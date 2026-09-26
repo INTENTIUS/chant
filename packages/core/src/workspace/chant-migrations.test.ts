@@ -145,6 +145,11 @@ describe.each(["dir", "git"] as const)("chud-lexicon-exit, from a %s source", (f
     expect(out).toMatch(/not moved: signing the release archive.* -> INTENTIUS\/chant#2515/);
     expect(out).toMatch(/not moved: the rollback Op \(ops\/rollback\.op\.ts\) -> INTENTIUS\/chant#2800/);
     expect(out).not.toContain("not moved: the release's steps after the ship gate");
+    // #2805: the plan lists README.md, CLAUDE.md and design/CLAUDE.md as
+    // changed, not silently left describing what the migration just deleted.
+    expect(out).toContain("write: README.md");
+    expect(out).toContain("write: CLAUDE.md");
+    expect(out).toContain("write: design/CLAUDE.md");
     expect(read(proj, "delivery/package.json")).toContain("@intentius/chud-runtime");
     expect(git(proj, ["status", "--porcelain"])).toBe("");
   });
@@ -183,8 +188,27 @@ describe.each(["dir", "git"] as const)("chud-lexicon-exit, from a %s source", (f
     expect(Object.keys(points["ship-skip"].inputs)).toContain("release.work_changed");
     expect(points["ship-skip"].question.type).toBe("noul");
     expect(Object.keys(points["slice-tier"].inputs)).toContain("work-item.fits_small");
+    // #2805: the slice-tier point no longer sends its decider to the `lint`
+    // block this migration just removed from chant.config.ts.
+    expect(points["slice-tier"].question.instructions).not.toMatch(/lint\.rules|chant\.config\.ts/);
+    expect(points["slice-tier"].question.instructions).toContain("studio kit");
     const decl = JSON.parse(read(proj, "chant.workspace.json")) as { records: Array<{ kind: string }> };
     expect(decl.records.map((r) => r.kind)).toContain("answers/answer.kind.mjs");
+
+    // #2805: README.md, CLAUDE.md and design/CLAUDE.md no longer describe
+    // chud's runtime, `--on chud`, or the Ops and paths this migration deleted
+    // as though they were still live.
+    for (const doc of ["README.md", "CLAUDE.md", "design/CLAUDE.md"]) {
+      const text = read(proj, doc);
+      expect(text, doc).not.toMatch(/--on chud|is the machinery|`chud design`|rollback, upgrade and dispatch Ops|chud's runtime package/);
+    }
+    expect(read(proj, "README.md")).toContain("off chud");
+    expect(read(proj, "CLAUDE.md")).toContain("studio kit's now");
+    // CLAUDE.md drops the dead path outright; design/CLAUDE.md keeps it only
+    // to say the package (and the path) are gone.
+    expect(read(proj, "CLAUDE.md")).not.toContain("chud-runtime/schemas");
+    expect(read(proj, "design/CLAUDE.md")).toContain("hud's chant views now");
+    expect(read(proj, "design/CLAUDE.md")).toMatch(/chud-runtime\/design\/`\. That package is\ngone/);
 
     const lineage = readLock(proj)!.scopes["."];
     expect(lineage.migrations).toContain(CHUD_LEXICON_EXIT);
