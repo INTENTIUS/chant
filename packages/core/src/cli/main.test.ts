@@ -727,6 +727,16 @@ describe("workspace graph --intent (#2651)", () => {
   });
 });
 
+describe("workspace check --changes (#2773)", () => {
+  test("parses the range, the work item and the severity", () => {
+    const args = parseArgs(["workspace", "check", "--changes", "main..HEAD", "--work", "W-001", "--severity", "fail", "--json"]);
+    expect(args).toMatchObject({ command: "workspace", path: "check", changes: "main..HEAD", work: "W-001", severity: "fail", json: true });
+    expect(() => parseArgs(["workspace", "check", "--changes"])).toThrow(/--changes needs a range/);
+    expect(() => parseArgs(["workspace", "check", "--changes", "main", "--severity"])).toThrow(/--severity needs off, warn or fail/);
+    expect(resolveCommand(args, commandRegistry)?.def.name).toBe("workspace check");
+  });
+});
+
 describe("workspace init and ls (#2534)", () => {
   test("resolve to their commands in the one workspace group, with the directory as extra positional", () => {
     const ls = parseArgs(["workspace", "ls", "examples", "--at", "HEAD", "--json"]);

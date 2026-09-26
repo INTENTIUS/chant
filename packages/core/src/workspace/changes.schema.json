@@ -1,0 +1,440 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/changes/v1/changes.schema.json",
+  "title": "chant workspace check --changes output",
+  "description": "What `chant workspace check --changes <base>..<head> --json` prints: the forward coverage check (#2773). Each path the diff changes, mapped to the current records whose constrains cover it, and a finding for each path no current decided record or open work item covers (change-uncovered), or that a record in hand for the change puts out of scope (change-out-of-scope). Readers ignore fields they do not know; a field is only ever added within a version. The finding and error codes are closed lists, and every one is in the one closed list of `reason-codes.ts`. Contract version 1 is written by chant 0.81.0 and newer, and this document was added to it by #2773; a chant without --changes refuses the flag.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/result"
+    },
+    {
+      "$ref": "#/$defs/failure"
+    }
+  ],
+  "$defs": {
+    "result": {
+      "description": "The diff and the records were read. Exit code 0, or 1 when severity is fail and there is a finding; the document is printed either way.",
+      "type": "object",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "workspace",
+        "range",
+        "severity",
+        "ignore",
+        "work",
+        "kinds",
+        "paths",
+        "findings",
+        "summary",
+        "ok"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/changes/v1/changes.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string",
+          "description": "The chant that wrote the document."
+        },
+        "workspace": {
+          "type": "object",
+          "required": [
+            "name",
+            "root"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "root": {
+              "type": "string",
+              "description": "The workspace root relative to the git root, \".\" for the git root."
+            }
+          }
+        },
+        "range": {
+          "type": "object",
+          "required": [
+            "spec",
+            "base",
+            "head"
+          ],
+          "properties": {
+            "spec": {
+              "type": "string",
+              "description": "The range as given: <base>..<head>, <base>...<head> or <base>."
+            },
+            "base": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40,64}$",
+              "description": "The commit the diff starts from: <base>, or for <base>...<head> the merge base."
+            },
+            "head": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40,64}$",
+              "description": "The commit the diff ends at. The declaration and the records are read here."
+            }
+          }
+        },
+        "severity": {
+          "enum": [
+            "off",
+            "warn",
+            "fail"
+          ],
+          "description": "From --severity, else the declaration's changes.severity, else warn. off reports no finding."
+        },
+        "ignore": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The declaration's changes.ignore globs."
+        },
+        "work": {
+          "description": "The work item in hand (--work), or null.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "record",
+                "state"
+              ],
+              "properties": {
+                "record": {
+                  "type": "string"
+                },
+                "state": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "kinds": {
+          "type": "array",
+          "description": "The record kinds read: the --kind files, or every kind the declaration names. role is work for a kind with a work block, decision for another kind with constrains, and other for a kind that covers nothing.",
+          "items": {
+            "type": "object",
+            "required": [
+              "file",
+              "name",
+              "role"
+            ],
+            "properties": {
+              "file": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "role": {
+                "enum": [
+                  "decision",
+                  "work",
+                  "other"
+                ]
+              }
+            }
+          }
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/path"
+          }
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/finding"
+          }
+        },
+        "summary": {
+          "type": "object",
+          "required": [
+            "paths",
+            "covered",
+            "uncovered",
+            "outOfScope",
+            "ignored",
+            "records"
+          ],
+          "properties": {
+            "paths": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "covered": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "uncovered": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "outOfScope": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "ignored": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "records": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "ok": {
+          "type": "boolean",
+          "description": "False only when severity is fail and there is a finding."
+        }
+      }
+    },
+    "path": {
+      "type": "object",
+      "required": [
+        "path",
+        "change",
+        "from",
+        "member",
+        "status",
+        "coveredBy",
+        "outOfScopeBy",
+        "ignoredBy"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "From the workspace root."
+        },
+        "change": {
+          "enum": [
+            "added",
+            "modified",
+            "deleted",
+            "renamed"
+          ]
+        },
+        "from": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "For a rename, the path at base."
+        },
+        "member": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The member whose directory holds the path."
+        },
+        "status": {
+          "enum": [
+            "covered",
+            "uncovered",
+            "out-of-scope",
+            "ignored",
+            "record"
+          ],
+          "description": "record: the path is a record file of a kind read, so the change is to the records themselves. ignored: a changes.ignore glob matches it. out-of-scope takes precedence over covered."
+        },
+        "coveredBy": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "record",
+              "state",
+              "entry"
+            ],
+            "properties": {
+              "record": {
+                "type": "string",
+                "description": "The record, as <kind name>/<id>."
+              },
+              "state": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "entry": {
+                "type": "string",
+                "description": "The constrains entry that covers the path (path:<path> or member:<name>), or the out_of_scope path that puts it out."
+              }
+            }
+          },
+          "description": "The current records whose constrains cover the path: decisions not superseded and in a decided state, and work items not in a closed state."
+        },
+        "outOfScopeBy": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "record",
+              "state",
+              "entry"
+            ],
+            "properties": {
+              "record": {
+                "type": "string",
+                "description": "The record, as <kind name>/<id>."
+              },
+              "state": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "entry": {
+                "type": "string",
+                "description": "The constrains entry that covers the path (path:<path> or member:<name>), or the out_of_scope path that puts it out."
+              }
+            }
+          },
+          "description": "The records in hand whose out_of_scope lists the path or a directory above it."
+        },
+        "ignoredBy": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The glob that matched an ignored path."
+        }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "required": [
+        "id",
+        "code",
+        "path",
+        "message",
+        "severity",
+        "records",
+        "triage"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "finding:<code>:<path>."
+        },
+        "code": {
+          "enum": [
+            "change-uncovered",
+            "change-out-of-scope"
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "severity": {
+          "enum": [
+            "warn",
+            "fail"
+          ]
+        },
+        "records": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "For change-out-of-scope, the records that put the path out of scope."
+        },
+        "triage": {
+          "type": "object",
+          "required": [
+            "finding",
+            "region"
+          ],
+          "description": "The source a work item seeded from this finding carries: work.schema.json's sourceGap. The finding-triage decision point (#2741) reads it.",
+          "properties": {
+            "finding": {
+              "enum": [
+                "change-uncovered",
+                "change-out-of-scope"
+              ]
+            },
+            "region": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "failure": {
+      "description": "The range, the declaration, a record kind or the --work item could not be read, and nothing was checked. Exit code 1.",
+      "type": "object",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "error"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/changes/v1/changes.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "enum": [
+                "declaration-missing",
+                "declaration-ambiguous",
+                "declaration-unparseable",
+                "declaration-invalid",
+                "placement-invalid",
+                "reader-too-old",
+                "root-chant-required",
+                "not-a-git-repository",
+                "revision-unknown",
+                "kind-unreadable",
+                "kind-invalid",
+                "schema-unreadable",
+                "schema-id-mismatch",
+                "schema-invalid",
+                "location-missing",
+                "work-item-unknown"
+              ]
+            },
+            "message": {
+              "type": "string"
+            }
+          }
+        },
+        "paths": false
+      }
+    }
+  }
+}

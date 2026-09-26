@@ -16,6 +16,9 @@
  *
  * `chant workspace upgrade` runs the same checks in its staging worktree
  * before it reaches its gate.
+ *
+ * `--changes <base>..<head>` runs the forward coverage check instead
+ * (`changes-cli.ts`, #2773), which prints a document of its own.
  */
 
 import { realpathSync } from "node:fs";
@@ -84,7 +87,8 @@ export function findingKey(f: CheckFinding): string {
   return `${f.code}\0${f.scope ?? ""}\0${f.path ?? ""}`;
 }
 
-const USAGE = "chant workspace check [--at <rev>] [--json] [--format stylish|json|sarif] [--generated] [--kind <kind file>]";
+const USAGE =
+  "chant workspace check [--at <rev>] [--json] [--format stylish|json|sarif] [--generated] [--kind <kind file>]\n       chant workspace check --changes <base>..<head> [--work <id>] [--severity off|warn|fail] [--kind <kind file>...] [--json]";
 const FORMATS = ["stylish", "json", "sarif"] as const;
 
 /** A lock finding as a lint diagnostic, for `--format json` and `--format sarif`. */
@@ -222,6 +226,17 @@ export async function runWorkspaceCheck(ctx: CommandContext): Promise<number> {
   if (ctx.args.extraPositional) {
     console.error(formatError({ message: `chant workspace check takes no argument (got ${ctx.args.extraPositional})`, hint: USAGE }));
     return 1;
+  }
+  // The forward coverage check (#2773) is its own document.
+  if (ctx.args.changes !== undefined) {
+    if (ctx.args.at !== undefined) {
+      console.error(formatError({ message: "--changes reads the records at the range's head, so it takes no --at", hint: USAGE }));
+      return 1;
+    }
+    const { handToRootChant } = await import("./which-chant");
+    const handed = await handToRootChant(root, undefined);
+    if (handed !== undefined) return handed;
+    return (await import("./changes-cli")).runWorkspaceChanges(ctx, root);
   }
   const format = (ctx.args.format || "stylish") as (typeof FORMATS)[number];
   if (!FORMATS.includes(format)) {

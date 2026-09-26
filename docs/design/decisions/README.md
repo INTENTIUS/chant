@@ -72,6 +72,7 @@ A decision can also be written through chant: `chant workspace records new`, `am
 | `proposed_by` | who proposed the decision, when `chant workspace records new --by <name>` or the MCP `records-new` tool's `by` named one for a decision that opened `proposed`; null or absent otherwise, and never cleared once set (see [Naming a proposer](#naming-a-proposer)) |
 | `reviews` | each reviewer's verdict (`agree`, `dissent` or `abstain`), a note, a date and the digest of the text it judged; a dissent must have a note; empty until a review happens |
 | `constrains` | the issues (`owner/repo#n`), decisions (their ids), members (`member:<name>`) or workspace files and directories (`path:<path>`) the decision governs; at least one, since a decision that governs nothing is refused |
+| `out_of_scope` | optional: workspace files or directories a change carrying the decision out must not touch; `chant workspace check --changes` reports a change to one as `change-out-of-scope` while the decision is in hand ([#2773](https://github.com/INTENTIUS/chant/issues/2773)) |
 
 Unknown fields are refused, except ones starting with `x-`.
 

@@ -165,6 +165,9 @@ export const REASONS = {
   "intent-decision-unimplemented": "A decided decision constrains the region, no work item that is not dropped implements it, and no commit falls in its window.",
   "intent-work-blocked": "A work item constraining the region has commits in its window while a work item it needs is not done.",
   "intent-work-open-decided-code": "Commits in the region are a decision's own work while the work item implementing that decision is still open.",
+  // The forward coverage check (check --changes, #2773): findings, one per changed path.
+  "change-uncovered": "A path the diff changes is covered by no current decided record and no open work item, by path or by its member.",
+  "change-out-of-scope": "A record in hand for the change, such as the work item it is for or a decision that item implements, lists a path the diff changes in its out_of_scope.",
   // Composite instances joined to components (graph --composites, #2662): why the list is empty or has no component.
   "composites-no-chant-member": "No member of kind chant was read, so nothing declares a composite instance or a component.",
   "composites-none-declared": "The members read declare no composite instance.",

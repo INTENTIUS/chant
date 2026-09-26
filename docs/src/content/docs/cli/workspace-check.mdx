@@ -8,6 +8,7 @@ diataxis: reference
 
 ```
 chant workspace check [--at <rev>] [--json] [--format stylish|json|sarif] [--generated] [--kind <kind file>]
+chant workspace check --changes <base>..<head> [--work <id>] [--severity off|warn|fail] [--kind <kind file>...] [--json]
 ```
 
 ## Description
@@ -185,6 +186,41 @@ error  WSP124  box-isolation-literal: member chaff's box gives state HUD_IDENTIT
 
 Two boxes with one slot get one finding for each port they share. Only the declaration is read, so both checks run under `--at` too.
 
+## The forward coverage check
+
+`--changes <base>..<head>` runs a different check ([#2773](https://github.com/INTENTIUS/chant/issues/2773)). Each path the diff changes is mapped to the current records whose `constrains` cover it, the join [`graph --intent`](/chant/cli/workspace-graph/#the-intent-graph) reads the other way. The records that count are decided decisions nothing supersedes and work items still open. One covers a path through a `path:` entry naming it or a directory above it. A `member:` entry covers every path in that member. Two gaps are findings:
+
+- `change-uncovered`: no current record covers the path.
+- `change-out-of-scope`: a record in hand for the change lists the path in its `out_of_scope`. With `--work <id>`, the records in hand are that work item and the decisions it implements. Without it, they are every current record that covers some path in the diff.
+
+A change to a record file of a kind read is the records themselves, and needs no record. The declaration's `changes` block sets the rest:
+
+```json
+{
+  "changes": {
+    "severity": "warn",
+    "ignore": ["**/package-lock.json", "app/dist/**"]
+  }
+}
+```
+
+`severity` is `off` (no findings), `warn` (the default: findings are reported and the command passes) or `fail` (a finding fails the command). `--severity` replaces it for one run. `ignore` lists globs over file paths from the workspace root, such as lockfiles and generated output. A matching path is listed as `ignored` and never reported. The declaration and the records are read at `<head>`, so a change that adds its own work item is covered by it. `<base>...<head>` diffs from the merge base, and `<base>` alone diffs to `HEAD`.
+
+```
+$ chant workspace check --changes main..HEAD
+changes   3f2a91c0..8b04d2e1 (main..HEAD), severity warn
+covered      modified app/src/server.mjs; by decision/dec-001 (path:app/src)
+out-of-scope modified app/src/vendor/lib.mjs; by decision/dec-001 (app/src/vendor)
+uncovered    modified docs/readme.md
+ignored      modified app/package-lock.json; by **/package-lock.json
+record       added    work/W-003-next.md
+warning   change-out-of-scope: app/src/vendor/lib.mjs is modified, and decision/dec-001 (app/src/vendor) puts it out of scope
+warning   change-uncovered: docs/readme.md, in member docs, is modified, and no current decided record or open work item covers it by path or member
+5 changed paths: 1 covered, 1 uncovered, 1 out of scope, 1 ignored, 1 records; 2 findings
+```
+
+`--json` prints the [read contract](/chant/reference/workspace-read-contract/#the-forward-coverage-check) document, which follows `https://intentius.io/chant/schemas/workspace/changes/v1/changes.schema.json`. `chant serve mcp` serves it as the `workspace-changes` tool. Each finding's `triage` is the gap source a work item seeded from it takes, for the finding-triage decision point ([#2741](https://github.com/INTENTIUS/chant/issues/2741)). An Op that changes the checkout runs the check on its own branch with the [`changeCoverage` activity](/chant/guide/ops/#checking-the-change-against-the-records).
+
 ## Options
 
 | Option | Effect |
@@ -195,11 +231,14 @@ Two boxes with one slot get one finding for each port they share. Only the decla
 | `--format json` | Print the [read contract](/chant/reference/workspace-read-contract/) document, which follows `https://intentius.io/chant/schemas/workspace/check/v1/check.schema.json`. It holds what `--json` prints, with `$schema`, `contract`, `chant`, `at` and `workspace` (the declaration's `name` and `root`, or `null` without one) added. A `WSP001` finding also has `code`, the reason code the declaration couldn't be read with. `--at` outside a git repository or at an unknown revision prints `{ "$schema", "contract", "chant", "error" }` instead |
 | `--format sarif` | Print SARIF 2.1.0 through lint's SARIF reporter, with the suppressed findings as suppressed results |
 | `--generated` | Run each declared generator and compare its output with the file in the tree, as described under [generated files](#generated-files). Off by default, since generators run member code |
-| `--kind <kind file>` | Read the records of this record kind and run the [record checks](#record-checks). The path is resolved against the current directory. With `--at`, the records and the files they pin are read at the revision |
+| `--kind <kind file>` | Read the records of this record kind and run the [record checks](#record-checks). The path is resolved against the current directory. With `--at`, the records and the files they pin are read at the revision. With `--changes` it repeats, and the kinds given replace the declared ones |
+| `--changes <range>` | Run the [forward coverage check](#the-forward-coverage-check) over `<base>..<head>`, `<base>...<head>` or `<base>`, in place of the checks above. Takes no `--at` |
+| `--work <id>` | With `--changes`: the work item in hand, whose `out_of_scope` and whose decisions' `out_of_scope` apply. An id no work record has is `work-item-unknown` |
+| `--severity off\|warn\|fail` | With `--changes`: in place of the declaration's `changes.severity` |
 
 ## Exit codes
 
 | Code | Meaning |
 |---|---|
 | 0 | No lock finding and no declaration finding of error severity |
-| 1 | The lock cannot be read, a manual step is open, or a declaration check reports an error |
+| 1 | The lock cannot be read, a manual step is open, or a declaration check reports an error. With `--changes`: the range, the declaration, a kind or the `--work` item can't be read, or severity is `fail` and there is a finding |
