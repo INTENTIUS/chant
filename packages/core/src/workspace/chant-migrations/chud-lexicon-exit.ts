@@ -452,6 +452,79 @@ const CI_YML_EDITS: Edit[] = [
   { find: "      - name: App tests and approved contract checks\n", replace: "      - name: App tests\n" },
 ];
 
+// ── Root prose (#2805): README.md, CLAUDE.md and design/CLAUDE.md still
+// describe what this migration deletes. Each edit's `unless` marker is text
+// the replacement drops, so a second upgrade (or a template that never had
+// the passage) finds nothing to do.
+
+const README_EDITS: Edit[] = [
+  {
+    find: "| delivery | [`delivery/`](delivery) | `chant` | the chant project, which still runs on chud's runtime package (`@intentius/chud-runtime`) and the chud lexicon until they are split out of chud (INTENTIUS/chant#2713): the release, rollback, upgrade and dispatch Ops, the sites releases ship to, the agents that build the app, the decision points, the write-scope policy and this repo's CI |",
+    replace:
+      "| delivery | [`delivery/`](delivery) | `chant` | the chant project, off chud (INTENTIUS/chant#2737, ws-056): the release Op (Check, the ship-skip decision point, then the ship gate), the app component's supply chain, the Fly site, the agents that build the app, and this repo's CI. The dispatch Op, the local site and the write-scope policy are the kit's |",
+    required: "the delivery row naming chud's runtime package and the release, rollback, upgrade and dispatch Ops",
+    unless: /^(?![\s\S]*chud's runtime package)/,
+  },
+  {
+    find: "npm run release      # chant run release --on chud: check, plan, stop at the ship gate\nchant approve release ship --plan <digest>\nnpm run release      # ship it\nnpm run rollback\nnpm run upgrade      # move to a newer @intentius/chud-runtime, through its gate\nnpm run check        # the app's tests and every approved contract's check (CI runs this)\nnpm run lint         # chant lint agents, with the contract-sizing rules",
+    replace:
+      "npm run release      # chant run release: check, ask ship-skip, stop at the ship gate\nchant approve release ship --plan <digest>\nnpm run release      # ship it\nnpm run upgrade      # cd .. && chant workspace upgrade\nnpm run check        # the app's own tests (CI runs this)\nnpm run lint         # chant lint agents",
+    required: "the everyday commands naming --on chud, npm run rollback and the contract-sizing rules",
+    unless: /^(?![\s\S]*--on chud: check, plan)/,
+  },
+];
+
+const CLAUDE_EDITS: Edit[] = [
+  {
+    find: "| delivery | `delivery/` | The chant project: `chant.config.ts` (this repo's settings as `buildParams`: ports and how to run the app), `ops/` (the release, rollback, upgrade and dispatch Ops), `deploy/` (the app as a chant component and the sites it ships to), `agents/team.ts` (the agents that build the app, as fountain specs), `decisions/` (the decision points and the ship gate's Cedar policy), `ci/ci.ts` (this repo's CI), `.chant/` (the write-scope policy and the contract-sizing lint rules), and `node_modules/`. |",
+    replace:
+      "| delivery | `delivery/` | The chant project: `chant.config.ts` (this repo's settings as `buildParams`: ports and how to run the app), `ops/` (the release Op), `deploy/` (the app as a chant component and the Fly site's resources), `agents/team.ts` (the agents that build the app, as fountain specs; its factory Schedule still calls the kit's dispatch Op), `decisions/ship-skip.cedar.ts` (the ship gate's policy; the decision points are the workspace's `decisions/points.json` at the root), `ci/ci.ts` (this repo's CI), and `node_modules/`. |",
+    required: "the delivery row naming the release, rollback, upgrade and dispatch Ops and .chant/",
+    unless: /^(?![\s\S]*the release, rollback, upgrade and dispatch Ops)/,
+  },
+  {
+    find: "- Records keep their core fields in YAML front matter (or JSON), validated\n  against the schemas in\n  `delivery/node_modules/@intentius/chud-runtime/schemas/`. Extra fields must\n  start with `x-`.\n",
+    replace:
+      "- Records keep their core fields in YAML front matter (or JSON), validated\n  against the schema each kind declares beside it (`decision.schema.json`,\n  `evidence.schema.json`, `session.schema.json`,\n  `design/schemas/defs.schema.json`). Extra fields must start with `x-`.\n",
+    required: "the records bullet pointing at delivery/node_modules/@intentius/chud-runtime/schemas/",
+    unless: /^(?![\s\S]*chud-runtime\/schemas\/)/,
+  },
+  {
+    find: "- `delivery/node_modules/@intentius/chud-runtime` is the machinery (the design\n  app, the Op steps). It is a versioned dependency: never edit it. Upgrade it\n  with the upgrade Op (`npm run upgrade` in `delivery/`), which stops at a\n  gate for a person.\n",
+    replace:
+      "- The design app and its Op steps are the studio kit's now\n  (arugula-salad/studio, template/), not a `delivery/` dependency\n  (INTENTIUS/chant#2737, ws-056). Upgrade `delivery/`'s chant packages with\n  `npm run upgrade` (`chant workspace upgrade` at the root), which stops at a\n  gate for a person.\n",
+    required: "the bullet naming delivery/node_modules/@intentius/chud-runtime as the machinery",
+    unless: /^(?![\s\S]*is the machinery)/,
+  },
+];
+
+const DESIGN_CLAUDE_EDITS: Edit[] = [
+  {
+    // The template's own name parameter ({{chant:name}}) is already
+    // substituted by the time this migration runs, so the anchor captures
+    // whatever it became rather than matching the placeholder literally.
+    find: /You are inside the design app \(`chud design`\), and your working directory is\nthis one\. The team uses the app to write contracts, record decisions and ship\nreleases of ([^\n.]+)\. Your job is to change this app when the team\nasks: new views, different workflows, extra checks, whatever helps them build\n\1\. You do not build the app itself here; that happens in `chud\ndev` \(see `\.\.\/app\/CLAUDE\.md`\)\./,
+    replace:
+      "You are inside the design app. Its own CLI command is gone now that\n`@intentius/chud-runtime` is gone (INTENTIUS/chant#2737, ws-056); the design\napp is hud's chant views now (alecraso/hud#627). The team still uses it to\nwrite contracts, record decisions and ship releases of $1, and\nyour job stays the same: change this app when the team asks: new views,\ndifferent workflows, extra checks, whatever helps them build\n$1. You do not build the app itself here; that happens with\n`npm run dev` in `app/` (see `../app/CLAUDE.md`).",
+    required: "the paragraph naming the design app's `chud design`/`chud dev` commands",
+    unless: /^(?![\s\S]*chud design)/,
+  },
+  {
+    find: "The design app ships in the `@intentius/chud-runtime` package, the version\n`../delivery/package-lock.json` pins, at\n`../delivery/node_modules/@intentius/chud-runtime/design/`. `chud design` runs\nits `server.js` directly. Read it there, but never edit it: an `npm install`\nor an upgrade replaces it. This directory holds only this repo's overrides,\nand they win:",
+    replace:
+      "The design app used to ship in the `@intentius/chud-runtime` package, at\n`../delivery/node_modules/@intentius/chud-runtime/design/`. That package is\ngone (INTENTIUS/chant#2737, ws-056): the design app is hud's chant views now\n(alecraso/hud#627), not a `delivery/` dependency. This directory still holds\nonly this repo's overrides, and they win once hud reads them from here:",
+    required: "the paragraph naming @intentius/chud-runtime's design/ path",
+    unless: /^(?![\s\S]*chud design)/,
+  },
+  {
+    find: "- `design/lib/ops.js`: runs the chant Ops in `../delivery/ops/` (`chant run\n  <op> --on chud --json`, in `../delivery/`), reads the gate ledger on the\n  `chant/lifecycle` branch, and approves gates with `chant approve`.\n",
+    replace:
+      "- `design/lib/ops.js`: runs the chant Ops in `../delivery/ops/` (`chant run\n  <op> --json`, in `../delivery/`), reads the gate ledger on the\n  `chant/lifecycle` branch, and approves gates with `chant approve`.\n",
+    required: "the ops.js bullet's --on chud flag",
+    unless: /^(?![\s\S]*--on chud --json)/,
+  },
+];
+
 // ── package.json ─────────────────────────────────────────────────────────────
 
 const SCRIPT_MOVES: Record<string, { from: RegExp; to: string | null; why: string; notMoved?: NotMoved }> = {
@@ -526,6 +599,17 @@ function fixPackageJson(text: string, chantVersion: string, appRel: string): { t
 
 const KNOWN_OUTPUT = new RegExp(`^(?:${POINT_INPUT_OUTPUT_NAMES.map((n) => n.replace(/[-]/g, "\\-")).join("|")})(?:\\.|$)`);
 
+/**
+ * chud's `slice-tier` point tells its decider where the sizing limits are:
+ * "(lint.rules in chant.config.ts)". This migration removes that `lint`
+ * block (`configEdits`), so the converted point would point at nothing
+ * (#2805). Its sizing rules are the kit's now, per the plan's own `DELETED`
+ * entry for `.chant/rules/contract-sizing.ts`.
+ */
+function fixSizingReference(instructions: string): string {
+  return instructions.replace("(lint.rules in chant.config.ts)", "(the studio kit's contract-sizing rules, arugula-salad/studio, template/)");
+}
+
 /** chud's points.yaml as chant's points file, or the reason it cannot be. */
 export function convertPoints(text: string, file: string): { json: string } | { error: string } {
   let doc: unknown;
@@ -558,6 +642,7 @@ export function convertPoints(text: string, file: string): { json: string } | { 
     }
     const question = { ...(point.question as Record<string, unknown>) };
     if (question.type === "boolean") question.type = "noul";
+    if (typeof question.instructions === "string") question.instructions = fixSizingReference(question.instructions);
     const deciders = ((point.deciders as Array<Record<string, unknown>> | undefined) ?? []).map((d) => {
       if (d.kind !== "table") return d;
       const rows = (d.rows as Array<Record<string, unknown>>).map((r) => ({
@@ -662,6 +747,7 @@ function planExit(ctx: ChantMigrationContext): ChantMigrationPlan | null {
   };
 
   const appDir = members.find((m) => m.name === "app")?.dir ?? "app";
+  const designDir = members.find((m) => m.name === "design")?.dir ?? "design";
 
   for (const d of delivery) {
     const at = (p: string) => posix.join(d, p);
@@ -750,6 +836,15 @@ function planExit(ctx: ChantMigrationContext): ChantMigrationPlan | null {
     }
   }
   edit(".github/workflows/ci.yml", CI_YML_EDITS, "built from ci/ci.ts again (`npm run ci:build`)");
+
+  // The repo's prose (#2805): README.md, CLAUDE.md and design/CLAUDE.md
+  // describe chud's runtime, `--on chud` and the Ops and paths this migration
+  // deletes. Rewrite the passages this migration knows about; an edit whose
+  // anchor is gone (a different template shape) is a conflict, same as the
+  // code files above.
+  edit("README.md", README_EDITS, "the delivery row and everyday commands, off chud");
+  edit("CLAUDE.md", CLAUDE_EDITS, "the delivery row, the schema path and the upgrade Op, off chud");
+  edit(posix.join(designDir, "CLAUDE.md"), DESIGN_CLAUDE_EDITS, "the design app is the kit's now; no --on chud");
 
   // Whatever still imports the chud packages once the plan ran is a conflict.
   const planned = new Map(changes.map((c) => [c.path, c]));
