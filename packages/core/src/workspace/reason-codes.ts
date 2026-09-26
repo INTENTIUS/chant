@@ -194,7 +194,7 @@ export const REASONS = {
   "box-fountain-callback-undeclared": "A box member builds a fountain Box, whose persistent sandbox fountain gives a callback token scoped to its owner, and the member's box block does not declare the fountain-callback capability brokered by fountain with scope owner.",
   // A box's intent, the decision record its box block names (check, #2850). Each is also a WSP finding.
   "box-intent-unknown": "A box block names an intent, and no record of a declared kind named decision has that id.",
-  "box-intent-unconstrained": "The decision record a box names as its intent constrains nothing of the box: no member: entry for it and no path: entry at, above or inside its directory.",
+  "box-intent-unconstrained": "The decision record a box names as its intent constrains no member or path of this workspace: no member: entry for a declared member and no path: entry at, above or inside one's directory.",
   // The work lease (chant workspace work claim|renew|release, #2732): why the command could not run.
   "work-kind-missing": "No work kind to find the item in: --kind names a kind with no work block, or the declaration names no work kind.",
   "work-kind-ambiguous": "More than one declared work kind has a record with the id, so --kind must name one.",

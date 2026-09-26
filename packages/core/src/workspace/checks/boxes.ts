@@ -41,16 +41,19 @@
  * WSP126 (`box-intent-unknown`) and WSP127 (`box-intent-unconstrained`), #2850,
  * read the decision record a box block names as its intent (`box-intent.ts`).
  * WSP126 fails when no record of a declared kind named decision has the id.
- * WSP127 warns when the record's constrains has no `member:` entry for the box
- * and no `path:` entry at, above or inside its directory, since then
- * `chant workspace graph --intent` never shows it for the box's files. Both
- * read the working tree's records, so neither runs under `--at`.
+ * WSP127 warns when the record's constrains names no member or path of this
+ * workspace at all: no `member:` entry for a declared member and no `path:`
+ * entry at, above or inside one's directory. It need not reach the box's own
+ * member: the decision an intent names can constrain the member whose app the
+ * box runs, on a workspace where the box block sits on a different member,
+ * the box's steward (studio's template, #2857). Both read the working
+ * tree's records, so neither runs under `--at`.
  */
 
 import * as ts from "typescript";
 import type { WorkspaceCheck, WorkspaceCheckContext, WorkspaceDiagnostic } from "../checks";
 import type { Member } from "../declaration";
-import { constrainsBox } from "../box-intent";
+import { constrainsWorkspace } from "../box-intent";
 import type { ReasonCode } from "../reason-codes";
 import { joinPath, skippedDir, type WorkspaceTree } from "../tree";
 import { BOX_ISOLATION_CHECKS } from "./box-isolation";
@@ -478,24 +481,23 @@ export const BOX_CHECKS: readonly WorkspaceCheck[] = [
     id: WSP_BOX_INTENT_UNCONSTRAINED,
     name: "box-intent-unconstrained",
     description:
-      "The decision record a box names as its intent constrains the box: member:<the member's name>, or a path: entry at, above or inside its directory, so graph --intent shows it for the box's files.",
+      "The decision record a box names as its intent constrains a member or path of this workspace: member:<a declared member's name>, or a path: entry at, above or inside a declared member's directory. It need not be the box's own member: a box one member runs can be what a decision about another member constrains.",
     severity: "warning",
     configurable: true,
     check(ctx) {
       const out: WorkspaceDiagnostic[] = [];
-      const members = new Map(ctx.declaration.members.map((m) => [m.name, m]));
+      const members = ctx.declaration.members;
       for (const i of ctx.facts?.boxIntents ?? []) {
-        const m = members.get(i.member);
-        if (!i.record || !m) continue;
-        if (i.record.constrains.some((c) => constrainsBox(c, m))) continue;
+        if (!i.record) continue;
+        if (i.record.constrains.some((c) => constrainsWorkspace(c, members))) continue;
         out.push({
           checkId: this.id,
           severity: this.severity,
           code: "box-intent-unconstrained",
           message:
-            `box-intent-unconstrained: member ${i.member}'s box names the intent ${i.id} (${i.record.path}), which constrains ` +
-            (i.record.constrains.length === 0 ? "nothing" : i.record.constrains.join(", ")) +
-            ` and nothing of the box; add member:${m.name} to its constrains`,
+            `box-intent-unconstrained: member ${i.member}'s box names the intent ${i.id} (${i.record.path}), whose constrains ` +
+            (i.record.constrains.length === 0 ? "is empty" : `names ${i.record.constrains.join(", ")}`) +
+            `, and none of it is a member or path of this workspace; add member:<name> for the member the intent is about, or a path: entry at, above or inside a member's directory`,
           entity: i.member,
           pointer: i.pointer,
         });

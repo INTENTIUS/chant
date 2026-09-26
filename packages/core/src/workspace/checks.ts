@@ -33,7 +33,7 @@
  * | WSP121, WSP122 | boxes: no literal credential, every capability brokered (#2726) |
  * | WSP123, WSP124 | box isolation: no shared port, state path or cookie, no literal machine path (#2727) |
  * | WSP125 | boxes: a fountain Box declares the callback token fountain gives its sandbox (#2780) |
- * | WSP126, WSP127 | box intent: the decision record a box names exists, and constrains the box (#2850) |
+ * | WSP126, WSP127 | box intent: the decision record a box names exists, and constrains a member or path of this workspace (#2850, #2857) |
  * | WSP131 to WSP133 | diagram artifacts: source and render exist, a recorded source hash still matches (#2764) |
  */
 

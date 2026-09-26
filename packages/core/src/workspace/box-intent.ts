@@ -12,7 +12,9 @@
  * `chant workspace status --json` reports the record's state and answer
  * under the member's `box.intent`, and `chant workspace check` fails when no
  * decision record has the id (WSP126) and warns when the record constrains
- * nothing of the box (WSP127).
+ * no member or path of this workspace at all (WSP127, #2857): the member it
+ * names need not be the box's own, since a decision naming another member
+ * can be what the box is for, such as the app it runs.
  */
 
 import { loadDeclaredKinds, type DeclaredKind } from "./declared-kinds";
@@ -141,4 +143,17 @@ export function constrainsBox(entry: string, member: { name: string; dir: string
   // The root member holds every path.
   if (member.dir === ".") return true;
   return constraintCovers(path, member.dir) || constraintCovers(member.dir, path);
+}
+
+/**
+ * Whether a constrains entry names a member or path of this workspace at
+ * all: `member:<name>` for any declared member, or a `path:` entry that is
+ * some member's directory, a directory above it or a path inside it. An
+ * intent's constrains can govern a member other than the one whose box
+ * names it (a box run by one member can be what a decision about another
+ * member's app is for), so this asks only whether the entry is real, not
+ * whether it reaches a particular member.
+ */
+export function constrainsWorkspace(entry: string, members: readonly { name: string; dir: string }[]): boolean {
+  return members.some((m) => constrainsBox(entry, m));
 }
