@@ -2,7 +2,13 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { WatchOp, isStewardDeclaration, stewardFormFor, type OpConfig } from "@intentius/chant/op";
 import { ConciergeStack } from "./concierge-stack";
 import { Steward, stewardForOp, __resetStewardsForTests } from "./steward";
-import { Box, BOX_ALLOWED_VAULTS_METADATA_KEY, BOX_PORT_METADATA_KEY } from "./box";
+import {
+  Box,
+  BOX_ALLOWED_VAULTS_METADATA_KEY,
+  BOX_FOUNTAIN_CALLBACK_CAPABILITY,
+  BOX_PORT_METADATA_KEY,
+  BOX_SANDBOX_API_ACCESS_METADATA_KEY,
+} from "./box";
 import { postSynthChecks } from "../lint/post-synth/index";
 import spec from "../spec/fountain-openapi.snapshot.json";
 import { Environment, Vault } from "../generated/index";
@@ -345,6 +351,7 @@ describe("Box", () => {
       "managed-by": "chant",
       "box-port": 8080,
       [BOX_ALLOWED_VAULTS_METADATA_KEY]: [],
+      [BOX_SANDBOX_API_ACCESS_METADATA_KEY]: "owner",
     });
 
     expect(vault).toBeUndefined();
@@ -541,5 +548,19 @@ describe("Box", () => {
     // interpret.
     expect(agentNode.attrs.allowed_vault_ids).toBeUndefined();
     expect((agentNode.attrs.metadata as Record<string, unknown>)[BOX_ALLOWED_VAULTS_METADATA_KEY]).toBe("any");
+    // fountain's callback token (#2780): the graph node says the sandbox gets one, and its scope.
+    expect((agentNode.attrs.metadata as Record<string, unknown>)[BOX_SANDBOX_API_ACCESS_METADATA_KEY]).toBe("owner");
+  });
+
+  it("records fountain's callback token in the built manifest, and names the capability the box block declares for it (#2780)", () => {
+    const { environment, agent } = Box(base);
+    const entities = new Map<string, Declarable>([
+      ["boxAgent", agent as unknown as Declarable],
+      ["boxEnv", environment as unknown as Declarable],
+    ]);
+    resolveAttrRefs(entities);
+    const manifest = fountainSerializer.serialize(entities) as string;
+    expect(manifest).toMatch(/kind: Agent[\s\S]*box-sandbox-api-access: owner/);
+    expect(BOX_FOUNTAIN_CALLBACK_CAPABILITY).toEqual({ name: "fountain-callback", broker: "fountain", scope: ["owner"] });
   });
 });

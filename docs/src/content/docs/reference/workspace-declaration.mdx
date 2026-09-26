@@ -238,11 +238,13 @@ The member that holds the box's declarations carries a `box` block:
 | `capabilities[].broker` | no | What brokers it, such as `lobby` or `door`. It may be a member of this workspace or a runtime outside it, as a planted box's lobby is. Without it the capability is unbrokered, and `chant workspace check` fails with `WSP122`. |
 | `capabilities[].scope` | no | The parts of the box's own that the broker lets it reach. The broker enforces the words, and chant records them. For Fountain these are `agent` (start conversations with its own agent), `vault` (attach its own vault), and `conversations` and `sandboxes` (its own). |
 
+A box built from the fountain lexicon's `Box` also declares `{ "name": "fountain-callback", "broker": "fountain", "scope": ["owner"] }` ([#2780](https://github.com/INTENTIUS/chant/issues/2780)). The pinned fountain spec gives a persistent sandbox a callback token scoped to its owner, and has no way to turn it off for one ([managoat/fountain#2497](https://github.com/managoat/fountain/issues/2497)). The entry records that token, so the declaration doesn't claim a box with no credential while the machine holds one, and it sits beside any `fountain` capability a lobby brokers for the same box.
+
 The block goes in the workspace declaration and not in the box's TypeScript. `check` and `status` read the declaration without running member code, and a broker reads the read contract. A lexicon's own box type, such as the fountain lexicon's `Box` composite or chaff's `Box`, keeps describing the machine. The declaration adds what the box may reach and through what.
 
 | Command | Uses the box block |
 |---|---|
-| [`chant workspace check`](/chant/cli/workspace-check/#boxes) | reads every file in the member's directory and fails with `WSP121` (`box-credential-declared`) on a literal secret. It fails with `WSP122` (`box-capability-unbrokered`) on a capability that names no broker |
+| [`chant workspace check`](/chant/cli/workspace-check/#boxes) | reads every file in the member's directory and fails with `WSP121` (`box-credential-declared`) on a literal secret. It fails with `WSP122` (`box-capability-unbrokered`) on a capability that names no broker, and with `WSP125` (`box-fountain-callback-undeclared`) when a member that builds a fountain `Box` doesn't declare `fountain-callback` |
 | [`chant workspace status --json`](/chant/cli/workspace-status/#boxes) | lists each member's `box`, with every capability's `name`, `broker` and `scope` |
 
 Set `minReader` to `"0.91.0"` or newer when the file has a `box` block, so an older chant reports `reader-too-old` instead of an unknown field.

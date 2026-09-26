@@ -350,3 +350,24 @@ describe("fountainRun — a persistent agent launched with no prompt (#2781)", (
     expect(result.spriteName).toBe("fountain-abc-studio-box");
   });
 });
+
+describe("fountainRun — sandboxApiAccess (#2780)", () => {
+  it("passes sandbox_api_access through on an ephemeral agent", async () => {
+    const bodies: unknown[] = [];
+    const { http: inner } = scriptedConversation({ sandboxMode: "ephemeral", conversationId: "conv-1", statuses: ["completed"] });
+    const http: FountainHttp = async (method, path, body) => {
+      if (method === "POST" && path === "/api/conversations") bodies.push(body);
+      return inner(method, path, body);
+    };
+    await fountainRun({ agent: "researcher", prompt: "hi", sandboxApiAccess: "none", pollMs: 1, sleep: async () => {} }, undefined, http);
+    expect(bodies).toEqual([{ agent_id: "agent-1", prompt: "hi", sandbox_api_access: "none" }]);
+  });
+
+  it("refuses none on a persistent agent before starting a conversation, naming the fountain issue", async () => {
+    const { http, calls } = scriptedConversation({ sandboxMode: "persistent", conversationId: "conv-1", statuses: ["idle"] });
+    await expect(
+      fountainRun({ agent: "researcher", sandboxApiAccess: "none", pollMs: 1, sleep: async () => {} }, undefined, http),
+    ).rejects.toThrow(/persistent.*sandbox_api_access "none".*managoat\/fountain#2497/);
+    expect(calls).not.toContain("POST /api/conversations");
+  });
+});

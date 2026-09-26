@@ -39,9 +39,9 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 |
 | intent node kind | the node kinds of `intent.schema.json` | 9 | 0 | 3 |
 | intent edge kind | the edge kinds of `intent.schema.json` | 9 | 0 | 3 |
-| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 130 | 0 | 0 |
+| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 131 | 0 | 0 |
 | finding code | the finding codes of `intent.schema.json` | 17 | 0 | 0 |
-| WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 44 | 0 | 0 |
+| WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 45 | 0 | 0 |
 | hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 |
 
 Each row follows, in the order of the table above.
@@ -234,6 +234,7 @@ Each row follows, in the order of the table above.
 | reason code | `diagram-source-missing` | chant | check.schema.json | A declared diagram names a source, and it does not exist in the tree read. |
 | reason code | `diagram-render-missing` | chant | check.schema.json | A declared diagram's render does not exist in the tree read. |
 | reason code | `diagram-render-drift` | chant | check.schema.json | A declared diagram records a sourceHash, and the source's bytes now hash to something else: the render is stale for its source. |
+| reason code | `box-fountain-callback-undeclared` | chant | check.schema.json | A box member builds a fountain Box, whose persistent sandbox fountain gives a callback token scoped to its owner, and the member's box block does not declare the fountain-callback capability brokered by fountain with scope owner. |
 | reason code | `lock-invalid` | chant | check.schema.json | The lineage lock can't be read. |
 | reason code | `manual-step-open` | chant | check.schema.json | A scope in the lineage lock has an open manual step. |
 | reason code | `work-kind-missing` | chant | work-evidence.schema.json, work-history.schema.json, work-lease.schema.json | No work kind to find the item in: --kind names a kind with no work block, or the declaration names no work kind. |
@@ -318,6 +319,7 @@ Each row follows, in the order of the table above.
 | WSP check | `WSP131` `diagram-source-missing` | chant | check.schema.json | A diagram's source file, when it names one, exists in the tree read. |
 | WSP check | `WSP132` `diagram-render-missing` | chant | check.schema.json | A diagram's render exists in the tree read. |
 | WSP check | `WSP133` `diagram-render-drift` | chant | check.schema.json | A diagram that records a sourceHash is unchanged since its render was made: the source's bytes still hash to it. Runs no renderer. |
+| WSP check | `WSP125` `box-fountain-callback-undeclared` | chant | check.schema.json | A box member that builds a fountain Box declares the callback token fountain gives its persistent sandbox: the fountain-callback capability, brokered by fountain, with scope owner. |
 | hud view | H1 | hud | alecraso/hud | Review queue: decided records grouped by area, oldest first, each as a decision card. It reads records --current --json. |
 | hud view | H2 | hud | alecraso/hud | Decision page: options side by side with rejected options kept, the supersession chain, amendment history and provenance. It reads records --json, records --at. |
 | hud view | H3 | hud | alecraso/hud | Review actions: agree, dissent with a required reason, abstain and propose, each verdict a pull request under the signed-in principal. It reads records, and writes through records review and records new in a pull request. |

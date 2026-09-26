@@ -95,6 +95,14 @@ export interface FountainRunArgs {
    * 1 to 40 letters, digits, `-` and `_`, starting with a letter or digit.
    */
   spriteName?: string;
+  /**
+   * fountain's `sandbox_api_access` (#2780): `owner`, fountain's default, gives
+   * the sandbox a callback token scoped to the owner (`FOUNTAIN_TOKEN` in every
+   * exec); `none` mints none. fountain v0.21.0 accepts `none` only for a fresh
+   * ephemeral sandbox, so it is refused here for a persistent agent before any
+   * conversation starts (managoat/fountain#2497).
+   */
+  sandboxApiAccess?: "owner" | "none";
   endpoint?: string;
   token?: string;
   /**
@@ -245,6 +253,12 @@ export async function fountainRun(
 
   const { id: agentId, sandboxMode } = await resolveAgent(client, args.agent);
   const persistent = sandboxMode === "persistent";
+  if (args.sandboxApiAccess === "none" && persistent) {
+    throw new Error(
+      `fountainRun: agent "${args.agent}" is persistent, and fountain v0.21.0 accepts sandbox_api_access "none" ` +
+        `only for a fresh ephemeral sandbox, so its sandbox gets the owner-scoped callback token (managoat/fountain#2497)`,
+    );
+  }
   const terminatePolicy: TerminatePolicy = args.terminate ?? (persistent ? "never" : "on-deadline");
   const doneStatuses = persistent ? PERSISTENT_DONE_STATUSES : TERMINAL_STATUSES;
 
@@ -254,6 +268,7 @@ export async function fountainRun(
   if (!promptless) createBody.prompt = args.prompt;
   if (args.vaultId !== undefined) createBody.vault_id = args.vaultId;
   if (args.spriteName !== undefined) createBody.sprite_name = args.spriteName;
+  if (args.sandboxApiAccess !== undefined) createBody.sandbox_api_access = args.sandboxApiAccess;
 
   const created = await client("POST", "/api/conversations", createBody);
   if (created.status !== 201 && created.status !== 200) {
