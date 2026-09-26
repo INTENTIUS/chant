@@ -30,6 +30,26 @@ Endpoint and token resolution: explicit args win, then the named `fountain.profi
 
 ## fountainRun
 
-Conversations are runs, not resources, so they are started rather than declared. `fountainRun` resolves the agent by name, starts a conversation (optionally with a prompt and an allowlisted vault), polls to `completed | failed | timed_out`, and terminates at its deadline so a hung sandbox never outlives the op.
+Conversations are runs, not resources, so they are started rather than declared. `fountainRun` resolves the agent by name, starts a conversation (optionally with a prompt and an allowlisted vault), and polls until the launch is done. What counts as done depends on the agent's `sandbox_mode` and on whether the launch has a prompt.
 
-Multi-turn interaction — follow-up prompts, interrupt — is fountain's own conversations API. The lexicon stays at the lifecycle edges.
+| Launch | Done when | `status` in the result |
+|---|---|---|
+| Ephemeral agent | The conversation reaches `completed`, `failed`, `timed_out` or `terminated`. | The conversation's status. |
+| Persistent agent, with a prompt | The conversation settles on `idle` (or one of the above). | The turn's own outcome: `completed`, `failed` or `interrupted`. |
+| Persistent agent, no prompt | The conversation's sandbox is `ready` or `failed` and no turn is running. fountain v0.21.0 leaves such a conversation `pending`, since no turn starts. | `provisioned`, or `failed` with `failedStage` naming the provisioning stage that failed. |
+
+An empty `prompt` counts as no prompt. The result also carries `sandboxId` and `spriteName` (fountain's `sandbox.sprite_name`), so a caller can reach the machine without listing `/api/sandboxes`. `spriteName` in the args passes through as fountain's `sprite_name`, the suffix of the machine's name, so a box's runtime can predict it.
+
+| Arg | Effect |
+|---|---|
+| `timeoutMs` | Deadline for the wait. Default 10 minutes. |
+| `pollMs` | Poll interval. Default 5 seconds. |
+| `terminate` | What happens to the conversation's machine when the wait ends: `on-deadline` (the ephemeral default) terminates only a run whose turn never ended, `never` (the persistent default) leaves it, `always` terminates it either way. |
+
+Under `chant run` the executor calls both activities as `fn(args, signal)`. When the signal fires (the step's timeout, or Ctrl-C) `fountainRun` stops polling, applies the `terminate` policy as it does at its deadline, and the step fails.
+
+```typescript
+phase("Start", [activity("fountainRun", { agent: "studio-box", spriteName: "studio-box" })]);
+```
+
+Multi-turn interaction, meaning follow-up prompts and interrupts, is fountain's own conversations API. The lexicon stays at the lifecycle edges.

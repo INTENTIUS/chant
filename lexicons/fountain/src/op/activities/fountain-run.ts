@@ -24,6 +24,13 @@
  * interrupted` — fountain's `end_turn` block, or an error) without
  * terminating anything.
  *
+ * A persistent agent launched with no prompt (#2781) runs no turn: fountain
+ * provisions the home (or attaches to the one that exists) and the
+ * conversation stays `pending`, so it never reaches `idle`. For that launch
+ * the run is done once the conversation's sandbox is `ready` or `failed` and
+ * no turn is running, and the result is the sandbox's outcome: `provisioned`,
+ * or `failed` with the stage that failed.
+ *
  * Terminating the conversation's machine on deadline (a hung run should
  * not outlive the op that started it) still happens whenever the turn has
  * not ended — for either sandbox mode. `terminate` makes the choice
@@ -82,6 +89,12 @@ export interface FountainRunArgs {
   prompt?: string;
   /** Optional vault to attach (subject to the agent's allowlist upstream). */
   vaultId?: string;
+  /**
+   * fountain's `sprite_name`: the suffix of the machine's name, so a box's
+   * runtime can predict it. fountain keeps its `fountain-<account>-` prefix;
+   * 1 to 40 letters, digits, `-` and `_`, starting with a letter or digit.
+   */
+  spriteName?: string;
   endpoint?: string;
   token?: string;
   /**
@@ -114,13 +127,29 @@ export interface FountainRunResult {
    * The run's outcome. For a persistent agent whose turn ended, this is the
    * turn's own status (`completed | failed | interrupted`); otherwise it is
    * the conversation's status when the wait ended (`terminated` on a
-   * deadline).
+   * deadline). For a persistent agent launched with no prompt (#2781), it is
+   * the sandbox's outcome: `provisioned` or `failed`.
    */
   status: string;
   /** True when the agent's `sandbox_mode` resolved to `persistent`. */
   persistent: boolean;
   /** True when the op hit its deadline with the turn still unfinished. */
   terminatedByDeadline: boolean;
+  /** The conversation's sandbox, once fountain has reported one. */
+  sandboxId?: string;
+  /** The sandbox's machine name (fountain's `sandbox.sprite_name`), the name to reach it by. */
+  spriteName?: string;
+  /** For a no-prompt launch whose sandbox failed (#2781): the provisioning stage that failed, when fountain logged one. */
+  failedStage?: string;
+}
+
+/** Sandbox statuses that end a persistent agent's no-prompt launch (#2781). */
+const PROVISIONED_SANDBOX_STATUSES = new Set(["ready", "failed"]);
+
+interface ConversationView {
+  status?: string;
+  sandbox_id?: string | null;
+  sandbox?: { id?: string; sprite_name?: string; status?: string } | null;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -153,6 +182,32 @@ export async function resolveAgent(http: FountainHttp, agent: string): Promise<R
 export async function resolveAgentId(http: FountainHttp, agent: string): Promise<string> {
   if (UUID_RE.test(agent)) return agent;
   return (await resolveAgent(http, agent)).id;
+}
+
+/**
+ * The stage whose `failed` event came last in the conversation's stage log, or
+ * undefined. fountain logs provisioning as stage events (`network`, `setup`,
+ * `provision`, ...), each with a `state`.
+ */
+async function failedStage(http: FountainHttp, conversationId: string): Promise<string | undefined> {
+  let after = 0;
+  let found: string | undefined;
+  for (let page = 0; page < 20; page++) {
+    const { status, json } = await http(
+      "GET",
+      `/api/conversations/${conversationId}/events?streams=stage&limit=1000&after=${after}`,
+    );
+    if (status !== 200) return found;
+    const body = json as {
+      data?: Array<{ stage?: string | null; state?: string | null }>;
+      meta?: { has_more?: boolean; next_cursor?: number | null };
+    };
+    for (const e of body?.data ?? []) if (e.state === "failed" && e.stage) found = e.stage;
+    const next = body?.meta?.next_cursor;
+    if (!body?.meta?.has_more || typeof next !== "number") return found;
+    after = next;
+  }
+  return found;
 }
 
 /** The latest turn's status, or undefined if it can't be read or none exists. */
@@ -194,8 +249,11 @@ export async function fountainRun(
   const doneStatuses = persistent ? PERSISTENT_DONE_STATUSES : TERMINAL_STATUSES;
 
   const createBody: Record<string, unknown> = { agent_id: agentId };
-  if (args.prompt !== undefined) createBody.prompt = args.prompt;
+  // An empty prompt is no prompt, as fountain's own clients send it (#2781).
+  const promptless = args.prompt === undefined || args.prompt === "";
+  if (!promptless) createBody.prompt = args.prompt;
   if (args.vaultId !== undefined) createBody.vault_id = args.vaultId;
+  if (args.spriteName !== undefined) createBody.sprite_name = args.spriteName;
 
   const created = await client("POST", "/api/conversations", createBody);
   if (created.status !== 201 && created.status !== 200) {
@@ -204,14 +262,51 @@ export async function fountainRun(
   const conversationId = (created.json as { data?: { id?: string } })?.data?.id;
   if (!conversationId) throw new Error("fountainRun: conversation create returned no id");
 
+  let sandboxId: string | undefined;
+  let spriteName: string | undefined;
+  const machine = () => ({
+    ...(sandboxId ? { sandboxId } : {}),
+    ...(spriteName ? { spriteName } : {}),
+  });
+  const see = (view: ConversationView | undefined) => {
+    sandboxId = view?.sandbox?.id ?? view?.sandbox_id ?? sandboxId;
+    spriteName = view?.sandbox?.sprite_name ?? spriteName;
+  };
+  see((created.json as { data?: ConversationView })?.data);
+
   const deadline = Date.now() + timeoutMs;
   let conversationStatus = "pending";
   try {
     while (Date.now() < deadline) {
       const res = await client("GET", `/api/conversations/${conversationId}`);
       if (res.status === 200) {
-        conversationStatus =
-          (res.json as { data?: { status?: string } })?.data?.status ?? conversationStatus;
+        const view = (res.json as { data?: ConversationView })?.data;
+        see(view);
+        conversationStatus = view?.status ?? conversationStatus;
+        // A persistent launch with no prompt runs no turn (#2781): it is done
+        // when the home is up (or failed to come up) and nothing is running.
+        const sandboxStatus = view?.sandbox?.status;
+        if (
+          persistent &&
+          promptless &&
+          sandboxStatus &&
+          PROVISIONED_SANDBOX_STATUSES.has(sandboxStatus) &&
+          conversationStatus !== "running"
+        ) {
+          const failed = sandboxStatus === "failed";
+          const stage = failed ? await failedStage(client, conversationId) : undefined;
+          if (terminatePolicy === "always") {
+            await client("POST", `/api/conversations/${conversationId}/terminate`);
+          }
+          return {
+            conversationId,
+            status: failed ? "failed" : "provisioned",
+            persistent,
+            terminatedByDeadline: false,
+            ...machine(),
+            ...(stage ? { failedStage: stage } : {}),
+          };
+        }
         if (doneStatuses.has(conversationStatus)) {
           let status = conversationStatus;
           if (persistent && conversationStatus === "idle") {
@@ -221,7 +316,7 @@ export async function fountainRun(
           if (terminatePolicy === "always") {
             await client("POST", `/api/conversations/${conversationId}/terminate`);
           }
-          return { conversationId, status, persistent, terminatedByDeadline: false };
+          return { conversationId, status, persistent, terminatedByDeadline: false, ...machine() };
         }
       }
       await sleep(pollMs);
@@ -242,7 +337,7 @@ export async function fountainRun(
   if (terminatePolicy !== "never") {
     await client("POST", `/api/conversations/${conversationId}/terminate`);
   }
-  return { conversationId, status: "terminated", persistent, terminatedByDeadline: true };
+  return { conversationId, status: "terminated", persistent, terminatedByDeadline: true, ...machine() };
 }
 
 /** `sleep`, cut short by `signal`: rejects with the signal's reason as soon as it fires. */
