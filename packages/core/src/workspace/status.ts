@@ -181,9 +181,9 @@ export interface StatusBox {
   isolation: ResolvedIsolation | null;
   /**
    * The decision record the block names as the box's intent (#2850): its id,
-   * state, question, choice, decided_by and decided_on. Null when the block
-   * names none; every field but the id is null when no decision record has
-   * the id (WSP126).
+   * state, question, choice, answer (the chosen option's label), decided_by
+   * and decided_on. Null when the block names none; every field but the id
+   * is null when no decision record has the id (WSP126).
    */
   intent: BoxIntent | null;
 }

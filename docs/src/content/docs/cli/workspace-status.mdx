@@ -88,13 +88,15 @@ With `--json`, each member also lists its `box`: the [box block](/chant/referenc
     "state": "decided",
     "question": "What is fern for?",
     "choice": { "option": "a", "reason": "A review queue for the design team." },
+    "answer": "a review queue for the design team",
     "decided_by": "alex",
     "decided_on": "2026-09-26"
   }
 }
 ```
 
-`intent` is the decision record the box block names as the box's [intent](/chant/reference/workspace-declaration/#intent), or `null` when it names none ([#2850](https://github.com/INTENTIUS/chant/issues/2850)). It is read from the working tree, from the records of every declared kind named `decision`. While the record is `proposed`, `choice`, `decided_by` and `decided_on` are `null`. When no decision record has the id, every field but `id` is `null` and `chant workspace check` fails with `WSP126`.
+`intent` is the decision record the box block names as the box's [intent](/chant/reference/workspace-declaration/#intent), or `null` when it names none ([#2850](https://github.com/INTENTIUS/chant/issues/2850)). It is read from the working tree, from the records of every declared kind named `decision`. `answer` is the label of the `options[]` entry `choice.option` names, or `null` while none is chosen ([#2855](https://github.com/INTENTIUS/chant/issues/2855)). While the record is `proposed`, `choice`, `answer`, `decided_by` and `decided_on` are `null`. When no decision record has the id, every field but `id` is `null` and `chant workspace check` fails with `WSP126`.
+
 ### Stewards
 
 A steward is the one writer that runs a member's operational Ops, on Fountain or locally through `chant operator --steward` ([#2731](https://github.com/INTENTIUS/chant/issues/2731)). The JSON lists the stewards of each member of kind `chant` that has its own `chant.config.ts` or `.json`, read from their declarations in the member's `*.op.ts` files. This is the one part of the output that imports project code, and it imports only those files. Each Op's last run is the newest record in its run ledger on the local branch. The steward's `lease` is the one a local steward holds while it runs, read from the local ref and never fetched. The text view leaves stewards out.
