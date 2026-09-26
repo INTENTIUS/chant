@@ -52,6 +52,14 @@ chant workspace points --open --json
 
 A work item a model or an agent suggests opens `proposed`, with its proposer in `proposed_by`, until a person opens it or drops it.
 
+[`lessons/`](lessons), [`constraints/`](constraints) and [`preferences/`](preferences) hold what a box learns and stands by without weighing options, so it stops living only in a decision's prose ([#2771](https://github.com/INTENTIUS/chant/issues/2771)). A lesson names a situation and what was learned, with `derived_from` naming where it came from. A constraint states a rule, and its `constrains` joins `graph --intent` the way a decision's does. A preference states a default a person or team chose, and a decision may override it without withdrawing it. The declaration names all three beside the decision, work and answer kinds:
+
+```sh
+cd reference-workspace
+chant workspace records --kind lessons/lesson.kind.mjs --json
+chant workspace records --kind constraints/constraint.kind.mjs --json
+```
+
 [`skills/record-decisions/`](skills/record-decisions) and
 [`docs/record-decisions.md`](docs/record-decisions.md) are a harness-neutral
 way to write decision records by hand from a session, before anything
@@ -84,6 +92,7 @@ for the loop end to end.
 | [#2662](https://github.com/INTENTIUS/chant/issues/2662) | landed: delivery declares the app as a `DockerWebService` composite instance, and [`delivery/src/app.component.ts`](delivery/src/app.component.ts) is the component that deploys it, naming that kind in `composites`. `chant workspace graph --composites` lists the instance `delivery/app` with the component, matched in the same member. Compose names the service `appService` |
 | [#2741](https://github.com/INTENTIUS/chant/issues/2741) | landed: [`decisions/points.json`](decisions/points.json) declares `finding-triage`, `needs-a-decision`, `slice-tier` and `ship-skip`, and the work kind gains a `proposed` first state with `proposed_by`. The studio smoke claim for the same flow belongs to arugula-salad/studio |
 | [#2709](https://github.com/INTENTIUS/chant/issues/2709) | landed: [`skills/record-decisions/SKILL.md`](skills/record-decisions/SKILL.md) and [`docs/record-decisions.md`](docs/record-decisions.md), a harness-neutral way to propose decision records by hand from a session. Names `chant workspace records new` (or the `records-new` MCP tool from #2707, once it exists); the `source` provenance block from #2708 is filled in once that lands |
+| [#2771](https://github.com/INTENTIUS/chant/issues/2771) | landed: [`lessons/`](lessons), [`constraints/`](constraints) and [`preferences/`](preferences), three more reference kinds beside the decision, work and answer kinds, one example record each |
 
 ## Tests
 
