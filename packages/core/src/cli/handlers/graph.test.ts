@@ -3,6 +3,7 @@ import type { ParsedArgs } from "../registry";
 import { DECLARABLE_MARKER, type Declarable } from "../../declarable";
 import { AttrRef } from "../../attrref";
 import { GRAPH_IR_VERSION } from "../../graph-ir";
+import { NO_LEXICON_DETECTED_MESSAGE } from "../../detectLexicon";
 
 /**
  * The aws emulator capability, as the real plugin declares it. `--live`
@@ -468,6 +469,25 @@ describe("runGraph", () => {
       const exit = await runGraph({ args: makeArgs({ format: "ir" }), plugins: [], serializers: [] });
       expect(exit).toBe(1);
       expect(stderrBuf.join("\n")).toContain("boom");
+    });
+
+    // #2841 — an Ops-only project (`lexicons: []`, no lexicon import) has no
+    // lexicon to predict with. Detection's sentinel means "none", not a failed
+    // graph, so `chant workspace graph` does not report the member failed.
+    test("--format ir in a project with no lexicon graphs with no plugins", async () => {
+      lintClean(); discovered();
+      resolveLexMock.mockRejectedValue(new Error(NO_LEXICON_DETECTED_MESSAGE));
+      loadPluginsMock.mockResolvedValue([]);
+      const exit = await runGraph({ args: makeArgs({ format: "ir" }), plugins: [], serializers: [] });
+      expect(exit).toBe(0);
+      expect(loadPluginsMock).toHaveBeenCalledWith([]);
+      expect(JSON.parse(stdoutBuf.join("\n")).nodes.length).toBe(3);
+    });
+
+    test("--format ir still fails on a lexicon error other than none detected", async () => {
+      lintClean(); discovered();
+      resolveLexMock.mockRejectedValue(new Error("lexicon @intentius/chant-lexicon-nope is not installed"));
+      await expect(runGraph({ args: makeArgs({ format: "ir" }), plugins: [], serializers: [] })).rejects.toThrow("not installed");
     });
   });
 
