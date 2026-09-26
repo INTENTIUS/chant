@@ -317,6 +317,7 @@ describe("Box", () => {
     name: "studio-box",
     repo: { url: "https://github.com/arugula-salad/studio" },
     setupScript: "#!/bin/bash\nexec ~/box/provision-template.sh\n",
+    model: "anthropic/claude-sonnet-4-5",
     permissionPolicy: { default: "auto_allow" as const },
   };
 
@@ -334,7 +335,7 @@ describe("Box", () => {
     const a = props(agent);
     expect(a.name).toBe("studio-box");
     expect(a.runtime).toBe("claude");
-    expect(a.model).toBeUndefined();
+    expect(a.model).toBe("anthropic/claude-sonnet-4-5");
     expect(a.sandbox_mode).toBe("persistent");
     expect(a.environment).toBe(environment);
     expect(a.permission_policy).toEqual({ default: "auto_allow" });
@@ -414,6 +415,7 @@ describe("Box", () => {
     const { environment, agent, port } = Box({
       name: "blank-slate",
       setupScript: "#!/bin/bash\nnpm install\n",
+      model: "anthropic/claude-sonnet-4-5",
       permissionPolicy: { default: "auto_allow" as const },
       sandboxProvider: "runner",
     });
@@ -432,6 +434,13 @@ describe("Box", () => {
       /allowedHosts and unrestrictedNetworking/,
     );
     expect(() => Box({ ...base, setupScript: "  " })).toThrow(/setupScript is empty/);
+    // fountain v0.21.0 refuses an Agent with no model at apply (#2776); an
+    // untyped caller finds out at build instead.
+    const { model: _model, ...noModel } = base;
+    expect(() => Box(noModel as unknown as Parameters<typeof Box>[0])).toThrow(
+      /Box "studio-box": model is required — fountain v0\.21\.0 refuses an Agent with no model for the claude runtime/,
+    );
+    expect(() => Box({ ...base, model: " " })).toThrow(/model is required/);
   });
 
   it("serializes to a manifest whose specs the pinned API accepts, clean under every post-synth check", () => {
@@ -479,6 +488,7 @@ describe("Box", () => {
     const { environment, agent } = Box({
       name: "blank-slate",
       setupScript: "#!/bin/bash\nnpm install\n",
+      model: "anthropic/claude-sonnet-4-5",
       permissionPolicy: { default: "auto_allow" as const },
       sandboxProvider: "runner",
     });

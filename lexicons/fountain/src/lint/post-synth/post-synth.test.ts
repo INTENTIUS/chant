@@ -124,6 +124,16 @@ describe("FTN016 runtime-model-valid", () => {
     expect(diags).toHaveLength(0);
   });
 
+  it("errors on a conversational runtime with no model, as fountain v0.21.0 refuses it at apply (#2776)", () => {
+    for (const runtime of ["claude", "codex", "gemini", "opencode"]) {
+      const diags = runtimeModelValidCheck.check(ctx({ a: { entityType: AGENT, runtime } }));
+      expect(diags).toHaveLength(1);
+      expect(diags[0].message).toContain(`runtime "${runtime}" and no model`);
+      expect(diags[0].message).toContain("fountain v0.21.0");
+    }
+    expect(runtimeModelValidCheck.check(ctx({ a: { entityType: AGENT, runtime: "claude", model: "" } }))).toHaveLength(1);
+  });
+
   it("errors when an acp agent carries a model", () => {
     const diags = runtimeModelValidCheck.check(
       ctx({ a: { entityType: AGENT, runtime: "acp", model: "anthropic/claude-sonnet-4-6" } }),

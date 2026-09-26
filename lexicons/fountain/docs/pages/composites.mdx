@@ -86,6 +86,7 @@ export const { environment, agent, vault } = Box({
   name: "studio-box",
   repo: { url: "https://github.com/arugula-salad/studio", ref: "main" },
   setupScript: readFileSync("box/provision-template.sh", "utf8"),
+  model: "anthropic/claude-sonnet-4-6",
   permissionPolicy: { default: "auto_allow" },
   allowedHosts: ["registry.npmjs.org", "github.com"],
   vault: { secrets: [{ key: "STUDIO_SECRET", value: "${STUDIO_SECRET}" }] },
@@ -94,10 +95,12 @@ export const { environment, agent, vault } = Box({
 
 `setupScript` is the script's text, because fountain's `setup_script` is a string it runs, not a path it reads.
 
+`model` is required. fountain v0.21.0, the pinned spec, refuses an Agent with no model for every runtime but `acp` (`model: can't be blank` at apply), and a Box's runtime is never `acp`. `Box` throws at build when it is missing, and FTN016 reports the same gap on an Agent declared any other way.
+
 | Declared | Name | What it carries |
 |---|---|---|
 | Environment | `<name>-env` | the app repo at `/workspace/app` (or `repo.mountPath`) when `repo` is given, else no `repositories`; the setup script, `packages`, `env_vars` and networking, passed through |
-| Agent | `<name>` | `runtime` (default `claude`), `model` (fountain's default when omitted), `sandbox_mode: persistent`, `sandbox_provider` (unset — the instance default — unless `sandboxProvider` names one), the given `permission_policy` |
+| Agent | `<name>` | `runtime` (default `claude`), `model` (required), `sandbox_mode: persistent`, `sandbox_provider` (unset — the instance default — unless `sandboxProvider` names one), the given `permission_policy` |
 | Vault (with `vault`) | `<name>-secrets` (or `vault.name`) | the shared secrets, written inline at apply |
 
 | Default | Effect | Loosened by |

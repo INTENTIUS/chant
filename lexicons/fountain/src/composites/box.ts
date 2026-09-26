@@ -16,6 +16,7 @@
  *   name: "studio-box",
  *   repo: { url: "https://github.com/arugula-salad/studio", ref: "main" },
  *   setupScript: readFileSync("box/provision-template.sh", "utf8"),
+ *   model: "anthropic/claude-sonnet-4-5",
  *   permissionPolicy: { default: "auto_allow" },
  *   allowedHosts: ["registry.npmjs.org", "github.com"],
  *   vault: { secrets: [{ key: "STUDIO_SECRET", value: "${STUDIO_SECRET}" }] },
@@ -133,8 +134,13 @@ export interface BoxOpts {
   setupTimeoutSeconds?: number;
   /** Agent runtime. Default `claude`. */
   runtime?: "claude" | "codex" | "gemini" | "opencode";
-  /** Canonical provider/model_id. Omitted, fountain's default for the runtime. */
-  model?: string;
+  /**
+   * Canonical provider/model_id. Required (#2776): fountain v0.21.0, the
+   * pinned spec, refuses an Agent with no model for every runtime but `acp`
+   * (`model: can't be blank` at apply), and a Box's runtime is never `acp`.
+   * FTN016 flags the same gap on an Agent built any other way.
+   */
+  model: string;
   /** Sandbox backend override. Omitted, the instance default (`SANDBOX_PROVIDER`). A plain `Agent.sandbox_provider` field, so it is already visible on the graph node without extra bookkeeping (unlike `allowedVaults`; see "Allowed vaults in the read contract" above). */
   sandboxProvider?: BoxSandboxProvider;
   /** Per-tool permission policy. Required: fountain's unset policy is `auto_allow`. */
@@ -181,6 +187,14 @@ export function Box(opts: BoxOpts): BoxResources {
     throw new Error(
       `Box "${opts.name}": allowedHosts and unrestrictedNetworking together — ` +
         `an allowlist means nothing on an open network. Pass one.`,
+    );
+  }
+  // The type requires it; this is for an untyped caller, so it fails at build
+  // rather than at fountain's apply.
+  if (typeof opts.model !== "string" || !opts.model.trim()) {
+    throw new Error(
+      `Box "${opts.name}": model is required — fountain v0.21.0 refuses an Agent with no model ` +
+        `for the ${opts.runtime ?? "claude"} runtime. Pass a canonical provider/model_id.`,
     );
   }
   if (!opts.setupScript.trim()) {
@@ -239,7 +253,7 @@ export function Box(opts: BoxOpts): BoxResources {
   const agent = new Agent({
     name: opts.name,
     runtime: opts.runtime ?? "claude",
-    ...(opts.model !== undefined ? { model: opts.model } : {}),
+    model: opts.model,
     sandbox_mode: "persistent",
     ...(opts.sandboxProvider !== undefined ? { sandbox_provider: opts.sandboxProvider } : {}),
     environment,
