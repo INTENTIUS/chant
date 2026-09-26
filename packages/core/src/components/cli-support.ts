@@ -22,7 +22,7 @@
  *    executor, the CLI entrypoint the driver (#556) never had.
  */
 
-import { lexiconModulePath, lexiconNames } from "../lexicon-module";
+import { lexiconModulePath, lexiconNames, importLexiconPackage } from "../lexicon-module";
 import { discoverComponents } from "./discover";
 import type { BuildParamProvenance } from "../provenance";
 import { inferArchetype, projectToJson, type Archetype } from "./component";
@@ -244,7 +244,7 @@ export interface GenerateComponentsResult {
 async function loadLexiconPlugin(name: string): Promise<LexiconPlugin | null> {
   let mod: Record<string, unknown>;
   try {
-    mod = (await import(lexiconModulePath(name) ?? `@intentius/chant-lexicon-${name}`)) as Record<string, unknown>;
+    mod = (await importLexiconPackage(lexiconModulePath(name) ?? `@intentius/chant-lexicon-${name}`)) as Record<string, unknown>;
   } catch {
     return null;
   }

@@ -24,7 +24,9 @@
  * a project that names lexicons by package takes exactly the path it always did.
  */
 
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { createRequire } from "node:module";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { pathToFileURL } from "node:url";
 
 /**
  * One `lexicons` entry: a package-backed name, or a name plus the module that
@@ -212,4 +214,57 @@ export function lexiconPackagesToInstall(
   paths: ReadonlyMap<string, string> = modulePaths,
 ): string[] {
   return names.filter((name) => !paths.has(name)).map((name) => `@intentius/chant-lexicon-${name}`);
+}
+
+/**
+ * chant#2845 — the npm package a bare specifier names: `@scope/name` for a
+ * scoped one, else its first segment. `undefined` for a relative or absolute
+ * path, which is not a package.
+ */
+export function packageNameOf(spec: string): string | undefined {
+  if (spec.startsWith(".") || isAbsolute(spec) || spec.startsWith("file:")) return undefined;
+  const parts = spec.split("/");
+  return spec.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0];
+}
+
+/** True when `err` says the package `pkg` itself could not be found, not something it imports. */
+function isPackageNotFound(err: unknown, pkg: string): boolean {
+  const code = (err as { code?: unknown } | null)?.code;
+  if (code !== "ERR_MODULE_NOT_FOUND" && code !== "MODULE_NOT_FOUND") return false;
+  const message = err instanceof Error ? err.message : String(err);
+  return message.includes(`'${pkg}'`) || message.includes(`"${pkg}"`) || message.includes(`${pkg}/`);
+}
+
+/**
+ * chant#2845 — resolve `spec` (a lexicon package or one of its subpaths) from
+ * `fromDir` instead of from chant's own install, or `undefined` when the
+ * project doesn't have it either.
+ */
+export function resolveFromProject(spec: string, fromDir: string = process.cwd()): string | undefined {
+  try {
+    return createRequire(join(fromDir, "package.json")).resolve(spec);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * chant#2845 — import a lexicon package, or one of its subpaths, by its bare
+ * specifier. chant's own install is tried first, as a bare `import()` always
+ * did, so a lexicon chant can reach loads exactly as before. When the package
+ * isn't there, which is the case for a chant installed globally and a project
+ * that installs its lexicons in its own node_modules, it is resolved from
+ * `fromDir` (the project) and imported from there. Any other failure, and a
+ * package the project doesn't have either, rethrows the first error.
+ */
+export async function importLexiconPackage(spec: string, fromDir: string = process.cwd()): Promise<Record<string, unknown>> {
+  try {
+    return (await import(spec)) as Record<string, unknown>;
+  } catch (err) {
+    const pkg = packageNameOf(spec);
+    if (pkg === undefined || !isPackageNotFound(err, pkg)) throw err;
+    const resolved = resolveFromProject(spec, fromDir);
+    if (resolved === undefined) throw err;
+    return (await import(pathToFileURL(resolved).href)) as Record<string, unknown>;
+  }
 }

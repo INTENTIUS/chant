@@ -17,7 +17,7 @@
  */
 
 import { discoverOps, type DiscoveredOp } from "./discover";
-import { lexiconModulePath } from "../lexicon-module";
+import { lexiconModulePath, importLexiconPackage } from "../lexicon-module";
 import {
   isLexiconPlugin,
   type LexiconPlugin,
@@ -37,7 +37,7 @@ import {
 async function loadLexiconPlugin(name: string): Promise<LexiconPlugin | null> {
   let mod: Record<string, unknown>;
   try {
-    mod = (await import(lexiconModulePath(name) ?? `@intentius/chant-lexicon-${name}`)) as Record<string, unknown>;
+    mod = (await importLexiconPackage(lexiconModulePath(name) ?? `@intentius/chant-lexicon-${name}`)) as Record<string, unknown>;
   } catch {
     return null;
   }

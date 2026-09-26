@@ -36,7 +36,7 @@
 
 import * as coreContracts from "./activities/activity-contracts";
 import { collectActivityContracts, type ActivityContract } from "./activity-contract";
-import { importLexiconModule } from "../lexicon-module";
+import { importLexiconModule, importLexiconPackage } from "../lexicon-module";
 
 /**
  * The shape {@link loadActivityContracts} reads off a plugin: an optional
@@ -89,7 +89,7 @@ export async function loadActivityContracts(
         );
       } else {
         const spec = `@intentius/chant-lexicon-${name}/op/activity-contracts`;
-        collectActivityContracts((await import(spec)) as Record<string, unknown>, contracts);
+        collectActivityContracts((await importLexiconPackage(spec)) as Record<string, unknown>, contracts);
       }
     } catch {
       // Lexicon absent or declares no contracts at the conventional subpath.

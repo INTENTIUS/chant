@@ -1,4 +1,4 @@
-import { importLexiconModule, lexiconModulePath, lexiconNames, registerLexiconDeclarations } from "../lexicon-module";
+import { importLexiconModule, importLexiconPackage, lexiconModulePath, lexiconNames, registerLexiconDeclarations, resolveFromProject } from "../lexicon-module";
 import { readLexiconDeclarationsStatically, type StaticLexiconRead } from "../config-static";
 export { unknownPathLexiconsNotice } from "../config-static";
 import { createRequire } from "node:module";
@@ -51,7 +51,7 @@ export async function loadPlugin(lexiconName: string): Promise<LexiconPlugin> {
   }
 
   const packageName = `@intentius/chant-lexicon-${lexiconName}`;
-  const mod = await import(packageName);
+  const mod = (await importLexiconPackage(packageName)) as Record<string, any>;
 
   // Look for an explicit LexiconPlugin export
   for (const value of Object.values(mod)) {
@@ -109,7 +109,15 @@ export function resolveLexiconVersions(lexiconNames: readonly string[]): Record<
     if (lexiconModulePath(name) !== undefined) continue;
     const packageName = `@intentius/chant-lexicon-${name}`;
     try {
-      let dir = dirname(require_.resolve(packageName));
+      // chant#2845 — a lexicon chant's own install can't reach is resolved from the project.
+      let entry: string | undefined;
+      try {
+        entry = require_.resolve(packageName);
+      } catch (err) {
+        entry = resolveFromProject(packageName);
+        if (entry === undefined) throw err;
+      }
+      let dir = dirname(entry);
       // Bounded walk — a resolved entry point is never deeply nested inside
       // its own package, and an unbounded loop here would climb to `/`.
       for (let depth = 0; depth < 10; depth++) {

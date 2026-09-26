@@ -12,7 +12,7 @@
 
 import * as baseActivities from "./activities";
 import { ACTIVITY_PROFILES, type ActivityProfile } from "./activity-profiles";
-import { importLexiconModule } from "../lexicon-module";
+import { importLexiconModule, importLexiconPackage } from "../lexicon-module";
 
 export type { ActivityProfile } from "./activity-profiles";
 
@@ -64,7 +64,7 @@ export async function loadActivities(lexicons: string[] = []): Promise<Map<strin
         continue;
       }
       const spec = `@intentius/chant-lexicon-${name}/op/activities`;
-      collectActivities((await import(spec)) as Record<string, unknown>, activities);
+      collectActivities((await importLexiconPackage(spec)) as Record<string, unknown>, activities);
     } catch {
       // Lexicon absent or contributes no activities — fine.
     }
