@@ -28,9 +28,15 @@
  * not outlive the op that started it) still happens whenever the turn has
  * not ended — for either sandbox mode. `terminate` makes the choice
  * explicit rather than leaving it implicit in `sandbox_mode`.
+ *
+ * Under `chant run` the executor calls this as `fountainRun(args, signal)`
+ * (#2775). When the signal fires (the step's timeout, or Ctrl-C) polling
+ * stops, the terminate policy is applied as it is on the deadline, and the
+ * step fails with the abort's reason.
  */
 
 import {
+  abortable,
   resolveConnection,
   defaultFountainHttp,
   type FountainHttp,
@@ -164,15 +170,21 @@ async function latestTurnStatus(
 
 export async function fountainRun(
   args: FountainRunArgs,
+  signal?: AbortSignal,
   http?: FountainHttp,
   deps?: FountainConnectionDeps,
 ): Promise<FountainRunResult> {
+  // `raw` is what the terminate call goes through: it must still reach
+  // fountain after the signal has fired, so it does not carry the signal.
+  let raw = http;
   let client = http;
-  if (!client) {
+  if (!raw) {
     const { endpoint, token } = await resolveConnection(args, deps);
-    client = defaultFountainHttp(endpoint, token);
+    raw = defaultFountainHttp(endpoint, token);
+    client = defaultFountainHttp(endpoint, token, signal);
   }
-  const sleep = args.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  client = abortable(client!, signal);
+  const sleep = abortableSleep(args.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms))), signal);
   const timeoutMs = args.timeoutMs ?? 600_000;
   const pollMs = args.pollMs ?? 5_000;
 
@@ -194,24 +206,33 @@ export async function fountainRun(
 
   const deadline = Date.now() + timeoutMs;
   let conversationStatus = "pending";
-  while (Date.now() < deadline) {
-    const res = await client("GET", `/api/conversations/${conversationId}`);
-    if (res.status === 200) {
-      conversationStatus =
-        (res.json as { data?: { status?: string } })?.data?.status ?? conversationStatus;
-      if (doneStatuses.has(conversationStatus)) {
-        let status = conversationStatus;
-        if (persistent && conversationStatus === "idle") {
-          const turnStatus = await latestTurnStatus(client, conversationId);
-          if (turnStatus && TERMINAL_TURN_STATUSES.has(turnStatus)) status = turnStatus;
+  try {
+    while (Date.now() < deadline) {
+      const res = await client("GET", `/api/conversations/${conversationId}`);
+      if (res.status === 200) {
+        conversationStatus =
+          (res.json as { data?: { status?: string } })?.data?.status ?? conversationStatus;
+        if (doneStatuses.has(conversationStatus)) {
+          let status = conversationStatus;
+          if (persistent && conversationStatus === "idle") {
+            const turnStatus = await latestTurnStatus(client, conversationId);
+            if (turnStatus && TERMINAL_TURN_STATUSES.has(turnStatus)) status = turnStatus;
+          }
+          if (terminatePolicy === "always") {
+            await client("POST", `/api/conversations/${conversationId}/terminate`);
+          }
+          return { conversationId, status, persistent, terminatedByDeadline: false };
         }
-        if (terminatePolicy === "always") {
-          await client("POST", `/api/conversations/${conversationId}/terminate`);
-        }
-        return { conversationId, status, persistent, terminatedByDeadline: false };
       }
+      await sleep(pollMs);
     }
-    await sleep(pollMs);
+  } catch (err) {
+    // Aborted mid-wait: the turn has not ended, so the policy decides as it
+    // does on the deadline. Anything else propagates untouched.
+    if (signal?.aborted && terminatePolicy !== "never") {
+      await raw("POST", `/api/conversations/${conversationId}/terminate`).catch(() => {});
+    }
+    throw err;
   }
 
   // Deadline: the turn never ended (or, for an ephemeral conversation, its
@@ -222,4 +243,29 @@ export async function fountainRun(
     await client("POST", `/api/conversations/${conversationId}/terminate`);
   }
   return { conversationId, status: "terminated", persistent, terminatedByDeadline: true };
+}
+
+/** `sleep`, cut short by `signal`: rejects with the signal's reason as soon as it fires. */
+function abortableSleep(
+  sleep: (ms: number) => Promise<void>,
+  signal?: AbortSignal,
+): (ms: number) => Promise<void> {
+  if (!signal) return sleep;
+  return (ms) => {
+    signal.throwIfAborted();
+    return new Promise<void>((resolve, reject) => {
+      const onAbort = () => reject(signal.reason);
+      signal.addEventListener("abort", onAbort, { once: true });
+      sleep(ms).then(
+        () => {
+          signal.removeEventListener("abort", onAbort);
+          resolve();
+        },
+        (err) => {
+          signal.removeEventListener("abort", onAbort);
+          reject(err);
+        },
+      );
+    });
+  };
 }

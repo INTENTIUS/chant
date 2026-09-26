@@ -102,6 +102,7 @@ describe("fountainRun — ephemeral (behaves as today, #2718)", () => {
 
     const result = await fountainRun(
       { agent: "researcher", prompt: "hi", pollMs: 1, sleep: async () => {} },
+      undefined,
       http,
     );
     expect(result).toEqual({
@@ -121,6 +122,7 @@ describe("fountainRun — ephemeral (behaves as today, #2718)", () => {
 
     const result = await fountainRun(
       { agent: "researcher", timeoutMs: 1, pollMs: 1, sleep: async () => {} },
+      undefined,
       http,
     );
     expect(result).toEqual({
@@ -144,6 +146,7 @@ describe("fountainRun — persistent (#2718)", () => {
 
     const result = await fountainRun(
       { agent: "researcher", prompt: "hi", pollMs: 1, sleep: async () => {} },
+      undefined,
       http,
     );
     expect(result).toEqual({
@@ -166,7 +169,7 @@ describe("fountainRun — persistent (#2718)", () => {
       ],
     });
 
-    const result = await fountainRun({ agent: "researcher", pollMs: 1, sleep: async () => {} }, http);
+    const result = await fountainRun({ agent: "researcher", pollMs: 1, sleep: async () => {} }, undefined, http);
     expect(result.status).toBe("failed");
     expect(result.persistent).toBe(true);
   });
@@ -180,6 +183,7 @@ describe("fountainRun — persistent (#2718)", () => {
 
     const result = await fountainRun(
       { agent: "researcher", timeoutMs: 1, pollMs: 1, sleep: async () => {} },
+      undefined,
       http,
     );
     expect(result.terminatedByDeadline).toBe(true);
@@ -196,6 +200,7 @@ describe("fountainRun — persistent (#2718)", () => {
 
     await fountainRun(
       { agent: "researcher", terminate: "on-deadline", timeoutMs: 1, pollMs: 1, sleep: async () => {} },
+      undefined,
       http,
     );
     expect(calls).toContain("POST /api/conversations/conv-6/terminate");
@@ -211,6 +216,7 @@ describe("fountainRun — persistent (#2718)", () => {
 
     const result = await fountainRun(
       { agent: "researcher", terminate: "always", pollMs: 1, sleep: async () => {} },
+      undefined,
       http,
     );
     expect(result.terminatedByDeadline).toBe(false);
