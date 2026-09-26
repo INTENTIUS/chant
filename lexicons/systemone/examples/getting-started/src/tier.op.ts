@@ -5,8 +5,9 @@
  * `read` reads work item W-002 through the read contract, and each of the
  * point's `work-item.*` inputs takes its field. A table row answers when one
  * matches; otherwise the model decider's backend is asked, and its answer is
- * recorded as a proposal a person confirms with `chant workspace points
- * answer`. The step returns the answer record.
+ * recorded as a proposal. An open question stops the run `waiting` until a
+ * person answers it with `chant workspace points answer`; the next run reads
+ * the answer and goes on.
  */
 
 import { Op, phase } from "@intentius/chant/op";

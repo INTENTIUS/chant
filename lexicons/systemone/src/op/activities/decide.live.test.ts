@@ -11,6 +11,8 @@
  */
 
 import { afterAll, describe, expect, test } from "vitest";
+import { isPointWait } from "@intentius/chant/op";
+import { workspacePoints } from "@intentius/chant/workspace/points-cli";
 import { postQuestion } from "../../backend";
 import { cleanScratch, workspace } from "../../__fixtures__/workspace";
 import { runDecide } from "./decide";
@@ -58,11 +60,19 @@ describe.skipIf(!key)("decide against a real Jev-compatible server (TYPESAFE_API
 
   test("the activity asks a point and records the model's answer or its escalation", async () => {
     const root = workspace();
-    const r = await runDecide({ cwd: root, point: "triage", inputs: { "record.size": 5, "record.risky": true }, backends: { systemone: backend } }, {});
-    // The server answered: the record is a proposal, or escalated below the threshold with the model's lean. Never unreachable.
-    expect(["proposed", "escalated"]).toContain(r.state);
-    const model_ = r.escalations.find((e) => e.kind === "model");
-    if (r.state === "escalated") expect(model_?.reason).not.toContain("could not answer");
-    else expect(r.model).toBe(model);
+    const outcome = await runDecide({ cwd: root, point: "triage", inputs: { "record.size": 5, "record.risky": true }, backends: { systemone: backend } }, {}).then(
+      (r) => r.id,
+      (e: unknown) => {
+        if (isPointWait(e)) return e.question.id;
+        throw e;
+      },
+    );
+    const doc = await workspacePoints({ cwd: root });
+    if ("error" in doc) throw new Error(doc.error.message);
+    const q = doc.questions.find((x) => x.id === outcome)!;
+    // The server answered: a proposal at the pin, or an escalation below the threshold with the model's lean. Never unreachable.
+    expect(["proposed", "escalated"]).toContain(q.state);
+    if (q.state === "proposed") expect(q.decider).toMatchObject({ kind: "model", model });
+    else expect(q.escalations.find((e) => e.kind === "model")?.reason).not.toContain("could not answer");
   }, 120_000);
 });

@@ -90,7 +90,7 @@ export default Op({
 chant run triage-t1
 ```
 
-The stub answered 0.91, which meets the threshold of 0.8. So the step writes an answer record in the `proposed` state, with the probabilities, the confidence and the threshold, and returns it.
+The stub answered 0.91, which meets the threshold of 0.8. So the step writes an answer record in the `proposed` state, with the probabilities, the confidence and the threshold. A proposal is still an open question, so the run ends with status `waiting` and `chant run` exits 3.
 
 ## Confirm the proposal
 
@@ -101,7 +101,13 @@ chant workspace points --open
 chant workspace points answer triage-<hash> --answer yes --by alex
 ```
 
-Answering as the model did confirms it, and the record becomes `answered` with the model kept as its decider.
+Answering as the model did confirms it, and the record becomes `answered` with the model kept as its decider. Run the Op again:
+
+```bash
+chant run triage-t1
+```
+
+The step finds the answered record, calls no backend, and returns the answer, and the Op goes on.
 
 ## Use a real backend
 

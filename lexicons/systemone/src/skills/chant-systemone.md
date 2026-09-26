@@ -47,7 +47,9 @@ export default Op({
 
 ## What the step returns
 
-`{ id, path, state, open, answer, reused, written, decider, model, backend, confidence, threshold, escalations, missing }`. A model's answer is `proposed` and `open`: a person confirms it with `chant workspace points answer <id> --answer <value> --by <name>`. An answer never authorizes anything on its own.
+An answered question is the step's result: `{ id, path, state, open, answer, decider, model, backend, confidence, threshold, answeredBy, escalations, missing }`. A question that is escalated, or proposed by a model, is open: the step throws core's `PointWait` and the run ends `waiting` (`chant run` exits 3). A person answers with `chant workspace points answer <id> --answer <value> --by <name>`, and the next run reads the answer. A model's answer never decides on its own.
+
+In a steward's turn the model call goes through the broker: only through a capability the steward declares, and never with a key held in an environment variable.
 
 ## When the backend is unreachable
 

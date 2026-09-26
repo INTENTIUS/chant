@@ -11,6 +11,6 @@ name the point's model decider uses.
 ```bash
 export TYPESAFE_API_KEY=...        # or point the backend at a local server
 chant build                       # validates the step against the decide contract
-chant run tier-work
+chant run tier-work               # answered by a table row, or waiting on an open question (exit 3)
 chant workspace points --open     # the question, proposed or escalated, with the model's confidence
 ```
