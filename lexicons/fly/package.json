@@ -35,6 +35,11 @@
       "types": "./dist/op/activities/index.d.ts",
       "default": "./src/op/activities/index.ts"
     },
+    "./op/activity-contracts": {
+      "development": "./src/op/activity-contracts.ts",
+      "types": "./dist/op/activity-contracts.d.ts",
+      "default": "./src/op/activity-contracts.ts"
+    },
     "./lint/post-synth": {
       "development": "./src/lint/post-synth/index.ts",
       "types": "./dist/lint/post-synth/index.d.ts",
@@ -60,11 +65,13 @@
     "@intentius/chant": "*",
     "@types/ws": "^8.5.12",
     "tsc-alias": "^1.8.17",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "zod": "^4.3.6"
   },
   "peerDependencies": {
     "@intentius/chant": "^0.92.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "zod": "^4.3.6"
   },
   "description": "Fly.io Machines lexicon for chant — declarative IaC in TypeScript",
   "license": "Apache-2.0",
