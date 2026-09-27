@@ -247,7 +247,7 @@
                         ]
                       },
                       "point": {
-                        "description": "The open decision point a waiting run stopped on (#2749), as the run ledger records it, or null.",
+                        "description": "The decision point a waiting run stopped on (#2749), or null. Its state is the question's now, as `points` reads it: `answered` once a person has answered it. When the questions can't be read, or the answer record is gone, it is the state the run ledger recorded.",
                         "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/stewardWait" }]
                       }
                     }
@@ -363,7 +363,7 @@
           }
         },
         "waiting": {
-          "description": "The open decision points the steward waits on (#2749): one for each Op whose newest run is the steward's own (its ledger record names the steward) and stopped on a question: the steward's own Ops in ops order, then any other Op of the member, such as one the steward's process starts itself (studio#137), by name. The state is the question's when the run stopped; `chant workspace points --open` has its state now, and hud asks a person there. The steward never answers one, and runs an Op it lists again on the first round after it is answered (an Op beside its turns, in a process of its own, #2861).",
+          "description": "The open decision points the steward waits on (#2749): one for each Op whose newest run is the steward's own (its ledger record names the steward) and stopped on a question that is still open: the steward's own Ops in ops order, then any other Op of the member, such as one the steward's process starts itself (studio#137), by name. The state is the question's now, as `chant workspace points --open` reads it, where hud asks a person. A question answered since, or whose answer record is gone, is not listed, and nor is one whose Op has a newer run in flight: the Op's lease or one of its work leases was taken after the waiting run ended and is still held. When the questions can't be read, the run ledger's state stands. The steward never answers one, and runs an Op it lists again on the first round after it is answered (an Op beside its turns, in a process of its own, #2861).",
           "type": "array",
           "items": {
             "allOf": [
@@ -371,7 +371,7 @@
               {
                 "type": "object",
                 "required": ["op", "run"],
-                "properties": { "op": { "type": "string" }, "run": { "type": "string", "description": "The waiting run's id." } }
+                "properties": { "op": { "type": "string" }, "run": { "type": "string", "description": "The waiting run's id." }, "state": { "enum": ["escalated", "proposed"] } }
               }
             ]
           }
@@ -384,7 +384,7 @@
       "properties": {
         "id": { "type": "string", "description": "The answer record's id, as `points` lists the question and `points answer` names it." },
         "point": { "type": "string" },
-        "state": { "enum": ["escalated", "proposed"] },
+        "state": { "enum": ["escalated", "proposed", "answered"], "description": "The question's state now, as `points` reads it, or the state the run ledger recorded when the questions can't be read or the record is gone. Never `answered` in a steward's `waiting`." },
         "path": { "type": "string", "description": "The answer record, from the repository root." },
         "subject": { "type": ["string", "null"] },
         "since": { "type": "string", "description": "When the run stopped on it." }

@@ -17,6 +17,7 @@ import { workspacePoints } from "../workspace/points-cli";
 import type { WireAnswer } from "../workspace/points";
 import { readMemberStewards } from "../workspace/status-stewards";
 import { readRunLedger } from "../lifecycle/run-ledger";
+import { acquireLease, releaseLease } from "../lifecycle/lease";
 import type { ActivityFn, ActivityProfile } from "./activity-registry";
 import { runOpLocally } from "./local-executor";
 import { createBesideState, formatRoundLine, runOperatorRound, waitForBesideRuns } from "./operator";
@@ -420,5 +421,85 @@ describe("a waiting run of an Op beside the steward's turns (#2861)", () => {
     expect(log).toEqual(["ship"]);
     expect((await readRunLedger("local", "box-build", { cwd: root })).records.at(-1)).toMatchObject({ status: "ok", steward: "build-steward" });
     expect((await readMemberStewards(root, "local", "2027-01-01T00:11:00Z")).stewards.find((s) => s.name === "build-steward")!.waiting).toEqual([]);
+  });
+});
+
+describe("status lists a wait only while its question is open (studio box, 0.95.1)", () => {
+  const stewardShape = () =>
+    contract({ $schema: statusSchema.$schema, $id: `urn:test:status-steward-open-${Math.random()}`, $defs: statusSchema.$defs, $ref: "#/$defs/steward" });
+
+  /** A waiting run of `op` recorded as `steward`'s, and its ledger record. */
+  async function waitingRun(steward: string, op: OpConfig, release: string) {
+    const acts = new Map<string, ActivityFn>([
+      ...shipActivities([]),
+      ["askShip", async (args) => (await askPointInRun({ cwd: root, point: "ship-now", inputs: { release: args.release }, subject: release, on })).answer],
+    ]);
+    process.env[STEWARD_ENV] = steward;
+    try {
+      expect((await runOpLocally(op, acts, PROFILES, undefined, { ledger: { cwd: root } })).status).toBe("waiting");
+    } finally {
+      resetStewardTurn();
+    }
+    return (await readRunLedger("local", op.name, { cwd: root })).records.at(-1)!;
+  }
+
+  function declare(name: string, beside: OpConfig) {
+    const steward = declareSteward({ name, ops: [], beside: [{ op: beside, ready: { kind: "activity", fn: "readyShip", args: {} } }], capabilities: ["inference"] });
+    mkdirSync(join(root, "ops"), { recursive: true });
+    writeFileSync(join(root, "chant.config.json"), "{}\n");
+    writeFileSync(join(root, "ops", `${name}.op.ts`), `export const steward = ${JSON.stringify(steward)};\n`);
+  }
+
+  const entryOf = async (name: string) =>
+    (await readMemberStewards(root, "local", new Date().toISOString())).stewards.find((s) => s.name === name)!;
+
+  test("an open question is listed; once answered it is not, and lastRun.point has its state now", async () => {
+    const op = shipOp("open-dispatch", "r-40");
+    declare("open-steward", op);
+    const run = await waitingRun("open-steward", op, "r-40");
+    const question = run.point!.id;
+
+    const open = await entryOf("open-steward");
+    stewardShape().expectValid(open);
+    expect(open.waiting).toEqual([
+      { op: "open-dispatch", run: run.id, id: question, point: "ship-now", state: "escalated", path: run.point!.path, subject: "r-40", since: run.point!.since },
+    ]);
+
+    // A person answers; no run of the Op has started since, so the ledger's newest record still says waiting.
+    expect("error" in (await answerPoint({ cwd: root, id: question, answer: "yes", by: ["alice"], on }))).toBe(false);
+    expect((await readRunLedger("local", "open-dispatch", { cwd: root })).records.at(-1)).toMatchObject({ id: run.id, status: "waiting", point: { state: "escalated" } });
+    const answered = await entryOf("open-steward");
+    stewardShape().expectValid(answered);
+    expect(answered.waiting).toEqual([]);
+    expect(answered.ops[0].lastRun).toMatchObject({ id: run.id, status: "waiting", point: { id: question, state: "answered" } });
+  });
+
+  test("a newer run in flight, holding the Op's lease since the waiting run ended, drops the wait", async () => {
+    const op = shipOp("busy-dispatch", "r-41");
+    declare("busy-steward", op);
+    const run = await waitingRun("busy-steward", op, "r-41");
+    expect((await entryOf("busy-steward")).waiting.map((w) => w.run)).toEqual([run.id]);
+
+    // The next run takes the Op's lease and is still going: it has no ledger record yet.
+    const lease = await acquireLease("busy-dispatch", "busy-steward/busy-dispatch@box", { cwd: root });
+    expect(lease.acquired).toBe(true);
+    const busy = await entryOf("busy-steward");
+    stewardShape().expectValid(busy);
+    expect(busy.ops[0].beside!.lease).toMatchObject({ holder: "busy-steward/busy-dispatch@box", live: true });
+    expect(busy.ops[0].lastRun).toMatchObject({ id: run.id, status: "waiting", point: { state: "escalated" } });
+    expect(busy.waiting).toEqual([]);
+
+    // Once it lets go without a record, the question is still open and waited on again.
+    await releaseLease("busy-dispatch", "busy-steward/busy-dispatch@box", lease.lease!.token, { cwd: root });
+    expect((await entryOf("busy-steward")).waiting.map((w) => w.run)).toEqual([run.id]);
+  });
+
+  test("when the questions can't be read, the run ledger's state stands and the wait is listed", async () => {
+    const op = shipOp("blind-dispatch", "r-42");
+    declare("blind-steward", op);
+    const run = await waitingRun("blind-steward", op, "r-42");
+    expect("error" in (await answerPoint({ cwd: root, id: run.point!.id, answer: "yes", by: ["alice"], on }))).toBe(false);
+    const entry = (await readMemberStewards(root, "local", new Date().toISOString(), "chant", null, { readQuestions: async () => null })).stewards.find((s) => s.name === "blind-steward")!;
+    expect(entry.waiting).toMatchObject([{ run: run.id, state: "escalated" }]);
   });
 });

@@ -342,17 +342,8 @@ async function stewardGates(steward: StewardDeclaration, opts: OperatorRoundOpti
 
 /** Every question's state in the workspace, by id, or null when the workspace's points can't be read. */
 async function readQuestionStates(cwd: string): Promise<Map<string, string> | null> {
-  try {
-    const { workspacePoints } = await import("../workspace/points-cli");
-    const doc = await workspacePoints({ cwd });
-    if (!("questions" in doc)) return null;
-    // An answer kind that could not be read might hold the question: say
-    // nothing rather than resume a run whose question may still be open.
-    if (doc.sources.some((s) => s.reason !== null)) return null;
-    return new Map(doc.questions.map((q) => [q.id, q.state]));
-  } catch {
-    return null;
-  }
+  const { readQuestionStates: read } = await import("../workspace/points-cli");
+  return read(cwd);
 }
 
 /** Take or renew a local steward's own lease (#2731). */
