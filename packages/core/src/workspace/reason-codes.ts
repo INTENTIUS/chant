@@ -38,6 +38,7 @@ export const REASONS = {
   // --at and git.
   "not-a-git-repository": "--at, or a ledger read, needs a git repository and there is none.",
   "revision-unknown": "--at names no commit.",
+  "live-at-revision": "graph was given --live and --at: a live read is of the account now, not of a revision.",
   // status.
   "environment-invalid": "An environment name that can't name a ledger directory.",
   // A member or group that can't be read (ls, graph).

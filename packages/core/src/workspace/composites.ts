@@ -44,10 +44,10 @@ import type { CommandContext } from "../cli/registry";
 import { joinLabel, type JoinLabel } from "../join-key";
 import type { ComposedMember, MemberReason, WorkspaceGraph } from "./compose-graph";
 import { readMemberIr } from "./compose-graph";
-import { GRAPH_ERROR_CODES, workspaceGraph, type GraphQuery } from "./graph-cli";
+import { workspaceGraph, type GraphQuery } from "./graph-cli";
 import type { LinkRow } from "./links";
 import { emitDocument, type UnitResult } from "./member-commands";
-import { readerVersion, type ErrorLocation, type WorkspaceErrorCode } from "./declaration";
+import { readerVersion, WORKSPACE_ERROR_CODES, type ErrorLocation, type WorkspaceErrorCode } from "./declaration";
 import type { ReasonCode } from "./reason-codes";
 import { componentEnvironments, ENVIRONMENT_REASON_CODES, memberEnvironments, readLedgerEnvironments, type ComponentEnvironment, type EnvironmentReason, type LedgerEnvironmentReader, type MemberEnvironments } from "./environments";
 import { componentRuntimes, readRuntimesIn, RUNTIME_REASON_CODES, type ComponentRuntime, type MemberRuntimes, type PluginLoader, type RuntimeReason } from "./runtimes";
@@ -58,8 +58,12 @@ export const COMPOSITES_OUTPUT_SCHEMA_ID = "https://intentius.io/chant/schemas/w
 /** The read-contract version the document follows. */
 export const COMPOSITES_CONTRACT_VERSION = 1;
 
-/** Why the composites couldn't be read at all: the graph's codes. */
-export const COMPOSITES_ERROR_CODES = GRAPH_ERROR_CODES;
+/**
+ * Why the composites couldn't be read at all: the declaration's codes, as for
+ * the graph. The composites never read live, so the graph's own
+ * `live-at-revision` (#2875) can't reach them.
+ */
+export const COMPOSITES_ERROR_CODES = WORKSPACE_ERROR_CODES;
 
 /** Why the list is empty, or why no instance has a component. Closed: part of the read contract. */
 export const COMPOSITES_REASON_CODES = [
@@ -262,12 +266,15 @@ export async function workspaceComposites(
   const { loadPlugin, readLedgerEnvironments: readLedger = readLedgerEnvironments, ...graphQuery } = query;
   const { doc: graph, failed, components: runs } = await workspaceGraph({
     ...graphQuery,
+    // The composites read source only; a live flag never reaches the members.
+    ...(graphQuery.args ? { args: { ...graphQuery.args, live: false, overlay: false, traffic: undefined } } : {}),
     components: true,
     inTree: async (root, members) => {
       runtimes = await readRuntimesIn(root, members, loadPlugin);
     },
   });
-  if ("error" in graph) return { doc: { ...head, error: graph.error }, failed: true };
+  // With no live read, the graph fails only with a declaration code.
+  if ("error" in graph) return { doc: { ...head, error: { ...graph.error, code: graph.error.code as WorkspaceErrorCode } }, failed: true };
 
   const byMember = new Map((runs ?? []).map((r) => [r.unit.member, r]));
   const members: CompositesMember[] = [];

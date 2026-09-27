@@ -113,7 +113,7 @@ describe("composites output schema", () => {
   test("lists exactly the reason and error codes the code can return", () => {
     expect(schema.$defs.reason.properties.code.enum).toEqual([...COMPOSITES_REASON_CODES]);
     expect(schema.$defs.failure.properties.error.properties.code.enum).toEqual([...COMPOSITES_ERROR_CODES]);
-    expect(COMPOSITES_ERROR_CODES).toEqual(GRAPH_ERROR_CODES);
+    expect(COMPOSITES_ERROR_CODES).toEqual(GRAPH_ERROR_CODES.filter((c) => c !== "live-at-revision"));
     expect(schema.$defs.member.properties.reason.oneOf[1].properties!.code.enum).toEqual([...MEMBER_RUN_REASON_CODES]);
     expect(schema.$defs.member.properties.runtimeReasons.items.properties.code.enum).toEqual([...COMPOSITES_RUNTIME_REASON_CODES]);
     expect(schema.$defs.member.properties.environmentReasons.items.properties.code.enum).toEqual([...COMPOSITES_ENVIRONMENT_REASON_CODES]);

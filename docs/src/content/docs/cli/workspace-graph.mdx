@@ -8,6 +8,7 @@ title: "chant workspace graph"
 
 ```
 chant workspace graph [dir] [--at <rev>] [-o <file>] [--member <name>] [--kind <kind file>] [--env <name>] [--no-cache] [--dry-run]
+chant workspace graph [dir] --live --env <name> [--overlay] [--traffic <level>] [-o <file>] [--member <name>] [--kind <kind file>]
 chant workspace graph [dir] --composites [--at <rev>] [-o <file>] [--member <name>] [--env <name>]
 chant workspace graph [dir] --intent <path[:start-end]> [--at <rev>] [--kind <kind file>...] [--json]
 ```
@@ -29,6 +30,16 @@ Every node id becomes `<member>/<id>`. Member names can't contain `/`, and `::` 
 `groups.byMember` maps each member to its node ids. A lexicon or a composite type means the same thing in every member, so `byLexicon` and `byComposite` keep their keys and merge the ids across members. The keys of `byStack`, `byContainer` and `byWave` name things inside one member, and they are prefixed with the member too.
 
 The `links` section holds the [member links](#links), followed by the [record links](#record-links) when `--kind` names a record kind. The `records` section lists the records of that kind, and it is empty without `--kind`.
+
+## The live read
+
+With `--live`, each member runs `chant graph --live` under its own toolchain, so its graph is the account as it stands rather than its source ([#2875](https://github.com/INTENTIUS/chant/issues/2875)). `--overlay` and `--traffic <level>` are passed along too, and a member's chant then writes the drift overlay and the behaviour prediction onto its nodes. Composition keeps every attribute a member printed and rewrites only `$ref` values, so the `_drift`, `_overlay` and `_behaviour` attributes arrive as the member's chant wrote them. A member's `meta`, where the prediction's whole-estate figures sit, stays on its entry.
+
+The flags mean what they mean to [`chant graph`](/chant/cli/graph/). `--live` needs `--env`, and `--overlay` and `--traffic` only act on a live read, so this command refuses either without `--live` rather than ignore it. `--live` with `--at` fails with `live-at-revision`, because a live read is of the account now and `--at` reads the source at a revision. `--namespace` is not passed, since it scopes one member's read. Run that member's own `chant graph` for it.
+
+Each member entry carries `live`, which is `true` when the member ran with `--live`, and then `readAt`, when its read finished, as an ISO time. A member that did not run has `live: false` and no `readAt`. A live read is never served from the [member cache](#the-member-cache) or stored in it, so a live member has `cached: false` and `stamp: null`.
+
+A member whose account can't be reached is not told apart from any other member: `chant graph --live` reports an unreachable account as warnings on stderr and a graph with fewer nodes, and exits 0, so there is no signal for a code of its own. Its entry is `composed`, and with `--overlay` the declared entities its chant could not observe carry `_unobserved` with the reason.
 
 A member's IR with no `version` field comes from a chant older than that field. It is read as version 1 and upgraded in place, and the member's entry has `irVersion: null`. An IR with a version newer than this chant reads is left out with the reason code `ir-version-unsupported`.
 
@@ -63,7 +74,7 @@ The document follows the schema `https://intentius.io/chant/schemas/workspace/gr
   "version": 1,
   "workspace": { "name": "acme", "root": "." },
   "members": [
-    { "name": "api", "dir": "services/api", "kind": "chant", "status": "composed", "reason": null, "chant": "0.80.0", "irVersion": 1 },
+    { "name": "api", "dir": "services/api", "kind": "chant", "status": "composed", "reason": null, "chant": "0.80.0", "irVersion": 1, "live": false },
     { "name": "legacy", "dir": "legacy", "kind": "chant", "status": "composed", "reason": null, "chant": null, "irVersion": null },
     { "name": "docs", "dir": "docs", "kind": "other", "status": "skipped", "reason": { "code": "kind-not-run", "message": "..." }, "chant": null, "irVersion": null }
   ],
@@ -89,7 +100,7 @@ The document follows the schema `https://intentius.io/chant/schemas/workspace/gr
 
 `contract` is the read-contract version and `chant` the version that composed the graph. `at` is the full commit id with `--at`, and `null` for the working tree. `workspace.root` is the workspace root relative to the git root. `version` is the version of the composed graph format. A member's `chant` is the version its toolchain reported, or `null` when the member was read by a chant older than `member-run`. A member's `meta` and `pipeline`, when its IR has them, stay on the member's entry. A composed member also carries `cached`, which says whether the [member cache](#the-member-cache) answered it. Its `stamp` is the member's [stamp](/chant/reference/workspace-read-contract/#member-stamps), or `null` when none could be taken.
 
-When the declaration can't be read, the command prints `{ "$schema", "contract", "chant", "error": { "code", "message", "location" } }` instead, with one of the [declaration's error codes](/chant/reference/workspace-declaration/#errors) or an `--at` code, `not-a-git-repository` or `revision-unknown`.
+When the declaration can't be read, the command prints `{ "$schema", "contract", "chant", "error": { "code", "message", "location" } }` instead, with one of the [declaration's error codes](/chant/reference/workspace-declaration/#errors) or an `--at` code, `not-a-git-repository` or `revision-unknown`. `--live` with `--at` fails with `live-at-revision`.
 
 ## Links
 
@@ -327,6 +338,9 @@ Core reads trailers as git parses them and gives no key a meaning of its own. A 
 | `--json` | With `--intent`, print the document as JSON instead of the text walk. |
 | `--env <name>` | Passed to each member's `chant graph`. |
 | `--no-cache` | Read every member, leaving the [member cache](#the-member-cache) unread and unwritten. |
+| `--live` | Read each member's graph from the account with `chant graph --live`. Needs `--env`, and can't be used with `--at`. See [the live read](#the-live-read). |
+| `--overlay` | With `--live`, passed to each member: its graph carries the drift overlay against its source. |
+| `--traffic <level>` | With `--live`, passed to each member verbatim: its predicting lexicon writes the behaviour prediction at that traffic level. |
 | `--dry-run` | Print the plan and read nothing. |
 
 ## Exit codes

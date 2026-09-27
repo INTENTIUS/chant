@@ -106,6 +106,7 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `root-chant-required` | error | The declaration pins another chant, and it is not installed at the workspace root. |
 | `not-a-git-repository` | error | `--at`, `status` or `work` needs a git repository and there is none. |
 | `revision-unknown` | error | `--at` names no commit. |
+| `live-at-revision` | error, `graph` | `--live` was given with `--at`. A live read is of the account now, not of a revision. |
 | `environment-invalid` | error, `status` | The environment name can't name a ledger directory. |
 | `dir-missing` | member, `ls` and `graph` | The member's directory does not exist. |
 | `unknown-kind` | member, `ls` and `graph` | No built-in kind or pinned package supplies the member's kind. |

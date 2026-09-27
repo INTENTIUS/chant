@@ -305,6 +305,14 @@
           ],
           "description": "The IR version the member printed, or null when it printed none and was read as version 1."
         },
+        "live": {
+          "type": "boolean",
+          "description": "Whether the member was read with --live (#2875): its graph is the account as it stands, and its nodes carry whatever _drift, _overlay and _behaviour attributes its chant wrote. false for a source read and for a member that did not run. A document from a chant before #2875 has no live field, and a reader may take that as false."
+        },
+        "readAt": {
+          "type": "string",
+          "description": "For a live read, as an ISO 8601 time: when the member's read finished. A live member of a toolchain whose member-run names no time gets the time its toolchain's process ended."
+        },
         "cached": {
           "type": "boolean",
           "description": "Whether chant's per-member cache answered this read (#2876). Present on composed members. A cached read is the output the member's own chant printed for the same stamp, toolchain, command line and environment."
@@ -471,7 +479,8 @@
                 "reader-too-old",
                 "root-chant-required",
                 "not-a-git-repository",
-                "revision-unknown"
+                "revision-unknown",
+                "live-at-revision"
               ]
             },
             "message": {

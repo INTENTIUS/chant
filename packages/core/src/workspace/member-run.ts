@@ -49,7 +49,15 @@ export interface MemberRunUnit {
 
 export type MemberRunLine =
   | { type: "header"; protocol: number; chant: string }
-  | { type: "result"; id: string; exitCode: number; stdout: string; stderr: string };
+  | {
+      type: "result";
+      id: string;
+      exitCode: number;
+      stdout: string;
+      stderr: string;
+      /** When the member's command finished, as an ISO time (#2875). A member-run from before it leaves this out. */
+      finishedAt?: string;
+    };
 
 /** A `process.exit` inside a command, turned into a value. */
 class ExitRequest extends Error {
@@ -125,7 +133,7 @@ export async function runMemberUnits(request: MemberRunRequest, run: (argv: stri
     if (startEnv === undefined) delete process.env[ENV_VAR];
     else process.env[ENV_VAR] = startEnv;
     process.chdir(startDir);
-    emit({ type: "result", id: unit.id, ...result });
+    emit({ type: "result", id: unit.id, ...result, finishedAt: new Date().toISOString() });
   }
   return 0;
 }

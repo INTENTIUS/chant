@@ -76,6 +76,10 @@ export interface ComposedMember {
   chant: string | null;
   /** The IR version the member printed; `null` when it printed none and was upgraded as version 1. */
   irVersion: number | null;
+  /** Whether the member was read with `--live` (#2875): its graph is the account as it stands, not its source. */
+  live: boolean;
+  /** For a live read, when the member's read finished, as an ISO time. */
+  readAt?: string;
   /**
    * Whether the per-member cache answered this read (#2876). Set on composed
    * members by `chant workspace graph`.
