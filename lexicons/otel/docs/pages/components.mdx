@@ -33,6 +33,8 @@ Every built-in follows the config of the collector-contrib release in `COLLECTOR
 | `FilterProcessor` | `filter` | at least one condition; no empty condition |
 | `TransformProcessor` | `transform` | at least one statement; each group's `context` fits its signal and the group has statements |
 | `RedactionProcessor` | `redaction` | `allow_all_keys` or `allowed_keys` is set; `allowed_keys` is not set alongside `allow_all_keys: true`; no empty pattern; `hash_function` has something blocked to hash |
+| `TailSamplingProcessor` | `tail_sampling` | `decision_wait` is set; `policies` is not empty; policy names are present and unique; each policy has the block its `type` names and what that block needs; `and`, `drop` and `composite` have sub-policies, and `policy_order` and `rate_allocation` name existing ones |
+| `ProbabilisticSamplerProcessor` | `probabilistic_sampler` | `sampling_percentage` is set and within 0 to 100; `sampling_precision` within 1 to 14; `attribute_source: record` has a `from_attribute`; `hash_seed` only in `hash_seed` mode |
 
 Put `memory_limiter` first in every pipeline; OTEL105 warns otherwise.
 
@@ -67,6 +69,21 @@ export const scrub = new RedactionProcessor({
 });
 ```
 
+`tail_sampling` policies are a discriminated union on `type` (`TailSamplingPolicy`): the leaf types `always_sample`, `latency`, `numeric_attribute`, `probabilistic`, `status_code`, `string_attribute`, `rate_limiting`, `span_count`, `trace_state`, `boolean_attribute` and `ottl_condition`, plus `and`, `drop` and `composite`, whose sub-policies are leaf policies (and, for `composite`, `and` policies too). Each policy's settings sit under the key its `type` names, as in the collector's own config:
+
+```ts
+new TailSamplingProcessor({
+  decision_wait: "10s",
+  policies: [
+    { name: "errors", type: "status_code", status_code: { status_codes: ["ERROR"] } },
+    { name: "slow", type: "latency", latency: { threshold_ms: 2000 } },
+    { name: "rest", type: "probabilistic", probabilistic: { sampling_percentage: 10 } },
+  ],
+});
+```
+
+Tail sampling needs every span of a trace in one collector. Run it on a gateway, and when the gateway has more than one replica put a `loadbalancing` exporter on the agents in front of it.
+
 ## Exporters
 
 | Class | Type | Checks | Endpoints |
@@ -76,6 +93,9 @@ export const scrub = new RedactionProcessor({
 | `DebugExporter` | `debug` | none | `console` |
 | `PrometheusExporter` | `prometheus` | `endpoint` is set | `endpoint` (the address Prometheus scrapes) |
 | `GoogleCloudExporter` | `googlecloud` | none | `googlecloud://projects/<project>`, plus any endpoint overrides |
+| `LoadBalancingExporter` | `loadbalancing` | exactly one resolver; the chosen resolver has its hostnames, hostname or service; `routing_key: attributes` goes with `routing_attributes`; no `protocol.otlp.endpoint` | static `hostnames`; `dns` as `hostname:port`; `k8s` as `service:port` per port (default 4317); `aws-cloud-map://namespace/service_name` |
+
+The `loadbalancing` resolver (`LoadBalancingResolver`) is one of `static` (`hostnames`), `dns` (`hostname`, `port`), `k8s` (`service` as `name` or `name.namespace`, `ports`, `return_hostnames`) or `aws_cloud_map`; the type allows exactly one. `protocol.otlp` takes the `otlp` exporter's settings without `endpoint`, which each backend fills in. `loadBalancingEndpoints(resolver)` returns the same backends `collectorTopology()` reports.
 
 ## Connectors
 

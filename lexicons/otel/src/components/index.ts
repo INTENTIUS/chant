@@ -6,3 +6,4 @@ export * from "./filtering";
 export * from "./exporters";
 export * from "./connectors";
 export * from "./extensions";
+export * from "./sampling";

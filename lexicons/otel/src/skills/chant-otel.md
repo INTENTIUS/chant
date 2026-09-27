@@ -41,8 +41,8 @@ Emits `receivers.otlp`, `processors.memory_limiter` and `processors.batch`, `exp
 | Kind | Types |
 |---|---|
 | receivers | otlp, prometheus, hostmetrics, filelog, k8s_cluster, kubeletstats |
-| processors | batch, memory_limiter, resource, attributes, k8sattributes, resourcedetection, filter, transform, redaction |
-| exporters | otlp, otlphttp, debug, prometheus, googlecloud |
+| processors | batch, memory_limiter, resource, attributes, k8sattributes, resourcedetection, filter, transform, redaction, tail_sampling, probabilistic_sampler |
+| exporters | otlp, otlphttp, debug, prometheus, googlecloud, loadbalancing |
 | connectors | spanmetrics, servicegraph, routing, forward, count, sum |
 | extensions | health_check, pprof, zpages |
 
