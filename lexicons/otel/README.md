@@ -17,8 +17,8 @@ export { otlp, batch, backend, traces };
 
 | Kind | Types |
 |---|---|
-| receivers | otlp, prometheus, hostmetrics, filelog |
-| processors | batch, memory_limiter, resource, attributes, k8sattributes, resourcedetection |
+| receivers | otlp, prometheus, hostmetrics, filelog, k8s_cluster, kubeletstats |
+| processors | batch, memory_limiter, resource, attributes, k8sattributes, resourcedetection, filter, transform, redaction |
 | exporters | otlp, otlphttp, debug, prometheus, googlecloud |
 | connectors | spanmetrics, servicegraph, routing, forward, count |
 | extensions | health_check, pprof, zpages |
