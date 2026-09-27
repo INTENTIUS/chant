@@ -1,0 +1,117 @@
+---
+title: "Examples"
+description: "The grafana lexicon's example project"
+diataxis: how-to
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-grafana` — DO NOT EDIT.
+    Edit lexicons/grafana/docs/pages/examples.mdx instead; changes here are overwritten. */}
+
+
+Each example lives under `lexicons/grafana/examples/` and builds with `chant build src --lexicon grafana`. The lexicon's tests build it, lint it with no warnings, run GRAF101 to GRAF107 over the output, and validate each dashboard against the pinned Grafana schema.
+
+## getting-started
+
+A service overview over Prometheus, Tempo and Loki: RED panels over span metrics, a heatmap of latency buckets, a table of slow traces from TraceQL, the service's logs from LogQL, and a trace panel driven by a textbox variable. It uses every built-in panel type, two rows (one collapsed), a query variable, a dashboard link and a folder, and links the Tempo datasource to Loki and Prometheus through `jsonData`.
+
+```ts title="src/datasources.ts"
+```typescript title="datasources.ts"
+/**
+ * A service overview dashboard over Prometheus, Tempo and Loki, declared
+ * once and built into dashboard JSON and Grafana's provisioning files.
+ * This file: the three datasources, as the Grafana container reaches them.
+ */
+import { Datasource } from "@intentius/chant-lexicon-grafana";
+
+const loki = new Datasource({ name: "Loki", type: "loki", url: "http://loki:3100" });
+
+const prometheus = new Datasource({
+  name: "Prometheus",
+  type: "prometheus",
+  url: "http://prometheus:9090",
+  isDefault: true,
+});
+
+// Trace-to-logs: the declared Loki datasource is written as its uid.
+const tracesToLogs = { datasourceUid: loki, filterByTraceID: true, spanStartTimeShift: "-5m", spanEndTimeShift: "5m" };
+const tempoSettings = { tracesToLogsV2: tracesToLogs, serviceMap: { datasourceUid: prometheus } };
+
+const tempo = new Datasource({ name: "Tempo", type: "tempo", url: "http://tempo:3200", jsonData: tempoSettings });
+
+export { prometheus, tempo, loki };
+```
+```
+
+```ts title="src/queries.ts"
+```typescript title="queries.ts"
+/**
+ * The queries, one per question. PromQL over the span metrics the
+ * OpenTelemetry collector's spanmetrics connector produces, TraceQL for slow
+ * traces and one trace by id, LogQL for the service's logs.
+ */
+import { PromQuery, TempoQuery, LokiQuery } from "@intentius/chant-lexicon-grafana";
+
+const calls = 'traces_span_metrics_calls_total{service_name="$service"}';
+const buckets = 'traces_span_metrics_duration_milliseconds_bucket{service_name="$service"}';
+
+const requestRate = new PromQuery({
+  expr: `sum by (span_name) (rate(${calls}[$__rate_interval]))`,
+  legendFormat: "{{span_name}}",
+});
+
+const errorRatio = new PromQuery({
+  expr: `sum(rate(traces_span_metrics_calls_total{service_name="$service", status_code="STATUS_CODE_ERROR"}[$__rate_interval])) / sum(rate(${calls}[$__rate_interval]))`,
+  instant: true,
+});
+
+const latencyP95 = new PromQuery({
+  expr: `histogram_quantile(0.95, sum by (le) (rate(${buckets}[$__rate_interval])))`,
+  legendFormat: "p95",
+});
+
+const latencyBuckets = new PromQuery({ expr: `sum by (le) (rate(${buckets}[$__rate_interval]))`, format: "heatmap" });
+
+const slowTraces = new TempoQuery({ query: '{ resource.service.name = "$service" && duration > 500ms }', limit: 20, tableType: "traces" });
+
+const traceById = new TempoQuery({ query: "$traceId" });
+
+const serviceLogs = new LokiQuery({ expr: '{service_name="$service"} |= ``' });
+
+export { requestRate, errorRatio, latencyP95, latencyBuckets, slowTraces, traceById, serviceLogs };
+```
+```
+
+```ts title="src/dashboard.ts"
+```typescript title="dashboard.ts"
+/**
+ * The dashboard: variables, a row for the service's rates, errors and
+ * latency, and a collapsed row for digging into slow requests.
+ */
+import { Dashboard, Row } from "@intentius/chant-lexicon-grafana";
+import { service, traceId } from "./variables";
+import { intro, errors, errorGauge, rate, latency } from "./overview-panels";
+import { latencyDistribution, slowest, logs, trace } from "./debug-panels";
+
+const red = new Row({ title: "Rate, errors, duration", panels: [errors, errorGauge, rate, latency] });
+
+const investigate = new Row({ title: "Investigate", collapsed: true, panels: [latencyDistribution, slowest, logs, trace] });
+
+const lastHour = { from: "now-1h", to: "now" };
+const docs = { title: "Runbook", type: "link" as const, url: "https://example.com/runbooks/service", targetBlank: true };
+
+const serviceOverview = new Dashboard({
+  title: "Service overview",
+  uid: "service-overview",
+  tags: ["chant", "red"],
+  time: lastHour,
+  refresh: "30s",
+  graphTooltip: "sharedCrosshair",
+  variables: [service, traceId],
+  panels: [intro, red, investigate],
+  links: [docs],
+  folder: "Services",
+});
+
+export { serviceOverview };
+```
+```

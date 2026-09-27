@@ -1,0 +1,28 @@
+---
+title: "Where the Types Come From"
+description: "The Grafana schemas this lexicon vendors, how they are pinned, and why it does not depend on the foundation SDK"
+diataxis: explanation
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-grafana` — DO NOT EDIT.
+    Edit lexicons/grafana/docs/pages/schema-pin.mdx instead; changes here are overwritten. */}
+
+
+Grafana defines dashboards, each panel's options and each datasource's query model as CUE kinds. `grafana/grafana-foundation-sdk` runs those kinds through [cog](https://github.com/grafana/cog) to generate builder libraries in several languages, and next to them publishes one JSON Schema per kind.
+
+This lexicon vendors eleven of those JSON Schema files into `src/spec/schemas/`: `dashboard`, the panels `timeseries`, `stat`, `gauge`, `table`, `logs`, `heatmap` and `text`, and the queries `prometheus`, `tempo` and `loki`. The traces panel has no options schema. `GRAFANA_SCHEMA_PIN` records the tag, the commit and a sha256 per file, and a test fails if a file stops matching.
+
+`npm run generate` turns the vendored files into `src/schema/*.gen.ts`, one module per schema. Those modules are committed; `npm run validate` and a test fail when they drift from what generate writes. The panel classes type `options` and `fieldConfig.defaults.custom` from them, and the query classes type their fields from them.
+
+The same files back GRAF107. Every build checks each dashboard against the dashboard schema, and each panel's options and queries against their plugin's schema with required fields relaxed. That is the offline half of "Grafana imports it without edits". The other half boots a pinned Grafana container, provisions the example and reads each dashboard back; it runs when Docker is available and skips otherwise.
+
+## Bumping the pin
+
+1. Change `ref` and `commit` in `src/pin.ts`.
+2. `just fetch-schemas` downloads the files at that commit and prints each digest.
+3. Paste the digests into the pin and run `npm run generate`.
+4. Review the diff of `src/schema/`. It is the list of what Grafana changed.
+
+## Why not the SDK package
+
+The SDK's TypeScript builders are method chains (`new PanelBuilder().title(…).withTarget(…)`), and chant declarations are static `new X({ … })` data that the build evaluates and lint reads. The SDK's generated interfaces don't work as plain props either: each query type declares a method, enums are runtime TypeScript `enum`s, and option types mark every field required. The package is also versioned `0.0.x`, with a prerelease line per Grafana minor. Pinning its schema output keeps the fidelity without the dependency.
