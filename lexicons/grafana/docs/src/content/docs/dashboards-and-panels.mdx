@@ -1,0 +1,77 @@
+---
+title: "Dashboards and Panels"
+description: "Dashboard, Row, the eight panel classes, variables, layout and ids"
+diataxis: reference
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-grafana` — DO NOT EDIT.
+    Edit lexicons/grafana/docs/pages/dashboards-and-panels.mdx instead; changes here are overwritten. */}
+
+
+## Dashboard
+
+| Prop | Default | Notes |
+|---|---|---|
+| `title` | required | |
+| `uid` | export name as a uid | 1-40 letters, digits, `-`, `_` (GRAF001, GRAF106) |
+| `description`, `tags` | none, `[]` | |
+| `time` | `{ from: "now-6h", to: "now" }` | |
+| `refresh`, `timezone`, `weekStart`, `fiscalYearStartMonth`, `liveNow`, `timepicker` | Grafana's defaults | |
+| `graphTooltip` | `"default"` | `"sharedCrosshair"` or `"sharedTooltip"` |
+| `editable` | `true` | |
+| `variables` | `[]` | variable entities, in dropdown order |
+| `panels` | `[]` | panels and rows, top to bottom |
+| `links` | `[]` | `{ title, type, url?, … }`; the rest of Grafana's link fields are filled in |
+| `folder` | General | provisioned into this folder (a subdirectory of `dashboards/`) |
+
+The emitted JSON carries `schemaVersion` from the pinned dashboard schema, empty `annotations` (Grafana adds its built-in annotation on load), and no numeric `id`.
+
+## Panels
+
+| Class | Grafana `type` | Default size (w×h) | Typed from |
+|---|---|---|---|
+| `TimeSeriesPanel` | `timeseries` | 12×8 | `timeseries` options and field config |
+| `StatPanel` | `stat` | 6×4 | `stat` options |
+| `GaugePanel` | `gauge` | 6×6 | `gauge` options |
+| `TablePanel` | `table` | 12×8 | `table` options and field config |
+| `LogsPanel` | `logs` | 24×10 | `logs` options |
+| `TracesPanel` | `traces` | 24×12 | no options schema |
+| `HeatmapPanel` | `heatmap` | 12×8 | `heatmap` options and field config |
+| `TextPanel` | `text` | 24×3 | `text` options |
+
+Every panel takes `title`, `description`, `gridPos`, `datasource`, `targets`, `options`, `fieldConfig`, `transformations`, `links`, `repeat` (a variable or its name), `repeatDirection`, `maxPerRow`, `maxDataPoints`, `interval`, `timeFrom`, `timeShift`, `hideTimeOverride`, `transparent`, `pluginVersion` and `id`.
+
+`options` and `fieldConfig.defaults.custom` are the panel plugin's own types from the pinned schema, with every field optional: Grafana fills in what a panel leaves out. `schema.timeseries.Options` and the other namespaces under `schema` are exported for anyone who wants the full types.
+
+### Datasources on a panel
+
+A query uses its own `datasource`, else the panel's. The panel's emitted `datasource` is its own, or the one all its queries share, or Grafana's `-- Mixed --` when they differ. A panel inside a `Row` with a `datasource` inherits the row's.
+
+### Layout
+
+Grafana's grid is 24 columns. A panel with both `gridPos.x` and `gridPos.y` is placed exactly there. Any other panel is placed by the dashboard: left to right in declaration order, wrapping to a new line when the next panel would pass column 24, using `gridPos.w`/`h` if given and the class's default size otherwise.
+
+A `Row` starts below everything placed so far and takes one grid unit of height. Its `panels` are placed below it. With `collapsed: true` they are written inside the row (Grafana's format for a collapsed row) and the next item starts right under the row header.
+
+GRAF105 reports a panel wider than the grid and any two panels that overlap.
+
+### Ids
+
+Panel and row ids default to 1, 2, 3… in the order they appear, skipping any id set explicitly. Query `refId`s default to A, B, C… within each panel.
+
+## Variables
+
+| Class | Grafana `type` | Key props |
+|---|---|---|
+| `QueryVariable` | `query` | `datasource`, `query`, `regex`, `refresh` (`"never"`, `"onLoad"`, `"onTimeRangeChange"`), `sort` |
+| `CustomVariable` | `custom` | `values` |
+| `IntervalVariable` | `interval` | `values`, `auto`, `autoCount`, `autoMin` |
+| `DatasourceVariable` | `datasource` | `pluginType`, `regex` |
+| `ConstantVariable` | `constant` | `value` (always hidden) |
+| `TextboxVariable` | `textbox` | `value` |
+
+All take `name`, `label`, `description`, `hide` (`"label"`, `"valueOnly"`, `"hidden"`), `skipUrlSync` and `current`; the multi-value ones take `multi`, `includeAll` and `allValue`.
+
+A `DatasourceVariable` can be passed anywhere a datasource goes. The reference is written as `{ type: <pluginType>, uid: "${name}" }`, and its type parameter keeps a `PromQuery` from using a Loki datasource variable.
+
+Queries reference variables in their text, `$name` or `${name}`. GRAF103 checks each one is declared on the dashboard; Grafana's own `$__…` variables need no declaration.

@@ -1,0 +1,57 @@
+---
+title: "Other Panel and Datasource Plugins"
+description: "Add a panel plugin or a datasource's query class that chant doesn't ship, with definePanel and defineQuery"
+diataxis: how-to
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-grafana` — DO NOT EDIT.
+    Edit lexicons/grafana/docs/pages/custom-plugins.mdx instead; changes here are overwritten. */}
+
+
+The eight built-in panels and three query classes are defined through `definePanel` and `defineQuery`. A plugin chant doesn't ship uses the same two functions and gets the same layout, serialization and checks.
+
+## A panel plugin
+
+```ts
+import { definePanel } from "@intentius/chant-lexicon-grafana";
+
+interface PieChartOptions {
+  pieType?: "pie" | "donut";
+  legend?: { showLegend?: boolean; placement?: "bottom" | "right" };
+  displayLabels?: Array<"name" | "value" | "percent">;
+}
+
+export const PieChartPanel = definePanel<PieChartOptions>()({
+  type: "piechart",
+  className: "PieChartPanel",
+  description: "Pie chart",
+  defaultSize: { w: 8, h: 8 },
+});
+```
+
+The second type parameter types `fieldConfig.defaults.custom`. `type` is the plugin id Grafana stores; redefining a built-in id throws.
+
+## A datasource's queries
+
+```ts
+import { defineQuery } from "@intentius/chant-lexicon-grafana";
+
+interface ElasticQueryModel {
+  query: string;
+  metrics?: Array<{ type: string; id: string; field?: string }>;
+  bucketAggs?: Array<{ type: string; id: string; field?: string }>;
+  refId?: string;
+}
+
+export const ElasticQuery = defineQuery<ElasticQueryModel>()({
+  datasourceType: "elasticsearch",
+  className: "ElasticQuery",
+  expressionField: "query",
+});
+```
+
+`new ElasticQuery({ datasource })` accepts only an `elasticsearch` datasource, and GRAF101 to GRAF103 check its targets like any other.
+
+## What is not checked
+
+A definition without a `schema` gets no GRAF107 check for its options or queries, since the lexicon has nothing pinned to check them against. Its TypeScript type is the only contract.

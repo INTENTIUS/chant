@@ -5,7 +5,8 @@
   "type": "module",
   "workspaces": [
     "packages/*",
-    "lexicons/*"
+    "lexicons/*",
+    "lexicons/grafana/examples/*"
   ],
   "scripts": {
     "tsc": "tsc",
@@ -34,6 +35,7 @@
     "@intentius/chant-lexicon-gcp": "*",
     "@intentius/chant-lexicon-github": "*",
     "@intentius/chant-lexicon-gitlab": "*",
+    "@intentius/chant-lexicon-grafana": "workspace:*",
     "@intentius/chant-lexicon-helm": "*",
     "@intentius/chant-lexicon-k3d": "workspace:*",
     "@intentius/chant-lexicon-k3s": "workspace:*",

@@ -147,6 +147,12 @@
       ],
       "@intentius/chant-lexicon-terraform/*": [
         "lexicons/terraform/src/*"
+      ],
+      "@intentius/chant-lexicon-grafana": [
+        "lexicons/grafana/src/index.ts"
+      ],
+      "@intentius/chant-lexicon-grafana/*": [
+        "lexicons/grafana/src/*"
       ]
     }
   },
