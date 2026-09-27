@@ -6,7 +6,7 @@ user-invocable: true
 
 # OpenTelemetry Collector config with chant
 
-The otel lexicon (`@intentius/chant-lexicon-otel`) types collector config. Each receiver, processor, exporter and extension is an entity, pipelines reference them, and `chant build` writes one collector config file.
+The otel lexicon (`@intentius/chant-lexicon-otel`) types collector config. Each receiver, processor, exporter, connector and extension is an entity, pipelines reference them, and `chant build` writes one collector config file.
 
 ## Project setup
 
@@ -40,12 +40,25 @@ Emits `receivers.otlp`, `processors.memory_limiter` and `processors.batch`, `exp
 
 | Kind | Types |
 |---|---|
-| receivers | otlp, prometheus, hostmetrics, filelog |
-| processors | batch, memory_limiter, resource, attributes, k8sattributes, resourcedetection |
+| receivers | otlp, prometheus, hostmetrics, filelog, k8s_cluster, kubeletstats |
+| processors | batch, memory_limiter, resource, attributes, k8sattributes, resourcedetection, filter, transform, redaction |
 | exporters | otlp, otlphttp, debug, prometheus, googlecloud |
+| connectors | spanmetrics, servicegraph, routing, forward, count |
 | extensions | health_check, pprof, zpages |
 
 Anything else goes through `defineComponent`; see the `chant-otel-custom-components` skill.
+
+## Connectors
+
+A connector joins two pipelines. List the same entity in `exporters` of the pipeline that feeds it and in `receivers` of the pipeline it feeds:
+
+```ts
+export const spanmetrics = new SpanMetricsConnector({ dimensions: [{ name: "http.route" }] });
+export const traces = new Pipeline({ signal: "traces", receivers: [otlp], exporters: [backend, spanmetrics] });
+export const red = new Pipeline({ signal: "metrics", name: "red", receivers: [spanmetrics], exporters: [prom] });
+```
+
+`spanmetrics` and `servicegraph` turn traces into metrics, `count` turns any signal into metrics, `routing` and `forward` keep the signal. A connector on one side only fails OTEL101; a pipeline whose signal the connector can't pair fails OTEL112.
 
 ## Rules
 
@@ -57,4 +70,4 @@ Anything else goes through `defineComponent`; see the `chant-otel-custom-compone
 
 ## Reading the result
 
-`collectorTopologyOf(entities)` returns the pipelines, each component's endpoints and schema pin, and for each exporter the signals it carries, as plain data.
+`collectorTopologyOf(entities)` returns the pipelines, each component's endpoints and schema pin, for each exporter the signals it carries, and the connector `edges` between pipelines, as plain data.

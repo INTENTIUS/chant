@@ -3,7 +3,7 @@
  *
  * Emits one collector config file from every otel entity in the build: the
  * YAML `otelcol --config` reads as it is. Section order is fixed (receivers,
- * processors, exporters, extensions, service); components and pipelines keep
+ * processors, exporters, connectors, extensions, service); components and pipelines keep
  * the order they are declared in, and each component's config keeps the key
  * order it was written in, since collector docs and diffs read that way.
  *
