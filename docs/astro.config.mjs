@@ -349,6 +349,7 @@ export default defineConfig({
 								{ label: 'Forgejo Actions', link: '/lexicons/forgejo/' },
 								{ label: 'Docker', link: '/lexicons/docker/' },
 								{ label: 'OpenTelemetry Collector', link: '/lexicons/otel/' },
+								{ label: 'Grafana', link: '/lexicons/grafana/' },
 								{ label: 'Prometheus', link: '/lexicons/prometheus/' },
 								{ label: 'Render', link: '/lexicons/render/' },
 								{ label: 'Terraform', link: '/lexicons/terraform/' },

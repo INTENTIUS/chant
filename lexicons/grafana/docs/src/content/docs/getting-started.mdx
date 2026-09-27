@@ -1,0 +1,102 @@
+---
+title: "Getting Started"
+description: "Declare a first Grafana dashboard with the grafana lexicon and build it to dashboard JSON and provisioning files"
+diataxis: tutorial
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-grafana` — DO NOT EDIT.
+    Edit lexicons/grafana/docs/pages/getting-started.mdx instead; changes here are overwritten. */}
+
+
+This walks through one dashboard with a Prometheus datasource, a variable and two panels, then loads it into Grafana.
+
+## 1. Install and register the lexicon
+
+```bash
+npm install --save-dev @intentius/chant @intentius/chant-lexicon-grafana
+```
+
+```ts title="chant.config.ts"
+import type { ChantConfig } from "@intentius/chant";
+
+export default { lexicons: ["grafana"] } satisfies ChantConfig;
+```
+
+## 2. Declare the datasource
+
+A datasource is declared once. Panels and queries hold the entity, so there is no uid string to get wrong.
+
+```ts title="src/datasources.ts"
+import { Datasource } from "@intentius/chant-lexicon-grafana";
+
+const prometheus = new Datasource({ name: "Prometheus", type: "prometheus", url: "http://prometheus:9090", isDefault: true });
+
+export { prometheus };
+```
+
+Its uid defaults to the name as a uid, `prometheus`.
+
+## 3. Declare a variable and the queries
+
+```ts title="src/queries.ts"
+import { PromQuery, QueryVariable } from "@intentius/chant-lexicon-grafana";
+import { prometheus } from "./datasources";
+
+const job = new QueryVariable({ name: "job", datasource: prometheus, query: "label_values(up, job)" });
+
+const up = new PromQuery({ expr: 'sum(up{job="$job"})', instant: true });
+const scrapeDuration = new PromQuery({ expr: 'scrape_duration_seconds{job="$job"}', legendFormat: "{{instance}}" });
+
+export { job, up, scrapeDuration };
+```
+
+`PromQuery` fields come from Grafana's Prometheus query schema. Its `datasource` accepts only a `prometheus` datasource.
+
+## 4. Declare the panels and the dashboard
+
+```ts title="src/dashboard.ts"
+import { Dashboard, StatPanel, TimeSeriesPanel } from "@intentius/chant-lexicon-grafana";
+import { prometheus } from "./datasources";
+import { job, up, scrapeDuration } from "./queries";
+
+const seconds = { defaults: { unit: "s" } };
+
+const targetsUp = new StatPanel({ title: "Targets up", datasource: prometheus, targets: [up] });
+const scrapes = new TimeSeriesPanel({ title: "Scrape duration", datasource: prometheus, targets: [scrapeDuration], fieldConfig: seconds });
+
+const scrapeHealth = new Dashboard({ title: "Scrape health", variables: [job], panels: [targetsUp, scrapes] });
+
+export { targetsUp, scrapes, scrapeHealth };
+```
+
+Neither panel has a `gridPos`, so the dashboard places them: the stat panel at its default 6×4, the time series next to it at 12×8. The dashboard's uid defaults to its export name, `scrape-health`.
+
+## 5. Build
+
+```bash
+npx chant build src --lexicon grafana -o dist/grafana/index.json
+```
+
+```
+dist/grafana/
+├── index.json                               what was built
+├── dashboards/scrape-health.json            the dashboard, as Grafana imports it
+└── provisioning/
+    ├── dashboards/chant.yaml                a provider for the dashboards directory
+    └── datasources/chant.yaml               the Prometheus datasource
+```
+
+`chant build` also runs GRAF101 to GRAF107 on the output. A query pointing at a datasource nobody declared, a `$variable` the dashboard doesn't have, overlapping panels, or a key Grafana's dashboard schema doesn't allow fails here instead of in Grafana.
+
+## 6. Load it into Grafana
+
+```bash
+docker run --rm -p 3000:3000 \
+  -v "$PWD/dist/grafana/provisioning:/etc/grafana/provisioning:ro" \
+  -v "$PWD/dist/grafana/dashboards:/var/lib/grafana/dashboards:ro" \
+  grafana/grafana:12.4.11
+```
+
+Open `http://localhost:3000/d/scrape-health`. To import by hand instead, paste `dashboards/scrape-health.json` into Dashboards → New → Import.
+
+Next: [Dashboards and panels](../dashboards-and-panels/) for layout, rows and panel options, and [Provisioning](../provisioning/) for Kubernetes.

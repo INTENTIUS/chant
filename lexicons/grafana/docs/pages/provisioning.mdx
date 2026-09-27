@@ -1,0 +1,47 @@
+---
+title: "Provisioning"
+description: "Load the built dashboards and datasources into Grafana with Docker or Kubernetes"
+diataxis: how-to
+order: 4
+---
+
+`chant build src --lexicon grafana -o dist/grafana/index.json` writes Grafana's provisioning files next to the index:
+
+| Path | Mount at |
+|---|---|
+| `provisioning/datasources/chant.yaml` | `/etc/grafana/provisioning/datasources/` |
+| `provisioning/dashboards/chant.yaml` | `/etc/grafana/provisioning/dashboards/` |
+| `dashboards/` | the provider's path, `/var/lib/grafana/dashboards` by default |
+
+## Docker
+
+```bash
+docker run --rm -p 3000:3000 \
+  -v "$PWD/dist/grafana/provisioning:/etc/grafana/provisioning:ro" \
+  -v "$PWD/dist/grafana/dashboards:/var/lib/grafana/dashboards:ro" \
+  grafana/grafana:12.4.11
+```
+
+## Kubernetes
+
+Mount the datasource file and the provider file from ConfigMaps under `/etc/grafana/provisioning/datasources` and `/etc/grafana/provisioning/dashboards`, and the dashboard JSON from another ConfigMap under `/var/lib/grafana/dashboards`. A dashboard with a `folder` is written to `dashboards/<folder>/`; mount one ConfigMap per folder at the matching subdirectory.
+
+`grafanaFiles(entities)` returns the same files keyed by path, for code that builds those ConfigMaps from the declarations directly.
+
+## Folders
+
+The default provider sets `foldersFromFilesStructure: true`, so each subdirectory of `dashboards/` becomes a Grafana folder, named after the dashboard's `folder`. Dashboards without one land in General.
+
+## A different provider
+
+Declare a `DashboardProvider` to replace the default:
+
+```ts
+const team = new DashboardProvider({ name: "team", path: "/dashboards", allowUiUpdates: true, updateIntervalSeconds: 10 });
+```
+
+Setting `folder` or `folderUid` on the provider turns `foldersFromFilesStructure` off unless you set it, since Grafana does not allow both.
+
+## Import by hand
+
+Each `dashboards/*.json` file is also what Dashboards → New → Import accepts, and what `POST /api/dashboards/db` takes as `dashboard`.

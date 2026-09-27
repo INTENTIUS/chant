@@ -1,0 +1,61 @@
+---
+title: "Lint Rules"
+description: "What each GRAF rule catches and how to fix it"
+diataxis: reference
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-grafana` — DO NOT EDIT.
+    Edit lexicons/grafana/docs/pages/lint-rules.mdx instead; changes here are overwritten. */}
+
+
+The grafana lexicon's rules use the `GRAF` prefix. `GRAF0xx` rules read your TypeScript source during `chant lint`. `GRAF1xx` checks run after a build over the emitted dashboard JSON and provisioning files, and over any other output file shaped like a Grafana dashboard.
+
+| Id | Severity | Catches |
+|---|---|---|
+| GRAF001 | error | a literal dashboard or datasource `uid` Grafana rejects, or a variable `name` `$name` can't reference |
+| GRAF002 | error | a literal secret in a datasource's `secureJsonData` |
+| GRAF101 | error | a panel, query or query variable using a datasource no `Datasource` in the build declares (warning: queries with no datasource at all) |
+| GRAF102 | error | a query sent to a datasource of another plugin type |
+| GRAF103 | error | a `$variable` in a query, title, datasource or repeat that the dashboard doesn't declare |
+| GRAF104 | error | duplicate dashboard uids, datasource uids or names, panel ids, variable names or refIds |
+| GRAF105 | error / warning | a panel outside the 24-column grid (error), two panels overlapping (warning) |
+| GRAF106 | error | a dashboard or datasource uid Grafana rejects, or a dashboard with no title |
+| GRAF107 | error | a dashboard that doesn't match the pinned Grafana schema |
+
+## GRAF001
+
+A uid is 1-40 letters, digits, `-` and `_`. A variable name is letters, digits and `_`, not starting with a digit. Only literal values in source are checked; GRAF106 checks what was emitted.
+
+## GRAF002
+
+Write secrets as `$__env{NAME}`, `$__file{/path}` or `${NAME}`. Grafana expands them when it reads the provisioning file, so the value is in neither the repository nor the build output. A `secureJsonData` object written as a named `const` in the same file is followed.
+
+## GRAF101
+
+Every datasource reference in a dashboard (a panel's, each query's, each query variable's) must be the uid of a declared `Datasource`. Grafana's own pseudo-datasources (`-- Mixed --`, `-- Dashboard --`, `-- Grafana --`) and datasource-variable refs (`${ds}`) are exempt. A panel with queries and no datasource anywhere is a warning: Grafana sends the queries to its default datasource.
+
+This check joins dashboards against datasources, and a build only sees its own build root (chant #1939). With no `Datasource` declared in the build it reports nothing. A datasource declared in a different build root from the dashboards that use it looks undeclared. Keep datasources and their dashboards in one build root.
+
+## GRAF102
+
+The `type` in a reference must match the declared datasource's type, and a reference through a datasource variable must match that variable's `pluginType`. The typed classes prevent this in TypeScript; the check covers plain refs and hand-edited dashboards. Like GRAF101 it only sees the datasources of the same build root (chant #1939).
+
+## GRAF103
+
+Every `$name`, `${name}`, `${name:format}` and `[[name]]` in a query's fields, a panel or row title, a datasource uid, a `repeat` or a query variable's query must be a variable on the same dashboard. Grafana's built-ins (`$__interval`, `$__rate_interval`, `$__range`, anything starting with `$__`) need no declaration.
+
+## GRAF104
+
+Dashboard uids, datasource uids and datasource names are unique across the build; panel ids and variable names within a dashboard; refIds within a panel. When two dashboards share a uid Grafana keeps one and drops the other without an error.
+
+## GRAF105
+
+A panel must satisfy `x ≥ 0`, `y ≥ 0`, `w ≥ 1`, `h ≥ 1` and `x + w ≤ 24`. Two panels overlapping is a warning: Grafana moves one on load, so the dashboard won't look as declared. Panels inside a collapsed row are compared with each other, not with the rest of the dashboard. Panels without `x` and `y` are placed by the dashboard and never overlap each other.
+
+## GRAF106
+
+Grafana refuses a dashboard or datasource uid outside 1-40 letters, digits, `-` and `_`, and a dashboard with no title.
+
+## GRAF107
+
+The dashboard is validated against the dashboard schema at `GRAFANA_SCHEMA_PIN`. Each panel's `options` and `fieldConfig.defaults.custom`, and each Prometheus, Tempo or Loki query, are validated against their plugin's schema with required fields relaxed, since Grafana fills those in. The message names the JSON path and what the schema expected. See [Where the types come from](../schema-pin/).
