@@ -5,6 +5,10 @@
  * keeps the reference checked by TypeScript, or by id string (`otlp/backend`)
  * for a component declared somewhere chant can't see. OTEL101 catches a
  * string that names nothing declared.
+ *
+ * A connector goes in `exporters` of the pipeline that feeds it and in
+ * `receivers` of the pipeline it feeds. The same entity on both sides is what
+ * joins the two pipelines.
  */
 
 import { createResource } from "@intentius/chant/runtime";
@@ -12,7 +16,7 @@ import type { Declarable } from "@intentius/chant/declarable";
 import type { OTelComponent } from "./define";
 import { componentId, type ComponentKind, type Signal } from "./model";
 
-/** A reference to a component of kind `K`: the declared entity, or its id. */
+/** A reference to a component of kind `K` (or of any kind in a union): the declared entity, or its id. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type ComponentRef<K extends ComponentKind> = OTelComponent<K, string, any> | string;
 
@@ -20,9 +24,11 @@ export interface PipelineProps {
   signal: Signal;
   /** The instance name. The pipeline id becomes `signal/name`. */
   name?: string;
-  receivers: ComponentRef<"receiver">[];
+  /** Receivers, and connectors this pipeline takes data from. */
+  receivers: ComponentRef<"receiver" | "connector">[];
   processors?: ComponentRef<"processor">[];
-  exporters: ComponentRef<"exporter">[];
+  /** Exporters, and connectors this pipeline hands data to. */
+  exporters: ComponentRef<"exporter" | "connector">[];
 }
 
 export interface PipelineEntity extends Declarable {

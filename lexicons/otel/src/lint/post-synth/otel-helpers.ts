@@ -52,7 +52,7 @@ function toDiagnostic(issue: CollectorIssue, source?: string): PostSynthDiagnost
   };
 }
 
-/** Diagnostics for one config-level code (OTEL101-OTEL106) across every collector config in the output. */
+/** Diagnostics for one config-level code (OTEL101-OTEL106, OTEL112) across every collector config in the output. */
 export function configDiagnostics(ctx: PostSynthContext, code: CollectorIssueCode): PostSynthDiagnostic[] {
   return collectorConfigs(ctx).flatMap(({ source, config }) =>
     validateCollectorConfig(config)

@@ -5,26 +5,39 @@ diataxis: reference
 order: 5
 ---
 
-The otel lexicon's rules use the `OTEL` prefix. `OTEL0xx` rules read your TypeScript source during `chant lint`. `OTEL1xx` checks run after a build: OTEL101 to OTEL106 read the emitted collector YAML (and any other output document shaped like a collector config), OTEL107 to OTEL109 read the declared entities.
+The otel lexicon's rules use the `OTEL` prefix. `OTEL0xx` rules read your TypeScript source during `chant lint`. `OTEL1xx` checks run after a build: OTEL101 to OTEL106 and OTEL112 read the emitted collector YAML (and any other output document shaped like a collector config), OTEL107 to OTEL109 read the declared entities. OTEL110 and OTEL111 are reserved.
 
 | Id | Severity | Catches |
 |---|---|---|
 | OTEL001 | error | a pipeline id string that isn't `type` or `type/name`, or an instance `name` that is empty, has whitespace or starts with `/` |
 | OTEL002 | error | a literal credential (`authorization`, `api-key`, `api_key`, `token`, `password`, `secret`, `key_pem`) in a component's config |
-| OTEL101 | error | a pipeline using a receiver, processor or exporter nobody declared |
+| OTEL101 | error | a pipeline using a receiver, processor or exporter nobody declared, or a connector listed as an exporter but never as a receiver (or the reverse) |
 | OTEL102 | error | a pipeline with no receivers, or no exporters |
-| OTEL103 | warning | a declared component no pipeline uses, or an extension missing from `service.extensions` |
+| OTEL103 | warning | a declared component (connectors included) no pipeline uses, or an extension missing from `service.extensions` |
 | OTEL104 | error | `service.extensions` naming an undeclared extension |
 | OTEL105 | warning | `memory_limiter` somewhere other than first in a pipeline's processors |
 | OTEL106 | error | a pipeline id that isn't `traces`, `metrics` or `logs` (optionally `/name`), or a reference that isn't id syntax |
 | OTEL107 | error | a component's config breaking its definition's own rules, see [Components](../components/) |
 | OTEL108 | error | two components, or two pipelines, declaring the same id |
 | OTEL109 | error | a custom component without a usable schema pin |
+| OTEL112 | error | a connector joining a pipeline whose signal it can't pair with any pipeline on the other side, e.g. `spanmetrics` as the receiver of a traces pipeline |
 
 ## OTEL002 and credentials
 
 The collector expands `${env:NAME}` and `${file:/path}` when it loads its config, so a credential never needs to be in the declaration. Any value containing `${` is treated as such a reference, and keys ending in `_file` are paths, not secrets.
 
+## OTEL101, OTEL112 and connectors
+
+A connector is an exporter in one pipeline and a receiver in another, and the collector refuses a connector listed on only one side (OTEL101). Each connector also supports fixed signal pairs, as its factory registers them:
+
+| Connector | Pairs |
+|---|---|
+| `spanmetrics`, `servicegraph` | traces to metrics |
+| `count` | traces, metrics, logs or profiles to metrics |
+| `routing`, `forward` | traces to traces, metrics to metrics, logs to logs |
+
+OTEL112 applies the collector's rule: every pipeline feeding a connector must pair, through a supported pair, with some pipeline the connector feeds, and every pipeline it feeds must pair with some pipeline feeding it. The message names the connector's pairs. A custom connector is checked when its `defineComponent` call lists `connects`; without it, OTEL112 stays silent for that connector. Both rules read one collector config at a time, so pipelines split across build roots are not joined.
+
 ## Using the checks outside a build
 
-The same logic is exported as plain functions. `validateCollectorConfig(config)` returns OTEL101 to OTEL106 findings for any parsed collector config, and `validateCollectorEntities(entities)` returns OTEL107 to OTEL109 for declared entities. The k8s lexicon's `GkeOtelCollector` tests use the first to check the config the composite renders.
+The same logic is exported as plain functions. `validateCollectorConfig(config)` returns OTEL101 to OTEL106 and OTEL112 findings for any parsed collector config, and `validateCollectorEntities(entities)` returns OTEL107 to OTEL109 for declared entities. The k8s lexicon's `GkeOtelCollector` tests use the first to check the config the composite renders.

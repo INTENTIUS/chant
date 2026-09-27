@@ -17,11 +17,12 @@ chant ships a core set of components. A team or a plugin package adds any other 
 
 | Option | Required | Meaning |
 |---|---|---|
-| `kind` | yes | `receiver`, `processor`, `exporter` or `extension` |
+| `kind` | yes | `receiver`, `processor`, `exporter`, `connector` or `extension` |
 | `type` | yes | the collector type, the part of the id before `/`; letters, digits and `_` |
 | `pin` | yes | `{ source, version, digest? }`, see below |
 | `validate` | no | a function returning a list of problems, or any schema with `safeParse` (a zod schema works); failures are OTEL107 |
 | `endpoints` | no | a function returning where the component sends or listens, for `collectorTopology()` |
+| `connects` | no | connectors only: the signal pairs it supports, e.g. `[{ from: "traces", to: "metrics" }]`; OTEL112 checks pipelines against them and `collectorTopology()` reports edges only for them |
 | `description` | no | one line for docs and hover |
 
 ## Use it

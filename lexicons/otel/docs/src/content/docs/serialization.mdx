@@ -9,7 +9,7 @@ description: "Output format for the OpenTelemetry Collector lexicon"
 The otel lexicon serializes every otel entity in a build into **one
 collector config file** in YAML, the file `otelcol --config` reads.
 
-- Sections come out as receivers, processors, exporters, extensions, service,
+- Sections come out as receivers, processors, exporters, connectors, extensions, service,
   separated by a blank line. Empty sections are left out.
 - A component's id is its collector type, or `type/name` when its `name` is
   set. The export name in source never appears in the output.

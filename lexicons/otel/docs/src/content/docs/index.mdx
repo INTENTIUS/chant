@@ -7,8 +7,8 @@ description: "Typed OpenTelemetry Collector config: receivers, processors, expor
     Edit lexicons/otel/src/codegen/docs.ts instead; changes here are overwritten. */}
 
 The otel lexicon types [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/)
-config: receivers, processors, exporters, extensions and the pipelines that
-connect them. `chant build` emits one collector config file, the YAML
+config: receivers, processors, exporters, connectors, extensions and the
+pipelines that connect them. `chant build` emits one collector config file, the YAML
 `otelcol --config` reads as it is.
 
 ```ts
@@ -29,7 +29,8 @@ export const traces = new Pipeline({
 The built-in component set is otlp, prometheus, hostmetrics and filelog
 receivers; batch, memory_limiter, resource, attributes, k8sattributes and
 resourcedetection processors; otlp, otlphttp, debug, prometheus and
-googlecloud exporters; and the health_check, pprof and zpages extensions.
+googlecloud exporters; spanmetrics, servicegraph, routing, forward and count
+connectors; and the health_check, pprof and zpages extensions.
 Their config types follow the collector-contrib release named on the
 Custom components page. A component chant doesn't ship is added with
 `defineComponent`, and it is serialized and checked the same way as the
@@ -37,22 +38,23 @@ built-ins.
 
 Checks catch a pipeline that uses a component nobody declared (OTEL101), a
 pipeline with no receivers or exporters (OTEL102), a declared component no
-pipeline uses (OTEL103), and a literal credential in source (OTEL002).
+pipeline uses (OTEL103), a connector joining pipelines of signals it can't
+convert (OTEL112), and a literal credential in source (OTEL002).
 
 
 ## At a Glance
 
 | Metric | Count |
 |--------|-------|
-| Resources | 20 |
+| Resources | 25 |
 | Property types | 0 |
-| Services | 6 |
+| Services | 7 |
 | Intrinsic functions | 0 |
 | Pseudo-parameters | 0 |
-| Lint rules | 11 |
+| Lint rules | 12 |
 
-**Lexicon version:** 0.79.0  
+**Lexicon version:** 0.95.1  
 **Namespace:** `OTel`
 
-- [All Rules](./rules) — 11 rules
+- [All Rules](./rules) — 12 rules
 - [Serialization](./serialization) — output format details

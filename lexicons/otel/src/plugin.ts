@@ -26,7 +26,7 @@ const catalogResource: McpResourceContribution = {
 /**
  * OpenTelemetry Collector lexicon plugin.
  *
- * Typed receivers, processors, exporters and extensions, pipelines and the
+ * Typed receivers, processors, exporters, connectors and extensions, pipelines and the
  * service block, serialized to one collector config file. A component chant
  * doesn't ship comes in through `defineComponent`, and is serialized and
  * checked the same way as the built-ins.
