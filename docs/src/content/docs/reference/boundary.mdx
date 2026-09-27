@@ -39,7 +39,7 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 |
 | intent node kind | the node kinds of `intent.schema.json` | 9 | 0 | 3 |
 | intent edge kind | the edge kinds of `intent.schema.json` | 9 | 0 | 3 |
-| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 134 | 0 | 0 |
+| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 135 | 0 | 0 |
 | finding code | the finding codes of `intent.schema.json` | 17 | 0 | 0 |
 | WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 47 | 0 | 0 |
 | hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 |
@@ -136,6 +136,7 @@ Each row follows, in the order of the table above.
 | reason code | `root-chant-required` | chant | changes.schema.json, check.schema.json, composites.schema.json, graph.schema.json, intent.schema.json, ls.schema.json, points.schema.json, status.schema.json | The declaration pins a chant version other than the reader's, and that chant is not installed at the workspace root. |
 | reason code | `not-a-git-repository` | chant | changes.schema.json, check.schema.json, composites.schema.json, graph.schema.json, intent.schema.json, ls.schema.json, points.schema.json, records-since.schema.json, records.schema.json, status.schema.json, work-evidence.schema.json, work-history.schema.json, work-lease.schema.json | --at, or a ledger read, needs a git repository and there is none. |
 | reason code | `revision-unknown` | chant | changes.schema.json, check.schema.json, composites.schema.json, graph.schema.json, intent.schema.json, ls.schema.json, points.schema.json, records-since.schema.json, records.schema.json | --at names no commit. |
+| reason code | `live-at-revision` | chant | graph.schema.json | graph was given --live and --at: a live read is of the account now, not of a revision. |
 | reason code | `environment-invalid` | chant | status.schema.json | An environment name that can't name a ledger directory. |
 | reason code | `dir-missing` | chant | composites.schema.json, graph.schema.json, ls.schema.json | The member's directory does not exist. |
 | reason code | `unknown-kind` | chant | composites.schema.json, graph.schema.json, ls.schema.json | No built-in kind or pinned package supplies the member's kind. |
