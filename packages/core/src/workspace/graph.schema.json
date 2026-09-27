@@ -305,6 +305,17 @@
           ],
           "description": "The IR version the member printed, or null when it printed none and was read as version 1."
         },
+        "cached": {
+          "type": "boolean",
+          "description": "Whether chant's per-member cache answered this read (#2876). Present on composed members. A cached read is the output the member's own chant printed for the same stamp, toolchain, command line and environment."
+        },
+        "stamp": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "What the per-member cache keys this read on (#2876): sha256 over the member's files and install state, or over the commit id with --at. Present on composed members; null for a live read or when no stamp could be taken. Two reads of a member with equal stamps read the same source."
+        },
         "meta": {
           "type": "object",
           "description": "The member IR's whole-read facts."

@@ -76,6 +76,13 @@ export interface ComposedMember {
   chant: string | null;
   /** The IR version the member printed; `null` when it printed none and was upgraded as version 1. */
   irVersion: number | null;
+  /**
+   * Whether the per-member cache answered this read (#2876). Set on composed
+   * members by `chant workspace graph`.
+   */
+  cached?: boolean;
+  /** The member's stamp (#2876): what the cache keys the read on, or null when none could be taken. */
+  stamp?: string | null;
   /** Whole-read facts the member's IR carried (`meta`, `pipeline`), kept apart from the composed sections. */
   meta?: Record<string, unknown>;
   pipeline?: unknown;
