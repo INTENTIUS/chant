@@ -294,14 +294,17 @@ The server communicates over stdin/stdout using JSON-RPC 2.0 with line-based fra
 
 ## Protocol Details
 
-The MCP server implements the [Model Context Protocol](https://modelcontextprotocol.io/). It negotiates a revision rather than assuming the client's, and understands two:
+The MCP server implements the [Model Context Protocol](https://modelcontextprotocol.io/). It negotiates a revision rather than assuming the client's, and understands these:
 
 | Version | Role |
 |---------|------|
 | `2026-07-28` | Preferred. Answered to a client that asks for it, and to one that names no version at all |
+| `2025-11-25` | Answered to a client that asks for it by name. Claude Code 2.1.274 asks for this one |
+| `2025-06-18` | Answered to a client that asks for it by name |
+| `2025-03-26` | Answered to a client that asks for it by name |
 | `2024-11-05` | Answered to a client that asks for it by name |
 
-On the 2026-07-28 revision the requested version and the client identity travel in a `_meta` envelope on every request, and the server falls back to the top-level `protocolVersion` and `clientInfo` fields a prior-revision client sends on `initialize`.
+On the 2026-07-28 revision the requested version and the client identity travel in a `_meta` envelope on every request, and the server falls back to the top-level `protocolVersion` and `clientInfo` fields a prior-revision client (2024-11-05 or any 2025 revision) sends on `initialize`.
 
 ### Supported Methods
 

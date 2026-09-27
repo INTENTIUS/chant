@@ -25,15 +25,21 @@ import { CHANT_VERSION } from "../version";
  * Exported because `docs-parity.test.ts` reads it: `cli/mcp.mdx` states these
  * revisions in prose, and stating them twice is how the page came to claim
  * 2024-11-05 for two releases after this list moved past it (#2385).
+ *
+ * The 2025 revisions are here because Claude Code 2.1.274 asks for
+ * 2025-11-25 and rejects any answer outside 2025-11-25, 2025-06-18,
+ * 2025-03-26, 2024-11-05 and 2024-10-07. A 2025 client sends
+ * `protocolVersion`/`clientInfo` at the top level of `initialize`, which
+ * {@link parseMeta} already falls back to, so it needs no other branch.
  */
-export const SUPPORTED_PROTOCOL_VERSIONS = ["2026-07-28", "2024-11-05"] as const;
+export const SUPPORTED_PROTOCOL_VERSIONS = ["2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"] as const;
 const LATEST_PROTOCOL_VERSION = SUPPORTED_PROTOCOL_VERSIONS[0];
 
 /**
  * Pick the protocol version to answer with: the client's requested version
- * when we support it, otherwise our latest. A 2024-11-05 client that asks
- * for `2024-11-05` gets it back unchanged; a 2026-07-28 client — or one
- * that never says — gets the latest revision (#1194).
+ * when we support it, otherwise our latest. A 2024-11-05 or 2025 client that
+ * asks for its own version gets it back unchanged; a 2026-07-28 client, or one
+ * that never says, gets the latest revision (#1194).
  */
 export function negotiateProtocolVersion(requested: string | undefined): string {
   if (requested && (SUPPORTED_PROTOCOL_VERSIONS as readonly string[]).includes(requested)) {
