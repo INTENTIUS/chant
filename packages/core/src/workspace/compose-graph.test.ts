@@ -17,6 +17,7 @@ const member = (name: string, dir: string): ComposedMember => ({
   reason: null,
   chant: "0.80.0",
   irVersion: 1,
+  live: false,
 });
 
 const web: GraphIR = {

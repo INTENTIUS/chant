@@ -156,6 +156,21 @@ describe("member command lines", () => {
     expect(memberArgv("audit", unit, args({ failOn: "error" }))).toEqual(["audit", ".", "--format", "json", "--fail-on", "error"]);
     expect(memberArgv("graph", unit, args({ format: "mermaid" }))).toEqual(["graph", ".", "--format", "ir"]);
   });
+
+  test("graph hands each member the live read's flags as they are (#2875)", () => {
+    expect(memberArgv("graph", unit, args({ env: "prod", live: true, overlay: true, traffic: "100 rps, p50" }))).toEqual([
+      "graph", ".", "--format", "ir", "--env", "prod", "--live", "--overlay", "--traffic", "100 rps, p50",
+    ]);
+    expect(memberArgv("graph", unit, args({ env: "prod" }))).toEqual(["graph", ".", "--format", "ir", "--env", "prod"]);
+  });
+
+  test("a reader unit takes --env only with --live, which needs one (#2874, #2875)", () => {
+    const reader = { ...unit, reader: { lexicon: "terraform", config: {}, packageDir: "/p" } } as typeof unit;
+    expect(memberArgv("graph", reader, args({ env: "prod" }))).toEqual(["graph", ".", "--format", "ir"]);
+    expect(memberArgv("graph", reader, args({ env: "prod", live: true, overlay: true }))).toEqual([
+      "graph", ".", "--format", "ir", "--env", "prod", "--live", "--overlay",
+    ]);
+  });
 });
 
 describe("the member-run protocol", () => {

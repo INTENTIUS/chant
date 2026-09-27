@@ -11,7 +11,7 @@
  * reference workspace runs a real one (`read-contract.test.ts`).
  */
 
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, describe, expect, test } from "vitest";
 import { cleanScratch, commitAll, contract, declaration, declaration as declaration_, FAKE_GRAPH_CHANT, git, REPO, repo, scratchDir, validSchema } from "./__fixtures__/contract-repo";
@@ -60,7 +60,7 @@ describe("graph output schema", () => {
   test("lists exactly the reason and error codes the code can return", () => {
     expect(schema.$defs.member.properties.reason.oneOf[1].properties!.code.enum).toEqual([...MEMBER_RUN_REASON_CODES]);
     expect(schema.$defs.failure.properties.error.properties.code.enum).toEqual([...GRAPH_ERROR_CODES]);
-    expect(GRAPH_ERROR_CODES).toEqual(WORKSPACE_ERROR_CODES);
+    expect(GRAPH_ERROR_CODES).toEqual([...WORKSPACE_ERROR_CODES, "live-at-revision"]);
   });
 });
 
@@ -89,7 +89,7 @@ describe("the links section (#2539)", () => {
       ]),
       "chant.workspace.json",
     );
-    const member = (name: string) => ({ name, dir: name, kind: "chant", status: "composed" as const, reason: null, chant: "0.81.0", irVersion: 1 });
+    const member = (name: string) => ({ name, dir: name, kind: "chant", status: "composed" as const, reason: null, chant: "0.81.0", irVersion: 1, live: false });
     const graph = composeWorkspaceGraph(
       { name: "acme", root: "." },
       [
@@ -208,5 +208,121 @@ describe("chant workspace graph on built workspaces", () => {
       "root-chant-required",
       "declaration-invalid",
     ]);
+  });
+});
+
+/**
+ * A chant older than member-run that records its command line in argv.txt
+ * beside the member, outside its directory so the member cache's stamp holds,
+ * and prints ir.json, or live.json when asked for --live (#2875).
+ */
+const FAKE_LIVE_CHANT = `#!/bin/sh
+[ "$1" = graph ] || { echo "Error: Unknown command: $1" >&2; exit 1; }
+printf '%s\\n' "$*" > ../argv.txt
+case " $* " in
+  *" --live "*) cat live.json ;;
+  *) cat ir.json ;;
+esac
+`;
+
+/** Every file under `dir` an hour old, past the member cache's freshness window. */
+function age(dir: string): void {
+  const then = new Date(Date.now() - 3_600_000);
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, e.name);
+    if (e.isDirectory()) age(path);
+    else if (e.isFile()) utimesSync(path, then, then);
+  }
+}
+
+describe("the live read (#2875)", () => {
+  const source = { version: 1, nodes: [{ id: "Queue", kind: "Thing", lexicon: "fake", attrs: {} }], edges: [], groups: {} };
+  const live = {
+    version: 1,
+    nodes: [
+      { id: "Queue", kind: "Thing", lexicon: "fake", attrs: { _status: "good", _drift: { fields: ["size"] }, _behaviour: { cost: { perHour: 1.5, currency: "USD" } } } },
+      { id: "Stray", kind: "Thing", lexicon: "fake", attrs: { _status: "warn", _overlay: "foreign", peer: { $ref: "Queue" } } },
+    ],
+    edges: [],
+    groups: {},
+    meta: { _behaviour: { engine: "fixture", traffic: "100 rps" } },
+  };
+  const liveWorkspace = () =>
+    repo({
+      "chant.workspace.json": declaration([
+        { name: "api", dir: "api", kind: "chant" },
+        { name: "docs", dir: "docs", kind: "other", because: "prose" },
+      ]),
+      "api/chant.config.ts": "export default {};\n",
+      "api/ir.json": JSON.stringify(source),
+      "api/live.json": JSON.stringify(live),
+      "docs/README.md": "",
+      ".gitignore": "node_modules\n",
+      "node_modules/.bin/chant": { text: FAKE_LIVE_CHANT, mode: 0o755 },
+    });
+
+  test("hands --live, --overlay and --traffic to every member, and marks each member read live", async () => {
+    const root = liveWorkspace();
+    const before = Date.now();
+    const { doc, failed } = await workspaceGraph({ cwd: root, args: { env: "prod", live: true, overlay: true, traffic: "100 rps" } });
+    const g = result(doc);
+    expectValid(g);
+    expect(failed).toBe(false);
+    expect(readFileSync(join(root, "argv.txt"), "utf-8").trim()).toBe("graph . --format ir --env prod --live --overlay --traffic 100 rps");
+    const api = g.members.find((m) => m.name === "api")!;
+    expect(api).toMatchObject({ status: "composed", live: true });
+    expect(Date.parse(api.readAt!)).toBeGreaterThanOrEqual(before - 1000);
+    expect(g.members.find((m) => m.name === "docs")).toMatchObject({ status: "skipped", live: false });
+    expect(g.members.find((m) => m.name === "docs")!.readAt).toBeUndefined();
+  });
+
+  test("the drift, overlay and behaviour a member's chant wrote pass through composition untouched", async () => {
+    const { doc } = await workspaceGraph({ cwd: liveWorkspace(), args: { env: "prod", live: true, overlay: true } });
+    const g = result(doc);
+    expect(g.nodes.find((n) => n.id === "api/Queue")!.attrs).toEqual(live.nodes[0].attrs);
+    // Only $ref values are prefixed; every other attribute is as the member printed it.
+    expect(g.nodes.find((n) => n.id === "api/Stray")!.attrs).toEqual({ _status: "warn", _overlay: "foreign", peer: { $ref: "api/Queue" } });
+    expect(g.members.find((m) => m.name === "api")!.meta).toEqual(live.meta);
+  });
+
+  test("a source read marks every member not live, with no read time", async () => {
+    const { doc } = await workspaceGraph({ cwd: liveWorkspace() });
+    const g = result(doc);
+    expectValid(g);
+    expect(g.members.map((m) => [m.name, m.live, m.readAt ?? null])).toEqual([["api", false, null], ["docs", false, null]]);
+    expect(g.nodes.map((n) => n.id)).toEqual(["api/Queue"]);
+  });
+
+  test("a live read bypasses the member cache: it is never served from it and never stored (#2876)", async () => {
+    const root = liveWorkspace();
+    // Past the cache's freshness window, so a source read is stored.
+    age(root);
+    // A source read fills the cache; the live read after it still runs the member.
+    await workspaceGraph({ cwd: root });
+    const argv = join(root, "argv.txt");
+    rmSync(argv);
+    const live1 = result((await workspaceGraph({ cwd: root, args: { env: "prod", live: true, overlay: true } })).doc);
+    expect(existsSync(argv)).toBe(true);
+    expect(live1.members.find((m) => m.name === "api")).toMatchObject({ live: true, cached: false, stamp: null });
+    expect(live1.nodes.map((n) => n.id)).toEqual(["api/Queue", "api/Stray"]);
+    // A second live read runs again: nothing from the first was stored.
+    rmSync(argv);
+    const live2 = result((await workspaceGraph({ cwd: root, args: { env: "prod", live: true, overlay: true } })).doc);
+    expect(existsSync(argv)).toBe(true);
+    expect(live2.members.find((m) => m.name === "api")).toMatchObject({ live: true, cached: false });
+    // And the source read is still served as before, with no live attributes.
+    const again = result((await workspaceGraph({ cwd: root })).doc);
+    expect(again.members.find((m) => m.name === "api")).toMatchObject({ live: false, cached: true });
+    expect(again.nodes.map((n) => n.id)).toEqual(["api/Queue"]);
+  });
+
+  test("--live with --at is refused with live-at-revision, and runs no member", async () => {
+    const root = liveWorkspace();
+    commitAll(root);
+    const { doc, failed } = await workspaceGraph({ cwd: root, at: "HEAD", args: { env: "prod", live: true } });
+    expectValid(doc);
+    expect(failed).toBe(true);
+    expect("error" in doc && doc.error.code).toBe("live-at-revision");
+    expect(existsSync(join(root, "argv.txt"))).toBe(false);
   });
 });

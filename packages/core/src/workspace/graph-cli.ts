@@ -30,9 +30,9 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { formatError } from "../cli/format";
 import type { CommandContext, ParsedArgs } from "../cli/registry";
-import { composeWorkspaceGraph, readMemberIr, type ComposeInput, type WorkspaceGraph } from "./compose-graph";
+import { composeWorkspaceGraph, readMemberIr, type ComposedMember, type ComposeInput, type WorkspaceGraph } from "./compose-graph";
 import { openGraphCache, splitCached, storeReads, withoutUnits } from "./graph-cache";
-import { readDeclaration, readerVersion, WORKSPACE_ERROR_CODES, WorkspaceReadError, type ErrorLocation, type WorkspaceErrorCode } from "./declaration";
+import { readDeclaration, readerVersion, WORKSPACE_ERROR_CODES, WorkspaceReadError, type ErrorLocation } from "./declaration";
 import { describePlan, emitDocument, executePlan, memberStatus, planJson, planMembers, type MemberPlan, type Toolchain, type UnitResult } from "./member-commands";
 import { loadKindRegistry } from "./kinds";
 import { prepareKindReaders, type PreparedReaders } from "./kind-readers";
@@ -47,11 +47,18 @@ export const GRAPH_CONTRACT_VERSION = 1;
 /** `$id` of the JSON Schema for the document, shipped beside this file. */
 export const GRAPH_OUTPUT_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/graph/v1/graph.schema.json";
 
-/** Why the graph couldn't be read at all: the declaration's codes, `--at`'s included. */
-export const GRAPH_ERROR_CODES = WORKSPACE_ERROR_CODES;
+/**
+ * Why the graph couldn't be read at all: the declaration's codes, `--at`'s
+ * included, and `live-at-revision` for `--live` with `--at` (#2875).
+ */
+export const GRAPH_ERROR_CODES = [...WORKSPACE_ERROR_CODES, "live-at-revision"] as const;
+export type GraphErrorCode = (typeof GRAPH_ERROR_CODES)[number];
+
+/** Why `--live` and `--at` don't go together (#2875). */
+const LIVE_AT_REVISION = "--live reads the account as it stands now, and --at reads the source at a revision; chant workspace graph takes one of them";
 
 const USAGE =
-  "chant workspace graph [dir] [--at <rev>] [--member <name>] [--kind <kind file>] [-o <file>] [--env <env>] [--no-cache] [--dry-run] | chant workspace graph --composites [--at <rev>] [--member <name>] [-o <file>] | chant workspace graph --intent <path[:start-end]> [--at <rev>] [--kind <kind file>...] [--json]";
+  "chant workspace graph [dir] [--at <rev>] [--member <name>] [--kind <kind file>] [-o <file>] [--env <env>] [--live [--overlay] [--traffic <level>]] [--no-cache] [--dry-run] | chant workspace graph --composites [--at <rev>] [--member <name>] [-o <file>] | chant workspace graph --intent <path[:start-end]> [--at <rev>] [--kind <kind file>...] [--json]";
 
 interface Head {
   $schema: string;
@@ -61,7 +68,7 @@ interface Head {
 
 export type GraphDocument =
   | (Head & { at: string | null } & WorkspaceGraph)
-  | (Head & { error: { code: WorkspaceErrorCode; message: string; location: ErrorLocation | null } });
+  | (Head & { error: { code: GraphErrorCode; message: string; location: ErrorLocation | null } });
 
 export interface GraphQuery {
   /** Where the walk up to the declaration starts. */
@@ -69,7 +76,7 @@ export interface GraphQuery {
   at?: string;
   /** Only these members. */
   members?: string[];
-  /** The flags each member's `chant graph` gets (`--env`). */
+  /** The flags each member's `chant graph` gets (`--env`, and `--live`, `--overlay` and `--traffic`, #2875). */
   args?: Partial<ParsedArgs>;
   /** The chant for members with none of their own; the running chant by default. */
   reader?: Toolchain;
@@ -153,7 +160,21 @@ export function exportRevision(located: LocatedWorkspace, memberDirs: string[]):
   return out;
 }
 
-function compose(plan: MemberPlan, results: UnitResult[], only: string[] | undefined, declarationMembers: { name: string; dir: string; kind: string }[]): { inputs: ComposeInput[]; failed: boolean } {
+function compose(
+  plan: MemberPlan,
+  results: UnitResult[],
+  only: string[] | undefined,
+  declarationMembers: { name: string; dir: string; kind: string }[],
+  live = false,
+): { inputs: ComposeInput[]; failed: boolean } {
+  // A member that ran was read live when --live was given, and says when (#2875).
+  const read = (member: ComposedMember, r: UnitResult): ComposedMember => {
+    if (live) {
+      member.live = true;
+      if (r.finishedAt) member.readAt = r.finishedAt;
+    }
+    return member;
+  };
   const byId = new Map(results.map((r) => [r.id, r]));
   const inputs: ComposeInput[] = [];
   let failed = plan.unreadable.length > 0;
@@ -169,18 +190,18 @@ function compose(plan: MemberPlan, results: UnitResult[], only: string[] | undef
     if (r.exitCode !== 0) {
       failed = true;
       const tail = r.stderr.trim().split("\n").slice(-5).join("\n");
-      inputs.push({ member: memberStatus(m.name, m.dir, m.kind, "failed", { code: "command-failed", message: `chant graph exited ${r.exitCode}${tail ? `: ${tail}` : ""}` }, r.chant) });
+      inputs.push({ member: read(memberStatus(m.name, m.dir, m.kind, "failed", { code: "command-failed", message: `chant graph exited ${r.exitCode}${tail ? `: ${tail}` : ""}` }, r.chant), r) });
       continue;
     }
-    const read = readMemberIr(r.stdout);
-    if ("reason" in read) {
+    const ir = readMemberIr(r.stdout);
+    if ("reason" in ir) {
       failed = true;
-      inputs.push({ member: memberStatus(m.name, m.dir, m.kind, "failed", read.reason, r.chant) });
+      inputs.push({ member: read(memberStatus(m.name, m.dir, m.kind, "failed", ir.reason, r.chant), r) });
       continue;
     }
-    const member = memberStatus(m.name, m.dir, m.kind, "composed", null, r.chant);
-    member.irVersion = read.irVersion;
-    inputs.push({ member, ir: read.ir });
+    const member = read(memberStatus(m.name, m.dir, m.kind, "composed", null, r.chant), r);
+    member.irVersion = ir.irVersion;
+    inputs.push({ member, ir: ir.ir });
   }
   return { inputs, failed };
 }
@@ -198,6 +219,9 @@ export async function workspaceGraph(query: GraphQuery): Promise<GraphResult> {
   const head: Head = { $schema: GRAPH_OUTPUT_SCHEMA_ID, contract: GRAPH_CONTRACT_VERSION, chant: readerVersion() };
   let exported: string | undefined;
   let readers: PreparedReaders | undefined;
+  if (query.args?.live && query.at !== undefined) {
+    return { doc: { ...head, error: { code: "live-at-revision", message: LIVE_AT_REVISION, location: null } }, failed: true };
+  }
   try {
     const located = locateWorkspace(query.cwd, query.at);
     const declaration = readDeclaration(located.tree, "", { rootChant: true });
@@ -226,7 +250,7 @@ export async function workspaceGraph(query: GraphQuery): Promise<GraphResult> {
     if (query.inTree) await query.inTree(exported ?? located.rootOnDisk, declaration.members.filter((m) => !query.members?.length || query.members.includes(m.name)));
     for (const r of components ?? []) if (r.stderr.trim() && query.onStderr) query.onStderr(r.stderr.endsWith("\n") ? r.stderr : `${r.stderr}\n`);
     for (const r of results) if (r.stderr.trim() && query.onStderr) query.onStderr(r.stderr.endsWith("\n") ? r.stderr : `${r.stderr}\n`);
-    const { inputs, failed } = compose(plan, results, query.members, declaration.members);
+    const { inputs, failed } = compose(plan, results, query.members, declaration.members, !!args.live);
     for (const { member } of inputs) {
       if (member.status !== "composed") continue;
       member.cached = served.has(member.name);
@@ -278,6 +302,25 @@ export async function runWorkspaceGraph(ctx: CommandContext): Promise<number> {
       return 1;
     }
     if (!args.dryRun) return (await import("./composites")).runWorkspaceComposites(ctx, cwd);
+  }
+
+  // The live read (#2875): the flags mean what they mean to a member's own
+  // `chant graph`, where --overlay and --traffic only act on a live read and
+  // --live needs an environment. Here they are refused rather than ignored.
+  if (!args.composites && args.intent === undefined) {
+    if ((args.overlay || args.traffic !== undefined) && !args.live) {
+      console.error(formatError({ message: "--overlay and --traffic act on a live read; add --live --env <env>", hint: USAGE }));
+      return 1;
+    }
+    if (args.live && args.at !== undefined) {
+      emitDocument({ $schema: GRAPH_OUTPUT_SCHEMA_ID, contract: GRAPH_CONTRACT_VERSION, chant: readerVersion(), error: { code: "live-at-revision", message: LIVE_AT_REVISION, location: null } }, args.output);
+      console.error(formatError({ message: `live-at-revision: ${LIVE_AT_REVISION}`, hint: USAGE }));
+      return 1;
+    }
+    if (args.live && !args.env) {
+      console.error(formatError({ message: "--live needs an environment, as each member's chant graph --live does: --live --env <env>", hint: USAGE }));
+      return 1;
+    }
   }
 
   // The intent graph over one region (#2651) is its own document.

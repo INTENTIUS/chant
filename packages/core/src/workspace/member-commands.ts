@@ -294,9 +294,15 @@ export function memberArgv(verb: WorkspaceVerb, unit: RunUnit, args: ParsedArgs)
     if (args.tier) argv.push("--tier", args.tier);
     if (args.failOn) argv.push("--fail-on", args.failOn);
     if (args.maxFiles !== undefined) argv.push("--max-files", String(args.maxFiles));
-  } else if (args.env && !unit.reader) {
-    // A reader project declares no environments, so --env is the chant members' alone.
-    argv.push("--env", args.env);
+  } else {
+    // graph. A reader project declares no environments, so a source read
+    // leaves --env to the chant members. A live read needs one, and a reader
+    // project with none declared takes any name, so --live carries it (#2875).
+    if (args.env && (!unit.reader || args.live)) argv.push("--env", args.env);
+    // The live read's flags go to every member as they are (#2875).
+    if (args.live) argv.push("--live");
+    if (args.overlay) argv.push("--overlay");
+    if (args.traffic) argv.push("--traffic", args.traffic);
   }
   return argv;
 }
@@ -316,6 +322,8 @@ export interface UnitResult extends MemberOutput {
   chant: string | null;
   /** How the member ran: inside its toolchain's shared process, or in a level-0 process of its own. */
   mode: "member-run" | "per-member";
+  /** When the member's command finished, as an ISO time (#2875). */
+  finishedAt?: string;
 }
 
 interface Spawned {
@@ -379,13 +387,15 @@ async function runGroup(verb: WorkspaceVerb, group: ToolchainGroup, root: string
     units: units.map((u) => ({ id: u.id, dir: u.abs, argv: argvs.get(u.id)!, ...(u.exclude.length ? { exclude: u.exclude } : {}) })),
   };
   const answer = await run(toolchain.command, ["workspace", "member-run"], root, JSON.stringify(request));
+  const ended = new Date().toISOString();
   const parsed = parseMemberRunOutput(answer.stdout);
   if (parsed) {
     if (parsed.stray) process.stderr.write(`${parsed.stray}\n`);
     return units.map((unit) => {
       const r = parsed.results.get(unit.id);
       const base = { unit, toolchain, chant: parsed.chant, mode: "member-run" as const, id: unit.id, member: unit.member, dir: unit.dir, exclude: unit.exclude };
-      if (r) return { ...base, exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr };
+      // A member-run from before #2875 names no time; the group's end is the closest one.
+      if (r) return { ...base, exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr, finishedAt: r.finishedAt ?? ended };
       return { ...base, exitCode: answer.exitCode || 1, stdout: "", stderr: `the member-run process for ${toolchain.identity} ended before running this member\n${answer.stderr}` };
     });
   }
@@ -393,7 +403,7 @@ async function runGroup(verb: WorkspaceVerb, group: ToolchainGroup, root: string
   const out: UnitResult[] = [];
   for (const unit of units) {
     const r = await run(toolchain.command, argvs.get(unit.id)!, unit.abs);
-    out.push({ unit, toolchain, chant: null, mode: "per-member", id: unit.id, member: unit.member, dir: unit.dir, exclude: unit.exclude, ...r });
+    out.push({ unit, toolchain, chant: null, mode: "per-member", id: unit.id, member: unit.member, dir: unit.dir, exclude: unit.exclude, ...r, finishedAt: new Date().toISOString() });
   }
   return out;
 }
@@ -415,7 +425,7 @@ const USAGE: Record<WorkspaceVerb, string> = {
   build: "chant workspace build [dir] [--member <name>] [-o <dir>] [--format json|yaml] [--env <env>] [--param k=v] [--dry-run]",
   lint: "chant workspace lint [dir] [--member <name>] [--format stylish|json|sarif] [-o <file>] [--fix] [--dry-run]",
   audit: "chant workspace audit [dir] [--member <name>] [--format stylish|json] [-o <file>] [--tier <tier>] [--fail-on <level>] [--dry-run]",
-  graph: "chant workspace graph [dir] [--member <name>] [--kind <kind file>] [-o <file>] [--env <env>] [--no-cache] [--dry-run]",
+  graph: "chant workspace graph [dir] [--member <name>] [--kind <kind file>] [-o <file>] [--env <env>] [--live [--overlay] [--traffic <level>]] [--no-cache] [--dry-run]",
 };
 
 export function describePlan(plan: MemberPlan): string {
@@ -491,7 +501,7 @@ function formatAuditText(doc: ReturnType<typeof mergeAudit>, plan: MemberPlan): 
 }
 
 export function memberStatus(name: string, dir: string, kind: string, status: ComposedMember["status"], reason: MemberReason | null, chant: string | null): ComposedMember {
-  return { name, dir, kind, status, reason, chant, irVersion: null };
+  return { name, dir, kind, status, reason, chant, irVersion: null, live: false };
 }
 
 export async function runWorkspaceMembers(ctx: CommandContext, verb: WorkspaceVerb): Promise<number> {
