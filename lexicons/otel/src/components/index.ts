@@ -4,4 +4,5 @@ export * from "./k8s-receivers";
 export * from "./processors";
 export * from "./filtering";
 export * from "./exporters";
+export * from "./connectors";
 export * from "./extensions";

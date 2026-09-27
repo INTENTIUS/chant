@@ -1,6 +1,6 @@
 ---
 title: "Components"
-description: "The built-in receivers, processors, exporters and extensions, with the config rules each checks"
+description: "The built-in receivers, processors, exporters, connectors and extensions, with the config rules each checks"
 diataxis: reference
 order: 3
 ---
@@ -76,6 +76,32 @@ export const scrub = new RedactionProcessor({
 | `DebugExporter` | `debug` | none | `console` |
 | `PrometheusExporter` | `prometheus` | `endpoint` is set | `endpoint` (the address Prometheus scrapes) |
 | `GoogleCloudExporter` | `googlecloud` | none | `googlecloud://projects/<project>`, plus any endpoint overrides |
+
+## Connectors
+
+A connector is an exporter in one pipeline and a receiver in another. List the same entity in `exporters` of the pipeline that feeds it and in `receivers` of the pipeline it feeds. "Pairs" is the signal it reads and the signal it writes; OTEL112 checks pipelines against them.
+
+| Class | Type | Pairs | Checks |
+|---|---|---|---|
+| `SpanMetricsConnector` | `spanmetrics` | traces to metrics | not both `histogram.explicit` and `histogram.exponential`; `events.enabled` needs dimensions; no dimension repeats a default one (`service.name`, `span.name`, `span.kind`, `status.code`) |
+| `ServiceGraphConnector` | `servicegraph` | traces to metrics | none beyond the type |
+| `RoutingConnector` | `routing` | same signal in and out | `table` is not empty; each route has a `condition` or a `statement` (not both) and at least one pipeline; the `request` context needs a condition |
+| `ForwardConnector` | `forward` | same signal in and out | none |
+| `CountConnector` | `count` | traces, metrics, logs or profiles to metrics | metric names are not empty; counts of `metrics` take no attributes |
+
+```ts
+import { OtlpReceiver, OtlpExporter, PrometheusExporter, SpanMetricsConnector, Pipeline } from "@intentius/chant-lexicon-otel";
+
+export const otlp = new OtlpReceiver({ protocols: { grpc: { endpoint: "0.0.0.0:4317" } } });
+export const tempo = new OtlpExporter({ name: "tempo", endpoint: "tempo:4317" });
+export const prom = new PrometheusExporter({ endpoint: "0.0.0.0:8889" });
+export const spanmetrics = new SpanMetricsConnector({ dimensions: [{ name: "http.route" }] });
+
+export const traces = new Pipeline({ signal: "traces", receivers: [otlp], exporters: [tempo, spanmetrics] });
+export const red = new Pipeline({ signal: "metrics", name: "red", receivers: [spanmetrics], exporters: [prom] });
+```
+
+`routing` names its target pipelines by id string (`pipelines: ["traces/tenant-a"]`), since those pipelines also list the connector and a const can't refer to one declared after it.
 
 ## Extensions
 

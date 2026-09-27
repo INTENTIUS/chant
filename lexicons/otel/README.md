@@ -1,6 +1,6 @@
 # @intentius/chant-lexicon-otel
 
-OpenTelemetry Collector lexicon for [chant](https://github.com/INTENTIUS/chant): typed receivers, processors, exporters, extensions and pipelines, serialized to the collector YAML `otelcol --config` reads.
+OpenTelemetry Collector lexicon for [chant](https://github.com/INTENTIUS/chant): typed receivers, processors, exporters, connectors, extensions and pipelines, serialized to the collector YAML `otelcol --config` reads.
 
 ```ts
 import { OtlpReceiver, BatchProcessor, OtlpExporter, Pipeline } from "@intentius/chant-lexicon-otel";
@@ -20,23 +20,37 @@ export { otlp, batch, backend, traces };
 | receivers | otlp, prometheus, hostmetrics, filelog, k8s_cluster, kubeletstats |
 | processors | batch, memory_limiter, resource, attributes, k8sattributes, resourcedetection, filter, transform, redaction |
 | exporters | otlp, otlphttp, debug, prometheus, googlecloud |
+| connectors | spanmetrics, servicegraph, routing, forward, count |
 | extensions | health_check, pprof, zpages |
 
 The config types follow the collector-contrib release in `COLLECTOR_PIN`.
 
+## Connectors
+
+A connector joins two pipelines: it is an exporter in the pipeline that feeds it and a receiver in the pipeline it feeds. Put the same entity on both sides.
+
+```ts
+const spanmetrics = new SpanMetricsConnector({ dimensions: [{ name: "http.route" }] });
+
+export const traces = new Pipeline({ signal: "traces", receivers: [otlp], exporters: [backend, spanmetrics] });
+export const red = new Pipeline({ signal: "metrics", name: "red", receivers: [spanmetrics], exporters: [prom] });
+```
+
+Each connector supports fixed signal pairs (`spanmetrics`: traces to metrics). OTEL101 fails a connector listed on one side only, OTEL112 fails a pipeline whose signal the connector can't pair, and `collectorTopology()` reports each pipeline-to-pipeline hop in `edges`. A custom connector declares its pairs with `connects` in `defineComponent`.
+
 ## Components chant doesn't ship
 
-`defineComponent<Config>()({ kind, type, pin, validate?, endpoints? })` returns a class that serializes and lints like a built-in. `pin` records the schema source and version the config type follows; it is written as a `# chant:` comment above the emitted config and returned by `collectorTopology()`.
+`defineComponent<Config>()({ kind, type, pin, validate?, endpoints?, connects? })` returns a class that serializes and lints like a built-in. `pin` records the schema source and version the config type follows; it is written as a `# chant:` comment above the emitted config and returned by `collectorTopology()`.
 
 ## Checks
 
-OTEL001 and OTEL002 run on source (id syntax, literal credentials). OTEL101 to OTEL109 run after a build: undeclared or unused components, empty pipelines, extension wiring, `memory_limiter` placement, id syntax, each component's own config rules, duplicate ids and missing schema pins.
+OTEL001 and OTEL002 run on source (id syntax, literal credentials). OTEL101 to OTEL109 and OTEL112 run after a build: undeclared or unused components (a connector must be on both sides), empty pipelines, extension wiring, `memory_limiter` placement, id syntax, each component's own config rules, duplicate ids, missing schema pins, and connector signal pairs.
 
 ## Plain-data API
 
 - `collectorYaml(entities)` and `buildCollectorConfig(entities)` render a config inside another lexicon (the k8s `GkeOtelCollector` uses them).
 - `validateCollectorConfig(config)` and `validateCollectorEntities(entities)` run the checks without a build.
-- `collectorTopology(config)` and `collectorTopologyOf(entities)` return pipelines, endpoints, schema pins and the signals each exporter carries.
+- `collectorTopology(config)` and `collectorTopologyOf(entities)` return pipelines, endpoints, schema pins, the signals each exporter carries, and the connector edges between pipelines.
 
 ## Project structure
 

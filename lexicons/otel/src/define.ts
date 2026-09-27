@@ -2,9 +2,9 @@
  * `defineComponent()`, the one way a collector component type enters this
  * lexicon.
  *
- * The built-in receivers, processors, exporters and extensions are defined
- * through it, and so is a component a team or plugin adds for something chant
- * doesn't ship (a vendor exporter, an in-house processor). Both produce the
+ * The built-in receivers, processors, exporters, connectors and extensions are
+ * defined through it, and so is a component a team or plugin adds for something
+ * chant doesn't ship (a vendor exporter, an in-house processor). Both produce the
  * same kind of class, register in the same table, serialize through the same
  * code and are checked by the same post-synth checks, so there is no second
  * path for a custom component to fall off.
@@ -28,7 +28,7 @@
 
 import { createResource } from "@intentius/chant/runtime";
 import type { Declarable } from "@intentius/chant/declarable";
-import { componentId, type ComponentKind } from "./model";
+import { componentId, type ComponentKind, type ConnectorSignalPair } from "./model";
 
 /** Where a component's config schema comes from, and which version of it the type follows. */
 export interface SchemaPin {
@@ -74,6 +74,13 @@ export interface ComponentDefinition<K extends ComponentKind = ComponentKind, T 
   validate?: ConfigValidator<C>;
   /** Where this component sends or listens, for `collectorTopology()`. */
   endpoints?: (config: C) => string[];
+  /**
+   * Connectors only: the signal pairs the connector supports, as its factory
+   * registers them. OTEL112 checks each pipeline a connector joins against
+   * these, and `collectorTopology()` reports an edge only for a supported
+   * pair. A connector without them is not checked.
+   */
+  connects?: ReadonlyArray<ConnectorSignalPair>;
 }
 
 /** What a custom component supplies. `builtin` is always false for these. */
@@ -110,6 +117,7 @@ const KIND_SEGMENT: Record<ComponentKind, string> = {
   receiver: "Receiver",
   processor: "Processor",
   exporter: "Exporter",
+  connector: "Connector",
   extension: "Extension",
 };
 
