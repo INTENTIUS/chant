@@ -37,7 +37,7 @@ With `--live`, each member runs `chant graph --live` under its own toolchain, so
 
 The flags mean what they mean to [`chant graph`](/chant/cli/graph/). `--live` needs `--env`, and `--overlay` and `--traffic` only act on a live read, so this command refuses either without `--live` rather than ignore it. `--live` with `--at` fails with `live-at-revision`, because a live read is of the account now and `--at` reads the source at a revision. `--namespace` is not passed, since it scopes one member's read. Run that member's own `chant graph` for it.
 
-Each member entry carries `live`, which is `true` when the member ran with `--live`, and then `readAt`, when its read finished, as an ISO time. A member that did not run has `live: false` and no `readAt`. A live read is never cached.
+Each member entry carries `live`, which is `true` when the member ran with `--live`, and then `readAt`, when its read finished, as an ISO time. A member that did not run has `live: false` and no `readAt`. A live read is never served from the [member cache](#the-member-cache) or stored in it, so a live member has `cached: false` and `stamp: null`.
 
 A member whose account can't be reached is not told apart from any other member: `chant graph --live` reports an unreachable account as warnings on stderr and a graph with fewer nodes, and exits 0, so there is no signal for a code of its own. Its entry is `composed`, and with `--overlay` the declared entities its chant could not observe carry `_unobserved` with the reason.
 
