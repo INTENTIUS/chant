@@ -1,0 +1,64 @@
+---
+title: "Alertmanager"
+description: "Route, Receiver, InhibitRule, TimeInterval and AlertmanagerSettings, and how they serialize to alertmanager.yml"
+diataxis: reference
+order: 4
+---
+
+The types follow Alertmanager `v0.34.1` (`PROMETHEUS_PIN.alertmanager`). Field names are the file's own, so the [Alertmanager configuration docs](https://prometheus.io/docs/alerting/latest/configuration/) apply as written.
+
+## `Route`
+
+| Field | Type | Meaning |
+|---|---|---|
+| `receiver` | `Receiver` or `string` | Where matching alerts go. Required on the root route. |
+| `matchers` | `string[]` | Alertmanager matchers, e.g. `severity="page"`, `team=~"db\|infra"`. Not allowed on the root. |
+| `group_by` | `string[]` | Labels alerts are grouped by into one notification. `["..."]` groups by every label. |
+| `group_wait`, `group_interval`, `repeat_interval` | duration | Notification timing. |
+| `continue` | `boolean` | Keep matching sibling routes after this one matches. |
+| `mute_time_intervals`, `active_time_intervals` | `(TimeInterval \| string)[]` | When the route is muted, or the only times it is active. |
+| `routes` | `(Route \| RouteProps)[]` | Child routes, tried in order. |
+
+The root route is the one `Route` entity no other route lists in `routes`. Declaring two roots is a build warning, and the first is used.
+
+A route that references a `Receiver` or `TimeInterval` entity pulls it into the output even when it isn't exported on its own. A name string must match a declared one (PROM201, PROM204).
+
+## `Receiver`
+
+| Field | Integration |
+|---|---|
+| `name` | Unique (PROM203). |
+| `webhook_configs` | `url` or `url_file`, `http_config`, `max_alerts`, `timeout`. |
+| `email_configs` | `to`, `from`, `smarthost`, `auth_username`, `auth_password_file`, `require_tls`, `headers`, `html`, `text`. |
+| `slack_configs` | `api_url_file` (or `api_url`), `channel`, `title`, `text`, `fields`, `actions`. |
+| `pagerduty_configs` | `routing_key_file` (or `routing_key`, or the v1 `service_key`), `severity`, `class`, `component`, `group`, `details`, `links`. |
+
+Every integration takes `send_resolved`. A receiver with no integrations is valid: Alertmanager holds the alerts and sends nothing.
+
+### Credentials
+
+Alertmanager does not expand environment variables in its config. Mount each secret as a file and use the `*_file` field. PROM001 flags a literal `api_url`, `routing_key`, `service_key`, `auth_password`, `auth_secret`, `credentials`, `bearer_token`, `password` or `client_secret` in a `Receiver` or `AlertmanagerSettings`. A webhook `url` is not flagged; put a tokenized URL in `url_file`.
+
+## `InhibitRule`
+
+`source_matchers`, `target_matchers` and `equal`: while an alert matching the source fires, alerts matching the target that agree on every `equal` label are muted.
+
+## `TimeInterval`
+
+`name` and `time_intervals`, each a period with any of `times` (`start_time`/`end_time`, `HH:MM`), `weekdays` (`monday:friday`), `days_of_month`, `months`, `years` and `location` (an IANA zone).
+
+## `AlertmanagerSettings`
+
+`global` (`resolve_timeout`, `smtp_*`, `slack_api_url_file`, `pagerduty_url`, `http_config`) and `templates`. Declare at most one.
+
+## Output
+
+`alertmanager.yml` sections come out in the order `global`, `templates`, `route`, `inhibit_rules`, `receivers`, `time_intervals`. Receivers and time intervals are sorted by name; routes keep the order they are written in, since Alertmanager tries them in order.
+
+| Function | Returns |
+|---|---|
+| `buildAlertmanagerConfig(entities)` | `{ config, warnings, count }` |
+| `alertmanagerYaml(entities)` | The file text, exactly as the serializer writes it. |
+| `validateAlertmanagerConfig(config)` | PROM201 and PROM203 to PROM209 findings. |
+| `validateSeverityRouting(ruleFiles, config)` | PROM202 findings. |
+| `parseMatchers(s)`, `matcherMatches(m, labels)`, `matcher(name, op, value)` | Matcher parsing, evaluation and quoting. |

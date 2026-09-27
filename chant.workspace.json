@@ -362,6 +362,23 @@
       ]
     },
     {
+      "name": "lexicon-prometheus",
+      "dir": "lexicons/prometheus",
+      "kind": "other",
+      "because": "an npm workspace package with no chant project",
+      "generated": [
+        {
+          "path": "src/lint/post-synth/index.ts",
+          "generator": "npx tsx ../../scripts/generate-post-synth-barrels.ts",
+          "sources": [
+            "scripts/generate-post-synth-barrels.ts",
+            "packages/core/src/codegen/generate-post-synth-barrel.ts",
+            "lexicons/prometheus/src/lint/post-synth"
+          ]
+        }
+      ]
+    },
+    {
       "name": "lexicon-render",
       "dir": "lexicons/render",
       "kind": "other",

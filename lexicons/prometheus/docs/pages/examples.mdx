@@ -1,0 +1,40 @@
+---
+title: "Examples"
+description: "The prometheus lexicon's example projects"
+diataxis: how-to
+order: 8
+---
+
+Each example lives under `lexicons/prometheus/examples/`. The lexicon's tests build every one, lint it with no warnings, and run the lexicon's checks over the output with nothing to report; with `promtool` and `amtool` installed they run those too.
+
+## getting-started
+
+One group for an HTTP API: request rate and error ratio recording rules and a paging alert on the ratio.
+
+```ts title="src/rules.ts"
+{{file:getting-started/src/rules.ts}}
+```
+
+## alerting
+
+Rules and Alertmanager routing in one build root, so PROM202 can check that every severity is routed. One alert at two severities, PagerDuty and Slack for pages, email and a webhook for tickets muted outside office hours, and an inhibit rule so a page silences its ticket. Credentials are read from files.
+
+```ts title="src/alertmanager.ts"
+{{file:alerting/src/alertmanager.ts}}
+```
+
+## rules-from-data
+
+One group per service, built by a function from a list of service specs. Each group is still a typed `RuleGroup` the checks see.
+
+```ts title="src/services.ts"
+{{file:rules-from-data/src/services.ts}}
+```
+
+## k3d-stack
+
+Prometheus and Alertmanager as plain k8s workloads, each reading its config from a ConfigMap filled by `ruleFileYaml` and `alertmanagerYaml`. An always-firing `Watchdog` alert proves the path end to end; see [Checking with promtool and amtool](../upstream-tools/#on-a-cluster) for the e2e run.
+
+```ts title="src/workloads.ts"
+{{file:k3d-stack/src/workloads.ts}}
+```

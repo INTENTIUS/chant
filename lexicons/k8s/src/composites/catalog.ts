@@ -2461,6 +2461,12 @@ export const compositeCatalog: CompositeEntry[] = [
         "description": "Alert rules — if provided, creates a PrometheusRule."
       },
       {
+        "name": "ruleGroups",
+        "type": "Array<RuleGroupEntity | RuleGroupProps>",
+        "required": false,
+        "description": "Rule groups from the prometheus lexicon — if provided, creates a PrometheusRule holding them, after the `alertRules` group when both are set."
+      },
+      {
         "name": "replicas",
         "type": "number",
         "required": false,

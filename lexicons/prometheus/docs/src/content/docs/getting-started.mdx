@@ -1,0 +1,110 @@
+---
+title: "Getting Started"
+description: "Declare a first rule group and its Alertmanager routing, build the two files, and check them"
+diataxis: tutorial
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-prometheus` — DO NOT EDIT.
+    Edit lexicons/prometheus/docs/pages/getting-started.mdx instead; changes here are overwritten. */}
+
+
+This walks through one alert for an HTTP API, from declaration to a rule file Prometheus loads and an `alertmanager.yml` that routes the alert.
+
+## 1. Install and register the lexicon
+
+```bash
+npm install --save-dev @intentius/chant @intentius/chant-lexicon-prometheus
+```
+
+```ts title="chant.config.ts"
+import type { ChantConfig } from "@intentius/chant";
+
+export default { lexicons: ["prometheus"] } satisfies ChantConfig;
+```
+
+## 2. Declare a rule group
+
+A `RuleGroup` takes the rule file's own keys. Rules are plain objects: `record` and `expr` for a recording rule, `alert` and `expr` for an alerting rule.
+
+```ts title="src/rules.ts"
+import { RuleGroup, type Rule } from "@intentius/chant-lexicon-prometheus";
+
+const rules: Rule[] = [
+  {
+    record: "job:http_errors:ratio5m",
+    expr: 'sum by (job) (rate(http_requests_total{code=~"5.."}[5m])) / sum by (job) (rate(http_requests_total[5m]))',
+  },
+  {
+    alert: "ApiErrorRatioHigh",
+    expr: "job:http_errors:ratio5m > 0.05",
+    for: "10m",
+    labels: { severity: "page" },
+    annotations: { summary: "{{ $labels.job }} is failing over 5% of requests" },
+  },
+];
+
+const api = new RuleGroup({ name: "api", interval: "30s", rules });
+
+export { api };
+```
+
+## 3. Route the alert
+
+```ts title="src/alertmanager.ts"
+import { Receiver, Route, type RouteProps, type WebhookConfig } from "@intentius/chant-lexicon-prometheus";
+
+const hook: WebhookConfig[] = [{ url: "http://alert-sink.monitoring:8080/" }];
+const oncall = new Receiver({ name: "oncall", webhook_configs: hook });
+const fallback = new Receiver({ name: "default" });
+
+const children: RouteProps[] = [{ matchers: ['severity="page"'], receiver: oncall }];
+const root = new Route({ receiver: fallback, group_by: ["alertname", "job"], routes: children });
+
+export { oncall, fallback, root };
+```
+
+The root route is the `Route` no other route nests. Its receiver takes every alert no child route matches.
+
+## 4. Build
+
+```bash
+chant build src --lexicon prometheus -o dist/rules.yml
+```
+
+`dist/rules.yml` holds the group, and `dist/alertmanager.yml` is written beside it:
+
+```yaml title="dist/rules.yml"
+groups:
+  - name: api
+    interval: 30s
+    rules:
+      - record: job:http_errors:ratio5m
+        expr: sum by (job) (rate(http_requests_total{code=~"5.."}[5m])) / sum by (job) (rate(http_requests_total[5m]))
+      - alert: ApiErrorRatioHigh
+        expr: job:http_errors:ratio5m > 0.05
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: "{{ $labels.job }} is failing over 5% of requests"
+```
+
+## 5. What the build checked
+
+Every `expr` was parsed as PromQL (PROM104), durations were checked (PROM103), the route's receiver exists (PROM201), and the `page` severity has a route (PROM202). Change `severity: "page"` to `severity: "critical"` and rebuild: PROM202 reports that no route matches `severity="critical"`, so the alert would go to the default receiver.
+
+## 6. Check with the upstream tools
+
+With `promtool` and `amtool` installed:
+
+```bash
+promtool check rules dist/rules.yml
+amtool check-config dist/alertmanager.yml
+```
+
+The same checks run from TypeScript with [`promtoolCheckRules` and `amtoolCheckConfig`](../upstream-tools/).
+
+## Next
+
+- [Rule groups](../rule-groups/) and [Alertmanager](../alertmanager/) list every field.
+- [On Kubernetes](../kubernetes/) renders the same groups into a `PrometheusRule`.
