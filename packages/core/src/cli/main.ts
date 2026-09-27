@@ -90,6 +90,7 @@ const BOOLEAN_FLAGS = new Set([
   "--no-release-record",
   "--fold",
   "--no-fold",
+  "--no-cache",
   "--sandbox",
   "--yes",
   "--confirm-prod",
@@ -481,6 +482,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.noReleaseRecord = true;
     } else if (arg === "--fold") {
       result.fold = true;
+    } else if (arg === "--no-cache") {
+      // `chant workspace graph --no-cache` (#2876): read every member.
+      result.noCache = true;
     } else if (arg === "--no-fold") {
       // chant #1134 — fold is the default build path; this is the explicit
       // opt-out, and like --fold it beats chant.config.ts's build.fold.
@@ -935,7 +939,10 @@ Workspace (level 1, #2524):
                         with <member>/<id> ids and groups.byMember: the
                         read-contract document. --at <rev> runs each member's
                         source as it was at that commit; --kind adds the
-                        records' asset and constrains links
+                        records' asset and constrains links. A member whose
+                        source and toolchain are unchanged is served from
+                        the cache in $CHANT_CACHE_DIR or ~/.cache/chant;
+                        --no-cache reads every member
   workspace graph --composites [--at <rev>] [--member <name>] [-o <file>]
                         Each composite instance the members declare, with the
                         components whose contract can deploy it; an instance

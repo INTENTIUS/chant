@@ -1,4 +1,5 @@
-import { cpus, totalmem } from "node:os";
+import { cpus, tmpdir, totalmem } from "node:os";
+import { join } from "node:path";
 import { configDefaults, defineConfig } from "vitest/config";
 import tsconfigPaths from "vite-tsconfig-paths";
 
@@ -182,6 +183,10 @@ export default defineConfig({
     // while still making progress. 20s absorbs that without masking a
     // genuinely hung test for long.
     testTimeout: 20_000,
+    // chant #2876 — `chant workspace graph` keeps a per-member cache in the
+    // user's cache directory. Tests, and the chant processes they start, keep
+    // theirs in one throwaway directory per run instead of in $HOME.
+    env: { CHANT_CACHE_DIR: join(tmpdir(), `chant-test-cache-${process.pid}`) },
     projects: [
       {
         extends: true,

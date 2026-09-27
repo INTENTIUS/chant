@@ -106,7 +106,7 @@ rows:
     concept: "workspace graph"
     owner: "chant"
     carrier: "graph.schema.json"
-    what: "Prints the composed IR of every member, with member links and, given --kind, the records and their links."
+    what: "Prints the composed IR of every member, with member links and, given --kind, the records and their links. A member whose stamp, toolchain, command line and environment are unchanged is served from the per-member cache in the user's cache directory, never written into the workspace (ws-059)."
   - category: "command"
     concept: "workspace graph --intent"
     owner: "chant"

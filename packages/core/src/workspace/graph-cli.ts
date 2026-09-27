@@ -31,6 +31,7 @@ import { dirname, join, resolve } from "node:path";
 import { formatError } from "../cli/format";
 import type { CommandContext, ParsedArgs } from "../cli/registry";
 import { composeWorkspaceGraph, readMemberIr, type ComposeInput, type WorkspaceGraph } from "./compose-graph";
+import { openGraphCache, splitCached, storeReads, withoutUnits } from "./graph-cache";
 import { readDeclaration, readerVersion, WORKSPACE_ERROR_CODES, WorkspaceReadError, type ErrorLocation, type WorkspaceErrorCode } from "./declaration";
 import { describePlan, emitDocument, executePlan, memberStatus, planJson, planMembers, type MemberPlan, type Toolchain, type UnitResult } from "./member-commands";
 import { loadKindRegistry } from "./kinds";
@@ -50,7 +51,7 @@ export const GRAPH_OUTPUT_SCHEMA_ID = "https://intentius.io/chant/schemas/worksp
 export const GRAPH_ERROR_CODES = WORKSPACE_ERROR_CODES;
 
 const USAGE =
-  "chant workspace graph [dir] [--at <rev>] [--member <name>] [--kind <kind file>] [-o <file>] [--env <env>] [--dry-run] | chant workspace graph --composites [--at <rev>] [--member <name>] [-o <file>] | chant workspace graph --intent <path[:start-end]> [--at <rev>] [--kind <kind file>...] [--json]";
+  "chant workspace graph [dir] [--at <rev>] [--member <name>] [--kind <kind file>] [-o <file>] [--env <env>] [--no-cache] [--dry-run] | chant workspace graph --composites [--at <rev>] [--member <name>] [-o <file>] | chant workspace graph --intent <path[:start-end]> [--at <rev>] [--kind <kind file>...] [--json]";
 
 interface Head {
   $schema: string;
@@ -93,6 +94,8 @@ export interface GraphQuery {
    * here (#2674).
    */
   inTree?: (root: string, members: readonly { name: string; dir: string; kind: string }[]) => Promise<void>;
+  /** Read every member, leaving the per-member cache unread and unwritten (`--no-cache`, #2876). */
+  noCache?: boolean;
 }
 
 export interface GraphResult {
@@ -201,20 +204,34 @@ export async function workspaceGraph(query: GraphQuery): Promise<GraphResult> {
     // Kinds are read before planning: a package kind with a graph block runs (#2874).
     const kinds = loadKindRegistry(declaration.pins, located.rootOnDisk).registry;
     let plan = planMembers("graph", located.rootOnDisk, { only: query.members, reader: query.reader, tree: located.tree, kinds });
-    if (located.at !== null && plan.groups.length > 0) {
-      exported = exportRevision(located, plan.groups.flatMap((g) => g.units.map((u) => u.dir)));
+    const args = (query.args ?? {}) as ParsedArgs;
+    // Members whose last source read still stands are answered from the cache (#2876).
+    // A composites read runs every member's component graph as well, so it reads everything.
+    const cache = query.noCache || query.components ? undefined : openGraphCache(located.rootOnDisk);
+    const split = cache ? splitCached(plan, args, cache, located.at) : undefined;
+    const served = new Set(split?.hits.map((h) => h.id));
+    if (located.at !== null && withoutUnits(plan, served).groups.length > 0) {
+      exported = exportRevision(located, withoutUnits(plan, served).groups.flatMap((g) => g.units.map((u) => u.dir)));
       plan = planMembers("graph", exported, { only: query.members, reader: query.reader, tree: workingTree(exported), kinds });
     }
-    readers = prepareKindReaders(plan, exported ?? located.rootOnDisk);
-    const args = (query.args ?? {}) as ParsedArgs;
-    const [results, components] = await Promise.all([
-      executePlan(plan, args),
+    // Only the members that run get a reader project; a served member needs none.
+    const toRun = withoutUnits(plan, served);
+    readers = prepareKindReaders(toRun, exported ?? located.rootOnDisk);
+    const [ran, components] = await Promise.all([
+      executePlan(toRun, args),
       query.components ? executePlan(plan, args, () => componentGraphArgv(args)) : Promise.resolve(undefined),
     ]);
+    if (cache && split) storeReads(split, ran, cache);
+    const results = [...(split?.hits ?? []), ...ran];
     if (query.inTree) await query.inTree(exported ?? located.rootOnDisk, declaration.members.filter((m) => !query.members?.length || query.members.includes(m.name)));
     for (const r of components ?? []) if (r.stderr.trim() && query.onStderr) query.onStderr(r.stderr.endsWith("\n") ? r.stderr : `${r.stderr}\n`);
     for (const r of results) if (r.stderr.trim() && query.onStderr) query.onStderr(r.stderr.endsWith("\n") ? r.stderr : `${r.stderr}\n`);
     const { inputs, failed } = compose(plan, results, query.members, declaration.members);
+    for (const { member } of inputs) {
+      if (member.status !== "composed") continue;
+      member.cached = served.has(member.name);
+      member.stamp = split?.stamps.get(member.name) ?? null;
+    }
     // Links (#2539) resolve against the declaration that was read, the revision's for --at, and the kinds installed now.
     const graph = composeWorkspaceGraph({ name: declaration.name, root: located.root }, inputs, { declaration, kinds });
     let recordsFailed = false;
@@ -284,6 +301,7 @@ export async function runWorkspaceGraph(ctx: CommandContext): Promise<number> {
     at: args.at,
     members: args.members,
     args,
+    ...(args.noCache ? { noCache: true } : {}),
     ...(args.kind !== undefined ? { kind: resolve(args.kind) } : {}),
     onStderr: (text) => process.stderr.write(text),
   });

@@ -299,6 +299,8 @@ export interface ParsedArgs {
   subject?: string;
   /** `chant workspace points answer <id> --answer <value>` (#2739): the people's answer. */
   answer?: string;
+  /** `chant workspace graph --no-cache` (#2876): read every member, bypassing the per-member cache. */
+  noCache?: boolean;
   /** `chant workspace graph --composites` (#2662): print each composite instance with the components that can deploy it. */
   composites?: boolean;
   /** `chant workspace graph --intent <path[:start-end]>` (#2651): the region the intent graph is over. */

@@ -63,6 +63,18 @@ Some of what `--at` reads still comes from the working tree, which is how it sta
 - Remote revisions and URLs are not read. Fetch first.
 - `status` has no `--at`. It reads the local `chant/lifecycle` branch and names the tip it read.
 
+## Member stamps
+
+A composed member in the `graph` document carries a `stamp`, `sha256:` and 64 hex digits, which is what `chant workspace graph` keys its [member cache](/chant/cli/workspace-graph/#the-member-cache) on ([ws-059](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-059-graph-cache.md)). Two reads of a member with the same stamp read the same source, so a reader can compare stamps between documents to tell which members changed, without taking stamps of its own. The rule is stated here so that every reader means the same thing by it.
+
+| Read | What the stamp covers |
+|---|---|
+| working tree | every regular file under the member's directory, by path relative to it, mtime in milliseconds and size, sorted by path. Directories named `node_modules`, `dist` or `.git` are left out, as is every directory whose name starts with `.` and, for member `.`, the other members' directories |
+| `--at <rev>` | the commit id and the member's directory, which stand in for the files since a commit's tree never changes |
+| both | the install around the member: `node_modules/.package-lock.json` and the lockfiles (`package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock`, `pnpm-lock.yaml`, `bun.lock`, `bun.lockb`) by absolute path, mtime and size, in each directory from the member's up to the file-system root |
+
+`stamp` is `null` when no stamp could be taken, such as for a read that observes an account. A stamp is a fact about the source only. The toolchain, the command line and the environment are also part of the cache key, so an equal stamp does not by itself mean a cached read was served. `cached` says that.
+
 ## Which chant reads the declaration
 
 The root's chant reads the declaration ([ws-021](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-021-which-chant.md)). A root names its chant by pinning `@intentius/chant` in [`pins`](/chant/reference/workspace-declaration/#pins).
