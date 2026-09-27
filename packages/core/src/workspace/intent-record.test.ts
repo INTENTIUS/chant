@@ -24,6 +24,9 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { cleanScratch, contract, git, REPO, repo, writeFiles } from "./__fixtures__/contract-repo";
 import { intentGraph, type CommitNode, type DecisionNode } from "./intent";
+import { formatIntentRecord } from "./intent-cli";
+import { intentRecord, type IntentRecordDocument } from "./intent-record";
+import intentRecordSchema from "./intent-record.schema.json";
 import intentSchema from "./intent.schema.json";
 import { parseFrontMatter } from "./records";
 import { queryRecords } from "./records-cli";
@@ -128,6 +131,16 @@ beforeAll(() => {
 });
 afterAll(cleanScratch);
 
+const recordContract = contract(intentRecordSchema);
+type RecordResult = Exclude<IntentRecordDocument, { error: unknown }>;
+
+async function walkRecord(record: string, options: { kinds?: string[]; at?: string } = {}): Promise<RecordResult> {
+  const { doc } = await intentRecord({ cwd: root, record, at: options.at, kinds: (options.kinds ?? KINDS).map((k) => join(root, k)) });
+  recordContract.expectValid(doc);
+  if ("error" in doc) throw new Error(`${doc.error.code}: ${doc.error.message}`);
+  return doc;
+}
+
 describe("the commit that decided a record", () => {
   test("records --json names it: the commit that moved the record into an approved state, not the one that added it", async () => {
     const doc = await queryRecords({ kind: join(root, "decisions/decision.kind.mjs"), cwd: root });
@@ -160,5 +173,85 @@ describe("the commit that decided a record", () => {
     expect(state(sha.c1)).toBe("undecided");
     expect(state(sha.c6)).toBe("decided-by-window");
     expect(doc.edges.filter((e) => e.kind === "within" && e.from === `commit:${sha.c6}`).map((e) => e.to)).toEqual(["record:decision/s-001", "record:decision/s-002"]);
+  });
+});
+
+describe("graph --intent --record", () => {
+  test("walks every path and member entry once, keeps the commits in the window, and buckets each against the record", async () => {
+    const doc = await walkRecord("s-001");
+    expect(doc.record).toEqual({
+      id: "record:decision/s-001",
+      recordKind: "decision",
+      record: "s-001",
+      path: "decisions/s-001-smoke.md",
+      title: "Decision s-001",
+      state: "decided",
+      supersededBy: "s-003",
+      decidedIn: { sha: sha.c2, date: "2026-09-26T12:00:02Z", subject: "decide s-001" },
+      constrains: [
+        { entry: "member:smoke", granularity: "member", path: "smoke", exists: true, walked: true },
+        { entry: "path:docs/claims.md", granularity: "path", path: "docs/claims.md", exists: true, walked: true },
+      ],
+    });
+    expect(doc.window).toEqual({ from: sha.c2, until: sha.c9 });
+    expect(doc.commits.map((c) => [c.sha, c.bucket, c.files, c.entries])).toEqual([
+      [sha.c8, "unexplained", ["smoke/run.sh"], ["member:smoke"]],
+      [sha.c6, "within-other", ["docs/claims.md"], ["path:docs/claims.md"]],
+      [sha.c4, "worked", ["smoke/lib.sh"], ["member:smoke"]],
+      [sha.c3, "own", ["smoke/run.sh"], ["member:smoke"]],
+    ]);
+    const by = Object.fromEntries(doc.commits.map((c) => [c.sha, { unit: c.unit, workedBy: c.workedBy, alsoWithin: c.alsoWithin }]));
+    expect(by[sha.c3]).toEqual({ unit: "U-0001", workedBy: [], alsoWithin: [] });
+    expect(by[sha.c4]).toEqual({ unit: null, workedBy: [{ recordKind: "work", record: "W-001", state: "done" }], alsoWithin: [] });
+    expect(by[sha.c6]).toEqual({ unit: null, workedBy: [], alsoWithin: [{ recordKind: "decision", record: "s-002", state: "decided" }] });
+    // c0, c1 and c10 changed the region outside the window; c7 changed only the root member.
+    expect(doc.counts).toEqual({ commits: 4, own: 1, worked: 1, withinOther: 1, unexplained: 1, outsideWindow: 3 });
+    expect(doc.reasons).toEqual([]);
+  });
+
+  test("the text walk prints the record, its window, each commit with its bucket, and the counts", async () => {
+    const text = formatIntentRecord(await walkRecord("decision/s-001"));
+    expect(text.split("\n")[0]).toBe("record    s-001 decided, superseded by s-003: Decision s-001");
+    expect(text).toContain(`window    from ${sha.c2.slice(0, 8)} until ${sha.c9.slice(0, 8)}; decided in ${sha.c2.slice(0, 8)}`);
+    expect(text).toContain(`own          ${sha.c3.slice(0, 8)} 2026-09-26 run twice; unit U-0001; smoke/run.sh`);
+    expect(text).toContain(`worked       ${sha.c4.slice(0, 8)} 2026-09-26 W-001 and the lib; worked by W-001; smoke/lib.sh`);
+    expect(text).toContain(`within-other ${sha.c6.slice(0, 8)} 2026-09-26 a second claim; within s-002; docs/claims.md`);
+    expect(text.split("\n").at(-1)).toBe("4 commits in the window: 1 own, 1 worked, 1 within another record's window, 1 unexplained; 3 outside it");
+  });
+
+  test("a current record's window runs to the revision read; --at reads the history as it was", async () => {
+    const s003 = await walkRecord("s-003");
+    expect(s003.window).toEqual({ from: sha.c9, until: null });
+    expect(s003.commits.map((c) => [c.sha, c.bucket])).toEqual([[sha.c10, "unexplained"]]);
+    const early = await walkRecord("s-001", { at: sha.c4 });
+    expect(early.window).toEqual({ from: sha.c2, until: null });
+    expect(early.commits.map((c) => [c.sha, c.bucket])).toEqual([
+      [sha.c4, "worked"],
+      [sha.c3, "own"],
+    ]);
+  });
+
+  test("the root member's history leaves out the members inside it, and a proposed record's window opens where it was added", async () => {
+    const doc = await walkRecord("s-004");
+    expect(doc.record.decidedIn).toBeNull();
+    expect(doc.window).toEqual({ from: sha.c0, until: null });
+    expect(doc.commits.map((c) => c.sha)).toEqual([sha.c9, sha.c7, sha.c5, sha.c4, sha.c2, sha.c0]);
+    expect(doc.commits.flatMap((c) => c.files).filter((f) => f.startsWith("smoke/") || f.startsWith("docs/"))).toEqual([]);
+    expect(doc.commits.find((c) => c.sha === sha.c7)!.files).toEqual(["README.md"]);
+  });
+
+  test("without the plugin nothing joins c3 to a unit, so it is unexplained; without the work kind c4 is too", async () => {
+    const doc = await walkRecord("s-001", { kinds: ["decisions/decision.kind.mjs"] });
+    expect(doc.commits.map((c) => c.bucket)).toEqual(["unexplained", "within-other", "unexplained", "unexplained"]);
+    expect(doc.counts).toMatchObject({ own: 0, worked: 0, withinOther: 1, unexplained: 3 });
+  });
+
+  test("an id no decision has is intent-record-unknown, and so is a work item's", async () => {
+    for (const id of ["s-404", "W-001"]) {
+      const { doc, failed } = await intentRecord({ cwd: root, record: id, kinds: KINDS.map((k) => join(root, k)) });
+      recordContract.expectValid(doc);
+      expect(failed).toBe(true);
+      expect("error" in doc && doc.error.code).toBe("intent-record-unknown");
+    }
   });
 });

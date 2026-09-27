@@ -27,6 +27,8 @@ import { workspaceGraph } from "./graph-cli";
 import graphSchema from "./graph.schema.json";
 import { intentGraph } from "./intent";
 import intentSchema from "./intent.schema.json";
+import { intentRecord } from "./intent-record";
+import intentRecordSchema from "./intent-record.schema.json";
 import { runChecks } from "./lineage-check";
 import { listWorkspace } from "./ls";
 import lsSchema from "./ls.schema.json";
@@ -44,7 +46,7 @@ import statusSchema from "./status.schema.json";
 const FIXTURE = join(REPO, "reference-workspace");
 const TIMEOUT = 240_000;
 
-const SCHEMAS = { ls: lsSchema, graph: graphSchema, check: checkSchema, status: statusSchema, records: recordsSchema, "records-since": recordsSinceSchema, intent: intentSchema, composites: compositesSchema, points: pointsSchema };
+const SCHEMAS = { ls: lsSchema, graph: graphSchema, check: checkSchema, status: statusSchema, records: recordsSchema, "records-since": recordsSinceSchema, intent: intentSchema, "intent-record": intentRecordSchema, composites: compositesSchema, points: pointsSchema };
 
 /** This checkout's chant, started the way the CLI starts it, for members with no toolchain of their own. */
 const reader: Toolchain = {
@@ -135,6 +137,19 @@ describe("every schema against the reference workspace (#2543)", () => {
       expect(doc.workspace).toEqual({ name: "reference", root: "reference-workspace" });
       expect(doc.at).toBe(at ? head : null);
       expect(doc.region).toBe("region:app/src/server.mjs:19");
+    }
+  });
+
+  test("graph --intent --record, in the working tree and at HEAD", async () => {
+    const { expectValid } = contract(intentRecordSchema);
+    for (const at of [undefined, "HEAD"]) {
+      const { doc, failed } = await intentRecord({ cwd: FIXTURE, record: "ref-002", at, kinds: ["decisions/decision.kind.mjs", "work/work.kind.mjs"] });
+      expectValid(doc);
+      if ("error" in doc) throw new Error(doc.error.message);
+      expect(failed).toBe(false);
+      expect(doc.at).toBe(at ? head : null);
+      expect(doc.record.id).toBe("record:decision/ref-002");
+      expect(doc.record.decidedIn?.sha).toMatch(/^[0-9a-f]{40}$/);
     }
   });
 

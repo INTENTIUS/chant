@@ -773,6 +773,13 @@ describe("workspace init and ls (#2534)", () => {
     expect(() => parseArgs(["workspace", "work", "claim", "W-001", "--holder"])).toThrow(/--holder needs a value/);
   });
 
+  test("graph --intent takes --record in place of a region", () => {
+    expect(parseArgs(["workspace", "graph", "--intent", "--record", "studio-008", "--json"])).toMatchObject({ intent: "", record: "studio-008", json: true });
+    expect(parseArgs(["workspace", "graph", "--intent", "app/server.mjs"])).toMatchObject({ intent: "app/server.mjs" });
+    expect(() => parseArgs(["workspace", "graph", "--intent", "--json"])).toThrow(/--intent needs a region/);
+    expect(() => parseArgs(["workspace", "graph", "--intent", "--record"])).toThrow(/--record needs a record id/);
+  });
+
   test("run takes --work <id> for an Op with a work lease (#2748)", () => {
     expect(parseArgs(["run", "dispatch", "--work", "W-001", "--holder", "box/dispatch@h"])).toMatchObject({ command: "run", path: "dispatch", work: "W-001", holder: "box/dispatch@h" });
     expect(() => parseArgs(["run", "dispatch", "--work"])).toThrow(/--work needs a work item id/);

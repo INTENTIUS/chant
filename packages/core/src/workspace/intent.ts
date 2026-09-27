@@ -121,6 +121,8 @@ export const INTENT_ERROR_CODES = [
   "location-missing",
   /** The region's path, or its line range, does not exist in the tree read. */
   "intent-region-invalid",
+  /** --record names an id no record of a decision kind read has. */
+  "intent-record-unknown",
 ] as const satisfies readonly ReasonCode[];
 export type IntentErrorCode = (typeof INTENT_ERROR_CODES)[number];
 
@@ -397,7 +399,7 @@ function git(top: string, args: string[], input?: string): string {
   return execFileSync("git", args, { cwd: top, encoding: "utf-8", input, stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"], maxBuffer: 512 * 1024 * 1024 });
 }
 
-function tryGit(top: string, args: string[], input?: string): string | undefined {
+export function tryGit(top: string, args: string[], input?: string): string | undefined {
   try {
     return git(top, args, input);
   } catch {
@@ -417,7 +419,7 @@ function hunkRanges(patch: string): LineRange[] {
 }
 
 /** The commits that touched the region, newest first, with the lines each changed for a line range. */
-function regionHistory(top: string, rev: string, gitPath: string, type: "file" | "dir", lines: LineRange | null): { sha: string; lines: LineRange[] | null }[] {
+export function regionHistory(top: string, rev: string, gitPath: string, type: "file" | "dir", lines: LineRange | null): { sha: string; lines: LineRange[] | null }[] {
   if (lines) {
     const out = tryGit(top, ["log", `-L${lines.start},${lines.end}:${gitPath}`, "--format=%x00%H", "--no-color", rev]);
     if (out === undefined) return [];
@@ -441,7 +443,7 @@ function regionHistory(top: string, rev: string, gitPath: string, type: "file" |
 }
 
 /** Subject, body, author, date and trailers of each commit. */
-function commitDetails(top: string, shas: string[]): Map<string, IntentCommit> {
+export function commitDetails(top: string, shas: string[]): Map<string, IntentCommit> {
   const out = new Map<string, IntentCommit>();
   if (shas.length === 0) return out;
   const text = git(top, ["log", "--no-walk=unsorted", "--stdin", "--format=%x00%H%x1f%an%x1f%ae%x1f%aI%x1f%(trailers:only,unfold,separator=%x1e)%x1f%B"], `${shas.join("\n")}\n`);
@@ -470,7 +472,7 @@ function commitDetails(top: string, shas: string[]): Map<string, IntentCommit> {
 }
 
 /** The commit reachable from `rev` that last added `path` (from the repository root), or null. */
-function addingCommit(top: string, rev: string, path: string): string | null {
+export function addingCommit(top: string, rev: string, path: string): string | null {
   const out = tryGit(top, ["log", "--diff-filter=A", "-1", "--format=%H", rev, "--", path]);
   return out?.trim() || null;
 }
@@ -481,7 +483,7 @@ function addingCommit(top: string, rev: string, path: string): string | null {
  * `rev` (#2683). A record added in a closed state closes in the commit that
  * added it.
  */
-function closingCommit(top: string, rev: string, path: string, stateField: string, closed: readonly string[]): string | null {
+export function closingCommit(top: string, rev: string, path: string, stateField: string, closed: readonly string[]): string | null {
   const out = tryGit(top, ["log", "--format=%H", rev, "--", path]);
   let closing: string | null = null;
   for (const sha of (out ?? "").split("\n").map((l) => l.trim()).filter(Boolean)) {
@@ -500,7 +502,7 @@ export function windowOpening(top: string, rev: string, view: Pick<RecordView, "
 }
 
 /** `commit` and every commit between it and `rev` that has it as an ancestor. */
-function descendants(top: string, commit: string, rev: string): Set<string> {
+export function descendants(top: string, commit: string, rev: string): Set<string> {
   const out = new Set<string>([commit]);
   const text = tryGit(top, ["rev-list", "--ancestry-path", `${commit}..${rev}`]);
   for (const line of (text ?? "").split("\n")) if (line.trim()) out.add(line.trim());
@@ -605,7 +607,7 @@ async function resolveNodeFromGraph(cwd: string, at: string | undefined, member:
 
 // ── The walk ─────────────────────────────────────────────────────────────────
 
-interface LoadedKind {
+export interface LoadedKind {
   file: string;
   /** Relative to the repository root, for the document. */
   display: string;
@@ -615,7 +617,7 @@ interface LoadedKind {
   joins?: CommitJoins;
 }
 
-async function loadKinds(query: IntentQuery, top: string): Promise<LoadedKind[]> {
+export async function loadKinds(query: IntentQuery, top: string): Promise<LoadedKind[]> {
   const out: LoadedKind[] = [];
   for (const k of query.kinds ?? []) {
     const file = resolve(query.cwd, k);

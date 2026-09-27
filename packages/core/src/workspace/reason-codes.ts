@@ -150,6 +150,7 @@ export const REASONS = {
   "since-session-open": "--since names a session that is still open, so the comparison runs to the working tree.",
   // The intent graph (graph --intent, #2651): a read that fails.
   "intent-region-invalid": "The region's path, or its line range, does not exist in the tree read.",
+  "intent-record-unknown": "graph --intent --record names an id that no record of a decision kind read has.",
   // The intent graph: part of the walk that can't be read. The document is still printed.
   "intent-history-shallow": "The repository is a shallow clone, so the region's history stops at the clone's boundary.",
   "intent-plugin-failed": "A kind file's commitJoins, which joins commits to units, contracts and evidence, failed for a commit.",

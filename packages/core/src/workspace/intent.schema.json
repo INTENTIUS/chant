@@ -1259,7 +1259,8 @@
                 "schema-id-mismatch",
                 "schema-invalid",
                 "location-missing",
-                "intent-region-invalid"
+                "intent-region-invalid",
+                "intent-record-unknown"
               ]
             },
             "message": {

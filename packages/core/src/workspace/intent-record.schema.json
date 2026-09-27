@@ -1,0 +1,529 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/intent-record/v1/intent-record.schema.json",
+  "title": "chant workspace graph --intent --record output",
+  "description": "What `chant workspace graph --intent --record <id> --json` prints: the intent walk for one decision record over every path: and member: entry its constrains lists, each commit once, kept to the commits inside the record's window, each with one bucket relative to the record. The walk decides nothing: own, worked and within-other say what else accounts for a commit, and unexplained says nothing does. Contract version 1 is written by chant 0.81.0 and newer, and this document was added to it by graph --intent --record; a chant without --record refuses the flag. Every code is in the one closed list of `reason-codes.ts`.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/result"
+    },
+    {
+      "$ref": "#/$defs/failure"
+    }
+  ],
+  "$defs": {
+    "result": {
+      "description": "The record was read. Exit code 0, or 1 when a plugin failed; the document is printed either way.",
+      "type": "object",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "at",
+        "workspace",
+        "record",
+        "history",
+        "window",
+        "kinds",
+        "commits",
+        "counts",
+        "reasons"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/intent-record/v1/intent-record.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string",
+          "description": "The chant that wrote the document."
+        },
+        "at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{40,64}$",
+          "description": "The full commit id read with --at, or null for the working tree. History is read from this commit, or from HEAD for the working tree."
+        },
+        "workspace": {
+          "type": "object",
+          "required": [
+            "name",
+            "root"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "root": {
+              "type": "string",
+              "description": "The workspace root relative to the git root, \".\" for the git root."
+            }
+          }
+        },
+        "record": {
+          "type": "object",
+          "required": [
+            "id",
+            "recordKind",
+            "record",
+            "path",
+            "title",
+            "state",
+            "supersededBy",
+            "decidedIn",
+            "constrains"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^record:",
+              "description": "record:<kind>/<id>, the id graph --intent gives the same record's node."
+            },
+            "recordKind": {
+              "type": "string"
+            },
+            "record": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string",
+              "description": "The record file, from the repository root."
+            },
+            "title": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "state": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "supersededBy": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "decidedIn": {
+              "$ref": "#/$defs/decidedIn"
+            },
+            "constrains": {
+              "type": "array",
+              "description": "Every entry of the record's constrains list, in order.",
+              "items": {
+                "$ref": "#/$defs/constraint"
+              }
+            }
+          }
+        },
+        "history": {
+          "type": "object",
+          "required": [
+            "rev",
+            "shallow"
+          ],
+          "properties": {
+            "rev": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^[0-9a-f]{40,64}$",
+              "description": "The commit the history was read from, or null when the repository has no commits."
+            },
+            "shallow": {
+              "type": "boolean",
+              "description": "Whether the repository is a shallow clone. When true, reasons holds intent-history-shallow."
+            }
+          }
+        },
+        "window": {
+          "type": "object",
+          "required": [
+            "from",
+            "until"
+          ],
+          "properties": {
+            "from": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^[0-9a-f]{40,64}$",
+              "description": "The commit the window opens at: decidedIn, or the commit that added the record when it is not approved. Null when the record has no history."
+            },
+            "until": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^[0-9a-f]{40,64}$",
+              "description": "The commit that opened the window of the record superseding this one, which closes this one's, or null."
+            }
+          }
+        },
+        "kinds": {
+          "type": "array",
+          "description": "Each kind file read, as graph --intent lists them.",
+          "items": {
+            "type": "object",
+            "required": [
+              "file",
+              "name",
+              "records",
+              "joins"
+            ],
+            "properties": {
+              "file": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "records": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "joins": {
+                "enum": [
+                  "function",
+                  "data",
+                  null
+                ]
+              }
+            }
+          }
+        },
+        "commits": {
+          "type": "array",
+          "description": "The commits inside the window that changed the record's region, newest first by commit date.",
+          "items": {
+            "$ref": "#/$defs/commit"
+          }
+        },
+        "counts": {
+          "type": "object",
+          "required": [
+            "commits",
+            "own",
+            "worked",
+            "withinOther",
+            "unexplained",
+            "outsideWindow"
+          ],
+          "properties": {
+            "commits": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "own": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "worked": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "withinOther": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Commits whose bucket is within-other."
+            },
+            "unexplained": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "outsideWindow": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Commits that changed the region outside the window, which commits leaves out."
+            }
+          }
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/reason"
+          }
+        },
+        "error": false
+      }
+    },
+    "constraint": {
+      "type": "object",
+      "required": [
+        "entry",
+        "granularity",
+        "path",
+        "exists",
+        "walked"
+      ],
+      "properties": {
+        "entry": {
+          "type": "string"
+        },
+        "granularity": {
+          "enum": [
+            "path",
+            "member",
+            "contract",
+            "issue"
+          ]
+        },
+        "path": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "For a path entry, the path from the workspace root; for a member entry, the member's directory. Null for other entries, and for a member the declaration does not name."
+        },
+        "exists": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "For a path entry, whether the path is in the tree read; for a member entry, whether the declaration names the member. Null for an entry that names no path."
+        },
+        "walked": {
+          "type": "boolean",
+          "description": "Whether the entry's history was read. Contract and issue entries name no path and are never walked."
+        }
+      }
+    },
+    "commit": {
+      "type": "object",
+      "required": [
+        "sha",
+        "subject",
+        "author",
+        "date",
+        "trailers",
+        "pullRequest",
+        "unit",
+        "entries",
+        "files",
+        "bucket",
+        "workedBy",
+        "alsoWithin"
+      ],
+      "properties": {
+        "sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40,64}$"
+        },
+        "subject": {
+          "type": "string"
+        },
+        "author": {
+          "type": "object",
+          "required": [
+            "name",
+            "email"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "email": {
+              "type": "string"
+            }
+          }
+        },
+        "date": {
+          "type": "string",
+          "description": "Author date, ISO 8601."
+        },
+        "trailers": {
+          "type": "object",
+          "description": "Every trailer git parses from the message, keyed as written. Core gives no key a meaning; a kind's commitJoins may.",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "pullRequest": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "The number in a (#n) that ends the subject, as a squash merge writes it, or null."
+        },
+        "unit": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The unit a kind file's commitJoins joined the commit to, or null."
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The record's constrains entries whose history lists the commit."
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The files the commit changed in the record's region, from the workspace root; for a merge, against its first parent."
+        },
+        "bucket": {
+          "enum": [
+            "own",
+            "worked",
+            "within-other",
+            "unexplained"
+          ],
+          "description": "The first that holds: own, the record's own work as graph --intent judges it (a unit or contract a plugin joins names the record, or serves a contract it constrains); worked, a work item in workedBy; within-other, a decision in alsoWithin; unexplained, none."
+        },
+        "workedBy": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/recordRef"
+          },
+          "description": "Each work item that is not dropped, whose window holds the commit, and that implements the record or covers one of the commit's files by a path: entry. A work item's window runs from the commit that added it to the one that closed it, that one included."
+        },
+        "alsoWithin": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/recordRef"
+          },
+          "description": "Each other decision whose window holds the commit and whose path: entries cover one of the commit's files."
+        }
+      }
+    },
+    "recordRef": {
+      "type": "object",
+      "required": [
+        "recordKind",
+        "record",
+        "state"
+      ],
+      "properties": {
+        "recordKind": {
+          "type": "string"
+        },
+        "record": {
+          "type": "string"
+        },
+        "state": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "decidedIn": {
+      "description": "Added in contract 1. The commit that last moved the record into an approved state and kept it there: a state the kind's approval ranks above 0, or one of its closedStates when it has no approval. Read from the history of the record's file reachable from the revision read, or HEAD in the working tree. A record added approved was decided by the commit that added it. Null when the record is not approved in that history.",
+      "type": [
+        "object",
+        "null"
+      ],
+      "required": [
+        "sha",
+        "date",
+        "subject"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40,64}$"
+        },
+        "date": {
+          "type": "string",
+          "description": "The author date, ISO 8601."
+        },
+        "subject": {
+          "type": "string"
+        }
+      }
+    },
+    "reason": {
+      "type": "object",
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "enum": [
+            "intent-history-shallow",
+            "intent-plugin-failed"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    },
+    "failure": {
+      "description": "The declaration or a record kind could not be read, or no decision has the id, and nothing was walked. Exit code 1.",
+      "type": "object",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "error"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/intent-record/v1/intent-record.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "enum": [
+                "declaration-missing",
+                "declaration-ambiguous",
+                "declaration-unparseable",
+                "declaration-invalid",
+                "placement-invalid",
+                "reader-too-old",
+                "root-chant-required",
+                "not-a-git-repository",
+                "revision-unknown",
+                "kind-unreadable",
+                "kind-invalid",
+                "schema-unreadable",
+                "schema-id-mismatch",
+                "schema-invalid",
+                "location-missing",
+                "intent-record-unknown"
+              ]
+            },
+            "message": {
+              "type": "string"
+            }
+          }
+        },
+        "commits": false
+      }
+    }
+  }
+}

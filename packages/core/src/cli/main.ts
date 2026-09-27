@@ -377,9 +377,15 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant workspace graph --composites` (#2662)
       result.composites = true;
     } else if (arg === "--intent") {
-      // `chant workspace graph --intent <path[:start-end]>` (#2651)
-      result.intent = args[++i];
-      if (!result.intent || result.intent.startsWith("-")) throw new Error("--intent needs a region: --intent <path[:start-end]>");
+      // `chant workspace graph --intent <path[:start-end]>` (#2651), or `--intent --record <id>` with no region.
+      const value = args[i + 1];
+      if (value !== undefined && !value.startsWith("-")) result.intent = args[++i];
+      else if (args.includes("--record")) result.intent = "";
+      else throw new Error("--intent needs a region: --intent <path[:start-end]>, or --intent --record <id>");
+    } else if (arg === "--record") {
+      // `chant workspace graph --intent --record <id>`
+      result.record = args[++i];
+      if (!result.record || result.record.startsWith("-")) throw new Error("--record needs a record id: --record <id>");
     } else if (arg === "--changes") {
       // `chant workspace check --changes <base>..<head>` (#2773)
       result.changes = args[++i];
@@ -952,6 +958,10 @@ Workspace (level 1, #2524):
                         touched it, the decisions whose constrains cover it,
                         the artifacts they pin, and findings with closed codes.
                         Without --kind, every record kind the declaration names
+  workspace graph --intent --record <id> [--at <rev>] [--kind <kind file>...] [--json]
+                        One decision's intent walk over every path: and member:
+                        entry it constrains: the commits in its window, each
+                        own, worked, within-other or unexplained, with counts
 
 Lifecycle (alias: lc):
   lifecycle snapshot <env>  Query API, save metadata to orphan branch

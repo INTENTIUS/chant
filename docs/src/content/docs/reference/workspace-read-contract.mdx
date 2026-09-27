@@ -10,7 +10,7 @@ Tools that show a workspace read it through one contract ([#2536](https://github
 
 | Contract | chant floor | Declaration | Output schemas |
 |---|---|---|---|
-| 1 | 0.81.0 | schema 1 | `ls`, `graph`, `check`, `status`, `records`, `records-since`, `intent`, `composites`, `points`, `changes` and `work-history`, each at `v1` |
+| 1 | 0.81.0 | schema 1 | `ls`, `graph`, `check`, `status`, `records`, `records-since`, `intent`, `intent-record`, `composites`, `points`, `changes` and `work-history`, each at `v1` |
 
 Every document carries `contract`, the version it follows, and `$schema`, its schema's `$id`. Most also carry `chant`, the version of the chant that wrote it. A reader that knows contract 1 refuses a document with any other `contract` value. Given a chant older than the floor, the reader can say so and name the version to install, since that chant doesn't write the contract at all.
 
@@ -29,6 +29,7 @@ Each schema ships in `@intentius/chant` at `src/workspace/<command>.schema.json`
 | [`chant workspace records`](/chant/cli/workspace-records/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/records/v1/records.schema.json` |
 | [`chant workspace records --since`](/chant/cli/workspace-records/#what-changed-between-two-revisions) | `--json` | `https://intentius.io/chant/schemas/workspace/records-since/v1/records-since.schema.json` |
 | [`chant workspace graph --intent`](/chant/cli/workspace-graph/#the-intent-graph) | `--json` | `https://intentius.io/chant/schemas/workspace/intent/v1/intent.schema.json` |
+| [`chant workspace graph --intent --record`](/chant/cli/workspace-graph/#one-records-walk) | `--json` | `https://intentius.io/chant/schemas/workspace/intent-record/v1/intent-record.schema.json` |
 | [`chant workspace graph --composites`](/chant/cli/workspace-graph/#composites-and-components) | always | `https://intentius.io/chant/schemas/workspace/composites/v1/composites.schema.json` |
 | [`chant workspace check --changes`](/chant/cli/workspace-check/#the-forward-coverage-check) | `--json` | `https://intentius.io/chant/schemas/workspace/changes/v1/changes.schema.json` |
 | [`chant workspace points`](/chant/cli/workspace-points/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/points/v1/points.schema.json` |
@@ -51,6 +52,7 @@ A workspace is identified by its declared `name` and a git revision ([ws-016](ht
 | `records --since` | the records at `--since` and at `--at`, or in the working tree without `--at`, compared by id |
 | `graph` | the declaration at the revision, and each member's graph from its source at the revision. With `--kind`, the records and the files they pin or constrain at the revision too |
 | `graph --intent` | the declaration, the region, the records and the files they pin at the revision, and the history reachable from it |
+| `graph --intent --record` | the declaration and the records at the revision, and the history of each path and member the record constrains, reachable from it |
 
 A member's graph comes from running its chant config, so `graph --at` exports the workspace root's tree at the revision to a temporary directory with `git archive`, links the `node_modules` directories installed in the working tree into it, runs each member there and removes the directory. When no member runs, nothing is exported.
 
@@ -198,6 +200,7 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `since-session-unknown` | error, `records --since` | `--since` has a session id's shape and names no commit, and no session has that id ([#2693](https://github.com/INTENTIUS/chant/issues/2693)). |
 | `since-session-open` | reason, `records --since` | `--since` names a session that is still open, so the comparison runs to the working tree. |
 | `intent-region-invalid` | error, `graph --intent` | The region's path, or its line range, does not exist in the tree read. |
+| `intent-record-unknown` | error, `graph --intent --record` | No record of a decision kind read has the id. |
 | `intent-history-shallow` | reason, `graph --intent` | The repository is a shallow clone, so the region's history stops at the clone's boundary. |
 | `intent-plugin-failed` | reason, `graph --intent` | A kind file's `commitJoins` failed for a commit. |
 | `intent-commit-undecided` | finding, `graph --intent` | A commit changed the region when no decision constrained it at path granularity. |
@@ -380,6 +383,30 @@ A work item's window runs from the commit that added its record to the commit th
 A plugin's finding is about the commit it was returned for, so that commit's id comes first in `concerns`. Each of its `refs` that names a node in the graph follows as that node's id. chant first tries a ref as a node id, and then behind each node kind's prefix, such as `commit:` or `artifact:`. After that it tries the ref as a decision's record id or the start of a commit sha. A ref that names nothing in the graph stays in `refs` only. Plugin findings come after chant's own, in commit order. A decision that constrains a path below a directory region has a `constrains` edge to each file under that path, and it does not count as constraining the whole region.
 
 The document joins the others by the member name (`member` on region and file nodes, and `member:<name>` nodes), by the record id (`record` on a decision node, `records[].id` in `graph --kind` and `records`), and by the commit id (`at` and `provenance.commit`).
+
+### One record's walk
+
+`chant workspace graph --intent --record <id> --json` prints a different document, `intent-record`: the walk for one decision over every `path:` and `member:` entry its `constrains` lists. A `path:` entry's history is read as a region's is. A `member:` entry's history is its directory's, less the directories of the members inside it. Each commit appears once, and only the commits inside the record's window are listed. The head fields, `at`, `workspace`, `kinds` and `reasons` are as in `graph --intent`.
+
+| Field | Holds |
+|---|---|
+| `record` | `id` (`record:<kind>/<id>`, the id of the same record's decision node), `recordKind`, `record`, `path`, `title`, `state`, `supersededBy`, `decidedIn` and `constrains` |
+| `record.constrains[]` | every entry as written, with its `granularity`, its `path` (for a member, the member's directory), whether it `exists` and whether it was `walked` |
+| `history` | `rev`, the commit the history was read from, and `shallow` |
+| `window` | `from`, the commit the window opens at, and `until`, the commit that closes it, or `null` |
+| `commits[]` | the commits in the window, newest first by commit date |
+| `counts` | `commits`, a count for each bucket (`own`, `worked`, `withinOther`, `unexplained`), and `outsideWindow`, the commits that changed the region outside the window |
+
+A commit has `sha`, `subject`, `author`, `date`, `trailers` and `pullRequest` as a commit node has them. `unit` is the unit a commit join gave it, or `null`. `entries` names the constrains entries whose history lists it, and `files` the files it changed in the record's region, from the workspace root. For a merge, `files` is read against its first parent. The bucket is the first of these that holds:
+
+| `bucket` | The commit |
+|---|---|
+| `own` | is the record's own work, judged as for a `within` edge with `state: "decided"` |
+| `worked` | is in the window of a work item in `workedBy`: one that is not dropped and that implements the record or covers one of the commit's files by a `path:` entry |
+| `within-other` | is in the window of a decision in `alsoWithin`: another decision whose `path:` entries cover one of the commit's files |
+| `unexplained` | matches none of these |
+
+`workedBy` and `alsoWithin` list every match as `{ recordKind, record, state }`, whatever the bucket. If the record can't be walked, the result is a failure whose `error.code` is the declaration's code, the record kind's, or `intent-record-unknown`.
 
 ## The forward coverage check
 
