@@ -1023,14 +1023,26 @@ export async function runOpOnRuntime(ctx: CommandContext): Promise<number> {
   // whatever the runtime reports through `progress`.
   const progress = ctx.args.progressJson ? ndjsonProgressSink<StepRecord>() : undefined;
 
-  // Ctrl-C aborts in-flight activities (kills their child processes) instead of
-  // orphaning them. The handler is removed in `finally` so it never leaks.
+  // Ctrl-C, or a SIGTERM (the signal a steward's operator sends this process
+  // when it runs beside the steward's turns and the operator itself stops,
+  // and what a plain `kill <pid>` sends with no signal named), aborts
+  // in-flight activities (kills their child processes) instead of orphaning
+  // them. `process.on`, not `.once` (chant#2872's shape, here too): a second
+  // signal arriving before the `finally` below has released this run's lease
+  // (`stewardGate`, for a beside run) must not fall through to Node's default
+  // disposition and skip that release. `stopping` makes a repeat a no-op; the
+  // listeners are removed only after the release, at the very end of
+  // `finally`, not before it.
   const controller = new AbortController();
+  let stopping = false;
   const onSigint = () => {
+    if (stopping) return;
+    stopping = true;
     console.error(formatWarning({ message: "interrupted — stopping Op" }));
     controller.abort();
   };
-  process.once("SIGINT", onSigint);
+  process.on("SIGINT", onSigint);
+  process.on("SIGTERM", onSigint);
 
   try {
     const handle = await runtime.start(config, {
@@ -1107,10 +1119,14 @@ export async function runOpOnRuntime(ctx: CommandContext): Promise<number> {
     console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
     return 1;
   } finally {
-    process.removeListener("SIGINT", onSigint);
     // The turn is over, win or lose — free it so the steward's next round,
-    // or the next hand run, doesn't wait out this run's own TTL (#2750).
+    // or the next hand run, doesn't wait out this run's own TTL (#2750). The
+    // listeners stay registered until after this release (chant#2872): it is
+    // itself async, and removing them first would let a repeat signal in
+    // that window fall through to Node's default disposition and skip it.
     await stewardGate?.release?.();
+    process.removeListener("SIGINT", onSigint);
+    process.removeListener("SIGTERM", onSigint);
   }
 }
 

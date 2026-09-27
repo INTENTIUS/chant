@@ -170,11 +170,21 @@ export async function runOperator(ctx: CommandContext): Promise<number> {
   const leaseTtlMs = ctx.args.leaseTtl ? parseDuration(ctx.args.leaseTtl) : DEFAULT_LEASE_TTL_MS;
 
   const controller = new AbortController();
+  // `process.on`, not `.once`: a `.once` listener is gone the instant it
+  // fires, so a second SIGINT arriving while shutdown is still in flight
+  // (the `finally` below hasn't run yet) has no listener left and takes
+  // Node's default disposition — the process ends right there, before
+  // whatever the `finally` was going to do. Kept registered for the whole
+  // shutdown and only removed once it's actually over; `stopping` makes a
+  // repeat signal a no-op rather than a second `abort()`/log line (#2872).
+  let stopping = false;
   const onSigint = () => {
+    if (stopping) return;
+    stopping = true;
     console.error(formatWarning({ message: "interrupted — stopping operator" }));
     controller.abort();
   };
-  process.once("SIGINT", onSigint);
+  process.on("SIGINT", onSigint);
 
   const printRound = (events: OperatorTickEvent[]) => {
     for (const event of events) console.error(formatInfo(formatRoundLine(event)));
@@ -270,12 +280,24 @@ export async function runStewardOperator(ctx: CommandContext): Promise<number> {
   }
 
   const controller = new AbortController();
+  // `process.on`, not `.once` (#2872): a supervisor that signals both a
+  // process group and a child sends a second SIGTERM close behind the
+  // first. A `.once` listener has already unregistered itself by then, so
+  // that second signal takes Node's default disposition and ends the
+  // process immediately — before the `finally` below releases the
+  // steward's lease. Kept registered for the whole shutdown and removed
+  // only once it's over, so a second, third or later signal is a no-op
+  // (`stopping` guards against re-aborting or re-logging) rather than a
+  // fast exit that skips the release.
+  let stopping = false;
   const onSigint = () => {
+    if (stopping) return;
+    stopping = true;
     console.error(formatWarning({ message: "interrupted — stopping steward" }));
     controller.abort();
   };
-  process.once("SIGINT", onSigint);
-  process.once("SIGTERM", onSigint);
+  process.on("SIGINT", onSigint);
+  process.on("SIGTERM", onSigint);
 
   const printRound = (events: OperatorTickEvent[]) => {
     for (const event of events) console.error(formatInfo(formatRoundLine(event)));
@@ -316,11 +338,17 @@ export async function runStewardOperator(ctx: CommandContext): Promise<number> {
     });
     return 0;
   } finally {
-    process.removeListener("SIGINT", onSigint);
-    process.removeListener("SIGTERM", onSigint);
+    // The listeners stay registered through this whole `finally`, not just
+    // the `try` above (#2872): the lease release below is itself async (two
+    // more git plumbing calls), and a repeat signal landing in that window
+    // is exactly the shape the issue reported — removing the listeners
+    // first, before awaiting the release, would reopen the same hole one
+    // step later. `stopping` (set already) makes every repeat here a no-op.
     // A courtesy: the lease expires on its own if this never runs.
     const { record } = await readLease(stewardLeaseName(steward.name)).catch(() => ({ record: undefined }));
     if (record?.holder === holder) await releaseLease(stewardLeaseName(steward.name), holder, record.token).catch(() => false);
+    process.removeListener("SIGINT", onSigint);
+    process.removeListener("SIGTERM", onSigint);
   }
 }
 
