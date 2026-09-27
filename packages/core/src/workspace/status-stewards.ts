@@ -26,13 +26,17 @@
  *   `chant operator --steward` holds it or until it expires;
  * - an Op's `workLease.held` is the work leases its turns hold (#2748): those
  *   whose holder is `<steward>/<op>@...` (`stewardWorkHolder`), read from the
- *   ledger of the Op's work kind, or the member's own.
+ *   ledger of the Op's work kind, or the member's own;
+ * - an Op the steward runs beside its turns (#2861) has `beside`: whether it
+ *   declares a ready step, and the Op's own lease
+ *   (`refs/chant/lease/[<prefix>]<op>`), which a run of it holds while it runs.
+ *   Its waiting run and its work leases are listed as for any of its Ops.
  */
 
 import { existsSync, realpathSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { discoverOps, discoverStewards } from "../op/discover";
-import { stewardFormFor, stewardLeaseName, type StewardForm } from "../op/steward";
+import { stewardBesideFor, stewardFormFor, stewardLeaseName, type StewardForm } from "../op/steward";
 import { readRunLedger, runEnvOf } from "../lifecycle/run-ledger";
 import { readConvergeLedger, type ConvergeTickRecord } from "../lifecycle/converge-ledger";
 import { leaseRef } from "../lifecycle/lease";
@@ -123,6 +127,21 @@ export interface StatusStewardOp {
    * the steward's turns of this Op hold, a live one while a turn runs.
    */
   workLease: { kind: string | null; held: StatusStewardWorkLease[] } | null;
+  /**
+   * For an Op the steward runs beside its turns (#2861): whether a ready step
+   * says when to start it, and the Op's own lease, which a run of it holds
+   * while it runs (null when none has held it). Null for an Op run as one of
+   * the steward's turns.
+   */
+  beside: { ready: boolean; lease: StatusStewardLease | null } | null;
+}
+
+/** A lease ref as status reads it: locally, never fetched. `live` is false once `expiresAt` has passed. */
+export interface StatusStewardLease {
+  holder: string;
+  acquiredAt: string;
+  expiresAt: string;
+  live: boolean;
 }
 
 /** A work lease a steward's turn holds (#2748). */
@@ -152,7 +171,7 @@ export interface StatusSteward {
    */
   capabilities: { name: string; broker: string | null; declared: boolean }[];
   /** The local steward's own lease, or null when no local operator has held it. */
-  lease: { holder: string; acquiredAt: string; expiresAt: string; live: boolean } | null;
+  lease: StatusStewardLease | null;
   ops: StatusStewardOp[];
   /**
    * The open decision points the steward waits on (#2749): each Op whose
@@ -206,10 +225,11 @@ function isChantProject(dir: string): boolean {
   return existsSync(join(dir, "chant.config.ts")) || existsSync(join(dir, "chant.config.json"));
 }
 
-async function readStewardLease(name: string, memberDir: string, now: string): Promise<StatusSteward["lease"]> {
+/** A lease ref of the member, by its lease name (`_stewards/<name>`, or an Op's). */
+async function readLeaseRef(leaseName: string, memberDir: string, now: string): Promise<StatusStewardLease | null> {
   try {
     const { prefix } = await resolveMemberLedger(memberDir);
-    const sha = await readRefSha(leaseRef(stewardLeaseName(name), prefix), { cwd: memberDir });
+    const sha = await readRefSha(leaseRef(leaseName, prefix), { cwd: memberDir });
     if (!sha) return null;
     const record = JSON.parse((await readBlobBySha(sha, { cwd: memberDir })) ?? "") as Record<string, unknown>;
     if (typeof record.holder !== "string" || typeof record.expiresAt !== "string" || typeof record.acquiredAt !== "string") return null;
@@ -222,6 +242,18 @@ async function readStewardLease(name: string, memberDir: string, now: string): P
   } catch {
     return null;
   }
+}
+
+/** An Op's `beside` entry (#2861): null for an Op run as one of the steward's turns. */
+async function besideOf(
+  declaration: Parameters<typeof stewardBesideFor>[0],
+  op: string,
+  memberDir: string,
+  now: string,
+): Promise<StatusStewardOp["beside"]> {
+  const beside = stewardBesideFor(declaration, op);
+  if (!beside) return null;
+  return { ready: beside.ready !== null && beside.ready !== undefined, lease: await readLeaseRef(op, memberDir, now) };
 }
 
 /** The work leases `steward`'s turns of `op` hold, from the ledger of the Op's kind or the member's. */
@@ -314,6 +346,7 @@ export async function readMemberStewards(
         workLease: op.workLease
           ? { kind: op.workLease.kind ?? null, held: await readHeldWorkLeases(declaration.name, op, memberDir, now) }
           : null,
+        beside: await besideOf(declaration, op.name, memberDir, now),
       });
     }
     stewards.push({
@@ -326,7 +359,7 @@ export async function readMemberStewards(
         const declared = box?.capabilities.find((c) => c.name === name);
         return { name, broker: declared?.broker ?? null, declared: declared !== undefined };
       }),
-      lease: await readStewardLease(declaration.name, memberDir, now),
+      lease: await readLeaseRef(stewardLeaseName(declaration.name), memberDir, now),
       ops,
       waiting,
     });

@@ -12,7 +12,7 @@ import { build } from "../../build";
 import { isResourceDeclarable } from "../../declarable";
 import { collectBuildRootContributors, collectChangeSubscribers } from "../plugins";
 import { discoverOps, discoverStewards } from "../../op/discover";
-import { pickSteward, stewardFormFor, stewardLeaseName, DEFAULT_STEWARD_ENV } from "../../op/steward";
+import { pickSteward, stewardBesideOf, stewardFormFor, stewardLeaseName, stewardTurnOps, DEFAULT_STEWARD_ENV } from "../../op/steward";
 import { loadActivities, loadProfiles } from "../../op/activity-registry";
 import { parseDuration } from "../../op/local-executor";
 import {
@@ -23,6 +23,8 @@ import {
   formatSignalLine,
   DEFAULT_OPERATOR_INTERVAL_MS,
   acquireStewardLease,
+  createBesideState,
+  waitForBesideRuns,
   type ChangeSubscriber,
   type OperatorSignalEvent,
   type OperatorTickEvent,
@@ -279,19 +281,31 @@ export async function runStewardOperator(ctx: CommandContext): Promise<number> {
     for (const event of events) console.error(formatInfo(formatRoundLine(event)));
   };
 
-  const scheduled = steward.ops.filter((op) => op.schedule !== undefined);
+  const turnOps = stewardTurnOps(steward);
+  const scheduled = turnOps.filter((op) => op.schedule !== undefined);
+  const beside = stewardBesideOf(steward).map((b) => b.op);
   try {
     if (ctx.args.once) {
-      const events = await runOperatorRound({ steward, holder, leaseTtlMs, activities, profiles, signal: controller.signal });
+      // One round, and the runs it started beside the turns (#2861) to their end.
+      const besideState = createBesideState();
+      const events = await runOperatorRound({ steward, holder, leaseTtlMs, activities, profiles, signal: controller.signal, besideState, stewardEnv: env });
       printRound(events);
-      return events.some((e) => e.kind === "tick-failed" || e.kind === "steward-busy") ? 1 : 0;
+      await waitForBesideRuns(besideState);
+      const ended = besideState.ended.splice(0);
+      printRound(ended);
+      return events.some((e) => e.kind === "tick-failed" || e.kind === "steward-busy" || e.kind === "ready-failed") ||
+        ended.some((e) => e.kind === "beside-ended" && e.code !== 0 && e.code !== 3)
+        ? 1
+        : 0;
     }
     console.error(formatInfo(
-      `chant operator: steward ${steward.name} (local) runs ${scheduled.length} scheduled Op(s) of ${steward.ops.length}, ` +
-        `checking every ${intervalMs}ms (Ctrl-C to stop)`,
+      `chant operator: steward ${steward.name} (local) runs ${scheduled.length} scheduled Op(s) of ${turnOps.length} as its turns` +
+        (beside.length > 0 ? `, and ${beside.join(", ")} beside them` : "") +
+        `, checking every ${intervalMs}ms (Ctrl-C to stop)`,
     ));
     await runOperatorForever({
       steward,
+      stewardEnv: env,
       holder,
       intervalMs,
       leaseTtlMs,

@@ -109,15 +109,21 @@ export type {
 export {
   discoverConvergeOps, runOperatorRound, runOperatorForever, formatRoundLine,
   formatSignalLine, DEFAULT_OPERATOR_INTERVAL_MS, acquireStewardLease,
-  acquireStewardTurn, STEWARD_TURN_WAIT_MS,
+  acquireStewardTurn, STEWARD_TURN_WAIT_MS, createBesideState, waitForBesideRuns, stopBesideRuns,
 } from "./operator";
+export type { BesideState } from "./operator";
+export {
+  spawnBesideRun, inProcessBesideLauncher, holdBesideLease, askReady, DEFAULT_READY_TIMEOUT_MS,
+} from "./steward-beside";
+export type { BesideStart, BesideExit, BesideHandle, BesideLauncher, BesideWhy, HeldBesideLease, ReadyAnswer } from "./steward-beside";
 export {
   declareSteward, isStewardDeclaration, stewardFormFor, stewardOpConfig, normaliseStewardForm, stewardLeaseName,
-  stewardTurnLeaseName,
+  stewardTurnLeaseName, stewardBesideOf, stewardBesideFor, stewardTurnOps, readinessKeys,
   STEWARD_KIND, STEWARD_FORMS, STEWARD_NAME_PATTERN, DEFAULT_STEWARD_ENV,
 } from "./steward";
 export type {
   StewardDeclaration, StewardDeclarationConfig, StewardForm, StewardFormSpec, StewardOpInput,
+  StewardBeside, StewardBesideInput,
 } from "./steward";
 export { discoverStewards } from "./discover";
 export {

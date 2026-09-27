@@ -600,8 +600,9 @@ describe("stewards in chant workspace status --json (#2731)", () => {
         lastTick: null,
         changesCheckout: false,
         workLease: null,
+        beside: null,
       },
-      { name: "box-release", schedule: null, env: "local", lastRun: null, lastTick: null, changesCheckout: false, workLease: null },
+      { name: "box-release", schedule: null, env: "local", lastRun: null, lastTick: null, changesCheckout: false, workLease: null, beside: null },
       {
         name: "box-dispatch",
         schedule: { cron: "*/5 * * * *", overlap: "skip" },
@@ -622,6 +623,7 @@ describe("stewards in chant workspace status --json (#2731)", () => {
             },
           ],
         },
+        beside: null,
       },
     ]);
     // #2749: nothing the steward runs waits on a decision point.

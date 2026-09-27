@@ -17,7 +17,8 @@ import { recordGateApproval } from "./operator";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
 import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
 import type { CommandContext } from "../registry";
-import { stewardFormFor, stewardTurnLeaseName, DEFAULT_STEWARD_ENV, type StewardDeclaration } from "../../op/steward";
+import { stewardBesideFor, stewardFormFor, stewardTurnLeaseName, DEFAULT_STEWARD_ENV, type StewardDeclaration } from "../../op/steward";
+import { holdBesideLease } from "../../op/steward-beside";
 import { acquireStewardTurn, STEWARD_TURN_WAIT_MS } from "../../op/operator";
 import { releaseLease, currentHolderId, type AcquireLeaseResult } from "../../lifecycle/lease";
 import { StaleLockError } from "../../lifecycle/git";
@@ -557,6 +558,12 @@ type StewardTurnGate =
  * hand. Ctrl-C already means "abort my own run" here; it must not also mean
  * "give up waiting for someone else's turn".
  *
+ * An Op the steward runs beside its turns (#2861) takes the Op's own lease
+ * instead, renewed for as long as the run lasts, and never the turn: the run
+ * is one at a time with the runs the operator starts of it, and holds none
+ * of the steward's other Ops up. Held already, it refuses at once, naming
+ * the holder.
+ *
  * `undefined` (via the caller checking `owner`) when no steward lists this
  * op — the ordinary, untouched path.
  */
@@ -584,6 +591,8 @@ async function stewardTurnGate(opName: string, ctx: CommandContext): Promise<Ste
         `A plain \`chant run ${opName}\` would run it outside that thread, beside the steward instead of one of its turns.`,
     };
   }
+
+  if (stewardBesideFor(owner, opName)) return besideLeaseGate(opName, owner.name, ctx);
 
   const holder = currentHolderId();
   let turn: AcquireLeaseResult;
@@ -617,6 +626,36 @@ async function stewardTurnGate(opName: string, ctx: CommandContext): Promise<Ste
   const lease = turn.lease!;
   const stewardName = owner.name;
   return { ok: true, release: async () => { await releaseLease(stewardTurnLeaseName(stewardName), holder, lease.token).catch(() => false); } };
+}
+
+/**
+ * The lease a `chant run` of an Op beside a steward's turns holds (#2861):
+ * the Op's own, as `--holder` (the operator passes `<steward>/<op>@<its
+ * holder>`) or this process.
+ */
+async function besideLeaseGate(opName: string, steward: string, ctx: CommandContext): Promise<StewardTurnGate> {
+  const holder = ctx.args.holder ?? currentHolderId();
+  let held;
+  try {
+    held = await holdBesideLease(opName, holder);
+  } catch (err) {
+    return {
+      ok: false,
+      message: `Op "${opName}" runs beside steward "${steward}"'s turns, and its lease could not be read`,
+      hint:
+        `${err instanceof StaleLockError ? err.message : err instanceof Error ? err.message : String(err)} ` +
+        `This can happen when a process was killed mid-write; check refs/chant/lease/${opName} for a stale lock.`,
+    };
+  }
+  if (!held.acquired) {
+    return {
+      ok: false,
+      message: `Op "${opName}" runs beside steward "${steward}"'s turns, one run at a time, and a run of it is in progress` +
+        (held.heldBy ? ` (held by ${held.heldBy})` : ""),
+      hint: `Wait for that run to end and re-run \`chant run ${opName}\`; \`chant workspace status --json\` lists it under the steward. Its lease expires on its own if the process holding it died.`,
+    };
+  }
+  return { ok: true, release: held.release };
 }
 
 export async function runOp(ctx: CommandContext): Promise<number> {
@@ -975,7 +1014,10 @@ export async function runOpOnRuntime(ctx: CommandContext): Promise<number> {
   // runs under; it is taken where the run executes, which for a hosted
   // runtime is not this process.
   const work = await resolveRunWork(ctx, config, runtime.name);
-  if (work === null) return 1;
+  if (work === null) {
+    await stewardGate?.release?.();
+    return 1;
+  }
 
   // `--progress-json` streams one NDJSON StepRecord per settled step, fed by
   // whatever the runtime reports through `progress`.
