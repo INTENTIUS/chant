@@ -1,0 +1,134 @@
+---
+title: "GenAI Pipeline"
+description: "genAiPipeline(): remove prompt and completion content, and derive agent RED and token metrics from GenAI spans"
+diataxis: how-to
+order: 9
+---
+
+Agent and LLM workloads instrumented with the OpenTelemetry GenAI semantic conventions put two things on their spans that a collector has to deal with. Prompts, completions, system instructions and tool-call payloads can be recorded as attributes or events, and they often hold user data. The spans also carry what agent metrics need: the operation, the model, the tool, the error type and token counts. `genAiPipeline()` is a collector preset that removes the content by default and turns the spans into metrics.
+
+```ts
+import { genAiPipeline, OtlpExporter, PrometheusExporter } from "@intentius/chant-lexicon-otel";
+
+const tempo = new OtlpExporter({ name: "tempo", endpoint: "tempo:4317", tls: { insecure: true } });
+const prom = new PrometheusExporter({ endpoint: "0.0.0.0:8889" });
+
+export default genAiPipeline({ traceExporters: [tempo], metricExporters: [prom] });
+```
+
+Like [`otlpCollector()`](../composites/), it returns entities: pass them to `collectorYaml()`, export them from a chant project, or hand them to a platform composite as its `config`.
+
+## What it declares
+
+| Pipeline | Receivers | Processors | Exporters |
+|---|---|---|---|
+| `traces` | `otlp` | `memory_limiter`, `transform/genai_content`, `redaction/genai_content`, `batch` | `traceExporters`, `forward/genai` |
+| `traces/genai` | `forward/genai` | `filter/genai_spans` | `spanmetrics/genai`, `sum/genai_tokens` |
+| `metrics/genai` | `spanmetrics/genai`, `sum/genai_tokens` | `batch` | `metricExporters` |
+| `logs` | `otlp` | `memory_limiter`, `transform/genai_content`, `redaction/genai_content`, `batch` | `logExporters` |
+
+The `otlp` receiver listens on 4317 and 4318, and a `health_check` extension on 13133 unless `healthCheck: false`. Exporters default to one `debug` exporter. `logs: false` leaves out the logs pipeline.
+
+## Content is removed unless you keep it
+
+These attributes are deleted from spans, span events and log records:
+
+| Attribute | What it holds |
+|---|---|
+| `gen_ai.system_instructions` | the system prompt |
+| `gen_ai.input.messages` | the messages sent to the model |
+| `gen_ai.output.messages` | the model's reply |
+| `gen_ai.tool.call.arguments`, `gen_ai.tool.call.result` | what a tool was given and returned |
+| `gen_ai.retrieval.query.text`, `gen_ai.retrieval.documents` | retrieval queries and results |
+| `gen_ai.prompt`, `gen_ai.completion` | deprecated, still set by older instrumentation |
+| `gen_ai.prompt.<n>.*`, `gen_ai.completion.<n>.*` | indexed keys some libraries write outside the conventions |
+
+The newer conventions can also send content as a `gen_ai.client.inference.operation.details` event, with the same attributes; those are deleted whether the event arrives as a span event or as a log record. The deprecated content events (`gen_ai.system.message`, `gen_ai.user.message`, `gen_ai.assistant.message`, `gen_ai.tool.message`, `gen_ai.choice`) carry content in the log record body, so for those events the preset deletes `content`, `message` and `tool_calls` from a map body and empties a string body. It matches the event by the record's event name or by an `event.name` attribute.
+
+A `transform` processor does the deleting. The `redaction` processor can't do it: with `allow_all_keys: false` it deletes every key not on its allow list, and with `allow_all_keys: true` it only masks values. So `redaction/genai_content` runs after the transform with `allow_all_keys: true` and the content keys as `blocked_key_patterns`, as a backstop that masks any content value the transform missed. Neither processor touches resource attributes.
+
+To keep content, say so:
+
+```ts
+genAiPipeline({ keepContent: true });
+```
+
+That is the only switch that keeps it, so a config that records prompts shows it at the declaration. `contentAttributes` adds keys of your own to delete, and `maskValues` takes RE2 patterns masked in every attribute value whether content is kept or not (`hashFunction` hashes them instead of writing `****`):
+
+```ts
+genAiPipeline({
+  keepContent: true,
+  maskValues: ["[0-9]{13,16}", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+"],
+  hashFunction: "sha3",
+});
+```
+
+## Agent RED and token metrics
+
+The traces pipeline forwards every span to `traces/genai`, which keeps spans that have a `gen_ai.operation.name` and feeds two connectors. The metrics come from all spans, before anything samples them. To sample exported traces, pass the sampling processors as `sampling`: they run in a `traces/sampled` pipeline fed by a second `forward` connector, after the metrics branch.
+
+`spanmetrics/genai` counts calls and records duration with these dimensions on top of its defaults (`service.name`, `span.name`, `span.kind`, `status.code`): `gen_ai.operation.name`, `gen_ai.request.model`, `gen_ai.tool.name` and `error.type`. `dimensions` adds more. `spanmetrics` counts spans and can't sum an attribute, so token usage comes from the `sum` connector: `sum/genai_tokens` sums `gen_ai.usage.input_tokens` and `gen_ai.usage.output_tokens` by `gen_ai.request.model`. It skips in-process `invoke_agent` and `invoke_workflow` spans, whose usage totals the model calls under them, which are counted on their own spans.
+
+With the default `namespace` of `genai` and the `prometheus` exporter's default suffixes:
+
+| Metric | Prometheus | Type | Labels |
+|---|---|---|---|
+| `genai.calls` | `genai_calls_total` | counter | `service_name`, `span_name`, `span_kind`, `status_code`, `gen_ai_operation_name`, `gen_ai_request_model`, `gen_ai_tool_name`, `error_type` |
+| `genai.duration` | `genai_duration_seconds` | histogram | same as `genai.calls` |
+| `genai.tokens.input` | `genai_tokens_input_total` | counter | `gen_ai_request_model` |
+| `genai.tokens.output` | `genai_tokens_output_total` | counter | `gen_ai_request_model` |
+
+Errors are `genai_calls_total` with `status_code="STATUS_CODE_ERROR"`. A label is absent on a series whose spans lack the attribute, except the token model, which is `unknown` when the span names none. The `prometheus` exporter also sets `job` from the resource's `service.name`, and that is the only service label the token counters have.
+
+`genAiMetrics(options)` returns these names, Prometheus names and dimensions for the same options, so a dashboard can read them instead of repeating strings, and a renamed `namespace` moves the panels with it.
+
+Two things about the `sum` connector at the pinned collector release: it emits delta sums, which the `prometheus` exporter accumulates but an exporter that needs cumulative input does not; and it adds each value once per attribute it splits by, so the preset splits by the model alone. OTEL107 reports a `sum` metric with more than one attribute.
+
+## Semantic-conventions pin
+
+The attribute keys follow `GENAI_SEMCONV_PIN`: `github.com/open-telemetry/semantic-conventions` `v1.41.1`, the last release of that repository that defines `gen_ai.*`. The GenAI conventions have since moved to `github.com/open-telemetry/semantic-conventions-genai`, which had no release when the pin was set. The pin moves with this package, the way `COLLECTOR_PIN` does.
+
+The emitted YAML says which version the keys follow in a `# chant:` line, and [`collectorTopology()`](../topology/) returns it under `semconv`, with the components whose config uses a `gen_ai.` attribute:
+
+```ts
+{
+  namespace: "gen_ai",
+  source: "github.com/open-telemetry/semantic-conventions",
+  version: "v1.41.1",
+  components: ["transform/genai_content", "redaction/genai_content", "filter/genai_spans", "spanmetrics/genai", "sum/genai_tokens"],
+}
+```
+
+## Wiring the pieces yourself
+
+`genAiComponents(options)` returns the same components without receivers, exporters or pipelines, for a collector you lay out yourself:
+
+| Field | Component |
+|---|---|
+| `contentRemoval` | `transform/genai_content`, absent with `keepContent` |
+| `redaction` | `redaction/genai_content`, absent with `keepContent` and no `maskValues` |
+| `processors` | the two above in the order to run them |
+| `forward`, `genAiSpans` | `forward/genai` and `filter/genai_spans`, the metrics branch |
+| `spanMetrics`, `tokenUsage` | `spanmetrics/genai` and `sum/genai_tokens` |
+| `metrics` | what `genAiMetrics()` returns |
+| `semconv` | `GENAI_SEMCONV_PIN` |
+
+```ts
+import { genAiComponents, OtlpReceiver, DebugExporter, Pipeline } from "@intentius/chant-lexicon-otel";
+
+const genai = genAiComponents();
+const otlp = new OtlpReceiver({ protocols: { grpc: { endpoint: "0.0.0.0:4317" } } });
+const debug = new DebugExporter({});
+
+export const traces = new Pipeline({
+  signal: "traces",
+  receivers: [otlp],
+  processors: genai.processors,
+  exporters: [debug, genai.spanMetrics],
+});
+export const metrics = new Pipeline({ signal: "metrics", receivers: [genai.spanMetrics], exporters: [debug] });
+```
+
+## Checking it against the collector
+
+The lexicon's tests render the preset in several configurations and run `otelcol validate` on each when `otelcol-contrib` is on `PATH` or `OTELCOL_BIN` names a contrib build. With the binary present they also run the collector, send GenAI spans and events through it, check that no content reaches the exporter unless `keepContent` is set, and read the metrics above from the `prometheus` exporter. Without the binary those tests skip and the structural ones still run.

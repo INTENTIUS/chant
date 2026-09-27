@@ -24,6 +24,12 @@
  *   the top of the emitted YAML, so the file says which schema each
  *   non-built-in component was checked against. The collector ignores it.
  * - OTEL109 fails a build whose custom component has no usable pin.
+ *
+ * Semantic-convention pins (`GENAI_SEMCONV_PIN`) record which version of an
+ * attribute vocabulary a preset's keys follow. They are not tied to a
+ * component type, so `collectorTopology()` reports them under `semconv` for
+ * each component whose config uses that vocabulary, and the serializer writes
+ * one `# chant: semconv` line for them.
  */
 
 import { createResource } from "@intentius/chant/runtime";
@@ -47,6 +53,24 @@ export interface SchemaPin {
 export const COLLECTOR_PIN: SchemaPin = Object.freeze({
   source: "github.com/open-telemetry/opentelemetry-collector-contrib",
   version: "v0.130.0",
+});
+
+/**
+ * The OpenTelemetry GenAI semantic conventions the GenAI preset
+ * (`genAiPipeline()`) follows: which attributes carry prompt and completion
+ * content, and which name the operation, model, tool and token usage.
+ *
+ * v1.41.1 is the last semantic-conventions release that defines `gen_ai.*`
+ * itself. From v1.42.0 the GenAI conventions live in
+ * github.com/open-telemetry/semantic-conventions-genai, which had published no
+ * release when this pin was set; move the pin there once it does. Like
+ * `COLLECTOR_PIN`, it moves only when this package does, and
+ * `collectorTopology()` reports it for every component whose config names a
+ * `gen_ai.` attribute.
+ */
+export const GENAI_SEMCONV_PIN: SchemaPin = Object.freeze({
+  source: "github.com/open-telemetry/semantic-conventions",
+  version: "v1.41.1",
 });
 
 /** A zod-compatible schema: anything with `safeParse`. Keeps zod optional. */

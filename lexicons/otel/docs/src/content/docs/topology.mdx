@@ -36,6 +36,13 @@ interface CollectorTopology {
   }>;
   exporters: Array<{ id: string; type: string; endpoints: string[]; pipelines: string[]; signals: string[] }>;
   edges: Array<{ connector: string; from: string; fromSignal: string; to: string; toSignal: string }>;
+  semconv: Array<{
+    namespace: string;          // "gen_ai"
+    source: string;             // "github.com/open-telemetry/semantic-conventions"
+    version: string;            // "v1.41.1"
+    digest?: string;
+    components: string[];       // component ids whose config uses the namespace
+  }>;
 }
 ```
 
@@ -50,5 +57,9 @@ interface CollectorTopology {
 Only pairs the connector supports are edges, so a `count` connector fed by traces and feeding both a metrics and a logs pipeline has one edge, to metrics. For a connector whose definition isn't loaded, every (from, to) pair is reported. Connectors are not listed under `exporters`, which answers where telemetry leaves the collector.
 
 `endpoints` are what the config states, with the collector's defaults filled in where a component has one (an `otlp` receiver with an empty `grpc` block reports `localhost:4317`). A definition's `endpoints` function decides them; a component with no loaded definition reports its `endpoint` key when it has one. The `googlecloud` exporter reports `googlecloud://projects/<project>`, since it sends to Google's APIs rather than to an address in the config.
+
+## Semantic-convention pins
+
+A collector config names attributes (a `spanmetrics` dimension, a key an OTTL statement deletes) but can't say which version of the semantic conventions those names come from. `semconv` answers that for the vocabularies this package pins: for each one the config uses, the pin this package follows and the components that use it. Today that is `gen_ai`, pinned by `GENAI_SEMCONV_PIN`, and a component uses it when any key or value in its config names a `gen_ai.` attribute. The [GenAI preset](../genai-pipeline/) is the usual source. `semconv` is empty when no pinned vocabulary appears. The serializer writes the same fact as a `# chant: semconv` line at the top of the YAML.
 
 Parsing a built file and reading the declaration give the same topology, which the lexicon's tests assert.

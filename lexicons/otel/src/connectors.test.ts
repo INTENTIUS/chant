@@ -16,6 +16,7 @@ import {
   RoutingConnector,
   ServiceGraphConnector,
   SpanMetricsConnector,
+  SumConnector,
 } from "./components";
 import { collectorYaml } from "./collector";
 import { COLLECTOR_PIN, componentEntityType, defineComponent } from "./define";
@@ -61,7 +62,7 @@ describe("connector as a component kind", () => {
   });
 
   test("the built-ins are connectors pinned to the collector release", () => {
-    for (const Cls of [SpanMetricsConnector, ServiceGraphConnector, RoutingConnector, ForwardConnector, CountConnector]) {
+    for (const Cls of [SpanMetricsConnector, ServiceGraphConnector, RoutingConnector, ForwardConnector, CountConnector, SumConnector]) {
       expect(Cls.definition.kind).toBe("connector");
       expect(Cls.definition.builtin).toBe(true);
       expect(Cls.definition.pin).toEqual(COLLECTOR_PIN);

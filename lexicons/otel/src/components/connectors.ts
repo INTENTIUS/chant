@@ -1,5 +1,5 @@
 /**
- * Built-in connectors: spanmetrics, servicegraph, routing, forward, count.
+ * Built-in connectors: spanmetrics, servicegraph, routing, forward, count, sum.
  *
  * A connector is an exporter in one pipeline and a receiver in another. Put
  * the same entity in `exporters` of the pipeline that feeds it and in
@@ -201,6 +201,76 @@ export const CountConnector = defineBuiltin<CountConnectorConfig, "connector", "
         }
       }
     }
+    return problems;
+  },
+});
+
+// ── sum ──────────────────────────────────────────────────────────────
+
+export interface SumMetricInfo {
+  /** The attribute whose numeric value is summed. Strings that parse as numbers count; others are skipped. */
+  source_attribute: string;
+  description?: string;
+  /** OTTL conditions; an item is summed when any matches. None sums every item that has the attribute. */
+  conditions?: string[];
+  /**
+   * Attributes to split the sum by. Not supported for `metrics`. An item
+   * missing one of them is skipped unless it has a `default_value`. Use at
+   * most one: with more, the pinned collector adds each value once per
+   * attribute (OTEL107 reports it).
+   */
+  attributes?: Array<{ key: string; default_value?: string | number | boolean }>;
+}
+
+/**
+ * Each key is the name of a metric to emit. The connector emits monotonic
+ * sums with delta temporality; the `prometheus` exporter accumulates them,
+ * while an exporter that needs cumulative input wants a `deltatocumulative`
+ * processor in front of it.
+ */
+export interface SumConnectorConfig {
+  spans?: Record<string, SumMetricInfo>;
+  spanevents?: Record<string, SumMetricInfo>;
+  metrics?: Record<string, SumMetricInfo>;
+  datapoints?: Record<string, SumMetricInfo>;
+  logs?: Record<string, SumMetricInfo>;
+}
+
+/** Sums a numeric attribute of spans, span events, data points or log records, as metrics. */
+export const SumConnector = defineBuiltin<SumConnectorConfig, "connector", "sum">({
+  kind: "connector",
+  type: "sum",
+  description: "Sums a numeric attribute of spans, span events, data points or log records and emits the sums as metrics",
+  connects: [
+    { from: "traces", to: "metrics" },
+    { from: "metrics", to: "metrics" },
+    { from: "logs", to: "metrics" },
+  ],
+  validate: (c) => {
+    const problems: string[] = [];
+    let total = 0;
+    for (const [section, metrics] of Object.entries(c) as Array<[string, Record<string, SumMetricInfo> | undefined]>) {
+      for (const [name, info] of Object.entries(metrics ?? {})) {
+        total++;
+        if (name === "") problems.push(`${section}: metric name missing`);
+        if (!info?.source_attribute) problems.push(`${section}.${name}: source_attribute is missing`);
+        if (section === "metrics" && (info?.attributes ?? []).length > 0) {
+          problems.push(`${section}.${name}: attributes are not supported when summing metrics`);
+        }
+        (info?.attributes ?? []).forEach((a, i) => {
+          if (!a.key) problems.push(`${section}.${name}.attributes[${i}]: key is missing`);
+        });
+        // At the pinned release the connector adds each value once per
+        // attribute key (sumconnector summer.increment), so two keys double
+        // every sum.
+        if ((info?.attributes ?? []).length > 1) {
+          problems.push(
+            `${section}.${name}: more than one attribute multiplies each sum by the number of attributes in the pinned collector; split by one attribute`,
+          );
+        }
+      }
+    }
+    if (total === 0) problems.push("no metric is configured, so the connector emits nothing");
     return problems;
   },
 });

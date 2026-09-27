@@ -20,7 +20,7 @@ export { otlp, batch, backend, traces };
 | receivers | otlp, prometheus, hostmetrics, filelog, k8s_cluster, kubeletstats |
 | processors | batch, memory_limiter, resource, attributes, k8sattributes, resourcedetection, filter, transform, redaction |
 | exporters | otlp, otlphttp, debug, prometheus, googlecloud |
-| connectors | spanmetrics, servicegraph, routing, forward, count |
+| connectors | spanmetrics, servicegraph, routing, forward, count, sum |
 | extensions | health_check, pprof, zpages |
 
 The config types follow the collector-contrib release in `COLLECTOR_PIN`.
@@ -38,6 +38,10 @@ export const red = new Pipeline({ signal: "metrics", name: "red", receivers: [sp
 
 Each connector supports fixed signal pairs (`spanmetrics`: traces to metrics). OTEL101 fails a connector listed on one side only, OTEL112 fails a pipeline whose signal the connector can't pair, and `collectorTopology()` reports each pipeline-to-pipeline hop in `edges`. A custom connector declares its pairs with `connects` in `defineComponent`.
 
+## GenAI preset
+
+`genAiPipeline(options)` returns a collector for workloads that emit OpenTelemetry GenAI spans. Prompt, completion, system-instruction and tool-call content is deleted from spans, span events and log records unless `keepContent: true` is set, and every GenAI span becomes call, error, duration and token metrics before any sampling. The attribute keys follow `GENAI_SEMCONV_PIN` (semantic-conventions v1.41.1), which `collectorTopology()` returns under `semconv`. `genAiComponents()` gives the pieces for pipelines of your own, and `genAiMetrics()` the metric names a dashboard reads.
+
 ## Components chant doesn't ship
 
 `defineComponent<Config>()({ kind, type, pin, validate?, endpoints?, connects? })` returns a class that serializes and lints like a built-in. `pin` records the schema source and version the config type follows; it is written as a `# chant:` comment above the emitted config and returned by `collectorTopology()`.
@@ -50,7 +54,7 @@ OTEL001 and OTEL002 run on source (id syntax, literal credentials). OTEL101 to O
 
 - `collectorYaml(entities)` and `buildCollectorConfig(entities)` render a config inside another lexicon (the k8s `GkeOtelCollector` uses them).
 - `validateCollectorConfig(config)` and `validateCollectorEntities(entities)` run the checks without a build.
-- `collectorTopology(config)` and `collectorTopologyOf(entities)` return pipelines, endpoints, schema pins, the signals each exporter carries, and the connector edges between pipelines.
+- `collectorTopology(config)` and `collectorTopologyOf(entities)` return pipelines, endpoints, schema pins, the signals each exporter carries, the connector edges between pipelines, and the semantic-convention pins the config's attribute keys follow.
 
 ## Project structure
 
@@ -59,5 +63,6 @@ OTEL001 and OTEL002 run on source (id syntax, literal credentials). OTEL101 to O
 - `src/pipeline.ts`: `Pipeline` and `Service`
 - `src/collector.ts`, `src/yaml.ts`: entities to config to YAML
 - `src/validate-config.ts`, `src/lint/`: checks
-- `src/topology.ts`: the read surface
-- `examples/`: getting-started, k8s-node-agent, custom-component
+- `src/topology.ts`, `src/semconv.ts`: the read surface
+- `src/genai.ts`: the GenAI preset
+- `examples/`: getting-started, k8s-node-agent, genai-agent, custom-component
