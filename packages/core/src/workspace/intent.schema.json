@@ -542,6 +542,7 @@
         "provenance",
         "decided_by",
         "decided_on",
+        "decidedIn",
         "reviews",
         "supersededBy",
         "supersedes",
@@ -650,6 +651,10 @@
             "string",
             "null"
           ]
+        },
+        "decidedIn": {
+          "$ref": "#/$defs/decidedIn",
+          "description": "Its window opens at this commit, or, when null, at the commit that added the record."
         },
         "reviews": {
           "type": "object",
@@ -1440,6 +1445,32 @@
             "null"
           ],
           "description": "The linked record's state, or null when no record has the id."
+        }
+      }
+    },
+    "decidedIn": {
+      "description": "Added in contract 1. The commit that last moved the record into an approved state and kept it there: a state the kind's approval ranks above 0, or one of its closedStates when it has no approval. Read from the history of the record's file reachable from the revision read, or HEAD in the working tree. A record added approved was decided by the commit that added it. Null when the record is not approved in that history.",
+      "type": [
+        "object",
+        "null"
+      ],
+      "required": [
+        "sha",
+        "date",
+        "subject"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40,64}$"
+        },
+        "date": {
+          "type": "string",
+          "description": "The author date, ISO 8601."
+        },
+        "subject": {
+          "type": "string"
         }
       }
     }

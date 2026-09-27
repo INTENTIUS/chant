@@ -53,9 +53,10 @@ function withinLines(doc: Result, d: DecisionNode): string[] {
 function decisionLine(d: DecisionNode): string {
   const via = d.constrains.length > 0 ? d.constrains.map((c) => `${c.entry} (${c.granularity})`).join(", ") : "through supersession only";
   const by = d.decided_by ? `, decided by ${d.decided_by}${d.decided_on ? ` on ${d.decided_on}` : ""}` : "";
+  const decidedIn = d.decidedIn ? ` in ${short(d.decidedIn.sha)}` : "";
   const reviews = `${d.reviews.agree} agree, ${d.reviews.dissent} dissent, ${d.reviews.abstain} abstain`;
   const superseded = d.supersededBy ? `, superseded by ${d.supersededBy}` : "";
-  return `decision  ${d.record} ${d.state ?? "stateless"}${superseded}: ${d.title ?? d.path}; constrains ${via}${by}; ${reviews}; ${d.provenance.level}${d.valid ? "" : `; invalid: ${d.reasons.map((r) => r.code).join(", ")}`}`;
+  return `decision  ${d.record} ${d.state ?? "stateless"}${superseded}: ${d.title ?? d.path}; constrains ${via}${by}${decidedIn}; ${reviews}; ${d.provenance.level}${d.valid ? "" : `; invalid: ${d.reasons.map((r) => r.code).join(", ")}`}`;
 }
 
 /** A work item, then the commits made inside its window (#2683). */

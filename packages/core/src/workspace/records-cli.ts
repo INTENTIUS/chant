@@ -24,6 +24,7 @@ import { formatError } from "../cli/format";
 import type { CommandContext } from "../cli/registry";
 import { findWorkspaceRoot } from "../project-root";
 import { fileDigest, isWorkspacePath } from "./record-assets";
+import { decidedCommits, type DecidedIn } from "./record-decided";
 import { gitRevisionSource, gitRoot, resolveRevision, workingTreeSource, type RecordSource } from "./record-source";
 import { declaredRecordKinds, readDeclaration, WorkspaceReadError, type RecordKindDeclaration } from "./declaration";
 import { declaredKindFile } from "./declared-kinds";
@@ -100,6 +101,13 @@ export type RecordView = RecordEntry & {
    * lease is live state and not part of a revision.
    */
   lease?: { holder: string; token: string; acquiredAt: string; expiresAt: string } | null;
+  /**
+   * For a kind with approval ranks that is not a work kind, read in git: the
+   * commit that last moved the record into an approved state and kept it
+   * there, or null when the record is not approved in the history read
+   * (`record-decided.ts`). The intent graph's windows open at this commit.
+   */
+  decidedIn?: DecidedIn | null;
 };
 
 /** The role in the trust policy whose holders' verdicts the quorum does not count (#2671). */
@@ -327,6 +335,10 @@ export async function queryRecords(query: RecordsQuery): Promise<RecordsDocument
       ...(quorumOptions ? { quorum: computeQuorum(loaded.kind, r, quorumOptions) } : {}),
       ...(seals ? authorSeal(loaded.kind, r, policy, seals.checkRecordSeal) : {}),
     }));
+    if (loaded.kind.approval && !loaded.kind.work && top) {
+      const decided = decidedCommits(top, at ?? "HEAD", records.map((r) => r.path), loaded.kind);
+      for (const r of records) r.decidedIn = decided.get(r.path) ?? null;
+    }
     if (loaded.kind.work && query.workGaps !== false && top) await raiseWorkGaps(loaded, records, { root, workspaceRoot, at: query.at });
     if (loaded.kind.work && at === null && top) {
       const { activeWorkLeases } = await import("../lifecycle/work-lease");

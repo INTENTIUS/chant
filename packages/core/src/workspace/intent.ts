@@ -44,6 +44,7 @@ import { loadKindRegistry } from "./kinds";
 import { resolveLinks, type LinkTableRow } from "./links";
 import { sourceMemberHandles } from "./member-handles";
 import { constraintCovers, isWorkspacePath, memberHolding } from "./record-assets";
+import type { DecidedIn } from "./record-decided";
 import { importKindModule, loadRecordKind, parseFrontMatter, RecordReadError, supersedesTargets, type LoadedRecordKind } from "./records";
 import { queryRecords, type RecordView } from "./records-cli";
 import { isPluginCode, type PluginCode, type ReasonCode } from "./reason-codes";
@@ -232,6 +233,13 @@ export interface DecisionNode {
   provenance: { level: ProvenanceLevel; commit: string | null; reason: string };
   decided_by: string | null;
   decided_on: string | null;
+  /**
+   * The commit that last moved the record into an approved state and kept it
+   * there, from the history read (`record-decided.ts`), or null when the
+   * record is not approved there. Its window opens at this commit, or at the
+   * commit that added the record when this is null.
+   */
+  decidedIn: DecidedIn | null;
   reviews: { agree: number; dissent: number; abstain: number; openConcerns: number };
   supersededBy: string | null;
   /** The ids of the records this one's supersedes links name. */
@@ -484,6 +492,11 @@ function closingCommit(top: string, rev: string, path: string, stateField: strin
     closing = sha;
   }
   return closing;
+}
+
+/** The commit a decision record's window opens at: the one that decided it, or, when it is not approved, the one that added it. */
+export function windowOpening(top: string, rev: string, view: Pick<RecordView, "path" | "decidedIn">): string | null {
+  return view.decidedIn?.sha ?? addingCommit(top, rev, view.path);
 }
 
 /** `commit` and every commit between it and `rev` that has it as an ancestor. */
@@ -822,6 +835,7 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
       provenance: { level: v.provenance.level, commit: v.provenance.commit, reason: v.provenance.reason },
       decided_by: stringOr(v.data?.decided_by),
       decided_on: stringOr(v.data?.decided_on),
+      decidedIn: v.decidedIn ?? null,
       reviews: reviewSummary(v.data),
       supersededBy: v.supersededBy,
       supersedes,
@@ -988,14 +1002,15 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
   }
 
   // Which decisions covered the region at each commit's time: from the commit
-  // that added the record until the commit that added the record superseding it.
+  // that decided the record, or added it when it is not approved, until the
+  // commit that opened the window of the record superseding it.
   const windows = new Map<string, { from: Set<string>; until: Set<string> | null }>();
   if (rev) {
     for (const c of covering) {
-      const added = addingCommit(top, rev, c.view.path);
+      const opened = windowOpening(top, rev, c.view);
       const successor = c.view.supersededBy ? decisionById.get(`${c.node.recordKind}/${c.view.supersededBy}`) : undefined;
-      const replaced = successor ? addingCommit(top, rev, successor.view.path) : null;
-      windows.set(c.node.id, { from: added ? descendants(top, added, rev) : new Set(), until: replaced ? descendants(top, replaced, rev) : null });
+      const replaced = successor ? windowOpening(top, rev, successor.view) : null;
+      windows.set(c.node.id, { from: opened ? descendants(top, opened, rev) : new Set(), until: replaced ? descendants(top, replaced, rev) : null });
     }
   }
   // Work items (#2683): the records of each work kind whose constrains cover

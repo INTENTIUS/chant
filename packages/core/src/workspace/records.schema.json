@@ -5,6 +5,17 @@
   "description": "What `chant workspace records --json` prints, version 1 of the read contract for records (#2536). This is the first-test slice (#2546): records are unsealed and there is no workspace declaration yet. Readers ignore fields they do not know; a field is only ever added within a version. The reason and error codes are closed lists: a new code is a new contract version. Contract version 1 is written by chant 0.81.0 and newer; a reader that needs it refuses output whose `contract` it doesn't know. Every code is in the one closed list of `reason-codes.ts`.",
   "oneOf": [{ "$ref": "#/$defs/result" }, { "$ref": "#/$defs/failure" }, { "$ref": "#/$defs/set" }],
   "$defs": {
+    "decidedIn": {
+      "description": "The commit that last moved the record into an approved state and kept it there: a state the kind's approval ranks above 0, or one of its closedStates when it has no approval. Read from the history of the record's file reachable from the revision read, or HEAD in the working tree. A record added approved was decided by the commit that added it. Null when the record is not approved in that history.",
+      "type": ["object", "null"],
+      "required": ["sha", "date", "subject"],
+      "additionalProperties": false,
+      "properties": {
+        "sha": { "type": "string", "pattern": "^[0-9a-f]{40,64}$" },
+        "date": { "type": "string", "description": "The author date, ISO 8601." },
+        "subject": { "type": "string" }
+      }
+    },
     "set": {
       "description": "Added in contract 1 by #2680. What records prints without --kind when the workspace declaration names record kinds: one result or failure per declared kind, in the declaration's order (the workspace's own kinds, then each member's in member order). Exit code 1 when any kind's read failed; the others are still read and listed.",
       "type": "object",
@@ -131,6 +142,10 @@
           "description": "Added in contract 1 by #2774. The ids of records whose remediates link names this one, in path order. Unlike supersededBy, several records may remediate the same one, and a remediation never changes this record's state or supersededBy: it stays exactly as current as it was.",
           "type": "array",
           "items": { "type": "string" }
+        },
+        "decidedIn": {
+          "description": "Added in contract 1. Present for a kind with approval ranks that is not a work kind, read in a git repository.",
+          "$ref": "#/$defs/decidedIn"
         },
         "data": {
           "type": ["object", "null"],
