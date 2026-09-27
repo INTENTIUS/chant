@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { workingTreeSource } from "./record-source";
-import { computeQuorum, DEFAULT_QUORUM, loadRecordKind, normalisePrincipal, readRecords, recordTextDigest, type QuorumOptions, type RecordEntry } from "./records";
+import { computeQuorum, DEFAULT_QUORUM, loadRecordKind, normalisePrincipal, readRecords, recordTextDigest as rawDigest, type QuorumOptions, type RecordEntry } from "./records";
 
 const REPO = join(import.meta.dirname, "..", "..", "..", "..");
 const DECISIONS = join(REPO, "docs", "design", "decisions");
@@ -34,6 +34,13 @@ function review(reviewer: string, verdict: string, extra: Record<string, string>
     .join("\n");
 }
 
+/**
+ * A decision's digest: the decision kind names a ratified state, so its
+ * state line leaves the digest with the reviews and seal blocks (#2873).
+ * The rule tests below hold for that list as for the reviews block alone.
+ */
+const recordTextDigest = (text: string, fields: string | readonly string[] | null = ["reviews", "seal", "state"]) => rawDigest(text, fields);
+
 const BARE = recordTextDigest(SAMPLE);
 
 describe("recordTextDigest", () => {
@@ -41,7 +48,7 @@ describe("recordTextDigest", () => {
     expect(BARE).toMatch(/^[0-9a-f]{64}$/);
     const lines = SAMPLE.split("\n");
     const without = lines.filter((l) => l !== "reviews: []").join("\n");
-    expect(recordTextDigest(SAMPLE)).toBe(recordTextDigest(without, null));
+    expect(rawDigest(SAMPLE)).toBe(rawDigest(without, null));
   });
 
   test("does not move when a verdict is added, changed or removed", () => {
@@ -78,7 +85,7 @@ describe("recordTextDigest", () => {
       const file = join(dir, "ws-003.md");
       writeFileSync(file, withReviews(`${review("alice", "agree")}\n${review("bob", "dissent")}`));
       // The recipe in docs/src/content/docs/cli/workspace-records.mdx.
-      const awk = `awk 'NR==1&&$0=="---"{fm=1;print;next} fm&&$0=="---"{fm=0;skip=0;print;next} fm&&/^reviews[ \\t]*:/{skip=1;next} fm&&skip&&/^([ \\t#-]|$)/{next} {skip=0;print}' "${file}" | shasum -a 256`;
+      const awk = `awk 'NR==1&&$0=="---"{fm=1;print;next} fm&&$0=="---"{fm=0;skip=0;print;next} fm&&/^(reviews|seal|state)[ \\t]*:/{skip=1;next} fm&&skip&&/^([ \\t#-]|$)/{next} {skip=0;print}' "${file}" | shasum -a 256`;
       const out = execFileSync("sh", ["-c", awk], { encoding: "utf-8" });
       expect(out.split(" ")[0]).toBe(BARE);
     } finally {

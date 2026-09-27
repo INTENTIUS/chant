@@ -164,7 +164,8 @@ describe("records review --session (#2693)", () => {
     const root = declared();
     const { path } = await opened(root);
     const decision = join(root, "decisions", "ref-001-how-the-app-is-deployed.md");
-    const digest = recordTextDigest(readFileSync(decision, "utf-8"));
+    // The decision kind names a ratified state, so the state leaves the digest too (#2873).
+    const digest = recordTextDigest(readFileSync(decision, "utf-8"), ["reviews", "seal", "state"]);
 
     const dry = await reviewRecord({ kind: DECISIONS_KIND, id: "ref-001", verdict: "agree", by: "alice", session: "S-0002", dryRun: true, cwd: root });
     review.expectValid(dry);
