@@ -38,6 +38,7 @@ import {
   RecordReadError,
   type LoadedRecordKind,
   type Quorum,
+  type QuorumOptions,
   type ReadErrorCode,
   type ReadRecordsResult,
   type RecordEntry,
@@ -211,6 +212,24 @@ function declaredQuorum(tree: WorkspaceTree): { need: number; needFrom: "declara
 }
 
 /**
+ * The options a kind's quorum is computed with, or undefined when the kind
+ * has no reviews list: the need from the declaration in the tree read, and
+ * the agents, whether verdicts need a seal, and the keys a seal verifies
+ * against, all from the policy at base (#2671, #2687). `records` and the
+ * ratified check of `records new` and `amend` (#2873) both use it.
+ */
+export async function quorumOptionsFor(loaded: LoadedRecordKind, tree: WorkspaceTree, policy: TrustPolicy): Promise<QuorumOptions | undefined> {
+  if (!loaded.kind.reviews) return undefined;
+  const { checkVerdictSeal } = await import("./trust/seal");
+  return {
+    ...declaredQuorum(tree),
+    agents: new Set((policy.roles[AGENT_ROLE] ?? []).map(normalisePrincipal)),
+    attestation: policy.active,
+    verifySeal: (v: SealInput) => checkVerdictSeal(policy, v),
+  };
+}
+
+/**
  * Where a kind's pinned paths resolve: the workspace whose declaration sits
  * nearest above the kind file, when it is inside the repository, or else the
  * repository root. Relative to `root`, with / separators.
@@ -300,19 +319,8 @@ export async function queryRecords(query: RecordsQuery): Promise<RecordsDocument
       paths: result.records.map((r) => r.path),
       attestors: policy.active ? await activeAttestors() : [],
     });
-    // The quorum: the need from the declaration in the tree read, agents,
-    // whether verdicts need a seal, and the keys a seal verifies against,
-    // all from the policy at base (#2671, #2687).
     const seals = loaded.kind.reviews ? await import("./trust/seal") : undefined;
-    const checkVerdictSeal = seals?.checkVerdictSeal;
-    const quorumOptions = checkVerdictSeal
-      ? {
-          ...declaredQuorum(tree),
-          agents: new Set((policy.roles[AGENT_ROLE] ?? []).map(normalisePrincipal)),
-          attestation: policy.active,
-          verifySeal: (v: SealInput) => checkVerdictSeal(policy, v),
-        }
-      : undefined;
+    const quorumOptions = await quorumOptionsFor(loaded, tree, policy);
     const records: RecordView[] = result.records.map((r) => ({
       ...r,
       provenance: provenance.get(r.path)!,

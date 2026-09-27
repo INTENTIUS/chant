@@ -199,7 +199,7 @@ describe.skipIf(!hasSshKeygen)("author seals under a signers file at base", () =
     const doc = await amend(r, { evidence: [] });
     if ("error" in doc) throw new Error(doc.error.message);
     expect(doc.changed).toEqual(["evidence", "seal"]);
-    expect(doc.sealDropped).toMatch(/ws-003 was sealed by lex00, and the amendment moves its digest, so the seal was removed: seal it again with records amend ws-003 --sign/);
+    expect(doc.sealDropped).toMatch(/ws-003 was sealed by lex00, and the amendment moves its digest or its state, so the seal was removed: seal it again with records amend ws-003 --sign/);
     expect(readFileSync(join(r.dir, FILE), "utf-8")).not.toMatch(/^seal:/m);
     // Changing only the reviews leaves the digest, so the seal stays.
     await amend(r, {}, lex);
@@ -213,6 +213,30 @@ describe.skipIf(!hasSshKeygen)("author seals under a signers file at base", () =
     const rec = await record(r);
     expect(rec).toMatchObject({ attested: false, attestation: { code: "seal-missing" } });
     expect(warningCodes(rec)).toContain("record-unattested");
+  });
+
+  test("a move of state alone drops the seal, which signs the state though the digest leaves it out (#2873)", async () => {
+    const { r, lex } = workspace("state");
+    await amend(r, {}, lex);
+    const digest = (await record(r)).digest;
+    const doc = await amend(r, { state: "superseded" });
+    if ("error" in doc) throw new Error(doc.error.message);
+    expect(doc.changed).toEqual(["state", "seal"]);
+    expect(doc.sealDropped).toMatch(/moves its digest or its state/);
+    expect((await record(r)).digest).toBe(digest);
+  });
+
+  test("ratifying counts only verdicts whose seal verifies against the signers at base (#2873)", async () => {
+    const { r, alice, mallory } = workspace("ratify");
+    for (const k of [alice, mallory]) {
+      const by = k === alice ? "alice@example.test" : "mallory";
+      const doc = await reviewRecord({ kind: KIND, id: "ws-003", verdict: "agree", by, sign: k.file, cwd: r.dir });
+      if ("error" in doc) throw new Error(doc.error.message);
+    }
+    const refused = await amend(r, { state: "ratified" });
+    expect("error" in refused && refused.error.code).toBe("ratify-quorum-not-met");
+    expect("error" in refused && refused.error.message).toMatch(/needs 2 agreeing verdicts that count, and it has 1 \(not counted: mallory, review-unattested\)/);
+    expect(readFileSync(join(r.dir, FILE), "utf-8")).toMatch(/^state: "decided"$/m);
   });
 
   test("a stale seal left by hand fails, and an edited state fails", async () => {
@@ -308,7 +332,7 @@ describe.skipIf(!hasSshKeygen)("refusals", () => {
     expect("error" in from && from.error.code).toBe("write-input-invalid");
     expect(readFileSync(join(r.dir, FILE), "utf-8")).toBe(before);
 
-    await amend(r, { state: "ratified" });
+    await amend(r, { state: "superseded" });
     const closed = await amend(r, {}, lex);
     expect("error" in closed && closed.error.code).toBe("record-closed");
   });

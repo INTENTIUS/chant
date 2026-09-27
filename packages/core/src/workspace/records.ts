@@ -166,10 +166,16 @@ export const RECORD_SEAL_FIELD = "seal";
 /**
  * The top-level fields {@link recordTextDigest} leaves out for a kind: its
  * reviews list and {@link RECORD_SEAL_FIELD} when it has a reviews list, and
- * nothing when it has none (#2672, #2688).
+ * nothing when it has none (#2672, #2688). A kind that names a ratified
+ * state (`reviews.ratified`, #2873) leaves its state field out too, so
+ * moving a record to that state keeps the verdicts that ratified it
+ * counting.
  */
-export function digestFields(kind: Pick<RecordKind, "reviews">): string[] | null {
-  return kind.reviews ? [kind.reviews.field, RECORD_SEAL_FIELD] : null;
+export function digestFields(kind: Pick<RecordKind, "reviews" | "stateField">): string[] | null {
+  if (!kind.reviews) return null;
+  const fields = [kind.reviews.field, RECORD_SEAL_FIELD];
+  if (kind.reviews.ratified !== undefined && kind.stateField !== undefined) fields.push(kind.stateField);
+  return fields;
 }
 
 /** What a verdict's seal establishes (#2687). See `trust/seal.ts`. */
@@ -330,8 +336,14 @@ export const recordKindSchema = z
      * entry holds `reviewer`, `verdict` (agree, dissent or abstain) and
      * optionally `digest`, `note`, `proposes`, `addressed_by` and
      * `withdrawn_on`. Optional.
+     *
+     * `ratified` names the state a record enters only once its quorum is met
+     * (#2873): `records new` and `records amend` refuse it below the quorum,
+     * with ratify-quorum-not-met. With it the digest leaves the state field
+     * out, so the move to that state keeps the verdicts counting. It must be
+     * one of `states`.
      */
-    reviews: z.object({ field: z.string().min(1), decider: z.string().min(1) }).strict().optional(),
+    reviews: z.object({ field: z.string().min(1), decider: z.string().min(1), ratified: z.string().min(1).optional() }).strict().optional(),
     /**
      * The front-matter field a new record's proposer is named on, when the
      * kind opts in (#2756). `records new --by` and the MCP `records-new`
@@ -447,6 +459,10 @@ export const recordKindSchema = z
   .refine((k) => k.states !== undefined || k.proposedBy === undefined, {
     message: "a kind without states cannot have proposedBy: there is no first state for a record to open in",
     path: ["proposedBy"],
+  })
+  .refine((k) => k.reviews?.ratified === undefined || (k.states ?? []).includes(k.reviews.ratified), {
+    message: "reviews.ratified must be one of states: it names the state a record enters once its quorum is met",
+    path: ["reviews", "ratified"],
   })
   .refine((k) => (k.closedStates ?? []).every((s) => (k.states ?? []).includes(s)), {
     message: "every closed state must be listed in states",
@@ -731,7 +747,8 @@ function nonJson(v: unknown, at: string, seen: Set<object>): string | undefined 
  * kind with a reviews list the list is the reviews field and `seal`, the
  * record's author seal (#2688; {@link digestFields}), so sealing a record
  * leaves its digest where it was too. A record with no `seal` hashes exactly
- * as it did before author seals existed.
+ * as it did before author seals existed. A kind with `reviews.ratified` adds
+ * its state field (#2873).
  *
  * The rule, which a hand-editor can follow with a text editor and
  * `sha256sum`:

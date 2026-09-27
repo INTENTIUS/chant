@@ -195,7 +195,7 @@ export const workspaceWriteTools: ToolDefinition[] = [
   {
     name: "records-amend",
     description:
-      "Set top-level fields of a record: chant workspace records amend. A closed record never changes, and an approved one changes only in its state, evidence and reviews: anything else, its reasoning included, is a new record that supersedes it. A source block given in the fields records that the change came through MCP. " +
+      "Set top-level fields of a record: chant workspace records amend. A closed record never changes, and an approved one changes only in its state, evidence and reviews: anything else, its reasoning included, is a new record that supersedes it. A record moves to its kind's ratified state only once its review quorum is met (ratify-quorum-not-met). A source block given in the fields records that the change came through MCP. " +
       PROTOCOL,
     inputSchema: {
       type: "object",

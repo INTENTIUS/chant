@@ -841,10 +841,12 @@ Workspace (level 1, #2524):
                         Set top-level fields of one record. A closed record
                         never changes, and an approved one changes only its
                         state (upward), pins and reviews; anything else is
-                        refused with amend-supersede-instead. --sign seals
-                        the author again; without it an amendment removes
-                        the author seal and says so. Prints
-                        {path, id, changed}
+                        refused with amend-supersede-instead. Moving a
+                        record to its kind's ratified state (ratified for
+                        decisions) is refused with ratify-quorum-not-met
+                        until its quorum is met. --sign seals the author
+                        again; without it an amendment removes the author
+                        seal and says so. Prints {path, id, changed}
   workspace records review <id> [--kind <kind file>] --verdict agree|dissent|abstain --by <principal> [--note <text>] [--session <id>] [--sign [<key file>]] [--dry-run]
                         Append a review to one record, dated and bound to
                         the digest of the record text. A dissent needs

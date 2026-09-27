@@ -31,8 +31,10 @@ export const recordKind = {
   // (#2773): chant workspace check --changes reports change-out-of-scope.
   outOfScope: { field: "out_of_scope" },
   // Verdicts, and the field naming the decider, for each record's digest and
-  // quorum (#2671, #2672).
-  reviews: { field: "reviews", decider: "decided_by" },
+  // quorum (#2671, #2672). A decision becomes ratified only once its quorum
+  // is met: records new and amend refuse it below, and the digest leaves the
+  // state out, so ratifying keeps the verdicts counting (#2873).
+  reviews: { field: "reviews", decider: "decided_by", ratified: "ratified" },
   // records new --by and the MCP records-new tool's by name a proposal's
   // proposer here, apart from decided_by, which stays null until the
   // decision is decided (#2756).

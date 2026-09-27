@@ -29,6 +29,7 @@ import type { CommandContext } from "../cli/registry";
 import type { ReasonCode } from "./reason-codes";
 import { gitRoot, workingTreeSource, type RecordSource } from "./record-source";
 import {
+  computeQuorum,
   loadRecordKind,
   parseFrontMatter,
   readRecords,
@@ -41,7 +42,8 @@ import {
   type RecordEntry,
   type RecordWarning,
 } from "./records";
-import { declaredKindFiles, pinRoot, realpathOr } from "./records-cli";
+import { declaredKindFiles, pinRoot, quorumOptionsFor, realpathOr } from "./records-cli";
+import { policyAtBase, resolveBase } from "./trust/provenance";
 import { WorkspaceReadError } from "./declaration";
 import { findSessionKinds, headCommit, sessionKindsFor } from "./session-kinds";
 import { workingTree } from "./tree";
@@ -69,6 +71,7 @@ export const NEW_ERROR_CODES = [
   "record-sign-failed",
   "source-harvest-not-proposed",
   "record-state-not-initial",
+  "ratify-quorum-not-met",
   ...RECORD_REASON_CODES,
 ] as const satisfies readonly ReasonCode[];
 
@@ -82,6 +85,7 @@ export const AMEND_ERROR_CODES = [
   "record-closed",
   "amend-supersede-instead",
   "record-sign-failed",
+  "ratify-quorum-not-met",
   ...RECORD_REASON_CODES,
 ] as const satisfies readonly ReasonCode[];
 
@@ -386,6 +390,11 @@ export function overlay(base: RecordSource, path: string, text: string): RecordS
  * record's warnings.
  */
 export async function validateWrite(o: Opened, before: RecordEntry[], path: string, text: string, base: RecordSource = o.source): Promise<RecordWarning[]> {
+  return (await validatedEntry(o, before, path, text, base)).warnings;
+}
+
+/** {@link validateWrite}, returning the written record as the read found it. */
+export async function validatedEntry(o: Opened, before: RecordEntry[], path: string, text: string, base: RecordSource = o.source): Promise<RecordEntry> {
   const after = await readAll(o, overlay(base, path, text));
   const written = after.find((e) => e.path === path);
   if (!written) throw new RecordWriteError("record-path-unmatched", `${path} is not a file the kind ${o.view.name} reads`);
@@ -398,7 +407,30 @@ export async function validateWrite(o: Opened, before: RecordEntry[], path: stri
     const gained = e.reasons.find((r) => !had.get(e.path)?.has(`${r.code}\0${r.message}`));
     if (gained) throw new RecordWriteError(gained.code, `writing ${path} would make ${e.path} invalid: ${gained.message}`);
   }
-  return written.warnings;
+  return written;
+}
+
+/**
+ * Refuse a written record in the kind's ratified state (`reviews.ratified`,
+ * #2873) whose quorum is not met. The quorum is computed on the record as
+ * written, the way `records --json` computes it: the need from the
+ * declaration in the working tree, and agents and seals from the policy at
+ * base. A met quorum with open concerns is met, and the concerns stay listed.
+ */
+async function refuseRatifyBelowQuorum(o: Opened, written: RecordEntry, id: string): Promise<void> {
+  const ratified = o.loaded.kind.reviews?.ratified;
+  if (ratified === undefined || written.state !== ratified) return;
+  const top = gitRoot(o.root);
+  const policy = policyAtBase(top ?? o.root, top ? resolveBase(top) : { commit: null, from: null });
+  const tree = workingTree(o.workspaceRoot === "." ? o.root : join(o.root, ...o.workspaceRoot.split("/")));
+  const options = await quorumOptionsFor(o.loaded, tree, policy);
+  const q = options ? computeQuorum(o.loaded.kind, written, options) : null;
+  if (q === null || q.met) return;
+  const notCounted = q.notCounted.length > 0 ? ` (not counted: ${q.notCounted.map((v) => `${v.reviewer}, ${v.reason!.code}`).join("; ")})` : "";
+  throw new RecordWriteError(
+    "ratify-quorum-not-met",
+    `${id} can't be ${ratified} yet: its quorum needs ${q.need} agreeing verdicts that count, and it has ${q.agreed}${notCounted}. Add verdicts with chant workspace records review ${id} --verdict agree --by <reviewer>, then set ${o.loaded.kind.stateField} to ${ratified} again`,
+  );
 }
 
 export function findRecord(entries: RecordEntry[], id: string, kind: string): RecordEntry & { data: Record<string, unknown> } {
@@ -726,7 +758,9 @@ export async function newRecord(opts: NewRecordOptions & ChannelOptions): Promis
     let text = renderRecord(data, title ? `\n# ${title}\n` : "");
     let seal: AuthorSeal | undefined;
     if (opts.sign !== undefined) ({ text, seal } = await sealAuthor(o, text, data, id, opts.sign, opts.cwd));
-    const warnings = await validateWrite(o, before, path, text);
+    const written = await validatedEntry(o, before, path, text);
+    await refuseRatifyBelowQuorum(o, written, id);
+    const warnings = written.warnings;
     if (!opts.dryRun) writeFileSync(abs(o, path), text, { flag: "wx" });
     return {
       $schema: RECORDS_NEW_SCHEMA_ID,
@@ -823,16 +857,26 @@ export async function amendRecord(opts: AmendRecordOptions & ChannelOptions): Pr
     if (opts.sign !== undefined) {
       ({ text, seal } = await sealAuthor(o, text, merged, opts.id, opts.sign, opts.cwd));
       merged[RECORD_SEAL_FIELD] = seal;
-    } else if (sealable && recordTextDigest(text, digestFields(kind), kind.format) !== recordTextDigest(current, digestFields(kind), kind.format)) {
+    } else if (
+      sealable &&
+      (recordTextDigest(text, digestFields(kind), kind.format) !== recordTextDigest(current, digestFields(kind), kind.format) ||
+        (kind.stateField !== undefined && stableJson(old[kind.stateField]) !== stableJson(merged[kind.stateField])))
+    ) {
+      // The seal signs the state as well as the digest, and a kind with reviews.ratified leaves the state out of the digest (#2873).
       const signer = (old[RECORD_SEAL_FIELD] as { signer?: unknown } | null)?.signer;
       delete merged[RECORD_SEAL_FIELD];
       const dropped = removeField(text, RECORD_SEAL_FIELD, merged);
       if (dropped === undefined) throw new RecordWriteError("record-unparseable", `${target.path}: the ${RECORD_SEAL_FIELD} block can't be removed without changing the rest of the file`);
       text = dropped;
-      sealDropped = `${opts.id} was sealed${typeof signer === "string" ? ` by ${signer}` : ""}, and the amendment moves its digest, so the seal was removed: seal it again with records amend ${opts.id} --sign`;
+      sealDropped = `${opts.id} was sealed${typeof signer === "string" ? ` by ${signer}` : ""}, and the amendment moves its digest or its state, so the seal was removed: seal it again with records amend ${opts.id} --sign`;
     }
     if (stableJson(old[RECORD_SEAL_FIELD]) !== stableJson(merged[RECORD_SEAL_FIELD])) changed.push(RECORD_SEAL_FIELD);
-    const warnings = changed.length === 0 ? target.warnings : await validateWrite(o, before, target.path, text);
+    let warnings = target.warnings;
+    if (changed.length > 0) {
+      const written = await validatedEntry(o, before, target.path, text);
+      if (kind.stateField !== undefined && changed.includes(kind.stateField)) await refuseRatifyBelowQuorum(o, written, opts.id);
+      warnings = written.warnings;
+    }
     if (!opts.dryRun && changed.length > 0) writeFileSync(abs(o, target.path), text);
     return {
       $schema: RECORDS_AMEND_SCHEMA_ID,

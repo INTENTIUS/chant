@@ -129,6 +129,7 @@ export const REASONS = {
   "review-sign-failed": "--sign was given and no seal could be made: the key can't be read or used, git names no ssh signing key, or ssh-keygen is not installed.",
   "record-state-not-initial": "A record written through chant serve mcp gives a state other than the kind's first: a new record opens proposed, and a person moves it on.",
   "source-harvest-not-proposed": "A harvested record (source.via harvest) was written in a state other than the kind's first: a harvest proposes, and a person decides.",
+  "ratify-quorum-not-met": "The write puts a record in its kind's ratified state (reviews.ratified), and the record's quorum is not met: too few agreeing verdicts count.",
   "record-sign-failed": "--sign was given and no author seal could be made: the record names no author, the key can't be read or used, git names no ssh signing key, or ssh-keygen is not installed.",
   // A review given in a session (records review --session, #2693).
   "session-unknown": "--session names no session of a session kind whose subjects are the record's kind.",

@@ -10,7 +10,8 @@ import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { parseFrontMatter, recordTextDigest } from "./records";
+import { parseFrontMatter, recordTextDigest as textDigest } from "./records";
+import { queryRecords } from "./records-cli";
 import { allocateId, amendRecord, newRecord, renderRecord, reviewRecord, toYaml } from "./records-write";
 
 const REPO = join(import.meta.dirname, "..", "..", "..", "..");
@@ -18,6 +19,9 @@ const DECISIONS = join(REPO, "docs", "design", "decisions");
 const KIND = "decisions/decision.kind.mjs";
 
 type Data = Record<string, unknown>;
+
+/** The digest of a decision: the kind names a ratified state, so the state leaves the digest with the reviews and seal (#2873). */
+const recordTextDigest = (text: string) => textDigest(text, ["reviews", "seal", "state"]);
 
 const SAMPLE = (() => {
   const fm = parseFrontMatter(readFileSync(join(DECISIONS, "ws-003-seal-scope.md"), "utf-8"));
@@ -282,6 +286,7 @@ describe("records amend", () => {
   test("a decided record may be ratified, re-pin its evidence and take reviews, but not move down", async () => {
     const evidence = [{ title: "A spec", url: "https://example.com/spec" }];
     expect(await amendRecord({ kind: KIND, id: "ws-001", fields: fields({ evidence }), cwd: dir })).toMatchObject({ changed: ["evidence"] });
+    for (const by of ["alice", "bob"]) await reviewRecord({ kind: KIND, id: "ws-001", verdict: "agree", by, cwd: dir });
     expect(await amendRecord({ kind: KIND, id: "ws-001", fields: fields({ state: "ratified" }), cwd: dir })).toMatchObject({ changed: ["state"] });
     put("ws-006-six.md", decision({ id: "ws-006", title: "Six" }));
     expect(code(await amendRecord({ kind: KIND, id: "ws-006", fields: fields({ state: "withdrawn" }), cwd: dir }))).toBe("amend-supersede-instead");
@@ -316,6 +321,101 @@ describe("records amend", () => {
     const doc = await amendRecord({ kind: KIND, id: "ws-002", fields: fields({ area: "D7" }), dryRun: true, cwd: dir });
     expect("text" in doc && doc.text).toContain('area: "D7"');
     expect(touched(before, snapshot())).toEqual([]);
+  });
+});
+
+describe("ratifying against the quorum (#2873)", () => {
+  const ratify = (id = "ws-001") => amendRecord({ kind: KIND, id, fields: fields({ state: "ratified" }), cwd: dir });
+  const agree = (by: string, id = "ws-001") => reviewRecord({ kind: KIND, id, verdict: "agree", by, cwd: dir });
+  async function quorumOf(id: string) {
+    const doc = await queryRecords({ kind: KIND, cwd: dir });
+    if ("error" in doc) throw new Error(doc.error.message);
+    return doc.records.find((r) => r.id === id)!.quorum!;
+  }
+
+  test("below the quorum, ratified is refused with the count and what did not count, and nothing is written", async () => {
+    expect(SAMPLE.decided_by).toBe("lex00");
+    let before = snapshot();
+    let doc = await ratify();
+    expect(code(doc)).toBe("ratify-quorum-not-met");
+    expect("error" in doc && doc.error.message).toMatch(/^ws-001 can't be ratified yet: its quorum needs 2 agreeing verdicts that count, and it has 0\. Add verdicts with chant workspace records review ws-001/);
+    expect(touched(before, snapshot())).toEqual([]);
+    // One agreement and the decider's own: one counts.
+    await agree("alice");
+    await agree("lex00");
+    before = snapshot();
+    doc = await ratify();
+    expect("error" in doc && doc.error.message).toMatch(/it has 1 \(not counted: lex00, review-decider\)/);
+    expect(touched(before, snapshot())).toEqual([]);
+  });
+
+  test("at the quorum, ratified is taken, and the verdicts still count on the ratified record", async () => {
+    await agree("alice");
+    await agree("bob");
+    const judged = recordTextDigest(text("ws-001-one.md"));
+    expect(await ratify()).toMatchObject({ changed: ["state"] });
+    expect(data("ws-001-one.md").state).toBe("ratified");
+    expect(recordTextDigest(text("ws-001-one.md"))).toBe(judged);
+    expect(await quorumOf("ws-001")).toMatchObject({ need: 2, agreed: 2, met: true, notCounted: [] });
+  });
+
+  test("a met quorum with an open concern ratifies, and the concern stays listed", async () => {
+    await agree("alice");
+    await agree("bob");
+    await reviewRecord({ kind: KIND, id: "ws-001", verdict: "dissent", by: "carol", note: "It leaves out X.", cwd: dir });
+    expect(code(await ratify())).toBe("ok");
+    expect(await quorumOf("ws-001")).toMatchObject({ met: true, metWithObjections: true, openConcerns: [{ reviewer: "carol" }] });
+  });
+
+  test("verdicts on text an amendment changed do not count toward ratifying", async () => {
+    await agree("alice");
+    await agree("bob");
+    await amendRecord({ kind: KIND, id: "ws-001", fields: fields({ evidence: [] }), cwd: dir });
+    const doc = await ratify();
+    expect("error" in doc && doc.error.message).toMatch(/it has 0 \(not counted: alice, review-older-digest; bob, review-older-digest\)/);
+  });
+
+  test("the amendment that ratifies is checked as written, with its own changes to the reviews and pins", async () => {
+    await agree("alice");
+    const digest = recordTextDigest(text("ws-001-one.md"));
+    const reviews = [...(data("ws-001-one.md").reviews as Data[]), { reviewer: "bob", verdict: "agree", on: "2026-09-26", digest }];
+    expect(await amendRecord({ kind: KIND, id: "ws-001", fields: fields({ state: "ratified", reviews }), cwd: dir })).toMatchObject({ changed: ["state", "reviews"] });
+    put("ws-006-six.md", decision({ id: "ws-006", title: "Six" }));
+    await agree("alice", "ws-006");
+    await agree("bob", "ws-006");
+    // Re-pinning in the same write moves the digest, so the verdicts no longer match what would be ratified.
+    const doc = await amendRecord({ kind: KIND, id: "ws-006", fields: fields({ state: "ratified", evidence: [] }), cwd: dir });
+    expect(code(doc)).toBe("ratify-quorum-not-met");
+  });
+
+  test("records new refuses a record that opens ratified below its quorum", async () => {
+    const fresh = decision({ title: "Straight in", state: "ratified" });
+    delete fresh.id;
+    const before = snapshot();
+    expect(code(await newRecord({ kind: KIND, fields: fields(fresh), cwd: dir }))).toBe("ratify-quorum-not-met");
+    expect(touched(before, snapshot())).toEqual([]);
+    expect(code(await newRecord({ kind: KIND, fields: fields({ ...fresh, state: "decided" }), cwd: dir }))).toBe("ok");
+  });
+
+  test("a kind without reviews.ratified, or without reviews, takes ratified with no quorum, and its digest keeps the state", async () => {
+    const kindFile = join(dir, "decisions", "decision.kind.mjs");
+    const withRatified = readFileSync(kindFile, "utf-8");
+    expect(withRatified).toContain('reviews: { field: "reviews", decider: "decided_by", ratified: "ratified" },');
+    writeFileSync(kindFile, withRatified.replace(', ratified: "ratified" }', " }"));
+    const judged = textDigest(text("ws-001-one.md"), ["reviews", "seal"]);
+    expect(await ratify()).toMatchObject({ changed: ["state"] });
+    expect(textDigest(text("ws-001-one.md"), ["reviews", "seal"])).not.toBe(judged);
+    writeFileSync(kindFile, withRatified.replace('  reviews: { field: "reviews", decider: "decided_by", ratified: "ratified" },\n', ""));
+    put("ws-006-six.md", decision({ id: "ws-006", title: "Six" }));
+    expect(await ratify("ws-006")).toMatchObject({ changed: ["state"] });
+  });
+
+  test("a kind whose reviews.ratified is not one of its states is refused", async () => {
+    const kindFile = join(dir, "decisions", "decision.kind.mjs");
+    writeFileSync(kindFile, readFileSync(kindFile, "utf-8").replace('ratified: "ratified" }', 'ratified: "approved" }'));
+    const doc = await ratify();
+    expect(code(doc)).toBe("kind-invalid");
+    expect("error" in doc && doc.error.message).toMatch(/reviews\.ratified must be one of states/);
   });
 });
 
