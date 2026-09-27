@@ -38,6 +38,10 @@ The same \`RuleGroup\` renders into a Prometheus Operator \`PrometheusRule\`
 through the k8s lexicon, so rules are declared once whichever way Prometheus
 loads them.
 
+The \`Slo\` composite builds a service level objective to a \`RuleGroup\`:
+error ratios per window, the error budget left, and the SRE Workbook's
+multiwindow multi-burn-rate alerts. See [SLOs](./slos/).
+
 Checks run at build time: PromQL syntax in every \`expr\` (PROM104), unique
 group names (PROM101), valid durations (PROM103), routes that name
 declared receivers (PROM201), and every alert severity routed by some route

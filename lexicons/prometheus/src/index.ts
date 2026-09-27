@@ -75,4 +75,23 @@ export {
 export { PROMETHEUS_PIN } from "./pin";
 
 // promtool and amtool, when installed
-export { promtoolCheckRules, amtoolCheckConfig, hasTool, type ToolResult } from "./tools";
+export { promtoolCheckRules, promtoolTestRules, amtoolCheckConfig, hasTool, type ToolResult } from "./tools";
+
+// Composites
+export {
+  Slo,
+  sloMetrics,
+  sloPropsProblem,
+  sliExprProblem,
+  DEFAULT_BURN_RATES,
+  SLO_WINDOW_PLACEHOLDER,
+  type SloProps,
+  type SloSli,
+  type SloAlerting,
+  type SloAlertTier,
+  type BurnRateWindow,
+  type SloMembers,
+  type SloInstance,
+  type SloMetrics,
+  type SloBurnRate,
+} from "./composites";

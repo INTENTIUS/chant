@@ -14,6 +14,7 @@ The prometheus lexicon's rules use the `PROM` prefix. `PROM0xx` rules read your 
 |---|---|---|
 | PROM001 | error | a literal credential in a `Receiver` or `AlertmanagerSettings` |
 | PROM002 | error | a literal `expr` in a `RuleGroup` that is not valid PromQL |
+| PROM003 | error | an `Slo` whose literal `objective` is not strictly between 0 and 1, whose `window` is not a positive duration, or whose SLI expression lacks `{{window}}` or is not PromQL |
 | PROM101 | error | two groups in one rule file with the same name |
 | PROM102 | warning | two rules with the same name and label set |
 | PROM103 | error | a `for`, `keep_firing_for`, `interval` or `query_offset` that is not a Prometheus duration |
@@ -38,6 +39,10 @@ Alertmanager does not expand `${ENV}` in its config, so the only way to keep a s
 ## PROM002 and PROM104: PromQL syntax
 
 Both parse with `@prometheus-io/lezer-promql`, the grammar the Prometheus project publishes and its web UI uses, pinned as `PROMQL_GRAMMAR`. PROM002 reports literals in the editor; PROM104 reports every rule in the built file, including expressions assembled at runtime. The message gives the offset of the first error. The grammar checks syntax, not types: `rate(up)` parses. `promtool check rules` catches the rest, see [Checking with promtool and amtool](../upstream-tools/).
+
+## PROM003: an Slo that cannot build
+
+`Slo()` throws on these when the build runs it; PROM003 reports them in the editor, at the literal. Write the objective as a fraction (`0.995`, not `99.5`), the window as a Prometheus duration (`28d`, not `4 weeks`), and each SLI expression with `{{window}}` where the range goes, e.g. `sum(rate(requests_total[{{window}}]))`. See [SLOs](../slos/).
 
 ## PROM102: duplicate rules
 

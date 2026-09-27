@@ -2153,6 +2153,7 @@ export const compositeCatalog: CompositeEntry[] = [
       "ClusterRoleBinding",
       "ConfigMap",
       "DaemonSet",
+      "Pipeline",
       "ServiceAccount"
     ],
     "params": [

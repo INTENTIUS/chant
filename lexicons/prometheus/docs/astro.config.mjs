@@ -58,6 +58,10 @@ export default defineConfig({
                               "slug": "alertmanager"
                         },
                         {
+                              "label": "SLOs",
+                              "slug": "slos"
+                        },
+                        {
                               "label": "Lint Rules",
                               "slug": "lint-rules"
                         },

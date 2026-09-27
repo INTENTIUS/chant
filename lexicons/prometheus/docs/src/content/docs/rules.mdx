@@ -6,7 +6,7 @@ description: "Every lint rule and post-synth check provided by the Prometheus le
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-prometheus` — DO NOT EDIT.
     Edit lexicons/prometheus/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-The Prometheus lexicon provides **18** rules: 2 lint rules and 16 post-synth checks.
+The Prometheus lexicon provides **19** rules: 3 lint rules and 16 post-synth checks.
 
 ## Lint Rules
 
@@ -14,6 +14,7 @@ The Prometheus lexicon provides **18** rules: 2 lint rules and 16 post-synth che
 |----|----------|----------|-------------|
 | `PROM001` | error | security | a credential written as a literal in a `Receiver` or |
 | `PROM002` | error | correctness | a rule's `expr`, written as a string literal inside a |
+| `PROM003` | error | correctness | an `Slo` whose literal objective, window or SLI expression can |
 
 ## Post-Synth Checks
 

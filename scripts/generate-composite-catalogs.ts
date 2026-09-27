@@ -101,7 +101,28 @@ function classKind(symbol: ts.Symbol, checker: ts.TypeChecker): ClassKind | unde
   let decl = symbol.valueDeclaration;
   for (let hop = 0; hop < 4 && decl; hop++) {
     if (!ts.isVariableDeclaration(decl) || !decl.initializer) return undefined;
-    const init = decl.initializer;
+    let init: ts.Expression = decl.initializer;
+    while (ts.isAsExpression(init) || ts.isParenthesizedExpression(init) || ts.isSatisfiesExpression(init)) init = init.expression;
+    // A hand-written wrapper, `const X = function (this, props) { Base.call(this, props); ... }`,
+    // is the class its `createResource` base is (the prometheus `RuleGroup`).
+    if (ts.isFunctionExpression(init)) {
+      let kind: ClassKind | undefined;
+      const scan = (n: ts.Node): void => {
+        if (kind) return;
+        if (
+          ts.isCallExpression(n) &&
+          ts.isPropertyAccessExpression(n.expression) &&
+          n.expression.name.text === "call" &&
+          ts.isIdentifier(n.expression.expression)
+        ) {
+          const base = checker.getSymbolAtLocation(n.expression.expression);
+          if (base && base !== symbol) kind = classKind(base, checker);
+        }
+        ts.forEachChild(n, scan);
+      };
+      scan(init.body);
+      return kind;
+    }
     if (ts.isCallExpression(init) && ts.isIdentifier(init.expression)) {
       if (init.expression.text === "createResource") return "resource";
       if (init.expression.text === "createProperty") return "property";

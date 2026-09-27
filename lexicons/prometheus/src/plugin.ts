@@ -14,6 +14,7 @@ import { prometheusSkills } from "./skill-defs";
 import { CATALOG } from "./catalog";
 import { PROMETHEUS_PIN } from "./pin";
 import { PROMQL_GRAMMAR } from "./promql";
+import { compositeCatalog } from "./composites/catalog";
 
 const catalogResource: McpResourceContribution = {
   uri: "prometheus:resource-catalog",
@@ -86,6 +87,10 @@ export const prometheusPlugin: LexiconPlugin = {
   },
 
   skills: prometheusSkills,
+
+  composites() {
+    return compositeCatalog;
+  },
 
   mcpTools() {
     return [
