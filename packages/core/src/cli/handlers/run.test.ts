@@ -11,6 +11,7 @@ const discoverOpsMock = vi.fn();
 // default is what every other call sees.
 const discoverStewardsMock = vi.fn().mockResolvedValue({ stewards: new Map(), errors: [], conflicts: [] });
 const acquireStewardTurnMock = vi.fn();
+const holdBesideLeaseMock = vi.fn();
 const releaseLeaseMock = vi.fn();
 const loadChantConfigMock = vi.fn();
 const writeFileSyncMock = vi.fn();
@@ -32,6 +33,10 @@ vi.mock("../../op/discover", () => ({
 vi.mock("../../op/operator", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../op/operator")>();
   return { ...actual, acquireStewardTurn: (...args: unknown[]) => acquireStewardTurnMock(...args) };
+});
+vi.mock("../../op/steward-beside", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../op/steward-beside")>();
+  return { ...actual, holdBesideLease: (...args: unknown[]) => holdBesideLeaseMock(...args) };
 });
 vi.mock("../../lifecycle/lease", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../lifecycle/lease")>();
@@ -435,6 +440,72 @@ describe("runOp: a steward's turn (#2750)", () => {
     expect(out).toContain('steward "box-steward"');
     expect(out).toContain("cannot lock ref");
     expect(releaseLeaseMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * chant #2861: `chant run <op>` for an Op a steward runs beside its turns
+ * takes the Op's own lease, as `--holder`, and never the steward's turn.
+ * `holdBesideLease` is stubbed; `op/steward-beside.test.ts` runs it against a
+ * real repo.
+ */
+describe("runOp: an Op beside a steward's turns (#2861)", () => {
+  function stewardBeside(opName: string, name: string) {
+    return {
+      stewards: new Map([[name, {
+        declaration: {
+          kind: "Chant::Steward", name, ops: [{ name: "converge", phases: [] }, { name: opName, phases: [] }],
+          beside: [{ op: opName, ready: null }],
+          form: { default: "local", environments: {} }, capabilities: [], vault: null,
+        },
+        filePath: "ops/steward.op.ts", exportName: "steward",
+      }]]),
+      errors: [], conflicts: [],
+    };
+  }
+
+  beforeEach(() => {
+    discoverOpsMock.mockReset();
+    loadChantConfigMock.mockReset().mockResolvedValue({ config: {} });
+    loadPluginsMock.mockReset().mockResolvedValue([]);
+    acquireStewardTurnMock.mockReset();
+    holdBesideLeaseMock.mockReset();
+    releaseLeaseMock.mockReset().mockResolvedValue(true);
+  });
+
+  test("takes the Op's lease as --holder, not the turn, runs, and releases it once the run is over", async () => {
+    discoverOpsMock.mockResolvedValue({
+      ops: new Map([localOp("dispatch", [{ kind: "activity", fn: "shellCmd", args: { cmd: "true" } }])]),
+      errors: [],
+    });
+    discoverStewardsMock.mockResolvedValueOnce(stewardBeside("dispatch", "box-steward"));
+    const release = vi.fn(async () => {});
+    holdBesideLeaseMock.mockResolvedValue({ acquired: true, lease: { op: "dispatch", holder: "h", token: "t1", acquiredAt: "x", expiresAt: "y" }, release });
+    const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const exit = await runOp({ args: makeArgs({ path: "dispatch", holder: "box-steward/dispatch@op1" }), plugins: [], serializers: [] });
+    stderrWrite.mockRestore();
+
+    expect(exit).toBe(0);
+    expect(acquireStewardTurnMock).not.toHaveBeenCalled();
+    expect(holdBesideLeaseMock).toHaveBeenCalledWith("dispatch", "box-steward/dispatch@op1");
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  test("a run of it in progress: refused, naming the holder, nothing runs", async () => {
+    discoverOpsMock.mockResolvedValue({
+      ops: new Map([localOp("dispatch", [{ kind: "activity", fn: "shellCmd", args: { cmd: "true" } }])]),
+      errors: [],
+    });
+    discoverStewardsMock.mockResolvedValueOnce(stewardBeside("dispatch", "box-steward"));
+    holdBesideLeaseMock.mockResolvedValue({ acquired: false, heldBy: "box-steward/dispatch@op1" });
+    const stderr = makeStderrSpy();
+    const exit = await runOp({ args: makeArgs({ path: "dispatch" }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(1);
+    const out = stderr.join("\n");
+    expect(out).toContain(`runs beside steward "box-steward"'s turns`);
+    expect(out).toContain("box-steward/dispatch@op1");
+    expect(acquireStewardTurnMock).not.toHaveBeenCalled();
   });
 });
 

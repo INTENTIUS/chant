@@ -748,7 +748,9 @@ Ops:
                         CronJob invokers use this instead of the daemon).
                         --steward [<name>] runs a declared steward's local
                         form instead (#2731): its scheduled Ops on their
-                        crons, under the steward's own lease
+                        crons, under the steward's own lease, and its
+                        beside Ops as chant run processes of their own
+                        (#2861)
   operator status        Last tick, outcomes, and pending gates per
                         ConvergeOp, read from the chant/lifecycle orphan
                         branch alone — no daemon needs to be running

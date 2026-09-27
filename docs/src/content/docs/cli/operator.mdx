@@ -70,6 +70,17 @@ A steward's run that stops at a gate is resumed the same way ([#2779](https://gi
 
 A local steward is one turn at a time ([#2750](https://github.com/INTENTIUS/chant/issues/2750)). Around every run of one of its Ops, a round's own scheduled tick or a `chant run <op>` typed by hand, it holds a second lease, `refs/chant/lease/_turns/<name>`, for exactly as long as that one run takes. A round that finds the turn already held (by a hand run in progress) stops rather than ticking its remaining ops this round, and prints `operator: <op>@<env> skipped=1(turn-held:<holder>, steward "<name>" is already mid-turn)`; the next round tries again. See [`chant run <op>`](/chant/cli/run/) for what a hand run does with the same lease.
 
+An Op the steward lists under `beside` runs beside its turns instead ([#2861](https://github.com/INTENTIUS/chant/issues/2861)). A round never runs it inline. It starts `chant run <op>` as a process of its own and goes on with the round, so a build of half an hour holds no turn and converge keeps its cron. The process carries `CHANT_STEWARD=<name>` and `--holder <name>/<op>@<holder>`, so its run record names the steward and its work lease is listed under the steward. The run holds the Op's own lease, `refs/chant/lease/<op>`, renewed every third of its time to live until it ends. That makes it one run at a time. A round that finds the lease held prints `operator: <op>@<env> skipped=1(beside-running:<holder>)` and starts nothing, whether the holder is a run the operator started or a hand run. The table lists when a round starts one.
+
+| When | Its line |
+|---|---|
+| the Op's `schedule.cron` fires | `started=1(beside:cron)` |
+| the steward's run of it waits on a question a person has since answered | `started=1(beside:resumed) resumed="<id>"` |
+| its run stopped at a gate someone has since approved | `started=1(beside:approved) approved="<gate op>/<gate>"` |
+| its `ready` step names work the operator has not started a run for | `started=1(beside:ready) keys="<keys>"` |
+
+The `ready` step is one activity step, such as `shell("node ops/ready.mjs", { json: true })`, that the round runs while no run of the Op is in flight. It answers with a list of work keys, one key as a string, `true`, or no work (`false`, `null`, `""` or `[]`); for a `shell` step with `json: true` the answer is its parsed stdout. The operator keeps the keys it started a run for while it runs, so work that is still ready when the run ends is not started again (`skipped=1(not-ready:already-started:<keys>)`); `true` names no key and starts a run whenever none is in flight. A step that fails or answers another shape prints `failed=1(ready) error="..."` and starts nothing. The round after a run ends prints `ended=1(beside) exit=<code>`, with `chant run`'s exit code: 0 for ok, 3 for gated or waiting, 1 for failed. When the operator stops it sends each run it started SIGINT and waits up to ten seconds for it to release its leases. `--once` waits for the runs its round started before it exits.
+
 `chant workspace status --json` reports the steward with its lease and the last run of each Op. It also lists the work lease each Op's turn holds and the questions the steward waits on. [The Steward](/chant/lexicons/fountain/steward/) covers the declaration and how the steward shares a checkout with a coding agent.
 
 ### `operator status`

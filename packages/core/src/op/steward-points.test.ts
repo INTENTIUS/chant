@@ -19,7 +19,8 @@ import { readMemberStewards } from "../workspace/status-stewards";
 import { readRunLedger } from "../lifecycle/run-ledger";
 import type { ActivityFn, ActivityProfile } from "./activity-registry";
 import { runOpLocally } from "./local-executor";
-import { formatRoundLine, runOperatorRound } from "./operator";
+import { createBesideState, formatRoundLine, runOperatorRound, waitForBesideRuns } from "./operator";
+import { inProcessBesideLauncher } from "./steward-beside";
 import { declareSteward } from "./steward";
 import { askPointInRun, isPointWait, PointWait, type BrokeredModelAsk } from "./steward-points";
 import { enterStewardTurn, resetStewardTurn, STEWARD_ENV } from "./steward-turn";
@@ -360,5 +361,64 @@ describe("a waiting run of an Op the steward does not list (studio#137)", () => 
     const listed = status.stewards.flatMap((s) => s.waiting.map((w) => w.op));
     expect(listed).not.toContain("factory-lonely");
     expect(listed).not.toContain("factory-stranger");
+  });
+});
+
+describe("a waiting run of an Op beside the steward's turns (#2861)", () => {
+  test("status lists it under the steward with its lease, and the operator resumes it beside the turns once a person answers", async () => {
+    const build = shipOp("box-build", "r-30");
+    const steward = declareSteward({
+      name: "build-steward",
+      ops: [],
+      beside: [{ op: build, ready: { kind: "activity", fn: "readyShip", args: {} } }],
+      capabilities: ["inference"],
+    });
+    const log: string[] = [];
+    const acts = new Map<string, ActivityFn>([
+      ...shipActivities(log),
+      ["askShip", async (args) => (await askPointInRun({ cwd: root, point: "ship-now", inputs: { release: args.release }, subject: String(args.release), on })).answer],
+      ["readyShip", async () => ["r-30"]],
+    ]);
+    const besideState = createBesideState();
+    const launchBeside = inProcessBesideLauncher(acts, PROFILES);
+    const round = () => runOperatorRound({ cwd: root, steward, activities: acts, profiles: PROFILES, holder: "box", besideState, launchBeside });
+
+    // The ready step names work: the run starts beside the turns, asks, and waits.
+    const first = await round();
+    expect(first).toEqual([expect.objectContaining({ kind: "beside-started", op: "box-build", why: "ready", keys: ["r-30"], holder: "build-steward/box-build@box" })]);
+    await waitForBesideRuns(besideState);
+    const waiting = (await readRunLedger("local", "box-build", { cwd: root })).records.at(-1)!;
+    expect(waiting).toMatchObject({ status: "waiting", steward: "build-steward" });
+    const question = waiting.point!.id;
+
+    // workspace status lists it under the steward, as one of its Ops, with its wait.
+    mkdirSync(join(root, "ops"), { recursive: true });
+    writeFileSync(join(root, "chant.config.json"), "{}\n");
+    writeFileSync(join(root, "ops", "build-steward.op.ts"), `export const steward = ${JSON.stringify(steward)};\n`);
+    const status = await readMemberStewards(root, "local", "2027-01-01T00:01:00Z");
+    const entry = status.stewards.find((s) => s.name === "build-steward")!;
+    const stewardShape = contract({ $schema: statusSchema.$schema, $id: "urn:test:status-steward-beside", $defs: statusSchema.$defs, $ref: "#/$defs/steward" });
+    stewardShape.expectValid(entry);
+    expect(entry.ops.map((o) => [o.name, o.beside])).toEqual([["box-build", { ready: true, lease: null }]]);
+    expect(entry.waiting).toEqual([
+      { op: "box-build", run: waiting.id, id: question, point: "ship-now", state: "escalated", path: waiting.point!.path, subject: "r-30", since: waiting.point!.since },
+    ]);
+
+    // Still open: the same work is not started again, and the round says what it waits on.
+    const second = await round();
+    expect(second).toEqual([
+      { kind: "beside-ended", op: "box-build", env: "local", code: 3 },
+      { kind: "waiting-on-point", op: "box-build", env: "local", point: "ship-now", question, state: "escalated" },
+    ]);
+
+    // A person answers; the next round starts the run again beside the turns.
+    const answered = await answerPoint({ cwd: root, id: question, answer: "yes", by: ["alice"], on });
+    expect("error" in answered).toBe(false);
+    const third = await round();
+    expect(third).toEqual([expect.objectContaining({ kind: "beside-started", op: "box-build", why: "resumed", resumed: question })]);
+    await waitForBesideRuns(besideState);
+    expect(log).toEqual(["ship"]);
+    expect((await readRunLedger("local", "box-build", { cwd: root })).records.at(-1)).toMatchObject({ status: "ok", steward: "build-steward" });
+    expect((await readMemberStewards(root, "local", "2027-01-01T00:11:00Z")).stewards.find((s) => s.name === "build-steward")!.waiting).toEqual([]);
   });
 });

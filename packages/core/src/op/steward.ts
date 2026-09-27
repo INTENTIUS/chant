@@ -55,9 +55,36 @@
  * (`workLease`, #2748): its leased steps get a worktree of their own on
  * `chant/work/<item>`. `declareSteward` refuses such an Op without the lease,
  * and a scheduled Op whose lease leaves the item to the run.
+ *
+ * ## Beside the turns
+ *
+ * An Op listed under `beside` (#2861) is the steward's too, but its runs are
+ * not turns. A build that takes half an hour would otherwise hold every other
+ * Op of the steward, converge included, for its whole length. The local
+ * operator starts a run of it as a `chant run <op>` process of its own, with
+ * `CHANT_STEWARD` set so the run is still the steward's, and goes on with its
+ * rounds. One run at a time: the run holds the Op's own lease
+ * (`refs/chant/lease/<op>`), renewed while it runs, and never the turn lease.
+ * The operator starts one on the Op's cron, when its `ready` step says there
+ * is work, or to resume a run of the steward's that waited on a question now
+ * answered (or a gate now approved).
+ *
+ * ```ts
+ * export const steward = declareSteward({
+ *   name: "box-steward",
+ *   ops: [converge, release],
+ *   beside: [{ op: dispatch, ready: shell("node ops/ready.mjs", { json: true }) }],
+ * });
+ * ```
+ *
+ * `ops` on the normalised declaration is every Op the steward runs, beside
+ * ones last, so a reader that only asks "whose Op is this" (discovery's
+ * two-writers check, `chant run`, `workspace status`) needs nothing new.
+ * `beside` names the ones that run beside the turns.
  */
 
-import type { OpConfig } from "./types";
+import type { ActivityStep, OpConfig } from "./types";
+import { collectStepOutputRefs } from "./step-output-ref";
 import { isValidCronExpression, cronSyntaxMessage } from "./cron";
 import { workLeaseNeedsRunItem, workLeaseProblems } from "./work-lease-decl";
 
@@ -83,11 +110,35 @@ export const STEWARD_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
  */
 export type StewardOpInput = OpConfig | { props: unknown };
 
+/**
+ * An Op that runs beside the steward's turns (#2861): the Op alone, or the
+ * Op with the step that says when there is work for it.
+ */
+export type StewardBesideInput = StewardOpInput | { op: StewardOpInput; ready?: ActivityStep };
+
+/** An Op that runs beside the steward's turns, normalised. */
+export interface StewardBeside {
+  /** The Op's name; its config is in the declaration's `ops`. */
+  readonly op: string;
+  /**
+   * The step the operator runs each round, while no run of the Op is in
+   * flight, to ask whether there is work: see {@link readinessKeys}. Null
+   * for an Op started only on its cron, to resume a run, or by hand.
+   */
+  readonly ready: ActivityStep | null;
+}
+
 export interface StewardDeclarationConfig {
   /** The steward's name. On Fountain, the Agent's and the Teammate's. */
   name: string;
   /** The Ops it runs. A scheduled one runs on its cron; any other runs when asked. */
   ops: StewardOpInput[];
+  /**
+   * Ops it runs beside its turns (#2861), each in a process of its own under
+   * the Op's own lease, so a long run holds none of `ops` up. See the module
+   * doc.
+   */
+  beside?: StewardBesideInput[];
   /** Where it runs. Default `local`. */
   form?: StewardFormSpec;
   /**
@@ -105,7 +156,13 @@ export interface StewardDeclarationConfig {
 export interface StewardDeclaration {
   readonly kind: typeof STEWARD_KIND;
   readonly name: string;
+  /** Every Op it runs: its turns' Ops, then those that run beside them. */
   readonly ops: readonly OpConfig[];
+  /**
+   * The Ops of `ops` that run beside its turns (#2861). Read it through
+   * {@link stewardBesideOf}: a declaration made by an older core has none.
+   */
+  readonly beside?: readonly StewardBeside[];
   readonly form: { readonly default: StewardForm; readonly environments: Readonly<Record<string, StewardForm>> };
   /** Brokered box capabilities its Ops use (#2726). Empty when it names none. */
   readonly capabilities: readonly string[];
@@ -140,11 +197,22 @@ export function normaliseStewardForm(steward: string, spec: StewardFormSpec | un
   return { default: checkForm(steward, spec.default, "form.default"), environments };
 }
 
+/** A `beside` entry's Op and ready step, whichever of the two forms it was given in. */
+function besideEntry(entry: StewardBesideInput): { op: OpConfig; ready: ActivityStep | null } {
+  const e = entry as { op?: unknown; ready?: ActivityStep; phases?: unknown; props?: unknown };
+  if (e && typeof e === "object" && e.op !== undefined && e.phases === undefined && e.props === undefined) {
+    return { op: stewardOpConfig(e.op as StewardOpInput), ready: e.ready ?? null };
+  }
+  return { op: stewardOpConfig(entry as StewardOpInput), ready: null };
+}
+
 /**
  * Declare a steward. Refuses what would make it more than one writer or a
  * promise it can't keep: an Op listed twice, a schedule whose overlap isn't
  * `skip` (a fire while a turn runs is dropped in both forms), a cron that
- * doesn't parse, and a name a lease ref can't hold.
+ * doesn't parse, and a name a lease ref can't hold. For an Op beside the
+ * turns (#2861), also a `ready` that is not one activity step, or that reads
+ * another step's output (it runs on its own, outside any run).
  */
 export function declareSteward(config: StewardDeclarationConfig): StewardDeclaration {
   const name = config.name;
@@ -153,7 +221,8 @@ export function declareSteward(config: StewardDeclarationConfig): StewardDeclara
       `Steward ${JSON.stringify(name)}: a steward's name is letters, digits, ".", "_" and "-", starting with a letter or digit`,
     );
   }
-  const ops = config.ops.map(stewardOpConfig);
+  const besides = (config.beside ?? []).map(besideEntry);
+  const ops = [...config.ops.map(stewardOpConfig), ...besides.map((b) => b.op)];
   const seen = new Set<string>();
   for (const op of ops) {
     if (!op || typeof op.name !== "string" || !Array.isArray(op.phases)) {
@@ -171,6 +240,22 @@ export function declareSteward(config: StewardDeclarationConfig): StewardDeclara
         `Steward "${name}": op "${op.name}" is scheduled, but its workLease names no item, and a scheduled run can't be given one. ` +
           `Name the item, candidates, or the step whose output picks it.`,
       );
+    }
+    const beside = besides.find((b) => b.op === op);
+    if (beside?.ready) {
+      const ready = beside.ready;
+      if (!ready || ready.kind !== "activity" || typeof ready.fn !== "string") {
+        throw new Error(`Steward "${name}": op "${op.name}": ready is one activity step, such as shell("...", { json: true })`);
+      }
+      if (collectStepOutputRefs(ready.args ?? {}).length > 0) {
+        throw new Error(`Steward "${name}": op "${op.name}": its ready step reads another step's output, and it runs outside any run`);
+      }
+      if (workLeaseNeedsRunItem(op)) {
+        throw new Error(
+          `Steward "${name}": op "${op.name}" is started when its ready step says so, but its workLease names no item, and such a run can't be given one. ` +
+            `Name the item, candidates, or the step whose output picks it.`,
+        );
+      }
     }
     const schedule = op.schedule;
     if (!schedule) continue;
@@ -199,6 +284,7 @@ export function declareSteward(config: StewardDeclarationConfig): StewardDeclara
     kind: STEWARD_KIND,
     name,
     ops: Object.freeze([...ops]),
+    beside: Object.freeze(besides.map((b) => Object.freeze({ op: b.op.name, ready: b.ready }))),
     form: normaliseStewardForm(name, config.form),
     capabilities: Object.freeze(capabilities),
     vault,
@@ -217,6 +303,52 @@ export function isStewardDeclaration(value: unknown): value is StewardDeclaratio
     typeof v.form === "object" &&
     typeof v.form.default === "string"
   );
+}
+
+/** The Ops a steward runs beside its turns (#2861); none for a declaration without the field. */
+export function stewardBesideOf(steward: StewardDeclaration): readonly StewardBeside[] {
+  return Array.isArray(steward.beside) ? steward.beside : [];
+}
+
+/** The entry for `op` when the steward runs it beside its turns (#2861), or undefined. */
+export function stewardBesideFor(steward: StewardDeclaration, op: string): StewardBeside | undefined {
+  return stewardBesideOf(steward).find((b) => b.op === op);
+}
+
+/** The Ops a steward runs as its turns, one at a time: `ops` without the beside ones. */
+export function stewardTurnOps(steward: StewardDeclaration): OpConfig[] {
+  const beside = new Set(stewardBesideOf(steward).map((b) => b.op));
+  return steward.ops.filter((op) => !beside.has(op.name));
+}
+
+/**
+ * What a `ready` step's result says (#2861): the work keys it names, or null
+ * when its result is not one of the shapes below. The value read is the
+ * result's `json` when it has one (a `shell` step with `json: true`), or the
+ * result itself.
+ *
+ * - an array: one key per entry (a string as is, anything else as its JSON);
+ *   empty means no work;
+ * - a non-empty string: one key; `""` means no work;
+ * - `true` means work, with no key; `false` and `null` mean none.
+ *
+ * The operator starts a run when a key is one it has not started a run for
+ * yet, so a run that ends with the same work still ready is not started
+ * again for it. `true` has no key, so it starts a run whenever none is in
+ * flight.
+ */
+export function readinessKeys(result: unknown): { ready: boolean; keys: string[] } | null {
+  const value = result && typeof result === "object" && !Array.isArray(result) && "json" in result
+    ? (result as { json: unknown }).json
+    : result;
+  if (value === true) return { ready: true, keys: [] };
+  if (value === false || value === null || value === undefined) return { ready: false, keys: [] };
+  if (typeof value === "string") return value === "" ? { ready: false, keys: [] } : { ready: true, keys: [value] };
+  if (Array.isArray(value)) {
+    const keys = value.map((v) => (typeof v === "string" ? v : JSON.stringify(v)));
+    return { ready: keys.length > 0, keys };
+  }
+  return null;
 }
 
 /** The form a steward takes in `env` (`local` when none is named). */

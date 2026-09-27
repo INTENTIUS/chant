@@ -38,12 +38,13 @@
 import type { ActivityFn, ActivityProfile } from "./activity-registry";
 import { discoverOps, type DiscoveredOp } from "./discover";
 import { runOpLocally, OpRunFailure, type OpRunResult } from "./local-executor";
-import { acquireLease, releaseLease, stillHoldsLease, currentHolderId, DEFAULT_LEASE_TTL_MS, type LeaseRecord, type AcquireLeaseResult } from "../lifecycle/lease";
+import { acquireLease, releaseLease, stillHoldsLease, currentHolderId, readLease, DEFAULT_LEASE_TTL_MS, type LeaseRecord, type AcquireLeaseResult } from "../lifecycle/lease";
 import { randomUUID } from "node:crypto";
 import { readRunLedger, runEnvOf } from "../lifecycle/run-ledger";
 import { readGateLedger, latestResolutionSince } from "../lifecycle/gate-ledger";
 import { enterStewardTurn } from "./steward-turn";
-import { stewardLeaseName, stewardTurnLeaseName, type StewardDeclaration } from "./steward";
+import { stewardBesideOf, stewardLeaseName, stewardTurnLeaseName, stewardTurnOps, type StewardDeclaration } from "./steward";
+import { askReady, spawnBesideRun, type BesideHandle, type BesideLauncher, type BesideWhy } from "./steward-beside";
 import { stewardWorkHolder } from "./work-lease-run";
 import { StaleLockError } from "../lifecycle/git";
 import { cronMatches, cronDueBetween } from "./cron";
@@ -146,7 +147,78 @@ export type OperatorTickEvent =
    * lease for the whole steward, not one per op). The next round tries
    * again.
    */
-  | { kind: "turn-busy"; op: string; env: string; steward: string; heldBy?: string };
+  | { kind: "turn-busy"; op: string; env: string; steward: string; heldBy?: string }
+  /**
+   * A steward's Op beside its turns (#2861) was started in a process of its
+   * own, and the round went on without waiting for it. `why` is its cron, its
+   * ready step (`keys` are the work keys it named), or a waiting run to
+   * resume (`resumed`, the question now answered) or a gated one (`approved`).
+   * `holder` is the Op's lease holder and its work lease holder.
+   */
+  | {
+      kind: "beside-started";
+      op: string;
+      env: string;
+      why: BesideWhy;
+      holder: string;
+      keys?: string[];
+      resumed?: string;
+      approved?: { op: string; gate: string };
+    }
+  /** A run of an Op beside the turns is in flight (#2861): this operator's, or one whose lease another holder has, such as a hand `chant run`. Nothing was started. */
+  | { kind: "beside-running"; op: string; env: string; heldBy?: string }
+  /** A run this operator started beside the turns ended (#2861), reported on the round after. `code` is `chant run`'s exit code: 0 ok, 3 gated or waiting, 1 failed. */
+  | { kind: "beside-ended"; op: string; env: string; code: number | null; error?: string }
+  /**
+   * An Op beside the turns whose ready step names no work (#2861), or only
+   * work this operator already started a run for (`already`).
+   */
+  | { kind: "skipped-not-ready"; op: string; env: string; already?: string[] }
+  /** An Op beside the turns whose ready step failed, or answered in a shape it can't read (#2861). Nothing was started. */
+  | { kind: "ready-failed"; op: string; env: string; error: string };
+
+/**
+ * What a local steward's operator keeps about the runs it starts beside its
+ * turns (#2861), across rounds: the ones in flight, the work keys a ready
+ * step named that it already started a run for, and the runs that ended since
+ * the last round, which the next round reports. `runOperatorForever` owns one
+ * for its life; a restarted operator starts empty and finds a run still in
+ * flight by its lease.
+ */
+export interface BesideState {
+  running: Map<string, { handle: BesideHandle; holder: string; why: BesideWhy }>;
+  started: Map<string, Set<string>>;
+  ended: OperatorTickEvent[];
+}
+
+/** A fresh {@link BesideState}. */
+export function createBesideState(): BesideState {
+  return { running: new Map(), started: new Map(), ended: [] };
+}
+
+/** Wait for every run in flight beside the turns to end. `chant operator --steward --once` does before it exits. */
+export async function waitForBesideRuns(state: BesideState): Promise<void> {
+  await Promise.all([...state.running.values()].map((r) => r.handle.done));
+}
+
+/**
+ * Ask every run in flight beside the turns to stop, and wait up to `graceMs`
+ * for them to end. The operator does when it stops, so no run it started
+ * outlives it holding the Op's lease past its renewals.
+ */
+export async function stopBesideRuns(state: BesideState, graceMs = 10_000): Promise<void> {
+  const runs = [...state.running.values()];
+  for (const r of runs) r.handle.stop();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    Promise.all(runs.map((r) => r.handle.done)),
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, graceMs);
+      timer.unref?.();
+    }),
+  ]);
+  if (timer) clearTimeout(timer);
+}
 
 export interface OperatorRoundOptions {
   cwd?: string;
@@ -185,6 +257,16 @@ export interface OperatorRoundOptions {
    * read. Defaults to the workspace's `points` read; a test injects one.
    */
   readQuestions?: (cwd: string) => Promise<Map<string, string> | null>;
+  /**
+   * The runs a steward's operator started beside its turns (#2861), kept
+   * across rounds. A round given none keeps its own, which it forgets when
+   * it returns.
+   */
+  besideState?: BesideState;
+  /** How a run beside the turns is started. Default: `chant run <op>` in a process of its own ({@link spawnBesideRun}). */
+  launchBeside?: BesideLauncher;
+  /** The environment the steward operator was started for (`--env`), passed on to a run it starts beside its turns. */
+  stewardEnv?: string;
 }
 
 /** A steward's Op whose last run waits on a decision point (#2749). */
@@ -336,12 +418,12 @@ async function releaseStewardTurn(steward: string, holder: string, token: string
 }
 
 /**
- * The Ops one round considers: a steward's Ops, or every ConvergeOp. A
- * steward's Op with no schedule is considered only to resume a run of the
- * steward's that waits on a decision point.
+ * The Ops one round runs as turns: a steward's Ops but those beside its turns
+ * (#2861), or every ConvergeOp. A steward's Op with no schedule is considered
+ * only to resume a run of the steward's that waits on a decision point.
  */
 async function roundOps(opts: OperatorRoundOptions): Promise<DiscoveredOp["config"][]> {
-  if (opts.steward) return [...opts.steward.ops];
+  if (opts.steward) return stewardTurnOps(opts.steward);
   const { ops } = await discoverConvergeOps({ cwd: opts.cwd, env: opts.env });
   return ops.map((d) => d.config);
 }
@@ -388,6 +470,10 @@ export async function runOperatorRound(opts: OperatorRoundOptions): Promise<Oper
 
   if (!(await holdSteward())) return events;
 
+  // The runs started beside the turns that ended since the last round (#2861).
+  const besideState = opts.besideState ?? createBesideState();
+  events.push(...besideState.ended.splice(0));
+
   // A steward's Ops whose last run waits on a decision point (#2749), read
   // once per round, and the state of those questions now.
   const waiting = steward ? await stewardWaits(steward, opts) : new Map<string, WaitState>();
@@ -395,6 +481,7 @@ export async function runOperatorRound(opts: OperatorRoundOptions): Promise<Oper
   // been approved since.
   const gated = steward ? await stewardGates(steward, opts) : new Map<string, GateWaitState>();
 
+  let stewardLost = false;
   for (const config of await roundOps(opts)) {
     const env = steward ? runEnvOf(config) : (envOf(config) ?? "unknown");
     const wait = waiting.get(config.name);
@@ -548,10 +635,150 @@ export async function runOperatorRound(opts: OperatorRoundOptions): Promise<Oper
       restoreTurn?.();
       if (steward && turn?.acquired) await releaseStewardTurn(steward.name, holder, turn.lease!.token, { cwd: opts.cwd });
     }
-    if (!(await holdSteward())) break;
+    if (!(await holdSteward())) {
+      stewardLost = true;
+      break;
+    }
+  }
+
+  // The Ops beside the turns (#2861) are considered whatever became of the
+  // turns: a turn in progress holds none of them. Only a steward that lost its
+  // own lease starts nothing.
+  if (steward && !stewardLost) {
+    await besideRound(steward, opts, holder, besideState, waiting, gated, events);
   }
 
   return events;
+}
+
+/**
+ * One round for a steward's Ops beside its turns (#2861). For each one not
+ * already running: start it when a run of the steward's waits on a question
+ * now answered or a gate now approved, when its cron fires, or when its ready
+ * step names work it has not started a run for. The run is started and not
+ * waited for.
+ */
+async function besideRound(
+  steward: StewardDeclaration,
+  opts: OperatorRoundOptions,
+  holder: string,
+  state: BesideState,
+  waiting: Map<string, WaitState>,
+  gated: Map<string, GateWaitState>,
+  events: OperatorTickEvent[],
+): Promise<void> {
+  for (const beside of stewardBesideOf(steward)) {
+    const config = steward.ops.find((op) => op.name === beside.op);
+    if (!config) continue;
+    const env = runEnvOf(config);
+
+    // The cron is read whether or not a run is in flight, so a fire during a
+    // run is dropped (overlap "skip") rather than owed afterwards.
+    const cron = config.schedule?.cron;
+    let due = false;
+    if (cron) {
+      const now = (opts.now ?? (() => new Date()))();
+      const lastSeen = opts.scheduleState?.get(config.name);
+      due = lastSeen === undefined ? cronMatches(cron, now) : cronDueBetween(cron, lastSeen, now);
+      opts.scheduleState?.set(config.name, now);
+    }
+
+    const mine = state.running.get(config.name);
+    if (mine) {
+      events.push({ kind: "beside-running", op: config.name, env, heldBy: mine.holder });
+      continue;
+    }
+    // A run another process holds the lease for: a hand `chant run`, or one
+    // this steward started before its operator restarted.
+    let current: LeaseRecord | undefined;
+    try {
+      current = (await readLease(config.name, { cwd: opts.cwd })).record;
+    } catch (err) {
+      events.push({ kind: "lease-error", op: config.name, env, error: err instanceof Error ? err.message : String(err) });
+      continue;
+    }
+    const now = (opts.now ?? (() => new Date()))();
+    if (current && new Date(current.expiresAt).getTime() > now.getTime()) {
+      events.push({ kind: "beside-running", op: config.name, env, heldBy: current.holder });
+      continue;
+    }
+
+    const wait = waiting.get(config.name);
+    const stopped = gated.get(config.name);
+    const standing: OperatorTickEvent | undefined = wait
+      ? { kind: "waiting-on-point", op: config.name, env, point: wait.point, question: wait.question, state: wait.state }
+      : stopped
+        ? { kind: "waiting-on-gate", op: config.name, env, gateOp: stopped.gateOp, gate: stopped.gate }
+        : undefined;
+
+    let why: BesideWhy | undefined;
+    if (wait?.answered) why = "resumed";
+    else if (stopped?.approved) why = "approved";
+    else if (due) why = "cron";
+
+    let keys: string[] | undefined;
+    if (!why && beside.ready) {
+      const answer = await askReady(beside.ready, opts.activities, opts.signal);
+      if ("error" in answer) {
+        events.push({ kind: "ready-failed", op: config.name, env, error: answer.error });
+        continue;
+      }
+      if (answer.ready) {
+        const seen = state.started.get(config.name) ?? new Set<string>();
+        if (answer.keys.length === 0 || answer.keys.some((k) => !seen.has(k))) {
+          why = "ready";
+          keys = answer.keys;
+        } else {
+          events.push(standing ?? { kind: "skipped-not-ready", op: config.name, env, already: answer.keys });
+          continue;
+        }
+      } else {
+        events.push(standing ?? { kind: "skipped-not-ready", op: config.name, env });
+        continue;
+      }
+    }
+    if (!why) {
+      const idle: OperatorTickEvent | undefined = standing ?? (cron ? { kind: "skipped-not-due", op: config.name, env, cron } : undefined);
+      if (idle) events.push(idle);
+      continue;
+    }
+
+    const runHolder = stewardWorkHolder(steward.name, config.name, holder);
+    let handle: BesideHandle;
+    try {
+      handle = (opts.launchBeside ?? spawnBesideRun)({
+        op: config,
+        steward: steward.name,
+        ...(opts.stewardEnv !== undefined ? { env: opts.stewardEnv } : {}),
+        holder: runHolder,
+        cwd: opts.cwd ?? process.cwd(),
+        ...(opts.leaseTtlMs !== undefined ? { leaseTtlMs: opts.leaseTtlMs } : {}),
+      });
+    } catch (err) {
+      events.push({ kind: "tick-failed", op: config.name, env, error: err instanceof Error ? err.message : String(err) });
+      continue;
+    }
+    if (keys) {
+      const seen = state.started.get(config.name) ?? new Set<string>();
+      for (const k of keys) seen.add(k);
+      state.started.set(config.name, seen);
+    }
+    state.running.set(config.name, { handle, holder: runHolder, why });
+    void handle.done.then((exit) => {
+      state.running.delete(config.name);
+      state.ended.push({ kind: "beside-ended", op: config.name, env, code: exit.code, ...(exit.error ? { error: exit.error } : {}) });
+    });
+    events.push({
+      kind: "beside-started",
+      op: config.name,
+      env,
+      why,
+      holder: runHolder,
+      ...(keys && keys.length > 0 ? { keys } : {}),
+      ...(why === "resumed" && wait ? { resumed: wait.question } : {}),
+      ...(why === "approved" && stopped ? { approved: { op: stopped.gateOp, gate: stopped.gate } } : {}),
+    });
+  }
 }
 
 /**
@@ -673,17 +900,24 @@ export async function runOperatorForever(opts: OperatorLoopOptions): Promise<voi
   // lands on a firing minute — a fresh operator owes no catch-up for the ticks
   // it was not running for.
   const scheduleState = opts.scheduleState ?? new Map<string, Date>();
+  // The runs a steward starts beside its turns (#2861), for the life of the
+  // loop. When the loop stops, so do they.
+  const besideState = opts.besideState ?? createBesideState();
   const intervalMs = opts.intervalMs ?? DEFAULT_OPERATOR_INTERVAL_MS;
   const subscribers = opts.subscribers ?? [];
 
-  // Nothing to subscribe to: the loop below is byte for byte the loop that
-  // shipped before #1981, and takes none of the machinery's cost.
+  // Nothing to subscribe to: the loop below is the loop that shipped before
+  // #1981, and takes none of the machinery's cost.
   if (subscribers.length === 0) {
-    while (!opts.signal?.aborted) {
-      const events = await runOperatorRound({ ...opts, holder, scheduleState });
-      opts.onRound?.(events);
-      if (opts.signal?.aborted) break;
-      await sleepAbortable(intervalMs, opts.signal);
+    try {
+      while (!opts.signal?.aborted) {
+        const events = await runOperatorRound({ ...opts, holder, scheduleState, besideState });
+        opts.onRound?.(events);
+        if (opts.signal?.aborted) break;
+        await sleepAbortable(intervalMs, opts.signal);
+      }
+    } finally {
+      await stopBesideRuns(besideState);
     }
     return;
   }
@@ -736,7 +970,7 @@ export async function runOperatorForever(opts: OperatorLoopOptions): Promise<voi
     while (!opts.signal?.aborted) {
       gate.roundStarted();
       const startedAt = Date.now();
-      const events = await runOperatorRound({ ...opts, holder, scheduleState });
+      const events = await runOperatorRound({ ...opts, holder, scheduleState, besideState });
       opts.onRound?.(events);
       if (opts.signal?.aborted) break;
 
@@ -750,6 +984,7 @@ export async function runOperatorForever(opts: OperatorLoopOptions): Promise<voi
     }
   } finally {
     await closeAll();
+    await stopBesideRuns(besideState);
   }
 }
 
@@ -780,5 +1015,18 @@ export function formatRoundLine(event: OperatorTickEvent): string {
       return `operator: steward ${event.steward} skipped=1(steward-lease-held${event.heldBy ? `:${event.heldBy}` : ""})`;
     case "turn-busy":
       return `operator: ${event.op}@${event.env} skipped=1(turn-held${event.heldBy ? `:${event.heldBy}` : ""}, steward "${event.steward}" is already mid-turn)`;
+    case "beside-started":
+      return `operator: ${event.op}@${event.env} started=1(beside:${event.why}) holder="${event.holder}"` +
+        (event.keys ? ` keys="${event.keys.join(",")}"` : "") +
+        (event.resumed ? ` resumed="${event.resumed}"` : "") +
+        (event.approved ? ` approved="${event.approved.op}/${event.approved.gate}"` : "");
+    case "beside-running":
+      return `operator: ${event.op}@${event.env} skipped=1(beside-running${event.heldBy ? `:${event.heldBy}` : ""})`;
+    case "beside-ended":
+      return `operator: ${event.op}@${event.env} ended=1(beside) exit=${event.code ?? "none"}` + (event.error ? ` error="${event.error}"` : "");
+    case "skipped-not-ready":
+      return `operator: ${event.op}@${event.env} skipped=1(not-ready${event.already ? `:already-started:${event.already.join(",")}` : ""})`;
+    case "ready-failed":
+      return `operator: ${event.op}@${event.env} failed=1(ready) error="${event.error}"`;
   }
 }

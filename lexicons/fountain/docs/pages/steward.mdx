@@ -133,6 +133,18 @@ A box that never runs on Fountain doesn't need this lexicon for its steward. `de
 | runs the scheduled Ops | each on its own cron, each under its own operator lease, exactly as `chant operator` ticks a ConvergeOp; an Op with no schedule is left for someone to ask for, as it is on Fountain |
 | records each run | on the run ledger on `chant/lifecycle`, the record `chant run <op>` writes |
 
+`declareSteward` also takes `beside`: Ops the local form runs beside its turns, each in a `chant run <op>` process of its own under the Op's own lease, so a long build holds none of the other Ops up ([#2861](https://github.com/INTENTIUS/chant/issues/2861)). An entry is an Op, or `{ op, ready }` with a step that says when there is work:
+
+```typescript
+export const steward = declareSteward({
+  name: "box-steward",
+  ops: [converge, awake, release, upgrade],
+  beside: [{ op: dispatch, ready: shell("node ops/ready.mjs", { json: true }) }],
+});
+```
+
+The operator starts such an Op on its cron, when its ready step names new work, or to resume the steward's run of it once its question is answered or its gate approved, and keeps ticking the other Ops meanwhile. `chant run <op>` for it takes the Op's lease and not the steward's turn. [`operator --steward`](/chant/cli/operator/#operator---steward-name) has the details. This composite takes no `beside`, so on Fountain every Op is a turn.
+
 `--once` runs one round and exits. `--interval` and `--lease-ttl` work as they do for `chant operator`. On Ctrl-C or SIGTERM the steward releases its lease; one that dies without releasing it is reclaimed when the lease expires.
 
 The declaration refuses the same things in both forms: an Op listed twice, a schedule whose overlap isn't `skip`, a cron that doesn't parse. Discovery refuses one Op listed by two stewards, and two stewards with one name.
@@ -176,7 +188,7 @@ An Op the steward runs may ask a [decision point](/chant/guide/decision-points/)
 | The question stays out of the checkout | The answer record is written on the `chant/lifecycle` branch, under `_answers/<kind name>/<id>.md`, not in the checkout's working tree, which is the coding agent's ([#2786](https://github.com/INTENTIUS/chant/issues/2786)). It outlives the turn and any leased worktree. `points` reads it as part of the answer kind and gives its place on the branch as `ledger`. |
 | People answer it, not the steward's thread | The question is a record in the workspace. `chant workspace points --open` and MCP's `workspace-points` list it with `askedBy`, the steward and the run that asked it. `workspace status --json` lists it in the steward's `waiting`, beside its Ops. hud reads those and asks a person, who answers through hud or `chant workspace points answer`. |
 | The steward never answers | `points answer` is refused with `answer-in-steward-turn` during the steward's turn and in any process the turn starts, and the quorum never counts the steward that asked. A steward can't clear a gate either. |
-| The next run reads the answer | The next run asks the same point with the same inputs, finds the answered record and goes on. The local form runs a waiting Op again on the first round after its question is answered, whatever its cron says, and prints `resumed="<id>"`. Until then each round prints `waiting=1(point:<id>:<state>)`. On Fountain the Op's next scheduled turn reads the answer. |
+| The next run reads the answer | The next run asks the same point with the same inputs, finds the answered record and goes on. The local form runs a waiting Op again on the first round after its question is answered, whatever its cron says, and prints `resumed="<id>"`. An Op beside the turns is started again the same way, in a process of its own. Until then each round prints `waiting=1(point:<id>:<state>)`. On Fountain the Op's next scheduled turn reads the answer. |
 
 The Agent's command is `chant acp --steward <name>`, which marks every turn in the session as the steward's. In the local form, `chant operator --steward` marks each run it starts. Both export `CHANT_STEWARD` to the processes a run starts.
 

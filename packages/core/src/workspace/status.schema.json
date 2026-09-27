@@ -200,11 +200,11 @@
           ]
         },
         "ops": {
-          "description": "The Ops it runs, in declaration order.",
+          "description": "The Ops it runs, in declaration order: its turns' Ops, then those it runs beside its turns (#2861).",
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["name", "schedule", "env", "lastRun", "lastTick", "changesCheckout", "workLease"],
+            "required": ["name", "schedule", "env", "lastRun", "lastTick", "changesCheckout", "workLease", "beside"],
             "properties": {
               "name": { "type": "string" },
               "schedule": {
@@ -330,12 +330,40 @@
                     }
                   }
                 ]
+              },
+              "beside": {
+                "description": "For an Op the steward runs beside its turns (#2861), in a process of its own under the Op's own lease: ready is whether a ready step says when the operator starts it, and lease is the Op's lease ref (refs/chant/lease/<op>), held by a run of it while it runs (holder <steward>/<op>@<operator> for a run the operator started), read locally and never fetched, or null when none has held it. live is false once expiresAt has passed. Null for an Op the steward runs as one of its turns.",
+                "oneOf": [
+                  { "type": "null" },
+                  {
+                    "type": "object",
+                    "required": ["ready", "lease"],
+                    "properties": {
+                      "ready": { "type": "boolean" },
+                      "lease": {
+                        "oneOf": [
+                          { "type": "null" },
+                          {
+                            "type": "object",
+                            "required": ["holder", "acquiredAt", "expiresAt", "live"],
+                            "properties": {
+                              "holder": { "type": "string" },
+                              "acquiredAt": { "type": "string" },
+                              "expiresAt": { "type": "string" },
+                              "live": { "type": "boolean" }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
               }
             }
           }
         },
         "waiting": {
-          "description": "The open decision points the steward waits on (#2749): one for each Op whose newest run is the steward's own (its ledger record names the steward) and stopped on a question: the steward's own Ops in ops order, then any other Op of the member, such as one the steward's process starts itself (studio#137), by name. The state is the question's when the run stopped; `chant workspace points --open` has its state now, and hud asks a person there. The steward never answers one, and runs an Op it lists again on the first round after it is answered.",
+          "description": "The open decision points the steward waits on (#2749): one for each Op whose newest run is the steward's own (its ledger record names the steward) and stopped on a question: the steward's own Ops in ops order, then any other Op of the member, such as one the steward's process starts itself (studio#137), by name. The state is the question's when the run stopped; `chant workspace points --open` has its state now, and hud asks a person there. The steward never answers one, and runs an Op it lists again on the first round after it is answered (an Op beside its turns, in a process of its own, #2861).",
           "type": "array",
           "items": {
             "allOf": [
