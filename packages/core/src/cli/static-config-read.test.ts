@@ -72,7 +72,9 @@ afterEach(() => {
 function chant(args: string[], cwd: string): string {
   const result = spawnSync(process.execPath, ["--import", tsxLoader, mainTs, ...args], {
     cwd,
-    env: { PATH: process.env.PATH ?? "", HOME: home },
+    // TMPDIR passes through so tsx caches under the run's temp directory
+    // (chant#2864), not the machine-wide default this scrubbed env would give.
+    env: { PATH: process.env.PATH ?? "", HOME: home, TMPDIR: tmpdir() },
     encoding: "utf-8",
     input: "n\n",
     timeout: 60_000,
@@ -105,7 +107,11 @@ describe("commands that read path lexicons statically run no project code", () =
 
   test("a config it cannot read is reported, and still not run", () => {
     writeConfig(`process.env.CI ? ["github"] : [{ name: "github", module: "./gh/index.ts" }]`);
-    const output = chant(["dev", "onboard", "github"], project);
+    // `import --agents` rather than `dev onboard`: with the config unread,
+    // github is treated as a package, and onboard then patches the chant
+    // repo it runs from (its CI workflow, chant#2863). Both commands print
+    // the notice from the same recordProjectLexicons read.
+    const output = chant(["import", "--agents", "--lexicon", "github", "--output", join(root, "out")], project);
     expect(output).toContain("could not read the lexicons in");
     expect(output).toContain("treated as a package");
     expect(existsSync(marker)).toBe(false);

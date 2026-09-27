@@ -169,7 +169,9 @@ export default defineConfig({
     // naming the lexicons and the command instead. The check is a few
     // hundred stat calls (~10ms); generation itself is ~55s cold, too slow
     // to run implicitly.
-    globalSetup: ["test/lexicon-artifacts.setup.ts"],
+    // chant #2864: each run gets its own TMPDIR, removed when the run ends,
+    // so tsx's cache and leftover temp directories stay bounded.
+    globalSetup: ["test/lexicon-artifacts.setup.ts", "test/per-run-tmpdir.setup.ts"],
     environment: "node",
     // Vitest 4 moved the per-worker node flags from poolOptions.forks.execArgv
     // to this top-level key; the default pool is still forks.
