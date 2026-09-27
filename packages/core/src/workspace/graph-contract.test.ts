@@ -11,7 +11,7 @@
  * reference workspace runs a real one (`read-contract.test.ts`).
  */
 
-import { rmSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, describe, expect, test } from "vitest";
 import { cleanScratch, commitAll, contract, declaration, declaration as declaration_, FAKE_GRAPH_CHANT, git, REPO, repo, scratchDir, validSchema } from "./__fixtures__/contract-repo";
@@ -107,8 +107,15 @@ describe("the links section (#2539)", () => {
 });
 
 describe("chant workspace graph on the chant repo (#2557)", () => {
-  test("validates, and lists every member as skipped: none is kind chant", async () => {
-    const { doc, failed } = await workspaceGraph({ cwd: join(REPO, "packages", "core") });
+  // The one terraform member runs through the terraform lexicon (#2874), a
+  // real chant per read; kind-readers.e2e.test.ts covers that. Here it is
+  // left out, so nothing runs.
+  const notRun = (JSON.parse(readFileSync(join(REPO, "chant.workspace.json"), "utf-8")) as { members: { name: string; kind: string }[] }).members
+    .filter((m) => m.kind !== "terraform" && m.kind !== "choudoufu")
+    .map((m) => m.name);
+
+  test("validates, and lists every member but the terraform one as skipped: none is kind chant", async () => {
+    const { doc, failed } = await workspaceGraph({ cwd: join(REPO, "packages", "core"), members: notRun });
     const g = result(doc);
     expectValid(g);
     expect(failed).toBe(false);
@@ -119,7 +126,7 @@ describe("chant workspace graph on the chant repo (#2557)", () => {
 
   test("--at HEAD reads from git objects and exports nothing when no member runs", async () => {
     const head = git(REPO, "rev-parse", "HEAD");
-    const { doc } = await workspaceGraph({ cwd: REPO, at: "HEAD" });
+    const { doc } = await workspaceGraph({ cwd: REPO, at: "HEAD", members: notRun });
     const g = result(doc);
     expectValid(g);
     expect(g.at).toBe(head);

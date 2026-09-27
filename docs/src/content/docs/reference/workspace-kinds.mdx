@@ -64,10 +64,35 @@ chant reads the key `./workspace-kinds` literally. A `./*` pattern in `exports` 
 | `kinds[].probe.anyFile` | File names. The probe passes when a file matching one of them sits directly in the member's directory. A `*` matches any run of characters in a name, so `*.tf` matches every `.tf` file |
 | `kinds[].probe.anyBlock` | `in`, file names as in `anyFile`, and `blocks`, block names. The probe passes when a file directly in the directory whose name matches `in` has a line that opens one of those blocks with no label, such as `live {`. Leading space is allowed, and no file is parsed |
 | `kinds[].outputs` | Optional. Output names every member of the kind exposes to [member links](/chant/reference/workspace-declaration/#member-links). A member entry of the kind can list more in its own `outputs` |
+| `kinds[].graph` | Optional. How [`chant workspace graph`](/chant/cli/workspace-graph/) reads a member of the kind. See [below](#reading-a-member-in-the-graph) |
 
 A probe needs at least one of `anyFile` and `anyBlock`, and it passes when either one does. Both only look at files directly in the directory, never below it.
 
 Fields whose names start with `x-` are allowed on the file and on each kind. Anything else is refused. The JSON Schema ships in `@intentius/chant` at `src/workspace/workspace-kinds.schema.json`, with the `$id` `https://intentius.io/chant/schemas/workspace/kinds/v1/workspace-kinds.schema.json`.
+
+### Reading a member in the graph
+
+A kind's members are directories chant can probe, but a directory of `.tf` files has no chant config, so there is nothing for `chant graph` to run in it. The optional `graph` block says how to read one ([#2874](https://github.com/INTENTIUS/chant/issues/2874)):
+
+```json
+{
+  "name": "terraform",
+  "graph": {
+    "lexicon": "terraform",
+    "config": {
+      "moduleRoot": "{workspace}",
+      "roots": { "{member}": { "dir": "{dir}" } }
+    }
+  }
+}
+```
+
+| Field | Value |
+|---|---|
+| `graph.lexicon` | The lexicon that reads the member, by name. The package that supplies the kind must be `@intentius/chant-lexicon-<lexicon>`, so the lexicon chant loads is the one the declaration pins. A kind whose package has another name keeps its probe and loses its `graph` block, with a `WSP002` problem |
+| `graph.config` | The lexicon's config namespace for the reader project. In every string key and value, `{member}` becomes the member's name, `{dir}` its absolute directory and `{workspace}` the absolute workspace root. Nothing else is interpreted |
+
+For each member, `chant workspace graph` writes a reader project in a temporary directory: a `chant.config.json` with `lexicons: [<lexicon>]` and `config` under the lexicon's key, and a `node_modules` link to the directory that holds the pinned package. The member's `chant graph --format ir` runs there, and the project is removed afterwards. Nothing is written under the workspace. The block is data like the rest of the file: listing a workspace still imports nothing, and only `graph` loads the lexicon.
 
 ### Which packages are read
 
@@ -92,6 +117,8 @@ Two kinds ship from the terraform lexicon, since a choudoufu estate is a Terrafo
 | `terraform` | `@intentius/chant-lexicon-terraform` | 400 | `anyFile: ["*.tf"]` |
 
 A choudoufu root also passes the `terraform` probe, and the higher precedence makes it a `choudoufu` member. A workspace that uses either kind pins the lexicon.
+
+Both kinds carry a `graph` block, so `chant workspace graph` reads their members through the lexicon. Each member becomes one root named after the member, so a resource's id is `<member>/<member>/<address>`, and a local module's is `<member>/<member>/module.<name>/<address>`. The block sets the lexicon's `moduleRoot` to the workspace root, so a root that calls `../modules/x` keeps its modules as long as they sit inside the workspace. The `choudoufu` block also sets `binary: "choudoufu"`, so the estate the root declares is read as a live root.
 
 ```json
 {

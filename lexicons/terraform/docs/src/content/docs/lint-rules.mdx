@@ -1275,6 +1275,16 @@ that resolves outside the project root is not read, and a source already on the
 current call chain is a cycle and stops there. Both are build warnings naming
 the call site.
 
+**Where the walk stops.** The boundary is the project root, or a root's own
+directory when its `dir` lies outside the project. `terraform.moduleRoot`
+names another directory instead, absolute or relative to the project root, and
+a source that resolves outside it is refused the same way. `chant workspace
+graph` sets it to the workspace root when it reads a `terraform` or
+`choudoufu` member through a reader project of its own
+([#2874](https://github.com/INTENTIUS/chant/issues/2874)), so a member root
+that calls `../modules/x` keeps its modules. A project rarely needs it, since
+widening the boundary means reading modules the project doesn't own.
+
 `chant audit` walks the same scopes. Discovery reads each directory of `.tf`
 files, drops the ones another directory calls with a relative `source` (they
 are child modules, not roots), and hands the audit the directory each root was

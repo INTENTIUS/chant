@@ -17,6 +17,7 @@ import {
   probeKind,
   readPackageKinds,
   resolveKind,
+  substituteGraphConfig,
   type MemberKind,
 } from "./kinds";
 import schema from "./workspace-kinds.schema.json";
@@ -111,6 +112,54 @@ describe("parseKindData", () => {
     expect(parseKindData(kindsFile([{ ...tf, probe: { anyFile: ["../main.tf"] } }]), "p").problems[0]).toMatch(/anyFile/);
     expect(parseKindData(kindsFile([{ ...tf, run: "node x.js" }]), "p").problems[0]).toMatch(/additional properties/);
     expect(parseKindData("{", "p").problems[0]).toMatch(/^p: the kinds file is not JSON/);
+  });
+});
+
+describe("a kind's graph block (#2874)", () => {
+  const graph = { lexicon: "tf", config: { moduleRoot: "{workspace}", roots: { "{member}": { dir: "{dir}" } } } };
+
+  test("is read as data, and refuses a field it doesn't know", () => {
+    const data = parseKindData(kindsFile([{ ...tf, graph }]), "p");
+    expect(data.problems).toEqual([]);
+    expect(data.kinds[0].graph).toEqual(graph);
+    expect(parseKindData(kindsFile([{ ...tf, graph: { ...graph, run: "x" } }]), "p").problems[0]).toMatch(/additional properties/);
+    expect(parseKindData(kindsFile([{ ...tf, graph: { lexicon: "Bad Name", config: {} } }]), "p").problems[0]).toMatch(/lexicon/);
+    expect(parseKindData(kindsFile([{ ...tf, graph: { lexicon: "tf" } }]), "p").problems[0]).toMatch(/config/);
+  });
+
+  test("substitutes {member}, {dir} and {workspace} in keys and values, and nothing else", () => {
+    const out = substituteGraphConfig(
+      { moduleRoot: "{workspace}", roots: { "{member}": { dir: "{dir}", note: "{other} at {dir}/x" } }, list: ["{member}", 3, true, null] },
+      { member: "net", dir: "/ws/estates/net", workspace: "/ws" },
+    );
+    expect(out).toEqual({ moduleRoot: "/ws", roots: { net: { dir: "/ws/estates/net", note: "{other} at /ws/estates/net/x" } }, list: ["net", 3, true, null] });
+  });
+
+  test("records the supplying package, and is dropped with a problem when the lexicon is not that package", () => {
+    const root = dir({
+      ...pkg("@intentius/chant-lexicon-tf", "1.0.0", [{ ...tf, graph }]),
+      ...pkg("@acme/other", "1.0.0", [{ ...tf, name: "other-tf", graph }]),
+    });
+    const good = loadKindRegistry([{ package: "@intentius/chant-lexicon-tf", version: "1.0.0", path: null }], root);
+    expect(good.problems).toEqual([]);
+    expect(good.registry.get("terraform")).toMatchObject({ graph, packageDir: join(root, "node_modules/@intentius/chant-lexicon-tf") });
+
+    const bad = loadKindRegistry([{ package: "@acme/other", version: "1.0.0", path: null }], root);
+    expect(bad.problems.map((p) => p.message)).toEqual([expect.stringMatching(/other-tf reads its members with lexicon tf, which is @intentius\/chant-lexicon-tf, and this package is @acme\/other/)]);
+    expect(bad.registry.get("other-tf")?.graph).toBeUndefined();
+    expect(bad.registry.get("other-tf")).toBeDefined();
+  });
+
+  test("the terraform lexicon's kinds read their members with it, named for the member at the workspace root", () => {
+    const lexicon = join(import.meta.dirname, "..", "..", "..", "..", "lexicons", "terraform");
+    const read = readPackageKinds(lexicon);
+    expect(read.problems).toEqual([]);
+    for (const name of ["terraform", "choudoufu"]) {
+      const k = read.kinds.find((x) => x.name === name)!;
+      expect(k.graph?.lexicon).toBe("terraform");
+      expect(substituteGraphConfig(k.graph!.config, { member: "net", dir: "/ws/net", workspace: "/ws" })).toMatchObject({ moduleRoot: "/ws", roots: { net: { dir: "/ws/net" } } });
+    }
+    expect(read.kinds.find((x) => x.name === "choudoufu")!.graph!.config.binary).toBe("choudoufu");
   });
 });
 

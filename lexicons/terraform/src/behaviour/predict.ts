@@ -169,6 +169,7 @@ export const readTerraformDeclaration: TerraformDeclarationReader = async (cwd) 
     roots: namespace.roots,
     binary: namespace.binary,
     callModuleType: namespace.callModuleType,
+    moduleRoot: namespace.moduleRoot,
   });
   for (const [name, entity] of rendered.entities) {
     const e = entity as unknown as TerraformBehaviourEntity;

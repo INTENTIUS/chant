@@ -9,6 +9,10 @@
  *   Members of kind `other` are never read, and a nested `workspace` member
  *   runs its own workspace commands, so both are listed as skipped with the
  *   reason code `kind-not-run`.
+ * - For `graph` only, members of a pinned package's kind whose kinds file
+ *   says how to read them (#2874, a `graph` block): each runs `chant graph`
+ *   in a reader project chant writes for it (`kind-readers.ts`). Other
+ *   package kinds are `kind-not-run`, as before.
  * - For `build` and `lint` only, every project an example group matches
  *   (ws-051): groups are built and linted, and have no ledger, audit or place
  *   in the graph. On a large repository this is most of the run, so
@@ -38,7 +42,7 @@ import { findWorkspaceRoot } from "../project-root";
 import type { ComposedMember, MemberReason } from "./compose-graph";
 import { mergeAudit, mergeSarif, type MemberOutput } from "./compose-reports";
 import { readDeclaration, resolveGroups, rootExclusions, WorkspaceReadError, type Declaration } from "./declaration";
-import { builtinKindRegistry, type KindRegistry } from "./kinds";
+import { builtinKindRegistry, type KindGraph, type KindRegistry } from "./kinds";
 import { memberReason } from "./ls";
 import { MEMBER_RUN_PROTOCOL, PROTOCOL_PREFIX, type MemberRunLine, type MemberRunRequest } from "./member-run";
 import { workingTree, type WorkspaceTree } from "./tree";
@@ -58,6 +62,12 @@ export interface RunUnit {
   abs: string;
   /** Directories (relative to `dir`) left out of discovery; set for member `.`. */
   exclude: string[];
+  /**
+   * Set for a member read through its kind's `graph` block (#2874). `abs` is
+   * the member's directory until `kind-readers.ts` writes the reader project
+   * and points `abs` at it.
+   */
+  reader?: KindGraph & { packageDir: string };
 }
 
 export interface SkippedEntry {
@@ -189,6 +199,25 @@ export function planMembers(verb: WorkspaceVerb, root: string, options: PlanOpti
       }
       continue;
     }
+    const byKind = verb === "graph" && entry.kind !== "chant" ? kinds.get(entry.kind) : undefined;
+    if (byKind?.graph && byKind.packageDir) {
+      const reason = memberReason(entry, tree, kinds);
+      if (reason) {
+        unreadable.push({ name: entry.name, dir: entry.dir, kind: entry.kind, reason });
+        continue;
+      }
+      units.push({
+        id: entry.name,
+        member: entry.name,
+        kind: entry.kind,
+        group: false,
+        dir: entry.dir,
+        abs: entry.dir === "." ? root : join(root, entry.dir),
+        exclude: [],
+        reader: { ...byKind.graph, packageDir: byKind.packageDir },
+      });
+      continue;
+    }
     if (entry.kind !== "chant") {
       const why =
         entry.kind === "workspace"
@@ -265,7 +294,8 @@ export function memberArgv(verb: WorkspaceVerb, unit: RunUnit, args: ParsedArgs)
     if (args.tier) argv.push("--tier", args.tier);
     if (args.failOn) argv.push("--fail-on", args.failOn);
     if (args.maxFiles !== undefined) argv.push("--max-files", String(args.maxFiles));
-  } else if (args.env) {
+  } else if (args.env && !unit.reader) {
+    // A reader project declares no environments, so --env is the chant members' alone.
     argv.push("--env", args.env);
   }
   return argv;
