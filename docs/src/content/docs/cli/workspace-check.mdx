@@ -192,6 +192,12 @@ error    WSP126  box-intent-unknown: member fern's box names the intent box-009,
 warning  WSP127  box-intent-unconstrained: member fern's box names the intent box-001 (decisions/box-001-what-fern-is-for.md), whose constrains names path:vendor, and none of it is a member or path of this workspace; add member:<name> for the member the intent is about, or a path: entry at, above or inside a member's directory
 ```
 
+A box block's [services](/chant/reference/workspace-declaration/#services) are checked when the declaration is read ([#2880](https://github.com/INTENTIUS/chant/issues/2880)). A `needs` entry that names no service of the block, `needs` that form a cycle, a service name given twice and a second `httpPort` each make the declaration unreadable, so `check` reports one `WSP001` finding with the code `declaration-invalid`, and every other command refuses the file too:
+
+```text
+error  WSP001  declaration-invalid: member box's box service hud needs "api", which the block does not declare; declared services: app, hud
+```
+
 ## Diagrams
 
 A [declared diagram](/chant/reference/workspace-declaration/#diagrams) names a source and a render, pinned to the renderer that made the render ([#2764](https://github.com/INTENTIUS/chant/issues/2764)). `WSP131` and `WSP132` read the declaration and the tree checked, and fail when a named source or render doesn't exist there, including under `--at`. `WSP133` fails only for an entry that records a `sourceHash`, by hashing the source in the tree checked and comparing it against that recorded value. chant runs no renderer for this, on `check` or anywhere else. So `WSP133` catches a source that changed without a fresh render committed, but not a render that drifted from its source some other way.

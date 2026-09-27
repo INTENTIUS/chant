@@ -235,6 +235,7 @@ The member that holds the box's declarations carries a `box` block:
 |---|---|---|
 | `capabilities` | no | Each capability the box reaches outside itself. None when omitted. |
 | `intent` | no | The id of the decision record that says what the box is for. See [Intent](#intent). |
+| `services` | no | The services the box runs under its supervisor. See [Services](#services). |
 | `capabilities[].name` | yes | The capability, in the kind-name grammar, such as `inference` or `fountain`. A box names each capability once. |
 | `capabilities[].broker` | no | What brokers it, such as `lobby` or `door`. It may be a member of this workspace or a runtime outside it, as a planted box's lobby is. Without it the capability is unbrokered, and `chant workspace check` fails with `WSP122`. |
 | `capabilities[].scope` | no | The parts of the box's own that the broker lets it reach. The broker enforces the words, and chant records them. For Fountain these are `agent` (start conversations with its own agent), `vault` (attach its own vault), and `conversations` and `sandboxes` (its own). |
@@ -246,7 +247,7 @@ The block goes in the workspace declaration and not in the box's TypeScript. `ch
 | Command | Uses the box block |
 |---|---|
 | [`chant workspace check`](/chant/cli/workspace-check/#boxes) | reads every file in the member's directory and fails with `WSP121` (`box-credential-declared`) on a literal secret. It fails with `WSP122` (`box-capability-unbrokered`) on a capability that names no broker, and with `WSP125` (`box-fountain-callback-undeclared`) when a member that builds a fountain `Box` doesn't declare `fountain-callback`. It fails with `WSP126` (`box-intent-unknown`) when the intent names no decision record, and warns with `WSP127` (`box-intent-unconstrained`) when that record's constrains names no member or path of this workspace at all |
-| [`chant workspace status --json`](/chant/cli/workspace-status/#boxes) | lists each member's `box`, with every capability's `name`, `broker` and `scope`, and the box's `intent` |
+| [`chant workspace status --json`](/chant/cli/workspace-status/#boxes) | lists each member's `box`, with every capability's `name`, `broker` and `scope`, the box's `intent` and its `services` |
 
 Set `minReader` to `"0.91.0"` or newer when the file has a `box` block, so an older chant reports `reader-too-old` instead of an unknown field.
 
@@ -278,6 +279,40 @@ echo '{ "state": "decided", "choice": { "option": "a", "reason": "A review queue
 ```
 
 [`status --json`](/chant/cli/workspace-status/#boxes) reports the record under the member's `box.intent` as `{ id, state, question, choice, answer, decided_by, decided_on }`, before and after it is decided. `answer` is the label of the `options[]` entry `choice.option` names, or `null` while none is chosen ([#2855](https://github.com/INTENTIUS/chant/issues/2855)). `check` fails when no decision record has the id (`WSP126`), and warns when the record's `constrains` names no member or path of this workspace at all: no `member:` entry for a declared member and no `path:` entry at, above or inside one's directory (`WSP127`). The member it names need not be the box's own: a box one member runs can be what a decision naming another member constrains, such as the app the box runs when the box block sits on the box's steward ([#2857](https://github.com/INTENTIUS/chant/issues/2857)). With the box's own member constrained, [`graph --intent fern`](/chant/cli/workspace-graph/) shows the decision for the box's files. Set `minReader` to `"0.94.0"` or newer when a box block has an `intent`.
+
+### Services
+
+A box runs its processes as services under a supervisor: sprite-env on a sprite, or a stand-in with the same command line elsewhere. The box block lists them in `services` ([#2880](https://github.com/INTENTIUS/chant/issues/2880)), so a reader of [`status --json`](/chant/cli/workspace-status/#boxes) has them before anything observes the box, and the fly lexicon keeps them running from the same list:
+
+```json
+{
+  "name": "box",
+  "dir": "box",
+  "kind": "other",
+  "because": "the box's steward and its Ops",
+  "box": {
+    "services": [
+      { "name": "app", "cmd": "${HOME}/box/run-app.sh", "duration": "3s", "health": "http://127.0.0.1:5173/health" },
+      { "name": "door", "cmd": "${HOME}/box/run-door.sh", "needs": ["app"], "httpPort": 8080, "duration": "2s" },
+      { "name": "site", "cmd": "${HOME}/box/run-site.sh", "health": "http://127.0.0.1:3300/health", "optional": true }
+    ]
+  }
+}
+```
+
+| Field | Required | Value |
+|---|---|---|
+| `services[].name` | yes | The service's name in the supervisor, in the kind-name grammar. A box names each service once. |
+| `services[].cmd` | yes | The command the supervisor runs (`sprite-env services create --cmd`). Each `${VAR}` in it is expanded from the environment of the process that applies the list, so the declaration holds no machine path. |
+| `services[].needs` | no | Services of the same block that start first (`--needs`). |
+| `services[].httpPort` | no | The port the supervisor routes the sprite's URL to (`--http-port`). One service of a box at most sets it. |
+| `services[].duration` | no | How long the service must stay up after a create or start, such as `3s` (`--duration`). |
+| `services[].health` | no | A URL that answers 200 while the service works. Without one, the supervisor's state decides. |
+| `services[].optional` | no | `true` for a service something else creates by name, such as a site a release Op makes. An apply creates it only when its `only` names it, and an observer skips it while the supervisor has no such service. |
+
+The services also follow rules the schema can't state. Each `needs` entry names a service of the same block, and the `needs` form no cycle. A block gives each name once, and one service at most sets `httpPort`. A declaration that breaks one can't be read (`declaration-invalid`), so [`check`](/chant/cli/workspace-check/#boxes) fails with `WSP001`.
+
+The fly lexicon reads the list with `box: true`, from the box block of the member whose directory holds the working directory. `spriteServicesObserve({ box: true })` observes the services for a [`ConvergeOp`](/chant/guide/converging-lifecycle/), `spriteServiceRestart({ box: true })` restarts one and waits for its `health`, and `spriteApplyServices({ box: true })` creates and replaces them through `sprite-env services`. chant reads `services` from 0.95.0 on, so a declaration that has them sets `minReader` to `"0.95.0"` or newer.
 
 ### Isolation
 

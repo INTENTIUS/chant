@@ -13,7 +13,7 @@ import {
 } from "@intentius/chant/op";
 import * as contracts from "./activity-contracts";
 import * as activities from "./activities";
-import { spriteServicesObserve, spriteServiceRestart } from "./builders";
+import { spriteApplyServices, spriteServicesObserve, spriteServiceRestart } from "./builders";
 
 const CONTRACTS: Map<string, ActivityContract> = new Map(
   Object.values(contracts).filter(isActivityContract).map((c) => [c.name, c]),
@@ -29,7 +29,7 @@ describe("fly activity contracts (#2843)", () => {
       expect(typeof (activities as unknown as Record<string, unknown>)[c.name], `${c.name} is not an exported activity`).toBe("function");
       expect(c.returns, `${c.name} declares no return schema`).toBeDefined();
     }
-    expect([...CONTRACTS.keys()].sort()).toEqual(["spriteServiceRestart", "spriteServicesObserve"]);
+    expect([...CONTRACTS.keys()].sort()).toEqual(["spriteApplyServices", "spriteServiceRestart", "spriteServicesObserve"]);
   });
 
   test("a ConvergeOp observing spriteServicesObserve passes OPS012 and OPS013 (the guide's example)", () => {
@@ -63,9 +63,26 @@ describe("fly activity contracts (#2843)", () => {
     expect(issues.some((i) => i.message.includes("servicefile"))).toBe(true);
   });
 
+  test("the box forms validate: observe and restart with box: true, and an apply with box, only, start and restart (#2880)", () => {
+    const { op: converge } = ConvergeOp({
+      name: "converge",
+      env: "box",
+      observe: spriteServicesObserve({ box: true }),
+      rules: [when<ResourceSymptom>(eq("status", "drifted"), run("restart-service"), { id: "restart-drifted", why: "restart it" })],
+    });
+    expect(validateActivitySteps(converge.props as never, CONTRACTS)).toEqual([]);
+    expect(validateStepOutputRefs(converge.props as never, CONTRACTS)).toEqual([]);
+    expect(validateActivitySteps(op([spriteServiceRestart({ box: true })]), CONTRACTS)).toEqual([]);
+    expect(validateActivitySteps(op([spriteApplyServices({ box: true, only: ["site"], start: true, restart: true })]), CONTRACTS)).toEqual([]);
+    expect(validateActivitySteps(op([spriteApplyServices({ id: "box-1", services: [{ name: "app", cmd: "node app.js", needs: [] }], start: true })]), CONTRACTS)).toEqual([]);
+    const issues = validateActivitySteps(op([{ kind: "activity", fn: "spriteApplyServices", args: { box: true, onlyy: ["site"] } }]), CONTRACTS);
+    expect(issues.some((i) => i.message.includes("onlyy"))).toBe(true);
+  });
+
   test("loadActivityContracts finds them at @intentius/chant-lexicon-fly/op/activity-contracts", async () => {
     const loaded = await loadActivityContracts(["fly"]);
     expect(loaded.get("spriteServicesObserve")?.returns).toBeDefined();
     expect(loaded.get("spriteServiceRestart")?.returns).toBeDefined();
+    expect(loaded.get("spriteApplyServices")?.returns).toBeDefined();
   });
 });

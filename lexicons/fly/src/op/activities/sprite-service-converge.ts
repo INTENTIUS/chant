@@ -20,12 +20,18 @@
  * sprite and call `sprite-env services` (found on PATH or in /.sprite/bin,
  * or at `spriteEnv`). With an `id`, they go through the Sprites API
  * (`spriteServiceList`, `spriteServiceStop` and `spriteServiceStart`).
+ *
+ * The declared services come from `services`, from a `servicesFile`, or,
+ * with `box: true`, from the `services` of the box block of the workspace
+ * member whose directory holds the working directory (#2880), the list
+ * `chant workspace status --json` prints as `members[].box.services`.
  */
 
 import { execFile } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
+import { boxServices } from "./box-services";
 import { spriteServiceList, spriteServiceStart, spriteServiceStop } from "./sprite-services";
 import type { SpritesHttp } from "./sprites";
 import { defaultSpritesHttp } from "./sprites";
@@ -62,6 +68,12 @@ export interface SpriteServicesObserveArgs extends Via {
   services?: DeclaredSpriteService[];
   /** A JSON file of `{ services: [...] }`, relative to the working directory, read on each tick. */
   servicesFile?: string;
+  /**
+   * Read the services from the box block of the workspace member whose
+   * directory holds the working directory, on each tick (#2880), in place of
+   * `services` and `servicesFile`.
+   */
+  box?: boolean;
   /** Health probes before a service counts as drifted. Default 3. */
   probes?: number;
   /** Time between probes, ms. Default 1000. */
@@ -77,10 +89,12 @@ export interface SpriteServicesObserveResult {
 export interface SpriteServiceRestartArgs extends Via {
   /** The service. Default: the resource a ConvergeOp dispatched this run for (`CHANT_CONVERGE_RESOURCE`). */
   name?: string;
-  /** Its health URL. Default: the one `services` or `servicesFile` declares for it. */
+  /** Its health URL. Default: the one `services`, `servicesFile` or the box block (`box: true`) declares for it. */
   health?: string;
   services?: DeclaredSpriteService[];
   servicesFile?: string;
+  /** Read the declared services from the box block of the member the step runs in (#2880), in place of `services` and `servicesFile`. */
+  box?: boolean;
   /** How long to wait for the health URL after the restart, ms. Default 60000. */
   waitMs?: number;
 }
@@ -105,6 +119,20 @@ export function declaredServices(args: { services?: DeclaredSpriteService[]; ser
     }
   }
   return out;
+}
+
+/**
+ * The declared services: with `box: true`, the box block's (#2880), and
+ * otherwise those of {@link declaredServices}. `box` in place of the other
+ * two, never beside them.
+ */
+export async function resolveDeclaredServices(
+  args: { services?: DeclaredSpriteService[]; servicesFile?: string; box?: boolean },
+  cwd = process.cwd(),
+): Promise<DeclaredSpriteService[]> {
+  if (!args.box) return declaredServices(args, cwd);
+  if (args.services || args.servicesFile) throw new Error("box: true reads the services from the box block, so it takes no services or servicesFile beside it");
+  return (await boxServices(cwd)).map((s) => ({ name: s.name, ...(s.health ? { health: s.health } : {}), ...(s.optional ? { optional: true } : {}) }));
 }
 
 /** The sprite-env binary, or null when there is none. */
@@ -181,7 +209,7 @@ export async function spriteServicesObserve(
   signal?: AbortSignal,
   http?: SpritesHttp,
 ): Promise<SpriteServicesObserveResult> {
-  const declared = declaredServices(args);
+  const declared = await resolveDeclaredServices(args);
   const probes = Math.max(1, args.probes ?? 3);
   const interval = args.probeIntervalMs ?? 1000;
   let states: Map<string, string | null>;
@@ -245,7 +273,7 @@ export async function spriteServiceRestart(
   if (!name) {
     throw new Error(`spriteServiceRestart: no service named: pass \`name\`, or run the Op from a ConvergeOp rule, which sets ${CONVERGE_RESOURCE_ENV}`);
   }
-  const health = args.health ?? (args.services || args.servicesFile ? declaredServices(args).find((s) => s.name === name)?.health : undefined);
+  const health = args.health ?? (args.services || args.servicesFile || args.box ? (await resolveDeclaredServices(args)).find((s) => s.name === name)?.health : undefined);
 
   if (args.id) {
     const client = http ?? defaultSpritesHttp(args.token);

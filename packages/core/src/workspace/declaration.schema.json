@@ -402,12 +402,19 @@
     },
     "box": {
       "type": "object",
-      "description": "The member is a box, or holds a box's declarations (#2726). A box holds no credential: each capability it needs outside itself is reached through a broker, a runtime such as a lobby or a door, which holds the credential and enforces the scope. chant workspace check fails when a file in the member's directory carries a literal secret (WSP121) and when a capability names no broker (WSP122). chant workspace status --json lists the capabilities, so a broker can read the scopes. Its host, slot, ports, state and cookies state the box's isolation (#2727): chant derives each value from the box's identity, its host, the member's name and its slot, and prints them in chant workspace status --json, so a runtime reads them instead of choosing its own. chant workspace check fails when two boxes on a host resolve to the same value (WSP123) and when a box hard-codes a machine path (WSP124). A member that builds the fountain lexicon's Box declares the callback token fountain gives its persistent sandbox as the capability fountain-callback, brokered by fountain, with scope owner, or chant workspace check fails (WSP125, #2780). Its intent names the decision record that says what the box is for (#2850): chant workspace status --json reports the record's state and answer, and chant workspace check fails when no decision record has the id (WSP126) and warns when the record constrains no member or path of this workspace (WSP127, #2857). Added in schema 1 by chant 0.91.0, so a declaration that uses it sets minReader to 0.91.0 or newer.",
+      "description": "The member is a box, or holds a box's declarations (#2726). A box holds no credential: each capability it needs outside itself is reached through a broker, a runtime such as a lobby or a door, which holds the credential and enforces the scope. chant workspace check fails when a file in the member's directory carries a literal secret (WSP121) and when a capability names no broker (WSP122). chant workspace status --json lists the capabilities, so a broker can read the scopes. Its host, slot, ports, state and cookies state the box's isolation (#2727): chant derives each value from the box's identity, its host, the member's name and its slot, and prints them in chant workspace status --json, so a runtime reads them instead of choosing its own. chant workspace check fails when two boxes on a host resolve to the same value (WSP123) and when a box hard-codes a machine path (WSP124). A member that builds the fountain lexicon's Box declares the callback token fountain gives its persistent sandbox as the capability fountain-callback, brokered by fountain, with scope owner, or chant workspace check fails (WSP125, #2780). Its intent names the decision record that says what the box is for (#2850): chant workspace status --json reports the record's state and answer, and chant workspace check fails when no decision record has the id (WSP126) and warns when the record constrains no member or path of this workspace (WSP127, #2857). Its services list what the box runs under its supervisor (#2880), which the fly lexicon observes, restarts and applies through sprite-env, and which chant workspace status --json prints. Added in schema 1 by chant 0.91.0, so a declaration that uses it sets minReader to 0.91.0 or newer.",
       "properties": {
         "intent": {
           "type": "string",
           "minLength": 1,
           "description": "The id of the decision record that says what the box is for (#2850), a record of a declared kind named decision. A new box starts as a question: the record is proposed with a null choice until the person who answers it decides it. The record constrains a member or path of this workspace, with member:<a member's name> or a path: entry at, above or inside a member's directory. It need not be this member: the intent can constrain the app the box runs when that app is another member (#2857). When it constrains this member, chant workspace graph --intent shows it for the box's files. Added by chant 0.94.0, so a declaration that uses it sets minReader to 0.94.0 or newer."
+        },
+        "services": {
+          "type": "array",
+          "description": "The services the box runs under its supervisor, sprite-env on a sprite (#2880). Each name is given once, every needs entry names a service of this list, the needs form no cycle, and at most one service sets httpPort; a declaration that breaks one of these can't be read (declaration-invalid). The fly lexicon's spriteServicesObserve and spriteServiceRestart read the list with box: true, and spriteApplyServices with box: true creates and replaces the services through sprite-env. None when omitted. Added by chant 0.95.0, so a declaration that uses it sets minReader to 0.95.0 or newer.",
+          "items": {
+            "$ref": "#/$defs/boxService"
+          }
         },
         "capabilities": {
           "type": "array",
@@ -475,6 +482,55 @@
         "cookies": [
           "host"
         ]
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false
+    },
+    "boxService": {
+      "type": "object",
+      "description": "A service a box runs under its supervisor (#2880).",
+      "required": [
+        "name",
+        "cmd"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/kindName",
+          "description": "The service's name in the supervisor. Unique within the box."
+        },
+        "cmd": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The command the supervisor runs (sprite-env services create --cmd). ${HOME} and other ${VAR} references are expanded from the environment of the process that applies the list, so the declaration holds no machine path."
+        },
+        "needs": {
+          "type": "array",
+          "uniqueItems": true,
+          "description": "Names of services of the same box that start before this one (sprite-env services create --needs).",
+          "items": {
+            "$ref": "#/$defs/kindName"
+          }
+        },
+        "httpPort": {
+          "$ref": "#/$defs/port",
+          "description": "The port the supervisor routes the sprite's URL to (sprite-env services create --http-port). At most one service of a box sets it."
+        },
+        "duration": {
+          "type": "string",
+          "pattern": "^[0-9]+(\\.[0-9]+)?(ms|s|m)$",
+          "description": "How long the service must stay up after it is created or started, such as 3s (sprite-env services create --duration)."
+        },
+        "health": {
+          "type": "string",
+          "pattern": "^https?://",
+          "description": "A URL that answers 200 while the service works. spriteServicesObserve probes it, and spriteServiceRestart waits for it after a restart. Without it, the supervisor's state decides."
+        },
+        "optional": {
+          "type": "boolean",
+          "description": "True for a service something else creates by name, such as a site a release Op makes: spriteApplyServices creates it only when its only names it, and spriteServicesObserve skips it while the supervisor has no such service."
+        }
       },
       "patternProperties": {
         "^x-": true

@@ -186,6 +186,19 @@ export interface StatusBox {
    * is null when no decision record has the id (WSP126).
    */
   intent: BoxIntent | null;
+  /** The services the block declares (#2880), in file order, so a reader has them before any converge tick. Empty when it declares none. */
+  services: StatusBoxService[];
+}
+
+/** A declared box service as `status --json` prints it (#2880): every field present, null or false when not declared. */
+export interface StatusBoxService {
+  name: string;
+  cmd: string;
+  needs: string[];
+  httpPort: number | null;
+  duration: string | null;
+  health: string | null;
+  optional: boolean;
 }
 
 /**
@@ -409,6 +422,15 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
                 capabilities: m.box.capabilities.map((c) => ({ name: c.name, broker: c.broker, scope: [...c.scope] })),
                 isolation: isolation.get(m.name) ?? null,
                 intent: intents.get(m.name) ?? null,
+                services: m.box.services.map((s) => ({
+                  name: s.name,
+                  cmd: s.cmd,
+                  needs: [...s.needs],
+                  httpPort: s.httpPort,
+                  duration: s.duration,
+                  health: s.health,
+                  optional: s.optional,
+                })),
               },
         stewards: stewards.stewards,
         stewardReasons: stewards.reasons,

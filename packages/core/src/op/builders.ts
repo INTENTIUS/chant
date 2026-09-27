@@ -916,10 +916,21 @@ export const spriteApplyNetworkPolicy = (args: {
   return activity("spriteApplyNetworkPolicy", rest, profile ?? "fastIdempotent");
 };
 
-/** Reconcile a sprite's background services (create-or-update, optionally start). Defaults to the `fastIdempotent` profile (override via `profile`). */
+/**
+ * Reconcile a sprite's background services (create-or-update, optionally
+ * start). With an `id`, through the Sprites API and its `services`; without
+ * one, inside the sprite through sprite-env, applying the box block's
+ * services (`box: true`, #2880): `only` names some of them, `start` starts
+ * the applied ones that are not running, `restart` restarts the converged
+ * ones. Defaults to the `fastIdempotent` profile (override via `profile`).
+ */
 export const spriteApplyServices = (args: {
-  id: string;
-  services: Array<{
+  id?: string;
+  box?: boolean;
+  only?: string[];
+  restart?: boolean;
+  spriteEnv?: string;
+  services?: Array<{
     name: string;
     cmd: string;
     args?: string[];

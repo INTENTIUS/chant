@@ -216,7 +216,34 @@ export interface BoxDeclaration {
    * proposed with no choice until the person who answers it decides it.
    */
   intent: string | null;
+  /**
+   * The services the box runs under its supervisor (sprite-env on a sprite),
+   * in file order, or empty when the block declares none (#2880). The fly
+   * lexicon's `spriteServicesObserve`, `spriteServiceRestart` and
+   * `spriteApplyServices` read them with `box: true`.
+   */
+  services: BoxService[];
   /** The block's JSON Pointer in the file, for messages. */
+  pointer: string;
+}
+
+/** A service a box runs under its supervisor (#2880). */
+export interface BoxService {
+  /** Unique in the box. */
+  name: string;
+  /** The command the supervisor runs, as written: `${VAR}` references are left for the applying process to expand. */
+  cmd: string;
+  /** Names of services in the same block that start first. Empty when none. */
+  needs: string[];
+  /** The port the supervisor routes the sprite's URL to, or null. At most one service of a box sets it. */
+  httpPort: number | null;
+  /** How long the service must stay up after a create or start, such as `3s` (`sprite-env services create --duration`), or null for the supervisor's default. */
+  duration: string | null;
+  /** A URL that answers 200 while the service works, or null when the supervisor's state decides. */
+  health: string | null;
+  /** True: an apply creates it only when named, and an observer skips it while the supervisor has no such service. */
+  optional: boolean;
+  /** The entry's JSON Pointer in the file, for messages. */
   pointer: string;
 }
 
@@ -629,6 +656,9 @@ export function parseDeclaration(text: string, file: string, reader: string = re
       if (first) throw new WorkspaceReadError("declaration-invalid", `member ${m.name}'s box lists the capability ${c.name} twice; the first is at ${first.pointer}`, at(`${c.pointer}/name`));
       seen.set(c.name, c);
     }
+    // Its services name each other only within the block, without a cycle (#2880).
+    const problem = m.box ? boxServicesProblem(m.name, m.box.services) : null;
+    if (problem) throw new WorkspaceReadError("declaration-invalid", problem.message, at(problem.pointer));
   }
 
   // A diagram name is given once across the declaration (#2764): a reader keys diagrams by name.
@@ -720,6 +750,7 @@ function boxOf(raw: unknown, pointer: string): BoxDeclaration | null {
     state?: Record<string, string>;
     cookies?: string[];
     intent?: string;
+    services?: { name: string; cmd: string; needs?: string[]; httpPort?: number; duration?: string; health?: string; optional?: boolean }[];
   };
   return {
     capabilities: (b.capabilities ?? []).map((c, i) => ({ name: c.name, broker: c.broker ?? null, scope: [...(c.scope ?? [])], pointer: `${pointer}/capabilities/${i}` })),
@@ -729,8 +760,81 @@ function boxOf(raw: unknown, pointer: string): BoxDeclaration | null {
         ? null
         : { host: b.host, slot: b.slot!, ports: { ...(b.ports ?? {}) }, state: { ...(b.state ?? {}) }, cookies: [...(b.cookies ?? [])] },
     intent: b.intent ?? null,
+    services: (b.services ?? []).map((s, i) => ({
+      name: s.name,
+      cmd: s.cmd,
+      needs: [...(s.needs ?? [])],
+      httpPort: s.httpPort ?? null,
+      duration: s.duration ?? null,
+      health: s.health ?? null,
+      optional: s.optional ?? false,
+      pointer: `${pointer}/services/${i}`,
+    })),
     pointer,
   };
+}
+
+/**
+ * The rules the schema can't say about a box's services (#2880), as a
+ * message and the pointer to show, or null when they hold: each name is
+ * given once, every `needs` names a service of the same block, the `needs`
+ * form no cycle, and at most one service sets `httpPort`. The fly lexicon
+ * checks a list it is handed inline with the same rules.
+ */
+export function boxServicesProblem(member: string, services: readonly BoxService[]): { message: string; pointer: string } | null {
+  const byName = new Map<string, BoxService>();
+  for (const s of services) {
+    const first = byName.get(s.name);
+    if (first) return { message: `member ${member}'s box declares the service ${s.name} twice; the first is at ${first.pointer}`, pointer: `${s.pointer}/name` };
+    byName.set(s.name, s);
+  }
+  let routed: BoxService | undefined;
+  for (const s of services) {
+    if (s.httpPort === null) continue;
+    if (routed) {
+      return {
+        message: `member ${member}'s box gives both ${routed.name} (port ${routed.httpPort}) and ${s.name} (port ${s.httpPort}) an httpPort, and the supervisor routes the sprite's URL to one service`,
+        pointer: `${s.pointer}/httpPort`,
+      };
+    }
+    routed = s;
+  }
+  for (const s of services) {
+    const j = s.needs.findIndex((n) => !byName.has(n));
+    if (j >= 0) {
+      const known = services.map((x) => x.name).join(", ");
+      return { message: `member ${member}'s box service ${s.name} needs ${JSON.stringify(s.needs[j])}, which the block does not declare; declared services: ${known}`, pointer: `${s.pointer}/needs/${j}` };
+    }
+  }
+  const cycle = serviceCycle(services);
+  if (cycle) {
+    const s = byName.get(cycle[0])!;
+    return { message: `member ${member}'s box services need each other in a cycle: ${cycle.join(" -> ")}`, pointer: `${s.pointer}/needs` };
+  }
+  return null;
+}
+
+/** The first cycle the services' `needs` form, as names ending where it starts, or null. */
+function serviceCycle(services: readonly { name: string; needs: readonly string[] }[]): string[] | null {
+  const byName = new Map(services.map((s) => [s.name, s]));
+  const state = new Map<string, "visiting" | "done">();
+  const visit = (name: string, trail: string[]): string[] | null => {
+    const st = state.get(name);
+    if (st === "done") return null;
+    if (st === "visiting") return [...trail.slice(trail.indexOf(name)), name];
+    state.set(name, "visiting");
+    for (const dep of byName.get(name)?.needs ?? []) {
+      const found = visit(dep, [...trail, name]);
+      if (found) return found;
+    }
+    state.set(name, "done");
+    return null;
+  };
+  for (const s of services) {
+    const found = visit(s.name, []);
+    if (found) return found;
+  }
+  return null;
 }
 
 /**
