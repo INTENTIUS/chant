@@ -193,6 +193,24 @@ export async function workspacePoints(query: PointsQuery): Promise<PointsDocumen
   };
 }
 
+/**
+ * Every question's state in the workspace, by answer record id, read the way
+ * `points` reads them (the lifecycle ledger's questions included), or null
+ * when they can't all be read: an answer kind that could not be read might
+ * hold the question. The operator reads it to resume a waiting run, and
+ * `workspace status` to list a steward's waits.
+ */
+export async function readQuestionStates(cwd: string): Promise<Map<string, QuestionView["state"]> | null> {
+  try {
+    const doc = await workspacePoints({ cwd });
+    if (!("questions" in doc)) return null;
+    if (doc.sources.some((s) => s.reason !== null)) return null;
+    return new Map(doc.questions.map((q) => [q.id, q.state]));
+  } catch {
+    return null;
+  }
+}
+
 /** The document as lines for a person. */
 export function formatPoints(doc: Extract<PointsDocument, { points: unknown }>): string {
   const lines: string[] = [];
