@@ -15,6 +15,10 @@ Every built-in follows the config of the collector-contrib release in `COLLECTOR
 | `PrometheusReceiver` | `prometheus` | scrape job names are unique; some scrape config or a target allocator | static scrape targets |
 | `HostMetricsReceiver` | `hostmetrics` | at least one scraper | none |
 | `FileLogReceiver` | `filelog` | `include` is not empty | the `include` globs |
+| `K8sClusterReceiver` | `k8s_cluster` | `distribution` is `kubernetes` or `openshift` | none |
+| `KubeletStatsReceiver` | `kubeletstats` | `cert_file` and `key_file` when `auth_type` is `tls` (the default); `metric_groups` is not empty | `endpoint` |
+
+`k8s_cluster` reads the whole cluster from the Kubernetes API, so run one instance per cluster: a single-replica Deployment, or several replicas that share a `k8s_leader_elector` extension. In a per-node DaemonSet every node reports every object. `kubeletstats` reads the kubelet on its own node, so it belongs in the per-node agent, usually with `auth_type: "serviceAccount"` and `endpoint: "https://${env:K8S_NODE_NAME}:10250"`. The otel lexicon sees the collector config but not how it is deployed, so it does not flag `k8s_cluster` in a DaemonSet; that check comes with the deployment-shape lint planned in [chant#2899](https://github.com/INTENTIUS/chant/issues/2899).
 
 ## Processors
 
@@ -26,10 +30,44 @@ Every built-in follows the config of the collector-contrib release in `COLLECTOR
 | `AttributesProcessor` | `attributes` | as `resource`, for `actions` |
 | `K8sAttributesProcessor` | `k8sattributes` | none beyond the type |
 | `ResourceDetectionProcessor` | `resourcedetection` | at least one detector |
+| `FilterProcessor` | `filter` | at least one condition; no empty condition |
+| `TransformProcessor` | `transform` | at least one statement; each group's `context` fits its signal and the group has statements |
+| `RedactionProcessor` | `redaction` | `allow_all_keys` or `allowed_keys` is set; `allowed_keys` is not set alongside `allow_all_keys: true`; no empty pattern; `hash_function` has something blocked to hash |
 | `TailSamplingProcessor` | `tail_sampling` | `decision_wait` is set; `policies` is not empty; policy names are present and unique; each policy has the block its `type` names and what that block needs; `and`, `drop` and `composite` have sub-policies, and `policy_order` and `rate_allocation` name existing ones |
 | `ProbabilisticSamplerProcessor` | `probabilistic_sampler` | `sampling_percentage` is set and within 0 to 100; `sampling_precision` within 1 to 14; `attribute_source: record` has a `from_attribute`; `hash_seed` only in `hash_seed` mode |
 
 Put `memory_limiter` first in every pipeline; OTEL105 warns otherwise.
+
+`filter` and `transform` take [OTTL](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/v0.130.0/pkg/ottl). The structure is typed (which signal, which context, which list) and each condition or statement stays a string that the collector parses when it loads the config, so a mistake in the OTTL itself shows up in `otelcol validate`, not in the build.
+
+```ts
+export const dropHealth = new FilterProcessor({
+  error_mode: "ignore",
+  traces: { span: ['attributes["http.route"] == "/healthz"'] },
+  logs: { log_record: ["severity_number < SEVERITY_NUMBER_INFO"] },
+});
+
+export const tidy = new TransformProcessor({
+  trace_statements: [
+    { context: "span", conditions: ["kind == SPAN_KIND_SERVER"], statements: ['set(attributes["tier"], "edge")'] },
+    'delete_key(span.attributes, "http.request.header.cookie")',
+  ],
+});
+```
+
+A `transform` entry is either a group with an optional `context`, `conditions`, `statements` and `error_mode`, or a bare statement whose context the collector infers from its paths.
+
+`redaction` works on span, span event, log and data point attributes, not resource attributes. With `allow_all_keys` unset or false, every key outside `allowed_keys` and `ignored_keys` is deleted, which is why OTEL107 asks for one of the two. Values that match `blocked_values`, and every value of a key that matches `blocked_key_patterns`, are masked as `****`, or hashed when `hash_function` is set; `allowed_values` exempts a value. Patterns are Go regular expressions.
+
+```ts
+export const scrub = new RedactionProcessor({
+  allow_all_keys: true,
+  blocked_key_patterns: ["^gen_ai\\.(prompt|completion)"],
+  blocked_values: ["[0-9]{13,16}"],
+  hash_function: "sha3",
+  summary: "silent",
+});
+```
 
 `tail_sampling` policies are a discriminated union on `type` (`TailSamplingPolicy`): the leaf types `always_sample`, `latency`, `numeric_attribute`, `probabilistic`, `status_code`, `string_attribute`, `rate_limiting`, `span_count`, `trace_state`, `boolean_attribute` and `ottl_condition`, plus `and`, `drop` and `composite`, whose sub-policies are leaf policies (and, for `composite`, `and` policies too). Each policy's settings sit under the key its `type` names, as in the collector's own config:
 
@@ -102,4 +140,4 @@ export const red = new Pipeline({ signal: "metrics", name: "red", receivers: [sp
 
 ## Shared config types
 
-The settings many components share are exported as types: `TLSClientSettings`, `TLSServerSettings`, `GRPCServerSettings`, `HTTPServerSettings`, `GRPCClientSettings`, `HTTPClientSettings`, `RetrySettings`, `QueueSettings`, `ExporterHelperSettings` and `AttributeAction`. Use them to type a nested block you declare as its own const.
+The settings many components share are exported as types: `TLSClientSettings`, `TLSServerSettings`, `GRPCServerSettings`, `HTTPServerSettings`, `GRPCClientSettings`, `HTTPClientSettings`, `RetrySettings`, `QueueSettings`, `ExporterHelperSettings`, `AttributeAction`, and for the processors and receivers above `OttlErrorMode`, `TransformStatementGroup`, `K8sAuthType` and `MetricToggle`. Use them to type a nested block you declare as its own const.
