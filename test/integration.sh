@@ -468,17 +468,19 @@ rm -rf "$TESTDIR"
 # and provisioning files are written beside it with --output. The lexicon
 # registers no initTemplates, so there is no test_init section.
 test_lexicon "grafana" "/app/test/fixtures/grafana.ts" 'jq -e ".dashboards[0].uid == \"smoke-overview\""' 'grep -q "dashboards:"'
-GRAFANA_OUT="/app/_smoke_test_grafana_files/index.json"
-rm -rf "$(dirname "$GRAFANA_OUT")"
+GRAFANA_SRC="/app/_smoke_test_grafana_files/src"
+GRAFANA_OUT="/app/_smoke_test_grafana_files/dist/index.json"
+rm -rf /app/_smoke_test_grafana_files
+mkdir -p "$GRAFANA_SRC" && cp /app/test/fixtures/grafana.ts "$GRAFANA_SRC/"
 log "test_build_files_grafana"
-if $CHANT build "/app/_smoke_test_grafana/src" --output "$GRAFANA_OUT" 2>/dev/null \
+if $CHANT build "$GRAFANA_SRC" --output "$GRAFANA_OUT" 2>/dev/null \
   && jq -e '.uid == "smoke-overview" and (.panels | length) == 2' "$(dirname "$GRAFANA_OUT")/dashboards/smoke-overview.json" >/dev/null 2>&1 \
   && grep -q "type: prometheus" "$(dirname "$GRAFANA_OUT")/provisioning/datasources/chant.yaml"; then
   pass "grafana build --output writes dashboard JSON and provisioning files"
 else
   fail "grafana build --output did not write dashboard JSON and provisioning files"
 fi
-rm -rf "$(dirname "$GRAFANA_OUT")" /app/_smoke_test_grafana
+rm -rf /app/_smoke_test_grafana_files
 
 # Cedar
 # The artifact is policy text, not a document tree: `chant build` emits the
