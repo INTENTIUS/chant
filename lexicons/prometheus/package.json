@@ -1,0 +1,77 @@
+{
+  "name": "@intentius/chant-lexicon-prometheus",
+  "version": "0.95.1",
+  "description": "Prometheus lexicon for chant — typed recording and alerting rule groups and Alertmanager routing, serialized to a rule file and alertmanager.yml",
+  "license": "Apache-2.0",
+  "homepage": "https://intentius.io/chant",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/INTENTIUS/chant.git",
+    "directory": "lexicons/prometheus"
+  },
+  "bugs": {
+    "url": "https://github.com/INTENTIUS/chant/issues"
+  },
+  "keywords": [
+    "infrastructure-as-code",
+    "iac",
+    "typescript",
+    "prometheus",
+    "alertmanager",
+    "promql",
+    "observability",
+    "chant"
+  ],
+  "type": "module",
+  "files": [
+    "src/",
+    "dist/"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./src/index.ts"
+    },
+    "./*": {
+      "development": "./src/*.ts",
+      "types": "./dist/*.d.ts",
+      "default": "./src/*.ts"
+    },
+    "./lint/post-synth": {
+      "development": "./src/lint/post-synth/index.ts",
+      "types": "./dist/lint/post-synth/index.d.ts",
+      "default": "./src/lint/post-synth/index.ts"
+    },
+    "./manifest": "./dist/manifest.json",
+    "./meta": "./dist/meta.json",
+    "./types": "./dist/types/index.d.ts"
+  },
+  "scripts": {
+    "generate": "tsx src/codegen/generate-cli.ts",
+    "bundle": "tsx src/package-cli.ts",
+    "validate": "tsx src/validate-cli.ts",
+    "docs": "tsx src/codegen/docs-cli.ts",
+    "prepack": "npm run generate && npm run bundle && npm run validate && npm run build",
+    "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete"
+  },
+  "dependencies": {
+    "@lezer/highlight": "^1.2.4",
+    "@lezer/lr": "^1.4.10",
+    "@prometheus-io/lezer-promql": "0.315.0",
+    "js-yaml": "^4.3.1"
+  },
+  "devDependencies": {
+    "@intentius/chant": "*",
+    "@types/js-yaml": "^4.0.9",
+    "tsc-alias": "^1.8.17",
+    "typescript": "^5.9.3"
+  },
+  "peerDependencies": {
+    "@intentius/chant": "^0.95.1",
+    "typescript": "^5.9.3"
+  }
+}

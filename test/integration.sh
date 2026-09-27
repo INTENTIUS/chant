@@ -224,7 +224,7 @@ test_init() {
 
   if $CHANT init --lexicon "$name" "$init_dir" > /dev/null 2>&1; then
     # Check scaffolded source files
-    if [ -f "$init_dir/src/infra.ts" ] || [ -f "$init_dir/src/_.ts" ] || [ -f "$init_dir/src/config.ts" ] || [ -f "$init_dir/src/main.ts" ] || [ -f "$init_dir/src/compose.ts" ] || [ -f "$init_dir/src/cluster.ts" ]; then
+    if [ -f "$init_dir/src/infra.ts" ] || [ -f "$init_dir/src/_.ts" ] || [ -f "$init_dir/src/config.ts" ] || [ -f "$init_dir/src/main.ts" ] || [ -f "$init_dir/src/compose.ts" ] || [ -f "$init_dir/src/cluster.ts" ] || [ -f "$init_dir/src/rules.ts" ]; then
       pass "$name init creates source files"
     else
       fail "$name init missing source files"
@@ -461,6 +461,15 @@ test_lexicon "docker" "/app/test/fixtures/docker.ts" 'grep -q "services:"' 'grep
 TESTDIR="/app/_smoke_test_docker"
 mkdir -p "$TESTDIR/src" && cp /app/test/fixtures/docker.ts "$TESTDIR/src/"
 test_init "docker" "$TESTDIR"
+rm -rf "$TESTDIR"
+
+# Prometheus
+# The rule file is the primary output; alertmanager.yml is written beside it
+# under --output and echoed to stderr otherwise.
+test_lexicon "prometheus" "/app/test/fixtures/prometheus.ts" 'grep -q "groups:"' 'grep -q "record:"'
+TESTDIR="/app/_smoke_test_prometheus"
+mkdir -p "$TESTDIR/src" && cp /app/test/fixtures/prometheus.ts "$TESTDIR/src/"
+test_init "prometheus" "$TESTDIR"
 rm -rf "$TESTDIR"
 
 # Cedar

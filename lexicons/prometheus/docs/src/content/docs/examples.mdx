@@ -1,0 +1,273 @@
+---
+title: "Examples"
+description: "The prometheus lexicon's example projects"
+diataxis: how-to
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-prometheus` — DO NOT EDIT.
+    Edit lexicons/prometheus/docs/pages/examples.mdx instead; changes here are overwritten. */}
+
+
+Each example lives under `lexicons/prometheus/examples/`. The lexicon's tests build every one, lint it with no warnings, and run the lexicon's checks over the output with nothing to report; with `promtool` and `amtool` installed they run those too.
+
+## getting-started
+
+One group for an HTTP API: request rate and error ratio recording rules and a paging alert on the ratio.
+
+```ts title="src/rules.ts"
+```typescript title="rules.ts"
+/**
+ * One group of rules for an HTTP API: a recording rule for its 5xx ratio,
+ * and an alert on the recorded series.
+ *
+ * `chant build` writes the rule file Prometheus loads through `rule_files:`.
+ * Rules are plain objects typed with the lexicon's `Rule`, kept in a named
+ * const so the constructor stays flat.
+ */
+import { RuleGroup, type Rule } from "@intentius/chant-lexicon-prometheus";
+
+const rules: Rule[] = [
+  {
+    record: "job:http_requests:rate5m",
+    expr: "sum by (job) (rate(http_requests_total[5m]))",
+  },
+  {
+    record: "job:http_errors:ratio5m",
+    expr: 'sum by (job) (rate(http_requests_total{code=~"5.."}[5m])) / job:http_requests:rate5m',
+  },
+  {
+    alert: "ApiErrorRatioHigh",
+    expr: "job:http_errors:ratio5m > 0.05",
+    for: "10m",
+    labels: { severity: "page" },
+    annotations: {
+      summary: "{{ $labels.job }} is failing {{ $value | humanizePercentage }} of requests",
+      runbook_url: "https://runbooks.example.com/api-errors",
+    },
+  },
+];
+
+const api = new RuleGroup({ name: "api", interval: "30s", rules });
+
+export { api };
+```
+```
+
+## alerting
+
+Rules and Alertmanager routing in one build root, so PROM202 can check that every severity is routed. One alert at two severities, PagerDuty and Slack for pages, email and a webhook for tickets muted outside office hours, and an inhibit rule so a page silences its ticket. Credentials are read from files.
+
+```ts title="src/alertmanager.ts"
+```typescript title="alertmanager.ts"
+/**
+ * Alertmanager routing for the rules in rules.ts, declared in the same build
+ * root so PROM202 can check that every alert severity has a route.
+ *
+ * `chant build src -o dist/rules.yml` writes the rule file there and
+ * `dist/alertmanager.yml` beside it. Credentials come from mounted files:
+ * Alertmanager does not expand environment variables in its config.
+ */
+import {
+  AlertmanagerSettings,
+  InhibitRule,
+  Receiver,
+  Route,
+  TimeInterval,
+  type AlertmanagerGlobalConfig,
+  type EmailConfig,
+  type PagerDutyConfig,
+  type RouteProps,
+  type SlackConfig,
+  type TimePeriodConfig,
+  type WebhookConfig,
+} from "@intentius/chant-lexicon-prometheus";
+
+const global: AlertmanagerGlobalConfig = {
+  resolve_timeout: "5m",
+  smtp_smarthost: "smtp.example.com:587",
+  smtp_from: "alertmanager@example.com",
+  smtp_auth_username: "alertmanager",
+  smtp_auth_password_file: "/etc/alertmanager/secrets/smtp-password",
+};
+
+const settings = new AlertmanagerSettings({ global });
+
+const pagerduty: PagerDutyConfig[] = [{ routing_key_file: "/etc/alertmanager/secrets/pagerduty-key", severity: "critical" }];
+const slack: SlackConfig[] = [
+  { api_url_file: "/etc/alertmanager/secrets/slack-url", channel: "#payments-alerts", send_resolved: true },
+];
+const oncall = new Receiver({ name: "payments-oncall", pagerduty_configs: pagerduty, slack_configs: slack });
+
+const email: EmailConfig[] = [{ to: "payments@example.com" }];
+const bridge: WebhookConfig[] = [{ url: "http://ticket-bridge.monitoring:8080/alerts", send_resolved: false }];
+const tickets = new Receiver({ name: "payments-tickets", email_configs: email, webhook_configs: bridge });
+
+const sink: WebhookConfig[] = [{ url: "http://alert-sink.monitoring:8080/" }];
+const fallback = new Receiver({ name: "default", webhook_configs: sink });
+
+const outsideOfficeHours: TimePeriodConfig[] = [
+  { weekdays: ["saturday", "sunday"] },
+  { weekdays: ["monday:friday"], times: [{ start_time: "00:00", end_time: "09:00" }, { start_time: "18:00", end_time: "24:00" }] },
+];
+const officeHours = new TimeInterval({ name: "outside-office-hours", time_intervals: outsideOfficeHours });
+
+const byGroup = ["alertname", "service"];
+const children: RouteProps[] = [
+  { matchers: ['severity="page"'], receiver: oncall, repeat_interval: "1h" },
+  { matchers: ['severity="ticket"'], receiver: tickets, mute_time_intervals: [officeHours] },
+];
+
+const root = new Route({
+  receiver: fallback,
+  group_by: byGroup,
+  group_wait: "30s",
+  group_interval: "5m",
+  repeat_interval: "4h",
+  routes: children,
+});
+
+const pageSource = ['severity="page"'];
+const ticketTarget = ['severity="ticket"'];
+const sameAlert = ["alertname"];
+const pageMutesTicket = new InhibitRule({ source_matchers: pageSource, target_matchers: ticketTarget, equal: sameAlert });
+
+export { settings, oncall, tickets, fallback, officeHours, root, pageMutesTicket };
+```
+```
+
+## rules-from-data
+
+One group per service, built by a function from a list of service specs. Each group is still a typed `RuleGroup` the checks see.
+
+```ts title="src/services.ts"
+```typescript title="services.ts"
+/**
+ * Rule groups built from data: one group per service, the same recording
+ * rules and alerts for each. A rule is a plain object, so a function can
+ * produce them, and each group is still a typed, checked `RuleGroup`.
+ */
+import { RuleGroup, type Rule } from "@intentius/chant-lexicon-prometheus";
+
+interface ServiceSpec {
+  name: string;
+  /** Page when the 5xx ratio stays above this for 10 minutes. */
+  maxErrorRatio: number;
+  /** Page when p99 latency stays above this many seconds for 10 minutes. */
+  maxP99Seconds: number;
+}
+
+const SERVICES: ServiceSpec[] = [
+  { name: "orders", maxErrorRatio: 0.02, maxP99Seconds: 0.5 },
+  { name: "inventory", maxErrorRatio: 0.05, maxP99Seconds: 1 },
+];
+
+function serviceRules(s: ServiceSpec): Rule[] {
+  const sel = `service="${s.name}"`;
+  return [
+    {
+      record: "service:http_errors:ratio5m",
+      expr: `sum(rate(http_requests_total{${sel},code=~"5.."}[5m])) / sum(rate(http_requests_total{${sel}}[5m]))`,
+      labels: { service: s.name },
+    },
+    {
+      record: "service:http_latency_seconds:p99_5m",
+      expr: `histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{${sel}}[5m])))`,
+      labels: { service: s.name },
+    },
+    {
+      alert: "ServiceErrorRatioHigh",
+      expr: `service:http_errors:ratio5m{${sel}} > ${s.maxErrorRatio}`,
+      for: "10m",
+      labels: { severity: "page", service: s.name },
+      annotations: { summary: `${s.name} 5xx ratio above ${s.maxErrorRatio * 100}%` },
+    },
+    {
+      alert: "ServiceLatencyHigh",
+      expr: `service:http_latency_seconds:p99_5m{${sel}} > ${s.maxP99Seconds}`,
+      for: "10m",
+      labels: { severity: "page", service: s.name },
+      annotations: { summary: `${s.name} p99 latency above ${s.maxP99Seconds}s` },
+    },
+  ];
+}
+
+const orders = new RuleGroup({ name: "orders", rules: serviceRules(SERVICES[0]) });
+const inventory = new RuleGroup({ name: "inventory", rules: serviceRules(SERVICES[1]) });
+
+export { orders, inventory };
+```
+```
+
+## k3d-stack
+
+Prometheus and Alertmanager as plain k8s workloads, each reading its config from a ConfigMap filled by `ruleFileYaml` and `alertmanagerYaml`. An always-firing `Watchdog` alert proves the path end to end; see [Checking with promtool and amtool](../upstream-tools/#on-a-cluster) for the e2e run.
+
+```ts title="src/workloads.ts"
+```typescript title="workloads.ts"
+/**
+ * Prometheus and Alertmanager as plain Kubernetes workloads, no operator and
+ * no Helm. Each reads its config from a ConfigMap holding the files this
+ * build root's prometheus entities serialize to, rendered with the same
+ * `ruleFileYaml` / `alertmanagerYaml` the serializer uses, so the cluster
+ * runs exactly what `chant build` writes.
+ *
+ * The images' default commands read /etc/prometheus/prometheus.yml and
+ * /etc/alertmanager/alertmanager.yml, which is where the ConfigMaps mount.
+ */
+import { ConfiguredApp, type ConfiguredAppProps } from "@intentius/chant-lexicon-k8s";
+import { alertmanagerYaml, ruleFileYaml } from "@intentius/chant-lexicon-prometheus";
+import { stack } from "./rules";
+import { root } from "./alertmanager";
+
+export const PROMETHEUS_IMAGE = "prom/prometheus:v3.15.0";
+export const ALERTMANAGER_IMAGE = "prom/alertmanager:v0.34.1";
+
+const prometheusYml = `global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+rule_files:
+  - /etc/prometheus/rules.yml
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:80"]
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+  - job_name: alertmanager
+    static_configs:
+      - targets: ["alertmanager:80"]
+`;
+
+/** Both images run as nobody (65534) and need no capabilities. */
+const securityContext: ConfiguredAppProps["securityContext"] = {
+  runAsNonRoot: true,
+  runAsUser: 65534,
+  allowPrivilegeEscalation: false,
+  capabilities: { drop: ["ALL"] },
+};
+
+const prometheus = ConfiguredApp({
+  name: "prometheus",
+  image: PROMETHEUS_IMAGE,
+  port: 9090,
+  replicas: 1,
+  configData: { "prometheus.yml": prometheusYml, "rules.yml": ruleFileYaml([stack]) },
+  configMountPath: "/etc/prometheus",
+  securityContext,
+});
+
+const alertmanager = ConfiguredApp({
+  name: "alertmanager",
+  image: ALERTMANAGER_IMAGE,
+  port: 9093,
+  replicas: 1,
+  configData: { "alertmanager.yml": alertmanagerYaml([root]) },
+  configMountPath: "/etc/alertmanager",
+  securityContext,
+});
+
+export { prometheus, alertmanager };
+```
+```

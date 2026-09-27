@@ -147,6 +147,12 @@
       ],
       "@intentius/chant-lexicon-terraform/*": [
         "lexicons/terraform/src/*"
+      ],
+      "@intentius/chant-lexicon-prometheus": [
+        "lexicons/prometheus/src/index.ts"
+      ],
+      "@intentius/chant-lexicon-prometheus/*": [
+        "lexicons/prometheus/src/*"
       ]
     }
   },

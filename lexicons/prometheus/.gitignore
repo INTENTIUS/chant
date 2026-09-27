@@ -1,0 +1,6 @@
+src/generated/
+dist/
+node_modules/
+.cache/
+*.tgz
+.init-template-*/

@@ -413,6 +413,9 @@ jobs:
       - name: Generate and validate OTel lexicon
         run: npm run --prefix lexicons/otel prepack
 
+      - name: Generate and validate Prometheus lexicon
+        run: npm run --prefix lexicons/prometheus prepack
+
       - name: Generate and validate K8s lexicon
         run: npm run --prefix lexicons/k8s prepack
 
