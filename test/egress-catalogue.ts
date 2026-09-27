@@ -569,6 +569,13 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     why: "`just snapshot` refreshes the committed offline spec snapshot; run on a networked machine on purpose, and the snapshot is what everything else reads.",
   },
   {
+    file: "lexicons/grafana/src/spec/fetch-cli.ts",
+    primitives: ["fetch"],
+    phase: "codegen",
+    destination: "`raw.githubusercontent.com`, for the grafana-foundation-sdk JSON Schemas at the pinned commit",
+    why: "`just fetch-schemas` re-downloads the vendored Grafana schemas when bumping `GRAFANA_SCHEMA_PIN`; a maintainer command. Generate, bundle, validate, build and the tests read the committed files under `src/spec/schemas/` and reach nothing.",
+  },
+  {
     file: "lexicons/azure/scripts/fetch-quickstart-templates.ts",
     primitives: ["fetch"],
     phase: "codegen",

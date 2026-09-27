@@ -4,7 +4,8 @@
  * `collectorTopology()` reads a collector config (declared, or parsed from a
  * YAML file) and returns its pipelines, its components with their endpoints
  * and schema pins, for each exporter the pipelines and signals it carries,
- * and the edges connectors make from one pipeline to another. It is the
+ * the edges connectors make from one pipeline to another, and the
+ * semantic-convention versions its attribute keys follow. It is the
  * surface a reader such as `chant workspace graph` uses to say where a
  * member's telemetry is sent, and what a declared telemetry endpoint link can
  * point at.
@@ -14,6 +15,9 @@ import type { Declarable } from "@intentius/chant/declarable";
 import { buildCollectorConfig } from "./collector";
 import { definitionOf, type SchemaPin } from "./define";
 import { parseComponentId, pipelineSignal, SECTION_OF, type CollectorConfig, type ComponentKind } from "./model";
+import { semconvUsage, type SemconvUsage } from "./semconv";
+
+export type { SemconvUsage } from "./semconv";
 
 export interface TopologyPipeline {
   /** The id under `service.pipelines`, e.g. `traces` or `traces/backend`. */
@@ -75,6 +79,12 @@ export interface CollectorTopology {
    * every pair.
    */
   edges: TopologyEdge[];
+  /**
+   * The semantic-convention vocabularies the config's attribute keys come
+   * from, each with the pin this package follows for it (`GENAI_SEMCONV_PIN`
+   * for `gen_ai`) and the components that use it. Empty when none is used.
+   */
+  semconv: SemconvUsage[];
 }
 
 function endpointsOf(kind: ComponentKind, type: string, config: Record<string, unknown> | null | undefined): string[] {
@@ -149,7 +159,7 @@ export function collectorTopology(config: CollectorConfig): CollectorTopology {
     }
   }
 
-  return { pipelines, components, exporters, edges };
+  return { pipelines, components, exporters, edges, semconv: semconvUsage(config) };
 }
 
 /** The topology of declared entities, i.e. of the config the serializer would emit for them. */

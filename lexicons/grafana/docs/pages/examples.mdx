@@ -1,0 +1,24 @@
+---
+title: "Examples"
+description: "The grafana lexicon's example project"
+diataxis: how-to
+order: 8
+---
+
+Each example lives under `lexicons/grafana/examples/` and builds with `chant build src --lexicon grafana`. The lexicon's tests build it, lint it with no warnings, run GRAF101 to GRAF107 over the output, and validate each dashboard against the pinned Grafana schema.
+
+## getting-started
+
+A service overview over Prometheus, Tempo and Loki: RED panels over span metrics, a heatmap of latency buckets, a table of slow traces from TraceQL, the service's logs from LogQL, and a trace panel driven by a textbox variable. It uses every built-in panel type, two rows (one collapsed), a query variable, a dashboard link and a folder, and links the Tempo datasource to Loki and Prometheus through `jsonData`.
+
+```ts title="src/datasources.ts"
+{{file:getting-started/src/datasources.ts}}
+```
+
+```ts title="src/queries.ts"
+{{file:getting-started/src/queries.ts}}
+```
+
+```ts title="src/dashboard.ts"
+{{file:getting-started/src/dashboard.ts}}
+```

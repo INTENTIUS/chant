@@ -43,7 +43,7 @@ Emits `receivers.otlp`, `processors.memory_limiter` and `processors.batch`, `exp
 | receivers | otlp, prometheus, hostmetrics, filelog, k8s_cluster, kubeletstats |
 | processors | batch, memory_limiter, resource, attributes, k8sattributes, resourcedetection, filter, transform, redaction, tail_sampling, probabilistic_sampler |
 | exporters | otlp, otlphttp, debug, prometheus, googlecloud, loadbalancing |
-| connectors | spanmetrics, servicegraph, routing, forward, count |
+| connectors | spanmetrics, servicegraph, routing, forward, count, sum |
 | extensions | health_check, pprof, zpages |
 
 Anything else goes through `defineComponent`; see the `chant-otel-custom-components` skill.
@@ -58,7 +58,17 @@ export const traces = new Pipeline({ signal: "traces", receivers: [otlp], export
 export const red = new Pipeline({ signal: "metrics", name: "red", receivers: [spanmetrics], exporters: [prom] });
 ```
 
-`spanmetrics` and `servicegraph` turn traces into metrics, `count` turns any signal into metrics, `routing` and `forward` keep the signal. A connector on one side only fails OTEL101; a pipeline whose signal the connector can't pair fails OTEL112.
+`spanmetrics` and `servicegraph` turn traces into metrics, `count` and `sum` turn any signal into metrics (`sum` adds up a numeric attribute), `routing` and `forward` keep the signal. A connector on one side only fails OTEL101; a pipeline whose signal the connector can't pair fails OTEL112.
+
+## GenAI workloads
+
+For services that emit GenAI spans, start from the preset instead of writing the processors by hand:
+
+```ts
+export const collector = genAiPipeline({ traceExporters: [tempo], metricExporters: [prom] });
+```
+
+It deletes prompt, completion, system-instruction and tool-call content from spans, span events and logs, and derives call, error, duration and token metrics (`genai_calls_total`, `genai_duration_seconds`, `genai_tokens_input_total`, `genai_tokens_output_total`) from every GenAI span before sampling. Keep content only when asked, with `keepContent: true`. `genAiComponents()` returns the pieces for hand-built pipelines.
 
 ## Rules
 
@@ -70,4 +80,4 @@ export const red = new Pipeline({ signal: "metrics", name: "red", receivers: [sp
 
 ## Reading the result
 
-`collectorTopologyOf(entities)` returns the pipelines, each component's endpoints and schema pin, for each exporter the signals it carries, and the connector `edges` between pipelines, as plain data.
+`collectorTopologyOf(entities)` returns the pipelines, each component's endpoints and schema pin, for each exporter the signals it carries, the connector `edges` between pipelines, and under `semconv` the semantic-conventions version (`GENAI_SEMCONV_PIN`) the config's `gen_ai.` keys follow, as plain data.

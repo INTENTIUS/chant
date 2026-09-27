@@ -108,6 +108,7 @@ A connector is an exporter in one pipeline and a receiver in another. List the s
 | `RoutingConnector` | `routing` | same signal in and out | `table` is not empty; each route has a `condition` or a `statement` (not both) and at least one pipeline; the `request` context needs a condition |
 | `ForwardConnector` | `forward` | same signal in and out | none |
 | `CountConnector` | `count` | traces, metrics, logs or profiles to metrics | metric names are not empty; counts of `metrics` take no attributes |
+| `SumConnector` | `sum` | traces, metrics or logs to metrics | at least one metric; each has a `source_attribute`; sums of `metrics` take no attributes; at most one attribute, since the pinned release adds each value once per attribute |
 
 ```ts
 import { OtlpReceiver, OtlpExporter, PrometheusExporter, SpanMetricsConnector, Pipeline } from "@intentius/chant-lexicon-otel";

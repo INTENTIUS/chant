@@ -32,6 +32,7 @@ export {
   componentEntityType,
   isOTelComponent,
   COLLECTOR_PIN,
+  GENAI_SEMCONV_PIN,
   type SchemaPin,
   type SafeParseSchema,
   type ConfigValidator,
@@ -60,7 +61,9 @@ export {
   type TopologyComponent,
   type TopologyExporter,
   type TopologyEdge,
+  type SemconvUsage,
 } from "./topology";
+export { semconvUsage, SEMCONV_VOCABULARIES, type SemconvVocabulary } from "./semconv";
 
 // What the platform collector composites (docker, k8s, fly) share
 export {
@@ -72,3 +75,24 @@ export {
   type CollectorPort,
   type CollectorEndpoints,
 } from "./platform";
+
+// The GenAI preset: content removal and agent RED and token metrics
+export {
+  genAiPipeline,
+  genAiComponents,
+  genAiMetrics,
+  GENAI_ATTRIBUTES,
+  GENAI_CONTENT_ATTRIBUTES,
+  GENAI_CONTENT_EVENTS,
+  GENAI_INDEXED_CONTENT_PATTERN,
+  GENAI_SPAN_METRIC_DIMENSIONS,
+  GENAI_TOKEN_DIMENSIONS,
+  GENAI_DURATION_BUCKETS,
+  GENAI_UNKNOWN_MODEL,
+  type GenAiPipelineOptions,
+  type GenAiComponentsOptions,
+  type GenAiComponents,
+  type GenAiMetricsOptions,
+  type GenAiMetrics,
+  type GenAiMetric,
+} from "./genai";

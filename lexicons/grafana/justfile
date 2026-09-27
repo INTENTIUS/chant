@@ -1,0 +1,30 @@
+# Default recipe - list all available commands
+default:
+    @just --list
+
+# Regenerate the schema types and the registry from the vendored Grafana schemas
+generate:
+    npx tsx src/codegen/generate-cli.ts
+
+# Re-download the vendored schemas at the pinned commit and check their digests
+fetch-schemas:
+    npx tsx src/spec/fetch-cli.ts
+
+# Validate generated artifacts
+validate:
+    npx tsx src/validate-cli.ts
+
+# Generate docs site, install deps, and start dev server
+docs:
+    npx tsx src/codegen/docs-cli.ts
+    npm install --prefix docs
+    npm run --prefix docs dev
+
+# Build docs site for production
+docs-build:
+    npx tsx src/codegen/docs-cli.ts
+    npm install --prefix docs
+    npm run --prefix docs build
+
+# Package the lexicon (generate + validate)
+package: generate validate

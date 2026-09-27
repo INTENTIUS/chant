@@ -39,6 +39,10 @@ export default defineConfig({
                         {
                               "label": "Examples",
                               "slug": "examples"
+                        },
+                        {
+                              "label": "GenAI Pipeline",
+                              "slug": "genai-pipeline"
                         }
                   ]
             },

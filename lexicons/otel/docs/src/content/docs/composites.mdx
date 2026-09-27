@@ -30,6 +30,8 @@ The platform composites share a few helpers from this lexicon, and a composite f
 
 `otlpCollector({ exporters, signals, healthCheck })` returns the entities of a small OTLP collector: an `otlp` receiver on 4317 (gRPC) and 4318 (HTTP), `memory_limiter` then `batch`, the given exporters (one `debug` exporter by default), a `health_check` extension on 13133 unless `healthCheck` is `false`, and one pipeline per signal (traces, metrics and logs by default). Pass the result to `collectorYaml`.
 
+`genAiPipeline(options)` returns the entities of a collector for GenAI workloads in the same form: content removal on traces and logs, and span and token metrics from every GenAI span. See [GenAI pipeline](../genai-pipeline/).
+
 `collectorEndpoints(config)` reads a built config and returns the ports its receivers listen on, each with a name usable as a Kubernetes port name (`otlp-grpc`, `otlp-http`), and the `health_check` port and path when the service enables one on an address other than localhost. The composites publish ports and set up health checks from this, so both follow whatever config the caller declares.
 
 `COLLECTOR_IMAGE` is the contrib collector image at the version the built-in components are typed against, and `COLLECTOR_CONFIG_PATH` is `/etc/otel/config.yaml`, where every platform composite puts the rendered config.
