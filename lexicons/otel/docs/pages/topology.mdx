@@ -23,17 +23,28 @@ interface CollectorTopology {
   pipelines: Array<{ id: string; signal: string; receivers: string[]; processors: string[]; exporters: string[] }>;
   components: Array<{
     id: string;                 // "otlp/tempo"
-    kind: "receiver" | "processor" | "exporter" | "extension";
+    kind: "receiver" | "processor" | "exporter" | "connector" | "extension";
     type: string;               // "otlp"
     name?: string;              // "tempo"
     builtin: boolean;
     schema?: { source: string; version: string; digest?: string };
     endpoints: string[];
-    pipelines: string[];        // pipeline ids that use it
+    pipelines: string[];        // pipeline ids that use it (for a connector, on either side)
   }>;
   exporters: Array<{ id: string; type: string; endpoints: string[]; pipelines: string[]; signals: string[] }>;
+  edges: Array<{ connector: string; from: string; fromSignal: string; to: string; toSignal: string }>;
 }
 ```
+
+## Connector edges
+
+`edges` has one entry per hop a connector makes from one pipeline to another: `from` is a pipeline that lists the connector as an exporter, `to` one that lists it as a receiver, each with its signal. A traces pipeline feeding a metrics pipeline through `spanmetrics` gives:
+
+```ts
+{ connector: "spanmetrics", from: "traces", fromSignal: "traces", to: "metrics/red", toSignal: "metrics" }
+```
+
+Only pairs the connector supports are edges, so a `count` connector fed by traces and feeding both a metrics and a logs pipeline has one edge, to metrics. For a connector whose definition isn't loaded, every (from, to) pair is reported. Connectors are not listed under `exporters`, which answers where telemetry leaves the collector.
 
 `endpoints` are what the config states, with the collector's defaults filled in where a component has one (an `otlp` receiver with an empty `grpc` block reports `localhost:4317`). A definition's `endpoints` function decides them; a component with no loaded definition reports its `endpoint` key when it has one. The `googlecloud` exporter reports `googlecloud://projects/<project>`, since it sends to Google's APIs rather than to an address in the config.
 
