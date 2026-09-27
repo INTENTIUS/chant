@@ -33,9 +33,10 @@ export const traces = new Pipeline({
 \`\`\`
 
 The built-in component set is otlp, prometheus, hostmetrics and filelog
-receivers; batch, memory_limiter, resource, attributes, k8sattributes and
-resourcedetection processors; otlp, otlphttp, debug, prometheus and
-googlecloud exporters; and the health_check, pprof and zpages extensions.
+receivers; batch, memory_limiter, resource, attributes, k8sattributes,
+resourcedetection, tail_sampling and probabilistic_sampler processors; otlp,
+otlphttp, debug, prometheus, googlecloud and loadbalancing exporters; and the
+health_check, pprof and zpages extensions.
 Their config types follow the collector-contrib release named on the
 Custom components page. A component chant doesn't ship is added with
 \`defineComponent\`, and it is serialized and checked the same way as the

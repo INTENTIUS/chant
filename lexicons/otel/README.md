@@ -18,8 +18,8 @@ export { otlp, batch, backend, traces };
 | Kind | Types |
 |---|---|
 | receivers | otlp, prometheus, hostmetrics, filelog |
-| processors | batch, memory_limiter, resource, attributes, k8sattributes, resourcedetection |
-| exporters | otlp, otlphttp, debug, prometheus, googlecloud |
+| processors | batch, memory_limiter, resource, attributes, k8sattributes, resourcedetection, tail_sampling, probabilistic_sampler |
+| exporters | otlp, otlphttp, debug, prometheus, googlecloud, loadbalancing |
 | extensions | health_check, pprof, zpages |
 
 The config types follow the collector-contrib release in `COLLECTOR_PIN`.

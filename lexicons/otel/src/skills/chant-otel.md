@@ -41,8 +41,8 @@ Emits `receivers.otlp`, `processors.memory_limiter` and `processors.batch`, `exp
 | Kind | Types |
 |---|---|
 | receivers | otlp, prometheus, hostmetrics, filelog |
-| processors | batch, memory_limiter, resource, attributes, k8sattributes, resourcedetection |
-| exporters | otlp, otlphttp, debug, prometheus, googlecloud |
+| processors | batch, memory_limiter, resource, attributes, k8sattributes, resourcedetection, tail_sampling, probabilistic_sampler |
+| exporters | otlp, otlphttp, debug, prometheus, googlecloud, loadbalancing |
 | extensions | health_check, pprof, zpages |
 
 Anything else goes through `defineComponent`; see the `chant-otel-custom-components` skill.
