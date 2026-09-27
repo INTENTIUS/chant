@@ -38,6 +38,8 @@ import type { OpRunRecord } from "./runtime";
 import { randomUUID } from "node:crypto";
 import { RunWorkLease, LEASE_LOST, workLeaseProblems, workLeaseNeedsRunItem, type WorkLeaseRunResult } from "./work-lease-run";
 import { WORK_LEASE_STEP_ID } from "./types";
+import { LiveRun, currentLiveRun, withLiveRun } from "./run-live";
+import { runEnvOf } from "../lifecycle/run-ledger";
 
 export { parseDuration } from "./duration";
 
@@ -398,6 +400,15 @@ async function runStep(
     : Infinity;
   const nonRetryable = profile.retry?.nonRetryableErrorTypes ?? [];
 
+  // The in-flight record names the step while it runs.
+  const ended = currentLiveRun()?.stepStarted(step.fn, step.id);
+  try {
+    return await attempts();
+  } finally {
+    ended?.();
+  }
+
+  async function attempts(): Promise<RanStep> {
   let lastErr: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
@@ -435,6 +446,7 @@ async function runStep(
     }
   }
   return { record: { ...base, status: "fail", durationMs: Date.now() - start, error: errMessage(lastErr) } };
+  }
 }
 
 // ── Effect steps (#1834) ──────────────────────────────────────────────────────
@@ -518,6 +530,7 @@ async function workBoundary(
       return "unclaimed";
     }
     resultsById.set(WORK_LEASE_STEP_ID, claimed.lease);
+    currentLiveRun()?.item(claimed.lease.item);
     pushRecord(sink, ctx, {
       phase: phaseName,
       fn: "workLease:claim",
@@ -1026,9 +1039,22 @@ export async function runOpLocally(
   const turn = currentStewardTurn();
   const steward = options.steward ?? turn?.steward;
   const restore = turn && turn.run !== runId ? enterStewardTurn({ ...turn, run: runId }) : undefined;
+  // A run that writes to the ledger also says what it is doing while it runs
+  // (./run-live.ts), and removes that once its record is written.
+  const live = options.ledger
+    ? await LiveRun.open({
+        cwd: options.ledger.cwd ?? options.cwd ?? process.cwd(),
+        env: runEnvOf(config),
+        op: config.name,
+        id: runId,
+        started: options.now ?? new Date().toISOString(),
+        ...(steward ? { steward } : {}),
+      })
+    : undefined;
   try {
-    return await runOpInTurn(config, activities, profiles, signal, { ...options, runId, ...(steward ? { steward } : {}) });
+    return await withLiveRun(live, () => runOpInTurn(config, activities, profiles, signal, { ...options, runId, ...(steward ? { steward } : {}) }));
   } finally {
+    live?.close();
     restore?.();
   }
 }
@@ -1126,6 +1152,20 @@ async function runOpInTurn(
 
   const records: StepRecord[] = [];
   const start = Date.now();
+  // Each phase's wall-clock time, for the run record and the in-flight one.
+  const phaseDurations: Record<string, number> = {};
+  const timedPhase = async (phase: PhaseDefinition, ctx: GateContext, phaseSignal: AbortSignal | undefined): Promise<StepRecord[]> => {
+    const live = currentLiveRun();
+    const t0 = Date.now();
+    live?.phaseStarted(phase.name);
+    try {
+      const ran = await runPhase(phase, activities, profiles, resultsById, ctx, phaseSignal);
+      live?.phaseEnded(phase.name, phaseVerdict(ran), Date.now() - t0);
+      return ran;
+    } finally {
+      phaseDurations[phase.name] = (phaseDurations[phase.name] ?? 0) + (Date.now() - t0);
+    }
+  };
   const startedAt = options.now ?? new Date(start).toISOString();
 
   /**
@@ -1148,6 +1188,7 @@ async function runOpInTurn(
       ...(gate ? { gate: { name: gate.gate, since: gate.timestamp, ...(gate.op !== config.name ? { op: gate.op } : {}) } } : {}),
       ...(point ? { point: { ...point, since: ended } } : {}),
       ...(options.steward ? { steward: options.steward } : {}),
+      phaseDurations,
     });
     const record: OpRunRecord = { version: 1, ...input, id: runId };
     if (!options.ledger) return record;
@@ -1167,7 +1208,7 @@ async function runOpInTurn(
   try {
     for (const phase of config.phases) {
       if (signal?.aborted) throw new PhaseFailure([]);
-      records.push(...(await runPhase(phase, activities, profiles, resultsById, gates, stepSignal)));
+      records.push(...(await timedPhase(phase, gates, stepSignal)));
     }
     // The last renewal before the run is recorded (#2748): a run whose lease
     // was lost is never recorded as done.
@@ -1269,7 +1310,7 @@ async function runOpInTurn(
     if (!signal?.aborted) {
       for (const phase of [...(config.onFailure ?? [])].reverse()) {
         try {
-          records.push(...(await runPhase(phase, activities, profiles, resultsById, compensation, signal)));
+          records.push(...(await timedPhase(phase, compensation, signal)));
         } catch (compErr) {
           if (compErr instanceof PhaseFailure || compErr instanceof GateStop || compErr instanceof PointStop) {
             records.push(...compErr.records);
@@ -1314,6 +1355,13 @@ async function runOpInTurn(
     record,
     ...(await finishWork("ok")),
   };
+}
+
+/** A finished phase's verdict, as the run ledger folds it: `fail`, `skipped` when every step was, else `ok`. */
+function phaseVerdict(records: readonly StepRecord[]): "ok" | "fail" | "skipped" {
+  if (records.some((r) => r.status === "fail")) return "fail";
+  if (records.length > 0 && records.every((r) => r.status === "skipped")) return "skipped";
+  return "ok";
 }
 
 function errMessage(err: unknown): string {

@@ -31,6 +31,9 @@ import { appendRunRecord } from "../lifecycle/run-ledger";
 import { acquireStewardLease } from "../op/operator";
 import { stewardWorkHolder } from "../op/work-lease-run";
 import { claimWorkLease } from "../lifecycle/work-lease";
+import { runOpLocally } from "../op/local-executor";
+import { shellCmd } from "../op/activities/shell";
+import type { OpConfig } from "../op/types";
 
 const REPO = join(import.meta.dirname, "..", "..", "..", "..");
 
@@ -623,19 +626,21 @@ describe("stewards in chant workspace status --json (#2731)", () => {
         name: "box-converge",
         schedule: { cron: "* * * * *", overlap: "skip" },
         env: "local",
-        lastRun: { id: expect.any(String), status: "ok", started: "2026-09-25T10:00:00.000Z", ended: "2026-09-25T10:00:05.000Z", gate: null, point: null },
+        lastRun: { id: expect.any(String), status: "ok", started: "2026-09-25T10:00:00.000Z", ended: "2026-09-25T10:00:05.000Z", gate: null, point: null, phases: [] },
+        inFlight: null,
         // #2778: not a ConvergeOp (no Converge label), so no tick.
         lastTick: null,
         changesCheckout: false,
         workLease: null,
         beside: null,
       },
-      { name: "box-release", schedule: null, env: "local", lastRun: null, lastTick: null, changesCheckout: false, workLease: null, beside: null },
+      { name: "box-release", schedule: null, env: "local", lastRun: null, inFlight: null, lastTick: null, changesCheckout: false, workLease: null, beside: null },
       {
         name: "box-dispatch",
         schedule: { cron: "*/5 * * * *", overlap: "skip" },
         env: "local",
         lastRun: null,
+        inFlight: null,
         lastTick: null,
         changesCheckout: true,
         workLease: {
@@ -661,6 +666,75 @@ describe("stewards in chant workspace status --json (#2731)", () => {
     expectValid(k3d);
     expect(k3d.members[0].stewards[0].form).toBe("fountain");
     expect(k3d.members[0].stewards[0].lease!.live).toBe(false);
+  });
+
+  test("an Op's run in flight: its phase, step, finished phases and activity, then its phases' times once it settles", async () => {
+    const root = stewarded();
+    const box = join(root, "box");
+    let during: StatusDocument | undefined;
+    const release: OpConfig = {
+      name: "box-release",
+      overview: "release",
+      phases: [
+        { name: "Prep", steps: [{ kind: "activity", fn: "shellCmd", args: { cmd: 'echo "Edit app/a.js" >> "$CHANT_RUN_ACTIVITY"; printf \'{"at":"2026-09-25T10:00:00.000Z","text":"Bash npm test"}\\n\' >> "$CHANT_RUN_ACTIVITY"' } }] },
+        {
+          name: "Build",
+          steps: [
+            {
+              kind: "activity",
+              fn: "probe",
+              id: "build",
+              args: {},
+            },
+          ],
+        },
+      ],
+    } as unknown as OpConfig;
+    const activities = new Map<string, (args: Record<string, unknown>, signal?: AbortSignal) => Promise<unknown>>([
+      ["shellCmd", (args, signal) => shellCmd(args as never, signal)],
+      [
+        "probe",
+        async () => {
+          during = await workspaceStatus({ cwd: root, env: "minimal" });
+          return {};
+        },
+      ],
+    ]);
+    const run = await runOpLocally(release, activities as never, {}, undefined, { runId: "run-live-1", ledger: { cwd: box }, cwd: box, steward: "box-steward" });
+    expect(run.status).toBe("ok");
+
+    const inRun = result(during!);
+    expectValid(inRun);
+    const flying = inRun.members[0].stewards[0].ops.find((o) => o.name === "box-release")!;
+    expect(flying.lastRun).toBeNull();
+    expect(flying.inFlight).toMatchObject({
+      id: "run-live-1",
+      steward: "box-steward",
+      item: null,
+      phase: { name: "Build" },
+      step: { name: "build", fn: "probe" },
+      phases: [{ name: "Prep", status: "ok", durationMs: expect.any(Number) }],
+      activity: {
+        total: 2,
+        lines: [
+          { seq: 1, at: null, text: "Edit app/a.js" },
+          { seq: 2, at: "2026-09-25T10:00:00.000Z", text: "Bash npm test" },
+        ],
+      },
+    });
+
+    const after = result(await workspaceStatus({ cwd: root, env: "minimal" }));
+    expectValid(after);
+    const settled = after.members[0].stewards[0].ops.find((o) => o.name === "box-release")!;
+    expect(settled.inFlight).toBeNull();
+    expect(settled.lastRun).toMatchObject({
+      id: "run-live-1",
+      status: "ok",
+      phases: [
+        { name: "Prep", status: "ok", durationMs: expect.any(Number) },
+        { name: "Build", status: "ok", durationMs: expect.any(Number) },
+      ],
+    });
   });
 
   test("an op file that can't be imported is a reason, and the read still succeeds", async () => {

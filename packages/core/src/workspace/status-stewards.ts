@@ -14,6 +14,11 @@
  * - each Op's last run is the newest record in its run ledger,
  *   `<env>/runs__<op>.jsonl` under the member's ledger prefix, where `<env>`
  *   is the Op's own `labels.Env` or `local`;
+ * - an Op's `inFlight` is the run of it in flight now, from the record a
+ *   run keeps beside the checkout's git directory while it runs
+ *   (`../op/run-live.ts`): its phase and step, the phases it has finished and
+ *   its newest activity lines. Null once the run's ledger record is written,
+ *   or when the process that wrote it is gone;
  * - `waiting` lists the open decision points the steward waits on (#2749):
  *   each Op whose newest run is the steward's own and stopped on a question
  *   that is still open. The question's state is read now, the way `points`
@@ -53,6 +58,7 @@ import { listWorkLeases } from "../lifecycle/work-lease";
 import { stewardWorkHolder } from "../op/work-lease-run";
 import type { OpConfig } from "../op/types";
 import type { OpRunRecord } from "../op/runtime";
+import { readInFlightRun } from "../op/run-live";
 import { approveCommand } from "./status-gates";
 import type { ReasonCode } from "./reason-codes";
 
@@ -84,6 +90,35 @@ export interface StatusStewardRun {
    * state is the question's now, `answered` once a person has answered it.
    */
   point: StatusStewardWait | null;
+  /** Each phase in execution order, with its wall-clock time, or the sum of its steps' for a record that kept none. */
+  phases: StatusStewardPhase[];
+}
+
+/** A phase of a run: its verdict and how long it took. */
+export interface StatusStewardPhase {
+  name: string;
+  status: "ok" | "fail" | "skipped";
+  durationMs: number;
+}
+
+/**
+ * The run of an Op in flight now (../op/run-live.ts): what it is doing while
+ * its ledger record is not yet written.
+ */
+export interface StatusStewardInFlight {
+  id: string;
+  started: string;
+  /** When the run last changed its record. */
+  updated: string;
+  steward: string | null;
+  /** The work item the run's lease holds, once it is claimed. */
+  item: string | null;
+  phase: { name: string; started: string } | null;
+  step: { name: string; fn: string; started: string } | null;
+  /** The phases it has finished, in order. */
+  phases: StatusStewardPhase[];
+  /** The newest activity lines its steps reported; `total` counts every line of the run. */
+  activity: { total: number; lines: { seq: number; at: string | null; text: string }[] };
 }
 
 /** A decision point a steward's run stopped on (#2749). */
@@ -131,6 +166,8 @@ export interface StatusStewardOp {
   env: string;
   /** The newest run in its run ledger, or null when it has none. */
   lastRun: StatusStewardRun | null;
+  /** The run in flight now, or null when none is. */
+  inFlight: StatusStewardInFlight | null;
   /** For a ConvergeOp, its newest tick on the converge ledger (#2778); null for any other Op, or before its first tick. */
   lastTick: StatusStewardTick | null;
   /** Whether the Op changes the checkout, and so runs under a work lease on a branch of its own (#2748). */
@@ -235,6 +272,27 @@ function pointOf(p: NonNullable<OpRunRecord["point"]>, states: Map<string, strin
 function newerRunInFlight(ended: string, lease: StatusStewardLease | null, held: StatusStewardWorkLease[]): boolean {
   const after = (at: string) => Date.parse(at) >= Date.parse(ended);
   return (lease?.live === true && after(lease.acquiredAt)) || held.some((l) => l.state === "active" && after(l.acquiredAt));
+}
+
+/** The Op's run in flight, unless its ledger record is already the newest. Never throws. */
+async function inFlightOf(memberDir: string, env: string, op: string, lastRunId: string | null): Promise<StatusStewardInFlight | null> {
+  try {
+    const run = await readInFlightRun(memberDir, env, op);
+    if (!run || run.id === lastRunId) return null;
+    return {
+      id: run.id,
+      started: run.started,
+      updated: run.updated,
+      steward: run.steward,
+      item: run.item,
+      phase: run.phase,
+      step: run.step,
+      phases: run.phases.map((p) => ({ name: p.name, status: p.status, durationMs: p.durationMs })),
+      activity: run.activity,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function gateOf(g: NonNullable<OpRunRecord["gate"]>, opName: string): NonNullable<StatusStewardRun["gate"]> {
@@ -361,6 +419,11 @@ export async function readMemberStewards(
             ended: newest.ended,
             gate: newest.gate ? gateOf(newest.gate, op.name) : null,
             point: point?.wait ?? null,
+            phases: newest.phases.map((p) => ({
+              name: p.name,
+              status: p.status,
+              durationMs: p.durationMs ?? p.steps.reduce((sum, st) => sum + st.durationMs, 0),
+            })),
           };
           if (
             newest.status === "waiting" &&
@@ -377,6 +440,7 @@ export async function readMemberStewards(
           message: `${opEnv}/runs__${op.name}.jsonl: ${err instanceof Error ? err.message.split("\n")[0] : String(err)}`,
         });
       }
+      const inFlight = await inFlightOf(memberDir, opEnv, op.name, lastRun?.id ?? null);
       let lastTick: StatusStewardTick | null = null;
       if (op.labels?.Converge === "true") {
         try {
@@ -394,6 +458,7 @@ export async function readMemberStewards(
         schedule: op.schedule ? { cron: op.schedule.cron, overlap: "skip" } : null,
         env: opEnv,
         lastRun,
+        inFlight,
         lastTick,
         changesCheckout: op.changesCheckout === true,
         workLease,

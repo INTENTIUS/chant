@@ -2,6 +2,7 @@ import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { GateWait, asPendingGate } from "../gate-wait";
 import type { PendingGateRecord } from "../../lifecycle/gate-ledger";
+import { liveRunEnv } from "../run-live";
 
 const execAsync = promisify(exec);
 
@@ -116,7 +117,9 @@ export async function shellCmd(args: ShellCmdArgs, signal?: AbortSignal): Promis
   try {
     const { stdout, stderr } = await execAsync(args.cmd, {
       cwd: args.cwd,
-      env: { ...process.env, ...args.env },
+      // In a run that keeps an in-flight record, CHANT_RUN_ACTIVITY names the
+      // file the command appends activity lines to (../run-live.ts).
+      env: { ...process.env, ...liveRunEnv(), ...args.env },
       maxBuffer: MAX_STDOUT_BYTES,
       signal,
     });
