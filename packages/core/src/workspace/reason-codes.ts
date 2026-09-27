@@ -175,6 +175,8 @@ export const REASONS = {
   // The forward coverage check (check --changes, #2773): findings, one per changed path.
   "change-uncovered": "A path the diff changes is covered by no current decided record and no open work item, by path or by its member.",
   "change-out-of-scope": "A record in hand for the change, such as the work item it is for or a decision that item implements, lists a path the diff changes in its out_of_scope.",
+  // The patch read (workspace patch): a read that fails.
+  "patch-path-invalid": "workspace patch --path names a path that is not relative and inside the workspace.",
   // Composite instances joined to components (graph --composites, #2662): why the list is empty or has no component.
   "composites-no-chant-member": "No member of kind chant was read, so nothing declares a composite instance or a component.",
   "composites-none-declared": "The members read declare no composite instance.",

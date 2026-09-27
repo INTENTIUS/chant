@@ -243,6 +243,7 @@ export default defineConfig({
 								{ label: 'workspace lineage', slug: 'cli/workspace-lineage' },
 								{ label: 'workspace upgrade', slug: 'cli/workspace-upgrade' },
 								{ label: 'workspace check', slug: 'cli/workspace-check' },
+								{ label: 'workspace patch', slug: 'cli/workspace-patch' },
 								{ label: 'workspace build', slug: 'cli/workspace-build' },
 								{ label: 'workspace lint', slug: 'cli/workspace-lint' },
 								{ label: 'workspace audit', slug: 'cli/workspace-audit' },

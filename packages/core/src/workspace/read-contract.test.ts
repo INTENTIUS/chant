@@ -29,6 +29,8 @@ import { intentGraph } from "./intent";
 import intentSchema from "./intent.schema.json";
 import { intentRecord } from "./intent-record";
 import intentRecordSchema from "./intent-record.schema.json";
+import { workspacePatch } from "./patch";
+import patchSchema from "./patch.schema.json";
 import { runChecks } from "./lineage-check";
 import { listWorkspace } from "./ls";
 import lsSchema from "./ls.schema.json";
@@ -46,7 +48,7 @@ import statusSchema from "./status.schema.json";
 const FIXTURE = join(REPO, "reference-workspace");
 const TIMEOUT = 240_000;
 
-const SCHEMAS = { ls: lsSchema, graph: graphSchema, check: checkSchema, status: statusSchema, records: recordsSchema, "records-since": recordsSinceSchema, intent: intentSchema, "intent-record": intentRecordSchema, composites: compositesSchema, points: pointsSchema };
+const SCHEMAS = { ls: lsSchema, graph: graphSchema, check: checkSchema, status: statusSchema, records: recordsSchema, "records-since": recordsSinceSchema, intent: intentSchema, "intent-record": intentRecordSchema, composites: compositesSchema, points: pointsSchema, patch: patchSchema };
 
 /** This checkout's chant, started the way the CLI starts it, for members with no toolchain of their own. */
 const reader: Toolchain = {
@@ -151,6 +153,17 @@ describe("every schema against the reference workspace (#2543)", () => {
       expect(doc.record.id).toBe("record:decision/ref-002");
       expect(doc.record.decidedIn?.sha).toMatch(/^[0-9a-f]{40}$/);
     }
+  });
+
+  test("patch, for the last commit that changed the reference workspace", async () => {
+    const { expectValid } = contract(patchSchema);
+    const last = git(REPO, "log", "-1", "--format=%H", "--", "reference-workspace");
+    const { doc, failed } = await workspacePatch({ cwd: FIXTURE, range: last });
+    expectValid(doc);
+    if ("error" in doc) throw new Error(doc.error.message);
+    expect(failed).toBe(false);
+    expect(doc.workspace).toEqual({ name: "reference", root: "reference-workspace" });
+    expect(doc.files.length).toBeGreaterThan(0);
   });
 
   test(

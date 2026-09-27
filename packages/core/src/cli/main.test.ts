@@ -756,6 +756,7 @@ describe("workspace init and ls (#2534)", () => {
       "workspace lint",
       "workspace ls",
       "workspace member-run",
+      "workspace patch",
       "workspace points",
       "workspace records",
       "workspace status",
@@ -778,6 +779,13 @@ describe("workspace init and ls (#2534)", () => {
     expect(parseArgs(["workspace", "graph", "--intent", "app/server.mjs"])).toMatchObject({ intent: "app/server.mjs" });
     expect(() => parseArgs(["workspace", "graph", "--intent", "--json"])).toThrow(/--intent needs a region/);
     expect(() => parseArgs(["workspace", "graph", "--intent", "--record"])).toThrow(/--record needs a record id/);
+  });
+
+  test("patch takes a range, --path and --max-bytes", () => {
+    const patch = parseArgs(["workspace", "patch", "main...chant/work/W-001", "--path", "app", "--path", "docs/a.md", "--max-bytes", "4096", "--json"]);
+    expect(patch).toMatchObject({ command: "workspace", path: "patch", extraPositional: "main...chant/work/W-001", paths: ["app", "docs/a.md"], maxBytes: 4096, json: true });
+    expect(resolveCommand(patch, commandRegistry)?.def.name).toBe("workspace patch");
+    expect(() => parseArgs(["workspace", "patch", "HEAD", "--max-bytes", "0"])).toThrow(/--max-bytes needs a whole number/);
   });
 
   test("run takes --work <id> for an Op with a work lease (#2748)", () => {
