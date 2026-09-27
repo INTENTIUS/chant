@@ -147,6 +147,9 @@ export const UNIT_INCLUDE = [
   // chant #2817 — the per-test budget's own value and message. The run that
   // shows a slow test failing on it is test/unit-test-budget.e2e.test.ts.
   "test/unit-test-budget.test.ts",
+  // chant #2915 — the smoke Dockerfiles pack every workspace dependency of
+  // the tarballs they pack. Reads the Dockerfiles and package.json files only.
+  "test/smoke-tarball-deps.test.ts",
 ];
 
 /** The end-to-end files: out of the shards, into CI's `test-e2e` job. */
