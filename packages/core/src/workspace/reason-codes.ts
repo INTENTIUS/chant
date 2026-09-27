@@ -47,7 +47,7 @@ export const REASONS = {
   "no-matches": "An example group matches no directory holding a chant project.",
   // A member graph leaves out (graph, and the other per-member commands).
   "kind-not-run": "The member's kind is one the per-member commands don't run, such as other.",
-  "command-failed": "The member's own command exited with a failure.",
+  "command-failed": "The member's own command exited with a failure, or the lexicon that reads the member through its kind's graph block isn't installed where the workspace resolves its pin.",
   "output-unreadable": "The member's command printed something that isn't the document asked for.",
   "ir-version-unsupported": "The member's IR has a version this chant can't read.",
   // A ledger status can't fully read.

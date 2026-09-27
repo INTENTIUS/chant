@@ -34,6 +34,7 @@ import { composeWorkspaceGraph, readMemberIr, type ComposeInput, type WorkspaceG
 import { readDeclaration, readerVersion, WORKSPACE_ERROR_CODES, WorkspaceReadError, type ErrorLocation, type WorkspaceErrorCode } from "./declaration";
 import { describePlan, emitDocument, executePlan, memberStatus, planJson, planMembers, type MemberPlan, type Toolchain, type UnitResult } from "./member-commands";
 import { loadKindRegistry } from "./kinds";
+import { prepareKindReaders, type PreparedReaders } from "./kind-readers";
 import { recordLinkRows } from "./record-assets";
 import { RecordReadError } from "./records";
 import { workingTree } from "./tree";
@@ -184,22 +185,27 @@ function compose(plan: MemberPlan, results: UnitResult[], only: string[] | undef
 /** Plan a graph read without running anything, for `--dry-run`. Throws a {@link WorkspaceReadError}. */
 export function planGraph(query: GraphQuery): MemberPlan {
   const located = locateWorkspace(query.cwd, query.at);
-  readDeclaration(located.tree, "", { rootChant: true });
-  return planMembers("graph", located.rootOnDisk, { only: query.members, reader: query.reader, tree: located.tree });
+  const declaration = readDeclaration(located.tree, "", { rootChant: true });
+  const kinds = loadKindRegistry(declaration.pins, located.rootOnDisk).registry;
+  return planMembers("graph", located.rootOnDisk, { only: query.members, reader: query.reader, tree: located.tree, kinds });
 }
 
 /** Read and compose the graph, and build the document. Never throws a {@link WorkspaceReadError}. */
 export async function workspaceGraph(query: GraphQuery): Promise<GraphResult> {
   const head: Head = { $schema: GRAPH_OUTPUT_SCHEMA_ID, contract: GRAPH_CONTRACT_VERSION, chant: readerVersion() };
   let exported: string | undefined;
+  let readers: PreparedReaders | undefined;
   try {
     const located = locateWorkspace(query.cwd, query.at);
     const declaration = readDeclaration(located.tree, "", { rootChant: true });
-    let plan = planMembers("graph", located.rootOnDisk, { only: query.members, reader: query.reader, tree: located.tree });
+    // Kinds are read before planning: a package kind with a graph block runs (#2874).
+    const kinds = loadKindRegistry(declaration.pins, located.rootOnDisk).registry;
+    let plan = planMembers("graph", located.rootOnDisk, { only: query.members, reader: query.reader, tree: located.tree, kinds });
     if (located.at !== null && plan.groups.length > 0) {
       exported = exportRevision(located, plan.groups.flatMap((g) => g.units.map((u) => u.dir)));
-      plan = planMembers("graph", exported, { only: query.members, reader: query.reader, tree: workingTree(exported) });
+      plan = planMembers("graph", exported, { only: query.members, reader: query.reader, tree: workingTree(exported), kinds });
     }
+    readers = prepareKindReaders(plan, exported ?? located.rootOnDisk);
     const args = (query.args ?? {}) as ParsedArgs;
     const [results, components] = await Promise.all([
       executePlan(plan, args),
@@ -210,7 +216,6 @@ export async function workspaceGraph(query: GraphQuery): Promise<GraphResult> {
     for (const r of results) if (r.stderr.trim() && query.onStderr) query.onStderr(r.stderr.endsWith("\n") ? r.stderr : `${r.stderr}\n`);
     const { inputs, failed } = compose(plan, results, query.members, declaration.members);
     // Links (#2539) resolve against the declaration that was read, the revision's for --at, and the kinds installed now.
-    const kinds = loadKindRegistry(declaration.pins, located.rootOnDisk).registry;
     const graph = composeWorkspaceGraph({ name: declaration.name, root: located.root }, inputs, { declaration, kinds });
     let recordsFailed = false;
     if (query.kind !== undefined) {
@@ -233,6 +238,7 @@ export async function workspaceGraph(query: GraphQuery): Promise<GraphResult> {
     if (!(err instanceof WorkspaceReadError)) throw err;
     return { doc: { ...head, error: { code: err.code, message: err.message, location: err.location ?? null } }, failed: true };
   } finally {
+    readers?.cleanup();
     if (exported) rmSync(dirname(exported), { recursive: true, force: true });
   }
 }

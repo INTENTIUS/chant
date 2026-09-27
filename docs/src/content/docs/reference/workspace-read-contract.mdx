@@ -100,7 +100,7 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `kind-probe-failed` | member, `ls` and `graph` | The member's directory is not what its kind reads. |
 | `no-matches` | group, `ls` | The example group matches no chant project. |
 | `kind-not-run` | member, `graph` | The member's kind is one the per-member commands don't run, such as `other`. |
-| `command-failed` | member, `graph` | The member's own `chant graph` exited with a failure. |
+| `command-failed` | member, `graph` | The member's own `chant graph` exited with a failure, or the lexicon that reads a member through its kind's `graph` block isn't installed where the workspace resolves its pin. |
 | `output-unreadable` | member, `graph` | The member's chant printed something that isn't a graph IR. |
 | `ir-version-unsupported` | member, `graph` | The member's IR has a version this chant can't read. |
 | `ledger-unreadable` | ledger, `status` | Reading the ledger failed, so nothing from it is listed. |

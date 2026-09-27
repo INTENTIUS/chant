@@ -16,6 +16,8 @@ chant workspace graph [dir] --intent <path[:start-end]> [--at <rev>] [--kind <ki
 
 `chant workspace graph` reads every member of kind `chant` through that member's own `chant graph --format ir` and composes the results into one document ([#2537](https://github.com/INTENTIUS/chant/issues/2537), [ws-009](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-009-ir-versions.md), [ws-018](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-018-composer.md), [ws-022](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-022-ids.md)). The toolchain each member gets works as described for [`chant workspace build`](/chant/cli/workspace-build/#which-chant-runs-a-member). Example groups have no place in the graph.
 
+A member of a kind from a pinned package is read too when the package's kinds file says how, in the kind's [`graph` block](/chant/reference/workspace-kinds/#reading-a-member-in-the-graph) ([#2874](https://github.com/INTENTIUS/chant/issues/2874)). The `terraform` and `choudoufu` kinds of the terraform lexicon have one. chant writes a reader project for each such member in a temporary directory outside the workspace, with a `chant.config.json` that declares the lexicon, and runs the member's `chant graph` there under the member's toolchain. `--env` isn't passed to it, since the reader project declares no environments. The project is removed when the read ends. A member of a package kind without a `graph` block is listed with `kind-not-run`, and `build`, `lint` and `audit` skip every package kind.
+
 The document is part of the workspace [read contract](/chant/reference/workspace-read-contract/), with its own schema and reason codes.
 
 [`chant graph`](/chant/cli/graph/) is unchanged. At a workspace root it still prints the single-project IR of the root project, and this command is the only place members are composed.
@@ -118,7 +120,7 @@ A record link has `record` and `target` where a member link has `consumer` and `
 |---|---|
 | `kind-not-run` | has a kind the workspace commands don't run, such as `other` |
 | `dir-missing`, `unknown-kind`, `kind-probe-failed` | can't be read, as [`chant workspace ls`](/chant/cli/workspace-ls/#reason-codes) reports |
-| `command-failed` | printed no graph, because its `chant graph` exited with a failure |
+| `command-failed` | printed no graph, because its `chant graph` exited with a failure, or, for a member read through its kind's `graph` block, because the lexicon that reads it isn't installed where the workspace resolves its pin |
 | `output-unreadable` | printed something that is not a graph IR |
 | `ir-version-unsupported` | printed an IR newer than this chant reads |
 

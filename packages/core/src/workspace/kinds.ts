@@ -67,6 +67,16 @@ export type KindOutputs =
   /** The names listed here, plus any the member entry lists in `outputs` (`other`, and kinds from a package). */
   | { from: "declared"; names: string[] };
 
+/**
+ * How `chant workspace graph` reads a member of a package's kind (#2874): a
+ * lexicon, by name, and that lexicon's config namespace for a reader project
+ * chant writes itself. See {@link substituteGraphConfig} for the placeholders.
+ */
+export interface KindGraph {
+  lexicon: string;
+  config: Record<string, unknown>;
+}
+
 export interface MemberKind {
   name: string;
   /** One line for listings and error messages. */
@@ -84,6 +94,10 @@ export interface MemberKind {
   outputs: KindOutputs;
   /** Where the kind comes from: `builtin`, or the package that supplies it. */
   source: string;
+  /** The supplying package's directory, absolute; unset for a built-in kind. */
+  packageDir?: string;
+  /** How `workspace graph` reads a member of this kind (#2874); unset, the member is `kind-not-run`. */
+  graph?: KindGraph;
 }
 
 export interface KindRegistry {
@@ -310,7 +324,7 @@ export function parseKindData(text: string, source: string): KindData {
   const problems: string[] = [];
   const kinds: MemberKind[] = [];
   const seen = new Set<string>();
-  for (const k of (raw as { kinds: { name: string; description: string; precedence: number; probe: FileProbe; outputs?: string[] }[] }).kinds) {
+  for (const k of (raw as { kinds: { name: string; description: string; precedence: number; probe: FileProbe; outputs?: string[]; graph?: KindGraph }[] }).kinds) {
     if (BUILTIN_KIND_NAMES.includes(k.name)) {
       problems.push(`${source}: kind ${k.name} is built in and can't be supplied by a package`);
       continue;
@@ -331,6 +345,7 @@ export function parseKindData(text: string, source: string): KindData {
       shape: "member",
       outputs: { from: "declared", names: [...(k.outputs ?? [])] },
       source,
+      ...(k.graph ? { graph: { lexicon: k.graph.lexicon, config: structuredClone(k.graph.config) } } : {}),
     });
   }
   return { kinds, problems };
@@ -389,7 +404,49 @@ export function readPackageKinds(packageDir: string, source?: string): PackageKi
   } catch {
     return { kinds: [], problems: [`${name}: exports["${KINDS_SUBPATH}"] names ${target}, which does not exist`], file };
   }
-  return { ...parseKindData(text, name), file };
+  const data = parseKindData(text, name);
+  const packageName = typeof pkg.name === "string" ? pkg.name : undefined;
+  for (const k of data.kinds) {
+    k.packageDir = packageDir;
+    if (k.graph && packageName !== lexiconPackageName(k.graph.lexicon)) {
+      data.problems.push(
+        `${name}: kind ${k.name} reads its members with lexicon ${k.graph.lexicon}, which is ${lexiconPackageName(k.graph.lexicon)}, ` +
+          `and this package is ${packageName ?? "unnamed"}; the kind is kept, and workspace graph lists its members with kind-not-run`,
+      );
+      delete k.graph;
+    }
+  }
+  return { ...data, file };
+}
+
+/** The package a lexicon name resolves to. */
+export function lexiconPackageName(lexicon: string): string {
+  return `@intentius/chant-lexicon-${lexicon}`;
+}
+
+/** Where each placeholder in a kind's graph config points (#2874). */
+export interface GraphPlaceholders {
+  /** The member's name. */
+  member: string;
+  /** The member's directory, absolute. */
+  dir: string;
+  /** The workspace root, absolute. */
+  workspace: string;
+}
+
+/**
+ * A kind's graph config with `{member}`, `{dir}` and `{workspace}` replaced
+ * in every string key and value. Other braces are left as they are.
+ */
+export function substituteGraphConfig(config: Record<string, unknown>, at: GraphPlaceholders): Record<string, unknown> {
+  const text = (v: string) => v.replace(/\{(member|dir|workspace)\}/g, (_, key: keyof GraphPlaceholders) => at[key]);
+  const walk = (v: unknown): unknown => {
+    if (typeof v === "string") return text(v);
+    if (Array.isArray(v)) return v.map(walk);
+    if (v !== null && typeof v === "object") return Object.fromEntries(Object.entries(v).map(([k, x]) => [text(k), walk(x)]));
+    return v;
+  };
+  return walk(config) as Record<string, unknown>;
 }
 
 /**

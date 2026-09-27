@@ -72,6 +72,9 @@
             "maxLength": 255,
             "pattern": "^[^\\u0000-\\u001f]+$"
           }
+        },
+        "graph": {
+          "$ref": "#/$defs/graph"
         }
       },
       "patternProperties": {
@@ -128,6 +131,29 @@
       "type": "string",
       "description": "A file name, with no directory part. A * matches any run of characters.",
       "pattern": "^(?!\\.\\.?$)[^/\\\\]+$"
+    },
+    "graph": {
+      "type": "object",
+      "description": "How chant workspace graph reads a member of this kind (#2874). chant writes a reader project of its own outside the workspace, with a chant.config.json that declares lexicon and puts config under that lexicon's key, and runs the member's chant graph there. In every string key and value of config, {member} becomes the member's name, {dir} its absolute directory and {workspace} the absolute workspace root. Without this field a member of the kind is listed with kind-not-run.",
+      "required": [
+        "lexicon",
+        "config"
+      ],
+      "properties": {
+        "lexicon": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,39}$",
+          "description": "The lexicon that reads the member, by name. The package that supplies the kind must be @intentius/chant-lexicon-<lexicon>, so the lexicon chant loads is the one the declaration pins."
+        },
+        "config": {
+          "type": "object",
+          "description": "The lexicon's config namespace for the reader project, such as terraform's roots. Placeholders are substituted; nothing else is interpreted."
+        }
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false
     }
   }
 }
