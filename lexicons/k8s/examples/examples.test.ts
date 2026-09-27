@@ -55,6 +55,43 @@ describeAllExamples(
         expect(config.service?.pipelines?.traces?.exporters).toEqual(["otlp/tempo"]);
       },
     },
+    "otel-gateway": {
+      checks: (output) => {
+        const docs = loadAll(output) as Array<{ kind: string; metadata: { name: string; namespace?: string; annotations?: Record<string, string> }; [k: string]: any }>;
+        const doc = (kind: string, name: string) => docs.find((d) => d.kind === kind && d.metadata.name === name)!;
+        const configOf = (name: string) => load(doc("ConfigMap", name).data["config.yaml"]) as CollectorConfig;
+
+        // The gateway: replicas behind a ClusterIP and a headless Service.
+        expect(doc("Deployment", "otel-gateway").spec.replicas).toBe(2);
+        expect(doc("Service", "otel-gateway").spec.type).toBe("ClusterIP");
+        expect(doc("Service", "otel-gateway-headless").spec.clusterIP).toBe("None");
+        expect(doc("PodDisruptionBudget", "otel-gateway").spec.maxUnavailable).toBe(1);
+        const gatewayConfig = configOf("otel-gateway-config");
+        expect(validateCollectorConfig(gatewayConfig)).toEqual([]);
+        expect(gatewayConfig.service?.pipelines?.traces?.processors).toContain("tail_sampling");
+
+        // The agent reaches the gateway through endpoints built from its declaration.
+        const agentConfig = configOf("otel-agent-config");
+        expect(validateCollectorConfig(agentConfig)).toEqual([]);
+        expect(agentConfig.exporters?.["loadbalancing/gateway"]).toMatchObject({
+          routing_key: "traceID",
+          resolver: { k8s: { service: "otel-gateway-headless.observability", ports: [4317] } },
+        });
+        expect(agentConfig.exporters?.["otlp/gateway"]).toMatchObject({ endpoint: "otel-gateway.observability.svc:4317" });
+        expect(doc("Role", "otel-agent-endpoints").metadata.namespace).toBe("observability");
+
+        // The deployment shape post-synth checks read.
+        expect(doc("ConfigMap", "otel-agent-config").metadata.annotations).toMatchObject({
+          "otel.chant.dev/role": "agent",
+          "otel.chant.dev/workload": "DaemonSet/otel-agent",
+          "otel.chant.dev/gateways": "observability/otel-gateway=loadbalancing,observability/otel-gateway=service",
+        });
+        expect(doc("ConfigMap", "otel-gateway-config").metadata.annotations).toMatchObject({
+          "otel.chant.dev/role": "gateway",
+          "otel.chant.dev/workload": "Deployment/otel-gateway",
+        });
+      },
+    },
     "statefulset": {
       skipLint: true,
       checks: (output) => {
