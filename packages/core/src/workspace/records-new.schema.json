@@ -164,6 +164,7 @@
                 "record-sign-failed",
                 "source-harvest-not-proposed",
                 "record-state-not-initial",
+                "ratify-quorum-not-met",
                 "record-unparseable",
                 "record-schema-invalid",
                 "record-id-duplicate",

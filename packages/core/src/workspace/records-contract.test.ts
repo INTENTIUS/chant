@@ -116,7 +116,8 @@ describe("records output schema", () => {
       JSON.stringify({ name: "w", schema: 1, quorum: 1, members: [{ name: "docs", dir: "docs", kind: "other", because: "decisions only" }] }),
     );
     const base = readFileSync(join(dir, "ws-003-seal-scope.md"), "utf-8").replace(/^id: .*$/m, 'id: "ws-900"');
-    const digest = recordTextDigest(base);
+    // The decision kind names a ratified state, so the state leaves the digest too (#2873).
+    const digest = recordTextDigest(base, ["reviews", "seal", "state"]);
     const entry = (reviewer: string, verdict: string, extra = "") => `  - reviewer: "${reviewer}"\n    verdict: "${verdict}"\n    on: "2026-09-24"${extra}`;
     const reviews = [
       entry("alice", "agree", `\n    digest: "${digest}"`),

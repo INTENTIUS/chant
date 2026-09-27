@@ -22,4 +22,4 @@ stateDiagram-v2
 
 Only a ratified decision constrains other work. Work may build on a `decided` one, but its link shows the dependency is provisional.
 
-Every #2524 decision starts in `decided`, because one maintainer chose each of them alone. Seals and signing don't exist yet, so for now `ratified` is recorded by merging a pull request with the review quorum, as #2555 describes under First use.
+Every #2524 decision starts in `decided`, because one maintainer chose each of them alone. A person ratifies one once its quorum is met, by setting `state` to `ratified` with `chant workspace records amend`, and commits that in a pull request. The decision kind names `ratified` in `reviews.ratified`, so chant refuses the amendment with `ratify-quorum-not-met` while the quorum is not met, and leaves `state` out of the digest so the verdicts still count once it is ratified (#2873). chant never changes the state by itself, and a review only adds a verdict.

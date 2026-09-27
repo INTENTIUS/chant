@@ -58,7 +58,7 @@ export const recordKind = {
   pins: { field: "evidence" },
   constrains: { field: "constrains" },
   outOfScope: { field: "out_of_scope" },
-  reviews: { field: "reviews", decider: "decided_by" },
+  reviews: { field: "reviews", decider: "decided_by", ratified: "ratified" },
   proposedBy: { field: "proposed_by" },
   source: { field: "source" },
 };
@@ -66,7 +66,7 @@ export const recordKind = {
 
 `location.dir` and `schema.path` are relative to the kind's own directory. Subdirectories are skipped, and a name has to match `location.match` to be read. The `$id` inside the schema must equal `schema.id`.
 
-`approval`, `pins`, `constrains`, `reviews`, `proposedBy`, `remediates`, `outOfScope` and `session` are optional, and `approval` ranks the states for [supersession](#supersession). `remediates` is shaped like `supersedes` and names a closed record a later one fixes the consequence of, without replacing it (see [Remediation](#remediation)). `pins.field` names the list whose entries may pin a workspace file (see [Asset pins](#asset-pins)). `constrains.field` names the list of what a record governs, whose `member:<name>` and `path:<path>` entries become the record's links in [`chant workspace graph --kind`](/chant/cli/workspace-graph/#record-links). For `reviews`, `field` is the list of review verdicts and `decider` is the field holding the decider, and with them each record gets a digest and a quorum (see [Reviews and quorum](#reviews-and-quorum)). `proposedBy` works the other end of a record's life: its `field` says where a new record's proposer goes, apart from the decider (see [Naming a proposer](#naming-a-proposer)). chant 0.82.0 and older refuse a kind file that has `approval`, `pins` or `constrains`. `session` makes the kind a [review-session kind](#review-sessions), and chant 0.81.0 and older refuse it too. `source.field` names the object that says where a record came from, and opts the kind in to the [source block](#where-a-proposal-came-from). `outOfScope.field` names the list of paths a change under the record must leave alone, and the [forward coverage check](/chant/cli/workspace-check/#the-forward-coverage-check) reports a change to one of them as `change-out-of-scope` ([#2773](https://github.com/INTENTIUS/chant/issues/2773)). The decision and work kinds both call that list `out_of_scope`. A chant released before `remediates`, `outOfScope` or the source block existed refuses a kind file that has any of them, as it refuses any key it does not know.
+`approval`, `pins`, `constrains`, `reviews`, `proposedBy`, `remediates`, `outOfScope` and `session` are optional, and `approval` ranks the states for [supersession](#supersession). `remediates` is shaped like `supersedes` and names a closed record a later one fixes the consequence of, without replacing it (see [Remediation](#remediation)). `pins.field` names the list whose entries may pin a workspace file (see [Asset pins](#asset-pins)). `constrains.field` names the list of what a record governs, whose `member:<name>` and `path:<path>` entries become the record's links in [`chant workspace graph --kind`](/chant/cli/workspace-graph/#record-links). For `reviews`, `field` is the list of review verdicts and `decider` is the field holding the decider, and with them each record gets a digest and a quorum (see [Reviews and quorum](#reviews-and-quorum)). Its optional `ratified` names the state a record enters only once its quorum is met, `ratified` for decisions (see [Ratifying](#ratifying)), and it must be one of `states`. It is new in 0.95.0, and older chants reject the key. `proposedBy` works the other end of a record's life: its `field` says where a new record's proposer goes, apart from the decider (see [Naming a proposer](#naming-a-proposer)). chant 0.82.0 and older refuse a kind file that has `approval`, `pins` or `constrains`. `session` makes the kind a [review-session kind](#review-sessions), and chant 0.81.0 and older refuse it too. `source.field` names the object that says where a record came from, and opts the kind in to the [source block](#where-a-proposal-came-from). `outOfScope.field` names the list of paths a change under the record must leave alone, and the [forward coverage check](/chant/cli/workspace-check/#the-forward-coverage-check) reports a change to one of them as `change-out-of-scope` ([#2773](https://github.com/INTENTIUS/chant/issues/2773)). The decision and work kinds both call that list `out_of_scope`. A chant released before `remediates`, `outOfScope` or the source block existed refuses a kind file that has any of them, as it refuses any key it does not know.
 
 A kind with a `work` block is a work kind ([#2683](https://github.com/INTENTIUS/chant/issues/2683)), such as the reference workspace's `work/work.kind.mjs`, whose block reads as follows.
 
@@ -436,7 +436,7 @@ reviews:
   - reviewer: "alice"
     verdict: "agree"
     on: "2026-09-24"
-    digest: "00c53dedf2e2c1923c0ea24cba7895c0904beebe7d5be059b1d5fe839009728f"
+    digest: "4410ac0d03d63689155f2f3f8bc78722d7d2546bcd6723df5fd6952d0b041923"
 ```
 
 ### Digest rule
@@ -446,19 +446,21 @@ reviews:
 1. Line endings become LF. A CRLF or a lone CR becomes one LF.
 2. The reviews block and the `seal` block are removed from the front matter. The front matter is the lines between a first line `---` and the next line that is exactly `---`. Each block starts at a line whose first characters are its key (`reviews` or `seal`, bare or quoted), optional spaces or tabs, and `:`. It runs on through every following line that is empty or starts with a space, a tab, `#` or `-`, and it ends at the first line that doesn't, or at the closing `---`. Every other byte stays, including the `---` lines and the body. Which block is removed first makes no difference.
 
+A kind whose `reviews` names a `ratified` state removes its state field's block in step 2 as well, `state` for decisions ([#2873](https://github.com/INTENTIUS/chant/issues/2873)). Moving a record to the ratified state then leaves its digest where it was, so the verdicts that met the quorum still count on the ratified record.
+
 `seal` is the record's author seal ([#2688](https://github.com/INTENTIUS/chant/issues/2688)), only at column 0. A `seal` inside a verdict is part of the reviews block. A record with no top-level `seal` hashes exactly as it did before author seals existed, so no earlier digest moved.
 
-For a kind with `format: "json"`, step 2 removes the top-level reviews member instead, and then the top-level `seal` member from what is left. The removed text runs from the whitespace right before the member's name to the end of its value. One comma goes with it, along with the whitespace right before that comma. The comma is the one after the value when another member follows, and otherwise the one before the member. In a file written with one member per line, that is deleting the member's lines and the comma that separated it from its neighbour. Everything else stays byte for byte, the final newline included. A file that is not a JSON record, or has neither member, is hashed after step 1 only.
+For a kind with `format: "json"`, step 2 removes the top-level reviews member instead, and then the top-level `seal` member from what is left. When the kind names a `ratified` state, the state member goes next. The removed text runs from the whitespace right before the member's name to the end of its value. One comma goes with it, along with the whitespace right before that comma. The comma is the one after the value when another member follows, and otherwise the one before the member. In a file written with one member per line, that is deleting the member's lines and the comma that separated it from its neighbour. Everything else stays byte for byte, the final newline included. A file that is not a JSON record, or has neither member, is hashed after step 1 only.
 
-Text with no front matter, or neither key, is hashed after step 1 only. So adding, editing or removing a verdict leaves the digest unchanged, while any other edit to the file changes it. A verdict given before an amendment then names an older digest and stops counting. It follows that a tool which adds a verdict must change only the reviews block. If it reformats the rest of the front matter, every earlier verdict stops counting.
+Text with no front matter, or neither key, is hashed after step 1 only. So adding, editing or removing a verdict leaves the digest unchanged, while any other edit to the file changes it, apart from the state of a kind that names a ratified state. A verdict given before an amendment then names an older digest and stops counting. It follows that a tool which adds a verdict must change only the reviews block. If it reformats the rest of the front matter, every earlier verdict stops counting.
 
 `records --json` prints each record's `digest`, which is the value to copy into a new verdict. To check one by hand, for a file with LF line endings that ends in a newline, run this from the file's directory:
 
 ```bash
-awk 'NR==1&&$0=="---"{fm=1;print;next} fm&&$0=="---"{fm=0;skip=0;print;next} fm&&/^(reviews|seal)[ \t]*:/{skip=1;next} fm&&skip&&/^([ \t#-]|$)/{next} {skip=0;print}' ws-003-seal-scope.md | shasum -a 256
+awk 'NR==1&&$0=="---"{fm=1;print;next} fm&&$0=="---"{fm=0;skip=0;print;next} fm&&/^(reviews|seal|state)[ \t]*:/{skip=1;next} fm&&skip&&/^([ \t#-]|$)/{next} {skip=0;print}' ws-003-seal-scope.md | shasum -a 256
 ```
 
-The digest in the example above is `ws-003`'s in the chant repo at the time of writing. A verdict with no `digest` still counts, which keeps records written before digests working. The record gets the warning `review-undigested`, which names the reviewers, since an amendment won't stop those verdicts counting.
+The pattern lists `state` because the decision kind names a ratified state. For a kind that doesn't, leave `state` out of it. The digest in the example above is `ws-003`'s in the chant repo at the time of writing. A verdict with no `digest` still counts, which keeps records written before digests working. The record gets the warning `review-undigested`, which names the reviewers, since an amendment won't stop those verdicts counting.
 
 ### The quorum
 
@@ -477,6 +479,20 @@ Names are compared in NFKC form with surrounding spaces trimmed and letters lowe
 `openConcerns` lists every dissent that has neither `addressed_by` nor `withdrawn_on`, counted or not. `metWithObjections` is true when `met` is true and `openConcerns` isn't empty. A met count with an open concern is never consensus (RFC 7282), so a reader should show consensus only when `met` is true and `metWithObjections` is false.
 
 Without `--json`, a record with any verdict gets one more line, such as `quorum 2 of 2 agreed, met with objections; 1 not counted, 1 open concern`.
+
+### Ratifying
+
+chant never changes a record's state on its own. A person ratifies a decision once its quorum is met, by setting the state with `records amend` ([#2873](https://github.com/INTENTIUS/chant/issues/2873)):
+
+```bash
+echo '{"state": "ratified"}' | chant workspace records amend ws-052 --kind docs/design/decisions/decision.kind.mjs --set -
+```
+
+When the kind's `reviews` names a `ratified` state, `records amend` and `records new` refuse to write a record in that state unless its quorum is met, with `ratify-quorum-not-met`, and nothing is written. The quorum is computed on the record as it would be written, by the rules above: the need from the declaration in the working tree, and agents and seals from the policy at base. So verdicts on text the same amendment changes don't count, and neither do the decider's own. The message gives the count and each verdict that did not count, with its reason. A quorum met with objections is met, so the record can be ratified. Its open concerns stay listed in `openConcerns`. Such a kind leaves the state out of the digest. The ratified record's verdicts therefore still count, and `records --json` shows its quorum met.
+
+There is no quorum to check for a kind without `reviews` or one whose `reviews` names no `ratified` state. `records amend` moves its records to any state the approval rule allows. chant checks the quorum only when a record is written through `records new` or `records amend`. A file edited by hand to `ratified` is read as written.
+
+`records review` only appends the verdict. It doesn't change the state when the verdict meets the quorum, because a review changes only the reviews block. Whether to ratify over open concerns is for a person to decide.
 
 ### Sealing a verdict
 
@@ -564,7 +580,7 @@ echo '{}' | chant workspace records amend ws-052 --kind docs/design/decisions/de
 
 A record with no author, such as a proposed decision with `decided_by: null`, has nobody to seal it, so `--sign` is refused with `record-sign-failed`. The same code covers a key file ssh-keygen can't sign with. Either way the file is left untouched. A kind without `reviews` names no author, and `--sign` on it is `write-usage-invalid`. Only `--sign` writes the seal, and fields given with `--from` or `--set` that include `seal` are refused with `write-input-invalid`.
 
-An amendment moves the digest, so the old seal no longer covers the text. `amend --sign` signs the record again over the new digest. `amend` without `--sign` removes the seal, lists `seal` in `changed`, and says why in `sealDropped`, so a record never carries a seal that fails. An amendment that leaves the digest where it was keeps the seal, such as one that only changes `reviews`. On an approved record the seal may change along with what the approval rule allows. A record in a closed state takes no new seal (`record-closed`).
+An amendment moves the digest, so the old seal no longer covers the text. The seal signs the state as well, so on a decision a move to `ratified` stops it verifying even though the digest stays put. `amend --sign` signs the record again over the new digest and state. Without `--sign`, the amendment deletes the old seal. The result lists `seal` in `changed` and explains the deletion in `sealDropped`, so no record keeps a seal that fails. An amendment that leaves the digest where it was keeps the seal, such as one that only changes `reviews`. On an approved record the seal may change along with what the approval rule allows. A record in a closed state takes no new seal (`record-closed`).
 
 On read, each parsed record of a kind with `reviews` carries `attested` and `attestation: {code, message, key}`, the same shape as a verdict's:
 
@@ -730,10 +746,10 @@ A kind the declaration names can also be given by its declared name, or by its f
 | The record is | It may change |
 |---|---|
 | in a closed state, such as `ratified` | nothing (`record-closed`) |
-| approved (ranked above 0 in the kind's `approval`), such as `decided` | its state, to one ranked at least as high; its pins field (`evidence`); its reviews. Anything else is `amend-supersede-instead` |
+| approved (ranked above 0 in the kind's `approval`), such as `decided` | its state, to one ranked at least as high, and to the kind's ratified state only once the quorum is met (`ratify-quorum-not-met`, see [Ratifying](#ratifying)); its pins field (`evidence`); its reviews. Anything else is `amend-supersede-instead` |
 | anything else, such as `proposed` | any field but its id |
 
-The id never changes (`amend-id-immutable`). Both refusals say what to do instead: write the change as a new record whose `supersedes` names this one, which replaces it once it is approved at least as strongly. The session schema has no field for that link. For such a kind, `record-closed` says to write a new record in its place. For a session it says to open a new session. An amendment that changes nothing writes nothing and prints an empty `changed`. The author seal follows its own rule, under [Sealing a record](#sealing-a-record): `--sign` writes it again, and without `--sign` a change that moves the digest removes it and `sealDropped` says so.
+The id never changes (`amend-id-immutable`). Both refusals say what to do instead: write the change as a new record whose `supersedes` names this one, which replaces it once it is approved at least as strongly. The session schema has no field for that link. For such a kind, `record-closed` says to write a new record in its place. For a session it says to open a new session. An amendment that changes nothing writes nothing and prints an empty `changed`. The author seal follows its own rule, under [Sealing a record](#sealing-a-record): `--sign` writes it again, and without `--sign` a change that moves the digest or the state removes it and `sealDropped` says so.
 
 `review` appends `{reviewer, verdict, note, on, digest, session, seal}`. `seal` is written only with `--sign`. `on` is today's date in UTC, `note` and `session` appear only when given, and a dissent without a non-empty `--note` is refused with `review-note-required`. `digest` is the record's digest by the [digest rule](#digest-rule), the one `records --json` prints for it. The command rewrites only the reviews block and keeps every other byte of the file, so after the review the record's digest is still the one the verdict names ([#2672](https://github.com/INTENTIUS/chant/issues/2672)). A record in a closed state takes no review, and a kind that declares no `reviews` takes none (`review-unsupported`). With `--session`, the session has to exist and be open, and the verdict goes on its list too (see [Sessions from a UI](#sessions-from-a-ui)).
 

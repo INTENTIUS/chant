@@ -175,6 +175,7 @@
                 "record-closed",
                 "amend-supersede-instead",
                 "record-sign-failed",
+                "ratify-quorum-not-met",
                 "record-unparseable",
                 "record-schema-invalid",
                 "record-id-duplicate",
