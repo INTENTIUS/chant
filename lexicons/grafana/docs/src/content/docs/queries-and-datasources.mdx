@@ -1,0 +1,48 @@
+---
+title: "Queries and Datasources"
+description: "Datasource, PromQuery, TempoQuery and LokiQuery, and how references are written"
+diataxis: reference
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-grafana` — DO NOT EDIT.
+    Edit lexicons/grafana/docs/pages/queries-and-datasources.mdx instead; changes here are overwritten. */}
+
+
+## Datasource
+
+```ts
+const tempo = new Datasource({ name: "Tempo", type: "tempo", url: "http://tempo:3200", jsonData: tempoSettings });
+```
+
+| Prop | Default | Notes |
+|---|---|---|
+| `name` | required | unique in the organisation (GRAF104) |
+| `type` | required | the plugin id; `Datasource` is generic in it |
+| `uid` | name as a uid | what panels reference |
+| `url`, `basicAuth`, `basicAuthUser`, `user`, `database`, `withCredentials`, `isDefault`, `orgId`, `version` | unset | written as given |
+| `access` | `"proxy"` | |
+| `editable` | `false` | whether the UI may change the provisioned datasource |
+| `jsonData` | unset | plugin settings; a declared `Datasource` anywhere inside is written as its uid |
+| `secureJsonData` | unset | secrets, as `$__env{NAME}` or `$__file{/path}` (GRAF002) |
+
+Every declared datasource in the build goes to `provisioning/datasources/chant.yaml`.
+
+A datasource declared in another build root, or created by hand in Grafana, is referenced with a plain ref: `{ type: "prometheus", uid: "mimir" }`. GRAF101 reports that ref as undeclared if the build declares other datasources; see [Lint rules](../lint-rules/).
+
+## Queries
+
+| Class | Plugin | Expression | Typed from |
+|---|---|---|---|
+| `PromQuery` | `prometheus` | `expr` (PromQL) | `prometheus` `Dataquery` |
+| `TempoQuery` | `tempo` | `query` (TraceQL) | `tempo` `Dataquery`; `filters` defaults to `[]` and `queryType` to `"traceql"` |
+| `LokiQuery` | `loki` | `expr` (LogQL) | `loki` `Dataquery` |
+
+The fields are the plugin's query model at the pinned schema version, less `datasource`, which takes a `Datasource`, a `DatasourceVariable` or a `{ type, uid }` ref of the query's own plugin type. The expression is a string: this lexicon does not parse PromQL, TraceQL or LogQL.
+
+Each query becomes one of the panel's `targets`, carrying its datasource ref and `refId`.
+
+## Why references are entities
+
+A panel that names its datasource by uid string can name one that does not exist, or one of the wrong type, and Grafana shows the error only when someone opens the panel. Holding the entity makes the first mistake impossible in TypeScript and the second a type error. GRAF101 and GRAF102 still check the emitted JSON, for refs, datasource variables and dashboards chant didn't build.
+
+A later composite that builds panels from another declaration (a collector's span metrics, an SLO) reads that declaration's props when it builds the query string, so renaming a metric at its source changes the PromQL in the panel.
