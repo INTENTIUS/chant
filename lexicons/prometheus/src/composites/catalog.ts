@@ -58,7 +58,7 @@ export const compositeCatalog: CompositeEntry[] = [
         "name": "interval",
         "type": "string",
         "required": false,
-        "description": "Evaluation interval of both groups (default: Prometheus's `evaluation_interval`)."
+        "description": "Evaluation interval of the group (default: Prometheus's `evaluation_interval`)."
       }
     ]
   }
