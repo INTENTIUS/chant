@@ -2,5 +2,6 @@ export * from "./common";
 export * from "./receivers";
 export * from "./processors";
 export * from "./exporters";
+export * from "./connectors";
 export * from "./extensions";
 export * from "./sampling";

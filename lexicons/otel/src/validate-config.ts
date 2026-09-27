@@ -9,10 +9,12 @@
  */
 
 import type { Declarable } from "@intentius/chant/declarable";
-import { definitionFor, isOTelComponent, isUsablePin, runValidator } from "./define";
+import { definitionFor, definitionOf, isOTelComponent, isUsablePin, runValidator } from "./define";
 import { componentConfig } from "./collector";
-import { isComponentId, pipelineSignal, SIGNALS, type CollectorConfig } from "./model";
+import { isComponentId, parseComponentId, pipelineSignal, SIGNALS, type CollectorConfig, type ConnectorSignalPair } from "./model";
 import { isPipelineEntity } from "./pipeline";
+// OTEL112 reads the built-in connectors' signal pairs from the registry.
+import "./components/connectors";
 
 export type CollectorIssueCode =
   | "OTEL101"
@@ -23,7 +25,8 @@ export type CollectorIssueCode =
   | "OTEL106"
   | "OTEL107"
   | "OTEL108"
-  | "OTEL109";
+  | "OTEL109"
+  | "OTEL112";
 
 export interface CollectorIssue {
   code: CollectorIssueCode;
@@ -41,7 +44,20 @@ function ids(section: Record<string, unknown> | undefined): Set<string> {
   return new Set(Object.keys(section ?? {}));
 }
 
-/** Check a collector config's references and pipeline shape (OTEL101-OTEL106). */
+/** Where a connector appears: the pipelines it is an exporter in, and those it is a receiver in. */
+interface ConnectorUse {
+  asExporter: string[];
+  asReceiver: string[];
+}
+
+function describePairs(pairs: ReadonlyArray<ConnectorSignalPair>): string {
+  return pairs.map((p) => `${p.from} to ${p.to}`).join(", ");
+}
+
+/**
+ * Check a collector config's references and pipeline shape (OTEL101-OTEL106),
+ * and each connector's signals against its definition (OTEL112).
+ */
 export function validateCollectorConfig(config: CollectorConfig): CollectorIssue[] {
   const issues: CollectorIssue[] = [];
   const receivers = ids(config.receivers);
@@ -52,6 +68,7 @@ export function validateCollectorConfig(config: CollectorConfig): CollectorIssue
   const pipelines = config.service?.pipelines ?? {};
 
   const used = { receivers: new Set<string>(), processors: new Set<string>(), exporters: new Set<string>() };
+  const connectorUse = new Map<string, ConnectorUse>();
 
   for (const [pipelineId, pipeline] of Object.entries(pipelines)) {
     const signal = pipelineSignal(pipelineId);
@@ -84,6 +101,11 @@ export function validateCollectorConfig(config: CollectorConfig): CollectorIssue
           continue;
         }
         const viaConnector = field !== "processors" && connectors.has(id);
+        if (viaConnector) {
+          const use = connectorUse.get(id) ?? { asExporter: [], asReceiver: [] };
+          (field === "exporters" ? use.asExporter : use.asReceiver).push(pipelineId);
+          connectorUse.set(id, use);
+        }
         if (!declared.has(id) && !viaConnector) {
           issues.push({
             code: "OTEL101",
@@ -124,10 +146,35 @@ export function validateCollectorConfig(config: CollectorConfig): CollectorIssue
     }
   }
 
+  // A connector joins two pipelines, so the collector refuses one that is
+  // listed on only one side.
+  for (const [id, use] of connectorUse) {
+    if (use.asReceiver.length === 0) {
+      issues.push({
+        code: "OTEL101",
+        severity: "error",
+        pipeline: use.asExporter[0],
+        component: id,
+        message: `connector "${id}" is an exporter in pipeline "${use.asExporter[0]}" but no pipeline lists it as a receiver; a connector must appear on both sides, and the collector refuses to start`,
+      });
+    } else if (use.asExporter.length === 0) {
+      issues.push({
+        code: "OTEL101",
+        severity: "error",
+        pipeline: use.asReceiver[0],
+        component: id,
+        message: `connector "${id}" is a receiver in pipeline "${use.asReceiver[0]}" but no pipeline lists it as an exporter; a connector must appear on both sides, and the collector refuses to start`,
+      });
+    } else {
+      issues.push(...connectorSignalIssues(id, use));
+    }
+  }
+
   const unused: Array<[Set<string>, Set<string>, string]> = [
     [receivers, used.receivers, "receiver"],
     [processors, used.processors, "processor"],
     [exporters, used.exporters, "exporter"],
+    [connectors, new Set(connectorUse.keys()), "connector"],
   ];
   for (const [declared, usedIds, noun] of unused) {
     for (const id of declared) {
@@ -164,6 +211,47 @@ export function validateCollectorConfig(config: CollectorConfig): CollectorIssue
     }
   }
 
+  return issues;
+}
+
+/**
+ * OTEL112: every pipeline a connector joins must pair with a pipeline on the
+ * other side through a signal pair the connector supports. This is the
+ * collector's own rule: `spanmetrics` fed by a traces pipeline needs a metrics
+ * pipeline to receive from it, and cannot be the receiver of a traces
+ * pipeline. A connector whose definition this process doesn't have, or whose
+ * definition lists no pairs, is not checked.
+ */
+function connectorSignalIssues(id: string, use: ConnectorUse): CollectorIssue[] {
+  const type = parseComponentId(id)?.type ?? id;
+  const pairs = definitionOf("connector", type)?.connects;
+  if (!pairs || pairs.length === 0) return [];
+  const supported = (from: string, to: string) => pairs.some((p) => p.from === from && p.to === to);
+  const inSignals = use.asExporter.map(pipelineSignal);
+  const outSignals = use.asReceiver.map(pipelineSignal);
+  const issues: CollectorIssue[] = [];
+  for (const pipeline of use.asExporter) {
+    const from = pipelineSignal(pipeline);
+    if (outSignals.some((to) => supported(from, to))) continue;
+    issues.push({
+      code: "OTEL112",
+      severity: "error",
+      pipeline,
+      component: id,
+      message: `connector "${id}" is an exporter in ${from} pipeline "${pipeline}", but no pipeline it feeds carries a signal ${type} makes from ${from} (it supports ${describePairs(pairs)}); the collector refuses to start`,
+    });
+  }
+  for (const pipeline of use.asReceiver) {
+    const to = pipelineSignal(pipeline);
+    if (inSignals.some((from) => supported(from, to))) continue;
+    issues.push({
+      code: "OTEL112",
+      severity: "error",
+      pipeline,
+      component: id,
+      message: `connector "${id}" is a receiver in ${to} pipeline "${pipeline}", but no pipeline feeding it carries a signal ${type} turns into ${to} (it supports ${describePairs(pairs)}); the collector refuses to start`,
+    });
+  }
   return issues;
 }
 

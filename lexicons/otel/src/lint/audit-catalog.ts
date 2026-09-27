@@ -2,7 +2,8 @@
  * The otel lexicon's chant audit catalog, contributed via
  * `otelPlugin.auditCatalog()` (#687, #1346).
  *
- * OTEL101-OTEL106 read the emitted collector YAML, so they are `yamlBased`.
+ * OTEL101-OTEL106 and OTEL112 read the emitted collector YAML, so they are
+ * `yamlBased`.
  * OTEL107-OTEL109 read the declared entities (a component's definition, its
  * schema pin), which a standalone YAML file does not carry, so they are
  * constructed with `yamlBased: false`. The two source-level lint rules are
@@ -38,7 +39,7 @@ export const otelAuditCatalog: Record<string, RuleMeta> = {
     "merge-worthy",
     "guidance",
     "Pipeline uses an undeclared component",
-    "Declare the receiver, processor or exporter under its section, or reference the declared entity instead of an id string.",
+    "Declare the receiver, processor or exporter under its section, or reference the declared entity instead of an id string. List a connector as an exporter in one pipeline and a receiver in another.",
     { category: "correctness" },
   ),
   OTEL102: auditRule(
@@ -98,5 +99,13 @@ export const otelAuditCatalog: Record<string, RuleMeta> = {
     "correctness",
     "Custom collector component has no schema pin",
     "Pass defineComponent a pin with the source and version the component's config type follows.",
+  ),
+  OTEL112: auditRule(
+    "OTEL112",
+    "merge-worthy",
+    "guidance",
+    "Connector joins pipelines whose signals it does not convert",
+    "Feed the connector from, and receive from it into, pipelines of the signals it supports (spanmetrics: traces in, metrics out).",
+    { category: "correctness" },
   ),
 };

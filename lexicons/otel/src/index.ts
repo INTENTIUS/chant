@@ -59,6 +59,7 @@ export {
   type TopologyPipeline,
   type TopologyComponent,
   type TopologyExporter,
+  type TopologyEdge,
 } from "./topology";
 
 // What the platform collector composites (docker, k8s, fly) share

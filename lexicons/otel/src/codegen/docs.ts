@@ -13,8 +13,8 @@ function serviceFromType(resourceType: string): string {
 }
 
 const overview = `The otel lexicon types [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/)
-config: receivers, processors, exporters, extensions and the pipelines that
-connect them. \`chant build\` emits one collector config file, the YAML
+config: receivers, processors, exporters, connectors, extensions and the
+pipelines that connect them. \`chant build\` emits one collector config file, the YAML
 \`otelcol --config\` reads as it is.
 
 \`\`\`ts
@@ -35,7 +35,8 @@ export const traces = new Pipeline({
 The built-in component set is otlp, prometheus, hostmetrics and filelog
 receivers; batch, memory_limiter, resource, attributes, k8sattributes,
 resourcedetection, tail_sampling and probabilistic_sampler processors; otlp,
-otlphttp, debug, prometheus, googlecloud and loadbalancing exporters; and the
+otlphttp, debug, prometheus, googlecloud and loadbalancing exporters;
+spanmetrics, servicegraph, routing, forward and count connectors; and the
 health_check, pprof and zpages extensions.
 Their config types follow the collector-contrib release named on the
 Custom components page. A component chant doesn't ship is added with
@@ -44,13 +45,14 @@ built-ins.
 
 Checks catch a pipeline that uses a component nobody declared (OTEL101), a
 pipeline with no receivers or exporters (OTEL102), a declared component no
-pipeline uses (OTEL103), and a literal credential in source (OTEL002).
+pipeline uses (OTEL103), a connector joining pipelines of signals it can't
+convert (OTEL112), and a literal credential in source (OTEL002).
 `;
 
 const outputFormat = `The otel lexicon serializes every otel entity in a build into **one
 collector config file** in YAML, the file \`otelcol --config\` reads.
 
-- Sections come out as receivers, processors, exporters, extensions, service,
+- Sections come out as receivers, processors, exporters, connectors, extensions, service,
   separated by a blank line. Empty sections are left out.
 - A component's id is its collector type, or \`type/name\` when its \`name\` is
   set. The export name in source never appears in the output.
