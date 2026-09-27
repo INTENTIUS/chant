@@ -108,6 +108,20 @@ describe("McpServer", () => {
       expect(result.protocolVersion).toBe("2026-07-28");
     });
 
+    // Claude Code 2.1.274 asks for 2025-11-25 and accepts only these back.
+    for (const version of ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"]) {
+      test(`a Claude Code client asking for ${version} on initialize gets ${version} back`, async () => {
+        const response = await server.handleRequest({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: { protocolVersion: version, capabilities: {}, clientInfo: { name: "claude-code", version: "2.1.274" } },
+        });
+        expect(response.error).toBeUndefined();
+        expect((response.result as Record<string, unknown>).protocolVersion).toBe(version);
+      });
+    }
+
     test("an unrecognized requested version falls back to the latest supported", async () => {
       const response = await server.handleRequest({
         jsonrpc: "2.0",
