@@ -44,9 +44,11 @@ Most reads of a workspace find most members unchanged, and starting a member's c
 | the kind's reader | for a member of a package kind read through a reader project, the kind's `graph` block and the installed version of the package supplying it |
 | the environment | every environment variable except those a shell changes on its own, such as `PWD`, `SHLVL`, `TERM*` and `npm_*` |
 
-A read that observes an account (`--live`, `--overlay` or `--traffic` on the member's command line) is never stored. Neither is a read that failed, a read whose stamp moved while the member ran, or a working-tree read of a file younger than two seconds, since some file systems keep mtimes to the second. With `--at`, a commit's tree never changes, so the commit id stands in for the files and a read at the same commit is served however the working tree has moved since.
+A read that observes an account (`--live`, `--overlay` or `--traffic` on the member's command line) is never stored, and neither is a read that failed. A read whose stamp moved while the member ran is not stored either. Some file systems keep mtimes to the second, so a working-tree read of a file younger than two seconds is left out too.
 
-The cache lives outside the workspace, since a read never changes the workspace it reads: in `$CHANT_CACHE_DIR`, else `$XDG_CACHE_HOME/chant`, else `~/.cache/chant`, under `workspace-graph/` and a directory named for the workspace root's real path. Each workspace holds at most 512 entries and 128 MiB, dropping the least recently used first. Entries are written whole, to a temporary name and renamed, so concurrent reads never see half of one. Deleting the cache is always safe. `--no-cache` reads every member and leaves the cache untouched.
+With `--at`, the commit id stands in for the files, because a commit's tree never changes. A read at the same commit is served however the working tree has moved since.
+
+A read never changes the workspace it reads, so the cache lives outside it. The base directory is `$CHANT_CACHE_DIR` when that is set, then `$XDG_CACHE_HOME/chant`, then `~/.cache/chant`. Under it, each workspace gets a directory in `workspace-graph/` named for the real path of its root. Each workspace holds at most 512 entries and 128 MiB, dropping the least recently used first. Entries are written whole, to a temporary name and renamed, so concurrent reads never see half of one. Deleting the cache is always safe. `--no-cache` reads every member and leaves the cache untouched.
 
 ## Output
 
@@ -85,7 +87,7 @@ The document follows the schema `https://intentius.io/chant/schemas/workspace/gr
 }
 ```
 
-`contract` is the read-contract version and `chant` the version that composed the graph. `at` is the full commit id with `--at`, and `null` for the working tree. `workspace.root` is the workspace root relative to the git root. `version` is the version of the composed graph format. A member's `chant` is the version its toolchain reported, or `null` when the member was read by a chant older than `member-run`. A member's `meta` and `pipeline`, when its IR has them, stay on the member's entry. A composed member also carries `cached`, whether the [member cache](#the-member-cache) answered it, and `stamp`, its [stamp](/chant/reference/workspace-read-contract/#member-stamps), or `null` when none could be taken.
+`contract` is the read-contract version and `chant` the version that composed the graph. `at` is the full commit id with `--at`, and `null` for the working tree. `workspace.root` is the workspace root relative to the git root. `version` is the version of the composed graph format. A member's `chant` is the version its toolchain reported, or `null` when the member was read by a chant older than `member-run`. A member's `meta` and `pipeline`, when its IR has them, stay on the member's entry. A composed member also carries `cached`, which says whether the [member cache](#the-member-cache) answered it. Its `stamp` is the member's [stamp](/chant/reference/workspace-read-contract/#member-stamps), or `null` when none could be taken.
 
 When the declaration can't be read, the command prints `{ "$schema", "contract", "chant", "error": { "code", "message", "location" } }` instead, with one of the [declaration's error codes](/chant/reference/workspace-declaration/#errors) or an `--at` code, `not-a-git-repository` or `revision-unknown`.
 
