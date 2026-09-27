@@ -21,8 +21,9 @@ COPY . .
 
 RUN npm install
 
-# Generate dist/ artifacts for each lexicon
-RUN for lex in aws azure gcp gitlab k8s; do \
+# Generate dist/ artifacts for each lexicon (prometheus because k8s depends on it
+# and may be ahead of the registry copy)
+RUN for lex in aws azure gcp gitlab k8s prometheus; do \
       echo "=== prepack lexicons/$lex ===" && \
       npm run --prefix "lexicons/$lex" prepack; \
     done
@@ -31,7 +32,7 @@ RUN for lex in aws azure gcp gitlab k8s; do \
 RUN CORE_VERSION=$(jq -r '.version' packages/core/package.json) && \
     cd /app/packages/core && \
     jq 'del(.scripts)' package.json > tmp.json && mv tmp.json package.json && \
-    for lex in aws azure gcp gitlab k8s; do \
+    for lex in aws azure gcp gitlab k8s prometheus; do \
       cd /app/lexicons/$lex && \
       jq --arg v "$CORE_VERSION" \
         '(.dependencies // {}) |= with_entries(if .value == "workspace:*" then .value = $v else . end) | del(.scripts)' \
@@ -44,6 +45,7 @@ RUN mkdir -p /tarballs && \
     cd /app/lexicons/aws && rm -f *.tgz && npm pack && mv *.tgz /tarballs/lexicon-aws.tgz && \
     cd /app/lexicons/gitlab && rm -f *.tgz && npm pack && mv *.tgz /tarballs/lexicon-gitlab.tgz && \
     cd /app/lexicons/k8s && rm -f *.tgz && npm pack && mv *.tgz /tarballs/lexicon-k8s.tgz && \
+    cd /app/lexicons/prometheus && rm -f *.tgz && npm pack && mv *.tgz /tarballs/lexicon-prometheus.tgz && \
     cd /app/lexicons/gcp && rm -f *.tgz && npm pack && mv *.tgz /tarballs/lexicon-gcp.tgz && \
     cd /app/lexicons/azure && rm -f *.tgz && npm pack && mv *.tgz /tarballs/lexicon-azure.tgz
 
