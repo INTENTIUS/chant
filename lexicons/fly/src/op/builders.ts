@@ -108,7 +108,13 @@ export const spriteListDir = spriteStep<SpriteListDirArgs>("spriteListDir", "fas
 export const spriteRemove = spriteStep<SpriteRemoveArgs>("spriteRemove", "fastIdempotent");
 /** Reconcile a sprite's outbound network policy — the fully typed twin of core's `spriteApplyNetworkPolicy`. Defaults to the `fastIdempotent` profile. */
 export const spriteApplyNetworkPolicy = spriteStep<SpriteApplyNetworkPolicyArgs>("spriteApplyNetworkPolicy", "fastIdempotent");
-/** Reconcile a sprite's background services — the fully typed twin of core's `spriteApplyServices`. Defaults to the `fastIdempotent` profile. */
+/**
+ * Reconcile a sprite's background services — the fully typed twin of core's
+ * `spriteApplyServices`. With an `id`, through the Sprites API; without one,
+ * inside the sprite through sprite-env, applying the box block's services
+ * (`box: true`, with `only`, `start` and `restart`, #2880). Defaults to the
+ * `fastIdempotent` profile.
+ */
 export const spriteApplyServices = spriteStep<SpriteApplyServicesArgs>("spriteApplyServices", "fastIdempotent");
 /** Create-and-start one background service (#2711) — the single-service primitive underneath `spriteApplyServices`. Defaults to the `longInfra` profile (the create+start NDJSON round trip). */
 export const spriteServiceCreate = spriteStep<SpriteServiceCreateArgs>("spriteServiceCreate", "longInfra");

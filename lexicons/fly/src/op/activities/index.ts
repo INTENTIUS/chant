@@ -156,6 +156,7 @@ export {
   spriteServicesObserve,
   spriteServiceRestart,
   declaredServices,
+  resolveDeclaredServices,
   findSpriteEnv,
   parseServicesList,
   probeHealth,
@@ -199,7 +200,13 @@ export {
   networkRulesEqual,
   validateServices,
   serviceConfigEqual,
+  parseServiceDefinitions,
+  listedServiceDiffers,
+  spriteEnvCreateArgs,
 } from "./sprite-config";
+// A box's declared services (#2880), read from its box block with `box: true`.
+export { boxServices, expandServiceCommand, inStartOrder } from "./box-services";
+export type { BoxServiceDeclaration } from "./box-services";
 export type {
   NetworkRule,
   SpriteApplyNetworkPolicyArgs,
@@ -207,6 +214,8 @@ export type {
   ServiceSpec,
   SpriteApplyServicesArgs,
   SpriteApplyServicesResult,
+  ServiceApplyAction,
+  ListedService,
 } from "./sprite-config";
 
 // Sprite keep-alive Tasks activities (#847) — a hold that stops a Sprite pausing

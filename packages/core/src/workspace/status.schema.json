@@ -405,8 +405,25 @@
     },
     "box": {
       "type": "object",
-      "required": ["capabilities", "isolation", "intent"],
+      "required": ["capabilities", "isolation", "intent", "services"],
       "properties": {
+        "services": {
+          "description": "The services the box block declares (#2880), in declaration order, or empty when it declares none. A reader has them before any converge tick; a steward's ConvergeOp's lastTick carries each one's verdict. cmd is as declared: its ${VAR} references are left for the process that applies it to expand. Added by chant 0.95.0.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "cmd", "needs", "httpPort", "duration", "health", "optional"],
+            "properties": {
+              "name": { "type": "string" },
+              "cmd": { "type": "string", "description": "The command the supervisor runs, as declared." },
+              "needs": { "type": "array", "items": { "type": "string" }, "description": "Services of the same box that start first. Empty when none." },
+              "httpPort": { "type": ["integer", "null"], "description": "The port the supervisor routes the sprite's URL to, or null." },
+              "duration": { "type": ["string", "null"], "description": "How long the service must stay up after a create or start, such as 3s, or null for the supervisor's default." },
+              "health": { "type": ["string", "null"], "description": "A URL that answers 200 while the service works, or null when the supervisor's state decides." },
+              "optional": { "type": "boolean", "description": "True for a service something else creates by name, such as a site a release makes." }
+            }
+          }
+        },
         "intent": {
           "description": "The decision record the box block names as the box's intent (#2850), or null when it names none. A box starts as a question: the record is proposed with a null choice, and decided when the person who answered it amends it. Read from the working tree, from the declared record kinds named decision. When no decision record has the id, every field but id is null and chant workspace check fails (WSP126). Added by chant 0.94.0.",
           "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/intent" }]

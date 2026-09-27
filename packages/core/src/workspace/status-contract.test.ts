@@ -312,7 +312,35 @@ describe("chant workspace status on built workspaces", () => {
         ],
         isolation: null,
         intent: null,
+        services: [],
       },
+    ]);
+  });
+
+  test("each member's box lists the services its block declares, every field present (#2880)", async () => {
+    const root = repo({
+      "chant.workspace.json": declaration([
+        {
+          name: "box",
+          dir: "box",
+          kind: "other",
+          because: "the box's steward and its Ops",
+          box: {
+            services: [
+              { name: "app", cmd: "${HOME}/box/run-app.sh", duration: "3s", health: "http://127.0.0.1:5173/health" },
+              { name: "door", cmd: "${HOME}/box/run-door.sh", needs: ["app"], httpPort: 8080 },
+              { name: "site", cmd: "${HOME}/box/run-site.sh", optional: true },
+            ],
+          },
+        },
+      ]),
+    });
+    const doc = result(await workspaceStatus({ cwd: root, env: "prod" }));
+    expectValid(doc);
+    expect(doc.members[0].box?.services).toEqual([
+      { name: "app", cmd: "${HOME}/box/run-app.sh", needs: [], httpPort: null, duration: "3s", health: "http://127.0.0.1:5173/health", optional: false },
+      { name: "door", cmd: "${HOME}/box/run-door.sh", needs: ["app"], httpPort: 8080, duration: null, health: null, optional: false },
+      { name: "site", cmd: "${HOME}/box/run-site.sh", needs: [], httpPort: null, duration: null, health: null, optional: true },
     ]);
   });
 

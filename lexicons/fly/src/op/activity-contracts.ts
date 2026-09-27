@@ -12,12 +12,14 @@
  * needs its return schema; without one, every project declaring such a
  * ConvergeOp failed `chant build` and `chant lint`. `spriteServiceRestart` is
  * the step of the Op such a ConvergeOp's rule runs, and its result is what a
- * later step would read. The other Sprites activities have no contract yet,
+ * later step would read. `spriteApplyServices` is covered for its box form
+ * (#2880): `box`, `only`, `start` and `restart`, and the per-service actions
+ * its result names. The other Sprites activities have no contract yet,
  * which OPS012 skips rather than flags.
  *
  * Each `args` schema mirrors the `*Args` interface in
- * `./activities/sprite-service-converge.ts` and each `returns` schema the
- * `*Result`. Authored with `z.strictObject(...)`, so a misspelled key fails
+ * `./activities/sprite-service-converge.ts` or `./activities/sprite-config.ts`
+ * and each `returns` schema the `*Result`. Authored with `z.strictObject(...)`, so a misspelled key fails
  * the build instead of vanishing.
  */
 
@@ -44,6 +46,7 @@ export const spriteServicesObserveContract = activityContract(
     ...via,
     services: z.array(declaredService).optional(),
     servicesFile: z.string().optional(),
+    box: z.boolean().optional(),
     probes: z.number().optional(),
     probeIntervalMs: z.number().optional(),
   }),
@@ -61,7 +64,38 @@ export const spriteServiceRestartContract = activityContract(
     health: z.string().optional(),
     services: z.array(declaredService).optional(),
     servicesFile: z.string().optional(),
+    box: z.boolean().optional(),
     waitMs: z.number().optional(),
   }),
   z.object({ name: z.string(), healthy: z.boolean().nullable() }),
+);
+
+const serviceSpec = z.strictObject({
+  name: z.string(),
+  cmd: z.string(),
+  args: z.array(z.string()).optional(),
+  env: z.record(z.string(), z.string()).optional(),
+  dir: z.string().optional(),
+  needs: z.array(z.string()).optional(),
+  http_port: z.number().optional(),
+});
+
+export const spriteApplyServicesContract = activityContract(
+  "spriteApplyServices",
+  z.strictObject({
+    id: z.string().optional(),
+    services: z.array(serviceSpec).optional(),
+    box: z.boolean().optional(),
+    only: z.array(z.string()).optional(),
+    start: z.boolean().optional(),
+    restart: z.boolean().optional(),
+    spriteEnv: z.string().optional(),
+    endpoint: z.string().optional(),
+    token: z.string().optional(),
+  }),
+  z.object({
+    applied: z.array(z.string()),
+    started: z.array(z.string()),
+    services: z.array(z.object({ name: z.string(), action: z.enum(["created", "replaced", "restarted", "started", "left"]) })).optional(),
+  }),
 );

@@ -60,16 +60,36 @@ Some resources are declared nowhere a lexicon can observe them. The services a b
 
 `status` is `in-sync`, `drifted` or `unknown`. A `shell()` step that prints that object as JSON works too. The fly lexicon's `spriteServicesObserve` is the observer for a box's services. It reads the supervisor's list and probes each declared service's health URL.
 
+The box declares its services in its member's [box block](/chant/reference/workspace-declaration/#services) in `chant.workspace.json` ([#2880](https://github.com/INTENTIUS/chant/issues/2880)), as in this member entry.
+
+```json
+{
+  "name": "box",
+  "dir": "box",
+  "kind": "other",
+  "because": "the box's steward and its Ops",
+  "box": {
+    "services": [
+      { "name": "app", "cmd": "${HOME}/box/run-app.sh", "duration": "3s", "health": "http://127.0.0.1:5173/health" },
+      { "name": "hud", "cmd": "${HOME}/box/run-daemon.sh", "needs": ["app"], "duration": "3s", "health": "http://127.0.0.1:8081/__hud/health" },
+      { "name": "site", "cmd": "${HOME}/box/run-site.sh", "health": "http://127.0.0.1:3300/health", "optional": true }
+    ]
+  }
+}
+```
+
+With `box: true`, the observer and the restart read that list from the member whose directory holds the working directory, on every run. The observer skips `site`, which is `optional`, until the supervisor has it.
+
 ```typescript
 import { ConvergeOp, Op, eq, phase, report, run, when, type ResourceSymptom } from "@intentius/chant/op";
-import { spriteServicesObserve, spriteServiceRestart } from "@intentius/chant-lexicon-fly";
+import { spriteApplyServices, spriteServicesObserve, spriteServiceRestart } from "@intentius/chant-lexicon-fly";
 
 export const { op } = ConvergeOp({
   name: "converge",
   env: "box",
   dial: "apply",
   schedule: "* * * * *",
-  observe: spriteServicesObserve({ servicesFile: "services.json" }),
+  observe: spriteServicesObserve({ box: true }),
   rules: [
     when<ResourceSymptom>(eq("status", "drifted"), run("restart-service"), {
       id: "restart-drifted",
@@ -87,9 +107,18 @@ export default op;
 export const restartService = Op({
   name: "restart-service",
   overview: "Restart the service a converge rule names, and wait for its health URL.",
-  phases: [phase("Restart", [spriteServiceRestart({ servicesFile: "services.json" })])],
+  phases: [phase("Restart", [spriteServiceRestart({ box: true })])],
+});
+
+// services.op.ts: define the declared services, run when the box is provisioned.
+export const services = Op({
+  name: "services",
+  overview: "Create or replace the box's declared services through sprite-env, and start them.",
+  phases: [phase("Apply", [spriteApplyServices({ box: true, start: true })])],
 });
 ```
+
+`spriteServicesObserve` and `spriteServiceRestart` also take the list inline as `services`, or from a JSON file as `servicesFile`, in place of `box: true`. `spriteServiceRestart` restarts a service the supervisor already has. `spriteApplyServices({ box: true })` runs inside the sprite and defines the services through `sprite-env services`, in dependency order. It creates a declared service the supervisor doesn't have, and deletes and creates one whose `cmd`, `needs` or `httpPort` differ from what `sprite-env services list` reports. It leaves a converged one as it is and deletes nothing the block doesn't declare. `only: [names]` applies some of them, and an `optional` service is applied only when `only` names it. `start: true` then starts each applied service that isn't running, and `restart: true` restarts the applied ones that were already converged. Its result names what it did to each service: `created`, `replaced`, `restarted`, `started` or `left`. A release Op that ships a site applies it with `spriteApplyServices({ box: true, only: ["site"], start: true, restart: true })`.
 
 The rules read a `ResourceSymptom` (`env`, `resource`, `status`, `detail`) and are evaluated once for each resource. A `run()` that fires is dispatched for that resource. The dispatched run reads its name from `CHANT_CONVERGE_RESOURCE`, which `spriteServiceRestart` uses when it is given no `name`. The rest of this page holds per resource: `unknown` never remediates and flap damping counts one rule's fires for one resource. `budget` still bounds the dispatches of the whole tick. The dial × verb class matrix below applies to the dispatched Op as it does to any other. The tick's ledger record lists the resources and their verdicts in `resources`, and each outcome names its `resource`. `chant workspace status --json` shows a steward's ConvergeOp's newest tick as `lastTick`.
 
