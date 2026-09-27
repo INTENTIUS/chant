@@ -34,9 +34,10 @@ export const traces = new Pipeline({
 
 The built-in component set is otlp, prometheus, hostmetrics, filelog,
 k8s_cluster and kubeletstats receivers; batch, memory_limiter, resource,
-attributes, k8sattributes, resourcedetection, filter, transform and redaction
-processors; otlp, otlphttp, debug, prometheus and googlecloud exporters;
-spanmetrics, servicegraph, routing, forward, count and sum connectors; and the
+attributes, k8sattributes, resourcedetection, filter, transform, redaction,
+tail_sampling and probabilistic_sampler processors; otlp, otlphttp, debug,
+prometheus, googlecloud and loadbalancing exporters; spanmetrics,
+servicegraph, routing, forward, count and sum connectors; and the
 health_check, pprof and zpages extensions. \`genAiPipeline()\` is a preset for
 GenAI workloads: it removes prompt and completion content and derives agent
 RED and token metrics.
