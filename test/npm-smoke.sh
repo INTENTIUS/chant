@@ -35,8 +35,11 @@ PKGJSON
 }
 
 install_from_tarballs() {
-  # $1 = lexicon tarball path (core always included)
-  pkg_install /tarballs/core.tgz "$1"
+  # $1 = lexicon tarball path, or several separated by spaces when a lexicon
+  # depends on another one that may not be on the registry yet (k8s needs
+  # prometheus); core always included
+  # shellcheck disable=SC2086
+  pkg_install /tarballs/core.tgz $1
 }
 
 install_from_registry() {
@@ -69,7 +72,7 @@ verify_tarball_contains /tarballs/core.tgz "package/bin/chant" "core tarball con
 verify_tarball_contains /tarballs/core.tgz "package/src/cli/main.ts" "core tarball contains CLI entrypoint"
 verify_tarball_contains /tarballs/core.tgz "package/src/index.ts" "core tarball contains main export"
 
-for lex in aws azure gcp gitlab k8s docker fly fountain; do
+for lex in aws azure gcp gitlab k8s docker fly fountain prometheus; do
   verify_tarball_contains "/tarballs/lexicon-$lex.tgz" "package/dist/manifest.json" "$lex tarball contains dist/manifest.json"
   verify_tarball_contains "/tarballs/lexicon-$lex.tgz" "package/dist/meta.json" "$lex tarball contains dist/meta.json"
   verify_tarball_contains "/tarballs/lexicon-$lex.tgz" "package/dist/types/index.d.ts" "$lex tarball contains dist/types/index.d.ts"
@@ -131,7 +134,7 @@ test_manual_project "gitlab" "/tarballs/lexicon-gitlab.tgz" \
 export const build = new Job({ stage: "build", script: ["echo hello"] });'
 
 # K8s manual project
-test_manual_project "k8s" "/tarballs/lexicon-k8s.tgz" \
+test_manual_project "k8s" "/tarballs/lexicon-k8s.tgz /tarballs/lexicon-prometheus.tgz" \
   'import { Deployment } from "@intentius/chant-lexicon-k8s";
 export const app = new Deployment({
   metadata: { name: "test" },
@@ -173,6 +176,12 @@ if [ "$INSTALL_MODE" = "registry" ]; then
     fail "k8s-client: lexicon's optional-dep range resolves it (version skew? client stranded behind lexicon)"
   fi
 fi
+
+# Prometheus manual project
+test_manual_project "prometheus" "/tarballs/lexicon-prometheus.tgz" \
+  'import { RuleGroup, type Rule } from "@intentius/chant-lexicon-prometheus";
+const rules: Rule[] = [{ alert: "TargetDown", expr: "up == 0", for: "5m", labels: { severity: "page" }, annotations: { summary: "down" } }];
+export const smoke = new RuleGroup({ name: "smoke", rules });'
 
 # Azure manual project
 test_manual_project "azure" "/tarballs/lexicon-azure.tgz" \
@@ -279,7 +288,7 @@ fi
 
 test_init_flow() {
   local lexicon="$1"    # e.g. "aws"
-  local tarball="$2"    # e.g. "/tarballs/lexicon-aws.tgz"
+  local tarball="$2"    # e.g. "/tarballs/lexicon-aws.tgz"; several space-separated when one lexicon needs another
   local source="$3"     # TypeScript source to write into src/
   local label="npm-init-$lexicon"
 
@@ -312,7 +321,8 @@ test_init_flow() {
   if [ "$INSTALL_MODE" = "registry" ]; then
     pkg_install "@intentius/chant-lexicon-$lexicon@latest"
   else
-    pkg_install "$tarball"
+    # shellcheck disable=SC2086
+    pkg_install $tarball
   fi
 
   # Write a source file — init scaffolds config but not infra code
@@ -342,7 +352,7 @@ test_init_flow "gitlab" "/tarballs/lexicon-gitlab.tgz" \
   'import { Job } from "@intentius/chant-lexicon-gitlab";
 export const deploy = new Job({ stage: "deploy", script: ["echo deploy"] });'
 
-test_init_flow "k8s" "/tarballs/lexicon-k8s.tgz" \
+test_init_flow "k8s" "/tarballs/lexicon-k8s.tgz /tarballs/lexicon-prometheus.tgz" \
   'import { Service } from "@intentius/chant-lexicon-k8s";
 export const svc = new Service({
   metadata: { name: "smoke" },
@@ -397,6 +407,9 @@ test_example() {
     for lex in "${lexicons[@]}"; do
       install_args+=("@intentius/chant-lexicon-$lex@latest")
     done
+  elif [[ " ${install_args[*]} " == *" /tarballs/lexicon-k8s.tgz "* ]]; then
+    # k8s depends on prometheus, which may not be on the registry yet.
+    install_args+=(/tarballs/lexicon-prometheus.tgz)
   fi
   pkg_install "${install_args[@]}"
 
