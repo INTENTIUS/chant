@@ -7,7 +7,7 @@
  * three from their images against the same output, then runs the stack.
  */
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, test } from "vitest";
@@ -128,6 +128,17 @@ describe("the collectors", () => {
     for (const key of GENAI_CONTENT_ATTRIBUTES) expect(transform).toContain(key);
     expect(built.gatewayConfig.service.pipelines.traces.processors).toContain("transform/genai_content");
     expect(built.gatewayConfig.service.pipelines.logs.processors).toContain("transform/genai_content");
+  });
+
+  test("the otel lexicon's import round-trip fixtures are these two configs as built", () => {
+    // lexicons/otel/src/import/roundtrip.test.ts imports both; keep its copies current.
+    const fixture = (name: string) =>
+      readFileSync(join(import.meta.dirname, "../../../lexicons/otel/src/import/testdata", name), "utf-8")
+        .split("\n")
+        .slice(3)
+        .join("\n");
+    expect(fixture("agent-observability-agent.yaml")).toBe(built.agentConfigYaml);
+    expect(fixture("agent-observability-gateway.yaml")).toBe(built.gatewayConfigYaml);
   });
 
   test("both configs pass the otel lexicon's config checks (OTEL101-OTEL106, OTEL112)", () => {

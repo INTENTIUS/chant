@@ -43,6 +43,10 @@ export default defineConfig({
                         {
                               "label": "GenAI Pipeline",
                               "slug": "genai-pipeline"
+                        },
+                        {
+                              "label": "Importing a Collector Config",
+                              "slug": "importing"
                         }
                   ]
             },

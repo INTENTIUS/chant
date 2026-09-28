@@ -34,3 +34,5 @@ Lexicons may provide roundtrip tests that verify the full import pipeline:
 5. **Compare** the output structurally against the original
 
 The Kubernetes lexicon includes a full roundtrip suite and optional k3d cluster validation. See the [K8s Testing & Validation](/chant/lexicons/k8s/testing/) docs for details.
+
+The OpenTelemetry Collector lexicon imports collector YAML and checks that every fixture builds back to the same config, with `otelcol validate` over the result when `otelcol-contrib` is installed. See [Importing a Collector Config](/chant/lexicons/otel/importing/).
