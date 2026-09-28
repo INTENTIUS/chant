@@ -1,6 +1,6 @@
 ---
 title: "Examples"
-description: "The grafana lexicon's example project"
+description: "The grafana lexicon's example projects"
 diataxis: how-to
 ---
 
@@ -8,7 +8,7 @@ diataxis: how-to
     Edit lexicons/grafana/docs/pages/examples.mdx instead; changes here are overwritten. */}
 
 
-Each example lives under `lexicons/grafana/examples/` and builds with `chant build src --lexicon grafana`. The lexicon's tests build it, lint it with no warnings, run GRAF101 to GRAF107 over the output, and validate each dashboard against the pinned Grafana schema.
+Each example lives under `lexicons/grafana/examples/` and builds with `chant build src --lexicon grafana` (dashboards-from-declarations also with `--lexicon otel` and `--lexicon prometheus`). The lexicon's tests build it, lint it with no warnings, run GRAF101 to GRAF107 over the output, and validate each dashboard against the pinned Grafana schema.
 
 ## getting-started
 
@@ -113,5 +113,110 @@ const serviceOverview = new Dashboard({
 });
 
 export { serviceOverview };
+```
+```
+
+## dashboards-from-declarations
+
+A collector, an SLO and three dashboards in one build root, built with `chant build src --lexicon otel`, `--lexicon prometheus` and `--lexicon grafana`. The collector turns every span into RED metrics through a `spanmetrics` connector with the namespace `shop`, and GenAI spans into per-model metrics and token sums through the GenAI preset under `agents`. The checkout SLO writes its SLI with the names `spanMetricsNames()` reads from the same connector. `RedDashboard`, `SloDashboard` and `AgentDashboard` build their dashboards from the connector, the `Slo` and the preset, so changing `namespace: "shop"` moves the SLO's rules and the RED dashboard's queries together. See [Dashboards from Declarations](../composites/).
+
+```ts title="src/components.ts"
+```typescript title="components.ts"
+/**
+ * The collector's components. Every span becomes RED metrics through a
+ * `spanmetrics` connector; GenAI spans also become per-model and per-tool
+ * metrics and token sums through the GenAI preset; Prometheus scrapes it all
+ * from the `prometheus` exporter, and traces go to Tempo.
+ */
+import {
+  BatchProcessor,
+  genAiComponents,
+  MemoryLimiterProcessor,
+  OtlpExporter,
+  OtlpReceiver,
+  PrometheusExporter,
+  SpanMetricsConnector,
+  type OtlpReceiverConfig,
+  type SpanMetricsConnectorConfig,
+} from "@intentius/chant-lexicon-otel";
+
+const protocols: OtlpReceiverConfig["protocols"] = { grpc: { endpoint: "0.0.0.0:4317" }, http: { endpoint: "0.0.0.0:4318" } };
+const otlp = new OtlpReceiver({ protocols });
+
+const memoryLimiter = new MemoryLimiterProcessor({ check_interval: "1s", limit_percentage: 80, spike_limit_percentage: 20 });
+const batch = new BatchProcessor({});
+
+const plaintext = { insecure: true };
+const tempoTraces = new OtlpExporter({ name: "tempo", endpoint: "tempo:4317", tls: plaintext });
+
+const milliseconds: SpanMetricsConnectorConfig["histogram"] = {
+  unit: "ms",
+  explicit: { buckets: ["5ms", "10ms", "25ms", "50ms", "100ms", "250ms", "500ms", "1s", "2s", "5s"] },
+};
+
+/** Rename the namespace and the RED dashboard and the SLO follow. */
+const spans = new SpanMetricsConnector({ namespace: "shop", histogram: milliseconds, metrics_flush_interval: "15s" });
+
+/** Served on 8889 for Prometheus to scrape. */
+const metricsEndpoint = new PrometheusExporter({ endpoint: "0.0.0.0:8889" });
+
+/** The GenAI preset's pieces, its metric names under `agents`. */
+const genai = genAiComponents({ namespace: "agents" });
+
+export { otlp, memoryLimiter, batch, tempoTraces, spans, metricsEndpoint, genai };
+```
+```
+
+```ts title="src/slo.ts"
+```typescript title="slo.ts"
+/**
+ * An SLO on checkout, written over the span metrics the collector emits.
+ * The SLI takes the metric and label names from the connector declaration,
+ * so the SLO, its rules and its dashboard move together.
+ */
+import { spanMetricsNames } from "@intentius/chant-lexicon-otel";
+import { Slo } from "@intentius/chant-lexicon-prometheus";
+import { spans } from "./components";
+
+const names = spanMetricsNames(spans);
+const calls = names.calls.prometheus;
+const checkoutSpans = `${names.labels.spanName}="checkout"`;
+const failed = `${names.labels.statusCode}="${names.errorStatus}"`;
+
+const checkout = Slo({
+  name: "checkout",
+  objective: 0.999,
+  window: "30d",
+  description: "Checkout calls end without an error span.",
+  sli: {
+    errors: `sum(rate(${calls}{${checkoutSpans},${failed}}[{{window}}]))`,
+    total: `sum(rate(${calls}{${checkoutSpans}}[{{window}}]))`,
+  },
+  labels: { team: "payments" },
+});
+
+export { checkout };
+```
+```
+
+```ts title="src/dashboards.ts"
+```typescript title="dashboards.ts"
+/**
+ * Three dashboards, each built from the declaration it reads: RED per
+ * service from the spanmetrics connector, the checkout SLO from its `Slo`,
+ * and agent calls, errors and tokens from the GenAI preset.
+ */
+import { AgentDashboard, RedDashboard, SloDashboard } from "@intentius/chant-lexicon-grafana";
+import { genai, metricsEndpoint, spans } from "./components";
+import { prometheus } from "./datasources";
+import { checkout } from "./slo";
+
+const services = RedDashboard({ spanMetrics: spans, exporter: metricsEndpoint, datasource: prometheus, folder: "Observability" });
+
+const checkoutSlo = SloDashboard({ slo: checkout, datasource: prometheus, folder: "Observability" });
+
+const agents = AgentDashboard({ genAi: genai, datasource: prometheus, folder: "Observability" });
+
+export { services, checkoutSlo, agents };
 ```
 ```

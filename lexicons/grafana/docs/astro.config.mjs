@@ -58,6 +58,10 @@ export default defineConfig({
                               "slug": "queries-and-datasources"
                         },
                         {
+                              "label": "Dashboards from Declarations",
+                              "slug": "composites"
+                        },
+                        {
                               "label": "Lint Rules",
                               "slug": "lint-rules"
                         },

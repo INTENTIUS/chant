@@ -27,6 +27,16 @@ export { prometheus, rate, requests, overview };
 
 Panel options, field config and query fields are generated from Grafana's JSON Schemas as published by `grafana/grafana-foundation-sdk`, vendored in `src/spec/schemas/` and pinned by commit and digest in `GRAFANA_SCHEMA_PIN`. `definePanel` and `defineQuery` add plugins chant doesn't ship.
 
+## Dashboards from other declarations
+
+`RedDashboard`, `SloDashboard` and `AgentDashboard` build a dashboard from a declaration in another lexicon: rate, errors and duration per service from an otel `SpanMetricsConnector`; SLI, error budget and burn rate per alert window from a prometheus `Slo`; latency, errors and tokens per model and tool from the otel GenAI preset. Metric names are read from the declaration, so renaming a namespace or an SLO moves the panel queries.
+
+```ts
+export const services = RedDashboard({ spanMetrics: spans, datasource: prometheus });
+export const checkoutSlo = SloDashboard({ slo: checkout, datasource: prometheus });
+export const agents = AgentDashboard({ genAi: genAiMetrics(), datasource: prometheus });
+```
+
 ## Checks
 
 GRAF001 and GRAF002 run on source (uid and variable-name syntax, literal secrets). GRAF101 to GRAF107 run after a build: undeclared or mistyped datasources, undeclared variables, duplicate uids and ids, panels off the grid or overlapping, uids Grafana rejects, and validation against the pinned dashboard, panel and query schemas.

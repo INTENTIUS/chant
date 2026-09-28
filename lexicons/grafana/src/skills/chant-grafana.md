@@ -59,6 +59,24 @@ Leave `gridPos` out and panels are placed left to right, wrapping at 24 columns;
 
 chant's lint wants flat declarations: extract nested objects (`time`, `options`) to named consts, keep at most eight declarations per file, and export entities with `export { a, b }`.
 
+## Dashboards built from other declarations
+
+Three composites build a whole dashboard from what another lexicon declares, reading metric names at build time so a rename at the source moves the queries:
+
+```ts
+import { Datasource, RedDashboard, SloDashboard, AgentDashboard } from "@intentius/chant-lexicon-grafana";
+import { spans, genai } from "./collector";   // an otel SpanMetricsConnector and genAiComponents(...)
+import { checkout } from "./slo";            // a prometheus Slo(...)
+
+const services = RedDashboard({ spanMetrics: spans, datasource: prometheus });     // rate, errors, p50/p95/p99 per service
+const checkoutSlo = SloDashboard({ slo: checkout, datasource: prometheus });      // SLI, budget left, burn rate per alert window
+const agents = AgentDashboard({ genAi: genai, datasource: prometheus });          // per model and tool, tokens per model
+
+export { services, checkoutSlo, agents };
+```
+
+Pass the `prometheus` exporter as `exporter` to `RedDashboard` when its `namespace` changes the names. `datasource` may be a `{ type: "prometheus", uid }` ref to a datasource declared elsewhere. Never hand-write the span-metric or SLO series names in a query next to these; use `spanMetricsNames()` (otel), `sloMetrics()` (prometheus) or `genAiMetrics()` (otel), or the composites' `redQueries`, `sloQueries` and `agentQueries`.
+
 ## Rules
 
 - GRAF101: every panel, query and query variable names a declared datasource. GRAF102: of the right type.
