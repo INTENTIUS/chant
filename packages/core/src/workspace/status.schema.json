@@ -204,7 +204,7 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["name", "schedule", "env", "lastRun", "lastTick", "changesCheckout", "workLease", "beside"],
+            "required": ["name", "schedule", "env", "lastRun", "inFlight", "lastTick", "changesCheckout", "workLease", "beside"],
             "properties": {
               "name": { "type": "string" },
               "schedule": {
@@ -225,7 +225,7 @@
                   { "type": "null" },
                   {
                     "type": "object",
-                    "required": ["id", "status", "started", "ended", "gate", "point"],
+                    "required": ["id", "status", "started", "ended", "gate", "point", "phases"],
                     "properties": {
                       "id": { "type": "string" },
                       "status": { "enum": ["ok", "fail", "gated", "waiting"], "description": "waiting: an activity asked a decision point that is still open (#2749), and the run stopped there." },
@@ -247,8 +247,62 @@
                         ]
                       },
                       "point": {
-                        "description": "The open decision point a waiting run stopped on (#2749), as the run ledger records it, or null.",
+                        "description": "The decision point a waiting run stopped on (#2749), or null. Its state is the question's now, as `points` reads it: `answered` once a person has answered it. When the questions can't be read, or the answer record is gone, it is the state the run ledger recorded.",
                         "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/stewardWait" }]
+                      },
+                      "phases": {
+                        "description": "Each phase of the run in execution order, with its verdict and its wall-clock time in milliseconds. For a record written before chant kept phase times, durationMs is the sum of its steps' times. A phase skipped whole has 0. Added by chant 0.96.0.",
+                        "type": "array",
+                        "items": { "$ref": "#/$defs/runPhase" }
+                      }
+                    }
+                  }
+                ]
+              },
+              "inFlight": {
+                "description": "The run of the Op in flight now, or null when none is. A run that writes to the run ledger keeps a record beside the checkout's git directory while it runs and removes it once its ledger record is written; a record whose process on this host is gone is not in flight. phase and step are what it is doing now (step is the newest step still running, named by its id, or its activity when it has none), phases the phases it has finished, and activity the newest lines its steps reported (a shell step appends them to the file in CHANT_RUN_ACTIVITY), with seq counting from 1 over the run and total the count so far. item is the work item its lease holds, once claimed. Added by chant 0.96.0.",
+                "oneOf": [
+                  { "type": "null" },
+                  {
+                    "type": "object",
+                    "required": ["id", "started", "updated", "steward", "item", "phase", "step", "phases", "activity"],
+                    "properties": {
+                      "id": { "type": "string", "description": "The run's id: the id its ledger record will have." },
+                      "started": { "type": "string" },
+                      "updated": { "type": "string", "description": "When the run last changed its record." },
+                      "steward": { "type": ["string", "null"] },
+                      "item": { "type": ["string", "null"] },
+                      "phase": {
+                        "oneOf": [
+                          { "type": "null" },
+                          { "type": "object", "required": ["name", "started"], "properties": { "name": { "type": "string" }, "started": { "type": "string" } } }
+                        ]
+                      },
+                      "step": {
+                        "oneOf": [
+                          { "type": "null" },
+                          {
+                            "type": "object",
+                            "required": ["name", "fn", "started"],
+                            "properties": { "name": { "type": "string" }, "fn": { "type": "string" }, "started": { "type": "string" } }
+                          }
+                        ]
+                      },
+                      "phases": { "type": "array", "items": { "$ref": "#/$defs/runPhase" } },
+                      "activity": {
+                        "type": "object",
+                        "required": ["total", "lines"],
+                        "properties": {
+                          "total": { "type": "integer" },
+                          "lines": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "required": ["seq", "at", "text"],
+                              "properties": { "seq": { "type": "integer" }, "at": { "type": ["string", "null"] }, "text": { "type": "string" } }
+                            }
+                          }
+                        }
                       }
                     }
                   }
@@ -363,7 +417,7 @@
           }
         },
         "waiting": {
-          "description": "The open decision points the steward waits on (#2749): one for each Op whose newest run is the steward's own (its ledger record names the steward) and stopped on a question: the steward's own Ops in ops order, then any other Op of the member, such as one the steward's process starts itself (studio#137), by name. The state is the question's when the run stopped; `chant workspace points --open` has its state now, and hud asks a person there. The steward never answers one, and runs an Op it lists again on the first round after it is answered (an Op beside its turns, in a process of its own, #2861).",
+          "description": "The open decision points the steward waits on (#2749): one for each Op whose newest run is the steward's own (its ledger record names the steward) and stopped on a question that is still open: the steward's own Ops in ops order, then any other Op of the member, such as one the steward's process starts itself (studio#137), by name. The state is the question's now, as `chant workspace points --open` reads it, where hud asks a person. A question answered since, or whose answer record is gone, is not listed, and nor is one whose Op has a newer run in flight: the Op's lease or one of its work leases was taken after the waiting run ended and is still held. When the questions can't be read, the run ledger's state stands. The steward never answers one, and runs an Op it lists again on the first round after it is answered (an Op beside its turns, in a process of its own, #2861).",
           "type": "array",
           "items": {
             "allOf": [
@@ -371,11 +425,20 @@
               {
                 "type": "object",
                 "required": ["op", "run"],
-                "properties": { "op": { "type": "string" }, "run": { "type": "string", "description": "The waiting run's id." } }
+                "properties": { "op": { "type": "string" }, "run": { "type": "string", "description": "The waiting run's id." }, "state": { "enum": ["escalated", "proposed"] } }
               }
             ]
           }
         }
+      }
+    },
+    "runPhase": {
+      "type": "object",
+      "required": ["name", "status", "durationMs"],
+      "properties": {
+        "name": { "type": "string" },
+        "status": { "enum": ["ok", "fail", "skipped"] },
+        "durationMs": { "type": "number" }
       }
     },
     "stewardWait": {
@@ -384,7 +447,7 @@
       "properties": {
         "id": { "type": "string", "description": "The answer record's id, as `points` lists the question and `points answer` names it." },
         "point": { "type": "string" },
-        "state": { "enum": ["escalated", "proposed"] },
+        "state": { "enum": ["escalated", "proposed", "answered"], "description": "The question's state now, as `points` reads it, or the state the run ledger recorded when the questions can't be read or the record is gone. Never `answered` in a steward's `waiting`." },
         "path": { "type": "string", "description": "The answer record, from the repository root." },
         "subject": { "type": ["string", "null"] },
         "since": { "type": "string", "description": "When the run stopped on it." }

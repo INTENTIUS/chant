@@ -66,6 +66,8 @@ export interface OpRunPhaseRecord {
   name: string;
   /** `fail` if any step failed, `skipped` if every step was skipped, else `ok`. */
   status: "ok" | "fail" | "skipped";
+  /** The phase's wall-clock time, for a phase that ran. Absent on records written before it was kept, and for a phase skipped whole. */
+  durationMs?: number;
   steps: OpRunStepRecord[];
 }
 

@@ -14,13 +14,25 @@
  * - each Op's last run is the newest record in its run ledger,
  *   `<env>/runs__<op>.jsonl` under the member's ledger prefix, where `<env>`
  *   is the Op's own `labels.Env` or `local`;
+ * - an Op's `inFlight` is the run of it in flight now, from the record a
+ *   run keeps beside the checkout's git directory while it runs
+ *   (`../op/run-live.ts`): its phase and step, the phases it has finished and
+ *   its newest activity lines. Null once the run's ledger record is written,
+ *   or when the process that wrote it is gone;
  * - `waiting` lists the open decision points the steward waits on (#2749):
- *   each Op whose newest run is the steward's own and stopped on a question,
- *   as the run ledger records it. The question's state now is `points`'s.
- *   A run is the steward's when its record names it (`steward`, written for
- *   a run started in the steward's turn or under `CHANT_STEWARD`), so this
- *   also covers the member's other Ops, those no steward lists, that such a
- *   run belongs to, such as an Op the steward's process starts itself;
+ *   each Op whose newest run is the steward's own and stopped on a question
+ *   that is still open. The question's state is read now, the way `points`
+ *   reads it (`readQuestionStates`), not copied from the run ledger, which
+ *   keeps the state the run stopped with. A question answered since, or
+ *   whose record is gone, is not waited on; nor is one whose Op has a newer
+ *   run in flight that has not written its record yet: the Op's lease or one
+ *   of its work leases was taken after the waiting run ended
+ *   (`newerRunInFlight`). When the questions can't be read, the ledger's
+ *   state stands, as the operator's does. A run is the steward's when its
+ *   record names it (`steward`, written for a run started in the steward's
+ *   turn or under `CHANT_STEWARD`), so this also covers the member's other
+ *   Ops, those no steward lists, that such a run belongs to, such as an Op
+ *   the steward's process starts itself;
  * - `lease` is the local steward's own lease ref
  *   (`refs/chant/lease/[<prefix>]_stewards/<name>`), present while a
  *   `chant operator --steward` holds it or until it expires;
@@ -46,6 +58,7 @@ import { listWorkLeases } from "../lifecycle/work-lease";
 import { stewardWorkHolder } from "../op/work-lease-run";
 import type { OpConfig } from "../op/types";
 import type { OpRunRecord } from "../op/runtime";
+import { readInFlightRun } from "../op/run-live";
 import { approveCommand } from "./status-gates";
 import type { ReasonCode } from "./reason-codes";
 
@@ -72,17 +85,53 @@ export interface StatusStewardRun {
    * as `workspace-upgrade`), and the command that approves it.
    */
   gate: { name: string; since: string; op: string; approve: string } | null;
-  /** The open decision point the run stopped on, for a `waiting` run (#2749). */
+  /**
+   * The decision point the run stopped on, for a `waiting` run (#2749). Its
+   * state is the question's now, `answered` once a person has answered it.
+   */
   point: StatusStewardWait | null;
+  /** Each phase in execution order, with its wall-clock time, or the sum of its steps' for a record that kept none. */
+  phases: StatusStewardPhase[];
 }
 
-/** An open decision point a steward's run stopped on (#2749), as the run ledger records it. */
+/** A phase of a run: its verdict and how long it took. */
+export interface StatusStewardPhase {
+  name: string;
+  status: "ok" | "fail" | "skipped";
+  durationMs: number;
+}
+
+/**
+ * The run of an Op in flight now (../op/run-live.ts): what it is doing while
+ * its ledger record is not yet written.
+ */
+export interface StatusStewardInFlight {
+  id: string;
+  started: string;
+  /** When the run last changed its record. */
+  updated: string;
+  steward: string | null;
+  /** The work item the run's lease holds, once it is claimed. */
+  item: string | null;
+  phase: { name: string; started: string } | null;
+  step: { name: string; fn: string; started: string } | null;
+  /** The phases it has finished, in order. */
+  phases: StatusStewardPhase[];
+  /** The newest activity lines its steps reported; `total` counts every line of the run. */
+  activity: { total: number; lines: { seq: number; at: string | null; text: string }[] };
+}
+
+/** A decision point a steward's run stopped on (#2749). */
 export interface StatusStewardWait {
   /** The answer record's id: what `points --open` lists and `points answer` names. */
   id: string;
   point: string;
-  /** The question's state when the run stopped. */
-  state: "escalated" | "proposed";
+  /**
+   * The question's state now, as `points` reads it. The state the run
+   * stopped with when the questions can't be read or its record is gone.
+   * Never `answered` in a steward's `waiting`.
+   */
+  state: "escalated" | "proposed" | "answered";
   path: string;
   subject: string | null;
   since: string;
@@ -117,6 +166,8 @@ export interface StatusStewardOp {
   env: string;
   /** The newest run in its run ledger, or null when it has none. */
   lastRun: StatusStewardRun | null;
+  /** The run in flight now, or null when none is. */
+  inFlight: StatusStewardInFlight | null;
   /** For a ConvergeOp, its newest tick on the converge ledger (#2778); null for any other Op, or before its first tick. */
   lastTick: StatusStewardTick | null;
   /** Whether the Op changes the checkout, and so runs under a work lease on a branch of its own (#2748). */
@@ -175,7 +226,8 @@ export interface StatusSteward {
   ops: StatusStewardOp[];
   /**
    * The open decision points the steward waits on (#2749): each Op whose
-   * newest run is the steward's own and stopped on a question. Its declared
+   * newest run is the steward's own and stopped on a question still open,
+   * with no newer run of the Op in flight. Its declared
    * Ops come first, in `ops` order, then any other Op of the member whose
    * newest run names the steward, by Op name.
    */
@@ -187,15 +239,60 @@ export interface MemberStewards {
   reasons: { code: StewardReasonCode; message: string }[];
 }
 
-function waitOf(p: NonNullable<OpRunRecord["point"]>): StatusStewardWait {
+/** Every question's state in the workspace by id, or null when they can't all be read. */
+export type ReadQuestionStates = (cwd: string) => Promise<Map<string, string> | null>;
+
+async function readQuestionStates(cwd: string): Promise<Map<string, string> | null> {
+  const { readQuestionStates: read } = await import("./points-cli");
+  return read(cwd);
+}
+
+/**
+ * The point a run stopped on, with the question's state now and whether it
+ * is still open. A question whose record is gone is not open, as the
+ * operator reads it (`stewardWaits` in `../op/operator.ts`); when the
+ * questions can't be read, the run ledger's state stands and it is open.
+ */
+function pointOf(p: NonNullable<OpRunRecord["point"]>, states: Map<string, string> | null): { wait: StatusStewardWait; open: boolean } {
+  const recorded = p.state === "proposed" ? "proposed" : "escalated";
+  const now = states?.get(p.id);
+  const state = now === "escalated" || now === "proposed" || now === "answered" ? now : recorded;
   return {
-    id: p.id,
-    point: p.point,
-    state: p.state === "proposed" ? "proposed" : "escalated",
-    path: p.path,
-    subject: p.subject ?? null,
-    since: p.since,
+    wait: { id: p.id, point: p.point, state, path: p.path, subject: p.subject ?? null, since: p.since },
+    open: states === null || (now !== undefined && now !== "answered"),
   };
+}
+
+/**
+ * Whether a newer run of the Op is in flight than the one that ended at
+ * `ended`: the Op's own lease is live, or one of its work leases is active,
+ * and was taken after that run ended. A run writes its record when it ends,
+ * so until then the ledger's newest record is the older run's.
+ */
+function newerRunInFlight(ended: string, lease: StatusStewardLease | null, held: StatusStewardWorkLease[]): boolean {
+  const after = (at: string) => Date.parse(at) >= Date.parse(ended);
+  return (lease?.live === true && after(lease.acquiredAt)) || held.some((l) => l.state === "active" && after(l.acquiredAt));
+}
+
+/** The Op's run in flight, unless its ledger record is already the newest. Never throws. */
+async function inFlightOf(memberDir: string, env: string, op: string, lastRunId: string | null): Promise<StatusStewardInFlight | null> {
+  try {
+    const run = await readInFlightRun(memberDir, env, op);
+    if (!run || run.id === lastRunId) return null;
+    return {
+      id: run.id,
+      started: run.started,
+      updated: run.updated,
+      steward: run.steward,
+      item: run.item,
+      phase: run.phase,
+      step: run.step,
+      phases: run.phases.map((p) => ({ name: p.name, status: p.status, durationMs: p.durationMs })),
+      activity: run.activity,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function gateOf(g: NonNullable<OpRunRecord["gate"]>, opName: string): NonNullable<StatusStewardRun["gate"]> {
@@ -281,8 +378,12 @@ export async function readMemberStewards(
   now: string,
   kind = "chant",
   box: { capabilities: { name: string; broker: string | null }[] } | null = null,
+  deps: { readQuestions?: ReadQuestionStates } = {},
 ): Promise<MemberStewards> {
   const reasons: MemberStewards["reasons"] = [];
+  // Read once per member, and only when a run stopped on a question.
+  let states: Promise<Map<string, string> | null> | undefined;
+  const questionStates = () => (states ??= (deps.readQuestions ?? readQuestionStates)(memberDir));
   if (kind !== "chant" || !isChantProject(memberDir)) return { stewards: [], reasons };
 
   let discovered: Awaited<ReturnType<typeof discoverStewards>>;
@@ -302,20 +403,35 @@ export async function readMemberStewards(
     const waiting: StatusSteward["waiting"] = [];
     for (const op of declaration.ops) {
       const opEnv = runEnvOf(op);
+      const workLease = op.workLease
+        ? { kind: op.workLease.kind ?? null, held: await readHeldWorkLeases(declaration.name, op, memberDir, now) }
+        : null;
+      const beside = await besideOf(declaration, op.name, memberDir, now);
       let lastRun: StatusStewardRun | null = null;
       try {
         const newest = (await readRunLedger(opEnv, op.name, { cwd: memberDir })).records.at(-1);
         if (newest) {
+          const point = newest.point ? pointOf(newest.point, await questionStates()) : null;
           lastRun = {
             id: newest.id,
             status: newest.status,
             started: newest.started,
             ended: newest.ended,
             gate: newest.gate ? gateOf(newest.gate, op.name) : null,
-            point: newest.point ? waitOf(newest.point) : null,
+            point: point?.wait ?? null,
+            phases: newest.phases.map((p) => ({
+              name: p.name,
+              status: p.status,
+              durationMs: p.durationMs ?? p.steps.reduce((sum, st) => sum + st.durationMs, 0),
+            })),
           };
-          if (newest.status === "waiting" && lastRun.point && newest.steward === declaration.name) {
-            waiting.push({ op: op.name, run: newest.id, ...lastRun.point });
+          if (
+            newest.status === "waiting" &&
+            point?.open &&
+            newest.steward === declaration.name &&
+            !newerRunInFlight(newest.ended, beside?.lease ?? null, workLease?.held ?? [])
+          ) {
+            waiting.push({ op: op.name, run: newest.id, ...point.wait });
           }
         }
       } catch (err) {
@@ -324,6 +440,7 @@ export async function readMemberStewards(
           message: `${opEnv}/runs__${op.name}.jsonl: ${err instanceof Error ? err.message.split("\n")[0] : String(err)}`,
         });
       }
+      const inFlight = await inFlightOf(memberDir, opEnv, op.name, lastRun?.id ?? null);
       let lastTick: StatusStewardTick | null = null;
       if (op.labels?.Converge === "true") {
         try {
@@ -341,12 +458,11 @@ export async function readMemberStewards(
         schedule: op.schedule ? { cron: op.schedule.cron, overlap: "skip" } : null,
         env: opEnv,
         lastRun,
+        inFlight,
         lastTick,
         changesCheckout: op.changesCheckout === true,
-        workLease: op.workLease
-          ? { kind: op.workLease.kind ?? null, held: await readHeldWorkLeases(declaration.name, op, memberDir, now) }
-          : null,
-        beside: await besideOf(declaration, op.name, memberDir, now),
+        workLease,
+        beside,
       });
     }
     stewards.push({
@@ -364,7 +480,7 @@ export async function readMemberStewards(
       waiting,
     });
   }
-  if (stewards.length > 0) await addUndeclaredWaits(memberDir, stewards, found, reasons);
+  if (stewards.length > 0) await addUndeclaredWaits(memberDir, stewards, found, reasons, now, questionStates);
   return { stewards, reasons };
 }
 
@@ -381,6 +497,8 @@ async function addUndeclaredWaits(
   stewards: StatusSteward[],
   found: Awaited<ReturnType<typeof discoverStewards>>["stewards"],
   reasons: MemberStewards["reasons"],
+  now: string,
+  questionStates: () => Promise<Map<string, string> | null>,
 ): Promise<void> {
   const declared = new Set([...found.values()].flatMap(({ declaration }) => declaration.ops.map((op) => op.name)));
   let ops: OpConfig[];
@@ -396,7 +514,11 @@ async function addUndeclaredWaits(
       const newest = (await readRunLedger(opEnv, op.name, { cwd: memberDir })).records.at(-1);
       const steward = newest?.steward ? byName.get(newest.steward) : undefined;
       if (steward && newest?.status === "waiting" && newest.point) {
-        steward.waiting.push({ op: op.name, run: newest.id, ...waitOf(newest.point) });
+        const point = pointOf(newest.point, await questionStates());
+        const held = op.workLease ? await readHeldWorkLeases(steward.name, op, memberDir, now) : [];
+        if (point.open && !newerRunInFlight(newest.ended, await readLeaseRef(op.name, memberDir, now), held)) {
+          steward.waiting.push({ op: op.name, run: newest.id, ...point.wait });
+        }
       }
     } catch (err) {
       reasons.push({

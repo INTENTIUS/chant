@@ -147,6 +147,16 @@ The step reads the gate from the command's stdout when that is JSON with a `pend
 
 After `chant approve workspace-upgrade .` the next run runs the command again. This time the command finds the approval and applies the patch, and the run ends `ok`. A local steward runs its own gated run again on its first round after the approval (see [`operator --steward`](/chant/cli/operator/#operator---steward-name)). `chant workspace status --json` shows the gate on the Op's `lastRun` while it waits.
 
+### Reporting progress from a shell step
+
+A run started by `chant run` or a steward keeps an in-flight record while it runs, which `chant workspace status --json` shows as the Op's `inFlight`. A shell step's command finds the record's activity file in `CHANT_RUN_ACTIVITY` and the run's id in `CHANT_RUN_ID`. Each line it appends is one activity line, either plain text or `{"at": "<ISO-8601>", "text": "..."}`:
+
+```sh
+echo "Bash npm test" >> "$CHANT_RUN_ACTIVITY"
+```
+
+Outside such a run the variable is unset. An in-process activity calls `reportRunActivity(text)` from `@intentius/chant/op` instead.
+
 ## Gate steps
 
 A gate is a fact on the gate ledger: a run that reaches one with no resolution records that it is waiting and ends there. Typical gate scenarios:

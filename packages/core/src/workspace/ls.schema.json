@@ -173,13 +173,13 @@
         "name": { "type": "string" },
         "title": { "type": "string" },
         "source": { "type": ["string", "null"], "description": "From the workspace root, with / separators. Null for an SVG with no source." },
-        "render": { "type": "string", "description": "From the workspace root, with / separators." },
+        "render": { "type": ["string", "null"], "description": "From the workspace root, with / separators. Null for a mermaid or excalidraw diagram with no committed render: a reader draws it from its source." },
         "renderer": {
           "type": "object",
           "required": ["tool", "version", "args"],
           "properties": {
-            "tool": { "enum": ["d2", "mermaid", "graphviz"] },
-            "version": { "type": "string", "description": "The exact release the render was made with, such as 0.9.0." },
+            "tool": { "enum": ["d2", "mermaid", "graphviz", "excalidraw"] },
+            "version": { "type": "string", "description": "The exact release the render was made with, such as 0.9.0. For mermaid or excalidraw, the release of the library a reader draws the source with." },
             "args": { "type": "array", "items": { "type": "string" }, "description": "Passed before the input and output paths, in order." }
           }
         },

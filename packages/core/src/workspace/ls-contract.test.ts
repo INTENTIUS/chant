@@ -166,6 +166,12 @@ describe("chant workspace ls on built workspaces", () => {
             render: "docs/diagrams/boundary.svg",
             renderer: { tool: "graphviz", version: "9.0.0", args: [] },
           },
+          {
+            name: "flow",
+            title: "Request flow",
+            source: "docs/diagrams/flow.mmd",
+            renderer: { tool: "mermaid", version: "11.4.1" },
+          },
         ],
       }),
       "docs/README.md": "",
@@ -179,6 +185,14 @@ describe("chant workspace ls on built workspaces", () => {
         source: null,
         render: "docs/diagrams/boundary.svg",
         renderer: { tool: "graphviz", version: "9.0.0", args: [] },
+        member: null,
+      },
+      {
+        name: "flow",
+        title: "Request flow",
+        source: "docs/diagrams/flow.mmd",
+        render: null,
+        renderer: { tool: "mermaid", version: "11.4.1", args: [] },
         member: null,
       },
       {

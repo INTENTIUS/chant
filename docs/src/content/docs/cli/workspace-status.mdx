@@ -114,10 +114,11 @@ A steward is the one writer that runs a member's operational Ops, on Fountain or
 | `forms` | The declared default form, and the environments whose form differs from it |
 | `vault`, `capabilities` | The vault the steward holds, or `null`, and the box capabilities it reaches through a broker, each with the `broker` the member's box block gives it and `declared: false` when the block doesn't list it ([#2726](https://github.com/INTENTIUS/chant/issues/2726)) |
 | `lease` | The local steward's lease (`holder`, `acquiredAt`, `expiresAt`, `live`), or `null` when no local operator has held it |
-| `ops[]` | Each Op the steward runs, in declaration order (its turns' Ops, then those beside its turns), with `schedule` (`null` for an Op it runs only when asked), the `env` its runs are recorded under, and `lastRun` (`id`, `status`, `started`, `ended`, `gate`, `point`) or `null`. A gated run's `gate` has its `name`, `since`, the `op` it is recorded under and the `approve` command; `op` is a command's own, such as `workspace-upgrade`, when a step's command stopped at its gate ([#2779](https://github.com/INTENTIUS/chant/issues/2779)). `status` is `waiting` for a run that stopped on an open decision point, and `point` names that question. A ConvergeOp also has `lastTick`, its newest tick on the converge ledger: the rules that fired, what each did and for which resource, and what its observer step reported ([#2778](https://github.com/INTENTIUS/chant/issues/2778)). It is `null` for any other Op |
+| `ops[]` | Each Op the steward runs, in declaration order (its turns' Ops, then those beside its turns), with `schedule` (`null` for an Op it runs only when asked), the `env` its runs are recorded under, and `lastRun` (`id`, `status`, `started`, `ended`, `gate`, `point`, `phases`) or `null`. `phases` lists each phase of the run with its `status` and `durationMs`. A gated run's `gate` has its `name`, `since`, the `op` it is recorded under and the `approve` command; `op` is a command's own, such as `workspace-upgrade`, when a step's command stopped at its gate ([#2779](https://github.com/INTENTIUS/chant/issues/2779)). `status` is `waiting` for a run that stopped on a decision point, and `point` names that question, with its `state` now (`answered` once a person has answered it). A ConvergeOp also has `lastTick`, its newest tick on the converge ledger: the rules that fired, what each did and for which resource, and what its observer step reported ([#2778](https://github.com/INTENTIUS/chant/issues/2778)). It is `null` for any other Op |
+| `ops[].inFlight` | The run of the Op in flight now, or `null`. A run that writes to the run ledger keeps a record under the checkout's git directory while it runs, and removes it once its ledger record is written. `phase` and `step` are what it is doing now, `phases` the phases it has finished with their `durationMs`, and `item` the work item its lease holds once claimed. `activity` holds the newest 20 lines its steps reported, each with a `seq` counting from 1, and `total` counts every line so far. A shell step reports a line by appending it to the file named in `CHANT_RUN_ACTIVITY`, as plain text or as `{"at": "...", "text": "..."}`. A record whose process on this host is gone is not in flight |
 | `ops[].changesCheckout`, `ops[].workLease` | Whether the Op changes the checkout, and its [work lease](/chant/guide/ops/#running-under-a-work-lease) or `null` ([#2748](https://github.com/INTENTIUS/chant/issues/2748)). `workLease.kind` is the work kind file whose ledger holds the lease, or `null` for the member's own. `workLease.held` lists the leases the steward's turns of this Op hold, the ones whose holder is `<steward>/<op>@<process>`: an `active` one while a turn runs, an `expired` one left by a turn that stopped renewing |
 | `ops[].beside` | For an Op the steward runs beside its turns ([#2861](https://github.com/INTENTIUS/chant/issues/2861)), `ready` says whether a ready step tells the operator when to start it, and `lease` is the Op's own lease (`holder`, `acquiredAt`, `expiresAt`, `live`), which a run of it holds while it runs, or `null`. `null` for an Op run as one of the steward's turns. See [`operator --steward`](/chant/cli/operator/#operator---steward-name) |
-| `waiting[]` | The open decision points the steward waits on ([#2749](https://github.com/INTENTIUS/chant/issues/2749)): for each Op whose newest run is the steward's own and stopped on a question, the `op`, the `run`, and the question's `id`, `point`, `state`, `path`, `subject` and `since`. [`points --open`](/chant/cli/workspace-points/) has the question's state now. A run is the steward's when its ledger record names the steward, as it does for a run started with `CHANT_STEWARD` set, so an Op the steward's process starts itself is listed here though `ops[]` does not list it |
+| `waiting[]` | The open decision points the steward waits on ([#2749](https://github.com/INTENTIUS/chant/issues/2749)): for each Op whose newest run is the steward's own and stopped on a question still open, the `op`, the `run`, and the question's `id`, `point`, `state`, `path`, `subject` and `since`. The state is read now, as [`points --open`](/chant/cli/workspace-points/) reads it. A question answered since is left out, and so is one whose Op has a newer run in flight: the Op's lease or one of its work leases was taken after the waiting run ended and is still held. A run is the steward's when its ledger record names the steward, as it does for a run started with `CHANT_STEWARD` set, so an Op the steward's process starts itself is listed here though `ops[]` does not list it |
 
 ### Work leases
 
@@ -234,7 +235,8 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
               "name": "api-converge",
               "schedule": { "cron": "*/5 * * * *", "overlap": "skip" },
               "env": "local",
-              "lastRun": { "id": "0b6f...", "status": "ok", "started": "2026-09-21T09:00:00.000Z", "ended": "2026-09-21T09:00:04.000Z", "gate": null, "point": null },
+              "lastRun": { "id": "0b6f...", "status": "ok", "started": "2026-09-21T09:00:00.000Z", "ended": "2026-09-21T09:00:04.000Z", "gate": null, "point": null, "phases": [{ "name": "Converge", "status": "ok", "durationMs": 3920 }] },
+              "inFlight": null,
               "lastTick": {
                 "id": "5d1e...",
                 "timestamp": "2026-09-21T09:00:03.000Z",
@@ -250,12 +252,26 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
               "workLease": null,
               "beside": null
             },
-            { "name": "api-release", "schedule": null, "env": "prod", "lastRun": null, "lastTick": null, "changesCheckout": false, "workLease": null, "beside": null },
+            { "name": "api-release", "schedule": null, "env": "prod", "lastRun": null, "inFlight": null, "lastTick": null, "changesCheckout": false, "workLease": null, "beside": null },
             {
               "name": "api-dispatch",
               "schedule": null,
               "env": "local",
               "lastRun": null,
+              "inFlight": {
+                "id": "3c9a...",
+                "started": "2026-09-21T09:05:00.000Z",
+                "updated": "2026-09-21T09:07:12.000Z",
+                "steward": "api-steward",
+                "item": "W-017",
+                "phase": { "name": "Build", "started": "2026-09-21T09:05:09.000Z" },
+                "step": { "name": "build", "fn": "shellCmd", "started": "2026-09-21T09:05:09.000Z" },
+                "phases": [
+                  { "name": "Pick", "status": "ok", "durationMs": 1210 },
+                  { "name": "Understand", "status": "ok", "durationMs": 7630 }
+                ],
+                "activity": { "total": 2, "lines": [{ "seq": 1, "at": "2026-09-21T09:06:40.000Z", "text": "Edit app/lobby.js" }, { "seq": 2, "at": "2026-09-21T09:07:12.000Z", "text": "Bash npm test" }] }
+              },
               "lastTick": null,
               "changesCheckout": true,
               "workLease": {

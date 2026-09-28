@@ -392,6 +392,24 @@ describe("diagram artifacts (#2764)", () => {
     expect(failure(base([member([{ name: "a", title: "A", source: null, render: "a.svg" }])])).message).toContain('missing required field "renderer"');
   });
 
+  test("a mermaid diagram needs a source and may name no render; d2 and graphviz still need a render", () => {
+    const mermaid = { tool: "mermaid", version: "11.4.1" };
+    const d = parse(base([member([{ name: "flow", title: "Flow", source: "docs/diagrams/flow.mmd", renderer: mermaid }])]));
+    expect(d.members[0].diagrams[0]).toMatchObject({ source: "docs/diagrams/flow.mmd", render: null, renderer: { ...mermaid, args: [] } });
+    expect(parse(base([member([{ name: "flow", title: "Flow", source: "flow.mmd", render: null, renderer: mermaid }])])).members[0].diagrams[0].render).toBeNull();
+    expect(parse(base([member([{ name: "flow", title: "Flow", source: "flow.mmd", render: "flow.svg", renderer: mermaid }])])).members[0].diagrams[0].render).toBe("flow.svg");
+    expect(failure(base([member([{ name: "flow", title: "Flow", renderer: mermaid }])])).message).toContain('missing required field "source"');
+    expect(failure(base([member([{ name: "flow", title: "Flow", source: null, renderer: mermaid }])])).code).toBe("declaration-invalid");
+    expect(failure(base([member([{ name: "a", title: "A", source: "a.d2", render: null, renderer }])])).code).toBe("declaration-invalid");
+  });
+
+  test("an excalidraw diagram, like mermaid, needs a source and may name no render or an exported SVG", () => {
+    const excalidraw = { tool: "excalidraw", version: "0.18.0" };
+    expect(parse(base([member([{ name: "sketch", title: "Sketch", source: "docs/diagrams/sketch.excalidraw", renderer: excalidraw }])])).members[0].diagrams[0]).toMatchObject({ render: null, renderer: { ...excalidraw, args: [] } });
+    expect(parse(base([member([{ name: "sketch", title: "Sketch", source: "sketch.excalidraw", render: "sketch.svg", renderer: excalidraw }])])).members[0].diagrams[0].render).toBe("sketch.svg");
+    expect(failure(base([member([{ name: "sketch", title: "Sketch", renderer: excalidraw }])])).message).toContain('missing required field "source"');
+  });
+
   test("a sourceHash is a 64-character lowercase hex string, or absent", () => {
     const hash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
     expect(parse(base([member([diagram({ sourceHash: hash })])])).members[0].diagrams[0].sourceHash).toBe(hash);

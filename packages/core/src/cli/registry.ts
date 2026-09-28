@@ -303,8 +303,16 @@ export interface ParsedArgs {
   noCache?: boolean;
   /** `chant workspace graph --composites` (#2662): print each composite instance with the components that can deploy it. */
   composites?: boolean;
-  /** `chant workspace graph --intent <path[:start-end]>` (#2651): the region the intent graph is over. */
+  /** `chant workspace graph --intent <path[:start-end]>` (#2651): the region the intent graph is over. Empty with `--record`. */
   intent?: string;
+  /** `chant workspace graph --intent --record <id>`: walk one decision record over every entry its constrains lists. */
+  record?: string;
+  /** `chant workspace patch <range> --path <p>`: only these paths, from the workspace root. Repeatable. */
+  paths?: string[];
+  /** `chant workspace patch <range> --max-bytes <n>`: the most hunk text printed for one file. */
+  maxBytes?: number;
+  /** `chant workspace patch [<commit>] --worktree`: the working tree against the commit (HEAD unless given). */
+  worktree?: boolean;
   /** `chant workspace check --changes <base>..<head>` (#2773): the diff the forward coverage check maps to records. */
   changes?: string;
   /** `chant workspace check --changes ... --severity off|warn|fail` (#2773): in place of the declaration's `changes.severity`. */

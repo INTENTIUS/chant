@@ -756,6 +756,7 @@ describe("workspace init and ls (#2534)", () => {
       "workspace lint",
       "workspace ls",
       "workspace member-run",
+      "workspace patch",
       "workspace points",
       "workspace records",
       "workspace status",
@@ -771,6 +772,21 @@ describe("workspace init and ls (#2534)", () => {
     expect(resolveCommand(claim, commandRegistry)?.def.name).toBe("workspace work");
     expect(parseArgs(["workspace", "work", "release", "W-001", "--holder=a", "--token", "t", "--outcome", "done"])).toMatchObject({ holder: "a", token: "t", outcome: "done" });
     expect(() => parseArgs(["workspace", "work", "claim", "W-001", "--holder"])).toThrow(/--holder needs a value/);
+  });
+
+  test("graph --intent takes --record in place of a region", () => {
+    expect(parseArgs(["workspace", "graph", "--intent", "--record", "studio-008", "--json"])).toMatchObject({ intent: "", record: "studio-008", json: true });
+    expect(parseArgs(["workspace", "graph", "--intent", "app/server.mjs"])).toMatchObject({ intent: "app/server.mjs" });
+    expect(() => parseArgs(["workspace", "graph", "--intent", "--json"])).toThrow(/--intent needs a region/);
+    expect(() => parseArgs(["workspace", "graph", "--intent", "--record"])).toThrow(/--record needs a record id/);
+  });
+
+  test("patch takes a range, --path and --max-bytes", () => {
+    const patch = parseArgs(["workspace", "patch", "main...chant/work/W-001", "--path", "app", "--path", "docs/a.md", "--max-bytes", "4096", "--json"]);
+    expect(patch).toMatchObject({ command: "workspace", path: "patch", extraPositional: "main...chant/work/W-001", paths: ["app", "docs/a.md"], maxBytes: 4096, json: true });
+    expect(resolveCommand(patch, commandRegistry)?.def.name).toBe("workspace patch");
+    expect(() => parseArgs(["workspace", "patch", "HEAD", "--max-bytes", "0"])).toThrow(/--max-bytes needs a whole number/);
+    expect(parseArgs(["workspace", "patch", "--worktree", "--path", "docs/a.md", "--json"])).toMatchObject({ command: "workspace", path: "patch", worktree: true, paths: ["docs/a.md"], json: true });
   });
 
   test("run takes --work <id> for an Op with a work lease (#2748)", () => {

@@ -12,11 +12,14 @@
 import { resolve } from "node:path";
 import { formatError } from "../cli/format";
 import type { CommandContext } from "../cli/registry";
+import { intentRecord, type IntentRecordDocument } from "./intent-record";
 import { intentGraph, type ArtifactNode, type CommitNode, type DecisionNode, type IntentDocument, type IntentEdge, type IntentNode, type WorkNode } from "./intent";
 
 const USAGE = "chant workspace graph --intent <path[:start-end]> [--at <rev>] [--kind <kind file>...] [--json]";
+const RECORD_USAGE = "chant workspace graph --intent --record <id> [--at <rev>] [--kind <kind file>...] [--json]";
 
 type Result = Exclude<IntentDocument, { error: unknown }>;
+type RecordResult = Exclude<IntentRecordDocument, { error: unknown }>;
 
 function edgesFrom(doc: Result, from: string, kind: IntentEdge["kind"]): IntentEdge[] {
   return doc.edges.filter((e) => e.from === from && e.kind === kind);
@@ -53,9 +56,10 @@ function withinLines(doc: Result, d: DecisionNode): string[] {
 function decisionLine(d: DecisionNode): string {
   const via = d.constrains.length > 0 ? d.constrains.map((c) => `${c.entry} (${c.granularity})`).join(", ") : "through supersession only";
   const by = d.decided_by ? `, decided by ${d.decided_by}${d.decided_on ? ` on ${d.decided_on}` : ""}` : "";
+  const decidedIn = d.decidedIn ? ` in ${short(d.decidedIn.sha)}` : "";
   const reviews = `${d.reviews.agree} agree, ${d.reviews.dissent} dissent, ${d.reviews.abstain} abstain`;
   const superseded = d.supersededBy ? `, superseded by ${d.supersededBy}` : "";
-  return `decision  ${d.record} ${d.state ?? "stateless"}${superseded}: ${d.title ?? d.path}; constrains ${via}${by}; ${reviews}; ${d.provenance.level}${d.valid ? "" : `; invalid: ${d.reasons.map((r) => r.code).join(", ")}`}`;
+  return `decision  ${d.record} ${d.state ?? "stateless"}${superseded}: ${d.title ?? d.path}; constrains ${via}${by}${decidedIn}; ${reviews}; ${d.provenance.level}${d.valid ? "" : `; invalid: ${d.reasons.map((r) => r.code).join(", ")}`}`;
 }
 
 /** A work item, then the commits made inside its window (#2683). */
@@ -123,8 +127,50 @@ export function formatIntent(doc: Result): string {
   return out.join("\n");
 }
 
+/** The record walk as text: the record, its window, then each commit with its bucket, and the counts. */
+export function formatIntentRecord(doc: RecordResult): string {
+  const r = doc.record;
+  const out = [`record    ${r.record} ${r.state ?? "stateless"}${r.supersededBy ? `, superseded by ${r.supersededBy}` : ""}: ${r.title ?? r.path}`];
+  out.push(`window    ${doc.window.from ? `from ${short(doc.window.from)}` : "no history"}${doc.window.until ? ` until ${short(doc.window.until)}` : ""}${r.decidedIn ? `; decided in ${short(r.decidedIn.sha)} ${r.decidedIn.date.slice(0, 10)}: ${r.decidedIn.subject}` : "; not decided in the history read"}`);
+  for (const c of r.constrains) out.push(`entry     ${c.entry}${c.walked ? "" : c.exists === false ? " (not in the tree read)" : " (not walked)"}`);
+  for (const c of doc.commits) {
+    const why =
+      c.bucket === "own"
+        ? `unit ${c.unit}`
+        : c.bucket === "worked"
+          ? `worked by ${c.workedBy.map((w) => w.record).join(", ")}`
+          : c.bucket === "within-other"
+            ? `within ${c.alsoWithin.map((w) => w.record).join(", ")}`
+            : "nothing else accounts for it";
+    out.push(`${c.bucket.padEnd(12)} ${short(c.sha)} ${c.date.slice(0, 10)} ${c.subject}; ${why}; ${c.files.join(", ") || c.entries.join(", ")}`);
+  }
+  for (const x of doc.reasons) out.push(`reason    ${x.code}: ${x.message}`);
+  const n = doc.counts;
+  out.push(`${n.commits} commits in the window: ${n.own} own, ${n.worked} worked, ${n.withinOther} within another record's window, ${n.unexplained} unexplained; ${n.outsideWindow} outside it`);
+  return out.join("\n");
+}
+
+async function runRecord(ctx: CommandContext, cwd: string, kinds: string[] | undefined): Promise<number> {
+  const { args } = ctx;
+  const { doc, failed } = await intentRecord({ cwd, record: args.record!, at: args.at, kinds: kinds?.map((k) => resolve(k)) });
+  if (args.json) console.log(JSON.stringify(doc, null, 2));
+  if ("error" in doc) {
+    console.error(formatError({ message: `${doc.error.code}: ${doc.error.message}`, hint: RECORD_USAGE }));
+    return 1;
+  }
+  if (!args.json) console.log(formatIntentRecord(doc));
+  return failed ? 1 : 0;
+}
+
 export async function runWorkspaceIntent(ctx: CommandContext, cwd: string): Promise<number> {
   const { args } = ctx;
+  if (args.record !== undefined) {
+    if (args.intent) {
+      console.error(formatError({ message: "--record walks a record, so --intent takes no region with it", hint: RECORD_USAGE }));
+      return 1;
+    }
+    return runRecord(ctx, cwd, args.kinds ?? (args.kind !== undefined ? [args.kind] : undefined));
+  }
   if (!args.intent) {
     console.error(formatError({ message: "--intent needs a region: a path, path:line or path:start-end", hint: USAGE }));
     return 1;

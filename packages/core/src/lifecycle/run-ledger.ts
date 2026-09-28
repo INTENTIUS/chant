@@ -87,6 +87,8 @@ export function buildRunRecord(
     gate?: OpRunRecord["gate"];
     point?: OpRunRecord["point"];
     steward?: string;
+    /** Each phase's wall-clock time, by name, as the executor measured it. */
+    phaseDurations?: Record<string, number>;
   },
 ): OpRunRecordInput {
   const phases: OpRunPhaseRecord[] = [];
@@ -113,7 +115,11 @@ export function buildRunRecord(
     });
     if (record.outcome) outcomes[record.outcome.name] = record.outcome.value;
   }
-  for (const phase of phases) phase.status = phaseStatus(phase.steps);
+  for (const phase of phases) {
+    phase.status = phaseStatus(phase.steps);
+    const ms = times.phaseDurations?.[phase.name];
+    if (ms !== undefined) phase.durationMs = ms;
+  }
 
   return {
     ...(times.id !== undefined ? { id: times.id } : {}),

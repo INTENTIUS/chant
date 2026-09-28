@@ -140,13 +140,13 @@ export interface LinkDeclaration {
 }
 
 /** A renderer a diagram is pinned to (#2764): a closed list of tools chant does not run. */
-export const DIAGRAM_TOOLS = ["d2", "mermaid", "graphviz"] as const;
+export const DIAGRAM_TOOLS = ["d2", "mermaid", "graphviz", "excalidraw"] as const;
 export type DiagramTool = (typeof DIAGRAM_TOOLS)[number];
 
 /** The renderer a diagram's render was made with (#2764). chant never runs it; it is recorded so a reader can. */
 export interface DiagramRenderer {
   tool: DiagramTool;
-  /** The exact release the render was made with, such as "0.9.0". */
+  /** The exact release the render was made with, such as "0.9.0". For mermaid or excalidraw, the release of the library a reader draws the source with. */
   version: string;
   /** Passed before the input and output paths, in order. */
   args: string[];
@@ -162,10 +162,10 @@ export interface DiagramDeclaration {
   title: string;
   /** From the workspace root, with / separators. Null for an SVG with no source. */
   source: string | null;
-  /** From the workspace root, with / separators. */
-  render: string;
+  /** From the workspace root, with / separators. Null only for a mermaid or excalidraw diagram, which a reader draws from its source. */
+  render: string | null;
   renderer: DiagramRenderer;
-  /** sha256 hex of the source's bytes when the render was last produced, for `chant workspace check`'s drift finding. Null when not recorded, or when source is null: the render is then never checked for drift. */
+  /** sha256 hex of the source's bytes when the render was last produced (a mermaid or excalidraw diagram without a render: when the source was last pinned), for `chant workspace check`'s drift finding. Null when not recorded, or when source is null: the render is then never checked for drift. */
   sourceHash: string | null;
   /** The member that declares it, or null for the workspace's own. */
   member: string | null;
@@ -725,13 +725,13 @@ function recordKindsOf(raw: unknown, dir: string, member: string | null, pointer
 function diagramsOf(raw: unknown, member: string | null, pointer: string): DiagramDeclaration[] {
   return (
     (raw as
-      | { name: string; title: string; source?: string | null; render: string; renderer: { tool: DiagramTool; version: string; args?: string[] }; sourceHash?: string | null }[]
+      | { name: string; title: string; source?: string | null; render?: string | null; renderer: { tool: DiagramTool; version: string; args?: string[] }; sourceHash?: string | null }[]
       | undefined) ?? []
   ).map((d, i) => ({
     name: d.name,
     title: d.title,
     source: d.source ?? null,
-    render: d.render,
+    render: d.render ?? null,
     renderer: { tool: d.renderer.tool, version: d.renderer.version, args: [...(d.renderer.args ?? [])] },
     sourceHash: d.sourceHash ?? null,
     member,

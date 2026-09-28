@@ -135,6 +135,8 @@ export {
   currentStewardTurn, enterStewardTurn, setStewardTurn, resetStewardTurn, STEWARD_ENV,
 } from "./steward-turn";
 export type { StewardTurn } from "./steward-turn";
+export { reportRunActivity, readInFlightRun, RUN_ACTIVITY_ENV, RUN_ID_ENV } from "./run-live";
+export type { InFlightRun, InFlightRecord, InFlightPhase, InFlightActivityLine } from "./run-live";
 export type { DiscoveredSteward, StewardDiscoveryResult } from "./discover";
 export type {
   OperatorTickEvent, OperatorRoundOptions, OperatorLoopOptions,

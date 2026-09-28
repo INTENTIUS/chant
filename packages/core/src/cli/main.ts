@@ -377,9 +377,28 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant workspace graph --composites` (#2662)
       result.composites = true;
     } else if (arg === "--intent") {
-      // `chant workspace graph --intent <path[:start-end]>` (#2651)
-      result.intent = args[++i];
-      if (!result.intent || result.intent.startsWith("-")) throw new Error("--intent needs a region: --intent <path[:start-end]>");
+      // `chant workspace graph --intent <path[:start-end]>` (#2651), or `--intent --record <id>` with no region.
+      const value = args[i + 1];
+      if (value !== undefined && !value.startsWith("-")) result.intent = args[++i];
+      else if (args.includes("--record")) result.intent = "";
+      else throw new Error("--intent needs a region: --intent <path[:start-end]>, or --intent --record <id>");
+    } else if (arg === "--record") {
+      // `chant workspace graph --intent --record <id>`
+      result.record = args[++i];
+      if (!result.record || result.record.startsWith("-")) throw new Error("--record needs a record id: --record <id>");
+    } else if (arg === "--path") {
+      // `chant workspace patch <range> --path <p>`, repeatable
+      const value = args[++i];
+      if (!value || value.startsWith("-")) throw new Error("--path needs a path: --path <path>");
+      (result.paths ??= []).push(value);
+    } else if (arg === "--worktree") {
+      // `chant workspace patch [<commit>] --worktree`
+      result.worktree = true;
+    } else if (arg === "--max-bytes") {
+      // `chant workspace patch <range> --max-bytes <n>`
+      const value = Number(args[++i]);
+      if (!Number.isInteger(value) || value < 1) throw new Error("--max-bytes needs a whole number of bytes above 0");
+      result.maxBytes = value;
     } else if (arg === "--changes") {
       // `chant workspace check --changes <base>..<head>` (#2773)
       result.changes = args[++i];
@@ -923,6 +942,12 @@ Workspace (level 1, #2524):
                         --work item and its decisions) lists it in
                         out_of_scope. The declaration's changes block sets
                         the severity (warn by default) and ignore globs
+  workspace patch <base>..<head>|<base>...<head>|<commit> [--path <p>...] [--max-bytes <n>] [--json]
+  workspace patch [<commit>] --worktree [--path <p>...] [--max-bytes <n>] [--json]
+                        The hunks of a diff, file by file: a range, a work
+                        branch, or one commit against its first parent. Each
+                        file's hunk text stops at --max-bytes (64 KiB) and
+                        says it was truncated
   workspace build [dir] [--member <name>] [-o <dir>] [--dry-run]
                         Build every chant member and example project, each with
                         its own chant, one process per toolchain. -o <dir>
@@ -952,6 +977,10 @@ Workspace (level 1, #2524):
                         touched it, the decisions whose constrains cover it,
                         the artifacts they pin, and findings with closed codes.
                         Without --kind, every record kind the declaration names
+  workspace graph --intent --record <id> [--at <rev>] [--kind <kind file>...] [--json]
+                        One decision's intent walk over every path: and member:
+                        entry it constrains: the commits in its window, each
+                        own, worked, within-other or unexplained, with counts
 
 Lifecycle (alias: lc):
   lifecycle snapshot <env>  Query API, save metadata to orphan branch
@@ -1442,6 +1471,8 @@ export const commandRegistry: CommandDef[] = [
   { name: "workspace upgrade", handler: async (ctx) => (await import("../workspace/lineage-upgrade-cli")).runWorkspaceUpgrade(ctx) },
   // #2641 — workspace check reads member configs statically and never runs one.
   { name: "workspace check", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/lineage-check")).runWorkspaceCheck(ctx) },
+  // The hunks of a diff, for a reader that runs no git of its own.
+  { name: "workspace patch", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/patch")).runWorkspacePatch(ctx) },
   // #2537 — per-member commands. Each member runs under its own chant, one
   // process per toolchain identity; `member-run` is that process's entry.
   { name: "workspace build", handler: async (ctx) => (await import("../workspace/member-commands")).runWorkspaceMembers(ctx, "build") },

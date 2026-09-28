@@ -44,6 +44,7 @@ import { loadKindRegistry } from "./kinds";
 import { resolveLinks, type LinkTableRow } from "./links";
 import { sourceMemberHandles } from "./member-handles";
 import { constraintCovers, isWorkspacePath, memberHolding } from "./record-assets";
+import type { DecidedIn } from "./record-decided";
 import { importKindModule, loadRecordKind, parseFrontMatter, RecordReadError, supersedesTargets, type LoadedRecordKind } from "./records";
 import { queryRecords, type RecordView } from "./records-cli";
 import { isPluginCode, type PluginCode, type ReasonCode } from "./reason-codes";
@@ -120,6 +121,8 @@ export const INTENT_ERROR_CODES = [
   "location-missing",
   /** The region's path, or its line range, does not exist in the tree read. */
   "intent-region-invalid",
+  /** --record names an id no record of a decision kind read has. */
+  "intent-record-unknown",
 ] as const satisfies readonly ReasonCode[];
 export type IntentErrorCode = (typeof INTENT_ERROR_CODES)[number];
 
@@ -232,6 +235,13 @@ export interface DecisionNode {
   provenance: { level: ProvenanceLevel; commit: string | null; reason: string };
   decided_by: string | null;
   decided_on: string | null;
+  /**
+   * The commit that last moved the record into an approved state and kept it
+   * there, from the history read (`record-decided.ts`), or null when the
+   * record is not approved there. Its window opens at this commit, or at the
+   * commit that added the record when this is null.
+   */
+  decidedIn: DecidedIn | null;
   reviews: { agree: number; dissent: number; abstain: number; openConcerns: number };
   supersededBy: string | null;
   /** The ids of the records this one's supersedes links name. */
@@ -389,7 +399,7 @@ function git(top: string, args: string[], input?: string): string {
   return execFileSync("git", args, { cwd: top, encoding: "utf-8", input, stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"], maxBuffer: 512 * 1024 * 1024 });
 }
 
-function tryGit(top: string, args: string[], input?: string): string | undefined {
+export function tryGit(top: string, args: string[], input?: string): string | undefined {
   try {
     return git(top, args, input);
   } catch {
@@ -409,7 +419,7 @@ function hunkRanges(patch: string): LineRange[] {
 }
 
 /** The commits that touched the region, newest first, with the lines each changed for a line range. */
-function regionHistory(top: string, rev: string, gitPath: string, type: "file" | "dir", lines: LineRange | null): { sha: string; lines: LineRange[] | null }[] {
+export function regionHistory(top: string, rev: string, gitPath: string, type: "file" | "dir", lines: LineRange | null): { sha: string; lines: LineRange[] | null }[] {
   if (lines) {
     const out = tryGit(top, ["log", `-L${lines.start},${lines.end}:${gitPath}`, "--format=%x00%H", "--no-color", rev]);
     if (out === undefined) return [];
@@ -433,7 +443,7 @@ function regionHistory(top: string, rev: string, gitPath: string, type: "file" |
 }
 
 /** Subject, body, author, date and trailers of each commit. */
-function commitDetails(top: string, shas: string[]): Map<string, IntentCommit> {
+export function commitDetails(top: string, shas: string[]): Map<string, IntentCommit> {
   const out = new Map<string, IntentCommit>();
   if (shas.length === 0) return out;
   const text = git(top, ["log", "--no-walk=unsorted", "--stdin", "--format=%x00%H%x1f%an%x1f%ae%x1f%aI%x1f%(trailers:only,unfold,separator=%x1e)%x1f%B"], `${shas.join("\n")}\n`);
@@ -462,7 +472,7 @@ function commitDetails(top: string, shas: string[]): Map<string, IntentCommit> {
 }
 
 /** The commit reachable from `rev` that last added `path` (from the repository root), or null. */
-function addingCommit(top: string, rev: string, path: string): string | null {
+export function addingCommit(top: string, rev: string, path: string): string | null {
   const out = tryGit(top, ["log", "--diff-filter=A", "-1", "--format=%H", rev, "--", path]);
   return out?.trim() || null;
 }
@@ -473,7 +483,7 @@ function addingCommit(top: string, rev: string, path: string): string | null {
  * `rev` (#2683). A record added in a closed state closes in the commit that
  * added it.
  */
-function closingCommit(top: string, rev: string, path: string, stateField: string, closed: readonly string[]): string | null {
+export function closingCommit(top: string, rev: string, path: string, stateField: string, closed: readonly string[]): string | null {
   const out = tryGit(top, ["log", "--format=%H", rev, "--", path]);
   let closing: string | null = null;
   for (const sha of (out ?? "").split("\n").map((l) => l.trim()).filter(Boolean)) {
@@ -486,8 +496,13 @@ function closingCommit(top: string, rev: string, path: string, stateField: strin
   return closing;
 }
 
+/** The commit a decision record's window opens at: the one that decided it, or, when it is not approved, the one that added it. */
+export function windowOpening(top: string, rev: string, view: Pick<RecordView, "path" | "decidedIn">): string | null {
+  return view.decidedIn?.sha ?? addingCommit(top, rev, view.path);
+}
+
 /** `commit` and every commit between it and `rev` that has it as an ancestor. */
-function descendants(top: string, commit: string, rev: string): Set<string> {
+export function descendants(top: string, commit: string, rev: string): Set<string> {
   const out = new Set<string>([commit]);
   const text = tryGit(top, ["rev-list", "--ancestry-path", `${commit}..${rev}`]);
   for (const line of (text ?? "").split("\n")) if (line.trim()) out.add(line.trim());
@@ -592,7 +607,7 @@ async function resolveNodeFromGraph(cwd: string, at: string | undefined, member:
 
 // ── The walk ─────────────────────────────────────────────────────────────────
 
-interface LoadedKind {
+export interface LoadedKind {
   file: string;
   /** Relative to the repository root, for the document. */
   display: string;
@@ -602,7 +617,7 @@ interface LoadedKind {
   joins?: CommitJoins;
 }
 
-async function loadKinds(query: IntentQuery, top: string): Promise<LoadedKind[]> {
+export async function loadKinds(query: IntentQuery, top: string): Promise<LoadedKind[]> {
   const out: LoadedKind[] = [];
   for (const k of query.kinds ?? []) {
     const file = resolve(query.cwd, k);
@@ -822,6 +837,7 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
       provenance: { level: v.provenance.level, commit: v.provenance.commit, reason: v.provenance.reason },
       decided_by: stringOr(v.data?.decided_by),
       decided_on: stringOr(v.data?.decided_on),
+      decidedIn: v.decidedIn ?? null,
       reviews: reviewSummary(v.data),
       supersededBy: v.supersededBy,
       supersedes,
@@ -988,14 +1004,15 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
   }
 
   // Which decisions covered the region at each commit's time: from the commit
-  // that added the record until the commit that added the record superseding it.
+  // that decided the record, or added it when it is not approved, until the
+  // commit that opened the window of the record superseding it.
   const windows = new Map<string, { from: Set<string>; until: Set<string> | null }>();
   if (rev) {
     for (const c of covering) {
-      const added = addingCommit(top, rev, c.view.path);
+      const opened = windowOpening(top, rev, c.view);
       const successor = c.view.supersededBy ? decisionById.get(`${c.node.recordKind}/${c.view.supersededBy}`) : undefined;
-      const replaced = successor ? addingCommit(top, rev, successor.view.path) : null;
-      windows.set(c.node.id, { from: added ? descendants(top, added, rev) : new Set(), until: replaced ? descendants(top, replaced, rev) : null });
+      const replaced = successor ? windowOpening(top, rev, successor.view) : null;
+      windows.set(c.node.id, { from: opened ? descendants(top, opened, rev) : new Set(), until: replaced ? descendants(top, replaced, rev) : null });
     }
   }
   // Work items (#2683): the records of each work kind whose constrains cover
