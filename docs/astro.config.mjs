@@ -59,6 +59,7 @@ export default defineConfig({
 					items: [
 						{ label: 'Quick Start', slug: 'getting-started/quick-start' },
 						{ label: 'Alert Triage (local)', slug: 'tutorials/alert-triage-local' },
+						{ label: 'Agent Observability on k3d', slug: 'tutorials/agent-observability' },
 						{ label: 'Carve out of Terraform', slug: 'tutorials/terraform-carve-out' },
 						{ label: 'Run Ops on a Fountain Steward', slug: 'tutorials/fountain-steward' },
 						{

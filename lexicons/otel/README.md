@@ -25,6 +25,10 @@ export { otlp, batch, backend, traces };
 
 The config types follow the collector-contrib release in `COLLECTOR_PIN`.
 
+Sampling and routing: `tail_sampling` takes its policies as a discriminated union (`status_code`, `latency`, `probabilistic`, `and`, `composite` and the rest), and `loadbalancing` takes a `static`, `dns`, `k8s` or `aws_cloud_map` resolver. Content handling: `filter`, `transform` (OTTL statement groups per context) and `redaction`. Cluster metrics: `k8s_cluster` and `kubeletstats`.
+
+To run a config on Kubernetes, pass the same entities to the k8s lexicon's `OtelCollector` (a DaemonSet agent) or `OtelCollectorGateway` (a Deployment), and wire agents to a gateway with `gatewayExporter()`. [`examples/agent-observability`](../../examples/agent-observability) puts an agent, a sampled gateway with span and GenAI metrics, an SLO and Grafana dashboards together on k3d.
+
 ## Connectors
 
 A connector joins two pipelines: it is an exporter in the pipeline that feeds it and a receiver in the pipeline it feeds. Put the same entity on both sides.
