@@ -83,7 +83,7 @@ dist/grafana/
     └── datasources/chant.yaml               the Prometheus datasource
 ```
 
-`chant build` also runs GRAF101 to GRAF107 on the output. A query pointing at a datasource nobody declared, a `$variable` the dashboard doesn't have, overlapping panels, or a key Grafana's dashboard schema doesn't allow fails here instead of in Grafana.
+`chant build` also runs GRAF101 to GRAF107 on the output. A query pointing at a datasource nobody declared, a `$variable` the dashboard doesn't have, overlapping panels, or a value Grafana's dashboard schema doesn't allow fails here instead of in Grafana. A key the schema doesn't know is a warning.
 
 ## 6. Load it into Grafana
 

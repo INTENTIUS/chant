@@ -197,17 +197,17 @@ describe("GRAF106: uids and titles", () => {
 });
 
 describe("GRAF107: the pinned schema", () => {
-  test("flags an unknown dashboard key, a bad panel option and an unknown query field", () => {
+  test("warns about an unknown dashboard key and query field, and fails a bad panel option", () => {
     const dash = dashboardJson(
       [panelJson({ options: { graphMode: "sparkline" }, datasource: { type: "prometheus", uid: "p" }, targets: [{ refId: "A", expr: "up", exprr: "typo" }] })],
       [],
       { owner: "team-a" },
     );
-    const messages = graf107.check(ctxOfJson(dash)).map((d) => d.message);
-    expect(messages).toEqual([
-      expect.stringContaining('must NOT have additional properties ("owner")'),
-      expect.stringContaining("/panels/0/options/graphMode: must be equal to one of the allowed values"),
-      expect.stringContaining('/panels/0/targets/0: must NOT have additional properties ("exprr")'),
+    const diags = graf107.check(ctxOfJson(dash)).map((d) => [d.severity, d.message]);
+    expect(diags).toEqual([
+      ["warning", expect.stringContaining('/: unknown key "owner" (not in the pinned schema)')],
+      ["error", expect.stringContaining("/panels/0/options/graphMode: must be equal to one of the allowed values")],
+      ["warning", expect.stringContaining('/panels/0/targets/0: unknown key "exprr" (not in the pinned schema)')],
     ]);
   });
 

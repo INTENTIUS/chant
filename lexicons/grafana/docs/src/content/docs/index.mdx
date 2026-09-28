@@ -25,7 +25,8 @@ export const overview = new Dashboard({ title: "Overview", panels: [requests] })
 Panels: time series, stat, gauge, table, logs, traces, heatmap and text, plus
 rows. Queries: Prometheus (PromQL), Tempo (TraceQL) and Loki (LogQL). Panel
 options and query fields are generated from Grafana's own schemas at a pinned
-version, and every build validates the dashboards against the same schemas.
+version, corrected against Grafana's CUE, and track Grafana 12.4 and 13.x. Every
+build validates the dashboards against the same schemas.
 `definePanel` and `defineQuery` add plugins chant doesn't ship.
 
 Three composites build whole dashboards from declarations in other lexicons:
@@ -51,7 +52,7 @@ and anything Grafana's dashboard schema rejects (GRAF107).
 | Pseudo-parameters | 0 |
 | Lint rules | 9 |
 
-**Lexicon version:** 0.95.1  
+**Lexicon version:** 0.97.0  
 **Namespace:** `Grafana`
 
 - [All Rules](./rules) — 9 rules

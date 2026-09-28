@@ -5,12 +5,19 @@
  * kinds. `grafana/grafana-foundation-sdk` runs them through cog and
  * publishes, beside its builder libraries, one JSON Schema per kind under
  * `jsonschema/`. This lexicon vendors the files it uses into `src/spec/schemas/`
- * (exact bytes, at the commit below) and generates `src/schema/*.gen.ts`
- * from them. Nothing is fetched at build or test time.
+ * (exact bytes, at the commit below), applies the correction overlay in
+ * `src/spec/overlay/` (see `src/spec/overlay.ts`), and generates
+ * `src/schema/*.gen.ts` from the result. Nothing is fetched at build or test
+ * time.
+ *
+ * The types track Grafana 12.4 and 13.x: v0.0.20 is labelled with the
+ * v11.6.x kind registry, but its dashboard schema largely matches those
+ * releases, and the overlay covers the rest.
  *
  * Bumping the pin: change `ref` and `commit`, run `just fetch-schemas`
  * (downloads and prints the new digests), paste the digests here, run
- * `npm run generate`, and review the diff of `src/schema/`.
+ * `npm run generate` (it refuses overlay patches the new schemas already
+ * carry; delete those), and review the diff of `src/schema/`.
  */
 
 export interface GrafanaSchemaPin {
@@ -20,7 +27,10 @@ export interface GrafanaSchemaPin {
   ref: string;
   /** The exact commit the vendored files were taken from. */
   commit: string;
-  /** The Grafana kind registry version cog generated the schemas from. */
+  /**
+   * The kind registry label the SDK publishes the schemas under. It lags the
+   * content: the v0.0.20 schemas are labelled v11.6.x and cover 12.4 and 13.x.
+   */
   kindRegistry: string;
   /** sha256 of each vendored file, keyed by schema name (`src/spec/schemas/<name>.jsonschema.json`). */
   files: Readonly<Record<SchemaName, string>>;

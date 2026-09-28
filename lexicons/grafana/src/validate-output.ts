@@ -344,13 +344,18 @@ export function checkIdentity(a: GrafanaArtifacts): GrafanaIssue[] {
 
 // ── GRAF107: the pinned schemas ─────────────────────────────────
 
+/**
+ * A value the pinned schemas (with the correction overlay) do not allow is
+ * an error; a key they do not know is a warning, since newer Grafana
+ * versions add keys the pin has not caught up with.
+ */
 export function checkSchema(a: GrafanaArtifacts): GrafanaIssue[] {
   const issues: GrafanaIssue[] = [];
   for (const { json: d } of a.dashboards) {
     for (const p of validateDashboardSchema(d)) {
       issues.push({
         code: "GRAF107",
-        severity: "error",
+        severity: p.severity,
         message: `${dashName(d)} ${p.path}: ${p.message} (Grafana schema).`,
         entity: String(d.uid ?? ""),
       });

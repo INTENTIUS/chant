@@ -1,0 +1,14 @@
+{
+  "$comment": "Corrections to the vendored timeseries.jsonschema.json (foundation-sdk v0.0.20). Sources are Grafana's CUE at the tag in `grafana`. See src/spec/overlay.ts.",
+  "schema": "timeseries",
+  "grafana": "v13.2.2",
+  "patches": [
+    {
+      "op": "add",
+      "path": "/definitions/GraphFieldConfig/properties/showValues",
+      "value": { "type": "boolean", "description": "Show point values on the graph." },
+      "source": "packages/grafana-schema/src/common/mudball.cue:257 (:242 at v12.4.0)",
+      "why": "In GraphFieldConfig since 12.4; Grafana writes it into every time series panel's fieldConfig.defaults.custom."
+    }
+  ]
+}

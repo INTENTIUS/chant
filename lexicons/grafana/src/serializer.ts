@@ -13,9 +13,9 @@
  * Mount `provisioning/` at `/etc/grafana/provisioning` and `dashboards/` at
  * the provider's path (`/var/lib/grafana/dashboards` by default).
  *
- * The primary output is a small JSON index of what was built. Grafana's
- * files have no metadata channel chant could use without changing what
- * Grafana imports, so no ownership marker is stamped.
+ * The primary output is a small JSON index of what was built. The dashboard
+ * JSON carries no ownership marker: Grafana keeps who manages a dashboard in
+ * the resource's metadata on its `dashboard.grafana.app` API, not in the JSON.
  */
 
 import type { Declarable } from "@intentius/chant/declarable";

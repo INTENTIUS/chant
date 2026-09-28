@@ -1,0 +1,371 @@
+{
+  "$comment": "Corrections to the vendored dashboard.jsonschema.json (foundation-sdk v0.0.20), applied before type generation and GRAF107. Each patch cites the line of Grafana's source it follows, at the tag in `grafana`; CUE paths are kinds/dashboard/dashboard_kind.cue unless the source says otherwise. See src/spec/overlay.ts and docs/pages/schema-pin.mdx.",
+  "schema": "dashboard",
+  "grafana": "v13.2.2",
+  "patches": [
+    {
+      "op": "replace",
+      "path": "/definitions/Dashboard/required",
+      "value": ["schemaVersion"],
+      "source": "kinds/dashboard/dashboard_kind.cue:77,86,95",
+      "why": "Only schemaVersion is required; templating and annotations are optional (`templating?`, `annotations?`)."
+    },
+    {
+      "op": "replace",
+      "path": "/definitions/Dashboard/properties/gnetId",
+      "value": {
+        "anyOf": [{ "type": "string" }, { "type": "integer" }, { "type": "null" }],
+        "description": "ID of a dashboard imported from the https://grafana.com/grafana/dashboards/ portal. A string in Grafana 12.4, an integer in 13.x; grafana.com downloads carry null."
+      },
+      "source": "kinds/dashboard/dashboard_kind.cue:36 (int64 at v13.2.2, string at v12.4.0)",
+      "why": "The pin says string only; 13.x says int64, and community dashboards write null."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/Dashboard/properties/__inputs",
+      "value": {
+        "type": "array",
+        "items": { "$ref": "#/definitions/ExportInput" },
+        "description": "Inputs the importer asks for (datasources, constants). Written by \"Export for sharing externally\"."
+      },
+      "source": "public/app/features/dashboard-scene/scene/export/exporters.ts:44-66; kinds/dashboard/dashboard_kind.cue:17 (spec is a plain struct, open)",
+      "why": "UI exports carry export metadata the foundation-sdk schema closes out."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/Dashboard/properties/__requires",
+      "value": {
+        "type": "array",
+        "items": { "$ref": "#/definitions/ExportRequirement" },
+        "description": "Plugins and the Grafana version the export needs. Written by \"Export for sharing externally\"."
+      },
+      "source": "public/app/features/dashboard-scene/scene/export/exporters.ts:53-66",
+      "why": "UI exports carry export metadata the foundation-sdk schema closes out."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/Dashboard/properties/__elements",
+      "value": {
+        "type": "object",
+        "additionalProperties": { "$ref": "#/definitions/LibraryElementExport" },
+        "description": "Library panels the export embeds, keyed by uid. Written by \"Export for sharing externally\"."
+      },
+      "source": "public/app/features/dashboard-scene/scene/export/exporters.ts:64,328",
+      "why": "UI exports carry export metadata the foundation-sdk schema closes out."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/ExportInput",
+      "value": {
+        "type": "object",
+        "additionalProperties": {},
+        "required": ["name", "type"],
+        "properties": {
+          "name": { "type": "string", "description": "Placeholder name, used as `${name}` in the dashboard." },
+          "label": { "type": "string" },
+          "description": { "type": "string" },
+          "type": { "type": "string", "description": "`datasource` or `constant`." },
+          "pluginId": { "type": "string" },
+          "pluginName": { "type": "string" },
+          "value": { "description": "The value a constant input carries." }
+        },
+        "description": "One entry of an export's `__inputs`."
+      },
+      "source": "public/app/features/dashboard-scene/scene/export/exporters.ts:44-51",
+      "why": "Definition for __inputs entries."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/ExportRequirement",
+      "value": {
+        "type": "object",
+        "additionalProperties": {},
+        "required": ["type", "id"],
+        "properties": {
+          "type": { "type": "string", "description": "`grafana`, `panel` or `datasource`." },
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "version": { "type": "string" }
+        },
+        "description": "One entry of an export's `__requires`."
+      },
+      "source": "public/app/features/dashboard-scene/scene/export/exporters.ts:53-60",
+      "why": "Definition for __requires entries."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/LibraryElementExport",
+      "value": {
+        "type": "object",
+        "additionalProperties": {},
+        "required": ["uid", "name", "model"],
+        "properties": {
+          "uid": { "type": "string" },
+          "name": { "type": "string" },
+          "kind": { "type": "integer" },
+          "model": { "type": "object", "additionalProperties": {}, "description": "The library panel's own panel JSON." }
+        },
+        "description": "One library panel embedded in an export's `__elements`."
+      },
+      "source": "public/app/features/dashboard-scene/scene/export/exporters.ts:328-336",
+      "why": "Definition for __elements entries."
+    },
+    {
+      "op": "remove",
+      "path": "/definitions/Panel/required",
+      "source": "kinds/dashboard/dashboard_kind.cue:623,701",
+      "why": "A library panel reference ({ id, gridPos, libraryPanel }) has no `type`; Grafana fills it from the library element. The anyOf below keeps one of the two required."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/Panel/anyOf",
+      "value": [{ "required": ["type"] }, { "required": ["libraryPanel"] }],
+      "source": "kinds/dashboard/dashboard_kind.cue:623,701",
+      "why": "A panel names its plugin `type` or references a library panel."
+    },
+    {
+      "op": "replace",
+      "path": "/definitions/Panel/properties/links/items",
+      "value": { "$ref": "#/definitions/PanelLink" },
+      "source": "kinds/dashboard/dashboard_kind.cue:650; packages/grafana-data/src/types/dataLink.ts:34-62",
+      "why": "The CUE says [...#DashboardLink], but Grafana's panel editor writes the DataLink subset ({ title, url, targetBlank }) and every UI export carries it. PanelLink keeps DashboardLink's fields with only `title` required."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/PanelLink",
+      "value": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title"],
+        "properties": {
+          "title": { "type": "string", "description": "Title to display with the link" },
+          "url": { "type": "string", "description": "Link URL. Supports variables, e.g. ${__url_time_range}." },
+          "targetBlank": { "type": "boolean", "description": "If true, the link will be opened in a new tab" },
+          "type": { "$ref": "#/definitions/DashboardLinkType" },
+          "icon": { "type": "string" },
+          "tooltip": { "type": "string" },
+          "tags": { "type": "array", "items": { "type": "string" } },
+          "asDropdown": { "type": "boolean" },
+          "includeVars": { "type": "boolean" },
+          "keepTime": { "type": "boolean" },
+          "placement": { "$ref": "#/definitions/DashboardLinkPlacement" },
+          "oneClick": { "type": "boolean" }
+        },
+        "description": "A panel link: the fields Grafana's panel link editor writes, plus DashboardLink's."
+      },
+      "source": "kinds/dashboard/dashboard_kind.cue:283-308; packages/grafana-data/src/types/dataLink.ts:34-62",
+      "why": "Definition for panel links."
+    },
+    {
+      "op": "replace",
+      "path": "/definitions/FieldConfig/properties/links",
+      "value": {
+        "type": "array",
+        "items": { "$ref": "#/definitions/DataLink" },
+        "description": "The behavior when clicking on a result"
+      },
+      "source": "kinds/dashboard/dashboard_kind.cue:821",
+      "why": "The CUE says `links?: [...]` (any items); the pin requires every DashboardLink field on data links."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/DataLink",
+      "value": {
+        "type": "object",
+        "additionalProperties": {},
+        "properties": {
+          "title": { "type": "string" },
+          "url": { "type": "string", "description": "Link URL. Supports data variables, e.g. ${__field.labels.pod}." },
+          "targetBlank": { "type": "boolean" },
+          "oneClick": { "type": "boolean" },
+          "internal": { "type": "object", "additionalProperties": {}, "description": "A query in another datasource (Explore link)." },
+          "origin": {}
+        },
+        "description": "A data link on a field. Open: the CUE leaves these items unconstrained."
+      },
+      "source": "kinds/dashboard/dashboard_kind.cue:821; packages/grafana-data/src/types/dataLink.ts:34-62",
+      "why": "Types field links as Grafana's DataLink while accepting anything, as the CUE does."
+    },
+    {
+      "op": "replace",
+      "path": "/definitions/DashboardLink/required",
+      "value": ["title", "type", "icon", "tooltip", "tags"],
+      "source": "kinds/dashboard/dashboard_kind.cue:285-305",
+      "why": "asDropdown, targetBlank, includeVars and keepTime carry CUE defaults (`bool | *false`), so a link may leave them out."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/DashboardLink/properties/origin",
+      "value": { "$ref": "#/definitions/ControlSourceRef", "description": "The source that registered the link (if any)" },
+      "source": "kinds/dashboard/dashboard_kind.cue:307",
+      "why": "New in Grafana 13."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/ControlSourceRef",
+      "value": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "group"],
+        "properties": {
+          "type": { "type": "string", "const": "datasource" },
+          "group": { "type": "string", "description": "The plugin type-id" }
+        }
+      },
+      "source": "kinds/dashboard/dashboard_kind.cue:861-867",
+      "why": "New in Grafana 13 (#DatasourceControlSourceRef)."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/MatcherScope",
+      "value": { "type": "string", "enum": ["series", "nested", "annotation", "exemplar"] },
+      "source": "kinds/dashboard/dashboard_kind.cue:743",
+      "why": "New in Grafana 13."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/MatcherConfig/properties/scope",
+      "value": { "$ref": "#/definitions/MatcherScope", "description": "If set, limits this matcher to fields of that type. If not set, \"series\" mode is used." },
+      "source": "kinds/dashboard/dashboard_kind.cue:750-751",
+      "why": "New in Grafana 13."
+    },
+    {
+      "op": "replace",
+      "path": "/definitions/MatcherConfig/properties/options",
+      "value": { "description": "The matcher options. This is specific to the matcher implementation: a field name for byName, a pattern for byRegexp, an object for byNames or byValue." },
+      "source": "kinds/dashboard/dashboard_kind.cue:753",
+      "why": "The CUE says `options?: _`; byName, byRegexp, byType and byFrameRefID take a string."
+    },
+    {
+      "op": "replace",
+      "path": "/definitions/DynamicConfigValue/properties/value",
+      "value": {},
+      "source": "kinds/dashboard/dashboard_kind.cue:758",
+      "why": "The CUE says `value?: _`; override values are strings, numbers, booleans and arrays as often as objects."
+    },
+    {
+      "op": "replace",
+      "path": "/definitions/DataTransformerConfig/properties/options",
+      "value": { "description": "Options to be passed to the transformer\nValid options depend on the transformer id" },
+      "source": "kinds/dashboard/dashboard_kind.cue:551",
+      "why": "The CUE says `options: _`."
+    },
+    {
+      "op": "replace",
+      "path": "/definitions/Threshold/required",
+      "value": ["color"],
+      "source": "kinds/dashboard/dashboard_kind.cue:442-444",
+      "why": "The base step's value is -Infinity, which JSON cannot hold; Grafana's exports leave `value` out of that step."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/Threshold/properties/valueExpr",
+      "value": { "type": "string", "description": "Optional dashboard-variable expression (e.g. `$myVar`) resolved at render time; `value` is the numeric fallback when the expression cannot be resolved to a single finite number." },
+      "source": "kinds/dashboard/dashboard_kind.cue:445-446",
+      "why": "New in Grafana 13."
+    },
+    {
+      "op": "replace",
+      "path": "/definitions/VariableModel/properties/query",
+      "value": {
+        "anyOf": [{ "type": "string" }, { "type": "object", "additionalProperties": {} }],
+        "description": "Query used to fetch values for a variable: a string, or the datasource's own query object (Prometheus writes { query, qryType, refId })."
+      },
+      "source": "kinds/dashboard/dashboard_kind.cue:199",
+      "why": "The CUE says `string | {...}`; the pin requires every value of the object to be an object."
+    },
+    {
+      "op": "replace",
+      "path": "/definitions/VariableModel/properties/current",
+      "value": {
+        "anyOf": [{ "$ref": "#/definitions/VariableOption" }, { "type": "object", "additionalProperties": false, "maxProperties": 0 }],
+        "description": "Shows current selected variable text/value on the dashboard. `{}` before the variable has been resolved."
+      },
+      "source": "kinds/dashboard/dashboard_kind.cue:203",
+      "why": "Grafana writes `current: {}` for a datasource or query variable nothing has been selected in yet."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/VariableModel/properties/enableGroupBy",
+      "value": { "type": "boolean", "default": false, "description": "Whether the group-by operator is enabled in the ad hoc filter combobox." },
+      "source": "kinds/dashboard/dashboard_kind.cue:208-209",
+      "why": "New in Grafana 13."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/VariableModel/properties/valuesFormat",
+      "value": { "type": "string", "enum": ["csv", "json"], "default": "csv", "description": "Whether a custom variable defines its values as CSV or JSON." },
+      "source": "kinds/dashboard/dashboard_kind.cue:223-224",
+      "why": "In the CUE since 12.4, missing from the pin."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/VariableModel/properties/regexApplyTo",
+      "value": { "type": "string", "enum": ["value", "text"], "description": "Whether regex applies to the variable value or its display text." },
+      "source": "kinds/dashboard/dashboard_kind.cue:225-226,258",
+      "why": "In the CUE since 12.4, missing from the pin."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/VariableModel/properties/filters",
+      "value": { "type": "array", "items": { "$ref": "#/definitions/AdHocFilter" }, "description": "Ad hoc variable: the filters currently applied." },
+      "source": "kinds/dashboard/dashboard_kind.cue:231 (`...`); packages/grafana-data/src/types/templateVars.ts:68-85",
+      "why": "The CUE VariableModel is open; these are the ad hoc variable fields Grafana writes."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/VariableModel/properties/baseFilters",
+      "value": { "type": "array", "items": { "$ref": "#/definitions/AdHocFilter" }, "description": "Ad hoc variable: filters always applied to the key lookup, not shown in the UI." },
+      "source": "kinds/dashboard/dashboard_kind.cue:231 (`...`); packages/grafana-data/src/types/templateVars.ts:72-75",
+      "why": "The CUE VariableModel is open; these are the ad hoc variable fields Grafana writes."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/VariableModel/properties/defaultKeys",
+      "value": { "type": "array", "items": { "type": "object", "additionalProperties": {} }, "description": "Ad hoc variable: static keys that override the datasource's." },
+      "source": "kinds/dashboard/dashboard_kind.cue:231 (`...`); packages/grafana-data/src/types/templateVars.ts:76-79",
+      "why": "The CUE VariableModel is open; these are the ad hoc variable fields Grafana writes."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/VariableModel/properties/defaultValue",
+      "value": { "$ref": "#/definitions/VariableOption", "description": "Group-by variable: the default selection." },
+      "source": "kinds/dashboard/dashboard_kind.cue:231 (`...`); packages/grafana-data/src/types/templateVars.ts:87-93",
+      "why": "The CUE VariableModel is open; this is the group-by variable field Grafana writes."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/AdHocFilter",
+      "value": {
+        "type": "object",
+        "additionalProperties": {},
+        "required": ["key", "operator"],
+        "properties": {
+          "key": { "type": "string" },
+          "operator": { "type": "string", "description": "=, !=, =~, !~, <, >, =| or !=|" },
+          "value": { "type": "string" },
+          "values": { "type": "array", "items": { "type": "string" } },
+          "origin": { "type": "string" },
+          "condition": { "type": "string", "deprecated": true }
+        },
+        "description": "One ad hoc filter."
+      },
+      "source": "packages/grafana-data/src/types/templateVars.ts:58-66",
+      "why": "Definition for ad hoc filters."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/VariableOption/properties/properties",
+      "value": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Additional properties for multi-props variables" },
+      "source": "kinds/dashboard/dashboard_kind.cue:242-243",
+      "why": "New in Grafana 13."
+    },
+    {
+      "op": "replace",
+      "path": "/definitions/AnnotationQuery/additionalProperties",
+      "value": {},
+      "source": "kinds/dashboard/dashboard_kind.cue:179-181",
+      "why": "The CUE AnnotationQuery is open (`...`): datasources spread their own query fields into it."
+    }
+  ]
+}
