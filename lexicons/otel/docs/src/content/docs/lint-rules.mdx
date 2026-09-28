@@ -27,7 +27,7 @@ The otel lexicon's rules use the `OTEL` prefix. `OTEL0xx` rules read your TypeSc
 
 ## OTEL002 and credentials
 
-The collector expands `${env:NAME}` and `${file:/path}` when it loads its config, so a credential never needs to be in the declaration. Any value containing `${` is treated as such a reference, and keys ending in `_file` are paths, not secrets.
+The collector expands `${env:NAME}` and `${file:/path}` when it loads its config, so a credential never needs to be in the declaration. Any value containing `${` is treated as such a reference, and keys ending in `_file` are paths, not secrets. The check follows a setting lifted into a named `const` in the same file, the shape COR001 asks for and `chant import` writes, and looks inside lists, such as a Prometheus scrape job's `basic_auth`.
 
 ## OTEL101, OTEL112 and connectors
 

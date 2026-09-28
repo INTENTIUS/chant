@@ -78,6 +78,17 @@ It deletes prompt, completion, system-instruction and tool-call content from spa
 - Every pipeline needs at least one receiver and one exporter (OTEL102). A declared component no pipeline uses is a warning (OTEL103).
 - Declared extensions are enabled in declaration order unless a `Service` lists `extensions` itself.
 
+## Starting from an existing config
+
+When the user already has a collector config file, import it rather than retyping it:
+
+```bash
+chant import otel-collector-config.yaml --output src
+chant build src --lexicon otel -o collector.yaml   # the same config back
+```
+
+The importer writes `receivers.ts`, `processors.ts`, `exporters.ts`, `connectors.ts`, `extensions.ts`, `pipelines.ts`, and `service.ts` when extensions or telemetry need a `Service`. A component type with no built-in class lands in `custom-components.ts` as a `defineComponent` whose config is untyped data; offer to give it a config interface. Settings outside a built-in's config type still import and build, but `tsc` flags them. Read the warnings `chant import` prints: they name anything the lexicon has no place for.
+
 ## Reading the result
 
 `collectorTopologyOf(entities)` returns the pipelines, each component's endpoints and schema pin, for each exporter the signals it carries, the connector `edges` between pipelines, and under `semconv` the semantic-conventions version (`GENAI_SEMCONV_PIN`) the config's `gen_ai.` keys follow, as plain data.
