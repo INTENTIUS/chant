@@ -109,6 +109,7 @@ function routeConfig(route: RouteEntity | RouteProps): RouteConfig {
   if (p.repeat_interval !== undefined) out.repeat_interval = p.repeat_interval;
   if (p.mute_time_intervals !== undefined) out.mute_time_intervals = p.mute_time_intervals.map(intervalName);
   if (p.active_time_intervals !== undefined) out.active_time_intervals = p.active_time_intervals.map(intervalName);
+  if (p.labels !== undefined) out.labels = { ...p.labels };
   if (p.routes !== undefined) out.routes = p.routes.map(routeConfig);
   return out;
 }
@@ -177,6 +178,7 @@ export function buildAlertmanagerConfig(entities: Iterable<Declarable> | Map<str
   intervals.sort((a, b) => byName(a.props.name, b.props.name));
   if (receivers.length > 0) config.receivers = receivers.map((r) => plain(r.props) as ReceiverConfig);
   if (intervals.length > 0) config.time_intervals = intervals.map((t) => plain(t.props) as TimeIntervalConfig);
+  if (settings?.props.tracing) config.tracing = plain(settings.props.tracing) as AlertmanagerConfig["tracing"];
 
   return { config, warnings, count };
 }

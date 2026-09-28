@@ -15,6 +15,17 @@ The prometheus lexicon (`@intentius/chant-lexicon-prometheus`) types Prometheus 
 export default { lexicons: ["prometheus"] };
 ```
 
+## Starting from an existing rule file
+
+When the user already has a rule file, import it rather than retyping it:
+
+```bash
+chant import rules.yml --output src          # add --lexicon prometheus outside a chant project
+chant build src --lexicon prometheus -o rules.yml   # the same groups back
+```
+
+The importer writes `rules.ts` (per group, a `Rule[]` const of plain objects and a `RuleGroup`) and `slos.ts` for any group an `Slo()` built, as the `Slo` call. Multi-line expressions become template literals and Go templates in annotations stay as written. Read the warnings `chant import` prints: they name any field Prometheus doesn't define, which is not carried.
+
 ## Declaring a group
 
 A group takes the rule file's own keys (`name`, `interval`, `query_offset`, `limit`, `labels`, `rules`). Rules are plain objects: `record` + `expr` for a recording rule, `alert` + `expr` (+ `for`, `keep_firing_for`, `labels`, `annotations`) for an alerting rule.

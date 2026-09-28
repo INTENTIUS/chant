@@ -15,7 +15,7 @@ The prometheus lexicon serializes two files:
 - **`alertmanager.yml`**, from the `AlertmanagerSettings`, `Route`,
   `InhibitRule`, `Receiver` and `TimeInterval` entities, in that section
   order: `global`, `templates`, `route`, `inhibit_rules`, `receivers`,
-  `time_intervals`.
+  `time_intervals`, `tracing`.
 
 The rule file is the primary output when the build declares any rule
 groups, and `alertmanager.yml` is written beside it (`-o dist/rules.yml`
