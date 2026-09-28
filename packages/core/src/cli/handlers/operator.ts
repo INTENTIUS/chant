@@ -216,7 +216,12 @@ export async function runOperator(ctx: CommandContext): Promise<number> {
     });
     return 0;
   } finally {
-    process.removeListener("SIGINT", onSigint);
+    // Only when no signal started this shutdown. After one did, the process
+    // exits right after this returns, and removing the listener would put
+    // SIGINT back to its default disposition for that last stretch: a repeat
+    // signal arriving there ends the process by signal instead of the exit
+    // code (see the steward's `finally` below).
+    if (!stopping) process.removeListener("SIGINT", onSigint);
   }
 }
 
@@ -347,8 +352,17 @@ export async function runStewardOperator(ctx: CommandContext): Promise<number> {
     // A courtesy: the lease expires on its own if this never runs.
     const { record } = await readLease(stewardLeaseName(steward.name)).catch(() => ({ record: undefined }));
     if (record?.holder === holder) await releaseLease(stewardLeaseName(steward.name), holder, record.token).catch(() => false);
-    process.removeListener("SIGINT", onSigint);
-    process.removeListener("SIGTERM", onSigint);
+    // Removed only when no signal started this shutdown. After one did, the
+    // CLI goes on to `flushAndExit` (../main.ts) and `process.exit`, and
+    // removing the last SIGTERM listener hands the signal back to its
+    // default disposition for that stretch: a repeat SIGTERM arriving there
+    // ended the process by signal (exit code null) with the lease already
+    // released. That was the operator-steward-signal e2e test's intermittent
+    // failure; a SIGTERM every 2ms after the first hit it 8 runs of 8.
+    if (!stopping) {
+      process.removeListener("SIGINT", onSigint);
+      process.removeListener("SIGTERM", onSigint);
+    }
   }
 }
 
