@@ -45,7 +45,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 describe("chant operator --steward — a repeated SIGTERM (#2872)", () => {
-  test("a second and third SIGTERM sent in quick succession still release the steward's lease", async () => {
+  test("repeated SIGTERMs sent in quick succession still release the steward's lease and exit 0", async () => {
     const dir = repo(
       {
         "chant.config.ts": "export default { lexicons: [] };\n",
@@ -77,16 +77,24 @@ describe("chant operator --steward — a repeated SIGTERM (#2872)", () => {
       await sleep(50);
     }
 
-    // Three SIGTERMs, each given a moment to actually reach the child's event
-    // loop before the next: with `process.once`, the first one's auto-removal
-    // happens the instant it fires, so the second (or third) finds no
-    // listener left and the process exits right there, skipping the
-    // `finally` that releases the lease.
-    child.kill("SIGTERM");
-    await sleep(30);
-    child.kill("SIGTERM");
-    await sleep(30);
-    child.kill("SIGTERM");
+    // A SIGTERM, then more every few ms until the child is gone, each given
+    // a moment to reach the child's event loop before the next. With
+    // `process.once`, the first one's auto-removal happens the instant it
+    // fires, so the second finds no listener left and the process exits
+    // right there, skipping the `finally` that releases the lease. Firing
+    // until the child closes (not a fixed three) also covers the stretch
+    // after that `finally`, up to `process.exit`: when the handler removed
+    // its listeners there, a SIGTERM arriving in that stretch ended the
+    // process by signal (exit code null) though the lease was released. With
+    // three signals 30ms apart that failed CI now and then (runs
+    // 36357297831, 36358285603, 36368551353); signalling to the end hit it
+    // every time.
+    let closed = false;
+    child.on("close", () => (closed = true));
+    for (let sent = 0; !closed && sent < 1000; sent++) {
+      child.kill("SIGTERM");
+      await sleep(5);
+    }
 
     const code = await exited;
     expect(code, `chant operator --steward did not exit cleanly; stderr:\n${stderr}`).toBe(0);
