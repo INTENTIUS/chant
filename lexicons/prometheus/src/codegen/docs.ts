@@ -47,6 +47,10 @@ group names (PROM101), valid durations (PROM103), routes that name
 declared receivers (PROM201), and every alert severity routed by some route
 (PROM202). \`promtool check rules\` and \`amtool check-config\` are wrapped as
 helpers for tests and CI, and run when installed.
+
+\`chant import\` turns an existing rule file or \`alertmanager.yml\` into this
+TypeScript, and \`chant build\` on the result gives the file back (see
+Importing Rule Files and alertmanager.yml).
 `;
 
 const outputFormat = `The prometheus lexicon serializes two files:
@@ -58,7 +62,7 @@ const outputFormat = `The prometheus lexicon serializes two files:
 - **\`alertmanager.yml\`**, from the \`AlertmanagerSettings\`, \`Route\`,
   \`InhibitRule\`, \`Receiver\` and \`TimeInterval\` entities, in that section
   order: \`global\`, \`templates\`, \`route\`, \`inhibit_rules\`, \`receivers\`,
-  \`time_intervals\`.
+  \`time_intervals\`, \`tracing\`.
 
 The rule file is the primary output when the build declares any rule
 groups, and \`alertmanager.yml\` is written beside it (\`-o dist/rules.yml\`

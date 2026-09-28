@@ -1,6 +1,6 @@
 import * as ts from "typescript";
 import type { LintRule, LintDiagnostic, LintContext } from "@intentius/chant/lint/rule";
-import { calleeName, CREDENTIAL_CLASS, literalText, position, propertyName } from "./prom-ast";
+import { calleeName, constInitializers, CREDENTIAL_CLASS, literalText, position, propertyName, resolveConst } from "./prom-ast";
 
 /**
  * Alertmanager fields that hold a secret, each with a `*_file` sibling that
@@ -41,13 +41,18 @@ export const literalCredentialRule: LintRule = {
     const diagnostics: LintDiagnostic[] = [];
     const source = context.sourceFile;
 
-    const scanValue = (key: string | undefined, init: ts.Expression) => {
-      if (ts.isObjectLiteralExpression(init)) {
-        scan(init);
-        return;
-      }
-      if (ts.isArrayLiteralExpression(init)) {
-        for (const el of init.elements) if (ts.isObjectLiteralExpression(el)) scan(el);
+    const consts = constInitializers(source);
+    const scanned = new Set<ts.Node>();
+
+    // A value is followed to the const it names, so a list lifted out of the
+    // constructor (`email_configs: heartbeatEmail`) is scanned where it is used.
+    const scanValue = (key: string | undefined, value: ts.Expression) => {
+      const init = resolveConst(value, consts);
+      if (ts.isObjectLiteralExpression(init) || ts.isArrayLiteralExpression(init)) {
+        if (scanned.has(init)) return;
+        scanned.add(init);
+        if (ts.isObjectLiteralExpression(init)) scan(init);
+        else for (const el of init.elements) scanValue(undefined, el);
         return;
       }
       if (!key || !SECRET_FIELDS.has(key)) return;
@@ -64,8 +69,9 @@ export const literalCredentialRule: LintRule = {
 
     const scan = (obj: ts.ObjectLiteralExpression) => {
       for (const prop of obj.properties) {
-        if (!ts.isPropertyAssignment(prop)) continue;
-        scanValue(propertyName(prop), prop.initializer);
+        if (ts.isPropertyAssignment(prop)) scanValue(propertyName(prop), prop.initializer);
+        else if (ts.isShorthandPropertyAssignment(prop)) scanValue(prop.name.text, prop.name);
+        else if (ts.isSpreadAssignment(prop)) scanValue(undefined, prop.expression);
       }
     };
 
@@ -73,7 +79,7 @@ export const literalCredentialRule: LintRule = {
       if (ts.isNewExpression(node) || ts.isCallExpression(node)) {
         const name = calleeName(node);
         const arg = node.arguments?.[0];
-        if (name && CREDENTIAL_CLASS.test(name) && arg && ts.isObjectLiteralExpression(arg)) scan(arg);
+        if (name && CREDENTIAL_CLASS.test(name) && arg) scanValue(undefined, arg);
       }
       ts.forEachChild(node, visit);
     };

@@ -43,6 +43,10 @@ export default defineConfig({
                         {
                               "label": "Examples",
                               "slug": "examples"
+                        },
+                        {
+                              "label": "Importing Rule Files and alertmanager.yml",
+                              "slug": "importing"
                         }
                   ]
             },

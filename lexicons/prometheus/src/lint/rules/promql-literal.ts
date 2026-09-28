@@ -1,6 +1,6 @@
 import * as ts from "typescript";
 import type { LintRule, LintDiagnostic, LintContext } from "@intentius/chant/lint/rule";
-import { calleeName, literalText, position, propertyName } from "./prom-ast";
+import { calleeName, constInitializers, literalText, position, propertyName, resolveConst } from "./prom-ast";
 import { checkPromql } from "../../promql";
 
 /**
@@ -21,7 +21,21 @@ export const promqlLiteralRule: LintRule = {
     const diagnostics: LintDiagnostic[] = [];
     const source = context.sourceFile;
 
+    const consts = constInitializers(source);
+    const scanned = new Set<ts.Node>();
+
+    // Rules lifted into a const (`rules: apiRules`) are followed to it and
+    // checked where the group uses them.
+    const follow = (value: ts.Expression) => {
+      const init = resolveConst(value, consts);
+      if (init !== value && !scanned.has(init)) {
+        scanned.add(init);
+        scan(init);
+      }
+    };
     const scan = (node: ts.Node) => {
+      if (ts.isShorthandPropertyAssignment(node)) follow(node.name);
+      if (ts.isPropertyAssignment(node) && ts.isIdentifier(node.initializer)) follow(node.initializer);
       if (ts.isPropertyAssignment(node) && propertyName(node) === "expr") {
         const text = literalText(node.initializer);
         if (text !== undefined) {

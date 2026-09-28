@@ -180,6 +180,8 @@ export interface PagerDutyConfig extends NotifierBase {
 /** One entry under `receivers:`. */
 export interface ReceiverConfig {
   name: string;
+  /** Labels on the receiver, exposed to notification templates. */
+  labels?: LabelSet;
   webhook_configs?: WebhookConfig[];
   email_configs?: EmailConfig[];
   slack_configs?: SlackConfig[];
@@ -198,11 +200,18 @@ export interface RouteConfig {
   repeat_interval?: string;
   mute_time_intervals?: string[];
   active_time_intervals?: string[];
+  /**
+   * Labels on the route, inherited by child routes and exposed to
+   * notification templates as `routeLabels`. Values may be Go templates.
+   */
+  labels?: LabelSet;
   routes?: RouteConfig[];
 }
 
 /** One entry under `inhibit_rules:`. */
 export interface InhibitRuleConfig {
+  /** A name for the rule, shown in Alertmanager's logs and metrics. */
+  name?: string;
   source_matchers?: string[];
   target_matchers?: string[];
   /** Labels that must be equal on source and target for the inhibition to apply. */
@@ -254,6 +263,18 @@ export interface AlertmanagerGlobalConfig {
   http_config?: HttpClientConfig;
 }
 
+/** `tracing:` settings: where Alertmanager sends its own traces. */
+export interface AlertmanagerTracingConfig {
+  client_type?: "grpc" | "http";
+  endpoint?: string;
+  sampling_fraction?: number;
+  insecure?: boolean;
+  headers?: Record<string, string>;
+  compression?: string;
+  timeout?: string;
+  tls_config?: HttpClientConfig["tls_config"];
+}
+
 /** A whole `alertmanager.yml`, the file `amtool check-config` reads. */
 export interface AlertmanagerConfig {
   global?: AlertmanagerGlobalConfig;
@@ -262,6 +283,7 @@ export interface AlertmanagerConfig {
   inhibit_rules?: InhibitRuleConfig[];
   receivers?: ReceiverConfig[];
   time_intervals?: TimeIntervalConfig[];
+  tracing?: AlertmanagerTracingConfig;
 }
 
 /** The four receiver integrations this lexicon types. */

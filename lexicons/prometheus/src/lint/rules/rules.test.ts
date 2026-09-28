@@ -44,6 +44,22 @@ describe("PROM001 literal credential", () => {
     );
     expect(diags).toEqual([]);
   });
+
+  test("follows values lifted into named consts, shorthand props and spreads", () => {
+    const diags = literalCredentialRule.check(
+      ctx(`
+        const heartbeatEmail: EmailConfig[] = [{ to: "a@example.com", auth_password: "hunter2" }];
+        const heartbeat = new Receiver({ name: "heartbeat", email_configs: heartbeatEmail });
+        const oncallUntyped = { opsgenie_configs: [{ api_key: "x" }], pagerduty_configs: [{ service_key: "k" }] };
+        const oncall = new Receiver({ name: "oncall", ...oncallUntyped });
+        const global: AlertmanagerGlobalConfig = { smtp_auth_password: "p" };
+        const settings = new AlertmanagerSettings({ global });
+        const safe: PagerDutyConfig[] = [{ routing_key_file: "/etc/pd" }];
+        const pager = new Receiver({ name: "pager", pagerduty_configs: safe });
+      `),
+    );
+    expect(diags.map((d) => d.message.split("`")[1])).toEqual(["auth_password", "service_key", "smtp_auth_password"]);
+  });
 });
 
 describe("PROM002 PromQL literal", () => {
@@ -59,6 +75,18 @@ describe("PROM002 PromQL literal", () => {
     expect(diags).toHaveLength(1);
     expect(diags[0].ruleId).toBe("PROM002");
     expect(diags[0].line).toBe(3);
+  });
+
+  test("follows rules lifted into a named const", () => {
+    const diags = promqlLiteralRule.check(
+      ctx(`
+        const apiRules: Rule[] = [{ record: "a:b", expr: "sum(" }, { alert: "A", expr: "up == 0" }];
+        const api = new RuleGroup({ name: "api", rules: apiRules });
+        const rules: Rule[] = [{ record: "c:d", expr: "rate(x[5m]" }];
+        const other = new RuleGroup({ name: "other", rules });
+      `),
+    );
+    expect(diags.map((d) => d.line)).toEqual([2, 4]);
   });
 
   test("ignores built expressions and exprs outside a RuleGroup", () => {

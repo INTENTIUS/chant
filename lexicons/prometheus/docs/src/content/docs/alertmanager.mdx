@@ -20,6 +20,7 @@ The types follow Alertmanager `v0.34.1` (`PROMETHEUS_PIN.alertmanager`). Field n
 | `group_wait`, `group_interval`, `repeat_interval` | duration | Notification timing. |
 | `continue` | `boolean` | Keep matching sibling routes after this one matches. |
 | `mute_time_intervals`, `active_time_intervals` | `(TimeInterval \| string)[]` | When the route is muted, or the only times it is active. |
+| `labels` | `LabelSet` | Labels on the route, inherited by child routes and exposed to notification templates as `routeLabels`. Values may be Go templates. |
 | `routes` | `(Route \| RouteProps)[]` | Child routes, tried in order. |
 
 The root route is the one `Route` entity no other route lists in `routes`. Declaring two roots is a build warning, and the first is used.
@@ -31,6 +32,7 @@ A route that references a `Receiver` or `TimeInterval` entity pulls it into the 
 | Field | Integration |
 |---|---|
 | `name` | Unique (PROM203). |
+| `labels` | Labels exposed to notification templates. |
 | `webhook_configs` | `url` or `url_file`, `http_config`, `max_alerts`, `timeout`. |
 | `email_configs` | `to`, `from`, `smarthost`, `auth_username`, `auth_password_file`, `require_tls`, `headers`, `html`, `text`. |
 | `slack_configs` | `api_url_file` (or `api_url`), `channel`, `title`, `text`, `fields`, `actions`. |
@@ -44,7 +46,7 @@ Alertmanager does not expand environment variables in its config. Mount each sec
 
 ## `InhibitRule`
 
-`source_matchers`, `target_matchers` and `equal`: while an alert matching the source fires, alerts matching the target that agree on every `equal` label are muted.
+An optional `name`, then `source_matchers`, `target_matchers` and `equal`: while an alert matching the source fires, alerts matching the target that agree on every `equal` label are muted.
 
 ## `TimeInterval`
 
@@ -52,11 +54,11 @@ Alertmanager does not expand environment variables in its config. Mount each sec
 
 ## `AlertmanagerSettings`
 
-`global` (`resolve_timeout`, `smtp_*`, `slack_api_url_file`, `pagerduty_url`, `http_config`) and `templates`. Declare at most one.
+`global` (`resolve_timeout`, `smtp_*`, `slack_api_url_file`, `pagerduty_url`, `http_config`), `templates` and `tracing` (where Alertmanager sends its own traces). Declare at most one.
 
 ## Output
 
-`alertmanager.yml` sections come out in the order `global`, `templates`, `route`, `inhibit_rules`, `receivers`, `time_intervals`. Receivers and time intervals are sorted by name; routes keep the order they are written in, since Alertmanager tries them in order.
+`alertmanager.yml` sections come out in the order `global`, `templates`, `route`, `inhibit_rules`, `receivers`, `time_intervals`, `tracing`. Receivers and time intervals are sorted by name; routes keep the order they are written in, since Alertmanager tries them in order.
 
 | Function | Returns |
 |---|---|

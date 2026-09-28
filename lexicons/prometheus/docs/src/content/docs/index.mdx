@@ -41,6 +41,10 @@ declared receivers (PROM201), and every alert severity routed by some route
 (PROM202). `promtool check rules` and `amtool check-config` are wrapped as
 helpers for tests and CI, and run when installed.
 
+`chant import` turns an existing rule file or `alertmanager.yml` into this
+TypeScript, and `chant build` on the result gives the file back (see
+Importing Rule Files and alertmanager.yml).
+
 
 ## At a Glance
 
@@ -53,7 +57,7 @@ helpers for tests and CI, and run when installed.
 | Pseudo-parameters | 0 |
 | Lint rules | 19 |
 
-**Lexicon version:** 0.95.1  
+**Lexicon version:** 0.97.0  
 **Namespace:** `Prometheus`
 
 - [All Rules](./rules) — 19 rules

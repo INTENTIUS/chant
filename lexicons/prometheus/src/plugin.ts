@@ -9,6 +9,8 @@ import { prometheusAuditCatalog } from "./lint/audit-catalog";
 import { completions } from "./lsp/completions";
 import { hover } from "./lsp/hover";
 import { detectTemplate } from "./detect";
+import { PrometheusParser } from "./import/parser";
+import { PrometheusGenerator } from "./import/generator";
 import { initTemplates } from "./init-templates";
 import { prometheusSkills } from "./skill-defs";
 import { CATALOG } from "./catalog";
@@ -108,6 +110,14 @@ export const prometheusPlugin: LexiconPlugin = {
 
   detectTemplate(data: unknown) {
     return detectTemplate(data);
+  },
+
+  templateParser() {
+    return new PrometheusParser();
+  },
+
+  templateGenerator() {
+    return new PrometheusGenerator();
   },
 
   initTemplates(template?: string) {
