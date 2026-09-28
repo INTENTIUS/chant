@@ -1,6 +1,7 @@
 /**
- * Read the vendored Grafana schemas (`src/spec/schemas/*.jsonschema.json`) and check
- * them against the digests in `GRAFANA_SCHEMA_PIN`.
+ * Read the vendored Grafana schemas (`src/spec/schemas/*.jsonschema.json`), check
+ * them against the digests in `GRAFANA_SCHEMA_PIN`, and apply the correction
+ * overlay (`src/spec/overlay/`, see `./overlay.ts`) on top.
  */
 
 import { createHash } from "crypto";
@@ -8,6 +9,7 @@ import { readFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { GRAFANA_SCHEMA_PIN, SCHEMA_NAMES, type SchemaName } from "../pin";
+import { applyOverlay, loadOverlay } from "./overlay";
 
 /**
  * Where the vendored files live: beside this module, under `src/`, so they
@@ -32,13 +34,23 @@ export function readSchemaText(name: SchemaName): string {
   return readFileSync(schemaPath(name), "utf-8");
 }
 
+/** One vendored schema exactly as pinned, parsed, without the overlay. */
+export function loadVendoredSchema(name: SchemaName): Record<string, unknown> {
+  return JSON.parse(readSchemaText(name)) as Record<string, unknown>;
+}
+
 const parsed = new Map<SchemaName, Record<string, unknown>>();
 
-/** One vendored schema, parsed (cached per process). */
+/**
+ * One schema as the lexicon uses it: the vendored file with its overlay
+ * applied (cached per process). Types, GRAF107 and validation all read this.
+ */
 export function loadSchema(name: SchemaName): Record<string, unknown> {
   let schema = parsed.get(name);
   if (!schema) {
-    schema = JSON.parse(readSchemaText(name)) as Record<string, unknown>;
+    const vendored = loadVendoredSchema(name);
+    const overlay = loadOverlay(name);
+    schema = overlay ? applyOverlay(vendored, overlay) : vendored;
     parsed.set(name, schema);
   }
   return schema;

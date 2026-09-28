@@ -31,7 +31,8 @@ export const overview = new Dashboard({ title: "Overview", panels: [requests] })
 Panels: time series, stat, gauge, table, logs, traces, heatmap and text, plus
 rows. Queries: Prometheus (PromQL), Tempo (TraceQL) and Loki (LogQL). Panel
 options and query fields are generated from Grafana's own schemas at a pinned
-version, and every build validates the dashboards against the same schemas.
+version, corrected against Grafana's CUE, and track Grafana 12.4 and 13.x. Every
+build validates the dashboards against the same schemas.
 \`definePanel\` and \`defineQuery\` add plugins chant doesn't ship.
 
 Three composites build whole dashboards from declarations in other lexicons:
@@ -67,8 +68,9 @@ datasources and files that were built.
   referenced, and as its uid inside another datasource's \`jsonData\`.
 - \`chant build\` rewrites JSON files with sorted keys; Grafana does not care
   about key order.
-- Grafana's files have no metadata channel chant could use without changing
-  what Grafana imports, so no ownership marker is stamped.
+- The dashboard JSON carries no ownership marker. Grafana keeps who manages a
+  dashboard in the resource's metadata on its \`dashboard.grafana.app\` API,
+  not in the JSON.
 `;
 
 export async function generateDocs(opts?: { verbose?: boolean }): Promise<void> {

@@ -17,7 +17,7 @@ The grafana lexicon's rules use the `GRAF` prefix. `GRAF0xx` rules read your Typ
 | GRAF104 | error | duplicate dashboard uids, datasource uids or names, panel ids, variable names or refIds |
 | GRAF105 | error / warning | a panel outside the 24-column grid (error), two panels overlapping (warning) |
 | GRAF106 | error | a dashboard or datasource uid Grafana rejects, or a dashboard with no title |
-| GRAF107 | error | a dashboard that doesn't match the pinned Grafana schema |
+| GRAF107 | error / warning | a value the pinned Grafana schema doesn't allow (error), a key it doesn't know (warning) |
 
 ## GRAF001
 
@@ -55,4 +55,4 @@ Grafana refuses a dashboard or datasource uid outside 1-40 letters, digits, `-` 
 
 ## GRAF107
 
-The dashboard is validated against the dashboard schema at `GRAFANA_SCHEMA_PIN`. Each panel's `options` and `fieldConfig.defaults.custom`, and each Prometheus, Tempo or Loki query, are validated against their plugin's schema with required fields relaxed, since Grafana fills those in. The message names the JSON path and what the schema expected. See [Where the types come from](../schema-pin/).
+The dashboard is validated against the dashboard schema at `GRAFANA_SCHEMA_PIN`, with the correction overlay applied. Each panel's `options` and `fieldConfig.defaults.custom`, and each Prometheus, Tempo or Loki query, are validated against their plugin's schema with required fields relaxed, since Grafana fills those in. A value the schema doesn't allow (a wrong type, an enum value it doesn't list, a missing required field) is an error. A key the schema doesn't know is a warning: Grafana adds keys in every release, so an unknown key is more often a newer Grafana than a typo. The message names the JSON path and what the schema expected. Dashboards exported from Grafana 12.4 and 13.x pass, including the `__inputs`, `__requires` and `__elements` of an external export. See [Where the types come from](../schema-pin/).

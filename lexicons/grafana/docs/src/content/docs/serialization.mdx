@@ -27,6 +27,7 @@ datasources and files that were built.
   referenced, and as its uid inside another datasource's `jsonData`.
 - `chant build` rewrites JSON files with sorted keys; Grafana does not care
   about key order.
-- Grafana's files have no metadata channel chant could use without changing
-  what Grafana imports, so no ownership marker is stamped.
+- The dashboard JSON carries no ownership marker. Grafana keeps who manages a
+  dashboard in the resource's metadata on its `dashboard.grafana.app` API,
+  not in the JSON.
 

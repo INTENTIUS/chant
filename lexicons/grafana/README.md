@@ -25,7 +25,7 @@ export { prometheus, rate, requests, overview };
 | variables | `QueryVariable`, `CustomVariable`, `IntervalVariable`, `DatasourceVariable`, `ConstantVariable`, `TextboxVariable` |
 | datasources | `Datasource`, generic in its plugin type |
 
-Panel options, field config and query fields are generated from Grafana's JSON Schemas as published by `grafana/grafana-foundation-sdk`, vendored in `src/spec/schemas/` and pinned by commit and digest in `GRAFANA_SCHEMA_PIN`. `definePanel` and `defineQuery` add plugins chant doesn't ship.
+Panel options, field config and query fields are generated from Grafana's JSON Schemas as published by `grafana/grafana-foundation-sdk`, vendored in `src/spec/schemas/`, pinned by commit and digest in `GRAFANA_SCHEMA_PIN`, and corrected against Grafana's CUE by a checked-in overlay in `src/spec/overlay/`. They track Grafana 12.4 and 13.x. `definePanel` and `defineQuery` add plugins chant doesn't ship.
 
 ## Dashboards from other declarations
 
@@ -39,7 +39,7 @@ export const agents = AgentDashboard({ genAi: genAiMetrics(), datasource: promet
 
 ## Checks
 
-GRAF001 and GRAF002 run on source (uid and variable-name syntax, literal secrets). GRAF101 to GRAF107 run after a build: undeclared or mistyped datasources, undeclared variables, duplicate uids and ids, panels off the grid or overlapping, uids Grafana rejects, and validation against the pinned dashboard, panel and query schemas.
+GRAF001 and GRAF002 run on source (uid and variable-name syntax, literal secrets). GRAF101 to GRAF107 run after a build: undeclared or mistyped datasources, undeclared variables, duplicate uids and ids, panels off the grid or overlapping, uids Grafana rejects, and validation against the pinned dashboard, panel and query schemas (an unknown key is a warning).
 
 GRAF101 and GRAF102 compare dashboards with the datasources declared in the same build root (chant #1939); keep them together.
 
