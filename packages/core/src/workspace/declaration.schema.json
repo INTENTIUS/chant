@@ -592,13 +592,53 @@
     },
     "diagram": {
       "type": "object",
-      "description": "A diagram artifact the workspace declares (#2764): a rendered image with a source, pinned to the renderer that made it. chant never runs the renderer.",
+      "description": "A diagram artifact the workspace declares (#2764): a rendered image with a source, pinned to the renderer that made it. A mermaid or excalidraw diagram may name no render: a reader draws it from its source. chant never runs the renderer.",
       "required": [
         "name",
         "title",
-        "render",
         "renderer"
       ],
+      "if": {
+        "type": "object",
+        "properties": {
+          "renderer": {
+            "type": "object",
+            "properties": {
+              "tool": {
+                "enum": ["mermaid", "excalidraw"]
+              }
+            },
+            "required": [
+              "tool"
+            ]
+          }
+        },
+        "required": [
+          "renderer"
+        ]
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "$ref": "#/$defs/path"
+          }
+        },
+        "required": [
+          "source"
+        ]
+      },
+      "else": {
+        "type": "object",
+        "properties": {
+          "render": {
+            "$ref": "#/$defs/path"
+          }
+        },
+        "required": [
+          "render"
+        ]
+      },
       "properties": {
         "name": {
           "$ref": "#/$defs/name",
@@ -617,8 +657,11 @@
           "description": "The source file, from the workspace root, with / separators. Null for an SVG with no source. Default null."
         },
         "render": {
-          "$ref": "#/$defs/path",
-          "description": "The rendered image, from the workspace root, with / separators."
+          "oneOf": [
+            { "$ref": "#/$defs/path" },
+            { "type": "null" }
+          ],
+          "description": "The rendered image, from the workspace root, with / separators. Required for d2 and graphviz. A mermaid or excalidraw diagram needs a source instead and may leave render out or null, from chant 0.96.0: a reader such as hud draws it from the source (an excalidraw diagram may still commit an exported SVG for docs)."
         },
         "renderer": {
           "$ref": "#/$defs/diagramRenderer"
@@ -626,7 +669,7 @@
         "sourceHash": {
           "type": ["string", "null"],
           "pattern": "^[0-9a-f]{64}$",
-          "description": "sha256 hex of the source's bytes when render was last produced from it. chant workspace check compares this against the source in the tree read and reports drift (WSP133) on a mismatch; without it, or without a source, the render is never checked for drift. Default null."
+          "description": "sha256 hex of the source's bytes when render was last produced from it, or for a mermaid or excalidraw diagram without a render, when the source was last pinned. chant workspace check compares this against the source in the tree read and reports drift (WSP133) on a mismatch; without it, or without a source, the render is never checked for drift. Default null."
         }
       },
       "patternProperties": {
@@ -643,11 +686,11 @@
       ],
       "properties": {
         "tool": {
-          "enum": ["d2", "mermaid", "graphviz"]
+          "enum": ["d2", "mermaid", "graphviz", "excalidraw"]
         },
         "version": {
           "$ref": "#/$defs/version",
-          "description": "The exact release the render was made with, such as 0.9.0."
+          "description": "The exact release the render was made with, such as 0.9.0. For mermaid or excalidraw, the release of the library a reader draws the source with, such as 11.4.1."
         },
         "args": {
           "type": "array",

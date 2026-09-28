@@ -191,16 +191,36 @@ The declaration names the workspace's diagram artifacts, so hud and other reader
 | `name` | yes | The diagram's name, in the [name grammar](#names). Unique across the declaration. |
 | `title` | yes | Shown above the diagram. |
 | `source` | no | The source file, from the workspace root, with `/` separators. Null, the default, for an SVG with no source. |
-| `render` | yes | The rendered image, from the workspace root, with `/` separators. |
-| `renderer` | yes | The renderer the render was made with: `tool` (`d2`, `mermaid` or `graphviz`), `version` (the exact release, such as `"0.9.0"`) and `args`, the arguments passed before the input and output paths. |
-| `sourceHash` | no | sha256 hex of the source's bytes when the render was last produced from it. With it, `chant workspace check` fails ([`WSP133`](/chant/cli/workspace-check/#diagrams)) when the source's bytes now hash to something else: the render is stale for its source. Without it, or without a source, the render is never checked for drift. |
+| `render` | yes, except for `mermaid` and `excalidraw` | The rendered image, from the workspace root, with `/` separators. A `mermaid` or `excalidraw` diagram may leave it out or set it to null. |
+| `renderer` | yes | The renderer the render was made with: `tool` (`d2`, `mermaid`, `graphviz` or `excalidraw`), `version` (the exact release, such as `"0.9.0"`) and `args`, the arguments passed before the input and output paths. For `mermaid` and `excalidraw`, `version` is the release of the library the reader draws with, such as `"11.4.1"`. |
+| `sourceHash` | no | sha256 hex of the source's bytes when the render was last produced from it. With it, `chant workspace check` fails ([`WSP133`](/chant/cli/workspace-check/#diagrams)) when the source's bytes now hash to something else: the render is stale for its source. Without it, or without a source, the render is never checked for drift. For a `mermaid` or `excalidraw` diagram with no render, it pins the source itself. |
+
+`mermaid` and `excalidraw` diagrams are drawn by the reader. Each needs a `source` and may name no `render`: hud draws a `.mmd` source with the mermaid release `renderer.version` names, and opens an `.excalidraw` file (Excalidraw's JSON scene format) as an editable canvas. An `excalidraw` entry may still name an exported SVG for pages that can't draw the scene. For either tool, `sourceHash` pins the source itself. Declarations with a render-less entry need chant 0.96.0 or newer to read them, and should set `minReader` to match.
+
+```json
+{
+  "name": "request-flow",
+  "title": "Request flow",
+  "source": "docs/diagrams/request-flow.mmd",
+  "renderer": { "tool": "mermaid", "version": "11.4.1" }
+}
+```
+
+```json
+{
+  "name": "whiteboard",
+  "title": "Whiteboard",
+  "source": "docs/diagrams/whiteboard.excalidraw",
+  "renderer": { "tool": "excalidraw", "version": "0.18.0" }
+}
+```
 
 Unlike a [generated file](#generated-files) or a [record kind](#record-kinds), a diagram's `source` and `render` are workspace-root-relative wherever they are declared: a diagram's files need not sit inside the directory of the member that declares it.
 
 | Command | Uses the declared diagrams |
 |---|---|
 | [`chant workspace ls`](/chant/cli/workspace-ls/#output) | lists every one, flattened across the workspace and its members into one `diagrams` array, each with the member that declares it |
-| [`chant workspace check`](/chant/cli/workspace-check/#diagrams) | fails with `WSP131` when a named source doesn't exist, `WSP132` when the render doesn't exist, and, when the entry records a `sourceHash`, `WSP133` when the source's hash no longer matches it |
+| [`chant workspace check`](/chant/cli/workspace-check/#diagrams) | fails with `WSP131` when a named source doesn't exist, `WSP132` when a named render doesn't exist, and, when the entry records a `sourceHash`, `WSP133` when the source's hash no longer matches it |
 
 The example above sets `minReader` for that reason: without it, a chant older than 0.91.0 meets an unknown `diagrams` field and refuses the whole file, rather than naming the version gap with `reader-too-old`.
 

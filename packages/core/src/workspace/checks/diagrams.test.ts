@@ -123,6 +123,30 @@ describe("diagram-render-drift (WSP133)", () => {
     expect(d[0].message).toContain(`recorded sourceHash ${HASH.slice(0, 12)}`);
   });
 
+  test("a mermaid diagram with no render: WSP132 has nothing to check, and a recorded sourceHash pins the source", async () => {
+    const mermaid = (extra: Record<string, unknown> = {}) => ({ name: "flow", title: "Flow", source: "docs/diagrams/flow.mmd", renderer: { tool: "mermaid", version: "11.4.1" }, ...extra });
+    const pinned = repo({ "chant.workspace.json": declaration([mermaid({ sourceHash: HASH })]), "docs/diagrams/flow.mmd": SOURCE });
+    expect(await found(pinned)).toEqual([]);
+    const edited = repo({ "chant.workspace.json": declaration([mermaid({ sourceHash: HASH })]), "docs/diagrams/flow.mmd": "flowchart LR\n  a --> b\n" });
+    const d = await found(edited);
+    expect(d.map((x) => [x.ruleId, x.code])).toEqual([["WSP133", "diagram-render-drift"]]);
+    expect(d[0].message).toContain("source docs/diagrams/flow.mmd changed since its sourceHash was recorded");
+    expect(d[0].message).toMatch(/; update sourceHash$/);
+    const missing = repo({ "chant.workspace.json": declaration([mermaid()]), "docs/README.md": "" });
+    expect((await found(missing)).map((x) => x.ruleId)).toEqual(["WSP131"]);
+  });
+
+  test("an excalidraw diagram's sourceHash pins its JSON, and an exported SVG it names must exist", async () => {
+    const scene = JSON.stringify({ type: "excalidraw", version: 2, source: "hud", elements: [], appState: {}, files: {} });
+    const hash = sha256Hex(Buffer.from(scene, "utf-8"));
+    const sketch = (extra: Record<string, unknown> = {}) => ({ name: "sketch", title: "Sketch", source: "docs/diagrams/sketch.excalidraw", renderer: { tool: "excalidraw", version: "0.18.0" }, sourceHash: hash, ...extra });
+    expect(await found(repo({ "chant.workspace.json": declaration([sketch()]), "docs/diagrams/sketch.excalidraw": scene }))).toEqual([]);
+    const moved = await found(repo({ "chant.workspace.json": declaration([sketch()]), "docs/diagrams/sketch.excalidraw": scene.replace("[]", '[{"id":"a"}]') }));
+    expect(moved.map((x) => x.ruleId)).toEqual(["WSP133"]);
+    const noSvg = await found(repo({ "chant.workspace.json": declaration([sketch({ render: "docs/diagrams/sketch.svg" })]), "docs/diagrams/sketch.excalidraw": scene }));
+    expect(noSvg.map((x) => x.ruleId)).toEqual(["WSP132"]);
+  });
+
   test("a missing source is left to WSP131; WSP133 finds nothing to compare", async () => {
     const root = repo({
       "chant.workspace.json": declaration([diagram({ sourceHash: HASH })]),

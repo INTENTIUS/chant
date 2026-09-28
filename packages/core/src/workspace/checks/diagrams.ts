@@ -13,6 +13,11 @@
  * | WSP132 | `diagram-render-missing` | a diagram's render does not exist in the tree read |
  * | WSP133 | `diagram-render-drift` | a diagram records a `sourceHash`, and the source's bytes now hash to something else |
  *
+ * A mermaid or excalidraw diagram may name no render (a reader such as hud
+ * draws it from its source, with the pinned library): WSP132 then has nothing to
+ * check, and WSP133, when the entry records a sourceHash, pins the source
+ * itself, so an edit to it fails until the hash is updated.
+ *
  * WSP133 is opt-in per diagram: without a recorded `sourceHash` there is
  * nothing to compare, so the entry is silently not checked for drift. A
  * declaration records one by hashing the source when it commits a fresh
@@ -66,13 +71,13 @@ export const DIAGRAM_CHECKS: readonly WorkspaceCheck[] = [
   {
     id: WSP_DIAGRAM_RENDER_MISSING,
     name: "diagram-render-missing",
-    description: "A diagram's render exists in the tree read.",
+    description: "A diagram's render, when it names one, exists in the tree read. Only a mermaid or excalidraw diagram may name none.",
     severity: "error",
     configurable: true,
     check(ctx: WorkspaceCheckContext) {
       const out: WorkspaceDiagnostic[] = [];
       for (const d of declaredDiagrams(ctx.declaration)) {
-        if (ctx.tree.stat(d.render) === "file") continue;
+        if (d.render === null || ctx.tree.stat(d.render) === "file") continue;
         out.push(diagramFinding(this, d, "render", "diagram-render-missing", `${where(d)} diagram ${d.name} names the render ${d.render}, which does not exist${ctx.tree.label}`));
       }
       return out;
@@ -92,13 +97,15 @@ export const DIAGRAM_CHECKS: readonly WorkspaceCheck[] = [
         const bytes = ctx.tree.bytes ? ctx.tree.bytes(d.source) : Buffer.from(ctx.tree.read(d.source), "utf-8");
         const actual = sha256Hex(bytes);
         if (actual === d.sourceHash) continue;
+        const since = d.render === null ? "its sourceHash was recorded" : `${d.render} was rendered from it`;
+        const fix = d.render === null ? "update sourceHash" : "rerun the renderer and commit the result, or update sourceHash";
         out.push(
           diagramFinding(
             this,
             d,
             "sourceHash",
             "diagram-render-drift",
-            `${where(d)} diagram ${d.name}'s source ${d.source} changed since ${d.render} was rendered from it: recorded sourceHash ${d.sourceHash.slice(0, 12)} does not match the source's current hash ${actual.slice(0, 12)}${ctx.tree.label}; rerun the renderer and commit the result, or update sourceHash`,
+            `${where(d)} diagram ${d.name}'s source ${d.source} changed since ${since}: recorded sourceHash ${d.sourceHash.slice(0, 12)} does not match the source's current hash ${actual.slice(0, 12)}${ctx.tree.label}; ${fix}`,
           ),
         );
       }

@@ -1449,7 +1449,7 @@ rows:
     name: "diagram-render-missing"
     owner: "chant"
     carrier: "check.schema.json"
-    what: "A diagram's render exists in the tree read."
+    what: "A diagram's render, when it names one, exists in the tree read. Only a mermaid or excalidraw diagram may name none."
   - category: "wsp-check"
     concept: "WSP133"
     name: "diagram-render-drift"

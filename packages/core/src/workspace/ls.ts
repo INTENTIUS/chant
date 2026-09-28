@@ -122,8 +122,8 @@ export interface LsDiagram {
   title: string;
   /** From the workspace root, with / separators. Null for an SVG with no source. */
   source: string | null;
-  /** From the workspace root, with / separators. */
-  render: string;
+  /** From the workspace root, with / separators. Null for a mermaid or excalidraw diagram with no committed render: a reader draws it from its source. */
+  render: string | null;
   renderer: DiagramDeclaration["renderer"];
   /** The member that declares it, or null for the workspace's own. */
   member: string | null;
@@ -354,7 +354,7 @@ function formatLs(doc: Extract<LsDocument, { members: unknown }>): string {
   if (doc.diagrams.length > 0) {
     lines.push("");
     const rows = [["DIAGRAM", "MEMBER", "SOURCE", "RENDER", "RENDERER"]];
-    for (const d of doc.diagrams) rows.push([d.name, d.member ?? "(workspace)", d.source ?? "-", d.render, `${d.renderer.tool} ${d.renderer.version}`]);
+    for (const d of doc.diagrams) rows.push([d.name, d.member ?? "(workspace)", d.source ?? "-", d.render ?? "-", `${d.renderer.tool} ${d.renderer.version}`]);
     lines.push(...table(rows));
   }
   if (doc.groups.length > 0) {
