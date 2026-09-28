@@ -18,7 +18,7 @@ Every built-in follows the config of the collector-contrib release in `COLLECTOR
 | `K8sClusterReceiver` | `k8s_cluster` | `distribution` is `kubernetes` or `openshift` | none |
 | `KubeletStatsReceiver` | `kubeletstats` | `cert_file` and `key_file` when `auth_type` is `tls` (the default); `metric_groups` is not empty | `endpoint` |
 
-`k8s_cluster` reads the whole cluster from the Kubernetes API, so run one instance per cluster: a single-replica Deployment, or several replicas that share a `k8s_leader_elector` extension. In a per-node DaemonSet every node reports every object. `kubeletstats` reads the kubelet on its own node, so it belongs in the per-node agent, usually with `auth_type: "serviceAccount"` and `endpoint: "https://${env:K8S_NODE_NAME}:10250"`. The otel lexicon sees the collector config but not how it is deployed, so it does not flag `k8s_cluster` in a DaemonSet; that check comes with the deployment-shape lint planned in [chant#2899](https://github.com/INTENTIUS/chant/issues/2899).
+`k8s_cluster` reads the whole cluster from the Kubernetes API, so run one instance per cluster: a single-replica Deployment, or several replicas that share a `k8s_leader_elector` extension. In a per-node DaemonSet every node reports every object. `kubeletstats` reads the kubelet on its own node, so it belongs in the per-node agent, usually with `auth_type: "serviceAccount"` and `endpoint: "https://${env:K8S_NODE_NAME}:10250"`. The otel lexicon sees the collector config but not how it is deployed, so it does not flag `k8s_cluster` in a DaemonSet; the k8s lexicon's [WK8603](/chant/lexicons/k8s/otel-placement-checks/#wk8603-k8s_cluster-in-every-collector-copy) does, reading the config together with the workload that runs it.
 
 ## Processors
 

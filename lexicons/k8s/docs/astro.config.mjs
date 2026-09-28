@@ -83,6 +83,10 @@ export default defineConfig({
                               "slug": "argo-composites"
                         },
                         {
+                              "label": "Collector Placement Checks",
+                              "slug": "otel-placement-checks"
+                        },
+                        {
                               "label": "CRD-Generated Classes",
                               "slug": "crd-classes"
                         },
