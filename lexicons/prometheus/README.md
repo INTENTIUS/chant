@@ -26,13 +26,14 @@ export { api, oncall, fallback, root };
 | Class | File |
 |---|---|
 | `RuleGroup` | rule file |
+| `Slo` (composite) | rule file: SLI recording rules, error budget and multiwindow burn-rate alerts |
 | `Route`, `Receiver` (webhook, email, Slack, PagerDuty), `InhibitRule`, `TimeInterval`, `AlertmanagerSettings` | `alertmanager.yml` |
 
 Types follow Prometheus `v3.15.0` and Alertmanager `v0.34.1` (`PROMETHEUS_PIN`).
 
 ## Checks
 
-PROM001 and PROM002 run on source (literal credentials, PromQL syntax in literals). PROM101 to PROM107 run over the built rule file: unique group names, duplicate rules, durations, PromQL syntax, rule shape, severity labels and summaries. PROM201 to PROM209 run over `alertmanager.yml`: receivers and time intervals that exist, every alert severity routed (PROM202, one build root at a time), root route shape, matcher syntax, unused receivers, durations and integrations without a destination.
+PROM001 to PROM003 run on source (literal credentials, PromQL syntax in literals, `Slo` objective, window and SLI literals). PROM101 to PROM107 run over the built rule file: unique group names, duplicate rules, durations, PromQL syntax, rule shape, severity labels and summaries. PROM201 to PROM209 run over `alertmanager.yml`: receivers and time intervals that exist, every alert severity routed (PROM202, one build root at a time), root route shape, matcher syntax, unused receivers, durations and integrations without a destination.
 
 PromQL is parsed with `@prometheus-io/lezer-promql`, the Prometheus project's own grammar. `promtoolCheckRules` and `amtoolCheckConfig` run the upstream tools when they are installed.
 
@@ -41,14 +42,17 @@ PromQL is parsed with `@prometheus-io/lezer-promql`, the Prometheus project's ow
 - `ruleGroupConfig(group)`, `ruleFileYaml(entities)`, `alertmanagerYaml(entities)` render the files inside another lexicon. The k8s lexicon's `PrometheusRule` and `MonitoredService` take `RuleGroup`s through the first.
 - `validateRuleFile`, `validateAlertmanagerConfig`, `validateSeverityRouting` run the checks without a build.
 - `checkPromql`, `parseMatchers`, `isValidDuration` are the pieces underneath.
+- `sloMetrics(slo)` names the series an `Slo` records and its burn-rate thresholds, for dashboards.
 
 ## Project structure
 
 - `src/model.ts`: the plain-data shapes of both files
 - `src/rules.ts`: `RuleGroup`
 - `src/alertmanager.ts`: the Alertmanager entities
+- `src/composites/slo.ts`: `Slo` and `sloMetrics`
 - `src/build.ts`: entities to config to YAML
 - `src/promql.ts`, `src/matchers.ts`, `src/duration.ts`: parsing
 - `src/validate-config.ts`, `src/lint/`: checks
 - `src/tools.ts`: promtool and amtool
-- `examples/`: getting-started, alerting, rules-from-data, k3d-stack
+- `src/rule-eval.ts`: a small rule evaluator the SLO tests run over synthetic series
+- `examples/`: getting-started, alerting, rules-from-data, slo, k3d-stack

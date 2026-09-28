@@ -65,3 +65,27 @@ if (result.ran && !result.ok) throw new Error(result.output);
 ## Building rules from data
 
 `RuleGroup` takes plain rule objects, so a composite can generate them: map over services or windows, return one or more `RuleGroup`s, and the rule file and a `PrometheusRule` both pick them up. `ruleGroupConfig(group)` gives the plain group as it appears in the file.
+
+## SLOs
+
+`Slo` builds an SLO to one `RuleGroup`: error ratios per window, the error budget left, and the SRE Workbook's multiwindow burn-rate alerts (page at 1h/5m and 6h/30m, ticket at 1d/2h and 3d/6h, factors scaled to the SLO window). It is a composite, called without `new`.
+
+```ts
+import { Slo, sloMetrics } from "@intentius/chant-lexicon-prometheus";
+
+export const checkout = Slo({
+  name: "checkout",
+  objective: 0.999,
+  window: "30d",
+  sli: {
+    good: 'sum(rate(http_requests_total{job="checkout",code!~"5.."}[{{window}}]))',
+    total: 'sum(rate(http_requests_total{job="checkout"}[{{window}}]))',
+  },
+});
+
+sloMetrics(checkout).errorRatio["1h"]; // "slo:sli_error:ratio_rate1h"
+```
+
+- Write the objective as a fraction strictly between 0 and 1, and put `{{window}}` where each SLI expression's range goes (PROM003).
+- Alerts carry `severity` `page` or `ticket`; route both (PROM202).
+- Read series names from `sloMetrics()` in dashboards instead of repeating them.

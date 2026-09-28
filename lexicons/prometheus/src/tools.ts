@@ -46,6 +46,24 @@ export function promtoolCheckRules(yaml: string, bin = process.env.PROMTOOL ?? "
   return runOnText(bin, (f) => ["check", "rules", f], "rules.yml", yaml);
 }
 
+/**
+ * Run `promtool test rules` over rule file YAML and a unit-test file for it.
+ * The test file's `rule_files:` should name `rules.yml`, which is where the
+ * rule file is written beside it. `bin` defaults to `promtool` on PATH.
+ */
+export function promtoolTestRules(rulesYaml: string, testYaml: string, bin = process.env.PROMTOOL ?? "promtool"): ToolResult {
+  if (!hasTool(bin)) return { ran: false, ok: false, output: "" };
+  const dir = mkdtempSync(join(tmpdir(), "chant-prometheus-"));
+  try {
+    writeFileSync(join(dir, "rules.yml"), rulesYaml);
+    writeFileSync(join(dir, "rules.test.yml"), testYaml);
+    const r = spawnSync(bin, ["test", "rules", "rules.test.yml"], { cwd: dir, encoding: "utf-8" });
+    return { ran: true, ok: r.status === 0, output: `${r.stdout ?? ""}${r.stderr ?? ""}` };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 /** Run `amtool check-config` over `alertmanager.yml` text. `bin` defaults to `amtool` on PATH. */
 export function amtoolCheckConfig(yaml: string, bin = process.env.AMTOOL ?? "amtool"): ToolResult {
   return runOnText(bin, (f) => ["check-config", f], "alertmanager.yml", yaml);

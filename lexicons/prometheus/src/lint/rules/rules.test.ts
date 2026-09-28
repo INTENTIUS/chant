@@ -3,6 +3,7 @@ import * as ts from "typescript";
 import type { LintContext } from "@intentius/chant/lint/rule";
 import { literalCredentialRule } from "./literal-credential";
 import { promqlLiteralRule } from "./promql-literal";
+import { sloLiteralRule } from "./slo-literal";
 
 function ctx(code: string): LintContext {
   const sourceFile = ts.createSourceFile("alerts.ts", code, ts.ScriptTarget.Latest, true);
@@ -66,6 +67,46 @@ describe("PROM002 PromQL literal", () => {
         const w = "5m";
         new RuleGroup({ name: "g", rules: [{ record: "a:b", expr: \`rate(x[\${w}])\` }] });
         const notARule = { expr: "(((" };
+      `),
+    );
+    expect(diags).toEqual([]);
+  });
+});
+
+describe("PROM003 Slo literal", () => {
+  test("flags an objective outside (0, 1), a bad window and a broken SLI, at the literal", () => {
+    const diags = sloLiteralRule.check(
+      ctx(`
+        export const a = Slo({
+          name: "a",
+          objective: 99.5,
+          window: "4 weeks",
+          sli: { good: "sum(rate(ok_total[5m]))", total: "sum(rate(all_total[{{window}}])" },
+        });
+        export const b = Slo({ name: "b", objective: -1, window: "0", sli: { errors: "sum(rate(e[{{window}}]))", total: "sum(rate(t[{{window}}]))" } });
+      `),
+    );
+    expect(diags.map((d) => [d.ruleId, d.line])).toEqual([
+      ["PROM003", 4],
+      ["PROM003", 5],
+      ["PROM003", 6],
+      ["PROM003", 6],
+      ["PROM003", 8],
+      ["PROM003", 8],
+    ]);
+    expect(diags[0].message).toContain("strictly between 0 and 1");
+    expect(diags[1].message).toContain("positive Prometheus duration");
+    expect(diags[2].message).toContain("{{window}}");
+    expect(diags[3].message).toContain("not valid PromQL");
+  });
+
+  test("accepts a valid Slo, values built at runtime, and other callees", () => {
+    const diags = sloLiteralRule.check(
+      ctx(`
+        const objective = 1.5;
+        Slo({ name: "a", objective: 0.999, window: "30d", sli: { good: \`sum(rate(ok[{{window}}]))\`, total: "sum(rate(all[{{window}}]))" } });
+        Slo({ name: "b", objective, window: process.env.W!, sli: { good: expr, total: expr } });
+        Other({ objective: 5, window: "nope" });
       `),
     );
     expect(diags).toEqual([]);

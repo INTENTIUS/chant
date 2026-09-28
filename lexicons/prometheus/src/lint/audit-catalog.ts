@@ -4,7 +4,7 @@
  *
  * Every post-synth check reads the emitted rule file or `alertmanager.yml`
  * (or any output document shaped like one), so they are all `yamlBased` and
- * fire on an audit of standalone files too. The two source-level lint rules
+ * fire on an audit of standalone files too. The three source-level lint rules
  * read TypeScript, so they are constructed with `yamlBased: false`; they are
  * listed for a reader who meets them in a lint report.
  */
@@ -37,6 +37,12 @@ export const prometheusAuditCatalog: Record<string, RuleMeta> = {
     "correctness",
     "Literal PromQL expression in a RuleGroup does not parse",
     "Fix the expression at the offset the message names.",
+  ),
+  PROM003: sourceRule(
+    "PROM003",
+    "correctness",
+    "Slo objective, window or SLI expression is invalid",
+    "Set objective strictly between 0 and 1, window to a Prometheus duration such as 28d, and write each SLI expression as PromQL with {{window}} where the range goes.",
   ),
   PROM101: outputRule("PROM101", "merge-worthy", "correctness", "Rule group name repeated in a rule file", "Give every group in the rule file its own name."),
   PROM102: outputRule(

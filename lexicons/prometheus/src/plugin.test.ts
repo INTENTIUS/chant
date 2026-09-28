@@ -20,6 +20,7 @@ describe("prometheus plugin", () => {
     expect(ids).toEqual([
       "PROM001",
       "PROM002",
+      "PROM003",
       "PROM101",
       "PROM102",
       "PROM103",

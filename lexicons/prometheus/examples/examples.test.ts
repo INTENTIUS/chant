@@ -14,9 +14,11 @@ import {
   validateAlertmanagerConfig,
   validateRuleFile,
   validateSeverityRouting,
+  sloMetrics,
   type AlertmanagerConfig,
   type RuleFileConfig,
 } from "@intentius/chant-lexicon-prometheus";
+import { checkout, orderAck } from "./slo/src/slo";
 
 /** Every example's rule file must pass the lexicon's own checks with nothing to report. */
 function clean(output: string): RuleFileConfig {
@@ -57,6 +59,12 @@ describeAllExamples(
         const file = clean(output);
         expect(file.groups.map((g) => g.name)).toEqual(["inventory", "orders"]);
         expect(file.groups[1].rules).toHaveLength(4);
+      },
+    },
+    slo: {
+      checks: (output) => {
+        const file = clean(output);
+        expect(file.groups.map((g) => g.name)).toEqual(["slo-checkout", "slo-order-acknowledged"]);
       },
     },
   },
@@ -106,5 +114,47 @@ describe("the k3d-stack example", () => {
     const am = load(prom.files![ALERTMANAGER_FILE]) as AlertmanagerConfig;
     expect(validateAlertmanagerConfig(am)).toEqual([]);
     expect(validateSeverityRouting([load(prom.primary) as RuleFileConfig], am)).toEqual([]);
+  });
+});
+
+describe("the slo example", () => {
+  const srcDir = join(import.meta.dirname, "slo", "src");
+
+  async function built(): Promise<{ rules: string; am: string; entities: string[] }> {
+    const result = await build(srcDir, [prometheusSerializer]);
+    expect(result.errors).toHaveLength(0);
+    const out = result.outputs.get("prometheus") as SerializerResult;
+    return { rules: out.primary, am: out.files![ALERTMANAGER_FILE], entities: [...result.entities.keys()].sort() };
+  }
+
+  test("each Slo is one group, named from its export, with both severities routed", async () => {
+    const { rules, am, entities } = await built();
+    expect(entities).toEqual(expect.arrayContaining(["checkoutRules", "orderAckRules"]));
+    const file = load(rules) as RuleFileConfig;
+    const config = load(am) as AlertmanagerConfig;
+    expect(validateAlertmanagerConfig(config)).toEqual([]);
+    expect(validateSeverityRouting([file], config)).toEqual([]);
+  });
+
+  test("every series sloMetrics names is recorded in the built file", async () => {
+    const { rules } = await built();
+    for (const slo of [orderAck, checkout]) {
+      const m = sloMetrics(slo);
+      const group = (load(rules) as RuleFileConfig).groups.find((g) => g.name === m.group)!;
+      const recorded = group.rules.flatMap((r) => ("record" in r ? [r.record] : []));
+      expect(recorded).toEqual(expect.arrayContaining([...Object.values(m.errorRatio), m.errorBudgetRemaining, m.objectiveRatio]));
+    }
+    expect(sloMetrics(checkout).burnRates.map((b) => b.factor)).toEqual([14.4, 6, 3, 1]);
+    expect(sloMetrics(orderAck).burnRates.map((b) => b.factor)).toEqual([13.44, 5.6, 2.8, 0.933333]);
+  });
+
+  test.skipIf(!hasTool(process.env.PROMTOOL ?? "promtool"))("promtool accepts the rule file", async () => {
+    const r = promtoolCheckRules((await built()).rules);
+    expect(r.ok, r.output).toBe(true);
+  });
+
+  test.skipIf(!hasTool(process.env.AMTOOL ?? "amtool"))("amtool accepts alertmanager.yml", async () => {
+    const r = amtoolCheckConfig((await built()).am);
+    expect(r.ok, r.output).toBe(true);
   });
 });
