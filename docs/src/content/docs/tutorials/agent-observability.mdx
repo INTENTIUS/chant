@@ -1,16 +1,16 @@
 ---
 title: "Agent Observability on k3d"
-description: "Collector agent and gateway, a sampled pipeline with span and GenAI metrics, an SLO with burn-rate alerts, Alertmanager routing and Grafana dashboards, declared with the otel, k8s, prometheus, grafana and k3d lexicons and run on a local cluster."
+description: "Observability for an agent declared across five lexicons in one chant project and run on a local k3d cluster."
 diataxis: tutorial
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-An agent that misreads a quantity still returns 200. Seeing that takes traces with GenAI attributes, a collector that samples without losing the failures, an SLO on the runs, and dashboards that read all of it. This tutorial walks the [`agent-observability` example](https://github.com/INTENTIUS/chant/tree/main/examples/agent-observability), which declares all of that in one chant project, on an open-source stack, and runs it on k3d.
+An agent that misreads a quantity still returns 200, so seeing its failures takes more than error logs. You need GenAI spans, a collector that samples without dropping the failed runs, and an SLO over those runs with dashboards on top. This tutorial walks the [`agent-observability` example](https://github.com/INTENTIUS/chant/tree/main/examples/agent-observability), which declares that whole stack in one chant project and runs it on k3d.
 
 ## Cost
 
-None. The cluster is k3d on your machine, and every backend is an open-source image: the OpenTelemetry Collector, Prometheus, Alertmanager, Tempo, Loki and Grafana. No account, no key.
+None. The cluster is k3d on your machine and every backend is an open-source image (the OpenTelemetry Collector, the Prometheus and Grafana projects' own images), so nothing asks for an account or a key.
 
 ## How the lexicons fit together
 
@@ -40,7 +40,7 @@ npm run build
 npm run lint
 ```
 
-`build` writes four outputs: the k3d cluster config, the Kubernetes manifests, the Prometheus rule file with `alertmanager.yml` beside it, and Grafana's provisioning files and dashboard JSON.
+`build` writes one output per lexicon under `dist/`. The k8s manifests carry the prometheus and grafana outputs in ConfigMaps, so the cluster runs exactly the files those builds wrote.
 
 <Aside type="note">
 Keep the declarations a check joins across in one build root. The placement checks (WK8601 tail sampling on a DaemonSet, WK8602 a multi-replica gateway without trace-aware routing, WK8603 `k8s_cluster` per node) read each collector ConfigMap next to its workload; PROM202 reads the SLO's severities next to the routes; GRAF101 and GRAF102 read panels next to datasources. Across build roots they go silent (chant #1939).
@@ -57,7 +57,7 @@ kubectl apply -f dist/k8s.yaml
 kubectl -n observability port-forward svc/grafana 3000:80
 ```
 
-Open http://localhost:3000. The demo agent fails one run in five against a 99% objective, on purpose: within a few minutes the SLO's page alert fires, Alertmanager routes it to `oncall`, and the ticket alert for the same SLO is inhibited. In Tempo every failed and every slow run is there and most ordinary ones are not; in Prometheus every run is counted.
+Open http://localhost:3000. The demo agent fails one run in five against a 99% objective, on purpose. Within a few minutes the SLO's page alert fires and Alertmanager routes it to `oncall`, while the ticket alert for the same SLO is inhibited by the page. Tempo holds every failed and every slow run but only some of the ordinary ones, and Prometheus counts them all.
 
 The example's on-demand e2e does all of this for you and checks each step:
 
@@ -67,7 +67,4 @@ npx vitest run --project e2e examples/agent-observability
 
 ## Where to go next
 
-- [OTel lexicon](/chant/lexicons/otel/): connectors, sampling and the GenAI preset.
-- [OTel collectors on Kubernetes](/chant/lexicons/k8s/otel-collector/): the agent, the gateway, and the placement checks.
-- [Prometheus lexicon](/chant/lexicons/prometheus/): rule groups, Alertmanager routing and `Slo`.
-- [Grafana lexicon](/chant/lexicons/grafana/): dashboards, panels and provisioning.
+Each reference page covers its part in depth. Connectors, sampling and the GenAI preset are in the [OTel lexicon](/chant/lexicons/otel/) docs, and the agent and gateway composites with their placement checks are in [OTel collectors on Kubernetes](/chant/lexicons/k8s/otel-collector/). For `Slo` and routing see the [Prometheus lexicon](/chant/lexicons/prometheus/); for dashboards and provisioning, the [Grafana lexicon](/chant/lexicons/grafana/).
