@@ -61,6 +61,8 @@
     "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete"
   },
   "dependencies": {
+    "@intentius/chant-lexicon-otel": "*",
+    "@intentius/chant-lexicon-prometheus": "*",
     "ajv": "^8.20.0",
     "js-yaml": "^4.3.1"
   },

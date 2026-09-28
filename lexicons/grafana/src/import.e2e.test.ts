@@ -2,8 +2,10 @@
  * "A dashboard builds to JSON that Grafana imports without edits", against
  * Grafana itself.
  *
- * Builds the getting-started example, mounts its provisioning files and
- * dashboards into a pinned `grafana/grafana` container, and asserts that
+ * Builds each example (getting-started, and dashboards-from-declarations,
+ * whose dashboards the RED, SLO and agent composites build), mounts its
+ * provisioning files and dashboards into a pinned `grafana/grafana`
+ * container, and asserts that
  * Grafana provisioned every datasource and dashboard and hands each
  * dashboard back with the panels that were built. It then imports the same
  * JSON a second time through `POST /api/dashboards/db`, the path the UI's
@@ -20,6 +22,9 @@ import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { build } from "@intentius/chant/build";
 import type { SerializerResult } from "@intentius/chant/serializer";
+import type { Serializer } from "@intentius/chant/serializer";
+import { otelSerializer } from "@intentius/chant-lexicon-otel/serializer";
+import { prometheusSerializer } from "@intentius/chant-lexicon-prometheus/serializer";
 import { grafanaSerializer } from "./serializer";
 
 /** The Grafana release the import test runs against; `CHANT_GRAFANA_IMAGE` overrides it. */
@@ -36,9 +41,14 @@ function available(cmd: string): boolean {
 
 const hasDocker = available("docker info");
 const skipReason = hasDocker ? "" : "Docker is not running";
-const CONTAINER = `chant-grafana-import-${process.pid}`;
 const AUTH = `Basic ${Buffer.from("admin:admin").toString("base64")}`;
-const example = join(dirname(dirname(fileURLToPath(import.meta.url))), "examples", "getting-started", "src");
+const examples = join(dirname(dirname(fileURLToPath(import.meta.url))), "examples");
+
+/** Each example, and the serializers its build root needs. */
+const EXAMPLES: Array<{ name: string; serializers: Serializer[] }> = [
+  { name: "getting-started", serializers: [grafanaSerializer] },
+  { name: "dashboards-from-declarations", serializers: [otelSerializer, prometheusSerializer, grafanaSerializer] },
+];
 
 async function waitFor<T>(what: string, fn: () => Promise<T | undefined>, timeoutMs = 120_000): Promise<T> {
   const deadline = Date.now() + timeoutMs;
@@ -55,7 +65,8 @@ async function waitFor<T>(what: string, fn: () => Promise<T | undefined>, timeou
   throw new Error(`timed out waiting for ${what}${last ? `: ${String(last)}` : ""}`);
 }
 
-describe.skipIf(!hasDocker)(`Grafana imports the built dashboards without edits${skipReason ? ` (skipped: ${skipReason})` : ""}`, () => {
+describe.skipIf(!hasDocker).each(EXAMPLES)(`Grafana imports the $name dashboards without edits${skipReason ? ` (skipped: ${skipReason})` : ""}`, ({ name, serializers }) => {
+  const CONTAINER = `chant-grafana-import-${name}-${process.pid}`;
   const dir = mkdtempSync(join(tmpdir(), "chant-grafana-import-"));
 
   afterAll(() => {
@@ -68,7 +79,7 @@ describe.skipIf(!hasDocker)(`Grafana imports the built dashboards without edits$
   });
 
   it("provisions every datasource and dashboard, and accepts the JSON through the import API", { timeout: 300_000 }, async () => {
-    const result = await build(example, [grafanaSerializer]);
+    const result = await build(join(examples, name, "src"), serializers);
     expect(result.errors).toEqual([]);
     const out = result.outputs.get("grafana") as SerializerResult;
     for (const [file, content] of Object.entries(out.files ?? {})) {

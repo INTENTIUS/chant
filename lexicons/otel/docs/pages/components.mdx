@@ -122,6 +122,8 @@ export const traces = new Pipeline({ signal: "traces", receivers: [otlp], export
 export const red = new Pipeline({ signal: "metrics", name: "red", receivers: [spanmetrics], exporters: [prom] });
 ```
 
+`spanMetricsNames(connector, exporter?)` returns the names Prometheus serves a `spanmetrics` connector's metrics under, read from its `namespace`, dimensions and histogram unit, and from the `prometheus` exporter's `namespace` and `add_metric_suffixes` when you pass it. The connector above gives `traces_span_metrics_calls_total` and `traces_span_metrics_duration_milliseconds`, with labels `service_name`, `span_name`, `span_kind` and `status_code`. A query, an SLO or a dashboard built from those names follows a renamed namespace; the grafana lexicon's `RedDashboard` reads them this way.
+
 `routing` names its target pipelines by id string (`pipelines: ["traces/tenant-a"]`), since those pipelines also list the connector and a const can't refer to one declared after it.
 
 ## Extensions

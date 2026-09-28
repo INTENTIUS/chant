@@ -96,3 +96,17 @@ export {
   type GenAiMetrics,
   type GenAiMetric,
 } from "./genai";
+
+// Metric names as Prometheus serves them, for dashboards and SLOs built from a declaration
+export {
+  spanMetricsNames,
+  prometheusMetricName,
+  prometheusLabel,
+  SPANMETRICS_DEFAULT_DIMENSIONS,
+  SPANMETRICS_DEFAULT_NAMESPACE,
+  SPAN_STATUS_ERROR,
+  type CollectorMetric,
+  type SpanMetricsNames,
+  type SpanMetricsNamingConfig,
+  type PrometheusNaming,
+} from "./metric-names";

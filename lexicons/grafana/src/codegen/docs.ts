@@ -34,6 +34,12 @@ options and query fields are generated from Grafana's own schemas at a pinned
 version, and every build validates the dashboards against the same schemas.
 \`definePanel\` and \`defineQuery\` add plugins chant doesn't ship.
 
+Three composites build whole dashboards from declarations in other lexicons:
+\`RedDashboard\` from an otel \`spanmetrics\` connector, \`SloDashboard\` from a
+prometheus \`Slo\` and \`AgentDashboard\` from the otel GenAI preset. Metric names
+come from the declaration, so renaming one moves the panels. See
+[Dashboards from Declarations](./composites/).
+
 Checks catch a query aimed at a datasource nobody declared (GRAF101) or of the
 wrong type (GRAF102), a \`$variable\` the dashboard doesn't declare (GRAF103),
 duplicate uids and ids (GRAF104), panels off the grid or overlapping (GRAF105),

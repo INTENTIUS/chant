@@ -156,3 +156,23 @@ export {
 export { validateDashboardSchema, type SchemaProblem } from "./schema-validate";
 export { looksLikeDashboard, looksLikeDatasourceProvisioning, looksLikeDashboardProvisioning } from "./detect";
 export { slugUid, isValidUid, UID_PATTERN, type DeepPartial } from "./util";
+
+// Composites: dashboards built from a spanmetrics connector, an Slo and the GenAI preset
+export {
+  RedDashboard,
+  redQueries,
+  SloDashboard,
+  sloQueries,
+  AgentDashboard,
+  agentQueries,
+  type RedDashboardProps,
+  type RedDashboardMembers,
+  type RedDashboardInstance,
+  type SloDashboardProps,
+  type SloDashboardMembers,
+  type SloDashboardInstance,
+  type AgentDashboardProps,
+  type AgentDashboardMembers,
+  type AgentDashboardInstance,
+  type DashboardOptions,
+} from "./composites";
