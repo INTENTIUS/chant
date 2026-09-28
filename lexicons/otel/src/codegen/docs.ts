@@ -44,7 +44,8 @@ RED and token metrics.
 Their config types follow the collector-contrib release named on the
 Custom components page. A component chant doesn't ship is added with
 \`defineComponent\`, and it is serialized and checked the same way as the
-built-ins.
+built-ins. \`chant import\` turns an existing collector config file into this
+TypeScript (see Importing a Collector Config).
 
 Checks catch a pipeline that uses a component nobody declared (OTEL101), a
 pipeline with no receivers or exporters (OTEL102), a declared component no

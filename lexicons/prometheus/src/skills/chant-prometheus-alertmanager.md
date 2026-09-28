@@ -47,6 +47,10 @@ export const pageMutesTicket = new InhibitRule({
 });
 ```
 
+## Starting from an existing alertmanager.yml
+
+Import it rather than retyping it: `chant import alertmanager.yml --output src` (with `--lexicon prometheus` outside a chant project). The importer writes `receivers.ts`, `time-intervals.ts`, `routes.ts` (the root `Route`, children as `RouteProps` that reference receivers and time intervals by variable), `inhibit-rules.ts` and `settings.ts`. `*_file` paths and Go templates are kept as written; a literal credential is imported as found and PROM001 reports it, so offer to move it to the `*_file` field. Integrations the lexicon doesn't type (`opsgenie_configs`, `msteams_configs`, ...) are spread in from an untyped const. `match`/`match_re` and the top-level `mute_time_intervals` come back in their current spelling (`matchers`, `time_intervals`), and `chant import` prints a warning for each.
+
 ## What the checks hold you to
 
 - One root route (the `Route` no other route nests), with a receiver and no matchers (PROM205).

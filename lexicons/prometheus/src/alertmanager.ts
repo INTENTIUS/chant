@@ -16,6 +16,7 @@ import { createResource } from "@intentius/chant/runtime";
 import type { Declarable } from "@intentius/chant/declarable";
 import type {
   AlertmanagerGlobalConfig,
+  AlertmanagerTracingConfig,
   InhibitRuleConfig,
   ReceiverConfig,
   RouteConfig,
@@ -112,13 +113,15 @@ export interface AlertmanagerSettingsProps {
   global?: AlertmanagerGlobalConfig;
   /** Paths of notification template files. */
   templates?: string[];
+  /** Where Alertmanager sends its own traces. */
+  tracing?: AlertmanagerTracingConfig;
 }
 
 export interface AlertmanagerSettingsEntity extends Declarable {
   readonly props: AlertmanagerSettingsProps;
 }
 
-/** The `global:` block and `templates:` list. Optional; declare at most one. */
+/** The `global:` block, `templates:` list and `tracing:` block. Optional; declare at most one. */
 export const AlertmanagerSettings = entityClass<AlertmanagerSettingsProps, AlertmanagerSettingsEntity>(
   SETTINGS_TYPE,
   "AlertmanagerSettings",

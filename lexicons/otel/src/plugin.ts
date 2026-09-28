@@ -9,6 +9,8 @@ import { otelAuditCatalog } from "./lint/audit-catalog";
 import { completions } from "./lsp/completions";
 import { hover } from "./lsp/hover";
 import { detectTemplate } from "./detect";
+import { OtelCollectorParser } from "./import/parser";
+import { OtelCollectorGenerator } from "./import/generator";
 import { otelSkills } from "./skill-defs";
 import { BUILTIN_CATALOG } from "./catalog";
 import { COLLECTOR_PIN } from "./define";
@@ -94,6 +96,14 @@ export const otelPlugin: LexiconPlugin = {
 
   detectTemplate(data: unknown) {
     return detectTemplate(data);
+  },
+
+  templateParser() {
+    return new OtelCollectorParser();
+  },
+
+  templateGenerator() {
+    return new OtelCollectorGenerator();
   },
 
   completionProvider(ctx: CompletionContext) {
