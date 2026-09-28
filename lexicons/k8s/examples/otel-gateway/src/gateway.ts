@@ -1,8 +1,8 @@
 /**
  * The gateway: two collector replicas behind a ClusterIP Service and a
- * headless Service, where tail gatewaySampling happens.
+ * headless Service, where tail sampling happens.
  *
- * Tail gatewaySampling has to see every span of a trace, so the agents route traces
+ * Tail sampling has to see every span of a trace, so the agents route traces
  * to the replicas by trace id (see agent.ts).
  */
 import { OtelCollectorGateway } from "@intentius/chant-lexicon-k8s";
