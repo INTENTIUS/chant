@@ -358,6 +358,28 @@ describe.skipIf(missing !== undefined)(`agent-observability runs on k3d${missing
         expect(served.dashboard.panels.length).toBe(file.panels.length);
       }
       lap("Grafana datasources and dashboards");
+
+      // Every Prometheus query on the three dashboards returns data, with the
+      // variables at "All" and Grafana's interval macros filled in as Grafana
+      // would: the panels show something the moment the dashboards open.
+      interface PanelJson {
+        targets?: Array<{ expr?: string }>;
+        panels?: PanelJson[];
+      }
+      const exprs = (panels: PanelJson[]): string[] =>
+        panels.flatMap((p) => [...(p.targets ?? []).map((t) => t.expr).filter((e): e is string => !!e), ...exprs(p.panels ?? [])]);
+      const empty: string[] = [];
+      for (const d of built.grafanaIndex.dashboards) {
+        const json = JSON.parse(built.grafanaFiles[d.file]) as { panels: PanelJson[]; templating?: { list: Array<{ name: string; allValue?: string }> } };
+        const variables = json.templating?.list ?? [];
+        for (const expr of exprs(json.panels)) {
+          let q = expr.replaceAll("$__rate_interval", "1m").replaceAll("$__interval", "1m").replaceAll("$__range", "10m");
+          for (const v of variables) q = q.replaceAll(`$${v.name}`, v.allValue ?? ".*").replaceAll(`\${${v.name}}`, v.allValue ?? ".*");
+          if (promQuery(q).length === 0) empty.push(`${d.uid}: ${expr}`);
+        }
+      }
+      expect(empty).toEqual([]);
+      lap("every dashboard query returns data");
     } catch (err) {
       diagnostics();
       throw err;

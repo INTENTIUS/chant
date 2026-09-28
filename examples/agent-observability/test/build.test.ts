@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, test } from "vitest";
 import { dump, load } from "js-yaml";
-import { validateCollectorConfig, GENAI_CONTENT_ATTRIBUTES, genAiMetrics } from "@intentius/chant-lexicon-otel";
+import { validateCollectorConfig, GENAI_CONTENT_ATTRIBUTES, genAiMetrics, spanMetricsNames } from "@intentius/chant-lexicon-otel";
 import {
   amtoolCheckConfig,
   promtoolCheckRules,
@@ -25,6 +25,8 @@ import {
 } from "@intentius/chant-lexicon-prometheus";
 import { validateGrafanaOutput, DATASOURCES_FILE } from "@intentius/chant-lexicon-grafana";
 import { agentRuns } from "../src/slo";
+import { red as redConnector } from "../src/gateway-metrics";
+import { scrapeEndpoint } from "../src/gateway-components";
 import { buildExample, find, images, type Built } from "./built";
 
 function findOtelcol(): string | undefined {
@@ -199,8 +201,24 @@ describe("Grafana", () => {
   test("provisions Prometheus, Tempo and Loki, and the ConfigMap carries every file the grafana build writes", () => {
     expect(built.grafanaIndex.datasources.map((d) => d.type).sort()).toEqual(["loki", "prometheus", "tempo"]);
     const data = find(built.manifests, "ConfigMap", "grafana-files").data ?? {};
-    for (const [path, text] of Object.entries(built.grafanaFiles)) expect(data[path.replaceAll("/", "__")], path).toBe(text);
     expect(Object.keys(data)).toHaveLength(Object.keys(built.grafanaFiles).length);
+    for (const key of Object.keys(data)) expect(key).toMatch(/^[-._a-zA-Z0-9]+$/);
+    // Each file is mounted back at its own path, under the directory Grafana reads it from.
+    const pod = find(built.manifests, "Deployment", "grafana").spec?.template.spec;
+    const mounts = pod.containers[0].volumeMounts as Array<{ name: string; mountPath: string }>;
+    const roots = { "/etc/grafana/provisioning": "provisioning", "/var/lib/grafana/dashboards": "dashboards" } as const;
+    const mounted: string[] = [];
+    for (const volume of pod.volumes as Array<{ name: string; configMap?: { name: string; items: Array<{ key: string; path: string }> } }>) {
+      if (volume.configMap?.name !== "grafana-files") continue;
+      const at = mounts.find((m) => m.name === volume.name)!.mountPath;
+      const root = Object.entries(roots).find(([dir]) => at === dir || at.startsWith(`${dir}/`))!;
+      const prefix = `${root[1]}${at.slice(root[0].length)}/`;
+      for (const item of volume.configMap.items) {
+        expect(data[item.key], item.path).toBe(built.grafanaFiles[prefix + item.path]);
+        mounted.push(prefix + item.path);
+      }
+    }
+    expect(mounted.sort()).toEqual(Object.keys(built.grafanaFiles).sort());
   });
 
   test("the dashboards pass the grafana lexicon's output checks (GRAF101-GRAF107)", () => {
@@ -211,9 +229,21 @@ describe("Grafana", () => {
     expect(validateGrafanaOutput({ dashboards, datasources }).filter((i) => i.severity === "error")).toEqual([]);
   });
 
-  test("the GenAI metric names the dashboards read are the ones the preset emits", () => {
-    const names = genAiMetrics();
-    expect(names.calls.prometheus).toBe("genai_calls_total");
-    expect(names.inputTokens.prometheus).toBe("genai_tokens_input_total");
+  test("the RED, SLO and agent dashboards, in one folder", () => {
+    expect(built.grafanaIndex.dashboards.map((d) => d.uid).sort()).toEqual(["genai-agents", "red-traces-span-metrics", "slo-support-agent-runs"]);
+  });
+
+  test("each dashboard queries the names its source declaration emits", () => {
+    const text = (uid: string) => built.grafanaFiles[built.grafanaIndex.dashboards.find((d) => d.uid === uid)!.file];
+    const genai = genAiMetrics();
+    const red = spanMetricsNames(redConnector, scrapeEndpoint);
+    const slo = sloMetrics(agentRuns);
+    expect(text("red-traces-span-metrics")).toContain(red.calls.prometheus);
+    expect(text("red-traces-span-metrics")).toContain(red.duration!.prometheus);
+    expect(text("slo-support-agent-runs")).toContain(slo.errorBudgetRemaining);
+    expect(text("genai-agents")).toContain(genai.calls.prometheus);
+    expect(text("genai-agents")).toContain(genai.inputTokens.prometheus);
+    // And the SLO's SLI reads the same RED series the dashboard does.
+    expect(built.rulesYaml).toContain(red.calls.prometheus);
   });
 });

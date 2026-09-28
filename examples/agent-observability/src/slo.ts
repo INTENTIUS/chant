@@ -3,15 +3,21 @@
  *
  * The SLI reads the RED metrics the gateway's `spanmetrics` connector derives
  * from every span, before sampling, so the SLO counts runs Tempo never sees.
- * `Slo` builds the recording rules and the multiwindow burn-rate alerts;
- * `severity` is `page` for fast burns and `ticket` for slow ones, which is
- * what alertmanager.ts routes on.
+ * The metric and label names come from the connector and exporter
+ * declarations through `spanMetricsNames()`, so the SLO, its rules and its
+ * dashboard move with them. `Slo` builds the recording rules and the
+ * multiwindow burn-rate alerts; `severity` is `page` for fast burns and
+ * `ticket` for slow ones, which is what alertmanager.ts routes on.
  */
+import { spanMetricsNames } from "@intentius/chant-lexicon-otel";
 import { Slo } from "@intentius/chant-lexicon-prometheus";
+import { red } from "./gateway-metrics";
+import { scrapeEndpoint } from "./gateway-components";
 
-const calls = "traces_span_metrics_calls_total";
-const runs = `service_name="support-agent",span_name="invoke_agent support"`;
-const failed = `status_code="STATUS_CODE_ERROR"`;
+const names = spanMetricsNames(red, scrapeEndpoint);
+const calls = names.calls.prometheus;
+const runs = `${names.labels.service}="support-agent",${names.labels.spanName}="invoke_agent support"`;
+const failed = `${names.labels.statusCode}="${names.errorStatus}"`;
 
 export const agentRuns = Slo({
   name: "support-agent-runs",
