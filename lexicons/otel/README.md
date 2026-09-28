@@ -52,6 +52,10 @@ Each connector supports fixed signal pairs (`spanmetrics`: traces to metrics). O
 
 `defineComponent<Config>()({ kind, type, pin, validate?, endpoints?, connects? })` returns a class that serializes and lints like a built-in. `pin` records the schema source and version the config type follows; it is written as a `# chant:` comment above the emitted config and returned by `collectorTopology()`.
 
+## Importing an existing config
+
+`chant import otel-collector-config.yaml --output src` turns a collector config into this lexicon's TypeScript: one module per section plus `pipelines.ts`, each component a constant of its built-in class (`otlp/tempo` becomes `const otlpTempo = new OtlpExporter({ name: "tempo", ... })`), each connector one constant listed on both sides of its join. `${env:VAR}` references stay references. A component type chant doesn't ship is declared with `defineComponent` in `custom-components.ts`, config carried as data, pinned to the `# chant:` header's pin when the file has one and to `COLLECTOR_PIN` otherwise. `chant build` on the result gives back the same config; the round-trip tests in `src/import/roundtrip.test.ts` hold every example, a sampling gateway, `genAiPipeline()` output and collector-contrib's example configs to that.
+
 ## Checks
 
 OTEL001 and OTEL002 run on source (id syntax, literal credentials). OTEL101 to OTEL109 and OTEL112 run after a build: undeclared or unused components (a connector must be on both sides), empty pipelines, extension wiring, `memory_limiter` placement, id syntax, each component's own config rules, duplicate ids, missing schema pins, and connector signal pairs.
@@ -71,4 +75,5 @@ OTEL001 and OTEL002 run on source (id syntax, literal credentials). OTEL101 to O
 - `src/validate-config.ts`, `src/lint/`: checks
 - `src/topology.ts`, `src/semconv.ts`: the read surface
 - `src/genai.ts`: the GenAI preset
+- `src/import/`: `chant import` for collector YAML (parser, generator, round-trip tests and fixtures)
 - `examples/`: getting-started, k8s-node-agent, genai-agent, custom-component
