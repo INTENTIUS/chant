@@ -53,6 +53,7 @@ Each composite takes either `exporters` and `signals` for the default config, or
 |-----------|---------|--------------|
 | [`DockerOtelCollector`](/chant/lexicons/docker/otel-collector/) | docker | A Compose service, with the config inline in a top-level Compose config |
 | [`OtelCollector`](/chant/lexicons/k8s/otel-collector/) | k8s | A DaemonSet agent on any cluster, with a node-local Service |
+| [`OtelCollectorGateway`](/chant/lexicons/k8s/otel-collector/#the-gateway) | k8s | A Deployment gateway with a ClusterIP and a headless Service; `gatewayExporter()` points agents at it, through `loadbalancing` when routing by trace id |
 | [`FlyOtelCollector`](/chant/lexicons/fly/otel-collector/) | fly | A Fly Machine, with the config written in as a file |
 | `GkeOtelCollector` | k8s | A DaemonSet agent on GKE that exports to Google Cloud |
 

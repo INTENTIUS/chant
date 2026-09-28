@@ -8,6 +8,9 @@
  * `collectorYaml`) and says which ports the container exposes. Everything
  * platform-specific, such as a Workload Identity annotation or probes, comes
  * in as an option, so each composite keeps its own output.
+ *
+ * `OtelCollectorGateway` runs the same container and ConfigMap
+ * (`collectorContainer`, `collectorConfigMap`) in a Deployment.
  */
 
 import { mergeDefaults } from "@intentius/chant";
@@ -34,6 +37,10 @@ export interface CollectorAgentOptions {
   containerExtra?: Record<string, unknown>;
   /** Annotations on the ServiceAccount, such as a cloud identity binding. */
   serviceAccountAnnotations?: Record<string, string>;
+  /** Annotations on the DaemonSet, such as the deployment-shape markers in `otel-collector-shape.ts`. */
+  workloadAnnotations?: Record<string, string>;
+  /** Annotations on the ConfigMap. */
+  configMapAnnotations?: Record<string, string>;
   defaults?: {
     daemonSet?: Partial<Record<string, unknown>>;
     serviceAccount?: Partial<Record<string, unknown>>;
@@ -58,32 +65,14 @@ export function collectorAgentResources(opts: CollectorAgentOptions): CollectorA
   const bindingName = `${name}-binding`;
   const configMapName = `${name}-config`;
 
-  const container: Record<string, unknown> = {
-    name,
-    image: opts.image,
-    args: [`--config=${opts.configDir}/config.yaml`],
-    ports: opts.ports,
-    resources: {
-      requests: { cpu: opts.cpuRequest, memory: opts.memoryRequest },
-      limits: { cpu: opts.cpuLimit, memory: opts.memoryLimit },
-    },
-    volumeMounts: [
-      { name: "config", mountPath: opts.configDir, readOnly: true },
-    ],
-    securityContext: {
-      runAsNonRoot: true,
-      runAsUser: 10001,
-      readOnlyRootFilesystem: true,
-      allowPrivilegeEscalation: false,
-    },
-    ...opts.containerExtra,
-  };
+  const container = collectorContainer(opts);
 
   const daemonSet = new DaemonSet(mergeDefaults({
     metadata: {
       name,
       namespace,
       labels: { ...commonLabels, "app.kubernetes.io/component": "agent" },
+      ...(opts.workloadAnnotations ? { annotations: opts.workloadAnnotations } : {}),
     },
     spec: {
       selector: { matchLabels: { "app.kubernetes.io/name": name } },
@@ -144,16 +133,63 @@ export function collectorAgentResources(opts: CollectorAgentOptions): CollectorA
     ],
   }, defs?.clusterRoleBinding));
 
-  const configMap = new ConfigMap(mergeDefaults({
+  const configMap = collectorConfigMap(opts, configMapName, opts.configMapAnnotations);
+
+  return { daemonSet, serviceAccount, clusterRole, clusterRoleBinding, configMap };
+}
+
+/** The fields the collector container and its ConfigMap are built from. */
+export type CollectorContainerOptions = Pick<
+  CollectorAgentOptions,
+  "name" | "image" | "configDir" | "ports" | "cpuRequest" | "memoryRequest" | "cpuLimit" | "memoryLimit" | "containerExtra"
+>;
+
+/**
+ * The collector container: the image, the config file argument, the ports,
+ * requests and limits, the config volume mount and a non-root security
+ * context, with `containerExtra` laid over the top. The agent DaemonSet and
+ * the gateway Deployment run the same container.
+ */
+export function collectorContainer(opts: CollectorContainerOptions): Record<string, unknown> {
+  return {
+    name: opts.name,
+    image: opts.image,
+    args: [`--config=${opts.configDir}/config.yaml`],
+    ports: opts.ports,
+    resources: {
+      requests: { cpu: opts.cpuRequest, memory: opts.memoryRequest },
+      limits: { cpu: opts.cpuLimit, memory: opts.memoryLimit },
+    },
+    volumeMounts: [
+      { name: "config", mountPath: opts.configDir, readOnly: true },
+    ],
+    securityContext: {
+      runAsNonRoot: true,
+      runAsUser: 10001,
+      readOnlyRootFilesystem: true,
+      allowPrivilegeEscalation: false,
+    },
+    ...opts.containerExtra,
+  };
+}
+
+/** The ConfigMap holding the rendered collector config under `config.yaml`. */
+export function collectorConfigMap(
+  opts: Pick<CollectorAgentOptions, "namespace" | "commonLabels" | "configYaml"> & {
+    defaults?: { configMap?: Partial<Record<string, unknown>> };
+  },
+  configMapName: string,
+  annotations?: Record<string, string>,
+): InstanceType<typeof ConfigMap> {
+  return new ConfigMap(mergeDefaults({
     metadata: {
       name: configMapName,
-      namespace,
-      labels: { ...commonLabels, "app.kubernetes.io/component": "config" },
+      namespace: opts.namespace,
+      labels: { ...opts.commonLabels, "app.kubernetes.io/component": "config" },
+      ...(annotations ? { annotations } : {}),
     },
     data: {
       "config.yaml": opts.configYaml,
     },
-  }, defs?.configMap));
-
-  return { daemonSet, serviceAccount, clusterRole, clusterRoleBinding, configMap };
+  }, opts.defaults?.configMap));
 }
