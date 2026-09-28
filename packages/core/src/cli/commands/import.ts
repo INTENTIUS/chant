@@ -389,15 +389,6 @@ export async function importFromContent(options: ContentImportOptions): Promise<
   if (!plugin) {
     return { success: false, generatedFiles: [], warnings: [], error: `Lexicon "${options.lexicon}" not available.` };
   }
-  if (!plugin.templateParser || !plugin.templateGenerator) {
-    return {
-      success: false,
-      generatedFiles: [],
-      warnings: [],
-      error: `Lexicon "${plugin.name}" does not support template import.`,
-      lexicon: plugin.name,
-    };
-  }
   return parseAndWrite(plugin, options.content, outputDir, options.force, [], [], plugin.name);
 }
 
@@ -411,10 +402,23 @@ function parseAndWrite(
   generatedFiles: string[],
   lexicon: string,
 ): ImportResult {
+  // A lexicon can recognize a template (detectTemplate) without being able to
+  // import it (grafana has no parser). Every path funnels through here, so
+  // this one check covers detection, --lexicon and content import (#2940).
+  if (!plugin.templateParser || !plugin.templateGenerator) {
+    return {
+      success: false,
+      generatedFiles: [],
+      warnings: [],
+      error: `lexicon "${plugin.name}" does not support template import`,
+      lexicon: plugin.name,
+    };
+  }
+
   // Parse template
   let ir: TemplateIR;
   try {
-    const parser = plugin.templateParser!();
+    const parser = plugin.templateParser();
     ir = parser.parse(content);
   } catch (err) {
     return {
@@ -431,7 +435,7 @@ function parseAndWrite(
     warnings.push(...ir.warnings);
   }
 
-  const generator = plugin.templateGenerator!();
+  const generator = plugin.templateGenerator();
 
   // Check output directory
   if (existsSync(outputDir) && !force) {
