@@ -1,0 +1,73 @@
+---
+title: "Agent Observability on k3d"
+description: "Collector agent and gateway, a sampled pipeline with span and GenAI metrics, an SLO with burn-rate alerts, Alertmanager routing and Grafana dashboards, declared with the otel, k8s, prometheus, grafana and k3d lexicons and run on a local cluster."
+diataxis: tutorial
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+An agent that misreads a quantity still returns 200. Seeing that takes traces with GenAI attributes, a collector that samples without losing the failures, an SLO on the runs, and dashboards that read all of it. This tutorial walks the [`agent-observability` example](https://github.com/INTENTIUS/chant/tree/main/examples/agent-observability), which declares all of that in one chant project, on an open-source stack, and runs it on k3d.
+
+## Cost
+
+None. The cluster is k3d on your machine, and every backend is an open-source image: the OpenTelemetry Collector, Prometheus, Alertmanager, Tempo, Loki and Grafana. No account, no key.
+
+## How the lexicons fit together
+
+Each layer is declared with the lexicon that owns it, and each one reads the declarations it depends on instead of repeating them.
+
+| Layer | Lexicon | Declared with |
+|---|---|---|
+| Cluster | [k3d](/chant/lexicons/k3d/) | `Cluster`, brought up by `k3dUp` |
+| Collector configs | [otel](/chant/lexicons/otel/) | components, `Pipeline`, `SpanMetricsConnector`, `TailSamplingProcessor`, `genAiComponents()` |
+| Collectors on Kubernetes | [k8s](/chant/lexicons/k8s/) | `OtelCollector` (agent DaemonSet), `OtelCollectorGateway`, `gatewayExporter()` |
+| Rules and routing | [prometheus](/chant/lexicons/prometheus/) | `Slo`, `Route`, `Receiver`, `InhibitRule` |
+| Dashboards | [grafana](/chant/lexicons/grafana/) | `Datasource`, `RedDashboard`, `SloDashboard`, `AgentDashboard` |
+
+The joins are where chant earns its keep:
+
+- The agent's exporters come from `gatewayExporter(gateway, { loadBalance: true })`, so renaming the gateway or moving its namespace moves the agents with it, and the `loadbalancing` exporter sends every span of a trace to one gateway replica.
+- The gateway runs tail sampling after the `spanmetrics` connector and the GenAI preset's metrics branch, so metrics count every span and only traces are thinned.
+- The SLO's SLI reads the `spanmetrics` metric names, and the SLO dashboard reads the SLO's recorded series from `sloMetrics()`.
+- The RED and agent dashboards read their metric names from the connector and the GenAI preset, so renaming a namespace at the source moves the panels.
+- Prometheus, Alertmanager and Grafana mount ConfigMaps holding exactly what the prometheus and grafana builds write, through `ruleFileYaml`, `alertmanagerYaml` and `grafanaFiles`.
+
+## Build and lint
+
+```bash
+cd examples/agent-observability
+npm run build
+npm run lint
+```
+
+`build` writes four outputs: the k3d cluster config, the Kubernetes manifests, the Prometheus rule file with `alertmanager.yml` beside it, and Grafana's provisioning files and dashboard JSON.
+
+<Aside type="note">
+Keep the declarations a check joins across in one build root. The placement checks (WK8601 tail sampling on a DaemonSet, WK8602 a multi-replica gateway without trace-aware routing, WK8603 `k8s_cluster` per node) read each collector ConfigMap next to its workload; PROM202 reads the SLO's severities next to the routes; GRAF101 and GRAF102 read panels next to datasources. Across build roots they go silent (chant #1939).
+</Aside>
+
+## Run it
+
+```bash
+npm run image
+k3d cluster create --config dist/k3d.yaml
+k3d image import agent-observability-demo:0.1.0 -c agent-observability
+export KUBECONFIG=$(k3d kubeconfig write agent-observability)
+kubectl apply -f dist/k8s.yaml
+kubectl -n observability port-forward svc/grafana 3000:80
+```
+
+Open http://localhost:3000. The demo agent fails one run in five against a 99% objective, on purpose: within a few minutes the SLO's page alert fires, Alertmanager routes it to `oncall`, and the ticket alert for the same SLO is inhibited. In Tempo every failed and every slow run is there and most ordinary ones are not; in Prometheus every run is counted.
+
+The example's on-demand e2e does all of this for you and checks each step:
+
+```bash
+npx vitest run --project e2e examples/agent-observability
+```
+
+## Where to go next
+
+- [OTel lexicon](/chant/lexicons/otel/): connectors, sampling and the GenAI preset.
+- [OTel collectors on Kubernetes](/chant/lexicons/k8s/otel-collector/): the agent, the gateway, and the placement checks.
+- [Prometheus lexicon](/chant/lexicons/prometheus/): rule groups, Alertmanager routing and `Slo`.
+- [Grafana lexicon](/chant/lexicons/grafana/): dashboards, panels and provisioning.

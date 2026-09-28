@@ -293,6 +293,10 @@ const EXPECTED_MIXED_DIVERGENT: ReadonlyMap<string, string> = new Map<string, st
  */
 const EXPECTED_RUN_FALLBACK: ReadonlyMap<string, string> = new Map<string, string>([
   [
+    "examples/agent-observability",
+    "`gatewayExporter(...)`, `ruleFileYaml(...)` and `grafanaFiles(...)` as values: the workloads carry configs rendered from other declarations at run time; the taint fixpoint then takes the files they import",
+  ],
+  [
     "examples/cc-aws-canonical",
     "a same-file resource reference passed to a folded intrinsic or authoring helper, and `kubectlApply(...)` as a value",
   ],

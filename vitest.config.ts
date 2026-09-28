@@ -72,6 +72,9 @@ export const UNIT_INCLUDE = [
   // activities. (examples/ is not globbed wholesale — fargate's docker
   // e2e/volume suites need Docker and aren't CI unit tests.)
   "examples/alert-triage/**/*.test.ts",
+  // chant #2904 — the agent-observability example's build checks and its demo
+  // agent's spans. No Docker, no cluster; the k3d run is in E2E_INCLUDE below.
+  "examples/agent-observability/test/*.test.ts",
   // chant #1025 — the fold-vs-run differential corpus. Walks examples/
   // and lexicons/*/examples/ itself (no Docker), so it's included
   // explicitly the same way examples.test.ts is.
@@ -161,6 +164,9 @@ export const E2E_INCLUDE = [
   // CHANT_HARNESS_E2E and skips cleanly in a plain run; Docker and Floci come
   // into play only via `just testing-harness-e2e`.
   "examples/testing-harness-aws/harness.e2e.test.ts",
+  // chant #2904 — the agent-observability stack on k3d. Skips cleanly without
+  // Docker, k3d and kubectl, which CI does not install.
+  "examples/agent-observability/test/*.e2e.test.ts",
 ];
 
 export default defineConfig({
