@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { importCommand, type ImportOptions } from "./import";
+import { importCommand, parseTemplateDocuments, type ImportOptions } from "./import";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -375,5 +375,142 @@ describe("importCommand", () => {
     for (const file of result.generatedFiles) {
       expect(file.endsWith(".ts")).toBe(true);
     }
+  });
+});
+
+// #2935 — YAML templates reach detection and the plugin's parser instead of
+// failing JSON.parse, and `--lexicon` skips detection.
+describe("importCommand with YAML templates", () => {
+  let testDir: string;
+  let outputDir: string;
+
+  const configMap = `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  LOG_LEVEL: info
+`;
+
+  const deployment = `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: web
+          image: nginx:1.27
+`;
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `chant-import-yaml-test-${Date.now()}-${Math.random()}`);
+    outputDir = join(testDir, "output");
+    await mkdir(testDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  /** A project that declares the k8s lexicon, so detection can find it. */
+  async function k8sProject(): Promise<void> {
+    await writeFile(join(testDir, "chant.config.json"), JSON.stringify({ lexicons: ["k8s"] }));
+  }
+
+  function generated(files: string[]): string {
+    return files.map((f) => readFileSync(join(outputDir, f), "utf-8")).join("\n");
+  }
+
+  test("detects and imports a single-document k8s manifest", async () => {
+    await k8sProject();
+    const templatePath = join(testDir, "manifest.yaml");
+    await writeFile(templatePath, configMap);
+
+    const result = await importCommand({ templatePath, output: outputDir });
+
+    expect(result.error).toBeUndefined();
+    expect(result.success).toBe(true);
+    expect(result.lexicon).toBe("k8s");
+    expect(generated(result.generatedFiles)).toContain("ConfigMap");
+  }, 30000);
+
+  test("detects and imports a multi-document k8s manifest", async () => {
+    await k8sProject();
+    const templatePath = join(testDir, "manifests.yaml");
+    await writeFile(templatePath, `# app manifests\n---\n${configMap}---\n${deployment}`);
+
+    const result = await importCommand({ templatePath, output: outputDir });
+
+    expect(result.error).toBeUndefined();
+    expect(result.success).toBe(true);
+    expect(result.lexicon).toBe("k8s");
+    const code = generated(result.generatedFiles);
+    expect(code).toContain("ConfigMap");
+    expect(code).toContain("Deployment");
+  }, 30000);
+
+  test("--lexicon imports without detection", async () => {
+    // No project config: detection would only try the aws fallback.
+    const templatePath = join(testDir, "manifest.yaml");
+    await writeFile(templatePath, configMap);
+
+    const detected = await importCommand({ templatePath, output: join(testDir, "detected") });
+    expect(detected.success).toBe(false);
+    expect(detected.error).toContain("--lexicon");
+
+    const result = await importCommand({ templatePath, output: outputDir, lexicon: "k8s" });
+
+    expect(result.error).toBeUndefined();
+    expect(result.success).toBe(true);
+    expect(result.lexicon).toBe("k8s");
+    expect(generated(result.generatedFiles)).toContain("ConfigMap");
+  }, 30000);
+
+  test("--lexicon with an unknown lexicon fails", async () => {
+    const templatePath = join(testDir, "manifest.yaml");
+    await writeFile(templatePath, configMap);
+
+    const result = await importCommand({ templatePath, output: outputDir, lexicon: "no-such-lexicon" });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("no-such-lexicon");
+  });
+
+  test("content that is neither JSON nor YAML names both formats", async () => {
+    const templatePath = join(testDir, "notes.txt");
+    await writeFile(templatePath, "this is not a template\n{ nor is this");
+
+    const result = await importCommand({ templatePath, output: outputDir });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("JSON");
+    expect(result.error).toContain("YAML");
+  });
+});
+
+describe("parseTemplateDocuments", () => {
+  test("JSON yields the parsed value as one document", () => {
+    expect(parseTemplateDocuments('{"a": 1}')).toEqual([{ a: 1 }]);
+    expect(parseTemplateDocuments("[1, 2]")).toEqual([[1, 2]]);
+  });
+
+  test("YAML splits on document separators and skips empty or comment-only documents", () => {
+    const docs = parseTemplateDocuments("---\n# only a comment\n---\na: 1\n---\nb: two\n---\n");
+    expect(docs).toEqual([{ a: 1 }, { b: "two" }]);
+  });
+
+  test("returns undefined for content that is neither", () => {
+    expect(parseTemplateDocuments("")).toBeUndefined();
+    expect(parseTemplateDocuments("just some words")).toBeUndefined();
+    expect(parseTemplateDocuments("{ broken json")).toBeUndefined();
   });
 });

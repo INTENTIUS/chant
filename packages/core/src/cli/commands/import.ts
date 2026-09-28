@@ -5,6 +5,7 @@ import type { TemplateIR, ResourceIR, ParameterIR, TemplateParser } from "../../
 import type { GeneratedFile, TypeScriptGenerator } from "../../import/generator";
 import { loadPlugins, resolveProjectLexicons } from "../plugins";
 import type { LexiconPlugin, ResourceSelector } from "../../lexicon";
+import { parseYAML } from "../../yaml";
 
 /**
  * Import command options
@@ -16,6 +17,11 @@ export interface ImportOptions {
   output?: string;
   /** Force overwrite existing files */
   force?: boolean;
+  /**
+   * Lexicon whose parser handles the file (#2935). Skips detection and the
+   * JSON/YAML check: the raw content goes straight to that plugin's parser.
+   */
+  lexicon?: string;
 }
 
 /**
@@ -40,15 +46,50 @@ export interface ImportResult {
 type ResourceCategory = "storage" | "compute" | "network" | "other";
 
 /**
- * Detect which plugin handles a template by asking each plugin.
- * @param data - Parsed JSON object
+ * Parse template content for detection (#2935): JSON first, then YAML. A YAML
+ * file is split on `---` document separators the way the k8s parser splits
+ * it, and each document is parsed on its own, so detection sees the same
+ * per-document objects the plugin's parser will. JSON yields one document,
+ * the parsed value, exactly as before. Returns undefined when the content is
+ * neither: core's YAML reader is lenient and turns unparseable text into an
+ * empty mapping, so a file with no non-empty mapping document is rejected.
+ */
+export function parseTemplateDocuments(content: string): unknown[] | undefined {
+  try {
+    return [JSON.parse(content)];
+  } catch {
+    // Not JSON: try YAML.
+  }
+  const documents: unknown[] = [];
+  for (const chunk of content.replace(/\r\n?/g, "\n").split(/^---\s*$/m)) {
+    if (chunk.replace(/#[^\n]*/g, "").trim() === "") continue;
+    let doc: unknown;
+    try {
+      doc = parseYAML(chunk);
+    } catch {
+      continue;
+    }
+    if (typeof doc === "object" && doc !== null && Object.keys(doc).length > 0) {
+      documents.push(doc);
+    }
+  }
+  return documents.length > 0 ? documents : undefined;
+}
+
+/**
+ * Detect which plugin handles a template by asking each plugin. Documents are
+ * tried in file order and the first one some plugin recognizes decides; for a
+ * JSON template there is exactly one document, so this is the old behaviour.
+ * @param documents - Parsed template documents (see `parseTemplateDocuments`)
  * @param plugins - Loaded lexicon plugins
  * @returns The matching plugin, or undefined if none match
  */
-function detectPlugin(data: unknown, plugins: LexiconPlugin[]): LexiconPlugin | undefined {
-  for (const plugin of plugins) {
-    if (plugin.detectTemplate?.(data)) {
-      return plugin;
+function detectPlugin(documents: unknown[], plugins: LexiconPlugin[]): LexiconPlugin | undefined {
+  for (const data of documents) {
+    for (const plugin of plugins) {
+      if (plugin.detectTemplate?.(data)) {
+        return plugin;
+      }
     }
   }
   return undefined;
@@ -195,16 +236,25 @@ export async function importCommand(options: ImportOptions): Promise<ImportResul
     };
   }
 
-  // Load plugins and detect lexicon
-  let data: unknown;
-  try {
-    data = JSON.parse(content);
-  } catch {
+  // `--lexicon <name>` names the plugin, so there is nothing to detect and no
+  // format to check: the plugin's parser decides what it accepts (#2935).
+  if (options.lexicon) {
+    return importFromContent({
+      content,
+      lexicon: options.lexicon,
+      output: options.output,
+      force: options.force,
+    });
+  }
+
+  // Parse for detection: JSON, falling back to YAML.
+  const documents = parseTemplateDocuments(content);
+  if (!documents) {
     return {
       success: false,
       generatedFiles: [],
       warnings: [],
-      error: "Template is not valid JSON.",
+      error: "Template is neither valid JSON nor YAML.",
     };
   }
 
@@ -229,13 +279,15 @@ export async function importCommand(options: ImportOptions): Promise<ImportResul
     }
   }
 
-  const plugin = detectPlugin(data, plugins);
+  const plugin = detectPlugin(documents, plugins);
   if (!plugin) {
     return {
       success: false,
       generatedFiles: [],
       warnings: [],
-      error: "Could not detect template lexicon. No installed lexicon recognizes this template.",
+      error:
+        "Could not detect template lexicon. No installed lexicon recognizes this template. " +
+        "Pass --lexicon <name> to import it with a specific lexicon.",
     };
   }
 
@@ -248,8 +300,9 @@ export async function importCommand(options: ImportOptions): Promise<ImportResul
  * Import from an in-memory template string through a KNOWN plugin — no
  * detection, no JSON assumption (#1548). This is the seam
  * `chant import --kustomize <dir>` drives with `kustomize build` output
- * through the k8s plugin's YAML parser; `importCommand` above is the same
- * pipeline behind file reading + JSON detection.
+ * through the k8s plugin's YAML parser, and `chant import <file> --lexicon
+ * <name>` drives with the file's content (#2935); `importCommand` above is
+ * the same pipeline behind file reading + JSON/YAML detection.
  */
 export interface ContentImportOptions {
   /** The raw template content (YAML or JSON — the plugin's parser decides). */
