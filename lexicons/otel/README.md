@@ -42,6 +42,8 @@ export const red = new Pipeline({ signal: "metrics", name: "red", receivers: [sp
 
 Each connector supports fixed signal pairs (`spanmetrics`: traces to metrics). OTEL101 fails a connector listed on one side only, OTEL112 fails a pipeline whose signal the connector can't pair, and `collectorTopology()` reports each pipeline-to-pipeline hop in `edges`. A custom connector declares its pairs with `connects` in `defineComponent`.
 
+`spanMetricsNames(connector)` returns the Prometheus names of a `spanmetrics` connector's metrics (`traces_span_metrics_calls_total` and so on), read from its namespace, dimensions and histogram unit, for queries and dashboards that should follow the declaration.
+
 ## GenAI preset
 
 `genAiPipeline(options)` returns a collector for workloads that emit OpenTelemetry GenAI spans. Prompt, completion, system-instruction and tool-call content is deleted from spans, span events and log records unless `keepContent: true` is set, and every GenAI span becomes call, error, duration and token metrics before any sampling. The attribute keys follow `GENAI_SEMCONV_PIN` (semantic-conventions v1.41.1), which `collectorTopology()` returns under `semconv`. `genAiComponents()` gives the pieces for pipelines of your own, and `genAiMetrics()` the metric names a dashboard reads.

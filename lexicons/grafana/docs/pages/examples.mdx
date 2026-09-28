@@ -1,11 +1,11 @@
 ---
 title: "Examples"
-description: "The grafana lexicon's example project"
+description: "The grafana lexicon's example projects"
 diataxis: how-to
 order: 8
 ---
 
-Each example lives under `lexicons/grafana/examples/` and builds with `chant build src --lexicon grafana`. The lexicon's tests build it, lint it with no warnings, run GRAF101 to GRAF107 over the output, and validate each dashboard against the pinned Grafana schema.
+Each example lives under `lexicons/grafana/examples/` and builds with `chant build src --lexicon grafana` (dashboards-from-declarations also with `--lexicon otel` and `--lexicon prometheus`). The lexicon's tests build it, lint it with no warnings, run GRAF101 to GRAF107 over the output, and validate each dashboard against the pinned Grafana schema.
 
 ## getting-started
 
@@ -21,4 +21,20 @@ A service overview over Prometheus, Tempo and Loki: RED panels over span metrics
 
 ```ts title="src/dashboard.ts"
 {{file:getting-started/src/dashboard.ts}}
+```
+
+## dashboards-from-declarations
+
+A collector, an SLO and three dashboards in one build root, built with `chant build src --lexicon otel`, `--lexicon prometheus` and `--lexicon grafana`. The collector turns every span into RED metrics through a `spanmetrics` connector with the namespace `shop`, and GenAI spans into per-model metrics and token sums through the GenAI preset under `agents`. The checkout SLO writes its SLI with the names `spanMetricsNames()` reads from the same connector. `RedDashboard`, `SloDashboard` and `AgentDashboard` build their dashboards from the connector, the `Slo` and the preset, so changing `namespace: "shop"` moves the SLO's rules and the RED dashboard's queries together. See [Dashboards from Declarations](../composites/).
+
+```ts title="src/components.ts"
+{{file:dashboards-from-declarations/src/components.ts}}
+```
+
+```ts title="src/slo.ts"
+{{file:dashboards-from-declarations/src/slo.ts}}
+```
+
+```ts title="src/dashboards.ts"
+{{file:dashboards-from-declarations/src/dashboards.ts}}
 ```

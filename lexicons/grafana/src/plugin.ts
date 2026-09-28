@@ -12,6 +12,7 @@ import { detectTemplate } from "./detect";
 import { grafanaSkills } from "./skill-defs";
 import { BUILTIN_CATALOG } from "./catalog";
 import { GRAFANA_SCHEMA_PIN } from "./pin";
+import { compositeCatalog } from "./composites/catalog";
 
 const catalogResource: McpResourceContribution = {
   uri: "grafana:resource-catalog",
@@ -83,6 +84,10 @@ export const grafanaPlugin: LexiconPlugin = {
   },
 
   skills: grafanaSkills,
+
+  composites() {
+    return compositeCatalog;
+  },
 
   mcpTools() {
     return [createDiffTool(grafanaSerializer, "Compare current Grafana dashboard and provisioning output against the previous build", "grafana")];

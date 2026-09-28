@@ -45,6 +45,7 @@ import {
 } from "./components/connectors";
 import type { Duration } from "./components/common";
 import { Pipeline } from "./pipeline";
+import { prometheusMetricName, SPANMETRICS_DEFAULT_DIMENSIONS, type CollectorMetric } from "./metric-names";
 
 // ── The GenAI attribute vocabulary, at GENAI_SEMCONV_PIN ─────────────
 
@@ -135,16 +136,7 @@ export const GENAI_DURATION_BUCKETS: readonly Duration[] = Object.freeze([
 ]);
 
 /** One metric the preset emits, as the collector names it and as Prometheus exposes it. */
-export interface GenAiMetric {
-  /** The OTLP metric name. */
-  name: string;
-  /** The name the `prometheus` exporter serves with its default suffixes; histograms add `_bucket`, `_sum` and `_count`. */
-  prometheus: string;
-  type: "sum" | "histogram";
-  unit?: string;
-  /** Attribute names on its data points, beyond the resource. Prometheus labels replace `.` with `_`. */
-  dimensions: string[];
-}
+export type GenAiMetric = CollectorMetric;
 
 export interface GenAiMetrics {
   /** Span count, with `status.code` = `STATUS_CODE_ERROR` for errors. */
@@ -162,11 +154,6 @@ export interface GenAiMetricsOptions {
 }
 
 const DEFAULT_NAMESPACE = "genai";
-const SPANMETRICS_DEFAULT_DIMENSIONS = ["service.name", "span.name", "span.kind", "status.code"];
-
-function prometheusName(name: string, suffix: string): string {
-  return `${name.replace(/[^A-Za-z0-9_:]/g, "_")}${suffix}`;
-}
 
 /**
  * The metrics `genAiPipeline()` emits for the given options: names,
@@ -182,23 +169,23 @@ export function genAiMetrics(options: GenAiMetricsOptions = {}): GenAiMetrics {
   ];
   const tokenDims = [...GENAI_TOKEN_DIMENSIONS];
   return {
-    calls: { name: `${ns}.calls`, prometheus: prometheusName(`${ns}.calls`, "_total"), type: "sum", dimensions: spanDims },
+    calls: { name: `${ns}.calls`, prometheus: prometheusMetricName(`${ns}.calls`, "sum"), type: "sum", dimensions: spanDims },
     duration: {
       name: `${ns}.duration`,
-      prometheus: prometheusName(`${ns}.duration`, "_seconds"),
+      prometheus: prometheusMetricName(`${ns}.duration`, "histogram", "s"),
       type: "histogram",
       unit: "s",
       dimensions: spanDims,
     },
     inputTokens: {
       name: `${ns}.tokens.input`,
-      prometheus: prometheusName(`${ns}.tokens.input`, "_total"),
+      prometheus: prometheusMetricName(`${ns}.tokens.input`, "sum"),
       type: "sum",
       dimensions: tokenDims,
     },
     outputTokens: {
       name: `${ns}.tokens.output`,
-      prometheus: prometheusName(`${ns}.tokens.output`, "_total"),
+      prometheus: prometheusMetricName(`${ns}.tokens.output`, "sum"),
       type: "sum",
       dimensions: tokenDims,
     },
