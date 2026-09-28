@@ -416,7 +416,7 @@ A commit has `sha`, `subject`, `author`, `date`, `trailers` and `pullRequest` as
 
 | Field | Holds |
 |---|---|
-| `range` | `spec` as given, `form` (`range`, `merge-base` or `commit`), and the `base` and `head` commits |
+| `range` | `spec` as given, `form` (`range`, `merge-base`, `commit` or `worktree`), and the `base` and `head` commits; `head` is `null` for `worktree` |
 | `paths` | the `--path` filters, from the workspace root |
 | `limits` | `fileBytes`, 65536 unless `--max-bytes` sets it, and `totalBytes`, sixteen times that |
 | `files[]` | each changed file under the workspace root, in git's order |

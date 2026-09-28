@@ -10,6 +10,7 @@ diataxis: reference
 chant workspace patch <base>..<head> [--path <p>...] [--max-bytes <n>] [--json]
 chant workspace patch <base>...<head> [--path <p>...] [--max-bytes <n>] [--json]
 chant workspace patch <commit> [--path <p>...] [--max-bytes <n>] [--json]
+chant workspace patch [<commit>] --worktree [--path <p>...] [--max-bytes <n>] [--json]
 ```
 
 ## Description
@@ -17,6 +18,8 @@ chant workspace patch <commit> [--path <p>...] [--max-bytes <n>] [--json]
 `chant workspace patch` prints the lines a diff changes, for a reader that runs no git of its own, such as hud's review view. [`check --changes`](/chant/cli/workspace-check/#the-forward-coverage-check) maps the same diff to records and prints no lines of it.
 
 The range is read as `check --changes` reads one. `<base>..<head>` compares the two trees, and `<base>...<head>` compares `<head>` with the merge base, which is what a work branch needs: `main...chant/work/W-001` shows the branch's own change even after `main` has moved on. A single revision is that commit against its first parent, or against the empty tree for a root commit, so a reader can show one commit's change.
+
+`--worktree` compares a commit, `HEAD` unless one is given, with the working tree as it is on disk. Staged and unstaged edits both count. Each untracked file that git doesn't ignore is listed as added. The document's `range.form` is `worktree` and its `range.head` is `null`. A reader uses it to show a file's changes that nobody has committed yet.
 
 Each file the diff changes under the workspace root is listed in git's order, with renames and copies followed. Paths are from the workspace root. The [read contract](/chant/reference/workspace-read-contract/#the-patch-read) lists the fields of a file and of a hunk. A binary file has `null` counts and no hunks.
 
@@ -39,7 +42,8 @@ modified  docs/smoke-claims.md +17 -8
 |---|---|
 | `<base>..<head>` | The two trees to compare. `<head>` left out is `HEAD`. |
 | `<base>...<head>` | `<head>` against its merge base with `<base>`. |
-| `<commit>` | One commit against its first parent. |
+| `<commit>` | One commit against its first parent. With `--worktree`, the commit the working tree is compared with. |
+| `--worktree` | The working tree against the commit, or `HEAD`, untracked files included. |
 | `--path <p>` | Only this file, or the files under this directory, from the workspace root. Repeatable. |
 | `--max-bytes <n>` | The hunk text one file gets, in bytes. The total is sixteen times this. |
 | `--json` | Print the document as JSON instead of the text. |

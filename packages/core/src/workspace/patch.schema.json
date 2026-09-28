@@ -70,9 +70,10 @@
               "enum": [
                 "range",
                 "merge-base",
-                "commit"
+                "commit",
+                "worktree"
               ],
-              "description": "range: <base>..<head>. merge-base: <base>...<head>, so base is their merge base. commit: one commit, so base is its first parent, or the empty tree."
+              "description": "range: <base>..<head>. merge-base: <base>...<head>, so base is their merge base. commit: one commit, so base is its first parent, or the empty tree. worktree: --worktree, the working tree against one commit (HEAD unless given), untracked files that git does not ignore as added."
             },
             "base": {
               "type": "string",
@@ -80,8 +81,12 @@
               "description": "The commit, or for a root commit the empty tree, the diff starts from."
             },
             "head": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{40,64}$"
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^[0-9a-f]{40,64}$",
+              "description": "The commit the diff ends at; null for the working tree (worktree)."
             }
           }
         },

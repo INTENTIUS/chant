@@ -311,6 +311,8 @@ export interface ParsedArgs {
   paths?: string[];
   /** `chant workspace patch <range> --max-bytes <n>`: the most hunk text printed for one file. */
   maxBytes?: number;
+  /** `chant workspace patch [<commit>] --worktree`: the working tree against the commit (HEAD unless given). */
+  worktree?: boolean;
   /** `chant workspace check --changes <base>..<head>` (#2773): the diff the forward coverage check maps to records. */
   changes?: string;
   /** `chant workspace check --changes ... --severity off|warn|fail` (#2773): in place of the declaration's `changes.severity`. */

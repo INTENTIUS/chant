@@ -391,6 +391,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       const value = args[++i];
       if (!value || value.startsWith("-")) throw new Error("--path needs a path: --path <path>");
       (result.paths ??= []).push(value);
+    } else if (arg === "--worktree") {
+      // `chant workspace patch [<commit>] --worktree`
+      result.worktree = true;
     } else if (arg === "--max-bytes") {
       // `chant workspace patch <range> --max-bytes <n>`
       const value = Number(args[++i]);
@@ -940,6 +943,7 @@ Workspace (level 1, #2524):
                         out_of_scope. The declaration's changes block sets
                         the severity (warn by default) and ignore globs
   workspace patch <base>..<head>|<base>...<head>|<commit> [--path <p>...] [--max-bytes <n>] [--json]
+  workspace patch [<commit>] --worktree [--path <p>...] [--max-bytes <n>] [--json]
                         The hunks of a diff, file by file: a range, a work
                         branch, or one commit against its first parent. Each
                         file's hunk text stops at --max-bytes (64 KiB) and

@@ -1,6 +1,7 @@
 /**
  * The hunks of a diff: `chant workspace patch <base>..<head>|<base>...<head>|<commit>
- * [--path <p>...] [--max-bytes <n>] [--json]`.
+ * [--path <p>...] [--max-bytes <n>] [--json]`, or `chant workspace patch [<commit>]
+ * --worktree` for the working tree's changes against a commit (HEAD unless given).
  *
  * `check --changes` maps the paths a diff changes to records and prints no
  * lines of it. A reader showing what a work branch or a commit did needs the
@@ -8,6 +9,8 @@
  * range is read as `check --changes` reads one, except that a lone revision
  * is that commit against its first parent, or against the empty tree for a
  * root commit, since a reader drawing one commit wants that commit's change.
+ * With --worktree the head is the working tree as it is on disk: staged or
+ * not, and each untracked file git does not ignore, as added.
  *
  * Each changed file under the workspace root is listed, with renames
  * followed, its added and deleted line counts, and its hunks. A file's hunk
@@ -99,7 +102,8 @@ export type PatchDocument =
   | (Head & {
       workspace: { name: string; root: string };
       /** What was asked, and the two commits compared. `form` says how the spec was read. */
-      range: { spec: string; form: "range" | "merge-base" | "commit"; base: string; head: string };
+      /** head is null for the working tree (--worktree). */
+      range: { spec: string; form: "range" | "merge-base" | "commit" | "worktree"; base: string; head: string | null };
       /** The --path filters, from the workspace root; empty for the whole workspace. */
       paths: string[];
       limits: { fileBytes: number; totalBytes: number };
@@ -116,6 +120,8 @@ export interface PatchQuery {
   paths?: string[];
   /** The hunk text one file gets. */
   maxBytes?: number;
+  /** Compare `range` (one commit, HEAD when empty) with the working tree. */
+  worktree?: boolean;
 }
 
 export interface PatchResult {
@@ -160,10 +166,10 @@ function resolveRange(top: string, spec: string): { form: "range" | "merge-base"
 }
 
 /** Each changed file, from the repository root, with its counts; renames and copies followed. */
-function changedFiles(top: string, base: string, head: string, pathspecs: string[]): Omit<PatchFile, "hunkCount" | "bytes" | "hunks" | "truncated">[] {
+function changedFiles(top: string, revs: string[], pathspecs: string[]): Omit<PatchFile, "hunkCount" | "bytes" | "hunks" | "truncated">[] {
   const spec = ["--", ...pathspecs];
-  const status = git(top, ["diff", "--name-status", "-z", "-M", "--no-color", base, head, ...spec]).split("\0");
-  const counts = git(top, ["diff", "--numstat", "-z", "-M", "--no-color", base, head, ...spec]).split("\0");
+  const status = git(top, ["diff", "--name-status", "-z", "-M", "--no-color", ...revs, ...spec]).split("\0");
+  const counts = git(top, ["diff", "--numstat", "-z", "-M", "--no-color", ...revs, ...spec]).split("\0");
   const numstat = new Map<string, { additions: number | null; deletions: number | null }>();
   for (let i = 0; i < counts.length && counts[i] !== ""; ) {
     const [a, d, path] = counts[i].split("\t");
@@ -218,12 +224,36 @@ function parseHunks(text: string): { hunks: PatchHunk[]; bytes: number } {
  * When the count of sections is not the count of files, each file's diff is
  * read on its own instead.
  */
-function fileSections(top: string, base: string, head: string, pathspecs: string[], files: { path: string; from: string | null }[]): string[] {
-  const diff = (spec: string[]) => git(top, ["diff", "--no-color", "--no-ext-diff", "-M", base, head, "--", ...spec]);
+function fileSections(top: string, revs: string[], pathspecs: string[], files: { path: string; from: string | null }[]): string[] {
+  const diff = (spec: string[]) => git(top, ["diff", "--no-color", "--no-ext-diff", "-M", ...revs, "--", ...spec]);
   const text = diff(pathspecs);
   const sections = text === "" ? [] : text.split(/^(?=diff --git )/m).filter((x) => x.startsWith("diff --git "));
   if (sections.length === files.length) return sections;
   return files.map((f) => diff(f.from ? [f.from, f.path] : [f.path]));
+}
+
+/** `git diff --no-index`, which exits 1 when the two differ: its output either way. */
+function gitNoIndex(top: string, args: string[]): string {
+  try {
+    return git(top, ["diff", "--no-index", "--no-color", "--no-ext-diff", ...args]);
+  } catch (err) {
+    const out = (err as { status?: number; stdout?: string }).stdout;
+    if ((err as { status?: number }).status === 1 && typeof out === "string") return out;
+    throw err;
+  }
+}
+
+/** Each untracked file git does not ignore, under the pathspecs, as an added file with its diff text. */
+function untrackedFiles(top: string, pathspecs: string[]): { file: Omit<PatchFile, "hunkCount" | "bytes" | "hunks" | "truncated">; section: string }[] {
+  const listed = git(top, ["ls-files", "--others", "--exclude-standard", "-z", "--", ...pathspecs]).split("\0").filter((p) => p !== "");
+  return listed.map((path) => {
+    const [a, d] = gitNoIndex(top, ["--numstat", "--", "/dev/null", path]).split("\t");
+    const binary = a === "-";
+    return {
+      file: { path, change: "added" as const, from: null, binary, additions: binary ? null : Number(a) || 0, deletions: binary ? null : Number(d) || 0 },
+      section: binary ? "" : gitNoIndex(top, ["--", "/dev/null", path]),
+    };
+  });
 }
 
 /** The hunks cut to `budget` bytes: whole hunks while they fit, then the lines of the next that fit. */
@@ -271,15 +301,22 @@ function run(query: PatchQuery, head: Head): Exclude<PatchDocument, { error: unk
   const paths = (query.paths ?? []).map((p) => p.replace(/\/+$/, ""));
   for (const p of paths) if (p !== "." && !isWorkspacePath(p)) throw new PatchError("patch-path-invalid", `--path ${p} is not a relative path inside the workspace`);
   const pathspecs = paths.length === 0 ? [prefix === "" ? "." : prefix] : paths.map((p) => (joinPath(prefix, p) === "" ? "." : joinPath(prefix, p)));
-  const range = resolveRange(top, query.range);
+  const range = query.worktree
+    ? { form: "worktree" as const, base: commitOf(top, query.range === "" ? "HEAD" : query.range), head: null }
+    : resolveRange(top, query.range);
+  const revs = range.head === null ? [range.base] : [range.base, range.head];
   const fileBytes = query.maxBytes ?? PATCH_FILE_BYTES;
   const totalBytes = fileBytes * PATCH_TOTAL_FACTOR;
   const fromWorkspace = (full: string) => (prefix === "" ? full : full.slice(prefix.length + 1));
 
   let left = totalBytes;
   const files: PatchFile[] = [];
-  const changed = changedFiles(top, range.base, range.head, pathspecs);
-  const sections = changed.length > 0 ? fileSections(top, range.base, range.head, pathspecs, changed) : [];
+  const tracked = changedFiles(top, revs, pathspecs);
+  const trackedSections = tracked.length > 0 ? fileSections(top, revs, pathspecs, tracked) : [];
+  const fresh = range.head === null ? untrackedFiles(top, pathspecs) : [];
+  const both = [...tracked.map((file, i) => ({ file, section: trackedSections[i] })), ...fresh].sort((a, b) => (a.file.path < b.file.path ? -1 : a.file.path > b.file.path ? 1 : 0));
+  const changed = both.map((x) => x.file);
+  const sections = both.map((x) => x.section);
   for (const [i, f] of changed.entries()) {
     const entry = { ...f, path: fromWorkspace(f.path), from: f.from === null ? null : fromWorkspace(f.from) };
     if (f.binary) {
@@ -307,11 +344,11 @@ function run(query: PatchQuery, head: Head): Exclude<PatchDocument, { error: unk
   };
 }
 
-const USAGE = "chant workspace patch <base>..<head>|<base>...<head>|<commit> [--path <p>...] [--max-bytes <n>] [--json]";
+const USAGE = "chant workspace patch <base>..<head>|<base>...<head>|<commit> [--path <p>...] [--max-bytes <n>] [--json], or chant workspace patch [<commit>] --worktree [--path <p>...] [--max-bytes <n>] [--json]";
 
 /** Each file's line, then its hunks as git writes them, then a summary. */
 export function formatPatch(doc: Exclude<PatchDocument, { error: unknown }>): string {
-  const out = [`patch     ${doc.range.base.slice(0, 8)}..${doc.range.head.slice(0, 8)} (${doc.range.spec}, ${doc.range.form})`];
+  const out = [`patch     ${doc.range.base.slice(0, 8)}..${doc.range.head === null ? "worktree" : doc.range.head.slice(0, 8)} (${doc.range.spec}, ${doc.range.form})`];
   for (const f of doc.files) {
     const counts = f.binary ? "binary" : `+${f.additions} -${f.deletions}`;
     out.push(`${f.change.padEnd(9)} ${f.path}${f.from ? ` (from ${f.from})` : ""} ${counts}${f.truncated ? `; truncated, ${f.hunks.length} of ${f.hunkCount} hunks shown` : ""}`);
@@ -324,12 +361,12 @@ export function formatPatch(doc: Exclude<PatchDocument, { error: unknown }>): st
 
 export async function runWorkspacePatch(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
-  const range = args.extraPositional;
-  if (!range) {
+  const range = args.extraPositional ?? (args.worktree ? "" : undefined);
+  if (range === undefined) {
     console.error(formatError({ message: "chant workspace patch needs a range or a commit", hint: USAGE }));
     return 1;
   }
-  const { doc, failed } = await workspacePatch({ cwd: process.cwd(), range, paths: args.paths, maxBytes: args.maxBytes });
+  const { doc, failed } = await workspacePatch({ cwd: process.cwd(), range, paths: args.paths, maxBytes: args.maxBytes, worktree: args.worktree === true });
   if (args.json) console.log(JSON.stringify(doc, null, 2));
   if ("error" in doc) {
     console.error(formatError({ message: `${doc.error.code}: ${doc.error.message}`, hint: USAGE }));

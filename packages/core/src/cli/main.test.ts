@@ -786,6 +786,7 @@ describe("workspace init and ls (#2534)", () => {
     expect(patch).toMatchObject({ command: "workspace", path: "patch", extraPositional: "main...chant/work/W-001", paths: ["app", "docs/a.md"], maxBytes: 4096, json: true });
     expect(resolveCommand(patch, commandRegistry)?.def.name).toBe("workspace patch");
     expect(() => parseArgs(["workspace", "patch", "HEAD", "--max-bytes", "0"])).toThrow(/--max-bytes needs a whole number/);
+    expect(parseArgs(["workspace", "patch", "--worktree", "--path", "docs/a.md", "--json"])).toMatchObject({ command: "workspace", path: "patch", worktree: true, paths: ["docs/a.md"], json: true });
   });
 
   test("run takes --work <id> for an Op with a work lease (#2748)", () => {

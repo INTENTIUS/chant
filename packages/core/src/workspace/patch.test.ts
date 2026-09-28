@@ -56,7 +56,7 @@ afterAll(cleanScratch);
 const { expectValid } = contract(patchSchema);
 type Result = Exclude<PatchDocument, { error: unknown }>;
 
-async function patch(range: string, options: { paths?: string[]; maxBytes?: number } = {}): Promise<Result> {
+async function patch(range: string, options: { paths?: string[]; maxBytes?: number; worktree?: boolean } = {}): Promise<Result> {
   const { doc } = await workspacePatch({ cwd: ws, range, ...options });
   expectValid(doc);
   if ("error" in doc) throw new Error(`${doc.error.code}: ${doc.error.message}`);
@@ -147,6 +147,40 @@ describe("workspace patch", () => {
     expect(doc.files[17].hunks[0]).toMatchObject({ header: "@@ -0,0 +1 @@", lines: [] });
     expect(doc.files.every((f) => f.additions === 1 && f.hunkCount === 1 && f.bytes === 46)).toBe(true);
     expect(doc.summary.truncated).toBe(true);
+  });
+
+  test("--worktree reads the working tree against HEAD: edits staged or not, a deletion, and untracked files not ignored as added", async () => {
+    git(top, "checkout", "-q", "-b", "worktree", "main");
+    writeFiles(top, {
+      "ws/app/server.mjs": SERVER.replace("line5 = 5", "line5 = 55"),
+      "ws/docs/new.md": "# New\n\nTwo lines.\n",
+      "ws/.gitignore": "*.log\n",
+      "ws/debug.log": "ignored\n",
+      "outside-new.txt": "outside the workspace\n",
+    });
+    git(top, "add", "ws/.gitignore");
+    git(top, "rm", "-q", "ws/app/old.mjs");
+    try {
+      const doc = await patch("", { worktree: true });
+      expect(doc.range).toEqual({ spec: "", form: "worktree", base: sha.m1, head: null });
+      expect(doc.files.map(summary)).toEqual([
+        ["added", ".gitignore", null, 1, 0, 1, false],
+        ["deleted", "app/old.mjs", null, 0, 4, 1, false],
+        ["modified", "app/server.mjs", null, 1, 1, 1, false],
+        ["added", "docs/new.md", null, 3, 0, 1, false],
+      ]);
+      expect(doc.files[3].hunks).toEqual([{ header: "@@ -0,0 +1,3 @@", oldStart: 0, oldLines: 0, newStart: 1, newLines: 3, lines: ["+# New", "+", "+Two lines."] }]);
+      expect(doc.files[2].hunks[0].lines.filter((l) => /^[+-]/.test(l))).toEqual(["-export const line5 = 5;", "+export const line5 = 55;"]);
+      const one = await patch("HEAD", { worktree: true, paths: ["docs/new.md"] });
+      expect(one.files.map((f) => f.path)).toEqual(["docs/new.md"]);
+      expect(one.summary).toEqual({ files: 1, additions: 3, deletions: 0, truncated: false });
+      expect(formatPatch(one)).toContain("..worktree (HEAD, worktree)");
+      expect((await patch(sha.m0, { worktree: true, paths: ["docs/claims.md"] })).files.map((f) => [f.path, f.additions])).toEqual([["docs/claims.md", 2]]);
+    } finally {
+      git(top, "reset", "-q", "--hard");
+      git(top, "clean", "-qfdx");
+      git(top, "checkout", "-q", "main");
+    }
   });
 
   test("a revision that is no commit is revision-unknown, and a path outside the workspace patch-path-invalid", async () => {
