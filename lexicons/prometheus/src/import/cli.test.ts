@@ -71,9 +71,11 @@ describe("chant import", () => {
     const templatePath = write("alertmanager.yml", read("alertmanager-full.yml"));
     const output = join(dir, "src");
 
+    // Without a project, detection tries every installed lexicon (#2965).
     const detected = await importCommand({ templatePath, output: join(dir, "detected") });
-    expect(detected.success).toBe(false);
-    expect(detected.error).toContain("--lexicon");
+    expect(detected.error).toBeUndefined();
+    expect(detected.lexicon).toBe("prometheus");
+    expect(detected.detected).toBe(true);
 
     const result = await importCommand({ templatePath, output, lexicon: "prometheus" });
 

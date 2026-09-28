@@ -2,8 +2,9 @@ import { importLexiconModule, importLexiconPackage, lexiconModulePath, lexiconNa
 import { readLexiconDeclarationsStatically, type StaticLexiconRead } from "../config-static";
 export { unknownPathLexiconsNotice } from "../config-static";
 import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
-import { existsSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { existsSync, readdirSync, readFileSync, type Dirent } from "node:fs";
 import { isLexiconPlugin, type LexiconPlugin } from "../lexicon";
 import { loadChantConfigUpward } from "../config";
 import { findInfraFiles, detectLexicons } from "../index";
@@ -78,6 +79,44 @@ export async function loadPlugin(lexiconName: string): Promise<LexiconPlugin> {
   }
 
   throw new Error(`Package ${packageName} does not export a LexiconPlugin or Serializer`);
+}
+
+const LEXICON_PACKAGE_PREFIX = "chant-lexicon-";
+
+/**
+ * The names of the lexicon packages installed where {@link loadPlugin} can
+ * load them (#2965), sorted. `loadPlugin` imports
+ * `@intentius/chant-lexicon-<name>` from chant's own install and then from the
+ * project (`importLexiconPackage`), so this lists the `@intentius` scope of
+ * every `node_modules` directory Node would search from either place: each
+ * ancestor of chant's own module and each ancestor of `projectDir`. A name
+ * being listed does not promise it loads; the caller still handles a failure.
+ */
+export function listInstalledLexicons(projectDir: string = process.cwd()): string[] {
+  const names = new Set<string>();
+  const starts = [dirname(fileURLToPath(import.meta.url)), resolve(projectDir)];
+  for (const start of starts) {
+    let dir = start;
+    for (;;) {
+      const scope = join(dir, "node_modules", "@intentius");
+      let entries: Dirent[] = [];
+      try {
+        entries = readdirSync(scope, { withFileTypes: true });
+      } catch {
+        // No @intentius scope here.
+      }
+      for (const entry of entries) {
+        if (!entry.name.startsWith(LEXICON_PACKAGE_PREFIX)) continue;
+        if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+        const name = entry.name.slice(LEXICON_PACKAGE_PREFIX.length);
+        if (name !== "") names.add(name);
+      }
+      const parent = dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  }
+  return [...names].sort();
 }
 
 /**

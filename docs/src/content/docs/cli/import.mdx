@@ -23,7 +23,7 @@ With `--kustomize <dir>` it renders a kustomization first and imports the render
 
 The import process:
 
-1. Reads and parses the template file: JSON first, then YAML. A YAML file may hold several documents separated by `---`; each is parsed on its own
+1. Reads and parses the template file: JSON first, then YAML. A YAML file may hold several documents. A line holding only `---` starts one and a line holding only `...` ends one, and either may carry a trailing `# comment`. Each document is parsed on its own, and a document whose top level is a list parses as that list
 2. Asks each lexicon plugin if it recognizes the template via `detectTemplate()`, one parsed document at a time in file order. The first document a lexicon recognizes decides
 3. Hands the file's raw content to the matching lexicon's `templateParser()`, which extracts resources into an intermediate representation
 4. Uses the lexicon's `templateGenerator()` to produce TypeScript files
@@ -31,7 +31,11 @@ The import process:
 
 The template may be JSON or YAML, so Kubernetes manifests import the same way.
 
-Detection only considers the project's lexicons. These come from `chant.config.ts` or from the lexicons the project's source imports, and `aws` is tried when there are none. When no lexicon recognizes the template, pass `--lexicon <name>` to skip detection. The raw file content then goes to that lexicon's parser, which decides what it accepts. Without `--lexicon`, a file that is neither JSON nor YAML fails with `Template is neither valid JSON nor YAML.`
+Detection asks the project's lexicons first. These come from `chant.config.ts` or from the lexicons the project's source imports. If none of them recognizes the template, or you run the command outside a project, every installed `@intentius/chant-lexicon-*` package is asked, in name order. A package counts as installed when chant can load it: it sits in a `node_modules/@intentius` directory above chant's own install or above the project. So a Kubernetes manifest imported in an empty directory is detected as `k8s` if that lexicon is installed. Where several installed lexicons recognize the template, one that has a template parser goes first, and the others are named in a warning.
+
+The output names the lexicon: `Detected lexicon: <name>` when detection chose it, `Lexicon: <name>` when you named it with `--lexicon` (or `--kustomize`, which implies `k8s`).
+
+Pass `--lexicon <name>` to skip detection, for example when no lexicon recognizes the template. The raw file content then goes to that lexicon's parser, which decides what it accepts. Without `--lexicon`, a file that is neither JSON nor YAML fails with `Template is neither valid JSON nor YAML.`
 
 ## Flags
 
@@ -115,6 +119,9 @@ chant import template.json --output src/
 
 # Import Kubernetes manifests (one or many documents per file)
 chant import manifests.yaml --output src/
+
+# Outside a project: every installed lexicon is tried
+chant import deployment.yaml
 
 # Skip detection and name the lexicon
 chant import manifests.yaml --lexicon k8s --output src/

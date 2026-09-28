@@ -194,6 +194,54 @@ export function parseYAML(content: string): Record<string, unknown> {
 }
 
 /**
+ * Parse one YAML (or JSON) document whose top level may be a sequence
+ * (#2965). {@link parseYAML} reads only a top-level mapping and returns `{}`
+ * for a file like `- a\n- b`; its callers rely on getting a mapping back, so
+ * it keeps doing that. This returns the list instead, and otherwise defers to
+ * `parseYAML`.
+ */
+export function parseYAMLDocument(content: string): unknown {
+  try {
+    return JSON.parse(content);
+  } catch {
+    // Fall through to YAML parsing
+  }
+
+  const lines = content.replace(/\r\n?/g, "\n").split("\n");
+  const first = lines.findIndex((line) => line.trim() !== "" && !line.trim().startsWith("#"));
+  if (first !== -1 && /^\s*- /.test(lines[first])) {
+    return parseYAMLArray(lines, first, lines[first].search(/\S/)).value;
+  }
+  return parseYAMLLines(lines, 0, 0).value;
+}
+
+/** A document start (`---`) or end (`...`) marker, optionally followed by a comment. */
+const DOCUMENT_MARKER = /^(?:---|\.\.\.)(?:[ \t]+#.*)?[ \t]*$/;
+
+/**
+ * Split a YAML stream into its documents (#2965). A line holding only `---`
+ * starts a document and a line holding only `...` ends one; either may carry
+ * a trailing `# comment`. Documents that are empty or hold only comments are
+ * dropped. The text of each document is returned unparsed, with `\r\n`
+ * normalized to `\n`.
+ */
+export function splitYAMLDocuments(content: string): string[] {
+  const documents: string[] = [];
+  let current: string[] = [];
+  const flush = (): void => {
+    const text = current.join("\n");
+    if (text.replace(/#[^\n]*/g, "").trim() !== "") documents.push(text);
+    current = [];
+  };
+  for (const line of content.replace(/\r\n?/g, "\n").split("\n")) {
+    if (DOCUMENT_MARKER.test(line)) flush();
+    else current.push(line);
+  }
+  flush();
+  return documents;
+}
+
+/**
  * A block-scalar header: `|` (literal, keep newlines) or `>` (folded, newlines →
  * spaces), with a chomping indicator (`-` strip trailing newlines, `+` keep them,
  * default clip to a single one). Returns null when `inline` isn't a block header.

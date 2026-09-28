@@ -1,5 +1,12 @@
-import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { importCommand, parseTemplateDocuments, type ImportOptions } from "./import";
+import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
+import {
+  detectTemplateLexicon,
+  importCommand,
+  parseTemplateDocuments,
+  printImportResult,
+  type ImportOptions,
+} from "./import";
+import { listInstalledLexicons } from "../plugins";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -459,21 +466,32 @@ spec:
   }, 30000);
 
   test("--lexicon imports without detection", async () => {
-    // No project config: detection would only try the aws fallback.
     const templatePath = join(testDir, "manifest.yaml");
     await writeFile(templatePath, configMap);
-
-    const detected = await importCommand({ templatePath, output: join(testDir, "detected") });
-    expect(detected.success).toBe(false);
-    expect(detected.error).toContain("--lexicon");
 
     const result = await importCommand({ templatePath, output: outputDir, lexicon: "k8s" });
 
     expect(result.error).toBeUndefined();
     expect(result.success).toBe(true);
     expect(result.lexicon).toBe("k8s");
+    expect(result.detected).toBeFalsy();
     expect(generated(result.generatedFiles)).toContain("ConfigMap");
   }, 30000);
+
+  // #2965 — with no chant.config and no source imports, every installed
+  // lexicon is tried, not only aws.
+  test("detects a k8s manifest outside a project from the installed lexicons", async () => {
+    const templatePath = join(testDir, "manifest.yaml");
+    await writeFile(templatePath, `--- # config\n${configMap}...\n`);
+
+    const result = await importCommand({ templatePath, output: outputDir });
+
+    expect(result.error).toBeUndefined();
+    expect(result.success).toBe(true);
+    expect(result.lexicon).toBe("k8s");
+    expect(result.detected).toBe(true);
+    expect(generated(result.generatedFiles)).toContain("ConfigMap");
+  }, 60000);
 
   test("--lexicon with an unknown lexicon fails", async () => {
     const templatePath = join(testDir, "manifest.yaml");
@@ -497,6 +515,95 @@ spec:
   });
 });
 
+// #2965 — detection outside a project, and inside one when the project's
+// lexicons don't match.
+describe("detectTemplateLexicon", () => {
+  let testDir: string;
+
+  const collector = {
+    receivers: { otlp: { protocols: { grpc: {} } } },
+    exporters: { debug: {} },
+    service: { pipelines: { traces: { receivers: ["otlp"], exporters: ["debug"] } } },
+  };
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `chant-import-detect-test-${Date.now()}-${Math.random()}`);
+    await mkdir(testDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  test("an empty directory detects an otel collector config from the installed lexicons", async () => {
+    const detection = await detectTemplateLexicon([collector], testDir);
+    expect(detection?.plugin.name).toBe("otel");
+    expect(detection?.source).toBe("installed");
+  }, 60000);
+
+  test("a project lexicon that matches decides", async () => {
+    await writeFile(join(testDir, "chant.config.json"), JSON.stringify({ lexicons: ["aws"] }));
+    const detection = await detectTemplateLexicon([{ AWSTemplateFormatVersion: "2010-09-09", Resources: {} }], testDir);
+    expect(detection?.plugin.name).toBe("aws");
+    expect(detection?.source).toBe("project");
+  }, 60000);
+
+  test("inside a project, installed lexicons are tried when the project's don't match", async () => {
+    await writeFile(join(testDir, "chant.config.json"), JSON.stringify({ lexicons: ["aws"] }));
+    const detection = await detectTemplateLexicon([collector], testDir);
+    expect(detection?.plugin.name).toBe("otel");
+    expect(detection?.source).toBe("installed");
+  }, 60000);
+
+  test("names the other installed lexicons that also recognized the template", async () => {
+    // github and forgejo both read a GitHub-Actions-shaped workflow.
+    const workflow = { on: { push: {} }, jobs: { build: { "runs-on": "ubuntu-latest", steps: [] } } };
+    const detection = await detectTemplateLexicon([workflow], testDir);
+    expect(detection).toBeDefined();
+    // github has a template parser and forgejo does not, so github is chosen.
+    expect(detection!.plugin.name).toBe("github");
+    expect(detection!.alsoMatched).toContain("forgejo");
+  }, 60000);
+
+  test("returns undefined when no installed lexicon recognizes the template", async () => {
+    expect(await detectTemplateLexicon([{ version: "1.0", unknownField: {} }], testDir)).toBeUndefined();
+  }, 60000);
+});
+
+describe("listInstalledLexicons", () => {
+  test("lists the @intentius/chant-lexicon-* packages installed alongside chant", () => {
+    const names = listInstalledLexicons(tmpdir());
+    expect(names).toContain("aws");
+    expect(names).toContain("k8s");
+    expect(names).toContain("otel");
+    expect(names).toEqual([...names].sort());
+  });
+});
+
+describe("printImportResult", () => {
+  function printed(result: Parameters<typeof printImportResult>[0]): string {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      printImportResult(result);
+      return log.mock.calls.map((c) => c.join(" ")).join("\n");
+    } finally {
+      log.mockRestore();
+    }
+  }
+
+  test("says Detected lexicon when the lexicon was detected", () => {
+    expect(printed({ success: true, generatedFiles: [], warnings: [], lexicon: "k8s", detected: true })).toContain(
+      "Detected lexicon: k8s",
+    );
+  });
+
+  test("says Lexicon when the lexicon was named", () => {
+    const out = printed({ success: true, generatedFiles: [], warnings: [], lexicon: "k8s" });
+    expect(out).toContain("Lexicon: k8s");
+    expect(out).not.toContain("Detected");
+  });
+});
+
 describe("parseTemplateDocuments", () => {
   test("JSON yields the parsed value as one document", () => {
     expect(parseTemplateDocuments('{"a": 1}')).toEqual([{ a: 1 }]);
@@ -506,6 +613,19 @@ describe("parseTemplateDocuments", () => {
   test("YAML splits on document separators and skips empty or comment-only documents", () => {
     const docs = parseTemplateDocuments("---\n# only a comment\n---\na: 1\n---\nb: two\n---\n");
     expect(docs).toEqual([{ a: 1 }, { b: "two" }]);
+  });
+
+  test("a top-level YAML list parses as a list (#2965)", () => {
+    expect(parseTemplateDocuments("- name: one\n  expr: up\n- name: two\n")).toEqual([
+      [{ name: "one", expr: "up" }, { name: "two" }],
+    ]);
+  });
+
+  test("commented separators and document ends split documents (#2965)", () => {
+    expect(parseTemplateDocuments("--- # first\na: 1\n...\n--- # second\nb: two\n...\n")).toEqual([
+      { a: 1 },
+      { b: "two" },
+    ]);
   });
 
   test("returns undefined for content that is neither", () => {
