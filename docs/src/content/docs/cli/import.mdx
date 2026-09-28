@@ -31,11 +31,11 @@ The import process:
 
 The template may be JSON or YAML, so Kubernetes manifests import the same way.
 
-Detection asks the project's lexicons first. These come from `chant.config.ts` or from the lexicons the project's source imports. When none of them recognizes the template, or you run the command outside a project, every installed `@intentius/chant-lexicon-*` package is asked, in name order. A package counts as installed when chant can load it: it sits in a `node_modules/@intentius` directory above chant's own install or above the project. So a Kubernetes manifest imported in an empty directory is detected as `k8s` when that lexicon is installed. When several installed lexicons recognize the template, one that has a template parser goes first, and the others are named in a warning.
+Detection asks the project's lexicons first. These come from `chant.config.ts` or from the lexicons the project's source imports. If none of them recognizes the template, or you run the command outside a project, every installed `@intentius/chant-lexicon-*` package is asked, in name order. A package counts as installed when chant can load it: it sits in a `node_modules/@intentius` directory above chant's own install or above the project. So a Kubernetes manifest imported in an empty directory is detected as `k8s` if that lexicon is installed. Where several installed lexicons recognize the template, one that has a template parser goes first, and the others are named in a warning.
 
 The output names the lexicon: `Detected lexicon: <name>` when detection chose it, `Lexicon: <name>` when you named it with `--lexicon` (or `--kustomize`, which implies `k8s`).
 
-When no lexicon recognizes the template, pass `--lexicon <name>` to skip detection. The raw file content then goes to that lexicon's parser, which decides what it accepts. Without `--lexicon`, a file that is neither JSON nor YAML fails with `Template is neither valid JSON nor YAML.`
+Pass `--lexicon <name>` to skip detection, for example when no lexicon recognizes the template. The raw file content then goes to that lexicon's parser, which decides what it accepts. Without `--lexicon`, a file that is neither JSON nor YAML fails with `Template is neither valid JSON nor YAML.`
 
 ## Flags
 
