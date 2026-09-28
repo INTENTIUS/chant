@@ -1091,7 +1091,8 @@ Options:
                         - build: json (default) or yaml
                         - list: text (default) or json
                         - lint: stylish (default), json, or sarif
-  -d, --lexicon <name>  Build only the specified lexicon (e.g. aws, gitlab)
+  -d, --lexicon <name>  Build only the specified lexicon (e.g. aws, gitlab);
+                        import: use this lexicon instead of detecting one
       --env <name>      Active environment: sets CHANT_ENV so env-aware source
                         re-evaluates for that environment (build + graph), and
                         drives organizational policy. Must be in chant.config
@@ -1201,6 +1202,7 @@ Examples:
   chant run --components all --env production
   chant components export prod --component search-service -o ./dist/search-service
   chant import template.json --output ./infra/
+  chant import manifest.yaml --lexicon k8s --output ./infra/
   chant import --from prod --name my-bucket --output src/
   chant lint ./infra/
   chant lint ./infra/ --format sarif
