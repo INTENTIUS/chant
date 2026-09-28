@@ -1,0 +1,76 @@
+---
+title: "Collector Placement Checks"
+description: "WK8601, WK8602 and WK8603: tail sampling and the k8s_cluster receiver in collectors that run in the wrong place"
+diataxis: reference
+---
+
+Some OpenTelemetry Collector mistakes are about where a config runs, not what it says. A config with `tail_sampling` is valid YAML and passes `otelcol validate` whether it runs on one gateway pod or on every node, but only one of those samples whole traces. These three post-synth checks read each collector config together with the workload that runs it and warn when the placement defeats the component.
+
+| Rule | Severity | Fires when |
+|------|----------|------------|
+| [WK8601](#wk8601-tail-sampling-on-every-node) | warning | a DaemonSet collector runs `tail_sampling` in a traces pipeline |
+| [WK8602](#wk8602-multi-replica-gateway-without-trace-aware-routing) | warning | a gateway with more than one replica runs `tail_sampling`, and a collector in the build sends it traces without a `loadbalancing` exporter routed by `traceID` |
+| [WK8603](#wk8603-k8s_cluster-in-every-collector-copy) | warning | a DaemonSet, or a workload with more than one replica, runs the `k8s_cluster` receiver without a working `k8s_leader_elector` |
+
+They are in the k8s lexicon because they read Kubernetes manifests. The otel lexicon sees only the collector config. The OTEL110 and OTEL111 ids first planned for the tail sampling checks were never used.
+
+## How a config is joined to its workload
+
+The collector config is a string in a ConfigMap, and the replica count is on another document. The checks join them in this order:
+
+1. The workload's `otel.chant.dev/config` annotation names the ConfigMap whose `config.yaml` it runs. [`OtelCollector` and `OtelCollectorGateway`](../otel-collector/#deployment-shape-in-the-built-manifests) write it.
+2. Without the annotation, the ConfigMaps the pod spec mounts as volumes (directly or through a projected volume), keeping only data keys that parse as a collector config, meaning they have a `service.pipelines` map. When a container passes `--config=<path>`, only the key that path names counts. This is how `GkeOtelCollector` and hand-written manifests are read.
+
+DaemonSet, Deployment and StatefulSet workloads are read. The replica count is `spec.replicas` (1 when unset), raised to the `maxReplicas` of any HorizontalPodAutoscaler that targets the workload. Only pipelines in `service.pipelines` count, so a component that is declared but unused doesn't fire.
+
+When a link can't be resolved (a ConfigMap that isn't in the build, a replica count that isn't a number) the config is left out and the checks stay silent rather than guess.
+
+### One build root at a time
+
+Like every check that joins resources, these see only the build root of the current `chant build` ([chant #1939](https://github.com/INTENTIUS/chant/issues/1939)). If the ConfigMap and its workload, or the agents and the gateway, are declared in different build roots, the checks go silent: nothing in one build can tell "wired correctly in the other build" from "not wired". Keep a collector's ConfigMap and workload together, and keep agents in the same build root as the gateway they send to, if you want these checks to cover them.
+
+## WK8601: tail sampling on every node
+
+A DaemonSet collector receives the spans produced on its own node. A trace whose services run on several nodes reaches several agents, one piece each, and `tail_sampling` in each agent decides on its piece alone. An error span on node A doesn't keep the rest of the trace on node B, and a latency policy measures a fragment. Nothing fails. The traces you keep are incomplete, and the ones you drop may be the ones you wanted.
+
+The message names the DaemonSet, the ConfigMap and the `tail_sampling` processors:
+
+```
+DaemonSet observability/otel-agent runs tail_sampling (ConfigMap otel-agent-config, config.yaml) on every node. ...
+```
+
+Move tail sampling to a gateway. Declare it with `OtelCollectorGateway`, and send traces to it from the agents with `gatewayExporter(gateway, { loadBalance: true })`, which WK8602 then checks.
+
+## WK8602: multi-replica gateway without trace-aware routing
+
+A gateway with several replicas behind a ClusterIP Service gets connections spread across its pods with no regard for trace ids. The spans of one trace land on different replicas, and each replica's `tail_sampling` decides on a fragment, which is the WK8601 problem again one tier up. The fix is a `loadbalancing` exporter in front, hashing on `traceID` so every span of a trace goes to the same replica.
+
+The check looks at every other collector config in the build and fires, once per sender, when a traces pipeline exports to a Service that selects the gateway's pods through:
+
+- an `otlp` or `otlphttp` exporter whose `endpoint` (or `traces_endpoint`) is that Service, as `name`, `name.namespace`, `name.namespace.svc` or the full cluster domain;
+- a `loadbalancing` exporter whose `routing_key` is anything other than `traceID` (unset means `traceID`);
+- a `loadbalancing` exporter using the `dns` resolver on a ClusterIP Service, which resolves to one virtual IP rather than to the replicas. Use the headless Service, or the `k8s` resolver, which reads the Service's Endpoints.
+
+A single-replica gateway passes. So does a gateway reached through `loadbalancing` for traces and through its Service for metrics and logs, as in `lexicons/k8s/examples/otel-gateway`.
+
+It fires on evidence, not on absence. A multi-replica tail sampling gateway with no sender in the build passes, because the senders may be applications talking to it directly or agents built in another build root. Exporters using the `static` or `aws_cloud_map` resolvers are not matched to Services and are not checked.
+
+## WK8603: `k8s_cluster` in every collector copy
+
+The `k8s_cluster` receiver reports cluster-level metrics and entity events (nodes, workloads, pods, quotas) by watching the Kubernetes API. Every copy of the collector reports every object, so in a DaemonSet the whole cluster is reported once per node, and in a two-replica gateway twice: duplicated series in the backend and one set of API watches per copy.
+
+Run it in a single-replica Deployment, or set the receiver's `k8s_leader_elector` field to the id of a `k8s_leader_elector` extension that is declared and enabled in `service.extensions`, so only the replica holding the lease collects. Both components ship in the `otelcol-contrib` and `otelcol-k8s` distributions at the collector version the otel lexicon pins (v0.130.0). The elector takes a Lease, so the collector's ServiceAccount also needs access to `leases` in the `coordination.k8s.io` group (the extension's README suggests `get`, `list`, `watch`, `create`, `update`, `patch` and `delete`); with `OtelCollectorGateway` pass that rule in `clusterRules`.
+
+```yaml
+receivers:
+  k8s_cluster:
+    k8s_leader_elector: k8s_leader_elector
+extensions:
+  k8s_leader_elector:
+    lease_name: otel-cluster-receiver
+    lease_namespace: observability
+service:
+  extensions: [k8s_leader_elector]
+```
+
+The check fires when the field is missing, names something that isn't a declared `k8s_leader_elector` extension, or names one that `service.extensions` doesn't enable. The otel lexicon has no typed class for the extension yet, so declare it with `defineComponent` (see the otel lexicon's custom components page) or run the receiver in a single-replica Deployment.
