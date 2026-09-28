@@ -31,7 +31,7 @@
  * them from the declaration instead of repeating them.
  */
 
-import { Composite, type CompositeInstance } from "@intentius/chant";
+import { Composite, type CompositeInstance } from "@intentius/chant/composite";
 import { RuleGroup, type AlertingRule, type RecordingRule, type Rule, type RuleGroupEntity } from "../rules";
 import type { LabelSet } from "../model";
 import { durationMs, formatDuration, isValidDuration } from "../duration";
