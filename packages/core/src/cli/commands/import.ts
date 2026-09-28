@@ -3,9 +3,9 @@ import { join, resolve, basename, dirname } from "path";
 import { formatSuccess, formatWarning, formatError } from "../format";
 import type { TemplateIR, ResourceIR, ParameterIR, TemplateParser } from "../../import/parser";
 import type { GeneratedFile, TypeScriptGenerator } from "../../import/generator";
-import { loadPlugins, resolveProjectLexicons } from "../plugins";
+import { listInstalledLexicons, loadPlugin, loadPlugins, resolveProjectLexicons } from "../plugins";
 import type { LexiconPlugin, ResourceSelector } from "../../lexicon";
-import { parseYAML } from "../../yaml";
+import { parseYAMLDocument, splitYAMLDocuments } from "../../yaml";
 
 /**
  * Import command options
@@ -36,8 +36,13 @@ export interface ImportResult {
   warnings: string[];
   /** Error message if failed */
   error?: string;
-  /** Detected lexicon */
+  /** The lexicon that handled the template */
   lexicon?: string;
+  /**
+   * True when `lexicon` was found by template detection, false or absent when
+   * it was named (`--lexicon`, `--kustomize`) (#2965).
+   */
+  detected?: boolean;
 }
 
 /**
@@ -47,12 +52,14 @@ type ResourceCategory = "storage" | "compute" | "network" | "other";
 
 /**
  * Parse template content for detection (#2935): JSON first, then YAML. A YAML
- * file is split on `---` document separators the way the k8s parser splits
- * it, and each document is parsed on its own, so detection sees the same
- * per-document objects the plugin's parser will. JSON yields one document,
- * the parsed value, exactly as before. Returns undefined when the content is
- * neither: core's YAML reader is lenient and turns unparseable text into an
- * empty mapping, so a file with no non-empty mapping document is rejected.
+ * file is split into documents with core's `splitYAMLDocuments` (the k8s
+ * parser splits the same way), and each document is parsed on its own, so
+ * detection sees the same per-document objects the plugin's parser will. A
+ * document whose top level is a list parses as that list (#2965). JSON yields
+ * one document, the parsed value, exactly as before. Returns undefined when
+ * the content is neither: core's YAML reader is lenient and turns unparseable
+ * text into an empty mapping, so a file with no non-empty document is
+ * rejected.
  */
 export function parseTemplateDocuments(content: string): unknown[] | undefined {
   try {
@@ -61,11 +68,10 @@ export function parseTemplateDocuments(content: string): unknown[] | undefined {
     // Not JSON: try YAML.
   }
   const documents: unknown[] = [];
-  for (const chunk of content.replace(/\r\n?/g, "\n").split(/^---\s*$/m)) {
-    if (chunk.replace(/#[^\n]*/g, "").trim() === "") continue;
+  for (const chunk of splitYAMLDocuments(content)) {
     let doc: unknown;
     try {
-      doc = parseYAML(chunk);
+      doc = parseYAMLDocument(chunk);
     } catch {
       continue;
     }
@@ -76,23 +82,86 @@ export function parseTemplateDocuments(content: string): unknown[] | undefined {
   return documents.length > 0 ? documents : undefined;
 }
 
+/** The outcome of template detection (#2965). */
+export interface TemplateDetection {
+  /** The plugin that handles the template. */
+  plugin: LexiconPlugin;
+  /**
+   * Where it came from: one of the project's lexicons, or an installed
+   * lexicon package tried because none of the project's matched.
+   */
+  source: "project" | "installed";
+  /** Other installed lexicons that also recognized the deciding document. */
+  alsoMatched: string[];
+}
+
 /**
- * Detect which plugin handles a template by asking each plugin. Documents are
- * tried in file order and the first one some plugin recognizes decides; for a
- * JSON template there is exactly one document, so this is the old behaviour.
- * @param documents - Parsed template documents (see `parseTemplateDocuments`)
- * @param plugins - Loaded lexicon plugins
- * @returns The matching plugin, or undefined if none match
+ * Find the plugins that recognize a template. Documents are tried in file
+ * order and the first one some plugin recognizes decides; every plugin that
+ * recognizes that document is returned, in the order given. For a JSON
+ * template there is exactly one document, so this is the old behaviour.
  */
-function detectPlugin(documents: unknown[], plugins: LexiconPlugin[]): LexiconPlugin | undefined {
+function matchingPlugins(documents: unknown[], plugins: LexiconPlugin[]): LexiconPlugin[] {
   for (const data of documents) {
-    for (const plugin of plugins) {
-      if (plugin.detectTemplate?.(data)) {
-        return plugin;
+    const matches = plugins.filter((plugin) => {
+      try {
+        return plugin.detectTemplate?.(data) === true;
+      } catch {
+        return false;
       }
+    });
+    if (matches.length > 0) return matches;
+  }
+  return [];
+}
+
+/**
+ * Detect which lexicon handles a template (#2965). The project's lexicons
+ * (from chant.config, or the lexicons its source imports) are asked first, so
+ * inside a project nothing changes when one of them matches. When none does,
+ * or there is no project, every installed `@intentius/chant-lexicon-*`
+ * package that is not already a project lexicon is asked, in name order,
+ * and one with a `templateParser` is preferred over one without.
+ * Installed lexicons are loaded one at a time and without `init()`; one that
+ * fails to load is skipped. The chosen plugin is initialized before it is
+ * returned.
+ */
+export async function detectTemplateLexicon(
+  documents: unknown[],
+  projectDir: string,
+): Promise<TemplateDetection | undefined> {
+  let projectNames: string[] = [];
+  let projectPlugins: LexiconPlugin[] = [];
+  try {
+    projectNames = await resolveProjectLexicons(projectDir);
+    projectPlugins = await loadPlugins(projectNames);
+  } catch {
+    projectPlugins = [];
+  }
+
+  const [fromProject] = matchingPlugins(documents, projectPlugins);
+  if (fromProject) return { plugin: fromProject, source: "project", alsoMatched: [] };
+
+  const installed: LexiconPlugin[] = [];
+  for (const name of listInstalledLexicons(projectDir)) {
+    if (projectNames.includes(name)) continue;
+    try {
+      installed.push(await loadPlugin(name));
+    } catch {
+      // Not loadable from here: it cannot handle the template either.
     }
   }
-  return undefined;
+
+  // A lexicon that can import the template goes ahead of one that only
+  // recognizes it (github and forgejo both read an Actions workflow).
+  const matches = matchingPlugins(documents, installed);
+  const [plugin, ...others] = [
+    ...matches.filter((p) => p.templateParser),
+    ...matches.filter((p) => !p.templateParser),
+  ];
+  if (!plugin) return undefined;
+  await plugin.init?.();
+  return { plugin, source: "installed", alsoMatched: others.map((p) => p.name) };
 }
 
 /**
@@ -258,29 +327,12 @@ export async function importCommand(options: ImportOptions): Promise<ImportResul
     };
   }
 
-  // Load plugins — resolve from the output directory (or CWD) so that
-  // project config is found relative to where the user is working, not
-  // an arbitrary monorepo root.
+  // Detect from the output directory (or CWD) so that project config is
+  // found relative to where the user is working, not an arbitrary monorepo
+  // root.
   const projectDir = resolve(options.output ? dirname(options.output) : ".");
-  let plugins: LexiconPlugin[];
-  try {
-    const lexiconNames = await resolveProjectLexicons(projectDir);
-    plugins = await loadPlugins(lexiconNames);
-  } catch {
-    plugins = [];
-  }
-
-  // If no plugins resolved (no config, no source files), try common lexicons
-  if (plugins.length === 0) {
-    try {
-      plugins = await loadPlugins(["aws"]);
-    } catch {
-      // No lexicons available at all
-    }
-  }
-
-  const plugin = detectPlugin(documents, plugins);
-  if (!plugin) {
+  const detection = await detectTemplateLexicon(documents, projectDir);
+  if (!detection) {
     return {
       success: false,
       generatedFiles: [],
@@ -291,9 +343,16 @@ export async function importCommand(options: ImportOptions): Promise<ImportResul
     };
   }
 
-  const lexicon = plugin.name;
+  const { plugin } = detection;
+  if (detection.alsoMatched.length > 0) {
+    warnings.push(
+      `The template is also recognized by ${detection.alsoMatched.join(", ")}. ` +
+        `Importing with ${plugin.name}; pass --lexicon <name> to choose another.`,
+    );
+  }
 
-  return parseAndWrite(plugin, content, outputDir, options.force, warnings, generatedFiles, lexicon);
+  const result = parseAndWrite(plugin, content, outputDir, options.force, warnings, generatedFiles, plugin.name);
+  return { ...result, detected: true };
 }
 
 /**
@@ -598,6 +657,7 @@ export async function liveImportFromPlugins(
     generatedFiles,
     warnings,
     lexicon: generatorLexicon.name,
+    detected: !options.lexicon,
   };
 }
 
@@ -615,7 +675,7 @@ export function printImportResult(result: ImportResult): void {
   }
 
   if (result.lexicon) {
-    console.log(`Detected lexicon: ${result.lexicon}`);
+    console.log(`${result.detected ? "Detected lexicon" : "Lexicon"}: ${result.lexicon}`);
   }
 
   if (result.generatedFiles.length > 0) {

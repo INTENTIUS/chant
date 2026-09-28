@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { emitYAML, parseYAML, parseScalar } from "./yaml";
+import { emitYAML, parseYAML, parseYAMLDocument, parseScalar, splitYAMLDocuments } from "./yaml";
 
 // ---------------------------------------------------------------------------
 // emitYAML
@@ -536,5 +536,57 @@ describe("parseYAML — a colon without following space is not a mapping (#2013)
     expect(parseYAML("items:\n- name: x\n  args:\n  - --endpoint\n  - https://example.com/a\n  image: nginx\n")).toEqual({
       items: [{ name: "x", args: ["--endpoint", "https://example.com/a"], image: "nginx" }],
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parseYAMLDocument / splitYAMLDocuments (#2965)
+// ---------------------------------------------------------------------------
+
+describe("parseYAMLDocument", () => {
+  test("a top-level list parses as a list", () => {
+    expect(parseYAMLDocument("- a\n- b\n")).toEqual(["a", "b"]);
+    expect(parseYAMLDocument("# rules\n\n- name: one\n  expr: up\n- name: two\n")).toEqual([
+      { name: "one", expr: "up" },
+      { name: "two" },
+    ]);
+  });
+
+  test("parseYAML still returns a mapping for the same input", () => {
+    expect(parseYAML("- a\n- b\n")).toEqual({});
+  });
+
+  test("a mapping and JSON parse as parseYAML parses them", () => {
+    expect(parseYAMLDocument("a: 1\nb:\n  - x\n")).toEqual({ a: 1, b: ["x"] });
+    expect(parseYAMLDocument("[1, 2]")).toEqual([1, 2]);
+    expect(parseYAMLDocument("")).toEqual({});
+  });
+});
+
+describe("splitYAMLDocuments", () => {
+  test("splits on bare --- separators", () => {
+    expect(splitYAMLDocuments("a: 1\n---\nb: 2\n")).toEqual(["a: 1", "b: 2\n"]);
+  });
+
+  test("a separator may carry a trailing comment", () => {
+    expect(splitYAMLDocuments("--- # first\na: 1\n---   # second\nb: 2")).toEqual(["a: 1", "b: 2"]);
+  });
+
+  test("... ends a document", () => {
+    expect(splitYAMLDocuments("a: 1\n...\nb: 2\n... # done\n")).toEqual(["a: 1", "b: 2"]);
+    expect(splitYAMLDocuments("---\na: 1\n...\n---\nb: 2\n...\n")).toEqual(["a: 1", "b: 2"]);
+  });
+
+  test("drops empty and comment-only documents", () => {
+    expect(splitYAMLDocuments("# header\n---\n\n---\na: 1\n---\n# trailing\n")).toEqual(["a: 1"]);
+    expect(splitYAMLDocuments("")).toEqual([]);
+  });
+
+  test("only a whole-line marker splits", () => {
+    expect(splitYAMLDocuments("a: ---\nb: |\n  ---\n---x: 1\n")).toEqual(["a: ---\nb: |\n  ---\n---x: 1\n"]);
+  });
+
+  test("normalizes CRLF line endings", () => {
+    expect(splitYAMLDocuments("a: 1\r\n--- # c\r\nb: 2\r\n")).toEqual(["a: 1", "b: 2\n"]);
   });
 });

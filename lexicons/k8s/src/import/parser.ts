@@ -7,7 +7,7 @@
  */
 
 import type { TemplateParser, TemplateIR, ResourceIR } from "@intentius/chant/import/parser";
-import { parseYAML } from "@intentius/chant/yaml";
+import { parseYAML, splitYAMLDocuments } from "@intentius/chant/yaml";
 import { namespaceSegmentForGroup } from "../group-namespace";
 
 // ── GVK to type name mapping ───────────────────────────────────────
@@ -130,7 +130,7 @@ function toLogicalId(kind: string, name: string | undefined): string {
 /**
  * Kubernetes YAML parser implementation.
  *
- * Supports multi-document YAML (split on `---`). Each document is expected
+ * Supports multi-document YAML (split on `---`, see `splitYAMLDocuments`). Each document is expected
  * to be a standard Kubernetes object with apiVersion, kind, and metadata.
  */
 export class K8sParser implements TemplateParser {
@@ -138,11 +138,9 @@ export class K8sParser implements TemplateParser {
     const resources: ResourceIR[] = [];
     const namespaces = new Set<string>();
 
-    // Split on YAML document separator, filter blanks
-    const documents = content
-      .split(/^---\s*$/m)
-      .map((d) => d.trim())
-      .filter((d) => d.length > 0 && !/^[\s#]*$/.test(d.replace(/#[^\n]*/g, "")));
+    // Split into documents on `---` / `...` markers (a trailing `# comment`
+    // allowed); empty and comment-only documents are dropped (#2965).
+    const documents = splitYAMLDocuments(content);
 
     for (const docStr of documents) {
       const doc = parseYAML(docStr);
