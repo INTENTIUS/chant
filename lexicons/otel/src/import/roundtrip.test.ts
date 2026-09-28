@@ -24,7 +24,7 @@ import { join } from "path";
 import { load } from "js-yaml";
 import { build } from "@intentius/chant/build";
 import { lintCommand } from "@intentius/chant/cli/commands/lint";
-import { importFromContent } from "@intentius/chant/cli/commands/import";
+import { importCommand, importFromContent } from "@intentius/chant/cli/commands/import";
 import { otelSerializer } from "../serializer";
 import { collectorYaml } from "../collector";
 import { registeredDefinitions } from "../define";
@@ -336,5 +336,30 @@ test("importFromContent writes one module per section through the otel plugin", 
     expect(normalize(primary(built.outputs.get("otel")))).toEqual(normalize(read("gateway.yaml")));
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+describe("chant import collector.yaml", () => {
+  for (const lexicon of [undefined, "otel"]) {
+    test(lexicon ? "with --lexicon otel" : "detected as a collector config", async () => {
+      const dir = projectDir();
+      try {
+        const templatePath = join(dir, "collector.yaml");
+        writeFileSync(templatePath, read("gateway.yaml"));
+        const output = join(dir, "src");
+        const result = await importCommand({ templatePath, output, force: true, lexicon });
+        expect(result.error).toBeUndefined();
+        expect(result.success).toBe(true);
+        expect(result.lexicon).toBe("otel");
+        expect(result.generatedFiles).toContain("pipelines.ts");
+        const built = await build(output, [otelSerializer]);
+        expect(built.errors).toEqual([]);
+        expect(normalize(primary(built.outputs.get("otel")))).toEqual(normalize(read("gateway.yaml")));
+        const lint = await lintCommand({ path: output, format: "stylish" });
+        expect(lint.errorCount + lint.warningCount, lint.output).toBe(0);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
   }
 });
