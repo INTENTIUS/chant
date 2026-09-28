@@ -23,11 +23,15 @@ With `--kustomize <dir>` it renders a kustomization first and imports the render
 
 The import process:
 
-1. Reads and parses the template file (JSON)
-2. Asks each lexicon plugin if it recognizes the template via `detectTemplate()`
-3. Uses the matching lexicon's `templateParser()` to extract resources into an intermediate representation
+1. Reads and parses the template file: JSON first, then YAML. A YAML file may hold several documents separated by `---`; each is parsed on its own
+2. Asks each lexicon plugin if it recognizes the template via `detectTemplate()`, one parsed document at a time in file order. The first document a lexicon recognizes decides
+3. Hands the file's raw content to the matching lexicon's `templateParser()`, which extracts resources into an intermediate representation
 4. Uses the lexicon's `templateGenerator()` to produce TypeScript files
 5. Organizes generated files by resource category (storage, compute, network, other)
+
+The template may be JSON or YAML, so Kubernetes manifests import the same way.
+
+Detection only considers the project's lexicons. These come from `chant.config.ts` or from the lexicons the project's source imports, and `aws` is tried when there are none. When no lexicon recognizes the template, pass `--lexicon <name>` to skip detection. The raw file content then goes to that lexicon's parser, which decides what it accepts. Without `--lexicon`, a file that is neither JSON nor YAML fails with `Template is neither valid JSON nor YAML.`
 
 ## Flags
 
@@ -35,7 +39,7 @@ The import process:
 |------|-------------|
 | `--from <env>` | Import from a live environment instead of a template file |
 | `--kustomize <dir>` | Render the kustomization at `dir` and import the output as Kubernetes manifests. Needs `kustomize` or `kubectl` on the path |
-| `-d, --lexicon <name>` | With `--from`, restrict to one lexicon (e.g. `aws`, `k8s`) |
+| `-d, --lexicon <name>` | With a template file, import with this lexicon instead of detecting one. With `--from`, restrict to one lexicon (e.g. `aws`, `k8s`) |
 | `--type <ResourceType>` | With `--from`, export only resources of this type |
 | `--name <name>` | With `--from`, export only the resource with this name |
 | `--owned` | With `--from`, restrict to chant-owned resources — those carrying the live [ownership marker](/chant/configuration/config-file/#ownership) |
@@ -108,6 +112,12 @@ chant import template.json
 
 # Import to a specific directory
 chant import template.json --output src/
+
+# Import Kubernetes manifests (one or many documents per file)
+chant import manifests.yaml --output src/
+
+# Skip detection and name the lexicon
+chant import manifests.yaml --lexicon k8s --output src/
 
 # Import live infrastructure from an environment
 chant import --from prod

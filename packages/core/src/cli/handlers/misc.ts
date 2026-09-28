@@ -374,10 +374,13 @@ export async function runImport(ctx: CommandContext): Promise<number> {
     return result.success ? 0 : 1;
   }
 
+  // A template file: JSON or YAML, detected, unless `--lexicon` names the
+  // plugin (#2935).
   const result = await importCommand({
     templatePath: ctx.args.path,
     output: ctx.args.output,
     force: ctx.args.force,
+    lexicon: ctx.args.lexicon,
   });
 
   printImportResult(result);
