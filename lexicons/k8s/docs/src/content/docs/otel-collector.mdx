@@ -1,6 +1,6 @@
 ---
 title: "OpenTelemetry Collector"
-description: "OtelCollector runs a collector agent on any cluster, its config declared with the otel lexicon"
+description: "OtelCollector runs a collector agent on every node, OtelCollectorGateway a central tier, and gatewayExporter wires one to the other"
 diataxis: reference
 ---
 
@@ -9,6 +9,8 @@ diataxis: reference
 
 
 `OtelCollector` deploys an OpenTelemetry Collector agent on any Kubernetes cluster. It needs nothing from a cloud provider. On GKE, [`GkeOtelCollector`](../gke-composites/#gkeotelcollector) builds the same agent with a Google Cloud exporter and Workload Identity.
+
+The usual production shape adds a gateway: an agent on every node forwards to a few central replicas, which is where tail sampling, spanmetrics and export to a backend happen. [`OtelCollectorGateway`](#the-gateway) deploys that tier, and [`gatewayExporter()`](#agents-to-the-gateway) points an agent at it.
 
 The collector config is declared with the [otel lexicon](/chant/lexicons/otel/) and rendered with `collectorYaml()` into the `config.yaml` key of a ConfigMap. The container ports, the Service ports and the probes are read back from that config, so they follow whatever config is passed in.
 
@@ -33,6 +35,7 @@ export const collector = OtelCollector({
 | `clusterRole` | ClusterRole | Read access to pods, nodes, endpoints, replica sets and jobs, the same rules `GkeOtelCollector` grants |
 | `clusterRoleBinding` | ClusterRoleBinding | Binds the role to the service account |
 | `configMap` | ConfigMap | The rendered collector config, named `<name>-config` |
+| `endpointsRole`, `endpointsRoleBinding` | Role, RoleBinding | Only when the config has a `loadbalancing` exporter with the `k8s` resolver; see [agents to the gateway](#agents-to-the-gateway) |
 
 Pods send OTLP to `otel-collector.observability.svc:4317` (gRPC) or `:4318` (HTTP) with the default name and namespace.
 
@@ -81,4 +84,100 @@ Each receiver endpoint becomes a container port and a Service port, named after 
 
 The container runs as user 10001 with a read-only root filesystem and every capability dropped.
 
+The container runs with `imagePullPolicy: IfNotPresent`, since the default image is pinned to a version.
+
 The example project is `lexicons/k8s/examples/otel-collector`.
+
+## The gateway
+
+`OtelCollectorGateway` runs the same collector container as a Deployment with `replicas` pods, and puts two Services in front of it: a ClusterIP Service that agents send to, and a headless Service (`<name>-headless`) whose DNS name and Endpoints list every ready pod. The config, ports and probes work as they do for `OtelCollector`.
+
+```typescript
+import { OtelCollectorGateway } from "@intentius/chant-lexicon-k8s";
+import { Pipeline } from "@intentius/chant-lexicon-otel";
+import { otlp, sampling, batch, tempo, health } from "./components";
+
+export const gateway = OtelCollectorGateway({
+  name: "otel-gateway",
+  namespace: "observability",
+  replicas: 3,
+  config: [
+    health,
+    new Pipeline({ signal: "traces", receivers: [otlp], processors: [sampling, batch], exporters: [tempo] }),
+  ],
+});
+```
+
+| Member | Kind | Notes |
+|--------|------|-------|
+| `deployment` | Deployment | `replicas` pods, the config mounted at `/etc/otel/config.yaml` |
+| `service` | Service | ClusterIP, the receiver ports |
+| `headlessService` | Service | `clusterIP: None`, named `<name>-headless`, the same ports |
+| `serviceAccount` | ServiceAccount | Named `<name>-sa` |
+| `configMap` | ConfigMap | The rendered collector config, named `<name>-config` |
+| `podDisruptionBudget` | PodDisruptionBudget | With more than one replica: `maxUnavailable: 1` |
+| `clusterRole`, `clusterRoleBinding` | ClusterRole, ClusterRoleBinding | Only when `clusterRules` is set |
+
+The gateway reads nothing from the Kubernetes API by default, so it gets no ClusterRole. A config that does, such as one with a `k8s_cluster` receiver or a `k8sattributes` processor, passes the rules it needs as `clusterRules`.
+
+| Prop | Default | Meaning |
+|------|---------|---------|
+| `name` | `otel-gateway` | Name of the gateway and its resources |
+| `namespace` | `observability` | Namespace |
+| `replicas` | `2` | Number of collector pods |
+| `config`, `exporters`, `signals` | the default config | As for `OtelCollector` |
+| `clusterRules` | none | RBAC rules for a ClusterRole bound to the gateway's ServiceAccount |
+| `image` | the contrib image at the otel lexicon's pinned version | Collector image |
+| `labels` | none | Extra labels on every resource |
+| `cpuRequest`, `memoryRequest` | `200m`, `512Mi` | Container requests |
+| `cpuLimit`, `memoryLimit` | `1`, `1Gi` | Container limits |
+| `defaults` | none | Per-member overrides, keyed by the member names above |
+
+## Agents to the gateway
+
+`gatewayExporter(gateway, options)` returns an otel exporter whose endpoint is read from the gateway composite: its Services' names, its namespace, and the port its config listens on. Put it in the agent's pipelines like any other exporter. Renaming the gateway, moving it to another namespace or changing its receiver port moves the agent with it.
+
+```typescript
+import { OtelCollector, gatewayExporter } from "@intentius/chant-lexicon-k8s";
+import { Pipeline } from "@intentius/chant-lexicon-otel";
+import { gateway } from "./gateway";
+import { otlp, batch } from "./agent-components";
+
+export const agent = OtelCollector({
+  name: "otel-agent",
+  config: [
+    new Pipeline({ signal: "traces", receivers: [otlp], processors: [batch], exporters: [gatewayExporter(gateway, { loadBalance: true })] }),
+    new Pipeline({ signal: "metrics", receivers: [otlp], processors: [batch], exporters: [gatewayExporter(gateway)] }),
+  ],
+});
+```
+
+By default the exporter is `otlp/gateway`, sending to `<name>.<namespace>.svc:<port>` through the ClusterIP Service. gRPC keeps a connection open to one pod, so each agent sticks to one replica; that is fine for metrics and logs, and for traces when nothing on the gateway needs to see a whole trace.
+
+With `loadBalance: true` it is `loadbalancing/gateway`, routing by trace id to the headless Service, so every span of a trace reaches the same replica. A multi-replica gateway that runs `tail_sampling` or `spanmetrics` needs this; otherwise each replica decides on a fragment of the trace.
+
+| Option | Default | Meaning |
+|--------|---------|---------|
+| `name` | `gateway` | Exporter name: `otlp/<name>` or `loadbalancing/<name>` |
+| `loadBalance` | `false` | Use a `loadbalancing` exporter on the headless Service |
+| `resolver` | `k8s` | `k8s` watches the headless Service's Endpoints (`<name>-headless.<namespace>`); `dns` resolves `<name>-headless.<namespace>.svc` |
+| `routingKey` | `traceID` | What the `loadbalancing` exporter hashes on |
+| `port` | `otlp-grpc` | The gateway Service port to send to, by name |
+| `tls` | `{ insecure: true }` | TLS for the connection; plaintext inside the cluster by default |
+
+The `loadbalancing` exporter runs in the agent, so the `k8s` resolver needs the agent to read the gateway's Endpoints. When an agent's config has a `loadbalancing` exporter with the `k8s` resolver, whether from `gatewayExporter` or written by hand, `OtelCollector` adds a Role and RoleBinding named `<agent>-endpoints` in the resolved Service's namespace. They grant the agent's ServiceAccount `get`, `list` and `watch` on Endpoints, which the resolver watches at the pinned collector version, and on EndpointSlices, which later versions watch. One agent resolves Services in one namespace; a config that points `k8s` resolvers at two namespaces is refused.
+
+## Deployment shape in the built manifests
+
+The collector config is a string inside a ConfigMap, and whether it runs once per node or as several replicas is on another document. Both composites write annotations that join them, so a post-synth check can tell, from the built YAML alone, where each config runs and how agents reach the gateway.
+
+| Annotation | On | Value |
+|------------|----|-------|
+| `otel.chant.dev/role` | ConfigMap, workload | `agent` (a DaemonSet) or `gateway` (a Deployment) |
+| `otel.chant.dev/workload` | ConfigMap | The workload that mounts it, `DaemonSet/<name>` or `Deployment/<name>`, in the same namespace |
+| `otel.chant.dev/config` | workload | The name of the ConfigMap holding its `config.yaml` |
+| `otel.chant.dev/gateways` | agent ConfigMap and DaemonSet | Comma-separated `<namespace>/<gateway>=<routing>` for each gateway an exporter from `gatewayExporter` points at, with routing `loadbalancing` or `service` |
+
+The replica count is the workload's own `spec.replicas`. The keys are exported as `OTEL_COLLECTOR_ANNOTATIONS`. `GkeOtelCollector` writes none of them, since its output is fixed; its DaemonSet still names its ConfigMap in its `config` volume. A check that joins an agent to its gateway only sees both when they are in the same build root.
+
+The example project is `lexicons/k8s/examples/otel-gateway`: an agent and a two-replica gateway with tail sampling, in the `observability` namespace. `lexicons/k8s/examples/otel-gateway.e2e.test.ts` builds it, applies it to a k3d cluster, sends traces to the agent with `telemetrygen`, and checks that the gateway received all of them, with no trace split across the two replicas. It runs when Docker, k3d and kubectl are available and skips otherwise.

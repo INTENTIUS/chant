@@ -10,22 +10,27 @@
  * read back from that config, so they follow whatever config is passed in.
  *
  * `GkeOtelCollector` builds the same DaemonSet, RBAC and ConfigMap for GKE.
+ * `OtelCollectorGateway` is the central tier agents export to; give this
+ * composite an exporter from `gatewayExporter()` to point it there.
  */
 
 import { Composite, mergeDefaults } from "@intentius/chant";
 import type { Declarable } from "@intentius/chant/declarable";
 import {
-  buildCollectorConfig,
-  collectorEndpoints,
-  collectorYaml,
   otlpCollector,
-  COLLECTOR_CONFIG_PATH,
   COLLECTOR_IMAGE,
   type OTelComponent,
   type Signal,
 } from "@intentius/chant-lexicon-otel";
-import { Service } from "../generated";
+import { Service, Role, RoleBinding } from "../generated";
 import { collectorAgentResources, type CollectorAgentResources } from "./otel-collector-agent";
+import {
+  collectorRuntime,
+  gatewaysAnnotation,
+  gatewayTargetsOf,
+  k8sResolverNamespaces,
+  OTEL_COLLECTOR_ANNOTATIONS,
+} from "./otel-collector-shape";
 
 export interface OtelCollectorProps {
   /** Agent name (default: "otel-collector"). */
@@ -62,11 +67,16 @@ export interface OtelCollectorProps {
     clusterRole?: Partial<Record<string, unknown>>;
     clusterRoleBinding?: Partial<Record<string, unknown>>;
     configMap?: Partial<Record<string, unknown>>;
+    endpointsRole?: Partial<Record<string, unknown>>;
+    endpointsRoleBinding?: Partial<Record<string, unknown>>;
   };
 }
 
 export type OtelCollectorResult = CollectorAgentResources & {
   service: InstanceType<typeof Service>;
+  /** Read access to Endpoints for a `loadbalancing` exporter's `k8s` resolver, in the resolved Service's namespace. */
+  endpointsRole?: InstanceType<typeof Role>;
+  endpointsRoleBinding?: InstanceType<typeof RoleBinding>;
 };
 
 /**
@@ -103,19 +113,14 @@ export const OtelCollector = Composite((props: OtelCollectorProps) => {
   };
 
   const entities = props.config ? [...props.config] : otlpCollector({ exporters: props.exporters, signals: props.signals });
-  const { ports, healthCheck } = collectorEndpoints(buildCollectorConfig(entities).config);
-  const configDir = COLLECTOR_CONFIG_PATH.slice(0, COLLECTOR_CONFIG_PATH.lastIndexOf("/"));
+  const runtime = collectorRuntime(entities);
+  const configMapName = `${name}-config`;
 
-  // The probe names the port. A health_check on a receiver's port reuses that
-  // port's name, since a container port is declared once.
-  const healthPortName = healthCheck ? (ports.find((p) => p.port === healthCheck.port)?.name ?? "health") : undefined;
-  const probe = healthCheck ? { httpGet: { path: healthCheck.path, port: healthPortName } } : undefined;
-  const containerPorts = [
-    ...ports.map((p) => ({ containerPort: p.port, name: p.name })),
-    ...(healthCheck && !ports.some((p) => p.port === healthCheck.port)
-      ? [{ containerPort: healthCheck.port, name: "health" }]
-      : []),
-  ];
+  // How this agent is deployed, and which gateways it sends to, recorded on
+  // the ConfigMap and the DaemonSet for post-synth checks (see
+  // OTEL_COLLECTOR_ANNOTATIONS).
+  const gateways = gatewayTargetsOf(runtime.built);
+  const shape: Record<string, string> = gateways.length ? { [OTEL_COLLECTOR_ANNOTATIONS.gateways]: gatewaysAnnotation(gateways) } : {};
 
   const resources = collectorAgentResources({
     name,
@@ -123,22 +128,23 @@ export const OtelCollector = Composite((props: OtelCollectorProps) => {
     image,
     commonLabels,
     extraLabels,
-    configYaml: collectorYaml(entities),
-    configDir,
-    ports: containerPorts,
+    configYaml: runtime.configYaml,
+    configDir: runtime.configDir,
+    ports: runtime.containerPorts,
     cpuRequest,
     memoryRequest,
     cpuLimit,
     memoryLimit,
-    containerExtra: {
-      securityContext: {
-        runAsNonRoot: true,
-        runAsUser: 10001,
-        readOnlyRootFilesystem: true,
-        allowPrivilegeEscalation: false,
-        capabilities: { drop: ["ALL"] },
-      },
-      ...(probe ? { livenessProbe: probe, readinessProbe: probe } : {}),
+    containerExtra: runtime.containerExtra,
+    workloadAnnotations: {
+      [OTEL_COLLECTOR_ANNOTATIONS.role]: "agent",
+      [OTEL_COLLECTOR_ANNOTATIONS.config]: configMapName,
+      ...shape,
+    },
+    configMapAnnotations: {
+      [OTEL_COLLECTOR_ANNOTATIONS.role]: "agent",
+      [OTEL_COLLECTOR_ANNOTATIONS.workload]: `DaemonSet/${name}`,
+      ...shape,
     },
     defaults: defs,
   });
@@ -152,9 +158,46 @@ export const OtelCollector = Composite((props: OtelCollectorProps) => {
     spec: {
       selector: { "app.kubernetes.io/name": name },
       internalTrafficPolicy: "Local",
-      ports: ports.map((p) => ({ name: p.name, port: p.port, targetPort: p.name, protocol: "TCP" })),
+      ports: runtime.servicePorts.map((p) => ({ name: p.name, port: p.port, targetPort: p.name, protocol: "TCP" })),
     },
   }, defs?.service));
 
-  return { ...resources, service };
+  // The loadbalancing exporter's k8s resolver runs in this agent and watches
+  // the gateway's headless Service, so the agent's ServiceAccount gets read
+  // access to Endpoints (what the resolver watches at the pinned collector
+  // version) and EndpointSlices (what later versions watch) in that namespace.
+  const resolverNamespaces = k8sResolverNamespaces(runtime.built, namespace);
+  if (resolverNamespaces.length > 1) {
+    throw new Error(
+      `OtelCollector ${name}: loadbalancing exporters resolve Services in ${resolverNamespaces.join(" and ")}; ` +
+        `one agent can watch Endpoints in one namespace. Use one gateway namespace, or grant the rest through defaults.clusterRole`,
+    );
+  }
+  const saName = (resources.serviceAccount as unknown as { props: { metadata: { name: string } } }).props.metadata.name;
+  const endpointsRbac = resolverNamespaces.length
+    ? {
+        endpointsRole: new Role(mergeDefaults({
+          metadata: {
+            name: `${name}-endpoints`,
+            namespace: resolverNamespaces[0],
+            labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
+          },
+          rules: [
+            { apiGroups: [""], resources: ["endpoints"], verbs: ["get", "list", "watch"] },
+            { apiGroups: ["discovery.k8s.io"], resources: ["endpointslices"], verbs: ["get", "list", "watch"] },
+          ],
+        }, defs?.endpointsRole)),
+        endpointsRoleBinding: new RoleBinding(mergeDefaults({
+          metadata: {
+            name: `${name}-endpoints`,
+            namespace: resolverNamespaces[0],
+            labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
+          },
+          roleRef: { apiGroup: "rbac.authorization.k8s.io", kind: "Role", name: `${name}-endpoints` },
+          subjects: [{ kind: "ServiceAccount", name: saName, namespace }],
+        }, defs?.endpointsRoleBinding)),
+      }
+    : {};
+
+  return { ...resources, service, ...endpointsRbac };
 }, "OtelCollector");

@@ -2901,6 +2901,8 @@ export const compositeCatalog: CompositeEntry[] = [
       "ClusterRoleBinding",
       "ConfigMap",
       "DaemonSet",
+      "Role",
+      "RoleBinding",
       "Service",
       "ServiceAccount"
     ],
@@ -2974,6 +2976,106 @@ export const compositeCatalog: CompositeEntry[] = [
       {
         "name": "defaults",
         "type": "{ daemonSet?: Partial<Record<string, unknown>>; service?: Partial<Record<string, unknown>>; serviceAccount?: Partial<...",
+        "required": false,
+        "description": "Per-member defaults for fine-grained overrides."
+      }
+    ]
+  },
+  {
+    "name": "OtelCollectorGateway",
+    "lexicon": "k8s",
+    "description": "Create an OtelCollectorGateway composite.",
+    "bundles": [
+      "ClusterRole",
+      "ClusterRoleBinding",
+      "ConfigMap",
+      "Deployment",
+      "PodDisruptionBudget",
+      "Service",
+      "ServiceAccount"
+    ],
+    "params": [
+      {
+        "name": "name",
+        "type": "string",
+        "required": false,
+        "description": "Gateway name (default: \"otel-gateway\")."
+      },
+      {
+        "name": "namespace",
+        "type": "string",
+        "required": false,
+        "description": "Namespace (default: \"observability\")."
+      },
+      {
+        "name": "replicas",
+        "type": "number",
+        "required": false,
+        "description": "Number of collector pods (default: 2)."
+      },
+      {
+        "name": "image",
+        "type": "string",
+        "required": false,
+        "description": "Collector image (default: the contrib image at the otel lexicon's pinned collector version)."
+      },
+      {
+        "name": "config",
+        "type": "Iterable<Declarable>",
+        "required": false,
+        "description": "The collector config, as otel lexicon entities (components and pipelines)."
+      },
+      {
+        "name": "exporters",
+        "type": "OTelComponent<\"exporter\", string, any>[]",
+        "required": false,
+        "description": "Exporters for the default config (default: one `debug` exporter)."
+      },
+      {
+        "name": "signals",
+        "type": "Signal[]",
+        "required": false,
+        "description": "Signals the default config has pipelines for (default: traces, metrics and logs)."
+      },
+      {
+        "name": "clusterRules",
+        "type": "CollectorPolicyRule[]",
+        "required": false,
+        "description": "Cluster-wide read access the config needs, e.g. for a `k8s_cluster` receiver or a `k8sattributes` processor."
+      },
+      {
+        "name": "labels",
+        "type": "Record<string, string>",
+        "required": false,
+        "description": "Additional labels."
+      },
+      {
+        "name": "cpuRequest",
+        "type": "string",
+        "required": false,
+        "description": "CPU request (default: \"200m\")."
+      },
+      {
+        "name": "memoryRequest",
+        "type": "string",
+        "required": false,
+        "description": "Memory request (default: \"512Mi\")."
+      },
+      {
+        "name": "cpuLimit",
+        "type": "string",
+        "required": false,
+        "description": "CPU limit (default: \"1\")."
+      },
+      {
+        "name": "memoryLimit",
+        "type": "string",
+        "required": false,
+        "description": "Memory limit (default: \"1Gi\")."
+      },
+      {
+        "name": "defaults",
+        "type": "{ deployment?: Partial<Record<string, unknown>>; service?: Partial<Record<string, unknown>>; headlessService?: Partia...",
         "required": false,
         "description": "Per-member defaults for fine-grained overrides."
       }
