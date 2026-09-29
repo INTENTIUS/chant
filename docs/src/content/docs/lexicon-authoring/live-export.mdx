@@ -51,7 +51,7 @@ Keep all I/O in the activity and the mapping pure, as the shipping lexicons do:
 3. Map to `TemplateIR` by reusing your import parser.
 4. Apply the `selector` and the `owned` filter, below.
 
-Split the two halves across two files so the mapping tests without a transport. Seven lexicons implement this today:
+Split the two halves across two files so the mapping tests without a transport. Eight lexicons implement this today:
 
 | Lexicon | I/O entry point (what the plugin calls) | Pure mapping |
 |---|---|---|
@@ -61,6 +61,7 @@ Split the two halves across two files so the mapping tests without a transport. 
 | fly | `lexicons/fly/src/export-resources.ts` | `lexicons/fly/src/import/live-export.ts` |
 | fountain | `lexicons/fountain/src/export-resources.ts` | same file |
 | gcp | `lexicons/gcp/src/export-resources.ts` | `lexicons/gcp/src/import/live-export.ts` |
+| grafana | `lexicons/grafana/src/export-resources.ts` | `lexicons/grafana/src/import/live-export.ts` |
 | k8s | `lexicons/k8s/src/export-resources.ts` | `lexicons/k8s/src/import/live-export.ts` |
 
 Wire it from `plugin.ts` behind a dynamic import, the way every one of them does, so `chant build` never loads a live transport.
@@ -73,7 +74,7 @@ Each lexicon exports its own `ChannelKeys` (a `managedBy` / `stack` / `env` trip
 
 | Constant | Where | `managedBy` key |
 |---|---|---|
-| `LABEL_OWNERSHIP_KEYS` | `@intentius/chant/ownership` (k8s, gcp, helm, k3d, k3s) | `app.kubernetes.io/managed-by` |
+| `LABEL_OWNERSHIP_KEYS` | `@intentius/chant/ownership` (k8s, gcp, grafana, helm, k3d, k3s) | `app.kubernetes.io/managed-by` |
 | `AWS_TAG_OWNERSHIP_KEYS` | `lexicons/aws/src/ownership.ts` | `chant:managed-by` |
 | `AZURE_TAG_OWNERSHIP_KEYS` | `lexicons/azure/src/ownership.ts` | `chant-managed-by` |
 | `FLY_METADATA_OWNERSHIP_KEYS` | `lexicons/fly/src/ownership.ts` | `managed-by` |

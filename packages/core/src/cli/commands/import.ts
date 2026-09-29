@@ -59,9 +59,10 @@ type ResourceCategory = "storage" | "compute" | "network" | "other";
  * detection sees the same per-document objects the plugin's parser will. A
  * document whose top level is a list parses as that list (#2965). JSON yields
  * one document, the parsed value, exactly as before. Returns undefined when
- * the content is neither: core's YAML reader is lenient and turns unparseable
- * text into an empty mapping, so a file with no non-empty document is
- * rejected.
+ * the content is neither. A document core's YAML reader cannot parse is
+ * skipped here, since detection only needs one it can read; the plugin's
+ * parser meets the same document and reports it (#2991). A file with no
+ * non-empty document is rejected.
  */
 export function parseTemplateDocuments(content: string): unknown[] | undefined {
   try {

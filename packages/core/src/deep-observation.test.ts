@@ -309,6 +309,27 @@ describe("deepPathSet", () => {
     const set = deepPathSet({ Tags: [{ Key: "a" }] });
     expect([...set].sort()).toEqual(["Tags", "Tags[0]", "Tags[0].Key", "Tags[]", "Tags[].Key"]);
   });
+
+  // #2946: the path set has to agree with the normalized tree, which inlines
+  // a property-kind declarable's props (#1314). Otherwise a live node under
+  // one reads `counterpart: "absent"` and is pruned as an undeclared default.
+  test("walks a property-kind declarable as its props, as normalization inlines it", () => {
+    class Panel {
+      readonly entityType = "Grafana::Panel::stat";
+      readonly kind = "property";
+      constructor(readonly props: Record<string, unknown>) {}
+    }
+    const set = deepPathSet({ panels: [new Panel({ gridPos: { w: 6 } })] });
+    expect(set.has("panels[0].gridPos.w")).toBe(true);
+    expect(set.has("panels[].gridPos.w")).toBe(true);
+
+    const hooks = { prune: (n: { side: string; counterpart: string }) => n.side === "live" && n.counterpart === "absent" };
+    const live = normalizeDeepProperties(
+      { panels: [{ gridPos: { w: 6, x: 0 } }] },
+      { entityType: "T", side: "live", hooks, counterpartPaths: set },
+    );
+    expect(live).toEqual({ panels: [{ gridPos: { w: 6 } }] });
+  });
 });
 
 describe("deepValueEqual", () => {
