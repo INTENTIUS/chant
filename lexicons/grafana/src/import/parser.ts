@@ -24,7 +24,7 @@
  * - a v2 dashboard (`dashboard.grafana.app/v2` or `v2beta1`, or a bare v2
  *   spec), read into classic JSON by ./v2.ts, with a warning for each thing
  *   v2 says that the classic model cannot (#2947);
- * - a datasource or dashboard provisioning file.
+ * - a datasource, dashboard or alerting provisioning file (./alerting.ts).
  *
  * A v0/v1 resource that Grafana stores as v2 (`status.conversion` says so)
  * is refused unless the caller opts in (`acceptLossyV1`): it is a lossy
@@ -49,6 +49,7 @@ import { DASHBOARD_SCHEMA_VERSION } from "../schema/dashboard.gen";
 import { BUILTIN_DATASOURCE_UIDS } from "../datasource";
 import {
   looksLikeDashboard,
+  looksLikeAlertingProvisioning,
   looksLikeDashboardApiResponse,
   looksLikeDashboardProvisioning,
   looksLikeDashboardResource,
@@ -58,6 +59,8 @@ import {
 } from "../detect";
 import { slugUid } from "../util";
 import { pointer, type ImportEdit } from "./edits";
+import { NO_PROP, Report, list } from "./report";
+import { planAlertingProvisioning } from "./alerting";
 import { lossyV1Read, readV2Dashboard } from "./v2";
 import {
   COMMON_VARIABLE_KEYS,
@@ -120,6 +123,14 @@ export interface GrafanaImportOptions {
   acceptLossyV1?: boolean;
 }
 
+/** `metadata` of an alerting provisioning file's resource. */
+export interface AlertingResourceMetadata {
+  /** The file as parsed. */
+  source: Json;
+  /** What the importer did to it: apply these to `source`, then `normalizeAlerting` both sides, to compare with the rebuilt file. */
+  edits: ImportEdit[];
+}
+
 /** The panel plugin id format `definePanel` accepts. */
 const PLUGIN_ID = /^[a-z0-9][a-z0-9-_]*$/;
 
@@ -161,6 +172,20 @@ const PACKAGE_CLASS_NAMES = new Set([
   "GeomapPanel",
   "FlameGraphPanel",
   "AlertListPanel",
+  "AlertRuleGroup",
+  "AlertRule",
+  "AlertQuery",
+  "ReduceExpression",
+  "MathExpression",
+  "ThresholdExpression",
+  "ResampleExpression",
+  "ClassicConditionsExpression",
+  "SqlExpression",
+  "ContactPoint",
+  "NotificationPolicy",
+  "MuteTiming",
+  "NotificationTemplate",
+  "ExternalDatasource",
 ]);
 
 function words(text: string): string[] {
@@ -178,62 +203,7 @@ function describePanel(p: Json): string {
   return `panel ${title}${p.id !== undefined ? ` (id ${String(p.id)})` : ""}`;
 }
 
-function list(keys: string[]): string {
-  return keys.length === 1 ? keys[0] : `${keys.slice(0, -1).join(", ")} and ${keys[keys.length - 1]}`;
-}
 
-/** Collects edits, and warnings grouped by what they are about. */
-class Report {
-  readonly edits: ImportEdit[] = [];
-  private readonly headlines: string[] = [];
-  private readonly grouped = new Map<string, { subject: string; keys: string[]; why: string; kind: "drop" | "replace" }>();
-
-  /** A warning of its own. */
-  warn(message: string): void {
-    this.headlines.push(message);
-  }
-
-  /** `key` of `subject`, at `path`, is not carried. No warning when `why` is undefined (it is at Grafana's default). */
-  drop(path: string, subject: string, key: string, why?: string): void {
-    this.edits.push({ op: "remove", path });
-    if (why !== undefined) this.note("drop", subject, key, why);
-  }
-
-  /**
-   * The value at `path` is written as `value`. No warning when `why` is
-   * undefined (Grafana reads both the same); otherwise the warning reads
-   * `<subject>: <key> <why>`.
-   */
-  replace(path: string, value: unknown, subject: string, key: string, why?: string): void {
-    this.edits.push({ op: "replace", path, value });
-    if (why !== undefined) this.note("replace", subject, key, why);
-  }
-
-  edit(edit: ImportEdit): void {
-    this.edits.push(edit);
-  }
-
-  private note(kind: "drop" | "replace", subject: string, key: string, why: string): void {
-    const k = `${kind}\u0000${subject}\u0000${why}`;
-    const g = this.grouped.get(k) ?? { subject, keys: [], why, kind };
-    g.keys.push(key);
-    this.grouped.set(k, g);
-  }
-
-  warnings(): string[] {
-    const out = [...this.headlines];
-    for (const g of this.grouped.values()) {
-      const n = g.keys.length;
-      const why = g.why === NO_PROP ? `(no prop takes ${n === 1 ? "it" : "them"})` : g.why;
-      if (n === 0 || g.keys[0] === "") out.push(`${g.subject} ${why}`);
-      else if (g.kind === "replace") out.push(`${g.subject}: ${list(g.keys)} ${why}`);
-      else out.push(`${g.subject}: ${list(g.keys)} ${n === 1 ? "is" : "are"} not carried ${why}`);
-    }
-    return out;
-  }
-}
-
-const NO_PROP = "(no prop takes it)";
 
 
 /** A resolved datasource reference: the prop value, the plugin type when known, and a key for comparing two. */
@@ -1169,7 +1139,15 @@ export function parseGrafana(content: string, options: GrafanaImportOptions = {}
     return { resources: [resource("dashboardProviders", PROVISIONING_RESOURCE_TYPE, plan)], parameters: [], warnings };
   }
 
-  throw new Error("this is not Grafana dashboard JSON (no panels list) or a provisioning file (no datasources or providers list)");
+  if (looksLikeAlertingProvisioning(data)) {
+    const { plan, edits, warnings } = planAlertingProvisioning(data);
+    const metadata: AlertingResourceMetadata = { source: data, edits };
+    return { resources: [resource("alerting", PROVISIONING_RESOURCE_TYPE, plan, metadata as unknown as Json)], parameters: [], warnings };
+  }
+
+  throw new Error(
+    "this is not Grafana dashboard JSON (no panels list) or a provisioning file (no datasources, providers, or alerting groups, contactPoints, policies, muteTimes or templates list)",
+  );
 }
 
 /** The Grafana dashboard parser `chant import` runs. */

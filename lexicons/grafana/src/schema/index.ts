@@ -25,4 +25,5 @@ export * as geomap from "./geomap.gen";
 export * as prometheus from "./prometheus.gen";
 export * as tempo from "./tempo.gen";
 export * as loki from "./loki.gen";
+export * as expr from "./expr.gen";
 export { DASHBOARD_SCHEMA_VERSION } from "./dashboard.gen";

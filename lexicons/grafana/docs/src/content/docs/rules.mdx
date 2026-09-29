@@ -6,14 +6,14 @@ description: "Every lint rule and post-synth check provided by the Grafana lexic
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-grafana` — DO NOT EDIT.
     Edit lexicons/grafana/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-The Grafana lexicon provides **12** rules: 2 lint rules and 10 post-synth checks.
+The Grafana lexicon provides **16** rules: 2 lint rules and 14 post-synth checks.
 
 ## Lint Rules
 
 | ID | Severity | Category | Description |
 |----|----------|----------|-------------|
 | `GRAF001` | error | correctness | a uid Grafana rejects, or a variable name queries cannot reference. |
-| `GRAF002` | error | security | a datasource secret written as a literal. |
+| `GRAF002` | error | security | a datasource or contact point secret written as a literal. |
 
 ## Post-Synth Checks
 
@@ -30,4 +30,8 @@ Post-synth checks validate the serialized output after the build pipeline comple
 | `GRAF107` | A dashboard does not match the pinned Grafana schema |
 | `GRAF108` | A query sent to Prometheus is not valid PromQL |
 | `GRAF109` | Dashboard provisioning puts a dashboard somewhere other than its declared folder, or loads it twice |
+| `GRAF111` | An alert rule's condition, expression inputs or refIds do not fit together |
+| `GRAF112` | An alert rule queries a datasource the build does not declare, or of another type |
+| `GRAF113` | Alerting routes to a contact point or mute timing the build does not declare, or a policy matcher does not parse |
+| `GRAF114` | An alerting uid, name, title or interval Grafana rejects, or one declared twice |
 | `GRAF115` | A panel unit Grafana doesn't know, which it shows as a literal suffix |

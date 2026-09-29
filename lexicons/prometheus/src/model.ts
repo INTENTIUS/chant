@@ -311,11 +311,18 @@ export const RECEIVER_INTEGRATIONS = Object.keys(RECEIVER_INTEGRATION_TYPES) as 
 /** True when a parsed document has the shape of a Prometheus rule file. */
 export function looksLikeRuleFile(value: unknown): value is RuleFileConfig {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const groups = (value as Record<string, unknown>).groups;
+  const v = value as Record<string, unknown>;
+  const groups = v.groups;
   if (!Array.isArray(groups)) return false;
-  return groups.every(
-    (g) => typeof g === "object" && g !== null && typeof (g as Record<string, unknown>).name === "string" && Array.isArray((g as Record<string, unknown>).rules),
-  );
+  // Grafana's alerting provisioning files also hold `groups:` of named rule lists. Prometheus reads rule
+  // files strictly (unknown keys are errors), so `apiVersion`, a group `folder` or a rule's `data` means Grafana.
+  if ("apiVersion" in v) return false;
+  return groups.every((g) => {
+    if (typeof g !== "object" || g === null) return false;
+    const group = g as Record<string, unknown>;
+    if (typeof group.name !== "string" || !Array.isArray(group.rules) || "folder" in group) return false;
+    return !group.rules.some((r) => typeof r === "object" && r !== null && "data" in r);
+  });
 }
 
 /** True when a parsed document has the shape of an `alertmanager.yml`. */

@@ -43,14 +43,14 @@ describe("the overlay files", () => {
       if (!overlay) continue;
       expect(overlay.grafana).toMatch(/^v\d+\.\d+\.\d+$/);
       for (const p of overlay.patches) {
-        expect({ path: p.path, source: p.source }).toEqual({ path: p.path, source: expect.stringMatching(/\.(cue|ts):\d+/) });
+        expect({ path: p.path, source: p.source }).toEqual({ path: p.path, source: expect.stringMatching(/\.(cue|ts|go):\d+/) });
         expect(p.why.length).toBeGreaterThan(0);
       }
     }
   });
 
   test("the schemas with an overlay are patched; the vendored bytes are not", () => {
-    expect(SCHEMA_NAMES.filter((n) => loadOverlay(n))).toEqual(["dashboard", "timeseries", "table", "logs", "piechart", "nodegraph", "xychart", "trend", "canvas", "geomap"]);
+    expect(SCHEMA_NAMES.filter((n) => loadOverlay(n))).toEqual(["dashboard", "timeseries", "table", "logs", "piechart", "nodegraph", "xychart", "trend", "canvas", "geomap", "expr"]);
     const vendored = loadVendoredSchema("dashboard").definitions as Record<string, Json>;
     const patched = loadSchema("dashboard").definitions as Record<string, Json>;
     expect((vendored.MatcherConfig.properties as Json).scope).toBeUndefined();

@@ -15,6 +15,8 @@ Three composites build a whole dashboard from a declaration in another lexicon. 
 
 Each returns `{ dashboard }`, a `Dashboard` entity. Export the composite's result and the build writes the dashboard like any other.
 
+A fourth, `SloAlertRules`, reads the same `Slo` and returns `{ rules }`, an `AlertRuleGroup` of Grafana-managed burn-rate alerts; see [Alerting](../alerting/#slo-burn-rate-alerts).
+
 ```ts
 import { SpanMetricsConnector, genAiComponents } from "@intentius/chant-lexicon-otel";
 import { Slo } from "@intentius/chant-lexicon-prometheus";
