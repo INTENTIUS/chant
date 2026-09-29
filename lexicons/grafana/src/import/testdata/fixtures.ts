@@ -9,6 +9,7 @@
  *   provenance and licenses in its README).
  * - kube-prometheus's 33 dashboards (test/fixtures/kube-prometheus/,
  *   provenance and license in its README).
+ * - Alerting provisioning files (test/fixtures/alerting/).
  * - What this lexicon's examples build.
  */
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "fs";
@@ -57,10 +58,23 @@ export const KUBE_PROMETHEUS: readonly string[] = readdirSync(join(fixturesDir, 
   .sort()
   .map((f) => `kube-prometheus/${f}`);
 
+/**
+ * The alerting provisioning corpus (test/fixtures/alerting/, provenance and
+ * licenses in its README): Grafana 12.4.11 and 13.2.2 exports, and files
+ * from projects that provision Grafana alerting from files.
+ */
+export const ALERTING: readonly string[] = ["grafana-12.4.11", "grafana-13.2.2", "community"].flatMap((d) =>
+  readdirSync(join(fixturesDir, "alerting", d))
+    .filter((f) => /\.ya?ml$/.test(f))
+    .sort()
+    .map((f) => `alerting/${d}/${f}`),
+);
+
 /** The example build roots and the serializers each needs. */
 const EXAMPLES: ReadonlyArray<{ name: string; serializers: Serializer[] }> = [
   { name: "getting-started", serializers: [grafanaSerializer] },
   { name: "dashboards-from-declarations", serializers: [otelSerializer, prometheusSerializer, grafanaSerializer] },
+  { name: "alerting", serializers: [prometheusSerializer, grafanaSerializer] },
 ];
 
 /** Every file each example builds, keyed `<example>/<path>`. */

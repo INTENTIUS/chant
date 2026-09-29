@@ -9,7 +9,7 @@ const builtins = panels.registeredPanels().filter((d) => d.builtin);
 
 describe("built-in panels", () => {
   test("every panel type Grafana ships with a schema at the pin has a class", () => {
-    const panelSchemas = SCHEMA_NAMES.filter((n) => !["dashboard", "prometheus", "tempo", "loki"].includes(n));
+    const panelSchemas = SCHEMA_NAMES.filter((n) => !["dashboard", "prometheus", "tempo", "loki", "expr"].includes(n));
     expect(builtins.map((d) => d.schema).filter(Boolean).sort()).toEqual([...panelSchemas].sort());
   });
 

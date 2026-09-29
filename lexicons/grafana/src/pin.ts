@@ -59,6 +59,7 @@ export const SCHEMA_NAMES = [
   "prometheus",
   "tempo",
   "loki",
+  "expr",
 ] as const;
 
 export type SchemaName = (typeof SCHEMA_NAMES)[number];
@@ -107,6 +108,7 @@ export const GRAFANA_SCHEMA_PIN: GrafanaSchemaPin = Object.freeze({
     prometheus: "726fc97eeb1e37791dbbf988c3cf40de17bb8e623926e6979c4a3f947cb1af87",
     tempo: "21aec4c333c9b8e5e9228e85a6225c76161975abb54002e6f12e919e3b4e54ae",
     loki: "03b81d6b952e3d31785c4b52637e2b7b1c170cc2ea8ec7ec671c21599508e31b",
+    expr: "b1f1c1e4f6bf00f0fb4cb32b5bcc1b0e91fad9b7ad9354ecb791322bd97a5564",
     dashboardv2: "a2cfb8b731ff9f48c41f5aa06ade134cf0d93ab9f6f0567a34a4bc39a9fd984e",
   }),
 });

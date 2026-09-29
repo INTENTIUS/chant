@@ -51,9 +51,47 @@ export function looksLikeDashboardProvisioning(data: unknown): data is { apiVers
   return isObject(data) && data.apiVersion !== undefined && Array.isArray(data.providers);
 }
 
+/** The lists an alerting provisioning file holds (Grafana's `AlertingFileV1`). */
+const ALERTING_LISTS = [
+  "groups",
+  "deleteRules",
+  "contactPoints",
+  "deleteContactPoints",
+  "policies",
+  "resetPolicies",
+  "muteTimes",
+  "deleteMuteTimes",
+  "templates",
+  "deleteTemplates",
+] as const;
+
+/** A Grafana-managed rule group: a `folder`, or rules with `data` (queries), which a Prometheus rule group never has. */
+function looksLikeGrafanaRuleGroup(g: unknown): boolean {
+  if (!isObject(g)) return false;
+  if (typeof g.folder === "string") return true;
+  return Array.isArray(g.rules) && g.rules.some((r) => isObject(r) && Array.isArray(r.data));
+}
+
+/**
+ * An alerting provisioning file (`provisioning/alerting/*.yaml`, or what
+ * `/api/v1/provisioning/*\/export` writes): at least one of the alerting
+ * lists at the top level and nothing but those and `apiVersion`. A `groups`
+ * list must hold Grafana rule groups, so a Prometheus rule file (`groups:`
+ * of `name` and `rules` with `expr`) is not mistaken for one.
+ */
+export function looksLikeAlertingProvisioning(data: unknown): data is Record<string, unknown> {
+  if (!isObject(data)) return false;
+  const keys = Object.keys(data);
+  if (!keys.some((k) => (ALERTING_LISTS as readonly string[]).includes(k) && Array.isArray(data[k]))) return false;
+  if (!keys.every((k) => k === "apiVersion" || (ALERTING_LISTS as readonly string[]).includes(k))) return false;
+  if (Array.isArray(data.groups) && data.groups.length > 0 && !data.groups.every(looksLikeGrafanaRuleGroup)) return false;
+  return data.apiVersion !== undefined || Array.isArray(data.groups);
+}
+
 /**
  * Template detection for `chant import` and friends: dashboard JSON in any
- * of the shapes above (v2 included, #2947), or a provisioning file.
+ * of the shapes above (v2 included, #2947), or a datasource, dashboard or
+ * alerting provisioning file.
  */
 export function detectTemplate(data: unknown): boolean {
   return (
@@ -63,6 +101,7 @@ export function detectTemplate(data: unknown): boolean {
     looksLikeV2Dashboard(data) ||
     looksLikeDashboardApiResponse(data) ||
     looksLikeDatasourceProvisioning(data) ||
-    looksLikeDashboardProvisioning(data)
+    looksLikeDashboardProvisioning(data) ||
+    looksLikeAlertingProvisioning(data)
   );
 }

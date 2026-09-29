@@ -41,6 +41,98 @@ export {
   type DashboardProviderEntity,
 } from "./dashboard";
 
+// Grafana-managed alerting
+export {
+  AlertRuleGroup,
+  AlertRule,
+  AlertQuery,
+  ReduceExpression,
+  MathExpression,
+  ThresholdExpression,
+  ResampleExpression,
+  ClassicConditionsExpression,
+  SqlExpression,
+  ContactPoint,
+  NotificationPolicy,
+  MuteTiming,
+  NotificationTemplate,
+  ALERT_RULE_GROUP_TYPE,
+  ALERT_RULE_TYPE,
+  ALERT_QUERY_TYPE,
+  EXPRESSION_TYPE_PREFIX,
+  EXPRESSION_DATASOURCE_UID,
+  CONTACT_POINT_TYPE,
+  NOTIFICATION_POLICY_TYPE,
+  MUTE_TIMING_TYPE,
+  NOTIFICATION_TEMPLATE_TYPE,
+  isAlertRuleGroupEntity,
+  isAlertRuleEntity,
+  isAlertQueryEntity,
+  isExpressionEntity,
+  isContactPointEntity,
+  isNotificationPolicyEntity,
+  isMuteTimingEntity,
+  isNotificationTemplateEntity,
+  type AlertRuleGroupProps,
+  type AlertRuleGroupEntity,
+  type AlertRuleProps,
+  type AlertRuleEntity,
+  type AlertRuleData,
+  type AlertRuleNotificationSettings,
+  type AlertRuleRecord,
+  type AlertQueryProps,
+  type AlertQueryEntity,
+  type AlertDuration,
+  type RelativeTimeRange,
+  type ExpressionEntity,
+  type ExpressionKind,
+  type ReduceExpressionProps,
+  type MathExpressionProps,
+  type ThresholdExpressionProps,
+  type ResampleExpressionProps,
+  type ClassicConditionsExpressionProps,
+  type SqlExpressionProps,
+  type NoDataState,
+  type ExecErrState,
+  type ContactPointProps,
+  type ContactPointEntity,
+  type ContactPointReceiver,
+  type ContactPointIntegrationType,
+  type NotificationPolicyProps,
+  type NotificationPolicyEntity,
+  type PolicyRoute,
+  type ObjectMatcher,
+  type MuteTimingProps,
+  type MuteTimingEntity,
+  type NotificationTemplateProps,
+  type NotificationTemplateEntity,
+} from "./alerting";
+export {
+  buildAlerting,
+  alertingYaml,
+  alertRuleJson,
+  alertQueryJson,
+  ruleGroupJson,
+  contactPointJson,
+  notificationPolicyJson,
+  muteTimingJson,
+  notificationTemplateJson,
+  durationSeconds,
+  ALERTING_FILE,
+  ALERTING_FILE_KEYS,
+  DEFAULT_RELATIVE_TIME_RANGE,
+  DEFAULT_GROUP_INTERVAL,
+  type AlertingFile,
+  type AlertingIndex,
+  type ProvisionedRuleGroup,
+  type ProvisionedAlertRule,
+  type ProvisionedAlertQuery,
+  type ProvisionedContactPoint,
+  type ProvisionedMuteTiming,
+  type ProvisionedTemplate,
+} from "./alerting-build";
+export { CONTACT_POINT_SECRET_SETTINGS } from "./contact-point-secrets";
+
 // Panels and rows, and the extension point for other panel plugins
 export {
   TimeSeriesPanel,
@@ -196,11 +288,11 @@ export {
   type KnownDatasource,
   type DatasourceRefJson,
 } from "./datasource-refs";
-export { validateDashboardSchema, type SchemaProblem } from "./schema-validate";
-export { looksLikeDashboard, looksLikeDatasourceProvisioning, looksLikeDashboardProvisioning } from "./detect";
+export { validateDashboardSchema, validateExpressionSchema, type SchemaProblem } from "./schema-validate";
+export { looksLikeDashboard, looksLikeDatasourceProvisioning, looksLikeDashboardProvisioning, looksLikeAlertingProvisioning } from "./detect";
 export { slugUid, isValidUid, UID_PATTERN, type DeepPartial, type PropsOf } from "./util";
 
-// Composites: dashboards built from a spanmetrics connector, an Slo and the GenAI preset
+// Composites: dashboards built from a spanmetrics connector, an Slo and the GenAI preset, and an Slo's burn-rate alerts as Grafana rules
 export {
   RedDashboard,
   redQueries,
@@ -220,6 +312,11 @@ export {
   type AgentDashboardMembers,
   type AgentDashboardInstance,
   type DashboardOptions,
+  SloAlertRules,
+  sloAlertQueries,
+  type SloAlertRulesProps,
+  type SloAlertRulesMembers,
+  type SloAlertRulesInstance,
 } from "./composites";
 
 // Config namespace (#2946): `grafana.profiles.<env>` in chant.config.ts, the

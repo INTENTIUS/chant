@@ -3,7 +3,8 @@
  * the corpus takes longer than the unit-test budget allows, so this runs
  * with the e2e tests.
  *
- * Grafana's UI exports and what the examples build type-check clean. A
+ * Grafana's UI exports, the alerting provisioning corpus and what the
+ * examples build type-check clean. A
  * community dashboard can carry keys the pinned schemas do not list (query
  * fields from older Grafana versions such as `step` and `metric`, panel
  * options added after the pin): it still imports and builds back to the
@@ -17,7 +18,7 @@ import { join } from "path";
 import * as ts from "typescript";
 import { GrafanaParser } from "./parser";
 import { GrafanaGenerator } from "./generator";
-import { COMMUNITY, KUBE_PROMETHEUS, UI_EXPORTS, V2_EXPORTS, exampleOutputs, pkgDir, read, removeDir, repoRoot, writeFiles } from "./testdata/fixtures";
+import { ALERTING, COMMUNITY, KUBE_PROMETHEUS, UI_EXPORTS, V2_EXPORTS, exampleOutputs, pkgDir, read, removeDir, repoRoot, writeFiles } from "./testdata/fixtures";
 
 type Files = Array<{ path: string; content: string }>;
 
@@ -71,6 +72,15 @@ describe("the generated source type-checks against the lexicon's types", () => {
     for (const [name, text] of await exampleOutputs()) {
       if (/^[^/]+\/dashboards\/.*\.json$/.test(name)) projects[name] = generate(text);
     }
+    expect(typeErrors(projects)).toEqual([]);
+  }, 180_000);
+
+  test("alerting provisioning files, and what the alerting example builds, type-check clean", async () => {
+    const projects: Record<string, Files> = Object.fromEntries(ALERTING.map((f) => [f, generate(read(f))]));
+    for (const [name, text] of await exampleOutputs()) {
+      if (name.endsWith("provisioning/alerting/chant.yaml")) projects[name] = generate(text);
+    }
+    expect(Object.keys(projects).some((n) => n.startsWith("alerting/"))).toBe(true);
     expect(typeErrors(projects)).toEqual([]);
   }, 180_000);
 
