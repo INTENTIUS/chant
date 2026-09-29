@@ -61,8 +61,9 @@ Checks catch a query aimed at a datasource nobody declared, with
 wrong type (GRAF102), a \`$variable\` the dashboard doesn't declare (GRAF103),
 duplicate uids and ids (GRAF104), panels off the grid or overlapping (GRAF105),
 anything Grafana's dashboard schema rejects (GRAF107), PromQL sent to a
-Prometheus that doesn't parse (GRAF108), and a unit Grafana doesn't know
-(GRAF115). For alerting, they catch rules whose condition or expressions name
+Prometheus that doesn't parse (GRAF108), dashboard providers that load a
+dashboard twice or not into its declared folder (GRAF109), and a unit Grafana
+doesn't know (GRAF115). For alerting, they catch rules whose condition or expressions name
 no query (GRAF111), queries to undeclared datasources (GRAF112), routes to
 undeclared contact points or mute timings (GRAF113), and uids, intervals and
 duplicates Grafana refuses (GRAF114).
