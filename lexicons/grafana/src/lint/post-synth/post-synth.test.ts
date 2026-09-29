@@ -3,9 +3,9 @@ import { makePostSynthCtxFromFiles, makePostSynthCtx } from "@intentius/chant-te
 import type { PostSynthCheck } from "@intentius/chant/lint/post-synth";
 import type { Declarable } from "@intentius/chant/declarable";
 import { grafanaSerializer } from "../../serializer";
-import { Datasource } from "../../datasource";
+import { Datasource, ExternalDatasource } from "../../datasource";
 import { Dashboard } from "../../dashboard";
-import { Row, StatPanel, TimeSeriesPanel, TablePanel } from "../../panels";
+import { Row, StatPanel, TimeSeriesPanel, TablePanel, TextPanel } from "../../panels";
 import { PromQuery, TempoQuery } from "../../query";
 import { DatasourceVariable, QueryVariable } from "../../variables";
 import { graf101 } from "./graf101";
@@ -72,9 +72,64 @@ describe("GRAF101: undeclared datasource", () => {
     expect(graf101.check(ctxOf({ prometheus, tempo, d }))).toEqual([]);
   });
 
-  test("is silent when the build declares no datasource (another build root, chant #1939)", () => {
+  test("warns once per dashboard when the build declares no datasource, so nothing can be checked", () => {
     const panel = new StatPanel({ datasource: { type: "prometheus", uid: "elsewhere" }, targets: [up] });
+    const other = new StatPanel({ datasource: { type: "prometheus", uid: "elsewhere" }, targets: [up] });
+    const diags = graf101.check(ctxOf({ d: new Dashboard({ title: "D", panels: [panel, other] }) }));
+    expect(diags.map((d) => [d.checkId, d.severity])).toEqual([["GRAF101", "warning"]]);
+    expect(diags[0].message).toContain('datasource uid "elsewhere"');
+    expect(diags[0].message).toContain("ExternalDatasource");
+  });
+
+  test("says nothing when the build declares no datasource and the dashboard names none", () => {
+    const panel = new TextPanel({ options: { content: "hi", mode: "markdown" } });
     expect(graf101.check(ctxOf({ d: new Dashboard({ title: "D", panels: [panel] }) }))).toEqual([]);
+  });
+
+  test("resolves entity and { type, uid } refs to an ExternalDatasource, and never provisions it", () => {
+    const mimir = new ExternalDatasource({ type: "prometheus", uid: "mimir", name: "Mimir" });
+    const d = new Dashboard({
+      title: "D",
+      panels: [new StatPanel({ datasource: mimir, targets: [up] }), new StatPanel({ datasource: { type: "prometheus", uid: "mimir" }, targets: [up] })],
+      variables: [new QueryVariable({ name: "job", datasource: mimir, query: "label_values(job)" })],
+    });
+    const entities = { mimir, prometheus, d };
+    expect(graf101.check(ctxOf(entities))).toEqual([]);
+    expect(graf102.check(ctxOf(entities))).toEqual([]);
+    const out = grafanaSerializer.serialize(new Map(Object.entries(entities))) as { primary: string; files: Record<string, string> };
+    expect(out.files["provisioning/datasources/chant.yaml"]).not.toContain("mimir");
+    expect(JSON.parse(out.primary).externalDatasources).toEqual([{ type: "prometheus", uid: "mimir", name: "Mimir" }]);
+  });
+
+  test("an ExternalDatasource alone is enough to check references", () => {
+    const mimir = new ExternalDatasource({ type: "prometheus", uid: "mimir" });
+    const d = new Dashboard({ title: "D", panels: [new StatPanel({ datasource: { type: "prometheus", uid: "typo" }, targets: [up] })] });
+    const diags = graf101.check(ctxOf({ mimir, d }));
+    expect(diags.map((x) => [x.checkId, x.severity])).toEqual([
+      ["GRAF101", "error"],
+      ["GRAF101", "error"],
+    ]);
+    expect(diags[0].message).toContain('Declared: "mimir"');
+  });
+
+  test("flags a DatasourceVariable whose plugin type no declared datasource has", () => {
+    const ds = new DatasourceVariable({ name: "logs", pluginType: "loki" });
+    const diags = graf101.check(ctxOf({ prometheus, d: new Dashboard({ title: "D", variables: [ds] }) }));
+    expect(diags.map((x) => [x.checkId, x.severity])).toEqual([["GRAF101", "error"]]);
+    expect(diags[0].message).toContain('variable "logs" chooses among loki datasources');
+  });
+
+  test("passes a DatasourceVariable whose plugin type only an ExternalDatasource has", () => {
+    const ds = new DatasourceVariable({ name: "logs", pluginType: "loki" });
+    const loki = new ExternalDatasource({ type: "loki", uid: "loki-prod" });
+    expect(graf101.check(ctxOf({ prometheus, loki, d: new Dashboard({ title: "D", variables: [ds] }) }))).toEqual([]);
+  });
+
+  test("counts a DatasourceVariable in the no-datasource warning", () => {
+    const ds = new DatasourceVariable({ name: "logs", pluginType: "loki" });
+    const diags = graf101.check(ctxOf({ d: new Dashboard({ title: "D", variables: [ds] }) }));
+    expect(diags.map((x) => [x.checkId, x.severity])).toEqual([["GRAF101", "warning"]]);
+    expect(diags[0].message).toContain("datasource variables of type loki");
   });
 });
 
@@ -93,6 +148,13 @@ describe("GRAF102: datasource type mismatch", () => {
     );
     const diags = graf102.check(ctxOfJson(dash, [{ name: "Loki", type: "loki", uid: "loki" }]));
     expect(diags[0].message).toContain('variable "ds" chooses among loki');
+  });
+
+  test("checks a ref's type against an ExternalDatasource", () => {
+    const traces = new ExternalDatasource({ type: "tempo", uid: "traces", name: "Traces" });
+    const panel = new StatPanel({ datasource: { type: "prometheus", uid: "traces" }, targets: [up] });
+    const diags = graf102.check(ctxOf({ traces, d: new Dashboard({ title: "D", panels: [panel] }) }));
+    expect(diags[0].message).toContain('external datasource "Traces", which is tempo');
   });
 
   test("passes matching types", () => {
@@ -177,6 +239,18 @@ describe("GRAF105: grid", () => {
   test("passes a dashboard laid out by chant", () => {
     const panels = [new StatPanel(), new TimeSeriesPanel(), new Row({ title: "r", panels: [new TablePanel(), new TablePanel(), new TablePanel()] })];
     expect(graf105.check(ctxOf({ d: new Dashboard({ title: "D", panels }) }))).toEqual([]);
+  });
+});
+
+describe("GRAF104 and GRAF106 on external datasources", () => {
+  test("flags an ExternalDatasource sharing a uid with a provisioned one", () => {
+    const clash = new ExternalDatasource({ type: "prometheus", uid: "prometheus" });
+    expect(graf104.check(ctxOf({ prometheus, clash })).map((d) => d.message)).toEqual([expect.stringContaining('2 datasources share the uid "prometheus"')]);
+  });
+
+  test("flags an ExternalDatasource uid Grafana rejects", () => {
+    const bad = new ExternalDatasource({ type: "prometheus", uid: "has space" });
+    expect(graf106.check(ctxOf({ bad })).map((d) => d.message)).toEqual([expect.stringContaining('ExternalDatasource "has space"')]);
   });
 });
 

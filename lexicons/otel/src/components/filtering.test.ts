@@ -81,6 +81,33 @@ describe("filter processor", () => {
     );
     expect(problems(new FilterProcessor({ logs: { log_record: ["true"] } }))).toEqual([]);
   });
+
+  test("the legacy include/exclude match blocks serialize as written and count as conditions", () => {
+    const filter = new FilterProcessor({
+      metrics: { exclude: { match_type: "strict", metric_names: ["up", "scrape_duration_seconds"] } },
+      logs: { include: { match_type: "regexp", severity_number: { min: "WARN", match_undefined: true }, bodies: ["^panic"] } },
+      spans: { exclude: { match_type: "strict", services: ["healthcheck"], span_kinds: ["SPAN_KIND_INTERNAL"] } },
+    });
+    expect(problems(filter)).toEqual([]);
+    const parsed = load(primary(otelSerializer.serialize(entities({ filter })))) as any;
+    expect(parsed.processors.filter.metrics.exclude.metric_names).toEqual(["up", "scrape_duration_seconds"]);
+    expect(parsed.processors.filter.logs.include.severity_number).toEqual({ min: "WARN", match_undefined: true });
+    expect(parsed.processors.filter.spans.exclude.span_kinds).toEqual(["SPAN_KIND_INTERNAL"]);
+  });
+
+  test("a signal that mixes OTTL conditions with include/exclude is reported, as the collector rejects it", () => {
+    const mixed = new FilterProcessor({
+      traces: { span: ["true"] },
+      spans: { include: { match_type: "strict", services: ["a"] } },
+      metrics: { metric: ["true"], exclude: { match_type: "expr", expressions: ["MetricName == 'up'"] } },
+      logs: { log_record: ["true"], exclude: { match_type: "strict", bodies: ["x"] } },
+    });
+    expect(problems(mixed)).toEqual([
+      "traces mixes OTTL conditions with include/exclude, which the collector rejects",
+      "metrics mixes OTTL conditions with include/exclude, which the collector rejects",
+      "logs mixes OTTL conditions with include/exclude, which the collector rejects",
+    ]);
+  });
 });
 
 describe("transform processor", () => {

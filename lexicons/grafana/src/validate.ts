@@ -23,6 +23,7 @@ export type { ValidateCheck, ValidateResult } from "@intentius/chant/codegen/val
 export const REQUIRED_NAMES = [
   "Dashboard",
   "Datasource",
+  "ExternalDatasource",
   "DashboardProvider",
   "Row",
   "TimeSeriesPanel",
