@@ -7,6 +7,8 @@
  *   provenance in its README).
  * - Community dashboards from grafana.com (test/fixtures/community/,
  *   provenance and licenses in its README).
+ * - kube-prometheus's 33 dashboards (test/fixtures/kube-prometheus/,
+ *   provenance and license in its README).
  * - Alerting provisioning files (test/fixtures/alerting/).
  * - What this lexicon's examples build.
  * - Datasource provisioning files (test/fixtures/provisioning/).
@@ -50,6 +52,12 @@ export const COMMUNITY: readonly string[] = [
   "community/prometheus-2-stats.json",
   "community/prometheus-2-stats.grafana-12.4.11.json",
 ];
+
+/** kube-prometheus v0.19.0's dashboards, one file per dashboard, as paths under test/fixtures. */
+export const KUBE_PROMETHEUS: readonly string[] = readdirSync(join(fixturesDir, "kube-prometheus"))
+  .filter((f) => f.endsWith(".json"))
+  .sort()
+  .map((f) => `kube-prometheus/${f}`);
 
 /**
  * Datasource provisioning files (test/fixtures/provisioning/, provenance in

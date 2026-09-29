@@ -25,7 +25,6 @@ import type { VariableEntity } from "./variables";
 import type { SchemaName } from "./pin";
 import type {
   DashboardLink,
-  DataTransformerConfig,
   FieldConfig,
   FieldConfigSource,
   GridPos,
@@ -49,6 +48,7 @@ import type * as trend from "./schema/trend.gen";
 import type * as canvas from "./schema/canvas.gen";
 import type * as geomap from "./schema/geomap.gen";
 import type { AlertListOptions, FlameGraphOptions } from "./panel-options";
+import type { Transformation } from "./transformations";
 
 /** `fieldConfig` with `defaults.custom` typed for the panel. */
 export interface PanelFieldConfig<C> {
@@ -73,7 +73,8 @@ export interface PanelProps<O = Record<string, unknown>, C = Record<string, unkn
   /** The panel plugin's own options, typed from its schema. */
   options?: DeepPartial<O>;
   fieldConfig?: PanelFieldConfig<C>;
-  transformations?: DataTransformerConfig[];
+  /** Typed per transformer: `{ id: "organize", options: { ... } }`, `transformation(id, options)`, or `customTransformation()` for an id or option the types don't know. */
+  transformations?: Transformation[];
   links?: PanelLink[];
   /** Repeat the panel once per value of this variable. */
   repeat?: VariableEntity | string;
@@ -387,6 +388,12 @@ export interface RowProps {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   datasource?: DatasourceInput<any>;
   id?: number;
+  /**
+   * The grid line the row header sits on. Without it, the row goes on the
+   * first free line below everything declared before it. A row header is
+   * always full width and one line high, so `y` is all it takes.
+   */
+  gridPos?: { y: number };
 }
 
 export interface RowEntity extends Declarable {

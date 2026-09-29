@@ -4,7 +4,8 @@
  * Dashboard JSON -> TypeScript -> `chant build` -> dashboard JSON must give
  * back the same dashboard for every fixture: Grafana 12.4.11 and 13.2.2 UI
  * exports (plain and "for sharing externally"), community dashboards from
- * grafana.com, and what this lexicon's examples build. A v2 dashboard
+ * grafana.com, kube-prometheus's 33 dashboards, and what this lexicon's
+ * examples build. A v2 dashboard
  * (#2947) round-trips through its classic form (./v2.ts). "The same" means
  * equal after `normalizeDashboard` (Grafana's defaults and derived keys)
  * once the importer's edits are applied to the source: every key it could
@@ -33,7 +34,19 @@ import { GrafanaParser, type DashboardResourceMetadata } from "./parser";
 import { GrafanaGenerator } from "./generator";
 import { applyEdits } from "./edits";
 import { normalizeDashboard } from "./normalize";
-import { COMMUNITY, LOSSY_V1_EXPORT, PROVISIONING, UI_EXPORTS, V2_EXPORTS, exampleOutputs, projectDir, read, removeDir, writeFiles } from "./testdata/fixtures";
+import {
+  COMMUNITY,
+  KUBE_PROMETHEUS,
+  LOSSY_V1_EXPORT,
+  PROVISIONING,
+  UI_EXPORTS,
+  V2_EXPORTS,
+  exampleOutputs,
+  projectDir,
+  read,
+  removeDir,
+  writeFiles,
+} from "./testdata/fixtures";
 
 type Json = Record<string, unknown>;
 
@@ -94,16 +107,43 @@ async function importAndBuild(content: string): Promise<Imported> {
   }
 }
 
-/** Import, build, and expect the same dashboard back, lint-clean source and no check errors. */
-async function expectRoundTrip(content: string): Promise<Imported> {
+/** A check error as `<code> <message>`, with the dashboard's name left out. */
+const errorText = (i: GrafanaIssue): string => `${i.code} ${i.message.replace(/^Dashboard "[^"]*" /, "")}`;
+
+/**
+ * Import, build, and expect the same dashboard back, lint-clean source and
+ * no check errors but `errors`: what a source dashboard has that the
+ * checks reject, carried as it is.
+ */
+async function expectRoundTrip(content: string, errors: readonly string[] = []): Promise<Imported> {
   const out = await importAndBuild(content);
   expect(out.buildErrors).toEqual([]);
   expect(out.rebuilt).toBeDefined();
   expect(normalizeDashboard(out.rebuilt!)).toEqual(normalizeDashboard(out.expected!));
   expect(out.lint.errorCount + out.lint.warningCount, out.lint.output).toBe(0);
-  expect(out.issues.filter((i) => i.severity === "error")).toEqual([]);
+  expect(out.issues.filter((i) => i.severity === "error").map(errorText)).toEqual(errors);
   return out;
 }
+
+const NO_THRESHOLDS_MODE = (panel: number) => `GRAF107 /panels/${panel}/fieldConfig/defaults/thresholds: must have required property 'mode' (Grafana schema).`;
+const NODES_ERRORS = [NO_THRESHOLDS_MODE(5), "GRAF107 /panels/8/transformations/1: must have required property 'options' (Grafana schema).", NO_THRESHOLDS_MODE(8)];
+
+/**
+ * What kube-prometheus's dashboards have that Grafana's CUE schema rejects
+ * (GRAF107), by fixture. The round trip carries each value as it is, so the
+ * rebuilt dashboard has the same errors as the source.
+ */
+const KUBE_PROMETHEUS_ERRORS: Readonly<Record<string, readonly string[]>> = {
+  "kube-prometheus/grafana-overview.json": ["GRAF107 /panels/2/options/footer/fields: must be array (Grafana schema)."],
+  "kube-prometheus/k8s-resources-pod.json": [
+    'GRAF107 /panels/1/fieldConfig/defaults/custom/axisColorMode: must be equal to one of the allowed values: "text", "series" (Grafana schema).',
+  ],
+  "kube-prometheus/namespace-by-pod.json": [NO_THRESHOLDS_MODE(0), NO_THRESHOLDS_MODE(1)],
+  "kube-prometheus/pod-total.json": [NO_THRESHOLDS_MODE(0), NO_THRESHOLDS_MODE(1)],
+  "kube-prometheus/nodes.json": NODES_ERRORS,
+  "kube-prometheus/nodes-aix.json": NODES_ERRORS,
+  "kube-prometheus/nodes-darwin.json": NODES_ERRORS,
+};
 
 describe("dashboard JSON -> TypeScript -> dashboard JSON", () => {
   for (const file of UI_EXPORTS) {
@@ -206,6 +246,30 @@ describe("dashboard JSON -> TypeScript -> dashboard JSON", () => {
       expect(out.warnings.join("\n")).not.toMatch(/: datasource is not carried/);
     });
   }
+
+  for (const file of KUBE_PROMETHEUS) {
+    test(`kube-prometheus dashboard ${file}`, async () => {
+      const out = await expectRoundTrip(read(file), KUBE_PROMETHEUS_ERRORS[file]);
+      expect(out.warnings).toEqual([]);
+    });
+  }
+
+  test("kube-prometheus: a row keeps its line over an empty band, and over panels it overlaps (#2992)", async () => {
+    // Node Exporter / Nodes leaves lines 16 and 17 empty above its Disk row; Grafana closes the band when it draws the dashboard.
+    const nodes = await expectRoundTrip(read("kube-prometheus/nodes.json"), NODES_ERRORS);
+    expect(nodes.source).toMatch(/const diskRowGridPos: PropsOf<typeof Row>\["gridPos"\] = \{ y: 18 \};/);
+    // Prometheus / Remote-Write puts its Shards row on the line of the panel after it: the build keeps the overlap, and Grafana resolves it.
+    const remoteWrite = await expectRoundTrip(read("kube-prometheus/prometheus-remote-write.json"));
+    const shards = (remoteWrite.rebuilt!.panels as Json[]).filter((p) => p.title === "Shards" || p.title === "Current Shards");
+    expect(shards.map((p) => (p.gridPos as Json).y)).toEqual([16, 16]);
+  });
+
+  test("kube-prometheus: a gridPos without x is written with x 0, and a text panel keeps its Mixed datasource (#2992)", async () => {
+    const pv = await expectRoundTrip(read("kube-prometheus/persistentvolumesusage.json"));
+    expect((pv.rebuilt!.panels as Json[]).map((p) => (p.gridPos as Json).x)).toEqual([0, 18, 0, 18]);
+    const apiserver = await expectRoundTrip(read("kube-prometheus/apiserver.json"));
+    expect((apiserver.rebuilt!.panels as Json[])[0].datasource).toEqual({ type: "datasource", uid: "-- Mixed --" });
+  });
 
   test("Node Exporter Full keeps its 30-odd rows and every panel id", async () => {
     const out = await expectRoundTrip(read("community/node-exporter-full.json"));

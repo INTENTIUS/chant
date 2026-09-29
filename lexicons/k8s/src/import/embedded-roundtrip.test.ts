@@ -164,9 +164,9 @@ describe("manifest -> TypeScript -> manifest, with embedded content imported by 
     const out = await roundTrip("agent-observability.yaml");
     expect(out.buildErrors).toEqual([]);
     expect(embeddedDirs(out.files)).toEqual([
-      "grafana-files-dashboards-agent-observability-genai-agents",
-      "grafana-files-dashboards-agent-observability-red-traces-span-metrics",
-      "grafana-files-dashboards-agent-observability-slo-support-agent-runs",
+      "grafana-dashboard-genai-agents",
+      "grafana-dashboard-red-traces-span-metrics",
+      "grafana-dashboard-slo-support-agent-runs",
       "otel-agent-config",
       "otel-gateway-config",
       "prometheus-config-rules",

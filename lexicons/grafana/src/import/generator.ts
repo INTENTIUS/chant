@@ -33,7 +33,7 @@
 
 import type { GeneratedFile, TypeScriptGenerator } from "@intentius/chant/import/generator";
 import type { TemplateIR } from "@intentius/chant/import/parser";
-import { isDeclRef, type CustomClass, type Declaration, type Plan } from "./model";
+import { isCallValue, isDeclRef, type CustomClass, type Declaration, type Plan } from "./model";
 import { DASHBOARD_RESOURCE_TYPE, PROVISIONING_RESOURCE_TYPE, type PlanResourceProperties } from "./parser";
 
 const PACKAGE = "@intentius/chant-lexicon-grafana";
@@ -79,6 +79,14 @@ class Code {
   constructor(readonly code: string) {}
 }
 
+/** A call to a package function, its arguments laid out like any other value. */
+class Call {
+  constructor(
+    readonly fn: string,
+    readonly args: readonly unknown[],
+  ) {}
+}
+
 function propertyKey(k: string): string {
   return IDENT.test(k) ? k : JSON.stringify(k);
 }
@@ -109,10 +117,11 @@ function scalarLiteral(v: unknown): string {
 }
 
 function isPlain(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v) && !(v instanceof Code);
+  return typeof v === "object" && v !== null && !Array.isArray(v) && !(v instanceof Code) && !(v instanceof Call);
 }
 
 function inline(v: unknown): string {
+  if (v instanceof Call) return `${v.fn}(${v.args.map(inline).join(", ")})`;
   if (Array.isArray(v)) return `[${v.map(inline).join(", ")}]`;
   if (isPlain(v)) {
     const items = Object.entries(v)
@@ -129,6 +138,11 @@ export function tsLiteral(v: unknown, indent: number, col = indent): string {
   if (!one.includes("\n") && col + one.length + 2 <= MAX_LINE) return one;
   const pad = " ".repeat(indent + 2);
   const close = " ".repeat(indent);
+  if (v instanceof Call && v.args.length > 0) {
+    // Leading arguments that fit stay on the call's line; the last is laid out from there.
+    const head = `${v.fn}(${v.args.slice(0, -1).map((a) => `${inline(a)}, `).join("")}`;
+    return `${head}${tsLiteral(v.args[v.args.length - 1], indent, col + head.length)})`;
+  }
   if (Array.isArray(v)) {
     if (v.length === 0) return "[]";
     return `[\n${v.map((x) => `${pad}${tsLiteral(x, indent + 2)},`).join("\n")}\n${close}]`;
@@ -148,6 +162,7 @@ export function tsLiteral(v: unknown, indent: number, col = indent): string {
 /** True for a value COR001 wants in a named const rather than inline in a constructor. */
 function needsHoist(v: unknown): boolean {
   if (Array.isArray(v)) return v.some((x) => (typeof x === "object" && x !== null && !(x instanceof Code)) || Array.isArray(x));
+  if (v instanceof Call) return true;
   return isPlain(v);
 }
 
@@ -351,6 +366,10 @@ export function generatePlanModules(plan: Plan): {
       const target = byId.get(v.$decl);
       if (!target) throw new Error(`grafana import: the plan refers to "${v.$decl}", which it does not declare`);
       return refer(mod, v.$decl, names.get(v.$decl)!);
+    }
+    if (isCallValue(v)) {
+      mod.values.add(v.$call);
+      return new Call(v.$call, v.args.map((x) => resolve(mod, x)));
     }
     if (Array.isArray(v)) return v.map((x) => resolve(mod, x));
     if (isPlain(v)) return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, resolve(mod, x)]));
