@@ -121,6 +121,19 @@ const NODES_ERRORS = [NO_THRESHOLDS_MODE(5), "GRAF107 /panels/8/transformations/
  * (GRAF107), by fixture. The round trip carries each value as it is, so the
  * rebuilt dashboard has the same errors as the source.
  */
+/**
+ * The import warnings for kube-prometheus's dashboards, by fixture; the rest
+ * import with none. The node dashboards' sortBy transformation has a
+ * `fields: {}` Grafana's sortBy transformer does not take (it reads only
+ * `sort`), so it is carried as it is through customTransformation().
+ */
+const SORT_BY_FIELDS = 'panel "Disk Space Usage" (id 9): transformation 6 is written with customTransformation(), untyped: the sortBy transformer takes no option "fields".';
+const KUBE_PROMETHEUS_WARNINGS: Readonly<Record<string, readonly string[]>> = {
+  "kube-prometheus/nodes.json": [SORT_BY_FIELDS],
+  "kube-prometheus/nodes-aix.json": [SORT_BY_FIELDS],
+  "kube-prometheus/nodes-darwin.json": [SORT_BY_FIELDS],
+};
+
 const KUBE_PROMETHEUS_ERRORS: Readonly<Record<string, readonly string[]>> = {
   "kube-prometheus/grafana-overview.json": ["GRAF107 /panels/2/options/footer/fields: must be array (Grafana schema)."],
   "kube-prometheus/k8s-resources-pod.json": [
@@ -220,7 +233,7 @@ describe("dashboard JSON -> TypeScript -> dashboard JSON", () => {
   for (const file of KUBE_PROMETHEUS) {
     test(`kube-prometheus dashboard ${file}`, async () => {
       const out = await expectRoundTrip(read(file), KUBE_PROMETHEUS_ERRORS[file]);
-      expect(out.warnings).toEqual([]);
+      expect(out.warnings).toEqual(KUBE_PROMETHEUS_WARNINGS[file] ?? []);
     });
   }
 
