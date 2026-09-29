@@ -46,6 +46,20 @@ export const bucket = new _.Bucket({
 
 Simple string, number, and boolean properties are allowed inline. Only nested object literals and arrays containing objects are flagged.
 
+The rule looks only at resource constructors. A property-kind declarable, one a lexicon builds with `createProperty` and names in its plugin's `propertyClassNames()`, is already a nested value inside the resource that holds it, so the objects passed to it are not flagged. Grafana's panels, rows, queries and variables are property-kind, which lets a panel carry its `fieldConfig` and `options` inline:
+
+```typescript
+// OK: TimeSeriesPanel is property-kind
+export const overview = new Dashboard({
+  title: "Overview",
+  panels: [
+    new TimeSeriesPanel({ title: "Latency", fieldConfig: { defaults: { unit: "ms" } } }),
+  ],
+});
+```
+
+A lexicon that does not implement `propertyClassNames()` gets the rule on every constructor, as before.
+
 :::note
 This rule is automatically skipped inside `Composite()` factory callbacks, where inline construction is expected. See [Composite Rules](/chant/lint-rules/composite/).
 :::
@@ -83,6 +97,8 @@ Only applies to exported variables initialized with `new` expressions.
 ## COR009: File Declarable Limit
 
 Files should not contain too many resource declarations. The default limit is 8.
+
+Only resources count. Property-kind declarables, the classes a lexicon names in its plugin's `propertyClassNames()`, are left out, so a Grafana dashboard with twenty panels, queries and variables in one file counts as one. A lexicon that does not implement `propertyClassNames()` has every declarable counted, as before.
 
 **Severity:** warning
 

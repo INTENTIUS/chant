@@ -65,6 +65,8 @@ export const dataBucket = new _.Bucket({
 });
 ```
 
+Property-kind declarables, the classes a lexicon names in its plugin's `propertyClassNames()`, are handled differently. One is never flagged, since it only means something inside a resource and is often exported so another file can assemble it. A resource that holds one, inline or through a `const` in the same file, is not flagged either: it is the root that emits them, and nothing is expected to reference it. A Grafana dashboard holding its panels is the usual case. A resource whose property-kind children are all imported from other files has nothing in the file that marks it as a root, so it is still flagged; export it through an `export { … }` list or add a `chant-disable-next-line COR004` comment.
+
 :::note
 Resources that are imported and referenced from other files are tracked through the module graph. If a resource is only used via cross-file imports, it may still appear as referenced.
 :::

@@ -57,7 +57,7 @@ export const overview = new Dashboard({
 
 Leave `gridPos` out and panels are placed left to right, wrapping at 24 columns; give `x` and `y` to place one exactly. `Row({ title, panels, collapsed })` starts a full-width row. Dashboard uids default to the export name as a uid (`overview`).
 
-chant's lint wants flat declarations: extract nested objects (`time`, `options`) to named consts, keep at most eight declarations per file, and export entities with `export { a, b }`.
+Panels, rows, queries and variables are property-kind, so chant's core lint doesn't count them toward the eight-per-file limit (COR009) and lets them carry `fieldConfig` and `options` inline (COR001). The dashboard is a resource: lift its own nested objects (`time`, `links`) into named consts.
 
 ## Dashboards built from other declarations
 
