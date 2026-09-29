@@ -21,12 +21,12 @@ Post-synth checks validate the serialized output after the build pipeline comple
 
 | ID | Description |
 |----|-------------|
-| `GRAF101` | A panel, query or variable uses a datasource no Datasource or ExternalDatasource in the build declares |
+| `GRAF101` | A panel, query, variable or annotation uses a datasource no Datasource or ExternalDatasource in the build declares, or one the build deletes |
 | `GRAF102` | A query is sent to a datasource of another plugin type |
 | `GRAF103` | A query, title, datasource or repeat uses a variable the dashboard does not declare |
-| `GRAF104` | Two dashboards, datasources, panels, variables or queries share an id |
+| `GRAF104` | Two dashboards, datasources, folders, panels, variables or queries share an id |
 | `GRAF105` | A panel does not fit the 24-column grid, or overlaps another panel |
-| `GRAF106` | A dashboard or datasource uid Grafana rejects, or a dashboard with no title |
+| `GRAF106` | A dashboard, folder or datasource uid Grafana rejects, or a dashboard with no title |
 | `GRAF107` | A dashboard does not match the pinned Grafana schema |
 | `GRAF108` | A query sent to Prometheus is not valid PromQL |
 | `GRAF109` | Dashboard provisioning puts a dashboard somewhere other than its declared folder, or loads it twice |

@@ -5,7 +5,8 @@
  */
 
 import type { LexiconEntry } from "@intentius/chant/lsp/lexicon-providers";
-import { DATASOURCE_TYPE, EXTERNAL_DATASOURCE_TYPE } from "./datasource";
+import { DATASOURCE_PROVISIONING_TYPE, DATASOURCE_TYPE, EXTERNAL_DATASOURCE_TYPE } from "./datasource";
+import { FOLDER_TYPE } from "./folder";
 import { DASHBOARD_TYPE, DASHBOARD_PROVIDER_TYPE } from "./dashboard";
 import * as panels from "./panels";
 import * as queries from "./query";
@@ -21,7 +22,7 @@ import {
   NOTIFICATION_TEMPLATE_TYPE,
 } from "./alerting";
 
-export type CatalogKind = "dashboard" | "datasource" | "provider" | "panel" | "row" | "query" | "variable" | "alerting" | "expression";
+export type CatalogKind = "dashboard" | "folder" | "datasource" | "provider" | "panel" | "row" | "query" | "variable" | "alerting" | "expression";
 
 export interface CatalogEntry {
   className: string;
@@ -102,6 +103,20 @@ export const BUILTIN_CATALOG: CatalogEntry[] = [
     kind: "datasource",
     entityKind: "resource",
     description: "A datasource that already exists in Grafana: referenced like a Datasource and checked by GRAF101/GRAF102, never provisioned",
+  },
+  {
+    className: "Folder",
+    entityType: FOLDER_TYPE,
+    kind: "folder",
+    entityKind: "resource",
+    description: "A folder with a stable uid, nested with parent; a dashboard's folder may be one instead of a path",
+  },
+  {
+    className: "DatasourceProvisioning",
+    entityType: DATASOURCE_PROVISIONING_TYPE,
+    kind: "provider",
+    entityKind: "resource",
+    description: "The datasource provisioning file's prune (on by default) and deleteDatasources",
   },
   {
     className: "DashboardProvider",

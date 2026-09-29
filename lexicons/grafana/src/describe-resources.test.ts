@@ -14,6 +14,7 @@ import { Datasource, ExternalDatasource } from "./datasource";
 import { StatPanel, Row } from "./panels";
 import { PromQuery } from "./query";
 import { CustomVariable } from "./variables";
+import { Folder } from "./folder";
 
 type Entities = GrafanaObserveOptions["entities"];
 
@@ -251,5 +252,20 @@ describe("unobserved reasons", () => {
     expect(noToken.unobserved.overview).toMatchObject({ reason: "no-credentials", detail: expect.stringContaining("GRAFANA_TEST_TOKEN") });
     const failing = normalizeObservation(await run(state({ status: 500 })));
     expect(failing.unobserved.overview.reason).toBe("read-failed");
+  });
+});
+
+describe("folders (#2953)", () => {
+  it("a Folder is read by its uid, from its own or its path", async () => {
+    const platform = new Folder({ title: "Platform" });
+    const k8s = new Folder({ title: "Kubernetes", parent: platform, uid: "k8s" });
+    const gone = new Folder({ title: "Gone" });
+    const folders = entities({ platform, k8s, gone });
+    const s = state({ folders: { platform: "Platform", k8s: "Kubernetes" }, folderParents: { k8s: "platform" } });
+    const out = normalizeObservation(await describeResources({ environment: "prod", entityNames: [...folders.keys()], entities: folders, config: CONFIG, env: ENV, http: fakeGrafana(s) }));
+    expect(out.resources.platform).toMatchObject({ physicalId: "platform", status: "PRESENT", attributes: { title: "Platform" } });
+    // The fake serves folders over /api/folders only (Grafana 11), which carries no labels.
+    expect(out.resources.k8s).toMatchObject({ physicalId: "k8s", ownership: "unknown", attributes: { title: "Kubernetes", parentUid: "platform" } });
+    expect(out.resources.gone).toBeUndefined();
   });
 });

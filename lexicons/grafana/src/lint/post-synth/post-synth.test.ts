@@ -6,7 +6,8 @@ import { makePostSynthCtxFromFiles, makePostSynthCtx } from "@intentius/chant-te
 import type { PostSynthCheck } from "@intentius/chant/lint/post-synth";
 import type { Declarable } from "@intentius/chant/declarable";
 import { grafanaSerializer } from "../../serializer";
-import { Datasource, ExternalDatasource } from "../../datasource";
+import { Datasource, DatasourceProvisioning, ExternalDatasource } from "../../datasource";
+import { Folder } from "../../folder";
 import { Dashboard, DashboardProvider } from "../../dashboard";
 import { HeatmapPanel, Row, StatPanel, TimeSeriesPanel, TablePanel, TextPanel } from "../../panels";
 import { LokiQuery, PromQuery, TempoQuery } from "../../query";
@@ -512,5 +513,40 @@ describe("GRAF115 over real Grafana exports and community dashboards", () => {
   // Non-vacuous: the corpus sets hundreds of units between them.
   test("the corpus sets units", () => {
     expect(unitsSeen).toBeGreaterThan(200);
+  });
+});
+
+describe("annotations, folders and datasource deletes (#2953)", () => {
+  const deploys = (datasource: unknown, extra: Record<string, unknown> = {}) => ({ name: "Deploys", datasource, ...extra }) as never;
+
+  test("GRAF101 flags an annotation on an undeclared datasource, GRAF102 one of another type", () => {
+    const d = new Dashboard({ title: "D", annotations: [deploys({ type: "prometheus", uid: "gone" })] });
+    expect(ids(graf101, ctxOf({ prometheus, d }))).toEqual([["GRAF101", "error"]]);
+    const t = new Dashboard({ title: "T", annotations: [deploys({ type: "loki", uid: "prometheus" })] });
+    expect(ids(graf102, ctxOf({ prometheus, t }))).toEqual([["GRAF102", "error"]]);
+    expect(ids(graf101, ctxOf({ prometheus, ok: new Dashboard({ title: "O", annotations: [deploys(prometheus)] }) }))).toEqual([]);
+  });
+
+  test("GRAF101 flags an ExternalDatasource the provisioning file deletes", () => {
+    const old = new ExternalDatasource({ type: "prometheus", uid: "old", name: "Old" });
+    const d = new Dashboard({ title: "D", panels: [new StatPanel({ datasource: old, targets: [up] })] });
+    const diags = graf101.check(ctxOf({ prometheus, old, d, settings: new DatasourceProvisioning({ deleteDatasources: [{ name: "Old" }] }) }));
+    // The panel's own ref and its query's, as for any undeclared datasource.
+    expect(diags.map((x) => [x.checkId, x.severity])).toEqual([["GRAF101", "error"], ["GRAF101", "error"]]);
+    expect(diags[0].message).toContain("deleteDatasources");
+  });
+
+  test("GRAF103 reads an annotation's query and datasource; GRAF108 parses its PromQL", () => {
+    const d = new Dashboard({ title: "D", annotations: [deploys(prometheus, { expr: "changes(up{job=\"$job\"}[5m] > 0" })] });
+    expect(ids(graf103, ctxOf({ prometheus, d }))).toEqual([["GRAF103", "error"]]);
+    expect(ids(graf108, ctxOf({ prometheus, d }))).toEqual([["GRAF108", "error"]]);
+  });
+
+  test("GRAF104 flags two folders with one uid; GRAF106 a folder uid Grafana refuses", () => {
+    const two = ctxOf({ a: new Dashboard({ title: "A", folder: "Team A" }), b: new Dashboard({ title: "B", folder: "team-a" }) });
+    expect(ids(graf104, two)).toEqual([["GRAF104", "error"]]);
+    expect(ids(graf106, ctxOf({ g: new Dashboard({ title: "G", folder: "General" }) }))).toEqual([["GRAF106", "error"]]);
+    expect(ids(graf106, ctxOf({ f: new Folder({ title: "F", uid: "not a uid" }) }))).toEqual([["GRAF106", "error"]]);
+    expect(ids(graf106, ctxOf({ f: new Folder({ title: "F" }), d: new Dashboard({ title: "D", folder: "F/G" }) }))).toEqual([]);
   });
 });

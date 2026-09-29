@@ -48,14 +48,15 @@ export type ResolvedDatasource =
 
 /** One place a dashboard names, or inherits, a datasource. */
 export interface DatasourceUse {
-  /** A panel's own `datasource`, one of its queries (`targets`), or a query, ad hoc or group by variable. */
-  kind: "panel" | "query" | "variable";
+  /** A panel's own `datasource`, one of its queries (`targets`), a query, ad hoc or group by variable, or an annotation query. */
+  kind: "panel" | "query" | "variable" | "annotation";
   /** A human description, e.g. `panel "Latency" (id 3) query B`. */
   where: string;
   panel?: Json;
   target?: Json;
   variable?: Json;
-  /** The ref written on this panel, query or variable; unset when a query inherits its panel's. */
+  annotation?: Json;
+  /** The ref written on this panel, query, variable or annotation; unset when a query inherits its panel's. */
   ref?: DatasourceRefJson;
   /** Where the request goes: the query's own ref, else its panel's. */
   resolved: ResolvedDatasource;
@@ -149,11 +150,17 @@ export function resolveDatasourceRef(
 /** Variable types that send requests to a datasource of their own: a query variable's query, an ad hoc or group by variable's key and value lookups. */
 const DATASOURCE_VARIABLE_TYPES: ReadonlySet<string> = new Set(["query", "adhoc", "groupby"]);
 
+/** A dashboard's `annotations.list`. */
+export function annotationsOf(dashboard: Json): Json[] {
+  const list = (dashboard.annotations as { list?: unknown } | undefined)?.list;
+  return Array.isArray(list) ? (list as Json[]).filter((a) => a && typeof a === "object" && !Array.isArray(a)) : [];
+}
+
 /**
  * Every place a dashboard names or inherits a datasource: each panel's own
- * ref, each query (with its own ref, or its panel's when it has none), and
- * each query, ad hoc and group by variable. Rows are left out; their panels
- * carry the ref.
+ * ref, each query (with its own ref, or its panel's when it has none), each
+ * query, ad hoc and group by variable, and each annotation query with a datasource. Rows are left
+ * out; their panels carry the ref.
  */
 export function datasourceUses(dashboard: Json, known: ReadonlyMap<string, KnownDatasource>): DatasourceUse[] {
   const dsVars = datasourceVariables(dashboard);
@@ -186,6 +193,19 @@ export function datasourceUses(dashboard: Json, known: ReadonlyMap<string, Known
       where: `variable "${String(variable.name)}"`,
       variable,
       ...(ref ? { ref } : {}),
+      resolved: resolveDatasourceRef(ref, dsVars, known),
+    });
+  }
+  for (const annotation of annotationsOf(dashboard)) {
+    const ref = refOf(annotation.datasource);
+    if (!ref) continue;
+    const target = refOf(annotation.target) as Json | undefined;
+    out.push({
+      kind: "annotation",
+      where: `annotation "${String(annotation.name ?? "?")}"`,
+      annotation,
+      ...(target ? { target } : {}),
+      ref,
       resolved: resolveDatasourceRef(ref, dsVars, known),
     });
   }

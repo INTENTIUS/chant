@@ -29,6 +29,7 @@ import {
 import { bindGrafana, GrafanaBindingError, type BindOptions } from "../../api/bind";
 import type { GrafanaHttp } from "../../api/client";
 import { applyGrafana, parseDashboardFile, planFromDashboards, planRefs, type BuiltDashboardInput, type GrafanaApplyOutcome } from "../../api/apply";
+import type { FolderPlan } from "../../api/folders";
 
 export type { GrafanaApplyOutcome } from "../../api/apply";
 
@@ -74,16 +75,40 @@ function isObject(v: unknown): v is Json {
  * it. Pure but for the file reads.
  */
 export function readBuiltDashboards(indexPath: string, read: (path: string) => string = (p) => readFileSync(p, "utf8")): BuiltDashboardInput[] {
+  return readBuiltIndex(indexPath, read).dashboards;
+}
+
+/** The grafana index inside a build output: the index itself, or its `grafana` key in a multi-lexicon output. */
+function grafanaIndexOf(indexPath: string, read: (path: string) => string): Json {
   const raw = parseDashboardFile(read(indexPath), indexPath);
   const index = isObject(raw.grafana) && Array.isArray(raw.grafana.dashboards) ? raw.grafana : raw;
   if (!Array.isArray(index.dashboards)) throw new Error(`grafana apply: ${indexPath} is not a grafana build index (it has no "dashboards" list)`);
+  return index;
+}
+
+/**
+ * The dashboards a build wrote, with their folders, and the folders its
+ * index lists (every level of every folder, `Folder`s holding no dashboard
+ * included). An index written before folders were listed has none, and the
+ * plan derives them from the dashboards' paths.
+ */
+export function readBuiltIndex(indexPath: string, read: (path: string) => string = (p) => readFileSync(p, "utf8")): { dashboards: BuiltDashboardInput[]; folders: FolderPlan[] } {
+  const index = grafanaIndexOf(indexPath, read);
   const dir = dirname(indexPath);
-  return index.dashboards.map((entry, i) => {
+  const dashboards = (index.dashboards as unknown[]).map((entry, i) => {
     if (!isObject(entry) || typeof entry.file !== "string") throw new Error(`grafana apply: ${indexPath} dashboards[${i}] names no file`);
     const file = join(dir, entry.file);
     const json = parseDashboardFile(read(file), file);
-    return { json, ...(typeof entry.folder === "string" && entry.folder !== "" ? { folder: entry.folder } : {}) };
+    const folder = typeof entry.folder === "string" && entry.folder !== "" ? entry.folder : undefined;
+    const folderUid = folder && typeof entry.folderUid === "string" && entry.folderUid !== "" ? entry.folderUid : undefined;
+    return { json, ...(folder ? { folder } : {}), ...(folderUid ? { folderUid } : {}) };
   });
+  const folders: FolderPlan[] = (Array.isArray(index.folders) ? index.folders : []).flatMap((f: unknown) =>
+    isObject(f) && typeof f.uid === "string" && typeof f.title === "string" && typeof f.path === "string"
+      ? [{ uid: f.uid, title: f.title, path: f.path, ...(typeof f.parentUid === "string" ? { parentUid: f.parentUid } : {}) }]
+      : [],
+  );
+  return { dashboards, folders };
 }
 
 async function loadConfig(cwd: string): Promise<Pick<ChantConfig, "grafana" | "ownership"> | undefined> {
@@ -116,7 +141,8 @@ export function resolveMarker(args: Pick<GrafanaApplyArgs, "stack" | "ownershipE
  * with the binding's reason.
  */
 export async function grafanaApply(args: GrafanaApplyArgs, signal?: AbortSignal, deps: GrafanaApplyDeps = {}): Promise<GrafanaApplyOutcome> {
-  const plan = planFromDashboards(readBuiltDashboards(args.indexPath));
+  const built = readBuiltIndex(args.indexPath);
+  const plan = planFromDashboards(built.dashboards, built.folders);
   const config = deps.config ?? (await loadConfig(args.cwd ?? process.cwd()));
   const marker = resolveMarker(args, config);
   const bind: BindOptions = {

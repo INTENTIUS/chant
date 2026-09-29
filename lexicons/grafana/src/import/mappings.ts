@@ -12,9 +12,10 @@
  * - Variable types (#2952): `VARIABLE_MAPPINGS` has one entry per type the
  *   lexicon has a class for. A type with no entry (`system`, `snapshot`,
  *   which Grafana does not save) is reported and left out.
- * - Dashboard and panel fields (#2953 annotations, and any new prop):
- *   `DASHBOARD_FIELDS`, `PANEL_FIELDS` and `ROW_FIELDS` list the JSON keys
- *   copied onto a prop as they are. A key in none of the tables, and not
+ * - Dashboard and panel fields (any new prop): `DASHBOARD_FIELDS`,
+ *   `PANEL_FIELDS` and `ROW_FIELDS` list the JSON keys copied onto a prop as
+ *   they are. Annotations (#2953) are read by the parser's `annotations()`,
+ *   which resolves their datasources. A key in none of the tables, and not
  *   handled by the parser, is reported and left out, unless it is at the
  *   value Grafana assumes when it is missing (see `./normalize.ts`).
  */

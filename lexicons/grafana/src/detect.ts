@@ -41,9 +41,9 @@ export function looksLikeDashboardApiResponse(data: unknown): data is { dashboar
   return isObject(data) && isObject(data.meta) && (looksLikeDashboard(data.dashboard) || looksLikeLegacyRowsDashboard(data.dashboard));
 }
 
-/** A datasource provisioning file: `apiVersion` and a `datasources` list. */
-export function looksLikeDatasourceProvisioning(data: unknown): data is { apiVersion: unknown; datasources: unknown[] } {
-  return isObject(data) && data.apiVersion !== undefined && Array.isArray(data.datasources);
+/** A datasource provisioning file: `apiVersion` and a `datasources` or `deleteDatasources` list. */
+export function looksLikeDatasourceProvisioning(data: unknown): data is { apiVersion: unknown; datasources?: unknown[]; deleteDatasources?: unknown[]; prune?: unknown } {
+  return isObject(data) && data.apiVersion !== undefined && (Array.isArray(data.datasources) || Array.isArray(data.deleteDatasources));
 }
 
 /** A dashboard provisioning file: `apiVersion` and a `providers` list. */

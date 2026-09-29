@@ -11,6 +11,7 @@
  * |---|---|---|---|
  * | `Dashboard` | `/apis/dashboard.grafana.app/<v>/.../dashboards/<uid>` (Grafana 11: `/api/dashboards/uid/<uid>`) | absent | a v2-stored dashboard the server does not serve at v2: `unsupported-kind` |
  * | `Datasource`, `ExternalDatasource` | `/api/datasources/uid/<uid>` | absent | |
+ * | `Folder` | `/apis/folder.grafana.app/<v>/.../folders/<uid>` (Grafana 11: `/api/folders/<uid>`) | absent | |
  * | a panel, row, query or variable | its dashboard's read (./members.ts) | its dashboard's | its dashboard's |
  * | `DashboardProvider` | none: a provisioning-file setting Grafana serves no API for | | `unsupported-kind` |
  *
@@ -42,7 +43,9 @@ import { readDatasource } from "./api/datasources";
 import { DASHBOARD_PROVIDER_TYPE, DASHBOARD_TYPE } from "./dashboard";
 import { DATASOURCE_TYPE, EXTERNAL_DATASOURCE_TYPE } from "./datasource";
 import { dashboardMembers, isDashboardPart } from "./members";
-import { chantProviderNames, dashboardOwnership, ownershipGap } from "./ownership";
+import { readFolder } from "./api/folders";
+import { FOLDER_TYPE, folderUidOf } from "./folder";
+import { chantProviderNames, dashboardOwnership, folderOwnership, ownershipGap } from "./ownership";
 import { slugUid } from "./util";
 
 export interface GrafanaObserveOptions extends Omit<BindOptions, "environment"> {
@@ -55,6 +58,7 @@ export interface GrafanaObserveOptions extends Omit<BindOptions, "environment"> 
 
 /** The uid a declared dashboard or datasource has in Grafana: the one the build gives it. */
 export function declaredUid(name: string, entityType: string, props: Record<string, unknown>): string | undefined {
+  if (entityType === FOLDER_TYPE) return folderUidOf(props);
   if (typeof props.uid === "string" && props.uid !== "") return props.uid;
   if (entityType === DASHBOARD_TYPE) return slugUid(name || String(props.title ?? ""));
   if (entityType === DATASOURCE_TYPE && typeof props.name === "string") return slugUid(props.name);
@@ -119,6 +123,34 @@ async function observeDashboard(client: GrafanaClient, uid: string, providers: R
     },
   };
   return { present: meta, queried: live.address };
+}
+
+async function observeFolder(client: GrafanaClient, uid: string, providers: ReadonlySet<string>, owned: boolean | undefined): Promise<EntityObservation> {
+  let live;
+  try {
+    live = await readFolder(client, uid);
+  } catch (err) {
+    return unobservedFrom(err);
+  }
+  if (!live) return { absent: true };
+  const { ownership, marker } = folderOwnership(live, providers);
+  if (owned && ownership !== "owned") {
+    return {
+      unobserved: { reason: "filtered", detail: `folder "${uid}" exists but ${ownership === "unknown" ? "its ownership cannot be read: /api/folders returns no labels" : "is not chant's"}` },
+      queried: live.address,
+    };
+  }
+  return {
+    present: {
+      type: FOLDER_TYPE,
+      physicalId: uid,
+      status: "PRESENT",
+      ownership,
+      ...(marker ? { marker } : {}),
+      attributes: { title: live.title, via: live.via, ...(live.parentUid ? { parentUid: live.parentUid } : {}) },
+    },
+    queried: live.address,
+  };
 }
 
 async function observeDatasource(client: GrafanaClient, entity: DeclaredEntity, uid: string, owned: boolean | undefined): Promise<EntityObservation> {
@@ -188,6 +220,9 @@ function adapter(options: GrafanaObserveOptions): ObserverAdapter<GrafanaClient>
       const uid = declaredUid(entity.name, entity.type, entity.props);
       if (entity.type === DASHBOARD_TYPE) {
         return uid ? dashboardOnce(client, uid) : { unobserved: { reason: "read-failed", detail: `"${entity.name}" does not resolve to a uid` } };
+      }
+      if (entity.type === FOLDER_TYPE) {
+        return uid ? observeFolder(client, uid, providers, options.owned) : { unobserved: { reason: "read-failed", detail: `"${entity.name}" does not resolve to a uid` } };
       }
       if (entity.type === DATASOURCE_TYPE || entity.type === EXTERNAL_DATASOURCE_TYPE) {
         return uid ? observeDatasource(client, entity, uid, options.owned) : { unobserved: { reason: "read-failed", detail: `"${entity.name}" does not resolve to a uid` } };

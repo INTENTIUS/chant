@@ -70,6 +70,8 @@ What is not reported, because it is not a difference:
 - a value written out at the one Grafana assumes (`editable: true`, `graphTooltip: "default"`);
 - `[]`, `{}` and a missing key, which mean the same.
 
+A dashboard's folder is read back as its path, the titles from the root joined with `/`, so a dashboard moved to another folder, or a folder renamed or moved under another parent, shows as drift on `folder`. A declared `Folder` is read by its uid and compared by its title; its `parent` is a reference to another `Folder` and is not compared on its own, since the paths of the dashboards inside show a move. A `Folder` is owned when its labels carry chant's marker, or when file provisioning made it for one of the project's providers, and `unknown` on Grafana 11.
+
 Panels, rows, queries and variables are compared as part of their dashboard. Each takes its dashboard's verdict in the summary: present when the dashboard is. A datasource is compared by its settings; its secrets are compared by which keys are set, never by value, because Grafana does not return them.
 
 ### Dashboards Grafana stores as v2

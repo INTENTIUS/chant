@@ -1,10 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, describe, expect, test } from "vitest";
 import { describeApplyConformance } from "@intentius/chant-test-utils";
 import { normalizeApply } from "@intentius/chant/apply";
-import { grafanaApply, readBuiltDashboards, resolveMarker, toApplyResult, type GrafanaApplyDeps } from "./grafana-apply";
+import { grafanaApply, readBuiltDashboards, readBuiltIndex, resolveMarker, toApplyResult, type GrafanaApplyDeps } from "./grafana-apply";
 import { emptyGrafana, writableGrafana, type WritableGrafanaState } from "../../api/fake-grafana-writes";
 import type { GrafanaHttp } from "../../api/client";
 
@@ -53,6 +53,20 @@ describe("readBuiltDashboards", () => {
       { json: dashboard("a"), folder: "Team A" },
       { json: dashboard("b") },
     ]);
+  });
+
+  test("reads the folders the index lists and each dashboard's folder uid (#2953)", () => {
+    const indexPath = buildOutput([{ json: dashboard("a"), folder: "Platform/Kubernetes" }]);
+    const index = JSON.parse(readFileSync(indexPath, "utf8")) as Json;
+    (index.dashboards as Json[])[0].folderUid = "k8s";
+    index.folders = [
+      { uid: "plat", title: "Platform", path: "Platform" },
+      { uid: "k8s", title: "Kubernetes", parentUid: "plat", path: "Platform/Kubernetes" },
+    ];
+    writeFileSync(indexPath, JSON.stringify(index));
+    const built = readBuiltIndex(indexPath);
+    expect(built.dashboards).toEqual([{ json: dashboard("a"), folder: "Platform/Kubernetes", folderUid: "k8s" }]);
+    expect(built.folders.map((f) => [f.uid, f.parentUid])).toEqual([["plat", undefined], ["k8s", "plat"]]);
   });
 
   test("reads the grafana key of a combined multi-lexicon output", () => {
