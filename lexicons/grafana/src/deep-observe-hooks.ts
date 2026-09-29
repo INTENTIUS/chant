@@ -41,6 +41,7 @@
 import type { DeepArrayElement, DeepNode, DeepNormalizationHooks } from "@intentius/chant/deep-observation";
 import { DASHBOARD_TYPE } from "./dashboard";
 import { DATASOURCE_TYPE, EXTERNAL_DATASOURCE_TYPE } from "./datasource";
+import { FOLDER_TYPE } from "./folder";
 import { registeredQueries } from "./query";
 import { DASHBOARD_SCHEMA_VERSION } from "./schema/dashboard.gen";
 import { BOOKKEEPING_KEYS, LINK_DEFAULTS, deepEqual, isBuiltinAnnotation } from "./import/normalize";
@@ -49,7 +50,7 @@ import { DATASOURCE_API_DEFAULTS } from "./import/live-export";
 type Json = Record<string, unknown>;
 
 /** Where a node sits in a dashboard tree, from its index-erased pattern. */
-type Level = "dashboard" | "panel" | "target" | "variable" | "link";
+type Level = "dashboard" | "panel" | "target" | "variable" | "link" | "annotation";
 
 const SEGMENT = "([^.\\[\\]]+)";
 const PANEL = "panels\\[\\](?:\\.panels\\[\\])?";
@@ -59,6 +60,7 @@ const LEVELS: ReadonlyArray<[Level, RegExp]> = [
   ["target", new RegExp(`^${PANEL}\\.targets\\[\\]\\.${SEGMENT}$`)],
   ["variable", new RegExp(`^variables\\[\\]\\.${SEGMENT}$`)],
   ["link", new RegExp(`^(?:${PANEL}\\.)?links\\[\\]\\.${SEGMENT}$`)],
+  ["annotation", new RegExp(`^annotations\\[\\]\\.${SEGMENT}$`)],
 ];
 
 function levelOf(pattern: string): { level: Level; key: string } | undefined {
@@ -122,7 +124,12 @@ export const PROP_DEFAULTS: Readonly<Record<Level, Readonly<Json>>> = {
     autoMin: "10s",
   },
   link: LINK_DEFAULTS,
+  // Grafana 13.2 drops `hide: false` from an annotation it stores.
+  annotation: { hide: false },
 };
+
+/** What the build writes into an annotation that leaves them out (annotations.ts `annotationJson`). */
+const ANNOTATION_BUILD_DEFAULTS: Readonly<Json> = { enable: true, iconColor: "red" };
 
 /**
  * Keys the build fills in when a declaration leaves them out, by level:
@@ -141,6 +148,7 @@ export const BUILD_DERIVED: Readonly<Record<Level, ReadonlySet<string>>> = {
   // A query variable's selection is whatever the viewer last saved; the build writes one only when it is declared.
   variable: new Set(["current", "datasource"]),
   link: new Set(),
+  annotation: new Set(),
 };
 
 /** Defaults the build merges into a query from its class (`queryType: "traceql"`, `filters: []`): any key some class defaults, at that value. */
@@ -214,6 +222,7 @@ function pruneDashboard(node: DeepNode): boolean {
     if (at.level === "dashboard" && at.key === "timezone" && node.value === "browser") return true;
     if (at.level === "target" && queryDefault(at.key, node.value)) return true;
     if (at.level === "link" && at.key in LINK_DEFAULTS && deepEqual(LINK_DEFAULTS[at.key], node.value)) return true;
+    if (at.level === "annotation" && at.key in ANNOTATION_BUILD_DEFAULTS && deepEqual(ANNOTATION_BUILD_DEFAULTS[at.key], node.value)) return true;
     return false;
   }
 
@@ -223,9 +232,15 @@ function pruneDashboard(node: DeepNode): boolean {
   return at.key in defaults && deepEqual(defaults[at.key], node.value);
 }
 
+/** A folder's uid comes from its path when it is not declared. */
+function pruneFolder(node: DeepNode): boolean {
+  return node.side === "live" && node.counterpart === "absent" && node.pattern === "uid";
+}
+
 export const grafanaDeepNormalizationHooks: DeepNormalizationHooks = {
   prune(node: DeepNode): boolean {
     if (node.entityType === DASHBOARD_TYPE) return pruneDashboard(node);
+    if (node.entityType === FOLDER_TYPE) return pruneFolder(node);
     if (isDatasourceType(node.entityType)) return pruneDatasource(node);
     return false;
   },

@@ -41,6 +41,7 @@ import {
 } from "@intentius/chant/ownership";
 import { DASHBOARD_PROVIDER_TYPE } from "./dashboard";
 import type { LiveDashboard } from "./api/dashboards";
+import type { LiveFolder } from "./api/folders";
 
 /** The label keys chant's marker uses on a `dashboard.grafana.app` resource. */
 export const GRAFANA_OWNERSHIP_KEYS: ChannelKeys = LABEL_OWNERSHIP_KEYS;
@@ -99,5 +100,23 @@ export function dashboardOwnership(
   if (dashboard.annotations[MANAGED_BY_ANNOTATION] === FILE_PROVISIONING_MANAGER && manager !== undefined && providers.has(manager)) {
     return { ownership: "owned" };
   }
+  return { ownership: "foreign" };
+}
+
+/**
+ * A folder's ownership verdict, read the way a dashboard's is: chant's labels
+ * (the API applier's), else the manager annotations Grafana writes on a
+ * folder that file provisioning made for one of this project's providers.
+ * A folder read over `/api/folders` (Grafana 11) has neither: `unknown`.
+ */
+export function folderOwnership(folder: LiveFolder, providers: ReadonlySet<string>): { ownership: OwnershipVerdict; marker?: OwnershipMarker } {
+  if (folder.via === "legacy") return { ownership: "unknown" };
+  if (hasOwnershipMarker(folder.labels, GRAFANA_OWNERSHIP_KEYS)) {
+    const marker = readOwnership(folder.labels, GRAFANA_OWNERSHIP_KEYS);
+    return { ownership: classifyOwnership(folder.labels, GRAFANA_OWNERSHIP_KEYS), ...(marker ? { marker } : {}) };
+  }
+  const annotations = folder.annotations ?? {};
+  const manager = annotations[MANAGER_ID_ANNOTATION];
+  if (annotations[MANAGED_BY_ANNOTATION] === FILE_PROVISIONING_MANAGER && manager !== undefined && providers.has(manager)) return { ownership: "owned" };
   return { ownership: "foreign" };
 }

@@ -51,8 +51,8 @@ import {
   ensureFolder,
   folderApi,
   folderContentCount,
-  foldersForDashboards,
   listFolders,
+  resolveFolders,
   send,
   type FolderPlan,
 } from "./folders";
@@ -92,10 +92,11 @@ export interface GrafanaApplyPlan {
   readonly unsupported: Array<{ kind: string; name: string; detail: string }>;
 }
 
-/** A dashboard as the build hands it over: its JSON and the folder title it names. */
+/** A dashboard as the build hands it over: its JSON, the folder path it names, and that folder's uid when the build resolved it. */
 export interface BuiltDashboardInput {
   readonly json: Json;
   readonly folder?: string;
+  readonly folderUid?: string;
 }
 
 function sameJson(a: unknown, b: unknown): boolean {
@@ -103,14 +104,23 @@ function sameJson(a: unknown, b: unknown): boolean {
 }
 
 /**
- * Turn built dashboards into an apply plan: the folders they name, the
+ * Turn built dashboards into an apply plan: the folders they name (each
+ * level of a path, with its parent) and the build's own `folders` (its
+ * index lists every one, `Folder`s holding no dashboard included), the
  * library panels their `__elements` carry, and the dashboards themselves.
  * Throws on a plan no apply could satisfy: a dashboard with no uid, two
- * dashboards with one uid, or one library panel uid with two models.
+ * dashboards with one uid, two folders with one uid, or one library panel
+ * uid with two models.
  */
-export function planFromDashboards(dashboards: readonly BuiltDashboardInput[]): GrafanaApplyPlan {
-  const folders = foldersForDashboards(dashboards);
-  const folderUid = new Map(folders.map((f) => [f.title, f.uid]));
+export function planFromDashboards(dashboards: readonly BuiltDashboardInput[], declaredFolders: readonly FolderPlan[] = []): GrafanaApplyPlan {
+  const resolved = resolveFolders({
+    declared: [
+      ...declaredFolders.flatMap((f) => (f.path ? [{ uid: f.uid, path: f.path }] : [])),
+      ...dashboards.flatMap((d) => (d.folder && d.folderUid ? [{ uid: d.folderUid, path: d.folder }] : [])),
+    ],
+    paths: dashboards.map((d) => d.folder),
+  });
+  const folders = resolved.folders;
   const libraryPanels = new Map<string, LibraryPanelPlan>();
   const unsupported: GrafanaApplyPlan["unsupported"] = [];
   const out: DashboardPlan[] = [];
@@ -120,7 +130,7 @@ export function planFromDashboards(dashboards: readonly BuiltDashboardInput[]): 
     if (typeof uid !== "string" || uid === "") throw new Error(`grafana apply: dashboard "${String(d.json.title ?? "?")}" has no uid`);
     if (seen.has(uid)) throw new Error(`grafana apply: two dashboards have the uid "${uid}"`);
     seen.add(uid);
-    const inFolder = d.folder ? folderUid.get(d.folder) : undefined;
+    const inFolder = d.folderUid ?? resolved.uidOf(d.folder);
     const { panels, skipped } = libraryPanelsOf(d.json, inFolder);
     for (const p of panels) {
       const prior = libraryPanels.get(p.uid);

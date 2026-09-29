@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vitest";
-import { Datasource } from "./datasource";
-import { Dashboard } from "./dashboard";
+import { Datasource, DatasourceProvisioning, ExternalDatasource } from "./datasource";
+import { Dashboard, DashboardProvider } from "./dashboard";
+import { Folder } from "./folder";
+import { load } from "js-yaml";
 import { Row, StatPanel, TextPanel, TimeSeriesPanel, TablePanel, definePanel } from "./panels";
 import { PromQuery, TempoQuery, LokiQuery, defineQuery } from "./query";
 import {
@@ -411,5 +413,85 @@ describe("folders (#2944)", () => {
     expect(file("../../etc")).toBe("dashboards/etc/d.json");
     expect(file("a\\b")).toBe("dashboards/a-b/d.json");
     expect(file(" / ")).toBe("dashboards/d.json");
+  });
+});
+
+describe("folder uids and nesting (#2953)", () => {
+  const platform = new Folder({ title: "Platform", uid: "plat" });
+  const k8s = new Folder({ title: "Kubernetes", parent: platform });
+
+  test("a Folder is written where its path is, and the index lists every level with its uid and parent", () => {
+    const built = buildGrafana(
+      new Map<string, never>([
+        ["pods", new Dashboard({ title: "Pods", uid: "pods", folder: k8s }) as never],
+        ["nodes", new Dashboard({ title: "Nodes", uid: "nodes", folder: "Platform/Kubernetes/Nodes" }) as never],
+        ["spare", new Folder({ title: "Spare" }) as never],
+      ]),
+    );
+    expect(built.dashboards.map((d) => [d.file, d.folder, d.folderUid])).toEqual([
+      ["dashboards/Platform/Kubernetes/pods.json", "Platform/Kubernetes", "platform-kubernetes"],
+      ["dashboards/Platform/Kubernetes/Nodes/nodes.json", "Platform/Kubernetes/Nodes", "platform-kubernetes-nodes"],
+    ]);
+    expect(built.index.folders).toEqual([
+      { uid: "plat", title: "Platform", path: "Platform" },
+      { uid: "platform-kubernetes", title: "Kubernetes", parentUid: "plat", path: "Platform/Kubernetes" },
+      { uid: "platform-kubernetes-nodes", title: "Nodes", parentUid: "platform-kubernetes", path: "Platform/Kubernetes/Nodes" },
+      { uid: "spare", title: "Spare", path: "Spare" },
+    ]);
+  });
+
+  test("a path and a Folder at the same path are one folder; the Folder's uid wins", () => {
+    const built = buildGrafana([new Dashboard({ title: "A", uid: "a", folder: "Platform" }), new Dashboard({ title: "B", uid: "b", folder: platform })]);
+    expect(built.dashboards.map((d) => d.folderUid)).toEqual(["plat", "plat"]);
+    expect(built.folders).toEqual([{ uid: "plat", title: "Platform", path: "Platform" }]);
+  });
+
+  test("a Folder title is one level, and two uids at one path are refused", () => {
+    expect(() => new Folder({ title: "Platform/Kubernetes" })).toThrow(/not one folder level/);
+    expect(() => buildGrafana([new Folder({ title: "X", uid: "one" }), new Folder({ title: "X", uid: "two" })])).toThrow(/declared with the uids "one" and "two"/);
+  });
+
+  test("a root-level Folder on a DashboardProvider is written as folder and folderUid; a nested one is refused", () => {
+    const built = buildGrafana([new DashboardProvider({ name: "ops", folder: platform, path: "/d" })]);
+    expect(built.providers[0]).toMatchObject({ folder: "Platform", folderUid: "plat", options: { foldersFromFilesStructure: false } });
+    expect(() => new DashboardProvider({ name: "ops", folder: k8s })).toThrow(/nested; Grafana creates a provider's folder at the root/);
+  });
+});
+
+describe("annotations (#2953)", () => {
+  test("an annotation is written with its datasource resolved and Grafana's defaults filled in", () => {
+    const json = renderDashboard(
+      new Dashboard({
+        title: "D",
+        annotations: [
+          { name: "Deploys", datasource: prometheus, target: new PromQuery({ expr: "changes(up[5m]) > 0" }), titleFormat: "deploy" },
+          { name: "Incidents", datasource: { type: "grafana", uid: "-- Grafana --" }, enable: false, iconColor: "blue", target: { type: "tags", tags: ["incident"], limit: 100, matchAny: false } },
+        ],
+      }),
+    );
+    expect(json.annotations).toEqual({
+      list: [
+        { datasource: { type: "prometheus", uid: "prometheus" }, enable: true, iconColor: "red", name: "Deploys", titleFormat: "deploy", target: expect.objectContaining({ refId: "Anno", expr: "changes(up[5m]) > 0" }) },
+        { datasource: { type: "grafana", uid: "-- Grafana --" }, enable: false, iconColor: "blue", name: "Incidents", target: { type: "tags", tags: ["incident"], limit: 100, matchAny: false } },
+      ],
+    });
+    expect(validateDashboardSchema(json as never).filter((p) => p.severity === "error")).toEqual([]);
+    expect(renderDashboard(new Dashboard({ title: "E" })).annotations).toEqual({ list: [] });
+  });
+});
+
+describe("datasource prune (#2953)", () => {
+  const files = (entities: unknown[]) => load(buildGrafana(entities as never).files["provisioning/datasources/chant.yaml"] ?? "null") as Record<string, unknown> | null;
+
+  test("the datasource file prunes by default, so a removed Datasource leaves Grafana", () => {
+    expect(files([prometheus])).toMatchObject({ apiVersion: 1, prune: true });
+  });
+
+  test("DatasourceProvisioning turns pruning off and lists datasources to delete", () => {
+    const out = files([prometheus, new DatasourceProvisioning({ prune: false, deleteDatasources: [{ name: "Old" }, { name: "Other", orgId: 2 }] })]);
+    expect(out).toEqual({ apiVersion: 1, deleteDatasources: [{ name: "Old" }, { name: "Other", orgId: 2 }], datasources: [expect.objectContaining({ name: "Prometheus" })] });
+    expect(files([new DatasourceProvisioning({ deleteDatasources: [{ name: "Old" }] })])).toEqual({ apiVersion: 1, prune: true, deleteDatasources: [{ name: "Old" }], datasources: [] });
+    expect(files([new ExternalDatasource({ type: "prometheus", uid: "p" })])).toBeNull();
+    expect(() => buildGrafana([new DatasourceProvisioning({}), new DatasourceProvisioning({})])).toThrow(/at most one DatasourceProvisioning/);
   });
 });

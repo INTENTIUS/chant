@@ -4,5 +4,5 @@
  * API applier (`grafanaApply`, #2948) and its envelope projection
  * (`toApplyResult`), which core's apply activity looks up by name.
  */
-export { grafanaApply, toApplyResult, readBuiltDashboards, resolveMarker } from "./grafana-apply";
+export { grafanaApply, toApplyResult, readBuiltDashboards, readBuiltIndex, resolveMarker } from "./grafana-apply";
 export type { GrafanaApplyArgs, GrafanaApplyDeps, GrafanaApplyOutcome } from "./grafana-apply";

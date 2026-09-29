@@ -33,10 +33,15 @@ function parse(text: string, name: string): unknown[] {
   }
 }
 
+/** The grafana serializer's primary output (build.ts `GrafanaIndex`), which lists the folders the build resolved. */
+function isGrafanaIndex(doc: unknown): doc is { folders?: Array<{ uid: string; title: string; path?: string; parentUid?: string }> } {
+  return typeof doc === "object" && doc !== null && typeof (doc as { grafanaSchema?: unknown }).grafanaSchema === "string" && Array.isArray((doc as { dashboards?: unknown }).dashboards);
+}
+
 /** Every dashboard, provisioned datasource and dashboard provider and alerting provisioning file in the build's output, and every `ExternalDatasource` it declares. */
 export function grafanaArtifacts(ctx: PostSynthContext): GrafanaArtifacts {
   const externalDatasources = [...(ctx.entities?.values() ?? [])].filter(isExternalDatasource).map(externalDatasourceRecord);
-  const out: GrafanaArtifacts = { dashboards: [], datasources: [], externalDatasources, providers: [], alerting: [] };
+  const out: GrafanaArtifacts = { dashboards: [], datasources: [], externalDatasources, providers: [], alerting: [], folders: [], deleteDatasources: [] };
   for (const [lexicon, output] of ctx.outputs) {
     const texts: Array<[string, string]> =
       typeof output === "string"
@@ -49,8 +54,13 @@ export function grafanaArtifacts(ctx: PostSynthContext): GrafanaArtifacts {
         else if (looksLikeDashboardProvisioning(doc)) {
           for (const p of doc.providers) if (p && typeof p === "object" && !Array.isArray(p)) out.providers!.push(p as Record<string, unknown>);
         } else if (looksLikeAlertingProvisioning(doc)) out.alerting!.push({ source, json: doc });
-        else if (looksLikeDatasourceProvisioning(doc)) {
-          for (const d of doc.datasources) {
+        else if (isGrafanaIndex(doc)) {
+          for (const f of doc.folders ?? []) if (f && typeof f.uid === "string" && typeof f.title === "string") out.folders!.push(f);
+        } else if (looksLikeDatasourceProvisioning(doc)) {
+          for (const d of doc.deleteDatasources ?? []) {
+            if (d && typeof d === "object" && typeof (d as { name?: unknown }).name === "string") out.deleteDatasources!.push(d as { name: string; orgId?: number });
+          }
+          for (const d of doc.datasources ?? []) {
             if (d && typeof d === "object" && typeof (d as ProvisionedDatasource).name === "string") {
               const ds = d as ProvisionedDatasource;
               out.datasources.push({ ...ds, uid: typeof ds.uid === "string" ? ds.uid : ds.name });

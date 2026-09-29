@@ -48,14 +48,15 @@ export type ResolvedDatasource =
 
 /** One place a dashboard names, or inherits, a datasource. */
 export interface DatasourceUse {
-  /** A panel's own `datasource`, one of its queries (`targets`), or a query variable. */
-  kind: "panel" | "query" | "variable";
+  /** A panel's own `datasource`, one of its queries (`targets`), a query variable, or an annotation query. */
+  kind: "panel" | "query" | "variable" | "annotation";
   /** A human description, e.g. `panel "Latency" (id 3) query B`. */
   where: string;
   panel?: Json;
   target?: Json;
   variable?: Json;
-  /** The ref written on this panel, query or variable; unset when a query inherits its panel's. */
+  annotation?: Json;
+  /** The ref written on this panel, query, variable or annotation; unset when a query inherits its panel's. */
   ref?: DatasourceRefJson;
   /** Where the request goes: the query's own ref, else its panel's. */
   resolved: ResolvedDatasource;
@@ -146,10 +147,17 @@ export function resolveDatasourceRef(
   return { kind: "undeclared", uid: ref.uid, ...(ref.type ? { type: ref.type } : {}) };
 }
 
+/** A dashboard's `annotations.list`. */
+export function annotationsOf(dashboard: Json): Json[] {
+  const list = (dashboard.annotations as { list?: unknown } | undefined)?.list;
+  return Array.isArray(list) ? (list as Json[]).filter((a) => a && typeof a === "object" && !Array.isArray(a)) : [];
+}
+
 /**
  * Every place a dashboard names or inherits a datasource: each panel's own
- * ref, each query (with its own ref, or its panel's when it has none), and
- * each query variable. Rows are left out; their panels carry the ref.
+ * ref, each query (with its own ref, or its panel's when it has none), each
+ * query variable, and each annotation query with a datasource. Rows are left
+ * out; their panels carry the ref.
  */
 export function datasourceUses(dashboard: Json, known: ReadonlyMap<string, KnownDatasource>): DatasourceUse[] {
   const dsVars = datasourceVariables(dashboard);
@@ -182,6 +190,19 @@ export function datasourceUses(dashboard: Json, known: ReadonlyMap<string, Known
       where: `variable "${String(variable.name)}"`,
       variable,
       ...(ref ? { ref } : {}),
+      resolved: resolveDatasourceRef(ref, dsVars, known),
+    });
+  }
+  for (const annotation of annotationsOf(dashboard)) {
+    const ref = refOf(annotation.datasource);
+    if (!ref) continue;
+    const target = refOf(annotation.target) as Json | undefined;
+    out.push({
+      kind: "annotation",
+      where: `annotation "${String(annotation.name ?? "?")}"`,
+      annotation,
+      ...(target ? { target } : {}),
+      ref,
       resolved: resolveDatasourceRef(ref, dsVars, known),
     });
   }

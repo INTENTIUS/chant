@@ -4,8 +4,9 @@
  * Per image, one project is built and applied with `grafanaApply`, the Op
  * activity, through its build output (the index and the dashboard files):
  *
- * 1. Apply: two folders, a library panel and three dashboards are created,
- *    each dashboard and folder labelled with the project's marker.
+ * 1. Apply: three folders (one nested in another, with a pinned uid), a
+ *    library panel and three dashboards are created, each dashboard and
+ *    folder labelled with the project's marker.
  * 2. Re-apply: nothing is created, and nothing is written.
  * 3. A panel title is edited in the source and applied: that dashboard is
  *    updated, the rest unchanged.
@@ -43,13 +44,15 @@ const MARKER_LABELS = { "app.kubernetes.io/managed-by": "chant", "chant.intentiu
 const LIBRARY_PANEL = { uid: "chant-e2e-burn", name: "Error budget burn", kind: 1, model: { type: "stat", title: "Error budget burn", description: "shared" } };
 
 function source(opts: { requestsTitle: string; withErrors: boolean }): string {
-  return `import { Dashboard, StatPanel } from "@intentius/chant-lexicon-grafana";
+  return `import { Dashboard, Folder, StatPanel } from "@intentius/chant-lexicon-grafana";
 
 export const requests = new StatPanel({ title: ${JSON.stringify(opts.requestsTitle)} });
 export const latency = new StatPanel({ title: "Latency" });
 export const fiveHundreds = new StatPanel({ title: "5xx" });
 export const apiOverview = new Dashboard({ title: "API overview", folder: "Team A", tags: ["api"], panels: [requests, latency] });
-${opts.withErrors ? `export const errors = new Dashboard({ title: "Errors", folder: "Team B", panels: [fiveHundreds] });\n` : ""}export const home = new Dashboard({ title: "Home" });
+${opts.withErrors ? `export const errors = new Dashboard({ title: "Errors", folder: "Team B", panels: [fiveHundreds] });\n` : ""}export const teamA = new Folder({ title: "Team A" });
+export const payments = new Folder({ title: "Payments", uid: "chant-e2e-payments", parent: teamA });
+export const home = new Dashboard({ title: "Home", folder: payments });
 `;
 }
 
@@ -112,7 +115,7 @@ describe.skipIf(!hasDocker).each(GRAFANA_IMAGES)(`grafanaApply applies, re-appli
 
   afterAll(() => scope.cleanup());
 
-  it("apply: creates the folders, the library panel and the dashboards, labelled with the marker", { timeout: 240_000 }, async () => {
+  it("apply: creates the folders, nested ones under their parent, the library panel and the dashboards, labelled with the marker", { timeout: 240_000 }, async () => {
     await buildProject({ requestsTitle: "Requests", withErrors: true });
     const out = await apply();
     expect(out.api).toMatch(/^apis\/v1(beta1)?$/);
@@ -121,6 +124,7 @@ describe.skipIf(!hasDocker).each(GRAFANA_IMAGES)(`grafanaApply applies, re-appli
       "created Dashboard/api-overview",
       "created Dashboard/errors",
       "created Dashboard/home",
+      "created Folder/chant-e2e-payments",
       "created Folder/team-a",
       "created Folder/team-b",
       "created LibraryPanel/chant-e2e-burn",
@@ -133,6 +137,11 @@ describe.skipIf(!hasDocker).each(GRAFANA_IMAGES)(`grafanaApply applies, re-appli
     const folder = (await grafana.api(out.applied.find((a) => a.name === "team-a")!.address)).body as { metadata: { labels: Record<string, string> }; spec: { title: string } };
     expect(folder.metadata.labels).toMatchObject(MARKER_LABELS);
     expect(folder.spec.title).toBe("Team A");
+    const nested = (await grafana.api("/api/folders/chant-e2e-payments")).body as { title: string; parentUid?: string; parents?: Array<{ uid: string }> };
+    expect(nested.title).toBe("Payments");
+    expect(nested.parentUid ?? nested.parents?.[0]?.uid).toBe("team-a");
+    const home = (await grafana.api(out.applied.find((a) => a.name === "home")!.address)).body as { metadata: { annotations: Record<string, string> } };
+    expect(home.metadata.annotations["grafana.app/folder"]).toBe("chant-e2e-payments");
     const connections = (await grafana.api(`/api/library-elements/${LIBRARY_PANEL.uid}/connections`)).body as { result: Array<{ connectionUid: string }> };
     expect(connections.result.map((c) => c.connectionUid)).toEqual(["api-overview"]);
   });

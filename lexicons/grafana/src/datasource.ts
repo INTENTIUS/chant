@@ -151,3 +151,55 @@ export interface DatasourceRef<T extends string = string> {
 
 /** Grafana's own pseudo-datasources, which need no declaration. */
 export const BUILTIN_DATASOURCE_UIDS: ReadonlySet<string> = new Set(["grafana", "-- Grafana --", "-- Mixed --", "-- Dashboard --"]);
+
+export const DATASOURCE_PROVISIONING_TYPE = "Grafana::DatasourceProvisioning";
+
+/** A datasource the provisioning file deletes, by its name in an organisation. */
+export interface DeletedDatasource {
+  name: string;
+  /** Defaults to 1, as in Grafana. */
+  orgId?: number;
+}
+
+export interface DatasourceProvisioningProps {
+  /**
+   * Written as the file's `prune`. Grafana marks every datasource this file
+   * provisions as prunable, and deletes a prunable datasource once no
+   * provisioning file lists it any more, so removing a `Datasource` removes
+   * it from Grafana on the next provisioning run. Datasources provisioned
+   * without it, or made in the UI or API, are never pruned. Defaults to
+   * true; set false to keep a removed datasource in Grafana.
+   */
+  prune?: boolean;
+  /**
+   * Written as the file's `deleteDatasources`: Grafana deletes these by name
+   * before it provisions the file's datasources. Name one the file also
+   * provisions to have Grafana re-create it from the file on every run.
+   */
+  deleteDatasources?: DeletedDatasource[];
+}
+
+export interface DatasourceProvisioningEntity extends Declarable {
+  readonly props: DatasourceProvisioningProps;
+}
+
+const ProvisioningBase = createResource(DATASOURCE_PROVISIONING_TYPE, "grafana", {}) as unknown as (this: object, props: Record<string, unknown>) => void;
+
+/**
+ * The settings of the datasource provisioning file itself: `prune` and
+ * `deleteDatasources`. Optional: without one the file prunes. Declare at
+ * most one per build.
+ */
+export const DatasourceProvisioning = function (this: object, props: DatasourceProvisioningProps) {
+  ProvisioningBase.call(this, props as unknown as Record<string, unknown>);
+} as unknown as new (props: DatasourceProvisioningProps) => DatasourceProvisioningEntity;
+Object.defineProperty(DatasourceProvisioning, "name", { value: "DatasourceProvisioning" });
+
+export function isDatasourceProvisioningEntity(value: unknown): value is DatasourceProvisioningEntity {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as Declarable).entityType === DATASOURCE_PROVISIONING_TYPE &&
+    (value as Declarable).lexicon === "grafana"
+  );
+}

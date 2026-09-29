@@ -185,10 +185,12 @@ describe("dashboard JSON -> TypeScript -> dashboard JSON", () => {
       // GRAF101 saying it cannot check a dashboard that names its datasources only through variables.
       expect(out.issues.filter((i) => !(i.code === "GRAF101" && i.severity === "warning" && i.message.includes("cannot check")))).toEqual([]);
       expect(out.paths.every((p) => p.startsWith("chant-fx-"))).toBe(true);
-      // The ad hoc filter and the annotation are named, not dropped silently.
+      // The ad hoc filter is named, not dropped silently; the deploy annotation is carried (#2953).
       if (file.includes("checkout")) {
         expect(out.warnings).toContainEqual(expect.stringContaining('variable "Filters" (adhoc) is not carried'));
-        expect(out.warnings).toContainEqual(expect.stringContaining('the annotation "Deploys"'));
+        expect(out.warnings.join("\n")).not.toContain("Deploys");
+        expect(out.source).toContain('name: "Deploys"');
+        expect((out.rebuilt!.annotations as { list: Json[] }).list.map((a) => a.name)).toEqual(["Deploys"]);
         expect(out.source).toContain("repeat: env,");
         expect(out.source).toContain("collapsed: true,");
       } else if (file.includes("queries")) {

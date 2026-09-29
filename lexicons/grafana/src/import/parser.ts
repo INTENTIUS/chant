@@ -197,6 +197,8 @@ const PACKAGE_CLASS_NAMES = new Set([
   "MuteTiming",
   "NotificationTemplate",
   "ExternalDatasource",
+  "DatasourceProvisioning",
+  "Folder",
 ]);
 
 function words(text: string): string[] {
@@ -534,6 +536,52 @@ class DashboardConverter {
       );
     }
     return ids;
+  }
+
+  // ── annotations ─────────────────────────────────────────────────
+
+  /**
+   * `annotations.list` as `Dashboard.annotations`: every entry but the
+   * built-in one Grafana adds anyway, with its datasource resolved like a
+   * panel's and every other key as it is. `enable` and `iconColor`, which
+   * the schema requires and the build fills in, are recorded when missing.
+   */
+  annotations(): Json[] {
+    const container = this.d.annotations;
+    if (container === undefined || container === null) return [];
+    if (!isObject(container) || !Array.isArray(container.list)) {
+      this.report.drop(pointer("annotations"), "dashboard", "annotations", "(it is not an annotations.list)");
+      return [];
+    }
+    for (const key of Object.keys(container)) if (key !== "list") this.report.drop(pointer("annotations", key), "annotations", key, NO_PROP);
+    const out: Json[] = [];
+    container.list.forEach((a, i) => {
+      if (isBuiltinAnnotation(a)) return;
+      const path = (...rest: string[]) => pointer("annotations", "list", i, ...rest);
+      if (!isObject(a) || typeof a.name !== "string") {
+        this.report.drop(path(), "annotations", `entry ${i}`, "(it is not a named annotation query)");
+        return;
+      }
+      const subject = `annotation "${a.name}"`;
+      const props: Json = {};
+      for (const [key, value] of Object.entries(a)) {
+        if (value === null || value === undefined) {
+          this.report.drop(path(key), subject, key);
+          continue;
+        }
+        if (key !== "datasource") {
+          props[key] = value;
+          continue;
+        }
+        const ds = this.resolveDatasource(value, path(key), subject);
+        if (ds === "mixed") this.report.drop(path(key), subject, key, MIXED_ELSEWHERE);
+        else if (ds) props.datasource = ds.value;
+      }
+      if (typeof a.enable !== "boolean") this.report.replace(path("enable"), true, subject, "enable", "is missing, so it is written as true, which runs the query");
+      if (typeof a.iconColor !== "string") this.report.replace(path("iconColor"), "red", subject, "iconColor", "is missing, so it is written as red");
+      out.push(props);
+    });
+    return out;
   }
 
   // ── variables ───────────────────────────────────────────────────
@@ -893,6 +941,7 @@ class DashboardConverter {
     const variableRefs = [...inputIds, ...templating.map((_, i) => varIds.get(i)).filter((x): x is string => x !== undefined)].map(declRef);
 
     const panelRefs = this.items();
+    const annotations = this.annotations();
     this.settleExternals();
     if (this.legacyPanels > 0) {
       this.report.warn(
@@ -930,18 +979,7 @@ class DashboardConverter {
     if (variableRefs.length > 0) props.variables = variableRefs;
     if (panelRefs.length > 0) props.panels = panelRefs;
 
-    // Annotations: the built-in one is what Grafana adds anyway; any other is not carried yet.
-    const annotations = isObject(d.annotations) && Array.isArray(d.annotations.list) ? d.annotations.list : [];
-    const others = annotations.filter((a) => !isBuiltinAnnotation(a));
-    if (others.length > 0) {
-      const names = others.map((a) => (isObject(a) && typeof a.name === "string" ? `"${a.name}"` : "(unnamed)"));
-      this.report.drop(
-        pointer("annotations"),
-        "dashboard",
-        "",
-        `has ${others.length === 1 ? "the annotation" : "the annotations"} ${list(names)}, which ${others.length === 1 ? "is" : "are"} not carried: Dashboard has no annotations yet (#2953)`,
-      );
-    }
+    if (annotations.length > 0) props.annotations = annotations;
 
     const handled = new Set([
       ...DASHBOARD_FIELDS,
@@ -1073,7 +1111,11 @@ function replaceAt(value: unknown, path: ReadonlyArray<string | number>, replace
 }
 
 /**
- * Plan a datasource provisioning file: one `Datasource` per entry.
+ * Plan a datasource provisioning file: one `Datasource` per entry, and a
+ * `DatasourceProvisioning` for the file's own settings when they differ
+ * from what the build writes by default (`prune: true`, no deletes): a file
+ * that does not prune gets `prune: false`, so the rebuilt file still does
+ * not.
  *
  * A uid in one entry's `jsonData` that names another entry of the file (a
  * Tempo's `tracesToLogsV2.datasourceUid`, a Prometheus exemplar's
@@ -1100,9 +1142,30 @@ export function planDatasourceProvisioning(doc: Json): { plan: Plan; warnings: s
     }
     entries.push({ id: `datasource:${i}`, name: ds.name, type: ds.type, props, ...(typeof ds.uid === "string" ? { uid: ds.uid } : {}) });
   });
+  const settings: Json = {};
+  if (doc.prune !== true) settings.prune = false;
+  if (doc.prune !== undefined && doc.prune !== null && typeof doc.prune !== "boolean") {
+    report.drop(pointer("prune"), "the provisioning file", "prune", `(${JSON.stringify(doc.prune)} is not true or false, so the file is written not to prune)`);
+  }
+  const deletes: Json[] = [];
+  (Array.isArray(doc.deleteDatasources) ? doc.deleteDatasources : []).forEach((d, i) => {
+    if (!isObject(d) || typeof d.name !== "string") {
+      report.drop(pointer("deleteDatasources", i), "deleteDatasources", `entry ${i}`, "(it names no datasource)");
+      return;
+    }
+    const orgId = typeof d.orgId === "number" ? d.orgId : undefined;
+    for (const key of Object.keys(d)) if (key !== "name" && key !== "orgId") report.drop(pointer("deleteDatasources", i, key), `deleteDatasources "${d.name}"`, key, NO_PROP);
+    deletes.push({ name: d.name, ...(orgId !== undefined ? { orgId } : {}) });
+  });
+  if (deletes.length > 0) settings.deleteDatasources = deletes;
+  if (doc.deleteDatasources !== undefined && !Array.isArray(doc.deleteDatasources)) report.drop(pointer("deleteDatasources"), "the provisioning file", "deleteDatasources", "(it is not a list)");
+  const settingsDeclarations: Declaration[] = [];
+  if (Object.keys(settings).length > 0) {
+    settingsDeclarations.push({ id: "datasource-provisioning", kind: "new", className: "DatasourceProvisioning", props: settings, name: "datasource provisioning", module: "datasources" });
+  }
   for (const key of Object.keys(doc)) {
-    if (key === "apiVersion" || key === "datasources") continue;
-    report.drop(pointer(key), "the provisioning file", key, "(chant writes datasources only; prune and deleteDatasources are #2953)");
+    if (key === "apiVersion" || key === "datasources" || key === "prune" || key === "deleteDatasources") continue;
+    report.drop(pointer(key), "the provisioning file", key, NO_PROP);
   }
 
   // Each entry's links to other entries of the file, by the uid they name.
@@ -1137,6 +1200,7 @@ export function planDatasourceProvisioning(doc: Json): { plan: Plan; warnings: s
     });
     declared.add(next.id);
   }
+  declarations.push(...settingsDeclarations);
   return {
     plan: {
       directory: "",

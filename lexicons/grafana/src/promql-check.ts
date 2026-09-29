@@ -164,6 +164,10 @@ function usesOf(dashboard: Json, known: ReadonlyMap<string, KnownDatasource>, li
       const expr = use.target?.expr;
       if (typeof expr !== "string" || expr.trim() === "") continue;
       out.push({ where: library ? `library panel "${library}" query ${String(use.target?.refId ?? "?")}` : use.where, expr });
+    } else if (use.kind === "annotation" && use.annotation) {
+      // A Prometheus annotation keeps its query in `target.expr`, or at the top level when saved before Grafana 10.
+      const expr = use.target?.expr ?? use.annotation.expr;
+      if (typeof expr === "string" && expr.trim() !== "") out.push({ where: `${use.where} query`, expr });
     } else if (use.kind === "variable" && use.variable && !library) {
       const text = variableQueryText(use.variable);
       if (text) for (const expr of variablePromql(text)) out.push({ where: `${use.where} query`, expr });
