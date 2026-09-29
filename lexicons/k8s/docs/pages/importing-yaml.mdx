@@ -14,6 +14,21 @@ Input YAML → parse → generate TypeScript → export typed resources
 
 The importer reads multi-document YAML, identifies each resource’s `apiVersion` and `kind`, and generates the corresponding typed constructor call. The output is a valid `.k8s.ts` file you can immediately build with `chant build`.
 
+## Collector configs, rule groups and dashboards inside manifests
+
+`chant import` hands content that another lexicon owns to that lexicon, when it is installed:
+
+| In the manifest | Imported as |
+|---|---|
+| A ConfigMap value holding an OpenTelemetry Collector config (any key: `config.yaml`, the Helm chart's `relay`) | otel components and pipelines, and `collectorYaml([...])` in the ConfigMap |
+| A ConfigMap value holding a Prometheus rule file | prometheus `RuleGroup`s (an `Slo`'s group as that `Slo`), and `ruleFileYaml([...])` in the ConfigMap |
+| A `PrometheusRule`'s `spec.groups` | prometheus `RuleGroup`s, listed in `spec.groups` |
+| A ConfigMap value holding Grafana dashboard JSON, such as a dashboard labelled `grafana_dashboard` for the Grafana sidecar | a grafana `Dashboard`, and `dashboardJson(dashboard)` in the ConfigMap |
+
+Each is written in a directory named after the resource (and the key, when the ConfigMap has several), with the owner's usual modules, and the k8s module imports what it references. The workload still mounts the ConfigMap by name, and `chant build` renders the same content back into it.
+
+The k8s lexicon does not depend on those lexicons for this. Core finds the owner at run time. If it is not installed, the value stays a string and the import warns, naming the package to install. Other ConfigMap values, such as a Loki or Tempo config, stay strings with no warning.
+
 ## Running the import roundtrip
 
 From the `lexicons/k8s` directory:

@@ -272,7 +272,24 @@ const LEXICON_NAMES = [
 
 /** Generate the TypeScript declaring one rule file. */
 export function generateRuleFileFiles(file: RuleFileConfig): GeneratedFile[] {
+  return generateRuleFile(file).files;
+}
+
+/** A rule group's declaration: the module and variable, and `rules` when it is an `Slo`'s group. */
+export interface GroupDeclaration {
+  readonly path: string;
+  readonly name: string;
+  readonly member?: "rules";
+}
+
+/**
+ * Generate the TypeScript declaring one rule file, and say where each of its
+ * groups is declared, in the file's order (#2962: a PrometheusRule's
+ * `spec.groups` refers to them).
+ */
+export function generateRuleFile(file: RuleFileConfig): { files: GeneratedFile[]; groups: GroupDeclaration[] } {
   const names = new Names(LEXICON_NAMES);
+  const declared = new Map<RuleGroupConfig, GroupDeclaration>();
   const slos: Array<{ group: RuleGroupConfig; props: NonNullable<ReturnType<typeof recognizeSlo>> }> = [];
   const groups: RuleGroupConfig[] = [];
   for (const g of file.groups) {
@@ -310,21 +327,26 @@ export function generateRuleFileFiles(file: RuleFileConfig): GeneratedFile[] {
       lines.push(`${ctor}${objectOf(entries, 0, ctor.length)});`);
       mod.block(lines);
       mod.exports.push(v);
+      declared.set(g, { path: mod.path, name: v });
     }
   }
 
   for (const [mod, items] of chunk(slos, "slos", "Service level objectives, each built by Slo() to its rule group")) {
     modules.push(mod);
     mod.use("Slo");
-    for (const { props } of items) {
+    for (const { group, props } of items) {
       const v = sloVars[slos.findIndex((s) => s.props === props)];
       const head = `const ${v} = Slo(`;
       mod.block([`${head}${tsLiteral(props, 0, head.length)});`]);
       mod.exports.push(v);
+      declared.set(group, { path: mod.path, name: v, member: "rules" });
     }
   }
 
-  return modules.map((m) => ({ path: m.path, content: m.render() }));
+  return {
+    files: modules.map((m) => ({ path: m.path, content: m.render() })),
+    groups: file.groups.map((g) => declared.get(g)!),
+  };
 }
 
 // ── alertmanager.yml ─────────────────────────────────────────────────

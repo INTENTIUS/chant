@@ -1,3 +1,5 @@
+import type { EmbeddedContentResolver } from "./embedded";
+
 /**
  * Intermediate representation of a template parameter
  */
@@ -64,13 +66,27 @@ export interface TemplateIR {
 }
 
 /**
+ * What `chant import` hands a parser besides the content (#2962).
+ */
+export interface ParseContext {
+  /**
+   * Resolves content embedded in the template's resources (a collector
+   * config in a ConfigMap) to a reference to declarations the owning
+   * lexicon imports. Absent outside `chant import`; a parser then keeps
+   * embedded content as written.
+   */
+  readonly embedded?: EmbeddedContentResolver;
+}
+
+/**
  * Interface for template parsers that convert external formats to IR
  */
 export interface TemplateParser {
   /**
    * Parse template content into intermediate representation
    * @param content - Raw template content (JSON, YAML, etc.)
+   * @param context - What `chant import` provides beyond the content; parsers may ignore it
    * @returns Intermediate representation of the template
    */
-  parse(content: string): TemplateIR;
+  parse(content: string, context?: ParseContext): TemplateIR;
 }
