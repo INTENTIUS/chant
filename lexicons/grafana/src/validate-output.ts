@@ -1,6 +1,7 @@
 /**
- * The checks behind GRAF101-GRAF108, as plain functions over built Grafana
- * output: dashboard JSON documents and provisioned datasources. The
+ * The checks behind GRAF101-GRAF109, as plain functions over built Grafana
+ * output: dashboard JSON documents, provisioned datasources and dashboard
+ * providers. The
  * post-synth checks run them over a build; anything else holding the same
  * JSON (a test, another lexicon embedding dashboards) can call them directly.
  *
@@ -13,7 +14,7 @@
  */
 
 import type { ExternalDatasourceRecord, ProvisionedDatasource } from "./build";
-import { GRID_COLUMNS } from "./build";
+import { DASHBOARDS_DIR, GRID_COLUMNS } from "./build";
 import {
   datasourceUses,
   describePanel,
@@ -29,7 +30,7 @@ import { isValidUid } from "./util";
 import { validateDashboardSchema } from "./schema-validate";
 import { checkGrafanaPromql, prometheusQueries } from "./promql-check";
 
-export type GrafanaIssueCode = "GRAF101" | "GRAF102" | "GRAF103" | "GRAF104" | "GRAF105" | "GRAF106" | "GRAF107" | "GRAF108";
+export type GrafanaIssueCode = "GRAF101" | "GRAF102" | "GRAF103" | "GRAF104" | "GRAF105" | "GRAF106" | "GRAF107" | "GRAF108" | "GRAF109";
 
 export interface GrafanaIssue {
   code: GrafanaIssueCode;
@@ -51,6 +52,8 @@ export interface GrafanaArtifacts {
   datasources: ProvisionedDatasource[];
   /** Datasources the build references but does not provision (`ExternalDatasource`). */
   externalDatasources?: ExternalDatasourceRecord[];
+  /** Entries of `providers:` in dashboard provisioning files, as written: any field may be missing. */
+  providers?: Array<Record<string, unknown>>;
 }
 
 export { variableReferences };
@@ -387,6 +390,119 @@ export function checkPromqlSyntax(a: GrafanaArtifacts): GrafanaIssue[] {
   return issues;
 }
 
+// ── GRAF109: where dashboard provisioning puts dashboards ───────
+
+/** Grafana's default `[folder] max_nested_folder_depth`, and the most it can be raised to. */
+const DEFAULT_FOLDER_DEPTH = 4;
+const MAX_FOLDER_DEPTH = 7;
+
+/** The folder levels a dashboard file sits in under `dashboards/`, e.g. `["Platform", "Kubernetes"]`. */
+function folderLevels(source: string | undefined): string[] {
+  if (!source?.startsWith(`${DASHBOARDS_DIR}/`)) return [];
+  return source.slice(DASHBOARDS_DIR.length + 1).split("/").slice(0, -1);
+}
+
+interface ProviderView {
+  name: string;
+  orgId: number;
+  path: string;
+  folder: string;
+  folderUid: string;
+  fromFiles: boolean;
+}
+
+function providerView(p: Record<string, unknown>): ProviderView {
+  const options = (p.options && typeof p.options === "object" ? p.options : {}) as Json;
+  const path = typeof options.path === "string" ? options.path : typeof options.folder === "string" ? options.folder : "";
+  return {
+    name: typeof p.name === "string" ? p.name : "?",
+    orgId: typeof p.orgId === "number" && p.orgId !== 0 ? p.orgId : 1,
+    path: path.replace(/\/+$/, "") || "/",
+    folder: typeof p.folder === "string" ? p.folder : "",
+    folderUid: typeof p.folderUid === "string" ? p.folderUid : "",
+    fromFiles: options.foldersFromFilesStructure === true,
+  };
+}
+
+/** Whether a provider reading `a` also reads `b`: Grafana walks a provider's path recursively. */
+function contains(a: string, b: string): boolean {
+  return a === b || a === "/" || b.startsWith(`${a}/`);
+}
+
+function listDashboards(ds: Array<{ d: Json; levels: string[] }>): string {
+  const shown = ds.slice(0, 3).map(({ d, levels }) => `"${String(d.title ?? d.uid ?? "?")}" (${levels.join("/")})`);
+  return ds.length > 3 ? `${shown.join(", ")} and ${ds.length - 3} more` : shown.join(", ");
+}
+
+export function checkProvisioning(a: GrafanaArtifacts): GrafanaIssue[] {
+  const issues: GrafanaIssue[] = [];
+  const push = (severity: GrafanaIssue["severity"], message: string, entity?: string) => issues.push({ code: "GRAF109", severity, message, entity });
+  const providers = (a.providers ?? []).map(providerView);
+  const foldered = a.dashboards.map(({ source, json }) => ({ d: json, levels: folderLevels(source) })).filter((x) => x.levels.length > 0);
+
+  // Two providers reading the same files, in the same org.
+  for (let i = 0; i < providers.length; i++) {
+    for (let j = i + 1; j < providers.length; j++) {
+      const [p, q] = [providers[i], providers[j]];
+      if (p.orgId !== q.orgId) continue;
+      const shared = contains(p.path, q.path) ? q.path : contains(q.path, p.path) ? p.path : undefined;
+      if (shared === undefined) continue;
+      push(
+        "error",
+        `Dashboard providers "${p.name}" and "${q.name}" both load the dashboards under ${shared}. Grafana provisions each of them twice, then takes database writes away from both providers, so later changes to the files never reach Grafana. Give each provider its own path.`,
+        q.name,
+      );
+    }
+  }
+
+  // A provider mapping directories to folders that also names a folder.
+  for (const p of providers) {
+    if (!p.fromFiles || (p.folder === "" && p.folderUid === "")) continue;
+    if (p.folder !== "" && p.folderUid !== "") {
+      push("error", `Dashboard provider "${p.name}" sets folder, folderUid and foldersFromFilesStructure; Grafana refuses to start it. Drop folder and folderUid, or foldersFromFilesStructure.`, p.name);
+    } else {
+      const which = p.folder !== "" ? `folder "${p.folder}"` : `folderUid "${p.folderUid}"`;
+      push(
+        "warning",
+        `Dashboard provider "${p.name}" sets ${which} and foldersFromFilesStructure. Grafana files each dashboard by its directory and the top-level ones in General, so ${which} is not used${p.folderUid !== "" ? " (before Grafana 13.1 every directory resolves to that one folder uid instead)" : ""}. Drop one of the two.`,
+        p.name,
+      );
+    }
+  }
+
+  // Dashboards with a folder that no provider maps from directories.
+  if (foldered.length > 0 && providers.length > 0 && !providers.some((p) => p.fromFiles)) {
+    const where = providers.map((p) => `"${p.name}" puts every dashboard in ${p.folder !== "" ? `folder "${p.folder}"` : p.folderUid !== "" ? `folder uid "${p.folderUid}"` : "General"}`).join("; ");
+    push(
+      "warning",
+      `${foldered.length === 1 ? "A dashboard declares a folder" : `${foldered.length} dashboards declare a folder`}, ${listDashboards(foldered)}, but no dashboard provider sets foldersFromFilesStructure: ${where}. Set foldersFromFilesStructure: true on the provider (and drop its folder), or leave the dashboards' folder out.`,
+    );
+  }
+
+  // Nested folders, where a provider does map directories to folders.
+  if (providers.some((p) => p.fromFiles)) {
+    for (const { d, levels } of foldered) {
+      if (levels.length < 2) continue;
+      const uid = String(d.uid ?? "");
+      const path = levels.join("/");
+      if (levels.length > MAX_FOLDER_DEPTH) {
+        push("error", `${dashName(d)} is in folder "${path}", ${levels.length} levels deep; Grafana nests at most ${MAX_FOLDER_DEPTH}, and the provider stops with an error when it reaches it.`, uid);
+      } else {
+        const depth =
+          levels.length > DEFAULT_FOLDER_DEPTH
+            ? ` It is ${levels.length} levels deep, past Grafana's default max_nested_folder_depth of ${DEFAULT_FOLDER_DEPTH}: raise it in [folder], or the provider stops with an error when it reaches it.`
+            : "";
+        push(
+          "warning",
+          `${dashName(d)} is in nested folder "${path}". Grafana 13.1 and later create the folders inside one another; Grafana 12.4 and 13.0 use only the last level and put it in a top-level folder "${levels[levels.length - 1]}".${depth}`,
+          uid,
+        );
+      }
+    }
+  }
+  return issues;
+}
+
 const BY_CODE: Record<GrafanaIssueCode, (a: GrafanaArtifacts) => GrafanaIssue[]> = {
   GRAF101: (a) => checkDatasourceRefs(a).filter((i) => i.code === "GRAF101"),
   GRAF102: (a) => checkDatasourceRefs(a).filter((i) => i.code === "GRAF102"),
@@ -396,6 +512,7 @@ const BY_CODE: Record<GrafanaIssueCode, (a: GrafanaArtifacts) => GrafanaIssue[]>
   GRAF106: checkIdentity,
   GRAF107: checkSchema,
   GRAF108: checkPromqlSyntax,
+  GRAF109: checkProvisioning,
 };
 
 /** The issues one check finds. */

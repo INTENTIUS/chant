@@ -131,6 +131,7 @@ export {
   panelsJson,
   targetJson,
   variableModel,
+  customVariableOptions,
   datasourceRef,
   provisionedDatasource,
   externalDatasourceRecord,

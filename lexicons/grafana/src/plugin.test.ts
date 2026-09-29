@@ -16,7 +16,7 @@ describe("grafana plugin", () => {
 
   it("ships lint rules and post-synth checks, all under the GRAF prefix", () => {
     const ids = [...grafanaPlugin.lintRules!().map((r) => r.id), ...grafanaPlugin.postSynthChecks!().map((c) => c.id)];
-    expect(ids).toEqual(["GRAF001", "GRAF002", "GRAF101", "GRAF102", "GRAF103", "GRAF104", "GRAF105", "GRAF106", "GRAF107", "GRAF108"]);
+    expect(ids).toEqual(["GRAF001", "GRAF002", "GRAF101", "GRAF102", "GRAF103", "GRAF104", "GRAF105", "GRAF106", "GRAF107", "GRAF108", "GRAF109"]);
   });
 
   it("catalogues every rule and check for chant audit, and nothing else", () => {

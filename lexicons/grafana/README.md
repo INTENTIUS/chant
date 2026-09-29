@@ -39,7 +39,7 @@ export const agents = AgentDashboard({ genAi: genAiMetrics(), datasource: promet
 
 ## Checks
 
-GRAF001 and GRAF002 run on source (uid and variable-name syntax, literal secrets). GRAF101 to GRAF108 run after a build: undeclared or mistyped datasources, undeclared variables, duplicate uids and ids, panels off the grid or overlapping, uids Grafana rejects, validation against the pinned dashboard, panel and query schemas (an unknown key is a warning), and a PromQL syntax check on every query sent to a Prometheus.
+GRAF001 and GRAF002 run on source (uid and variable-name syntax, literal secrets). GRAF101 to GRAF109 run after a build: undeclared or mistyped datasources, undeclared variables, duplicate uids and ids, panels off the grid or overlapping, uids Grafana rejects, validation against the pinned dashboard, panel and query schemas (an unknown key is a warning), a PromQL syntax check on every query sent to a Prometheus, and dashboard providers that load a dashboard twice or not into its declared folder.
 
 GRAF101 and GRAF102 compare dashboards with the datasources declared in the same build root (chant #1939); keep them together, and declare a datasource that already exists in Grafana with `ExternalDatasource`, which the checks count and the build never provisions.
 

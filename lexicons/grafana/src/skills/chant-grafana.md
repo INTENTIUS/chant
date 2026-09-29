@@ -86,6 +86,7 @@ Pass the `prometheus` exporter as `exporter` to `RedDashboard` when its `namespa
 - GRAF106: uids of 1-40 letters, digits, `-`, `_`; dashboards have titles.
 - GRAF107: the dashboard matches Grafana's schema at the pinned version.
 - GRAF108: every query and query variable sent to a Prometheus parses as PromQL (template variables and `$__` macros are substituted first).
+- GRAF109: the dashboard providers put each dashboard in its declared folder, and no two load the same files.
 
 GRAF101 and GRAF102 compare against the datasources in the same build root, so keep datasources and dashboards in one `chant build` (chant #1939). For a datasource that exists in Grafana but is provisioned elsewhere, declare `new ExternalDatasource({ type: "prometheus", uid: "mimir" })` and use it like a `Datasource`; it is checked against, never provisioned.
 

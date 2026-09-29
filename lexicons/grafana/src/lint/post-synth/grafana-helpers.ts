@@ -1,6 +1,6 @@
 /**
- * Shared plumbing for the grafana post-synth checks: find the dashboards and
- * provisioned datasources in a build's output, and run the plain-function
+ * Shared plumbing for the grafana post-synth checks: find the dashboards,
+ * provisioned datasources and dashboard providers in a build's output, and run the plain-function
  * checks in `validate-output.ts` over them.
  *
  * Any output file shaped like a dashboard or a datasource provisioning file
@@ -12,7 +12,7 @@
 import type { PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
 import type { SerializerResult } from "@intentius/chant/serializer";
 import { loadAll } from "js-yaml";
-import { looksLikeDashboard, looksLikeDatasourceProvisioning } from "../../detect";
+import { looksLikeDashboard, looksLikeDashboardProvisioning, looksLikeDatasourceProvisioning } from "../../detect";
 import { externalDatasourceRecord, type ProvisionedDatasource } from "../../build";
 import { isExternalDatasource } from "../../datasource";
 import { issuesFor, type GrafanaArtifacts, type GrafanaIssueCode } from "../../validate-output";
@@ -32,10 +32,10 @@ function parse(text: string, name: string): unknown[] {
   }
 }
 
-/** Every dashboard and provisioned datasource in the build's output, and every `ExternalDatasource` it declares. */
+/** Every dashboard, provisioned datasource and dashboard provider in the build's output, and every `ExternalDatasource` it declares. */
 export function grafanaArtifacts(ctx: PostSynthContext): GrafanaArtifacts {
   const externalDatasources = [...(ctx.entities?.values() ?? [])].filter(isExternalDatasource).map(externalDatasourceRecord);
-  const out: GrafanaArtifacts = { dashboards: [], datasources: [], externalDatasources };
+  const out: GrafanaArtifacts = { dashboards: [], datasources: [], externalDatasources, providers: [] };
   for (const [lexicon, output] of ctx.outputs) {
     const texts: Array<[string, string]> =
       typeof output === "string"
@@ -45,6 +45,9 @@ export function grafanaArtifacts(ctx: PostSynthContext): GrafanaArtifacts {
       if (!text) continue;
       for (const doc of parse(text, source)) {
         if (looksLikeDashboard(doc)) out.dashboards.push({ source, json: doc });
+        else if (looksLikeDashboardProvisioning(doc)) {
+          for (const p of doc.providers) if (p && typeof p === "object" && !Array.isArray(p)) out.providers!.push(p as Record<string, unknown>);
+        }
         else if (looksLikeDatasourceProvisioning(doc)) {
           for (const d of doc.datasources) {
             if (d && typeof d === "object" && typeof (d as ProvisionedDatasource).name === "string") {

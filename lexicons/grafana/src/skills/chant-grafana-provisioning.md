@@ -35,8 +35,8 @@ Declare a `DashboardProvider` to change the mount path, pin a folder, or allow U
 export const provider = new DashboardProvider({ name: "team", path: "/dashboards", allowUiUpdates: true });
 ```
 
-With no provider declared, chant writes one named `chant` that reads `/var/lib/grafana/dashboards` and maps subdirectories to folders.
+With no provider declared, chant writes one named `chant` that reads `/var/lib/grafana/dashboards` and maps subdirectories to folders. A provider with `folder` set puts every dashboard in that folder and ignores the dashboards' own `folder`; GRAF109 warns. Two providers on the same or nested paths load every dashboard twice, which GRAF109 reports as an error. A dashboard `folder` of `"Platform/Kubernetes"` nests on Grafana 13.1 and later.
 
 ## Checking before Grafana does
 
-`chant lint` and `chant build` run GRAF101-GRAF108 on the output, including a check against Grafana's dashboard schema at the pinned version and a PromQL syntax check on every query sent to a Prometheus. To check against a real Grafana, the lexicon's `import.test.ts` boots `grafana/grafana` with Docker, provisions the example and reads each dashboard back over the HTTP API.
+`chant lint` and `chant build` run GRAF101-GRAF109 on the output, including a check against Grafana's dashboard schema at the pinned version, a PromQL syntax check on every query sent to a Prometheus, and a check that the providers put each dashboard in its declared folder, once. To check against a real Grafana, the lexicon's `import.test.ts` boots `grafana/grafana` with Docker, provisions the example and reads each dashboard back over the HTTP API.

@@ -35,6 +35,8 @@ Mount the datasource file and the provider file from ConfigMaps under `/etc/graf
 
 The default provider sets `foldersFromFilesStructure: true`, so each subdirectory of `dashboards/` becomes a Grafana folder, named after the dashboard's `folder`. Dashboards without one land in General.
 
+A `folder` with a `/` nests: `folder: "Platform/Kubernetes"` is written to `dashboards/Platform/Kubernetes/`, which Grafana 13.1 and later load as a Kubernetes folder inside Platform. Grafana 12.4 and 13.0 use only the last directory, so the dashboard lands in a top-level Kubernetes folder; GRAF109 warns. Folder uids and permissions are not modelled yet (#2953).
+
 ## A different provider
 
 Declare a `DashboardProvider` to replace the default:
@@ -43,7 +45,7 @@ Declare a `DashboardProvider` to replace the default:
 const team = new DashboardProvider({ name: "team", path: "/dashboards", allowUiUpdates: true, updateIntervalSeconds: 10 });
 ```
 
-Setting `folder` or `folderUid` on the provider turns `foldersFromFilesStructure` off unless you set it, since Grafana does not allow both.
+Setting `folder` or `folderUid` on the provider turns `foldersFromFilesStructure` off unless you set it, and then every dashboard goes in that folder whatever its own `folder` says; GRAF109 warns when a dashboard declares one. Grafana refuses a provider with `folder`, `folderUid` and `foldersFromFilesStructure` all set. Two providers on the same path, or one inside the other, load every dashboard twice: GRAF109 reports it as an error.
 
 ## Import by hand
 

@@ -19,6 +19,7 @@ The grafana lexicon's rules use the `GRAF` prefix. `GRAF0xx` rules read your Typ
 | GRAF106 | error | a dashboard or datasource uid Grafana rejects, or a dashboard with no title |
 | GRAF107 | error / warning | a value the pinned Grafana schema doesn't allow (error), a key it doesn't know (warning) |
 | GRAF108 | error | a panel query or query variable sent to a Prometheus datasource that is not valid PromQL |
+| GRAF109 | error / warning | two dashboard providers loading the same files, or a provider Grafana refuses (error); a dashboard folder a provider ignores, or a nested folder older Grafana flattens (warning) |
 
 ## GRAF001
 
@@ -67,3 +68,12 @@ Every panel query and query variable whose datasource resolves to a `prometheus`
 Grafana replaces template variables before Prometheus sees the query, so the check does too. `$var`, `${var}`, `${var:format}`, `[[var]]` and the `$__` macros become a duration inside `[...]` or after `offset` (`[$__rate_interval]`, `[$window]`), a number for `$__range_s`, `$__interval_ms`, `$__from` and `$__to`, and a name anywhere else (`$metric{...}`, `by ($label)`). Inside a quoted string they are left alone. A query variable's `label_values(selector, label)`, `label_names(selector)` and `query_result(expr)` are checked on the selector or expression; `metrics(regex)` and bare `label_values(label)` hold no PromQL.
 
 It is a syntax check: `sum(x{cluster="$cluster"}` (a missing bracket) and `[5 m]` fail, `rate` over an instant vector parses. The message gives the offset in the query as written.
+
+## GRAF109
+
+Read from the dashboard provisioning file and where each dashboard file sits under `dashboards/`.
+
+- Two providers in the same org whose paths are the same, or one inside the other, are an error. Grafana walks a provider's path recursively, so both load every dashboard under it; it then logs the duplicate uids and takes database writes away from both providers, so later changes to the files never reach Grafana. Give each provider its own path.
+- A provider with `foldersFromFilesStructure: true` and both `folder` and `folderUid` is an error: Grafana refuses to start it. With only one of them it is a warning, since Grafana files dashboards by their directories and does not use that folder.
+- Dashboards that declare a `folder` when no provider sets `foldersFromFilesStructure` are a warning: each provider puts every dashboard it loads in its own `folder` (or General), and the dashboards' folders are ignored. A declared `DashboardProvider` with `folder` or `folderUid` turns `foldersFromFilesStructure` off unless it is set.
+- A nested folder, `folder: "Platform/Kubernetes"`, is written as `dashboards/Platform/Kubernetes/`. Grafana 13.1 and later create a Kubernetes folder inside Platform; Grafana 12.4 and 13.0 use only the last directory and put the dashboard in a top-level Kubernetes folder, so it is a warning. Grafana nests at most 4 levels by default (`[folder] max_nested_folder_depth`, at most 7), and a provider stops with an error on a deeper directory: the message says so past 4, and past 7 it is an error.

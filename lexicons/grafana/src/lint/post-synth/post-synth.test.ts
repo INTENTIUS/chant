@@ -7,7 +7,7 @@ import type { PostSynthCheck } from "@intentius/chant/lint/post-synth";
 import type { Declarable } from "@intentius/chant/declarable";
 import { grafanaSerializer } from "../../serializer";
 import { Datasource, ExternalDatasource } from "../../datasource";
-import { Dashboard } from "../../dashboard";
+import { Dashboard, DashboardProvider } from "../../dashboard";
 import { Row, StatPanel, TimeSeriesPanel, TablePanel, TextPanel } from "../../panels";
 import { LokiQuery, PromQuery, TempoQuery } from "../../query";
 import { DatasourceVariable, QueryVariable } from "../../variables";
@@ -19,6 +19,7 @@ import { graf105 } from "./graf105";
 import { graf106 } from "./graf106";
 import { graf107 } from "./graf107";
 import { graf108 } from "./graf108";
+import { graf109 } from "./graf109";
 import { prometheusQueries } from "../../promql-check";
 import { knownDatasources } from "../../datasource-refs";
 
@@ -369,5 +370,93 @@ describe("GRAF108 over real Grafana exports", () => {
     // Non-vacuous: every export in the corpus sends PromQL to a Prometheus.
     expect(prometheusQueries(JSON.parse(text), knownDatasources([])).length).toBeGreaterThan(0);
     expect(graf108.check(makePostSynthCtxFromFiles("grafana", { [name]: text }, "{}"))).toEqual([]);
+  });
+});
+
+describe("GRAF109: where provisioning puts dashboards (#2944)", () => {
+  const pods = new Dashboard({ title: "Pods", uid: "pods", folder: "Platform/Kubernetes" });
+  const team = new Dashboard({ title: "Team", uid: "team", folder: "Team" });
+  const plain = new Dashboard({ title: "Plain", uid: "plain" });
+
+  test("the default provider and one-level folders pass", () => {
+    expect(graf109.check(ctxOf({ team, plain }))).toEqual([]);
+  });
+
+  test("a provider with a folder ignores each dashboard's own folder: a warning", () => {
+    const provider = new DashboardProvider({ name: "team", folder: "Shared" });
+    const diags = graf109.check(ctxOf({ team, plain, provider }));
+    expect(diags.map((d) => [d.checkId, d.severity])).toEqual([["GRAF109", "warning"]]);
+    expect(diags[0].message).toContain('"team" puts every dashboard in folder "Shared"');
+    expect(diags[0].message).toContain('"Team" (Team)');
+  });
+
+  test("a provider with foldersFromFilesStructure: false and no folder puts them all in General", () => {
+    const provider = new DashboardProvider({ name: "flat", foldersFromFilesStructure: false });
+    const diags = graf109.check(ctxOf({ team, provider }));
+    expect(diags.map((d) => d.severity)).toEqual(["warning"]);
+    expect(diags[0].message).toContain("in General");
+  });
+
+  test("one provider mapping folders from directories is enough", () => {
+    const pinned = new DashboardProvider({ name: "shared", folder: "Shared", path: "/elsewhere" });
+    const mapped = new DashboardProvider({ name: "mapped" });
+    expect(graf109.check(ctxOf({ team, pinned, mapped }))).toEqual([]);
+  });
+
+  test("two providers on the same path, or nested paths, in one org: an error", () => {
+    const a = new DashboardProvider({ name: "a", path: "/var/lib/grafana/dashboards" });
+    const b = new DashboardProvider({ name: "b", path: "/var/lib/grafana/dashboards/" });
+    const c = new DashboardProvider({ name: "c", path: "/var/lib/grafana/dashboards/team" });
+    const diags = graf109.check(ctxOf({ plain, a, b, c }));
+    expect(diags.map((d) => [d.severity, d.entity])).toEqual([
+      ["error", "b"],
+      ["error", "c"],
+      ["error", "c"],
+    ]);
+    expect(diags[0].message).toContain('"a" and "b" both load the dashboards under /var/lib/grafana/dashboards');
+  });
+
+  test("the same path in two orgs, and sibling paths, pass", () => {
+    const a = new DashboardProvider({ name: "a", path: "/d" });
+    const b = new DashboardProvider({ name: "b", path: "/d", orgId: 2 });
+    const c = new DashboardProvider({ name: "c", path: "/dash" });
+    expect(graf109.check(ctxOf({ plain, a, b, c }))).toEqual([]);
+  });
+
+  test("folder, folderUid and foldersFromFilesStructure together: Grafana refuses the provider", () => {
+    const p = new DashboardProvider({ name: "p", folder: "X", folderUid: "x", foldersFromFilesStructure: true });
+    expect(ids(graf109, ctxOf({ plain, p }))).toEqual([["GRAF109", "error"]]);
+  });
+
+  test("folder with foldersFromFilesStructure: the folder is not used", () => {
+    const p = new DashboardProvider({ name: "p", folder: "X", foldersFromFilesStructure: true });
+    const diags = graf109.check(ctxOf({ plain, p }));
+    expect(diags.map((d) => d.severity)).toEqual(["warning"]);
+    expect(diags[0].message).toContain('folder "X" is not used');
+  });
+
+  test("a nested folder: a warning naming what Grafana before 13.1 does", () => {
+    const diags = graf109.check(ctxOf({ pods }));
+    expect(diags.map((d) => [d.severity, d.entity])).toEqual([["warning", "pods"]]);
+    expect(diags[0].message).toContain('top-level folder "Kubernetes"');
+  });
+
+  test("past Grafana's default nesting depth the warning says so; past its hard limit it is an error", () => {
+    const deep = new Dashboard({ title: "Deep", uid: "deep", folder: "a/b/c/d/e" });
+    const tooDeep = new Dashboard({ title: "Too deep", uid: "too-deep", folder: "a/b/c/d/e/f/g/h" });
+    const diags = graf109.check(ctxOf({ deep, tooDeep }));
+    expect(diags.map((d) => [d.severity, d.entity])).toEqual([
+      ["warning", "deep"],
+      ["error", "too-deep"],
+    ]);
+    expect(diags[0].message).toContain("max_nested_folder_depth of 4");
+  });
+
+  test("reads hand-written provisioning files too", () => {
+    const files = {
+      "dashboards/Team/d.json": JSON.stringify(dashboardJson([])),
+      "provisioning/dashboards/a.yaml": "apiVersion: 1\nproviders:\n  - name: one\n    folder: Ops\n    options: { path: /d }\n",
+    };
+    expect(ids(graf109, makePostSynthCtxFromFiles("grafana", files, "{}"))).toEqual([["GRAF109", "warning"]]);
   });
 });

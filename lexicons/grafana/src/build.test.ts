@@ -11,7 +11,7 @@ import {
   QueryVariable,
   TextboxVariable,
 } from "./variables";
-import { panelsJson, renderDashboard, variableModel, dashboardJson, grafanaFiles, type PanelJson } from "./build";
+import { panelsJson, renderDashboard, variableModel, dashboardJson, grafanaFiles, buildGrafana, customVariableOptions, type PanelJson } from "./build";
 
 /** The panels array, read as plain panels (the tests below build no rows unless they say so). */
 function panelsOnly(items: Parameters<typeof panelsJson>[0]): PanelJson[] {
@@ -273,6 +273,51 @@ describe("variables", () => {
     expect(variableModel(new TextboxVariable({ name: "q" }))).toMatchObject({ type: "textbox", query: "" });
   });
 
+  test("a custom value in Grafana's `text : value` syntax shows the text and sets the value (#2944)", () => {
+    const v = variableModel(new CustomVariable({ name: "env", values: ["Production : prod", "Staging : stg", "dev"] }));
+    expect(v).toMatchObject({
+      query: "Production : prod,Staging : stg,dev",
+      current: { text: "Production", value: "prod" },
+      options: [
+        { selected: true, text: "Production", value: "prod" },
+        { selected: false, text: "Staging", value: "stg" },
+        { selected: false, text: "dev", value: "dev" },
+      ],
+    });
+  });
+
+  test("a custom value's selected option follows current by value, and multi-value current selects several", () => {
+    const v = variableModel(
+      new CustomVariable({ name: "env", multi: true, values: ["Production : prod", "Staging : stg"], current: { text: ["Staging"], value: ["stg"] } }),
+    );
+    expect((v as { options: Array<{ selected: boolean }> }).options.map((o) => o.selected)).toEqual([false, true]);
+  });
+
+  test("a comma already escaped as \\, is not escaped again (#2944)", () => {
+    const v = variableModel(new CustomVariable({ name: "pair", values: ["a\\,b", "c,d", "Label, with comma : x\\,y"] }));
+    expect(v).toMatchObject({
+      query: "a\\,b,c\\,d,Label\\, with comma : x\\,y",
+      options: [
+        { text: "a,b", value: "a,b" },
+        { text: "c,d", value: "c,d" },
+        { text: "Label, with comma", value: "x,y" },
+      ],
+    });
+  });
+
+  test("customVariableOptions parses a query the way Grafana does", () => {
+    expect(customVariableOptions("a : 1, b,c\\,d , ,x:y, k : v : w")).toEqual([
+      { text: "a", value: "1" },
+      { text: "b", value: "b" },
+      { text: "c,d", value: "c,d" },
+      { text: "", value: "" },
+      // No spaces around the colon: one plain value.
+      { text: "x:y", value: "x:y" },
+      // Grafana's first group is greedy: the last ` : ` splits.
+      { text: "k : v", value: "w" },
+    ]);
+  });
+
   test("a dashboard with every variable kind matches the dashboard schema", () => {
     const dash = new Dashboard({
       title: "Vars",
@@ -321,5 +366,21 @@ describe("extension points", () => {
       "provisioning/dashboards/chant.yaml",
       "provisioning/datasources/chant.yaml",
     ]);
+  });
+});
+
+describe("folders (#2944)", () => {
+  test("a nested folder is written as nested directories under dashboards/", () => {
+    const built = buildGrafana([new Dashboard({ title: "Pods", uid: "pods", folder: "Platform/Kubernetes" })]);
+    expect(built.dashboards[0].file).toBe("dashboards/Platform/Kubernetes/pods.json");
+    expect(built.index.dashboards[0].folder).toBe("Platform/Kubernetes");
+  });
+
+  test("blank levels, dot-led levels and backslashes can't leave dashboards/", () => {
+    const file = (folder: string) => buildGrafana([new Dashboard({ title: "D", uid: "d", folder })]).dashboards[0].file;
+    expect(file("/Platform//Kubernetes/")).toBe("dashboards/Platform/Kubernetes/d.json");
+    expect(file("../../etc")).toBe("dashboards/etc/d.json");
+    expect(file("a\\b")).toBe("dashboards/a-b/d.json");
+    expect(file(" / ")).toBe("dashboards/d.json");
   });
 });

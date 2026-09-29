@@ -3,7 +3,7 @@
  *
  * Builds every example and validates each dashboard against Grafana's
  * dashboard schema at `GRAFANA_SCHEMA_PIN`, each panel's options and each
- * query against their plugin's schema, and runs GRAF101-GRAF108 over the
+ * query against their plugin's schema, and runs GRAF101-GRAF109 over the
  * output. `import.e2e.test.ts` does the same against a real Grafana when
  * Docker is available.
  */

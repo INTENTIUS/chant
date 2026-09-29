@@ -23,7 +23,7 @@ import {
   type AlertmanagerConfig,
   type RuleFileConfig,
 } from "@intentius/chant-lexicon-prometheus";
-import { validateGrafanaOutput, DATASOURCES_FILE } from "@intentius/chant-lexicon-grafana";
+import { validateGrafanaOutput, DATASOURCES_FILE, DASHBOARD_PROVIDERS_FILE } from "@intentius/chant-lexicon-grafana";
 import { agentRuns } from "../src/slo";
 import { red as redConnector } from "../src/gateway-metrics";
 import { scrapeEndpoint } from "../src/gateway-components";
@@ -232,12 +232,13 @@ describe("Grafana", () => {
     expect(mounted.sort()).toEqual(Object.keys(built.grafanaFiles).sort());
   });
 
-  test("the dashboards pass the grafana lexicon's output checks (GRAF101-GRAF108)", () => {
+  test("the dashboards pass the grafana lexicon's output checks (GRAF101-GRAF109)", () => {
     const dashboards = Object.entries(built.grafanaFiles)
       .filter(([path]) => path.endsWith(".json"))
       .map(([source, text]) => ({ source, json: JSON.parse(text) as Record<string, unknown> }));
     const datasources = (load(built.grafanaFiles[DATASOURCES_FILE]) as { datasources: never[] }).datasources;
-    expect(validateGrafanaOutput({ dashboards, datasources }).filter((i) => i.severity === "error")).toEqual([]);
+    const providers = (load(built.grafanaFiles[DASHBOARD_PROVIDERS_FILE]) as { providers: never[] }).providers;
+    expect(validateGrafanaOutput({ dashboards, datasources, providers }).filter((i) => i.severity === "error")).toEqual([]);
   });
 
   test("the RED, SLO and agent dashboards, in one folder", () => {
