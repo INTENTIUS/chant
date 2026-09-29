@@ -23,7 +23,8 @@ import {
   type AlertmanagerConfig,
   type RuleFileConfig,
 } from "@intentius/chant-lexicon-prometheus";
-import { validateGrafanaOutput, DATASOURCES_FILE, DASHBOARD_PROVIDERS_FILE } from "@intentius/chant-lexicon-grafana";
+import { DATASOURCES_FILE, DASHBOARD_PROVIDERS_FILE } from "@intentius/chant-lexicon-grafana";
+import { validateGrafanaOutput } from "@intentius/chant-lexicon-grafana/validation";
 import { agentRuns } from "../src/slo";
 import { red as redConnector } from "../src/gateway-metrics";
 import { scrapeEndpoint } from "../src/gateway-components";

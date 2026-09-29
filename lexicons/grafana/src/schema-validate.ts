@@ -26,9 +26,11 @@
  * several variants) match more than one.
  */
 
-import Ajv, { type ValidateFunction, type ErrorObject } from "ajv";
+import { createRequire } from "module";
+import type AjvClass from "ajv";
+import type { ValidateFunction, ErrorObject } from "ajv";
 import type { SchemaName } from "./pin";
-import { loadSchema } from "./spec/schemas";
+import { SCHEMA_JSON } from "./spec/schemas.gen";
 import { panelDefinitionFor } from "./panels";
 import { queryDefinitionFor } from "./query";
 
@@ -40,10 +42,59 @@ export interface SchemaProblem {
   severity: "error" | "warning";
 }
 
-let ajv: Ajv | undefined;
-function getAjv(): Ajv {
-  ajv ??= new Ajv({ strict: false, allErrors: true, validateFormats: false });
+let ajv: AjvClass | undefined;
+let ajvError: string | undefined;
+
+/**
+ * ajv, loaded on first use.
+ *
+ * Every `chant build`, `chant lint` and `chant list` loads the plugin, and the
+ * plugin's post-synth barrel reaches this module, so a top-level import would
+ * put ajv on every run that has grafana installed, validating or not.
+ * `check()` is synchronous, so `await import()` is not available;
+ * `createRequire` is (the same as the cedar lexicon's wasm, and ajv is
+ * CommonJS). Where it cannot load (a bundle with no `node_modules` beside
+ * it), {@link schemaValidationUnavailable} says why and GRAF107 reports that
+ * instead of throwing.
+ */
+function getAjv(): AjvClass | undefined {
+  if (ajv || ajvError) return ajv;
+  try {
+    const mod = createRequire(import.meta.url)("ajv") as { default?: typeof AjvClass } & typeof AjvClass;
+    const Ajv = mod.default ?? mod;
+    ajv = new Ajv({ strict: false, allErrors: true, validateFormats: false });
+  } catch (err) {
+    ajvError = (err instanceof Error ? err.message : String(err)).split("\n")[0];
+  }
   return ajv;
+}
+
+/** Why schema validation cannot run here (ajv did not load), or undefined when it can. */
+export function schemaValidationUnavailable(): string | undefined {
+  getAjv();
+  return ajvError === undefined ? undefined : `ajv could not be loaded: ${ajvError}`;
+}
+
+function requireAjv(): AjvClass {
+  const a = getAjv();
+  if (!a) throw new Error(`grafana schema validation: ${schemaValidationUnavailable()}`);
+  return a;
+}
+
+const parsed = new Map<SchemaName, Record<string, unknown>>();
+
+/**
+ * One schema as validation uses it: the vendored file with its overlay
+ * applied, from the generated `spec/schemas.gen.ts` (no filesystem read, so
+ * it works bundled), parsed on first use.
+ */
+export function bundledSchema(name: SchemaName): Record<string, unknown> {
+  let schema = parsed.get(name);
+  if (!schema) {
+    schema = JSON.parse(SCHEMA_JSON[name]) as Record<string, unknown>;
+    parsed.set(name, schema);
+  }
+  return schema;
 }
 
 const compiled = new Map<string, ValidateFunction>();
@@ -74,7 +125,7 @@ function validatorFor(name: SchemaName, def: string | undefined, mode: Mode): Va
   const key = `${name}#${def ?? ""}#${mode.lenient}#${mode.open}`;
   const hit = compiled.get(key);
   if (hit) return hit;
-  const schema = loadSchema(name);
+  const schema = bundledSchema(name);
   const definitions = (schema.definitions ?? {}) as Record<string, unknown>;
   const ref = def ? `#/definitions/${def}` : (schema.$ref as string | undefined);
   if (!ref) return undefined;
@@ -84,7 +135,7 @@ function validatorFor(name: SchemaName, def: string | undefined, mode: Mode): Va
     $ref: ref,
     definitions: prepare(definitions, mode),
   };
-  const fn = getAjv().compile(root);
+  const fn = requireAjv().compile(root);
   compiled.set(key, fn);
   return fn;
 }

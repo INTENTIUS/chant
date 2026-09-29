@@ -29,7 +29,7 @@ import {
 } from "./datasource-refs";
 import { isBuiltinVariable, MULTI_VALUE_KINDS } from "./variables";
 import { isValidUid } from "./util";
-import { validateDashboardSchema } from "./schema-validate";
+import { schemaValidationUnavailable, validateDashboardSchema } from "./schema-validate";
 import { checkGrafanaPromql, prometheusQueries } from "./promql-check";
 import { checkAlertingIdentity, checkNotificationRefs, checkRuleDatasources, checkRulePromql, checkRuleQueries, type AlertingDoc } from "./validate-alerting";
 import { closestGrafanaUnit, isGrafanaUnit } from "./spec/units";
@@ -425,6 +425,11 @@ export function checkIdentity(a: GrafanaArtifacts): GrafanaIssue[] {
  */
 export function checkSchema(a: GrafanaArtifacts): GrafanaIssue[] {
   const issues: GrafanaIssue[] = [];
+  if (a.dashboards.length === 0) return issues;
+  const unavailable = schemaValidationUnavailable();
+  if (unavailable) {
+    return [{ code: "GRAF107", severity: "warning", message: `Dashboards were not checked against the Grafana schema: ${unavailable}.` }];
+  }
   for (const { json: d } of a.dashboards) {
     for (const p of validateDashboardSchema(d)) {
       issues.push({

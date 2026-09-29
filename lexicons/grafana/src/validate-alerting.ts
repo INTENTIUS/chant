@@ -26,7 +26,7 @@ import { parseMatchers } from "@intentius/chant-lexicon-prometheus/matchers";
 import { EXPRESSION_DATASOURCE_UID } from "./alerting";
 import type { KnownDatasource } from "./datasource-refs";
 import { isValidUid } from "./util";
-import { validateExpressionSchema } from "./schema-validate";
+import { schemaValidationUnavailable, validateExpressionSchema } from "./schema-validate";
 import { checkGrafanaPromql } from "./promql-check";
 
 type Json = Record<string, unknown>;
@@ -152,7 +152,9 @@ export function checkRuleQueries(docs: readonly AlertingDoc[]): AlertingIssue[] 
       if (q.datasourceUid !== EXPRESSION_DATASOURCE_UID) continue;
       const model = modelOf(q);
       const at = `expression ${String(q.refId ?? "?")}`;
-      for (const p of validateExpressionSchema(model)) {
+      const unavailable = schemaValidationUnavailable();
+      if (unavailable) push(`${at} was not checked against the Grafana expression schema: ${unavailable}.`, "warning");
+      for (const p of unavailable ? [] : validateExpressionSchema(model)) {
         if (p.severity === "error") push(`${at} ${p.path === "/" ? "" : `${p.path.slice(1)} `}${p.message} (Grafana expression schema).`);
       }
       for (const input of expressionInputs(model)) {

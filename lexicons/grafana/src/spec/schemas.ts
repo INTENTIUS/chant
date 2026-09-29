@@ -2,6 +2,12 @@
  * Read the vendored Grafana schemas (`src/spec/schemas/*.jsonschema.json`), check
  * them against the digests in `GRAFANA_SCHEMA_PIN`, and apply the correction
  * overlay (`src/spec/overlay/`, see `./overlay.ts`) on top.
+ *
+ * This is the source side, for `npm run generate`, the lexicon's own
+ * validate step, the importer's tests and the fetch scripts: it reads files
+ * next to this module. Nothing a build or lint runs imports it. Validation
+ * reads the generated `./schemas.gen.ts`, which generate writes from
+ * {@link loadSchema}.
  */
 
 import { createHash } from "crypto";
@@ -11,12 +17,7 @@ import { fileURLToPath } from "url";
 import { GRAFANA_SCHEMA_PIN, VENDORED_SCHEMA_NAMES, type SchemaName, type VendoredSchemaName } from "../pin";
 import { applyOverlay, loadOverlay } from "./overlay";
 
-/**
- * Where the vendored files live: beside this module, under `src/`, so they
- * ship with the source the package runs from and GRAF107 can read them.
- * A function, not a module-scope constant, so edge bundles that import the
- * lexicon never evaluate a filesystem path at load.
- */
+/** Where the vendored files live: beside this module, under `src/`. */
 export function schemasDir(): string {
   return join(dirname(fileURLToPath(import.meta.url)), "schemas");
 }
@@ -43,7 +44,8 @@ const parsed = new Map<SchemaName, Record<string, unknown>>();
 
 /**
  * One schema as the lexicon uses it: the vendored file with its overlay
- * applied (cached per process). Types, GRAF107 and validation all read this.
+ * applied (cached per process). Generate writes the types and
+ * `./schemas.gen.ts` from this, so GRAF107 sees the same schema.
  */
 export function loadSchema(name: SchemaName): Record<string, unknown> {
   let schema = parsed.get(name);
