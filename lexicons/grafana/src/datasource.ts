@@ -83,6 +83,58 @@ export function isDatasourceEntity(value: unknown): value is DatasourceEntity {
   );
 }
 
+export const EXTERNAL_DATASOURCE_TYPE = "Grafana::ExternalDatasource";
+
+export interface ExternalDatasourceProps<T extends string = string> {
+  /** The datasource plugin id, e.g. `prometheus`. */
+  type: T;
+  /** The uid the datasource already has in Grafana. */
+  uid: string;
+  /** Its display name in Grafana, for messages and for a `DatasourceVariable` `regex`. */
+  name?: string;
+}
+
+export interface ExternalDatasourceEntity<T extends string = string> extends Declarable {
+  readonly props: ExternalDatasourceProps<T>;
+  /** The plugin id. */
+  readonly datasourceType: T;
+  /** The uid panels will reference. */
+  readonly uid: string;
+}
+
+const ExternalBase = createResource(EXTERNAL_DATASOURCE_TYPE, "grafana", {}) as unknown as (this: object, props: Record<string, unknown>) => void;
+
+export interface ExternalDatasourceConstructor {
+  new <T extends string>(props: ExternalDatasourceProps<T>): ExternalDatasourceEntity<T>;
+}
+
+/**
+ * A datasource that already exists in Grafana: provisioned by hand, by
+ * another build root, or by another tool. It is never written to the
+ * provisioning file. Panels, queries and variables use it like a
+ * `Datasource`, and GRAF101/GRAF102 check references against it.
+ */
+export const ExternalDatasource = function (this: object, props: ExternalDatasourceProps) {
+  ExternalBase.call(this, props as unknown as Record<string, unknown>);
+  Object.defineProperty(this, "datasourceType", { value: props.type, enumerable: false });
+  Object.defineProperty(this, "uid", { value: props.uid, enumerable: false });
+} as unknown as ExternalDatasourceConstructor;
+Object.defineProperty(ExternalDatasource, "name", { value: "ExternalDatasource" });
+
+export function isExternalDatasource(value: unknown): value is ExternalDatasourceEntity {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as Declarable).entityType === EXTERNAL_DATASOURCE_TYPE &&
+    (value as Declarable).lexicon === "grafana"
+  );
+}
+
+/** A declared or an external datasource: anything a panel can hold that has a fixed uid. */
+export function isDatasourceDeclaration(value: unknown): value is DatasourceEntity | ExternalDatasourceEntity {
+  return isDatasourceEntity(value) || isExternalDatasource(value);
+}
+
 /** A datasource declared somewhere this build can't see, named by its Grafana ref. */
 export interface DatasourceRef<T extends string = string> {
   type: T;

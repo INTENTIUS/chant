@@ -5,14 +5,16 @@
  *
  * Any output file shaped like a dashboard or a datasource provisioning file
  * counts, not only the grafana lexicon's own, so a dashboard another lexicon
- * embeds is checked the same way.
+ * embeds is checked the same way. `ExternalDatasource` declarations are never
+ * written to a provisioning file, so they come from the build's entities.
  */
 
 import type { PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
 import type { SerializerResult } from "@intentius/chant/serializer";
 import { loadAll } from "js-yaml";
 import { looksLikeDashboard, looksLikeDatasourceProvisioning } from "../../detect";
-import type { ProvisionedDatasource } from "../../build";
+import { externalDatasourceRecord, type ProvisionedDatasource } from "../../build";
+import { isExternalDatasource } from "../../datasource";
 import { issuesFor, type GrafanaArtifacts, type GrafanaIssueCode } from "../../validate-output";
 
 function parse(text: string, name: string): unknown[] {
@@ -30,9 +32,10 @@ function parse(text: string, name: string): unknown[] {
   }
 }
 
-/** Every dashboard and provisioned datasource in the build's output. */
+/** Every dashboard and provisioned datasource in the build's output, and every `ExternalDatasource` it declares. */
 export function grafanaArtifacts(ctx: PostSynthContext): GrafanaArtifacts {
-  const out: GrafanaArtifacts = { dashboards: [], datasources: [] };
+  const externalDatasources = [...(ctx.entities?.values() ?? [])].filter(isExternalDatasource).map(externalDatasourceRecord);
+  const out: GrafanaArtifacts = { dashboards: [], datasources: [], externalDatasources };
   for (const [lexicon, output] of ctx.outputs) {
     const texts: Array<[string, string]> =
       typeof output === "string"

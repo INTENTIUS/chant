@@ -11,7 +11,7 @@
 
 import { createProperty } from "@intentius/chant/runtime";
 import type { Declarable } from "@intentius/chant/declarable";
-import type { DatasourceEntity, DatasourceRef } from "./datasource";
+import type { DatasourceEntity, DatasourceRef, ExternalDatasourceEntity } from "./datasource";
 import type { VariableOption } from "./schema/dashboard.gen";
 
 export type VariableKind = "query" | "custom" | "interval" | "datasource" | "constant" | "textbox";
@@ -40,7 +40,7 @@ interface MultiValueProps {
 
 /** A variable anything can hold before its datasource is known: its own datasource ref or a datasource variable. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type VariableDatasource = DatasourceEntity<any> | DatasourceRef | DatasourceVariableEntity<any>;
+export type VariableDatasource = DatasourceEntity<any> | ExternalDatasourceEntity<any> | DatasourceRef | DatasourceVariableEntity<any>;
 
 export interface QueryVariableProps extends CommonVariableProps, MultiValueProps {
   datasource: VariableDatasource;
