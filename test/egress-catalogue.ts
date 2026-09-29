@@ -576,6 +576,13 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     why: "`just fetch-schemas` re-downloads the vendored Grafana schemas when bumping `GRAFANA_SCHEMA_PIN`; a maintainer command. Generate, bundle, validate, build and the tests read the committed files under `src/spec/schemas/` and reach nothing.",
   },
   {
+    file: "lexicons/grafana/src/spec/fetch-units-cli.ts",
+    primitives: ["fetch"],
+    phase: "codegen",
+    destination: "`raw.githubusercontent.com`, for Grafana's `valueFormats/categories.ts` at the tag in `GRAFANA_UNITS_SOURCE`",
+    why: "`just fetch-units` re-extracts the unit ids GRAF115 accepts when moving to a newer Grafana; a maintainer command. Build, lint and the tests read the committed `src/spec/units.gen.ts` and reach nothing.",
+  },
+  {
     file: "lexicons/azure/scripts/fetch-quickstart-templates.ts",
     primitives: ["fetch"],
     phase: "codegen",
