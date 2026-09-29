@@ -20,9 +20,10 @@
  * pin bump that adds a v2 key fails until the key is placed in one of them.
  *
  * What the classic model can hold but chant cannot yet (library panels,
- * annotations, ad hoc, group by and switch variables) is written to the
- * classic JSON as Grafana would and reported by the classic importer
- * (`./parser.ts`), as for any classic dashboard.
+ * annotations) is written to the classic JSON as Grafana would and reported
+ * by the classic importer (`./parser.ts`), as for any classic dashboard. Ad
+ * hoc, group by and switch variables are written the same way and imported
+ * by the classic importer's variable mappings (`./mappings.ts`).
  *
  * A classic read of a dashboard Grafana stores as v2 is the lossy direction:
  * `storedAsV2` recognises it from the resource's

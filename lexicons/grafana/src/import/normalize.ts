@@ -270,6 +270,8 @@ function normalizeVariable(variable: unknown): unknown {
       const empty = !cur || Object.keys(cur).length === 0 || (Array.isArray(cur.value) && cur.value.length === 0);
       if (empty || deepEqual(cur, out.defaultValue)) delete out.current;
       if (Array.isArray(out.options) && out.options.length === 0) delete out.options;
+      // Always multi-value.
+      delete out.multi;
       break;
     }
     case "switch": {
@@ -280,6 +282,7 @@ function normalizeVariable(variable: unknown): unknown {
       const off = value(opts[1]) ?? "false";
       out.options = [on, off];
       out.current = value(out.current) ?? off;
+      delete out.query;
       break;
     }
     case "custom":

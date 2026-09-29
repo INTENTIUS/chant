@@ -145,6 +145,10 @@ describe("dashboard JSON -> TypeScript -> dashboard JSON", () => {
         // Tabs become rows, and the auto grid's panels keep the positions Grafana gives them.
         expect(out.warnings).toContainEqual(expect.stringMatching(/tabs "Overview" and "Details" become expanded rows/));
         expect((out.rebuilt!.panels as Json[]).filter((p) => p.type === "row").map((p) => p.title)).toEqual(["Overview", "Details", "Latency ($env)", "Logs"]);
+        // Its switch and group by variables come through the classic variable mappings.
+        expect(out.source).toContain('const detailed = new SwitchVariable({ name: "detailed", label: "Detailed" });');
+        expect(out.source).toContain("const groupBy = new GroupByVariable({");
+        expect(out.warnings.filter((w) => /^variable "(detailed|groupBy)"/.test(w))).toEqual([]);
       }
     });
   }

@@ -263,7 +263,8 @@ export const VARIABLE_MAPPINGS: Readonly<Record<string, VariableMapping>> = {
   },
   groupby: {
     className: "GroupByVariable",
-    keys: ["datasource", "options", "current", "defaultValue", "allowCustomValue"],
+    // A group by variable is always multi-value; Grafana reads no `multi` on it.
+    keys: ["datasource", "options", "current", "defaultValue", "allowCustomValue", "multi"],
     convert(ctx) {
       const { json } = ctx;
       const out: Json = { datasource: ctx.datasource(json.datasource, `${ctx.path}/datasource`) };
@@ -282,7 +283,8 @@ export const VARIABLE_MAPPINGS: Readonly<Record<string, VariableMapping>> = {
   },
   switch: {
     className: "SwitchVariable",
-    keys: ["current", "options"],
+    // Grafana reads no `query` on a switch (the v2 down-conversion writes an empty one).
+    keys: ["current", "options", "query"],
     convert(ctx) {
       const { json } = ctx;
       const options = Array.isArray(json.options) ? json.options : [];
