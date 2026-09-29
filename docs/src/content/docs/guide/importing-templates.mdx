@@ -37,4 +37,4 @@ The Kubernetes lexicon includes a full roundtrip suite and optional k3d cluster 
 
 The OpenTelemetry Collector lexicon imports collector YAML and checks that every fixture builds back to the same config, with `otelcol validate` over the result when `otelcol-contrib` is installed. See [Importing a Collector Config](/chant/lexicons/otel/importing/).
 
-The Prometheus lexicon imports rule files and `alertmanager.yml` and checks that every fixture builds back to the same file, with `promtool check rules` and `amtool check-config` over the result when those are installed. See [Importing Rule Files and alertmanager.yml](/chant/lexicons/prometheus/importing/).
+Prometheus rule files and `alertmanager.yml` import the same way: every fixture must build back to the same file, and `promtool check rules` and `amtool check-config` run over the result when those are installed. See [Importing Rule Files and alertmanager.yml](/chant/lexicons/prometheus/importing/).
