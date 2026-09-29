@@ -16,7 +16,7 @@ describe("grafana plugin", () => {
 
   it("ships lint rules and post-synth checks, all under the GRAF prefix", () => {
     const ids = [...grafanaPlugin.lintRules!().map((r) => r.id), ...grafanaPlugin.postSynthChecks!().map((c) => c.id)];
-    expect(ids).toEqual(["GRAF001", "GRAF002", "GRAF101", "GRAF102", "GRAF103", "GRAF104", "GRAF105", "GRAF106", "GRAF107", "GRAF108", "GRAF115"]);
+    expect(ids).toEqual(["GRAF001", "GRAF002", "GRAF101", "GRAF102", "GRAF103", "GRAF104", "GRAF105", "GRAF106", "GRAF107", "GRAF108", "GRAF111", "GRAF112", "GRAF113", "GRAF114", "GRAF115"]);
   });
 
   it("catalogues every rule and check for chant audit, and nothing else", () => {
@@ -29,13 +29,16 @@ describe("grafana plugin", () => {
     expect(grafanaPlugin.detectTemplate!({ panels: [], schemaVersion: 41, title: "x" })).toBe(true);
     expect(grafanaPlugin.detectTemplate!({ apiVersion: 1, datasources: [] })).toBe(true);
     expect(grafanaPlugin.detectTemplate!({ apiVersion: 1, providers: [] })).toBe(true);
+    expect(grafanaPlugin.detectTemplate!({ apiVersion: 1, groups: [{ name: "g", folder: "F", rules: [] }] })).toBe(true);
+    expect(grafanaPlugin.detectTemplate!({ apiVersion: 1, contactPoints: [] })).toBe(true);
+    expect(grafanaPlugin.detectTemplate!({ groups: [{ name: "g", rules: [{ alert: "A", expr: "up == 0" }] }] })).toBe(false);
     expect(grafanaPlugin.detectTemplate!({ apiVersion: "v1", kind: "ConfigMap" })).toBe(false);
     expect(grafanaPlugin.detectTemplate!({ receivers: {}, service: { pipelines: {} } })).toBe(false);
   });
 
   it("loads its skills with content", () => {
     const skills = grafanaPlugin.skills!();
-    expect(skills.map((s) => s.name)).toEqual(["chant-grafana", "chant-grafana-provisioning"]);
+    expect(skills.map((s) => s.name)).toEqual(["chant-grafana", "chant-grafana-provisioning", "chant-grafana-alerting"]);
     for (const s of skills) expect(s.content.length).toBeGreaterThan(200);
   });
 

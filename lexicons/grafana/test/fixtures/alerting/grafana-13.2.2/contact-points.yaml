@@ -1,0 +1,29 @@
+apiVersion: 1
+contactPoints:
+    - orgId: 1
+      name: oncall
+      receivers:
+        - uid: chant-fx-oncall-email
+          type: email
+          settings:
+            addresses: oncall@example.com;sre@example.com
+            message: '{{ template "checkout.message" . }}'
+            singleEmail: true
+          disableResolveMessage: false
+        - uid: chant-fx-oncall-slack
+          type: slack
+          settings:
+            recipient: '#checkout-alerts'
+            title: '{{ .CommonLabels.alertname }}'
+            url: '[REDACTED]'
+          disableResolveMessage: false
+    - orgId: 1
+      name: tickets
+      receivers:
+        - uid: chant-fx-tickets
+          type: webhook
+          settings:
+            httpMethod: POST
+            maxAlerts: "10"
+            url: https://tickets.example.com/hook
+          disableResolveMessage: false

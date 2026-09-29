@@ -19,7 +19,7 @@ const catalogued = compositeCatalog.map((entry) => entry.name).sort();
 
 describe("the grafana composite catalog", () => {
   test("every exported composite has an entry, and every entry names an exported composite", () => {
-    expect(exported).toEqual(["AgentDashboard", "RedDashboard", "SloDashboard"]);
+    expect(exported).toEqual(["AgentDashboard", "RedDashboard", "SloAlertRules", "SloDashboard"]);
     expect(catalogued, "regenerate with `npm run generate:composite-catalogs -- grafana`").toEqual(exported);
   });
 
@@ -27,7 +27,7 @@ describe("the grafana composite catalog", () => {
     for (const entry of compositeCatalog) {
       expect(entry.lexicon, entry.name).toBe("grafana");
       expect(entry.description.length, entry.name).toBeGreaterThan(0);
-      expect(entry.bundles, entry.name).toEqual(["Dashboard"]);
+      expect(entry.bundles, entry.name).toEqual(entry.name === "SloAlertRules" ? ["AlertRuleGroup"] : ["Dashboard"]);
     }
   });
 

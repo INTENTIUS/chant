@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { GrafanaGenerator, generatePlan, DECLARABLES_PER_FILE } from "./generator";
-import { declRef, type Declaration, type Plan } from "./model";
+import { callValue, declRef, type Declaration, type Plan } from "./model";
 
 function plan(declarations: Declaration[], extra: Partial<Plan> = {}): Plan {
   const keys = [...new Set(declarations.map((d) => d.module))];
@@ -195,4 +195,16 @@ test("an IR with no dashboard (a v2 one, reported by the parser) generates nothi
 
 test("the generator owns its layout, so core writes its files as they are (#2964)", () => {
   expect(new GrafanaGenerator().ownsLayout).toBe(true);
+});
+
+describe("call values (#2954)", () => {
+  test("a call is written with the package function imported, its last argument laid out like any value", () => {
+    const long = { excludeByName: Object.fromEntries(Array.from({ length: 8 }, (_, i) => [`field number ${i}`, true])) };
+    const transformations = [{ id: "merge", options: {} }, callValue("customTransformation", ["sortBy", { fields: {} }]), callValue("customTransformation", ["organize", long])];
+    const files = generatePlan(plan([panel(1, { transformations }), dash(["panel:1"])]));
+    const text = files.map((f) => f.content).join("\n");
+    expect(text).toMatch(/import \{[^}]*customTransformation[^}]*\} from "@intentius\/chant-lexicon-grafana";/);
+    expect(text).toContain('  customTransformation("sortBy", { fields: {} }),');
+    expect(text).toContain('  customTransformation("organize", {\n    excludeByName: {\n      "field number 0": true,');
+  });
 });

@@ -3,7 +3,8 @@
  * the corpus takes longer than the unit-test budget allows, so this runs
  * with the e2e tests.
  *
- * Grafana's UI exports and what the examples build type-check clean. A
+ * Grafana's UI exports, the alerting provisioning corpus and what the
+ * examples build type-check clean. A
  * community dashboard can carry keys the pinned schemas do not list (query
  * fields from older Grafana versions such as `step` and `metric`, panel
  * options added after the pin): it still imports and builds back to the
@@ -17,7 +18,7 @@ import { join } from "path";
 import * as ts from "typescript";
 import { GrafanaParser } from "./parser";
 import { GrafanaGenerator } from "./generator";
-import { COMMUNITY, UI_EXPORTS, V2_EXPORTS, exampleOutputs, pkgDir, read, removeDir, repoRoot, writeFiles } from "./testdata/fixtures";
+import { ALERTING, COMMUNITY, KUBE_PROMETHEUS, UI_EXPORTS, V2_EXPORTS, exampleOutputs, pkgDir, read, removeDir, repoRoot, writeFiles } from "./testdata/fixtures";
 
 type Files = Array<{ path: string; content: string }>;
 
@@ -74,6 +75,15 @@ describe("the generated source type-checks against the lexicon's types", () => {
     expect(typeErrors(projects)).toEqual([]);
   }, 180_000);
 
+  test("alerting provisioning files, and what the alerting example builds, type-check clean", async () => {
+    const projects: Record<string, Files> = Object.fromEntries(ALERTING.map((f) => [f, generate(read(f))]));
+    for (const [name, text] of await exampleOutputs()) {
+      if (name.endsWith("provisioning/alerting/chant.yaml")) projects[name] = generate(text);
+    }
+    expect(Object.keys(projects).some((n) => n.startsWith("alerting/"))).toBe(true);
+    expect(typeErrors(projects)).toEqual([]);
+  }, 180_000);
+
   test("community dashboards: what they carry outside the pinned types is where tsc points", () => {
     const found: Record<string, Record<string, number>> = {};
     for (const file of COMMUNITY) found[file] = byProperty(typeErrors({ [file]: generate(read(file)) }));
@@ -85,6 +95,24 @@ describe("the generated source type-checks against the lexicon's types", () => {
       "community/redis.json": { metric: 11, step: 6, time_options: 1, unitScale: 13 },
       "community/prometheus-2-stats.json": { metric: 3, now: 1, step: 18 },
       "community/prometheus-2-stats.grafana-12.4.11.json": { metric: 3, step: 18 },
+    });
+  }, 300_000);
+
+  test("kube-prometheus's dashboards: what they carry outside the pinned types is where tsc points", () => {
+    const projects: Record<string, Files> = Object.fromEntries(KUBE_PROMETHEUS.map((f) => [f, generate(read(f))]));
+    // Compiled as one program: a project's files are under its fixture path, made a directory name.
+    const errors = typeErrors(projects);
+    const found = Object.fromEntries(
+      KUBE_PROMETHEUS.map((f) => [f, byProperty(errors.filter((e) => e.startsWith(`${f.replace(/[^A-Za-z0-9]+/g, "-")}/`)))] as const).filter(([, v]) => Object.keys(v).length > 0),
+    );
+    expect(Object.values(found).reduce((n, v) => n + Object.values(v).reduce((a, b) => a + b, 0), 0)).toBe(errors.length);
+    // Values GRAF107 reports in the source dashboards (roundtrip.test.ts), plus keys the pinned schemas do not list. The node
+    // dashboards' merge transformation without options type-checks: the typed transformation classes do not require it.
+    expect(found).toEqual({
+      "kube-prometheus/grafana-overview.json": { "Type 'string' is not assignable to type 'string[]'.": 1, alertThreshold: 2 },
+      "kube-prometheus/k8s-resources-pod.json": { "Type '\"thresholds\"' is not assignable to type 'AxisColorMode | undefined'.": 1 },
+      "kube-prometheus/namespace-by-pod.json": { index: 6 },
+      "kube-prometheus/pod-total.json": { index: 6 },
     });
   }, 300_000);
 });
