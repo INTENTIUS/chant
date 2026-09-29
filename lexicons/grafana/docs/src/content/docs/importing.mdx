@@ -25,7 +25,7 @@ Each dashboard is written to a directory of its own, named after its uid, so a s
 | File | Holds |
 |---|---|
 | `variables.ts` | one variable per entry of the dashboard's variable list, datasource variables first |
-| `datasources.ts` | a `DatasourceRef` const per datasource the panels name by uid |
+| `datasources.ts` | an `ExternalDatasource` per datasource the panels name by uid |
 | `plugins.ts` | a `definePanel` or `defineQuery` for each plugin chant has no class for |
 | `panels.ts` | the panels above the first row, each with its queries |
 | `row-<title>.ts` | one per row: the row and the panels under it |
@@ -71,7 +71,9 @@ A panel type chant has no class for yet (`piechart`, `bargauge`) is declared wit
 
 ## Datasources
 
-A reference by uid (`{ "type": "prometheus", "uid": "prom" }`) becomes a `DatasourceRef` const in `datasources.ts`, the datasource as it exists in your Grafana. To provision the datasource from chant as well, replace the const with a `Datasource` of the same uid.
+A reference by uid (`{ "type": "prometheus", "uid": "prom" }`) becomes an `ExternalDatasource` in `datasources.ts`: the datasource as it exists in your Grafana, which the build does not provision but GRAF101 and GRAF102 check references against. To provision it from chant as well, replace it with a `Datasource` of the same uid. Grafana's own pseudo-datasources (`-- Grafana --`, `-- Dashboard --`) stay plain `{ type, uid }` refs. A datasource variable whose selected value is a uid adds an `ExternalDatasource` for it too.
+
+GRAF101 fails a build in which a datasource variable's type has no declared datasource. So when the dashboard names some datasources by uid but none of a datasource variable's type, the importer writes those uids as plain refs instead, so the build passes, and its warning lists what to declare. A dashboard that names its datasources only through variables (a shared export) gets a GRAF101 warning after a build that it cannot check them, until you declare them.
 
 An export made for sharing names its datasources through `__inputs` and `${DS_PROMETHEUS}`, which Grafana's import dialog fills in. The importer turns each such input into a `DatasourceVariable` of the same name, so every `${DS_PROMETHEUS}` in the dashboard still resolves, now to whatever the variable selects. A constant input (`${VAR_SERVICE}`) is replaced by its value, as the import dialog would. Both are reported.
 

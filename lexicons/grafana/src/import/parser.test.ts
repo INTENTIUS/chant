@@ -121,10 +121,10 @@ describe("datasource references", () => {
     });
   }
 
-  test("a concrete uid becomes one DatasourceRef const, shared by everything that names it", () => {
+  test("a concrete uid becomes one ExternalDatasource, shared by everything that names it and exported", () => {
     const { plan } = planDashboard(panelWith(prom, [{ refId: "A", expr: "up", datasource: prom }]));
-    const ref = decl(plan.declarations, "datasource:prometheus:prom");
-    expect(ref).toMatchObject({ kind: "value", value: prom, type: { text: 'DatasourceRef<"prometheus">', imports: ["DatasourceRef"] } });
+    expect(decl(plan.declarations, "datasource:prometheus:prom")).toMatchObject({ kind: "new", className: "ExternalDatasource", props: prom });
+    expect(plan.exports).toEqual(["datasource:prometheus:prom", "dashboard"]);
     // The query's datasource is the panel's, so the build writes it from the panel.
     expect(decl(plan.declarations, "query:0:0").props).toEqual({ refId: "A", expr: "up" });
     expect(decl(plan.declarations, "query:0:0").className).toBe("PromQuery");
@@ -163,6 +163,16 @@ describe("datasource references", () => {
     const { plan } = planDashboard(dashboard({ panels: [{ type: "stat", id: 1, targets: [{ refId: "A", expr: "up" }] }] }));
     expect(decl(plan.declarations, "query:0:0")).toMatchObject({ className: "DefaultDatasourceQuery", customClass: "query-class:default" });
     expect(plan.customClasses.map((c) => c.definition)).toEqual([{ datasourceType: "default", className: "DefaultDatasourceQuery" }]);
+  });
+
+  test("Grafana's own pseudo-datasources stay DatasourceRef consts", () => {
+    const { plan } = planDashboard(panelWith({ type: "datasource", uid: "-- Dashboard --" }));
+    expect(decl(plan.declarations, "datasource:datasource:-- Dashboard --")).toMatchObject({
+      kind: "value",
+      value: { type: "datasource", uid: "-- Dashboard --" },
+      type: { text: 'DatasourceRef<"datasource">', imports: ["DatasourceRef"] },
+    });
+    expect(plan.exports).toEqual(["dashboard"]);
   });
 
   test("a ref with no uid, or a concrete uid with no type, is reported", () => {

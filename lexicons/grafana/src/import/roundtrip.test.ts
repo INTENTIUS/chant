@@ -22,11 +22,12 @@ import { join } from "path";
 import { load } from "js-yaml";
 import { build } from "@intentius/chant/build";
 import type { SerializerResult } from "@intentius/chant/serializer";
+import type { Declarable } from "@intentius/chant/declarable";
 import { lintCommand } from "@intentius/chant/cli/commands/lint";
 import { importCommand, importFromContent } from "@intentius/chant/cli/commands/import";
 import { grafanaSerializer } from "../serializer";
 import { validateGrafanaOutput, type GrafanaIssue } from "../validate-output";
-import { DATASOURCES_FILE, DASHBOARD_PROVIDERS_FILE } from "../build";
+import { buildGrafana, DATASOURCES_FILE, DASHBOARD_PROVIDERS_FILE } from "../build";
 import { GrafanaParser, type DashboardResourceMetadata } from "./parser";
 import { GrafanaGenerator } from "./generator";
 import { applyEdits } from "./edits";
@@ -49,6 +50,16 @@ interface Imported {
   buildErrors: unknown[];
   issues: GrafanaIssue[];
   lint: { errorCount: number; warningCount: number; output: string };
+}
+
+/** GRAF101-GRAF107 over a build's grafana entities, as the post-synth checks run them: declared and external datasources included. */
+function checks(entities: Map<string, Declarable>): GrafanaIssue[] {
+  const built = buildGrafana(new Map([...entities].filter(([, e]) => e.lexicon === "grafana")));
+  return validateGrafanaOutput({
+    dashboards: built.dashboards.map((d) => ({ source: d.file, json: d.json as unknown as Json })),
+    datasources: built.datasources,
+    externalDatasources: built.externalDatasources,
+  });
 }
 
 /** Dashboard JSON (or a provisioning file) -> IR -> TypeScript -> `chant build`, and `chant lint` over the source. */
@@ -74,7 +85,7 @@ async function importAndBuild(content: string): Promise<Imported> {
       rebuilt: text === undefined ? undefined : (JSON.parse(text) as Json),
       files,
       buildErrors: result.errors,
-      issues: validateGrafanaOutput({ dashboards: dashboards.map(([f, t]) => ({ source: f, json: JSON.parse(t) })), datasources: [] }),
+      issues: checks(result.entities),
       lint: { errorCount: lint.errorCount, warningCount: lint.warningCount, output: lint.output },
     };
   } finally {
@@ -97,8 +108,9 @@ describe("dashboard JSON -> TypeScript -> dashboard JSON", () => {
   for (const file of UI_EXPORTS) {
     test(`Grafana UI export ${file}`, async () => {
       const out = await expectRoundTrip(read(file));
-      // What Grafana exported passes every check once rebuilt, schema included.
-      expect(out.issues).toEqual([]);
+      // What Grafana exported passes every check once rebuilt, schema included. The one finding left is
+      // GRAF101 saying it cannot check a dashboard that names its datasources only through variables.
+      expect(out.issues.filter((i) => !(i.code === "GRAF101" && i.severity === "warning" && i.message.includes("cannot check")))).toEqual([]);
       expect(out.paths.every((p) => p.startsWith("chant-fx-"))).toBe(true);
       // The ad hoc filter and the annotation are named, not dropped silently.
       if (file.includes("checkout")) {
@@ -122,6 +134,22 @@ describe("dashboard JSON -> TypeScript -> dashboard JSON", () => {
       }
     });
   }
+
+  test("datasources the dashboard names by uid become ExternalDatasources, and every check passes", async () => {
+    for (const file of ["exports/grafana-12.4.11/checkout.json", "exports/grafana-12.4.11/slo.json", "exports/grafana-13.2.2/slo.json"]) {
+      const out = await expectRoundTrip(read(file));
+      expect(out.issues, file).toEqual([]);
+      expect(out.source).toContain('const prom = new ExternalDatasource({ type: "prometheus", uid: "prom" });');
+    }
+    // The 12.4.11 export's datasource variable has prom selected: that is where the Prometheus uid comes from.
+    expect((await importAndBuild(read("exports/grafana-12.4.11/checkout.json"))).source).toContain('const loki = new ExternalDatasource({ type: "loki", uid: "loki" });');
+  });
+
+  test("when a datasource variable's type is named by no uid, the uids stay plain refs and the warning says why", async () => {
+    const out = await expectRoundTrip(read("exports/grafana-13.2.2/checkout.json"));
+    expect(out.source).toContain('const loki: DatasourceRef<"loki"> = { type: "loki", uid: "loki" };');
+    expect(out.warnings).toContainEqual(expect.stringMatching(/^datasources: the dashboard names "loki" \(loki\) by uid, but no prometheus datasource, which \$datasource \(prometheus\) chooses among/));
+  });
 
   test("an __inputs constant is filled in, and __inputs datasources become variables", async () => {
     const out = await expectRoundTrip(read("exports/grafana-12.4.11/checkout.external.json"));
@@ -176,7 +204,7 @@ describe("dashboard JSON -> TypeScript -> dashboard JSON", () => {
   test("the same dashboard after Grafana 12.4.11 migrated it imports with no warnings", async () => {
     const out = await expectRoundTrip(read("community/prometheus-2-stats.grafana-12.4.11.json"));
     expect(out.warnings).toEqual([]);
-    expect(out.source).toContain('const prom: DatasourceRef<"prometheus"> = { type: "prometheus", uid: "prom" };');
+    expect(out.source).toContain('const prom = new ExternalDatasource({ type: "prometheus", uid: "prom" });');
   });
 
   test("what the examples build comes back as the same text", async () => {

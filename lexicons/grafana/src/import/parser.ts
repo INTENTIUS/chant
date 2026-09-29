@@ -323,25 +323,75 @@ class DashboardConverter {
 
   // ── datasources ─────────────────────────────────────────────────
 
+  /** Datasources the dashboard references by uid, declared as `ExternalDatasource`s; exported so the build sees them. */
+  readonly externals: string[] = [];
+
+  /**
+   * The declaration for a datasource referenced by uid: an
+   * `ExternalDatasource` (it exists in Grafana, outside this dashboard), or,
+   * for one of Grafana's own pseudo-datasources, a `DatasourceRef` const.
+   */
   private refDecl(type: string, uid: string): ResolvedDs {
     const key = `${type}\u0000${uid}`;
     let id = this.refDecls.get(key);
     if (!id) {
       id = `datasource:${type}:${uid}`;
       this.module("datasources", "datasources", "Datasources the panels and queries refer to, by the uid they have in Grafana");
-      const pseudo = BUILTIN_DATASOURCE_UIDS.has(uid) || type === "datasource" || type === "grafana";
-      const hint = pseudo ? `${uid.replace(/-/g, " ")} datasource` : /^[A-Za-z][A-Za-z0-9_-]{0,24}$/.test(uid) ? uid : `${type} datasource`;
-      this.add({
+      const pseudo = BUILTIN_DATASOURCE_UIDS.has(uid) || type === "datasource" || type === "grafana" || uid.includes("$");
+      if (pseudo) {
+        const hint = uid.includes("$") ? `${type} datasource` : `${uid.replace(/-/g, " ")} datasource`;
+        this.add({
+          id,
+          kind: "value",
+          value: { type, uid },
+          type: { text: `DatasourceRef<${JSON.stringify(type)}>`, imports: ["DatasourceRef"] },
+          name: hint,
+          module: "datasources",
+        });
+      } else {
+        const hint = /^[A-Za-z][A-Za-z0-9_-]{0,24}$/.test(uid) ? uid : `${type} datasource`;
+        this.add({ id, kind: "new", className: "ExternalDatasource", props: { type, uid }, name: hint, module: "datasources" });
+        this.externals.push(id);
+      }
+      this.refDecls.set(key, id);
+    }
+    return { value: declRef(id), type, key, written: { type, uid } };
+  }
+
+  /**
+   * GRAF101 checks a datasource variable against the declared datasources of
+   * its type. When the dashboard names some datasources by uid but a
+   * datasource variable's type is not among them, declaring the others would
+   * make GRAF101 fail the build over a datasource the dashboard never names;
+   * then the uids are written as plain refs instead, and the warning says
+   * what to declare.
+   */
+  private settleExternals(): void {
+    if (this.externals.length === 0) return;
+    const covered = new Set(this.externals.map((id) => String(this.declarations.find((d) => d.id === id)!.props!.type)));
+    const uncovered = [...this.datasourceVariables.entries()].filter(([, v]) => !covered.has(v.pluginType));
+    if (uncovered.length === 0) return;
+    const uids: string[] = [];
+    for (const id of this.externals) {
+      const i = this.declarations.findIndex((d) => d.id === id);
+      const { type, uid } = this.declarations[i].props as { type: string; uid: string };
+      uids.push(`"${uid}" (${type})`);
+      this.declarations[i] = {
         id,
         kind: "value",
         value: { type, uid },
         type: { text: `DatasourceRef<${JSON.stringify(type)}>`, imports: ["DatasourceRef"] },
-        name: hint,
+        name: this.declarations[i].name,
         module: "datasources",
-      });
-      this.refDecls.set(key, id);
+      };
     }
-    return { value: declRef(id), type, key, written: { type, uid } };
+    this.externals.length = 0;
+    const vars = uncovered.map(([name, v]) => `$${name} (${v.pluginType})`);
+    this.report.warn(
+      `datasources: the dashboard names ${list(uids)} by uid, but no ${[...new Set(uncovered.map(([, v]) => v.pluginType))].join(" or ")} datasource, ` +
+        `which ${list(vars)} ${vars.length === 1 ? "chooses" : "choose"} among. They are written as plain { type, uid } refs rather than ExternalDatasources, ` +
+        "so GRAF101 and GRAF102 do not check them; declare an ExternalDatasource for each, and one of each variable's type, to have them checked.",
+    );
   }
 
   /**
@@ -524,7 +574,15 @@ class DashboardConverter {
     const id = `variable:${name}`;
     this.add({ id, kind: "new", className: mapping.className, props, name, module: "variables" });
     this.variables.set(name, id);
-    if (type === "datasource") this.datasourceVariables.set(name, { declId: id, pluginType: String(props.pluginType) });
+    if (type === "datasource") {
+      const pluginType = String(props.pluginType);
+      this.datasourceVariables.set(name, { declId: id, pluginType });
+      // Since Grafana 8.3 the selected value is the datasource's uid and the text its name: a datasource that exists.
+      const cur = isObject(json.current) ? json.current : {};
+      if (typeof cur.value === "string" && cur.value !== "" && !cur.value.includes("$") && cur.value !== cur.text) {
+        this.refDecl(pluginType, cur.value);
+      }
+    }
     return id;
   }
 
@@ -748,6 +806,7 @@ class DashboardConverter {
     const variableRefs = [...inputIds, ...templating.map((_, i) => varIds.get(i)).filter((x): x is string => x !== undefined)].map(declRef);
 
     const panelRefs = this.items();
+    this.settleExternals();
     if (this.legacyPanels > 0) {
       this.report.warn(
         `${this.legacyPanels} ${this.legacyPanels === 1 ? "panel is an AngularJS panel" : "panels are AngularJS panels"} (${[...this.legacyTypes].join(", ")}) ` +
@@ -825,7 +884,7 @@ class DashboardConverter {
       modules,
       declarations: this.declarations,
       customClasses: [...this.customClasses.values()],
-      exports: ["dashboard"],
+      exports: [...this.externals, "dashboard"],
     };
   }
 }
