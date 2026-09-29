@@ -8,7 +8,7 @@ import type { Declarable } from "@intentius/chant/declarable";
 import { grafanaSerializer } from "../../serializer";
 import { Datasource, ExternalDatasource } from "../../datasource";
 import { Dashboard } from "../../dashboard";
-import { Row, StatPanel, TimeSeriesPanel, TablePanel, TextPanel } from "../../panels";
+import { HeatmapPanel, Row, StatPanel, TimeSeriesPanel, TablePanel, TextPanel } from "../../panels";
 import { LokiQuery, PromQuery, TempoQuery } from "../../query";
 import { DatasourceVariable, QueryVariable } from "../../variables";
 import { graf101 } from "./graf101";
@@ -19,6 +19,10 @@ import { graf105 } from "./graf105";
 import { graf106 } from "./graf106";
 import { graf107 } from "./graf107";
 import { graf108 } from "./graf108";
+import { graf115 } from "./graf115";
+import { panelUnits } from "../../validate-output";
+import { panelsOf } from "../../datasource-refs";
+import { GRAFANA_UNIT_IDS } from "../../spec/units";
 import { prometheusQueries } from "../../promql-check";
 import { knownDatasources } from "../../datasource-refs";
 
@@ -369,5 +373,82 @@ describe("GRAF108 over real Grafana exports", () => {
     // Non-vacuous: every export in the corpus sends PromQL to a Prometheus.
     expect(prometheusQueries(JSON.parse(text), knownDatasources([])).length).toBeGreaterThan(0);
     expect(graf108.check(makePostSynthCtxFromFiles("grafana", { [name]: text }, "{}"))).toEqual([]);
+  });
+});
+
+describe("GRAF115: units", () => {
+  test("flags the units from the issue (#2954) and suggests the id meant", () => {
+    const bytes = new StatPanel({ title: "Memory", datasource: prometheus, targets: [up], fieldConfig: { defaults: { unit: "byte" } } });
+    const cores = new TimeSeriesPanel({ title: "CPU", datasource: prometheus, targets: [up], fieldConfig: { defaults: { unit: "cores" } } });
+    const diags = graf115.check(ctxOf({ prometheus, d: new Dashboard({ title: "D", panels: [bytes, cores] }) }));
+    expect(diags.map((d) => [d.checkId, d.severity])).toEqual([
+      ["GRAF115", "warning"],
+      ["GRAF115", "warning"],
+    ]);
+    expect(diags[0].message).toContain('panel "Memory" (id 1) fieldConfig.defaults.unit: unit "byte" is not one Grafana knows');
+    expect(diags[0].message).toContain('Did you mean "bytes"?');
+    expect(diags[1].message).not.toContain("Did you mean");
+    expect(diags[1].message).toContain('"suffix:cores"');
+  });
+
+  test("passes registered ids, the legacy alias, an empty unit and every custom-unit syntax", () => {
+    const units = ["bytes", "s", "percentunit", "reqps", "currencyEUR", "farenheit", "", "suffix: cores", "prefix:$", "time:YYYY-MM-DD", "si:mF", "count:reqs", "currency:financial:€:suffix", "bool:up/down"];
+    const panels = units.map((unit) => new StatPanel({ datasource: prometheus, targets: [up], fieldConfig: { defaults: { unit } } }));
+    expect(graf115.check(ctxOf({ prometheus, d: new Dashboard({ title: "D", panels }) }))).toEqual([]);
+  });
+
+  test("checks overrides, heatmap axes and cells, legacy y-axes and library panels", () => {
+    const heat = new HeatmapPanel({ title: "Heat", datasource: prometheus, targets: [up], options: { yAxis: { unit: "sec" }, cellValues: { unit: "Short" } } });
+    const table = new TablePanel({
+      title: "T",
+      datasource: prometheus,
+      targets: [up],
+      fieldConfig: { overrides: [{ matcher: { id: "byName", options: "x" }, properties: [{ id: "decimals", value: 2 }, { id: "unit", value: "celcius" }] }] },
+    });
+    const messages = graf115.check(ctxOf({ prometheus, d: new Dashboard({ title: "D", panels: [heat, table] }) })).map((d) => d.message);
+    expect(messages).toEqual([
+      expect.stringContaining('options.yAxis.unit: unit "sec"'),
+      expect.stringContaining('options.cellValues.unit: unit "Short" is not one Grafana knows, so it is shown as a literal suffix. Did you mean "short"?'),
+      expect.stringContaining('fieldConfig.overrides[0].properties[1]: unit "celcius" is not one Grafana knows, so it is shown as a literal suffix. Did you mean "celsius"?'),
+    ]);
+
+    const graph = panelJson({ type: "graph", yaxes: [{ format: "bytes" }, { format: "ops/s" }] });
+    const lib = panelJson({ fieldConfig: { defaults: { unit: "req/s" }, overrides: [] } });
+    const dash = dashboardJson([graph], [], { __elements: { lib: { kind: 1, model: lib } } });
+    expect(graf115.check(ctxOfJson(dash)).map((d) => d.message)).toEqual([
+      expect.stringContaining('panel "p" (id 1) yaxes[1].format: unit "ops/s"'),
+      expect.stringContaining('library panel "lib" fieldConfig.defaults.unit: unit "req/s"'),
+    ]);
+  });
+
+  test("the vendored registry is Grafana v13.2.2's", () => {
+    expect(GRAFANA_UNIT_IDS.length).toBe(274);
+    expect(GRAFANA_UNIT_IDS).toEqual(expect.arrayContaining(["none", "bytes", "decbytes", "reqps", "ms", "percentunit", "celsius", "currencyUSD", "dateTimeAsIso", "h"]));
+    expect(GRAFANA_UNIT_IDS).not.toContain("byte");
+  });
+});
+
+describe("GRAF115 over real Grafana exports and community dashboards", () => {
+  const fixtures = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "test", "fixtures");
+  const exportsDir = join(fixtures, "exports");
+  const files = [
+    ...readdirSync(exportsDir)
+      .filter((d) => d.startsWith("grafana-"))
+      .flatMap((v) => readdirSync(join(exportsDir, v)).filter((f) => f.endsWith(".json") && !f.includes("-resource")).map((f) => `exports/${v}/${f}`)),
+    ...readdirSync(join(fixtures, "community"))
+      .filter((f) => f.endsWith(".json"))
+      .map((f) => `community/${f}`),
+  ];
+  let unitsSeen = 0;
+
+  test.each(files)("%s has no GRAF115 warnings", (name) => {
+    const text = readFileSync(join(fixtures, name), "utf-8");
+    unitsSeen += panelsOf(JSON.parse(text)).flatMap(({ panel }) => panelUnits(panel)).length;
+    expect(graf115.check(makePostSynthCtxFromFiles("grafana", { [name]: text }, "{}"))).toEqual([]);
+  });
+
+  // Non-vacuous: the corpus sets hundreds of units between them.
+  test("the corpus sets units", () => {
+    expect(unitsSeen).toBeGreaterThan(200);
   });
 });

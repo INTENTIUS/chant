@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { emitYAML, parseYAML, parseYAMLDocument, parseScalar, splitYAMLDocuments } from "./yaml";
+import { load as jsYamlLoad } from "js-yaml";
+import { emitYAML, parseYAML, parseYAMLDocument, parseScalar, splitYAMLDocuments, YAMLParseError } from "./yaml";
 
 // ---------------------------------------------------------------------------
 // emitYAML
@@ -588,5 +589,195 @@ describe("splitYAMLDocuments", () => {
 
   test("normalizes CRLF line endings", () => {
     expect(splitYAMLDocuments("a: 1\r\n--- # c\r\nb: 2\r\n")).toEqual(["a: 1", "b: 2\n"]);
+  });
+});
+
+// Blank, whitespace-only and comment lines inside a block, and other input the
+// parser used to skip or hoist without a word (#2991). Each valid case is
+// checked against js-yaml, so the expected value is what a full parser reads.
+describe("parseYAML — blank lines inside blocks (#2991)", () => {
+  const same = (src: string): void => {
+    expect(parseYAMLDocument(src)).toEqual(jsYamlLoad(src));
+  };
+
+  test("a blank line between a key and its nested mapping (the reported bug)", () => {
+    expect(parseYAML("a:\n\n  b: 1\nc: 2\n")).toEqual({ a: { b: 1 }, c: 2 });
+  });
+
+  test("a whitespace-only line between a key and its nested mapping", () => {
+    expect(parseYAML("a:\n  \n  b: 1\nc: 2\n")).toEqual({ a: { b: 1 }, c: 2 });
+    expect(parseYAML("a:\n\t\n  b: 1\nc: 2\n")).toEqual({ a: { b: 1 }, c: 2 });
+  });
+
+  test("a comment at a lower column between a key and its nested mapping", () => {
+    same("a:\n# about b\n  b: 1\nc: 2\n");
+  });
+
+  test("a blank line before the first item of a block sequence", () => {
+    // This one lost every key after the sequence, not just the sequence.
+    same("a:\n\n  - 1\n  - 2\nc: 2\n");
+    same("a:\n\n- 1\n- 2\nc: 2\n");
+  });
+
+  test("blank lines between block sequence items", () => {
+    same("a:\n  - 1\n\n  -   \n\n  - 3\nb: 2\n");
+  });
+
+  test("blank lines between the keys of a nested mapping", () => {
+    same("a:\n  b: 1\n\n  c:\n\n    d: 2\n\n  e: 3\nf: 4\n");
+  });
+
+  test("blank lines before nested blocks inside a sequence item", () => {
+    same("a:\n- name: x\n  env:\n\n  - n: 1\n  meta:\n\n    k: v\n\n  last: 1\nc: 2\n");
+    same("a:\n- first:\n\n    k: v\n  second: 2\n");
+  });
+
+  test("a dash alone on its line takes the block below it", () => {
+    same("a:\n-\n  x: 1\n  y: 2\n-\n\n  - 1\n-\n- z\n");
+  });
+
+  test("CRLF line endings, blank lines included", () => {
+    expect(parseYAML("a:\r\n\r\n  b: 1\r\n  c:\r\n  \r\n  - x\r\nd: 2\r\n")).toEqual({
+      a: { b: 1, c: ["x"] },
+      d: 2,
+    });
+  });
+
+  test("trailing whitespace on keys, items and blank lines", () => {
+    same("a:   \n    \n  b: 1   \n  c:  \n\t\n    d: 2\ne:\n  - x   \n  -   y: 1  \n      z: 2\n");
+  });
+
+  test("a sequence item indented past `- ` keeps its keys together", () => {
+    same("-   a: 1\n    b: 2\n-   c: 3\n");
+  });
+
+  test("the emitter's output still round-trips", () => {
+    const value = { a: { b: [{ c: 1, d: { e: "x" } }, "y"], f: null }, g: [[]] };
+    expect(parseYAML(emitYAML(value, 0).trimStart())).toEqual(value);
+  });
+});
+
+describe("parseYAML — scalars spanning lines (#2991)", () => {
+  const same = (src: string): void => {
+    expect(parseYAMLDocument(src)).toEqual(jsYamlLoad(src));
+  };
+
+  test("a plain scalar wrapped onto more lines, as go-yaml (Helm toYaml) wraps them", () => {
+    same("description: a long line that go-yaml\n  wraps at eighty columns\n\n  and a paragraph\nnext: 1\n");
+  });
+
+  test("a wrapped plain scalar as a sequence item and as an item's key", () => {
+    same("- long text\n  continued\n- name: x\n  help: more\n    text\n  after: 1\n");
+  });
+
+  test("a scalar on the line after its key", () => {
+    same("a:\n  hello\n  there\nb: 1\n");
+  });
+
+  test("a double-quoted scalar across lines, with a blank line and an escaped break", () => {
+    same('a: "one\n  two\n\n  three"\nb: "x\\\n    y"\nc: 1\n');
+  });
+
+  test("a single-quoted scalar across lines", () => {
+    same("a: 'it''s\n  here'\nb: 1\n");
+  });
+
+  test("an unterminated quoted scalar is an error", () => {
+    expect(() => parseYAML('a: "abc\nb: 1\n')).toThrow(YAMLParseError);
+  });
+});
+
+describe("parseYAML — quoted keys (#2991)", () => {
+  test("a quoted key holding a colon is read, not skipped", () => {
+    expect(parseYAML('"a:b": 1\nc: 2\n')).toEqual({ "a:b": 1, c: 2 });
+  });
+
+  test("quotes are not part of the key", () => {
+    expect(parseYAMLDocument("- \"a\": \"b\"\n  'c:d': 2\n")).toEqual([{ a: "b", "c:d": 2 }]);
+  });
+});
+
+describe("parseYAML — lines it cannot place are errors, not drops (#2991)", () => {
+  const throwsAt = (src: string, line: number): void => {
+    let error: unknown;
+    try {
+      parseYAML(src);
+    } catch (err) {
+      error = err;
+    }
+    expect(error).toBeInstanceOf(YAMLParseError);
+    expect((error as YAMLParseError).line).toBe(line);
+  };
+
+  test("a key indented under a scalar value", () => {
+    // Used to read as { a: 1, b: 2, c: 3 }.
+    throwsAt("a: 1\n   b: 2\nc: 3\n", 2);
+  });
+
+  test("a key indented past its siblings inside a sequence item", () => {
+    throwsAt("items:\n- name: x\n  image: y\n     stray: z\n", 4);
+  });
+
+  test("a line that is neither a key nor an item", () => {
+    throwsAt("a: 1\njust text\nb: 2\n", 2);
+  });
+
+  test("a dedent to a column no mapping is at", () => {
+    throwsAt("  a: 1\nb: 2\n", 2);
+  });
+
+  test("a tag before a nested block names the construct", () => {
+    expect(() => parseYAML("a: !Thing\n  b: 1\n")).toThrow(/the tag "!Thing"/);
+  });
+
+  test("an alias with no anchor before it", () => {
+    throwsAt("a: *nowhere\n", 1);
+  });
+
+  test("document markers are still skipped, as before", () => {
+    expect(parseYAML("---\na: 1\n...\n")).toEqual({ a: 1 });
+  });
+
+  test("a top-level list still reads as an empty mapping through parseYAML", () => {
+    expect(parseYAML("- a\n- b\n")).toEqual({});
+  });
+});
+
+// GitLab CI templates and Alertmanager configs anchor a block and merge it
+// elsewhere. Before #2991 the anchored block was hoisted into its parent and
+// the alias read as the string "*name".
+describe("parseYAML — anchors, aliases and merge keys (#2991)", () => {
+  const same = (src: string): void => {
+    expect(parseYAMLDocument(src)).toEqual(jsYamlLoad(src));
+  };
+
+  test("an anchored mapping merged into jobs, a GitLab CI template", () => {
+    same(
+      ".test-template: &test-defaults\n  stage: test\n  before_script:\n    - npm ci\n\n" +
+        "unit-test:\n  <<: *test-defaults\n  script:\n    - npm test\n" +
+        "lint:\n  stage: lint\n  <<: *test-defaults\n",
+    );
+  });
+
+  test("an anchored sequence item merged into the next, an Alertmanager receiver", () => {
+    same("slack_configs:\n  - &slack\n    channel: '#db-alerts'\n    send_resolved: true\n  - <<: *slack\n    channel: '#db-oncall'\n");
+  });
+
+  test("anchored scalars and sequences, and aliases to them", () => {
+    same("a: &v 1\nb: *v\nc: &list\n  - x\n  - y\nd: *list\ne:\n  - *v\n  - *list\n");
+  });
+
+  test("several anchors merged at once; the first listed wins", () => {
+    same("a: &a\n  x: 1\n  y: 1\nb: &b\n  y: 2\n  z: 2\nc:\n  <<: [*a, *b]\n  z: 3\n");
+  });
+
+  test("an alias is a copy, not shared with its anchor", () => {
+    const doc = parseYAML("a: &a\n  x: 1\nb: *a\n") as { a: { x: number }; b: { x: number } };
+    doc.b.x = 2;
+    expect(doc.a.x).toBe(1);
+  });
+
+  test("a merge key needs a mapping", () => {
+    expect(() => parseYAML("a: &v 1\nb:\n  <<: *v\n")).toThrow(YAMLParseError);
   });
 });
