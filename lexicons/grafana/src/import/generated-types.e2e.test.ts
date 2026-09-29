@@ -106,15 +106,12 @@ describe("the generated source type-checks against the lexicon's types", () => {
       KUBE_PROMETHEUS.map((f) => [f, byProperty(errors.filter((e) => e.startsWith(`${f.replace(/[^A-Za-z0-9]+/g, "-")}/`)))] as const).filter(([, v]) => Object.keys(v).length > 0),
     );
     expect(Object.values(found).reduce((n, v) => n + Object.values(v).reduce((a, b) => a + b, 0), 0)).toBe(errors.length);
-    // The same values GRAF107 reports in the source dashboards (roundtrip.test.ts), plus keys the pinned schemas do not list.
-    const noOptions = { "Property 'options' is missing in type '{ id: string; }' but required in type 'DataTransformerConfig'.": 1 };
+    // Values GRAF107 reports in the source dashboards (roundtrip.test.ts), plus keys the pinned schemas do not list. The node
+    // dashboards' merge transformation without options type-checks: the typed transformation classes do not require it.
     expect(found).toEqual({
       "kube-prometheus/grafana-overview.json": { "Type 'string' is not assignable to type 'string[]'.": 1, alertThreshold: 2 },
       "kube-prometheus/k8s-resources-pod.json": { "Type '\"thresholds\"' is not assignable to type 'AxisColorMode | undefined'.": 1 },
       "kube-prometheus/namespace-by-pod.json": { index: 6 },
-      "kube-prometheus/nodes-aix.json": noOptions,
-      "kube-prometheus/nodes-darwin.json": noOptions,
-      "kube-prometheus/nodes.json": noOptions,
       "kube-prometheus/pod-total.json": { index: 6 },
     });
   }, 300_000);
