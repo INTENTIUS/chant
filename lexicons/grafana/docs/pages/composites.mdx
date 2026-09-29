@@ -102,6 +102,10 @@ Metric names come from the preset's metrics, and label names from its GenAI attr
 
 `redQueries(names, quantiles?, serviceFilter?, spanKinds?)`, `sloQueries(sloMetrics(slo))` and `agentQueries(genAiMetrics())` return the PromQL each composite runs, for panels of your own.
 
+## Tested against data
+
+`src/composites/queries.e2e.test.ts` backfills a Prometheus with series named the way the example's connector, `Slo` and GenAI preset name them, provisions the example's dashboards into Grafana 12.4.11 and 13.2.2, and runs every panel's query through Grafana's `/api/ds/query` with each variable at "All". The series grow at constant rates, so each expected value is exact: a service with calls and no errors reads an error ratio of 0; a service that only makes client calls is absent from every panel and from the service picker; client errors don't count toward a service's error ratio; each token total comes back as one instant value; and a service or model with no traffic in the window reads 0/0 = NaN, which is the correct answer for it. The test needs Docker and skips without it.
+
 ## Build roots
 
 GRAF101 and GRAF102 check each panel's datasource against the datasources declared in the same build root (chant #1939). Keep the `Datasource` next to the dashboards, as the [example](../examples/#dashboards-from-declarations) does. For a Prometheus that another build root provisions, or that already exists in Grafana, declare it with `ExternalDatasource({ type: "prometheus", uid })` and pass that as the composite's `datasource`: the checks then resolve the reference instead of reporting it as undeclared, and nothing is provisioned for it. The composites read their sources at declaration time, so the connector, the `Slo` and the preset can live anywhere the dashboard file can import them from.

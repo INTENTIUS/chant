@@ -37,6 +37,8 @@ A module with more than eight declarations is split into `row-cpu-1.ts`, `row-cp
 chant build src --lexicon grafana -o dist/grafana/index.json
 ```
 
+A dashboard held in a Kubernetes ConfigMap, such as one labelled `grafana_dashboard` for the Grafana sidecar, is imported the same way when you import the manifest with the k8s lexicon. The ConfigMap's value becomes `dashboardJson(dashboard)`. See the k8s lexicon's [Importing Existing YAML](/chant/lexicons/k8s/importing-yaml/).
+
 ## What the generated source looks like
 
 A panel becomes a constant named after its title, and its queries take the panel's name and their refId. Nested settings are lifted into named consts typed by the class's props, which is how COR001 wants a declaration written:

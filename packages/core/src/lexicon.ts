@@ -5,6 +5,7 @@ import type { RuleSpec } from "./lint/declarative";
 import type { PostSynthCheck } from "./lint/post-synth";
 import type { TemplateParser, TemplateIR } from "./import/parser";
 import type { TypeScriptGenerator } from "./import/generator";
+import type { EmbeddedContentImporter } from "./import/embedded";
 import type { AgentConfigImporter } from "./agents/importer";
 import type { ArtifactIntegrity } from "./lexicon-integrity";
 import type { OkfFile } from "./okf";
@@ -1164,6 +1165,17 @@ export interface LexiconPlugin {
 
   /** Return a generator for converting IR to TypeScript */
   templateGenerator?(): TypeScriptGenerator;
+
+  /**
+   * Importers for this lexicon's content when it is embedded in another
+   * lexicon's resources (#2962): a collector config in a k8s ConfigMap, rule
+   * groups in a `PrometheusRule`, dashboard JSON in a ConfigMap. The host's
+   * parser offers the content through `ParseContext.embedded`, and core finds
+   * the owner at run time among the project's lexicons and the installed
+   * ones whose `detectTemplate` recognizes the content, so the host does not
+   * depend on the owner. See `packages/core/src/import/embedded.ts`.
+   */
+  embeddedImporters?(): EmbeddedContentImporter[];
 
   /**
    * Re-express local agent configuration (skills, MCP servers, instruction
