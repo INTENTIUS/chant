@@ -237,6 +237,20 @@ export {
 // Hand-written options for the built-in panels with no schema
 export type { AlertListOptions, AlertListSortOrder, AlertListStateFilter, FlameGraphOptions } from "./panel-options";
 
+// Panel transformations, typed per transformer (Grafana v13.2.2)
+export {
+  transformation,
+  customTransformation,
+  TRANSFORMATION_IDS,
+  type Transformation,
+  type KnownTransformation,
+  type CustomTransformation,
+  type TransformationCommon,
+  type TransformationId,
+  type TransformationOptionsById,
+  type ReducerId,
+} from "./transformations";
+
 // Plain-data API: render, check and detect without a build
 export {
   buildGrafana,
