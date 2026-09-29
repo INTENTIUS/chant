@@ -206,6 +206,13 @@ function describePanel(p: Json): string {
 
 
 
+/** Why a Mixed datasource anywhere but on a panel is not carried. */
+const MIXED_ELSEWHERE = '(it is "-- Mixed --", which only a panel can have: it means each query names its own datasource)';
+
+/** Grafana's grid width, and what the dashboard schema says a missing `gridPos` key is. */
+const GRID_COLUMNS = 24;
+const GRID_POS_DEFAULTS = { h: 9, w: 12, x: 0, y: 0 } as const;
+
 
 /** A resolved datasource reference: the prop value, the plugin type when known, and a key for comparing two. */
 interface ResolvedDs {
@@ -542,6 +549,7 @@ class DashboardConverter {
       path,
       datasource: (value, p) => {
         const r = this.resolveDatasource(value, p, subject);
+        if (r === "mixed") this.report.drop(p, subject, "datasource", MIXED_ELSEWHERE);
         return r === "mixed" || r === undefined ? undefined : r.value;
       },
       drop: (key, why) => this.report.drop(`${path}${pointer(key)}`, subject, key, why ?? NO_PROP),
@@ -588,6 +596,36 @@ class DashboardConverter {
   }
 
   // ── panels and rows ─────────────────────────────────────────────
+
+  /**
+   * A panel's `gridPos` with every coordinate written out. A missing `x` or
+   * `y` is 0 to Grafana, as it is in the dashboard schema, but the build
+   * would place the panel itself, so the 0 is written. A missing `h` or `w`
+   * is written as the schema's default, with a warning, since the build
+   * would otherwise use the panel class's default size.
+   */
+  private gridPos(json: Json, path: string, subject: string, props: Json): void {
+    const gp = json.gridPos;
+    if (!isObject(gp)) return;
+    const filled: Json = { ...gp };
+    const sized: string[] = [];
+    for (const [key, value] of Object.entries(GRID_POS_DEFAULTS)) {
+      if (typeof gp[key] === "number") continue;
+      filled[key] = value;
+      if (key === "h" || key === "w") sized.push(`gridPos.${key}`);
+    }
+    if (deepEqual(filled, gp)) return;
+    props.gridPos = filled;
+    const why = sized.length === 0 ? undefined : `${sized.length === 1 ? "is" : "are"} missing, so the dashboard schema's default is written (h ${GRID_POS_DEFAULTS.h}, w ${GRID_POS_DEFAULTS.w})`;
+    this.report.replace(`${path}/gridPos`, filled, subject, sized.join(" and ") || "gridPos", why);
+  }
+
+  /** A panel's Mixed datasource, as a `DatasourceRef` const: the build writes it when the panel's queries alone would not make it Mixed. */
+  private mixed(value: unknown, path: string, subject: string): ResolvedDs {
+    const resolved = this.refDecl("datasource", MIXED_UID);
+    if (!deepEqual(value, resolved.written)) this.report.replace(path, resolved.written, subject, "datasource");
+    return resolved;
+  }
 
   private copyFields(json: Json, fields: readonly string[], defaults: Readonly<Json>, props: Json): void {
     for (const key of fields) {
@@ -655,8 +693,11 @@ class DashboardConverter {
     const fc = json.fieldConfig;
     if (isObject(fc) && deepEqual(fc, { defaults: {}, overrides: [] })) delete props.fieldConfig;
 
+    this.gridPos(json, path, subject, props);
+
     const own = this.resolveDatasource(json.datasource, `${path}/datasource`, subject);
-    if (own !== undefined && own !== "mixed") props.datasource = own.value;
+    if (own === "mixed") props.datasource = this.mixed(json.datasource, `${path}/datasource`, subject).value;
+    else if (own !== undefined) props.datasource = own.value;
     // A panel without a datasource of its own inherits its row's in the build; Grafana does not do that.
     const inherited = own === undefined && rowDatasource !== undefined && rowDatasource !== "mixed" ? rowDatasource : undefined;
     if (inherited && (json.datasource === undefined || json.datasource === null)) {
@@ -680,6 +721,7 @@ class DashboardConverter {
         return;
       }
       const tds = this.resolveDatasource(t.datasource, `${tPath}/datasource`, `${subject} query ${String(t.refId ?? i)}`);
+      if (tds === "mixed") this.report.drop(`${tPath}/datasource`, `${subject} query ${String(t.refId ?? i)}`, "datasource", MIXED_ELSEWHERE);
       const tResolved = tds === "mixed" ? undefined : tds;
       const effectiveType =
         tResolved?.type ?? (panelDs !== undefined && panelDs !== "mixed" ? panelDs.type : undefined) ?? DEFAULT_DATASOURCE_TYPE;
@@ -753,7 +795,15 @@ class DashboardConverter {
     }
     const props: Json = { title: typeof json.title === "string" ? json.title : "" };
     this.copyFields(json, ROW_FIELDS, ROW_DEFAULTS, props);
-    if (ds !== undefined && ds !== "mixed") props.datasource = ds.value;
+    if (ds === "mixed") this.report.drop(`${path}/datasource`, subject, "datasource", MIXED_ELSEWHERE);
+    else if (ds !== undefined) props.datasource = ds.value;
+    const gp = json.gridPos;
+    if (isObject(gp) && typeof gp.y === "number") {
+      // Grafana draws a row header full width and one line high whatever its gridPos says, so only y is carried.
+      props.gridPos = { y: gp.y };
+      const written = { h: 1, w: GRID_COLUMNS, x: 0, y: gp.y };
+      if (!deepEqual(gp, written)) this.report.replace(`${path}/gridPos`, written, subject, "gridPos");
+    }
     if (typeof json.repeat === "string" && json.repeat !== "") {
       const v = this.variables.get(json.repeat);
       props.repeat = v ? declRef(v) : json.repeat;
