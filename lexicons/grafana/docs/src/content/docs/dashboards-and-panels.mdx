@@ -23,8 +23,9 @@ diataxis: reference
 | `panels` | `[]` | panels and rows, top to bottom |
 | `links` | `[]` | `{ title, type, url?, … }`; the rest of Grafana's link fields are filled in |
 | `folder` | General | provisioned into this folder (a subdirectory of `dashboards/`) |
+| `schemaVersion` | the pinned schema's | `chant import` sets it for a dashboard saved by an older Grafana, so Grafana still migrates it on load |
 
-The emitted JSON carries `schemaVersion` from the pinned dashboard schema, empty `annotations` (Grafana adds its built-in annotation on load), and no numeric `id`.
+The emitted JSON carries `schemaVersion` from the pinned dashboard schema unless the dashboard sets its own, empty `annotations` (Grafana adds its built-in annotation on load), and no numeric `id`.
 
 ## Panels
 

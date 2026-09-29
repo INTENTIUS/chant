@@ -403,7 +403,7 @@ function parseAndWrite(
   lexicon: string,
 ): ImportResult {
   // A lexicon can recognize a template (detectTemplate) without being able to
-  // import it (grafana has no parser). Every path funnels through here, so
+  // import it (grafana had no parser until #2945). Every path funnels through here, so
   // this one check covers detection, --lexicon and content import (#2940).
   if (!plugin.templateParser || !plugin.templateGenerator) {
     return {
