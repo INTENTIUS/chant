@@ -308,6 +308,18 @@ function layout(plan: Plan): { modules: Module[]; home: Map<string, Module> } {
 
 /** The TypeScript for one plan: its modules, in the order they should be read. */
 export function generatePlan(plan: Plan): GeneratedFile[] {
+  return generatePlanModules(plan).files;
+}
+
+/**
+ * The TypeScript for one plan, and where each declaration the plan exports
+ * is declared: its module's path and variable (#2962: a ConfigMap holding
+ * the dashboard refers to it).
+ */
+export function generatePlanModules(plan: Plan): {
+  files: GeneratedFile[];
+  exported: Map<string, { path: string; name: string }>;
+} {
   const names = assignNames(plan);
   const { modules, home } = layout(plan);
   const byId = new Map(plan.declarations.map((d) => [d.id, d]));
@@ -404,7 +416,13 @@ export function generatePlan(plan: Plan): GeneratedFile[] {
     if (plan.exports.includes(d.id)) mod.exports.add(name);
   }
 
-  return modules.map((m) => ({ path: m.path, content: m.render() }));
+  const exported = new Map<string, { path: string; name: string }>();
+  for (const id of plan.exports) {
+    const mod = home.get(id);
+    const name = names.get(id);
+    if (mod && name) exported.set(id, { path: mod.path, name });
+  }
+  return { files: modules.map((m) => ({ path: m.path, content: m.render() })), exported };
 }
 
 /** The Grafana TypeScript generator `chant import` runs. */
