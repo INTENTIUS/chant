@@ -41,7 +41,10 @@ and it builds back to the same dashboard (see
 [Importing Dashboards](./importing/)). \`chant lifecycle diff --live\` reports
 a dashboard edited in Grafana as drift, property by property, and
 \`chant import --from <env>\` writes a running Grafana's dashboards as
-TypeScript (see [Drift and Live Export](./observing/)).
+TypeScript (see [Drift and Live Export](./observing/)). \`grafanaApply\` writes
+a build to a running Grafana over its HTTP API, with folders and library
+panels, and prunes the project's own dashboards and folders (see
+[Apply over the API](./applying/)).
 
 Grafana-managed alerting is typed too: rule groups with their queries and
 server-side expressions (reduce, math, threshold, resample, classic

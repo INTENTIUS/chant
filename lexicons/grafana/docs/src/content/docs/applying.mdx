@@ -1,0 +1,80 @@
+---
+title: "Apply over the API"
+description: "Write the dashboards, folders and library panels a build declares to a running Grafana over its HTTP API, and delete the ones the project no longer declares"
+diataxis: how-to
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-grafana` — DO NOT EDIT.
+    Edit lexicons/grafana/docs/pages/applying.mdx instead; changes here are overwritten. */}
+
+
+File provisioning (see [Provisioning](../provisioning/)) needs the build's files mounted into Grafana's container. When you cannot mount files, or you want real folders and library panels, apply the build over Grafana's HTTP API instead. The applier creates and updates folders, library panels and dashboards, labels what it writes as the project's, and with `prune` deletes the project's dashboards and folders that the build no longer declares.
+
+It writes to Grafana 12.4 and 13.x through the `dashboard.grafana.app` and `folder.grafana.app` APIs, and to Grafana 11 through `/api/dashboards/db` and `/api/folders`.
+
+## Point an environment at a Grafana
+
+The applier uses the same `grafana.profiles.<env>` entry as [Drift and Live Export](../observing/), or `GRAFANA_URL` with `GRAFANA_TOKEN` when the environment has no profile. The service account needs the Editor role, or a custom role with the actions in `grafanaActionsFor("Apply", "Prune")`:
+
+```ts
+import { grafanaActionsFor } from "@intentius/chant-lexicon-grafana";
+
+grafanaActionsFor("Apply", "Prune");
+// ["dashboards:read", "dashboards:create", "dashboards:write", "folders:read", ...]
+```
+
+Set the project's ownership stack in `chant.config.ts`. The applier labels every dashboard and folder with it, and prune deletes only what carries it:
+
+```ts
+export default {
+  lexicons: ["grafana"],
+  ownership: { stack: "shop", env: "prod" },
+  grafana: { profiles: { prod: { url: "https://grafana.example.com", token: { env: "GRAFANA_PROD_TOKEN" } } } },
+} satisfies ChantConfig;
+```
+
+## Apply from an Op
+
+Build, then apply the build's index, the file `chant build -o` wrote. The applier reads the dashboard files from the same directory:
+
+```ts
+// ops/grafana.op.ts, with "build:grafana": "chant build src --lexicon grafana -o dist/grafana.json" in package.json
+import { Op, phase, build } from "@intentius/chant/op";
+import { grafanaApply } from "@intentius/chant-lexicon-grafana";
+
+export default Op({
+  name: "grafana-prod",
+  phases: [
+    phase("Build", [build(".", { script: "build:grafana" })]),
+    phase("Apply", [grafanaApply("dist/grafana.json", { environment: "prod", prune: true })]),
+  ],
+});
+```
+
+The step reports each resource once, in core's apply envelope:
+
+- **applied**, as `created`, `updated` or `unchanged`. A dashboard whose live content already covers what the build would send, in the same folder and with the same labels, is `unchanged` and is not written. Grafana's own additions (the built-in annotation, its defaults, a migrated `schemaVersion`) do not count as changes; a panel title edited in the UI does, and the apply puts it back.
+- **pruned**, with `prune`: the project's dashboards and folders the build no longer has.
+- **not attempted**, with the reason: `no-binding` or `no-credentials` for every resource when the environment names no Grafana or the token is refused, and `not-prunable` for what prune could not consider (below).
+
+A failed write stops the step with Grafana's status and message.
+
+## What gets written
+
+- **Folders.** A dashboard's `folder` is a title. The applier makes one folder per title, with a uid made from the title (`"Team A"` becomes `team-a`), so the next apply finds it again. A folder that already has that uid is used and labelled.
+- **Library panels.** A dashboard file that carries library panels in `__elements`, as an exported dashboard does, has each one written to the library before the dashboard, in the dashboard's folder. The dashboard is sent without `__elements`, `__inputs` and `__requires`. Declaring library panels in TypeScript is not supported yet, so this applies to dashboard JSON that already has them.
+- **Dashboards.** Sent with the project's labels (`app.kubernetes.io/managed-by: chant`, `chant.intentius.io/stack`, `chant.intentius.io/env`) and their folder. A dashboard with the same uid that somebody else made is updated and labelled; labels already on it are kept.
+
+On Grafana 11 there is nowhere to put labels, so nothing is labelled.
+
+## What prune deletes
+
+Prune deletes a dashboard or folder only when its labels carry `managed-by: chant` with the project's stack and env. A dashboard saved in the UI, one another chant project applied, and one loaded from provisioning files are never deleted.
+
+Dashboards go first, then folders, a nested folder before its parent. A folder that still holds something, such as a dashboard somebody saved into it, is left and reported `not-prunable` with what it holds; the next prune deletes it once it is empty.
+
+Three things are never pruned, and are reported as `not-prunable`:
+
+- library panels, because their API has no labels;
+- anything on Grafana 11, which has no labels to read;
+- anything, when no ownership stack is set, since the applier could not tell the project's dashboards from another project's.
