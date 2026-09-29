@@ -209,27 +209,45 @@ describe("rules and routing", () => {
 });
 
 describe("Grafana", () => {
-  test("provisions Prometheus, Tempo and Loki, and the ConfigMap carries every file the grafana build writes", () => {
+  test("provisions Prometheus, Tempo and Loki, and the ConfigMaps carry every file the grafana build writes", () => {
     expect(built.grafanaIndex.datasources.map((d) => d.type).sort()).toEqual(["loki", "prometheus", "tempo"]);
-    const data = find(built.manifests, "ConfigMap", "grafana-files").data ?? {};
-    expect(Object.keys(data)).toHaveLength(Object.keys(built.grafanaFiles).length);
-    for (const key of Object.keys(data)) expect(key).toMatch(/^[-._a-zA-Z0-9]+$/);
+    const configMaps = new Map(built.manifests.filter((m) => m.kind === "ConfigMap" && m.metadata.name.startsWith("grafana-")).map((m) => [m.metadata.name, m]));
     // Each file is mounted back at its own path, under the directory Grafana reads it from.
     const pod = find(built.manifests, "Deployment", "grafana").spec?.template.spec;
     const mounts = pod.containers[0].volumeMounts as Array<{ name: string; mountPath: string }>;
     const roots = { "/etc/grafana/provisioning": "provisioning", "/var/lib/grafana/dashboards": "dashboards" } as const;
     const mounted: string[] = [];
-    for (const volume of pod.volumes as Array<{ name: string; configMap?: { name: string; items: Array<{ key: string; path: string }> } }>) {
-      if (volume.configMap?.name !== "grafana-files") continue;
+    type Source = { configMap: { name: string; items: Array<{ key: string; path: string }> } };
+    for (const volume of pod.volumes as Array<{ name: string; projected?: { sources: Source[] } }>) {
+      if (!volume.projected) continue;
       const at = mounts.find((m) => m.name === volume.name)!.mountPath;
       const root = Object.entries(roots).find(([dir]) => at === dir || at.startsWith(`${dir}/`))!;
       const prefix = `${root[1]}${at.slice(root[0].length)}/`;
-      for (const item of volume.configMap.items) {
-        expect(data[item.key], item.path).toBe(built.grafanaFiles[prefix + item.path]);
-        mounted.push(prefix + item.path);
+      for (const { configMap } of volume.projected.sources) {
+        const data = configMaps.get(configMap.name)?.data ?? {};
+        for (const item of configMap.items) {
+          expect(data[item.key], item.path).toBe(built.grafanaFiles[prefix + item.path]);
+          mounted.push(prefix + item.path);
+        }
       }
     }
     expect(mounted.sort()).toEqual(Object.keys(built.grafanaFiles).sort());
+  });
+
+  test("the ConfigMaps are labelled the way the Grafana Helm chart's sidecar finds them", () => {
+    const dashboards = built.manifests.filter((m) => m.kind === "ConfigMap" && m.metadata.labels?.grafana_dashboard === "1");
+    expect(dashboards.map((m) => m.metadata.name).sort()).toEqual([
+      "grafana-dashboard-genai-agents",
+      "grafana-dashboard-red-traces-span-metrics",
+      "grafana-dashboard-slo-support-agent-runs",
+    ]);
+    for (const m of dashboards) {
+      expect(m.metadata.annotations).toEqual({ "k8s-sidecar-target-directory": "Agent observability" });
+      const [key, text] = Object.entries(m.data ?? {})[0];
+      expect(built.grafanaFiles[`dashboards/Agent observability/${key}`]).toBe(text);
+    }
+    const datasources = built.manifests.filter((m) => m.kind === "ConfigMap" && m.metadata.labels?.grafana_datasource === "1");
+    expect(datasources.map((m) => Object.keys(m.data ?? {}))).toEqual([["chant.yaml"]]);
   });
 
   test("the dashboards pass the grafana lexicon's output checks (GRAF1xx)", () => {
