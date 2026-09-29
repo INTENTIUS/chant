@@ -16,15 +16,15 @@
  * 3. Live export of the environment generates TypeScript that carries the
  *    edit, and the generated project builds.
  *
- * Unique container names, a random host port, removed in afterAll even on
- * failure. Skipped, with the reason in the test name, when Docker is not
- * running. Run through the slot lock:
+ * Containers come from the shared helpers in ../test/e2e/containers.ts
+ * (unique names, random host ports, removed in afterAll even on failure;
+ * `CHANT_GRAFANA_IMAGES` overrides the image pair). Skipped, with the reason
+ * in the test name, when Docker is not running. Run through the slot lock:
  * `~/checkouts/intentius/chant-worktrees/.docker-slot.sh <label> -- npx vitest run lexicons/grafana/src/observe.e2e.test.ts`
  */
 
 import { execSync, spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -33,22 +33,11 @@ import type { SerializerResult } from "@intentius/chant/serializer";
 import { grafanaSerializer } from "./serializer";
 import { exportResources } from "./export-resources";
 import { GrafanaGenerator } from "./import/generator";
+import { DockerScope, GRAFANA_IMAGES, dockerAvailable, waitFor, type GrafanaContainer } from "../test/e2e/containers";
 
-const IMAGES = (process.env.CHANT_GRAFANA_OBSERVE_IMAGES ?? "grafana/grafana:12.4.11,grafana/grafana:13.2.2").split(",");
-
-function available(cmd: string): boolean {
-  try {
-    execSync(cmd, { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-const hasDocker = available("docker info");
+const hasDocker = dockerAvailable();
 const skipReason = hasDocker ? "" : " (skipped: Docker is not running)";
 const repoRoot = resolve(import.meta.dirname, "..", "..", "..");
-const AUTH = `Basic ${Buffer.from("admin:admin").toString("base64")}`;
 
 const PROJECT: Record<string, string> = {
   "src/datasources.ts": `import { Datasource } from "@intentius/chant-lexicon-grafana";
@@ -74,21 +63,6 @@ export const apiOverview = new Dashboard({ title: "API overview", tags: ["api"],
 export const provider = new DashboardProvider({ name: "chant", allowUiUpdates: true, updateIntervalSeconds: 3600 });
 `,
 };
-
-async function waitFor<T>(what: string, fn: () => Promise<T | undefined>, timeoutMs = 180_000): Promise<T> {
-  const deadline = Date.now() + timeoutMs;
-  let last: unknown;
-  while (Date.now() < deadline) {
-    try {
-      const v = await fn();
-      if (v !== undefined) return v;
-    } catch (err) {
-      last = err;
-    }
-    await new Promise((r) => setTimeout(r, 1000));
-  }
-  throw new Error(`timed out waiting for ${what}${last ? `: ${String(last)}` : ""}`);
-}
 
 /** This checkout's chant, run in `cwd`. */
 function chant(cwd: string, env: Record<string, string>, ...args: string[]): Promise<{ status: number | null; stdout: string; stderr: string }> {
@@ -124,19 +98,13 @@ interface LiveDiffJson {
   };
 }
 
-describe.skipIf(!hasDocker).each(IMAGES)(`a dashboard edited in Grafana shows as drift in chant lifecycle diff --live: %s${skipReason}`, (image) => {
-  const tag = image.split(":").pop()!.replace(/[^A-Za-z0-9]/g, "-");
-  const CONTAINER = `chant-grafana-observe-${tag}-${process.pid}-${Date.now().toString(36)}`;
-  const dir = mkdtempSync(join(tmpdir(), "chant-grafana-observe-"));
-  const project = join(dir, "project");
-  const mounted = join(dir, "mounted");
-  let base = "";
+describe.skipIf(!hasDocker).each(GRAFANA_IMAGES)(`a dashboard edited in Grafana shows as drift in chant lifecycle diff --live: %s${skipReason}`, (image) => {
+  const scope = new DockerScope("grafana-observe");
+  let dir = "";
+  let project = "";
+  let grafana: GrafanaContainer;
   const env = { E2E_GRAFANA_USER: "admin", E2E_GRAFANA_PASSWORD: "admin", GRAFANA_URL: "", GRAFANA_TOKEN: "" };
-
-  const api = async (path: string, init?: RequestInit) => {
-    const res = await fetch(`${base}${path}`, { ...init, headers: { authorization: AUTH, "content-type": "application/json", ...(init?.headers ?? {}) } });
-    return { status: res.status, body: (await res.json()) as Record<string, unknown> };
-  };
+  const profile = () => ({ url: grafana.base, basicAuth: { user: { env: "E2E_GRAFANA_USER" }, password: { env: "E2E_GRAFANA_PASSWORD" } } });
 
   const diff = async (): Promise<LiveDiffJson> => {
     const r = await chant(project, env, "lifecycle", "diff", "e2e", "--live", "--json");
@@ -146,6 +114,9 @@ describe.skipIf(!hasDocker).each(IMAGES)(`a dashboard edited in Grafana shows as
   };
 
   beforeAll(async () => {
+    dir = scope.tempDir();
+    project = join(dir, "project");
+    const mounted = join(dir, "mounted");
     for (const [file, content] of Object.entries(PROJECT)) {
       mkdirSync(dirname(join(project, file)), { recursive: true });
       writeFileSync(join(project, file), content);
@@ -162,45 +133,14 @@ describe.skipIf(!hasDocker).each(IMAGES)(`a dashboard edited in Grafana shows as
       writeFileSync(join(mounted, file), content);
     }
 
-    execSync(
-      [
-        "docker run -d",
-        `--name ${CONTAINER}`,
-        "-p 127.0.0.1::3000",
-        "-e GF_SECURITY_ADMIN_PASSWORD=admin",
-        "-e GF_ANALYTICS_REPORTING_ENABLED=false",
-        "-e GF_ANALYTICS_CHECK_FOR_UPDATES=false",
-        `-v ${join(mounted, "provisioning")}:/etc/grafana/provisioning:ro`,
-        `-v ${join(mounted, "dashboards")}:/var/lib/grafana/dashboards:ro`,
-        image,
-      ].join(" "),
-      { stdio: "ignore" },
-    );
-    const port = execSync(`docker port ${CONTAINER} 3000/tcp`).toString().trim().split("\n")[0].split(":").pop();
-    base = `http://127.0.0.1:${port}`;
+    grafana = await scope.grafana({ image, provisioningDir: join(mounted, "provisioning"), dashboardsDir: join(mounted, "dashboards") });
+    writeFileSync(join(project, "chant.config.ts"), `export default { lexicons: ["grafana"], grafana: { profiles: { e2e: ${JSON.stringify(profile())} } } };\n`);
 
-    writeFileSync(
-      join(project, "chant.config.ts"),
-      `export default {
-  lexicons: ["grafana"],
-  grafana: { profiles: { e2e: { url: "${base}", basicAuth: { user: { env: "E2E_GRAFANA_USER" }, password: { env: "E2E_GRAFANA_PASSWORD" } } } } },
-};
-`,
-    );
-
-    await waitFor("Grafana to answer", async () => ((await fetch(`${base}/api/health`)).ok ? true : undefined));
-    await waitFor("the dashboard to be provisioned", async () => ((await api("/api/dashboards/uid/api-overview")).status === 200 ? true : undefined));
-    await waitFor("the datasource to be provisioned", async () => ((await api("/api/datasources/uid/prometheus")).status === 200 ? true : undefined));
+    await waitFor("the dashboard to be provisioned", async () => ((await grafana.api("/api/dashboards/uid/api-overview")).status === 200 ? true : undefined));
+    await waitFor("the datasource to be provisioned", async () => ((await grafana.api("/api/datasources/uid/prometheus")).status === 200 ? true : undefined));
   }, 300_000);
 
-  afterAll(() => {
-    try {
-      execSync(`docker rm -f ${CONTAINER}`, { stdio: "ignore" });
-    } catch {
-      // already gone
-    }
-    rmSync(dir, { recursive: true, force: true });
-  });
+  afterAll(() => scope.cleanup());
 
   it("an untouched dashboard: present, chant's, no drift, nothing unclaimed", { timeout: 300_000 }, async () => {
     const { grafana } = (await diff()).lexicons;
@@ -215,12 +155,12 @@ describe.skipIf(!hasDocker).each(IMAGES)(`a dashboard edited in Grafana shows as
   });
 
   it("the same dashboard saved from the editor with a changed query and title: exactly those paths drift", { timeout: 300_000 }, async () => {
-    const { body } = await api("/api/dashboards/uid/api-overview");
+    const { body } = await grafana.api("/api/dashboards/uid/api-overview");
     const dashboard = body.dashboard as { panels: Array<{ title: string; targets?: Array<{ expr?: string }> }> };
     const rate = dashboard.panels.find((p) => p.title === "Request rate")!;
     rate.targets![0].expr = "sum(rate(http_requests_total[1m]))";
     dashboard.panels.find((p) => p.title === "Errors")!.title = "5xx";
-    const saved = await api("/api/dashboards/db", { method: "POST", body: JSON.stringify({ dashboard, overwrite: true, message: "edited in the UI" }) });
+    const saved = await grafana.api("/api/dashboards/db", { method: "POST", body: JSON.stringify({ dashboard, overwrite: true, message: "edited in the UI" }) });
     expect(saved.status).toBe(200);
 
     const { grafana } = (await diff()).lexicons;
@@ -235,7 +175,7 @@ describe.skipIf(!hasDocker).each(IMAGES)(`a dashboard edited in Grafana shows as
   it("live export generates TypeScript that carries the edit and builds", { timeout: 240_000 }, async () => {
     const ir = await exportResources({
       environment: "e2e",
-      config: { grafana: { profiles: { e2e: { url: base, basicAuth: { user: { env: "E2E_GRAFANA_USER" }, password: { env: "E2E_GRAFANA_PASSWORD" } } } } } },
+      config: { grafana: { profiles: { e2e: profile() } } },
       env,
     });
     const files = new GrafanaGenerator().generate(ir);

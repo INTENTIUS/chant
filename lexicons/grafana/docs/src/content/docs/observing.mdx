@@ -79,7 +79,7 @@ Panels, rows, queries and variables are compared as part of their dashboard. Eac
 These are reported as not observed, with the reason, and never as missing:
 
 - a `DashboardProvider`: it is a setting in Grafana's provisioning file, which Grafana serves no API for;
-- a dashboard saved in the v2 schema, which chant does not read yet;
+- a dashboard saved in the v2 schema, which chant does not observe yet (`chant import` reads one);
 - anything, when the token is refused (`no credentials`) or the environment names no Grafana (`no binding`).
 
 ## Whose dashboard it is

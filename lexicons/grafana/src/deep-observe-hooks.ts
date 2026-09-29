@@ -10,13 +10,14 @@
  * values an author wrote out that are also what happens when they are left
  * out.
  *
- * Measured against Grafana 12.4.11 and 13.2.2 (the review behind #2946 and
- * the e2e in ./observe.e2e.test.ts): a stored dashboard differs from the
- * built one by its `id` and `version`, the built-in "Annotations & Alerts"
- * annotation Grafana adds, empty `options` and `fieldConfig` it drops, and,
- * through `/apis`, `null` values it drops. The rest of this table is the
- * build's own choices: panel ids, grid positions, query refIds, a panel's
- * datasource taken from its queries.
+ * Measured against Grafana 12.4.11 and 13.2.2 (the e2e in
+ * ./observe.e2e.test.ts): read over `/api/dashboards/uid`, a stored dashboard
+ * differs from the built one only by the `id` and `version` Grafana adds
+ * (../test/e2e/stored-model.ts). Read over `/apis/dashboard.grafana.app`, its
+ * spec has no `id` or `version`, but it carries the built-in "Annotations &
+ * Alerts" annotation, and empty `options` and `fieldConfig` and every `null`
+ * are gone. The rest of this table is the build's own choices: panel ids,
+ * grid positions, query refIds, a panel's datasource taken from its queries.
  *
  * Every rule is one of four kinds, and they are in this order below:
  *

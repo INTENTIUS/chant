@@ -64,9 +64,12 @@ function storePanel(p: Json): Json {
 }
 
 /**
- * A built dashboard as Grafana stores it and hands it back through `/apis`:
- * the built-in annotation added, empty `options` and `fieldConfig` dropped,
- * `null` values dropped, and the uid moved to the resource's name.
+ * A built dashboard as Grafana hands it back through `/apis` (measured on
+ * 12.4.11 and 13.2.2): the built-in annotation added, empty `options` and
+ * `fieldConfig` dropped, `null` values dropped, and the uid moved to the
+ * resource's name. The legacy route (`/api/dashboards/uid`) serves the
+ * built JSON plus `id` and `version`; the fake serves this model on both,
+ * which is the harder case for the legacy path.
  */
 export function storedDashboard(built: Json): Json {
   const out = dropNulls(built) as Json;

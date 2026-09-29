@@ -17,11 +17,14 @@
  * as classic JSON. Everything downstream (observe, deep observe, export) only
  * ever sees its answer. A dashboard stored as v2 (the layout-and-elements
  * schema Grafana 12 introduced) is reported as not readable, with the reason,
- * rather than read through Grafana's own v2-to-v1 conversion, whose output
- * chant has not been checked against: #2947 adds v2 reading there.
+ * rather than read through Grafana's own v2-to-v1 conversion, which drops
+ * what v1 cannot hold; the importer refuses that read for the same reason
+ * (`lossyV1Read`). The importer reads v2 itself (./../import/v2.ts), and
+ * #2947 wires that in here: read the resource at v2 and convert it.
  */
 
 import { looksLikeV2Dashboard } from "../detect";
+import { lossyV1Read } from "../import/v2";
 import type { GrafanaClient } from "./client";
 
 type Json = Record<string, unknown>;
@@ -167,22 +170,17 @@ export async function listDashboards(client: GrafanaClient): Promise<LiveDashboa
 export function classicDashboardOf(dashboard: LiveDashboard): { json: Json } | { unsupported: string } {
   if (dashboard.via === "legacy") {
     const json = isObject(dashboard.raw.dashboard) ? dashboard.raw.dashboard : {};
-    if (looksLikeV2Dashboard(json)) return { unsupported: "it is a v2 dashboard, which chant does not read yet (#2947)" };
+    if (looksLikeV2Dashboard(json)) return { unsupported: "it is a v2 dashboard, which chant does not observe yet (#2947)" };
     return { json };
   }
-  const status = isObject(dashboard.raw.status) ? dashboard.raw.status : {};
-  const conversion = isObject(status.conversion) ? status.conversion : {};
-  const stored = typeof conversion.storedVersion === "string" ? conversion.storedVersion : undefined;
-  if (stored?.startsWith("v2")) {
-    return { unsupported: `it is stored as a ${stored} dashboard, which chant does not read yet (#2947)` };
-  }
-  if (conversion.failed === true) {
-    const error = typeof conversion.error === "string" ? `: ${conversion.error}` : "";
-    return { unsupported: `Grafana could not convert it to the classic schema${error}` };
-  }
+  // The importer's own test for a v1 read of a v2-stored dashboard (#2947),
+  // so import and observe refuse the same lossy down-conversion.
+  const lossy = lossyV1Read(dashboard.raw);
+  if (lossy?.failed) return { unsupported: `Grafana could not convert it from ${lossy.storedVersion || "the version it is stored at"} to the classic schema` };
+  if (lossy) return { unsupported: `it is stored as a ${lossy.storedVersion} dashboard, which chant does not observe yet (#2947)` };
   const spec = isObject(dashboard.raw.spec) ? dashboard.raw.spec : undefined;
   if (!spec) return { unsupported: "the resource has no spec" };
-  if (looksLikeV2Dashboard(spec)) return { unsupported: "it is a v2 dashboard, which chant does not read yet (#2947)" };
+  if (looksLikeV2Dashboard(spec)) return { unsupported: "it is a v2 dashboard, which chant does not observe yet (#2947)" };
   // The resource's name is the dashboard's uid; the spec does not repeat it.
   return { json: { ...spec, uid: dashboard.uid } };
 }
