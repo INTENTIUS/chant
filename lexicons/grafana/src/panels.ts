@@ -11,8 +11,10 @@
  *
  * `gridPos` is optional. A panel without `x` and `y` is placed by the
  * dashboard: left to right in declaration order, wrapping at Grafana's
- * 24-column width, below the previous row of panels. A panel with both is
- * placed exactly there, and GRAF105 reports overlaps.
+ * 24-column width, below the previous row of panels, and around any cells
+ * already taken. A panel with both is placed exactly there and reserves its
+ * cells first; GRAF105 reports overlaps between explicit panels. A panel
+ * with only `x` or only `y` keeps that column or line.
  */
 
 import { createProperty } from "@intentius/chant/runtime";

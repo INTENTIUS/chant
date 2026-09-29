@@ -277,47 +277,105 @@ export function targetJson(query: QueryEntity, index: number, panelDatasource?: 
   });
 }
 
+/** A bitmask of grid columns [x, x + w), clipped to the grid. */
+function columns(x: number, w: number): number {
+  const from = Math.max(0, x);
+  const to = Math.min(GRID_COLUMNS, x + w);
+  return to > from ? ((1 << (to - from)) - 1) << from : 0;
+}
+
+/**
+ * Places panels on Grafana's grid. It keeps an occupancy grid, so a panel
+ * placed automatically never lands on one placed explicitly (reserved up
+ * front) or on one placed before it.
+ */
 class Layout {
   private x = 0;
-  private y = 0;
+  private y: number;
   private lineH = 0;
-  private bottom = 0;
+  private bottom: number;
+  /** Taken cells: one column bitmask per grid line. */
+  private readonly taken: number[] = [];
+
+  constructor(top = 0) {
+    this.y = top;
+    this.bottom = top;
+  }
+
+  /** Marks the cells of a panel with both `x` and `y` as taken, before anything is placed. */
+  reserve(gp: Partial<GridPos> | undefined, size: { w: number; h: number }): void {
+    if (gp?.x === undefined || gp?.y === undefined) return;
+    this.take(gp.x, gp.y, gp.w ?? size.w, gp.h ?? size.h);
+  }
 
   place(gp: Partial<GridPos> | undefined, size: { w: number; h: number }): GridPos {
     const w = gp?.w ?? size.w;
     const h = gp?.h ?? size.h;
     if (gp?.x !== undefined && gp?.y !== undefined) {
+      this.take(gp.x, gp.y, w, h);
       this.bottom = Math.max(this.bottom, gp.y + h);
       return { h, w, x: gp.x, y: gp.y };
     }
-    if (this.x + w > GRID_COLUMNS && this.x > 0) {
-      this.y += this.lineH;
+    if (gp?.y !== undefined) {
+      // Only `y`: the first free column on that line, else on the first line below with room.
+      for (let y = Math.max(0, gp.y); ; y++) {
+        const x = this.freeColumn(0, y, w, h);
+        if (x === undefined) continue;
+        this.take(x, y, w, h);
+        this.bottom = Math.max(this.bottom, y + h);
+        return { h, w, x, y };
+      }
+    }
+    // Flow: the first free spot on the current line after the previous panel, else the next line.
+    // Only `x`: that column, on the first line where it is free.
+    for (;;) {
+      const x =
+        gp?.x === undefined
+          ? this.freeColumn(this.x, this.y, w, h)
+          : gp.x >= this.x && this.free(gp.x, this.y, w, h)
+            ? gp.x
+            : undefined;
+      if (x !== undefined) {
+        const pos = { h, w, x, y: this.y };
+        this.take(x, this.y, w, h);
+        this.x = x + w;
+        this.lineH = Math.max(this.lineH, h);
+        this.bottom = Math.max(this.bottom, this.y + h);
+        return pos;
+      }
+      this.y += this.lineH || 1;
       this.x = 0;
       this.lineH = 0;
     }
-    const pos = { h, w, x: this.x, y: this.y };
-    this.x += w;
-    this.lineH = Math.max(this.lineH, h);
-    this.bottom = Math.max(this.bottom, this.y + h);
-    return pos;
   }
 
-  /** A full-width row header below everything placed so far. */
-  row(): { pos: GridPos; mark: () => void } {
-    const y = Math.max(this.bottom, this.y + this.lineH);
-    const pos = { h: 1, w: GRID_COLUMNS, x: 0, y };
+  /** A full-width row header on the first free line below everything placed so far. */
+  row(): GridPos {
+    let y = Math.max(this.bottom, this.y + this.lineH);
+    while (!this.free(0, y, GRID_COLUMNS, 1)) y++;
+    this.take(0, y, GRID_COLUMNS, 1);
     this.x = 0;
     this.y = y + 1;
     this.lineH = 0;
     this.bottom = y + 1;
-    // Called after a collapsed row's panels: the next thing starts right under the header.
-    const mark = () => {
-      this.x = 0;
-      this.y = y + 1;
-      this.lineH = 0;
-      this.bottom = y + 1;
-    };
-    return { pos, mark };
+    return { h: 1, w: GRID_COLUMNS, x: 0, y };
+  }
+
+  /** The first column at or after `from` where a w×h panel fits on line `y`. A panel wider than the grid fits only at 0. */
+  private freeColumn(from: number, y: number, w: number, h: number): number | undefined {
+    for (let x = from; x === 0 || x + w <= GRID_COLUMNS; x++) if (this.free(x, y, w, h)) return x;
+    return undefined;
+  }
+
+  private free(x: number, y: number, w: number, h: number): boolean {
+    const mask = columns(x, w);
+    for (let line = Math.max(0, y); line < y + h; line++) if ((this.taken[line] ?? 0) & mask) return false;
+    return true;
+  }
+
+  private take(x: number, y: number, w: number, h: number): void {
+    const mask = columns(x, w);
+    for (let line = Math.max(0, y); line < y + h; line++) this.taken[line] = (this.taken[line] ?? 0) | mask;
   }
 }
 
@@ -385,19 +443,28 @@ function panelJson(panel: PanelEntity, gridPos: GridPos, id: number, inherited?:
 /** A dashboard's `panels` array: rows and panels, laid out, with ids. */
 export function panelsJson(items: Array<PanelEntity | RowEntity>): Array<PanelJson | RowPanelJson> {
   const layout = new Layout();
+  // Panels on the dashboard's grid with both x and y take their cells first; a collapsed row's are laid out on their own.
+  for (const item of items) {
+    const onGrid = isRowEntity(item) ? (item.props.collapsed ? [] : (item.props.panels ?? [])) : [item];
+    for (const p of onGrid.filter(isPanelEntity)) layout.reserve(p.props.gridPos, p.panelDefinition.defaultSize);
+  }
   const ids = new Ids(explicitIds(items));
   const out: Array<PanelJson | RowPanelJson> = [];
   for (const item of items) {
     if (isRowEntity(item)) {
       const r = item.props;
-      const { pos, mark } = layout.row();
+      const pos = layout.row();
       const rowId = ids.take(r.id);
       const rowRef = datasourceRef(r.datasource);
-      const children = (r.panels ?? []).filter(isPanelEntity).map((p) => {
-        const gp = layout.place(p.props.gridPos, p.panelDefinition.defaultSize);
+      const collapsed = r.collapsed ?? false;
+      // A collapsed row's panels sit under its header on a grid of their own; the next item starts right under the header.
+      const rowLayout = collapsed ? new Layout(pos.y + 1) : layout;
+      const panels = (r.panels ?? []).filter(isPanelEntity);
+      if (collapsed) for (const p of panels) rowLayout.reserve(p.props.gridPos, p.panelDefinition.defaultSize);
+      const children = panels.map((p) => {
+        const gp = rowLayout.place(p.props.gridPos, p.panelDefinition.defaultSize);
         return panelJson(p, gp, ids.take(p.props.id), rowRef);
       });
-      const collapsed = r.collapsed ?? false;
       out.push(
         compact({
           type: "row" as const,
@@ -410,8 +477,7 @@ export function panelsJson(items: Array<PanelEntity | RowEntity>): Array<PanelJs
           repeat: repeatName(r.repeat),
         }),
       );
-      if (collapsed) mark();
-      else out.push(...children);
+      if (!collapsed) out.push(...children);
     } else if (isPanelEntity(item)) {
       const gp = layout.place(item.props.gridPos, item.panelDefinition.defaultSize);
       out.push(panelJson(item, gp, ids.take(item.props.id)));
