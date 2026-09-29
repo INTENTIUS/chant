@@ -143,15 +143,15 @@ describe.skipIf(!hasDocker).each(GRAFANA_IMAGES)(`a dashboard edited in Grafana 
   afterAll(() => scope.cleanup());
 
   it("an untouched dashboard: present, chant's, no drift, nothing unclaimed", { timeout: 300_000 }, async () => {
-    const { grafana } = (await diff()).lexicons;
-    expect(grafana.resources.missing).toEqual([]);
-    expect(grafana.observed.apiOverview).toMatchObject({ status: "PRESENT", ownership: "owned" });
-    expect(grafana.observed.prometheus).toMatchObject({ status: "PRESENT" });
+    const report = (await diff()).lexicons.grafana;
+    expect(report.resources.missing).toEqual([]);
+    expect(report.observed.apiOverview).toMatchObject({ status: "PRESENT", ownership: "owned" });
+    expect(report.observed.prometheus).toMatchObject({ status: "PRESENT" });
     // Only the provider is not observed: Grafana serves no API for it.
-    expect(grafana.resources.unobserved.map((u) => `${u.name}:${u.reason}`)).toEqual(["provider:unsupported-kind"]);
-    expect(grafana.deep.drifted).toEqual([]);
-    expect(grafana.deep.unclaimed).toEqual([]);
-    expect(grafana.deep.unchanged).toEqual(expect.arrayContaining(["apiOverview", "prometheus"]));
+    expect(report.resources.unobserved.map((u) => `${u.name}:${u.reason}`)).toEqual(["provider:unsupported-kind"]);
+    expect(report.deep.drifted).toEqual([]);
+    expect(report.deep.unclaimed).toEqual([]);
+    expect(report.deep.unchanged).toEqual(expect.arrayContaining(["apiOverview", "prometheus"]));
   });
 
   it("the same dashboard saved from the editor with a changed query and title: exactly those paths drift", { timeout: 300_000 }, async () => {
@@ -163,13 +163,13 @@ describe.skipIf(!hasDocker).each(GRAFANA_IMAGES)(`a dashboard edited in Grafana 
     const saved = await grafana.api("/api/dashboards/db", { method: "POST", body: JSON.stringify({ dashboard, overwrite: true, message: "edited in the UI" }) });
     expect(saved.status).toBe(200);
 
-    const { grafana } = (await diff()).lexicons;
-    const changes = grafana.deep.drifted.find((d) => d.name === "apiOverview")?.changes ?? [];
+    const report = (await diff()).lexicons.grafana;
+    const changes = report.deep.drifted.find((d) => d.name === "apiOverview")?.changes ?? [];
     expect(changes.map((c) => ({ path: c.path, kind: c.kind, live: c.live })).sort((a, b) => a.path.localeCompare(b.path))).toEqual([
       { path: "panels[0].panels[0].targets[0].expr", kind: "changed", live: "sum(rate(http_requests_total[1m]))" },
       { path: "panels[0].panels[1].title", kind: "changed", live: "5xx" },
     ]);
-    expect(grafana.deep.drifted.map((d) => d.name)).toEqual(["apiOverview"]);
+    expect(report.deep.drifted.map((d) => d.name)).toEqual(["apiOverview"]);
   });
 
   it("live export generates TypeScript that carries the edit and builds", { timeout: 240_000 }, async () => {
