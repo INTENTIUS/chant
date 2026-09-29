@@ -45,3 +45,7 @@ Setting `folder` or `folderUid` on the provider turns `foldersFromFilesStructure
 ## Import by hand
 
 Each `dashboards/*.json` file is also what Dashboards → New → Import accepts, and what `POST /api/dashboards/db` takes as `dashboard`.
+
+## Without mounting files
+
+When the files cannot be mounted into Grafana, `grafanaApply` writes the dashboards, their folders and any library panels over Grafana's HTTP API instead. See [Apply over the API](../applying/). Datasources still come from the provisioning file.
