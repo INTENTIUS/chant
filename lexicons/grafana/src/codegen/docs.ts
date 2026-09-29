@@ -29,8 +29,9 @@ const requests = new TimeSeriesPanel({ title: "Requests per second", datasource:
 export const overview = new Dashboard({ title: "Overview", panels: [requests] });
 \`\`\`
 
-Panels: time series, stat, gauge, table, logs, traces, heatmap and text, plus
-rows. Queries: Prometheus (PromQL), Tempo (TraceQL) and Loki (LogQL). Panel
+Panels: time series, stat, gauge, table, logs, traces, heatmap, text, bar
+chart, bar gauge, pie chart, state timeline, status history, histogram, node
+graph, XY chart, trend, canvas, geomap, flame graph and alert list, plus rows. Queries: Prometheus (PromQL), Tempo (TraceQL) and Loki (LogQL). Panel
 options and query fields are generated from Grafana's own schemas at a pinned
 version, corrected against Grafana's CUE, and track Grafana 12.4 and 13.x. Every
 build validates the dashboards against the same schemas.

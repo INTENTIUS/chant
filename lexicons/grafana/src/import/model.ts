@@ -60,7 +60,7 @@ export interface Declaration {
 
 /** A panel or query class the import declares, for a plugin chant has no class for. */
 export interface CustomClass {
-  /** e.g. `panel-class:piechart`, `query-class:elasticsearch`. */
+  /** e.g. `panel-class:grafana-clock-panel`, `query-class:elasticsearch`. */
   readonly id: string;
   readonly className: string;
   /** `definePanel` or `defineQuery`. */

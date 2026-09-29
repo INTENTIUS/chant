@@ -159,6 +159,19 @@ const PACKAGE_CLASS_NAMES = new Set([
   "TracesPanel",
   "HeatmapPanel",
   "TextPanel",
+  "BarChartPanel",
+  "BarGaugePanel",
+  "PieChartPanel",
+  "StateTimelinePanel",
+  "StatusHistoryPanel",
+  "HistogramPanel",
+  "NodeGraphPanel",
+  "XYChartPanel",
+  "TrendPanel",
+  "CanvasPanel",
+  "GeomapPanel",
+  "FlameGraphPanel",
+  "AlertListPanel",
   "AlertRuleGroup",
   "AlertRule",
   "AlertQuery",
@@ -603,7 +616,8 @@ class DashboardConverter {
       return undefined;
     }
     const type = typeof json.type === "string" ? json.type : "";
-    if (!PLUGIN_ID.test(type) || type === "row") {
+    // A built-in's id is taken as it is: core ids predate the lowercase rule (`nodeGraph`).
+    if (type === "row" || (!builtinPanelFor(type) && !PLUGIN_ID.test(type))) {
       this.report.drop(path, subject, "", `has ${type ? `the type "${type}", which is not a panel plugin id` : "no type"}, so it is left out`);
       return undefined;
     }

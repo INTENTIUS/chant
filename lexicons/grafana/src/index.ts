@@ -143,6 +143,19 @@ export {
   TracesPanel,
   HeatmapPanel,
   TextPanel,
+  BarChartPanel,
+  BarGaugePanel,
+  PieChartPanel,
+  StateTimelinePanel,
+  StatusHistoryPanel,
+  HistogramPanel,
+  NodeGraphPanel,
+  XYChartPanel,
+  TrendPanel,
+  CanvasPanel,
+  GeomapPanel,
+  FlameGraphPanel,
+  AlertListPanel,
   Row,
   definePanel,
   registeredPanels,
@@ -221,6 +234,8 @@ export {
   type ImportOnlySchemaName,
   type VendoredSchemaName,
 } from "./pin";
+// Hand-written options for the built-in panels with no schema
+export type { AlertListOptions, AlertListSortOrder, AlertListStateFilter, FlameGraphOptions } from "./panel-options";
 
 // Plain-data API: render, check and detect without a build
 export {
