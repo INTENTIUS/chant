@@ -26,11 +26,11 @@ const tempo = new Datasource({ name: "Tempo", type: "tempo", url: "http://tempo:
 export { prometheus, tempo };
 ```
 
-The uid defaults to the name as a uid (`prometheus`, `tempo`). Secrets go in `secureJsonData` as `"$__env{NAME}"` or `"$__file{/path}"`, never literally (GRAF002). A declared `Datasource` inside `jsonData` is written as its uid, which is how a Tempo datasource links to Loki or Prometheus.
+The uid defaults to the name as a uid (`prometheus`, `tempo`). Secrets go in `secureJsonData` as `"$__env{NAME}"` or `"$__file{/path}"`, never literally (GRAF002). `jsonData` and the `secureJsonData` keys are typed per plugin for every plugin with a query class. A declared `Datasource` inside `jsonData` is written as its uid, which is how a Tempo datasource links to Loki or Prometheus and a Prometheus exemplar to Tempo; a link field only takes a datasource of a type Grafana offers there.
 
 ## Queries
 
-`PromQuery` (PromQL in `expr`), `TempoQuery` (TraceQL in `query`) and `LokiQuery` (LogQL in `expr`). Fields are typed from Grafana's own query schemas. `datasource` only accepts a datasource of the query's plugin type, so a PromQL query can't be pointed at Tempo.
+`PromQuery` (PromQL in `expr`), `TempoQuery` (TraceQL in `query`), `LokiQuery` (LogQL in `expr`), `ElasticsearchQuery`, `CloudWatchQuery`, `AzureMonitorQuery`, `CloudMonitoringQuery`, `BigQueryQuery`, `PyroscopeQuery`, and `PostgresQuery`, `MySQLQuery` and `MSSQLQuery` (SQL in `rawSql`). Fields are typed from Grafana's own query schemas, or by hand for SQL. `datasource` only accepts a datasource of the query's plugin type, so a PromQL query can't be pointed at Tempo.
 
 ```ts
 const requestRate = new PromQuery({

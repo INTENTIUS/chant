@@ -11,6 +11,7 @@
  *   provenance and license in its README).
  * - Alerting provisioning files (test/fixtures/alerting/).
  * - What this lexicon's examples build.
+ * - Datasource provisioning files (test/fixtures/provisioning/).
  */
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "fs";
 import { dirname, join, resolve } from "path";
@@ -57,6 +58,13 @@ export const KUBE_PROMETHEUS: readonly string[] = readdirSync(join(fixturesDir, 
   .filter((f) => f.endsWith(".json"))
   .sort()
   .map((f) => `kube-prometheus/${f}`);
+
+/**
+ * Datasource provisioning files (test/fixtures/provisioning/, provenance in
+ * its README): one written for chant with every plugin whose settings are
+ * typed, and grafana/docker-otel-lgtm's.
+ */
+export const PROVISIONING: readonly string[] = ["provisioning/typed-plugins.datasources.yaml", "provisioning/docker-otel-lgtm.datasources.yaml"];
 
 /**
  * The alerting provisioning corpus (test/fixtures/alerting/, provenance and

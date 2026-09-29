@@ -5,7 +5,7 @@ diataxis: how-to
 order: 5
 ---
 
-The eight built-in panels and three query classes are defined through `definePanel` and `defineQuery`. A plugin chant doesn't ship uses the same two functions and gets the same layout, serialization and checks.
+The built-in panels and query classes are defined through `definePanel` and `defineQuery`. A plugin chant doesn't ship uses the same two functions and gets the same layout, serialization and checks.
 
 ## A panel plugin
 
@@ -33,21 +33,22 @@ The second type parameter types `fieldConfig.defaults.custom`. `type` is the plu
 ```ts
 import { defineQuery } from "@intentius/chant-lexicon-grafana";
 
-interface ElasticQueryModel {
+interface OpenSearchQueryModel {
   query: string;
+  queryType?: "lucene" | "PPL";
   metrics?: Array<{ type: string; id: string; field?: string }>;
   bucketAggs?: Array<{ type: string; id: string; field?: string }>;
   refId?: string;
 }
 
-export const ElasticQuery = defineQuery<ElasticQueryModel>()({
-  datasourceType: "elasticsearch",
-  className: "ElasticQuery",
+export const OpenSearchQuery = defineQuery<OpenSearchQueryModel>()({
+  datasourceType: "grafana-opensearch-datasource",
+  className: "OpenSearchQuery",
   expressionField: "query",
 });
 ```
 
-`new ElasticQuery({ datasource })` accepts only an `elasticsearch` datasource, and GRAF101 to GRAF103 check its targets like any other.
+`new OpenSearchQuery({ datasource })` accepts only a `grafana-opensearch-datasource` datasource, and GRAF101 to GRAF103 check its targets like any other. A datasource type chant ships a class for (see [Queries and Datasources](../queries-and-datasources/#queries)) cannot be redefined.
 
 ## What is not checked
 

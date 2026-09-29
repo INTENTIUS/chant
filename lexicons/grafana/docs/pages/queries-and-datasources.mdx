@@ -1,6 +1,6 @@
 ---
 title: "Queries and Datasources"
-description: "Datasource, PromQuery, TempoQuery and LokiQuery, and how references are written"
+description: "Datasource and its typed settings, the query classes for twelve datasource plugins, and how references are written"
 diataxis: reference
 order: 3
 ---
@@ -19,10 +19,46 @@ const tempo = new Datasource({ name: "Tempo", type: "tempo", url: "http://tempo:
 | `url`, `basicAuth`, `basicAuthUser`, `user`, `database`, `withCredentials`, `isDefault`, `orgId`, `version` | unset | written as given |
 | `access` | `"proxy"` | |
 | `editable` | `false` | whether the UI may change the provisioned datasource |
-| `jsonData` | unset | plugin settings; a declared `Datasource` anywhere inside is written as its uid |
-| `secureJsonData` | unset | secrets, as `$__env{NAME}` or `$__file{/path}` (GRAF002) |
+| `jsonData` | unset | plugin settings, typed per plugin (below); a declared `Datasource` anywhere inside is written as its uid |
+| `secureJsonData` | unset | secrets, by the keys the plugin reads, as `$__env{NAME}` or `$__file{/path}` (GRAF002) |
 
 Every declared datasource in the build goes to `provisioning/datasources/chant.yaml`.
+
+## Typed settings
+
+`jsonData` and the keys of `secureJsonData` are typed for every plugin that has a query class, from the plugin's source at the version Grafana 13.2.2 bundles (or, for plugins still in Grafana's tree, from Grafana v13.2.2); each type in `src/datasource-settings.ts` cites where it was read. For any other plugin id, `jsonData` is any object and `secureJsonData` any string map.
+
+```ts
+const tempo = new Datasource({ name: "Tempo", type: "tempo", url: "http://tempo:3200" });
+const loki = new Datasource({
+  name: "Loki",
+  type: "loki",
+  jsonData: { derivedFields: [{ name: "TraceID", matcherType: "label", matcherRegex: "trace_id", datasourceUid: tempo }] },
+});
+const prometheus = new Datasource({
+  name: "Prometheus",
+  type: "prometheus",
+  jsonData: { httpMethod: "POST", exemplarTraceIdDestinations: [{ name: "trace_id", datasourceUid: tempo }] },
+  secureJsonData: { basicAuthPassword: "$__env{PROM_PASSWORD}" },
+});
+```
+
+| Plugin id | `jsonData` type | Links to other datasources |
+|---|---|---|
+| `prometheus` | `PrometheusJsonData` | `exemplarTraceIdDestinations[].datasourceUid`: tempo, jaeger, zipkin |
+| `loki` | `LokiJsonData` | `derivedFields[].datasourceUid`: tempo, jaeger, zipkin |
+| `tempo` | `TempoJsonData` | `tracesToLogsV2`: loki, elasticsearch and the external logs plugins; `tracesToMetrics`: prometheus; `tracesToProfiles`: grafana-pyroscope-datasource; `serviceMap`: prometheus |
+| `elasticsearch` | `ElasticsearchJsonData` | `dataLinks[].datasourceUid`: tempo, jaeger, zipkin |
+| `cloudwatch` | `CloudWatchJsonData` | `tracingDatasourceUid`: grafana-x-ray-datasource |
+| `grafana-azure-monitor-datasource` | `AzureMonitorJsonData` | |
+| `stackdriver` | `CloudMonitoringJsonData` | |
+| `grafana-bigquery-datasource` | `BigQueryJsonData` | |
+| `grafana-pyroscope-datasource` | `PyroscopeJsonData` | |
+| `grafana-postgresql-datasource`, `postgres` | `PostgresJsonData` | |
+| `mysql` | `MySQLJsonData` | |
+| `mssql` | `MSSQLJsonData` | |
+
+Every plugin also takes `alertmanagerUid` (an `alertmanager` datasource) and the other `DataSourceJsonData` keys, and the HTTP-based ones the HTTP client settings (`timeout`, TLS, SigV4, `httpHeaderName1`…, `oauthPassThru`, `keepCookies`, the secure socks proxy) in `HttpJsonData`. Every key is optional, since Grafana fills in its defaults. A link field takes a declared or external datasource of the plugin types listed, which is the set Grafana's picker offers there, and is written as its uid; a uid string is accepted too, for a datasource of any other type. A key the plugin does not read, or a link to a datasource of the wrong type, is a type error. Nothing checks `jsonData` after the build: GRAF107 covers dashboards only.
 
 ## ExternalDatasource
 
@@ -51,8 +87,19 @@ GRAF101 and GRAF102 count it as declared. A plain `{ type: "prometheus", uid: "m
 | `PromQuery` | `prometheus` | `expr` (PromQL) | `prometheus` `Dataquery` |
 | `TempoQuery` | `tempo` | `query` (TraceQL) | `tempo` `Dataquery`; `filters` defaults to `[]` and `queryType` to `"traceql"` |
 | `LokiQuery` | `loki` | `expr` (LogQL) | `loki` `Dataquery` |
+| `ElasticsearchQuery` | `elasticsearch` | `query` (Lucene), with `metrics` and `bucketAggs` | `elasticsearch` `Dataquery` |
+| `CloudWatchQuery` | `cloudwatch` | `expression` (metric math or Logs Insights), by `queryMode` | `cloudwatch` `MetricsQuery`, `LogsQuery` and `AnnotationQuery`, merged; `id` and `region` optional |
+| `AzureMonitorQuery` | `grafana-azure-monitor-datasource` | in `azureMonitor`, `azureLogAnalytics` (KQL), `azureResourceGraph` or `azureTraces`, by `queryType` | `azuremonitor` `MonitorQuery` |
+| `CloudMonitoringQuery` | `stackdriver` | in `timeSeriesList`, `timeSeriesQuery` (MQL), `sloQuery` or `promQLQuery`, by `queryType` | `googlecloudmonitoring` `CloudMonitoringQuery` |
+| `BigQueryQuery` | `grafana-bigquery-datasource` | `rawSql` (GoogleSQL) | `bigquery` `Dataquery`; `format` and `rawSql` optional |
+| `PyroscopeQuery` | `grafana-pyroscope-datasource` | `labelSelector` | `grafanapyroscope` `Dataquery`; `labelSelector` and `groupBy` optional |
+| `PostgresQuery` | `grafana-postgresql-datasource`, and its old id `postgres` | `rawSql` | by hand, `SqlQueryModel` (`@grafana/sql` at v13.2.2) |
+| `MySQLQuery` | `mysql` | `rawSql` | by hand, `SqlQueryModel` |
+| `MSSQLQuery` | `mssql` | `rawSql` (T-SQL) | by hand, `SqlQueryModel` |
 
-The fields are the plugin's query model at the pinned schema version, less `datasource`, which takes a `Datasource`, a `DatasourceVariable` or a `{ type, uid }` ref of the query's own plugin type. The expression is a string. After a build, GRAF108 parses the PromQL of every query that reaches a Prometheus datasource, with template variables substituted first; TraceQL and LogQL are not parsed.
+The fields are the plugin's query model at the pinned schema version, less `datasource`, which takes a `Datasource`, a `DatasourceVariable` or a `{ type, uid }` ref of the query's own plugin type. A field the schema requires but Grafana fills in when it is missing is optional; the class's doc comment cites where Grafana does it. The SQL plugins have no schema upstream, so their shared model is typed by hand in `src/query-models.ts` and GRAF107 checks only the panel around them. The OpenSearch plugin has neither a schema nor a copy in Grafana 13.2.2, so it keeps `defineQuery` (see [Other Panel and Datasource Plugins](../custom-plugins/)).
+
+The expression is a string. After a build, GRAF108 parses the PromQL of every query that reaches a Prometheus datasource, with template variables substituted first. It goes by the datasource a query resolves to, not by field name: a Cloud Monitoring `promQLQuery.expr`, a Loki `expr` and SQL are not parsed.
 
 Each query becomes one of the panel's `targets`, carrying its datasource ref and `refId`.
 

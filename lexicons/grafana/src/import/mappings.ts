@@ -8,7 +8,12 @@
  *   in `panels.ts` is used by the importer with no change here. Any other
  *   type is declared in the imported source with `definePanel`.
  * - Query types (#2951): the same, through `registeredQueries()`, keyed by
- *   datasource plugin type; any other type gets a `defineQuery`.
+ *   datasource plugin type or one of its `aliases` (`postgres`); any other
+ *   type gets a `defineQuery`.
+ * - Datasource links in a provisioning file (#2951): `JSONDATA_LINKS` in
+ *   `../datasource-settings.ts` lists the `jsonData` fields that hold another
+ *   datasource's uid and the plugin types each takes; the parser turns such a
+ *   uid into a reference. Add an entry with the `LinkedDatasource` field.
  * - Variable types (#2952): `VARIABLE_MAPPINGS` has one entry per type the
  *   lexicon has a class for. A type with no entry (`system`, `snapshot`,
  *   which Grafana does not save) is reported and left out.
@@ -97,7 +102,7 @@ export function builtinPanelFor(type: string): PanelDefinition | undefined {
 
 /** The class a query to a datasource of this plugin type is declared with, when chant ships one. */
 export function builtinQueryFor(datasourceType: string): QueryDefinition | undefined {
-  return registeredQueries().find((d) => d.builtin && d.datasourceType === datasourceType);
+  return registeredQueries().find((d) => d.builtin && (d.datasourceType === datasourceType || d.aliases?.includes(datasourceType)));
 }
 
 /**

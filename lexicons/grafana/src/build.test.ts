@@ -422,16 +422,16 @@ describe("variables", () => {
 describe("extension points", () => {
   test("definePanel and defineQuery produce classes that render and lay out like built-ins", () => {
     const ClockPanel = definePanel<{ mode?: "time" | "countdown" }>()({ type: "grafana-clock-panel", className: "ClockPanel", defaultSize: { w: 8, h: 8 } });
-    const ElasticQuery = defineQuery<{ query: string; refId?: string }>()({ datasourceType: "elasticsearch", className: "ElasticQuery" });
-    const es = new Datasource({ name: "Logs ES", type: "elasticsearch" });
+    const OpenSearchQuery = defineQuery<{ query: string; refId?: string }>()({ datasourceType: "grafana-opensearch-datasource", className: "OpenSearchQuery" });
+    const os = new Datasource({ name: "Logs OS", type: "grafana-opensearch-datasource" });
     const json = renderDashboard(
-      new Dashboard({ title: "Custom", panels: [new ClockPanel({ options: { mode: "countdown" }, datasource: es, targets: [new ElasticQuery({ query: "*" })] })] }),
+      new Dashboard({ title: "Custom", panels: [new ClockPanel({ options: { mode: "countdown" }, datasource: os, targets: [new OpenSearchQuery({ query: "*" })] })] }),
     );
     expect(json.panels![0]).toMatchObject({
       type: "grafana-clock-panel",
       gridPos: { w: 8, h: 8, x: 0, y: 0 },
       options: { mode: "countdown" },
-      datasource: { type: "elasticsearch", uid: "logs-es" },
+      datasource: { type: "grafana-opensearch-datasource", uid: "logs-os" },
       targets: [{ refId: "A", query: "*" }],
     });
     expect(validateDashboardSchema(json as unknown as Record<string, unknown>)).toEqual([]);

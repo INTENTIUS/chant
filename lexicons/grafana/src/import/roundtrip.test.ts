@@ -34,7 +34,19 @@ import { GrafanaParser, type DashboardResourceMetadata } from "./parser";
 import { GrafanaGenerator } from "./generator";
 import { applyEdits } from "./edits";
 import { normalizeDashboard } from "./normalize";
-import { COMMUNITY, KUBE_PROMETHEUS, LOSSY_V1_EXPORT, UI_EXPORTS, V2_EXPORTS, exampleOutputs, projectDir, read, removeDir, writeFiles } from "./testdata/fixtures";
+import {
+  COMMUNITY,
+  KUBE_PROMETHEUS,
+  LOSSY_V1_EXPORT,
+  PROVISIONING,
+  UI_EXPORTS,
+  V2_EXPORTS,
+  exampleOutputs,
+  projectDir,
+  read,
+  removeDir,
+  writeFiles,
+} from "./testdata/fixtures";
 
 type Json = Record<string, unknown>;
 
@@ -181,6 +193,24 @@ describe("dashboard JSON -> TypeScript -> dashboard JSON", () => {
         expect((out.rebuilt!.annotations as { list: Json[] }).list.map((a) => a.name)).toEqual(["Deploys"]);
         expect(out.source).toContain("repeat: env,");
         expect(out.source).toContain("collapsed: true,");
+      } else if (file.includes("queries")) {
+        // Every datasource with a query class is imported through it, typed; none needs a defineQuery.
+        for (const cls of [
+          "ElasticsearchQuery",
+          "CloudWatchQuery",
+          "AzureMonitorQuery",
+          "CloudMonitoringQuery",
+          "BigQueryQuery",
+          "PyroscopeQuery",
+          "PostgresQuery",
+          "MySQLQuery",
+          "MSSQLQuery",
+          "PromQuery",
+          "LokiQuery",
+        ]) {
+          expect(out.source).toContain(`new ${cls}(`);
+        }
+        expect(out.source).not.toContain("defineQuery");
       } else if (file.includes("slo")) {
         expect(out.warnings).toContainEqual(expect.stringMatching(/is a library panel \("Burn rate", uid chant-fx-burn\)/));
       }
@@ -192,7 +222,7 @@ describe("dashboard JSON -> TypeScript -> dashboard JSON", () => {
         expect(out.warnings).toContain("dashboard: __elements is not carried (the library panels exported with it; library panels are not carried yet)");
       }
       if (file.includes(".external.")) {
-        expect(out.warnings).toContainEqual(expect.stringMatching(/^__inputs: DS_PROMETHEUS \(prometheus\)/));
+        expect(out.warnings).toContainEqual(expect.stringMatching(/^__inputs: (.*, )?DS_PROMETHEUS \(prometheus\)/));
         expect(out.source).toContain("const dsPrometheus = new DatasourceVariable({");
       }
     });
@@ -364,6 +394,46 @@ describe("provisioning files", () => {
     expect(out.source).toContain("const tempo = new Datasource({");
     expect(load(out.files[DATASOURCES_FILE])).toEqual(load(yaml));
     expect(out.lint.errorCount + out.lint.warningCount, out.lint.output).toBe(0);
+  });
+
+  for (const file of PROVISIONING) {
+    test(`${file}: typed Datasources, links as references, the same datasources back`, async () => {
+      const yaml = read(file);
+      const out = await importAndBuild(yaml);
+      expect(out.warnings).toEqual([]);
+      expect(out.buildErrors).toEqual([]);
+      // What the build adds: its defaults for access and editable, and a uid made from the name.
+      type Entry = Record<string, unknown> & { name: string };
+      const withDefaults = (d: Entry) => ({ access: "proxy", editable: false, ...d });
+      const sorted = (list: Entry[]) => [...list].sort((a, b) => a.name.localeCompare(b.name));
+      const source = sorted((load(yaml) as { datasources: Entry[] }).datasources.map(withDefaults));
+      expect(sorted((load(out.files[DATASOURCES_FILE]) as { datasources: Entry[] }).datasources)).toEqual(source);
+      // Settings consts are typed for their plugin, and a uid naming an earlier datasource of the file is a reference.
+      expect(out.source).toContain('PropsOf<typeof Datasource<"tempo">>["jsonData"]');
+      expect(out.source).toMatch(/serviceMap: \{ datasourceUid: (mimir|prometheus) \}/);
+      expect(out.lint.errorCount + out.lint.warningCount, out.lint.output).toBe(0);
+    });
+  }
+
+  test("a link that would close a cycle stays a uid, and one to a plugin type the field does not take is not linked", () => {
+    const ir = new GrafanaParser().parse(
+      [
+        "apiVersion: 1",
+        "datasources:",
+        "  - { name: Tempo, type: tempo, uid: tempo, jsonData: { tracesToLogsV2: { datasourceUid: loki }, serviceMap: { datasourceUid: splunk } } }",
+        "  - { name: Loki, type: loki, uid: loki, jsonData: { derivedFields: [{ name: t, matcherRegex: x, datasourceUid: tempo }] } }",
+        "  - { name: Splunk, type: grafana-splunk-datasource, uid: splunk }",
+      ].join("\n"),
+    );
+    const source = new GrafanaGenerator()
+      .generate(ir)
+      .map((f) => f.content)
+      .join("\n");
+    // Neither Tempo nor Loki can come first with both links; Tempo, first in the file, keeps its link as a uid.
+    expect(source).toContain('tracesToLogsV2: { datasourceUid: "loki" }');
+    expect(source).toContain("datasourceUid: tempo");
+    // The service map takes a Prometheus, so a Splunk uid stays a string.
+    expect(source).toContain('serviceMap: { datasourceUid: "splunk" }');
   });
 
   test("a dashboard provisioning file becomes DashboardProviders", async () => {

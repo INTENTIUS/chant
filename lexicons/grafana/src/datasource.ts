@@ -10,9 +10,14 @@
 import { createResource } from "@intentius/chant/runtime";
 import type { Declarable } from "@intentius/chant/declarable";
 import { slugUid } from "./util";
+import type { DatasourceJsonData, DatasourceSecureJsonData, TypedDatasourceType } from "./datasource-settings";
 
-/** Datasource plugin types this lexicon types queries for. Any other plugin id is accepted as a string. */
-export type KnownDatasourceType = "prometheus" | "tempo" | "loki";
+/**
+ * Datasource plugin types this lexicon types queries and settings for
+ * (`postgres` is the PostgreSQL plugin's old id). Any other plugin id is
+ * accepted as a string.
+ */
+export type KnownDatasourceType = TypedDatasourceType;
 
 /** How Grafana reaches the datasource: through its backend (`proxy`) or from the browser (`direct`). */
 export type DatasourceAccess = "proxy" | "direct";
@@ -20,7 +25,7 @@ export type DatasourceAccess = "proxy" | "direct";
 export interface DatasourceProps<T extends string = string> {
   /** Display name, unique within the Grafana organisation. */
   name: string;
-  /** The datasource plugin id, e.g. `prometheus`, `tempo`, `loki`. */
+  /** The datasource plugin id, e.g. `prometheus`, `tempo`, `loki`, `grafana-postgresql-datasource`. */
   type: T;
   /** Stable id panels refer to. Defaults to the name as a uid (`Prometheus` becomes `prometheus`). */
   uid?: string;
@@ -33,17 +38,20 @@ export interface DatasourceProps<T extends string = string> {
   database?: string;
   withCredentials?: boolean;
   /**
-   * Plugin settings. A declared `Datasource` anywhere in here is written as
-   * its uid, so `tracesToLogsV2: { datasourceUid: loki }` links Tempo to a
-   * declared Loki.
+   * Plugin settings, typed for the plugins in `DatasourceJsonDataTypes`
+   * (`./datasource-settings.ts`) and any object for others. A declared
+   * `Datasource` anywhere in here is written as its uid, so
+   * `tracesToLogsV2: { datasourceUid: loki }` links Tempo to a declared Loki;
+   * a typed field that names a datasource accepts only the plugin types
+   * Grafana offers there.
    */
-  jsonData?: Record<string, unknown>;
+  jsonData?: DatasourceJsonData<T>;
   /**
-   * Secrets. Write them as Grafana provisioning expands them
-   * (`$__env{NAME}`, `$__file{/path}`, `${NAME}`), not as literals: GRAF002
-   * flags a literal.
+   * Secrets, by the keys the plugin reads. Write them as Grafana provisioning
+   * expands them (`$__env{NAME}`, `$__file{/path}`, `${NAME}`), not as
+   * literals: GRAF002 flags a literal.
    */
-  secureJsonData?: Record<string, string>;
+  secureJsonData?: DatasourceSecureJsonData<T>;
   /** Whether users may edit the provisioned datasource in the UI. Defaults to false. */
   editable?: boolean;
   orgId?: number;

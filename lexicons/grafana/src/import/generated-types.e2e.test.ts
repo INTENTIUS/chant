@@ -18,7 +18,7 @@ import { join } from "path";
 import * as ts from "typescript";
 import { GrafanaParser } from "./parser";
 import { GrafanaGenerator } from "./generator";
-import { ALERTING, COMMUNITY, KUBE_PROMETHEUS, UI_EXPORTS, V2_EXPORTS, exampleOutputs, pkgDir, read, removeDir, repoRoot, writeFiles } from "./testdata/fixtures";
+import { ALERTING, COMMUNITY, KUBE_PROMETHEUS, PROVISIONING, UI_EXPORTS, V2_EXPORTS, exampleOutputs, pkgDir, read, removeDir, repoRoot, writeFiles } from "./testdata/fixtures";
 
 type Files = Array<{ path: string; content: string }>;
 
@@ -68,12 +68,24 @@ function byProperty(errors: string[]): Record<string, number> {
 
 describe("the generated source type-checks against the lexicon's types", () => {
   test("Grafana's UI exports, the v2 dashboards and the examples' dashboards type-check clean", async () => {
-    const projects: Record<string, Files> = Object.fromEntries([...UI_EXPORTS, ...V2_EXPORTS].map((f) => [f, generate(read(f))]));
+    const projects: Record<string, Files> = Object.fromEntries(
+      [...UI_EXPORTS, ...V2_EXPORTS, "provisioning/typed-plugins.datasources.yaml"].map((f) => [f, generate(read(f))]),
+    );
     for (const [name, text] of await exampleOutputs()) {
       if (/^[^/]+\/dashboards\/.*\.json$/.test(name)) projects[name] = generate(text);
     }
     expect(typeErrors(projects)).toEqual([]);
   }, 180_000);
+
+  test("real-world provisioning files: settings the pinned plugins no longer read are where tsc points", () => {
+    const found: Record<string, Record<string, number>> = {};
+    for (const file of PROVISIONING) found[file] = byProperty(typeErrors({ [file]: generate(read(file)) }));
+    expect(found).toEqual({
+      "provisioning/typed-plugins.datasources.yaml": {},
+      // Tempo's lokiSearch, which tempo 13.1.5 (bundled with Grafana 13.2.2) no longer reads.
+      "provisioning/docker-otel-lgtm.datasources.yaml": { lokiSearch: 1 },
+    });
+  }, 120_000);
 
   test("alerting provisioning files, and what the alerting example builds, type-check clean", async () => {
     const projects: Record<string, Files> = Object.fromEntries(ALERTING.map((f) => [f, generate(read(f))]));
@@ -90,7 +102,7 @@ describe("the generated source type-checks against the lexicon's types", () => {
     expect(found).toEqual({
       "community/node-exporter-full.json": { step: 273, metric: 1 },
       "community/k8s-views-global.json": {},
-      "community/k8s-views-pods.json": { footer: 3 },
+      "community/k8s-views-pods.json": { wrapText: 2 },
       "community/traefik.json": {},
       "community/redis.json": { metric: 11, step: 6, time_options: 1, unitScale: 13 },
       "community/prometheus-2-stats.json": { metric: 3, now: 1, step: 18 },

@@ -21,7 +21,7 @@ export { prometheus, rate, requests, overview };
 |---|---|
 | dashboards | `Dashboard`, `Row`, `DashboardProvider` |
 | panels | `TimeSeriesPanel`, `StatPanel`, `GaugePanel`, `TablePanel`, `LogsPanel`, `TracesPanel`, `HeatmapPanel`, `TextPanel`, `BarChartPanel`, `BarGaugePanel`, `PieChartPanel`, `StateTimelinePanel`, `StatusHistoryPanel`, `HistogramPanel`, `NodeGraphPanel`, `XYChartPanel`, `TrendPanel`, `CanvasPanel`, `GeomapPanel`, `FlameGraphPanel`, `AlertListPanel` |
-| queries | `PromQuery` (PromQL), `TempoQuery` (TraceQL), `LokiQuery` (LogQL) |
+| queries | `PromQuery` (PromQL), `TempoQuery` (TraceQL), `LokiQuery` (LogQL), `ElasticsearchQuery`, `CloudWatchQuery`, `AzureMonitorQuery`, `CloudMonitoringQuery`, `BigQueryQuery`, `PyroscopeQuery`, `PostgresQuery`, `MySQLQuery`, `MSSQLQuery` |
 | variables | `QueryVariable`, `CustomVariable`, `IntervalVariable`, `DatasourceVariable`, `ConstantVariable`, `TextboxVariable`, `AdhocVariable`, `GroupByVariable`, `SwitchVariable` |
 | datasources | `Datasource`, generic in its plugin type |
 | alerting | `AlertRuleGroup`, `AlertRule`, `AlertQuery`, the expressions `ReduceExpression`, `MathExpression`, `ThresholdExpression`, `ResampleExpression`, `ClassicConditionsExpression`, `SqlExpression`, and `ContactPoint`, `NotificationPolicy`, `MuteTiming`, `NotificationTemplate`, written to `provisioning/alerting/chant.yaml` |

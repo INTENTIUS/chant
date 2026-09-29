@@ -88,6 +88,10 @@ export interface TableFieldOptions {
    * Hides any header for a column, useful for columns that show some static content or buttons.
    */
   hideHeader?: boolean;
+  /**
+   * options for the footer for this field
+   */
+  footer?: TableFieldFooterOptions;
 }
 
 /**
@@ -354,4 +358,14 @@ export interface TableMarkdownCellOptions {
  */
 export interface TableGeoCellOptions {
   type: TableCellDisplayMode;
+}
+
+/**
+ * The footer of one field (TableFooterOptions in the CUE; renamed here because the vendored schema already has a panel-level TableFooterOptions)
+ */
+export interface TableFieldFooterOptions {
+  /**
+   * footer reducers to apply to this field
+   */
+  reducers?: string[];
 }
