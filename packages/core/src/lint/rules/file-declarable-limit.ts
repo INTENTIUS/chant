@@ -1,5 +1,6 @@
 import * as ts from "typescript";
 import type { LintRule, LintContext, LintDiagnostic } from "../rule";
+import { isPropertyKindNew } from "./property-kind";
 
 const DECLARABLE_LIMIT = 8;
 
@@ -57,15 +58,21 @@ function isDeclarableConstructor(node: ts.NewExpression): boolean {
   return false;
 }
 
+/**
+ * Collect the declarable `new` expressions this rule counts. Property-kind
+ * declarables (chant #2957) are left out: a dashboard with twenty panels,
+ * queries and variables is one resource, not twenty-one.
+ */
 function collectDeclarableNewExpressions(
   node: ts.Node,
+  context: LintContext,
   results: ts.NewExpression[],
 ): void {
-  if (ts.isNewExpression(node) && isDeclarableConstructor(node)) {
+  if (ts.isNewExpression(node) && isDeclarableConstructor(node) && !isPropertyKindNew(node, context)) {
     results.push(node);
   }
   ts.forEachChild(node, (child) =>
-    collectDeclarableNewExpressions(child, results),
+    collectDeclarableNewExpressions(child, context, results),
   );
 }
 
@@ -73,11 +80,11 @@ export const fileDeclarableLimitRule: LintRule = {
   id: "COR009",
   severity: "warning",
   category: "style",
-  description: "Limits the number of Declarable instances per file to encourage splitting by concern",
+  description: "Limits the number of resource Declarable instances per file to encourage splitting by concern; property-kind declarables are not counted",
   check(context: LintContext, options?: Record<string, unknown>): LintDiagnostic[] {
     const limit = (typeof options?.max === "number" ? options.max : null) ?? DECLARABLE_LIMIT;
     const instances: ts.NewExpression[] = [];
-    collectDeclarableNewExpressions(context.sourceFile, instances);
+    collectDeclarableNewExpressions(context.sourceFile, context, instances);
 
     if (instances.length > limit) {
       return [

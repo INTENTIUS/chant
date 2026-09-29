@@ -75,6 +75,12 @@ export const grafanaPlugin: LexiconPlugin = {
     return rules;
   },
 
+  // Panels, rows, queries and variables live inside a dashboard, so core
+  // lint does not count them as resources (chant #2957).
+  propertyClassNames() {
+    return BUILTIN_CATALOG.filter((e) => e.entityKind === "property").map((e) => e.className);
+  },
+
   postSynthChecks() {
     return postSynthChecks;
   },

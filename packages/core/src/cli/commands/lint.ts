@@ -141,7 +141,13 @@ function lexiconResolutionDiagnostic(projectRoot: string, error: Error): LintDia
  */
 async function loadAllPluginRules(
   projectPath: string,
-): Promise<{ rules: Map<string, LintRule>; intrinsics: IntrinsicDef[]; plugins: LexiconPlugin[]; lexiconError?: Error }> {
+): Promise<{
+  rules: Map<string, LintRule>;
+  intrinsics: IntrinsicDef[];
+  propertyClasses: Set<string>;
+  plugins: LexiconPlugin[];
+  lexiconError?: Error;
+}> {
   const rules = new Map<string, LintRule>();
 
   // Load core COR/EVL rules directly
@@ -198,6 +204,12 @@ async function loadAllPluginRules(
   // hence the guard.
   const intrinsics = plugins.flatMap((plugin) => plugin.intrinsics?.() ?? []);
 
+  // chant #2957 — the class names these plugins declare property-kind, so
+  // COR001, COR004 and COR009 leave out declarables that live inside a
+  // resource (a Grafana panel inside its dashboard) instead of treating
+  // them as resources.
+  const propertyClasses = new Set(plugins.flatMap((plugin) => plugin.propertyClassNames?.() ?? []));
+
   for (const plugin of plugins) {
     if (plugin.lintRules) {
       for (const r of plugin.lintRules()) {
@@ -219,7 +231,7 @@ async function loadAllPluginRules(
     rules.set(r.id, r);
   }
 
-  return { rules, intrinsics, plugins, ...(lexiconError ? { lexiconError } : {}) };
+  return { rules, intrinsics, propertyClasses, plugins, ...(lexiconError ? { lexiconError } : {}) };
 }
 
 /**
@@ -667,6 +679,7 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
   // flagging it. Computed once here regardless of which branch below runs,
   // same as `allRules`.
   const intrinsics = loaded.intrinsics;
+  const propertyClasses = loaded.propertyClasses;
 
   // Merge in any config-level plugin rules (custom .ts rule files)
   if (config.plugins && config.plugins.length > 0) {
@@ -681,7 +694,7 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
   let diagnostics: LintDiagnostic[];
   let suppressed: Array<LintDiagnostic & { reason?: string }> = [];
   if (options.rules) {
-    const result = await runLint(files, options.rules, undefined, intrinsics, projectConfig);
+    const result = await runLint(files, options.rules, undefined, intrinsics, projectConfig, propertyClasses);
     diagnostics = result.diagnostics;
     suppressed = result.suppressed;
   } else if (hasOverrides) {
@@ -689,13 +702,13 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
     for (const file of files) {
       const relativePath = relative(projectRoot, file);
       const { rules: fileRules, ruleOptions } = getDefaultRules(projectRoot, relativePath, allRules);
-      const result = await runLint([file], fileRules, ruleOptions, intrinsics, projectConfig);
+      const result = await runLint([file], fileRules, ruleOptions, intrinsics, projectConfig, propertyClasses);
       diagnostics.push(...result.diagnostics);
       suppressed.push(...result.suppressed);
     }
   } else {
     const { rules, ruleOptions } = getDefaultRules(projectRoot, undefined, allRules);
-    const result = await runLint(files, rules, ruleOptions, intrinsics, projectConfig);
+    const result = await runLint(files, rules, ruleOptions, intrinsics, projectConfig, propertyClasses);
     diagnostics = result.diagnostics;
     suppressed = result.suppressed;
   }
@@ -736,7 +749,7 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
 
     // Re-lint after fixes to get updated diagnostics
     if (options.rules) {
-      const postResult = await runLint(files, options.rules, undefined, intrinsics, projectConfig);
+      const postResult = await runLint(files, options.rules, undefined, intrinsics, projectConfig, propertyClasses);
       diagnostics = postResult.diagnostics;
       suppressed = postResult.suppressed;
     } else if (hasOverrides) {
@@ -745,13 +758,13 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
       for (const file of files) {
         const relativePath = relative(projectRoot, file);
         const { rules: fileRules, ruleOptions } = getDefaultRules(projectRoot, relativePath, allRules);
-        const postResult = await runLint([file], fileRules, ruleOptions, intrinsics, projectConfig);
+        const postResult = await runLint([file], fileRules, ruleOptions, intrinsics, projectConfig, propertyClasses);
         diagnostics.push(...postResult.diagnostics);
         suppressed.push(...postResult.suppressed);
       }
     } else {
       const { rules, ruleOptions } = getDefaultRules(projectRoot, undefined, allRules);
-      const postResult = await runLint(files, rules, ruleOptions, intrinsics, projectConfig);
+      const postResult = await runLint(files, rules, ruleOptions, intrinsics, projectConfig, propertyClasses);
       diagnostics = postResult.diagnostics;
       suppressed = postResult.suppressed;
     }
