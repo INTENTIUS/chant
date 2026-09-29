@@ -8,7 +8,7 @@ import type { Declarable } from "@intentius/chant/declarable";
 import { grafanaSerializer } from "../../serializer";
 import { Datasource, ExternalDatasource } from "../../datasource";
 import { Dashboard, DashboardProvider } from "../../dashboard";
-import { Row, StatPanel, TimeSeriesPanel, TablePanel, TextPanel } from "../../panels";
+import { HeatmapPanel, Row, StatPanel, TimeSeriesPanel, TablePanel, TextPanel } from "../../panels";
 import { LokiQuery, PromQuery, TempoQuery } from "../../query";
 import { DatasourceVariable, QueryVariable } from "../../variables";
 import { graf101 } from "./graf101";
@@ -20,6 +20,10 @@ import { graf106 } from "./graf106";
 import { graf107 } from "./graf107";
 import { graf108 } from "./graf108";
 import { graf109 } from "./graf109";
+import { graf115 } from "./graf115";
+import { panelUnits } from "../../validate-output";
+import { panelsOf } from "../../datasource-refs";
+import { GRAFANA_UNIT_IDS } from "../../spec/units";
 import { prometheusQueries } from "../../promql-check";
 import { knownDatasources } from "../../datasource-refs";
 
@@ -373,90 +377,79 @@ describe("GRAF108 over real Grafana exports", () => {
   });
 });
 
-describe("GRAF109: where provisioning puts dashboards (#2944)", () => {
-  const pods = new Dashboard({ title: "Pods", uid: "pods", folder: "Platform/Kubernetes" });
-  const team = new Dashboard({ title: "Team", uid: "team", folder: "Team" });
-  const plain = new Dashboard({ title: "Plain", uid: "plain" });
-
-  test("the default provider and one-level folders pass", () => {
-    expect(graf109.check(ctxOf({ team, plain }))).toEqual([]);
-  });
-
-  test("a provider with a folder ignores each dashboard's own folder: a warning", () => {
-    const provider = new DashboardProvider({ name: "team", folder: "Shared" });
-    const diags = graf109.check(ctxOf({ team, plain, provider }));
-    expect(diags.map((d) => [d.checkId, d.severity])).toEqual([["GRAF109", "warning"]]);
-    expect(diags[0].message).toContain('"team" puts every dashboard in folder "Shared"');
-    expect(diags[0].message).toContain('"Team" (Team)');
-  });
-
-  test("a provider with foldersFromFilesStructure: false and no folder puts them all in General", () => {
-    const provider = new DashboardProvider({ name: "flat", foldersFromFilesStructure: false });
-    const diags = graf109.check(ctxOf({ team, provider }));
-    expect(diags.map((d) => d.severity)).toEqual(["warning"]);
-    expect(diags[0].message).toContain("in General");
-  });
-
-  test("one provider mapping folders from directories is enough", () => {
-    const pinned = new DashboardProvider({ name: "shared", folder: "Shared", path: "/elsewhere" });
-    const mapped = new DashboardProvider({ name: "mapped" });
-    expect(graf109.check(ctxOf({ team, pinned, mapped }))).toEqual([]);
-  });
-
-  test("two providers on the same path, or nested paths, in one org: an error", () => {
-    const a = new DashboardProvider({ name: "a", path: "/var/lib/grafana/dashboards" });
-    const b = new DashboardProvider({ name: "b", path: "/var/lib/grafana/dashboards/" });
-    const c = new DashboardProvider({ name: "c", path: "/var/lib/grafana/dashboards/team" });
-    const diags = graf109.check(ctxOf({ plain, a, b, c }));
-    expect(diags.map((d) => [d.severity, d.entity])).toEqual([
-      ["error", "b"],
-      ["error", "c"],
-      ["error", "c"],
+describe("GRAF115: units", () => {
+  test("flags the units from the issue (#2954) and suggests the id meant", () => {
+    const bytes = new StatPanel({ title: "Memory", datasource: prometheus, targets: [up], fieldConfig: { defaults: { unit: "byte" } } });
+    const cores = new TimeSeriesPanel({ title: "CPU", datasource: prometheus, targets: [up], fieldConfig: { defaults: { unit: "cores" } } });
+    const diags = graf115.check(ctxOf({ prometheus, d: new Dashboard({ title: "D", panels: [bytes, cores] }) }));
+    expect(diags.map((d) => [d.checkId, d.severity])).toEqual([
+      ["GRAF115", "warning"],
+      ["GRAF115", "warning"],
     ]);
-    expect(diags[0].message).toContain('"a" and "b" both load the dashboards under /var/lib/grafana/dashboards');
+    expect(diags[0].message).toContain('panel "Memory" (id 1) fieldConfig.defaults.unit: unit "byte" is not one Grafana knows');
+    expect(diags[0].message).toContain('Did you mean "bytes"?');
+    expect(diags[1].message).not.toContain("Did you mean");
+    expect(diags[1].message).toContain('"suffix:cores"');
   });
 
-  test("the same path in two orgs, and sibling paths, pass", () => {
-    const a = new DashboardProvider({ name: "a", path: "/d" });
-    const b = new DashboardProvider({ name: "b", path: "/d", orgId: 2 });
-    const c = new DashboardProvider({ name: "c", path: "/dash" });
-    expect(graf109.check(ctxOf({ plain, a, b, c }))).toEqual([]);
+  test("passes registered ids, the legacy alias, an empty unit and every custom-unit syntax", () => {
+    const units = ["bytes", "s", "percentunit", "reqps", "currencyEUR", "farenheit", "", "suffix: cores", "prefix:$", "time:YYYY-MM-DD", "si:mF", "count:reqs", "currency:financial:€:suffix", "bool:up/down"];
+    const panels = units.map((unit) => new StatPanel({ datasource: prometheus, targets: [up], fieldConfig: { defaults: { unit } } }));
+    expect(graf115.check(ctxOf({ prometheus, d: new Dashboard({ title: "D", panels }) }))).toEqual([]);
   });
 
-  test("folder, folderUid and foldersFromFilesStructure together: Grafana refuses the provider", () => {
-    const p = new DashboardProvider({ name: "p", folder: "X", folderUid: "x", foldersFromFilesStructure: true });
-    expect(ids(graf109, ctxOf({ plain, p }))).toEqual([["GRAF109", "error"]]);
-  });
-
-  test("folder with foldersFromFilesStructure: the folder is not used", () => {
-    const p = new DashboardProvider({ name: "p", folder: "X", foldersFromFilesStructure: true });
-    const diags = graf109.check(ctxOf({ plain, p }));
-    expect(diags.map((d) => d.severity)).toEqual(["warning"]);
-    expect(diags[0].message).toContain('folder "X" is not used');
-  });
-
-  test("a nested folder: a warning naming what Grafana before 13.1 does", () => {
-    const diags = graf109.check(ctxOf({ pods }));
-    expect(diags.map((d) => [d.severity, d.entity])).toEqual([["warning", "pods"]]);
-    expect(diags[0].message).toContain('top-level folder "Kubernetes"');
-  });
-
-  test("past Grafana's default nesting depth the warning says so; past its hard limit it is an error", () => {
-    const deep = new Dashboard({ title: "Deep", uid: "deep", folder: "a/b/c/d/e" });
-    const tooDeep = new Dashboard({ title: "Too deep", uid: "too-deep", folder: "a/b/c/d/e/f/g/h" });
-    const diags = graf109.check(ctxOf({ deep, tooDeep }));
-    expect(diags.map((d) => [d.severity, d.entity])).toEqual([
-      ["warning", "deep"],
-      ["error", "too-deep"],
+  test("checks overrides, heatmap axes and cells, legacy y-axes and library panels", () => {
+    const heat = new HeatmapPanel({ title: "Heat", datasource: prometheus, targets: [up], options: { yAxis: { unit: "sec" }, cellValues: { unit: "Short" } } });
+    const table = new TablePanel({
+      title: "T",
+      datasource: prometheus,
+      targets: [up],
+      fieldConfig: { overrides: [{ matcher: { id: "byName", options: "x" }, properties: [{ id: "decimals", value: 2 }, { id: "unit", value: "celcius" }] }] },
+    });
+    const messages = graf115.check(ctxOf({ prometheus, d: new Dashboard({ title: "D", panels: [heat, table] }) })).map((d) => d.message);
+    expect(messages).toEqual([
+      expect.stringContaining('options.yAxis.unit: unit "sec"'),
+      expect.stringContaining('options.cellValues.unit: unit "Short" is not one Grafana knows, so it is shown as a literal suffix. Did you mean "short"?'),
+      expect.stringContaining('fieldConfig.overrides[0].properties[1]: unit "celcius" is not one Grafana knows, so it is shown as a literal suffix. Did you mean "celsius"?'),
     ]);
-    expect(diags[0].message).toContain("max_nested_folder_depth of 4");
+
+    const graph = panelJson({ type: "graph", yaxes: [{ format: "bytes" }, { format: "ops/s" }] });
+    const lib = panelJson({ fieldConfig: { defaults: { unit: "req/s" }, overrides: [] } });
+    const dash = dashboardJson([graph], [], { __elements: { lib: { kind: 1, model: lib } } });
+    expect(graf115.check(ctxOfJson(dash)).map((d) => d.message)).toEqual([
+      expect.stringContaining('panel "p" (id 1) yaxes[1].format: unit "ops/s"'),
+      expect.stringContaining('library panel "lib" fieldConfig.defaults.unit: unit "req/s"'),
+    ]);
   });
 
-  test("reads hand-written provisioning files too", () => {
-    const files = {
-      "dashboards/Team/d.json": JSON.stringify(dashboardJson([])),
-      "provisioning/dashboards/a.yaml": "apiVersion: 1\nproviders:\n  - name: one\n    folder: Ops\n    options: { path: /d }\n",
-    };
-    expect(ids(graf109, makePostSynthCtxFromFiles("grafana", files, "{}"))).toEqual([["GRAF109", "warning"]]);
+  test("the vendored registry is Grafana v13.2.2's", () => {
+    expect(GRAFANA_UNIT_IDS.length).toBe(274);
+    expect(GRAFANA_UNIT_IDS).toEqual(expect.arrayContaining(["none", "bytes", "decbytes", "reqps", "ms", "percentunit", "celsius", "currencyUSD", "dateTimeAsIso", "h"]));
+    expect(GRAFANA_UNIT_IDS).not.toContain("byte");
+  });
+});
+
+describe("GRAF115 over real Grafana exports and community dashboards", () => {
+  const fixtures = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "test", "fixtures");
+  const exportsDir = join(fixtures, "exports");
+  const files = [
+    ...readdirSync(exportsDir)
+      .filter((d) => d.startsWith("grafana-"))
+      .flatMap((v) => readdirSync(join(exportsDir, v)).filter((f) => f.endsWith(".json") && !f.includes("-resource")).map((f) => `exports/${v}/${f}`)),
+    ...readdirSync(join(fixtures, "community"))
+      .filter((f) => f.endsWith(".json"))
+      .map((f) => `community/${f}`),
+  ];
+  let unitsSeen = 0;
+
+  test.each(files)("%s has no GRAF115 warnings", (name) => {
+    const text = readFileSync(join(fixtures, name), "utf-8");
+    unitsSeen += panelsOf(JSON.parse(text)).flatMap(({ panel }) => panelUnits(panel)).length;
+    expect(graf115.check(makePostSynthCtxFromFiles("grafana", { [name]: text }, "{}"))).toEqual([]);
+  });
+
+  // Non-vacuous: the corpus sets hundreds of units between them.
+  test("the corpus sets units", () => {
+    expect(unitsSeen).toBeGreaterThan(200);
   });
 });

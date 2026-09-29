@@ -232,7 +232,7 @@ describe("Grafana", () => {
     expect(mounted.sort()).toEqual(Object.keys(built.grafanaFiles).sort());
   });
 
-  test("the dashboards pass the grafana lexicon's output checks (GRAF101-GRAF109)", () => {
+  test("the dashboards pass the grafana lexicon's output checks (GRAF1xx)", () => {
     const dashboards = Object.entries(built.grafanaFiles)
       .filter(([path]) => path.endsWith(".json"))
       .map(([source, text]) => ({ source, json: JSON.parse(text) as Record<string, unknown> }));

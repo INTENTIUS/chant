@@ -2,7 +2,7 @@
  * The grafana lexicon's chant audit catalog, contributed via
  * `grafanaPlugin.auditCatalog()` (#687, #1346).
  *
- * GRAF101-GRAF109 read the emitted dashboard JSON and provisioning files, so
+ * GRAF101-GRAF109 and GRAF115 read the emitted dashboard JSON and provisioning files, so
  * they fire on an audit of files chant didn't build too, and are
  * `yamlBased`. GRAF001 and GRAF002 read TypeScript source, so they are
  * constructed with `yamlBased: false`; they are listed for a reader who
@@ -98,6 +98,14 @@ export const grafanaAuditCatalog: Record<string, RuleMeta> = {
     "guidance",
     "Dashboard provisioning puts a dashboard somewhere other than its declared folder, or loads it twice",
     "Give each dashboard provider its own path; set foldersFromFilesStructure: true (and no folder) on the provider when dashboards declare a folder; for a nested folder, run Grafana 13.1 or later or use a single-level folder.",
+    { category: "correctness" },
+  ),
+  GRAF115: auditRule(
+    "GRAF115",
+    "merge-worthy",
+    "guidance",
+    "Panel unit Grafana doesn't know",
+    'Use a unit id from Grafana\'s unit picker ("bytes", "s", "percent", "reqps"), or a custom unit such as "suffix: cores", "prefix:$", "si:mF", "count:reqs" or "currency:EUR". Grafana shows an unknown unit as a literal suffix.',
     { category: "correctness" },
   ),
 };

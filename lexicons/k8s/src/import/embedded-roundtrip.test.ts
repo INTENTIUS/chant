@@ -98,7 +98,7 @@ function embeddedDirs(files: Record<string, string>): string[] {
 }
 
 describe("manifest -> TypeScript -> manifest, with embedded content imported by its owner", () => {
-  test("a collector's ConfigMap becomes typed otel declarations, and the DaemonSet still mounts it", async () => {
+  test("a collector's ConfigMap becomes typed otel declarations, and the DaemonSet comes back whole", async () => {
     const out = await roundTrip("otel-collector-daemonset.yaml");
     expect(out.buildErrors).toEqual([]);
     expect(out.result.warnings).toEqual([]);
@@ -115,18 +115,14 @@ describe("manifest -> TypeScript -> manifest, with embedded content imported by 
     const after = find(out.output, "ConfigMap", name).data as Json;
     expect(collectorConfig(after.relay as string)).toEqual(collectorConfig(before.relay as string));
 
-    // The DaemonSet still mounts the ConfigMap by its name. Only the volume is
-    // compared: the chart's whitespace-only lines trip core's YAML reader, which
-    // loses the pod template's structure on import, a k8s import bug of its own
-    // (#2991).
-    const configMapVolumes = (value: unknown): string[] => {
-      if (Array.isArray(value)) return value.flatMap(configMapVolumes);
-      if (typeof value !== "object" || value === null) return [];
-      const v = value as Json;
-      const own = typeof (v.configMap as Json | undefined)?.name === "string" ? [(v.configMap as Json).name as string] : [];
-      return [...own, ...Object.values(v).flatMap(configMapVolumes)];
-    };
-    expect(configMapVolumes(find(out.output, "DaemonSet", name))).toEqual([name]);
+    // The whole DaemonSet comes back, pod template included. The chart renders
+    // `spec:` followed by a whitespace-only line, which core's YAML reader
+    // used to read as the end of the template's spec, moving its keys up to
+    // the DaemonSet's spec (#2991).
+    const daemonSet = find(out.output, "DaemonSet", name);
+    expect(daemonSet).toEqual(find(out.input, "DaemonSet", name));
+    const template = (daemonSet.spec as Json).template as Json;
+    expect((template.spec as Json).serviceAccountName).toBe("example-opentelemetry-collector");
   });
 
   test("a PrometheusRule's spec.groups become prometheus RuleGroups", async () => {
