@@ -9,6 +9,7 @@ import { otelSerializer, spanMetricsNames } from "@intentius/chant-lexicon-otel"
 import { prometheusSerializer, sloMetrics } from "@intentius/chant-lexicon-prometheus";
 import { spans, genai } from "./dashboards-from-declarations/src/components";
 import { checkout } from "./dashboards-from-declarations/src/slo";
+import { checkout as checkoutSlo } from "./alerting/src/slo";
 
 describeAllExamples(
   {
@@ -34,8 +35,42 @@ describeAllExamples(
     },
     // Built with the otel and prometheus serializers too, below.
     "dashboards-from-declarations": { skipBuild: true },
+    alerting: { skipBuild: true },
   },
 );
+
+describe("the alerting example", () => {
+  const srcDir = join(import.meta.dirname, "alerting", "src");
+
+  test("builds the SLO's Prometheus rules and Grafana's alerting file from one build root, all clean", async () => {
+    const result = await build(srcDir, [prometheusSerializer, grafanaSerializer]);
+    expect(result.errors).toHaveLength(0);
+    const grafana = result.outputs.get("grafana") as SerializerResult;
+    const index = JSON.parse(grafana.primary) as GrafanaIndex;
+    expect(index.files).toEqual(["provisioning/alerting/chant.yaml", "provisioning/datasources/chant.yaml"]);
+    expect(index.alerting).toEqual({
+      ruleGroups: [
+        { name: "checkout", folder: "Checkout", rules: 2 },
+        { name: "slo-checkout", folder: "SLOs", rules: 4 },
+      ],
+      contactPoints: ["oncall", "tickets"],
+      policies: 1,
+      muteTimings: ["weekends"],
+      templates: ["checkout.email"],
+    });
+    const alerting = load(grafana.files!["provisioning/alerting/chant.yaml"]) as Record<string, unknown>;
+    const { datasources } = load(grafana.files!["provisioning/datasources/chant.yaml"]) as { datasources: ProvisionedDatasource[] };
+    expect(validateGrafanaOutput({ dashboards: [], datasources, alerting: [{ json: alerting }] })).toEqual([]);
+
+    // The Grafana rules read the series the Slo's Prometheus rules record.
+    const rules = (result.outputs.get("prometheus") as SerializerResult | string);
+    const prom = typeof rules === "string" ? rules : rules.primary;
+    for (const b of sloMetrics(checkoutSlo).burnRates) {
+      expect(prom).toContain(`record: ${b.longRecord}`);
+      expect(grafana.files!["provisioning/alerting/chant.yaml"]).toContain(`${b.longRecord}{slo="checkout"}`);
+    }
+  });
+});
 
 describe("the dashboards-from-declarations example", () => {
   const srcDir = join(import.meta.dirname, "dashboards-from-declarations", "src");

@@ -8,12 +8,12 @@ diataxis: reference
     Edit lexicons/grafana/docs/pages/lint-rules.mdx instead; changes here are overwritten. */}
 
 
-The grafana lexicon's rules use the `GRAF` prefix. `GRAF0xx` rules read your TypeScript source during `chant lint`. `GRAF1xx` checks run after a build over the emitted dashboard JSON and provisioning files, and over any other output file shaped like a Grafana dashboard.
+The grafana lexicon's rules use the `GRAF` prefix. `GRAF0xx` rules read your TypeScript source during `chant lint`. `GRAF1xx` checks run after a build over the emitted dashboard JSON and provisioning files (alerting included), and over any other output file shaped like a Grafana dashboard or alerting provisioning file.
 
 | Id | Severity | Catches |
 |---|---|---|
 | GRAF001 | error | a literal dashboard or datasource `uid` Grafana rejects, or a variable `name` `$name` can't reference |
-| GRAF002 | error | a literal secret in a datasource's `secureJsonData` |
+| GRAF002 | error | a literal secret in a datasource's `secureJsonData` or in a contact point setting Grafana stores encrypted |
 | GRAF101 | error / warning | a panel, query or query variable using a datasource no `Datasource` or `ExternalDatasource` in the build declares, or a datasource variable whose plugin type none has (error); queries with no datasource at all, or a build that declares no datasource, so references cannot be checked (warning) |
 | GRAF102 | error | a query sent to a datasource of another plugin type |
 | GRAF103 | error | a `$variable` in a query, title, datasource or repeat that the dashboard doesn't declare |
@@ -21,7 +21,11 @@ The grafana lexicon's rules use the `GRAF` prefix. `GRAF0xx` rules read your Typ
 | GRAF105 | error / warning | a panel outside the 24-column grid (error), two panels overlapping (warning) |
 | GRAF106 | error | a dashboard or datasource uid Grafana rejects, or a dashboard with no title |
 | GRAF107 | error / warning | a value the pinned Grafana schema doesn't allow (error), a key it doesn't know (warning) |
-| GRAF108 | error | a panel query or query variable sent to a Prometheus datasource that is not valid PromQL |
+| GRAF108 | error | a panel query, query variable or alert rule query sent to a Prometheus datasource that is not valid PromQL |
+| GRAF111 | error | an alert rule whose condition, expression inputs or `record.from` name no refId of the rule, with duplicate refIds, or with an expression model the pinned schema rejects |
+| GRAF112 | error / warning | an alert rule query to a datasource the build does not declare, or whose model is for another plugin (error); a build that declares no datasource, so rule queries cannot be checked (warning) |
+| GRAF113 | error / warning | a policy route or rule sending to a contact point, or naming a mute timing, the build does not declare, or a policy matcher that does not parse (error); a build that declares none, so they cannot be checked (warning) |
+| GRAF114 | error | an alerting uid, title, group interval, duration or state Grafana rejects, or a rule uid, group, contact point, receiver uid, policy tree, mute timing or template declared twice |
 | GRAF115 | warning | a panel unit that is neither a Grafana unit id nor a custom unit |
 
 ## GRAF001
@@ -31,6 +35,8 @@ A uid is 1-40 letters, digits, `-` and `_`. A variable name is letters, digits a
 ## GRAF002
 
 Write secrets as `$__env{NAME}`, `$__file{/path}` or `${NAME}`. Grafana expands them when it reads the provisioning file, so the value is in neither the repository nor the build output. A `secureJsonData` object written as a named `const` in the same file is followed.
+
+A `ContactPoint`'s receivers are checked the same way, at the settings Grafana stores encrypted for that integration type (`CONTACT_POINT_SECRET_SETTINGS`, from Grafana 13.2.2's `/api/alert-notifiers`): a Slack `url` or `token`, a PagerDuty `integrationKey`, a webhook's `password`, `authorization_credentials`, `hmacConfig.secret` and TLS keys, and so on. Receivers, their settings and nested settings written as named consts are followed.
 
 ## GRAF101
 
@@ -71,6 +77,24 @@ Every panel query and query variable whose datasource resolves to a `prometheus`
 Grafana replaces template variables before Prometheus sees the query, so the check does too. `$var`, `${var}`, `${var:format}`, `[[var]]` and the `$__` macros become a duration inside `[...]` or after `offset` (`[$__rate_interval]`, `[$window]`), a number for `$__range_s`, `$__interval_ms`, `$__from` and `$__to`, and a name anywhere else (`$metric{...}`, `by ($label)`). Inside a quoted string they are left alone. A query variable's `label_values(selector, label)`, `label_names(selector)` and `query_result(expr)` are checked on the selector or expression; `metrics(regex)` and bare `label_values(label)` hold no PromQL.
 
 It is a syntax check: `sum(x{cluster="$cluster"}` (a missing bracket) and `[5 m]` fail, `rate` over an instant vector parses. The message gives the offset in the query as written.
+
+Alert rule queries are parsed too: a query whose `datasourceUid` is a declared `prometheus` datasource, or whose model says `datasource.type: prometheus`, has its `expr` checked the same way.
+
+## GRAF111
+
+Within one alert rule, the `condition`, each expression's inputs (the `expression` of a reduce, threshold or resample, every `$A` or `${A}` in a math expression, each classic condition's `query.params[0]`) and a recording rule's `record.from` must name a refId of that rule, and no two queries may share a refId. An alert rule needs a condition; a recording rule needs `record.metric`. Each server-side expression model is validated against the pinned `expr` schema, as written, so a missing `reducer` or an evaluator type Grafana doesn't know is reported at its field. Grafana refuses such a rule, and one refused rule stops it provisioning every alerting file.
+
+## GRAF112
+
+Each alert rule query's `datasourceUid` must be a datasource the build declares, provisioned (`Datasource`) or external (`ExternalDatasource`), and a model that states its datasource type must match the declared type. A recording rule's `targetDatasourceUid` must be a declared Prometheus datasource. Like GRAF101 it only sees the build root's datasources; with none declared it warns once, naming the uids it could not check.
+
+## GRAF113
+
+The notification policy tree's receivers (the root's and every route's), each rule's `notification_settings.receiver`, and every `mute_time_intervals` and `active_time_intervals` entry must name a `ContactPoint` or `MuteTiming` the build declares. `grafana-default-email` exists in every Grafana and is always accepted. Object matchers must be `[label, op, value]` with op `=`, `!=`, `=~` or `!~` and a regex that compiles; `matchers` strings must parse as Alertmanager matchers. With no contact point or mute timing declared at all, it warns once that it cannot check, since they may exist in Grafana already.
+
+## GRAF114
+
+What Grafana's file provisioner refuses: a rule or contact point receiver uid outside 1-40 letters, digits, `-` and `_`; a rule with no title or one over 190 characters; a group with no name or folder, or an interval that is not a positive multiple of 10s (Grafana's evaluation tick); a `for` or `keepFiringFor` that is not a duration; a `noDataState` or `execErrState` Grafana doesn't know. And what it keeps only one of, per organisation: rule uids, group names within a folder, contact point names, receiver uids, mute timing and template names, and policy trees.
 
 ## GRAF115
 
