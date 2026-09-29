@@ -21,11 +21,16 @@
  *   for sharing externally" (`__inputs`, `__requires`, `__elements`);
  * - the same wrapped in a `dashboard.grafana.app` v0/v1 resource (`spec`),
  *   or in the `{ dashboard, meta }` of `GET /api/dashboards/uid/<uid>`;
+ * - a v2 dashboard (`dashboard.grafana.app/v2` or `v2beta1`, or a bare v2
+ *   spec), read into classic JSON by ./v2.ts, with a warning for each thing
+ *   v2 says that the classic model cannot (#2947);
  * - a datasource or dashboard provisioning file.
  *
- * A v2 dashboard, or one saved before Grafana 5.0 (panels inside a
- * top-level `rows` list), is recognised and reported, and nothing is
- * imported from it.
+ * A v0/v1 resource that Grafana stores as v2 (`status.conversion` says so)
+ * is refused unless the caller opts in (`acceptLossyV1`): it is a lossy
+ * down-conversion that looks like any other v1 dashboard. A dashboard saved
+ * before Grafana 5.0 (panels inside a top-level `rows` list) is recognised
+ * and reported, and nothing is imported from it.
  *
  * Deliberate changes, each with a warning:
  *
@@ -53,6 +58,7 @@ import {
 } from "../detect";
 import { slugUid } from "../util";
 import { pointer, type ImportEdit } from "./edits";
+import { lossyV1Read, readV2Dashboard } from "./v2";
 import {
   COMMON_VARIABLE_KEYS,
   DASHBOARD_FIELDS,
@@ -99,6 +105,19 @@ export interface DashboardResourceMetadata {
   source: Json;
   /** What the importer did to it: apply these to `source` to get what the rebuilt dashboard should equal. */
   edits: ImportEdit[];
+  /** For a v2 dashboard, the v2 JSON as given; `source` is then its classic form (see ./v2.ts). */
+  v2?: Json;
+}
+
+/** Options for reading dashboard JSON. */
+export interface GrafanaImportOptions {
+  /**
+   * Import a `dashboard.grafana.app` v0/v1 resource even when Grafana stores
+   * the dashboard as v2. That read has already lost what v1 cannot hold (tabs,
+   * auto grids, conditional rendering); prefer importing the v2 read. Off by
+   * default: such a resource is refused, with a warning saying why.
+   */
+  acceptLossyV1?: boolean;
 }
 
 /** The panel plugin id format `definePanel` accepts. */
@@ -1059,21 +1078,45 @@ function resource(logicalId: string, type: string, plan: Plan, metadata?: Json):
   return { logicalId, type, properties: properties as unknown as Json, ...(metadata ? { metadata } : {}) };
 }
 
+/** One dashboard's IR: its plan, and the source and edits the round trip checks it against. */
+function dashboardIR(dashboard: Json, extra: { warnings?: string[]; v2?: Json } = {}): TemplateIR {
+  const { plan, edits, warnings } = planDashboard(dashboard);
+  const metadata: DashboardResourceMetadata = { source: dashboard, edits, ...(extra.v2 ? { v2: extra.v2 } : {}) };
+  const title = typeof dashboard.title === "string" ? dashboard.title : "dashboard";
+  return {
+    resources: [resource(logicalIdFor(title), DASHBOARD_RESOURCE_TYPE, plan, metadata as unknown as Json)],
+    parameters: [],
+    warnings: [...(extra.warnings ?? []), ...warnings],
+  };
+}
+
 /** Parse dashboard JSON or a provisioning file into IR. */
-export function parseGrafana(content: string): TemplateIR {
+export function parseGrafana(content: string, options: GrafanaImportOptions = {}): TemplateIR {
   const data = content.trim() === "" ? undefined : parseDocument(content);
   if (!isObject(data)) {
     throw new Error("expected Grafana dashboard JSON or a provisioning file, as a JSON or YAML object");
   }
 
   if (looksLikeV2Dashboard(data)) {
+    const { dashboard, warnings } = readV2Dashboard(data);
     const version = looksLikeDashboardResource(data) ? ` (${data.apiVersion})` : "";
+    const note =
+      `This is a v2 dashboard${version}. chant builds classic (v1) dashboard JSON, so it is read into the classic model the way Grafana reads it at v1` +
+      (warnings.length > 0 ? "; what v2 holds that the classic model cannot is listed below." : ", and nothing v2-only is lost.");
+    return dashboardIR(dashboard, { warnings: [note, ...warnings], v2: data });
+  }
+
+  const lossy = lossyV1Read(data);
+  if (lossy && !options.acceptLossyV1) {
+    const why = lossy.failed
+      ? `Grafana could not convert it from ${lossy.storedVersion || "the version it is stored at"} (status.conversion.failed)`
+      : `Grafana stores this dashboard as ${lossy.storedVersion} and converted it down to serve it at ${lossy.apiVersion}, dropping whatever v2 has and v1 does not (tabs, auto grids, conditional rendering), with nothing in the spec to show it`;
     return {
       resources: [],
       parameters: [],
       warnings: [
-        `This is a v2 dashboard${version}. chant imports classic (v1) dashboard JSON; reading v2 is not supported yet (#2947). ` +
-          "In Grafana, export it with Export > Export as JSON and the Classic model, and import that. Nothing was imported.",
+        `Not imported: ${why}. Read the dashboard at dashboard.grafana.app/v2 (or export it from the UI with the V2 Resource model) and import that; ` +
+          "chant reads v2 and names everything it cannot carry. To import this down-converted copy anyway, parse it with acceptLossyV1.",
       ],
     };
   }
@@ -1092,14 +1135,17 @@ export function parseGrafana(content: string): TemplateIR {
   }
 
   if (looksLikeDashboard(dashboard)) {
-    const { plan, edits, warnings } = planDashboard(dashboard);
-    const metadata: DashboardResourceMetadata = { source: dashboard, edits };
-    const title = typeof dashboard.title === "string" ? dashboard.title : "dashboard";
-    return {
-      resources: [resource(logicalIdFor(title), DASHBOARD_RESOURCE_TYPE, plan, metadata as unknown as Json)],
-      parameters: [],
-      warnings,
-    };
+    if (lossy) {
+      return dashboardIR(dashboard, {
+        warnings: [
+          lossy.failed
+            ? `Grafana could not convert this dashboard from ${lossy.storedVersion || "the version it is stored at"} to ${lossy.apiVersion} (status.conversion.failed), so this copy may be incomplete. Imported anyway (acceptLossyV1).`
+            : `Grafana stores this dashboard as ${lossy.storedVersion}, and this ${lossy.apiVersion} copy is a lossy down-conversion of it: ` +
+              "whatever v2 has and v1 does not (tabs, auto grids, conditional rendering) is already gone. Imported anyway (acceptLossyV1).",
+        ],
+      });
+    }
+    return dashboardIR(dashboard);
   }
 
   if (looksLikeDatasourceProvisioning(data)) {
@@ -1117,7 +1163,9 @@ export function parseGrafana(content: string): TemplateIR {
 
 /** The Grafana dashboard parser `chant import` runs. */
 export class GrafanaParser implements TemplateParser {
+  constructor(private readonly options: GrafanaImportOptions = {}) {}
+
   parse(content: string): TemplateIR {
-    return parseGrafana(content);
+    return parseGrafana(content, this.options);
   }
 }

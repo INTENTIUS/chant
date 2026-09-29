@@ -423,7 +423,7 @@ describe("GRAF108 over real Grafana exports", () => {
   const exportsDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "test", "fixtures", "exports");
   const files = readdirSync(exportsDir)
     .filter((d) => d.startsWith("grafana-"))
-    .flatMap((v) => readdirSync(join(exportsDir, v)).filter((f) => f.endsWith(".json") && !f.includes("v2-resource")).map((f) => `${v}/${f}`));
+    .flatMap((v) => readdirSync(join(exportsDir, v)).filter((f) => f.endsWith(".json") && !f.includes("-resource")).map((f) => `${v}/${f}`));
 
   test.each(files)("%s has no GRAF108 errors", (name) => {
     const text = readFileSync(join(exportsDir, name), "utf-8");

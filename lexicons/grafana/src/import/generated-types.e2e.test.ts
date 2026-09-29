@@ -17,7 +17,7 @@ import { join } from "path";
 import * as ts from "typescript";
 import { GrafanaParser } from "./parser";
 import { GrafanaGenerator } from "./generator";
-import { COMMUNITY, UI_EXPORTS, exampleOutputs, pkgDir, read, removeDir, repoRoot, writeFiles } from "./testdata/fixtures";
+import { COMMUNITY, UI_EXPORTS, V2_EXPORTS, exampleOutputs, pkgDir, read, removeDir, repoRoot, writeFiles } from "./testdata/fixtures";
 
 type Files = Array<{ path: string; content: string }>;
 
@@ -66,8 +66,8 @@ function byProperty(errors: string[]): Record<string, number> {
 }
 
 describe("the generated source type-checks against the lexicon's types", () => {
-  test("Grafana's UI exports and the examples' dashboards type-check clean", async () => {
-    const projects: Record<string, Files> = Object.fromEntries(UI_EXPORTS.map((f) => [f, generate(read(f))]));
+  test("Grafana's UI exports, the v2 dashboards and the examples' dashboards type-check clean", async () => {
+    const projects: Record<string, Files> = Object.fromEntries([...UI_EXPORTS, ...V2_EXPORTS].map((f) => [f, generate(read(f))]));
     for (const [name, text] of await exampleOutputs()) {
       if (/^[^/]+\/dashboards\/.*\.json$/.test(name)) projects[name] = generate(text);
     }
