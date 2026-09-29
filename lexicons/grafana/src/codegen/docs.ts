@@ -13,7 +13,8 @@ function serviceFromType(resourceType: string): string {
 }
 
 const overview = `The grafana lexicon types what a [Grafana](https://grafana.com/docs/grafana/latest/) dashboard
-shows: datasources, dashboards, rows, panels, queries and variables. \`chant build\`
+shows: datasources, dashboards, rows, panels, queries and variables, and
+Grafana-managed alerting. \`chant build\`
 writes one JSON file per dashboard, the JSON Grafana imports as it is, plus the
 provisioning files Grafana reads for dashboards and datasources. Grafana server
 settings, users and plugins are out of scope.
@@ -45,6 +46,13 @@ a build to a running Grafana over its HTTP API, with folders and library
 panels, and prunes the project's own dashboards and folders (see
 [Apply over the API](./applying/)).
 
+Grafana-managed alerting is typed too: rule groups with their queries and
+server-side expressions (reduce, math, threshold, resample, classic
+conditions, SQL), contact points, the notification policy tree, mute timings
+and templates, written to Grafana's alerting provisioning file.
+\`SloAlertRules\` turns a prometheus \`Slo\` into burn-rate alert rules. See
+[Alerting](./alerting/).
+
 Three composites build whole dashboards from declarations in other lexicons:
 \`RedDashboard\` from an otel \`spanmetrics\` connector, \`SloDashboard\` from a
 prometheus \`Slo\` and \`AgentDashboard\` from the otel GenAI preset. Metric names
@@ -57,7 +65,10 @@ wrong type (GRAF102), a \`$variable\` the dashboard doesn't declare (GRAF103),
 duplicate uids and ids (GRAF104), panels off the grid or overlapping (GRAF105),
 anything Grafana's dashboard schema rejects (GRAF107), PromQL sent to a
 Prometheus that doesn't parse (GRAF108), and a unit Grafana doesn't know
-(GRAF115).
+(GRAF115). For alerting, they catch rules whose condition or expressions name
+no query (GRAF111), queries to undeclared datasources (GRAF112), routes to
+undeclared contact points or mute timings (GRAF113), and uids, intervals and
+duplicates Grafana refuses (GRAF114).
 `;
 
 const outputFormat = `The grafana lexicon writes Grafana's own files, keyed by path under the
@@ -68,9 +79,12 @@ directory of the \`-o\` output:
 - \`provisioning/datasources/chant.yaml\`: every declared datasource.
 - \`provisioning/dashboards/chant.yaml\`: a file provider for the dashboards
   directory; a default one unless a \`DashboardProvider\` is declared.
+- \`provisioning/alerting/chant.yaml\`: rule groups, contact points, the
+  notification policy tree, mute timings and templates, when the build
+  declares any.
 
 The primary output (the \`-o\` file itself) is a JSON index of the dashboards,
-datasources and files that were built.
+datasources, alerting and files that were built.
 
 - Dashboard JSON carries the pinned schema's \`schemaVersion\`, no numeric \`id\`,
   and every field Grafana's schema requires (link defaults, an empty

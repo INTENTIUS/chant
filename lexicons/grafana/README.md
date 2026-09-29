@@ -24,12 +24,13 @@ export { prometheus, rate, requests, overview };
 | queries | `PromQuery` (PromQL), `TempoQuery` (TraceQL), `LokiQuery` (LogQL) |
 | variables | `QueryVariable`, `CustomVariable`, `IntervalVariable`, `DatasourceVariable`, `ConstantVariable`, `TextboxVariable` |
 | datasources | `Datasource`, generic in its plugin type |
+| alerting | `AlertRuleGroup`, `AlertRule`, `AlertQuery`, the expressions `ReduceExpression`, `MathExpression`, `ThresholdExpression`, `ResampleExpression`, `ClassicConditionsExpression`, `SqlExpression`, and `ContactPoint`, `NotificationPolicy`, `MuteTiming`, `NotificationTemplate`, written to `provisioning/alerting/chant.yaml` |
 
 Panel options, field config and query fields are generated from Grafana's JSON Schemas as published by `grafana/grafana-foundation-sdk`, vendored in `src/spec/schemas/`, pinned by commit and digest in `GRAFANA_SCHEMA_PIN`, and corrected against Grafana's CUE by a checked-in overlay in `src/spec/overlay/`. They track Grafana 12.4 and 13.x. `definePanel` and `defineQuery` add plugins chant doesn't ship.
 
 ## Dashboards from other declarations
 
-`RedDashboard`, `SloDashboard` and `AgentDashboard` build a dashboard from a declaration in another lexicon: rate, errors and duration per service from an otel `SpanMetricsConnector`; SLI, error budget and burn rate per alert window from a prometheus `Slo`; latency, errors and tokens per model and tool from the otel GenAI preset. Metric names are read from the declaration, so renaming a namespace or an SLO moves the panel queries.
+`RedDashboard`, `SloDashboard` and `AgentDashboard` build a dashboard from a declaration in another lexicon: rate, errors and duration per service from an otel `SpanMetricsConnector`; SLI, error budget and burn rate per alert window from a prometheus `Slo`; latency, errors and tokens per model and tool from the otel GenAI preset. Metric names are read from the declaration, so renaming a namespace or an SLO moves the panel queries. `SloAlertRules` turns the same `Slo` into Grafana-managed burn-rate alert rules.
 
 ```ts
 export const services = RedDashboard({ spanMetrics: spans, datasource: prometheus });
@@ -54,5 +55,6 @@ GRAF101 and GRAF102 compare dashboards with the datasources declared in the same
 ## Plain-data API
 
 - `buildGrafana(entities)` and `grafanaFiles(entities)` render every file by path, for embedding in another lexicon's output (a ConfigMap, a volume).
+- `GrafanaConfigMaps` and `grafanaVolumes` from `@intentius/chant-lexicon-grafana/k8s` deliver dashboards and provisioning to Kubernetes as ConfigMaps labelled for the Grafana Helm chart's sidecar (`grafana_dashboard`, `grafana_datasource`), or mounted into a plain Grafana Deployment.
 - `renderDashboard(dashboard)` and `dashboardJson(dashboard)` render one dashboard.
 - `validateGrafanaOutput({ dashboards, datasources })` and `validateDashboardSchema(json)` run the checks without a build.

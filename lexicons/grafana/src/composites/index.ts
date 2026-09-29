@@ -10,3 +10,5 @@ export type { SloDashboardProps, SloDashboardMembers, SloDashboardInstance } fro
 export { AgentDashboard, agentQueries } from "./agent-dashboard";
 export type { AgentDashboardProps, AgentDashboardMembers, AgentDashboardInstance } from "./agent-dashboard";
 export type { DashboardOptions } from "./shared";
+export { SloAlertRules, sloAlertQueries } from "./slo-alert-rules";
+export type { SloAlertRulesProps, SloAlertRulesMembers, SloAlertRulesInstance } from "./slo-alert-rules";

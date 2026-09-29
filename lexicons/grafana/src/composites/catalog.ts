@@ -103,6 +103,12 @@ export const compositeCatalog: CompositeEntry[] = [
         "description": "Duration quantiles, one panel each (default p50, p95 and p99)."
       },
       {
+        "name": "spanKinds",
+        "type": "SpanKind[]",
+        "required": false,
+        "description": "The span kinds the queries count (default server and consumer spans)."
+      },
+      {
         "name": "datasource",
         "type": "DatasourceInput<\"prometheus\">",
         "required": true,
@@ -151,6 +157,82 @@ export const compositeCatalog: CompositeEntry[] = [
         "name": "links",
         "type": "DashboardLinkInput[]",
         "required": false
+      }
+    ]
+  },
+  {
+    "name": "SloAlertRules",
+    "lexicon": "grafana",
+    "description": "Grafana-managed burn-rate alerts for an `Slo`: one rule per window pair, with the labels and annotations the `Slo`'s Prometheus alerts carry.",
+    "bundles": [
+      "AlertRuleGroup"
+    ],
+    "params": [
+      {
+        "name": "slo",
+        "type": "SloInstance | RuleGroupEntity | SloMetrics",
+        "required": true,
+        "description": "The `Slo(...)` the rules alert on, its rule group, or what `sloMetrics()` returned for it."
+      },
+      {
+        "name": "datasource",
+        "type": "DatasourceInput<\"prometheus\">",
+        "required": true,
+        "description": "The Prometheus holding the `Slo`'s recorded series: a declared `Datasource`, an `ExternalDatasource`, or `{ type: \"prometheus\", uid }`."
+      },
+      {
+        "name": "folder",
+        "type": "string",
+        "required": true,
+        "description": "The Grafana folder the rules are stored in, by title."
+      },
+      {
+        "name": "group",
+        "type": "string",
+        "required": false,
+        "description": "The rule group's name."
+      },
+      {
+        "name": "interval",
+        "type": "string",
+        "required": false,
+        "description": "How often the rules are evaluated, a multiple of 10s."
+      },
+      {
+        "name": "contactPoint",
+        "type": "ContactPointEntity | string",
+        "required": false,
+        "description": "Send the alerts straight to this contact point."
+      },
+      {
+        "name": "for",
+        "type": "string",
+        "required": false,
+        "description": "How long a pair must hold before its alert fires."
+      },
+      {
+        "name": "labels",
+        "type": "Record<string, string>",
+        "required": false,
+        "description": "More labels on every rule, e.g. `team`."
+      },
+      {
+        "name": "annotations",
+        "type": "Record<string, string>",
+        "required": false,
+        "description": "More annotations on every rule, e.g. `runbook_url`."
+      },
+      {
+        "name": "noDataState",
+        "type": "NoDataState",
+        "required": false,
+        "description": "What no data does."
+      },
+      {
+        "name": "execErrState",
+        "type": "ExecErrState",
+        "required": false,
+        "description": "What a query error does."
       }
     ]
   },

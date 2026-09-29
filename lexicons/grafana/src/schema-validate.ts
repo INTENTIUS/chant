@@ -208,3 +208,27 @@ export function validateDashboardSchema(dashboard: Json): SchemaProblem[] {
   for (const { panel, path } of libraryPanelModels(dashboard)) out.push(...checkPanel(panel, path));
   return out;
 }
+
+/** The `expr` schema definition for each server-side expression type. */
+const EXPRESSION_DEFINITIONS: Record<string, string> = {
+  math: "TypeMath",
+  reduce: "TypeReduce",
+  resample: "TypeResample",
+  classic_conditions: "TypeClassicConditions",
+  threshold: "TypeThreshold",
+  sql: "TypeSql",
+};
+
+/**
+ * Check one server-side expression model (an alert rule's `data[].model`
+ * whose datasource is `__expr__`) against the pinned `expr` schema, as
+ * written: its `type` picks the definition, and every required field must
+ * be there, since Grafana fills none in.
+ */
+export function validateExpressionSchema(model: Json, prefix = ""): SchemaProblem[] {
+  const def = typeof model.type === "string" ? EXPRESSION_DEFINITIONS[model.type] : undefined;
+  if (!def) {
+    return [{ path: `${prefix}/type`, message: `is ${JSON.stringify(model.type)}, not one of ${Object.keys(EXPRESSION_DEFINITIONS).join(", ")}`, severity: "error" }];
+  }
+  return check(model, "expr", def, false, prefix);
+}

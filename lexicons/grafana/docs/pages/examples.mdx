@@ -5,7 +5,7 @@ diataxis: how-to
 order: 8
 ---
 
-Each example lives under `lexicons/grafana/examples/` and builds with `chant build src --lexicon grafana` (dashboards-from-declarations also with `--lexicon otel` and `--lexicon prometheus`). The lexicon's tests build it, lint it with no warnings, run the GRAF1xx checks over the output, and validate each dashboard against the pinned Grafana schema.
+Each example lives under `lexicons/grafana/examples/` and builds with `chant build src --lexicon grafana` (dashboards-from-declarations also with `--lexicon otel` and `--lexicon prometheus`, alerting also with `--lexicon prometheus`). The lexicon's tests build it, lint it with no warnings, run the GRAF1xx checks over the output, and validate each dashboard against the pinned Grafana schema.
 
 ## getting-started
 
@@ -37,4 +37,20 @@ A collector, an SLO and three dashboards in one build root, built with `chant bu
 
 ```ts title="src/dashboards.ts"
 {{file:dashboards-from-declarations/src/dashboards.ts}}
+```
+
+## alerting
+
+Grafana-managed alerting in one build root with the SLO it alerts on, built with `chant build src --lexicon prometheus` and `--lexicon grafana`. `SloAlertRules` turns the checkout `Slo` into four burn-rate rules that read the error ratios the `Slo`'s Prometheus rules record; two hand-written rules use a reduce and a threshold with a recovery threshold, and a Loki query. Contact points read their secrets from the environment, the policy tree pages on `severity=page` and files tickets for the rest outside weekends. `src/alerting.e2e.test.ts` provisions it into Grafana 13.2.2 and reads it back. See [Alerting](../alerting/).
+
+```ts title="src/slo.ts"
+{{file:alerting/src/slo.ts}}
+```
+
+```ts title="src/rules.ts"
+{{file:alerting/src/rules.ts}}
+```
+
+```ts title="src/notifications.ts"
+{{file:alerting/src/notifications.ts}}
 ```

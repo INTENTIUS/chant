@@ -30,7 +30,7 @@ The joins are where chant earns its keep:
 - The gateway runs tail sampling after the `spanmetrics` connector and the GenAI preset's metrics branch, so metrics count every span and only traces are thinned.
 - The SLO's SLI reads the `spanmetrics` metric names, and the SLO dashboard reads the SLO's recorded series from `sloMetrics()`.
 - The RED and agent dashboards read their metric names from the connector and the GenAI preset, so renaming a namespace at the source moves the panels.
-- Prometheus, Alertmanager and Grafana mount ConfigMaps holding exactly what the prometheus and grafana builds write, through `ruleFileYaml`, `alertmanagerYaml` and `grafanaFiles`.
+- Prometheus, Alertmanager and Grafana mount ConfigMaps holding exactly what the prometheus and grafana builds write, through `ruleFileYaml`, `alertmanagerYaml` and the grafana lexicon's `GrafanaConfigMaps` and `grafanaVolumes`.
 
 ## Build and lint
 

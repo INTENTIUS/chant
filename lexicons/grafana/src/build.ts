@@ -34,6 +34,7 @@ import type {
 import { DASHBOARD_SCHEMA_VERSION } from "./schema/dashboard.gen";
 import { GRAFANA_SCHEMA_PIN } from "./pin";
 import { compact, slugUid } from "./util";
+import { ALERTING_FILE, alertingYaml, buildAlerting, type AlertingFile, type AlertingIndex } from "./alerting-build";
 import { DEFAULT_PROVIDER_NAME } from "./ownership";
 
 export type { DashboardJson, PanelJson, RowPanelJson, VariableModel, DataSourceRef };
@@ -94,6 +95,8 @@ export interface BuiltGrafana {
   /** `ExternalDatasource` declarations: the checks count them, the provisioning file leaves them out. */
   externalDatasources: ExternalDatasourceRecord[];
   providers: ProvisionedProvider[];
+  /** The alerting provisioning file, when the build declares any alerting. */
+  alerting?: AlertingFile;
   /** Every output file by path, ready to write. */
   files: Record<string, string>;
   /** A short summary of what was built: the serializer's primary output. */
@@ -106,6 +109,8 @@ export interface GrafanaIndex {
   datasources: Array<{ name: string; type: string; uid: string }>;
   /** Datasources declared with `ExternalDatasource`: referenced, never provisioned. */
   externalDatasources?: ExternalDatasourceRecord[];
+  /** Rule groups, contact points, policies, mute timings and templates, when the build declares any. */
+  alerting?: AlertingIndex;
   files: string[];
 }
 
@@ -350,10 +355,15 @@ class Layout {
     }
   }
 
-  /** A full-width row header on the first free line below everything placed so far. */
-  row(): GridPos {
-    let y = Math.max(this.bottom, this.y + this.lineH);
-    while (!this.free(0, y, GRID_COLUMNS, 1)) y++;
+  /** Marks the line of a row header with an explicit `y` as taken, before anything is placed. */
+  reserveRow(y: number | undefined): void {
+    if (y !== undefined) this.take(0, y, GRID_COLUMNS, 1);
+  }
+
+  /** A full-width row header on line `explicitY`, else on the first free line below everything placed so far. */
+  row(explicitY?: number): GridPos {
+    let y = explicitY ?? Math.max(this.bottom, this.y + this.lineH);
+    if (explicitY === undefined) while (!this.free(0, y, GRID_COLUMNS, 1)) y++;
     this.take(0, y, GRID_COLUMNS, 1);
     this.x = 0;
     this.y = y + 1;
@@ -404,7 +414,8 @@ function panelJson(panel: PanelEntity, gridPos: GridPos, id: number, inherited?:
   const def = panel.panelDefinition;
   const own = datasourceRef(p.datasource) ?? inherited;
   const queries = (p.targets ?? []).filter(isQueryEntity);
-  const targets = queries.map((q, i) => targetJson(q, i, own));
+  // A query under a Mixed panel names its own datasource; one that names none goes to the default, not to Mixed.
+  const targets = queries.map((q, i) => targetJson(q, i, sameRef(own, MIXED) ? undefined : own));
   const refs = targets.map((t) => t.datasource as DataSourceRef | undefined);
   let datasource = own;
   if (!datasource && refs.length > 0) {
@@ -444,8 +455,9 @@ function panelJson(panel: PanelEntity, gridPos: GridPos, id: number, inherited?:
 /** A dashboard's `panels` array: rows and panels, laid out, with ids. */
 export function panelsJson(items: Array<PanelEntity | RowEntity>): Array<PanelJson | RowPanelJson> {
   const layout = new Layout();
-  // Panels on the dashboard's grid with both x and y take their cells first; a collapsed row's are laid out on their own.
+  // Panels on the dashboard's grid with both x and y, and rows with a y, take their cells first; a collapsed row's panels are laid out on their own.
   for (const item of items) {
+    if (isRowEntity(item)) layout.reserveRow(item.props.gridPos?.y);
     const onGrid = isRowEntity(item) ? (item.props.collapsed ? [] : (item.props.panels ?? [])) : [item];
     for (const p of onGrid.filter(isPanelEntity)) layout.reserve(p.props.gridPos, p.panelDefinition.defaultSize);
   }
@@ -454,7 +466,7 @@ export function panelsJson(items: Array<PanelEntity | RowEntity>): Array<PanelJs
   for (const item of items) {
     if (isRowEntity(item)) {
       const r = item.props;
-      const pos = layout.row();
+      const pos = layout.row(r.gridPos?.y);
       const rowId = ids.take(r.id);
       const rowRef = datasourceRef(r.datasource);
       const collapsed = r.collapsed ?? false;
@@ -645,15 +657,18 @@ export function buildGrafana(entities: Map<string, Declarable> | Iterable<Declar
 
   if (datasources.length > 0) files[DATASOURCES_FILE] = datasourcesYaml(datasources);
   if (providers.length > 0) files[DASHBOARD_PROVIDERS_FILE] = dashboardProvidersYaml(providers);
+  const alerting = buildAlerting(named.map(([, e]) => e));
+  if (alerting) files[ALERTING_FILE] = alertingYaml(alerting.file);
 
   const index: GrafanaIndex = {
     grafanaSchema: `${GRAFANA_SCHEMA_PIN.source}@${GRAFANA_SCHEMA_PIN.ref}`,
     dashboards: dashboards.map(({ uid, title, folder, file }) => ({ uid, title, ...(folder ? { folder } : {}), file })),
     datasources: datasources.map(({ name, type, uid }) => ({ name, type, uid })),
     ...(externalDatasources.length > 0 ? { externalDatasources } : {}),
+    ...(alerting ? { alerting: alerting.index } : {}),
     files: Object.keys(files).sort(),
   };
-  return { dashboards, datasources, externalDatasources, providers, files, index };
+  return { dashboards, datasources, externalDatasources, providers, ...(alerting ? { alerting: alerting.file } : {}), files, index };
 }
 
 /** Every file the grafana entities render to, by path relative to the output directory. */

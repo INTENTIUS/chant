@@ -55,6 +55,8 @@ export const overview = new Dashboard({
 });
 ```
 
+`transformations` is typed per transformer id, from Grafana v13.2.2's transformers: `transformation("organize", { excludeByName: { Time: true } })` checks the options against that one transformer, and a `{ id, options }` literal works too. Use `customTransformation(id, options)` for a plugin's transformer or options the types don't have.
+
 Leave `gridPos` out and panels are placed left to right, wrapping at 24 columns and flowing around explicitly placed panels; give `x` and `y` to place one exactly. `Row({ title, panels, collapsed })` starts a full-width row. Dashboard uids default to the export name as a uid (`overview`).
 
 Panels, rows, queries and variables are property-kind, so chant's core lint doesn't count them toward the eight-per-file limit (COR009) and lets them carry `fieldConfig` and `options` inline (COR001). The dashboard is a resource: lift its own nested objects (`time`, `links`) into named consts.
@@ -87,6 +89,7 @@ Pass the `prometheus` exporter as `exporter` to `RedDashboard` when its `namespa
 - GRAF107: the dashboard matches Grafana's schema at the pinned version.
 - GRAF108: every query and query variable sent to a Prometheus parses as PromQL (template variables and `$__` macros are substituted first).
 - GRAF115 (warning): every panel unit is a Grafana unit id (`bytes`, `s`, `percent`, `reqps`, ...) or a custom unit (`suffix: cores`, `prefix:$`, `si:mF`, `count:reqs`, `currency:EUR`). Grafana shows anything else as literal text after the value.
+- GRAF111-GRAF114: alert rules, contact points, policies and mute timings; see the chant-grafana-alerting skill.
 
 GRAF101 and GRAF102 compare against the datasources in the same build root, so keep datasources and dashboards in one `chant build` (chant #1939). For a datasource that exists in Grafana but is provisioned elsewhere, declare `new ExternalDatasource({ type: "prometheus", uid: "mimir" })` and use it like a `Datasource`; it is checked against, never provisioned.
 

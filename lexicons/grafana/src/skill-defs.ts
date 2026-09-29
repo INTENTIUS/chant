@@ -28,4 +28,21 @@ export const grafanaSkills = createSkillsLoader(import.meta.url, [
     description: "Load chant-built Grafana dashboards and datasources into a running Grafana through its provisioning directories, in Docker or Kubernetes",
     triggers: [{ type: "context" as const, value: "grafana provisioning" }],
   },
+  {
+    file: "chant-grafana-alerting.md",
+    name: "chant-grafana-alerting",
+    description:
+      "Declare Grafana-managed alert rules, server-side expressions, contact points, notification policies and mute timings, turn an Slo into burn-rate rules, and import Grafana's alerting exports",
+    triggers: [
+      { type: "context" as const, value: "grafana alerting" },
+      { type: "context" as const, value: "grafana alert rule" },
+      { type: "context" as const, value: "contact point" },
+    ],
+    examples: [
+      {
+        title: "An SLO's burn-rate alerts as Grafana-managed rules",
+        output: 'export const checkoutBurn = SloAlertRules({ slo: checkout, datasource: prometheus, folder: "SLOs" });',
+      },
+    ],
+  },
 ]);
