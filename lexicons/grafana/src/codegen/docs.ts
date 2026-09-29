@@ -31,10 +31,17 @@ export const overview = new Dashboard({ title: "Overview", panels: [requests] })
 
 Panels: time series, stat, gauge, table, logs, traces, heatmap, text, bar
 chart, bar gauge, pie chart, state timeline, status history, histogram, node
-graph, XY chart, trend, canvas, geomap, flame graph and alert list, plus rows. Queries: Prometheus (PromQL), Tempo (TraceQL) and Loki (LogQL). Panel
-options and query fields are generated from Grafana's own schemas at a pinned
-version, corrected against Grafana's CUE, and track Grafana 12.4 and 13.x. Every
-build validates the dashboards against the same schemas.
+graph, XY chart, trend, canvas, geomap, flame graph and alert list, plus rows.
+Queries: Prometheus (PromQL), Tempo (TraceQL), Loki (LogQL), Elasticsearch,
+CloudWatch, Azure Monitor, Cloud Monitoring, BigQuery, Pyroscope, and SQL for
+PostgreSQL, MySQL and MSSQL. Panel options and query fields are generated from
+Grafana's own schemas at a pinned version, corrected against Grafana's CUE, and
+track Grafana 12.4 and 13.x. Every build validates the dashboards against the
+same schemas.
+Dashboards are written in the classic (v1) JSON model. Grafana 13's v2 model
+(tabs, auto grids, conditional rendering) cannot be declared yet; import and
+drift read a v2 dashboard by converting it to the classic model, and say what
+the conversion loses.
 \`definePanel\` and \`defineQuery\` add plugins chant doesn't ship.
 \`chant import\` turns dashboard JSON exported from Grafana into this TypeScript,
 and it builds back to the same dashboard (see

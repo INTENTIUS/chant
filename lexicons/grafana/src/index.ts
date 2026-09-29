@@ -365,7 +365,7 @@ export {
   type ReducerId,
 } from "./transformations";
 
-// Plain-data API: render, check and detect without a build
+// Plain-data API: render and detect without a build
 export {
   buildGrafana,
   grafanaFiles,
@@ -400,18 +400,12 @@ export {
   type VariableModel,
   type DataSourceRef,
 } from "./build";
-export {
-  validateGrafanaOutput,
-  issuesFor,
-  knownDatasourcesOf,
-  variableReferences,
-  type GrafanaIssue,
-  type GrafanaIssueCode,
-  type GrafanaArtifacts,
-  type DashboardDoc,
-} from "./validate-output";
+// The checks as plain functions (validateGrafanaOutput, validateDashboardSchema)
+// are on the `@intentius/chant-lexicon-grafana/validation` subpath (#2958), so
+// declaring dashboards does not load them.
 export {
   datasourceUses,
+  variableReferences,
   resolveDatasourceRef,
   knownDatasources,
   type DatasourceUse,
@@ -419,7 +413,6 @@ export {
   type KnownDatasource,
   type DatasourceRefJson,
 } from "./datasource-refs";
-export { validateDashboardSchema, validateExpressionSchema, type SchemaProblem } from "./schema-validate";
 export { looksLikeDashboard, looksLikeDatasourceProvisioning, looksLikeDashboardProvisioning, looksLikeAlertingProvisioning } from "./detect";
 export { slugUid, isValidUid, UID_PATTERN, type DeepPartial, type PropsOf } from "./util";
 
