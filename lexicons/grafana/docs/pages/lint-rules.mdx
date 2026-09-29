@@ -11,7 +11,7 @@ The grafana lexicon's rules use the `GRAF` prefix. `GRAF0xx` rules read your Typ
 |---|---|---|
 | GRAF001 | error | a literal dashboard or datasource `uid` Grafana rejects, or a variable `name` `$name` can't reference |
 | GRAF002 | error | a literal secret in a datasource's `secureJsonData` |
-| GRAF101 | error | a panel, query or query variable using a datasource no `Datasource` in the build declares (warning: queries with no datasource at all) |
+| GRAF101 | error / warning | a panel, query or query variable using a datasource no `Datasource` or `ExternalDatasource` in the build declares, or a datasource variable whose plugin type none has (error); queries with no datasource at all, or a build that declares no datasource, so references cannot be checked (warning) |
 | GRAF102 | error | a query sent to a datasource of another plugin type |
 | GRAF103 | error | a `$variable` in a query, title, datasource or repeat that the dashboard doesn't declare |
 | GRAF104 | error | duplicate dashboard uids, datasource uids or names, panel ids, variable names or refIds |
@@ -29,13 +29,15 @@ Write secrets as `$__env{NAME}`, `$__file{/path}` or `${NAME}`. Grafana expands 
 
 ## GRAF101
 
-Every datasource reference in a dashboard (a panel's, each query's, each query variable's) must be the uid of a declared `Datasource`. Grafana's own pseudo-datasources (`-- Mixed --`, `-- Dashboard --`, `-- Grafana --`) and datasource-variable refs (`${ds}`) are exempt. A panel with queries and no datasource anywhere is a warning: Grafana sends the queries to its default datasource.
+Every datasource reference in a dashboard (a panel's, each query's, each query variable's) must be the uid of a declared `Datasource` or `ExternalDatasource`. Grafana's own pseudo-datasources (`-- Mixed --`, `-- Dashboard --`, `-- Grafana --`) and datasource-variable refs (`${ds}`) are exempt. A panel with queries and no datasource anywhere is a warning: Grafana sends the queries to its default datasource.
 
-This check joins dashboards against datasources, and a build only sees its own build root (chant #1939). With no `Datasource` declared in the build it reports nothing. A datasource declared in a different build root from the dashboards that use it looks undeclared. Keep datasources and their dashboards in one build root.
+A datasource variable offers the datasources of its `pluginType`. If no declared `Datasource` or `ExternalDatasource` has that type, the variable has nothing the build knows to choose from, and GRAF101 reports it.
+
+This check joins dashboards against the datasources of the same build root (chant #1939). Declare a datasource that exists in Grafana but is provisioned elsewhere (another build root, the UI, another tool) with `ExternalDatasource`: the check resolves references to it, and nothing is provisioned. When a build declares no datasource at all, each dashboard that references one gets a single warning naming the uids and datasource-variable types it could not check.
 
 ## GRAF102
 
-The `type` in a reference must match the declared datasource's type, and a reference through a datasource variable must match that variable's `pluginType`. The typed classes prevent this in TypeScript; the check covers plain refs and hand-edited dashboards. Like GRAF101 it only sees the datasources of the same build root (chant #1939).
+The `type` in a reference must match the type of the declared or external datasource it names, and a reference through a datasource variable must match that variable's `pluginType`. The typed classes prevent this in TypeScript; the check covers plain refs and hand-edited dashboards. Like GRAF101 it only sees the datasources of the same build root (chant #1939), so declare the others with `ExternalDatasource`.
 
 ## GRAF103
 

@@ -33,7 +33,7 @@ export const grafanaAuditCatalog: Record<string, RuleMeta> = {
     "merge-worthy",
     "guidance",
     "Panel uses an undeclared datasource",
-    "Point the panel or query at a declared Datasource, or declare the datasource it names in the same build root.",
+    "Point the panel or query at a declared Datasource, or declare the datasource it names in the same build root: a Datasource to provision it, an ExternalDatasource if it already exists in Grafana.",
     { category: "correctness" },
   ),
   GRAF102: auditRule(

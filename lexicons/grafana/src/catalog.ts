@@ -5,7 +5,7 @@
  */
 
 import type { LexiconEntry } from "@intentius/chant/lsp/lexicon-providers";
-import { DATASOURCE_TYPE } from "./datasource";
+import { DATASOURCE_TYPE, EXTERNAL_DATASOURCE_TYPE } from "./datasource";
 import { DASHBOARD_TYPE, DASHBOARD_PROVIDER_TYPE } from "./dashboard";
 import * as panels from "./panels";
 import * as queries from "./query";
@@ -73,6 +73,13 @@ export const BUILTIN_CATALOG: CatalogEntry[] = [
     kind: "datasource",
     entityKind: "resource",
     description: "A datasource, declared once and referenced by panels, queries and variables",
+  },
+  {
+    className: "ExternalDatasource",
+    entityType: EXTERNAL_DATASOURCE_TYPE,
+    kind: "datasource",
+    entityKind: "resource",
+    description: "A datasource that already exists in Grafana: referenced like a Datasource and checked by GRAF101/GRAF102, never provisioned",
   },
   {
     className: "DashboardProvider",
