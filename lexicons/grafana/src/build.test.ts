@@ -18,6 +18,7 @@ function panelsOnly(items: Parameters<typeof panelsJson>[0]): PanelJson[] {
   return panelsJson(items) as PanelJson[];
 }
 import { validateDashboardSchema } from "./schema-validate";
+import { checkGrid } from "./validate-output";
 
 const prometheus = new Datasource({ name: "Prometheus", type: "prometheus" });
 const tempo = new Datasource({ name: "Tempo", type: "tempo" });
@@ -75,6 +76,120 @@ describe("layout", () => {
     expect(shut.collapsed).toBe(true);
     expect(shut.panels.map((p) => [p.title, p.id, p.gridPos])).toEqual([["c", 6, { h: 8, w: 12, x: 0, y: 14 }]]);
     expect((panels[1] as unknown as { panels: unknown[] }).panels).toEqual([]);
+  });
+
+  test("an auto-placed panel flows around an explicit one declared before it (#2941)", () => {
+    const panels = panelsJson([
+      new TimeSeriesPanel({ title: "a", gridPos: { x: 0, y: 0, w: 12 } }),
+      new TimeSeriesPanel({ title: "b", gridPos: { w: 12 } }),
+    ]);
+    expect(panels.map((p) => p.gridPos)).toEqual([
+      { h: 8, w: 12, x: 0, y: 0 },
+      { h: 8, w: 12, x: 12, y: 0 },
+    ]);
+  });
+
+  test("an explicit panel reserves its cells even when declared after auto-placed ones", () => {
+    const panels = panelsJson([
+      new StatPanel({ title: "s1" }),
+      new StatPanel({ title: "s2" }),
+      new StatPanel({ title: "s3" }),
+      new StatPanel({ title: "s4" }),
+      new StatPanel({ title: "pinned", gridPos: { x: 6, y: 0, w: 6, h: 4 } }),
+      new TextPanel({ title: "wide" }),
+    ]);
+    expect(panels.map((p) => [p.title, p.gridPos])).toEqual([
+      ["s1", { h: 4, w: 6, x: 0, y: 0 }],
+      ["s2", { h: 4, w: 6, x: 12, y: 0 }],
+      ["s3", { h: 4, w: 6, x: 18, y: 0 }],
+      ["s4", { h: 4, w: 6, x: 0, y: 4 }],
+      ["pinned", { h: 4, w: 6, x: 6, y: 0 }],
+      ["wide", { h: 3, w: 24, x: 0, y: 8 }],
+    ]);
+  });
+
+  test("a line blocked by an explicit panel is skipped", () => {
+    const panels = panelsJson([
+      new StatPanel({ title: "band", gridPos: { x: 0, y: 0, w: 24, h: 2 } }),
+      new StatPanel({ title: "hole", gridPos: { x: 0, y: 6, w: 6, h: 2 } }),
+      new StatPanel({ title: "s1" }),
+      new TextPanel({ title: "wide" }),
+    ]);
+    expect(panels.map((p) => [p.title, p.gridPos])).toEqual([
+      ["band", { h: 2, w: 24, x: 0, y: 0 }],
+      ["hole", { h: 2, w: 6, x: 0, y: 6 }],
+      ["s1", { h: 4, w: 6, x: 0, y: 2 }],
+      ["wide", { h: 3, w: 24, x: 0, y: 8 }],
+    ]);
+  });
+
+  test("a partial gridPos is honoured: x only keeps its column, y only its line", () => {
+    const panels = panelsJson([
+      new StatPanel({ title: "right", gridPos: { x: 18 } }),
+      new StatPanel({ title: "left", gridPos: { x: 0 } }),
+      new StatPanel({ title: "next" }),
+      new StatPanel({ title: "low", gridPos: { y: 20, w: 12 } }),
+      new StatPanel({ title: "low2", gridPos: { y: 20, w: 12 } }),
+      new StatPanel({ title: "low3", gridPos: { y: 20, w: 12 } }),
+    ]);
+    expect(panels.map((p) => [p.title, p.gridPos])).toEqual([
+      ["right", { h: 4, w: 6, x: 18, y: 0 }],
+      ["left", { h: 4, w: 6, x: 0, y: 4 }],
+      ["next", { h: 4, w: 6, x: 6, y: 4 }],
+      ["low", { h: 4, w: 12, x: 0, y: 20 }],
+      ["low2", { h: 4, w: 12, x: 12, y: 20 }],
+      ["low3", { h: 4, w: 12, x: 0, y: 24 }],
+    ]);
+  });
+
+  test("a full-width row header skips lines taken by explicit panels", () => {
+    const panels = panelsJson([
+      new TimeSeriesPanel({ title: "top" }),
+      new Row({
+        title: "open",
+        panels: [new StatPanel({ title: "pinned", gridPos: { x: 0, y: 8, w: 24, h: 2 } }), new StatPanel({ title: "a" })],
+      }),
+      new Row({ title: "next" }),
+    ]);
+    expect(panels.map((p) => [p.type, p.title, p.gridPos])).toEqual([
+      ["timeseries", "top", { h: 8, w: 12, x: 0, y: 0 }],
+      ["row", "open", { h: 1, w: 24, x: 0, y: 10 }],
+      ["stat", "pinned", { h: 2, w: 24, x: 0, y: 8 }],
+      ["stat", "a", { h: 4, w: 6, x: 0, y: 11 }],
+      ["row", "next", { h: 1, w: 24, x: 0, y: 15 }],
+    ]);
+  });
+
+  test("a collapsed row's panels flow around its own explicit panels and don't block the dashboard", () => {
+    const panels = panelsJson([
+      new Row({
+        title: "shut",
+        collapsed: true,
+        panels: [new StatPanel({ title: "pinned", gridPos: { x: 0, y: 1, w: 6, h: 4 } }), new StatPanel({ title: "a" })],
+      }),
+      new StatPanel({ title: "after" }),
+    ]);
+    const shut = panels[0] as unknown as { panels: PanelJson[] };
+    expect(shut.panels.map((p) => [p.title, p.gridPos])).toEqual([
+      ["pinned", { h: 4, w: 6, x: 0, y: 1 }],
+      ["a", { h: 4, w: 6, x: 6, y: 1 }],
+    ]);
+    expect(panels[1].gridPos).toEqual({ h: 4, w: 6, x: 0, y: 1 });
+  });
+
+  test("a mixed layout built by the dashboard passes GRAF105", () => {
+    const dash = new Dashboard({
+      title: "Mixed",
+      panels: [
+        new TimeSeriesPanel({ title: "a", gridPos: { x: 0, y: 0, w: 12 } }),
+        new TimeSeriesPanel({ title: "b", gridPos: { w: 12 } }),
+        new StatPanel({ title: "c", gridPos: { x: 6 } }),
+        new StatPanel({ title: "d", gridPos: { x: 12, y: 8, w: 12, h: 4 } }),
+        new StatPanel({ title: "e" }),
+        new Row({ title: "r", panels: [new StatPanel({ title: "f", gridPos: { x: 18, y: 12 } }), new StatPanel({ title: "g" })] }),
+      ],
+    });
+    expect(checkGrid({ dashboards: [{ json: JSON.parse(dashboardJson(dash)) }], datasources: [] })).toEqual([]);
   });
 
   test("auto ids skip ids set explicitly", () => {
