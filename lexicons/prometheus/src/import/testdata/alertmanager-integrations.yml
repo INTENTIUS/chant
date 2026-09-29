@@ -1,0 +1,215 @@
+# Every receiver integration Alertmanager v0.34.1 defines, each with the
+# fields its struct lists beyond the destination, every credential read from
+# a *_file, and every global field that has a default for one of them.
+global:
+  resolve_timeout: 5m
+  http_config:
+    follow_redirects: true
+    enable_http2: false
+    http_headers:
+      X-Tenant:
+        values: [platform]
+      X-Api-Key:
+        files: [/etc/alertmanager/secrets/api-key-header]
+  jira_api_url: https://jira.example.com/rest/api/2/
+  smtp_from: alertmanager@example.com
+  smtp_smarthost: smtp.example.com:465
+  smtp_auth_username: alertmanager
+  smtp_auth_password_file: /etc/alertmanager/secrets/smtp-password
+  smtp_require_tls: false
+  smtp_force_implicit_tls: true
+  smtp_tls_config:
+    ca_file: /etc/alertmanager/tls/ca.pem
+    min_version: TLS12
+  slack_app_token_file: /etc/alertmanager/secrets/slack-app-token
+  slack_app_url: https://slack.com/api/chat.postMessage
+  opsgenie_api_url: https://api.eu.opsgenie.com/
+  opsgenie_api_key_file: /etc/alertmanager/secrets/opsgenie-key
+  wechat_api_url: https://qyapi.weixin.qq.com/cgi-bin/
+  wechat_api_secret_file: /etc/alertmanager/secrets/wechat-secret
+  wechat_api_corp_id: corp-1
+  victorops_api_url: https://alert.victorops.com/integrations/generic/20131114/alert/
+  victorops_api_key_file: /etc/alertmanager/secrets/victorops-key
+  telegram_api_url: https://api.telegram.org
+  telegram_bot_token_file: /etc/alertmanager/secrets/telegram-token
+  webex_api_url: https://webexapis.com/v1/messages
+  rocketchat_api_url: https://open.rocket.chat
+  rocketchat_token_file: /etc/alertmanager/secrets/rocketchat-token
+  rocketchat_token_id_file: /etc/alertmanager/secrets/rocketchat-token-id
+  mattermost_webhook_url_file: /etc/alertmanager/secrets/mattermost-url
+route:
+  receiver: chat
+  group_by: [alertname]
+  routes:
+    - matchers: ['team="ops"']
+      receiver: ops
+    - matchers: ['team="tickets"']
+      receiver: tickets
+    - matchers: ['team="mobile"']
+      receiver: mobile
+receivers:
+  - name: chat
+    slack_configs:
+      - channel: '#alerts'
+        message_text: '{{ .CommonLabels.alertname }}'
+        callback_id: alerts
+        image_url: https://example.com/graph.png
+        thumb_url: https://example.com/thumb.png
+        update_message: true
+        timeout: 10s
+        fields:
+          - title: Severity
+            value: '{{ .CommonLabels.severity }}'
+            short: true
+        actions:
+          - type: button
+            text: Runbook
+            url: '{{ .CommonAnnotations.runbook_url }}'
+            style: primary
+            confirm:
+              text: Open the runbook?
+              ok_text: 'Yes'
+              dismiss_text: 'No'
+    discord_configs:
+      - webhook_url_file: /etc/alertmanager/secrets/discord-url
+        title: '{{ .CommonLabels.alertname }}'
+        message: '{{ .CommonAnnotations.summary }}'
+        content: '<@&123456>'
+        username: alertmanager
+        avatar_url: https://example.com/avatar.png
+    msteams_configs:
+      - webhook_url_file: /etc/alertmanager/secrets/teams-url
+        title: '{{ .CommonLabels.alertname }}'
+        summary: '{{ .CommonAnnotations.summary }}'
+        text: '{{ .CommonAnnotations.description }}'
+    msteamsv2_configs:
+      - webhook_url_file: /etc/alertmanager/secrets/teams-workflow-url
+        title: '{{ .CommonLabels.alertname }}'
+        text: '{{ .CommonAnnotations.description }}'
+    mattermost_configs:
+      - channel: alerts
+        username: alertmanager
+        text: '{{ .CommonAnnotations.summary }}'
+        icon_emoji: ':rotating_light:'
+        attachments:
+          - title: '{{ .CommonLabels.alertname }}'
+            color: danger
+            fields:
+              - title: Severity
+                value: '{{ .CommonLabels.severity }}'
+                short: true
+        props:
+          card: '{{ .CommonAnnotations.description }}'
+        priority:
+          priority: urgent
+          requested_ack: true
+    webex_configs:
+      - room_id: room-1
+        message: '{{ .CommonAnnotations.summary }}'
+        http_config:
+          authorization:
+            credentials_file: /etc/alertmanager/secrets/webex-token
+    rocketchat_configs:
+      - channel: '#alerts'
+        title: '{{ .CommonLabels.alertname }}'
+        emoji: ':fire:'
+        short_fields: true
+        fields:
+          - title: Severity
+            value: '{{ .CommonLabels.severity }}'
+            short: true
+        actions:
+          - type: button
+            text: Silence
+            url: https://alertmanager.example.com/#/silences/new
+    telegram_configs:
+      - chat_id: -1001234567890
+        message_thread_id: 7
+        parse_mode: HTML
+        disable_notifications: false
+        message: '{{ .CommonAnnotations.summary }}'
+  - name: ops
+    email_configs:
+      - to: ops@example.com
+        force_implicit_tls: true
+        threading:
+          enabled: true
+          thread_by_date: daily
+    opsgenie_configs:
+      - message: '{{ .CommonLabels.alertname }}'
+        priority: P2
+        tags: 'team,ops'
+        details:
+          cluster: '{{ .CommonLabels.cluster }}'
+        responders:
+          - name: ops
+            type: team
+        update_alerts: true
+    victorops_configs:
+      - routing_key: ops
+        message_type: CRITICAL
+        entity_display_name: '{{ .CommonLabels.alertname }}'
+        custom_fields:
+          cluster: '{{ .CommonLabels.cluster }}'
+    pagerduty_configs:
+      - routing_key_file: /etc/alertmanager/secrets/pagerduty-key
+        timeout: 20s
+        details:
+          firing: '{{ .Alerts.Firing | len }}'
+    incidentio_configs:
+      - url: https://api.incident.io/v2/alert_events/http/01ABC
+        alert_source_token_file: /etc/alertmanager/secrets/incidentio-token
+        max_alerts: 20
+        timeout: 15s
+    webhook_configs:
+      - url_file: /etc/alertmanager/secrets/webhook-url
+        timeout: 5s
+        http_config:
+          oauth2:
+            client_id: alertmanager
+            client_secret_file: /etc/alertmanager/secrets/oauth-secret
+            token_url: https://auth.example.com/token
+            scopes: [alerts]
+  - name: tickets
+    jira_configs:
+      - project: OPS
+        issue_type: Bug
+        summary: '{{ template "jira.default.summary" . }}'
+        description:
+          template: '{{ template "jira.default.description" . }}'
+          enable_update: false
+        labels: [alertmanager]
+        priority: High
+        resolve_transition: Done
+        reopen_transition: Reopen
+        wont_fix_resolution: "Won't Fix"
+        reopen_duration: 1h
+        fields:
+          customfield_10001: ops
+        http_config:
+          basic_auth:
+            username: alertmanager
+            password_file: /etc/alertmanager/secrets/jira-password
+    sns_configs:
+      - topic_arn: arn:aws:sns:us-east-1:123456789012:alerts
+        subject: '{{ .CommonLabels.alertname }}'
+        sigv4:
+          region: us-east-1
+          role_arn: arn:aws:iam::123456789012:role/alertmanager
+        attributes:
+          team: ops
+  - name: mobile
+    pushover_configs:
+      - user_key_file: /etc/alertmanager/secrets/pushover-user
+        token_file: /etc/alertmanager/secrets/pushover-token
+        priority: '{{ if eq .Status "firing" }}2{{ else }}0{{ end }}'
+        retry: 1m
+        expire: 1h
+        ttl: 24h
+        sound: siren
+        html: true
+    wechat_configs:
+      - to_user: '@all'
+        agent_id: '1000002'
+        message_type: markdown
+        message: '{{ .CommonAnnotations.summary }}'

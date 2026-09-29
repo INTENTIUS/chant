@@ -1,7 +1,7 @@
 # Deprecated spellings (match, match_re, source_match, the top-level
-# mute_time_intervals), integrations this lexicon does not type (opsgenie,
-# msteams), global fields outside the typed set, *_file credentials, Go
-# templates, a YAML anchor with a merge key, and one literal credential.
+# mute_time_intervals), integrations beside the common four (opsgenie,
+# msteams) and their global fields, *_file credentials, Go templates, a YAML
+# anchor with a merge key, and one literal credential.
 global:
   resolve_timeout: 5m
   smtp_smarthost: smtp.example.com:587

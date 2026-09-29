@@ -27,7 +27,7 @@ export { api, oncall, fallback, root };
 |---|---|
 | `RuleGroup` | rule file |
 | `Slo` (composite) | rule file: SLI recording rules, error budget and multiwindow burn-rate alerts |
-| `Route`, `Receiver` (webhook, email, Slack, PagerDuty), `InhibitRule`, `TimeInterval`, `AlertmanagerSettings` | `alertmanager.yml` |
+| `Route`, `Receiver` (every Alertmanager integration), `InhibitRule`, `TimeInterval`, `AlertmanagerSettings` | `alertmanager.yml` |
 
 Types follow Prometheus `v3.15.0` and Alertmanager `v0.34.1` (`PROMETHEUS_PIN`).
 

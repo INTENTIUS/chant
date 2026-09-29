@@ -81,17 +81,34 @@ describe("alertmanager.yml", () => {
     expect(files["routes.ts"]).toContain("const root = new Route({ receiver: fallback, routes: rootChildren });");
   });
 
-  test("an integration the lexicon does not type is spread in from an untyped const, with a comment", () => {
+  test("every integration Alertmanager defines is declared with its type", () => {
     const files = byPath(
-      generateAlertmanagerFiles({ receivers: [{ name: "ops", opsgenie_configs: [{ api_key_file: "/k" }] } as never] }),
+      generateAlertmanagerFiles({
+        receivers: [{ name: "ops", opsgenie_configs: [{ api_key_file: "/k", priority: "P1" }], msteamsv2_configs: [{ webhook_url_file: "/t" }] }],
+      }),
+    );
+    expect(files["receivers.ts"]).toContain('const opsOpsgenie: OpsGenieConfig[] = [{ api_key_file: "/k", priority: "P1" }];');
+    expect(files["receivers.ts"]).toContain('const opsMsteamsv2: MSTeamsV2Config[] = [{ webhook_url_file: "/t" }];');
+    expect(files["receivers.ts"]).not.toContain("Untyped");
+  });
+
+  test("a receiver or global key Alertmanager doesn't define is spread in from an untyped const, with a comment", () => {
+    const files = byPath(
+      generateAlertmanagerFiles({
+        global: { resolve_timeout: "5m", pigeon_loft: "roof" } as never,
+        receivers: [{ name: "ops", pigeon_configs: [{ loft: "roof" }] } as never],
+      }),
     );
     expect(files["receivers.ts"]).toContain(
       [
-        '// Receiver "ops": opsgenie_configs is not typed by this lexicon, so it is carried as data.',
-        'const opsUntyped = { opsgenie_configs: [{ api_key_file: "/k" }] };',
+        '// Receiver "ops": pigeon_configs is not a field Alertmanager v0.34.1 defines, so it is carried as',
+        "// data, untyped.",
+        'const opsUntyped = { pigeon_configs: [{ loft: "roof" }] };',
         'const ops = new Receiver({ name: "ops", ...opsUntyped });',
       ].join("\n"),
     );
+    expect(files["settings.ts"]).toContain("// global: pigeon_loft is not a field Alertmanager v0.34.1 defines");
+    expect(files["settings.ts"]).toContain("...globalUntyped,");
   });
 });
 

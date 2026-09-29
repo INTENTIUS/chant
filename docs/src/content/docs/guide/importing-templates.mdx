@@ -36,3 +36,5 @@ Lexicons may provide roundtrip tests that verify the full import pipeline:
 The Kubernetes lexicon includes a full roundtrip suite and optional k3d cluster validation. See the [K8s Testing & Validation](/chant/lexicons/k8s/testing/) docs for details.
 
 The OpenTelemetry Collector lexicon imports collector YAML and checks that every fixture builds back to the same config, with `otelcol validate` over the result when `otelcol-contrib` is installed. See [Importing a Collector Config](/chant/lexicons/otel/importing/).
+
+The Prometheus lexicon imports rule files and `alertmanager.yml` and checks that every fixture builds back to the same file, with `promtool check rules` and `amtool check-config` over the result when those are installed. See [Importing Rule Files and alertmanager.yml](/chant/lexicons/prometheus/importing/).

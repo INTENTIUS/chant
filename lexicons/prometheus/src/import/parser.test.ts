@@ -96,6 +96,19 @@ describe("parsePrometheusYaml", () => {
         opsgenie_configs: [{ api_key: "literal" }],
       },
     ]);
+    expect(parsed.warnings).toEqual([]);
+  });
+
+  test("a receiver or global key Alertmanager doesn't define is carried and named in a warning", () => {
+    const parsed = parsePrometheusYaml(
+      lines("global: { resolve_timeout: 5m, pigeon_loft: roof }", "receivers:", "  - name: chat", "    pigeon_configs: [{ loft: roof }]"),
+    );
+    if (parsed.kind !== "alertmanager") throw new Error("expected alertmanager.yml");
+    expect(parsed.config.receivers).toEqual([{ name: "chat", pigeon_configs: [{ loft: "roof" }] }]);
+    expect(parsed.warnings).toEqual([
+      "global: pigeon_loft is not a global field in Alertmanager v0.34.1; carried as data, untyped",
+      'receiver "chat": pigeon_configs is not a receiver field in Alertmanager v0.34.1; carried as data, untyped',
+    ]);
   });
 
   test("dates and times stay strings, as the Go loaders read them", () => {

@@ -31,6 +31,8 @@ import type {
   RuleGroupConfig,
   TimeIntervalConfig,
 } from "../model";
+import { ALERTMANAGER_GLOBAL_FIELDS, RECEIVER_INTEGRATION_TYPES } from "../model";
+import { PROMETHEUS_PIN } from "../pin";
 import {
   ALERTMANAGER_RESOURCE_TYPE,
   RULE_FILE_RESOURCE_TYPE,
@@ -329,35 +331,19 @@ export function generateRuleFileFiles(file: RuleFileConfig): GeneratedFile[] {
 
 /** Receiver fields the lexicon types, with the type each list is declared as. */
 const RECEIVER_FIELD_TYPES: Record<string, string> = {
-  webhook_configs: "WebhookConfig[]",
-  email_configs: "EmailConfig[]",
-  slack_configs: "SlackConfig[]",
-  pagerduty_configs: "PagerDutyConfig[]",
+  ...Object.fromEntries(Object.entries(RECEIVER_INTEGRATION_TYPES).map(([k, t]) => [k, `${t}[]`])),
   labels: "LabelSet",
 };
 
 /** `global:` fields the lexicon types. */
-const GLOBAL_FIELDS = new Set([
-  "resolve_timeout",
-  "smtp_from",
-  "smtp_smarthost",
-  "smtp_hello",
-  "smtp_auth_username",
-  "smtp_auth_password",
-  "smtp_auth_password_file",
-  "smtp_auth_secret",
-  "smtp_auth_secret_file",
-  "smtp_auth_identity",
-  "smtp_require_tls",
-  "slack_api_url",
-  "slack_api_url_file",
-  "pagerduty_url",
-  "http_config",
-]);
+const GLOBAL_FIELDS = new Set<string>(ALERTMANAGER_GLOBAL_FIELDS);
+
+const AM_VERSION = PROMETHEUS_PIN.alertmanager.version;
 
 /** A comment naming the fields carried as data, wrapped at the line limit. */
 function untypedComment(what: string, keys: string[]): string[] {
-  const text = `${what} ${keys.join(", ")} ${keys.length === 1 ? "is" : "are"} not typed by this lexicon, so ${keys.length === 1 ? "it is" : "they are"} carried as data.`;
+  const one = keys.length === 1;
+  const text = `${what} ${keys.join(", ")} ${one ? "is not a field" : "are not fields"} Alertmanager ${AM_VERSION} defines, so ${one ? "it is" : "they are"} carried as data, untyped.`;
   const lines: string[] = [];
   let cur = "//";
   for (const w of text.split(" ")) {
