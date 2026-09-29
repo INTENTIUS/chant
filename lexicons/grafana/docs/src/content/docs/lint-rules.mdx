@@ -22,6 +22,7 @@ The grafana lexicon's rules use the `GRAF` prefix. `GRAF0xx` rules read your Typ
 | GRAF106 | error | a dashboard or datasource uid Grafana rejects, or a dashboard with no title |
 | GRAF107 | error / warning | a value the pinned Grafana schema doesn't allow (error), a key it doesn't know (warning) |
 | GRAF108 | error | a panel query or query variable sent to a Prometheus datasource that is not valid PromQL |
+| GRAF115 | warning | a panel unit that is neither a Grafana unit id nor a custom unit |
 
 ## GRAF001
 
@@ -70,3 +71,21 @@ Every panel query and query variable whose datasource resolves to a `prometheus`
 Grafana replaces template variables before Prometheus sees the query, so the check does too. `$var`, `${var}`, `${var:format}`, `[[var]]` and the `$__` macros become a duration inside `[...]` or after `offset` (`[$__rate_interval]`, `[$window]`), a number for `$__range_s`, `$__interval_ms`, `$__from` and `$__to`, and a name anywhere else (`$metric{...}`, `by ($label)`). Inside a quoted string they are left alone. A query variable's `label_values(selector, label)`, `label_names(selector)` and `query_result(expr)` are checked on the selector or expression; `metrics(regex)` and bare `label_values(label)` hold no PromQL.
 
 It is a syntax check: `sum(x{cluster="$cluster"}` (a missing bracket) and `[5 m]` fail, `rate` over an instant vector parses. The message gives the offset in the query as written.
+
+## GRAF115
+
+A field's `unit` is a free string in Grafana's schema, so GRAF107 accepts anything. Grafana looks the string up in its unit registry; an id it doesn't have is drawn after the value as literal text, so `"byte"` renders `5 byte` where `"bytes"` renders `5 B`, and `"cores"` renders `2 cores` when you may have wanted `"none"` or `"short"`. GRAF115 checks each panel's `fieldConfig.defaults.unit`, every override property with id `unit`, a heatmap's `options.yAxis.unit` and `options.cellValues.unit`, and a legacy graph panel's `yaxes[].format`, including library panels in an export's `__elements`.
+
+The accepted ids are the ones registered in Grafana v13.2.2's [`categories.ts`](https://github.com/grafana/grafana/blob/v13.2.2/packages/grafana-data/src/valueFormats/categories.ts), plus the legacy alias `farenheit` that `valueFormats.ts` still resolves. They are vendored in `src/spec/units.gen.ts`; `just fetch-units` re-extracts them. A custom unit passes whatever follows its prefix, exactly as Grafana parses it:
+
+| Syntax | Renders |
+|---|---|
+| `suffix:<text>` | the value, then the text |
+| `prefix:<text>` | the text, then the value |
+| `si:<scale><unit>` | an SI-scaled unit, e.g. `si:mF` |
+| `count:<unit>` | a scaled count, e.g. `count:reqs` |
+| `currency:<symbol>`, `currency:financial:<symbol>[:suffix]` | a currency amount |
+| `time:<format>` | a date, e.g. `time:YYYY-MM-DD` |
+| `bool:<true>/<false>` | text for true and false |
+
+It is a warning because the dashboard still renders. The message names the closest registered id when one is a case change or a couple of letters away (`"Bytes"`, `"celcius"`), and says to write `suffix:<text>` if the text was meant.

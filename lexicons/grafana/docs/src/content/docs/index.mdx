@@ -42,8 +42,9 @@ Checks catch a query aimed at a datasource nobody declared, with
 `Datasource` or `ExternalDatasource` (GRAF101), or of the
 wrong type (GRAF102), a `$variable` the dashboard doesn't declare (GRAF103),
 duplicate uids and ids (GRAF104), panels off the grid or overlapping (GRAF105),
-anything Grafana's dashboard schema rejects (GRAF107), and PromQL sent to a
-Prometheus that doesn't parse (GRAF108).
+anything Grafana's dashboard schema rejects (GRAF107), PromQL sent to a
+Prometheus that doesn't parse (GRAF108), and a unit Grafana doesn't know
+(GRAF115).
 
 
 ## At a Glance
@@ -55,10 +56,10 @@ Prometheus that doesn't parse (GRAF108).
 | Services | 8 |
 | Intrinsic functions | 0 |
 | Pseudo-parameters | 0 |
-| Lint rules | 10 |
+| Lint rules | 11 |
 
 **Lexicon version:** 0.98.0  
 **Namespace:** `Grafana`
 
-- [All Rules](./rules) — 10 rules
+- [All Rules](./rules) — 11 rules
 - [Serialization](./serialization) — output format details
