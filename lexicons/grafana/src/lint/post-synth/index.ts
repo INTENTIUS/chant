@@ -7,6 +7,7 @@ import { graf104 } from "./graf104";
 import { graf105 } from "./graf105";
 import { graf106 } from "./graf106";
 import { graf107 } from "./graf107";
+import { graf108 } from "./graf108";
 
 export const postSynthChecks: PostSynthCheck[] = [
   graf101,
@@ -16,4 +17,5 @@ export const postSynthChecks: PostSynthCheck[] = [
   graf105,
   graf106,
   graf107,
+  graf108,
 ];

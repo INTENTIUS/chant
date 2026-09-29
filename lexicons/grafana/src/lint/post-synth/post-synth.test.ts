@@ -1,4 +1,7 @@
 import { describe, expect, test } from "vitest";
+import { readdirSync, readFileSync } from "fs";
+import { dirname, join } from "path";
+import { fileURLToPath } from "url";
 import { makePostSynthCtxFromFiles, makePostSynthCtx } from "@intentius/chant-test-utils";
 import type { PostSynthCheck } from "@intentius/chant/lint/post-synth";
 import type { Declarable } from "@intentius/chant/declarable";
@@ -6,7 +9,7 @@ import { grafanaSerializer } from "../../serializer";
 import { Datasource, ExternalDatasource } from "../../datasource";
 import { Dashboard } from "../../dashboard";
 import { Row, StatPanel, TimeSeriesPanel, TablePanel, TextPanel } from "../../panels";
-import { PromQuery, TempoQuery } from "../../query";
+import { LokiQuery, PromQuery, TempoQuery } from "../../query";
 import { DatasourceVariable, QueryVariable } from "../../variables";
 import { graf101 } from "./graf101";
 import { graf102 } from "./graf102";
@@ -15,6 +18,9 @@ import { graf104 } from "./graf104";
 import { graf105 } from "./graf105";
 import { graf106 } from "./graf106";
 import { graf107 } from "./graf107";
+import { graf108 } from "./graf108";
+import { prometheusQueries } from "../../promql-check";
+import { knownDatasources } from "../../datasource-refs";
 
 /** Serialize entities the way a build does and hand the files to the harness. */
 function ctxOf(entities: Record<string, Declarable>) {
@@ -301,5 +307,67 @@ describe("GRAF107: the pinned schema", () => {
     const dash = dashboardJson([panelJson({ options: { colorMode: "rainbow" } })]);
     const ctx = makePostSynthCtx("k8s", JSON.stringify(dash));
     expect(graf107.check(ctx).map((d) => d.checkId)).toEqual(["GRAF107"]);
+  });
+});
+
+describe("GRAF108: PromQL syntax", () => {
+  const loki = new Datasource({ name: "Loki", type: "loki" });
+
+  test("flags the unbalanced expression from the issue (#2955)", () => {
+    const cluster = new QueryVariable({ name: "cluster", datasource: prometheus, query: "label_values(up, cluster)" });
+    const panel = new StatPanel({ title: "Up", datasource: prometheus, targets: [new PromQuery({ expr: 'sum(x{cluster="$cluster"}' })] });
+    const diags = graf108.check(ctxOf({ prometheus, d: new Dashboard({ title: "D", variables: [cluster], panels: [panel] }) }));
+    expect(diags.map((d) => [d.checkId, d.severity])).toEqual([["GRAF108", "error"]]);
+    expect(diags[0].message).toContain('panel "Up"');
+    expect(diags[0].message).toContain("query A is not valid PromQL: the expression ends early");
+  });
+
+  test("flags a query variable and a panel query inheriting a Prometheus datasource variable", () => {
+    const ds = new DatasourceVariable({ name: "ds", pluginType: "prometheus" });
+    const job = new QueryVariable({ name: "job", datasource: prometheus, query: 'label_values(up{env="prod", job, instance)' });
+    const panel = new TimeSeriesPanel({ title: "Rate", datasource: ds, targets: [new PromQuery({ expr: "rate(http_requests_total[5 m])" })] });
+    const messages = graf108.check(ctxOf({ prometheus, d: new Dashboard({ title: "D", variables: [ds, job], panels: [panel] }) })).map((d) => d.message);
+    expect(messages).toEqual([expect.stringContaining('panel "Rate" (id 1) query A is not valid PromQL'), expect.stringContaining('variable "job" query is not valid PromQL')]);
+  });
+
+  test("passes template variables and Grafana's macros where Prometheus would see a value", () => {
+    const route = new QueryVariable({ name: "route", datasource: prometheus, query: 'label_values(http_requests_total{job="$job"}, route)' });
+    const job = new QueryVariable({ name: "job", datasource: prometheus, query: "label_values(up, job)" });
+    const exprs = [
+      'sum by (le) (rate(http_request_duration_seconds_bucket{route=~"$route"}[$__rate_interval]))',
+      'sum(increase(http_requests_total{job="${job}"}[$__range])) / $__range_s',
+      'rate(http_requests_total{job=~"[[job]]"}[$__interval]) offset $__interval',
+    ];
+    const panel = new TimeSeriesPanel({ datasource: prometheus, targets: exprs.map((expr) => new PromQuery({ expr })) });
+    expect(graf108.check(ctxOf({ prometheus, d: new Dashboard({ title: "D", variables: [job, route], panels: [panel] }) }))).toEqual([]);
+  });
+
+  test("leaves LogQL, TraceQL and queries of unknown destination alone", () => {
+    const logs = new StatPanel({ datasource: loki, targets: [new LokiQuery({ expr: '{app="x"} |= "error" | json' })] });
+    const traces = new TablePanel({ datasource: tempo, targets: [new TempoQuery({ query: "{ .status = error }" })] });
+    const d = new Dashboard({ title: "D", panels: [logs, traces] });
+    expect(graf108.check(ctxOf({ loki, tempo, d }))).toEqual([]);
+    // No datasource anywhere: Grafana sends it to its default, whatever that is.
+    const unknown = dashboardJson([panelJson({ targets: [{ refId: "A", expr: "sum(" }] })]);
+    expect(graf108.check(ctxOfJson(unknown))).toEqual([]);
+  });
+
+  test("checks refs to a Prometheus the build does not declare, by the ref's own type", () => {
+    const dash = dashboardJson([panelJson({ datasource: { type: "prometheus", uid: "elsewhere" }, targets: [{ refId: "A", expr: "sum(up" }] })]);
+    expect(ids(graf108, ctxOfJson(dash))).toEqual([["GRAF108", "error"]]);
+  });
+});
+
+describe("GRAF108 over real Grafana exports", () => {
+  const exportsDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "test", "fixtures", "exports");
+  const files = readdirSync(exportsDir)
+    .filter((d) => d.startsWith("grafana-"))
+    .flatMap((v) => readdirSync(join(exportsDir, v)).filter((f) => f.endsWith(".json") && !f.includes("v2-resource")).map((f) => `${v}/${f}`));
+
+  test.each(files)("%s has no GRAF108 errors", (name) => {
+    const text = readFileSync(join(exportsDir, name), "utf-8");
+    // Non-vacuous: every export in the corpus sends PromQL to a Prometheus.
+    expect(prometheusQueries(JSON.parse(text), knownDatasources([])).length).toBeGreaterThan(0);
+    expect(graf108.check(makePostSynthCtxFromFiles("grafana", { [name]: text }, "{}"))).toEqual([]);
   });
 });

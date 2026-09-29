@@ -39,4 +39,4 @@ With no provider declared, chant writes one named `chant` that reads `/var/lib/g
 
 ## Checking before Grafana does
 
-`chant lint` and `chant build` run GRAF101-GRAF107 on the output, including a check against Grafana's dashboard schema at the pinned version. To check against a real Grafana, the lexicon's `import.test.ts` boots `grafana/grafana` with Docker, provisions the example and reads each dashboard back over the HTTP API.
+`chant lint` and `chant build` run GRAF101-GRAF108 on the output, including a check against Grafana's dashboard schema at the pinned version and a PromQL syntax check on every query sent to a Prometheus. To check against a real Grafana, the lexicon's `import.test.ts` boots `grafana/grafana` with Docker, provisions the example and reads each dashboard back over the HTTP API.

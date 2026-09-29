@@ -13,6 +13,31 @@
  * docs apply word for word.
  */
 
+import {
+  RECEIVER_INTEGRATION_TYPES,
+  type DiscordConfig,
+  type EmailConfig,
+  type HttpClientConfig,
+  type IncidentioConfig,
+  type JiraConfig,
+  type MattermostConfig,
+  type MSTeamsConfig,
+  type MSTeamsV2Config,
+  type OpsGenieConfig,
+  type PagerDutyConfig,
+  type PushoverConfig,
+  type ReceiverIntegration,
+  type RocketchatConfig,
+  type SlackConfig,
+  type SNSConfig,
+  type TelegramConfig,
+  type TlsConfig,
+  type VictorOpsConfig,
+  type WebexConfig,
+  type WebhookConfig,
+  type WechatConfig,
+} from "./integrations";
+
 /** Labels or annotations: string keys to string values. */
 export type LabelSet = Record<string, string>;
 
@@ -78,114 +103,31 @@ export function ruleName(rule: RuleConfig): string {
 
 // ── Alertmanager ────────────────────────────────────────────────────
 
-/** HTTP client settings shared by the receivers that make HTTP calls. */
-export interface HttpClientConfig {
-  basic_auth?: { username?: string; username_file?: string; password?: string; password_file?: string };
-  authorization?: { type?: string; credentials?: string; credentials_file?: string };
-  bearer_token?: string;
-  bearer_token_file?: string;
-  oauth2?: Record<string, unknown>;
-  proxy_url?: string;
-  follow_redirects?: boolean;
-  enable_http2?: boolean;
-  tls_config?: {
-    ca_file?: string;
-    cert_file?: string;
-    key_file?: string;
-    server_name?: string;
-    insecure_skip_verify?: boolean;
-    min_version?: string;
-  };
-}
-
-interface NotifierBase {
-  /** Whether to notify about resolved alerts too. */
-  send_resolved?: boolean;
-}
-
-export interface WebhookConfig extends NotifierBase {
-  /** Where alerts are POSTed. Set this or `url_file`. */
-  url?: string;
-  url_file?: string;
-  http_config?: HttpClientConfig;
-  /** Most alerts per message; 0 sends them all. */
-  max_alerts?: number;
-  timeout?: string;
-}
-
-export interface EmailConfig extends NotifierBase {
-  to: string;
-  from?: string;
-  /** `host:port` of the SMTP server. Falls back to `global.smtp_smarthost`. */
-  smarthost?: string;
-  hello?: string;
-  auth_username?: string;
-  auth_password?: string;
-  auth_password_file?: string;
-  auth_secret?: string;
-  auth_secret_file?: string;
-  auth_identity?: string;
-  require_tls?: boolean;
-  tls_config?: HttpClientConfig["tls_config"];
-  html?: string;
-  text?: string;
-  headers?: Record<string, string>;
-}
-
-export interface SlackConfig extends NotifierBase {
-  /** The incoming-webhook URL. It is a credential: prefer `api_url_file`. */
-  api_url?: string;
-  api_url_file?: string;
-  channel?: string;
-  username?: string;
-  color?: string;
-  title?: string;
-  title_link?: string;
-  pretext?: string;
-  text?: string;
-  footer?: string;
-  fallback?: string;
-  icon_emoji?: string;
-  icon_url?: string;
-  link_names?: boolean;
-  short_fields?: boolean;
-  mrkdwn_in?: string[];
-  fields?: Array<{ title: string; value: string; short?: boolean }>;
-  actions?: Array<Record<string, unknown>>;
-  http_config?: HttpClientConfig;
-}
-
-export interface PagerDutyConfig extends NotifierBase {
-  /** Events API v2 integration key. A credential: prefer `routing_key_file`. */
-  routing_key?: string;
-  routing_key_file?: string;
-  /** Events API v1 integration key. A credential: prefer `service_key_file`. */
-  service_key?: string;
-  service_key_file?: string;
-  url?: string;
-  client?: string;
-  client_url?: string;
-  description?: string;
-  severity?: string;
-  class?: string;
-  component?: string;
-  group?: string;
-  source?: string;
-  details?: Record<string, string>;
-  links?: Array<{ href: string; text?: string }>;
-  images?: Array<{ src: string; alt?: string; href?: string }>;
-  http_config?: HttpClientConfig;
-}
+export * from "./integrations";
 
 /** One entry under `receivers:`. */
 export interface ReceiverConfig {
   name: string;
   /** Labels on the receiver, exposed to notification templates. */
   labels?: LabelSet;
-  webhook_configs?: WebhookConfig[];
+  discord_configs?: DiscordConfig[];
   email_configs?: EmailConfig[];
-  slack_configs?: SlackConfig[];
+  incidentio_configs?: IncidentioConfig[];
   pagerduty_configs?: PagerDutyConfig[];
+  slack_configs?: SlackConfig[];
+  webhook_configs?: WebhookConfig[];
+  opsgenie_configs?: OpsGenieConfig[];
+  wechat_configs?: WechatConfig[];
+  pushover_configs?: PushoverConfig[];
+  victorops_configs?: VictorOpsConfig[];
+  sns_configs?: SNSConfig[];
+  telegram_configs?: TelegramConfig[];
+  webex_configs?: WebexConfig[];
+  msteams_configs?: MSTeamsConfig[];
+  msteamsv2_configs?: MSTeamsV2Config[];
+  jira_configs?: JiraConfig[];
+  rocketchat_configs?: RocketchatConfig[];
+  mattermost_configs?: MattermostConfig[];
 }
 
 /** A route in the routing tree. The top-level `route:` is the root. */
@@ -244,12 +186,18 @@ export interface TimeIntervalConfig {
   time_intervals: TimePeriodConfig[];
 }
 
-/** `global:` settings. */
+/**
+ * `global:` settings: defaults the receivers fall back to. Credentials with
+ * a `*_file` sibling are best set through it; PROM001 flags a literal.
+ */
 export interface AlertmanagerGlobalConfig {
+  /** How long an alert that stops being updated stays firing. */
   resolve_timeout?: string;
+  http_config?: HttpClientConfig;
+  jira_api_url?: string;
   smtp_from?: string;
-  smtp_smarthost?: string;
   smtp_hello?: string;
+  smtp_smarthost?: string;
   smtp_auth_username?: string;
   smtp_auth_password?: string;
   smtp_auth_password_file?: string;
@@ -257,11 +205,82 @@ export interface AlertmanagerGlobalConfig {
   smtp_auth_secret_file?: string;
   smtp_auth_identity?: string;
   smtp_require_tls?: boolean;
+  smtp_tls_config?: TlsConfig;
+  smtp_force_implicit_tls?: boolean;
   slack_api_url?: string;
   slack_api_url_file?: string;
+  slack_app_token?: string;
+  slack_app_token_file?: string;
+  slack_app_url?: string;
   pagerduty_url?: string;
-  http_config?: HttpClientConfig;
+  opsgenie_api_url?: string;
+  opsgenie_api_key?: string;
+  opsgenie_api_key_file?: string;
+  wechat_api_url?: string;
+  wechat_api_secret?: string;
+  wechat_api_secret_file?: string;
+  wechat_api_corp_id?: string;
+  victorops_api_url?: string;
+  victorops_api_key?: string;
+  victorops_api_key_file?: string;
+  telegram_api_url?: string;
+  telegram_bot_token?: string;
+  telegram_bot_token_file?: string;
+  webex_api_url?: string;
+  rocketchat_api_url?: string;
+  rocketchat_token?: string;
+  rocketchat_token_file?: string;
+  rocketchat_token_id?: string;
+  rocketchat_token_id_file?: string;
+  mattermost_webhook_url?: string;
+  mattermost_webhook_url_file?: string;
 }
+
+/** Every `global:` field, as a list, for code that reads a parsed file. */
+export const ALERTMANAGER_GLOBAL_FIELDS = Object.freeze(Object.keys({
+  resolve_timeout: true,
+  http_config: true,
+  jira_api_url: true,
+  smtp_from: true,
+  smtp_hello: true,
+  smtp_smarthost: true,
+  smtp_auth_username: true,
+  smtp_auth_password: true,
+  smtp_auth_password_file: true,
+  smtp_auth_secret: true,
+  smtp_auth_secret_file: true,
+  smtp_auth_identity: true,
+  smtp_require_tls: true,
+  smtp_tls_config: true,
+  smtp_force_implicit_tls: true,
+  slack_api_url: true,
+  slack_api_url_file: true,
+  slack_app_token: true,
+  slack_app_token_file: true,
+  slack_app_url: true,
+  pagerduty_url: true,
+  opsgenie_api_url: true,
+  opsgenie_api_key: true,
+  opsgenie_api_key_file: true,
+  wechat_api_url: true,
+  wechat_api_secret: true,
+  wechat_api_secret_file: true,
+  wechat_api_corp_id: true,
+  victorops_api_url: true,
+  victorops_api_key: true,
+  victorops_api_key_file: true,
+  telegram_api_url: true,
+  telegram_bot_token: true,
+  telegram_bot_token_file: true,
+  webex_api_url: true,
+  rocketchat_api_url: true,
+  rocketchat_token: true,
+  rocketchat_token_file: true,
+  rocketchat_token_id: true,
+  rocketchat_token_id_file: true,
+  mattermost_webhook_url: true,
+  mattermost_webhook_url_file: true,
+} satisfies Record<keyof AlertmanagerGlobalConfig, true>)) as readonly (keyof AlertmanagerGlobalConfig)[];
 
 /** `tracing:` settings: where Alertmanager sends its own traces. */
 export interface AlertmanagerTracingConfig {
@@ -272,7 +291,7 @@ export interface AlertmanagerTracingConfig {
   headers?: Record<string, string>;
   compression?: string;
   timeout?: string;
-  tls_config?: HttpClientConfig["tls_config"];
+  tls_config?: TlsConfig;
 }
 
 /** A whole `alertmanager.yml`, the file `amtool check-config` reads. */
@@ -286,8 +305,8 @@ export interface AlertmanagerConfig {
   tracing?: AlertmanagerTracingConfig;
 }
 
-/** The four receiver integrations this lexicon types. */
-export const RECEIVER_INTEGRATIONS = ["webhook_configs", "email_configs", "slack_configs", "pagerduty_configs"] as const;
+/** The receiver integrations, every one Alertmanager defines. */
+export const RECEIVER_INTEGRATIONS = Object.keys(RECEIVER_INTEGRATION_TYPES) as readonly ReceiverIntegration[];
 
 /** True when a parsed document has the shape of a Prometheus rule file. */
 export function looksLikeRuleFile(value: unknown): value is RuleFileConfig {

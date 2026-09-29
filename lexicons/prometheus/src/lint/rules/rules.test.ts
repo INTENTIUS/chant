@@ -58,7 +58,37 @@ describe("PROM001 literal credential", () => {
         const pager = new Receiver({ name: "pager", pagerduty_configs: safe });
       `),
     );
-    expect(diags.map((d) => d.message.split("`")[1])).toEqual(["auth_password", "service_key", "smtp_auth_password"]);
+    expect(diags.map((d) => d.message.split("`")[1])).toEqual(["auth_password", "api_key", "service_key", "smtp_auth_password"]);
+  });
+
+  test("covers every integration's credential, and api_url and routing_key only where they are one", () => {
+    const diags = literalCredentialRule.check(
+      ctx(`
+        const chatSlack: SlackConfig[] = [{ api_url: "https://hooks.slack.com/services/T/B/X", app_token: "xoxb-1" }];
+        new Receiver({
+          name: "chat",
+          slack_configs: chatSlack,
+          discord_configs: [{ webhook_url: "https://discord.com/api/webhooks/1/x" }],
+          telegram_configs: [{ bot_token: "123:abc", chat_id: 1 }],
+          webex_configs: [{ api_url: "https://webexapis.com/v1/messages", room_id: "r" }],
+          victorops_configs: [{ api_key: "k", routing_key: "ops" }],
+          pushover_configs: [{ user_key: "u", token: "t" }],
+          rocketchat_configs: [{ token_id: "i", token_file: "/etc/rc" }],
+        });
+        new AlertmanagerSettings({ global: { telegram_bot_token: "123:abc", webex_api_url: "https://webexapis.com/v1/messages" } });
+      `),
+    );
+    expect(diags.map((d) => d.message.split("`")[1])).toEqual([
+      "api_url",
+      "app_token",
+      "webhook_url",
+      "bot_token",
+      "api_key",
+      "user_key",
+      "token",
+      "token_id",
+      "telegram_bot_token",
+    ]);
   });
 });
 

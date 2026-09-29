@@ -3,10 +3,11 @@
  * `TempoQuery` (TraceQL) and `LokiQuery` (LogQL), each typed from that
  * plugin's query schema at `GRAFANA_SCHEMA_PIN`.
  *
- * The expression is a string; this lexicon does not parse PromQL, TraceQL or
- * LogQL. What it does check is where the query goes: `datasource` only
- * accepts a datasource of the query's own plugin type, and GRAF101, GRAF102
- * and GRAF103 check the emitted references after a build.
+ * The expression is a string. What the lexicon checks is where the query
+ * goes: `datasource` only accepts a datasource of the query's own plugin
+ * type, and GRAF101, GRAF102 and GRAF103 check the emitted references after
+ * a build. GRAF108 parses the PromQL of every query that reaches a
+ * Prometheus; TraceQL and LogQL are not parsed.
  *
  * `defineQuery` is the extension point for any other datasource plugin, and
  * the three built-ins are defined through it.
