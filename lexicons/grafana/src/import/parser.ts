@@ -47,6 +47,7 @@ import * as jsYaml from "js-yaml";
 import type { TemplateIR, TemplateParser, ResourceIR } from "@intentius/chant/import/parser";
 import { DASHBOARD_SCHEMA_VERSION } from "../schema/dashboard.gen";
 import { BUILTIN_DATASOURCE_UIDS } from "../datasource";
+import { JSONDATA_LINKS } from "../datasource-settings";
 import {
   looksLikeDashboard,
   looksLikeDashboardApiResponse,
@@ -140,6 +141,15 @@ const PACKAGE_CLASS_NAMES = new Set([
   "PromQuery",
   "TempoQuery",
   "LokiQuery",
+  "ElasticsearchQuery",
+  "CloudWatchQuery",
+  "AzureMonitorQuery",
+  "CloudMonitoringQuery",
+  "BigQueryQuery",
+  "PyroscopeQuery",
+  "PostgresQuery",
+  "MySQLQuery",
+  "MSSQLQuery",
   "TimeSeriesPanel",
   "StatPanel",
   "GaugePanel",
@@ -986,10 +996,51 @@ const DATASOURCE_FIELDS = [
   "version",
 ];
 
-/** Plan a datasource provisioning file: one `Datasource` per entry. */
+/**
+ * The `jsonData` paths of `ds` that hold another datasource's uid (see
+ * `JSONDATA_LINKS`), with the uid found there and the plugin types the
+ * field accepts.
+ */
+function jsonDataLinks(type: string, jsonData: Json): Array<{ path: Array<string | number>; uid: string; targets: readonly string[] }> {
+  const out: Array<{ path: Array<string | number>; uid: string; targets: readonly string[] }> = [];
+  const walk = (value: unknown, rest: readonly string[], at: Array<string | number>, targets: readonly string[]) => {
+    if (rest.length === 0) {
+      if (typeof value === "string" && value !== "") out.push({ path: at, uid: value, targets });
+      return;
+    }
+    const [head, ...tail] = rest;
+    if (head === "*") {
+      if (Array.isArray(value)) value.forEach((v, i) => walk(v, tail, [...at, i], targets));
+    } else if (isObject(value)) walk(value[head], tail, [...at, head], targets);
+  };
+  for (const link of JSONDATA_LINKS) if (!link.on || link.on.includes(type)) walk(jsonData, link.path, [], link.targets);
+  return out;
+}
+
+/** A copy of `value` with `replacement` at `path`. */
+function replaceAt(value: unknown, path: ReadonlyArray<string | number>, replacement: unknown): unknown {
+  if (path.length === 0) return replacement;
+  const [head, ...tail] = path;
+  if (Array.isArray(value)) return value.map((v, i) => (i === head ? replaceAt(v, tail, replacement) : v));
+  if (isObject(value)) return { ...value, [head]: replaceAt(value[head], tail, replacement) };
+  return value;
+}
+
+/**
+ * Plan a datasource provisioning file: one `Datasource` per entry.
+ *
+ * A uid in one entry's `jsonData` that names another entry of the file (a
+ * Tempo's `tracesToLogsV2.datasourceUid`, a Prometheus exemplar's
+ * `datasourceUid`, a Loki derived field's) becomes a reference to that
+ * entry's `Datasource`, so the link is type-checked, when the entry is of a
+ * plugin type the field accepts. Declarations are ordered so each refers
+ * only to ones before it; a link that would close a cycle (Tempo to Loki and
+ * Loki back to Tempo) stays a uid string. The build writes provisioned
+ * datasources sorted by name, so the order does not show in its output.
+ */
 export function planDatasourceProvisioning(doc: Json): { plan: Plan; warnings: string[] } {
   const report = new Report();
-  const declarations: Declaration[] = [];
+  const entries: Array<{ id: string; name: string; type: string; props: Json; uid?: string }> = [];
   const list = Array.isArray(doc.datasources) ? doc.datasources : [];
   list.forEach((ds, i) => {
     if (!isObject(ds) || typeof ds.name !== "string" || typeof ds.type !== "string") {
@@ -1001,11 +1052,44 @@ export function planDatasourceProvisioning(doc: Json): { plan: Plan; warnings: s
     for (const key of Object.keys(ds)) {
       if (!DATASOURCE_FIELDS.includes(key)) report.drop(pointer("datasources", i, key), `datasource "${ds.name}"`, key, NO_PROP);
     }
-    declarations.push({ id: `datasource:${i}`, kind: "new", className: "Datasource", props, name: ds.name, module: "datasources" });
+    entries.push({ id: `datasource:${i}`, name: ds.name, type: ds.type, props, ...(typeof ds.uid === "string" ? { uid: ds.uid } : {}) });
   });
   for (const key of Object.keys(doc)) {
     if (key === "apiVersion" || key === "datasources") continue;
     report.drop(pointer(key), "the provisioning file", key, "(chant writes datasources only; prune and deleteDatasources are #2953)");
+  }
+
+  // Each entry's links to other entries of the file, by the uid they name.
+  const byUid = new Map(entries.filter((e) => e.uid !== undefined).map((e) => [e.uid!, e]));
+  const links = new Map(
+    entries.map((e) => {
+      const jsonData = e.props.jsonData;
+      const found = isObject(jsonData) ? jsonDataLinks(e.type, jsonData) : [];
+      return [e.id, found.flatMap((l) => {
+        const target = byUid.get(l.uid);
+        return target && target !== e && l.targets.includes(target.type) ? [{ path: l.path, target: target.id }] : [];
+      })];
+    }),
+  );
+  // File order, except that an entry waits for the entries it links to; a cycle is broken at the first entry left.
+  const declared = new Set<string>();
+  const declarations: Declaration[] = [];
+  while (declared.size < entries.length) {
+    const remaining = entries.filter((e) => !declared.has(e.id));
+    const next = remaining.find((e) => links.get(e.id)!.every((l) => declared.has(l.target))) ?? remaining[0];
+    let jsonData = next.props.jsonData;
+    for (const l of links.get(next.id)!) if (declared.has(l.target)) jsonData = replaceAt(jsonData, l.path, declRef(l.target));
+    const props = jsonData === undefined ? next.props : { ...next.props, jsonData };
+    declarations.push({
+      id: next.id,
+      kind: "new",
+      className: "Datasource",
+      typeArguments: [JSON.stringify(next.type)],
+      props,
+      name: next.name,
+      module: "datasources",
+    });
+    declared.add(next.id);
   }
   return {
     plan: {

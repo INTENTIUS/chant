@@ -4,12 +4,14 @@ import { Dashboard } from "./dashboard";
 import { renderDashboard } from "./build";
 import { validateDashboardSchema } from "./schema-validate";
 import { SCHEMA_NAMES } from "./pin";
+import { registeredQueries } from "./query";
 
 const builtins = panels.registeredPanels().filter((d) => d.builtin);
 
 describe("built-in panels", () => {
   test("every panel type Grafana ships with a schema at the pin has a class", () => {
-    const panelSchemas = SCHEMA_NAMES.filter((n) => !["dashboard", "prometheus", "tempo", "loki"].includes(n));
+    const querySchemas = new Set<string>(registeredQueries().flatMap((d) => (d.schema ? [d.schema] : [])));
+    const panelSchemas = SCHEMA_NAMES.filter((n) => n !== "dashboard" && !querySchemas.has(n));
     expect(builtins.map((d) => d.schema).filter(Boolean).sort()).toEqual([...panelSchemas].sort());
   });
 

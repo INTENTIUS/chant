@@ -79,6 +79,25 @@
       "value": ["solid", "dash", "dot", "square", "accessible"],
       "source": "packages/grafana-schema/src/common/mudball.cue:41 (not in v12.4.0)",
       "why": "Grafana 13 adds the \"accessible\" line style; the vendored enum rejects it."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/TableFieldFooterOptions",
+      "value": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": { "reducers": { "type": "array", "items": { "type": "string" }, "description": "footer reducers to apply to this field" } },
+        "description": "The footer of one field (TableFooterOptions in the CUE; renamed here because the vendored schema already has a panel-level TableFooterOptions)"
+      },
+      "source": "packages/grafana-schema/src/common/table.cue:108-111 (:108 at v12.4.0)",
+      "why": "Grafana 12.4 moved the table footer onto each field; this is its shape."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/TableFieldOptions/properties/footer",
+      "value": { "$ref": "#/definitions/TableFieldFooterOptions", "description": "options for the footer for this field" },
+      "source": "packages/grafana-schema/src/common/table.cue:158-159 (:153-154 at v12.4.0)",
+      "why": "Grafana 12.4.11 writes fieldConfig.defaults.custom.footer ({ reducers: [] }) on the table panels it exports (test/fixtures/exports/grafana-12.4.11/queries.json)."
     }
   ]
 }

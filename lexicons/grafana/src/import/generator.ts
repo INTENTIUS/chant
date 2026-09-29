@@ -386,6 +386,7 @@ export function generatePlanModules(plan: Plan): {
         classRef = className;
       }
       mod.declarables++;
+      const typed = d.typeArguments && d.typeArguments.length > 0 ? `${classRef}<${d.typeArguments.join(", ")}>` : classRef;
       const entries: Array<[string, string]> = [];
       for (const [key, raw] of Object.entries(d.props ?? {})) {
         if (raw === undefined) continue;
@@ -396,7 +397,7 @@ export function generatePlanModules(plan: Plan): {
         }
         mod.types.add("PropsOf");
         const cn = constName(`${name}${pascal(key) || "Value"}`);
-        const head = `const ${cn}: PropsOf<typeof ${classRef}>[${JSON.stringify(key)}] = `;
+        const head = `const ${cn}: PropsOf<typeof ${typed}>[${JSON.stringify(key)}] = `;
         lines.push(`${head}${tsLiteral(value, 0, head.length)};`);
         entries.push([key, cn]);
       }

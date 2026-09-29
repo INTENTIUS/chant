@@ -8,6 +8,7 @@
  * - Community dashboards from grafana.com (test/fixtures/community/,
  *   provenance and licenses in its README).
  * - What this lexicon's examples build.
+ * - Datasource provisioning files (test/fixtures/provisioning/).
  */
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "fs";
 import { dirname, join, resolve } from "path";
@@ -48,6 +49,13 @@ export const COMMUNITY: readonly string[] = [
   "community/prometheus-2-stats.json",
   "community/prometheus-2-stats.grafana-12.4.11.json",
 ];
+
+/**
+ * Datasource provisioning files (test/fixtures/provisioning/, provenance in
+ * its README): one written for chant with every plugin whose settings are
+ * typed, and grafana/docker-otel-lgtm's.
+ */
+export const PROVISIONING: readonly string[] = ["provisioning/typed-plugins.datasources.yaml", "provisioning/docker-otel-lgtm.datasources.yaml"];
 
 /** The example build roots and the serializers each needs. */
 const EXAMPLES: ReadonlyArray<{ name: string; serializers: Serializer[] }> = [

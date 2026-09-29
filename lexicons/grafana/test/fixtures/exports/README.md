@@ -73,6 +73,31 @@ where the overlay patches for `piechart`, `nodegraph`, `trend`, `canvas` and
 `geomap` come from. The 13.2.2 Classic export is converted from the stored
 V2 model and carries the panels as they were saved.
 
+### Every datasource with a query class (chant #2951)
+
+`grafana-12.4.11/queries.json`, `grafana-13.2.2/queries.json` and their
+`.external.json` exports were captured on 2026-09-28 from the same two
+images, from `seed/queries.json`: panels querying Elasticsearch (metrics,
+raw data and logs), CloudWatch (a metric search, a Metrics Insights query
+and a Logs Insights query), Azure Monitor (metrics, Log Analytics and
+Resource Graph), Google Cloud Monitoring (a time series list, PromQL and an
+SLO), BigQuery, Grafana Pyroscope, PostgreSQL (code and builder mode),
+MySQL and SQL Server, plus a `-- Mixed --` panel with a Prometheus query
+(with exemplars), a Cloud Monitoring PromQL query and a Loki query. The
+datasources were created through `POST /api/datasources` with the uids the
+seed uses (`es`, `cloudwatch`, `azure`, `gcm`, `bigquery`, `pyroscope`,
+`postgres`, `mysql`, `sqlserver`, `prom`, `loki`), nothing behind them.
+BigQuery is not bundled with either image; it was installed at start-up
+with `GF_PLUGINS_PREINSTALL_SYNC=grafana-bigquery-datasource@3.4.2`.
+
+The dashboard was opened in headless Chromium and exported from the toolbar
+as for the panel exports above. In 13.2.2 the "Export for sharing
+externally" view sometimes shows `{"error": {"message": "Datasource: <uid>
+was not found"}}` instead of the dashboard, naming a different datasource
+from run to run; the export here is from a run where it did not. 12.4.11
+writes `fieldConfig.defaults.custom.footer` on each table panel, which the
+`table` overlay now allows.
+
 ### A dashboard stored as v2 (chant #2947)
 
 `grafana-13.2.2/tabs.v2-resource.json` and `tabs.v1-resource.json` were

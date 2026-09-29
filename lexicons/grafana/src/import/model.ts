@@ -41,6 +41,13 @@ export interface Declaration {
   readonly className?: string;
   /** For `new`: the id of the `CustomClass` declaring `className`, when it is not a package export. */
   readonly customClass?: string;
+  /**
+   * For `new`: type arguments for the class, as TypeScript source. The
+   * consts lifted out of the props are typed `PropsOf<typeof Class<...>>`,
+   * so a `Datasource<"prometheus">`'s `jsonData` const is typed as
+   * Prometheus settings rather than any plugin's.
+   */
+  readonly typeArguments?: readonly string[];
   /** For `new`: the constructor's props, in source order. */
   readonly props?: Record<string, unknown>;
   /** For `value`: the value, and its type annotation with the package types it names. */
