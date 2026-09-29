@@ -31,11 +31,29 @@ describe("planFromDashboards", () => {
       { json: dashboard("b", { __elements: { burn: LIB } }), folder: "Team A" },
       { json: dashboard("c") },
     ]);
-    expect(plan.folders).toEqual([{ uid: "team-a", title: "Team A" }]);
+    expect(plan.folders).toEqual([{ uid: "team-a", title: "Team A", path: "Team A" }]);
     expect(plan.libraryPanels).toEqual([{ uid: "burn", name: "Shared burn", model: LIB.model, folderUid: "team-a" }]);
     expect(plan.dashboards.map((d) => [d.uid, d.folderUid])).toEqual([["a", "team-a"], ["b", "team-a"], ["c", undefined]]);
     expect(Object.keys(plan.dashboards[0].json)).not.toEqual(expect.arrayContaining(["__elements"]));
     expect(planRefs(plan).map((r) => `${r.kind}/${r.name}`)).toEqual(["Folder/team-a", "LibraryPanel/burn", "Dashboard/a", "Dashboard/b", "Dashboard/c"]);
+  });
+
+  test("a nested path is a folder per level, parents first; the build's folders pin uids (#2953)", () => {
+    const plan = planFromDashboards(
+      [
+        { json: dashboard("a"), folder: "Platform/Kubernetes" },
+        { json: dashboard("b"), folder: "Platform/Kubernetes/Nodes", folderUid: "nodes" },
+      ],
+      [{ uid: "plat", title: "Platform", path: "Platform" }, { uid: "empty", title: "Empty", path: "Empty" }],
+    );
+    expect(plan.folders).toEqual([
+      { uid: "empty", title: "Empty", path: "Empty" },
+      { uid: "plat", title: "Platform", path: "Platform" },
+      { uid: "platform-kubernetes", title: "Kubernetes", parentUid: "plat", path: "Platform/Kubernetes" },
+      { uid: "nodes", title: "Nodes", parentUid: "platform-kubernetes", path: "Platform/Kubernetes/Nodes" },
+    ]);
+    expect(plan.dashboards.map((d) => [d.uid, d.folderUid])).toEqual([["a", "platform-kubernetes"], ["b", "nodes"]]);
+    expect(() => planFromDashboards([{ json: dashboard("a"), folder: "X", folderUid: "one" }], [{ uid: "two", title: "X", path: "X" }])).toThrow(/declared with the uids/);
   });
 
   test("a library variable in __elements is reported unsupported, not dropped", () => {

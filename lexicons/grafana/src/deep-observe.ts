@@ -18,10 +18,15 @@
  *   diffed against the declaration: a tab added in the UI is a row that
  *   the declaration does not have.
  * - The folder is not in the JSON. It is read from the resource's folder
- *   and written as its title, the form `Dashboard.folder` takes; when the
- *   declaration's folder name is one the build had to rewrite to make a
- *   directory (`Ops/Team` becomes `Ops-Team`), the declared spelling is
- *   kept, since the two name the same folder.
+ *   and written as its path, its titles from the root joined with `/`, the
+ *   form `Dashboard.folder` takes (a `Folder` given for it is held as its
+ *   path too); when the declared path is one the build had to rewrite to
+ *   make directories (` Ops / Team ` becomes `Ops/Team`), the declared
+ *   spelling is kept, since the two name the same folder.
+ * - A `Folder` is read by its uid: its title, and its parent's uid when it
+ *   is nested. A declared `parent` is a reference, which core does not
+ *   compare, so a folder moved to another parent shows as drift on the
+ *   dashboards it holds, whose paths change.
  * - A datasource's API payload is put into `DatasourceProps` vocabulary,
  *   secrets as key names only.
  *
@@ -39,7 +44,9 @@ import { deepObservation, normalizeDeepProperties } from "@intentius/chant/deep-
 import { boundedConcurrently, unobservedAll } from "@intentius/chant/observation";
 import { bindGrafana, classifyGrafanaFailure } from "./api/bind";
 import type { GrafanaClient } from "./api/client";
-import { classicDashboardOf, dashboardApi, folderTitleOf, readDashboard } from "./api/dashboards";
+import { classicDashboardOf, dashboardApi, readDashboard } from "./api/dashboards";
+import { liveFolderPath, readFolder } from "./api/folders";
+import { FOLDER_TYPE, folderLevels, folderUidOf } from "./folder";
 import { readDatasource } from "./api/datasources";
 import { DASHBOARD_PROVIDER_TYPE, DASHBOARD_TYPE } from "./dashboard";
 import { DATASOURCE_TYPE, EXTERNAL_DATASOURCE_TYPE } from "./datasource";
@@ -47,15 +54,15 @@ import { grafanaDeepNormalizationHooks } from "./deep-observe-hooks";
 import { ORPHAN_PART, PROVIDER_NOT_OBSERVABLE, declaredUid, type GrafanaObserveOptions } from "./describe-resources";
 import { dashboardMembers, isDashboardPart } from "./members";
 import { dashboardTree, datasourceProps } from "./import/live-export";
-import { chantProviderNames, dashboardOwnership, ownershipGap } from "./ownership";
+import { chantProviderNames, dashboardOwnership, folderOwnership, ownershipGap } from "./ownership";
 
 export { grafanaDeepNormalizationHooks };
 
 type Json = Record<string, unknown>;
 
-/** The directory name the build writes a folder to (build.ts `folderDir`), which is the title Grafana gives it. */
-function folderDirName(folder: string): string {
-  return folder.replace(/[/\\]+/g, "-").replace(/^\.+/, "").trim() || "General";
+/** A folder path as the build writes it (build.ts `folderDir`), which is the path Grafana's folders take. */
+function samePath(declared: string, live: string): boolean {
+  return folderLevels(declared).join("/") === live;
 }
 
 async function dashboardProperties(client: GrafanaClient, uid: string, declared: Json, providers: ReadonlySet<string>, owned: boolean | undefined): Promise<DeepResourceObservation | UnobservedEntity | undefined> {
@@ -73,16 +80,29 @@ async function dashboardProperties(client: GrafanaClient, uid: string, declared:
     }
   }
   const { tree } = dashboardTree(classic.json);
-  const folder = await folderTitleOf(client, live);
+  const folder = live.folderUid ? await liveFolderPath(client, live.folderUid) : undefined;
   if (folder !== undefined) {
     const declaredFolder = typeof declared.folder === "string" ? declared.folder : undefined;
-    tree.folder = declaredFolder !== undefined && folderDirName(declaredFolder) === folder ? declaredFolder : folder;
+    tree.folder = declaredFolder !== undefined && samePath(declaredFolder, folder) ? declaredFolder : folder;
   }
   return {
     type: DASHBOARD_TYPE,
     physicalId: uid,
     properties: normalizeDeepProperties(tree, { entityType: DASHBOARD_TYPE, side: "live", hooks: grafanaDeepNormalizationHooks }),
   };
+}
+
+async function folderProperties(client: GrafanaClient, uid: string, providers: ReadonlySet<string>, owned: boolean | undefined): Promise<DeepResourceObservation | UnobservedEntity | undefined> {
+  const live = await readFolder(client, uid);
+  if (!live) return undefined;
+  if (owned) {
+    const { ownership } = folderOwnership(live, providers);
+    if (ownership !== "owned") {
+      return { type: FOLDER_TYPE, reason: "filtered", detail: `folder "${uid}" is ${ownership === "unknown" ? "of unknown ownership (read over /api/folders, which has no labels)" : "not chant's"}`, queried: live.address };
+    }
+  }
+  const tree: Json = { title: live.title, uid: live.uid, ...(live.parentUid ? { parent: live.parentUid } : {}) };
+  return { type: FOLDER_TYPE, physicalId: uid, properties: normalizeDeepProperties(tree, { entityType: FOLDER_TYPE, side: "live", hooks: grafanaDeepNormalizationHooks }) };
 }
 
 async function datasourceProperties(client: GrafanaClient, uid: string, entityType: string, owned: boolean | undefined): Promise<DeepResourceObservation | UnobservedEntity | undefined> {
@@ -135,8 +155,9 @@ export async function observeResourcesDeepGrafana(options: GrafanaObserveOptions
       return;
     }
     const isDashboard = entityType === DASHBOARD_TYPE;
+    const isFolder = entityType === FOLDER_TYPE;
     const isDatasource = entityType === DATASOURCE_TYPE || entityType === EXTERNAL_DATASOURCE_TYPE;
-    if (!isDashboard && !isDatasource) {
+    if (!isDashboard && !isDatasource && !isFolder) {
       unobserved[name] = { type: entityType, reason: "unsupported-kind", detail: `no grafana deep reader for ${entityType}` };
       return;
     }
@@ -148,7 +169,9 @@ export async function observeResourcesDeepGrafana(options: GrafanaObserveOptions
     try {
       const result = isDashboard
         ? await dashboardProperties(client, uid, props, providers, options.owned)
-        : await datasourceProperties(client, uid, entityType, options.owned);
+        : isFolder
+          ? await folderProperties(client, uid, providers, options.owned)
+          : await datasourceProperties(client, uid, entityType, options.owned);
       // Not there: the thin read reports it missing; restating it as a property hole would say it twice.
       if (result === undefined) return;
       if (isUnobserved(result)) unobserved[name] = result;

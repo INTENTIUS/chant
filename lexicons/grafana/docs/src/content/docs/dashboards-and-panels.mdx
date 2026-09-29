@@ -22,10 +22,27 @@ diataxis: reference
 | `variables` | `[]` | variable entities, in dropdown order |
 | `panels` | `[]` | panels and rows, top to bottom |
 | `links` | `[]` | `{ title, type, url?, … }`; the rest of Grafana's link fields are filled in |
-| `folder` | General | provisioned into this folder (a subdirectory of `dashboards/`); `"Platform/Kubernetes"` nests on Grafana 13.1 and later |
+| `annotations` | `[]` | annotation queries: `{ name, datasource?, target?, … }`; `enable` defaults to `true`, `iconColor` to `red` |
+| `folder` | General | a path (a subdirectory of `dashboards/`; `"Platform/Kubernetes"` nests on Grafana 13.1 and later) or a `Folder`, which pins the folder's uid (see [Provisioning](../provisioning/#folders)) |
 | `schemaVersion` | the pinned schema's | `chant import` sets it for a dashboard saved by an older Grafana, so Grafana still migrates it on load |
 
-The emitted JSON carries `schemaVersion` from the pinned dashboard schema unless the dashboard sets its own, empty `annotations` (Grafana adds its built-in annotation on load), and no numeric `id`.
+The emitted JSON carries `schemaVersion` from the pinned dashboard schema unless the dashboard sets its own, the declared `annotations` (Grafana adds its built-in "Annotations & Alerts" one on load), and no numeric `id`.
+
+## Annotations
+
+An annotation query draws events on the dashboard's time series panels: deploys, incidents, alert state changes. Its `datasource` takes whatever a panel's does, and its `target` is the query in the datasource plugin's shape or a query entity of that plugin:
+
+```ts
+export const checkout = new Dashboard({
+  title: "Checkout",
+  annotations: [
+    { name: "Deploys", datasource: prometheus, target: new PromQuery({ expr: 'changes(kube_deployment_status_observed_generation{deployment="checkout"}[5m]) > 0' }), titleFormat: "deploy" },
+    { name: "Incidents", datasource: { type: "grafana", uid: "-- Grafana --" }, iconColor: "orange", target: { type: "tags", tags: ["incident"], limit: 100, matchAny: false } },
+  ],
+});
+```
+
+Leave out Grafana's built-in "Annotations & Alerts" query: Grafana adds it to every dashboard without one. Declare it (with `builtIn: 1`) only to change it, for example to turn it off. GRAF101 and GRAF102 check an annotation's datasource like a panel's, GRAF103 its variables, and GRAF108 the PromQL of one sent to Prometheus.
 
 ## Panels
 

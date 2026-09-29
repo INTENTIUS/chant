@@ -14,6 +14,12 @@ export {
   isDatasourceEntity,
   isExternalDatasource,
   isDatasourceDeclaration,
+  DatasourceProvisioning,
+  DATASOURCE_PROVISIONING_TYPE,
+  isDatasourceProvisioningEntity,
+  type DatasourceProvisioningProps,
+  type DatasourceProvisioningEntity,
+  type DeletedDatasource,
   type ExternalDatasourceProps,
   type ExternalDatasourceEntity,
   type ExternalDatasourceConstructor,
@@ -39,7 +45,13 @@ export {
   type DashboardLinkInput,
   type DashboardProviderProps,
   type DashboardProviderEntity,
+  type DashboardEntityProps,
+  type DashboardProviderEntityProps,
 } from "./dashboard";
+
+// Folders and annotations
+export { Folder, FOLDER_TYPE, isFolderEntity, folderLevels, type FolderProps, type FolderEntity } from "./folder";
+export { annotationJson, ANNOTATION_REF_ID, type AnnotationInput } from "./annotations";
 
 // Grafana-managed alerting
 export {
@@ -267,6 +279,7 @@ export {
   externalDatasourceRecord,
   provisionedProvider,
   datasourcesYaml,
+  datasourceFileSettings,
   dashboardProvidersYaml,
   GRID_COLUMNS,
   DATASOURCES_FILE,
@@ -278,6 +291,7 @@ export {
   type ProvisionedDatasource,
   type ExternalDatasourceRecord,
   type ProvisionedProvider,
+  type DatasourceFileSettings,
   type DashboardJson,
   type PanelJson,
   type RowPanelJson,
@@ -357,7 +371,7 @@ export { bindGrafana, classifyGrafanaFailure, GrafanaBindingError } from "./api/
 export { grafanaApply } from "./op/builders";
 export { applyGrafana, planFromDashboards, GRAFANA_APPLY_KINDS } from "./api/apply";
 export type { GrafanaApplyPlan, GrafanaApplyOutcome, DashboardPlan, BuiltDashboardInput } from "./api/apply";
-export { folderUidFor, foldersForDashboards, type FolderPlan } from "./api/folders";
+export { folderUidFor, foldersForDashboards, resolveFolders, liveFolderPath, type FolderPlan, type ResolvedFolders } from "./api/folders";
 
 // The Grafana RBAC actions a service account needs to observe, apply and prune.
 export { GrafanaActions, grafanaActionsFor, type GrafanaAccessLevel } from "./actions/index";
