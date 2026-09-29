@@ -6,11 +6,11 @@
  * `GRAFANA_SCHEMA_PIN`, then `npm run generate`.
  */
 import { writeFileSync } from "fs";
-import { GRAFANA_SCHEMA_PIN, SCHEMA_NAMES, schemaUrl } from "../pin";
+import { GRAFANA_SCHEMA_PIN, VENDORED_SCHEMA_NAMES, schemaUrl } from "../pin";
 import { schemaPath, sha256 } from "./schemas";
 
 let changed = 0;
-for (const name of SCHEMA_NAMES) {
+for (const name of VENDORED_SCHEMA_NAMES) {
   const res = await fetch(schemaUrl(name));
   if (!res.ok) throw new Error(`${name}: HTTP ${res.status} from ${schemaUrl(name)}`);
   const text = await res.text();
@@ -22,6 +22,6 @@ for (const name of SCHEMA_NAMES) {
 }
 console.error(
   changed === 0
-    ? `All ${SCHEMA_NAMES.length} schemas match the pin (${GRAFANA_SCHEMA_PIN.ref}).`
+    ? `All ${VENDORED_SCHEMA_NAMES.length} schemas match the pin (${GRAFANA_SCHEMA_PIN.ref}).`
     : `${changed} schema(s) differ from the pin: update GRAFANA_SCHEMA_PIN.files in src/pin.ts, then run npm run generate.`,
 );

@@ -4,7 +4,8 @@
  * Dashboard JSON -> TypeScript -> `chant build` -> dashboard JSON must give
  * back the same dashboard for every fixture: Grafana 12.4.11 and 13.2.2 UI
  * exports (plain and "for sharing externally"), community dashboards from
- * grafana.com, and what this lexicon's examples build. "The same" means
+ * grafana.com, and what this lexicon's examples build. A v2 dashboard
+ * (#2947) round-trips through its classic form (./v2.ts). "The same" means
  * equal after `normalizeDashboard` (Grafana's defaults and derived keys)
  * once the importer's edits are applied to the source: every key it could
  * not carry, and every value it wrote in another form. An edit that changes
@@ -32,7 +33,7 @@ import { GrafanaParser, type DashboardResourceMetadata } from "./parser";
 import { GrafanaGenerator } from "./generator";
 import { applyEdits } from "./edits";
 import { normalizeDashboard } from "./normalize";
-import { COMMUNITY, UI_EXPORTS, V2_EXPORT, exampleOutputs, projectDir, read, removeDir, writeFiles } from "./testdata/fixtures";
+import { COMMUNITY, LOSSY_V1_EXPORT, UI_EXPORTS, V2_EXPORTS, exampleOutputs, projectDir, read, removeDir, writeFiles } from "./testdata/fixtures";
 
 type Json = Record<string, unknown>;
 
@@ -154,6 +155,19 @@ describe("dashboard JSON -> TypeScript -> dashboard JSON", () => {
     });
   }
 
+  for (const file of V2_EXPORTS) {
+    test(`v2 dashboard ${file}, through its classic form`, async () => {
+      const out = await expectRoundTrip(read(file));
+      expect(out.paths.every((p) => /^chant-fx-(checkout|tabs)\//.test(p))).toBe(true);
+      expect(out.warnings[0]).toMatch(/^This is a v2 dashboard \(dashboard\.grafana\.app\/v2\)\./);
+      if (file.includes("tabs")) {
+        // Tabs become rows, and the auto grid's panels keep the positions Grafana gives them.
+        expect(out.warnings).toContainEqual(expect.stringMatching(/tabs "Overview" and "Details" become expanded rows/));
+        expect((out.rebuilt!.panels as Json[]).filter((p) => p.type === "row").map((p) => p.title)).toEqual(["Overview", "Details", "Latency ($env)", "Logs"]);
+      }
+    });
+  }
+
   test("datasources the dashboard names by uid become ExternalDatasources, and every check passes", async () => {
     for (const file of ["exports/grafana-12.4.11/checkout.json", "exports/grafana-12.4.11/slo.json", "exports/grafana-13.2.2/slo.json"]) {
       const out = await expectRoundTrip(read(file));
@@ -203,11 +217,27 @@ describe("dashboard JSON -> TypeScript -> dashboard JSON", () => {
     expect(out.paths.filter((p) => p.includes("/row-")).length).toBeGreaterThan(30);
   });
 
-  test("a panel type chant has no class for goes through definePanel", async () => {
+  test("a panel type chant ships a class for is declared with it", async () => {
     const out = await expectRoundTrip(read("community/traefik.json"));
-    expect(out.source).toContain('const PiechartPanel = definePanel()({');
-    expect(out.source).toContain('import { PiechartPanel } from "./plugins";');
-    expect(out.source).toMatch(/new PiechartPanel\(\{/);
+    expect(out.source).toMatch(/new PieChartPanel\(\{/);
+    expect(out.source).not.toContain("definePanel");
+  });
+
+  test("every built-in panel type in a UI export is declared with its class", async () => {
+    const out = await expectRoundTrip(read("exports/grafana-12.4.11/panels.json"));
+    for (const cls of ["BarChartPanel", "BarGaugePanel", "PieChartPanel", "StateTimelinePanel", "StatusHistoryPanel", "HistogramPanel", "NodeGraphPanel", "XYChartPanel", "TrendPanel", "CanvasPanel", "GeomapPanel", "FlameGraphPanel", "AlertListPanel", "TracesPanel"]) {
+      expect(out.source).toMatch(new RegExp(`new ${cls}\\(\\{`));
+    }
+    expect(out.source).not.toContain("definePanel");
+    expect(out.warnings).toEqual([]);
+  });
+
+  test("a panel type chant has no class for goes through definePanel", async () => {
+    // The Traefik dashboard with its pie chart swapped for a community plugin chant does not ship.
+    const out = await expectRoundTrip(read("community/traefik.json").split('"type": "piechart"').join('"type": "grafana-polystat-panel"'));
+    expect(out.source).toContain("const GrafanaPolystatPanelPanel = definePanel()({");
+    expect(out.source).toContain('import { GrafanaPolystatPanelPanel } from "./plugins";');
+    expect(out.source).toMatch(/new GrafanaPolystatPanelPanel\(\{/);
   });
 
   test("an AngularJS-era dashboard: schemaVersion carried, top-level panel settings named", async () => {
@@ -306,29 +336,48 @@ describe("chant import dashboard.json", () => {
     });
   }
 
-  test("a v2 dashboard is recognised, reported and not imported", async () => {
+  test("a v2 dashboard is imported, and builds back to its classic form", async () => {
     const dir = projectDir();
     try {
       const output = join(dir, "src");
-      const result = await importFromContent({ content: read(V2_EXPORT), lexicon: "grafana", output });
+      const content = read(V2_EXPORTS[1]);
+      const result = await importFromContent({ content, lexicon: "grafana", output });
       expect(result.error).toBeUndefined();
-      expect(result.success).toBe(true);
-      expect(result.generatedFiles).toEqual([]);
-      expect(result.warnings).toEqual([expect.stringMatching(/^This is a v2 dashboard \(dashboard\.grafana\.app\/v2\)\. .*not supported yet \(#2947\)/)]);
-      expect(existsSync(join(output, "chant-fx-checkout"))).toBe(false);
+      expect(result.generatedFiles).toContain("chant-fx-tabs/dashboard.ts");
+      expect(result.warnings[0]).toMatch(/^This is a v2 dashboard \(dashboard\.grafana\.app\/v2\)\./);
+      const built = await build(output, [grafanaSerializer]);
+      expect(built.errors).toEqual([]);
+      const text = (built.outputs.get("grafana") as SerializerResult).files!["dashboards/chant-fx-tabs.json"];
+      const meta = new GrafanaParser().parse(content).resources[0].metadata as unknown as DashboardResourceMetadata;
+      expect(normalizeDashboard(JSON.parse(text))).toEqual(normalizeDashboard(applyEdits(meta.source, meta.edits)));
     } finally {
       removeDir(dir);
     }
   });
 
-  test("detection picks the v2 dashboard up too, so the warning reaches the user", async () => {
+  test("a v1 read of a dashboard Grafana stores as v2 is refused, and nothing is written", async () => {
+    const dir = projectDir();
+    try {
+      const output = join(dir, "src");
+      const result = await importFromContent({ content: read(LOSSY_V1_EXPORT), lexicon: "grafana", output });
+      expect(result.success).toBe(true);
+      expect(result.generatedFiles).toEqual([]);
+      expect(result.warnings).toEqual([expect.stringMatching(/^Not imported: Grafana stores this dashboard as v2 /)]);
+      expect(existsSync(join(output, "chant-fx-tabs"))).toBe(false);
+    } finally {
+      removeDir(dir);
+    }
+  });
+
+  test("detection picks the v2 dashboard up too", async () => {
     const dir = projectDir();
     try {
       const templatePath = join(dir, "checkout.v2.json");
-      writeFiles(dir, [{ path: "checkout.v2.json", content: read(V2_EXPORT) }]);
+      writeFiles(dir, [{ path: "checkout.v2.json", content: read(V2_EXPORTS[0]) }]);
       const result = await importCommand({ templatePath, output: join(dir, "src"), force: true });
       expect(result.lexicon).toBe("grafana");
       expect(result.warnings.join("\n")).toContain("v2 dashboard");
+      expect(result.generatedFiles).toContain("chant-fx-checkout/dashboard.ts");
     } finally {
       removeDir(dir);
     }

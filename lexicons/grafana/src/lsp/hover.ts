@@ -2,6 +2,7 @@ import type { HoverContext, HoverInfo } from "@intentius/chant/lsp/types";
 import { LexiconIndex, lexiconHover, type LexiconEntry } from "@intentius/chant/lsp/lexicon-providers";
 import { BUILTIN_CATALOG, lexiconRegistry } from "../catalog";
 import { GRAFANA_SCHEMA_PIN } from "../pin";
+import { panelDefinitionFor } from "../panels";
 
 let cachedIndex: LexiconIndex | null = null;
 
@@ -20,7 +21,13 @@ function resourceHover(className: string, entry: LexiconEntry): HoverInfo | unde
   const lines = [`**${className}**`, "", `grafana type: \`${entry.resourceType}\``];
   if (cat?.description) lines.push("", cat.description);
   if (cat?.kind === "panel") {
-    lines.push("", `Panel plugin \`${cat.pluginId}\`. Options typed from ${GRAFANA_SCHEMA_PIN.source} ${GRAFANA_SCHEMA_PIN.ref}.`);
+    const schema = cat.pluginId ? panelDefinitionFor(cat.pluginId)?.schema : undefined;
+    lines.push(
+      "",
+      schema
+        ? `Panel plugin \`${cat.pluginId}\`. Options typed from ${GRAFANA_SCHEMA_PIN.source} ${GRAFANA_SCHEMA_PIN.ref} (\`${schema}\`).`
+        : `Panel plugin \`${cat.pluginId}\`. Grafana publishes no options schema for it, so GRAF107 does not check its options.`,
+    );
   } else if (cat?.kind === "query") {
     lines.push("", `For \`${cat.pluginId}\` datasources. Typed from ${GRAFANA_SCHEMA_PIN.source} ${GRAFANA_SCHEMA_PIN.ref}.`);
   }

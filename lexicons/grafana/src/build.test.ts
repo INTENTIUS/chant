@@ -336,16 +336,16 @@ describe("variables", () => {
 
 describe("extension points", () => {
   test("definePanel and defineQuery produce classes that render and lay out like built-ins", () => {
-    const PieChartPanel = definePanel<{ pieType?: "pie" | "donut" }>()({ type: "piechart", className: "PieChartPanel", defaultSize: { w: 8, h: 8 } });
+    const ClockPanel = definePanel<{ mode?: "time" | "countdown" }>()({ type: "grafana-clock-panel", className: "ClockPanel", defaultSize: { w: 8, h: 8 } });
     const ElasticQuery = defineQuery<{ query: string; refId?: string }>()({ datasourceType: "elasticsearch", className: "ElasticQuery" });
     const es = new Datasource({ name: "Logs ES", type: "elasticsearch" });
     const json = renderDashboard(
-      new Dashboard({ title: "Custom", panels: [new PieChartPanel({ options: { pieType: "donut" }, datasource: es, targets: [new ElasticQuery({ query: "*" })] })] }),
+      new Dashboard({ title: "Custom", panels: [new ClockPanel({ options: { mode: "countdown" }, datasource: es, targets: [new ElasticQuery({ query: "*" })] })] }),
     );
     expect(json.panels![0]).toMatchObject({
-      type: "piechart",
+      type: "grafana-clock-panel",
       gridPos: { w: 8, h: 8, x: 0, y: 0 },
-      options: { pieType: "donut" },
+      options: { mode: "countdown" },
       datasource: { type: "elasticsearch", uid: "logs-es" },
       targets: [{ refId: "A", query: "*" }],
     });

@@ -26,8 +26,7 @@ Downloaded on 2026-09-28.
 Between them they cover rows (collapsed and expanded), a row with its own
 datasource, `__inputs` datasources, datasource, query, custom and interval
 variables, transformations, value mappings, field overrides, panel links,
-the `piechart` and `bargauge` panels (which chant has no class for yet, so
-the importer declares them with `definePanel`), and legacy query fields
+the `piechart` and `bargauge` panels, and legacy query fields
 (`step`, `intervalFactor`, `metric`) that the pinned query schema no longer
 lists.
 

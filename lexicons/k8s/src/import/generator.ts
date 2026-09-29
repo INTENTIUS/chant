@@ -7,6 +7,18 @@
 
 import type { TypeScriptGenerator, GeneratedFile } from "@intentius/chant/import/generator";
 import type { TemplateIR, ResourceIR } from "@intentius/chant/import/parser";
+import {
+  EmbeddedImportScope,
+  isEmbeddedReference,
+  renderEmbeddedReference,
+} from "@intentius/chant/import/embedded";
+
+const IDENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+
+/** An object key as TypeScript: bare when it is an identifier, quoted otherwise (`"config.yaml"`, `"app.kubernetes.io/name"`). */
+function propertyKey(key: string): string {
+  return IDENT.test(key) ? key : JSON.stringify(key);
+}
 
 /**
  * Map K8s entity types to their constructor class names.
@@ -99,6 +111,9 @@ const SERVICE_PORT_TYPES = new Set([
  * Generate TypeScript source code from a Kubernetes IR.
  */
 export class K8sGenerator implements TypeScriptGenerator {
+  /** The imports for embedded content the current `generate()` call references (#2962). */
+  private scope = new EmbeddedImportScope("");
+
   generate(ir: TemplateIR): GeneratedFile[] {
     const lines: string[] = [];
 
@@ -112,10 +127,13 @@ export class K8sGenerator implements TypeScriptGenerator {
       this.collectNestedConstructors(resource.properties, usedConstructors, resource.type);
     }
 
-    // Import statement
-    const imports = [...usedConstructors].sort().join(", ");
-    lines.push(`import { ${imports} } from "@intentius/chant-lexicon-k8s";`);
-    lines.push("");
+    // Names the embedded content's imports must not take: every constructor this file may use, and its exports.
+    this.scope = new EmbeddedImportScope("", [
+      ...usedConstructors,
+      ...Object.values(PROPERTY_CONSTRUCTORS),
+      "ServicePort",
+      ...ir.resources.map((r) => r.logicalId),
+    ]);
 
     // Emit namespaces as comments
     if (ir.metadata?.namespaces && Array.isArray(ir.metadata.namespaces)) {
@@ -139,7 +157,16 @@ export class K8sGenerator implements TypeScriptGenerator {
       lines.push("");
     }
 
-    return [{ path: "main.ts", content: lines.join("\n") }];
+    // Import statements: the k8s constructors, then what embedded content references.
+    // The constructors are read back from what was emitted (string literals
+    // taken out), so a nested one the walk above does not reach (a
+    // container's env) is imported too.
+    const code = lines.join("\n").replace(/"(?:[^"\\\n]|\\.)*"/g, '""');
+    for (const m of code.matchAll(/\bnew ([A-Z][A-Za-z0-9_]*)\(/g)) usedConstructors.add(m[1]);
+    const imports = [...usedConstructors].sort().join(", ");
+    const head = [`import { ${imports} } from "@intentius/chant-lexicon-k8s";`, ...this.scope.lines(), ""];
+
+    return [{ path: "main.ts", content: [...head, ...lines].join("\n") }];
   }
 
   /**
@@ -199,7 +226,7 @@ export class K8sGenerator implements TypeScriptGenerator {
     for (const [key, value] of Object.entries(props)) {
       if (value === undefined || value === null) continue;
       const emitted = this.emitValue(key, value, depth + 1, parentType);
-      entries.push(`${innerIndent}${key}: ${emitted},`);
+      entries.push(`${innerIndent}${propertyKey(key)}: ${emitted},`);
     }
 
     if (entries.length === 0) return "{}";
@@ -208,6 +235,7 @@ export class K8sGenerator implements TypeScriptGenerator {
 
   private emitValue(key: string, value: unknown, depth: number, parentType: string): string {
     if (value === null || value === undefined) return "undefined";
+    if (isEmbeddedReference(value)) return renderEmbeddedReference(value, this.scope, depth * 2);
 
     // Special case: "ports" on Service → ServicePort constructor
     if (key === "ports" && SERVICE_PORT_TYPES.has(parentType) && Array.isArray(value)) {
@@ -256,6 +284,7 @@ export class K8sGenerator implements TypeScriptGenerator {
 
   private emitLiteral(value: unknown, depth: number, parentType: string): string {
     if (value === null || value === undefined) return "undefined";
+    if (isEmbeddedReference(value)) return renderEmbeddedReference(value, this.scope, depth * 2);
     if (typeof value === "string") return JSON.stringify(value);
     if (typeof value === "number" || typeof value === "boolean") return String(value);
 
@@ -275,7 +304,7 @@ export class K8sGenerator implements TypeScriptGenerator {
       const indent = "  ".repeat(depth);
       const innerIndent = "  ".repeat(depth + 1);
       const items = entries.map(
-        ([k, v]) => `${innerIndent}${k}: ${this.emitLiteral(v, depth + 1, parentType)},`,
+        ([k, v]) => `${innerIndent}${propertyKey(k)}: ${this.emitLiteral(v, depth + 1, parentType)},`,
       );
       return `{\n${items.join("\n")}\n${indent}}`;
     }

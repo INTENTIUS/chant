@@ -6,6 +6,8 @@ import type { GeneratedFile, TypeScriptGenerator } from "../../import/generator"
 import { listInstalledLexicons, loadPlugin, loadPlugins, resolveProjectLexicons } from "../plugins";
 import type { LexiconPlugin, ResourceSelector } from "../../lexicon";
 import { parseYAMLDocument, splitYAMLDocuments } from "../../yaml";
+import { importLexiconPackage } from "../../lexicon-module";
+import { EmbeddedImports, type EmbeddedContent, type RegisteredEmbeddedImporter } from "../../import/embedded";
 
 /**
  * Import command options
@@ -380,7 +382,7 @@ export async function importCommand(options: ImportOptions): Promise<ImportResul
     );
   }
 
-  const result = parseAndWrite(plugin, content, outputDir, options.force, warnings, generatedFiles, plugin.name);
+  const result = await parseAndWrite(plugin, content, outputDir, options.force, warnings, generatedFiles, plugin.name, projectDir);
   return { ...result, detected: true };
 }
 
@@ -418,11 +420,93 @@ export async function importFromContent(options: ContentImportOptions): Promise<
   if (!plugin) {
     return { success: false, generatedFiles: [], warnings: [], error: `Lexicon "${options.lexicon}" not available.` };
   }
-  return parseAndWrite(plugin, options.content, outputDir, options.force, [], [], plugin.name);
+  const projectDir = resolve(options.output ? dirname(options.output) : ".");
+  return parseAndWrite(plugin, options.content, outputDir, options.force, [], [], plugin.name, projectDir);
+}
+
+/**
+ * The importers for the content a host's parser offered (#2962): those of the
+ * project's lexicons, and of each installed lexicon whose `detectTemplate`
+ * recognizes one of the offered documents. The recognizing is done with the
+ * lexicon's light `/detect` module, so a lexicon is loaded in full only when
+ * it may own something; one that fails to load is skipped.
+ */
+async function embeddedImportersFor(
+  offered: readonly EmbeddedContent[],
+  host: LexiconPlugin,
+  projectDir: string,
+): Promise<RegisteredEmbeddedImporter[]> {
+  const documents = offered.map((c) => c.document).filter((d) => typeof d === "object" && d !== null);
+  if (documents.length === 0) return [];
+
+  let projectNames: string[] = [];
+  try {
+    projectNames = await resolveProjectLexicons(projectDir);
+  } catch {
+    projectNames = [];
+  }
+  const candidates: string[] = [...projectNames];
+  for (const name of listInstalledLexicons(projectDir)) {
+    if (candidates.includes(name)) continue;
+    try {
+      const detect = await importLexiconPackage(`@intentius/chant-lexicon-${name}/detect`, projectDir);
+      const detectTemplate = detect.detectTemplate;
+      if (typeof detectTemplate !== "function") continue;
+      if (documents.some((d) => {
+        try {
+          return detectTemplate(d) === true;
+        } catch {
+          return false;
+        }
+      })) {
+        candidates.push(name);
+      }
+    } catch {
+      // No /detect module, or it failed to load: not a candidate.
+    }
+  }
+
+  const registered: RegisteredEmbeddedImporter[] = [];
+  for (const name of candidates) {
+    let plugin: LexiconPlugin;
+    try {
+      plugin = name === host.name ? host : await loadPlugin(name);
+    } catch {
+      continue;
+    }
+    let importers;
+    try {
+      importers = plugin.embeddedImporters?.() ?? [];
+    } catch {
+      continue;
+    }
+    for (const importer of importers) registered.push({ lexicon: plugin.name, importer });
+  }
+  return registered;
+}
+
+/**
+ * Parse, resolving embedded content (#2962). A first parse with a probe
+ * collects what the parser offers; when it offers anything, the owners'
+ * importers are loaded and the content is parsed again with them. A parser
+ * that offers nothing is parsed once, and nothing is loaded.
+ */
+async function parseWithEmbedded(
+  plugin: LexiconPlugin,
+  parser: TemplateParser,
+  content: string,
+  projectDir: string,
+): Promise<{ ir: TemplateIR; embedded?: EmbeddedImports }> {
+  const probe = new EmbeddedImports([], { quiet: true });
+  const ir = parser.parse(content, { embedded: probe });
+  if (probe.offered.length === 0) return { ir };
+  const importers = await embeddedImportersFor(probe.offered, plugin, projectDir);
+  const embedded = new EmbeddedImports(importers);
+  return { ir: parser.parse(content, { embedded }), embedded };
 }
 
 /** The shared tail of every template import: parse → generate → write. */
-function parseAndWrite(
+async function parseAndWrite(
   plugin: LexiconPlugin,
   content: string,
   outputDir: string,
@@ -430,7 +514,8 @@ function parseAndWrite(
   warnings: string[],
   generatedFiles: string[],
   lexicon: string,
-): ImportResult {
+  projectDir: string,
+): Promise<ImportResult> {
   // A lexicon can recognize a template (detectTemplate) without being able to
   // import it (grafana had no parser until #2945). Every path funnels through here, so
   // this one check covers detection, --lexicon and content import (#2940).
@@ -446,9 +531,10 @@ function parseAndWrite(
 
   // Parse template
   let ir: TemplateIR;
+  let embedded: EmbeddedImports | undefined;
   try {
     const parser = plugin.templateParser();
-    ir = parser.parse(content);
+    ({ ir, embedded } = await parseWithEmbedded(plugin, parser, content, projectDir));
   } catch (err) {
     return {
       success: false,
@@ -463,6 +549,8 @@ function parseAndWrite(
   if (ir.warnings) {
     warnings.push(...ir.warnings);
   }
+  // Embedded content the owner could not carry, or that no installed lexicon imports.
+  if (embedded) warnings.push(...embedded.warnings);
 
   const generator = plugin.templateGenerator();
 
@@ -480,8 +568,10 @@ function parseAndWrite(
   }
 
   // Generate files
-  const { files, warnings: layoutWarnings } = generateOrganizedFiles(ir, generator);
+  const { files: hostFiles, warnings: layoutWarnings } = generateOrganizedFiles(ir, generator);
   warnings.push(...layoutWarnings);
+  // The owners' modules for embedded content, each in a directory of its own.
+  const files = [...hostFiles, ...(embedded?.files ?? [])];
 
   // Write files
   for (const file of files) {

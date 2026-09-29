@@ -31,7 +31,8 @@ function readJson(path: string): Json {
 const versions = readdirSync(exportsDir).filter((d) => d.startsWith("grafana-"));
 const classicExports = versions.flatMap((v) =>
   readdirSync(join(exportsDir, v))
-    .filter((f) => f.endsWith(".json") && !f.includes("v2-resource"))
+    // The v1 and v2 resources (#2947) are API reads, not classic exports.
+    .filter((f) => f.endsWith(".json") && !f.includes("-resource"))
     .map((f) => [`${v}/${f}`, join(exportsDir, v, f)] as const),
 );
 
@@ -48,8 +49,8 @@ describe("the overlay files", () => {
     }
   });
 
-  test("the dashboard, timeseries, table and logs schemas are patched; the vendored bytes are not", () => {
-    expect(SCHEMA_NAMES.filter((n) => loadOverlay(n))).toEqual(["dashboard", "timeseries", "table", "logs"]);
+  test("the schemas with an overlay are patched; the vendored bytes are not", () => {
+    expect(SCHEMA_NAMES.filter((n) => loadOverlay(n))).toEqual(["dashboard", "timeseries", "table", "logs", "piechart", "nodegraph", "xychart", "trend", "canvas", "geomap"]);
     const vendored = loadVendoredSchema("dashboard").definitions as Record<string, Json>;
     const patched = loadSchema("dashboard").definitions as Record<string, Json>;
     expect((vendored.MatcherConfig.properties as Json).scope).toBeUndefined();

@@ -33,7 +33,7 @@ export interface GrafanaSchemaPin {
    */
   kindRegistry: string;
   /** sha256 of each vendored file, keyed by schema name (`src/spec/schemas/<name>.jsonschema.json`). */
-  files: Readonly<Record<SchemaName, string>>;
+  files: Readonly<Record<VendoredSchemaName, string>>;
 }
 
 export const SCHEMA_NAMES = [
@@ -45,12 +45,39 @@ export const SCHEMA_NAMES = [
   "logs",
   "heatmap",
   "text",
+  "barchart",
+  "bargauge",
+  "piechart",
+  "statetimeline",
+  "statushistory",
+  "histogram",
+  "nodegraph",
+  "xychart",
+  "trend",
+  "canvas",
+  "geomap",
   "prometheus",
   "tempo",
   "loki",
 ] as const;
 
 export type SchemaName = (typeof SCHEMA_NAMES)[number];
+
+/**
+ * Schemas vendored from the same commit for reading, not for types: no
+ * `.gen.ts` is generated from them and GRAF107 does not use them, since chant
+ * builds classic dashboards. `dashboardv2` is the v2 dashboard kind the
+ * importer reads (#2947); `src/import/v2.test.ts` checks the importer knows
+ * every key it defines.
+ */
+export const IMPORT_ONLY_SCHEMA_NAMES = ["dashboardv2"] as const;
+
+export type ImportOnlySchemaName = (typeof IMPORT_ONLY_SCHEMA_NAMES)[number];
+
+/** Every schema file under `src/spec/schemas/`. */
+export type VendoredSchemaName = SchemaName | ImportOnlySchemaName;
+
+export const VENDORED_SCHEMA_NAMES: readonly VendoredSchemaName[] = [...SCHEMA_NAMES, ...IMPORT_ONLY_SCHEMA_NAMES];
 
 export const GRAFANA_SCHEMA_PIN: GrafanaSchemaPin = Object.freeze({
   source: "github.com/grafana/grafana-foundation-sdk/jsonschema",
@@ -66,13 +93,25 @@ export const GRAFANA_SCHEMA_PIN: GrafanaSchemaPin = Object.freeze({
     logs: "0254600ef9720bd2c906628304a7c362c0182b4bff2fd7d91352d95a269b2dda",
     heatmap: "1e1905eef14ada48c121374ecad41412380b317e8183771d99a7504753d5005c",
     text: "db6d2e3e2c576d1c78ac2e08930f60dbc22bb7ee21abd0cd9204be49f0dbce09",
+    barchart: "36f16c10ac3529f88435b81af1d2e352bc915d228a0fb0418d4e46cc2615f6cb",
+    bargauge: "dbd22a7b71c4133b880ad39daeaf33c5bf0509fe0d5dc7a882fe3449207b636f",
+    piechart: "3edcd85eb8333db755562fc360e392795617582c8d03d11f5918247a4b0ceea9",
+    statetimeline: "4df9f488db587b074de51e2b10d6361e3dd390f110aee105029f334b863bd365",
+    statushistory: "3149edd7e3c9567913bb123ee764b118c816b9865ab7ec1f19275335b670f4b3",
+    histogram: "ef30d7b439b5ece72783be27575b736745aa3eedade37919fcf7560427eb09ac",
+    nodegraph: "76595130348310202d87c0efd1e248d60f391cf4cf39c0d3c8d30a251c1f9461",
+    xychart: "071b4866d0d292c772adb5946a6cae94cc2486b4a0acabb6247090b5f7a83f9f",
+    trend: "599a241e922217be840a65fbf731f7883a3304fd2b6074af01650d325ec0e629",
+    canvas: "53e5069cfeef461913cec759c120bc31167b7532be2b69d3c45ce7e4877290d7",
+    geomap: "8c8716e9bdbb6b0465b2e91ad1a1100d96a02b7f1be606bd90a6676d94897179",
     prometheus: "726fc97eeb1e37791dbbf988c3cf40de17bb8e623926e6979c4a3f947cb1af87",
     tempo: "21aec4c333c9b8e5e9228e85a6225c76161975abb54002e6f12e919e3b4e54ae",
     loki: "03b81d6b952e3d31785c4b52637e2b7b1c170cc2ea8ec7ec671c21599508e31b",
+    dashboardv2: "a2cfb8b731ff9f48c41f5aa06ade134cf0d93ab9f6f0567a34a4bc39a9fd984e",
   }),
 });
 
 /** The raw URL of one schema file at the pinned commit. */
-export function schemaUrl(name: SchemaName, pin: GrafanaSchemaPin = GRAFANA_SCHEMA_PIN): string {
+export function schemaUrl(name: VendoredSchemaName, pin: GrafanaSchemaPin = GRAFANA_SCHEMA_PIN): string {
   return `https://raw.githubusercontent.com/grafana/grafana-foundation-sdk/${pin.commit}/jsonschema/${name}.jsonschema.json`;
 }

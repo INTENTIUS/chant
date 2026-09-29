@@ -31,8 +31,8 @@ locally with defaults plus anonymous Admin access.
    the export drawer's editor, reformatted with `jq .`.
 4. `grafana-13.2.2/checkout.v2-resource.json` is the same dashboard exported
    with the "V2 Resource" model, Grafana 13's default. It is not a classic
-   dashboard and is not validated against the v1 schema; it is here for the
-   v2 work.
+   dashboard and is not validated against the v1 schema; the importer reads
+   it as v2 (#2947).
 
 The seed files are what was posted, before Grafana migrated them to
 `schemaVersion` 42; the exports are what came back.
@@ -50,6 +50,53 @@ carries a model with newer values too. The Classic model was picked under
 Advanced options in the export drawer, since 13.2 defaults to V2 Resource.
 There is no 12.4.11 capture because the `accessible` line style is new in
 13.x.
+
+### Every other built-in panel type (chant #2950)
+
+`grafana-12.4.11/panels.json`, `grafana-13.2.2/panels.json` and their
+`.external.json` exports were captured on 2026-09-28 from the same two
+images, from `seed/panels.json`: one panel each of bar chart, bar gauge, pie
+chart, state timeline, status history, histogram, node graph, XY chart,
+trend, canvas, geomap, flame graph, alert list and traces. Besides the
+Prometheus and Loki datasources above, a Tempo (uid `tempo`) and a Grafana
+Pyroscope (uid `pyroscope`) datasource were created, again with nothing
+behind them. The seed's XY chart carries `pluginVersion: "11.1.0"` so that
+Grafana keeps its manual series mapping as written instead of migrating it
+from the pre-11.1 format.
+
+The dashboard was opened in headless Chromium at 1600x3000 and scrolled to
+the end, so every panel plugin loaded, then exported from the toolbar's
+Export > Export as JSON in the same page (a fresh load of
+`?shareView=export` exports before the panels load). In 12.4.11 the export
+therefore carries each plugin's defaults and a `pluginVersion`, which is
+where the overlay patches for `piechart`, `nodegraph`, `trend`, `canvas` and
+`geomap` come from. The 13.2.2 Classic export is converted from the stored
+V2 model and carries the panels as they were saved.
+
+### A dashboard stored as v2 (chant #2947)
+
+`grafana-13.2.2/tabs.v2-resource.json` and `tabs.v1-resource.json` were
+captured on 2026-09-29 from `grafana/grafana:13.2.2` (commit 1bea008f), run
+the same way, with the same two datasources. `seed/tabs.v2.json` was created
+through `POST /apis/dashboard.grafana.app/v2/namespaces/default/dashboards`,
+so Grafana stores it as v2. It has what the classic model cannot hold: tabs,
+an auto grid, rows nested in a tab, conditional rendering on a panel and a
+row, a row with `fillScreen`, a variable shown in the controls menu, and
+switch and group by variables. The two files are the API's reads of it,
+reformatted with `jq .`, not UI exports:
+
+- `tabs.v2-resource.json`: `GET .../v2/namespaces/default/dashboards/chant-fx-tabs`.
+  Its spec is the seed's, unchanged.
+- `tabs.v1-resource.json`: `GET .../v1/namespaces/default/dashboards/chant-fx-tabs`,
+  Grafana's down-conversion, with `status.conversion.storedVersion: v2`. The
+  importer refuses it by default, and `src/import/v2.test.ts` checks that
+  reading the v2 file gives this spec. `v0alpha1`, `v1beta1` and `v2beta1`
+  reads carry the same marker; `GET /api/dashboards/uid/chant-fx-tabs` does
+  not (its `meta.apiVersion` is `v0alpha1` for v1- and v2-stored dashboards
+  alike).
+
+These are not classic exports: the schema, GRAF108 and round-trip tests that
+read every export skip files named `*-resource.json`.
 
 ## Adding a fixture
 

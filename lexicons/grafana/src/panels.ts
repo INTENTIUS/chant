@@ -37,6 +37,18 @@ import type * as table from "./schema/table.gen";
 import type * as logs from "./schema/logs.gen";
 import type * as heatmap from "./schema/heatmap.gen";
 import type * as text from "./schema/text.gen";
+import type * as barchart from "./schema/barchart.gen";
+import type * as bargauge from "./schema/bargauge.gen";
+import type * as piechart from "./schema/piechart.gen";
+import type * as statetimeline from "./schema/statetimeline.gen";
+import type * as statushistory from "./schema/statushistory.gen";
+import type * as histogram from "./schema/histogram.gen";
+import type * as nodegraph from "./schema/nodegraph.gen";
+import type * as xychart from "./schema/xychart.gen";
+import type * as trend from "./schema/trend.gen";
+import type * as canvas from "./schema/canvas.gen";
+import type * as geomap from "./schema/geomap.gen";
+import type { AlertListOptions, FlameGraphOptions } from "./panel-options";
 
 /** `fieldConfig` with `defaults.custom` typed for the panel. */
 export interface PanelFieldConfig<C> {
@@ -120,9 +132,11 @@ export function panelDefinitionFor(type: string): PanelDefinition | undefined {
 }
 
 const PLUGIN_ID = /^[a-z0-9][a-z0-9-_]*$/;
+/** Core panel ids predate the lowercase rule plugin ids follow: the node graph is `nodeGraph`. */
+const CORE_PLUGIN_ID = /^[A-Za-z0-9][A-Za-z0-9-_]*$/;
 
 function makePanelClass<T extends string, O, C>(def: PanelDefinition<T>): PanelClass<T, O, C> {
-  if (!PLUGIN_ID.test(def.type)) throw new Error(`grafana: "${def.type}" is not a panel plugin id`);
+  if (!(def.builtin ? CORE_PLUGIN_ID : PLUGIN_ID).test(def.type)) throw new Error(`grafana: "${def.type}" is not a panel plugin id`);
   if (def.type === "row") throw new Error('grafana: "row" is not a panel; use Row');
   const existing = registry().get(def.type);
   if (existing?.builtin && !def.builtin) {
@@ -147,12 +161,12 @@ function makePanelClass<T extends string, O, C>(def: PanelDefinition<T>): PanelC
  *
  * @example
  * ```ts
- * interface PieOptions { pieType?: "pie" | "donut"; legend?: { showLegend?: boolean } }
+ * interface ClockOptions { mode?: "time" | "countdown"; clockType?: "24 hour" | "12 hour" }
  *
- * export const PieChartPanel = definePanel<PieOptions>()({
- *   type: "piechart",
- *   className: "PieChartPanel",
- *   defaultSize: { w: 8, h: 8 },
+ * export const ClockPanel = definePanel<ClockOptions>()({
+ *   type: "grafana-clock-panel",
+ *   className: "ClockPanel",
+ *   defaultSize: { w: 6, h: 4 },
  * });
  * ```
  */
@@ -242,6 +256,121 @@ export const TextPanel = makePanelClass<"text", text.Options, Record<string, unk
   description: "Text: markdown or HTML, no queries",
   defaultSize: { w: 24, h: 3 },
   schema: "text",
+  builtin: true,
+});
+
+export const BarChartPanel = makePanelClass<"barchart", barchart.Options, barchart.FieldConfig>({
+  type: "barchart",
+  className: "BarChartPanel",
+  description: "Bar chart: categorical values as bars, grouped or stacked",
+  defaultSize: { w: 12, h: 8 },
+  schema: "barchart",
+  builtin: true,
+});
+
+export const BarGaugePanel = makePanelClass<"bargauge", bargauge.Options, Record<string, unknown>>({
+  type: "bargauge",
+  className: "BarGaugePanel",
+  description: "Bar gauge: one bar per series, filled against min, max and thresholds",
+  defaultSize: { w: 12, h: 8 },
+  schema: "bargauge",
+  builtin: true,
+});
+
+export const PieChartPanel = makePanelClass<"piechart", piechart.Options, piechart.FieldConfig>({
+  type: "piechart",
+  className: "PieChartPanel",
+  description: "Pie chart: each series' share of the total, as a pie or donut",
+  defaultSize: { w: 8, h: 8 },
+  schema: "piechart",
+  builtin: true,
+});
+
+export const StateTimelinePanel = makePanelClass<"state-timeline", statetimeline.Options, statetimeline.FieldConfig>({
+  type: "state-timeline",
+  className: "StateTimelinePanel",
+  description: "State timeline: state changes over time, one lane per series",
+  defaultSize: { w: 24, h: 8 },
+  schema: "statetimeline",
+  builtin: true,
+});
+
+export const StatusHistoryPanel = makePanelClass<"status-history", statushistory.Options, statushistory.FieldConfig>({
+  type: "status-history",
+  className: "StatusHistoryPanel",
+  description: "Status history: periodic states over time as a grid of cells",
+  defaultSize: { w: 24, h: 8 },
+  schema: "statushistory",
+  builtin: true,
+});
+
+export const HistogramPanel = makePanelClass<"histogram", histogram.Options, histogram.FieldConfig>({
+  type: "histogram",
+  className: "HistogramPanel",
+  description: "Histogram: the distribution of values, bucketed, over the whole time range",
+  defaultSize: { w: 12, h: 8 },
+  schema: "histogram",
+  builtin: true,
+});
+
+export const NodeGraphPanel = makePanelClass<"nodeGraph", nodegraph.Options, Record<string, unknown>>({
+  type: "nodeGraph",
+  className: "NodeGraphPanel",
+  description: "Node graph: a directed graph of nodes and edges, e.g. a service map",
+  defaultSize: { w: 24, h: 12 },
+  schema: "nodegraph",
+  builtin: true,
+});
+
+export const XYChartPanel = makePanelClass<"xychart", xychart.Options, xychart.FieldConfig>({
+  type: "xychart",
+  className: "XYChartPanel",
+  description: "XY chart: one field plotted against another, as points or lines",
+  defaultSize: { w: 12, h: 8 },
+  schema: "xychart",
+  builtin: true,
+});
+
+export const TrendPanel = makePanelClass<"trend", trend.Options, trend.FieldConfig>({
+  type: "trend",
+  className: "TrendPanel",
+  description: "Trend: values against a numeric x field that is not time",
+  defaultSize: { w: 12, h: 8 },
+  schema: "trend",
+  builtin: true,
+});
+
+export const CanvasPanel = makePanelClass<"canvas", canvas.Options, Record<string, unknown>>({
+  type: "canvas",
+  className: "CanvasPanel",
+  description: "Canvas: freely placed elements, text, icons and metrics bound to data",
+  defaultSize: { w: 12, h: 10 },
+  schema: "canvas",
+  builtin: true,
+});
+
+export const GeomapPanel = makePanelClass<"geomap", geomap.Options, Record<string, unknown>>({
+  type: "geomap",
+  className: "GeomapPanel",
+  description: "Geomap: data on a world map, as markers, heatmaps or routes",
+  defaultSize: { w: 12, h: 10 },
+  schema: "geomap",
+  builtin: true,
+});
+
+export const FlameGraphPanel = makePanelClass<"flamegraph", FlameGraphOptions, Record<string, unknown>>({
+  type: "flamegraph",
+  className: "FlameGraphPanel",
+  description: "Flame graph: profiling data, e.g. from Pyroscope, as a flame graph and table",
+  defaultSize: { w: 24, h: 12 },
+  builtin: true,
+});
+
+export const AlertListPanel = makePanelClass<"alertlist", AlertListOptions, Record<string, unknown>>({
+  type: "alertlist",
+  className: "AlertListPanel",
+  description: "Alert list: alert rules and their current state, no queries",
+  defaultSize: { w: 8, h: 10 },
   builtin: true,
 });
 

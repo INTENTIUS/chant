@@ -113,7 +113,7 @@ function makeQueryClass<T extends string, M>(def: QueryDefinition<T, M>): QueryC
  * });
  * ```
  */
-export function defineQuery<M>() {
+export function defineQuery<M = Record<string, unknown>>() {
   return function <T extends string>(def: Omit<QueryDefinition<T, M>, "builtin">): QueryClass<T, M> {
     return makeQueryClass<T, M>({ ...def, builtin: false });
   };

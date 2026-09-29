@@ -11,6 +11,7 @@ import { hover } from "./lsp/hover";
 import { detectTemplate } from "./detect";
 import { PrometheusParser } from "./import/parser";
 import { PrometheusGenerator } from "./import/generator";
+import { ruleGroupsImporter } from "./import/embedded";
 import { initTemplates } from "./init-templates";
 import { prometheusSkills } from "./skill-defs";
 import { CATALOG } from "./catalog";
@@ -118,6 +119,10 @@ export const prometheusPlugin: LexiconPlugin = {
 
   templateGenerator() {
     return new PrometheusGenerator();
+  },
+
+  embeddedImporters() {
+    return [ruleGroupsImporter];
   },
 
   initTemplates(template?: string) {

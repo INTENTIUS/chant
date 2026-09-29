@@ -51,6 +51,19 @@ export {
   TracesPanel,
   HeatmapPanel,
   TextPanel,
+  BarChartPanel,
+  BarGaugePanel,
+  PieChartPanel,
+  StateTimelinePanel,
+  StatusHistoryPanel,
+  HistogramPanel,
+  NodeGraphPanel,
+  XYChartPanel,
+  TrendPanel,
+  CanvasPanel,
+  GeomapPanel,
+  FlameGraphPanel,
+  AlertListPanel,
   Row,
   definePanel,
   registeredPanels,
@@ -119,7 +132,18 @@ export {
 // The generated schema types and their pin
 export * as schema from "./schema";
 export { DASHBOARD_SCHEMA_VERSION } from "./schema";
-export { GRAFANA_SCHEMA_PIN, SCHEMA_NAMES, type GrafanaSchemaPin, type SchemaName } from "./pin";
+export {
+  GRAFANA_SCHEMA_PIN,
+  SCHEMA_NAMES,
+  IMPORT_ONLY_SCHEMA_NAMES,
+  VENDORED_SCHEMA_NAMES,
+  type GrafanaSchemaPin,
+  type SchemaName,
+  type ImportOnlySchemaName,
+  type VendoredSchemaName,
+} from "./pin";
+// Hand-written options for the built-in panels with no schema
+export type { AlertListOptions, AlertListSortOrder, AlertListStateFilter, FlameGraphOptions } from "./panel-options";
 
 // Plain-data API: render, check and detect without a build
 export {

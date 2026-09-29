@@ -6,13 +6,14 @@ diataxis: how-to
 
 import { Aside } from '@astrojs/starlight/components';
 
-The `chant import` command reads existing infrastructure files (YAML, JSON, Dockerfiles) and emits TypeScript source using your lexicon's types. Five optional plugin members cover import and its neighbours; a lexicon with no import story implements none of them.
+The `chant import` command reads existing infrastructure files (YAML, JSON, Dockerfiles) and emits TypeScript source using your lexicon's types. Six optional plugin members cover import and its neighbours; a lexicon with no import story implements none of them.
 
 | Member | Returns | Drives |
 |---|---|---|
 | `detectTemplate(data)` | `boolean` | Which lexicon owns a template file. Core parses the file, asks the project's lexicons and then the installed ones, and takes the first `true` (`detectTemplateLexicon` in `packages/core/src/cli/commands/import.ts`). |
 | `templateParser()` | `TemplateParser` | Source format to `TemplateIR`. |
 | `templateGenerator()` | `TypeScriptGenerator` | `TemplateIR` to `GeneratedFile[]`. |
+| `embeddedImporters()` | `EmbeddedContentImporter[]` | This lexicon's content when it sits inside another lexicon's resources, such as a collector config in a k8s ConfigMap. See [Embedded content](#embedded-content). |
 | `migrationSource(from)` | `MigrationSource \| undefined` | `chant migrate`: another provider's format into this lexicon's. |
 | `agentConfigImporter()` | `AgentConfigImporter` | `chant import --agents`: local agent configuration into this lexicon's resources. |
 
@@ -21,7 +22,7 @@ The `chant import` command reads existing infrastructure files (YAML, JSON, Dock
 Two interfaces in `packages/core/src/import/` are the whole contract between a lexicon and the import pipeline:
 
 ```typescript
-interface TemplateParser    { parse(content: string): TemplateIR; }
+interface TemplateParser    { parse(content: string, context?: ParseContext): TemplateIR; }
 interface TypeScriptGenerator { generate(ir: TemplateIR): GeneratedFile[]; readonly ownsLayout?: boolean; }
 interface GeneratedFile     { readonly path: string; readonly content: string; }
 ```
@@ -69,6 +70,32 @@ export class MyGenerator implements TypeScriptGenerator {
   }
 }
 ```
+
+## Embedded content
+
+Some sources carry another lexicon's source inside them. A Kubernetes ConfigMap can hold a collector's `config.yaml`, a Prometheus rule file or a Grafana dashboard's JSON, and a `PrometheusRule`'s `spec.groups` are Prometheus rule groups. `chant import` hands such content to the lexicon that owns it, so it comes out as that lexicon's typed declarations, and the host resource refers to them ([#2962](https://github.com/INTENTIUS/chant/issues/2962)):
+
+```typescript
+import { ConfigMap } from "@intentius/chant-lexicon-k8s";
+import { collectorYaml } from "@intentius/chant-lexicon-otel";
+import { debug } from "./otel-agent/exporters";
+import { traces } from "./otel-agent/pipelines";
+import { otlp } from "./otel-agent/receivers";
+
+export const configMapOtelAgent = new ConfigMap({
+  metadata: { name: "otel-agent" },
+  data: { "config.yaml": collectorYaml([otlp, debug, traces]) },
+});
+```
+
+Neither side depends on the other. The contract is in `packages/core/src/import/embedded.ts`:
+
+- The host's parser offers content. `parse(content, context)` calls `context.embedded.resolve(site)` for each place content can sit, and puts the `EmbeddedReference` it gets back into its IR in place of the raw value. `undefined` means keep the value as written. A site gives its `location` for messages, a `directory` name, the content as `text` or as the `document` it would be in a file of its own, and `select` when the host's value is one member of that document (`"groups"` for `spec.groups`). It may also name an `expectedOwner`, which is used only to warn when that lexicon is not installed. `context` is absent outside `chant import`, and a parser then keeps everything as written.
+- The owner declares an `EmbeddedContentImporter` in `embeddedImporters()`. `matches(site)` says whether it imports the content. `import(site)` returns the modules that declare it (paths relative to their own directory) and an `EmbeddedValue`: the declarations the host's value is built from, either as a list or as a single one, and optionally a function of the owner's package to pass them through. The otel importer returns `collectorYaml([...])` over every component and pipeline. The prometheus importer returns the list of `RuleGroup`s, or `ruleFileYaml([...])` for a rule file held as text. The grafana importer returns `dashboardJson(dashboard)`.
+- Core finds the owner at run time. When the parser offers anything, core asks the project's lexicons and every installed lexicon whose `/detect` module's `detectTemplate` recognizes an offered document, loads only those in full, and parses again with their importers. It writes each import's modules in a directory of its own beside the host's files. Warnings name content the owner could not carry, an import that failed, and content whose expected owner is not installed. That content is kept as written.
+- The host's generator renders the reference with `renderEmbeddedReference(ref, scope)`. An `EmbeddedImportScope` collects the imports the module needs and aliases a name the module already uses (a second collector's `otlp` becomes `otlp2`).
+
+k8s is the only host so far (`lexicons/k8s/src/import/embedded.ts`). otel, prometheus and grafana are the owners, each in its `src/import/embedded.ts`. The round trip over real manifests is `lexicons/k8s/src/import/embedded-roundtrip.test.ts`.
 
 ## The three files
 
