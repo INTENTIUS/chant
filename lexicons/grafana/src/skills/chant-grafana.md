@@ -75,7 +75,7 @@ const agents = AgentDashboard({ genAi: genai, datasource: prometheus });        
 export { services, checkoutSlo, agents };
 ```
 
-Pass the `prometheus` exporter as `exporter` to `RedDashboard` when its `namespace` changes the names. `datasource` may be a `{ type: "prometheus", uid }` ref to a datasource declared elsewhere. Never hand-write the span-metric or SLO series names in a query next to these; use `spanMetricsNames()` (otel), `sloMetrics()` (prometheus) or `genAiMetrics()` (otel), or the composites' `redQueries`, `sloQueries` and `agentQueries`.
+Pass the `prometheus` exporter as `exporter` to `RedDashboard` when its `namespace` changes the names. `RedDashboard` counts server and consumer spans only; pass `spanKinds` to count others, or `[]` for every kind. `datasource` may be a `{ type: "prometheus", uid }` ref to a datasource declared elsewhere. Never hand-write the span-metric or SLO series names in a query next to these; use `spanMetricsNames()` (otel), `sloMetrics()` (prometheus) or `genAiMetrics()` (otel), or the composites' `redQueries`, `sloQueries` and `agentQueries`.
 
 ## Rules
 

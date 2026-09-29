@@ -204,21 +204,55 @@ function organizeByCategory(ir: TemplateIR): Map<ResourceCategory, ResourceIR[]>
   return categories;
 }
 
+/** The files an import writes, and anything core could not keep. */
+export interface OrganizedFiles {
+  files: GeneratedFile[];
+  warnings: string[];
+}
+
 /**
- * Generate organized files with separate modules
+ * The first file of one per-category `generate()` call, which core writes as
+ * `<name>.ts`. Any further files that call returned are named in a warning
+ * rather than dropped silently; a call that returned nothing is skipped with
+ * a warning rather than failing on `generated[0]`.
  */
-function generateOrganizedFiles(
+function firstFileOf(generated: GeneratedFile[], fileName: string, warnings: string[]): string | undefined {
+  if (generated.length === 0) {
+    warnings.push(`The generator returned no file for ${fileName}; it was not written.`);
+    return undefined;
+  }
+  if (generated.length > 1) {
+    const dropped = generated.slice(1).map((f) => f.path).join(", ");
+    warnings.push(
+      `The generator returned ${generated.length} files for ${fileName}; only the first was kept, ` +
+        `and ${dropped} ${generated.length === 2 ? "was" : "were"} not written. ` +
+        "A generator that places its own files sets ownsLayout (#2964).",
+    );
+  }
+  return generated[0].content;
+}
+
+/**
+ * Decide the files an import writes. A generator with `ownsLayout` is called
+ * once with the whole IR and its files are written exactly as returned
+ * (#2964). Otherwise an IR of up to three resources is generated in one call,
+ * and a larger one is split into one file per resource category plus an
+ * `index.ts` barrel.
+ */
+export function generateOrganizedFiles(
   ir: TemplateIR,
   generator: TypeScriptGenerator,
-): GeneratedFile[] {
+): OrganizedFiles {
+  const warnings: string[] = [];
+
+  // The generator places its own files, or everything fits in one call.
+  if (generator.ownsLayout === true || ir.resources.length <= 3) {
+    return { files: generator.generate(ir), warnings };
+  }
+
   const files: GeneratedFile[] = [];
   const categories = organizeByCategory(ir);
   const exports: string[] = [];
-
-  // If all resources fit in one file, just generate main.ts
-  if (ir.resources.length <= 3) {
-    return generator.generate(ir);
-  }
 
   // Generate files for each category
   for (const [category, resources] of categories) {
@@ -229,13 +263,10 @@ function generateOrganizedFiles(
       resources,
     };
 
-    const generated = generator.generate(categoryIr);
     const fileName = `${category}.ts`;
-
-    files.push({
-      path: fileName,
-      content: generated[0].content,
-    });
+    const content = firstFileOf(generator.generate(categoryIr), fileName, warnings);
+    if (content === undefined) continue;
+    files.push({ path: fileName, content });
 
     // Track exports
     for (const resource of resources) {
@@ -250,15 +281,13 @@ function generateOrganizedFiles(
       parameters: ir.parameters,
       resources: [],
     };
-    const generated = generator.generate(paramsIr);
-    files.push({
-      path: "parameters.ts",
-      content: generated[0].content,
-    });
-
-    for (const param of ir.parameters) {
-      const varName = param.name.charAt(0).toLowerCase() + param.name.slice(1);
-      exports.push(`export { ${varName} } from "./parameters";`);
+    const content = firstFileOf(generator.generate(paramsIr), "parameters.ts", warnings);
+    if (content !== undefined) {
+      files.push({ path: "parameters.ts", content });
+      for (const param of ir.parameters) {
+        const varName = param.name.charAt(0).toLowerCase() + param.name.slice(1);
+        exports.push(`export { ${varName} } from "./parameters";`);
+      }
     }
   }
 
@@ -270,7 +299,7 @@ function generateOrganizedFiles(
     });
   }
 
-  return files;
+  return { files, warnings };
 }
 
 /**
@@ -451,7 +480,8 @@ function parseAndWrite(
   }
 
   // Generate files
-  const files = generateOrganizedFiles(ir, generator);
+  const { files, warnings: layoutWarnings } = generateOrganizedFiles(ir, generator);
+  warnings.push(...layoutWarnings);
 
   // Write files
   for (const file of files) {
@@ -525,7 +555,7 @@ function mergeIR(parts: TemplateIR[]): TemplateIR {
  * for full-fidelity IR, then generate chant TypeScript from it.
  *
  * Unlike file import, the live config may contain secrets — the caller prints a
- * warning. Reuses the same by-category output organization as file import.
+ * warning. Uses the same file layout as file import (`generateOrganizedFiles`).
  */
 export async function importFromLive(options: LiveImportOptions): Promise<ImportResult> {
   const projectDir = resolve(options.output ? dirname(options.output) : ".");
@@ -640,7 +670,8 @@ export async function liveImportFromPlugins(
     mkdirSync(outputDir, { recursive: true });
   }
 
-  const files = generateOrganizedFiles(ir, generator);
+  const { files, warnings: layoutWarnings } = generateOrganizedFiles(ir, generator);
+  warnings.push(...layoutWarnings);
   const generatedFiles: string[] = [];
   for (const file of files) {
     const filePath = join(outputDir, file.path);
