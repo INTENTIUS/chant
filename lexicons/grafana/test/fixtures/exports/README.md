@@ -37,6 +37,20 @@ locally with defaults plus anonymous Admin access.
 The seed files are what was posted, before Grafana migrated them to
 `schemaVersion` 42; the exports are what came back.
 
+### Newer enum values (chant #2971)
+
+`grafana-13.2.2/cells.json` and `cells.external.json` were captured the same
+way on 2026-09-28 from `grafana/grafana:13.2.2` (commit 1bea008f), from
+`seed/cells.json` and the library panel `seed/owners.library-panel.json`.
+They use enum values the pinned schemas lack and the overlay adds: the pill,
+markdown (with `dynamicHeight`) and geo table cell types, the viridis, magma,
+plasma, inferno and cividis color schemes, and the `accessible` line style.
+The library panel is a markdown table, so the external export's `__elements`
+carries a model with newer values too. The Classic model was picked under
+Advanced options in the export drawer, since 13.2 defaults to V2 Resource.
+There is no 12.4.11 capture because the `accessible` line style is new in
+13.x.
+
 ## Adding a fixture
 
 Run the same steps against another Grafana version (a new directory named

@@ -103,7 +103,7 @@
           "uid": { "type": "string" },
           "name": { "type": "string" },
           "kind": { "type": "integer" },
-          "model": { "type": "object", "additionalProperties": {}, "description": "The library panel's own panel JSON." }
+          "model": { "type": "object", "additionalProperties": {}, "description": "The library panel's own panel JSON. GRAF107 checks it as a panel (src/schema-validate.ts), not here." }
         },
         "description": "One library panel embedded in an export's `__elements`."
       },
@@ -366,6 +366,13 @@
       "value": {},
       "source": "kinds/dashboard/dashboard_kind.cue:179-181",
       "why": "The CUE AnnotationQuery is open (`...`): datasources spread their own query fields into it."
+    },
+    {
+      "op": "replace",
+      "path": "/definitions/FieldColorModeId/enum",
+      "value": ["thresholds", "palette-classic", "palette-classic-by-name", "continuous-viridis", "continuous-magma", "continuous-plasma", "continuous-inferno", "continuous-cividis", "continuous-GrYlRd", "continuous-RdYlGr", "continuous-BlYlRd", "continuous-YlRd", "continuous-BlPu", "continuous-YlBl", "continuous-blues", "continuous-reds", "continuous-greens", "continuous-purples", "fixed", "shades"],
+      "source": "kinds/dashboard/dashboard_kind.cue:410 (:407 at v12.4.0)",
+      "why": "The vendored enum lacks the perceptual schemes (viridis, magma, plasma, inferno, cividis) the color scheme picker offers since 12.4."
     }
   ]
 }

@@ -102,13 +102,13 @@ export type FieldTextAlignment = "auto" | "left" | "right" | "center";
  * The color-background-solid, gradient-gauge, and lcd-gauge
  * modes are deprecated in favor of new cell subOptions
  */
-export type TableCellDisplayMode = "auto" | "color-text" | "color-background" | "color-background-solid" | "gradient-gauge" | "lcd-gauge" | "json-view" | "basic" | "image" | "gauge" | "sparkline" | "data-links" | "custom" | "actions";
+export type TableCellDisplayMode = "auto" | "color-text" | "color-background" | "color-background-solid" | "gradient-gauge" | "lcd-gauge" | "json-view" | "basic" | "image" | "gauge" | "sparkline" | "data-links" | "custom" | "actions" | "pill" | "markdown" | "geo";
 
 /**
  * Table cell options. Each cell has a display mode
  * and other potential options for that display.
  */
-export type TableCellOptions = TableAutoCellOptions | TableSparklineCellOptions | TableBarGaugeCellOptions | TableColoredBackgroundCellOptions | TableColorTextCellOptions | TableImageCellOptions | TableDataLinksCellOptions | TableActionsCellOptions | TableJsonViewCellOptions;
+export type TableCellOptions = TableAutoCellOptions | TableSparklineCellOptions | TableBarGaugeCellOptions | TableColoredBackgroundCellOptions | TableColorTextCellOptions | TableImageCellOptions | TableDataLinksCellOptions | TableActionsCellOptions | TableJsonViewCellOptions | TablePillCellOptions | TableMarkdownCellOptions | TableGeoCellOptions;
 
 /**
  * Auto mode table cell options
@@ -251,7 +251,7 @@ export type LineInterpolation = "linear" | "smooth" | "stepBefore" | "stepAfter"
  * TODO docs
  */
 export interface LineStyle {
-  fill?: "solid" | "dash" | "dot" | "square";
+  fill?: "solid" | "dash" | "dot" | "square" | "accessible";
   dash?: number[];
 }
 
@@ -333,3 +333,25 @@ export type ScaleDistribution = "linear" | "log" | "ordinal" | "symlog";
  * TODO docs
  */
 export type StackingMode = "none" | "normal" | "percent";
+
+/**
+ * Pill cell options
+ */
+export interface TablePillCellOptions {
+  type: TableCellDisplayMode;
+}
+
+/**
+ * Markdown cell options
+ */
+export interface TableMarkdownCellOptions {
+  type: TableCellDisplayMode;
+  dynamicHeight?: boolean;
+}
+
+/**
+ * Geo cell options
+ */
+export interface TableGeoCellOptions {
+  type: TableCellDisplayMode;
+}
