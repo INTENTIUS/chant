@@ -27,7 +27,9 @@ const delivered = {
   labels: grafanaLabels,
 };
 const grafanaConfigMaps = GrafanaConfigMaps({ ...delivered, namespace: NAMESPACE });
-const { volumes, volumeMounts } = grafanaVolumes(delivered);
+const mounted = grafanaVolumes(delivered);
+const volumes = mounted.volumes;
+const volumeMounts = mounted.volumeMounts;
 
 const grafanaContainer = {
   name: "grafana",
