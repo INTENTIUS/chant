@@ -34,6 +34,7 @@ import type {
 import { DASHBOARD_SCHEMA_VERSION } from "./schema/dashboard.gen";
 import { GRAFANA_SCHEMA_PIN } from "./pin";
 import { compact, slugUid } from "./util";
+import { ALERTING_FILE, alertingYaml, buildAlerting, type AlertingFile, type AlertingIndex } from "./alerting-build";
 
 export type { DashboardJson, PanelJson, RowPanelJson, VariableModel, DataSourceRef };
 
@@ -93,6 +94,8 @@ export interface BuiltGrafana {
   /** `ExternalDatasource` declarations: the checks count them, the provisioning file leaves them out. */
   externalDatasources: ExternalDatasourceRecord[];
   providers: ProvisionedProvider[];
+  /** The alerting provisioning file, when the build declares any alerting. */
+  alerting?: AlertingFile;
   /** Every output file by path, ready to write. */
   files: Record<string, string>;
   /** A short summary of what was built: the serializer's primary output. */
@@ -105,6 +108,8 @@ export interface GrafanaIndex {
   datasources: Array<{ name: string; type: string; uid: string }>;
   /** Datasources declared with `ExternalDatasource`: referenced, never provisioned. */
   externalDatasources?: ExternalDatasourceRecord[];
+  /** Rule groups, contact points, policies, mute timings and templates, when the build declares any. */
+  alerting?: AlertingIndex;
   files: string[];
 }
 
@@ -644,15 +649,18 @@ export function buildGrafana(entities: Map<string, Declarable> | Iterable<Declar
 
   if (datasources.length > 0) files[DATASOURCES_FILE] = datasourcesYaml(datasources);
   if (providers.length > 0) files[DASHBOARD_PROVIDERS_FILE] = dashboardProvidersYaml(providers);
+  const alerting = buildAlerting(named.map(([, e]) => e));
+  if (alerting) files[ALERTING_FILE] = alertingYaml(alerting.file);
 
   const index: GrafanaIndex = {
     grafanaSchema: `${GRAFANA_SCHEMA_PIN.source}@${GRAFANA_SCHEMA_PIN.ref}`,
     dashboards: dashboards.map(({ uid, title, folder, file }) => ({ uid, title, ...(folder ? { folder } : {}), file })),
     datasources: datasources.map(({ name, type, uid }) => ({ name, type, uid })),
     ...(externalDatasources.length > 0 ? { externalDatasources } : {}),
+    ...(alerting ? { alerting: alerting.index } : {}),
     files: Object.keys(files).sort(),
   };
-  return { dashboards, datasources, externalDatasources, providers, files, index };
+  return { dashboards, datasources, externalDatasources, providers, ...(alerting ? { alerting: alerting.file } : {}), files, index };
 }
 
 /** Every file the grafana entities render to, by path relative to the output directory. */
