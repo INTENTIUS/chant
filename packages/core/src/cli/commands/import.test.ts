@@ -503,6 +503,31 @@ spec:
     expect(result.error).toContain("no-such-lexicon");
   });
 
+  // #2991 — a blank or whitespace-only line after `spec:` (Helm renders one
+  // for an empty conditional) no longer ends the pod template's spec.
+  test("a blank line after a key keeps its block nested", async () => {
+    const templatePath = join(testDir, "manifest.yaml");
+    await writeFile(templatePath, deployment.replace("    spec:\n", "    spec:\n      \n"));
+
+    const result = await importCommand({ templatePath, output: outputDir, lexicon: "k8s" });
+
+    expect(result.error).toBeUndefined();
+    // The containers stay under template.spec, not hoisted beside `replicas`.
+    expect(generated(result.generatedFiles)).toMatch(/template: \{[\s\S]*spec: \{\s*containers: \[/);
+  }, 30000);
+
+  // #2991 — a document the YAML reader cannot place fails the import with
+  // its line, where it used to import a different manifest.
+  test("a mis-indented document fails the import and names the line", async () => {
+    const templatePath = join(testDir, "manifests.yaml");
+    await writeFile(templatePath, `${configMap}---\n${deployment.replace("  replicas: 2\n", "  replicas: 2\n     paused: true\n")}`);
+
+    const result = await importCommand({ templatePath, output: outputDir });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("YAML line 7");
+  }, 30000);
+
   test("content that is neither JSON nor YAML names both formats", async () => {
     const templatePath = join(testDir, "notes.txt");
     await writeFile(templatePath, "this is not a template\n{ nor is this");
