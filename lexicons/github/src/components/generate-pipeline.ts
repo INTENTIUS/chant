@@ -375,14 +375,21 @@ function memberArtifactStep(step: Record<string, unknown>, member: PipelineMembe
  * Shared with the forgejo dialect (#969), which transforms the doc first.
  */
 export function emitPipelineYAML(doc: GithubPipelineDoc): string {
+  // A block value starts with a newline; an inline one (`{}` for an empty
+  // component set) needs the space after the colon, or `jobs:{}` is a plain
+  // scalar rather than a key (#2991).
+  const section = (key: string, value: unknown): string => {
+    const emitted = emitYAML(value, 1);
+    return `${key}:${emitted.startsWith("\n") ? "" : " "}${emitted}`;
+  };
   const sections: string[] = [];
   sections.push("name: " + emitYAML(doc.name, 0));
-  sections.push("on:" + emitYAML(doc.on, 1));
+  sections.push(section("on", doc.on));
   if (doc.env && Object.keys(doc.env).length > 0) {
-    sections.push("env:" + emitYAML(doc.env, 1));
+    sections.push(section("env", doc.env));
   }
-  if (doc.defaults) sections.push("defaults:" + emitYAML(doc.defaults, 1));
-  sections.push("jobs:" + emitYAML(doc.jobsDoc, 1));
+  if (doc.defaults) sections.push(section("defaults", doc.defaults));
+  sections.push(section("jobs", doc.jobsDoc));
   return sections.join("\n\n") + "\n";
 }
 
