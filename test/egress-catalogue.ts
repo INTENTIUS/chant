@@ -404,6 +404,13 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     why: "The cpln lexicon's read transport, injectable through `CplnHttp` so tests need no network.",
   },
   {
+    file: "lexicons/grafana/src/api/client.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "the Grafana HTTP API named by `grafana.profiles.<env>` or `GRAFANA_URL`",
+    why: "The grafana lexicon's transport for `lifecycle diff --live` and `import --from`, injectable through `GrafanaHttp` so tests need no network.",
+  },
+  {
     file: "lexicons/fly/src/op/activities/fly-apply.ts",
     primitives: ["fetch"],
     phase: "apply",
@@ -574,6 +581,13 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     phase: "codegen",
     destination: "`raw.githubusercontent.com`, for the grafana-foundation-sdk JSON Schemas at the pinned commit",
     why: "`just fetch-schemas` re-downloads the vendored Grafana schemas when bumping `GRAFANA_SCHEMA_PIN`; a maintainer command. Generate, bundle, validate, build and the tests read the committed files under `src/spec/schemas/` and reach nothing.",
+  },
+  {
+    file: "lexicons/grafana/src/spec/fetch-units-cli.ts",
+    primitives: ["fetch"],
+    phase: "codegen",
+    destination: "`raw.githubusercontent.com`, for Grafana's `valueFormats/categories.ts` at the tag in `GRAFANA_UNITS_SOURCE`",
+    why: "`just fetch-units` re-extracts the unit ids GRAF115 accepts when moving to a newer Grafana; a maintainer command. Build, lint and the tests read the committed `src/spec/units.gen.ts` and reach nothing.",
   },
   {
     file: "lexicons/azure/scripts/fetch-quickstart-templates.ts",

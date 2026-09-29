@@ -347,11 +347,11 @@ describe("panels and rows", () => {
   });
 
   test("a panel type chant has no class for gets a definePanel", () => {
-    const { plan } = planDashboard(dashboard({ panels: [{ type: "piechart", id: 1, title: "pie" }, { type: "piechart", id: 2, title: "pie 2" }] }));
+    const { plan } = planDashboard(dashboard({ panels: [{ type: "grafana-clock-panel", id: 1, title: "clock" }, { type: "grafana-clock-panel", id: 2, title: "clock 2" }] }));
     expect(plan.customClasses).toEqual([
-      expect.objectContaining({ id: "panel-class:piechart", className: "PiechartPanel", factory: "definePanel", definition: { type: "piechart", className: "PiechartPanel", defaultSize: { w: 12, h: 8 } } }),
+      expect.objectContaining({ id: "panel-class:grafana-clock-panel", className: "GrafanaClockPanelPanel", factory: "definePanel", definition: { type: "grafana-clock-panel", className: "GrafanaClockPanelPanel", defaultSize: { w: 12, h: 8 } } }),
     ]);
-    expect(decl(plan.declarations, "panel:1")).toMatchObject({ className: "PiechartPanel", customClass: "panel-class:piechart" });
+    expect(decl(plan.declarations, "panel:1")).toMatchObject({ className: "GrafanaClockPanelPanel", customClass: "panel-class:grafana-clock-panel" });
   });
 
   test("a panel key no prop takes is named, unless it is at Grafana's default", () => {

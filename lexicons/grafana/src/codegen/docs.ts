@@ -28,15 +28,19 @@ const requests = new TimeSeriesPanel({ title: "Requests per second", datasource:
 export const overview = new Dashboard({ title: "Overview", panels: [requests] });
 \`\`\`
 
-Panels: time series, stat, gauge, table, logs, traces, heatmap and text, plus
-rows. Queries: Prometheus (PromQL), Tempo (TraceQL) and Loki (LogQL). Panel
+Panels: time series, stat, gauge, table, logs, traces, heatmap, text, bar
+chart, bar gauge, pie chart, state timeline, status history, histogram, node
+graph, XY chart, trend, canvas, geomap, flame graph and alert list, plus rows. Queries: Prometheus (PromQL), Tempo (TraceQL) and Loki (LogQL). Panel
 options and query fields are generated from Grafana's own schemas at a pinned
 version, corrected against Grafana's CUE, and track Grafana 12.4 and 13.x. Every
 build validates the dashboards against the same schemas.
 \`definePanel\` and \`defineQuery\` add plugins chant doesn't ship.
 \`chant import\` turns dashboard JSON exported from Grafana into this TypeScript,
 and it builds back to the same dashboard (see
-[Importing Dashboards](./importing/)).
+[Importing Dashboards](./importing/)). \`chant lifecycle diff --live\` reports
+a dashboard edited in Grafana as drift, property by property, and
+\`chant import --from <env>\` writes a running Grafana's dashboards as
+TypeScript (see [Drift and Live Export](./observing/)).
 
 Three composites build whole dashboards from declarations in other lexicons:
 \`RedDashboard\` from an otel \`spanmetrics\` connector, \`SloDashboard\` from a
@@ -49,8 +53,9 @@ Checks catch a query aimed at a datasource nobody declared, with
 wrong type (GRAF102), a \`$variable\` the dashboard doesn't declare (GRAF103),
 duplicate uids and ids (GRAF104), panels off the grid or overlapping (GRAF105),
 anything Grafana's dashboard schema rejects (GRAF107), PromQL sent to a
-Prometheus that doesn't parse (GRAF108), and a panel repeated over a variable
-that only ever holds one value (GRAF110).
+Prometheus that doesn't parse (GRAF108), a panel repeated over a variable
+that only ever holds one value (GRAF110), and a unit Grafana doesn't know
+(GRAF115).
 `;
 
 const outputFormat = `The grafana lexicon writes Grafana's own files, keyed by path under the
@@ -76,7 +81,10 @@ datasources and files that were built.
   about key order.
 - The dashboard JSON carries no ownership marker. Grafana keeps who manages a
   dashboard in the resource's metadata on its \`dashboard.grafana.app\` API,
-  not in the JSON.
+  not in the JSON: for a provisioned dashboard, the name of the provider that
+  loaded it, which is \`chant\` unless a \`DashboardProvider\` names another.
+  \`chant lifecycle diff --live\` reads that back (see
+  [Drift and Live Export](../observing/)).
 `;
 
 export async function generateDocs(opts?: { verbose?: boolean }): Promise<void> {

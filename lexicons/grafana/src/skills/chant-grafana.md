@@ -41,7 +41,7 @@ const requestRate = new PromQuery({
 
 ## Panels and dashboards
 
-Panel classes: `TimeSeriesPanel`, `StatPanel`, `GaugePanel`, `TablePanel`, `LogsPanel`, `TracesPanel`, `HeatmapPanel`, `TextPanel`, plus `Row`. `options` and `fieldConfig.defaults.custom` are typed from each panel's schema, and every option is optional because Grafana fills in the rest.
+Panel classes: `TimeSeriesPanel`, `StatPanel`, `GaugePanel`, `TablePanel`, `LogsPanel`, `TracesPanel`, `HeatmapPanel`, `TextPanel`, `BarChartPanel`, `BarGaugePanel`, `PieChartPanel`, `StateTimelinePanel`, `StatusHistoryPanel`, `HistogramPanel`, `NodeGraphPanel`, `XYChartPanel`, `TrendPanel`, `CanvasPanel`, `GeomapPanel`, `FlameGraphPanel`, `AlertListPanel`, plus `Row`. `options` and `fieldConfig.defaults.custom` are typed from each panel's schema, and every option is optional because Grafana fills in the rest.
 
 ```ts
 const rate = new TimeSeriesPanel({ title: "Request rate", datasource: prometheus, targets: [requestRate] });
@@ -87,6 +87,7 @@ Pass the `prometheus` exporter as `exporter` to `RedDashboard` when its `namespa
 - GRAF107: the dashboard matches Grafana's schema at the pinned version.
 - GRAF108: every query and query variable sent to a Prometheus parses as PromQL (template variables and `$__` macros are substituted first; an object-form variable query is checked on its `query`).
 - GRAF110: a panel or row repeats over a query, custom or datasource variable with `multi` or `includeAll`, or a group by variable; anything else shows it once (warning).
+- GRAF115 (warning): every panel unit is a Grafana unit id (`bytes`, `s`, `percent`, `reqps`, ...) or a custom unit (`suffix: cores`, `prefix:$`, `si:mF`, `count:reqs`, `currency:EUR`). Grafana shows anything else as literal text after the value.
 
 GRAF101 and GRAF102 compare against the datasources in the same build root, so keep datasources and dashboards in one `chant build` (chant #1939). For a datasource that exists in Grafana but is provisioned elsewhere, declare `new ExternalDatasource({ type: "prometheus", uid: "mimir" })` and use it like a `Datasource`; it is checked against, never provisioned.
 

@@ -1,0 +1,102 @@
+---
+title: "Drift and Live Export"
+description: "Compare the dashboards and datasources you declared with what a running Grafana holds, and write a Grafana's dashboards back out as TypeScript"
+diataxis: how-to
+order: 6
+---
+
+A dashboard provisioned from chant can still change in Grafana: somebody edits a query in the editor and saves, or moves the dashboard to another folder. `chant lifecycle diff <env> --live` reads the environment's Grafana and reports those changes against your source, property by property. `chant import --from <env>` goes the other way and writes a Grafana's dashboards and datasources as TypeScript.
+
+Both read Grafana 12.4 and 13.x over its `dashboard.grafana.app` API, and Grafana 11 over `/api/dashboards/uid`.
+
+## Point an environment at a Grafana
+
+Name the Grafana for each chant environment in `chant.config.ts`. Credentials are named by the environment variable that holds them, never written in the file:
+
+```ts
+import type { ChantConfig } from "@intentius/chant/config";
+import "@intentius/chant-lexicon-grafana";
+
+export default {
+  lexicons: ["grafana"],
+  grafana: {
+    profiles: {
+      staging: { url: "https://grafana.staging.example.com", token: { env: "GRAFANA_STAGING_TOKEN" } },
+      prod: { url: "https://grafana.example.com", token: { env: "GRAFANA_PROD_TOKEN" }, orgId: 2 },
+      local: { url: "http://localhost:3000", basicAuth: { user: { env: "GF_USER" }, password: { env: "GF_PASSWORD" } } },
+    },
+  },
+} satisfies ChantConfig;
+```
+
+The token is a [service account](https://grafana.com/docs/grafana/latest/administration/service-accounts/) token; the Viewer role is enough to observe and export. `orgId` picks the organisation (1 when left out). For Grafana Cloud, add `namespace: "stacks-<id>"`.
+
+An environment with no profile uses `GRAFANA_URL`, with `GRAFANA_TOKEN`, or with `GRAFANA_USER` and `GRAFANA_PASSWORD`.
+
+## See what changed in Grafana
+
+```bash
+chant lifecycle diff staging --live
+```
+
+For a dashboard whose query and panel title were changed in the editor, and which had a panel added:
+
+```text
+grafana (properties)
+2 property drift across 1 resource(s), 0 accepted, 1 unchanged, 3 unclaimed, 1 unobserved
+--------------------------------------------------------------------------------
+
+PROPERTY DRIFT (declared vs live; baseline shown where one exists):
+  - apiOverview (Grafana::Dashboard)
+      panels[0].panels[0].targets[0].expr: sum(rate(http_requests_total{job="$job"}[5m])) → sum(rate(http_requests_total[1m])) [from: authored]
+      panels[0].panels[1].title: Errors → 5xx [from: authored]
+
+UNCLAIMED (live values on properties chant never declared; not drift):
+  - apiOverview (Grafana::Dashboard)
+      panels[0].panels[2].options.content: hi [not in this declaration's claimed fields]
+      panels[0].panels[2].options.mode: markdown [not in this declaration's claimed fields]
+      panels[0].panels[2].title: Added in the UI [not in this declaration's claimed fields]
+```
+
+Paths are in the terms you wrote the dashboard in, not Grafana's JSON: `panels[0].panels[1]` is the second panel of the first row, and a query is found by position under its panel. A changed value you declared is drift. A value you never declared, such as a panel added in the UI, is listed as unclaimed and is never proposed as a change.
+
+What is not reported, because it is not a difference:
+
+- what the build fills in when you leave it out: panel ids, grid positions of auto-laid-out panels, query `refId`s, a panel's datasource taken from its queries, the dashboard's uid, and `timezone: "browser"`;
+- what Grafana adds or drops when it serves a stored dashboard: its `id` and `version`, and, through `dashboard.grafana.app`, the built-in "Annotations & Alerts" annotation, empty `options` and `fieldConfig`, and `null` values;
+- a value written out at the one Grafana assumes (`editable: true`, `graphTooltip: "default"`);
+- `[]`, `{}` and a missing key, which mean the same.
+
+Panels, rows, queries and variables are compared as part of their dashboard. Each takes its dashboard's verdict in the summary: present when the dashboard is. A datasource is compared by its settings; its secrets are compared by which keys are set, never by value, because Grafana does not return them.
+
+`chant lifecycle diff --live --json` gives the same report as data; `--update-baseline` accepts what it reported, so it stops being reported until it changes again.
+
+### What cannot be read
+
+These are reported as not observed, with the reason, and never as missing:
+
+- a `DashboardProvider`: it is a setting in Grafana's provisioning file, which Grafana serves no API for;
+- a dashboard saved in the v2 schema, which chant does not observe yet (`chant import` reads one);
+- anything, when the token is refused (`no credentials`) or the environment names no Grafana (`no binding`).
+
+## Whose dashboard it is
+
+A dashboard is chant's (`owned`) when:
+
+- it was loaded by one of the project's dashboard providers. Grafana records the provider's name on the dashboard, and chant's provider is named `chant` unless you declare a `DashboardProvider` with another name; or
+- its labels carry `app.kubernetes.io/managed-by: chant`, the marker chant writes when it creates a dashboard through the API. These labels also name the stack and environment.
+
+Anything else is `foreign`: a dashboard saved in the UI, or loaded by another provider. Two reads cannot tell, and say `unknown`: a datasource, whose API has no labels, and any dashboard on Grafana 11. `--owned` leaves those out.
+
+## Write a Grafana's dashboards as TypeScript
+
+```bash
+chant import --from staging --lexicon grafana --output src
+```
+
+Every dashboard and datasource in the organisation is written, each dashboard in a directory named after its uid, laid out the way [`chant import`](../importing/) lays out a dashboard file. The dashboards refer to the exported datasources by uid.
+
+- `--type Grafana::Dashboard` or `--type Grafana::Datasource` exports one kind; `--name <uid>` exports one dashboard or datasource.
+- `--owned` exports only chant's dashboards, and no datasources.
+- Grafana never returns a datasource's secrets. They are written as `"[REDACTED]"`, and the import warns about each one: replace them with a `$__env{NAME}` or `$__file{path}` reference, which GRAF002 asks for.
+- A dashboard saved in the v2 schema is left out, with a warning.

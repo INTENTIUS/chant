@@ -1,4 +1,5 @@
 import type { LexiconPlugin } from "@intentius/chant/lexicon";
+import type { OwnershipChannel } from "@intentius/chant/ownership";
 import type { CompletionContext, HoverContext } from "@intentius/chant/lsp/types";
 import type { McpResourceContribution } from "@intentius/chant/mcp/types";
 import { createDiffTool } from "@intentius/chant/lexicon-plugin-helpers";
@@ -16,6 +17,9 @@ import { grafanaSkills } from "./skill-defs";
 import { BUILTIN_CATALOG } from "./catalog";
 import { GRAFANA_SCHEMA_PIN } from "./pin";
 import { compositeCatalog } from "./composites/catalog";
+import { grafanaConfigSchema } from "./config";
+import { grafanaDeepNormalizationHooks } from "./deep-observe-hooks";
+import { GRAFANA_OWNERSHIP_KEYS } from "./ownership";
 
 const catalogResource: McpResourceContribution = {
   uri: "grafana:resource-catalog",
@@ -25,6 +29,23 @@ const catalogResource: McpResourceContribution = {
   async handler(): Promise<string> {
     return JSON.stringify({ pin: GRAFANA_SCHEMA_PIN, entities: BUILTIN_CATALOG });
   },
+};
+
+/**
+ * Where chant's marker can be read (#2946, see ./ownership.ts).
+ *
+ * A dashboard read over `/apis/dashboard.grafana.app` resolves `owned` or
+ * `foreign` on all three paths: from chant's managed-by label (stack and env
+ * included) when it was written through the API, or from the manager
+ * annotation Grafana writes on a dashboard one of the project's providers
+ * loaded. What resolves nothing, and says `unknown`, is kind- and
+ * server-shaped rather than path-shaped: datasources (their API has no
+ * labels) and dashboards on Grafana 11 (read over `/api/dashboards/uid`).
+ * An `owned: true` read withholds those as `filtered`.
+ */
+const ownershipChannel: OwnershipChannel = {
+  keys: GRAFANA_OWNERSHIP_KEYS,
+  reads: ["describeResources", "observeResourcesDeep", "exportResources"],
 };
 
 /**
@@ -39,6 +60,8 @@ const catalogResource: McpResourceContribution = {
 export const grafanaPlugin: LexiconPlugin = {
   name: "grafana",
   serializer: grafanaSerializer,
+  configSchema: grafanaConfigSchema,
+  ownershipChannel,
 
   // ── Required lifecycle methods ────────────────────────────────
 
@@ -128,6 +151,28 @@ export const grafanaPlugin: LexiconPlugin = {
 
   hoverProvider(ctx: HoverContext) {
     return hover(ctx);
+  },
+
+  // ── Live observation and export (#2946) ──────────────────────
+  // Behind dynamic imports, so `chant build` never loads a transport. The
+  // hooks are static: core normalizes the declared tree with them whether or
+  // not a live read happens.
+
+  async describeResources(options) {
+    const { describeResources } = await import("./describe-resources");
+    return describeResources(options);
+  },
+
+  async observeResourcesDeep(options) {
+    const { observeResourcesDeepGrafana } = await import("./deep-observe");
+    return observeResourcesDeepGrafana(options);
+  },
+
+  deepNormalizationHooks: grafanaDeepNormalizationHooks,
+
+  async exportResources(options) {
+    const { exportResources } = await import("./export-resources");
+    return exportResources(options);
   },
 
   async docs(options?: { verbose?: boolean }) {

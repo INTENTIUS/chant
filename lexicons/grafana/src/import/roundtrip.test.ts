@@ -219,11 +219,27 @@ describe("dashboard JSON -> TypeScript -> dashboard JSON", () => {
     expect(out.paths.filter((p) => p.includes("/row-")).length).toBeGreaterThan(30);
   });
 
-  test("a panel type chant has no class for goes through definePanel", async () => {
+  test("a panel type chant ships a class for is declared with it", async () => {
     const out = await expectRoundTrip(read("community/traefik.json"));
-    expect(out.source).toContain('const PiechartPanel = definePanel()({');
-    expect(out.source).toContain('import { PiechartPanel } from "./plugins";');
-    expect(out.source).toMatch(/new PiechartPanel\(\{/);
+    expect(out.source).toMatch(/new PieChartPanel\(\{/);
+    expect(out.source).not.toContain("definePanel");
+  });
+
+  test("every built-in panel type in a UI export is declared with its class", async () => {
+    const out = await expectRoundTrip(read("exports/grafana-12.4.11/panels.json"));
+    for (const cls of ["BarChartPanel", "BarGaugePanel", "PieChartPanel", "StateTimelinePanel", "StatusHistoryPanel", "HistogramPanel", "NodeGraphPanel", "XYChartPanel", "TrendPanel", "CanvasPanel", "GeomapPanel", "FlameGraphPanel", "AlertListPanel", "TracesPanel"]) {
+      expect(out.source).toMatch(new RegExp(`new ${cls}\\(\\{`));
+    }
+    expect(out.source).not.toContain("definePanel");
+    expect(out.warnings).toEqual([]);
+  });
+
+  test("a panel type chant has no class for goes through definePanel", async () => {
+    // The Traefik dashboard with its pie chart swapped for a community plugin chant does not ship.
+    const out = await expectRoundTrip(read("community/traefik.json").split('"type": "piechart"').join('"type": "grafana-polystat-panel"'));
+    expect(out.source).toContain("const GrafanaPolystatPanelPanel = definePanel()({");
+    expect(out.source).toContain('import { GrafanaPolystatPanelPanel } from "./plugins";');
+    expect(out.source).toMatch(/new GrafanaPolystatPanelPanel\(\{/);
   });
 
   test("an AngularJS-era dashboard: schemaVersion carried, top-level panel settings named", async () => {

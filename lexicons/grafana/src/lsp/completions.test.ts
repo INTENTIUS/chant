@@ -14,6 +14,11 @@ describe("grafana LSP completions", () => {
     expect(items.map((i) => i.label)).toContain("TimeSeriesPanel");
   });
 
+  it("offers every panel class sharing a prefix", () => {
+    const items = completions({ uri: "file:///d.ts", content: "new Sta", position: { line: 0, character: 7 }, wordAtCursor: "Sta", linePrefix: "new Sta" });
+    expect(items.map((i) => i.label)).toEqual(expect.arrayContaining(["StatPanel", "StateTimelinePanel", "StatusHistoryPanel"]));
+  });
+
   it("offers the query classes by prefix", () => {
     const items = completions({
       uri: "file:///q.ts",
