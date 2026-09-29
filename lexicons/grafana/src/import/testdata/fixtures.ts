@@ -24,16 +24,19 @@ export const fixturesDir = join(pkgDir, "test", "fixtures");
 /** A fixture file's text, by path under test/fixtures. */
 export const read = (...p: string[]): string => readFileSync(join(fixturesDir, ...p), "utf-8");
 
-/** The classic UI exports (every export but the v2 resource), as paths under test/fixtures. */
+/** The classic UI exports (every export but the v1 and v2 resources), as paths under test/fixtures. */
 export const UI_EXPORTS: readonly string[] = ["grafana-12.4.11", "grafana-13.2.2"].flatMap((v) =>
   readdirSync(join(fixturesDir, "exports", v))
-    .filter((f) => f.endsWith(".json") && !f.includes("v2-resource"))
+    .filter((f) => f.endsWith(".json") && !f.includes("-resource"))
     .sort()
     .map((f) => `exports/${v}/${f}`),
 );
 
-/** The v2 resource export, which the importer reports and does not read. */
-export const V2_EXPORT = "exports/grafana-13.2.2/checkout.v2-resource.json";
+/** v2 dashboards (#2947): the checkout V2 Resource UI export, and the tabs dashboard as the v2 API reads it. */
+export const V2_EXPORTS: readonly string[] = ["exports/grafana-13.2.2/checkout.v2-resource.json", "exports/grafana-13.2.2/tabs.v2-resource.json"];
+
+/** The tabs dashboard read at dashboard.grafana.app/v1: Grafana's lossy down-conversion of a dashboard it stores as v2. */
+export const LOSSY_V1_EXPORT = "exports/grafana-13.2.2/tabs.v1-resource.json";
 
 /** The grafana.com dashboards, as paths under test/fixtures. */
 export const COMMUNITY: readonly string[] = [

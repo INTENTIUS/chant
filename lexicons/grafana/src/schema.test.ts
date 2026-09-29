@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
-import { GRAFANA_SCHEMA_PIN, SCHEMA_NAMES, schemaUrl } from "./pin";
+import { GRAFANA_SCHEMA_PIN, SCHEMA_NAMES, VENDORED_SCHEMA_NAMES, schemaUrl } from "./pin";
 import { digestMismatches, loadSchema } from "./spec/schemas";
 import { schemaModules } from "./codegen/generate";
 import { schemaModule, tsType } from "./codegen/schema-types";
@@ -13,7 +13,9 @@ const pkgDir = dirname(dirname(fileURLToPath(import.meta.url)));
 describe("the schema pin", () => {
   test("names a commit and a digest for every vendored schema", () => {
     expect(GRAFANA_SCHEMA_PIN.commit).toMatch(/^[0-9a-f]{40}$/);
-    expect(Object.keys(GRAFANA_SCHEMA_PIN.files).sort()).toEqual([...SCHEMA_NAMES].sort());
+    expect(Object.keys(GRAFANA_SCHEMA_PIN.files).sort()).toEqual([...VENDORED_SCHEMA_NAMES].sort());
+    // Types come from the classic schemas only; dashboardv2 is vendored for the importer (#2947).
+    expect(VENDORED_SCHEMA_NAMES.filter((n) => !(SCHEMA_NAMES as readonly string[]).includes(n))).toEqual(["dashboardv2"]);
     expect(schemaUrl("stat")).toBe(`https://raw.githubusercontent.com/grafana/grafana-foundation-sdk/${GRAFANA_SCHEMA_PIN.commit}/jsonschema/stat.jsonschema.json`);
   });
 
