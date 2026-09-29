@@ -21,6 +21,8 @@
  * something.
  */
 
+import { customVariableOptions } from "../build";
+
 type Json = Record<string, unknown>;
 
 /** Grafana's value for a dashboard key the JSON leaves out. */
@@ -303,7 +305,9 @@ function normalizeVariable(variable: unknown): unknown {
       out.query = values.join(",");
       delete out.options;
       if (type === "custom" && (!isObject(out.current) || Object.keys(out.current).length === 0) && values.length > 0) {
-        out.current = { text: values[0], value: values[0] };
+        // Grafana selects the first option, with a `text : value` item split into its text and value.
+        const first = customVariableOptions(query ?? "")[0];
+        if (first) out.current = { text: first.text, value: first.value };
       }
       out.refresh = type === "interval" ? 2 : out.refresh;
       break;

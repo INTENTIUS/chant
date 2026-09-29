@@ -22,7 +22,7 @@ diataxis: reference
 | `variables` | `[]` | variable entities, in dropdown order |
 | `panels` | `[]` | panels and rows, top to bottom |
 | `links` | `[]` | `{ title, type, url?, … }`; the rest of Grafana's link fields are filled in |
-| `folder` | General | provisioned into this folder (a subdirectory of `dashboards/`) |
+| `folder` | General | provisioned into this folder (a subdirectory of `dashboards/`); `"Platform/Kubernetes"` nests on Grafana 13.1 and later |
 | `schemaVersion` | the pinned schema's | `chant import` sets it for a dashboard saved by an older Grafana, so Grafana still migrates it on load |
 
 The emitted JSON carries `schemaVersion` from the pinned dashboard schema unless the dashboard sets its own, empty `annotations` (Grafana adds its built-in annotation on load), and no numeric `id`.
@@ -100,7 +100,7 @@ Panel and row ids default to 1, 2, 3… in the order they appear, skipping any i
 | Class | Grafana `type` | Key props |
 |---|---|---|
 | `QueryVariable` | `query` | `datasource`, `query`, `definition`, `regex`, `refresh` (`"never"`, `"onLoad"`, `"onTimeRangeChange"`), `sort` |
-| `CustomVariable` | `custom` | `values` |
+| `CustomVariable` | `custom` | `values`, each a value or `"text : value"` |
 | `IntervalVariable` | `interval` | `values`, `auto`, `autoCount`, `autoMin` |
 | `DatasourceVariable` | `datasource` | `pluginType`, `regex` |
 | `ConstantVariable` | `constant` | `value` (always hidden) |
@@ -132,6 +132,8 @@ These three depend on the Grafana version:
 | `AdhocVariable` | every supported version; `enableGroupBy` is new in 13 and needs the `dashboardUnifiedDrilldownControls` feature toggle |
 | `GroupByVariable` | in the dashboard schema since 10.4, but experimental in 12.4 and 13.x: with the `groupByVariable` feature toggle off, Grafana drops the variable when it loads the dashboard. Grafana 12.4 also cannot export a dashboard that has one |
 | `SwitchVariable` | 12.3 and later |
+
+A `CustomVariable` value is written the way Grafana reads it: `"Production : prod"` shows `Production` and sets `prod`, and a comma is part of the value (chant escapes it as `\,`, and leaves one already escaped alone).
 
 A `DatasourceVariable` can be passed anywhere a datasource goes. The reference is written as `{ type: <pluginType>, uid: "${name}" }`, and its type parameter keeps a `PromQuery` from using a Loki datasource variable.
 

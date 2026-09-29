@@ -86,7 +86,7 @@ dist/grafana/
     └── datasources/chant.yaml               the Prometheus datasource
 ```
 
-`chant build` also runs the GRAF1xx checks on the output. A query pointing at a datasource nobody declared, a `$variable` the dashboard doesn't have, overlapping panels, a value Grafana's dashboard schema doesn't allow, or PromQL with a missing bracket fails here instead of in Grafana. A key the schema doesn't know is a warning, and so is a unit Grafana doesn't know, such as `"byte"` for `"bytes"`.
+`chant build` also runs the GRAF1xx checks on the output. A query pointing at a datasource nobody declared, a `$variable` the dashboard doesn't have, overlapping panels, a value Grafana's dashboard schema doesn't allow, PromQL with a missing bracket, or a provider that ignores a dashboard's folder fails here instead of in Grafana. A key the schema doesn't know is a warning, and so is a unit Grafana doesn't know, such as `"byte"` for `"bytes"`.
 
 ## 6. Load it into Grafana
 

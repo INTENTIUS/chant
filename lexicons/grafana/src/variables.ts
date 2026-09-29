@@ -92,6 +92,11 @@ export interface QueryVariableProps extends CommonVariableProps, MultiValueProps
 }
 
 export interface CustomVariableProps extends CommonVariableProps, MultiValueProps {
+  /**
+   * The values, in Grafana's syntax: `"Production : prod"` shows
+   * `Production` and sets `prod`. A comma is part of the value (written as
+   * `\,`, and one already escaped is kept).
+   */
   values: string[];
 }
 

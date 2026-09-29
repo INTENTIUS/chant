@@ -20,6 +20,12 @@ export interface FakeDashboard {
   annotations?: Record<string, string>;
   /** The version it is stored at: `v0alpha1` for a classic dashboard, `v2beta1` for one saved as v2. */
   storedVersion?: string;
+  /**
+   * For a dashboard stored as v2, its v2 spec, served at the v2 versions the
+   * server has (`spec` is then the classic read's down-conversion). Without
+   * it the v2 routes answer 404.
+   */
+  v2?: Json;
   folderUid?: string;
 }
 
@@ -111,6 +117,14 @@ export function fakeGrafana(state: FakeGrafanaState, calls: string[] = []): Graf
     }
     const list = new RegExp(`^/apis/dashboard\\.grafana\\.app/${state.api}/namespaces/${ns}/dashboards$`).exec(route);
     if (list && state.api !== "legacy") return ok({ items: Object.entries(state.dashboards).map(([uid, d]) => resource(uid, d)), metadata: {} });
+    const v2 = new RegExp(`^/apis/dashboard\\.grafana\\.app/(v2|v2beta1)/namespaces/${ns}/dashboards/([^/]+)$`).exec(route);
+    if (v2 && state.api !== "legacy" && (state.api === "v1" || v2[1] === "v2beta1")) {
+      const uid = decodeURIComponent(v2[2]);
+      const d = state.dashboards[uid];
+      if (!d?.v2) return notFound;
+      const r = resource(uid, d);
+      return ok({ ...r, apiVersion: `dashboard.grafana.app/${v2[1]}`, spec: d.v2, status: {} });
+    }
     const one = new RegExp(`^/apis/dashboard\\.grafana\\.app/${state.api}/namespaces/${ns}/dashboards/([^/]+)$`).exec(route);
     if (one && state.api !== "legacy") {
       const d = state.dashboards[decodeURIComponent(one[1])];

@@ -88,6 +88,7 @@ Pass the `prometheus` exporter as `exporter` to `RedDashboard` when its `namespa
 - GRAF106: uids of 1-40 letters, digits, `-`, `_`; dashboards have titles.
 - GRAF107: the dashboard matches Grafana's schema at the pinned version.
 - GRAF108: every query and query variable sent to a Prometheus parses as PromQL (template variables and `$__` macros are substituted first; an object-form variable query is checked on its `query`).
+- GRAF109: the dashboard providers put each dashboard in its declared folder, and no two load the same files.
 - GRAF110: a panel or row repeats over a query, custom or datasource variable with `multi` or `includeAll`, or a group by variable; anything else shows it once (warning).
 - GRAF115 (warning): every panel unit is a Grafana unit id (`bytes`, `s`, `percent`, `reqps`, ...) or a custom unit (`suffix: cores`, `prefix:$`, `si:mF`, `count:reqs`, `currency:EUR`). Grafana shows anything else as literal text after the value.
 - GRAF111-GRAF114: alert rules, contact points, policies and mute timings; see the chant-grafana-alerting skill.

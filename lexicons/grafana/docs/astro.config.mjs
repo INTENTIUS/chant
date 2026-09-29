@@ -49,6 +49,10 @@ export default defineConfig({
                               "slug": "custom-plugins"
                         },
                         {
+                              "label": "Apply over the API",
+                              "slug": "applying"
+                        },
+                        {
                               "label": "Drift and Live Export",
                               "slug": "observing"
                         },
