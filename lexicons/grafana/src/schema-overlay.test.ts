@@ -31,7 +31,8 @@ function readJson(path: string): Json {
 const versions = readdirSync(exportsDir).filter((d) => d.startsWith("grafana-"));
 const classicExports = versions.flatMap((v) =>
   readdirSync(join(exportsDir, v))
-    .filter((f) => f.endsWith(".json") && !f.includes("v2-resource"))
+    // The v1 and v2 resources (#2947) are API reads, not classic exports.
+    .filter((f) => f.endsWith(".json") && !f.includes("-resource"))
     .map((f) => [`${v}/${f}`, join(exportsDir, v, f)] as const),
 );
 

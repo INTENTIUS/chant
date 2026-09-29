@@ -4,7 +4,7 @@ import { DASHBOARD_SCHEMA_VERSION } from "../schema/dashboard.gen";
 import { GrafanaParser, planDashboard, type DashboardResourceMetadata, type PlanResourceProperties } from "./parser";
 import { applyEdits } from "./edits";
 import type { Declaration } from "./model";
-import { read, V2_EXPORT } from "./testdata/fixtures";
+import { read, V2_EXPORTS } from "./testdata/fixtures";
 
 type Json = Record<string, unknown>;
 
@@ -24,15 +24,16 @@ function decl(declarations: readonly Declaration[], id: string): Declaration {
 const prom = { type: "prometheus", uid: "prom" };
 
 describe("what the parser accepts", () => {
-  test("a v2 resource is reported, not imported (#2947)", () => {
-    const ir = parse(read(V2_EXPORT));
-    expect(ir.resources).toEqual([]);
-    expect(ir.warnings).toEqual([expect.stringMatching(/^This is a v2 dashboard \(dashboard\.grafana\.app\/v2\)\..*#2947.*Classic model/)]);
+  // v2 dashboards (#2947) are read into classic JSON; v2.test.ts covers them.
+  test("a v2 resource is read into a classic dashboard", () => {
+    const ir = parse(read(V2_EXPORTS[0]));
+    expect(ir.resources.map((r) => r.logicalId)).toEqual(["checkoutService"]);
+    expect(ir.warnings?.[0]).toMatch(/^This is a v2 dashboard \(dashboard\.grafana\.app\/v2\)\./);
   });
 
-  test("a bare v2 spec is reported too", () => {
+  test("a bare v2 spec is read too", () => {
     const ir = parse({ title: "x", elements: {}, layout: { kind: "GridLayout", spec: { items: [] } } });
-    expect(ir.resources).toEqual([]);
+    expect(ir.resources).toHaveLength(1);
     expect(ir.warnings?.[0]).toMatch(/^This is a v2 dashboard\. /);
   });
 
@@ -62,7 +63,7 @@ describe("what the parser accepts", () => {
   });
 
   test("detectTemplate claims every shape the parser reads", () => {
-    expect(detectTemplate(JSON.parse(read(V2_EXPORT)))).toBe(true);
+    expect(detectTemplate(JSON.parse(read(V2_EXPORTS[0])))).toBe(true);
     expect(detectTemplate({ title: "old", schemaVersion: 12, rows: [] })).toBe(true);
     expect(detectTemplate({ dashboard: dashboard(), meta: {} })).toBe(true);
     expect(detectTemplate({ apiVersion: "dashboard.grafana.app/v1beta1", kind: "Dashboard", spec: dashboard() })).toBe(true);

@@ -8,7 +8,7 @@ import { createHash } from "crypto";
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
-import { GRAFANA_SCHEMA_PIN, SCHEMA_NAMES, type SchemaName } from "../pin";
+import { GRAFANA_SCHEMA_PIN, VENDORED_SCHEMA_NAMES, type SchemaName, type VendoredSchemaName } from "../pin";
 import { applyOverlay, loadOverlay } from "./overlay";
 
 /**
@@ -21,7 +21,7 @@ export function schemasDir(): string {
   return join(dirname(fileURLToPath(import.meta.url)), "schemas");
 }
 
-export function schemaPath(name: SchemaName): string {
+export function schemaPath(name: VendoredSchemaName): string {
   return join(schemasDir(), `${name}.jsonschema.json`);
 }
 
@@ -30,12 +30,12 @@ export function sha256(text: string | Buffer): string {
 }
 
 /** The raw bytes of one vendored schema. */
-export function readSchemaText(name: SchemaName): string {
+export function readSchemaText(name: VendoredSchemaName): string {
   return readFileSync(schemaPath(name), "utf-8");
 }
 
 /** One vendored schema exactly as pinned, parsed, without the overlay. */
-export function loadVendoredSchema(name: SchemaName): Record<string, unknown> {
+export function loadVendoredSchema(name: VendoredSchemaName): Record<string, unknown> {
   return JSON.parse(readSchemaText(name)) as Record<string, unknown>;
 }
 
@@ -57,9 +57,9 @@ export function loadSchema(name: SchemaName): Record<string, unknown> {
 }
 
 /** Vendored files whose digest does not match the pin, with what was found. */
-export function digestMismatches(): Array<{ name: SchemaName; expected: string; actual: string }> {
-  const out: Array<{ name: SchemaName; expected: string; actual: string }> = [];
-  for (const name of SCHEMA_NAMES) {
+export function digestMismatches(): Array<{ name: VendoredSchemaName; expected: string; actual: string }> {
+  const out: Array<{ name: VendoredSchemaName; expected: string; actual: string }> = [];
+  for (const name of VENDORED_SCHEMA_NAMES) {
     const actual = sha256(readFileSync(schemaPath(name)));
     const expected = GRAFANA_SCHEMA_PIN.files[name];
     if (actual !== expected) out.push({ name, expected, actual });

@@ -4,7 +4,8 @@
  * Dashboard JSON -> TypeScript -> `chant build` -> dashboard JSON must give
  * back the same dashboard for every fixture: Grafana 12.4.11 and 13.2.2 UI
  * exports (plain and "for sharing externally"), community dashboards from
- * grafana.com, and what this lexicon's examples build. "The same" means
+ * grafana.com, and what this lexicon's examples build. A v2 dashboard
+ * (#2947) round-trips through its classic form (./v2.ts). "The same" means
  * equal after `normalizeDashboard` (Grafana's defaults and derived keys)
  * once the importer's edits are applied to the source: every key it could
  * not carry, and every value it wrote in another form. An edit that changes
@@ -32,7 +33,7 @@ import { GrafanaParser, type DashboardResourceMetadata } from "./parser";
 import { GrafanaGenerator } from "./generator";
 import { applyEdits } from "./edits";
 import { normalizeDashboard } from "./normalize";
-import { COMMUNITY, UI_EXPORTS, V2_EXPORT, exampleOutputs, projectDir, read, removeDir, writeFiles } from "./testdata/fixtures";
+import { COMMUNITY, LOSSY_V1_EXPORT, UI_EXPORTS, V2_EXPORTS, exampleOutputs, projectDir, read, removeDir, writeFiles } from "./testdata/fixtures";
 
 type Json = Record<string, unknown>;
 
@@ -131,6 +132,19 @@ describe("dashboard JSON -> TypeScript -> dashboard JSON", () => {
       if (file.includes(".external.")) {
         expect(out.warnings).toContainEqual(expect.stringMatching(/^__inputs: DS_PROMETHEUS \(prometheus\)/));
         expect(out.source).toContain("const dsPrometheus = new DatasourceVariable({");
+      }
+    });
+  }
+
+  for (const file of V2_EXPORTS) {
+    test(`v2 dashboard ${file}, through its classic form`, async () => {
+      const out = await expectRoundTrip(read(file));
+      expect(out.paths.every((p) => /^chant-fx-(checkout|tabs)\//.test(p))).toBe(true);
+      expect(out.warnings[0]).toMatch(/^This is a v2 dashboard \(dashboard\.grafana\.app\/v2\)\./);
+      if (file.includes("tabs")) {
+        // Tabs become rows, and the auto grid's panels keep the positions Grafana gives them.
+        expect(out.warnings).toContainEqual(expect.stringMatching(/tabs "Overview" and "Details" become expanded rows/));
+        expect((out.rebuilt!.panels as Json[]).filter((p) => p.type === "row").map((p) => p.title)).toEqual(["Overview", "Details", "Latency ($env)", "Logs"]);
       }
     });
   }
@@ -287,29 +301,48 @@ describe("chant import dashboard.json", () => {
     });
   }
 
-  test("a v2 dashboard is recognised, reported and not imported", async () => {
+  test("a v2 dashboard is imported, and builds back to its classic form", async () => {
     const dir = projectDir();
     try {
       const output = join(dir, "src");
-      const result = await importFromContent({ content: read(V2_EXPORT), lexicon: "grafana", output });
+      const content = read(V2_EXPORTS[1]);
+      const result = await importFromContent({ content, lexicon: "grafana", output });
       expect(result.error).toBeUndefined();
-      expect(result.success).toBe(true);
-      expect(result.generatedFiles).toEqual([]);
-      expect(result.warnings).toEqual([expect.stringMatching(/^This is a v2 dashboard \(dashboard\.grafana\.app\/v2\)\. .*not supported yet \(#2947\)/)]);
-      expect(existsSync(join(output, "chant-fx-checkout"))).toBe(false);
+      expect(result.generatedFiles).toContain("chant-fx-tabs/dashboard.ts");
+      expect(result.warnings[0]).toMatch(/^This is a v2 dashboard \(dashboard\.grafana\.app\/v2\)\./);
+      const built = await build(output, [grafanaSerializer]);
+      expect(built.errors).toEqual([]);
+      const text = (built.outputs.get("grafana") as SerializerResult).files!["dashboards/chant-fx-tabs.json"];
+      const meta = new GrafanaParser().parse(content).resources[0].metadata as unknown as DashboardResourceMetadata;
+      expect(normalizeDashboard(JSON.parse(text))).toEqual(normalizeDashboard(applyEdits(meta.source, meta.edits)));
     } finally {
       removeDir(dir);
     }
   });
 
-  test("detection picks the v2 dashboard up too, so the warning reaches the user", async () => {
+  test("a v1 read of a dashboard Grafana stores as v2 is refused, and nothing is written", async () => {
+    const dir = projectDir();
+    try {
+      const output = join(dir, "src");
+      const result = await importFromContent({ content: read(LOSSY_V1_EXPORT), lexicon: "grafana", output });
+      expect(result.success).toBe(true);
+      expect(result.generatedFiles).toEqual([]);
+      expect(result.warnings).toEqual([expect.stringMatching(/^Not imported: Grafana stores this dashboard as v2 /)]);
+      expect(existsSync(join(output, "chant-fx-tabs"))).toBe(false);
+    } finally {
+      removeDir(dir);
+    }
+  });
+
+  test("detection picks the v2 dashboard up too", async () => {
     const dir = projectDir();
     try {
       const templatePath = join(dir, "checkout.v2.json");
-      writeFiles(dir, [{ path: "checkout.v2.json", content: read(V2_EXPORT) }]);
+      writeFiles(dir, [{ path: "checkout.v2.json", content: read(V2_EXPORTS[0]) }]);
       const result = await importCommand({ templatePath, output: join(dir, "src"), force: true });
       expect(result.lexicon).toBe("grafana");
       expect(result.warnings.join("\n")).toContain("v2 dashboard");
+      expect(result.generatedFiles).toContain("chant-fx-checkout/dashboard.ts");
     } finally {
       removeDir(dir);
     }
