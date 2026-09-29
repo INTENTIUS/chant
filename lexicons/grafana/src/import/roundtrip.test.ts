@@ -106,8 +106,15 @@ describe("dashboard JSON -> TypeScript -> dashboard JSON", () => {
         expect(out.warnings).toContainEqual(expect.stringContaining('the annotation "Deploys"'));
         expect(out.source).toContain("repeat: env,");
         expect(out.source).toContain("collapsed: true,");
-      } else {
+      } else if (file.includes("slo")) {
         expect(out.warnings).toContainEqual(expect.stringMatching(/is a library panel \("Burn rate", uid chant-fx-burn\)/));
+      }
+      // A library panel, and the models an external export carries in __elements, are named.
+      const source = JSON.parse(read(file)) as Json;
+      const libraryPanels = (source.panels as Json[]).filter((p) => p.libraryPanel !== undefined).length;
+      expect(out.warnings.filter((w) => w.includes("is a library panel")).length).toBe(libraryPanels);
+      if (source.__elements && Object.keys(source.__elements as Json).length > 0) {
+        expect(out.warnings).toContain("dashboard: __elements is not carried (the library panels exported with it; library panels are not carried yet)");
       }
       if (file.includes(".external.")) {
         expect(out.warnings).toContainEqual(expect.stringMatching(/^__inputs: DS_PROMETHEUS \(prometheus\)/));

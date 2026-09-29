@@ -24,9 +24,12 @@ export const fixturesDir = join(pkgDir, "test", "fixtures");
 /** A fixture file's text, by path under test/fixtures. */
 export const read = (...p: string[]): string => readFileSync(join(fixturesDir, ...p), "utf-8");
 
-/** The classic UI exports (not the v2 resource), as paths under test/fixtures. */
+/** The classic UI exports (every export but the v2 resource), as paths under test/fixtures. */
 export const UI_EXPORTS: readonly string[] = ["grafana-12.4.11", "grafana-13.2.2"].flatMap((v) =>
-  ["checkout.json", "checkout.external.json", "slo.json", "slo.external.json"].map((f) => `exports/${v}/${f}`),
+  readdirSync(join(fixturesDir, "exports", v))
+    .filter((f) => f.endsWith(".json") && !f.includes("v2-resource"))
+    .sort()
+    .map((f) => `exports/${v}/${f}`),
 );
 
 /** The v2 resource export, which the importer reports and does not read. */
