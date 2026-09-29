@@ -25,6 +25,7 @@ export const {
   selectCommands,
   MCP_READ_TOOLS,
   mcpToolCall,
+  sameReadDocument,
   startMcpSession,
   createConformanceWorkspace,
   conformanceTarget,
