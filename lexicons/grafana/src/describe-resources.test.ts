@@ -162,7 +162,7 @@ describeObservationConformance({
       expectUnobserved: ["overview"],
     },
     {
-      name: "a dashboard stored as v2",
+      name: "a dashboard stored as v2 that the server does not serve at v2",
       declared: ["overview"],
       run: () => {
         const s = state();
@@ -178,6 +178,67 @@ describeObservationConformance({
       expectUnobserved: ["lonely"],
     },
   ],
+});
+
+/** A small v2 spec of the "Overview" dashboard: one stat panel in a tab. */
+const OVERVIEW_V2 = {
+  title: "Overview",
+  annotations: [],
+  cursorSync: "Off",
+  links: [],
+  preload: false,
+  tags: [],
+  variables: [],
+  timeSettings: { from: "now-6h", to: "now", autoRefresh: "", autoRefreshIntervals: [], hideTimepicker: false, fiscalYearStartMonth: 0 },
+  elements: {
+    "panel-1": {
+      kind: "Panel",
+      spec: { id: 1, title: "Up", description: "", links: [], data: { kind: "QueryGroup", spec: { queries: [], transformations: [], queryOptions: {} } }, vizConfig: { kind: "VizConfig", group: "stat", version: "", spec: { options: {}, fieldConfig: { defaults: {}, overrides: [] } } } },
+    },
+  },
+  layout: {
+    kind: "TabsLayout",
+    spec: { tabs: [{ kind: "TabsLayoutTab", spec: { title: "Health", layout: { kind: "GridLayout", spec: { items: [{ kind: "GridLayoutItem", spec: { x: 0, y: 0, width: 12, height: 8, element: { kind: "ElementReference", name: "panel-1" } } }] } } } }] },
+  },
+};
+
+describe("a dashboard Grafana stores as v2 (#2947)", () => {
+  for (const [api, version] of [["v1", "v2"], ["v1beta1", "v2beta1"]] as const) {
+    it(`is read again at ${version} on a ${api} server, and says it was v2 and what the classic form cannot hold`, async () => {
+      const s = state({ api });
+      s.dashboards.overview = { ...s.dashboards.overview, storedVersion: version, v2: OVERVIEW_V2 };
+      const calls: string[] = [];
+      const obs = normalizeObservation(await run(s, { entityNames: ["overview"] }, calls));
+      expect(obs.unobserved).toEqual({});
+      // Ownership comes from the v2 resource's metadata, as from the classic one: the declared ops provider loads it.
+      expect(obs.resources.overview).toMatchObject({ status: "PRESENT", ownership: "owned" });
+      expect(obs.resources.overview.attributes).toMatchObject({ title: "Overview", schema: "v2", v2Lossy: [expect.stringMatching(/tabs "Health" become expanded rows/)] });
+      expect(calls).toContain(`GET /apis/dashboard.grafana.app/${version}/namespaces/default/dashboards/overview`);
+    });
+  }
+
+  it("a classic dashboard is read once, at the classic version, with no schema attribute", async () => {
+    const calls: string[] = [];
+    const obs = normalizeObservation(await run(state(), { entityNames: ["overview"] }, calls));
+    expect(obs.resources.overview.attributes).not.toHaveProperty("schema");
+    expect(calls.filter((c) => c.includes("/dashboards/overview"))).toEqual(["GET /apis/dashboard.grafana.app/v1/namespaces/default/dashboards/overview"]);
+  });
+
+  it("one the server does not serve at v2 is unsupported-kind, not the lossy classic read", async () => {
+    const s = state();
+    s.dashboards.overview.storedVersion = "v2";
+    const obs = normalizeObservation(await run(s, { entityNames: ["overview"] }));
+    expect(obs.unobserved.overview).toMatchObject({ reason: "unsupported-kind", detail: expect.stringMatching(/stored as a v2 dashboard .* lossy down-conversion/) });
+  });
+
+  it("a failed v2 read is read-failed", async () => {
+    const s = state();
+    s.dashboards.overview = { ...s.dashboards.overview, storedVersion: "v2", v2: OVERVIEW_V2 };
+    const base = fakeGrafana(s);
+    const http: typeof base = async (method, path, body) => (path.includes("/v2/") ? { status: 500, json: { message: "boom" } } : base(method, path, body));
+    const obs = normalizeObservation(await describeResources({ environment: "prod", entityNames: ["overview"], entities: ALL, config: CONFIG, env: ENV, http }));
+    expect(obs.unobserved.overview.reason).toBe("read-failed");
+  });
 });
 
 describe("unobserved reasons", () => {
