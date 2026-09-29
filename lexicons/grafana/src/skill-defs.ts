@@ -45,4 +45,21 @@ export const grafanaSkills = createSkillsLoader(import.meta.url, [
       },
     ],
   },
+  {
+    file: "chant-grafana-operations.md",
+    name: "chant-grafana-operations",
+    description:
+      "Start a Grafana project from a template, bring existing dashboards into chant with chant import, find what changed in a running Grafana with chant lifecycle diff --live, export a Grafana as TypeScript, and apply a build over the HTTP API",
+    triggers: [
+      { type: "context" as const, value: "grafana drift" },
+      { type: "context" as const, value: "import grafana dashboard" },
+      { type: "context" as const, value: "grafana apply" },
+    ],
+    examples: [
+      {
+        title: "See what was edited in a running Grafana since the last build",
+        output: "chant lifecycle diff staging --live",
+      },
+    ],
+  },
 ]);
