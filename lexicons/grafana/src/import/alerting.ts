@@ -23,8 +23,8 @@
  *
  * Grafana's editor writes keys into expression models that the expression
  * does not read (a `conditions` block on reduce and math, `operator`,
- * `query`, `reducer` and `type` in a threshold's conditions, `type` in
- * classic conditions). They are left out as edits without a warning:
+ * `query`, `reducer` and `type` in a threshold's conditions, `type` and
+ * `reducer.params` in classic conditions). They are left out as edits without a warning:
  * Grafana evaluates the rule the same without them.
  */
 
@@ -72,9 +72,23 @@ const CONDITION_KEYS: Partial<Record<ExpressionKind, string[]>> = {
   classic_conditions: ["evaluator", "operator", "query", "reducer"],
 };
 
+/** A classic condition's reducer is read by `type` alone; the editor also writes an empty `params` (`ConditionReducerJSON`). */
+function classicReducerParams(kind: ExpressionKind, c: Json): boolean {
+  return kind === "classic_conditions" && isObject(c.reducer) && "params" in c.reducer;
+}
+
 function conditionsKept(kind: ExpressionKind, conditions: unknown[]): unknown[] {
   const keys = CONDITION_KEYS[kind]!;
-  return conditions.map((c) => (isObject(c) ? Object.fromEntries(Object.entries(c).filter(([k]) => keys.includes(k))) : c));
+  return conditions.map((c) => {
+    if (!isObject(c)) return c;
+    const kept = Object.fromEntries(Object.entries(c).filter(([k]) => keys.includes(k)));
+    if (classicReducerParams(kind, c)) {
+      const reducer = { ...(c.reducer as Json) };
+      delete reducer.params;
+      kept.reducer = reducer;
+    }
+    return kept;
+  });
 }
 
 const RULE_FIELDS = [
@@ -344,6 +358,7 @@ class AlertingConverter {
             v.forEach((c, ci) => {
               if (!isObject(c)) return;
               for (const ck of Object.keys(c)) if (!CONDITION_KEYS[kind]!.includes(ck)) this.report.drop(pointer(...path, "model", "conditions", ci, ck), subject, ck);
+              if (classicReducerParams(kind, c)) this.report.drop(pointer(...path, "model", "conditions", ci, "reducer", "params"), subject, "reducer.params");
             });
             props.conditions = conditionsKept(kind, v);
             continue;

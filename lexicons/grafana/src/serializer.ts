@@ -9,6 +9,9 @@
  * - `provisioning/datasources/chant.yaml`: every declared datasource.
  * - `provisioning/dashboards/chant.yaml`: the provider that loads the
  *   dashboard files, a default one unless a `DashboardProvider` is declared.
+ * - `provisioning/alerting/chant.yaml`: rule groups, contact points, the
+ *   notification policy tree, mute timings and templates, when the build
+ *   declares any (see `alerting-build.ts`).
  *
  * Mount `provisioning/` at `/etc/grafana/provisioning` and `dashboards/` at
  * the provider's path (`/var/lib/grafana/dashboards` by default).

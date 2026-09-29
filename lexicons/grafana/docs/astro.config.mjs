@@ -37,6 +37,10 @@ export default defineConfig({
                               "slug": "provisioning"
                         },
                         {
+                              "label": "Alerting",
+                              "slug": "alerting"
+                        },
+                        {
                               "label": "Importing Dashboards",
                               "slug": "importing"
                         },

@@ -1,0 +1,140 @@
+---
+title: "Alerting"
+description: "Declare Grafana-managed alert rules, contact points, notification policies and mute timings, and provision them from files"
+diataxis: how-to
+order: 5
+---
+
+Grafana-managed alerting is declared with the same build as dashboards and datasources, and written to one provisioning file, `provisioning/alerting/chant.yaml`, in the format Grafana's file provisioner reads (the same at 12.4 and 13.x). Mount `provisioning/` at `/etc/grafana/provisioning` as for datasources; see [Provisioning](../provisioning/).
+
+| Class | What it declares |
+|---|---|
+| `AlertRuleGroup` | rules in a folder, evaluated together every `interval` |
+| `AlertRule` | one alert or recording rule: its queries, expressions and condition |
+| `AlertQuery` | a datasource query of any plugin, with its model as Grafana stores it |
+| `ReduceExpression`, `MathExpression`, `ThresholdExpression`, `ResampleExpression`, `ClassicConditionsExpression`, `SqlExpression` | server-side expressions |
+| `ContactPoint` | one or more integrations (email, Slack, webhook, ...) under one name |
+| `NotificationPolicy` | an organisation's policy tree, from the root |
+| `MuteTiming` | a named time interval for `mute_time_intervals` or `active_time_intervals` |
+| `NotificationTemplate` | a notification template group |
+
+## A rule
+
+```ts
+import { AlertRule, AlertRuleGroup, PromQuery, ReduceExpression, ThresholdExpression } from "@intentius/chant-lexicon-grafana";
+import { prometheus } from "./datasources";
+
+const p99 = new PromQuery({
+  datasource: prometheus,
+  expr: 'histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{job="checkout"}[5m])))',
+});
+const p99Max = new ReduceExpression({ expression: "A", reducer: "max" });
+const slow = new ThresholdExpression({
+  expression: "B",
+  conditions: [{ evaluator: { type: "gt", params: [0.5] }, unloadEvaluator: { type: "lt", params: [0.4] } }],
+});
+
+const latency = new AlertRule({
+  title: "Checkout p99 latency above 500ms",
+  data: [p99, p99Max, slow],
+  relativeTimeRange: { from: "30m" },
+  for: "10m",
+  labels: { severity: "ticket" },
+});
+
+export const checkoutAlerts = new AlertRuleGroup({ name: "checkout", folder: "Checkout", rules: [latency] });
+```
+
+Each entry of `data` gets a refId from its position (A, B, C, ...) unless it sets `refId`. Expressions name their inputs by refId: `expression: "A"` for reduce, threshold and resample, `$A` and `${A}` in a math expression. `condition` defaults to the last entry's refId; a recording rule (`record: { metric, from }`) has none. `uid` defaults to the title as a uid; set it when the title may change, since Grafana tracks a rule's state and history by uid.
+
+A datasource query reads the last 10 minutes unless the rule's `relativeTimeRange` or the query's own says otherwise. Durations are Prometheus durations (`30m`, `1h30m`) or seconds. `for`, `keepFiringFor`, `noDataState`, `execErrState`, `labels`, `annotations`, `isPaused`, `dashboardUid` (a `Dashboard` or its uid), `panelId`, `missing_series_evals_to_resolve` and `notification_settings` are written as Grafana names them. Left out, Grafana uses its own defaults (`noDataState: NoData`, `execErrState: Alerting`).
+
+### Queries
+
+A typed query (`PromQuery`, `LokiQuery`, `TempoQuery`, or a class from `defineQuery`) goes straight into `data`, and its datasource must be a `Datasource`, an `ExternalDatasource` or a `{ type, uid }` ref. A `DatasourceVariable` is refused at build time: rules are evaluated without dashboard variables.
+
+`AlertQuery` takes any plugin's model as it is, or a typed query plus a `queryType`, time range or refId of its own:
+
+```ts
+const panics = new AlertQuery({
+  query: new LokiQuery({ datasource: loki, expr: 'sum(count_over_time({app="checkout"} |= "panic" [5m]))' }),
+  queryType: "instant",
+  relativeTimeRange: { from: "5m" },
+});
+const rows = new AlertQuery({ datasource: postgres, model: { rawSql: "SELECT count(*) AS value FROM jobs WHERE failed", format: "table" } });
+```
+
+### Expressions
+
+The expression classes are typed from Grafana's server-side expression schema at the pin (`expr` in `src/pin.ts`), which matches `pkg/expr/query.types.json` at Grafana 12.4.11 and 13.2.2. Props are the model's fields; `type`, `datasource` (`__expr__`) and `refId` are written by the builder.
+
+| Class | Reads | Main fields |
+|---|---|---|
+| `ReduceExpression` | one refId | `reducer` (`last`, `mean`, `max`, ...), `settings.mode` (`dropNN`, `replaceNN`) |
+| `MathExpression` | `$refId` terms | `expression`, e.g. `$A / $B > 0.05` |
+| `ThresholdExpression` | one refId | `conditions[0].evaluator` (`gt`, `lt`, `within_range`, ...), `unloadEvaluator` for a recovery threshold |
+| `ResampleExpression` | one refId | `window`, `downsampler`, `upsampler` |
+| `ClassicConditionsExpression` | refIds in each condition's `query.params` | `conditions` with `evaluator`, `operator`, `query`, `reducer` |
+| `SqlExpression` | refIds as table names | `expression` (SQL), `format` |
+
+## Contact points, policies and timings
+
+```ts
+{{file:alerting/src/notifications.ts}}
+```
+
+A receiver without a `uid` gets one from the contact point's name and the integration type (`oncall-slack`). Write each secret setting as `$__env{NAME}` or `$__file{/path}`: Grafana expands it when it reads the file. GRAF002 flags a literal in a setting Grafana stores encrypted, per integration: a Slack `url` or `token`, a PagerDuty `integrationKey`, a webhook's `password`, `authorization_credentials` or TLS key, and the rest of the list in `CONTACT_POINT_SECRET_SETTINGS`, taken from Grafana 13.2.2's `/api/alert-notifiers`.
+
+A policy's `receiver`, a rule's `notification_settings.receiver`, and each entry of `mute_time_intervals` and `active_time_intervals` take the entity or its name. Passing the entity keeps the reference checked by TypeScript; a name is checked after the build by GRAF113. Routes match with `object_matchers` (`[label, op, value]`, what Grafana writes) or Alertmanager `matchers` strings. Provisioning a `NotificationPolicy` replaces the organisation's whole tree, so there is one per `orgId`.
+
+## SLO burn-rate alerts
+
+`SloAlertRules` turns a prometheus `Slo` into Grafana rules, one per burn-rate window pair, with the windows, thresholds, labels and annotations of the `Slo`'s own Prometheus alerts:
+
+```ts
+{{file:alerting/src/slo.ts}}
+```
+
+Each rule reads the two error ratios the `Slo` records, as instant Prometheus queries, and holds while both are above the pair's threshold:
+
+```text
+A = slo:sli_error:ratio_rate1h{slo="checkout"}
+B = slo:sli_error:ratio_rate5m{slo="checkout"}
+C = $A > 0.0144 && $B > 0.0144        (condition)
+```
+
+So the `Slo`'s rule group has to be loaded into the Prometheus the rules query; reading recorded ratios is what keeps a 3-day window cheap to evaluate every minute. The rules carry the `severity` label (`page` or `ticket`) for the policy tree to route on, or go straight to `contactPoint` when one is given. `noDataState` defaults to `OK`: no recorded ratio means no traffic, so no budget is burning. The `Slo` still builds its own Prometheus alerts; route those nowhere if Grafana is the only pager. See [Dashboards from Declarations](../composites/) for `sloMetrics()`.
+
+## Import an alerting file
+
+`chant import` reads an alerting provisioning file, or what Grafana's export writes (Alerting > Export, or `GET /api/v1/provisioning/alert-rules/export`, `contact-points/export`, `policies/export`, `mute-timings/export`), and writes `alert-rules.ts`, `notifications.ts` and `alerting-datasources.ts`:
+
+```bash
+curl -s -u admin:admin "http://localhost:3000/api/v1/provisioning/alert-rules/export?format=yaml" > alert-rules.yaml
+chant import alert-rules.yaml
+```
+
+A file with `apiVersion` and alerting lists (`groups`, `contactPoints`, `policies`, `muteTimes`, `templates`) is recognised as grafana's. A Prometheus rule file also has `groups:`, but its groups have no `folder` and its rules no `data`, so it still goes to the prometheus lexicon.
+
+- An expression becomes its typed class. Grafana's editor writes keys the expression never reads (a `conditions` block on a reduce or math, `operator`, `query` and `reducer` on a threshold's conditions); they are left out without a warning. An expression the typed class cannot hold is kept as an `AlertQuery` with its model.
+- A datasource query becomes an `AlertQuery` with its model as it is. The datasource becomes an `ExternalDatasource` when the model states its type; when the model only looks like PromQL (`expr` with `instant` or `range`), it is declared as prometheus with a warning; otherwise the query keeps the bare uid, with a warning, and the checks cannot see its type.
+- A contact point exported without secrets holds `[REDACTED]` for each; that becomes `$__env{<NAME>_<TYPE>_<SETTING>}`, with a warning naming the variable to set.
+- `deleteRules`, `deleteContactPoints`, `resetPolicies`, `deleteMuteTimes` and `deleteTemplates` are reported and not carried: they are one-off instructions to Grafana, not state.
+
+`src/import/alerting-roundtrip.test.ts` imports every file in `test/fixtures/alerting/` (Grafana 12.4.11 and 13.2.2 exports, and files from projects that provision alerting from files; sources and licenses in its README), builds it back and compares the result, after `normalizeAlerting`, with the source.
+
+## Checks
+
+| Id | Catches |
+|---|---|
+| GRAF108 | an alert rule's PromQL that does not parse |
+| GRAF111 | a condition, expression input or `record.from` naming no refId of the rule, duplicate refIds, an expression model the schema rejects |
+| GRAF112 | a query to a datasource the build does not declare, or whose model is for another plugin |
+| GRAF113 | a route or rule sending to a contact point, or naming a mute timing, the build does not declare; a matcher that does not parse |
+| GRAF114 | a uid, title, interval or state Grafana rejects, and anything declared twice |
+
+Grafana stops provisioning alerting when one file in the directory is invalid, so these run on every build. See [Lint Rules](../lint-rules/).
+
+## Try it
+
+`src/alerting.e2e.test.ts` provisions the alerting example, and Grafana 13.2.2's own exports imported and built back, into `grafana/grafana:13.2.2` (or the image in `CHANT_GRAFANA_ALERTING_IMAGE`), and reads every rule, contact point, policy, timing and template back through `/api/v1/provisioning/*`. It needs Docker and skips without it.

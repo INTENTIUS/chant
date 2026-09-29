@@ -67,4 +67,31 @@ describe("GRAF002 literal secret", () => {
     );
     expect(diags).toEqual([]);
   });
+
+  test("flags a contact point's secret setting written as a literal, inline or through consts", () => {
+    const diags = literalSecretRule.check(
+      ctx(`
+        new ContactPoint({ name: "oncall", receivers: [{ type: "slack", settings: { url: "https://hooks.slack.com/services/T/B/X", recipient: "#c" } }] });
+        const pd = { integrationKey: "abc123" };
+        const receivers = [{ type: "pagerduty", settings: pd }, { type: "webhook", settings: { url: "https://x", tlsConfig: { clientKey: "-----BEGIN" } } }];
+        new ContactPoint({ name: "pager", receivers });
+      `),
+    );
+    expect(diags.map((d) => d.message)).toEqual([
+      expect.stringContaining("slack contact point setting url"),
+      expect.stringContaining("pagerduty contact point setting integrationKey"),
+      expect.stringContaining("webhook contact point setting tlsConfig.clientKey"),
+    ]);
+  });
+
+  test("accepts expanded contact point secrets, and settings that are not secret", () => {
+    const diags = literalSecretRule.check(
+      ctx(`
+        new ContactPoint({ name: "oncall", receivers: [{ type: "slack", settings: { url: "$__env{SLACK_URL}", recipient: "#c" } }] });
+        new ContactPoint({ name: "hook", receivers: [{ type: "webhook", settings: { url: "https://tickets.example.com", authorization_credentials: "\${TOKEN}" } }] });
+        new ContactPoint({ name: "mail", receivers: [{ type: "email", settings: { addresses: "a@example.com" } }] });
+      `),
+    );
+    expect(diags).toEqual([]);
+  });
 });

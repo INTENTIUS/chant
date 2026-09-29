@@ -8,7 +8,7 @@ diataxis: how-to
     Edit lexicons/grafana/docs/pages/examples.mdx instead; changes here are overwritten. */}
 
 
-Each example lives under `lexicons/grafana/examples/` and builds with `chant build src --lexicon grafana` (dashboards-from-declarations also with `--lexicon otel` and `--lexicon prometheus`). The lexicon's tests build it, lint it with no warnings, run GRAF101 to GRAF108 over the output, and validate each dashboard against the pinned Grafana schema.
+Each example lives under `lexicons/grafana/examples/` and builds with `chant build src --lexicon grafana` (dashboards-from-declarations also with `--lexicon otel` and `--lexicon prometheus`, alerting also with `--lexicon prometheus`). The lexicon's tests build it, lint it with no warnings, run GRAF101 to GRAF108 and GRAF111 to GRAF114 over the output, and validate each dashboard against the pinned Grafana schema.
 
 ## getting-started
 
@@ -218,5 +218,143 @@ const checkoutSlo = SloDashboard({ slo: checkout, datasource: prometheus, folder
 const agents = AgentDashboard({ genAi: genai, datasource: prometheus, folder: "Observability" });
 
 export { services, checkoutSlo, agents };
+```
+```
+
+## alerting
+
+Grafana-managed alerting in one build root with the SLO it alerts on, built with `chant build src --lexicon prometheus` and `--lexicon grafana`. `SloAlertRules` turns the checkout `Slo` into four burn-rate rules that read the error ratios the `Slo`'s Prometheus rules record; two hand-written rules use a reduce and a threshold with a recovery threshold, and a Loki query. Contact points read their secrets from the environment, the policy tree pages on `severity=page` and files tickets for the rest outside weekends. `src/alerting.e2e.test.ts` provisions it into Grafana 13.2.2 and reads it back. See [Alerting](../alerting/).
+
+```ts title="src/slo.ts"
+```typescript title="slo.ts"
+/**
+ * An SLO on checkout requests, and its burn-rate alerts as Grafana-managed
+ * rules. The Prometheus rule group records the error ratios; the Grafana
+ * rules read them, with the windows and thresholds `sloMetrics()` gives.
+ */
+import { Slo } from "@intentius/chant-lexicon-prometheus";
+import { SloAlertRules } from "@intentius/chant-lexicon-grafana";
+import { prometheus } from "./datasources";
+
+const checkout = Slo({
+  name: "checkout",
+  objective: 0.999,
+  window: "30d",
+  description: "Checkout requests answer without a 5xx.",
+  sli: {
+    errors: 'sum(rate(http_requests_total{job="checkout",code=~"5.."}[{{window}}]))',
+    total: 'sum(rate(http_requests_total{job="checkout"}[{{window}}]))',
+  },
+  labels: { team: "payments" },
+});
+
+const checkoutBurn = SloAlertRules({
+  slo: checkout,
+  datasource: prometheus,
+  folder: "SLOs",
+  labels: { team: "payments" },
+  annotations: { runbook_url: "https://runbooks.example.com/checkout-slo" },
+});
+
+export { checkout, checkoutBurn };
+```
+```
+
+```ts title="src/rules.ts"
+```typescript title="rules.ts"
+/**
+ * Two rules written by hand: a Prometheus latency rule built from typed
+ * server-side expressions (reduce, and a threshold with a recovery
+ * threshold), and a Loki rule that pages on panics.
+ */
+import {
+  AlertQuery,
+  AlertRule,
+  AlertRuleGroup,
+  LokiQuery,
+  PromQuery,
+  ReduceExpression,
+  ThresholdExpression,
+} from "@intentius/chant-lexicon-grafana";
+import { loki, prometheus } from "./datasources";
+
+const p99 = new PromQuery({
+  datasource: prometheus,
+  expr: 'histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{job="checkout"}[5m])))',
+  range: true,
+});
+const p99Max = new ReduceExpression({ expression: "A", reducer: "max" });
+const p99Threshold = new ThresholdExpression({
+  expression: "B",
+  conditions: [{ evaluator: { type: "gt", params: [0.5] }, unloadEvaluator: { type: "lt", params: [0.4] } }],
+});
+const latencyLabels = { severity: "ticket", team: "payments" };
+const latency = new AlertRule({
+  title: "Checkout p99 latency above 500ms",
+  uid: "checkout-p99-latency",
+  data: [p99, p99Max, p99Threshold],
+  relativeTimeRange: { from: "30m" },
+  for: "10m",
+  labels: latencyLabels,
+  annotations: { summary: "Checkout p99 is {{ humanizeDuration $values.B.Value }}" },
+});
+
+const panicsQuery = new LokiQuery({ datasource: loki, expr: 'sum(count_over_time({app="checkout"} |= "panic" [5m]))' });
+const panics = new AlertQuery({ query: panicsQuery, queryType: "instant", relativeTimeRange: { from: "5m" } });
+const panicsOverZero = new ThresholdExpression({ expression: "A", conditions: [{ evaluator: { type: "gt", params: [0] } }] });
+const panicLabels = { severity: "page", team: "payments" };
+const panicRule = new AlertRule({
+  title: "Checkout panicked",
+  uid: "checkout-panics",
+  data: [panics, panicsOverZero],
+  noDataState: "OK",
+  labels: panicLabels,
+});
+
+const checkoutAlerts = new AlertRuleGroup({ name: "checkout", folder: "Checkout", interval: "1m", rules: [latency, panicRule] });
+
+export { checkoutAlerts };
+```
+```
+
+```ts title="src/notifications.ts"
+```typescript title="notifications.ts"
+/**
+ * Where alerts go: two contact points, a policy tree that pages on
+ * `severity=page` and files tickets for the rest outside weekends, and the
+ * template the email uses. Secrets come from the environment Grafana runs
+ * in, never from this file (GRAF002).
+ */
+import { ContactPoint, MuteTiming, NotificationPolicy, NotificationTemplate } from "@intentius/chant-lexicon-grafana";
+
+const emailTemplate = new NotificationTemplate({
+  name: "checkout.email",
+  template: '{{ define "checkout.email.subject" }}{{ len .Alerts.Firing }} firing: {{ .CommonLabels.alertname }}{{ end }}',
+});
+
+const weekendIntervals: ConstructorParameters<typeof MuteTiming>[0]["time_intervals"] = [
+  { weekdays: ["saturday", "sunday"], location: "Europe/Berlin" },
+];
+const weekends = new MuteTiming({ name: "weekends", time_intervals: weekendIntervals });
+
+const oncallReceivers: ConstructorParameters<typeof ContactPoint>[0]["receivers"] = [
+  { type: "slack", settings: { url: "$__env{SLACK_ONCALL_WEBHOOK}", recipient: "#checkout-oncall" } },
+  { type: "email", settings: { addresses: "oncall@example.com", subject: '{{ template "checkout.email.subject" . }}' } },
+];
+const oncall = new ContactPoint({ name: "oncall", receivers: oncallReceivers });
+
+const ticketReceivers: ConstructorParameters<typeof ContactPoint>[0]["receivers"] = [
+  { type: "webhook", settings: { url: "https://tickets.example.com/hooks/grafana", authorization_credentials: "$__env{TICKETS_TOKEN}" } },
+];
+const tickets = new ContactPoint({ name: "tickets", receivers: ticketReceivers });
+
+const policyGroupBy = ["grafana_folder", "alertname", "slo"];
+const policyRoutes: ConstructorParameters<typeof NotificationPolicy>[0]["routes"] = [
+  { receiver: oncall, object_matchers: [["severity", "=", "page"]], group_wait: "10s" },
+  { receiver: tickets, object_matchers: [["severity", "!=", "page"]], mute_time_intervals: [weekends] },
+];
+const policy = new NotificationPolicy({ receiver: tickets, group_by: policyGroupBy, repeat_interval: "4h", routes: policyRoutes });
+
+export { emailTemplate, weekends, oncall, tickets, policy };
 ```
 ```

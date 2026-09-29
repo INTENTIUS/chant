@@ -14,9 +14,12 @@ directory of the `-o` output:
 - `provisioning/datasources/chant.yaml`: every declared datasource.
 - `provisioning/dashboards/chant.yaml`: a file provider for the dashboards
   directory; a default one unless a `DashboardProvider` is declared.
+- `provisioning/alerting/chant.yaml`: rule groups, contact points, the
+  notification policy tree, mute timings and templates, when the build
+  declares any.
 
 The primary output (the `-o` file itself) is a JSON index of the dashboards,
-datasources and files that were built.
+datasources, alerting and files that were built.
 
 - Dashboard JSON carries the pinned schema's `schemaVersion`, no numeric `id`,
   and every field Grafana's schema requires (link defaults, an empty

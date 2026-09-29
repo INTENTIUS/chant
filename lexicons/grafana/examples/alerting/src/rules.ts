@@ -47,6 +47,6 @@ const panicRule = new AlertRule({
   labels: panicLabels,
 });
 
-const checkoutRules = new AlertRuleGroup({ name: "checkout", folder: "Checkout", interval: "1m", rules: [latency, panicRule] });
+const checkoutAlerts = new AlertRuleGroup({ name: "checkout", folder: "Checkout", interval: "1m", rules: [latency, panicRule] });
 
-export { checkoutRules };
+export { checkoutAlerts };

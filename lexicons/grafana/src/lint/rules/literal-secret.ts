@@ -15,8 +15,12 @@ function resolveArray(node: ts.Expression, consts: Map<string, ts.Expression>, d
   return undefined;
 }
 
+/** The value of a property, `name: value` or the shorthand `name` (followed as an identifier). */
 function prop(obj: ts.ObjectLiteralExpression, name: string): ts.Expression | undefined {
-  for (const p of obj.properties) if (propertyName(p) === name) return (p as ts.PropertyAssignment).initializer;
+  for (const p of obj.properties) {
+    if (propertyName(p) === name) return (p as ts.PropertyAssignment).initializer;
+    if (ts.isShorthandPropertyAssignment(p) && p.name.text === name) return p.name;
+  }
   return undefined;
 }
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Usage: capture.sh <tag> <outdir>
+# Usage: seed.sh <tag> <outdir>  (see README.md in this directory)
 set -u
 TAG=$1; OUT=$2; mkdir -p "$OUT"
 NAME="chant-2949-capture-${TAG//./-}-$$"

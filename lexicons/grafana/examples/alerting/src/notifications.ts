@@ -11,10 +11,10 @@ const emailTemplate = new NotificationTemplate({
   template: '{{ define "checkout.email.subject" }}{{ len .Alerts.Firing }} firing: {{ .CommonLabels.alertname }}{{ end }}',
 });
 
-const weekends = new MuteTiming({
-  name: "weekends",
-  time_intervals: [{ weekdays: ["saturday", "sunday"], location: "Europe/Berlin" }],
-});
+const weekendIntervals: ConstructorParameters<typeof MuteTiming>[0]["time_intervals"] = [
+  { weekdays: ["saturday", "sunday"], location: "Europe/Berlin" },
+];
+const weekends = new MuteTiming({ name: "weekends", time_intervals: weekendIntervals });
 
 const oncallReceivers: ConstructorParameters<typeof ContactPoint>[0]["receivers"] = [
   { type: "slack", settings: { url: "$__env{SLACK_ONCALL_WEBHOOK}", recipient: "#checkout-oncall" } },

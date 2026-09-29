@@ -1,5 +1,5 @@
 {
-  "$comment": "Corrections to the vendored expr.jsonschema.json (foundation-sdk v0.0.20). Sources are Grafana's server-side expression query types (pkg/expr/query.types.json) at the tag in `grafana`; at v12.4.11 and v13.2.2 they match the vendored schema except for this key. See src/spec/overlay.ts.",
+  "$comment": "Corrections to the vendored expr.jsonschema.json (foundation-sdk v0.0.20). Sources are Grafana's server-side expression code (pkg/expr) at the tag in `grafana`; its query types (pkg/expr/query.types.json) at v12.4.11 and v13.2.2 match the vendored schema except for this key. See src/spec/overlay.ts.",
   "schema": "expr",
   "grafana": "v13.2.2",
   "patches": [
@@ -7,7 +7,7 @@
       "op": "add",
       "path": "/definitions/TypeThreshold/properties/conditions/items/properties/loadedFingerprints",
       "value": { "type": "array", "items": { "type": "string" }, "description": "Fingerprints of the series already firing, written by Grafana while it evaluates a rule with a recovery threshold. Supersedes loadedDimensions. Never set it by hand." },
-      "source": "pkg/expr/query.types.json:355 (absent at v12.4.11)",
+      "source": "pkg/expr/threshold.go:259 (absent at v12.4.11)",
       "why": "New in 13.x: Grafana keeps the firing series of a hysteresis threshold here, so a stored rule can carry it."
     }
   ]
