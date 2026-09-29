@@ -360,3 +360,25 @@ describe("provisioning files", () => {
     expect(ir.warnings).toEqual(['provider "b" is of type sqlite; chant writes file providers only, so it is left out']);
   });
 });
+
+describe("transformations (#2954)", () => {
+  test("a transformation the types hold stays an object; any other is written with customTransformation()", () => {
+    const transformations = [
+      { id: "organize", options: { renameByName: { Value: "Requests" } } },
+      { id: "sortBy", options: { fields: {}, sort: [{ field: "Pod" }] } },
+      { id: "grafana-plugin-x", options: { a: 1 }, disabled: true },
+      { options: {} },
+    ];
+    const { plan, warnings } = planDashboard(dashboard({ panels: [{ type: "table", id: 1, title: "t", gridPos: { x: 0, y: 0, w: 12, h: 8 }, transformations }] }));
+    expect(decl(plan.declarations, "panel:0").props!.transformations).toEqual([
+      { id: "organize", options: { renameByName: { Value: "Requests" } } },
+      { $call: "customTransformation", args: ["sortBy", { fields: {}, sort: [{ field: "Pod" }] }] },
+      { $call: "customTransformation", args: ["grafana-plugin-x", { a: 1 }, { disabled: true }] },
+    ]);
+    expect(warnings).toEqual([
+      'panel "t" (id 1): transformation 2 is written with customTransformation(), untyped: the sortBy transformer takes no option "fields".',
+      'panel "t" (id 1): transformation 3 is written with customTransformation(), untyped: "grafana-plugin-x" is not a transformer Grafana v13.2.2 registers.',
+      'panel "t" (id 1): transformation 4 has no id, so Grafana skips it; it is not carried.',
+    ]);
+  });
+});

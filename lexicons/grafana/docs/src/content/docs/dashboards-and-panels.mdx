@@ -59,6 +59,26 @@ Every panel takes `title`, `description`, `gridPos`, `datasource`, `targets`, `o
 
 The alert list and flame graph panels define their options in Grafana's TypeScript, with no CUE kind, so there is no schema to generate from. `AlertListOptions` and `FlameGraphOptions` are written by hand from Grafana 13.2.2's source and exported. GRAF107 checks these two panels, and the traces panel, against the dashboard's `Panel` definition but not their `options`.
 
+### Transformations
+
+`transformations` is typed per transformer. The dashboard schema only says a transformation has an `id` and some `options`, and foundation-sdk v0.0.20 has no schema for any transformer, so the option types are transcribed from the transformers Grafana v13.2.2 registers: `packages/grafana-data/src/transformations/transformers/` for the standard ones, `public/app/features/transformers/` for the rest. All 42 ids are covered, from `organize`, `reduce`, `joinByField` and `calculateField` to `spatial` and `regression`. Every top-level option is optional, because Grafana fills in each transformer's defaults before it runs.
+
+```ts
+import { TablePanel, transformation, customTransformation } from "@intentius/chant-lexicon-grafana";
+
+export const pods = new TablePanel({
+  title: "Pods",
+  transformations: [
+    { id: "labelsToFields", options: { mode: "columns", keepLabels: ["pod", "namespace"] } },
+    transformation("organize", { excludeByName: { Time: true }, renameByName: { pod: "Pod" } }),
+    transformation("sortBy", { sort: [{ field: "Pod" }] }, { disabled: false }),
+    customTransformation("my-org-transformer", { level: 2 }),
+  ],
+});
+```
+
+An object literal is checked against its id: an unknown id, a misspelt option or a bad reducer id is a type error. There is one gap. For an option key that another transformer takes (`fields` belongs to `reduce` and `groupBy`, for example), `tsc` checks the literal against every transformer at once, so a wrong transformer's key can slip through. `transformation(id, options, common?)` checks against the one transformer named, so prefer it. For a plugin's transformer, or options newer than Grafana 13.2.2, use `customTransformation(id, options, common?)`, which takes anything and writes it unchanged. `common` holds `disabled`, `filter` and `topic`.
+
 ### Datasources on a panel
 
 A query uses its own `datasource`, else the panel's. The panel's emitted `datasource` is its own, or the one all its queries share, or Grafana's `-- Mixed --` when they differ. A panel inside a `Row` with a `datasource` inherits the row's.

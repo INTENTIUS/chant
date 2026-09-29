@@ -57,6 +57,7 @@ import {
   looksLikeV2Dashboard,
 } from "../detect";
 import { slugUid } from "../util";
+import { untypedTransformationReason } from "../transformations";
 import { pointer, type ImportEdit } from "./edits";
 import { lossyV1Read, readV2Dashboard } from "./v2";
 import {
@@ -72,7 +73,7 @@ import {
   builtinQueryFor,
   type VariableContext,
 } from "./mappings";
-import { declRef, type CustomClass, type Declaration, type DeclRef, type ModuleSpec, type Plan } from "./model";
+import { callValue, declRef, type CustomClass, type Declaration, type DeclRef, type ModuleSpec, type Plan } from "./model";
 import {
   BOOKKEEPING_KEYS,
   DASHBOARD_DEFAULTS,
@@ -628,6 +629,30 @@ class DashboardConverter {
     }
   }
 
+  /**
+   * A panel's transformations, typed (#2954): each is written as the
+   * `{ id, options }` object `Transformation` types by id, or, when its id,
+   * a key or an option key is one the types don't know, through
+   * `customTransformation(id, options, { disabled, filter, topic })` with
+   * the same JSON. Nothing is dropped.
+   */
+  private transformations(list: unknown[], subject: string): unknown[] {
+    return list.map((t, i) => {
+      if (!isObject(t)) return t;
+      const why = untypedTransformationReason(t);
+      if (why === undefined) return t;
+      const { id, options, ...rest } = t;
+      if (typeof id !== "string") {
+        this.report.warn(`${subject}: transformation ${i + 1} has no id, so Grafana skips it; it is not carried.`);
+        return undefined;
+      }
+      if (options !== undefined && !isObject(options)) this.report.warn(`${subject}: transformation ${i + 1} (${id}) options are not an object, so they are not carried.`);
+      const common = Object.keys(rest).length > 0 ? [rest] : [];
+      this.report.warn(`${subject}: transformation ${i + 1} is written with customTransformation(), untyped: ${why}.`);
+      return callValue("customTransformation", [id, isObject(options) ? options : {}, ...common]);
+    }).filter((t) => t !== undefined);
+  }
+
   /** One panel, with its queries; returns the panel's declaration id. */
   panel(json: unknown, path: string, module: string, rowDatasource: Resolution): string | undefined {
     if (!isObject(json)) {
@@ -656,6 +681,7 @@ class DashboardConverter {
     const id = `panel:${index}`;
     const props: Json = {};
     this.copyFields(json, PANEL_FIELDS, PANEL_DEFAULTS, props);
+    if (Array.isArray(props.transformations)) props.transformations = this.transformations(props.transformations, subject);
     const fc = json.fieldConfig;
     if (isObject(fc) && deepEqual(fc, { defaults: {}, overrides: [] })) delete props.fieldConfig;
 
