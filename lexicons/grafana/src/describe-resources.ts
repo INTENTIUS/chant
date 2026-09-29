@@ -9,10 +9,14 @@
  *
  * | Entity | Read | 404 | Not readable |
  * |---|---|---|---|
- * | `Dashboard` | `/apis/dashboard.grafana.app/<v>/.../dashboards/<uid>` (Grafana 11: `/api/dashboards/uid/<uid>`) | absent | a v2 dashboard: `unsupported-kind` |
+ * | `Dashboard` | `/apis/dashboard.grafana.app/<v>/.../dashboards/<uid>` (Grafana 11: `/api/dashboards/uid/<uid>`) | absent | a v2-stored dashboard the server does not serve at v2: `unsupported-kind` |
  * | `Datasource`, `ExternalDatasource` | `/api/datasources/uid/<uid>` | absent | |
  * | a panel, row, query or variable | its dashboard's read (./members.ts) | its dashboard's | its dashboard's |
  * | `DashboardProvider` | none: a provisioning-file setting Grafana serves no API for | | `unsupported-kind` |
+ *
+ * A dashboard Grafana stores as v2 is read at v2 and converted (#2947);
+ * its metadata says `schema: "v2"` and lists what the classic form cannot
+ * hold under `v2Lossy`.
  *
  * A refused token is `no-credentials` for every entity, a missing binding
  * `no-binding`, anything else `read-failed`, never absent.
@@ -111,6 +115,7 @@ async function observeDashboard(client: GrafanaClient, uid: string, providers: R
       ...(typeof metadata.generation === "number" ? { generation: metadata.generation } : {}),
       ...(typeof legacyVersion === "number" ? { version: legacyVersion } : {}),
       ...(managerId ? { managerId } : {}),
+      ...(classic.warnings !== undefined ? { schema: "v2", ...(classic.warnings.length > 0 ? { v2Lossy: classic.warnings } : {}) } : {}),
     },
   };
   return { present: meta, queried: live.address };

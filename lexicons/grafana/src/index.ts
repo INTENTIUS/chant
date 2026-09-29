@@ -352,6 +352,7 @@ export {
   panelsJson,
   targetJson,
   variableModel,
+  customVariableOptions,
   datasourceRef,
   provisionedDatasource,
   externalDatasourceRecord,
@@ -441,3 +442,13 @@ export {
 export { GrafanaClient, GrafanaApiError, grafanaHttp, namespaceOf, statusVerdict } from "./api/client";
 export type { GrafanaAuth, GrafanaHttp, GrafanaResponse, GrafanaTarget, StatusVerdict } from "./api/client";
 export { bindGrafana, classifyGrafanaFailure, GrafanaBindingError } from "./api/bind";
+
+// The API applier (#2948): the typed Op step, and the pieces an embedding
+// caller composes (the activity itself is `./op/activities`).
+export { grafanaApply } from "./op/builders";
+export { applyGrafana, planFromDashboards, GRAFANA_APPLY_KINDS } from "./api/apply";
+export type { GrafanaApplyPlan, GrafanaApplyOutcome, DashboardPlan, BuiltDashboardInput } from "./api/apply";
+export { folderUidFor, foldersForDashboards, type FolderPlan } from "./api/folders";
+
+// The Grafana RBAC actions a service account needs to observe, apply and prune.
+export { GrafanaActions, grafanaActionsFor, type GrafanaAccessLevel } from "./actions/index";

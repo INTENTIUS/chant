@@ -159,6 +159,25 @@ const KUBE_PROMETHEUS_ERRORS: Readonly<Record<string, readonly string[]>> = {
 };
 
 describe("dashboard JSON -> TypeScript -> dashboard JSON", () => {
+  test("a custom variable in Grafana's `text : value` syntax, with an escaped comma and no current (#2944)", async () => {
+    const dashboard = {
+      uid: "kv",
+      title: "KV",
+      schemaVersion: 42,
+      panels: [],
+      templating: { list: [{ type: "custom", name: "env", query: "Production : prod,Staging : stg,a\\,b" }] },
+    };
+    const out = await expectRoundTrip(JSON.stringify(dashboard));
+    const env = (out.rebuilt!.templating as { list: Json[] }).list[0];
+    expect(env.query).toBe("Production : prod,Staging : stg,a\\,b");
+    expect(env.current).toEqual({ text: "Production", value: "prod" });
+    expect(env.options).toEqual([
+      { selected: true, text: "Production", value: "prod" },
+      { selected: false, text: "Staging", value: "stg" },
+      { selected: false, text: "a,b", value: "a,b" },
+    ]);
+  });
+
   for (const file of UI_EXPORTS) {
     test(`Grafana UI export ${file}`, async () => {
       const out = await expectRoundTrip(read(file));

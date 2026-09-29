@@ -13,6 +13,10 @@
  *   without the refIds the build numbered. Core then diffs that against the
  *   declaration's props, normalized on both sides by
  *   ./deep-observe-hooks.ts.
+ * - A dashboard Grafana stores as v2 is read at v2 and converted to the
+ *   classic JSON the importer makes of it (#2947), so the tree is
+ *   diffed against the declaration: a tab added in the UI is a row that
+ *   the declaration does not have.
  * - The folder is not in the JSON. It is read from the resource's folder
  *   and written as its title, the form `Dashboard.folder` takes; when the
  *   declaration's folder name is one the build had to rewrite to make a
@@ -22,8 +26,9 @@
  *   secrets as key names only.
  *
  * Tri-state, one level down: a dashboard that is not there is left out (the
- * thin read reports it missing); one that cannot be read (a v2 dashboard, a
- * failed request, withheld by `owned`) is NOT-OBSERVED with its reason; a
+ * thin read reports it missing); one that cannot be read (a failed
+ * request, withheld by `owned`, a v2-stored dashboard the server cannot
+ * serve at v2) is NOT-OBSERVED with its reason; a
  * provider has no API and is `unsupported-kind`. Nothing unreadable comes
  * back as a clean tree. A declared panel, row, query or variable has no tree
  * of its own (./members.ts): its properties are in its dashboard's.

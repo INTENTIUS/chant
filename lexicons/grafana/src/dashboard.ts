@@ -56,7 +56,10 @@ export interface DashboardProps {
   /**
    * The Grafana folder to provision it into. Written as a subdirectory of
    * `dashboards/`, which the provider maps to folders
-   * (`foldersFromFilesStructure`). Leave it out for the General folder.
+   * (`foldersFromFilesStructure`). `"Platform/Kubernetes"` nests one
+   * directory in another, which Grafana 13.1 and later make a Kubernetes
+   * folder inside Platform; earlier versions use only the last level
+   * (GRAF109 warns). Leave it out for the General folder.
    */
   folder?: string;
 }
@@ -91,7 +94,11 @@ export interface DashboardProviderProps {
   /** Provider name, unique in the provisioning file. */
   name: string;
   orgId?: number;
-  /** Folder for dashboards not in a subdirectory. */
+  /**
+   * Put every dashboard this provider loads in this folder. Setting it (or
+   * `folderUid`) turns `foldersFromFilesStructure` off by default, so each
+   * dashboard's own `folder` is ignored (GRAF109 warns).
+   */
   folder?: string;
   folderUid?: string;
   /** Where the `dashboards/` output is mounted in the Grafana container. Defaults to `/var/lib/grafana/dashboards`. */

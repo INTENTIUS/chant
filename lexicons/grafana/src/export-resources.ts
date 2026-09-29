@@ -9,8 +9,9 @@
  *
  * - Every dashboard in the organisation is listed over the API the thin
  *   read uses (`/apis/dashboard.grafana.app`, or `/api/search` plus
- *   `/api/dashboards/uid` on Grafana 11). A v2 dashboard is left out with a
- *   warning (#2947).
+ *   `/api/dashboards/uid` on Grafana 11). A dashboard stored as v2 is read at
+ *   v2 and exported through its classic form, with a warning for each thing
+ *   the classic form cannot hold (#2947).
  * - Every datasource is read by uid, for `secureJsonFields`; secrets come
  *   back as key names only (see `datasourceProps`).
  * - `selector.type` is `Grafana::Dashboard` or `Grafana::Datasource`;
@@ -61,6 +62,7 @@ export async function exportResources(options: GrafanaExportOptions): Promise<Ex
         warnings.push(`dashboard ${live.uid} is not exported: ${classic.unsupported}`);
         continue;
       }
+      for (const w of classic.warnings ?? []) warnings.push(`dashboard ${live.uid} is stored as v2 and exported in the classic model: ${w}`);
       dashboards.push({ json: classic.json });
     }
   }

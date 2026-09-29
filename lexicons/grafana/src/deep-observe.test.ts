@@ -11,6 +11,7 @@
 
 import { beforeAll, describe, expect, it } from "vitest";
 import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import { build } from "@intentius/chant/build";
 import { isResourceDeclarable } from "@intentius/chant/declarable";
 import type { SerializerResult } from "@intentius/chant/serializer";
@@ -200,14 +201,32 @@ describe("datasources", () => {
   });
 });
 
+describe("a dashboard Grafana stores as v2 (#2947)", () => {
+  it("is read at v2 and diffed through its classic form: the tabs a UI save made are drift", async () => {
+    const state = provisioned(gettingStarted, "v1");
+    // Saved from the new editor as the tabs dashboard of the import fixtures, under this dashboard's uid.
+    const v2 = (JSON.parse(readFileSync(join(import.meta.dirname, "..", "test", "fixtures", "exports", "grafana-13.2.2", "tabs.v2-resource.json"), "utf-8")) as Json).spec as Json;
+    state.dashboards["service-overview"] = { ...state.dashboards["service-overview"], storedVersion: "v2", v2 };
+    const { live, result } = await diff(gettingStarted, state);
+    const { resources, unobserved } = normalizeDeepObservation(live);
+    expect(unobserved.serviceOverview).toBeUndefined();
+    expect(resources.serviceOverview.properties.title).toBe("Checkout (tabs)");
+    const paths = driftPaths(result).filter((p) => p.startsWith("serviceOverview:"));
+    expect(paths).toContain("serviceOverview:changed:title");
+    // The tabs are rows in the live tree.
+    const rows = (resources.serviceOverview.properties.panels as Json[]).map((p) => p.title);
+    expect(rows).toEqual(expect.arrayContaining(["Overview", "Details"]));
+  });
+});
+
 describe("what cannot be read is not observed, never a clean tree", () => {
-  it("a dashboard stored as v2 is unsupported-kind, naming #2947", async () => {
+  it("a dashboard stored as v2 that the server does not serve at v2 is unsupported-kind, not its lossy classic read", async () => {
     const state = provisioned(gettingStarted, "v1");
     state.dashboards["service-overview"].storedVersion = "v2beta1";
     const { live } = await diff(gettingStarted, state);
     const { resources, unobserved } = normalizeDeepObservation(live);
     expect(resources.serviceOverview).toBeUndefined();
-    expect(unobserved.serviceOverview).toMatchObject({ reason: "unsupported-kind", detail: expect.stringContaining("#2947") });
+    expect(unobserved.serviceOverview).toMatchObject({ reason: "unsupported-kind", detail: expect.stringMatching(/stored as a v2beta1 dashboard .* lossy down-conversion/) });
   });
 
   it("a refused token is no-credentials for every entity", async () => {
