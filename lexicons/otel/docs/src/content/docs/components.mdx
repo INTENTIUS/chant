@@ -33,7 +33,7 @@ Every built-in follows the config of the collector-contrib release in `COLLECTOR
 | `AttributesProcessor` | `attributes` | as `resource`, for `actions` |
 | `K8sAttributesProcessor` | `k8sattributes` | none beyond the type |
 | `ResourceDetectionProcessor` | `resourcedetection` | at least one detector |
-| `FilterProcessor` | `filter` | at least one condition; no empty condition |
+| `FilterProcessor` | `filter` | at least one condition or `include`/`exclude` block; no empty condition; no signal mixing the two |
 | `TransformProcessor` | `transform` | at least one statement; each group's `context` fits its signal and the group has statements |
 | `RedactionProcessor` | `redaction` | `allow_all_keys` or `allowed_keys` is set; `allowed_keys` is not set alongside `allow_all_keys: true`; no empty pattern; `hash_function` has something blocked to hash |
 | `TailSamplingProcessor` | `tail_sampling` | `decision_wait` is set; `policies` is not empty; policy names are present and unique; each policy has the block its `type` names and what that block needs; `and`, `drop` and `composite` have sub-policies, and `policy_order` and `rate_allocation` name existing ones |
@@ -41,7 +41,7 @@ Every built-in follows the config of the collector-contrib release in `COLLECTOR
 
 Put `memory_limiter` first in every pipeline; OTEL105 warns otherwise.
 
-`filter` and `transform` take [OTTL](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/v0.130.0/pkg/ottl). The structure is typed (which signal, which context, which list) and each condition or statement stays a string that the collector parses when it loads the config, so a mistake in the OTTL itself shows up in `otelcol validate`, not in the build.
+`filter` and `transform` take [OTTL](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/v0.130.0/pkg/ottl). The structure is typed (which signal, which context, which list) and each condition or statement stays a string that the collector parses when it loads the config, so a mistake in the OTTL itself shows up in `otelcol validate`, not in the build. `filter` also types the older `include`/`exclude` match blocks under `metrics`, `logs` and `spans`, so that imported configs using them type-check; a signal takes one form or the other, never both.
 
 ```ts
 export const dropHealth = new FilterProcessor({
