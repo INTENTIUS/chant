@@ -629,7 +629,10 @@ export const EGRESS_SCAN_ROOTS = ["packages", "lexicons", "scripts", "ops"] as c
  * chant's, and cataloguing them would bury the rows that matter. `generated`
  * and `dist` are build output. Test files are excluded by extension below, for
  * the same reason: a test is not a path an adopter runs, and a recording
- * fetch mock in one would read as a network caller.
+ * fetch mock in one would read as a network caller. `e2e` holds the helpers
+ * the `*.e2e.test.ts` files share (chant #2956: the grafana lexicon's
+ * container helpers, which poll the containers they start on localhost), and
+ * is skipped for the same reason as the test files themselves.
  */
 export const EGRESS_SCAN_SKIP_DIRS = new Set([
   "node_modules",
@@ -640,6 +643,7 @@ export const EGRESS_SCAN_SKIP_DIRS = new Set([
   "__snapshots__",
   "coverage",
   ".git",
+  "e2e",
 ]);
 
 /** Client-side symbols per builtin. `createServer` is deliberately absent. */
