@@ -31,6 +31,8 @@ The import process:
 
 The template may be JSON or YAML, so Kubernetes manifests import the same way.
 
+Content that belongs to another lexicon is imported by that lexicon. A ConfigMap holding a collector config, a Prometheus rule file or a Grafana dashboard, and a `PrometheusRule`'s `spec.groups`, come out as otel, prometheus or grafana declarations. Each is written in a directory of its own, named after the resource, and the k8s resource refers to them, e.g. `data: { "config.yaml": collectorYaml([otlp, batch, debug, traces]) }`. The owning lexicon only has to be installed. When it is not, the content stays a string and a warning names the package to install. See [Embedded content](/chant/lexicon-authoring/importing/#embedded-content).
+
 Detection asks the project's lexicons first. These come from `chant.config.ts` or from the lexicons the project's source imports. If none of them recognizes the template, or you run the command outside a project, every installed `@intentius/chant-lexicon-*` package is asked, in name order. A package counts as installed when chant can load it: it sits in a `node_modules/@intentius` directory above chant's own install or above the project. So a Kubernetes manifest imported in an empty directory is detected as `k8s` if that lexicon is installed. Where several installed lexicons recognize the template, one that has a template parser goes first, and the others are named in a warning.
 
 The output names the lexicon: `Detected lexicon: <name>` when detection chose it, `Lexicon: <name>` when you named it with `--lexicon` (or `--kustomize`, which implies `k8s`).
