@@ -115,7 +115,7 @@ Two shapes are in use. github and gitlab implement `TemplateParser` / `TypeScrip
 import { parseYAML } from "@intentius/chant/yaml";
 ```
 
-`parseYAML` handles the YAML subset found in real infrastructure files — nested maps, block sequences, inline JSON, booleans, and quoted scalars with colons (e.g. `"80:80"` port strings). Custom regex parsers miss edge cases and drift from the core parser's behaviour.
+`parseYAML` handles the YAML subset found in real infrastructure files — nested maps, block sequences, inline JSON, booleans, and quoted scalars with colons (e.g. `"80:80"` port strings). Custom regex parsers miss edge cases and drift from the core parser's behaviour. A line it cannot place, such as a key indented under a scalar or an alias with no anchor, throws a `YAMLParseError` naming the line instead of being dropped; let it reach `chant import`, which reports it as a parse failure.
 
 <Aside type="caution">
 When a scalar contains a colon but is not a mapping (e.g. Docker port `"80:80"`, volume `"data:/path"`), **quote it in the source YAML**. Unquoted `key:value` is valid YAML syntax for a single-key mapping, not a scalar.

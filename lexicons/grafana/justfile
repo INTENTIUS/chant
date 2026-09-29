@@ -10,6 +10,10 @@ generate:
 fetch-schemas:
     npx tsx src/spec/fetch-cli.ts
 
+# Re-extract the unit ids GRAF115 accepts from Grafana's unit registry at the pinned tag
+fetch-units:
+    npx tsx src/spec/fetch-units-cli.ts
+
 # Validate generated artifacts
 validate:
     npx tsx src/validate-cli.ts
