@@ -36,7 +36,10 @@ build validates the dashboards against the same schemas.
 \`definePanel\` and \`defineQuery\` add plugins chant doesn't ship.
 \`chant import\` turns dashboard JSON exported from Grafana into this TypeScript,
 and it builds back to the same dashboard (see
-[Importing Dashboards](./importing/)).
+[Importing Dashboards](./importing/)). \`chant lifecycle diff --live\` reports
+a dashboard edited in Grafana as drift, property by property, and
+\`chant import --from <env>\` writes a running Grafana's dashboards as
+TypeScript (see [Drift and Live Export](./observing/)).
 
 Three composites build whole dashboards from declarations in other lexicons:
 \`RedDashboard\` from an otel \`spanmetrics\` connector, \`SloDashboard\` from a
@@ -75,7 +78,10 @@ datasources and files that were built.
   about key order.
 - The dashboard JSON carries no ownership marker. Grafana keeps who manages a
   dashboard in the resource's metadata on its \`dashboard.grafana.app\` API,
-  not in the JSON.
+  not in the JSON: for a provisioned dashboard, the name of the provider that
+  loaded it, which is \`chant\` unless a \`DashboardProvider\` names another.
+  \`chant lifecycle diff --live\` reads that back (see
+  [Drift and Live Export](./observing/)).
 `;
 
 export async function generateDocs(opts?: { verbose?: boolean }): Promise<void> {
