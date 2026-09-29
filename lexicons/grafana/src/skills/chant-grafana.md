@@ -88,6 +88,7 @@ Pass the `prometheus` exporter as `exporter` to `RedDashboard` when its `namespa
 - GRAF108: every query and query variable sent to a Prometheus parses as PromQL (template variables and `$__` macros are substituted first; an object-form variable query is checked on its `query`).
 - GRAF110: a panel or row repeats over a query, custom or datasource variable with `multi` or `includeAll`, or a group by variable; anything else shows it once (warning).
 - GRAF115 (warning): every panel unit is a Grafana unit id (`bytes`, `s`, `percent`, `reqps`, ...) or a custom unit (`suffix: cores`, `prefix:$`, `si:mF`, `count:reqs`, `currency:EUR`). Grafana shows anything else as literal text after the value.
+- GRAF111-GRAF114: alert rules, contact points, policies and mute timings; see the chant-grafana-alerting skill.
 
 GRAF101 and GRAF102 compare against the datasources in the same build root, so keep datasources and dashboards in one `chant build` (chant #1939). For a datasource that exists in Grafana but is provisioned elsewhere, declare `new ExternalDatasource({ type: "prometheus", uid: "mimir" })` and use it like a `Datasource`; it is checked against, never provisioned.
 

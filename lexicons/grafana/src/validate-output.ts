@@ -1,6 +1,8 @@
 /**
- * The checks behind GRAF101-GRAF108, GRAF110 and GRAF115, as plain functions over built Grafana
- * output: dashboard JSON documents and provisioned datasources. The
+ * The checks behind GRAF101-GRAF108, GRAF110, GRAF111-GRAF114 and GRAF115, as plain
+ * functions over built Grafana output: dashboard JSON documents, provisioned
+ * datasources and alerting provisioning files (the alerting checks are in
+ * `validate-alerting.ts`). The
  * post-synth checks run them over a build; anything else holding the same
  * JSON (a test, another lexicon embedding dashboards) can call them directly.
  *
@@ -28,9 +30,24 @@ import { isBuiltinVariable, MULTI_VALUE_KINDS } from "./variables";
 import { isValidUid } from "./util";
 import { validateDashboardSchema } from "./schema-validate";
 import { checkGrafanaPromql, prometheusQueries } from "./promql-check";
+import { checkAlertingIdentity, checkNotificationRefs, checkRuleDatasources, checkRulePromql, checkRuleQueries, type AlertingDoc } from "./validate-alerting";
 import { closestGrafanaUnit, isGrafanaUnit } from "./spec/units";
 
-export type GrafanaIssueCode = "GRAF101" | "GRAF102" | "GRAF103" | "GRAF104" | "GRAF105" | "GRAF106" | "GRAF107" | "GRAF108" | "GRAF110" | "GRAF115";
+export type GrafanaIssueCode =
+  | "GRAF101"
+  | "GRAF102"
+  | "GRAF103"
+  | "GRAF104"
+  | "GRAF105"
+  | "GRAF106"
+  | "GRAF107"
+  | "GRAF108"
+  | "GRAF110"
+  | "GRAF111"
+  | "GRAF112"
+  | "GRAF113"
+  | "GRAF114"
+  | "GRAF115";
 
 export interface GrafanaIssue {
   code: GrafanaIssueCode;
@@ -52,7 +69,11 @@ export interface GrafanaArtifacts {
   datasources: ProvisionedDatasource[];
   /** Datasources the build references but does not provision (`ExternalDatasource`). */
   externalDatasources?: ExternalDatasourceRecord[];
+  /** Alerting provisioning files (rule groups, contact points, policies, mute timings, templates). */
+  alerting?: AlertingDoc[];
 }
+
+export type { AlertingDoc };
 
 export { variableReferences };
 
@@ -374,8 +395,8 @@ export function checkSchema(a: GrafanaArtifacts): GrafanaIssue[] {
 // ── GRAF108: PromQL syntax ──────────────────────────────────────
 
 /**
- * Each panel query and query variable that reaches a Prometheus datasource
- * is parsed as PromQL, with its template variables replaced by placeholders
+ * Each panel query, query variable and alert rule query that reaches a
+ * Prometheus datasource is parsed as PromQL, with its template variables replaced by placeholders
  * first (see `promql-check.ts`). A query whose datasource can't be told is
  * not parsed.
  */
@@ -389,6 +410,7 @@ export function checkPromqlSyntax(a: GrafanaArtifacts): GrafanaIssue[] {
       issues.push({ code: "GRAF108", severity: "error", message: `${dashName(d)} ${where} is not valid PromQL: ${checked.message}.`, entity: String(d.uid ?? "") });
     }
   }
+  issues.push(...checkRulePromql(a.alerting ?? [], known));
   return issues;
 }
 
@@ -498,6 +520,10 @@ const BY_CODE: Record<GrafanaIssueCode, (a: GrafanaArtifacts) => GrafanaIssue[]>
   GRAF107: checkSchema,
   GRAF108: checkPromqlSyntax,
   GRAF110: checkRepeats,
+  GRAF111: (a) => checkRuleQueries(a.alerting ?? []),
+  GRAF112: (a) => checkRuleDatasources(a.alerting ?? [], knownDatasourcesOf(a)),
+  GRAF113: (a) => checkNotificationRefs(a.alerting ?? []),
+  GRAF114: (a) => checkAlertingIdentity(a.alerting ?? []),
   GRAF115: checkUnits,
 };
 

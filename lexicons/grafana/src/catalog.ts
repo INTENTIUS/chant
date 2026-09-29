@@ -10,8 +10,18 @@ import { DASHBOARD_TYPE, DASHBOARD_PROVIDER_TYPE } from "./dashboard";
 import * as panels from "./panels";
 import * as queries from "./query";
 import { VARIABLE_TYPE_PREFIX } from "./variables";
+import {
+  ALERT_QUERY_TYPE,
+  ALERT_RULE_GROUP_TYPE,
+  ALERT_RULE_TYPE,
+  CONTACT_POINT_TYPE,
+  EXPRESSION_TYPE_PREFIX,
+  MUTE_TIMING_TYPE,
+  NOTIFICATION_POLICY_TYPE,
+  NOTIFICATION_TEMPLATE_TYPE,
+} from "./alerting";
 
-export type CatalogKind = "dashboard" | "datasource" | "provider" | "panel" | "row" | "query" | "variable";
+export type CatalogKind = "dashboard" | "datasource" | "provider" | "panel" | "row" | "query" | "variable" | "alerting" | "expression";
 
 export interface CatalogEntry {
   className: string;
@@ -62,6 +72,15 @@ const VARIABLES: Array<[string, string, string]> = [
   ["SwitchVariable", "switch", "An on/off switch with a value for each state (Grafana 12.3 and later)"],
 ];
 
+const EXPRESSIONS: Array<[string, string, string]> = [
+  ["ReduceExpression", "reduce", "A server-side expression reducing each series to one number (last, mean, max, ...)"],
+  ["MathExpression", "math", "A server-side math expression over other results by refId, e.g. $A / $B"],
+  ["ThresholdExpression", "threshold", "A server-side threshold, with an optional recovery threshold"],
+  ["ResampleExpression", "resample", "A server-side expression resampling a time series to a fixed window"],
+  ["ClassicConditionsExpression", "classic_conditions", "Grafana's legacy classic conditions, as a server-side expression"],
+  ["SqlExpression", "sql", "A server-side SQL expression over the other results"],
+];
+
 export const BUILTIN_CATALOG: CatalogEntry[] = [
   {
     className: "Dashboard",
@@ -98,6 +117,64 @@ export const BUILTIN_CATALOG: CatalogEntry[] = [
     entityKind: "property",
     description: "A full-width row header; its panels are placed below it, or inside it when collapsed",
   },
+  {
+    className: "AlertRuleGroup",
+    entityType: ALERT_RULE_GROUP_TYPE,
+    kind: "alerting",
+    entityKind: "resource",
+    description: "A group of Grafana-managed alert and recording rules in a folder, evaluated together at one interval",
+  },
+  {
+    className: "ContactPoint",
+    entityType: CONTACT_POINT_TYPE,
+    kind: "alerting",
+    entityKind: "resource",
+    description: "A contact point: the integrations (email, Slack, webhook, ...) alerts are sent to, under one name",
+  },
+  {
+    className: "NotificationPolicy",
+    entityType: NOTIFICATION_POLICY_TYPE,
+    kind: "alerting",
+    entityKind: "resource",
+    description: "An organisation's notification policy tree: the root receiver and the routes that match alerts to contact points",
+  },
+  {
+    className: "MuteTiming",
+    entityType: MUTE_TIMING_TYPE,
+    kind: "alerting",
+    entityKind: "resource",
+    description: "A named time interval that mutes (or, as active_time_intervals, enables) notifications",
+  },
+  {
+    className: "NotificationTemplate",
+    entityType: NOTIFICATION_TEMPLATE_TYPE,
+    kind: "alerting",
+    entityKind: "resource",
+    description: "A notification template group, Go templates contact point settings can use",
+  },
+  {
+    className: "AlertRule",
+    entityType: ALERT_RULE_TYPE,
+    kind: "alerting",
+    entityKind: "property",
+    description: "A Grafana-managed alert or recording rule: queries, expressions and the condition that fires it",
+  },
+  {
+    className: "AlertQuery",
+    entityType: ALERT_QUERY_TYPE,
+    kind: "alerting",
+    entityKind: "property",
+    description: "A datasource query of an alert rule, with its model as Grafana stores it and its time range",
+  },
+  ...EXPRESSIONS.map(
+    ([className, type, description]): CatalogEntry => ({
+      className,
+      entityType: `${EXPRESSION_TYPE_PREFIX}${type}`,
+      kind: "expression",
+      entityKind: "property",
+      description,
+    }),
+  ),
   ...panelEntries,
   ...queryEntries,
   ...VARIABLES.map(

@@ -8,7 +8,7 @@ diataxis: how-to
     Edit lexicons/grafana/docs/pages/importing.mdx instead; changes here are overwritten. */}
 
 
-`chant import` reads dashboard JSON and writes TypeScript that declares the same dashboard with this lexicon's classes. `chant build` on the result gives back the dashboard you started from. Anything the lexicon cannot express yet is printed as a warning, never dropped silently.
+`chant import` reads dashboard JSON and writes TypeScript that declares the same dashboard with this lexicon's classes. It reads datasource, dashboard and alerting provisioning files too; for alerting see [Alerting](../alerting/#import-an-alerting-file). `chant build` on the result gives back the dashboard you started from. Anything the lexicon cannot express yet is printed as a warning, never dropped silently.
 
 ## Import a dashboard
 
