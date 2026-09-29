@@ -90,8 +90,8 @@ export function looksLikeAlertingProvisioning(data: unknown): data is Record<str
 
 /**
  * Template detection for `chant import` and friends: dashboard JSON in any
- * of the shapes above (v2 included, so the importer can say it does not read
- * v2 yet), or a datasource, dashboard or alerting provisioning file.
+ * of the shapes above (v2 included, #2947), or a datasource, dashboard or
+ * alerting provisioning file.
  */
 export function detectTemplate(data: unknown): boolean {
   return (

@@ -106,6 +106,7 @@ best-known readers.
 | `detectTemplate(data)` | `boolean` | Detect whether a parsed template belongs to this lexicon |
 | `templateParser()` | `TemplateParser` | Parser for importing external templates |
 | `templateGenerator()` | `TypeScriptGenerator` | Generator for converting IR to TypeScript |
+| `embeddedImporters()` | `EmbeddedContentImporter[]` | Import this lexicon's content where another lexicon's resource holds it: otel collector configs in a k8s ConfigMap, prometheus rule groups in a `PrometheusRule`, grafana dashboards in a ConfigMap. Core finds the owner at run time, so the host needs no dependency on it ([#2962](https://github.com/INTENTIUS/chant/issues/2962)). See [Implementing Import](/chant/lexicon-authoring/importing/#embedded-content) |
 | `agentConfigImporter()` | `AgentConfigImporter` | Re-express local agent configuration (skills, MCP servers, instruction files) discovered by `chant audit --agents` as this lexicon's resources — fountain implements it for `Agent`/`Environment` |
 | `migrationSource(from)` | `MigrationSource \| undefined` | Translate another lexicon's format into this one — gitlab and forgejo implement `migrationSource("github")` |
 
