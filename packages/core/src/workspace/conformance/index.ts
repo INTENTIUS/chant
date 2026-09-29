@@ -528,6 +528,28 @@ function runChant(command: string[], argv: string[], cwd: string, timeoutMs: num
 }
 
 /**
+ * Whether an MCP tool's document and the one its command printed are the same
+ * read (#2707). Each graph member's `cached` flag (#2876) is left out: it says
+ * whether chant's per-member cache answered that one read, not what the graph
+ * is. The tool is called first, so its read can store the cache entry the
+ * command's read is then answered from, and the flag differs while the graph
+ * does not (#3019). Everything else must be equal.
+ */
+export function sameReadDocument(tool: unknown, printed: unknown): boolean {
+  return isDeepStrictEqual(withoutCacheFlags(tool), withoutCacheFlags(printed));
+}
+
+function withoutCacheFlags(doc: unknown): unknown {
+  if (typeof doc !== "object" || doc === null || !Array.isArray((doc as { members?: unknown }).members)) return doc;
+  const members = (doc as { members: unknown[] }).members.map((m) => {
+    if (typeof m !== "object" || m === null || !("cached" in m)) return m;
+    const { cached: _cached, ...rest } = m as Record<string, unknown>;
+    return rest;
+  });
+  return { ...doc, members };
+}
+
+/**
  * A transport that runs chant in the workspace `target()` names and records
  * every call and what it printed. `reset()` clears the record before a read.
  */
@@ -556,7 +578,7 @@ export function recordingTransport(target: () => { workspaceDir: string; chantCo
     } catch {
       printedDoc = undefined;
     }
-    if (!isDeepStrictEqual(doc, printedDoc)) problems.push(`${argv.slice(1).join(" ")}: the MCP tool ${call.name} returned a document other than chant ${argv.join(" ")} printed`);
+    if (!sameReadDocument(doc, printedDoc)) problems.push(`${argv.slice(1).join(" ")}: the MCP tool ${call.name} returned a document other than chant ${argv.join(" ")} printed`);
     return { argv: [...argv], status: 0, stdout: JSON.stringify(doc), stderr: "" };
   };
   const transport: ChantTransport = {
