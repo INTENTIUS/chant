@@ -161,6 +161,7 @@ export { slugUid, isValidUid, UID_PATTERN, type DeepPartial } from "./util";
 export {
   RedDashboard,
   redQueries,
+  RED_DEFAULT_SPAN_KINDS,
   SloDashboard,
   sloQueries,
   AgentDashboard,
@@ -168,6 +169,7 @@ export {
   type RedDashboardProps,
   type RedDashboardMembers,
   type RedDashboardInstance,
+  type SpanKind,
   type SloDashboardProps,
   type SloDashboardMembers,
   type SloDashboardInstance,

@@ -15,7 +15,7 @@ import { Datasource } from "../datasource";
 import { buildGrafana, type DashboardJson } from "../build";
 import { validateGrafanaOutput } from "../validate-output";
 import { validateDashboardSchema } from "../schema-validate";
-import { AgentDashboard, RedDashboard, SloDashboard } from "./index";
+import { AgentDashboard, RedDashboard, redQueries, SloDashboard } from "./index";
 
 const prometheus = new Datasource({ name: "Prometheus", type: "prometheus", url: "http://prometheus:9090" });
 
@@ -78,16 +78,64 @@ describe("RedDashboard", () => {
     expectClean(json, out);
     expect(json.uid).toBe("red-traces-span-metrics");
     expect(panels(json).map((p) => p.title)).toEqual(["Rate", "Errors", "Duration p50", "Duration p95", "Duration p99"]);
-    expect(panelByTitle(json, "Rate").targets).toMatchObject([
-      { expr: 'sum by (service_name) (rate(traces_span_metrics_calls_total{service_name=~"$service"}[$__rate_interval]))' },
-    ]);
-    expect((panelByTitle(json, "Errors").targets as Json[])[0].expr).toContain('status_code="STATUS_CODE_ERROR"');
+    const calls = 'traces_span_metrics_calls_total{service_name=~"$service", span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}';
+    const errors = 'traces_span_metrics_calls_total{service_name=~"$service", span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", status_code="STATUS_CODE_ERROR"}';
+    expect(panelByTitle(json, "Rate").targets).toMatchObject([{ expr: `sum by (service_name) (rate(${calls}[$__rate_interval]))` }]);
+    expect(panelByTitle(json, "Rate").description).toBe("Server and consumer spans per second by service, from traces_span_metrics_calls_total.");
+    expect((panelByTitle(json, "Errors").targets as Json[])[0].expr).toBe(
+      "(\n" +
+        `sum by (service_name) (rate(${errors}[$__rate_interval]))\n` +
+        "or\n" +
+        `sum by (service_name) (rate(${calls}[$__rate_interval])) * 0\n` +
+        ")\n/\n" +
+        `sum by (service_name) (rate(${calls}[$__rate_interval]))`,
+    );
     expect((panelByTitle(json, "Duration p95").targets as Json[])[0].expr).toBe(
-      'histogram_quantile(0.95, sum by (le, service_name) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=~"$service"}[$__rate_interval])))',
+      'histogram_quantile(0.95, sum by (le, service_name) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=~"$service", span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[$__rate_interval])))',
     );
     expect((panelByTitle(json, "Duration p95").fieldConfig as { defaults: Json }).defaults.unit).toBe("ms");
     const templating = json.templating as unknown as { list: Json[] };
-    expect(templating.list.map((v) => [v.name, v.query])).toEqual([["service", "label_values(traces_span_metrics_calls_total, service_name)"]]);
+    expect(templating.list.map((v) => [v.name, v.query])).toEqual([
+      ["service", 'label_values(traces_span_metrics_calls_total{span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}, service_name)'],
+    ]);
+  });
+
+  test("spanKinds picks the kinds counted; [] counts every kind", () => {
+    const names = spanMetricsNames(new SpanMetricsConnector({ namespace: "shop" }));
+    const all = redQueries(names, [0.5], "$service", []);
+    expect(all.rate).toBe('sum by (service_name) (rate(shop_calls_total{service_name=~"$service"}[$__rate_interval]))');
+    expect(all.services).toBe("label_values(shop_calls_total, service_name)");
+
+    const client = redQueries(names, [0.5], "checkout", ["SPAN_KIND_CLIENT", "SPAN_KIND_PRODUCER", "SPAN_KIND_CLIENT"]);
+    expect(client.rate).toBe(
+      'sum by (service_name) (rate(shop_calls_total{service_name=~"checkout", span_kind=~"SPAN_KIND_CLIENT|SPAN_KIND_PRODUCER"}[$__rate_interval]))',
+    );
+    for (const e of [client.rate, client.errorRatio, ...client.duration.map((d) => d.expr)]) {
+      expect(checkPromql(asPromql(e)), e).toEqual({ ok: true });
+    }
+
+    const { json, out } = built(
+      RedDashboard({ spanMetrics: new SpanMetricsConnector({ namespace: "shop" }), spanKinds: ["SPAN_KIND_SERVER"], datasource: prometheus }).dashboard,
+    );
+    expectClean(json, out);
+    for (const e of exprs(json)) expect(e).toContain('span_kind=~"SPAN_KIND_SERVER"');
+    expect(panelByTitle(json, "Errors").description).toBe('Share of server spans with status_code="STATUS_CODE_ERROR", by service.');
+
+    const every = built(RedDashboard({ spanMetrics: new SpanMetricsConnector({ namespace: "shop" }), spanKinds: [], datasource: prometheus }).dashboard);
+    for (const e of exprs(every.json)) expect(e).not.toContain("span_kind");
+    expect(panelByTitle(every.json, "Rate").description).toBe("Spans per second by service, from shop_calls_total.");
+  });
+
+  test("a connector that excludes span.kind gets no kind filter by default, and naming kinds for it is an error", () => {
+    const connector = new SpanMetricsConnector({ exclude_dimensions: ["span.kind"] });
+    const { json, out } = built(RedDashboard({ spanMetrics: connector, datasource: prometheus }).dashboard);
+    expectClean(json, out);
+    for (const e of exprs(json)) expect(e).not.toContain("span_kind");
+    expect(() => RedDashboard({ spanMetrics: connector, spanKinds: ["SPAN_KIND_SERVER"], datasource: prometheus })).toThrow(/excludes span\.kind/);
+    expect(() => RedDashboard({ spanMetrics: connector, spanKinds: [], datasource: prometheus })).not.toThrow();
+    expect(() =>
+      RedDashboard({ spanMetrics: new SpanMetricsConnector({}), spanKinds: ["SERVER" as never], datasource: prometheus }),
+    ).toThrow(/unknown span kind "SERVER"/);
   });
 
   test("renaming the connector's namespace moves every query; its histogram unit moves the duration metric", () => {
@@ -259,10 +307,26 @@ describe("AgentDashboard", () => {
       "Input tokens",
       "Output tokens",
     ]);
+    const calls = 'genai_calls_total{service_name=~"$service", gen_ai_request_model=~"$model"}';
+    const errors = 'genai_calls_total{service_name=~"$service", gen_ai_request_model=~"$model", status_code="STATUS_CODE_ERROR"}';
     expect((panelByTitle(json, "Errors by model").targets as Json[])[0].expr).toBe(
-      'sum by (gen_ai_request_model) (rate(genai_calls_total{service_name=~"$service", gen_ai_request_model=~"$model", status_code="STATUS_CODE_ERROR"}[$__rate_interval]))\n/\n' +
-        'sum by (gen_ai_request_model) (rate(genai_calls_total{service_name=~"$service", gen_ai_request_model=~"$model"}[$__rate_interval]))',
+      "(\n" +
+        `sum by (gen_ai_request_model) (rate(${errors}[$__rate_interval]))\n` +
+        "or\n" +
+        `sum by (gen_ai_request_model) (rate(${calls}[$__rate_interval])) * 0\n` +
+        ")\n/\n" +
+        `sum by (gen_ai_request_model) (rate(${calls}[$__rate_interval]))`,
     );
+    expect((panelByTitle(json, "Errors by tool").targets as Json[])[0].expr).toMatch(/^\(\nsum by \(gen_ai_tool_name\) .*\nor\n.* \* 0\n\)\n\/\n/s);
+    // The token totals are one instant query each, not a range query of full-range increases.
+    for (const [title, metric] of [["Input tokens", "genai_tokens_input_total"], ["Output tokens", "genai_tokens_output_total"]]) {
+      expect(panelByTitle(json, title).targets).toMatchObject([
+        { expr: `sum(increase(${metric}{gen_ai_request_model=~"$model"}[$__range]))`, instant: true, range: false },
+      ]);
+    }
+    for (const title of ["Input tokens by model", "Errors by model"]) {
+      expect((panelByTitle(json, title).targets as Json[])[0].instant).toBeUndefined();
+    }
     expect((panelByTitle(json, "Latency p95 by tool").targets as Json[])[0].expr).toBe(
       'histogram_quantile(0.95, sum by (le, gen_ai_tool_name) (rate(genai_duration_seconds_bucket{service_name=~"$service", gen_ai_request_model=~"$model", gen_ai_tool_name!=""}[$__rate_interval])))',
     );

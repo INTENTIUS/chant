@@ -48,25 +48,34 @@ A datasource of any other type is an error at declaration time. Queries use `$__
 ## RedDashboard
 
 ```ts
-RedDashboard({ spanMetrics, exporter?, quantiles?, datasource, ... })
+RedDashboard({ spanMetrics, exporter?, quantiles?, spanKinds?, datasource, ... })
 ```
 
 - `spanMetrics`: the `spanmetrics` connector, or what `spanMetricsNames(connector)` returned.
 - `exporter`: the `prometheus` exporter serving the metrics, when its `namespace` or `add_metric_suffixes: false` changes the names Prometheus sees.
 - `quantiles`: duration quantiles, one panel each. Default `[0.5, 0.95, 0.99]`.
+- `spanKinds`: the span kinds counted. Default `["SPAN_KIND_SERVER", "SPAN_KIND_CONSUMER"]` (`RED_DEFAULT_SPAN_KINDS`), the spans that handle a request or a message; `[]` counts every kind.
 
 Names come from the otel lexicon's `spanMetricsNames()`: the connector's `namespace` (default `traces.span.metrics`), its histogram unit (`ms` gives `_milliseconds`, `s` gives `_seconds`), and which default dimensions `exclude_dimensions` leaves in. The dashboard has a multi-value `service` variable and two rows: rate and errors, then one panel per duration quantile. With `histogram.disable` there is no duration row. A connector that excludes `service.name` or `status.code` can't be broken down by service or split into errors, so the composite refuses it.
+
+The spanmetrics connector counts every span, so a service's outgoing calls (client and producer spans) and its internal spans sit in the same series as the requests it serves. Counting them all would inflate the rate, which the panel labels as requests per second, and let a failing downstream call count as the service's own error. The queries and the `service` variable filter on `span_kind` instead. A connector that excludes `span.kind` gets no filter by default, and naming `spanKinds` for it is an error.
+
+The error ratio's numerator falls back to the denominator times zero, so a service with traffic and no errors shows 0 rather than "No data".
 
 The PromQL, for a connector with `namespace: "shop"`:
 
 ```promql
-sum by (service_name) (rate(shop_calls_total{service_name=~"$service"}[$__rate_interval]))
+sum by (service_name) (rate(shop_calls_total{service_name=~"$service", span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[$__rate_interval]))
 
-sum by (service_name) (rate(shop_calls_total{service_name=~"$service", status_code="STATUS_CODE_ERROR"}[$__rate_interval]))
+(
+sum by (service_name) (rate(shop_calls_total{service_name=~"$service", span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", status_code="STATUS_CODE_ERROR"}[$__rate_interval]))
+or
+sum by (service_name) (rate(shop_calls_total{service_name=~"$service", span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[$__rate_interval])) * 0
+)
 /
-sum by (service_name) (rate(shop_calls_total{service_name=~"$service"}[$__rate_interval]))
+sum by (service_name) (rate(shop_calls_total{service_name=~"$service", span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[$__rate_interval]))
 
-histogram_quantile(0.95, sum by (le, service_name) (rate(shop_duration_milliseconds_bucket{service_name=~"$service"}[$__rate_interval])))
+histogram_quantile(0.95, sum by (le, service_name) (rate(shop_duration_milliseconds_bucket{service_name=~"$service", span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[$__rate_interval])))
 ```
 
 ## SloDashboard
@@ -90,11 +99,11 @@ AgentDashboard({ genAi, quantile?, datasource, ... })
 - `genAi`: `genAiMetrics(options)` with the options the collector was built with, or the `genAiComponents(options)` result itself.
 - `quantile`: the latency quantile per model and per tool. Default 0.95.
 
-Metric names come from the preset's metrics, and label names from its GenAI attribute keys (`gen_ai.request.model` is `gen_ai_request_model`). Variables pick services and models. Rows: calls, error ratio and latency per model; the same per tool (operations with a `gen_ai.tool.name`); failed operations by `error.type`; and input and output tokens per model, as rates and as totals over the dashboard's range. Token sums carry only the model label, so the service variable doesn't filter them.
+Metric names come from the preset's metrics, and label names from its GenAI attribute keys (`gen_ai.request.model` is `gen_ai_request_model`). Variables pick services and models. Rows: calls, error ratio and latency per model; the same per tool (operations with a `gen_ai.tool.name`); failed operations by `error.type`; and input and output tokens per model, as rates and as totals over the dashboard's range. The totals are instant queries, one `increase(...[$__range])` evaluated at the end of the range. Token sums carry only the model label, so the service variable doesn't filter them. The error ratios pad their numerator to zero the same way `RedDashboard`'s does.
 
 ## The queries without a dashboard
 
-`redQueries(names)`, `sloQueries(sloMetrics(slo))` and `agentQueries(genAiMetrics())` return the PromQL each composite runs, for panels of your own.
+`redQueries(names, quantiles?, serviceFilter?, spanKinds?)`, `sloQueries(sloMetrics(slo))` and `agentQueries(genAiMetrics())` return the PromQL each composite runs, for panels of your own.
 
 ## Build roots
 

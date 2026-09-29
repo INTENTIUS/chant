@@ -18,6 +18,7 @@ import { slugUid } from "../util";
 import {
   dashboardProps,
   durationUnit,
+  errorRatio,
   legend,
   quantile,
   quantileName,
@@ -75,8 +76,7 @@ export function agentQueries(m: GenAiMetrics, q = 0.95) {
   const err: Matcher = [status, "=", SPAN_STATUS_ERROR];
   const calls = m.calls.prometheus;
   const buckets = `${m.duration.prometheus}_bucket`;
-  const ratio = (matchers: Matcher[], by: string[]) =>
-    `${sumRate(selector(calls, [...matchers, err]), by)}\n/\n${sumRate(selector(calls, matchers), by)}`;
+  const ratio = (matchers: Matcher[], by: string[]) => errorRatio(selector(calls, [...matchers, err]), selector(calls, matchers), by);
   const tokens: Matcher[] = [[tokenModel, "=~", "$model"]];
 
   return {
@@ -191,13 +191,16 @@ export const AgentDashboard = Composite<AgentDashboardProps, AgentDashboardMembe
       }),
     ],
   });
+  // One instant query at the end of the range: `increase(...[$__range])`
+  // is the total over the whole range, so evaluating it at every step of a
+  // range query would only repeat that work for points the stat throws away.
   const tokenStat = (title: string, expr: string) =>
     new StatPanel({
       title,
       description: "Over the dashboard's time range.",
       datasource: ds,
       gridPos: { w: 4, h: 8 },
-      targets: [new PromQuery({ expr, legendFormat: title })],
+      targets: [new PromQuery({ expr, legendFormat: title, instant: true, range: false })],
       options: { graphMode: "none", colorMode: "none", reduceOptions: { calcs: ["lastNotNull"] } },
       fieldConfig: { defaults: { unit: "short", decimals: 0 } },
     });

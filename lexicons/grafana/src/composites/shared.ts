@@ -39,6 +39,17 @@ export function sumRate(sel: string, by: string[], range = "$__rate_interval"): 
   return `sum${by.length ? ` by (${by.join(", ")})` : ""} (rate(${sel}[${range}]))`;
 }
 
+/**
+ * `errors / all` as rates summed by `by`, with the numerator padded to zero:
+ * `(errors or all * 0) / all`. A group with calls but no error series gets
+ * 0 instead of dropping out of the result, so a panel shows 0% rather than
+ * "No data" for a service that has had no errors.
+ */
+export function errorRatio(errorSel: string, allSel: string, by: string[]): string {
+  const all = sumRate(allSel, by);
+  return `(\n${sumRate(errorSel, by)}\nor\n${all} * 0\n)\n/\n${all}`;
+}
+
 /** `histogram_quantile(q, sum by (le, labels) (rate(bucket[range])))`. */
 export function quantile(q: number, bucketSel: string, by: string[]): string {
   return `histogram_quantile(${num(q)}, ${sumRate(bucketSel, ["le", ...by])})`;
