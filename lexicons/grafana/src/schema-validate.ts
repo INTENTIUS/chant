@@ -16,6 +16,9 @@
  * (`additionalProperties: false` dropped; what fails is an error) and once
  * as pinned (what fails only for an unknown key is a warning).
  *
+ * An export shared externally embeds its library panels in `__elements`;
+ * each element's `model` is checked the same way as a panel on the grid.
+ *
  * `oneOf` is read as `anyOf` throughout. The CUE these schemas come from
  * has disjunctions, which accept a value matching any branch; cog writes
  * them as `oneOf`, which rejects a value matching two, and loosely
@@ -139,6 +142,48 @@ function panelsOf(dashboard: Json): Array<{ panel: Json; path: string }> {
   return out;
 }
 
+/** A panel (not a row) against the dashboard's Panel definition and its plugin's options, custom field config and queries. */
+function checkPanel(panel: Json, path: string): SchemaProblem[] {
+  const out = check(panel, "dashboard", "Panel", false, path);
+  const def = typeof panel.type === "string" ? panelDefinitionFor(panel.type) : undefined;
+  if (def?.schema) {
+    if (panel.options !== undefined) out.push(...check(panel.options, def.schema, "Options", true, `${path}/options`));
+    const custom = (panel.fieldConfig as { defaults?: { custom?: unknown } } | undefined)?.defaults?.custom;
+    if (custom !== undefined) out.push(...check(custom, def.schema, "FieldConfig", true, `${path}/fieldConfig/defaults/custom`));
+  }
+  const panelType = (panel.datasource as { type?: string } | undefined)?.type;
+  const targets = Array.isArray(panel.targets) ? (panel.targets as Json[]) : [];
+  targets.forEach((t, k) => {
+    const type = (t?.datasource as { type?: string } | undefined)?.type ?? panelType;
+    const qdef = type ? queryDefinitionFor(type) : undefined;
+    if (!qdef?.schema) return;
+    out.push(...check(t, qdef.schema, undefined, true, `${path}/targets/${k}`));
+  });
+  return out;
+}
+
+/** `LibraryElementKind.Panel` (public/app/features/library-panels/types.ts:8-10 at v13.2.2, its only member). */
+const LIBRARY_PANEL_KIND = 1;
+
+/**
+ * The library panel models an external export embeds in `__elements`. The
+ * envelope check covers each element's own fields (uid, name, kind, model
+ * present); the model is a whole panel, checked like one.
+ */
+function libraryPanelModels(dashboard: Json): Array<{ panel: Json; path: string }> {
+  const elements = dashboard.__elements;
+  if (!elements || typeof elements !== "object" || Array.isArray(elements)) return [];
+  const out: Array<{ panel: Json; path: string }> = [];
+  for (const [key, el] of Object.entries(elements as Record<string, unknown>)) {
+    if (!el || typeof el !== "object") continue;
+    const { kind, model } = el as { kind?: unknown; model?: unknown };
+    if (kind !== undefined && kind !== LIBRARY_PANEL_KIND) continue;
+    if (!model || typeof model !== "object" || Array.isArray(model)) continue;
+    out.push({ panel: model as Json, path: `/__elements/${key.replace(/~/g, "~0").replace(/\//g, "~1")}/model` });
+  }
+  return out;
+}
+
 /** Everything in one dashboard that the pinned schemas reject or do not know. */
 export function validateDashboardSchema(dashboard: Json): SchemaProblem[] {
   const out: SchemaProblem[] = [];
@@ -158,21 +203,8 @@ export function validateDashboardSchema(dashboard: Json): SchemaProblem[] {
       out.push(...check(header, "dashboard", "RowPanel", false, path));
       continue;
     }
-    out.push(...check(panel, "dashboard", "Panel", false, path));
-    const def = typeof panel.type === "string" ? panelDefinitionFor(panel.type) : undefined;
-    if (def?.schema) {
-      if (panel.options !== undefined) out.push(...check(panel.options, def.schema, "Options", true, `${path}/options`));
-      const custom = (panel.fieldConfig as { defaults?: { custom?: unknown } } | undefined)?.defaults?.custom;
-      if (custom !== undefined) out.push(...check(custom, def.schema, "FieldConfig", true, `${path}/fieldConfig/defaults/custom`));
-    }
-    const panelType = (panel.datasource as { type?: string } | undefined)?.type;
-    const targets = Array.isArray(panel.targets) ? (panel.targets as Json[]) : [];
-    targets.forEach((t, k) => {
-      const type = (t?.datasource as { type?: string } | undefined)?.type ?? panelType;
-      const qdef = type ? queryDefinitionFor(type) : undefined;
-      if (!qdef?.schema) return;
-      out.push(...check(t, qdef.schema, undefined, true, `${path}/targets/${k}`));
-    });
+    out.push(...checkPanel(panel, path));
   }
+  for (const { panel, path } of libraryPanelModels(dashboard)) out.push(...checkPanel(panel, path));
   return out;
 }

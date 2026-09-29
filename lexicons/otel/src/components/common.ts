@@ -5,8 +5,13 @@
  * unchanged.
  */
 
-/** A duration string the collector parses, e.g. `5s`, `250ms`, `1m30s`. */
-export type Duration = string;
+/**
+ * A duration the collector parses: a string such as `5s`, `250ms` or
+ * `1m30s`, or a bare integer, which the collector reads as nanoseconds
+ * (collector-contrib's own servicegraph test config writes
+ * `latency_histogram_buckets: [1,2,3,4,5]`). Prefer the string form.
+ */
+export type Duration = string | number;
 
 export interface TLSClientSettings {
   insecure?: boolean;

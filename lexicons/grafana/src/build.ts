@@ -10,7 +10,7 @@
 
 import { dump } from "js-yaml";
 import type { Declarable } from "@intentius/chant/declarable";
-import { isDatasourceEntity, type DatasourceEntity, type DatasourceRef } from "./datasource";
+import { isDatasourceDeclaration, isDatasourceEntity, isExternalDatasource, type DatasourceEntity, type DatasourceRef, type ExternalDatasourceEntity } from "./datasource";
 import {
   isDashboardEntity,
   isDashboardProviderEntity,
@@ -90,6 +90,8 @@ export interface BuiltDashboard {
 export interface BuiltGrafana {
   dashboards: BuiltDashboard[];
   datasources: ProvisionedDatasource[];
+  /** `ExternalDatasource` declarations: the checks count them, the provisioning file leaves them out. */
+  externalDatasources: ExternalDatasourceRecord[];
   providers: ProvisionedProvider[];
   /** Every output file by path, ready to write. */
   files: Record<string, string>;
@@ -101,7 +103,16 @@ export interface GrafanaIndex {
   grafanaSchema: string;
   dashboards: Array<{ uid: string; title: string; folder?: string; file: string }>;
   datasources: Array<{ name: string; type: string; uid: string }>;
+  /** Datasources declared with `ExternalDatasource`: referenced, never provisioned. */
+  externalDatasources?: ExternalDatasourceRecord[];
   files: string[];
+}
+
+/** An `ExternalDatasource` as the checks and the index see it. */
+export interface ExternalDatasourceRecord {
+  type: string;
+  uid: string;
+  name?: string;
 }
 
 // ── References ──────────────────────────────────────────────────
@@ -116,13 +127,13 @@ function isRef(value: unknown): value is DatasourceRef {
   );
 }
 
-/** The `{ type, uid }` Grafana stores for a datasource, a datasource variable, or a ref. */
+/** The `{ type, uid }` Grafana stores for a datasource (declared or external), a datasource variable, or a ref. */
 export function datasourceRef(input: DatasourceInput | undefined): DataSourceRef | undefined {
   if (input === undefined || input === null) return undefined;
-  if (isDatasourceEntity(input)) return { type: input.datasourceType, uid: input.uid };
+  if (isDatasourceDeclaration(input)) return { type: input.datasourceType, uid: input.uid };
   if (isDatasourceVariable(input)) return { type: input.pluginType, uid: `\${${input.variableName}}` };
   if (isRef(input)) return { type: input.type, uid: input.uid };
-  throw new Error("grafana: a datasource must be a Datasource, a DatasourceVariable or a { type, uid } ref");
+  throw new Error("grafana: a datasource must be a Datasource, an ExternalDatasource, a DatasourceVariable or a { type, uid } ref");
 }
 
 function sameRef(a: DataSourceRef | undefined, b: DataSourceRef | undefined): boolean {
@@ -516,9 +527,9 @@ export function dashboardJson(dashboard: DashboardEntity, exportName?: string): 
 
 // ── Datasources and providers ───────────────────────────────────
 
-/** Replace every declared `Datasource` inside plugin settings with its uid. */
+/** Replace every declared or external datasource inside plugin settings with its uid. */
 function resolveNested(value: unknown): unknown {
-  if (isDatasourceEntity(value)) return value.uid;
+  if (isDatasourceDeclaration(value)) return value.uid;
   if (Array.isArray(value)) return value.map(resolveNested);
   if (value && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) {
     return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, resolveNested(v)]));
@@ -547,6 +558,11 @@ export function provisionedDatasource(ds: DatasourceEntity): ProvisionedDatasour
     orgId: p.orgId,
     version: p.version,
   });
+}
+
+/** One `ExternalDatasource` as the checks and the index see it. */
+export function externalDatasourceRecord(ds: ExternalDatasourceEntity): ExternalDatasourceRecord {
+  return compact({ type: ds.datasourceType, uid: ds.uid, name: ds.props.name });
 }
 
 /** One dashboard provider as a provisioning entry. */
@@ -600,6 +616,11 @@ export function buildGrafana(entities: Map<string, Declarable> | Iterable<Declar
     .map(([, e]) => provisionedDatasource(e as DatasourceEntity))
     .sort((a, b) => a.name.localeCompare(b.name));
 
+  const externalDatasources: ExternalDatasourceRecord[] = named
+    .filter(([, e]) => isExternalDatasource(e))
+    .map(([, e]) => externalDatasourceRecord(e as ExternalDatasourceEntity))
+    .sort((a, b) => a.uid.localeCompare(b.uid));
+
   const dashboards: BuiltDashboard[] = [];
   for (const [name, e] of named) {
     if (!isDashboardEntity(e)) continue;
@@ -628,9 +649,10 @@ export function buildGrafana(entities: Map<string, Declarable> | Iterable<Declar
     grafanaSchema: `${GRAFANA_SCHEMA_PIN.source}@${GRAFANA_SCHEMA_PIN.ref}`,
     dashboards: dashboards.map(({ uid, title, folder, file }) => ({ uid, title, ...(folder ? { folder } : {}), file })),
     datasources: datasources.map(({ name, type, uid }) => ({ name, type, uid })),
+    ...(externalDatasources.length > 0 ? { externalDatasources } : {}),
     files: Object.keys(files).sort(),
   };
-  return { dashboards, datasources, providers, files, index };
+  return { dashboards, datasources, externalDatasources, providers, files, index };
 }
 
 /** Every file the grafana entities render to, by path relative to the output directory. */

@@ -4,14 +4,14 @@
  * budget allows, so this runs with the e2e tests.
  */
 import { describe, expect, test } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import * as ts from "typescript";
 import { collectorYaml } from "../collector";
 import { genAiPipeline } from "../genai";
 import { OtelCollectorParser } from "./parser";
 import { OtelCollectorGenerator } from "./generator";
-import { everyBuiltin, exampleOutputs, pkgDir, read, repoRoot, UPSTREAM_BUILTIN_ONLY } from "./testdata/fixtures";
+import { everyBuiltin, exampleOutputs, pkgDir, read, repoRoot } from "./testdata/fixtures";
 
 /** Type errors in generated projects, compiled together against the lexicon's source with the repo's compiler options. */
 function typeErrors(projects: Record<string, Array<{ path: string; content: string }>>): string[] {
@@ -45,31 +45,66 @@ function typeErrors(projects: Record<string, Array<{ path: string; content: stri
 
 const generate = (yaml: string) => new OtelCollectorGenerator().generate(new OtelCollectorParser().parse(yaml));
 
+/** Every vendored import fixture, by path under testdata/: the chant-built configs and the collector-contrib ones. */
+function vendoredFixtures(): string[] {
+  const dir = join(import.meta.dirname, "testdata");
+  const yamlIn = (sub: string) =>
+    readdirSync(join(dir, sub))
+      .filter((f) => f.endsWith(".yaml"))
+      .sort()
+      .map((f) => (sub ? `${sub}/${f}` : f));
+  return [...yamlIn(""), ...yamlIn("upstream")];
+}
+
 describe("the generated source type-checks against the lexicon's config types", () => {
-  test("for every fixture whose config stays within the typed fields", async () => {
+  test("for every vendored fixture, every example's output, genAiPipeline() and every built-in's typed fields", async () => {
+    const fixtures = vendoredFixtures();
+    // The corpus the round-trip tests read; a missing directory would pass vacuously.
+    expect(fixtures).toEqual(expect.arrayContaining(["gateway.yaml", "upstream/couchbase.yaml", "upstream/servicegraph-nop.yaml"]));
+    expect(fixtures.length).toBeGreaterThanOrEqual(12);
     const projects: Record<string, Array<{ path: string; content: string }>> = {
-      gateway: generate(read("gateway.yaml")),
-      agent: generate(read("agent-observability-agent.yaml")),
-      agentGateway: generate(read("agent-observability-gateway.yaml")),
+      ...Object.fromEntries(fixtures.map((f) => [f, generate(read(...f.split("/")))])),
       genai: generate(collectorYaml(genAiPipeline())),
       everyBuiltin: generate(collectorYaml(everyBuiltin())),
-      faultTolerant: generate(read("upstream", "fault-tolerant-logs.yaml")),
-      ...Object.fromEntries(UPSTREAM_BUILTIN_ONLY.map((f) => [f, generate(read("upstream", f))])),
-      ...Object.fromEntries((await exampleOutputs()).map(([n, y]) => [n, generate(y)])),
+      ...Object.fromEntries((await exampleOutputs()).map(([n, y]) => [`example-${n}`, generate(y)])),
     };
     expect(typeErrors(projects)).toEqual([]);
   }, 120_000);
 
   test("a value outside a built-in's typed config is carried as found, and tsc points at it", () => {
-    // couchbase uses the filter processor's legacy match syntax and a scrape job's basic_auth,
-    // neither of which the lexicon's config types cover.
-    const couchbase = typeErrors({ couchbase: generate(read("upstream", "couchbase.yaml")) });
-    expect(couchbase).toEqual([
-      expect.stringMatching(/^couchbase\/processors\.ts: .*'exclude' does not exist/),
-      expect.stringMatching(/^couchbase\/receivers\.ts: .*'basic_auth' does not exist in type 'PrometheusScrapeConfig'/),
+    // The type check is not vacuous: a batch timeout of `true` is neither a duration string nor
+    // nanoseconds, and a scrape job stays closed to keys Prometheus does not read.
+    const yaml = [
+      "receivers:",
+      "  otlp:",
+      "    protocols:",
+      "      grpc: {}",
+      "  prometheus:",
+      "    config:",
+      "      scrape_configs:",
+      "        - job_name: self",
+      "          static_configs: [{ targets: [\"localhost:8888\"] }]",
+      "          basic_auth: { username: u, password_file: /etc/p }",
+      "          scrape_everything: true",
+      "processors:",
+      "  batch:",
+      "    timeout: true",
+      "exporters:",
+      "  debug: {}",
+      "service:",
+      "  pipelines:",
+      "    traces:",
+      "      receivers: [otlp]",
+      "      processors: [batch]",
+      "      exporters: [debug]",
+      "    metrics:",
+      "      receivers: [prometheus]",
+      "      exporters: [debug]",
+      "",
+    ].join("\n");
+    expect(typeErrors({ bad: generate(yaml) })).toEqual([
+      expect.stringMatching(/^bad\/processors\.ts: Type 'true' is not assignable to type 'Duration/),
+      expect.stringMatching(/^bad\/receivers\.ts: .*'scrape_everything' does not exist in type 'PrometheusScrapeConfig'/),
     ]);
-    // The servicegraph test config writes bucket durations as bare integers (nanoseconds); Duration is a string.
-    const servicegraph = typeErrors({ servicegraph: generate(read("upstream", "servicegraph-nop.yaml")) });
-    expect(servicegraph).toEqual(Array(5).fill("servicegraph/connectors.ts: Type 'number' is not assignable to type 'string'."));
   }, 120_000);
 });

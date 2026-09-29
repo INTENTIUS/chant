@@ -7,7 +7,7 @@ import { load } from "js-yaml";
 import type { Declarable } from "@intentius/chant/declarable";
 import type { SerializerResult } from "@intentius/chant/serializer";
 import { grafanaSerializer } from "./serializer";
-import { Datasource } from "./datasource";
+import { Datasource, ExternalDatasource } from "./datasource";
 import { Dashboard, DashboardProvider } from "./dashboard";
 import { StatPanel, TimeSeriesPanel } from "./panels";
 import { PromQuery } from "./query";
@@ -148,6 +148,18 @@ describe("grafana serializer", () => {
     const ds = load(out.files![DATASOURCES_FILE]) as { datasources: Array<{ name: string; jsonData?: unknown }> };
     expect(ds.datasources.find((d) => d.name === "Tempo")?.jsonData).toEqual({ tracesToLogsV2: { datasourceUid: "loki" } });
     expect(JSON.parse(out.primary).files).toEqual(Object.keys(out.files!).sort());
+  });
+
+  test("an ExternalDatasource is referenced by uid, in panels and in another datasource's settings, and not provisioned", () => {
+    const loki = new ExternalDatasource({ type: "loki", uid: "loki-prod", name: "Loki (prod)" });
+    const tempo = new Datasource({ name: "Tempo", type: "tempo", jsonData: { tracesToLogsV2: { datasourceUid: loki } } });
+    const logs = new StatPanel({ datasource: loki });
+    const out = run({ loki, tempo, d: new Dashboard({ title: "D", panels: [logs] }) });
+    expect(JSON.parse(out.files!["dashboards/d.json"]).panels[0].datasource).toEqual({ type: "loki", uid: "loki-prod" });
+    const ds = load(out.files![DATASOURCES_FILE]) as { datasources: Array<{ name: string; jsonData?: unknown }> };
+    expect(ds.datasources.map((d) => d.name)).toEqual(["Tempo"]);
+    expect(ds.datasources[0].jsonData).toEqual({ tracesToLogsV2: { datasourceUid: "loki-prod" } });
+    expect(JSON.parse(out.primary).externalDatasources).toEqual([{ type: "loki", uid: "loki-prod", name: "Loki (prod)" }]);
   });
 
   test("round trip: the emitted text parses back to the declared values", () => {

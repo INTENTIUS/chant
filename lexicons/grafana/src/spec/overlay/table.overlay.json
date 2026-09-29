@@ -1,0 +1,84 @@
+{
+  "$comment": "Corrections to the vendored table.jsonschema.json (foundation-sdk v0.0.20). Sources are Grafana's CUE at the tag in `grafana`. See src/spec/overlay.ts.",
+  "schema": "table",
+  "grafana": "v13.2.2",
+  "patches": [
+    {
+      "op": "replace",
+      "path": "/definitions/TableCellDisplayMode/enum",
+      "value": ["auto", "color-text", "color-background", "color-background-solid", "gradient-gauge", "lcd-gauge", "json-view", "basic", "image", "gauge", "sparkline", "data-links", "custom", "actions", "pill", "markdown", "geo"],
+      "source": "packages/grafana-schema/src/common/table.cue:7 (:7 at v12.4.0)",
+      "why": "The pill, markdown and geo cell types are in the CUE since 12.4; the vendored enum rejects them."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/TablePillCellOptions",
+      "value": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type"],
+        "properties": { "type": { "allOf": [{ "$ref": "#/definitions/TableCellDisplayMode" }], "default": "pill" } },
+        "description": "Pill cell options"
+      },
+      "source": "packages/grafana-schema/src/common/table.cue:75-77 (:75 at v12.4.0)",
+      "why": "Definition for the pill cell type."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/TableMarkdownCellOptions",
+      "value": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type"],
+        "properties": {
+          "type": { "allOf": [{ "$ref": "#/definitions/TableCellDisplayMode" }], "default": "markdown" },
+          "dynamicHeight": { "type": "boolean" }
+        },
+        "description": "Markdown cell options"
+      },
+      "source": "packages/grafana-schema/src/common/table.cue:79-86 (:79 at v12.4.0)",
+      "why": "Definition for the markdown cell type. The CUE declares it twice; the two unify to one struct with an optional dynamicHeight."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/TableGeoCellOptions",
+      "value": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type"],
+        "properties": { "type": { "allOf": [{ "$ref": "#/definitions/TableCellDisplayMode" }], "default": "geo" } },
+        "description": "Geo cell options"
+      },
+      "source": "packages/grafana-schema/src/common/table.cue:88-90 (:88 at v12.4.0)",
+      "why": "Definition for the geo cell type."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/TableCellOptions/oneOf/-",
+      "value": { "$ref": "#/definitions/TablePillCellOptions" },
+      "source": "packages/grafana-schema/src/common/table.cue:97 (:97 at v12.4.0)",
+      "why": "TableCellOptions is a disjunction that includes the pill variant."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/TableCellOptions/oneOf/-",
+      "value": { "$ref": "#/definitions/TableMarkdownCellOptions" },
+      "source": "packages/grafana-schema/src/common/table.cue:97 (:97 at v12.4.0)",
+      "why": "TableCellOptions is a disjunction that includes the markdown variant."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/TableCellOptions/oneOf/-",
+      "value": { "$ref": "#/definitions/TableGeoCellOptions" },
+      "source": "packages/grafana-schema/src/common/table.cue:97 (:97 at v12.4.0)",
+      "why": "TableCellOptions is a disjunction that includes the geo variant."
+    },
+    {
+      "op": "replace",
+      "path": "/definitions/LineStyle/properties/fill/enum",
+      "value": ["solid", "dash", "dot", "square", "accessible"],
+      "source": "packages/grafana-schema/src/common/mudball.cue:41 (not in v12.4.0)",
+      "why": "Grafana 13 adds the \"accessible\" line style; the vendored enum rejects it."
+    }
+  ]
+}

@@ -8,13 +8,56 @@
  */
 
 import { defineBuiltin } from "../define";
+import type { AttributesMatch } from "./processors";
 
 /** What an OTTL processor does when a condition or statement errors at run time. */
 export type OttlErrorMode = "ignore" | "silent" | "propagate";
 
 // ── filter ───────────────────────────────────────────────────────────
 
-/** OTTL conditions per context. Telemetry matching any condition is dropped. */
+/** An attribute a legacy include/exclude block matches on (`filterconfig.Attribute`). */
+export interface FilterAttributeMatch {
+  key: string;
+  value?: unknown;
+}
+
+/** Options for the `regexp` match type (`filterset/regexp.Config`). */
+export interface FilterRegexpSettings {
+  cacheenabled?: boolean;
+  cachemaxnumentries?: number;
+}
+
+/**
+ * The filter processor's legacy `metrics.include` / `metrics.exclude` block
+ * (`filterconfig.MetricMatchProperties`). `expr` takes `expressions` instead
+ * of `metric_names`.
+ */
+export interface FilterMetricMatch {
+  match_type: "strict" | "regexp" | "expr";
+  regexp?: FilterRegexpSettings;
+  metric_names?: string[];
+  expressions?: string[];
+  resource_attributes?: FilterAttributeMatch[];
+}
+
+/** The filter processor's legacy `logs.include` / `logs.exclude` block (`LogMatchProperties`). */
+export interface FilterLogMatch {
+  match_type: "strict" | "regexp";
+  resource_attributes?: FilterAttributeMatch[];
+  record_attributes?: FilterAttributeMatch[];
+  severity_texts?: string[];
+  /** Matches records at or above `min`, a severity number or name such as `INFO`. */
+  severity_number?: { min: number | string; match_undefined?: boolean };
+  bodies?: string[];
+}
+
+/**
+ * Conditions per signal. Telemetry matching any condition is dropped.
+ *
+ * Each signal takes OTTL conditions or the legacy `include` / `exclude`
+ * match blocks (for traces, the legacy blocks sit under `spans`), not both:
+ * the collector rejects a signal that mixes them.
+ */
 export interface FilterProcessorConfig {
   /** Default `propagate`: an erroring condition fails the batch. `ignore` logs and moves on. */
   error_mode?: OttlErrorMode;
@@ -24,15 +67,27 @@ export interface FilterProcessorConfig {
     /** Drops the span event. */
     spanevent?: string[];
   };
+  /** Legacy span matching. With `include`, spans that do not match are dropped; with `exclude`, spans that match. */
+  spans?: { include?: AttributesMatch; exclude?: AttributesMatch };
   metrics?: {
     /** Drops the whole metric, e.g. `name == "http.server.duration" and type == METRIC_DATA_TYPE_HISTOGRAM`. */
     metric?: string[];
     /** Drops the data point. */
     datapoint?: string[];
+    /** Legacy: keeps only the metrics that match. */
+    include?: FilterMetricMatch;
+    /** Legacy: drops the metrics that match. */
+    exclude?: FilterMetricMatch;
+    /** Legacy: options for the `regexp` match type. */
+    regexp?: FilterRegexpSettings;
   };
   logs?: {
     /** Drops the log record, e.g. `severity_number < SEVERITY_NUMBER_WARN`. */
     log_record?: string[];
+    /** Legacy: keeps only the log records that match. */
+    include?: FilterLogMatch;
+    /** Legacy: drops the log records that match. */
+    exclude?: FilterLogMatch;
   };
 }
 
@@ -55,7 +110,15 @@ export const FilterProcessor = defineBuiltin<FilterProcessorConfig, "processor",
         if (typeof cond !== "string" || cond.trim() === "") problems.push(`${path}[${i}] is an empty condition`);
       });
     }
-    if (lists.every(([, list]) => !list || list.length === 0)) {
+    const legacy: Array<[string, boolean, boolean]> = [
+      ["traces", !!(c.traces?.span || c.traces?.spanevent), !!(c.spans?.include || c.spans?.exclude)],
+      ["metrics", !!(c.metrics?.metric || c.metrics?.datapoint), !!(c.metrics?.include || c.metrics?.exclude)],
+      ["logs", !!c.logs?.log_record, !!(c.logs?.include || c.logs?.exclude)],
+    ];
+    for (const [signal, ottl, matchBlocks] of legacy) {
+      if (ottl && matchBlocks) problems.push(`${signal} mixes OTTL conditions with include/exclude, which the collector rejects`);
+    }
+    if (lists.every(([, list]) => !list || list.length === 0) && legacy.every(([, , matchBlocks]) => !matchBlocks)) {
       problems.push("no condition is set for any signal, so the processor drops nothing");
     }
     return problems;

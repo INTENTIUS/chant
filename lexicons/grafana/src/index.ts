@@ -8,8 +8,15 @@ export { grafanaSerializer } from "./serializer";
 export {
   Datasource,
   DATASOURCE_TYPE,
+  ExternalDatasource,
+  EXTERNAL_DATASOURCE_TYPE,
   BUILTIN_DATASOURCE_UIDS,
   isDatasourceEntity,
+  isExternalDatasource,
+  isDatasourceDeclaration,
+  type ExternalDatasourceProps,
+  type ExternalDatasourceEntity,
+  type ExternalDatasourceConstructor,
   type DatasourceProps,
   type DatasourceEntity,
   type DatasourceConstructor,
@@ -126,6 +133,7 @@ export {
   variableModel,
   datasourceRef,
   provisionedDatasource,
+  externalDatasourceRecord,
   provisionedProvider,
   datasourcesYaml,
   dashboardProvidersYaml,
@@ -137,6 +145,7 @@ export {
   type BuiltDashboard,
   type GrafanaIndex,
   type ProvisionedDatasource,
+  type ExternalDatasourceRecord,
   type ProvisionedProvider,
   type DashboardJson,
   type PanelJson,
@@ -147,12 +156,22 @@ export {
 export {
   validateGrafanaOutput,
   issuesFor,
+  knownDatasourcesOf,
   variableReferences,
   type GrafanaIssue,
   type GrafanaIssueCode,
   type GrafanaArtifacts,
   type DashboardDoc,
 } from "./validate-output";
+export {
+  datasourceUses,
+  resolveDatasourceRef,
+  knownDatasources,
+  type DatasourceUse,
+  type ResolvedDatasource,
+  type KnownDatasource,
+  type DatasourceRefJson,
+} from "./datasource-refs";
 export { validateDashboardSchema, type SchemaProblem } from "./schema-validate";
 export { looksLikeDashboard, looksLikeDatasourceProvisioning, looksLikeDashboardProvisioning } from "./detect";
 export { slugUid, isValidUid, UID_PATTERN, type DeepPartial } from "./util";
