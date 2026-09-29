@@ -55,5 +55,6 @@ GRAF101 and GRAF102 compare dashboards with the datasources declared in the same
 ## Plain-data API
 
 - `buildGrafana(entities)` and `grafanaFiles(entities)` render every file by path, for embedding in another lexicon's output (a ConfigMap, a volume).
+- `GrafanaConfigMaps` and `grafanaVolumes` from `@intentius/chant-lexicon-grafana/k8s` deliver dashboards and provisioning to Kubernetes as ConfigMaps labelled for the Grafana Helm chart's sidecar (`grafana_dashboard`, `grafana_datasource`), or mounted into a plain Grafana Deployment.
 - `renderDashboard(dashboard)` and `dashboardJson(dashboard)` render one dashboard.
 - `validateGrafanaOutput({ dashboards, datasources })` and `validateDashboardSchema(json)` run the checks without a build.

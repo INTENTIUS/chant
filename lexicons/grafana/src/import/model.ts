@@ -23,6 +23,24 @@ export function isDeclRef(v: unknown): v is DeclRef {
   return typeof v === "object" && v !== null && typeof (v as DeclRef).$decl === "string" && Object.keys(v).length === 1;
 }
 
+/**
+ * A value written as a call to a function the package exports, e.g.
+ * `customTransformation("sortBy", { ... })` for a transformation the typed
+ * form can't hold. The arguments are values like any other.
+ */
+export interface CallValue {
+  readonly $call: string;
+  readonly args: readonly unknown[];
+}
+
+export function callValue(fn: string, args: readonly unknown[]): CallValue {
+  return { $call: fn, args };
+}
+
+export function isCallValue(v: unknown): v is CallValue {
+  return typeof v === "object" && v !== null && typeof (v as CallValue).$call === "string" && Array.isArray((v as CallValue).args) && Object.keys(v).length === 2;
+}
+
 /** Where a declaration's variable name comes from: a text to camelCase, or another declaration's name plus a suffix. */
 export type NameHint = string | { readonly of: string; readonly suffix: string };
 
