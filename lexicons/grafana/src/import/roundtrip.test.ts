@@ -12,7 +12,7 @@
  * the check that nothing was dropped silently.
  *
  * The generated source must lint clean (COR001, COR004 and COR009 among
- * the rules), and the rebuilt dashboards must pass GRAF101-GRAF107 without
+ * the rules), and the rebuilt dashboards must pass GRAF101-GRAF110 without
  * errors. generated-types.e2e.test.ts type-checks the generated source.
  */
 
@@ -52,7 +52,7 @@ interface Imported {
   lint: { errorCount: number; warningCount: number; output: string };
 }
 
-/** GRAF101-GRAF107 over a build's grafana entities, as the post-synth checks run them: declared and external datasources included. */
+/** GRAF101-GRAF110 over a build's grafana entities, as the post-synth checks run them: declared and external datasources included. */
 function checks(entities: Map<string, Declarable>): GrafanaIssue[] {
   const built = buildGrafana(new Map([...entities].filter(([, e]) => e.lexicon === "grafana")));
   return validateGrafanaOutput({
@@ -112,10 +112,10 @@ describe("dashboard JSON -> TypeScript -> dashboard JSON", () => {
       // GRAF101 saying it cannot check a dashboard that names its datasources only through variables.
       expect(out.issues.filter((i) => !(i.code === "GRAF101" && i.severity === "warning" && i.message.includes("cannot check")))).toEqual([]);
       expect(out.paths.every((p) => p.startsWith("chant-fx-"))).toBe(true);
-      // The ad hoc filter and the annotation are named, not dropped silently.
+      // The annotation is named, not dropped silently; the ad hoc filter is carried.
       if (file.includes("checkout")) {
-        expect(out.warnings).toContainEqual(expect.stringContaining('variable "Filters" (adhoc) is not carried'));
         expect(out.warnings).toContainEqual(expect.stringContaining('the annotation "Deploys"'));
+        expect(out.source).toContain("const filters = new AdhocVariable({");
         expect(out.source).toContain("repeat: env,");
         expect(out.source).toContain("collapsed: true,");
       } else if (file.includes("slo")) {
@@ -165,6 +165,23 @@ describe("dashboard JSON -> TypeScript -> dashboard JSON", () => {
     ]);
     expect(out.text).toContain('"uid": "${DS_LOKI}"');
     expect(out.text).not.toContain("__inputs");
+  });
+
+  test("ad hoc, group by and switch variables, and object-form queries, import with no warnings", async () => {
+    const out = await expectRoundTrip(read("exports/grafana-13.2.2/drilldown.json"));
+    expect(out.warnings).toEqual([]);
+    for (const cls of ["AdhocVariable", "GroupByVariable", "SwitchVariable"]) expect(out.source).toContain(`new ${cls}({`);
+    expect(out.source).toContain("qryType: 4,");
+    expect(out.source).toContain('enabledValue: "0.99",');
+    // The rebuilt JSON keeps the object query, so Grafana's variable editor opens it in the form it was written in.
+    const namespace = (out.rebuilt!.templating as { list: Json[] }).list.find((v) => v.name === "namespace")!;
+    expect(namespace.query).toEqual({ qryType: 1, query: "label_values(kube_namespace_created, namespace)", refId: "PrometheusVariableQueryEditor-VariableQuery" });
+    // Repeated over a multi-value variable: no GRAF110.
+    expect(out.issues.filter((i) => i.code === "GRAF110")).toEqual([]);
+    for (const file of ["exports/grafana-12.4.11/drilldown.json", "exports/grafana-12.4.11/drilldown.external.json", "exports/grafana-13.2.2/drilldown.external.json"]) {
+      const warnings = (await expectRoundTrip(read(file))).warnings;
+      expect(warnings.filter((w) => !w.startsWith("__inputs:") && !w.startsWith("dashboard: __requires")), file).toEqual([]);
+    }
   });
 
   for (const file of COMMUNITY) {
@@ -268,13 +285,15 @@ describe("chant import dashboard.json", () => {
         expect(result.error).toBeUndefined();
         expect(result.success).toBe(true);
         expect(result.lexicon).toBe("grafana");
+        // Nine variables (the two __inputs datasources among them): more than COR009's eight per module.
         expect(result.generatedFiles).toEqual([
-          "chant-fx-checkout/variables.ts",
+          "chant-fx-checkout/variables-1.ts",
+          "chant-fx-checkout/variables-2.ts",
           "chant-fx-checkout/panels.ts",
           "chant-fx-checkout/row-details-for-job.ts",
           "chant-fx-checkout/dashboard.ts",
         ]);
-        expect(result.warnings).toContainEqual(expect.stringContaining('variable "Filters" (adhoc) is not carried'));
+        expect(result.warnings.join("\n")).not.toContain("is not carried: chant has no");
         const built = await build(output, [grafanaSerializer]);
         expect(built.errors).toEqual([]);
         const text = (built.outputs.get("grafana") as SerializerResult).files!["dashboards/chant-fx-checkout.json"];

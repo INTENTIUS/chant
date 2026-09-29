@@ -11,7 +11,7 @@ The grafana lexicon's rules use the `GRAF` prefix. `GRAF0xx` rules read your Typ
 |---|---|---|
 | GRAF001 | error | a literal dashboard or datasource `uid` Grafana rejects, or a variable `name` `$name` can't reference |
 | GRAF002 | error | a literal secret in a datasource's `secureJsonData` |
-| GRAF101 | error / warning | a panel, query or query variable using a datasource no `Datasource` or `ExternalDatasource` in the build declares, or a datasource variable whose plugin type none has (error); queries with no datasource at all, or a build that declares no datasource, so references cannot be checked (warning) |
+| GRAF101 | error / warning | a panel, query, or query, ad hoc or group by variable using a datasource no `Datasource` or `ExternalDatasource` in the build declares, or a datasource variable whose plugin type none has (error); queries with no datasource at all, or a build that declares no datasource, so references cannot be checked (warning) |
 | GRAF102 | error | a query sent to a datasource of another plugin type |
 | GRAF103 | error | a `$variable` in a query, title, datasource or repeat that the dashboard doesn't declare |
 | GRAF104 | error | duplicate dashboard uids, datasource uids or names, panel ids, variable names or refIds |
@@ -19,6 +19,7 @@ The grafana lexicon's rules use the `GRAF` prefix. `GRAF0xx` rules read your Typ
 | GRAF106 | error | a dashboard or datasource uid Grafana rejects, or a dashboard with no title |
 | GRAF107 | error / warning | a value the pinned Grafana schema doesn't allow (error), a key it doesn't know (warning) |
 | GRAF108 | error | a panel query or query variable sent to a Prometheus datasource that is not valid PromQL |
+| GRAF110 | warning | a panel or row repeated over a variable that only ever holds one value |
 
 ## GRAF001
 
@@ -30,7 +31,7 @@ Write secrets as `$__env{NAME}`, `$__file{/path}` or `${NAME}`. Grafana expands 
 
 ## GRAF101
 
-Every datasource reference in a dashboard (a panel's, each query's, each query variable's) must be the uid of a declared `Datasource` or `ExternalDatasource`. Grafana's own pseudo-datasources (`-- Mixed --`, `-- Dashboard --`, `-- Grafana --`) and datasource-variable refs (`${ds}`) are exempt. A panel with queries and no datasource anywhere is a warning: Grafana sends the queries to its default datasource.
+Every datasource reference in a dashboard (a panel's, each query's, and each query, ad hoc and group by variable's) must be the uid of a declared `Datasource` or `ExternalDatasource`. Grafana's own pseudo-datasources (`-- Mixed --`, `-- Dashboard --`, `-- Grafana --`) and datasource-variable refs (`${ds}`) are exempt. A panel with queries and no datasource anywhere is a warning: Grafana sends the queries to its default datasource.
 
 A datasource variable offers the datasources of its `pluginType`. If no declared `Datasource` or `ExternalDatasource` has that type, the variable has nothing the build knows to choose from, and GRAF101 reports it.
 
@@ -62,8 +63,12 @@ The dashboard is validated against the dashboard schema at `GRAFANA_SCHEMA_PIN`,
 
 ## GRAF108
 
-Every panel query and query variable whose datasource resolves to a `prometheus` one is parsed with the grammar the Prometheus web UI's editor uses (`@prometheus-io/lezer-promql`, through the prometheus lexicon's `checkPromql`). The datasource is resolved the way GRAF101 and GRAF102 resolve it: the query's own ref, else its panel's, a datasource variable's `pluginType`, or the `type` on a ref to a datasource the build doesn't declare. A query whose datasource can't be told, one with no ref anywhere, is not parsed, and neither is LogQL or TraceQL. Library panels in an export's `__elements` are checked too.
+Every panel query and query variable whose datasource resolves to a `prometheus` one is parsed with the grammar the Prometheus web UI's editor uses (`@prometheus-io/lezer-promql`, through the prometheus lexicon's `checkPromql`). The datasource is resolved the way GRAF101 and GRAF102 resolve it: the query's own ref, else its panel's, a datasource variable's `pluginType`, or the `type` on a ref to a datasource the build doesn't declare. A query whose datasource can't be told, one with no ref anywhere, is not parsed, and neither is LogQL or TraceQL. Library panels in an export's `__elements` are checked too. A query variable in object form (Prometheus writes `{ qryType, query, refId }`) is checked on its `query`.
 
 Grafana replaces template variables before Prometheus sees the query, so the check does too. `$var`, `${var}`, `${var:format}`, `[[var]]` and the `$__` macros become a duration inside `[...]` or after `offset` (`[$__rate_interval]`, `[$window]`), a number for `$__range_s`, `$__interval_ms`, `$__from` and `$__to`, and a name anywhere else (`$metric{...}`, `by ($label)`). Inside a quoted string they are left alone. A query variable's `label_values(selector, label)`, `label_names(selector)` and `query_result(expr)` are checked on the selector or expression; `metrics(regex)` and bare `label_values(label)` hold no PromQL.
 
 It is a syntax check: `sum(x{cluster="$cluster"}` (a missing bracket) and `[5 m]` fail, `rate` over an instant vector parses. The message gives the offset in the query as written.
+
+## GRAF110
+
+Grafana repeats a panel or row once per selected value of the variable its `repeat` names, and only over a variable that holds a list of values: a query, custom, datasource or group by variable. Repeated over an ad hoc, constant, interval, textbox or switch variable, the panel shows once and Grafana logs an error in the browser console. Repeated over a query, custom or datasource variable with neither `multi` nor `includeAll`, it shows once, since only one value can be selected. Both are warnings: the dashboard loads, it just doesn't repeat. Set `multi: true` or `includeAll: true` on the variable, or repeat over another one. A `repeat` that names no variable of the dashboard is GRAF103.

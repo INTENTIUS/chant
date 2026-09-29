@@ -208,26 +208,84 @@ describe("variables", () => {
     expect(p.declarations.filter((d) => d.module === "variables").map((d) => d.id)[0]).toBe("variable:ds");
   });
 
-  test("a type the lexicon has no class for is reported and left out (#2952)", () => {
-    const { plan: p, warnings, edits } = plan([{ type: "adhoc", name: "Filters", datasource: prom, filters: [] }]);
+  test("a type the lexicon has no class for is reported and left out", () => {
+    const { plan: p, warnings, edits } = plan([{ type: "system", name: "__org", query: "" }]);
     expect(p.declarations.filter((d) => d.module === "variables")).toEqual([]);
-    expect(warnings).toEqual(['variable "Filters" (adhoc) is not carried: chant has no adhoc variable yet (#2952), so it is left out']);
+    expect(warnings).toEqual(['variable "__org" (system) is not carried: chant has no system variable, so it is left out']);
     expect(edits).toContainEqual({ op: "remove", path: "/templating/list/0" });
   });
 
-  test("an object query is written as its query string; keys besides refId are named", () => {
+  test("ad hoc, group by and switch variables", () => {
     const { plan: p, warnings, edits } = plan([
-      { type: "query", name: "job", datasource: prom, query: { qryType: 1, query: "label_values(job)", refId: "PrometheusVariableQueryEditor-VariableQuery" } },
+      {
+        type: "adhoc",
+        name: "Filters",
+        datasource: prom,
+        filters: [{ key: "namespace", operator: "=", value: "shop" }],
+        baseFilters: [],
+        defaultKeys: [{ text: "pod", value: "pod" }],
+        allowCustomValue: false,
+        enableGroupBy: false,
+      },
+      {
+        type: "groupby",
+        name: "by",
+        datasource: prom,
+        options: [{ text: "pod", value: "pod" }, { text: "Node", value: "node" }],
+        current: { text: ["node"], value: ["node"] },
+        defaultValue: { text: ["pod"], value: ["pod"] },
+      },
+      { type: "switch", name: "on", current: { text: "true", value: "true" }, options: [{ text: "true", value: "true" }, { text: "false", value: "false" }] },
+      { type: "switch", name: "q", current: { text: "0.5", value: "0.5" }, options: [{ text: "0.99", value: "0.99" }, { text: "0.5", value: "0.5" }] },
     ]);
-    expect(decl(p.declarations, "variable:job").props!.query).toBe("label_values(job)");
-    expect(edits).toContainEqual({ op: "replace", path: "/templating/list/0/query", value: "label_values(job)" });
-    expect(warnings).toEqual(['variable "job": query is an object; it is written as its query string, and its qryType is not carried (#2952)']);
-    expect(plan([{ type: "query", name: "j", datasource: prom, query: { query: "x", refId: "r" } }]).warnings).toEqual([]);
+    expect(warnings).toEqual([]);
+    expect(edits.filter((e) => "path" in e && e.path.startsWith("/templating"))).toEqual([]);
+    const props = (id: string) => [decl(p.declarations, id).className, decl(p.declarations, id).props];
+    expect(props("variable:Filters")).toEqual([
+      "AdhocVariable",
+      {
+        name: "Filters",
+        datasource: { $decl: "datasource:prometheus:prom" },
+        filters: [{ key: "namespace", operator: "=", value: "shop" }],
+        defaultKeys: [{ text: "pod", value: "pod" }],
+        allowCustomValue: false,
+      },
+    ]);
+    expect(props("variable:by")).toEqual([
+      "GroupByVariable",
+      {
+        name: "by",
+        datasource: { $decl: "datasource:prometheus:prom" },
+        options: ["pod", { text: "Node", value: "node" }],
+        defaultValue: ["pod"],
+        current: { text: ["node"], value: ["node"] },
+      },
+    ]);
+    expect(props("variable:on")).toEqual(["SwitchVariable", { name: "on", enabled: true }]);
+    expect(props("variable:q")).toEqual(["SwitchVariable", { name: "q", enabledValue: "0.99", disabledValue: "0.5" }]);
   });
 
-  test("an object query with no query string cannot be carried", () => {
-    const { warnings } = plan([{ type: "query", name: "ns", datasource: { type: "cloudwatch", uid: "cw" }, query: { namespace: "AWS/EC2" } }]);
-    expect(warnings).toEqual([expect.stringMatching(/^variable "ns" is not carried: its query is an object with no query string/)]);
+  test("a switch whose current value is neither of its values starts off, and says so", () => {
+    const { warnings, edits } = plan([{ type: "switch", name: "s", current: { text: "maybe", value: "maybe" }, options: [{ text: "true", value: "true" }, { text: "false", value: "false" }] }]);
+    expect(warnings).toEqual(['variable "s": current is "maybe", neither the enabled nor the disabled value; the switch starts off']);
+    expect(edits).toContainEqual({ op: "replace", path: "/templating/list/0/current", value: { text: "false", value: "false" } });
+  });
+
+  test("an ad hoc or group by variable with no datasource chant can refer to is left out", () => {
+    const { warnings } = plan([{ type: "adhoc", name: "f", datasource: { type: "prometheus" }, filters: [] }]);
+    expect(warnings).toContainEqual(expect.stringMatching(/^variable "f" is not carried: it has no datasource chant can refer to, and AdhocVariable needs one/));
+  });
+
+  test("an object query is carried as it is, with a definition that differs from its text", () => {
+    const query = { qryType: 1, query: "label_values(job)", refId: "PrometheusVariableQueryEditor-VariableQuery" };
+    const { plan: p, warnings, edits } = plan([
+      { type: "query", name: "job", datasource: prom, query, definition: "label_values(job)" },
+      { type: "query", name: "ns", datasource: { type: "cloudwatch", uid: "cw" }, query: { namespace: "AWS/EC2" }, definition: "Namespaces" },
+    ]);
+    expect(warnings).toEqual([]);
+    expect(edits.filter((e) => "path" in e && e.path.startsWith("/templating"))).toEqual([]);
+    expect(decl(p.declarations, "variable:job").props).toEqual({ name: "job", datasource: { $decl: "datasource:prometheus:prom" }, query });
+    expect(decl(p.declarations, "variable:ns").props).toMatchObject({ query: { namespace: "AWS/EC2" }, definition: "Namespaces" });
   });
 
   test("keys at Grafana's default are dropped quietly; others are named", () => {

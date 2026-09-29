@@ -164,7 +164,7 @@ function usesOf(dashboard: Json, known: ReadonlyMap<string, KnownDatasource>, li
       const expr = use.target?.expr;
       if (typeof expr !== "string" || expr.trim() === "") continue;
       out.push({ where: library ? `library panel "${library}" query ${String(use.target?.refId ?? "?")}` : use.where, expr });
-    } else if (use.kind === "variable" && use.variable && !library) {
+    } else if (use.kind === "variable" && use.variable?.type === "query" && !library) {
       const text = variableQueryText(use.variable);
       if (text) for (const expr of variablePromql(text)) out.push({ where: `${use.where} query`, expr });
     }

@@ -48,7 +48,7 @@ export type ResolvedDatasource =
 
 /** One place a dashboard names, or inherits, a datasource. */
 export interface DatasourceUse {
-  /** A panel's own `datasource`, one of its queries (`targets`), or a query variable. */
+  /** A panel's own `datasource`, one of its queries (`targets`), or a query, ad hoc or group by variable. */
   kind: "panel" | "query" | "variable";
   /** A human description, e.g. `panel "Latency" (id 3) query B`. */
   where: string;
@@ -146,10 +146,14 @@ export function resolveDatasourceRef(
   return { kind: "undeclared", uid: ref.uid, ...(ref.type ? { type: ref.type } : {}) };
 }
 
+/** Variable types that send requests to a datasource of their own: a query variable's query, an ad hoc or group by variable's key and value lookups. */
+const DATASOURCE_VARIABLE_TYPES: ReadonlySet<string> = new Set(["query", "adhoc", "groupby"]);
+
 /**
  * Every place a dashboard names or inherits a datasource: each panel's own
  * ref, each query (with its own ref, or its panel's when it has none), and
- * each query variable. Rows are left out; their panels carry the ref.
+ * each query, ad hoc and group by variable. Rows are left out; their panels
+ * carry the ref.
  */
 export function datasourceUses(dashboard: Json, known: ReadonlyMap<string, KnownDatasource>): DatasourceUse[] {
   const dsVars = datasourceVariables(dashboard);
@@ -175,7 +179,7 @@ export function datasourceUses(dashboard: Json, known: ReadonlyMap<string, Known
     }
   }
   for (const variable of variablesOf(dashboard)) {
-    if (variable.type !== "query") continue;
+    if (!DATASOURCE_VARIABLE_TYPES.has(String(variable.type))) continue;
     const ref = refOf(variable.datasource);
     out.push({
       kind: "variable",

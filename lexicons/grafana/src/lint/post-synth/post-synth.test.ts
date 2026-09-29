@@ -10,7 +10,7 @@ import { Datasource, ExternalDatasource } from "../../datasource";
 import { Dashboard } from "../../dashboard";
 import { Row, StatPanel, TimeSeriesPanel, TablePanel, TextPanel } from "../../panels";
 import { LokiQuery, PromQuery, TempoQuery } from "../../query";
-import { DatasourceVariable, QueryVariable } from "../../variables";
+import { AdhocVariable, CustomVariable, DatasourceVariable, GroupByVariable, IntervalVariable, QueryVariable, SwitchVariable } from "../../variables";
 import { graf101 } from "./graf101";
 import { graf102 } from "./graf102";
 import { graf103 } from "./graf103";
@@ -19,6 +19,7 @@ import { graf105 } from "./graf105";
 import { graf106 } from "./graf106";
 import { graf107 } from "./graf107";
 import { graf108 } from "./graf108";
+import { graf110 } from "./graf110";
 import { prometheusQueries } from "../../promql-check";
 import { knownDatasources } from "../../datasource-refs";
 
@@ -189,6 +190,18 @@ describe("GRAF103: undeclared variables", () => {
   });
 });
 
+describe("GRAF101, GRAF103 on ad hoc and group by variables", () => {
+  test("checks an ad hoc or group by variable's datasource like a query variable's", () => {
+    const d = dashboardJson([], [
+      { type: "adhoc", name: "f", datasource: { type: "prometheus", uid: "gone" }, filters: [] },
+      { type: "groupby", name: "by", datasource: { type: "prometheus", uid: "${nope}" } },
+    ]);
+    const ctx = ctxOfJson(d, [{ name: "Prometheus", type: "prometheus", uid: "prom" }]);
+    expect(graf101.check(ctx).map((x) => x.message)).toEqual([expect.stringContaining('variable "f" uses datasource uid "gone"')]);
+    expect(graf103.check(ctx).map((x) => x.message)).toEqual([expect.stringContaining('variable "by" datasource uses $nope')]);
+  });
+});
+
 describe("GRAF104: duplicates", () => {
   test("flags duplicate dashboard uids, datasource names and panel ids", () => {
     const again = new Datasource({ name: "Prometheus", type: "prometheus", uid: "prom-2" });
@@ -355,6 +368,54 @@ describe("GRAF108: PromQL syntax", () => {
   test("checks refs to a Prometheus the build does not declare, by the ref's own type", () => {
     const dash = dashboardJson([panelJson({ datasource: { type: "prometheus", uid: "elsewhere" }, targets: [{ refId: "A", expr: "sum(up" }] })]);
     expect(ids(graf108, ctxOfJson(dash))).toEqual([["GRAF108", "error"]]);
+  });
+});
+
+describe("GRAF110: repeats", () => {
+  test("flags a repeat over a variable Grafana cannot repeat over, and over one that holds one value", () => {
+    const ds = new DatasourceVariable({ name: "ds", pluginType: "prometheus" });
+    const w = new IntervalVariable({ name: "w", values: ["1m", "5m"] });
+    const on = new SwitchVariable({ name: "on" });
+    const f = new AdhocVariable({ name: "f", datasource: ds });
+    const env = new CustomVariable({ name: "env", values: ["a", "b"] });
+    const panels = [new StatPanel({ title: "by w", repeat: w }), new StatPanel({ title: "by on", repeat: on }), new StatPanel({ title: "by f", repeat: f }), new StatPanel({ title: "by env", repeat: env })];
+    const diags = graf110.check(ctxOf({ prometheus, d: new Dashboard({ title: "D", variables: [ds, w, on, f, env], panels }) }));
+    expect(diags.map((x) => [x.checkId, x.severity])).toEqual(Array(4).fill(["GRAF110", "warning"]));
+    expect(diags.map((x) => x.message)).toEqual([
+      expect.stringContaining('panel "by w" (id 1) repeats over $w, an interval variable, which Grafana cannot repeat over'),
+      expect.stringContaining("repeats over $on, a switch variable"),
+      expect.stringContaining("repeats over $f, an ad hoc variable"),
+      expect.stringContaining("repeats over $env, a custom variable with neither multi nor includeAll"),
+    ]);
+  });
+
+  test("checks a row's repeat too", () => {
+    const env = new CustomVariable({ name: "env", values: ["a", "b"] });
+    const row = new Row({ title: "Per env", repeat: env, panels: [new StatPanel({ title: "s" })] });
+    expect(graf110.check(ctxOf({ d: new Dashboard({ title: "D", variables: [env], panels: [row] }) })).map((x) => x.message)).toEqual([
+      expect.stringContaining('row "Per env" repeats over $env'),
+    ]);
+  });
+
+  test("passes a multi-value or include-all variable, a group by variable, and leaves an undeclared one to GRAF103", () => {
+    const env = new CustomVariable({ name: "env", values: ["a", "b"], multi: true });
+    const job = new QueryVariable({ name: "job", datasource: prometheus, query: { query: "label_values(up, job)", qryType: 1 }, includeAll: true });
+    const ds = new DatasourceVariable({ name: "ds", pluginType: "prometheus", multi: true });
+    const by = new GroupByVariable({ name: "by", datasource: prometheus });
+    const panels = [env, job, ds, by].map((v) => new StatPanel({ title: v.variableName, repeat: v }));
+    panels.push(new StatPanel({ title: "gone", repeat: "gone" }));
+    expect(graf110.check(ctxOf({ prometheus, d: new Dashboard({ title: "D", variables: [env, job, ds, by], panels }) }))).toEqual([]);
+  });
+});
+
+describe("GRAF108 on object-form variable queries", () => {
+  test("parses the query text of an object query sent to Prometheus", () => {
+    const ds = new DatasourceVariable({ name: "ds", pluginType: "prometheus" });
+    const bad = new QueryVariable({ name: "bad", datasource: ds, query: { qryType: 1, query: 'label_values(up{job="x", instance)', refId: "PrometheusVariableQueryEditor-VariableQuery" } });
+    const good = new QueryVariable({ name: "good", datasource: ds, query: { qryType: 4, query: 'kube_pod_info{namespace=~"$ns"}' } });
+    const ns = new CustomVariable({ name: "ns", values: ["a"] });
+    const diags = graf108.check(ctxOf({ prometheus, d: new Dashboard({ title: "D", variables: [ds, ns, bad, good] }) }));
+    expect(diags.map((x) => x.message)).toEqual([expect.stringContaining('variable "bad" query is not valid PromQL')]);
   });
 });
 

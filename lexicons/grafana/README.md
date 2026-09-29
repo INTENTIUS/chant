@@ -22,7 +22,7 @@ export { prometheus, rate, requests, overview };
 | dashboards | `Dashboard`, `Row`, `DashboardProvider` |
 | panels | `TimeSeriesPanel`, `StatPanel`, `GaugePanel`, `TablePanel`, `LogsPanel`, `TracesPanel`, `HeatmapPanel`, `TextPanel` |
 | queries | `PromQuery` (PromQL), `TempoQuery` (TraceQL), `LokiQuery` (LogQL) |
-| variables | `QueryVariable`, `CustomVariable`, `IntervalVariable`, `DatasourceVariable`, `ConstantVariable`, `TextboxVariable` |
+| variables | `QueryVariable`, `CustomVariable`, `IntervalVariable`, `DatasourceVariable`, `ConstantVariable`, `TextboxVariable`, `AdhocVariable`, `GroupByVariable`, `SwitchVariable` |
 | datasources | `Datasource`, generic in its plugin type |
 
 Panel options, field config and query fields are generated from Grafana's JSON Schemas as published by `grafana/grafana-foundation-sdk`, vendored in `src/spec/schemas/`, pinned by commit and digest in `GRAFANA_SCHEMA_PIN`, and corrected against Grafana's CUE by a checked-in overlay in `src/spec/overlay/`. They track Grafana 12.4 and 13.x. `definePanel` and `defineQuery` add plugins chant doesn't ship.
@@ -43,7 +43,7 @@ export const agents = AgentDashboard({ genAi: genAiMetrics(), datasource: promet
 
 ## Checks
 
-GRAF001 and GRAF002 run on source (uid and variable-name syntax, literal secrets). GRAF101 to GRAF108 run after a build: undeclared or mistyped datasources, undeclared variables, duplicate uids and ids, panels off the grid or overlapping, uids Grafana rejects, validation against the pinned dashboard, panel and query schemas (an unknown key is a warning), and a PromQL syntax check on every query sent to a Prometheus.
+GRAF001 and GRAF002 run on source (uid and variable-name syntax, literal secrets). GRAF101 to GRAF108 and GRAF110 run after a build: undeclared or mistyped datasources, undeclared variables, duplicate uids and ids, panels off the grid or overlapping, uids Grafana rejects, validation against the pinned dashboard, panel and query schemas (an unknown key is a warning), a PromQL syntax check on every query sent to a Prometheus, and a panel or row repeated over a variable that only ever holds one value.
 
 GRAF101 and GRAF102 compare dashboards with the datasources declared in the same build root (chant #1939); keep them together, and declare a datasource that already exists in Grafana with `ExternalDatasource`, which the checks count and the build never provisions.
 

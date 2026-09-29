@@ -61,15 +61,42 @@ Panel and row ids default to 1, 2, 3… in the order they appear, skipping any i
 
 | Class | Grafana `type` | Key props |
 |---|---|---|
-| `QueryVariable` | `query` | `datasource`, `query`, `regex`, `refresh` (`"never"`, `"onLoad"`, `"onTimeRangeChange"`), `sort` |
+| `QueryVariable` | `query` | `datasource`, `query`, `definition`, `regex`, `refresh` (`"never"`, `"onLoad"`, `"onTimeRangeChange"`), `sort` |
 | `CustomVariable` | `custom` | `values` |
 | `IntervalVariable` | `interval` | `values`, `auto`, `autoCount`, `autoMin` |
 | `DatasourceVariable` | `datasource` | `pluginType`, `regex` |
 | `ConstantVariable` | `constant` | `value` (always hidden) |
 | `TextboxVariable` | `textbox` | `value` |
+| `AdhocVariable` | `adhoc` | `datasource`, `filters`, `baseFilters`, `defaultKeys`, `allowCustomValue`, `enableGroupBy` |
+| `GroupByVariable` | `groupby` | `datasource`, `options`, `defaultValue`, `allowCustomValue` |
+| `SwitchVariable` | `switch` | `enabled`, `enabledValue` (default `"true"`), `disabledValue` (default `"false"`) |
 
-All take `name`, `label`, `description`, `hide` (`"label"`, `"valueOnly"`, `"hidden"`), `skipUrlSync` and `current`; the multi-value ones take `multi`, `includeAll` and `allValue`.
+All take `name`, `label`, `description`, `hide` (`"label"`, `"valueOnly"`, `"hidden"`) and `skipUrlSync`, and all but the switch take `current`; the query, custom and datasource variables take `multi`, `includeAll` and `allValue`.
+
+A `QueryVariable`'s `query` is a string, or the object the datasource's variable editor writes, which Grafana hands to the datasource as it is. Prometheus writes `{ qryType, query, refId }`; the `PrometheusVariableQuery` type lists its fields. The object form keeps the editor's own form (label values, series query, and so on) when the dashboard is opened in Grafana; `definition` defaults to the query text.
+
+```ts
+const namespace = new QueryVariable({
+  name: "namespace",
+  datasource: prometheus,
+  query: { qryType: 1, query: "label_values(kube_namespace_created, namespace)" },
+  multi: true,
+  includeAll: true,
+});
+```
+
+An `AdhocVariable` adds its filters (`{ key, operator, value }`) to every query sent to its datasource, and a `GroupByVariable` adds a grouping by the keys selected; no query names them. Both ask the datasource for keys unless given `defaultKeys` or `options`. A `SwitchVariable` is `$name` set to `enabledValue` or `disabledValue`.
+
+These three depend on the Grafana version:
+
+| Class | Grafana |
+|---|---|
+| `AdhocVariable` | every supported version; `enableGroupBy` is new in 13 and needs the `dashboardUnifiedDrilldownControls` feature toggle |
+| `GroupByVariable` | in the dashboard schema since 10.4, but experimental in 12.4 and 13.x: with the `groupByVariable` feature toggle off, Grafana drops the variable when it loads the dashboard. Grafana 12.4 also cannot export a dashboard that has one |
+| `SwitchVariable` | 12.3 and later |
 
 A `DatasourceVariable` can be passed anywhere a datasource goes. The reference is written as `{ type: <pluginType>, uid: "${name}" }`, and its type parameter keeps a `PromQuery` from using a Loki datasource variable.
 
 Queries reference variables in their text, `$name` or `${name}`. GRAF103 checks each one is declared on the dashboard; Grafana's own `$__…` variables need no declaration.
+
+A panel or row with `repeat` is copied once per selected value of that variable. Grafana repeats only over a query, custom, datasource or group by variable, and a query, custom or datasource one needs `multi` or `includeAll` to have more than one value; GRAF110 warns about a repeat that can only ever show one copy.

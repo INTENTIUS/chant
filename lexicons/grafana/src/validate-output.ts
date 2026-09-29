@@ -1,5 +1,5 @@
 /**
- * The checks behind GRAF101-GRAF108, as plain functions over built Grafana
+ * The checks behind GRAF101-GRAF108 and GRAF110, as plain functions over built Grafana
  * output: dashboard JSON documents and provisioned datasources. The
  * post-synth checks run them over a build; anything else holding the same
  * JSON (a test, another lexicon embedding dashboards) can call them directly.
@@ -24,12 +24,12 @@ import {
   type DatasourceRefJson,
   type KnownDatasource,
 } from "./datasource-refs";
-import { isBuiltinVariable } from "./variables";
+import { isBuiltinVariable, MULTI_VALUE_KINDS } from "./variables";
 import { isValidUid } from "./util";
 import { validateDashboardSchema } from "./schema-validate";
 import { checkGrafanaPromql, prometheusQueries } from "./promql-check";
 
-export type GrafanaIssueCode = "GRAF101" | "GRAF102" | "GRAF103" | "GRAF104" | "GRAF105" | "GRAF106" | "GRAF107" | "GRAF108";
+export type GrafanaIssueCode = "GRAF101" | "GRAF102" | "GRAF103" | "GRAF104" | "GRAF105" | "GRAF106" | "GRAF107" | "GRAF108" | "GRAF110";
 
 export interface GrafanaIssue {
   code: GrafanaIssueCode;
@@ -201,8 +201,12 @@ export function checkVariables(a: GrafanaArtifacts): GrafanaIssue[] {
       }
     }
     for (const v of variablesOf(d)) {
+      const ref = v.datasource as DatasourceRefJson | undefined;
+      if (ref && typeof ref === "object" && isVariableUid(ref.uid)) {
+        for (const n of variableReferences(ref.uid!)) if (n !== v.name) report(n, `variable "${String(v.name)}" datasource`);
+      }
       if (v.type !== "query") continue;
-      const names = new Set(stringsIn(v.query, new Set()).flatMap(variableReferences));
+      const names = new Set(stringsIn(v.query, new Set(["refId"])).flatMap(variableReferences));
       for (const n of names) if (n !== v.name) report(n, `variable "${String(v.name)}" query`);
     }
   }
@@ -387,6 +391,44 @@ export function checkPromqlSyntax(a: GrafanaArtifacts): GrafanaIssue[] {
   return issues;
 }
 
+// ── GRAF110: repeats ────────────────────────────────────────────
+
+/**
+ * A panel or row repeated over a variable Grafana cannot repeat over, or
+ * one that can only ever hold one value. Grafana repeats over a query,
+ * custom, datasource or group by variable (a `MultiValueVariable` in
+ * @grafana/scenes), once per selected value. Over any other kind it logs an
+ * error and shows the panel once; over a query, custom or datasource
+ * variable with neither `multi` nor `includeAll`, there is only ever one
+ * value to repeat for. A repeat naming no variable is GRAF103's.
+ */
+const KIND_NAMES: Readonly<Record<string, string>> = { adhoc: "an ad hoc", interval: "an interval", groupby: "a group by" };
+
+export function checkRepeats(a: GrafanaArtifacts): GrafanaIssue[] {
+  const issues: GrafanaIssue[] = [];
+  for (const { json: d } of a.dashboards) {
+    const variables = new Map(variablesOf(d).map((v) => [String(v.name), v]));
+    for (const { panel } of panelsOf(d)) {
+      if (typeof panel.repeat !== "string" || panel.repeat === "") continue;
+      const v = variables.get(panel.repeat);
+      if (!v) continue;
+      const where = panel.type === "row" ? `row "${String(panel.title ?? "")}"` : describePanel(panel);
+      const type = String(v.type);
+      const kind = `${KIND_NAMES[type] ?? `a ${type}`} variable`;
+      let why: string | undefined;
+      if (!MULTI_VALUE_KINDS.has(type)) {
+        why = `${kind}, which Grafana cannot repeat over: it shows the ${panel.type === "row" ? "row" : "panel"} once. Repeat over a query, custom, datasource or group by variable`;
+      } else if (type !== "groupby" && v.multi !== true && v.includeAll !== true) {
+        why = `${kind} with neither multi nor includeAll, so it only ever holds one value and the ${panel.type === "row" ? "row" : "panel"} shows once. Set multi or includeAll on it`;
+      }
+      if (why) {
+        issues.push({ code: "GRAF110", severity: "warning", message: `${dashName(d)} ${where} repeats over $${panel.repeat}, ${why}.`, entity: String(d.uid ?? "") });
+      }
+    }
+  }
+  return issues;
+}
+
 const BY_CODE: Record<GrafanaIssueCode, (a: GrafanaArtifacts) => GrafanaIssue[]> = {
   GRAF101: (a) => checkDatasourceRefs(a).filter((i) => i.code === "GRAF101"),
   GRAF102: (a) => checkDatasourceRefs(a).filter((i) => i.code === "GRAF102"),
@@ -396,6 +438,7 @@ const BY_CODE: Record<GrafanaIssueCode, (a: GrafanaArtifacts) => GrafanaIssue[]>
   GRAF106: checkIdentity,
   GRAF107: checkSchema,
   GRAF108: checkPromqlSyntax,
+  GRAF110: checkRepeats,
 };
 
 /** The issues one check finds. */

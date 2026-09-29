@@ -79,13 +79,14 @@ Pass the `prometheus` exporter as `exporter` to `RedDashboard` when its `namespa
 
 ## Rules
 
-- GRAF101: every panel, query and query variable names a declared datasource (`Datasource` or `ExternalDatasource`), and every datasource variable's plugin type has one. GRAF102: of the right type.
+- GRAF101: every panel, query, and query, ad hoc and group by variable names a declared datasource (`Datasource` or `ExternalDatasource`), and every datasource variable's plugin type has one. GRAF102: of the right type.
 - GRAF103: every `$name`/`${name}` in a query, title or repeat is a declared variable (`$__*` are Grafana's own).
 - GRAF104: unique dashboard uids, datasource uids and names, panel ids, variable names and refIds.
 - GRAF105: panels fit the 24-column grid and don't overlap.
 - GRAF106: uids of 1-40 letters, digits, `-`, `_`; dashboards have titles.
 - GRAF107: the dashboard matches Grafana's schema at the pinned version.
-- GRAF108: every query and query variable sent to a Prometheus parses as PromQL (template variables and `$__` macros are substituted first).
+- GRAF108: every query and query variable sent to a Prometheus parses as PromQL (template variables and `$__` macros are substituted first; an object-form variable query is checked on its `query`).
+- GRAF110: a panel or row repeats over a query, custom or datasource variable with `multi` or `includeAll`, or a group by variable; anything else shows it once (warning).
 
 GRAF101 and GRAF102 compare against the datasources in the same build root, so keep datasources and dashboards in one `chant build` (chant #1939). For a datasource that exists in Grafana but is provisioned elsewhere, declare `new ExternalDatasource({ type: "prometheus", uid: "mimir" })` and use it like a `Datasource`; it is checked against, never provisioned.
 

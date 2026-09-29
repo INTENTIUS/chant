@@ -193,7 +193,7 @@ export function variableModel(variable: VariableEntity): VariableModel {
         ...common,
         datasource: datasourceRef(p.datasource),
         query: p.query,
-        definition: p.query,
+        definition: p.definition ?? queryText(p.query),
         regex: p.regex,
         refresh: REFRESH[(p.refresh ?? "onLoad") as keyof typeof REFRESH],
         sort: p.sort,
@@ -249,7 +249,49 @@ export function variableModel(variable: VariableEntity): VariableModel {
         query: p.value ?? "",
         current: { text: p.value ?? "", value: p.value ?? "" },
       }) as VariableModel;
+    case "adhoc":
+      return compact({
+        ...common,
+        datasource: datasourceRef(p.datasource),
+        filters: p.filters ?? [],
+        baseFilters: p.baseFilters ?? [],
+        defaultKeys: p.defaultKeys,
+        allowCustomValue: p.allowCustomValue,
+        enableGroupBy: p.enableGroupBy,
+      }) as VariableModel;
+    case "groupby": {
+      const options = p.options?.map((o: string | { text: string; value: string }) => (typeof o === "string" ? { text: o, value: o } : o));
+      const defaultValue = Array.isArray(p.defaultValue) ? { text: p.defaultValue, value: p.defaultValue } : p.defaultValue;
+      return compact({
+        ...common,
+        datasource: datasourceRef(p.datasource),
+        options,
+        current: p.current ?? defaultValue,
+        defaultValue,
+        allowCustomValue: p.allowCustomValue,
+      }) as VariableModel;
+    }
+    case "switch": {
+      const on: string = p.enabledValue ?? "true";
+      const off: string = p.disabledValue ?? "false";
+      const value = p.enabled ? on : off;
+      return compact({
+        ...common,
+        current: { text: value, value },
+        options: [
+          { text: on, value: on },
+          { text: off, value: off },
+        ],
+      }) as VariableModel;
+    }
   }
+}
+
+/** The text of a variable query: the string, or an object query's `query`. */
+function queryText(query: unknown): string | undefined {
+  if (typeof query === "string") return query;
+  if (query && typeof query === "object" && typeof (query as { query?: unknown }).query === "string") return (query as { query: string }).query;
+  return undefined;
 }
 
 // ── Panels and layout ───────────────────────────────────────────

@@ -1,6 +1,6 @@
 /**
  * Dashboard variables (Grafana's "templating"): query, custom, interval,
- * datasource, constant and textbox.
+ * datasource, constant, textbox, ad hoc filters, group by and switch.
  *
  * A variable is declared on its own and listed in a dashboard's
  * `variables`. Queries reference it as `$name` or `${name}` in their
@@ -12,9 +12,12 @@
 import { createProperty } from "@intentius/chant/runtime";
 import type { Declarable } from "@intentius/chant/declarable";
 import type { DatasourceEntity, DatasourceRef, ExternalDatasourceEntity } from "./datasource";
-import type { VariableOption } from "./schema/dashboard.gen";
+import type { AdHocFilter, VariableOption } from "./schema/dashboard.gen";
 
-export type VariableKind = "query" | "custom" | "interval" | "datasource" | "constant" | "textbox";
+export type VariableKind = "query" | "custom" | "interval" | "datasource" | "constant" | "textbox" | "adhoc" | "groupby" | "switch";
+
+/** The kinds Grafana can repeat a panel or row over: the ones that hold a list of values (`MultiValueVariable` in @grafana/scenes). */
+export const MULTI_VALUE_KINDS: ReadonlySet<string> = new Set(["query", "custom", "datasource", "groupby"]);
 
 /** Where the variable shows: with its label, without it, or not at all. */
 export type VariableHide = "label" | "valueOnly" | "hidden";
@@ -42,10 +45,45 @@ interface MultiValueProps {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type VariableDatasource = DatasourceEntity<any> | ExternalDatasourceEntity<any> | DatasourceRef | DatasourceVariableEntity<any>;
 
+/**
+ * A variable query in the object form a datasource's variable editor
+ * writes. Grafana passes it to the datasource as it is, so any key the
+ * datasource reads may be here.
+ */
+export interface VariableQueryObject {
+  /** The query text, when the datasource has one (Prometheus, Loki, and most others). */
+  query?: string;
+  /** The editor's id for the query; Grafana writes e.g. `PrometheusVariableQueryEditor-VariableQuery`. */
+  refId?: string;
+  [key: string]: unknown;
+}
+
+/**
+ * A Prometheus variable query as Grafana's Prometheus variable editor
+ * writes it. `query` is the text Grafana runs (`label_values(up, job)`);
+ * the other fields let the editor show the query in its form again.
+ */
+export interface PrometheusVariableQuery extends VariableQueryObject {
+  query: string;
+  /** The editor's query type: 0 label names, 1 label values, 2 metrics, 3 query result, 4 series query, 5 classic query. */
+  qryType?: 0 | 1 | 2 | 3 | 4 | 5;
+  label?: string;
+  metric?: string;
+  seriesQuery?: string;
+  varQueryResult?: string;
+  labelFilters?: Array<{ label: string; op: string; value: string }>;
+}
+
 export interface QueryVariableProps extends CommonVariableProps, MultiValueProps {
   datasource: VariableDatasource;
-  /** The datasource's variable query, e.g. `label_values(up, job)` for Prometheus. */
-  query: string;
+  /**
+   * The datasource's variable query: a string (`label_values(up, job)` for
+   * Prometheus), or the object the datasource's variable editor writes
+   * (`{ query: "label_values(up, job)", qryType: 1 }`).
+   */
+  query: string | VariableQueryObject;
+  /** The text Grafana shows for the query in the variable list. Defaults to the query string. */
+  definition?: string;
   regex?: string;
   /** When to re-run the query. Defaults to on dashboard load. */
   refresh?: "never" | "onLoad" | "onTimeRangeChange";
@@ -80,6 +118,51 @@ export interface TextboxVariableProps extends CommonVariableProps {
   value?: string;
 }
 
+/** One ad hoc filter: `key operator value`, e.g. `{ key: "namespace", operator: "=", value: "shop" }`. */
+export type AdhocFilter = AdHocFilter;
+
+/** A key an ad hoc or group by variable offers, in place of asking the datasource. */
+export interface VariableKeyOption {
+  text: string;
+  value?: string | number;
+  [key: string]: unknown;
+}
+
+export interface AdhocVariableProps extends CommonVariableProps {
+  /** The datasource whose queries get the filters, and which is asked for keys and values. */
+  datasource: VariableDatasource;
+  /** The filters applied when the dashboard loads. */
+  filters?: AdhocFilter[];
+  /** Filters that narrow the key and value lookups, not shown or applied to queries. */
+  baseFilters?: AdhocFilter[];
+  /** A fixed set of keys to offer instead of the datasource's. */
+  defaultKeys?: VariableKeyOption[];
+  /** Whether a key or value not in the list can be typed in. Grafana's default is true. */
+  allowCustomValue?: boolean;
+  /** Offer the group-by operator in the filter box (Grafana 13, behind the `dashboardUnifiedDrilldownControls` feature toggle). */
+  enableGroupBy?: boolean;
+}
+
+export interface GroupByVariableProps extends CommonVariableProps {
+  /** The datasource whose queries are grouped, and which is asked for the keys. */
+  datasource: VariableDatasource;
+  /** A fixed set of keys to offer instead of the datasource's: a key, or `{ text, value }`. */
+  options?: Array<string | { text: string; value: string }>;
+  /** The keys selected when the dashboard loads with none in the URL. */
+  defaultValue?: string[] | VariableOption;
+  /** Whether a key not in the list can be typed in. Grafana's default is true. */
+  allowCustomValue?: boolean;
+}
+
+export interface SwitchVariableProps extends Omit<CommonVariableProps, "current"> {
+  /** Whether the switch is on when the dashboard loads. Defaults to off. */
+  enabled?: boolean;
+  /** The value `$name` has when the switch is on. Defaults to `"true"`. */
+  enabledValue?: string;
+  /** The value `$name` has when the switch is off. Defaults to `"false"`. */
+  disabledValue?: string;
+}
+
 export interface VariableEntity<P = CommonVariableProps> extends Declarable {
   readonly props: P;
   readonly variableKind: VariableKind;
@@ -94,7 +177,7 @@ export interface DatasourceVariableEntity<T extends string = string> extends Var
 
 export const VARIABLE_TYPE_PREFIX = "Grafana::Variable::";
 
-function variableClass<P extends CommonVariableProps | ConstantVariableProps>(kind: VariableKind, className: string) {
+function variableClass<P extends CommonVariableProps | ConstantVariableProps | SwitchVariableProps>(kind: VariableKind, className: string) {
   const Base = createProperty(`${VARIABLE_TYPE_PREFIX}${kind}`, "grafana") as unknown as (this: object, props: Record<string, unknown>) => void;
   const Cls = function (this: object, props: P) {
     Base.call(this, props as unknown as Record<string, unknown>);
@@ -137,6 +220,30 @@ export const ConstantVariable = variableClass<ConstantVariableProps>("constant",
 export const TextboxVariable = variableClass<TextboxVariableProps>("textbox", "TextboxVariable") as unknown as new (
   props: TextboxVariableProps,
 ) => VariableEntity<TextboxVariableProps>;
+
+/**
+ * Ad hoc filters: `key operator value` filters Grafana adds to every query
+ * sent to the variable's datasource (Prometheus, Loki, Elasticsearch,
+ * InfluxDB and others whose plugin supports them). Referenced by no query.
+ */
+export const AdhocVariable = variableClass<AdhocVariableProps>("adhoc", "AdhocVariable") as unknown as new (
+  props: AdhocVariableProps,
+) => VariableEntity<AdhocVariableProps>;
+
+/**
+ * Group by: a choice of label keys Grafana adds as a grouping to every query
+ * sent to the variable's datasource. In Grafana 12.4 and 13.x it is
+ * experimental: with the `groupByVariable` feature toggle off, Grafana
+ * drops it when the dashboard loads.
+ */
+export const GroupByVariable = variableClass<GroupByVariableProps>("groupby", "GroupByVariable") as unknown as new (
+  props: GroupByVariableProps,
+) => VariableEntity<GroupByVariableProps>;
+
+/** An on/off switch, `$name` being `enabledValue` or `disabledValue`. New in Grafana 12.3. */
+export const SwitchVariable = variableClass<SwitchVariableProps>("switch", "SwitchVariable") as unknown as new (
+  props: SwitchVariableProps,
+) => VariableEntity<SwitchVariableProps>;
 
 export function isVariableEntity(value: unknown): value is VariableEntity {
   return (
