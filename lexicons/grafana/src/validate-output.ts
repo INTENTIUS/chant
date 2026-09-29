@@ -1,5 +1,5 @@
 /**
- * The checks behind GRAF101-GRAF107, as plain functions over built Grafana
+ * The checks behind GRAF101-GRAF108, as plain functions over built Grafana
  * output: dashboard JSON documents and provisioned datasources. The
  * post-synth checks run them over a build; anything else holding the same
  * JSON (a test, another lexicon embedding dashboards) can call them directly.
@@ -27,8 +27,9 @@ import {
 import { isBuiltinVariable } from "./variables";
 import { isValidUid } from "./util";
 import { validateDashboardSchema } from "./schema-validate";
+import { checkGrafanaPromql, prometheusQueries } from "./promql-check";
 
-export type GrafanaIssueCode = "GRAF101" | "GRAF102" | "GRAF103" | "GRAF104" | "GRAF105" | "GRAF106" | "GRAF107";
+export type GrafanaIssueCode = "GRAF101" | "GRAF102" | "GRAF103" | "GRAF104" | "GRAF105" | "GRAF106" | "GRAF107" | "GRAF108";
 
 export interface GrafanaIssue {
   code: GrafanaIssueCode;
@@ -365,6 +366,27 @@ export function checkSchema(a: GrafanaArtifacts): GrafanaIssue[] {
   return issues;
 }
 
+// ── GRAF108: PromQL syntax ──────────────────────────────────────
+
+/**
+ * Each panel query and query variable that reaches a Prometheus datasource
+ * is parsed as PromQL, with its template variables replaced by placeholders
+ * first (see `promql-check.ts`). A query whose datasource can't be told is
+ * not parsed.
+ */
+export function checkPromqlSyntax(a: GrafanaArtifacts): GrafanaIssue[] {
+  const issues: GrafanaIssue[] = [];
+  const known = knownDatasourcesOf(a);
+  for (const { json: d } of a.dashboards) {
+    for (const { where, expr } of prometheusQueries(d, known)) {
+      const checked = checkGrafanaPromql(expr);
+      if (checked.ok) continue;
+      issues.push({ code: "GRAF108", severity: "error", message: `${dashName(d)} ${where} is not valid PromQL: ${checked.message}.`, entity: String(d.uid ?? "") });
+    }
+  }
+  return issues;
+}
+
 const BY_CODE: Record<GrafanaIssueCode, (a: GrafanaArtifacts) => GrafanaIssue[]> = {
   GRAF101: (a) => checkDatasourceRefs(a).filter((i) => i.code === "GRAF101"),
   GRAF102: (a) => checkDatasourceRefs(a).filter((i) => i.code === "GRAF102"),
@@ -373,6 +395,7 @@ const BY_CODE: Record<GrafanaIssueCode, (a: GrafanaArtifacts) => GrafanaIssue[]>
   GRAF105: checkGrid,
   GRAF106: checkIdentity,
   GRAF107: checkSchema,
+  GRAF108: checkPromqlSyntax,
 };
 
 /** The issues one check finds. */

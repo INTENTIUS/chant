@@ -45,7 +45,8 @@ Checks catch a query aimed at a datasource nobody declared, with
 \`Datasource\` or \`ExternalDatasource\` (GRAF101), or of the
 wrong type (GRAF102), a \`$variable\` the dashboard doesn't declare (GRAF103),
 duplicate uids and ids (GRAF104), panels off the grid or overlapping (GRAF105),
-and anything Grafana's dashboard schema rejects (GRAF107).
+anything Grafana's dashboard schema rejects (GRAF107), and PromQL sent to a
+Prometheus that doesn't parse (GRAF108).
 `;
 
 const outputFormat = `The grafana lexicon writes Grafana's own files, keyed by path under the
