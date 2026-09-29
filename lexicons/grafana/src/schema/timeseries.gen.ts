@@ -147,7 +147,7 @@ export type LineInterpolation = "linear" | "smooth" | "stepBefore" | "stepAfter"
  * TODO docs
  */
 export interface LineStyle {
-  fill?: "solid" | "dash" | "dot" | "square";
+  fill?: "solid" | "dash" | "dot" | "square" | "accessible";
   dash?: number[];
 }
 
