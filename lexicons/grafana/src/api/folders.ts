@@ -1,17 +1,19 @@
 /**
- * Folders, for the API applier (#2948). Every folder decision the applier
- * makes is in this module: which folders a build needs, the uid each gets,
- * how one is read, written, listed and deleted, and on which API.
+ * Folders: the one place a build's folders become uids and parents, and how
+ * the API applier (#2948) and observation read and write them.
  *
- * ## What the lexicon models today
+ * ## What a build declares
  *
- * A dashboard names its folder by title (`Dashboard.folder`), and a title
- * holds no nesting (the build flattens `/` in it). So the applier derives
- * one root-level folder per distinct title, with a stable uid made from the
- * title ({@link folderUidFor}), and a second apply finds it again by that
- * uid. {@link FolderPlan} already carries `parentUid`, and the writers
- * already send it, so #2953 (folder uid and nesting on the declaration) only
- * has to change {@link foldersForDashboards}.
+ * A dashboard names its folder as a path (`Dashboard.folder:
+ * "Platform/Kubernetes"`) or as a `Folder` (../folder.ts), and a `Folder`
+ * may be declared on its own. {@link resolveFolders} turns all of it into
+ * one {@link FolderPlan} per folder: every level of every path, the uid a
+ * `Folder` pins or {@link folderUidFor} of its path, and its parent's uid.
+ * The build calls it and writes the result to its index (`folders`, and a
+ * `folderUid` on each dashboard); the applier reads the index and calls it
+ * again, which also covers an index written before folders were listed.
+ * Two folders at one path with different uids, or two paths with one uid,
+ * throw: no delivery could make both.
  *
  * ## Which API
  *
@@ -25,7 +27,9 @@
  */
 
 import { GrafanaApiError, type GrafanaClient } from "./client";
-import { slugUid } from "../util";
+import { folderLevels, folderUidFor } from "../folder";
+
+export { folderUidFor };
 
 type Json = Record<string, unknown>;
 
@@ -55,6 +59,8 @@ export interface FolderPlan {
   readonly title: string;
   /** The parent folder's uid; absent for a root-level folder. */
   readonly parentUid?: string;
+  /** Its titles from the root, joined with `/`: the directory file provisioning reads it from. */
+  readonly path?: string;
 }
 
 /** A folder as Grafana holds it. */
@@ -64,6 +70,8 @@ export interface LiveFolder {
   readonly parentUid?: string;
   /** `metadata.labels`; empty on the legacy API. */
   readonly labels: Readonly<Record<string, string>>;
+  /** `metadata.annotations`; empty on the legacy API. */
+  readonly annotations?: Readonly<Record<string, string>>;
   readonly via: "apis" | "legacy";
   /** The request path it lives at. */
   readonly address: string;
@@ -71,31 +79,74 @@ export interface LiveFolder {
   readonly version?: number;
 }
 
-/**
- * The uid chant gives the folder a dashboard names by title. Stable, so a
- * second apply finds the folder the first one made; Grafana's own limit is
- * 40 characters, which `slugUid` keeps to.
- */
-export function folderUidFor(title: string): string {
-  return slugUid(title);
+/** The folders a build resolves to, and the uid of each path. */
+export interface ResolvedFolders {
+  /** One per folder, sorted by path, so a parent comes before its children. */
+  readonly folders: FolderPlan[];
+  /** The uid of the folder at `path` (any spelling `folderLevels` reads the same); undefined for the General folder. */
+  uidOf(path: string | undefined): string | undefined;
 }
 
 /**
- * The folders a set of dashboards needs, one per distinct title, sorted by
- * uid. The one place a dashboard's folder becomes a folder plan.
+ * Every folder a build needs, with its uid and parent: the folders declared
+ * with a uid (`Folder`s, or dashboards already resolved), and every level of
+ * every path a dashboard names. A level no declaration pins gets
+ * {@link folderUidFor} of its path. Throws when two declarations put
+ * different uids at one path, and when two paths would get one uid unless
+ * `duplicateUids` is `keep`: the build keeps both and GRAF104 reports them,
+ * since file provisioning, which gives folders uids of its own, can still
+ * deliver them.
  */
-export function foldersForDashboards(dashboards: Iterable<{ folder?: string }>): FolderPlan[] {
-  const byUid = new Map<string, FolderPlan>();
-  for (const d of dashboards) {
-    if (!d.folder) continue;
-    const uid = folderUidFor(d.folder);
-    const seen = byUid.get(uid);
-    if (seen && seen.title !== d.folder) {
-      throw new Error(`grafana apply: the folders "${seen.title}" and "${d.folder}" would both get the uid "${uid}"; rename one`);
+export function resolveFolders(
+  input: { declared?: Iterable<{ uid: string; path: string }>; paths?: Iterable<string | undefined> },
+  options: { duplicateUids?: "throw" | "keep" } = {},
+): ResolvedFolders {
+  const byPath = new Map<string, string>();
+  const key = (path: string) => folderLevels(path).join("/");
+  for (const d of input.declared ?? []) {
+    const path = key(d.path);
+    if (path === "") continue;
+    const prior = byPath.get(path);
+    if (prior !== undefined && prior !== d.uid) {
+      throw new Error(`grafana: the folder "${path}" is declared with the uids "${prior}" and "${d.uid}"; a folder has one uid`);
     }
-    byUid.set(uid, { uid, title: d.folder });
+    byPath.set(path, d.uid);
   }
-  return [...byUid.values()].sort((a, b) => a.uid.localeCompare(b.uid));
+  const addPath = (path: string) => {
+    const levels = folderLevels(path);
+    for (let i = 1; i <= levels.length; i++) {
+      const prefix = levels.slice(0, i).join("/");
+      if (!byPath.has(prefix)) byPath.set(prefix, folderUidFor(prefix));
+    }
+  };
+  for (const path of [...byPath.keys()]) addPath(path);
+  for (const path of input.paths ?? []) if (path) addPath(path);
+
+  const byUid = new Map<string, string>();
+  const folders: FolderPlan[] = [];
+  for (const path of [...byPath.keys()].sort((a, b) => a.localeCompare(b))) {
+    const uid = byPath.get(path)!;
+    const seen = byUid.get(uid);
+    if (seen !== undefined && options.duplicateUids !== "keep") throw new Error(`grafana: the folders "${seen}" and "${path}" would both get the uid "${uid}"; give one a Folder with its own uid`);
+    byUid.set(uid, path);
+    const levels = path.split("/");
+    const parentUid = levels.length > 1 ? byPath.get(levels.slice(0, -1).join("/")) : undefined;
+    folders.push({ uid, title: levels[levels.length - 1], ...(parentUid ? { parentUid } : {}), path });
+  }
+  return { folders, uidOf: (path) => (path === undefined ? undefined : byPath.get(key(path))) };
+}
+
+/**
+ * The folders a set of dashboards needs: every level of every folder they
+ * name, sorted by path. A dashboard that already carries its `folderUid`
+ * pins its folder's uid.
+ */
+export function foldersForDashboards(dashboards: Iterable<{ folder?: string; folderUid?: string }>): FolderPlan[] {
+  const list = [...dashboards];
+  return resolveFolders({
+    declared: list.filter((d) => d.folder && d.folderUid).map((d) => ({ uid: d.folderUid!, path: d.folder! })),
+    paths: list.map((d) => d.folder),
+  }).folders;
 }
 
 /** The folder API the server behind `client` serves, discovered once per client. */
@@ -120,12 +171,14 @@ export function folderPath(api: FolderApi, namespace: string, uid: string): stri
 function fromResource(resource: Json, address: string): LiveFolder {
   const metadata = isObject(resource.metadata) ? resource.metadata : {};
   const spec = isObject(resource.spec) ? resource.spec : {};
-  const parentUid = stringMap(metadata.annotations)[FOLDER_ANNOTATION];
+  const annotations = stringMap(metadata.annotations);
+  const parentUid = annotations[FOLDER_ANNOTATION];
   return {
     uid: typeof metadata.name === "string" ? metadata.name : "",
     title: typeof spec.title === "string" ? spec.title : "",
     ...(parentUid ? { parentUid } : {}),
     labels: stringMap(metadata.labels),
+    annotations,
     via: "apis",
     address,
   };
@@ -150,6 +203,27 @@ export async function readFolder(client: GrafanaClient, uid: string): Promise<Li
   const body = await client.get<Json>(address);
   if (body === undefined) return undefined;
   return api.kind === "apis" ? fromResource(body, address) : fromLegacy(body, address);
+}
+
+/**
+ * The path of the folder with this uid, its titles from the root joined with
+ * `/`, the form `Dashboard.folder` takes. One read per folder per client;
+ * undefined when the folder, or one of its parents, cannot be found.
+ */
+export async function liveFolderPath(client: GrafanaClient, uid: string): Promise<string | undefined> {
+  const titles: string[] = [];
+  const seen = new Set<string>();
+  for (let at: string | undefined = uid; at; ) {
+    // Grafana's own limit on nesting is 8 levels; a longer chain is a cycle.
+    if (seen.has(at) || seen.size > 8) return undefined;
+    seen.add(at);
+    const id: string = at;
+    const folder = await client.once(`folder:${id}`, () => readFolder(client, id));
+    if (!folder) return undefined;
+    titles.unshift(folder.title);
+    at = folder.parentUid;
+  }
+  return titles.join("/");
 }
 
 /** Every folder in the organisation over `/apis`, paged. The legacy API has no labels to list by, so it is not listed. */

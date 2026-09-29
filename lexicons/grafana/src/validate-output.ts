@@ -17,6 +17,7 @@
 import type { ExternalDatasourceRecord, ProvisionedDatasource } from "./build";
 import { DASHBOARDS_DIR, GRID_COLUMNS } from "./build";
 import {
+  annotationsOf,
   datasourceUses,
   describePanel,
   knownDatasources,
@@ -73,6 +74,10 @@ export interface GrafanaArtifacts {
   providers?: Array<Record<string, unknown>>;
   /** Alerting provisioning files (rule groups, contact points, policies, mute timings, templates). */
   alerting?: AlertingDoc[];
+  /** The folders the build resolved (its index's `folders`): each level of each dashboard's folder path, and every `Folder`. */
+  folders?: Array<{ uid: string; title: string; path?: string; parentUid?: string }>;
+  /** `deleteDatasources` entries of datasource provisioning files. */
+  deleteDatasources?: Array<{ name: string; orgId?: number }>;
 }
 
 export type { AlertingDoc };
@@ -180,6 +185,19 @@ export function checkDatasourceRefs(a: GrafanaArtifacts): GrafanaIssue[] {
       }
     }
 
+    // An ExternalDatasource the provisioning file deletes (and does not provision again) is gone once Grafana provisions it.
+    const deleted = new Set((a.deleteDatasources ?? []).filter((x) => (x.orgId ?? 1) === 1).map((x) => x.name));
+    const provisioned = new Set(a.datasources.map((x) => x.name));
+    const gone = new Set([...known.values()].filter((k) => k.external && k.name !== undefined && deleted.has(k.name) && !provisioned.has(k.name)).map((k) => k.uid));
+    for (const { where, resolved } of uses) {
+      if (resolved.kind !== "declared" || !gone.has(resolved.datasource.uid)) continue;
+      push(
+        "GRAF101",
+        "error",
+        `${where} uses external datasource "${resolved.datasource.name}", which the datasource provisioning file deletes (deleteDatasources); Grafana removes it before the dashboard can use it.`,
+      );
+    }
+
     // A datasource variable offers the datasources of its plugin type; with none declared it has nothing to choose.
     if (known.size > 0) {
       for (const v of dsVariables) {
@@ -229,6 +247,14 @@ export function checkVariables(a: GrafanaArtifacts): GrafanaIssue[] {
       const names = new Set(stringsIn(v.query, new Set()).flatMap(variableReferences));
       for (const n of names) if (n !== v.name) report(n, `variable "${String(v.name)}" query`);
     }
+    for (const an of annotationsOf(d)) {
+      const where = `annotation "${String(an.name ?? "?")}"`;
+      const ref = an.datasource as DatasourceRefJson | undefined;
+      if (ref && typeof ref === "object" && isVariableUid(ref.uid)) for (const n of variableReferences(ref.uid!)) report(n, `${where} datasource`);
+      // Grafana interpolates the query (`target`, or Prometheus's legacy `expr`), not the name, colour or title formats.
+      const names = new Set(stringsIn([an.target, an.expr], TARGET_SKIP).flatMap(variableReferences));
+      for (const n of names) report(n, `${where} query`);
+    }
   }
   return issues;
 }
@@ -253,6 +279,10 @@ export function checkDuplicates(a: GrafanaArtifacts): GrafanaIssue[] {
   const allUids = [...a.datasources.map((d) => d.uid), ...(a.externalDatasources ?? []).map((d) => d.uid)];
   for (const [uid, n] of dupes(allUids, (u) => u)) push(`${n} datasources share the uid "${uid}".`, uid);
   for (const [name, n] of dupes(a.datasources, (d) => d.name)) push(`${n} datasources share the name "${name}"; Grafana needs names to be unique.`, name);
+  for (const [uid, n] of dupes(a.folders ?? [], (f) => f.uid)) {
+    const paths = (a.folders ?? []).filter((f) => f.uid === uid).map((f) => `"${f.path ?? f.title}"`);
+    push(`${n} folders share the uid "${uid}" (${paths.join(", ")}); Grafana keeps one folder per uid, so the API applier refuses the build. Give one a Folder with its own uid.`, uid);
+  }
   for (const { json: d } of a.dashboards) {
     const uid = String(d.uid ?? "");
     const panels = panelsOf(d).map((p) => p.panel);
@@ -352,6 +382,19 @@ export function checkIdentity(a: GrafanaArtifacts): GrafanaIssue[] {
         severity: "error",
         message: `Datasource "${ds.name}" has uid "${ds.uid}"; Grafana accepts 1-40 letters, digits, "-" and "_".`,
         entity: ds.name,
+      });
+    }
+  }
+  for (const f of a.folders ?? []) {
+    const where = `Folder "${f.path ?? f.title}"`;
+    if (!isValidUid(f.uid)) {
+      issues.push({ code: "GRAF106", severity: "error", message: `${where} has uid "${f.uid}"; Grafana accepts 1-40 letters, digits, "-" and "_".`, entity: f.uid });
+    } else if (f.uid === "general") {
+      issues.push({
+        code: "GRAF106",
+        severity: "error",
+        message: `${where} has uid "general", which Grafana keeps for its root (the General folder) and refuses for a folder. Leave folder out to put a dashboard in General, or give the folder another uid.`,
+        entity: f.uid,
       });
     }
   }

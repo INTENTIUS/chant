@@ -35,6 +35,8 @@ export interface FakeGrafanaState {
   dashboards: Record<string, FakeDashboard>;
   datasources?: Record<string, Json>;
   folders?: Record<string, string>;
+  /** A folder's parent uid, by folder uid, for nested folders. */
+  folderParents?: Record<string, string>;
   /** Answer every request with this status (a refused token: 401). */
   status?: number;
   namespace?: string;
@@ -147,8 +149,10 @@ export function fakeGrafana(state: FakeGrafanaState, calls: string[] = []): Graf
     }
     const folder = /^\/api\/folders\/([^/]+)$/.exec(route);
     if (folder) {
-      const title = state.folders?.[decodeURIComponent(folder[1])];
-      return title ? ok({ uid: folder[1], title }) : notFound;
+      const uid = decodeURIComponent(folder[1]);
+      const title = state.folders?.[uid];
+      const parentUid = state.folderParents?.[uid];
+      return title ? ok({ uid, title, ...(parentUid ? { parentUid } : {}) }) : notFound;
     }
     if (route === "/api/datasources") return ok(Object.values(state.datasources ?? {}).map(({ secureJsonFields: _s, ...rest }) => rest));
     const ds = /^\/api\/datasources\/uid\/([^/]+)$/.exec(route);

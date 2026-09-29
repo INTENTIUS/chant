@@ -22,7 +22,9 @@ import { observeResourcesDeepGrafana } from "./deep-observe";
 import { grafanaDeepNormalizationHooks } from "./deep-observe-hooks";
 import { fakeGrafana, liveDatasource, storedDashboard, type FakeGrafanaState } from "./api/fake-grafana";
 import { load } from "js-yaml";
-import { DATASOURCES_FILE, type GrafanaIndex } from "./build";
+import { DATASOURCES_FILE, buildGrafana, type GrafanaIndex } from "./build";
+import { Dashboard } from "./dashboard";
+import { Folder } from "./folder";
 
 const { diffDeepObservation } = await import("@intentius/chant/lifecycle/deep-observe");
 const { normalizeDeepObservation } = await import("@intentius/chant/deep-observation");
@@ -261,5 +263,49 @@ describe("what cannot be read is not observed, never a clean tree", () => {
     expect(resources).toEqual({});
     expect(unobserved.serviceOverview.reason).toBe("filtered");
     expect(unobserved.prometheus.reason).toBe("filtered");
+  });
+});
+
+describe("folders (#2953)", () => {
+  const platform = new Folder({ title: "Platform", uid: "plat" });
+  const k8s = new Folder({ title: "Kubernetes", parent: platform });
+  const pods = new Dashboard({ title: "Pods", uid: "pods", folder: k8s });
+
+  function nested(): { built: Built; state: FakeGrafanaState } {
+    const out = buildGrafana(new Map<string, never>([["pods", pods as never], ["k8s", k8s as never]]));
+    const entities: Entities = new Map([
+      ["pods", { entityType: pods.entityType, props: pods.props as Record<string, unknown> }],
+      ["k8s", { entityType: k8s.entityType, props: k8s.props as unknown as Record<string, unknown> }],
+    ]);
+    const state: FakeGrafanaState = {
+      api: "v1",
+      dashboards: {
+        pods: {
+          spec: storedDashboard(JSON.parse(out.files["dashboards/Platform/Kubernetes/pods.json"]) as Json),
+          annotations: { "grafana.app/managedBy": "classic-file-provisioning", "grafana.app/managerId": "chant" },
+          folderUid: "platform-kubernetes",
+        },
+      },
+      folders: { plat: "Platform", "platform-kubernetes": "Kubernetes", other: "Other" },
+      folderParents: { "platform-kubernetes": "plat" },
+    };
+    return { built: { entities, index: out.index, files: out.files }, state };
+  }
+
+  it("a dashboard in a nested Folder reads back as its path, and the Folder by its uid, with no drift", async () => {
+    const { built, state } = nested();
+    const { live, result } = await diff(built, state);
+    expect(normalizeDeepObservation(live).unobserved).toEqual({});
+    expect(driftPaths(result)).toEqual([]);
+    expect(unclaimedPaths(result)).toEqual([]);
+  });
+
+  it("a nested folder moved or renamed shows on the dashboard's path and the Folder's title", async () => {
+    const { built, state } = nested();
+    state.folderParents!["platform-kubernetes"] = "other";
+    expect(driftPaths((await diff(built, state)).result)).toEqual(["pods:changed:folder"]);
+    state.folderParents!["platform-kubernetes"] = "plat";
+    state.folders!["platform-kubernetes"] = "K8s";
+    expect(driftPaths((await diff(built, state)).result).sort()).toEqual(["k8s:changed:title", "pods:changed:folder"]);
   });
 });

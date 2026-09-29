@@ -63,7 +63,44 @@ A Grafana run by the Grafana Operator reads `GrafanaDashboard` and `GrafanaDatas
 
 The default provider sets `foldersFromFilesStructure: true`, so each subdirectory of `dashboards/` becomes a Grafana folder, named after the dashboard's `folder`. Dashboards without one land in General.
 
-A `folder` with a `/` nests: `folder: "Platform/Kubernetes"` is written to `dashboards/Platform/Kubernetes/`, which Grafana 13.1 and later load as a Kubernetes folder inside Platform. Grafana 12.4 and 13.0 use only the last directory, so the dashboard lands in a top-level Kubernetes folder; GRAF109 warns. Folder uids and permissions are not modelled yet (#2953).
+A `folder` with a `/` nests: `folder: "Platform/Kubernetes"` is written to `dashboards/Platform/Kubernetes/`, which Grafana 13.1 and later load as a Kubernetes folder inside Platform. Grafana 12.4 and 13.0 use only the last directory, so the dashboard lands in a top-level Kubernetes folder; GRAF109 warns.
+
+To give a folder a stable uid, declare it as a `Folder` and nest with `parent`:
+
+```ts
+import { Dashboard, Folder } from "@intentius/chant-lexicon-grafana";
+
+export const platform = new Folder({ title: "Platform", uid: "platform" });
+export const kubernetes = new Folder({ title: "Kubernetes", parent: platform });
+export const pods = new Dashboard({ title: "Pods", folder: kubernetes });
+```
+
+A `Folder` is written to the same directory as its path (`dashboards/Platform/Kubernetes/`), so a dashboard with `folder: kubernetes` and one with `folder: "Platform/Kubernetes"` land in the same folder. Every folder gets a uid: its `Folder`'s, else its path as a uid (`platform-kubernetes`). The build's index lists every folder with its uid and parent, and each dashboard's `folderUid`.
+
+How the uid reaches Grafana depends on how the dashboards are delivered:
+
+- The API applier (`grafanaApply`) creates every folder with its uid and parent, parents first. See [Apply over the API](../applying/).
+- File provisioning has no field for a nested folder's uid. Grafana looks each level up by title under its parent and creates it with a uid of its own when it is missing, so a folder the applier created first keeps its uid, and one Grafana creates does not.
+- A `DashboardProvider` whose `folder` is a root-level `Folder` writes its title and uid as `folder` and `folderUid`. Grafana creates a provider's folder at the root, so a nested `Folder` there is refused.
+
+Two paths that make the same uid (`Team A` and `team-a`) are a GRAF104 error, and the uid `general`, which a `folder: "General"` would get, is a GRAF106 error: Grafana keeps it for the General folder. Folder permissions are not modelled.
+
+## Datasource pruning
+
+The datasource provisioning file sets `prune: true`. Grafana marks each datasource the file provisions as prunable, and when a later provisioning run finds a prunable datasource that no provisioning file lists, it deletes it. Removing a `Datasource` from the build therefore removes it from Grafana the next time Grafana provisions (on restart, or `POST /api/admin/provisioning/datasources/reload`). A datasource created in the UI or the API, or provisioned by a file without `prune`, is never pruned.
+
+`DatasourceProvisioning` sets the file's own settings. Turn pruning off, or list datasources for Grafana to delete by name before it provisions the rest:
+
+```ts
+import { DatasourceProvisioning } from "@intentius/chant-lexicon-grafana";
+
+export const datasourceFile = new DatasourceProvisioning({
+  prune: false,
+  deleteDatasources: [{ name: "Old Prometheus", orgId: 1 }],
+});
+```
+
+Naming a datasource the file also provisions makes Grafana delete it and create it again from the file on every run. Declare at most one `DatasourceProvisioning`. A dashboard that uses an `ExternalDatasource` the file deletes is a GRAF101 error.
 
 ## A different provider
 

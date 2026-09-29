@@ -387,26 +387,44 @@ describe("the dashboard", () => {
     expect(warnings).toContain('dashboard: uid is missing, so the dashboard is given the uid "my-board", from its title');
   });
 
-  test("the built-in annotation is Grafana's default; any other is named (#2953)", () => {
+  test("the built-in annotation is Grafana's default and left out; any other is carried (#2953)", () => {
     const builtin = { builtIn: 1, datasource: { type: "datasource", uid: "grafana" }, enable: true, hide: true, iconColor: "rgba(0, 211, 255, 1)", name: "Annotations & Alerts", type: "dashboard" };
-    expect(planDashboard(dashboard({ annotations: { list: [builtin] } })).warnings).toEqual([]);
-    const other = planDashboard(dashboard({ annotations: { list: [builtin, { name: "Deploys", enable: true }] } }));
-    expect(other.warnings).toEqual(['dashboard has the annotation "Deploys", which is not carried: Dashboard has no annotations yet (#2953)']);
-    expect(other.edits).toContainEqual({ op: "remove", path: "/annotations" });
+    const only = planDashboard(dashboard({ annotations: { list: [builtin] } }));
+    expect(only.warnings).toEqual([]);
+    expect(only.plan.declarations.find((d) => d.id === "dashboard")!.props!.annotations).toBeUndefined();
+    const deploys = { name: "Deploys", datasource: { type: "prometheus", uid: "prom" }, iconColor: "red", expr: "changes(up[5m]) > 0", step: "60s", target: { refId: "Anno" } };
+    const other = planDashboard(dashboard({ annotations: { list: [builtin, deploys, { name: "Off", enable: false, iconColor: "blue", hide: null }] } }));
+    expect(other.warnings).toEqual(['annotation "Deploys": enable is missing, so it is written as true, which runs the query']);
+    const props = other.plan.declarations.find((d) => d.id === "dashboard")!.props!;
+    expect(props.annotations).toEqual([
+      { name: "Deploys", datasource: { $decl: "datasource:prometheus:prom" }, iconColor: "red", expr: "changes(up[5m]) > 0", step: "60s", target: { refId: "Anno" } },
+      { name: "Off", enable: false, iconColor: "blue" },
+    ]);
+    expect(other.plan.declarations).toContainEqual(expect.objectContaining({ id: "datasource:prometheus:prom", className: "ExternalDatasource" }));
+    expect(other.edits).toContainEqual({ op: "replace", path: "/annotations/list/1/enable", value: true });
+    expect(other.edits).toContainEqual({ op: "remove", path: "/annotations/list/2/hide" });
   });
 });
 
 describe("provisioning files", () => {
   test("a datasource provisioning file: one Datasource each, unknown keys named", () => {
-    const ir = parse("apiVersion: 1\nprune: true\ndatasources:\n  - name: Prometheus\n    type: prometheus\n    url: http://prom:9090\n    password: x\n");
+    const ir = parse("apiVersion: 1\nprune: true\ndatasources:\n  - name: Prometheus\n    type: prometheus\n    url: http://prom:9090\n    password: x\nextra: 1\n");
     const { plan } = ir.resources[0].properties as unknown as PlanResourceProperties;
     expect(plan.declarations).toEqual([
       expect.objectContaining({ className: "Datasource", props: { name: "Prometheus", type: "prometheus", url: "http://prom:9090" } }),
     ]);
-    expect(ir.warnings).toEqual([
-      'datasource "Prometheus": password is not carried (no prop takes it)',
-      "the provisioning file: prune is not carried (chant writes datasources only; prune and deleteDatasources are #2953)",
+    expect(ir.warnings).toEqual(['datasource "Prometheus": password is not carried (no prop takes it)', "the provisioning file: extra is not carried (no prop takes it)"]);
+  });
+
+  test("a datasource provisioning file's prune and deleteDatasources become a DatasourceProvisioning (#2953)", () => {
+    const pruned = parse("apiVersion: 1\nprune: true\ndatasources: []\n").resources[0].properties as unknown as PlanResourceProperties;
+    expect(pruned.plan.declarations).toEqual([]);
+    const kept = parse("apiVersion: 1\ndeleteDatasources:\n  - name: Old\n    orgId: 2\n  - name: Gone\ndatasources: []\n");
+    const { plan } = kept.resources[0].properties as unknown as PlanResourceProperties;
+    expect(plan.declarations).toEqual([
+      expect.objectContaining({ className: "DatasourceProvisioning", props: { prune: false, deleteDatasources: [{ name: "Old", orgId: 2 }, { name: "Gone" }] } }),
     ]);
+    expect(kept.warnings).toEqual([]);
   });
 
   test("a dashboard provisioning file: file providers only", () => {

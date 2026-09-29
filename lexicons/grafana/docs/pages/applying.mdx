@@ -58,7 +58,7 @@ A failed write stops the step with Grafana's status and message.
 
 ## What gets written
 
-- **Folders.** A dashboard's `folder` is a title. The applier makes one folder per title, with a uid made from the title (`"Team A"` becomes `team-a`), so the next apply finds it again. A folder that already has that uid is used and labelled.
+- **Folders.** A dashboard's `folder` is a path or a `Folder` (see [Provisioning](../provisioning/#folders)). The applier makes one folder per level, parents first, each under its parent, with the uid its `Folder` pins or one made from its path (`"Team A"` becomes `team-a`, `"Platform/Kubernetes"` a `platform-kubernetes` inside `platform`), so the next apply finds it again. It reads them from the build's index, which also lists a `Folder` no dashboard is in yet. A folder that already has that uid is used, moved under its declared parent and labelled.
 - **Library panels.** A dashboard file that carries library panels in `__elements`, as an exported dashboard does, has each one written to the library before the dashboard, in the dashboard's folder. The dashboard is sent without `__elements`, `__inputs` and `__requires`. Declaring library panels in TypeScript is not supported yet, so this applies to dashboard JSON that already has them.
 - **Dashboards.** Sent with the project's labels (`app.kubernetes.io/managed-by: chant`, `chant.intentius.io/stack`, `chant.intentius.io/env`) and their folder. A dashboard with the same uid that somebody else made is updated and labelled; labels already on it are kept.
 
