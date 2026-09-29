@@ -10,7 +10,7 @@ The `chant import` command reads existing infrastructure files (YAML, JSON, Dock
 
 | Member | Returns | Drives |
 |---|---|---|
-| `detectTemplate(data)` | `boolean` | Which lexicon owns a template file. Core parses the file, asks each loaded plugin in turn, and takes the first `true` (`detectPlugin` in `packages/core/src/cli/commands/import.ts`). |
+| `detectTemplate(data)` | `boolean` | Which lexicon owns a template file. Core parses the file, asks the project's lexicons and then the installed ones, and takes the first `true` (`detectTemplateLexicon` in `packages/core/src/cli/commands/import.ts`). |
 | `templateParser()` | `TemplateParser` | Source format to `TemplateIR`. |
 | `templateGenerator()` | `TypeScriptGenerator` | `TemplateIR` to `GeneratedFile[]`. |
 | `migrationSource(from)` | `MigrationSource \| undefined` | `chant migrate`: another provider's format into this lexicon's. |
@@ -22,7 +22,7 @@ Two interfaces in `packages/core/src/import/` are the whole contract between a l
 
 ```typescript
 interface TemplateParser    { parse(content: string): TemplateIR; }
-interface TypeScriptGenerator { generate(ir: TemplateIR): GeneratedFile[]; }
+interface TypeScriptGenerator { generate(ir: TemplateIR): GeneratedFile[]; readonly ownsLayout?: boolean; }
 interface GeneratedFile     { readonly path: string; readonly content: string; }
 ```
 
@@ -55,7 +55,20 @@ Three rules follow from that shape:
 
 ### How core drives the two halves
 
-`generateOrganizedFiles` in `packages/core/src/cli/commands/import.ts` decides the file layout, not you. Up to three resources it calls `generate(ir)` once and writes whatever paths you return. Above three it buckets resources by category (`storage` / `compute` / `network` / `other`), calls `generate()` once per non-empty bucket, and takes `generated[0].content` for `<category>.ts`. So a generator must return at least one file for any IR it is handed, and its first file must be the whole content for those resources.
+`generateOrganizedFiles` in `packages/core/src/cli/commands/import.ts` decides the file layout unless your generator takes it over. File import and live import (`chant import --from <env>`) both go through it.
+
+By default an IR of up to three resources gets one `generate(ir)` call and core writes whatever paths you return. Above three, core buckets resources by category (`storage` / `compute` / `network` / `other`) and calls `generate()` once per non-empty bucket. The category is guessed from substrings of each resource's `type`. It writes `generated[0].content` as `<category>.ts` and adds an `index.ts` that re-exports each resource's lowercased `logicalId` from its category file. Any further files a call returns are not written, and the import warns with their paths. A call that returns nothing is skipped with a warning. So under the default layout your first file must be the whole content for the resources you were handed, and resources in different buckets cannot import each other.
+
+Set `ownsLayout: true` on the generator when that split does not fit. That is the case when your resources refer to each other (collector pipelines to components, or Alertmanager routes to receivers), or when one call returns several modules. Core then calls `generate(ir)` once with the whole IR, whatever its size. It writes exactly the files you return at the paths you give, and adds no `index.ts` of its own. The otel and prometheus generators return several modules per call but leave `ownsLayout` unset. Each of their parsers emits a single IR resource per config, so the split never runs for them.
+
+```typescript
+export class MyGenerator implements TypeScriptGenerator {
+  readonly ownsLayout = true;
+  generate(ir: TemplateIR): GeneratedFile[] {
+    // one module per component, plus whatever barrel you want
+  }
+}
+```
 
 ## The three files
 

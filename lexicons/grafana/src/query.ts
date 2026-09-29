@@ -14,15 +14,19 @@
 
 import { createProperty } from "@intentius/chant/runtime";
 import type { Declarable } from "@intentius/chant/declarable";
-import type { DatasourceEntity, DatasourceRef } from "./datasource";
+import type { DatasourceEntity, DatasourceRef, ExternalDatasourceEntity } from "./datasource";
 import type { DatasourceVariableEntity } from "./variables";
 import type { SchemaName } from "./pin";
 import type { Dataquery as PrometheusDataquery } from "./schema/prometheus.gen";
 import type { Dataquery as TempoDataquery } from "./schema/tempo.gen";
 import type { Dataquery as LokiDataquery } from "./schema/loki.gen";
 
-/** Where a query or panel sends its request: a declared datasource, a datasource variable, or the ref of one declared elsewhere. */
-export type DatasourceInput<T extends string = string> = DatasourceEntity<T> | DatasourceVariableEntity<T> | DatasourceRef<T>;
+/** Where a query or panel sends its request: a declared or external datasource, a datasource variable, or the ref of one declared elsewhere. */
+export type DatasourceInput<T extends string = string> =
+  | DatasourceEntity<T>
+  | ExternalDatasourceEntity<T>
+  | DatasourceVariableEntity<T>
+  | DatasourceRef<T>;
 
 /** A query model's fields, less what chant fills in (`datasource`, `refId` stays optional). */
 export type QueryModel<M> = Omit<M, "datasource">;

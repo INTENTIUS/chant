@@ -1,7 +1,8 @@
 /**
- * The correction overlay (chant #2939): real Grafana 12.4 and 13.x exports
- * pass GRAF107, the reproductions from the issue type and build, unknown keys
- * are warnings, and genuine type violations stay errors.
+ * The correction overlay (chant #2939, #2971): real Grafana 12.4 and 13.x
+ * exports pass GRAF107, the reproductions from the issues type and build,
+ * unknown keys are warnings, genuine type violations stay errors, and the
+ * library panels an external export embeds in `__elements` are checked.
  */
 import { describe, expect, test } from "vitest";
 import { readdirSync, readFileSync } from "fs";
@@ -47,8 +48,8 @@ describe("the overlay files", () => {
     }
   });
 
-  test("the dashboard, timeseries and logs schemas are patched; the vendored bytes are not", () => {
-    expect(SCHEMA_NAMES.filter((n) => loadOverlay(n))).toEqual(["dashboard", "timeseries", "logs"]);
+  test("the dashboard, timeseries, table and logs schemas are patched; the vendored bytes are not", () => {
+    expect(SCHEMA_NAMES.filter((n) => loadOverlay(n))).toEqual(["dashboard", "timeseries", "table", "logs"]);
     const vendored = loadVendoredSchema("dashboard").definitions as Record<string, Json>;
     const patched = loadSchema("dashboard").definitions as Record<string, Json>;
     expect((vendored.MatcherConfig.properties as Json).scope).toBeUndefined();
@@ -72,7 +73,12 @@ describe("real Grafana exports", () => {
   test("the corpus covers Grafana 12.4 and 13.2, plain and shared externally", () => {
     expect(versions).toEqual(["grafana-12.4.11", "grafana-13.2.2"]);
     expect(classicExports.map(([name]) => name)).toEqual(
-      expect.arrayContaining(["grafana-12.4.11/checkout.external.json", "grafana-13.2.2/slo.external.json", "grafana-13.2.2/checkout.json"]),
+      expect.arrayContaining([
+        "grafana-12.4.11/checkout.external.json",
+        "grafana-13.2.2/slo.external.json",
+        "grafana-13.2.2/checkout.json",
+        "grafana-13.2.2/cells.external.json",
+      ]),
     );
   });
 
@@ -86,6 +92,103 @@ describe("real Grafana exports", () => {
     const json = readJson(join(exportsDir, "grafana-13.2.2", "slo.external.json"));
     expect(Object.keys(json)).toEqual(expect.arrayContaining(["__inputs", "__requires", "__elements"]));
     expect(Object.keys(json.__elements as Json)).toEqual(["chant-fx-burn"]);
+  });
+});
+
+describe("enum values newer than the pin", () => {
+  const cells = readJson(join(exportsDir, "grafana-13.2.2", "cells.external.json"));
+  const panels = (cells.panels as Json[]).filter((p) => !p.libraryPanel);
+  const custom = (p: Json) => ((p.fieldConfig as Json).defaults as Json).custom as Json;
+  const colorMode = (p: Json) => (((p.fieldConfig as Json).defaults as Json).color as Json).mode;
+
+  test("the 13.2 cells export uses them, in panels and in its library panel", () => {
+    expect(panels.map((p) => (custom(p)?.cellOptions as Json | undefined)?.type).filter(Boolean)).toEqual(["pill", "markdown", "geo"]);
+    expect(panels.map(colorMode)).toEqual([
+      "continuous-viridis",
+      "continuous-magma",
+      "continuous-plasma",
+      "continuous-inferno",
+    ]);
+    expect(custom(panels[3]).lineStyle).toEqual({ fill: "accessible" });
+    const model = ((cells.__elements as Json)["chant-fx-owners"] as Json).model as Json;
+    expect([(custom(model).cellOptions as Json).type, colorMode(model)]).toEqual(["markdown", "continuous-cividis"]);
+  });
+
+  test("the vendored schemas reject them; the overlay accepts them", () => {
+    const enumOf = (schema: Json, def: string) => ((schema.definitions as Json)[def] as Json).enum as string[];
+    const fill = (schema: Json) => ((((schema.definitions as Json).LineStyle as Json).properties as Json).fill as Json).enum as string[];
+    for (const [name, def, value] of [
+      ["dashboard", "FieldColorModeId", "continuous-viridis"],
+      ["table", "TableCellDisplayMode", "pill"],
+      ["table", "TableCellDisplayMode", "markdown"],
+      ["table", "TableCellDisplayMode", "geo"],
+    ] as const) {
+      expect(enumOf(loadVendoredSchema(name), def)).not.toContain(value);
+      expect(enumOf(loadSchema(name), def)).toContain(value);
+    }
+    for (const name of ["timeseries", "table"] as const) {
+      expect(fill(loadVendoredSchema(name))).not.toContain("accessible");
+      expect(fill(loadSchema(name))).toContain("accessible");
+    }
+  });
+
+  test("an unknown enum value is still an error", () => {
+    const bad = structuredClone(cells);
+    custom((bad.panels as Json[])[0]).cellOptions = { type: "hologram" };
+    const problems = validateDashboardSchema(bad);
+    expect(problems.map((p) => [p.severity, p.path])).toContainEqual(["error", "/panels/0/fieldConfig/defaults/custom/cellOptions/type"]);
+  });
+});
+
+describe("library panels in __elements", () => {
+  const external = () => readJson(join(exportsDir, "grafana-13.2.2", "slo.external.json"));
+  const burn = (json: Json) => ((json.__elements as Json)["chant-fx-burn"] as Json).model as Json;
+
+  test("a bad library panel model is reported at its path", () => {
+    const json = external();
+    const model = burn(json);
+    ((model.options as Json).legend as Json).displayMode = "sideways";
+    (model.targets as Json[])[0].format = "csv";
+    model.transparent = "yes";
+    model.fancyNewField = true;
+    const problems = validateDashboardSchema(json).map((p) => `${p.severity} ${p.path}: ${p.message}`);
+    expect(problems).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/^error \/__elements\/chant-fx-burn\/model\/options\/legend\/displayMode: must be equal to one of the allowed values/),
+        expect.stringMatching(/^error \/__elements\/chant-fx-burn\/model\/targets\/0\/format: must be equal to one of the allowed values/),
+        "error /__elements/chant-fx-burn/model/transparent: must be boolean",
+        'warning /__elements/chant-fx-burn/model: unknown key "fancyNewField" (not in the pinned schema)',
+      ]),
+    );
+    expect(problems).toHaveLength(4);
+    const issues = checkSchema({ dashboards: [{ source: "slo.external.json", json }], datasources: [] });
+    expect(issues.filter((i) => i.code === "GRAF107" && i.severity === "error")).toHaveLength(3);
+  });
+
+  test("a model with neither a type nor a library panel reference is an error", () => {
+    const json = external();
+    delete burn(json).type;
+    expect(validateDashboardSchema(json).map((p) => [p.severity, p.path, p.message])).toEqual([
+      ["error", "/__elements/chant-fx-burn/model", "must have required property 'type'"],
+      ["error", "/__elements/chant-fx-burn/model", "must have required property 'libraryPanel'"],
+    ]);
+  });
+
+  test("the element itself is checked by the envelope, and a uid with a slash is escaped in the path", () => {
+    const json = external();
+    const el = (json.__elements as Json)["chant-fx-burn"] as Json;
+    json.__elements = { "team/burn": { ...el, uid: "team/burn", name: 7, model: { ...(el.model as Json), title: 9 } } };
+    expect(validateDashboardSchema(json).map((p) => `${p.path}: ${p.message}`)).toEqual([
+      "/__elements/team~1burn/name: must be string",
+      "/__elements/team~1burn/model/title: must be string",
+    ]);
+  });
+
+  test("an element of another kind is not read as a panel", () => {
+    const json = external();
+    const el = (json.__elements as Json)["chant-fx-burn"] as Json;
+    json.__elements = { "chant-fx-burn": { ...el, kind: 2, model: { type: 7 } } };
+    expect(validateDashboardSchema(json)).toEqual([]);
   });
 });
 

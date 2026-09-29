@@ -75,18 +75,18 @@ const agents = AgentDashboard({ genAi: genai, datasource: prometheus });        
 export { services, checkoutSlo, agents };
 ```
 
-Pass the `prometheus` exporter as `exporter` to `RedDashboard` when its `namespace` changes the names. `datasource` may be a `{ type: "prometheus", uid }` ref to a datasource declared elsewhere. Never hand-write the span-metric or SLO series names in a query next to these; use `spanMetricsNames()` (otel), `sloMetrics()` (prometheus) or `genAiMetrics()` (otel), or the composites' `redQueries`, `sloQueries` and `agentQueries`.
+Pass the `prometheus` exporter as `exporter` to `RedDashboard` when its `namespace` changes the names. `RedDashboard` counts server and consumer spans only; pass `spanKinds` to count others, or `[]` for every kind. `datasource` may be a `{ type: "prometheus", uid }` ref to a datasource declared elsewhere. Never hand-write the span-metric or SLO series names in a query next to these; use `spanMetricsNames()` (otel), `sloMetrics()` (prometheus) or `genAiMetrics()` (otel), or the composites' `redQueries`, `sloQueries` and `agentQueries`.
 
 ## Rules
 
-- GRAF101: every panel, query and query variable names a declared datasource. GRAF102: of the right type.
+- GRAF101: every panel, query and query variable names a declared datasource (`Datasource` or `ExternalDatasource`), and every datasource variable's plugin type has one. GRAF102: of the right type.
 - GRAF103: every `$name`/`${name}` in a query, title or repeat is a declared variable (`$__*` are Grafana's own).
 - GRAF104: unique dashboard uids, datasource uids and names, panel ids, variable names and refIds.
 - GRAF105: panels fit the 24-column grid and don't overlap.
 - GRAF106: uids of 1-40 letters, digits, `-`, `_`; dashboards have titles.
 - GRAF107: the dashboard matches Grafana's schema at the pinned version.
 
-GRAF101 and GRAF102 compare against the datasources in the same build root, so keep datasources and dashboards in one `chant build` (chant #1939).
+GRAF101 and GRAF102 compare against the datasources in the same build root, so keep datasources and dashboards in one `chant build` (chant #1939). For a datasource that exists in Grafana but is provisioned elsewhere, declare `new ExternalDatasource({ type: "prometheus", uid: "mimir" })` and use it like a `Datasource`; it is checked against, never provisioned.
 
 ## Other plugins
 

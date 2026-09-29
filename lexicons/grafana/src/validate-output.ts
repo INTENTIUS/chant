@@ -5,14 +5,25 @@
  * JSON (a test, another lexicon embedding dashboards) can call them directly.
  *
  * Checks that join a dashboard against datasources (GRAF101, GRAF102) only
- * see the datasources passed in. In a build that is the build root being
- * built (chant #1939): with no datasource declared in it they report
- * nothing, and a datasource declared in another build root looks undeclared.
+ * see the datasources passed in: the ones provisioned and the ones declared
+ * with `ExternalDatasource`. In a build that is the build root being built
+ * (chant #1939). With none declared they warn that references cannot be
+ * checked; a datasource that exists in Grafana but is not declared looks
+ * undeclared, so declare it with `ExternalDatasource`.
  */
 
-import type { ProvisionedDatasource } from "./build";
+import type { ExternalDatasourceRecord, ProvisionedDatasource } from "./build";
 import { GRID_COLUMNS } from "./build";
-import { BUILTIN_DATASOURCE_UIDS } from "./datasource";
+import {
+  datasourceUses,
+  describePanel,
+  knownDatasources,
+  panelsOf,
+  variableReferences,
+  variablesOf,
+  type DatasourceRefJson,
+  type KnownDatasource,
+} from "./datasource-refs";
 import { isBuiltinVariable } from "./variables";
 import { isValidUid } from "./util";
 import { validateDashboardSchema } from "./schema-validate";
@@ -35,55 +46,18 @@ export interface DashboardDoc {
 
 export interface GrafanaArtifacts {
   dashboards: DashboardDoc[];
+  /** Datasources the build provisions. */
   datasources: ProvisionedDatasource[];
+  /** Datasources the build references but does not provision (`ExternalDatasource`). */
+  externalDatasources?: ExternalDatasourceRecord[];
 }
+
+export { variableReferences };
 
 type Json = Record<string, unknown>;
-interface Ref {
-  type?: string;
-  uid?: string;
-}
-
-interface PanelInfo {
-  panel: Json;
-  /** Panels inside a collapsed row are laid out in their own group. */
-  group: string;
-}
-
-function panelsOf(dashboard: Json): PanelInfo[] {
-  const out: PanelInfo[] = [];
-  const top = Array.isArray(dashboard.panels) ? (dashboard.panels as Json[]) : [];
-  for (const p of top) {
-    if (!p || typeof p !== "object") continue;
-    out.push({ panel: p, group: "" });
-    if (p.type === "row" && Array.isArray(p.panels)) {
-      for (const c of p.panels as Json[]) if (c && typeof c === "object") out.push({ panel: c, group: `row ${String(p.id)}` });
-    }
-  }
-  return out;
-}
-
-function describePanel(panel: Json): string {
-  const title = typeof panel.title === "string" && panel.title ? `"${panel.title}"` : "(untitled)";
-  return `panel ${title} (id ${String(panel.id ?? "?")})`;
-}
 
 function dashName(d: Json): string {
   return `Dashboard "${String(d.title ?? d.uid ?? "?")}"`;
-}
-
-function variablesOf(d: Json): Json[] {
-  const list = (d.templating as { list?: unknown } | undefined)?.list;
-  return Array.isArray(list) ? (list as Json[]).filter((v) => v && typeof v === "object") : [];
-}
-
-const VAR_REF = /\$\{([A-Za-z_][A-Za-z0-9_]*)(?::[^}]*)?\}|\[\[([A-Za-z_][A-Za-z0-9_]*)(?::[^\]]*)?\]\]|\$([A-Za-z_][A-Za-z0-9_]*)/g;
-
-/** Every variable name referenced in a string. */
-export function variableReferences(text: string): string[] {
-  const out: string[] = [];
-  for (const m of text.matchAll(VAR_REF)) out.push(m[1] ?? m[2] ?? m[3]);
-  return out;
 }
 
 function isVariableUid(uid: string | undefined): boolean {
@@ -101,79 +75,95 @@ function stringsIn(value: unknown, skip: ReadonlySet<string>, out: string[] = []
 
 const TARGET_SKIP = new Set(["refId", "datasource"]);
 
-/** Every datasource ref a panel makes, with where it is made. */
-function panelRefs(panel: Json): Array<{ ref: Ref; where: string }> {
-  const out: Array<{ ref: Ref; where: string }> = [];
-  const panelRef = panel.datasource as Ref | undefined;
+/** Every datasource ref a panel or row writes itself, with where it is written. */
+function panelRefs(panel: Json): Array<{ ref: DatasourceRefJson; where: string }> {
+  const out: Array<{ ref: DatasourceRefJson; where: string }> = [];
+  const panelRef = panel.datasource as DatasourceRefJson | undefined;
   if (panelRef && typeof panelRef === "object") out.push({ ref: panelRef, where: describePanel(panel) });
   const targets = Array.isArray(panel.targets) ? (panel.targets as Json[]) : [];
   for (const t of targets) {
-    const r = t?.datasource as Ref | undefined;
+    const r = t?.datasource as DatasourceRefJson | undefined;
     if (r && typeof r === "object") out.push({ ref: r, where: `${describePanel(panel)} query ${String(t.refId ?? "?")}` });
   }
   return out;
 }
 
-function isPseudoRef(ref: Ref): boolean {
-  return ref.type === "datasource" || ref.type === "grafana" || (ref.uid !== undefined && BUILTIN_DATASOURCE_UIDS.has(ref.uid));
+/** The datasources a set of artifacts knows by uid: provisioned and external. */
+export function knownDatasourcesOf(a: GrafanaArtifacts): Map<string, KnownDatasource> {
+  return knownDatasources(a.datasources, a.externalDatasources ?? []);
+}
+
+function listUids(known: ReadonlyMap<string, KnownDatasource>): string {
+  return [...known.keys()].map((k) => `"${k}"`).join(", ");
 }
 
 // ── GRAF101, GRAF102: datasource references ─────────────────────
 
 export function checkDatasourceRefs(a: GrafanaArtifacts): GrafanaIssue[] {
   const issues: GrafanaIssue[] = [];
-  if (a.datasources.length === 0) return issues; // declared elsewhere, or not at all: see #1939
-  const byUid = new Map(a.datasources.map((d) => [d.uid, d]));
+  const known = knownDatasourcesOf(a);
+  const types = new Set([...known.values()].map((k) => k.type));
   for (const { json: d } of a.dashboards) {
     const uid = String(d.uid ?? "");
-    const vars = new Map(variablesOf(d).map((v) => [String(v.name), v]));
-    const refs: Array<{ ref: Ref; where: string }> = [];
+    const push = (code: GrafanaIssueCode, severity: GrafanaIssue["severity"], message: string) =>
+      issues.push({ code, severity, message: `${dashName(d)} ${message}`, entity: uid });
+
     for (const { panel } of panelsOf(d)) {
       if (panel.type === "row") continue;
-      refs.push(...panelRefs(panel));
       const targets = Array.isArray(panel.targets) ? (panel.targets as Json[]) : [];
       if (targets.length > 0 && !panel.datasource && targets.every((t) => !t?.datasource)) {
-        issues.push({
-          code: "GRAF101",
-          severity: "warning",
-          message: `${dashName(d)} ${describePanel(panel)} has queries but no datasource; Grafana will send them to whichever datasource is its default.`,
-          entity: uid,
-        });
+        push("GRAF101", "warning", `${describePanel(panel)} has queries but no datasource; Grafana will send them to whichever datasource is its default.`);
       }
     }
-    for (const v of vars.values()) {
-      if (v.type === "query" && v.datasource && typeof v.datasource === "object") refs.push({ ref: v.datasource as Ref, where: `variable "${String(v.name)}"` });
+
+    const uses = datasourceUses(d, known).filter((u) => u.ref !== undefined);
+    const dsVariables = variablesOf(d).filter((v) => v.type === "datasource" && typeof v.query === "string" && v.query);
+
+    // Nothing declared: the references can't be checked. Say so once per dashboard rather than staying silent.
+    if (known.size === 0) {
+      const uids = [...new Set(uses.flatMap((u) => (u.resolved.kind === "undeclared" ? [u.resolved.uid] : [])))];
+      const plugins = [...new Set(dsVariables.map((v) => String(v.query)))];
+      const what = [
+        ...(uids.length > 0 ? [`datasource uid${uids.length > 1 ? "s" : ""} ${uids.map((u) => `"${u}"`).join(", ")}`] : []),
+        ...(plugins.length > 0 ? [`datasource variables of type ${plugins.join(", ")}`] : []),
+      ];
+      if (what.length > 0) {
+        const them = uids.length + plugins.length > 1 ? "them" : "it";
+        push(
+          "GRAF101",
+          "warning",
+          `uses ${what.join(" and ")}, but the build declares no datasource, so GRAF101 and GRAF102 cannot check ${them}. Declare a Datasource to provision one, or an ExternalDatasource for one that already exists in Grafana.`,
+        );
+      }
     }
-    for (const { ref, where } of refs) {
-      if (isPseudoRef(ref) || ref.uid === undefined) continue;
-      if (isVariableUid(ref.uid)) {
-        const [name] = variableReferences(ref.uid);
-        const v = name ? vars.get(name) : undefined;
-        if (v && v.type === "datasource" && ref.type && v.query && v.query !== ref.type) {
-          issues.push({
-            code: "GRAF102",
-            severity: "error",
-            message: `${dashName(d)} ${where} expects a ${ref.type} datasource, but variable "${name}" chooses among ${String(v.query)} datasources.`,
-            entity: uid,
-          });
+
+    for (const { ref, where, resolved } of uses) {
+      if (resolved.kind === "variable") {
+        const v = variablesOf(d).find((x) => x.name === resolved.variable);
+        if (v && v.type === "datasource" && ref!.type && v.query && v.query !== ref!.type) {
+          push("GRAF102", "error", `${where} expects a ${ref!.type} datasource, but variable "${resolved.variable}" chooses among ${String(v.query)} datasources.`);
         }
-        continue;
+      } else if (resolved.kind === "undeclared" && known.size > 0) {
+        push(
+          "GRAF101",
+          "error",
+          `${where} uses datasource uid "${resolved.uid}"${ref!.type ? ` (${ref!.type})` : ""}, which no declared Datasource or ExternalDatasource has. Declared: ${listUids(known)}.`,
+        );
+      } else if (resolved.kind === "declared" && ref!.type && ref!.type !== resolved.type) {
+        const ds = resolved.datasource;
+        push("GRAF102", "error", `${where} sends a ${ref!.type} query to ${ds.external ? "external " : ""}datasource "${ds.name ?? ds.uid}", which is ${ds.type}.`);
       }
-      const declared = byUid.get(ref.uid);
-      if (!declared) {
-        issues.push({
-          code: "GRAF101",
-          severity: "error",
-          message: `${dashName(d)} ${where} uses datasource uid "${ref.uid}"${ref.type ? ` (${ref.type})` : ""}, which no declared Datasource has. Declared: ${[...byUid.keys()].map((k) => `"${k}"`).join(", ")}.`,
-          entity: uid,
-        });
-      } else if (ref.type && ref.type !== declared.type) {
-        issues.push({
-          code: "GRAF102",
-          severity: "error",
-          message: `${dashName(d)} ${where} sends a ${ref.type} query to datasource "${declared.name}", which is ${declared.type}.`,
-          entity: uid,
-        });
+    }
+
+    // A datasource variable offers the datasources of its plugin type; with none declared it has nothing to choose.
+    if (known.size > 0) {
+      for (const v of dsVariables) {
+        if (types.has(String(v.query))) continue;
+        push(
+          "GRAF101",
+          "error",
+          `variable "${String(v.name)}" chooses among ${String(v.query)} datasources, but no declared Datasource or ExternalDatasource is of type ${String(v.query)}. Declared types: ${[...types].join(", ")}.`,
+        );
       }
     }
   }
@@ -235,7 +225,8 @@ export function checkDuplicates(a: GrafanaArtifacts): GrafanaIssue[] {
   for (const [uid, n] of dupes(a.dashboards, (d) => (typeof d.json.uid === "string" ? d.json.uid : undefined))) {
     push(`${n} dashboards share the uid "${uid}"; Grafana keeps one of them.`, uid);
   }
-  for (const [uid, n] of dupes(a.datasources, (d) => d.uid)) push(`${n} datasources share the uid "${uid}".`, uid);
+  const allUids = [...a.datasources.map((d) => d.uid), ...(a.externalDatasources ?? []).map((d) => d.uid)];
+  for (const [uid, n] of dupes(allUids, (u) => u)) push(`${n} datasources share the uid "${uid}".`, uid);
   for (const [name, n] of dupes(a.datasources, (d) => d.name)) push(`${n} datasources share the name "${name}"; Grafana needs names to be unique.`, name);
   for (const { json: d } of a.dashboards) {
     const uid = String(d.uid ?? "");
@@ -336,6 +327,16 @@ export function checkIdentity(a: GrafanaArtifacts): GrafanaIssue[] {
         severity: "error",
         message: `Datasource "${ds.name}" has uid "${ds.uid}"; Grafana accepts 1-40 letters, digits, "-" and "_".`,
         entity: ds.name,
+      });
+    }
+  }
+  for (const ds of a.externalDatasources ?? []) {
+    if (!isValidUid(ds.uid)) {
+      issues.push({
+        code: "GRAF106",
+        severity: "error",
+        message: `ExternalDatasource "${ds.name ?? ds.uid}" has uid "${ds.uid}"; Grafana accepts 1-40 letters, digits, "-" and "_".`,
+        entity: ds.name ?? ds.uid,
       });
     }
   }

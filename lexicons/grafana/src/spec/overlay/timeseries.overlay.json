@@ -9,6 +9,13 @@
       "value": { "type": "boolean", "description": "Show point values on the graph." },
       "source": "packages/grafana-schema/src/common/mudball.cue:257 (:242 at v12.4.0)",
       "why": "In GraphFieldConfig since 12.4; Grafana writes it into every time series panel's fieldConfig.defaults.custom."
+    },
+    {
+      "op": "replace",
+      "path": "/definitions/LineStyle/properties/fill/enum",
+      "value": ["solid", "dash", "dot", "square", "accessible"],
+      "source": "packages/grafana-schema/src/common/mudball.cue:41 (not in v12.4.0)",
+      "why": "Grafana 13 adds the \"accessible\" line style; the vendored enum rejects it."
     }
   ]
 }

@@ -73,12 +73,16 @@ export const ResourceProcessor = defineBuiltin<ResourceProcessorConfig, "process
 
 // ── attributes ───────────────────────────────────────────────────────
 
+/** An include/exclude block of the attributes processor and the filter processor's legacy `spans` (`filterconfig.MatchProperties`). */
 export interface AttributesMatch {
   match_type: "strict" | "regexp";
+  regexp?: { cacheenabled?: boolean; cachemaxnumentries?: number };
   services?: string[];
   span_names?: string[];
+  span_kinds?: string[];
   log_bodies?: string[];
   log_severity_texts?: string[];
+  log_severity_number?: { min: number | string; match_undefined?: boolean };
   metric_names?: string[];
   attributes?: Array<{ key: string; value?: unknown }>;
   resources?: Array<{ key: string; value?: unknown }>;

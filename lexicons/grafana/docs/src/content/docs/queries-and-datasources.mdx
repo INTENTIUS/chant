@@ -27,7 +27,25 @@ const tempo = new Datasource({ name: "Tempo", type: "tempo", url: "http://tempo:
 
 Every declared datasource in the build goes to `provisioning/datasources/chant.yaml`.
 
-A datasource declared in another build root, or created by hand in Grafana, is referenced with a plain ref: `{ type: "prometheus", uid: "mimir" }`. GRAF101 reports that ref as undeclared if the build declares other datasources; see [Lint rules](../lint-rules/).
+## ExternalDatasource
+
+A datasource that already exists in Grafana, because another build root provisions it, someone created it in the UI, or another tool manages it, is declared with `ExternalDatasource`:
+
+```ts
+export const mimir = new ExternalDatasource({ type: "prometheus", uid: "mimir", name: "Mimir" });
+
+new TimeSeriesPanel({ datasource: mimir, targets: [new PromQuery({ expr: "sum(up)" })] });
+```
+
+| Prop | Default | Notes |
+|---|---|---|
+| `type` | required | the plugin id; `ExternalDatasource` is generic in it, like `Datasource` |
+| `uid` | required | the uid the datasource has in Grafana |
+| `name` | unset | its display name, used in messages |
+
+It is used anywhere a `Datasource` is: a panel's, row's, query's or query variable's `datasource`, and inside another datasource's `jsonData`, where it is written as its uid. It is never written to the provisioning file; the build index lists it under `externalDatasources`.
+
+GRAF101 and GRAF102 count it as declared. A plain `{ type: "prometheus", uid: "mimir" }` ref resolves against it too, so imported or hand-written refs are checked against the declared type. Without the declaration, a ref to a datasource the build does not provision is a GRAF101 error when the build declares other datasources, and a GRAF101 warning that nothing can be checked when it declares none; see [Lint rules](../lint-rules/).
 
 ## Queries
 

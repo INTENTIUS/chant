@@ -820,7 +820,7 @@ export interface FieldColor {
  * `shades`: Shades of a single color. Specify a single color, useful in an override rule.
  * `fixed`: Fixed color mode. Specify a single color, useful in an override rule.
  */
-export type FieldColorModeId = "thresholds" | "palette-classic" | "palette-classic-by-name" | "continuous-GrYlRd" | "continuous-RdYlGr" | "continuous-BlYlRd" | "continuous-YlRd" | "continuous-BlPu" | "continuous-YlBl" | "continuous-blues" | "continuous-reds" | "continuous-greens" | "continuous-purples" | "fixed" | "shades";
+export type FieldColorModeId = "thresholds" | "palette-classic" | "palette-classic-by-name" | "continuous-viridis" | "continuous-magma" | "continuous-plasma" | "continuous-inferno" | "continuous-cividis" | "continuous-GrYlRd" | "continuous-RdYlGr" | "continuous-BlYlRd" | "continuous-YlRd" | "continuous-BlPu" | "continuous-YlBl" | "continuous-blues" | "continuous-reds" | "continuous-greens" | "continuous-purples" | "fixed" | "shades";
 
 /**
  * Defines how to assign a series color from "by value" color schemes. For example for an aggregated data points like a timeseries, the color can be assigned by the min, max or last value.
@@ -1388,7 +1388,7 @@ export interface LibraryElementExport {
   name: string;
   kind?: number;
   /**
-   * The library panel's own panel JSON.
+   * The library panel's own panel JSON. GRAF107 checks it as a panel (src/schema-validate.ts), not here.
    */
   model: Record<string, unknown>;
   [key: string]: unknown;
