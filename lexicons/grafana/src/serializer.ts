@@ -17,8 +17,13 @@
  * the provider's path (`/var/lib/grafana/dashboards` by default).
  *
  * The primary output is a small JSON index of what was built. The dashboard
- * JSON carries no ownership marker: Grafana keeps who manages a dashboard in
- * the resource's metadata on its `dashboard.grafana.app` API, not in the JSON.
+ * JSON carries no ownership marker, because Grafana keeps who manages a
+ * dashboard outside it, in the resource's metadata on its
+ * `dashboard.grafana.app` API. For a file-provisioned dashboard that metadata
+ * is the `grafana.app/managerId` annotation Grafana writes, whose value is the
+ * provider name in `provisioning/dashboards/chant.yaml`: `chant` unless a
+ * `DashboardProvider` names another. That name is the marker chant stamps at
+ * synthesis, and ./ownership.ts reads it back.
  */
 
 import type { Declarable } from "@intentius/chant/declarable";

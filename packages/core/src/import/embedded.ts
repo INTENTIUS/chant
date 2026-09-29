@@ -164,8 +164,9 @@ export function embeddedDocument(text: string): unknown {
   } catch {
     return undefined;
   }
-  // Core's YAML reader is lenient and reads text that is not YAML (`just
-  // text`, `KEY=value` lines) as an empty mapping; that is no document.
+  // Text that is not YAML (`just text`, `KEY=value` lines) makes core's YAML
+  // reader throw, caught above (#2991); an empty or comment-only text reads
+  // as an empty mapping. Neither is a document.
   if (typeof doc === "object" && doc !== null && Object.keys(doc).length === 0) return undefined;
   return doc;
 }

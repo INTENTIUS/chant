@@ -1,6 +1,6 @@
 /**
- * The checks behind GRAF101-GRAF108 and GRAF111-GRAF114, as plain functions
- * over built Grafana output: dashboard JSON documents, provisioned
+ * The checks behind GRAF101-GRAF108, GRAF111-GRAF114 and GRAF115, as plain
+ * functions over built Grafana output: dashboard JSON documents, provisioned
  * datasources and alerting provisioning files (the alerting checks are in
  * `validate-alerting.ts`). The
  * post-synth checks run them over a build; anything else holding the same
@@ -31,6 +31,7 @@ import { isValidUid } from "./util";
 import { validateDashboardSchema } from "./schema-validate";
 import { checkGrafanaPromql, prometheusQueries } from "./promql-check";
 import { checkAlertingIdentity, checkNotificationRefs, checkRuleDatasources, checkRulePromql, checkRuleQueries, type AlertingDoc } from "./validate-alerting";
+import { closestGrafanaUnit, isGrafanaUnit } from "./spec/units";
 
 export type GrafanaIssueCode =
   | "GRAF101"
@@ -44,7 +45,8 @@ export type GrafanaIssueCode =
   | "GRAF111"
   | "GRAF112"
   | "GRAF113"
-  | "GRAF114";
+  | "GRAF114"
+  | "GRAF115";
 
 export interface GrafanaIssue {
   code: GrafanaIssueCode;
@@ -407,6 +409,64 @@ export function checkPromqlSyntax(a: GrafanaArtifacts): GrafanaIssue[] {
   return issues;
 }
 
+// ── GRAF115: units ──────────────────────────────────────────────
+
+/** Every unit a panel sets, with where: field defaults, `unit` overrides, heatmap axes and cells, and a legacy graph panel's y-axes. */
+export function panelUnits(panel: Json): Array<{ where: string; unit: string }> {
+  const out: Array<{ where: string; unit: string }> = [];
+  const add = (where: string, unit: unknown) => {
+    if (typeof unit === "string") out.push({ where, unit });
+  };
+  const fieldConfig = panel.fieldConfig as Json | undefined;
+  add("fieldConfig.defaults.unit", (fieldConfig?.defaults as Json | undefined)?.unit);
+  const overrides = Array.isArray(fieldConfig?.overrides) ? (fieldConfig.overrides as Json[]) : [];
+  overrides.forEach((o, i) => {
+    const props = Array.isArray(o?.properties) ? (o.properties as Json[]) : [];
+    props.forEach((p, j) => {
+      if (p?.id === "unit") add(`fieldConfig.overrides[${i}].properties[${j}]`, p.value);
+    });
+  });
+  const options = panel.options as Json | undefined;
+  add("options.yAxis.unit", (options?.yAxis as Json | undefined)?.unit);
+  add("options.cellValues.unit", (options?.cellValues as Json | undefined)?.unit);
+  if (Array.isArray(panel.yaxes)) (panel.yaxes as Json[]).forEach((y, i) => add(`yaxes[${i}].format`, y?.format));
+  return out;
+}
+
+/**
+ * A unit Grafana doesn't register (at v13.2.2) and that isn't a custom
+ * `<kind>:` unit is shown as a literal suffix, so `"byte"` renders `5 byte`.
+ * A warning: it renders, just not as meant.
+ */
+export function checkUnits(a: GrafanaArtifacts): GrafanaIssue[] {
+  const issues: GrafanaIssue[] = [];
+  for (const { json: d } of a.dashboards) {
+    const panels: Array<{ panel: Json; label: string }> = panelsOf(d).map(({ panel }) => ({ panel, label: describePanel(panel) }));
+    const elements = d.__elements;
+    if (elements && typeof elements === "object" && !Array.isArray(elements)) {
+      for (const [key, element] of Object.entries(elements as Json)) {
+        const model = element && typeof element === "object" ? (element as Json).model : undefined;
+        if (model && typeof model === "object" && !Array.isArray(model)) panels.push({ panel: model as Json, label: `library panel "${key}"` });
+      }
+    }
+    for (const { panel, label } of panels) {
+      if (panel.type === "row") continue;
+      for (const { where, unit } of panelUnits(panel)) {
+        if (isGrafanaUnit(unit)) continue;
+        const guess = closestGrafanaUnit(unit);
+        const hint = guess ? `Did you mean "${guess}"? ` : "";
+        issues.push({
+          code: "GRAF115",
+          severity: "warning",
+          message: `${dashName(d)} ${label} ${where}: unit "${unit}" is not one Grafana knows, so it is shown as a literal suffix. ${hint}For a custom unit write "suffix:${unit}" (or prefix:, si:, count:, currency:, time:).`,
+          entity: String(d.uid ?? ""),
+        });
+      }
+    }
+  }
+  return issues;
+}
+
 const BY_CODE: Record<GrafanaIssueCode, (a: GrafanaArtifacts) => GrafanaIssue[]> = {
   GRAF101: (a) => checkDatasourceRefs(a).filter((i) => i.code === "GRAF101"),
   GRAF102: (a) => checkDatasourceRefs(a).filter((i) => i.code === "GRAF102"),
@@ -420,6 +480,7 @@ const BY_CODE: Record<GrafanaIssueCode, (a: GrafanaArtifacts) => GrafanaIssue[]>
   GRAF112: (a) => checkRuleDatasources(a.alerting ?? [], knownDatasourcesOf(a)),
   GRAF113: (a) => checkNotificationRefs(a.alerting ?? []),
   GRAF114: (a) => checkAlertingIdentity(a.alerting ?? []),
+  GRAF115: checkUnits,
 };
 
 /** The issues one check finds. */

@@ -38,7 +38,10 @@ build validates the dashboards against the same schemas.
 \`definePanel\` and \`defineQuery\` add plugins chant doesn't ship.
 \`chant import\` turns dashboard JSON exported from Grafana into this TypeScript,
 and it builds back to the same dashboard (see
-[Importing Dashboards](./importing/)).
+[Importing Dashboards](./importing/)). \`chant lifecycle diff --live\` reports
+a dashboard edited in Grafana as drift, property by property, and
+\`chant import --from <env>\` writes a running Grafana's dashboards as
+TypeScript (see [Drift and Live Export](./observing/)).
 
 Grafana-managed alerting is typed too: rule groups with their queries and
 server-side expressions (reduce, math, threshold, resample, classic
@@ -57,11 +60,12 @@ Checks catch a query aimed at a datasource nobody declared, with
 \`Datasource\` or \`ExternalDatasource\` (GRAF101), or of the
 wrong type (GRAF102), a \`$variable\` the dashboard doesn't declare (GRAF103),
 duplicate uids and ids (GRAF104), panels off the grid or overlapping (GRAF105),
-anything Grafana's dashboard schema rejects (GRAF107), and PromQL sent to a
-Prometheus that doesn't parse (GRAF108). For alerting, they catch rules whose
-condition or expressions name no query (GRAF111), queries to undeclared
-datasources (GRAF112), routes to undeclared contact points or mute timings
-(GRAF113), and uids, intervals and duplicates Grafana refuses (GRAF114).
+anything Grafana's dashboard schema rejects (GRAF107), PromQL sent to a
+Prometheus that doesn't parse (GRAF108), and a unit Grafana doesn't know
+(GRAF115). For alerting, they catch rules whose condition or expressions name
+no query (GRAF111), queries to undeclared datasources (GRAF112), routes to
+undeclared contact points or mute timings (GRAF113), and uids, intervals and
+duplicates Grafana refuses (GRAF114).
 `;
 
 const outputFormat = `The grafana lexicon writes Grafana's own files, keyed by path under the
@@ -90,7 +94,10 @@ datasources, alerting and files that were built.
   about key order.
 - The dashboard JSON carries no ownership marker. Grafana keeps who manages a
   dashboard in the resource's metadata on its \`dashboard.grafana.app\` API,
-  not in the JSON.
+  not in the JSON: for a provisioned dashboard, the name of the provider that
+  loaded it, which is \`chant\` unless a \`DashboardProvider\` names another.
+  \`chant lifecycle diff --live\` reads that back (see
+  [Drift and Live Export](../observing/)).
 `;
 
 export async function generateDocs(opts?: { verbose?: boolean }): Promise<void> {

@@ -2,8 +2,8 @@
  * The grafana lexicon's chant audit catalog, contributed via
  * `grafanaPlugin.auditCatalog()` (#687, #1346).
  *
- * GRAF101-GRAF108 and GRAF111-GRAF114 read the emitted dashboard JSON and
- * provisioning files (alerting included), so
+ * GRAF101-GRAF108, GRAF111-GRAF114 and GRAF115 read the emitted dashboard
+ * JSON and provisioning files (alerting included), so
  * they fire on an audit of files chant didn't build too, and are
  * `yamlBased`. GRAF001 and GRAF002 read TypeScript source, so they are
  * constructed with `yamlBased: false`; they are listed for a reader who
@@ -123,6 +123,14 @@ export const grafanaAuditCatalog: Record<string, RuleMeta> = {
     "guidance",
     "Alerting uid, name, title or interval Grafana rejects, or declared twice",
     'Use 1-40 letters, digits, "-" and "_" for uids, a multiple of 10s for group intervals, and one name per rule group, contact point, mute timing and template in each organisation.',
+    { category: "correctness" },
+  ),
+  GRAF115: auditRule(
+    "GRAF115",
+    "merge-worthy",
+    "guidance",
+    "Panel unit Grafana doesn't know",
+    'Use a unit id from Grafana\'s unit picker ("bytes", "s", "percent", "reqps"), or a custom unit such as "suffix: cores", "prefix:$", "si:mF", "count:reqs" or "currency:EUR". Grafana shows an unknown unit as a literal suffix.',
     { category: "correctness" },
   ),
 };
