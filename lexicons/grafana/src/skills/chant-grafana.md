@@ -55,6 +55,8 @@ export const overview = new Dashboard({
 });
 ```
 
+`transformations` is typed per transformer id, from Grafana v13.2.2's transformers: `transformation("organize", { excludeByName: { Time: true } })` checks the options against that one transformer, and a `{ id, options }` literal works too. Use `customTransformation(id, options)` for a plugin's transformer or options the types don't have.
+
 Leave `gridPos` out and panels are placed left to right, wrapping at 24 columns and flowing around explicitly placed panels; give `x` and `y` to place one exactly. `Row({ title, panels, collapsed })` starts a full-width row. Dashboard uids default to the export name as a uid (`overview`).
 
 Panels, rows, queries and variables are property-kind, so chant's core lint doesn't count them toward the eight-per-file limit (COR009) and lets them carry `fieldConfig` and `options` inline (COR001). The dashboard is a resource: lift its own nested objects (`time`, `links`) into named consts.

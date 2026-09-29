@@ -148,16 +148,40 @@ describe("datasource references", () => {
     expect(byName.warnings).toContain('panel "p" (id 1): datasource is not carried (it names the datasource "Prometheus" rather than its uid, from before Grafana 8.3)');
   });
 
-  test("Mixed is left to the build, which writes it when the queries differ", () => {
-    const { plan } = planDashboard(
+  test("a panel's Mixed datasource is carried, and its queries keep their own", () => {
+    const { plan, warnings, edits } = planDashboard(
       panelWith({ type: "datasource", uid: "-- Mixed --" }, [
         { refId: "A", expr: "up", datasource: prom },
         { refId: "B", query: "{}", datasource: { type: "tempo", uid: "tempo" } },
       ]),
     );
-    expect(decl(plan.declarations, "panel:0").props!.datasource).toBeUndefined();
+    expect(decl(plan.declarations, "panel:0").props!.datasource).toEqual({ $decl: "datasource:datasource:-- Mixed --" });
+    expect(decl(plan.declarations, "datasource:datasource:-- Mixed --")).toMatchObject({ kind: "value", value: { type: "datasource", uid: "-- Mixed --" } });
     expect(decl(plan.declarations, "query:0:0").props!.datasource).toEqual({ $decl: "datasource:prometheus:prom" });
     expect(decl(plan.declarations, "query:0:1").className).toBe("TempoQuery");
+    expect(warnings).toEqual([]);
+    expect(edits.filter((e) => "path" in e && e.path.endsWith("/datasource"))).toEqual([]);
+  });
+
+  test("a panel with no queries keeps its Mixed datasource (kube-prometheus apiserver)", () => {
+    const { plan, warnings } = planDashboard(dashboard({ panels: [{ type: "text", id: 1, datasource: { type: "datasource", uid: "-- Mixed --" }, targets: [] }] }));
+    expect(decl(plan.declarations, "panel:0").props!.datasource).toEqual({ $decl: "datasource:datasource:-- Mixed --" });
+    expect(warnings).toEqual([]);
+  });
+
+  test("Mixed on a query or a row is not carried, and is reported", () => {
+    const mixed = { type: "datasource", uid: "-- Mixed --" };
+    const { edits, warnings } = planDashboard(
+      dashboard({
+        panels: [
+          { type: "row", id: 1, title: "R", collapsed: true, datasource: mixed, panels: [{ type: "stat", id: 2, title: "s", datasource: prom, targets: [{ refId: "A", expr: "up", datasource: mixed }] }] },
+        ],
+      }),
+    );
+    expect(edits).toContainEqual({ op: "remove", path: "/panels/0/datasource" });
+    expect(edits).toContainEqual({ op: "remove", path: "/panels/0/panels/0/targets/0/datasource" });
+    expect(warnings).toContainEqual(expect.stringMatching(/^row "R": datasource is not carried \(it is "-- Mixed --", which only a panel can have/));
+    expect(warnings).toContainEqual(expect.stringMatching(/^panel "s" \(id 2\) query A: datasource is not carried \(it is "-- Mixed --"/));
   });
 
   test("a query with no datasource anywhere gets a class of its own", () => {
@@ -323,9 +347,41 @@ describe("panels and rows", () => {
       }),
     );
     expect(decl(plan.declarations, "dashboard").props!.panels).toEqual([{ $decl: "panel:0" }, { $decl: "row:0" }, { $decl: "row:1" }]);
-    expect(decl(plan.declarations, "row:0").props).toEqual({ title: "Open", id: 2, panels: [{ $decl: "panel:1" }] });
-    expect(decl(plan.declarations, "row:1").props).toEqual({ title: "Shut", id: 4, collapsed: true, panels: [{ $decl: "panel:2" }] });
+    expect(decl(plan.declarations, "row:0").props).toEqual({ title: "Open", id: 2, gridPos: { y: 3 }, panels: [{ $decl: "panel:1" }] });
+    expect(decl(plan.declarations, "row:1").props).toEqual({ title: "Shut", id: 4, collapsed: true, gridPos: { y: 8 }, panels: [{ $decl: "panel:2" }] });
     expect(plan.modules.map((m) => m.file)).toEqual(["panels", "row-open", "row-shut", "dashboard"]);
+  });
+
+  test("a row keeps the line it is on, even with an empty band above it (kube-prometheus nodes)", () => {
+    const { plan, edits, warnings } = planDashboard(
+      dashboard({
+        panels: [
+          { type: "stat", id: 1, title: "a", gridPos: { x: 0, y: 0, w: 24, h: 4 } },
+          { type: "row", id: 2, title: "Late", collapsed: false, gridPos: { x: 0, y: 6, w: 24, h: 1 }, panels: [] },
+          { type: "row", id: 3, title: "Bare", collapsed: false, gridPos: { y: 7 }, panels: [] },
+        ],
+      }),
+    );
+    expect(decl(plan.declarations, "row:0").props!.gridPos).toEqual({ y: 6 });
+    expect(decl(plan.declarations, "row:1").props!.gridPos).toEqual({ y: 7 });
+    // A row header is full width and one line high to Grafana, so filling those in is no change, and needs no warning.
+    expect(edits).toContainEqual({ op: "replace", path: "/panels/2/gridPos", value: { h: 1, w: 24, x: 0, y: 7 } });
+    expect(warnings).toEqual([]);
+  });
+
+  test("a gridPos without x or y has them written as 0; without h or w, with the schema's size and a warning", () => {
+    const { plan, edits, warnings } = planDashboard(
+      dashboard({
+        panels: [
+          { type: "stat", id: 1, title: "a", gridPos: { h: 7, w: 18, y: 0 } },
+          { type: "stat", id: 2, title: "b", gridPos: { x: 18, y: 0 } },
+        ],
+      }),
+    );
+    expect(decl(plan.declarations, "panel:0").props!.gridPos).toEqual({ h: 7, w: 18, x: 0, y: 0 });
+    expect(decl(plan.declarations, "panel:1").props!.gridPos).toEqual({ h: 9, w: 12, x: 18, y: 0 });
+    expect(edits).toContainEqual({ op: "replace", path: "/panels/0/gridPos", value: { h: 7, w: 18, x: 0, y: 0 } });
+    expect(warnings).toEqual(['panel "b" (id 2): gridPos.h and gridPos.w are missing, so the dashboard schema\'s default is written (h 9, w 12)']);
   });
 
   test("a panel with no datasource in a row with one is reported: the build gives it the row's", () => {
@@ -416,5 +472,27 @@ describe("provisioning files", () => {
     const { plan } = ir.resources[0].properties as unknown as PlanResourceProperties;
     expect(plan.declarations.map((d) => d.props)).toEqual([{ name: "a", path: "/d" }]);
     expect(ir.warnings).toEqual(['provider "b" is of type sqlite; chant writes file providers only, so it is left out']);
+  });
+});
+
+describe("transformations (#2954)", () => {
+  test("a transformation the types hold stays an object; any other is written with customTransformation()", () => {
+    const transformations = [
+      { id: "organize", options: { renameByName: { Value: "Requests" } } },
+      { id: "sortBy", options: { fields: {}, sort: [{ field: "Pod" }] } },
+      { id: "grafana-plugin-x", options: { a: 1 }, disabled: true },
+      { options: {} },
+    ];
+    const { plan, warnings } = planDashboard(dashboard({ panels: [{ type: "table", id: 1, title: "t", gridPos: { x: 0, y: 0, w: 12, h: 8 }, transformations }] }));
+    expect(decl(plan.declarations, "panel:0").props!.transformations).toEqual([
+      { id: "organize", options: { renameByName: { Value: "Requests" } } },
+      { $call: "customTransformation", args: ["sortBy", { fields: {}, sort: [{ field: "Pod" }] }] },
+      { $call: "customTransformation", args: ["grafana-plugin-x", { a: 1 }, { disabled: true }] },
+    ]);
+    expect(warnings).toEqual([
+      'panel "t" (id 1): transformation 2 is written with customTransformation(), untyped: the sortBy transformer takes no option "fields".',
+      'panel "t" (id 1): transformation 3 is written with customTransformation(), untyped: "grafana-plugin-x" is not a transformer Grafana v13.2.2 registers.',
+      'panel "t" (id 1): transformation 4 has no id, so Grafana skips it; it is not carried.',
+    ]);
   });
 });

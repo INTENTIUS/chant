@@ -66,8 +66,9 @@ export const PANEL_FIELDS: readonly string[] = [
 
 /**
  * Row JSON keys carried onto the `Row` prop of the same name. A row's
- * `gridPos` is not among them: the build places a row below what comes
- * before it, which is where Grafana keeps it.
+ * `gridPos` is not among them: only its `y` is carried (Grafana draws a row
+ * header full width and one line high), so the row stays on its line even
+ * where the build would place it elsewhere, such as below an empty band.
  */
 export const ROW_FIELDS: readonly string[] = ["id", "title", "collapsed"];
 

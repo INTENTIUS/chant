@@ -81,6 +81,24 @@ describe("layout", () => {
     expect((panels[1] as unknown as { panels: unknown[] }).panels).toEqual([]);
   });
 
+  test("a row with a y keeps that line, even over an empty band or on a line a panel takes (#2992)", () => {
+    const panels = panelsJson([
+      new StatPanel({ title: "a", gridPos: { x: 0, y: 0, w: 24, h: 4 } }),
+      new Row({ title: "late", gridPos: { y: 6 }, panels: [new StatPanel({ title: "b", gridPos: { x: 0, y: 7, w: 24, h: 4 } })] }),
+      new Row({ title: "auto", panels: [new StatPanel({ title: "c" })] }),
+      new Row({ title: "early", gridPos: { y: 8 } }),
+    ]);
+    expect(panels.map((p) => [p.title, p.gridPos])).toEqual([
+      ["a", { h: 4, w: 24, x: 0, y: 0 }],
+      ["late", { h: 1, w: 24, x: 0, y: 6 }],
+      ["b", { h: 4, w: 24, x: 0, y: 7 }],
+      // An auto-placed row skips the line the "early" row reserved.
+      ["auto", { h: 1, w: 24, x: 0, y: 11 }],
+      ["c", { h: 4, w: 6, x: 0, y: 12 }],
+      ["early", { h: 1, w: 24, x: 0, y: 8 }],
+    ]);
+  });
+
   test("an auto-placed panel flows around an explicit one declared before it (#2941)", () => {
     const panels = panelsJson([
       new TimeSeriesPanel({ title: "a", gridPos: { x: 0, y: 0, w: 12 } }),
@@ -218,6 +236,17 @@ describe("datasources and targets", () => {
       { type: "prometheus", uid: "prometheus" },
       { type: "tempo", uid: "tempo" },
     ]);
+  });
+
+  test("a panel declared Mixed stays Mixed, and a query naming no datasource is not sent to Mixed (#2992)", () => {
+    const mixed = { type: "datasource", uid: "-- Mixed --" };
+    const [bare, panel] = panelsOnly([
+      new TextPanel({ datasource: mixed }),
+      new StatPanel({ datasource: mixed, targets: [new PromQuery({ expr: "up", datasource: prometheus }), new PromQuery({ expr: "down" })] }),
+    ]);
+    expect(bare.datasource).toEqual(mixed);
+    expect(panel.datasource).toEqual(mixed);
+    expect(panel.targets!.map((t) => (t as { datasource?: unknown }).datasource)).toEqual([{ type: "prometheus", uid: "prometheus" }, undefined]);
   });
 
   test("a panel takes its queries' shared datasource, and a row passes its own down", () => {
