@@ -1047,6 +1047,15 @@ export interface LexiconPlugin {
   /** Return declarative rule specs for compilation via rule() */
   declarativeRules?(): RuleSpec[];
 
+  /**
+   * Class names this lexicon exports whose instances are property-kind
+   * declarables (`createProperty`), such as Grafana's panels and queries.
+   * The core COR001, COR004 and COR009 heuristics leave them out, since a
+   * property-kind declarable lives inside the resource that holds it
+   * (chant #2957). A lexicon that leaves this out gets the rules unchanged.
+   */
+  propertyClassNames?(): string[];
+
   /** Return post-synthesis checks for build validation */
   postSynthChecks?(): PostSynthCheck[];
 
