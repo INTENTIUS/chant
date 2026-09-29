@@ -31,4 +31,5 @@ export * as azuremonitor from "./azuremonitor.gen";
 export * as googlecloudmonitoring from "./googlecloudmonitoring.gen";
 export * as bigquery from "./bigquery.gen";
 export * as grafanapyroscope from "./grafanapyroscope.gen";
+export * as expr from "./expr.gen";
 export { DASHBOARD_SCHEMA_VERSION } from "./dashboard.gen";

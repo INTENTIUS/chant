@@ -50,7 +50,7 @@ export interface SqlPropertyExpression {
  * The visual builder's query: `SQLExpression`, packages/grafana-sql/src/types.ts:67-77.
  * `whereJsonTree` is react-awesome-query-builder's `JsonTree`, carried as data.
  */
-export interface SqlExpression {
+export interface SqlBuilderQuery {
   columns?: SqlFunctionExpression[];
   whereJsonTree?: Record<string, unknown>;
   whereString?: string;
@@ -85,7 +85,7 @@ export interface SqlQueryModel {
   alias?: string;
   dataset?: string;
   table?: string;
-  sql?: SqlExpression;
+  sql?: SqlBuilderQuery;
   /** `EditorMode` from @grafana/plugin-ui: the raw SQL editor or the visual builder. */
   editorMode?: "code" | "builder";
   rawQuery?: boolean;

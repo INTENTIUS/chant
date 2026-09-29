@@ -65,6 +65,7 @@ export const SCHEMA_NAMES = [
   "googlecloudmonitoring",
   "bigquery",
   "grafanapyroscope",
+  "expr",
 ] as const;
 
 export type SchemaName = (typeof SCHEMA_NAMES)[number];
@@ -119,6 +120,7 @@ export const GRAFANA_SCHEMA_PIN: GrafanaSchemaPin = Object.freeze({
     googlecloudmonitoring: "e1f2e2086d4216f22aca84def440b6a31a76e074727aa2ea3d2d10671e68834b",
     bigquery: "939a0a6aee2c98fd8f690659e17060ff2b5bad1b22437e3449741ce0acc5abe4",
     grafanapyroscope: "297db04efc4f9501ffa729acd9e02e484998bc4d823c7da362e401faceed64a2",
+    expr: "b1f1c1e4f6bf00f0fb4cb32b5bcc1b0e91fad9b7ad9354ecb791322bd97a5564",
     dashboardv2: "a2cfb8b731ff9f48c41f5aa06ade134cf0d93ab9f6f0567a34a4bc39a9fd984e",
   }),
 });
