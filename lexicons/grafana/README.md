@@ -22,7 +22,7 @@ export { prometheus, rate, requests, overview };
 | dashboards | `Dashboard`, `Row`, `DashboardProvider` |
 | panels | `TimeSeriesPanel`, `StatPanel`, `GaugePanel`, `TablePanel`, `LogsPanel`, `TracesPanel`, `HeatmapPanel`, `TextPanel`, `BarChartPanel`, `BarGaugePanel`, `PieChartPanel`, `StateTimelinePanel`, `StatusHistoryPanel`, `HistogramPanel`, `NodeGraphPanel`, `XYChartPanel`, `TrendPanel`, `CanvasPanel`, `GeomapPanel`, `FlameGraphPanel`, `AlertListPanel` |
 | queries | `PromQuery` (PromQL), `TempoQuery` (TraceQL), `LokiQuery` (LogQL), `ElasticsearchQuery`, `CloudWatchQuery`, `AzureMonitorQuery`, `CloudMonitoringQuery`, `BigQueryQuery`, `PyroscopeQuery`, `PostgresQuery`, `MySQLQuery`, `MSSQLQuery` |
-| variables | `QueryVariable`, `CustomVariable`, `IntervalVariable`, `DatasourceVariable`, `ConstantVariable`, `TextboxVariable` |
+| variables | `QueryVariable`, `CustomVariable`, `IntervalVariable`, `DatasourceVariable`, `ConstantVariable`, `TextboxVariable`, `AdhocVariable`, `GroupByVariable`, `SwitchVariable` |
 | datasources | `Datasource`, generic in its plugin type |
 | alerting | `AlertRuleGroup`, `AlertRule`, `AlertQuery`, the expressions `ReduceExpression`, `MathExpression`, `ThresholdExpression`, `ResampleExpression`, `ClassicConditionsExpression`, `SqlExpression`, and `ContactPoint`, `NotificationPolicy`, `MuteTiming`, `NotificationTemplate`, written to `provisioning/alerting/chant.yaml` |
 
@@ -48,7 +48,7 @@ With `grafana.profiles.<env>` in `chant.config.ts` (a URL, and a service account
 
 ## Checks
 
-GRAF001 and GRAF002 run on source (uid and variable-name syntax, literal secrets). The GRAF1xx checks run after a build: undeclared or mistyped datasources, undeclared variables, duplicate uids and ids, panels off the grid or overlapping, uids Grafana rejects, validation against the pinned dashboard, panel and query schemas (an unknown key is a warning), a PromQL syntax check on every query sent to a Prometheus (GRAF108), dashboard providers that load a dashboard twice or not into its declared folder (GRAF109), and a check that every panel unit is one Grafana knows or a custom `suffix:`/`prefix:`-style unit (GRAF115).
+GRAF001 and GRAF002 run on source (uid and variable-name syntax, literal secrets). The GRAF1xx checks run after a build: undeclared or mistyped datasources, undeclared variables, duplicate uids and ids, panels off the grid or overlapping, uids Grafana rejects, validation against the pinned dashboard, panel and query schemas (an unknown key is a warning), a PromQL syntax check on every query sent to a Prometheus (GRAF108), dashboard providers that load a dashboard twice or not into its declared folder (GRAF109), a panel or row repeated over a variable that only ever holds one value (GRAF110), and a check that every panel unit is one Grafana knows or a custom `suffix:`/`prefix:`-style unit (GRAF115).
 
 GRAF101 and GRAF102 compare dashboards with the datasources declared in the same build root (chant #1939); keep them together, and declare a datasource that already exists in Grafana with `ExternalDatasource`, which the checks count and the build never provisions.
 

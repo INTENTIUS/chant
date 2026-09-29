@@ -150,6 +150,9 @@ const PACKAGE_CLASS_NAMES = new Set([
   "DatasourceVariable",
   "ConstantVariable",
   "TextboxVariable",
+  "AdhocVariable",
+  "GroupByVariable",
+  "SwitchVariable",
   "PromQuery",
   "TempoQuery",
   "LokiQuery",
@@ -597,7 +600,7 @@ class DashboardConverter {
     const type = String(json.type);
     const mapping = VARIABLE_MAPPINGS[type];
     if (!mapping) {
-      this.report.drop(path, subject, "", `(${type}) is not carried: chant has no ${type} variable yet (#2952), so it is left out`);
+      this.report.drop(path, subject, "", `(${type}) is not carried: chant has no ${type} variable, so it is left out`);
       return undefined;
     }
     let dropped = false;

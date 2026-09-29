@@ -81,14 +81,15 @@ Pass the `prometheus` exporter as `exporter` to `RedDashboard` when its `namespa
 
 ## Rules
 
-- GRAF101: every panel, query and query variable names a declared datasource (`Datasource` or `ExternalDatasource`), and every datasource variable's plugin type has one. GRAF102: of the right type.
+- GRAF101: every panel, query, and query, ad hoc and group by variable names a declared datasource (`Datasource` or `ExternalDatasource`), and every datasource variable's plugin type has one. GRAF102: of the right type.
 - GRAF103: every `$name`/`${name}` in a query, title or repeat is a declared variable (`$__*` are Grafana's own).
 - GRAF104: unique dashboard uids, datasource uids and names, panel ids, variable names and refIds.
 - GRAF105: panels fit the 24-column grid and don't overlap.
 - GRAF106: uids of 1-40 letters, digits, `-`, `_`; dashboards have titles.
 - GRAF107: the dashboard matches Grafana's schema at the pinned version.
-- GRAF108: every query and query variable sent to a Prometheus parses as PromQL (template variables and `$__` macros are substituted first).
+- GRAF108: every query and query variable sent to a Prometheus parses as PromQL (template variables and `$__` macros are substituted first; an object-form variable query is checked on its `query`).
 - GRAF109: the dashboard providers put each dashboard in its declared folder, and no two load the same files.
+- GRAF110: a panel or row repeats over a query, custom or datasource variable with `multi` or `includeAll`, or a group by variable; anything else shows it once (warning).
 - GRAF115 (warning): every panel unit is a Grafana unit id (`bytes`, `s`, `percent`, `reqps`, ...) or a custom unit (`suffix: cores`, `prefix:$`, `si:mF`, `count:reqs`, `currency:EUR`). Grafana shows anything else as literal text after the value.
 - GRAF111-GRAF114: alert rules, contact points, policies and mute timings; see the chant-grafana-alerting skill.
 

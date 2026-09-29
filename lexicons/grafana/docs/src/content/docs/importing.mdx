@@ -67,6 +67,8 @@ const requestRateEnv = new TimeSeriesPanel({
 });
 ```
 
+Every variable type Grafana saves has a class, so the variable list comes over whole. A query variable in object form (`{ qryType, query, refId }`, as Prometheus's variable editor writes it) keeps its object, an ad hoc variable its filters, base filters and static keys, a group by variable its options and default, and a switch its enabled and disabled values and whether it starts on.
+
 Panel ids, positions and query refIds are carried as they are, so the rebuilt dashboard keeps its layout and any links to `viewPanel=<id>`. A panel `gridPos` missing `x` or `y` is written with 0, which is what Grafana reads; one missing `h` or `w` is written with the dashboard schema's default (9 and 12) and a warning. A row keeps its line as `gridPos: { y }`, so it stays where the source has it even above an empty band or on a line a panel also takes, where the build would otherwise place it lower. A panel's `repeat` names the variable constant, and a panel or query that uses a datasource variable holds that variable. A key left at the value Grafana assumes when it is missing (`transparent: false`, an empty `options`) is not written.
 
 A query is declared with its datasource's class (`PromQuery`, `ElasticsearchQuery`, `CloudWatchQuery`, `PostgresQuery` and the rest listed in [Queries and Datasources](../queries-and-datasources/#queries)), so its fields are type-checked; a Postgres query under the plugin's old id, `postgres`, is a `PostgresQuery` too. A panel type chant has no class for (a community plugin such as `grafana-clock-panel`) is declared with `definePanel` in `plugins.ts`, and a query to a datasource type chant has no class for with `defineQuery`. Their options are carried as data, typed `Record<string, unknown>`; see [Other Panel and Datasource Plugins](../custom-plugins/) to type them.
@@ -86,7 +88,6 @@ An export made for sharing names its datasources through `__inputs` and `${DS_PR
 `chant import` prints a warning for each of these, and leaves it out:
 
 - library panels, and the `__elements` that carry their models;
-- ad hoc filter, group by and switch variables, and anything but the query string of a query variable whose query is an object (#2952);
 - a top-level dashboard or panel key no prop takes, such as `gnetId`, and the `__requires` plugin list;
 - a textbox variable's current value when it differs from its default;
 - `-- Mixed --` anywhere but on a panel (a row, a query or a variable). A panel's Mixed datasource is carried as a `DatasourceRef` const.
@@ -118,7 +119,7 @@ Grafana's v1 read drops what the classic model cannot hold without saying so. Th
 | an annotation placed in the controls menu | a toggle in the usual place |
 | a key the pinned `dashboardv2` schema does not have | nothing |
 
-What the classic model has but chant does not yet (library panels, ad hoc, group by and switch variables) is reported as for a classic dashboard; see below. `dashboard.grafana.app/v2alpha1` is not read: read the dashboard at v2 instead.
+What the classic model has but chant does not yet (library panels) is reported as for a classic dashboard; see below. Ad hoc, group by and switch variables are imported as they are from a classic dashboard. `dashboard.grafana.app/v2alpha1` is not read: read the dashboard at v2 instead.
 
 A v0 or v1 read of a dashboard Grafana stores as v2 is refused. Grafana marks it with `status.conversion.storedVersion: v2`, and it has already lost what v2 has and v1 does not, with nothing in the spec to show it; building it and writing it back would overwrite the tabs. The warning says to read the dashboard at `dashboard.grafana.app/v2` (or export it with the V2 Resource model) and import that. Code that calls the parser directly can accept such a read anyway with `new GrafanaParser({ acceptLossyV1: true })`, which imports it with a warning. `GET /api/dashboards/uid/<uid>` carries no such marker, so a v2 dashboard read through it cannot be told from a classic one: prefer the v2 export.
 

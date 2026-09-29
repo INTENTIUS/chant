@@ -51,6 +51,36 @@ Advanced options in the export drawer, since 13.2 defaults to V2 Resource.
 There is no 12.4.11 capture because the `accessible` line style is new in
 13.x.
 
+### Ad hoc, group by and switch variables (chant #2952)
+
+`drilldown.json` and `drilldown.external.json` in both version directories
+were captured on 2026-09-28 from `seed/drilldown.json`, the same way, with
+two differences: each Grafana ran with `GF_FEATURE_TOGGLES_ENABLE=groupByVariable`
+(group by variables are experimental in 12.4 and 13.x, and without the
+toggle Grafana drops them on load), and the Prometheus datasource pointed
+at a running, empty `prom/prometheus:v3.15.0`, so the variables' key and
+value lookups answered. The seed has query variables in object form
+(`{ qryType, query, refId }`, a label-values and a series query), an ad hoc
+variable with filters, base filters and static keys, a group by variable
+with static options and a default, two switch variables (one with its own
+enabled and disabled values), and a panel repeated over a multi-value
+variable.
+
+Two Grafana behaviours show in them:
+
+- Grafana 12.4.11 cannot export a dashboard that has a group by variable:
+  the export drawer stays empty, and `makeExportableExternally` throws
+  `"groupby" not found in: query,custom,textbox,constant,datasource,interval,adhoc,system,switch`.
+  The 12.4.11 captures are of the seed with the group by variable removed.
+- Grafana 13.2.2 leaves the group by variable out of the "for sharing
+  externally" export; the plain export keeps it.
+
+One edit was made after capture: the CPU panel's unit, captured as `cores`,
+was changed to `suffix: cores` in the seed and in all four exports, once
+GRAF115 (#3003) began warning about units Grafana does not register.
+Grafana writes `fieldConfig.defaults.unit` back unchanged, so the exports
+are what it would have written for the corrected seed.
+
 ### Every other built-in panel type (chant #2950)
 
 `grafana-12.4.11/panels.json`, `grafana-13.2.2/panels.json` and their
