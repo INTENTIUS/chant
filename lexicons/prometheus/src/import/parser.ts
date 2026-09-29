@@ -21,6 +21,8 @@
 import * as jsYaml from "js-yaml";
 import type { TemplateIR, TemplateParser } from "@intentius/chant/import/parser";
 import {
+  ALERTMANAGER_GLOBAL_FIELDS,
+  RECEIVER_INTEGRATIONS,
   looksLikeAlertmanagerConfig,
   looksLikeRuleFile,
   type AlertmanagerConfig,
@@ -32,6 +34,7 @@ import {
   type RuleGroupConfig,
   type TimeIntervalConfig,
 } from "../model";
+import { PROMETHEUS_PIN } from "../pin";
 
 /** The IR resource type for a whole rule file. */
 export const RULE_FILE_RESOURCE_TYPE = "Prometheus::RuleFile";
@@ -264,12 +267,22 @@ function parseTimeIntervals(raw: unknown, at: string, warnings: string[]): TimeI
   return out;
 }
 
+const AM_VERSION = PROMETHEUS_PIN.alertmanager.version;
+const RECEIVER_KEYS = new Set<string>(["name", "labels", ...RECEIVER_INTEGRATIONS]);
+const GLOBAL_KEYS = new Set<string>(ALERTMANAGER_GLOBAL_FIELDS);
+
 function parseAlertmanager(doc: Record<string, unknown>, warnings: string[]): AlertmanagerConfig {
   for (const k of Object.keys(doc)) {
     if (!AM_SECTIONS.includes(k)) warnings.push(`top-level section "${k}" is not one chant declares; it is not carried`);
   }
   const config: AlertmanagerConfig = {};
-  if (isPlainObject(doc.global)) config.global = doc.global as AlertmanagerConfig["global"];
+  if (isPlainObject(doc.global)) {
+    config.global = doc.global as AlertmanagerConfig["global"];
+    const unknown = Object.keys(doc.global).filter((k) => !GLOBAL_KEYS.has(k));
+    if (unknown.length > 0) {
+      warnings.push(`global: ${unknown.join(", ")} ${unknown.length === 1 ? "is not a global field" : "are not global fields"} in Alertmanager ${AM_VERSION}; carried as data, untyped`);
+    }
+  }
   else if (doc.global !== undefined && doc.global !== null) warnings.push("global is not a mapping; it is not carried");
   const templates = stringList(doc.templates, "templates", warnings);
   if (templates) config.templates = templates;
@@ -287,6 +300,10 @@ function parseAlertmanager(doc: Record<string, unknown>, warnings: string[]): Al
       if (!isPlainObject(r) || r.name === undefined || r.name === null) {
         warnings.push(`receivers[${i}] has no name; it is not carried`);
         return;
+      }
+      const unknown = Object.keys(r).filter((k) => !RECEIVER_KEYS.has(k));
+      if (unknown.length > 0) {
+        warnings.push(`receiver "${String(r.name)}": ${unknown.join(", ")} ${unknown.length === 1 ? "is not a receiver field" : "are not receiver fields"} in Alertmanager ${AM_VERSION}; carried as data, untyped`);
       }
       receivers.push({ ...r, name: String(r.name) } as ReceiverConfig);
     });

@@ -24,7 +24,7 @@ import { build } from "@intentius/chant/build";
 import { lintCommand } from "@intentius/chant/cli/commands/lint";
 import { prometheusSerializer } from "../serializer";
 import { amtoolCheckConfig, hasTool, promtoolCheckRules } from "../tools";
-import type { AlertmanagerConfig, RouteConfig, RuleFileConfig } from "../model";
+import { RECEIVER_INTEGRATION_TYPES, type AlertmanagerConfig, type RouteConfig, type RuleFileConfig } from "../model";
 import { PrometheusParser } from "./parser";
 import { PrometheusGenerator } from "./generator";
 import { builtFiles, exampleOutputs, pkgDir, read, sloOutputs, UPSTREAM, type BuiltFile } from "./testdata/fixtures";
@@ -256,10 +256,11 @@ describe("YAML -> TypeScript -> YAML", () => {
     expect(out.source).toContain('url_file: "/etc/alertmanager/secrets/default-webhook-url"');
     expect(out.source).toContain("description: '{{ template \"pagerduty.default.description\" . }}'");
     expect(out.source).toContain('summary: "{{ .GroupLabels.alertname }} in {{ .GroupLabels.cluster }}"');
-    // Integrations and global fields the lexicon does not type are carried as data, spread in.
-    expect(out.source).toContain("// Receiver \"oncall\": opsgenie_configs is not typed by this lexicon");
-    expect(out.source).toContain("...oncallUntyped,");
-    expect(out.source).toContain("...globalUntyped,");
+    // Every integration and global field is typed.
+    expect(out.source).toContain("const oncallOpsgenie: OpsGenieConfig[] = [");
+    expect(out.source).toContain("const dbChatMsteams: MSTeamsConfig[] = [");
+    expect(out.source).toContain('opsgenie_api_key_file: "/etc/alertmanager/secrets/opsgenie-key"');
+    expect(out.source).not.toContain("Untyped");
     // Deprecated spellings are rewritten, and each rewrite is named.
     expect(out.source).toContain(`matchers: ['severity="page"', 'service=~"^(api|web)$"']`);
     expect(out.source).toContain(`source_matchers: ['severity="page"']`);
@@ -270,19 +271,54 @@ describe("YAML -> TypeScript -> YAML", () => {
     expect(out.warnings.join("\n")).toContain("top-level mute_time_intervals (weekends)");
   });
 
+  /**
+   * What each upstream sample is expected to raise: literal credentials
+   * (Alertmanager's own examples write placeholder secrets inline), which
+   * PROM001 reports, and deprecated `match` spellings, which import warns
+   * about. A sample not listed raises nothing.
+   */
+  const UPSTREAM_EXPECT: Record<string, { prom001?: number; warnings?: number }> = {
+    "alertmanager-simple.yml": { prom001: 4 },
+    // smtp_auth_password, slack_api_url, three routing_keys, the VictorOps and Opsgenie api_keys, Pushover's token and user_key.
+    "alertmanager-conf-good.yml": { prom001: 9, warnings: 9 },
+    "alertmanager-opsgenie-default-apikey-file.yml": { warnings: 1 },
+    "alertmanager-rocketchat-default-token-file.yml": { warnings: 1 },
+    "alertmanager-victorops-default-apikey-file.yml": { warnings: 1 },
+    "alertmanager-wechat-default-api-secret-file.yml": { prom001: 1 },
+  };
+
+  test("an alertmanager.yml using every receiver integration", async () => {
+    const out = await expectRoundTrip(read("alertmanager-integrations.yml"));
+    expect(out.warnings).toEqual([]);
+    expect(out.source).not.toContain("Untyped");
+    for (const type of Object.values(RECEIVER_INTEGRATION_TYPES)) expect(out.source).toMatch(new RegExp(`: ${type}\\[\\] = `));
+    // Fields the common four integrations gained, and structured values, keep their types.
+    expect(out.source).toContain('message_text: "{{ .CommonLabels.alertname }}"');
+    expect(out.source).toContain('threading: { enabled: true, thread_by_date: "daily" }');
+    expect(out.source).toContain("chat_id: -1001234567890");
+    expect(out.source).toContain('description: { template: \'{{ template "jira.default.description" . }}\', enable_update: false }');
+    expect(out.source).toContain('http_headers: {');
+  });
+
   for (const file of UPSTREAM) {
     test(`upstream sample: ${file}`, async () => {
       const yaml = read("upstream", file);
-      // The Alertmanager example writes placeholder secrets inline, which PROM001 reports.
-      const out = await expectRoundTrip(yaml, file === "alertmanager-simple.yml" ? { lintRules: ["PROM001"] } : {});
-      expect(out.warnings).toEqual([]);
+      const expected = UPSTREAM_EXPECT[file] ?? {};
+      const out = await expectRoundTrip(yaml, expected.prom001 ? { lintRules: ["PROM001"] } : {});
+      expect(out.lint.output.match(/PROM001/g) ?? []).toHaveLength(expected.prom001 ?? 0);
+      expect(out.warnings).toHaveLength(expected.warnings ?? 0);
+      for (const w of out.warnings) expect(w).toMatch(/match(_re)? are written as/);
+      // Every integration and global field is typed: nothing is carried as untyped data.
+      expect(out.source).not.toContain("Untyped");
       if (file === "alertmanager-simple.yml") {
         expect(out.source).toContain('service_key: "<team-X-key>"');
         expect(out.source).toContain("const tracing: AlertmanagerTracingConfig = {");
-        expect(out.lint.output.match(/PROM001/g)).toHaveLength(4);
       }
       if (file === "alertmanager-route-labels.yml") {
         expect(out.source).toContain('reason: "database {{ .GroupLabels.database }}"');
+      }
+      if (file === "alertmanager-sns-topic-arn.yml") {
+        expect(out.source).toContain("const snsApiNotificationsSns: SNSConfig[] = [");
       }
     });
   }
@@ -300,6 +336,7 @@ describe("upstream tools accept the re-emitted files", () => {
   const amFixtures = async (): Promise<BuiltFile[]> => [
     ...(await exampleOutputs()).filter((o) => o.name.endsWith("alertmanager.yml")),
     handWritten("alertmanager-full.yml"),
+    handWritten("alertmanager-integrations.yml"),
     ...UPSTREAM.filter((f) => f.startsWith("alertmanager-")).map(upstream),
   ];
 

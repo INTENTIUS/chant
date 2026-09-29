@@ -30,16 +30,31 @@ A route that references a `Receiver` or `TimeInterval` entity pulls it into the 
 |---|---|
 | `name` | Unique (PROM203). |
 | `labels` | Labels exposed to notification templates. |
-| `webhook_configs` | `url` or `url_file`, `http_config`, `max_alerts`, `timeout`. |
-| `email_configs` | `to`, `from`, `smarthost`, `auth_username`, `auth_password_file`, `require_tls`, `headers`, `html`, `text`. |
-| `slack_configs` | `api_url_file` (or `api_url`), `channel`, `title`, `text`, `fields`, `actions`. |
-| `pagerduty_configs` | `routing_key_file` (or `routing_key`, or the v1 `service_key`), `severity`, `class`, `component`, `group`, `details`, `links`. |
+| `webhook_configs` | `url` or `url_file`, `http_config`, `max_alerts`, `timeout`, `payload`. |
+| `email_configs` | `to`, `from`, `smarthost`, `auth_username`, `auth_password_file`, `require_tls`, `force_implicit_tls`, `threading`, `headers`, `html`, `text`. |
+| `slack_configs` | `api_url_file` (or `api_url`), or `app_token_file` with `app_url`; `channel`, `title`, `text`, `message_text`, `fields`, `actions`, `update_message`. |
+| `pagerduty_configs` | `routing_key_file` (or `routing_key`, or the v1 `service_key`), `severity`, `class`, `component`, `group`, `details`, `links`, `timeout`. |
+| `opsgenie_configs` | `api_key_file` (or `global.opsgenie_api_key_file`), `message`, `priority`, `responders`, `tags`, `details`. |
+| `msteams_configs`, `msteamsv2_configs` | `webhook_url_file`, `title`, `text` (and `summary` for the connector webhook). |
+| `discord_configs` | `webhook_url_file`, `title`, `message`, `content`. |
+| `telegram_configs` | `bot_token_file` (or the global one), `chat_id` or `chat_id_file`, `message`, `parse_mode`. |
+| `sns_configs` | `topic_arn`, `phone_number` or `target_arn`; `sigv4`, `subject`, `message`, `attributes`. |
+| `wechat_configs` | `api_secret_file` (or the global one), `corp_id`, `to_user`, `agent_id`, `message`. |
+| `webex_configs` | `room_id`, `message`, and the bot token in `http_config.authorization`. |
+| `victorops_configs` | `api_key_file` (or the global one), `routing_key`, `message_type`, `custom_fields`. |
+| `pushover_configs` | `user_key_file`, `token_file`, `priority`, `retry`, `expire`, `sound`. |
+| `jira_configs` | `project`, `issue_type`, `summary`, `description`, `labels`, the transitions, `fields`. |
+| `incidentio_configs` | `url` or `url_file`, `alert_source_token_file`. |
+| `rocketchat_configs` | `token_file` and `token_id_file` (or the global ones), `channel`, `fields`, `actions`. |
+| `mattermost_configs` | `webhook_url_file` (or the global one), `channel`, `text`, `attachments`, `priority`. |
+
+The types follow the Go structs of Alertmanager v0.34.1 field for field, so a misspelled or unknown field is a type error.
 
 Every integration takes `send_resolved`. A receiver with no integrations is valid: Alertmanager holds the alerts and sends nothing.
 
 ### Credentials
 
-Alertmanager does not expand environment variables in its config. Mount each secret as a file and use the `*_file` field. PROM001 flags a literal `api_url`, `routing_key`, `service_key`, `auth_password`, `auth_secret`, `credentials`, `bearer_token`, `password` or `client_secret` in a `Receiver` or `AlertmanagerSettings`. A webhook `url` is not flagged; put a tokenized URL in `url_file`.
+Alertmanager does not expand environment variables in its config. Mount each secret as a file and use the `*_file` field. PROM001 flags a literal credential in a `Receiver` or `AlertmanagerSettings`: a Slack `api_url` or `app_token`, a PagerDuty `routing_key` or `service_key`, a `webhook_url`, `api_key`, `api_secret`, `bot_token`, `token`, `token_id`, `user_key` or `alert_source_token`, the SMTP `auth_password` and `auth_secret`, their `global` counterparts, and the `http_config` `credentials`, `bearer_token`, `password` and `client_secret`. Each has a `*_file` sibling. An `api_url` outside Slack and a VictorOps `routing_key` are not secrets and are not flagged. A webhook `url` is not flagged either; put a tokenized URL in `url_file`.
 
 ## `InhibitRule`
 
@@ -51,7 +66,7 @@ An optional `name`, then `source_matchers`, `target_matchers` and `equal`: while
 
 ## `AlertmanagerSettings`
 
-`global` (`resolve_timeout`, `smtp_*`, `slack_api_url_file`, `pagerduty_url`, `http_config`), `templates` and `tracing` (where Alertmanager sends its own traces). Declare at most one.
+`global` (`resolve_timeout`, `http_config`, `smtp_*`, and each integration's default URL and credential file, such as `slack_api_url_file`, `opsgenie_api_key_file` or `telegram_bot_token_file`), `templates` and `tracing` (where Alertmanager sends its own traces). Declare at most one.
 
 ## Output
 

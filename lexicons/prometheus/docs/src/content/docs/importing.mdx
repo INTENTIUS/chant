@@ -107,19 +107,18 @@ Alertmanager still reads a few older forms. The importer writes the current one 
 
 Alertmanager treats both forms the same way, so the rebuilt file routes and mutes the same alerts.
 
-## Fields the lexicon does not type
+## Fields Alertmanager doesn't define
 
-The lexicon types the webhook, email, Slack and PagerDuty integrations and the common `global:` fields. Anything else in a receiver (`opsgenie_configs`, `msteams_configs`, …) or in `global:` is carried as data in a const without a type, spread into the declaration, with a comment naming the fields:
+Every receiver integration and every `global:` field of Alertmanager v0.34.1 is typed, so an imported receiver's lists come back as typed consts (`OpsGenieConfig[]`, `MSTeamsV2Config[]`, ...). A key Alertmanager doesn't define, in a receiver or in `global:`, is carried as data in a const without a type, spread into the declaration, with a comment naming it, and `chant import` prints a warning:
 
 ```ts title="receivers.ts"
-// Receiver "oncall": opsgenie_configs is not typed by this lexicon, so it is carried as data.
-const oncallUntyped = {
-  opsgenie_configs: [{ api_key_file: "/etc/alertmanager/secrets/opsgenie-key", priority: "P1" }],
-};
+// Receiver "oncall": pigeon_configs is not a field Alertmanager v0.34.1 defines, so it is carried as
+// data, untyped.
+const oncallUntyped = { pigeon_configs: [{ loft: "roof" }] };
 const oncall = new Receiver({ name: "oncall", pagerduty_configs: oncallPagerduty, ...oncallUntyped });
 ```
 
-A field inside a typed integration that its type doesn't list (a Slack `message_text`, say) is kept in place. It still builds back to the same YAML, but `tsc` reports it at the const that holds it. Add it to the type, or mark the line with `// @ts-expect-error` and a reason.
+That is usually an integration from a newer Alertmanager, or a typo, which `amtool check-config` would reject. A field inside an integration that its type doesn't list is kept in place instead. It still builds back to the same YAML, but `tsc` reports it at the const that holds it. Fix the spelling, or mark the line with `// @ts-expect-error` and a reason.
 
 ## What the importer cannot carry
 

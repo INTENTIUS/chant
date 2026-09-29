@@ -111,4 +111,12 @@ export const UPSTREAM = [
   "prometheus-alerting-templates.yml",
   "alertmanager-simple.yml",
   "alertmanager-route-labels.yml",
+  "alertmanager-conf-good.yml",
+  "alertmanager-mattermost-default-webhook-url-file.yml",
+  "alertmanager-opsgenie-default-apikey-file.yml",
+  "alertmanager-rocketchat-default-token-file.yml",
+  "alertmanager-sns-topic-arn.yml",
+  "alertmanager-telegram-default-bot-token-file.yml",
+  "alertmanager-victorops-default-apikey-file.yml",
+  "alertmanager-wechat-default-api-secret-file.yml",
 ];

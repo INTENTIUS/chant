@@ -7,19 +7,46 @@ import { calleeName, constInitializers, CREDENTIAL_CLASS, literalText, position,
  * reads it from a mounted file instead.
  */
 export const SECRET_FIELDS = new Set([
-  "api_url", // slack_configs: the incoming-webhook URL is the credential
-  "slack_api_url",
-  "routing_key",
+  "api_url", // slack_configs only: the incoming-webhook URL is the credential (see SECRET_ONLY_IN)
+  "webhook_url", // discord, msteams, msteamsv2 and mattermost
+  "app_token",
+  "routing_key", // pagerduty (victorops' routing_key names a route, see SECRET_ONLY_IN)
   "service_key",
+  "api_key",
+  "api_secret",
+  "bot_token",
+  "token",
+  "token_id",
+  "user_key",
+  "alert_source_token",
   "auth_password",
   "auth_secret",
   "smtp_auth_password",
   "smtp_auth_secret",
+  "slack_api_url",
+  "slack_app_token",
+  "opsgenie_api_key",
+  "wechat_api_secret",
+  "victorops_api_key",
+  "telegram_bot_token",
+  "rocketchat_token",
+  "rocketchat_token_id",
+  "mattermost_webhook_url",
   "password",
   "credentials",
   "bearer_token",
   "client_secret",
 ]);
+
+/**
+ * Fields that are a secret in one integration and plain elsewhere: `api_url`
+ * is Slack's webhook credential but only an endpoint for the others, and a
+ * VictorOps `routing_key` names a route.
+ */
+const SECRET_ONLY_IN: Record<string, string> = {
+  api_url: "slack_configs",
+  routing_key: "pagerduty_configs",
+};
 
 /**
  * PROM001: a credential written as a literal in a `Receiver` or
@@ -46,16 +73,20 @@ export const literalCredentialRule: LintRule = {
 
     // A value is followed to the const it names, so a list lifted out of the
     // constructor (`email_configs: heartbeatEmail`) is scanned where it is used.
-    const scanValue = (key: string | undefined, value: ts.Expression) => {
+    // `integration` is the `*_configs` list a value sits in, when that is known.
+    const scanValue = (key: string | undefined, value: ts.Expression, integration?: string) => {
       const init = resolveConst(value, consts);
+      const within = key?.endsWith("_configs") ? key : integration;
       if (ts.isObjectLiteralExpression(init) || ts.isArrayLiteralExpression(init)) {
         if (scanned.has(init)) return;
         scanned.add(init);
-        if (ts.isObjectLiteralExpression(init)) scan(init);
-        else for (const el of init.elements) scanValue(undefined, el);
+        if (ts.isObjectLiteralExpression(init)) scan(init, within);
+        else for (const el of init.elements) scanValue(undefined, el, within);
         return;
       }
       if (!key || !SECRET_FIELDS.has(key)) return;
+      const only = SECRET_ONLY_IN[key];
+      if (only && integration !== undefined && integration !== only) return;
       const text = literalText(init);
       if (text === undefined || text === "") return;
       diagnostics.push({
@@ -67,11 +98,11 @@ export const literalCredentialRule: LintRule = {
       });
     };
 
-    const scan = (obj: ts.ObjectLiteralExpression) => {
+    const scan = (obj: ts.ObjectLiteralExpression, integration?: string) => {
       for (const prop of obj.properties) {
-        if (ts.isPropertyAssignment(prop)) scanValue(propertyName(prop), prop.initializer);
-        else if (ts.isShorthandPropertyAssignment(prop)) scanValue(prop.name.text, prop.name);
-        else if (ts.isSpreadAssignment(prop)) scanValue(undefined, prop.expression);
+        if (ts.isPropertyAssignment(prop)) scanValue(propertyName(prop), prop.initializer, integration);
+        else if (ts.isShorthandPropertyAssignment(prop)) scanValue(prop.name.text, prop.name, integration);
+        else if (ts.isSpreadAssignment(prop)) scanValue(undefined, prop.expression, integration);
       }
     };
 

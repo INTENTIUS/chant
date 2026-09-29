@@ -50,6 +50,7 @@ describe("the generated source type-checks against the lexicon's types", () => {
     const projects: Record<string, Files> = {
       rulesFull: generate(read("rules-full.yml")),
       alertmanagerFull: generate(read("alertmanager-full.yml")),
+      alertmanagerIntegrations: generate(read("alertmanager-integrations.yml")),
       ...Object.fromEntries(UPSTREAM.map((f) => [f, generate(read("upstream", f))])),
       ...Object.fromEntries(sloOutputs().map((o) => [o.name, generate(o.yaml)])),
       ...Object.fromEntries((await exampleOutputs()).map((o) => [o.name, generate(o.yaml)])),
@@ -67,9 +68,10 @@ describe("the generated source type-checks against the lexicon's types", () => {
       "      - channel: '#alerts'",
       "        api_url_file: /etc/alertmanager/slack-url",
       "        message_text: '{{ .CommonLabels.alertname }}'",
+      "        mesage_txt: typo",
       "",
     ].join("\n");
     const errors = typeErrors({ slack: generate(yaml) });
-    expect(errors).toEqual([expect.stringMatching(/^slack\/receivers\.ts: .*'message_text' does not exist in type 'SlackConfig'/)]);
+    expect(errors).toEqual([expect.stringMatching(/^slack\/receivers\.ts: .*'mesage_txt' does not exist in type 'SlackConfig'/)]);
   }, 120_000);
 });
