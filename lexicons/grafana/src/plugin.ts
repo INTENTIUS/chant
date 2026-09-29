@@ -12,6 +12,7 @@ import { hover } from "./lsp/hover";
 import { detectTemplate } from "./detect";
 import { GrafanaParser } from "./import/parser";
 import { GrafanaGenerator } from "./import/generator";
+import { dashboardImporter } from "./import/embedded";
 import { grafanaSkills } from "./skill-defs";
 import { BUILTIN_CATALOG } from "./catalog";
 import { GRAFANA_SCHEMA_PIN } from "./pin";
@@ -138,6 +139,10 @@ export const grafanaPlugin: LexiconPlugin = {
 
   templateGenerator() {
     return new GrafanaGenerator();
+  },
+
+  embeddedImporters() {
+    return [dashboardImporter];
   },
 
   completionProvider(ctx: CompletionContext) {

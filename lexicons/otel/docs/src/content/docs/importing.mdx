@@ -33,6 +33,8 @@ A section with more than eight components is split into `processors-1.ts`, `proc
 chant build src --lexicon otel -o collector.yaml
 ```
 
+A collector config inside a Kubernetes ConfigMap is imported the same way when you import the manifest with the k8s lexicon. The ConfigMap's value becomes `collectorYaml([...])` over the imported components and pipelines. See the k8s lexicon's [Importing Existing YAML](/chant/lexicons/k8s/importing-yaml/).
+
 ## What the generated source looks like
 
 A component id becomes a constant named after it (`otlp/tempo` becomes `otlpTempo`), and the part after `/` becomes the `name` prop. When a receiver and an exporter share an id, both constants get a kind suffix (`otlpReceiver`, `otlpExporter`). Nested settings are lifted into named consts typed by the component's config type, which is how COR001 wants a declaration written:

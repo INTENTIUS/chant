@@ -11,6 +11,7 @@ import { hover } from "./lsp/hover";
 import { detectTemplate } from "./detect";
 import { OtelCollectorParser } from "./import/parser";
 import { OtelCollectorGenerator } from "./import/generator";
+import { collectorConfigImporter } from "./import/embedded";
 import { otelSkills } from "./skill-defs";
 import { BUILTIN_CATALOG } from "./catalog";
 import { COLLECTOR_PIN } from "./define";
@@ -104,6 +105,10 @@ export const otelPlugin: LexiconPlugin = {
 
   templateGenerator() {
     return new OtelCollectorGenerator();
+  },
+
+  embeddedImporters() {
+    return [collectorConfigImporter];
   },
 
   completionProvider(ctx: CompletionContext) {
