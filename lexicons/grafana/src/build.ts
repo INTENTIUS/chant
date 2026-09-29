@@ -349,10 +349,15 @@ class Layout {
     }
   }
 
-  /** A full-width row header on the first free line below everything placed so far. */
-  row(): GridPos {
-    let y = Math.max(this.bottom, this.y + this.lineH);
-    while (!this.free(0, y, GRID_COLUMNS, 1)) y++;
+  /** Marks the line of a row header with an explicit `y` as taken, before anything is placed. */
+  reserveRow(y: number | undefined): void {
+    if (y !== undefined) this.take(0, y, GRID_COLUMNS, 1);
+  }
+
+  /** A full-width row header on line `explicitY`, else on the first free line below everything placed so far. */
+  row(explicitY?: number): GridPos {
+    let y = explicitY ?? Math.max(this.bottom, this.y + this.lineH);
+    if (explicitY === undefined) while (!this.free(0, y, GRID_COLUMNS, 1)) y++;
     this.take(0, y, GRID_COLUMNS, 1);
     this.x = 0;
     this.y = y + 1;
@@ -403,7 +408,8 @@ function panelJson(panel: PanelEntity, gridPos: GridPos, id: number, inherited?:
   const def = panel.panelDefinition;
   const own = datasourceRef(p.datasource) ?? inherited;
   const queries = (p.targets ?? []).filter(isQueryEntity);
-  const targets = queries.map((q, i) => targetJson(q, i, own));
+  // A query under a Mixed panel names its own datasource; one that names none goes to the default, not to Mixed.
+  const targets = queries.map((q, i) => targetJson(q, i, sameRef(own, MIXED) ? undefined : own));
   const refs = targets.map((t) => t.datasource as DataSourceRef | undefined);
   let datasource = own;
   if (!datasource && refs.length > 0) {
@@ -443,8 +449,9 @@ function panelJson(panel: PanelEntity, gridPos: GridPos, id: number, inherited?:
 /** A dashboard's `panels` array: rows and panels, laid out, with ids. */
 export function panelsJson(items: Array<PanelEntity | RowEntity>): Array<PanelJson | RowPanelJson> {
   const layout = new Layout();
-  // Panels on the dashboard's grid with both x and y take their cells first; a collapsed row's are laid out on their own.
+  // Panels on the dashboard's grid with both x and y, and rows with a y, take their cells first; a collapsed row's panels are laid out on their own.
   for (const item of items) {
+    if (isRowEntity(item)) layout.reserveRow(item.props.gridPos?.y);
     const onGrid = isRowEntity(item) ? (item.props.collapsed ? [] : (item.props.panels ?? [])) : [item];
     for (const p of onGrid.filter(isPanelEntity)) layout.reserve(p.props.gridPos, p.panelDefinition.defaultSize);
   }
@@ -453,7 +460,7 @@ export function panelsJson(items: Array<PanelEntity | RowEntity>): Array<PanelJs
   for (const item of items) {
     if (isRowEntity(item)) {
       const r = item.props;
-      const pos = layout.row();
+      const pos = layout.row(r.gridPos?.y);
       const rowId = ids.take(r.id);
       const rowRef = datasourceRef(r.datasource);
       const collapsed = r.collapsed ?? false;

@@ -258,6 +258,12 @@ export interface RowProps {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   datasource?: DatasourceInput<any>;
   id?: number;
+  /**
+   * The grid line the row header sits on. Without it, the row goes on the
+   * first free line below everything declared before it. A row header is
+   * always full width and one line high, so `y` is all it takes.
+   */
+  gridPos?: { y: number };
 }
 
 export interface RowEntity extends Declarable {
