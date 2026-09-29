@@ -15,17 +15,17 @@ The eight built-in panels and three query classes are defined through `definePan
 ```ts
 import { definePanel } from "@intentius/chant-lexicon-grafana";
 
-interface PieChartOptions {
-  pieType?: "pie" | "donut";
-  legend?: { showLegend?: boolean; placement?: "bottom" | "right" };
-  displayLabels?: Array<"name" | "value" | "percent">;
+interface ClockOptions {
+  mode?: "time" | "countdown";
+  clockType?: "24 hour" | "12 hour";
+  countdownSettings?: { endCountdownTime?: string; endText?: string };
 }
 
-export const PieChartPanel = definePanel<PieChartOptions>()({
-  type: "piechart",
-  className: "PieChartPanel",
-  description: "Pie chart",
-  defaultSize: { w: 8, h: 8 },
+export const ClockPanel = definePanel<ClockOptions>()({
+  type: "grafana-clock-panel",
+  className: "ClockPanel",
+  description: "Clock",
+  defaultSize: { w: 6, h: 4 },
 });
 ```
 

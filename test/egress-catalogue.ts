@@ -404,6 +404,13 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     why: "The cpln lexicon's read transport, injectable through `CplnHttp` so tests need no network.",
   },
   {
+    file: "lexicons/grafana/src/api/client.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "the Grafana HTTP API named by `grafana.profiles.<env>` or `GRAFANA_URL`",
+    why: "The grafana lexicon's transport for `lifecycle diff --live` and `import --from`, injectable through `GrafanaHttp` so tests need no network.",
+  },
+  {
     file: "lexicons/fly/src/op/activities/fly-apply.ts",
     primitives: ["fetch"],
     phase: "apply",

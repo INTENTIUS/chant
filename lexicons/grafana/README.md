@@ -20,7 +20,7 @@ export { prometheus, rate, requests, overview };
 | Kind | Classes |
 |---|---|
 | dashboards | `Dashboard`, `Row`, `DashboardProvider` |
-| panels | `TimeSeriesPanel`, `StatPanel`, `GaugePanel`, `TablePanel`, `LogsPanel`, `TracesPanel`, `HeatmapPanel`, `TextPanel` |
+| panels | `TimeSeriesPanel`, `StatPanel`, `GaugePanel`, `TablePanel`, `LogsPanel`, `TracesPanel`, `HeatmapPanel`, `TextPanel`, `BarChartPanel`, `BarGaugePanel`, `PieChartPanel`, `StateTimelinePanel`, `StatusHistoryPanel`, `HistogramPanel`, `NodeGraphPanel`, `XYChartPanel`, `TrendPanel`, `CanvasPanel`, `GeomapPanel`, `FlameGraphPanel`, `AlertListPanel` |
 | queries | `PromQuery` (PromQL), `TempoQuery` (TraceQL), `LokiQuery` (LogQL) |
 | variables | `QueryVariable`, `CustomVariable`, `IntervalVariable`, `DatasourceVariable`, `ConstantVariable`, `TextboxVariable` |
 | datasources | `Datasource`, generic in its plugin type |
@@ -40,6 +40,10 @@ export const agents = AgentDashboard({ genAi: genAiMetrics(), datasource: promet
 ## Importing existing dashboards
 
 `chant import dashboard.json --output src` turns dashboard JSON exported from Grafana (with or without "Export for sharing externally") into this lexicon's TypeScript, in a directory named after the dashboard's uid: variables, one module per row with its panels and their queries, and the `Dashboard`. Panel ids, positions and refIds are kept, datasources named by uid become `ExternalDatasource`s, and `__inputs` datasources become `DatasourceVariable`s of the same name. A panel or datasource type chant has no class for is declared with `definePanel` or `defineQuery`. What the lexicon cannot express yet (annotations, library panels, ad hoc variables) is printed as a warning. A v2 dashboard is reported and not imported (#2947). `chant build` on the result gives back the same dashboard: the round-trip tests in `src/import/roundtrip.test.ts` hold Grafana 12.4.11 and 13.2.2 UI exports, community dashboards from grafana.com such as Node Exporter Full, and the examples' output to that. Datasource and dashboard provisioning files import too.
+
+## Drift and live export
+
+With `grafana.profiles.<env>` in `chant.config.ts` (a URL, and a service account token named by its environment variable), or `GRAFANA_URL` and `GRAFANA_TOKEN`, `chant lifecycle diff <env> --live` reads each declared dashboard and datasource from Grafana 12.4 or 13.x over `/apis/dashboard.grafana.app` (Grafana 11 over `/api/dashboards/uid`) and reports a dashboard edited in the UI as drift, at the path it was declared under (`panels[0].panels[1].title: Errors → 5xx`). The stored dashboard is read back through the importer, so what the build fills in (ids, grid positions, refIds) and what Grafana adds (the built-in annotation) is not reported. A dashboard is `owned` when one of the project's providers loaded it or its labels carry `app.kubernetes.io/managed-by: chant`. `chant import --from <env>` writes the environment's dashboards and datasources as TypeScript, through the same generator as `chant import`. The e2e in `src/observe.e2e.test.ts` runs both against Grafana 12.4.11 and 13.2.2.
 
 ## Checks
 

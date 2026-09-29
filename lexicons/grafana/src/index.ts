@@ -51,6 +51,19 @@ export {
   TracesPanel,
   HeatmapPanel,
   TextPanel,
+  BarChartPanel,
+  BarGaugePanel,
+  PieChartPanel,
+  StateTimelinePanel,
+  StatusHistoryPanel,
+  HistogramPanel,
+  NodeGraphPanel,
+  XYChartPanel,
+  TrendPanel,
+  CanvasPanel,
+  GeomapPanel,
+  FlameGraphPanel,
+  AlertListPanel,
   Row,
   definePanel,
   registeredPanels,
@@ -129,6 +142,8 @@ export {
   type ImportOnlySchemaName,
   type VendoredSchemaName,
 } from "./pin";
+// Hand-written options for the built-in panels with no schema
+export type { AlertListOptions, AlertListSortOrder, AlertListStateFilter, FlameGraphOptions } from "./panel-options";
 
 // Plain-data API: render, check and detect without a build
 export {
@@ -206,3 +221,21 @@ export {
   type AgentDashboardInstance,
   type DashboardOptions,
 } from "./composites";
+
+// Config namespace (#2946): `grafana.profiles.<env>` in chant.config.ts, the
+// Grafana each environment is observed in and exported from.
+export { grafanaConfigSchema, resolveGrafanaTarget } from "./config";
+export type { GrafanaConfig, GrafanaProfile } from "./config";
+
+// Ownership (#2946): chant's marker on a dashboard.grafana.app resource.
+export {
+  GRAFANA_OWNERSHIP_KEYS,
+  DEFAULT_PROVIDER_NAME,
+  grafanaOwnershipLabels,
+  dashboardOwnership,
+} from "./ownership";
+
+// The HTTP client observe and export share, for the API applier (#2948).
+export { GrafanaClient, GrafanaApiError, grafanaHttp, namespaceOf, statusVerdict } from "./api/client";
+export type { GrafanaAuth, GrafanaHttp, GrafanaResponse, GrafanaTarget, StatusVerdict } from "./api/client";
+export { bindGrafana, classifyGrafanaFailure, GrafanaBindingError } from "./api/bind";

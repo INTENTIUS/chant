@@ -145,6 +145,7 @@ answer, and the suite will hold you to it: every verdict must then be `unknown`.
 | cpln | `chant.intentius.io/managed-by` tags | `describeResources` |
 | fly | `managed-by` machine metadata | `describeResources` |
 | gcp | `app.kubernetes.io/managed-by` labels | all three |
+| grafana | `app.kubernetes.io/managed-by` labels on a `dashboard.grafana.app` resource, or the `grafana.app/managerId` annotation naming a project provider | all three, for dashboards over `/apis`; datasources and Grafana 11 dashboards say `unknown` |
 | helm | `app.kubernetes.io/managed-by` labels | `describeResources`, `observeResourcesDeep` |
 | k3d | `app.kubernetes.io/managed-by` labels | `describeResources` |
 | k3s | `app.kubernetes.io/managed-by` labels | `describeResources` |
@@ -195,7 +196,7 @@ The scenario fields are these.
 | `expectMarker` | Per entity, the exact `ResourceMetadata.marker` (stack + env) the read must surface. |
 | `expectNoMarker` | Names whose live model carries no marker channel, so the field must stay absent. |
 
-Ten lexicons run it today (aws, azure, cedar, fly, fountain, gcp, helm, k3d, k3s, k8s). `lexicons/fly/src/describe-resources.test.ts` and `lexicons/aws/src/lifecycle-integration.test.ts` are the other two worth reading, for a REST transport and for a stack-granularity marker.
+Eleven lexicons run it today (aws, azure, cedar, fly, fountain, gcp, grafana, helm, k3d, k3s, k8s). `lexicons/fly/src/describe-resources.test.ts` and `lexicons/aws/src/lifecycle-integration.test.ts` are the other two worth reading, for a REST transport and for a stack-granularity marker.
 
 ## observeResourcesDeep() — property-level drift
 
@@ -474,10 +475,10 @@ author adding a reader has one row to update. Today's counts.
 
 | Hook | Lexicons |
 |---|---|
-| `describeResources()` | 12: aws, azure, cedar, cpln, fly, fountain, gcp, helm, k3d, k3s, k8s, render |
-| `observeResourcesDeep()` | 6: aws, azure, fountain, gcp, helm, k8s |
+| `describeResources()` | 13: aws, azure, cedar, cpln, fly, fountain, gcp, grafana, helm, k3d, k3s, k8s, render |
+| `observeResourcesDeep()` | 7: aws, azure, fountain, gcp, grafana, helm, k8s |
 | `listArtifacts()` | 2: docker, helm |
-| `exportResources()` | 7: aws, azure, cedar, fly, fountain, gcp, k8s |
+| `exportResources()` | 8: aws, azure, cedar, fly, fountain, gcp, grafana, k8s |
 
 github, gitlab and forgejo implement none by design: workflow definitions are
 git-tracked, so drift is `git diff`. See the [github](/lexicons/github/) and
@@ -519,6 +520,7 @@ Live-export coverage today.
 | Fly | `lexicons/fly/src/export-resources.ts` | Machines API (flaps) reads, mapped by `src/import/live-export.ts` |
 | Fountain | `lexicons/fountain/src/export-resources.ts` | REST list per kind, stripped to the authored shape in the same file; a kind a selector excludes is still listed when a selected kind resolves a reference through it |
 | GCP | `lexicons/gcp/src/export-resources.ts` | Per-kind REST `GET`s, mapped by `src/import/live-export.ts` |
+| Grafana | `lexicons/grafana/src/export-resources.ts` | Every dashboard over `/apis/dashboard.grafana.app` (or `/api/search` on Grafana 11) and every datasource over `/api/datasources`, planned by the dashboard importer in `src/import/live-export.ts`; secrets as key names only |
 | K8s | `lexicons/k8s/src/export-resources.ts` | Typed API client `LIST` per kind, stripped of `status`/`managedFields`/server metadata (kept under `--verbatim`), mapped by `src/import/live-export.ts` |
 
 Where a lexicon has both files the split is deliberate: all I/O in the entry point, the cleaning and IR-building pure in `src/import/live-export.ts` so it tests without a transport. cedar and fountain keep both halves in one file.

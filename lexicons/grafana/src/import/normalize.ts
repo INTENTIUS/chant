@@ -199,6 +199,15 @@ function normalizeLink(link: unknown): unknown {
   return out;
 }
 
+/**
+ * Per datasource type, a query key's value when the target leaves it out.
+ * A Tempo query without `filters` has no search filters, which `TempoQuery`
+ * writes as `filters: []`.
+ */
+export const TARGET_DEFAULTS: Readonly<Record<string, Readonly<Json>>> = {
+  tempo: { filters: [] },
+};
+
 function normalizeTarget(target: unknown, index: number, panelDatasource: unknown): unknown {
   if (!isObject(target)) return target;
   const out = { ...target };
@@ -208,6 +217,9 @@ function normalizeTarget(target: unknown, index: number, panelDatasource: unknow
   } else {
     out.datasource = canonicalRef(out.datasource);
   }
+  const type = isObject(out.datasource) ? out.datasource.type : undefined;
+  const defaults = typeof type === "string" ? TARGET_DEFAULTS[type] : undefined;
+  if (defaults) dropDefaults(out, defaults);
   if (out.refId === undefined || out.refId === null || out.refId === "") out.refId = refIdAt(index);
   return out;
 }
