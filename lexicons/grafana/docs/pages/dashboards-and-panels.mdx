@@ -1,6 +1,6 @@
 ---
 title: "Dashboards and Panels"
-description: "Dashboard, Row, the eight panel classes, variables, layout and ids"
+description: "Dashboard, Row, the 21 panel classes, variables, layout and ids"
 diataxis: reference
 order: 2
 ---
@@ -36,10 +36,25 @@ The emitted JSON carries `schemaVersion` from the pinned dashboard schema unless
 | `TracesPanel` | `traces` | 24×12 | no options schema |
 | `HeatmapPanel` | `heatmap` | 12×8 | `heatmap` options and field config |
 | `TextPanel` | `text` | 24×3 | `text` options |
+| `BarChartPanel` | `barchart` | 12×8 | `barchart` options and field config |
+| `BarGaugePanel` | `bargauge` | 12×8 | `bargauge` options |
+| `PieChartPanel` | `piechart` | 8×8 | `piechart` options and field config |
+| `StateTimelinePanel` | `state-timeline` | 24×8 | `statetimeline` options and field config |
+| `StatusHistoryPanel` | `status-history` | 24×8 | `statushistory` options and field config |
+| `HistogramPanel` | `histogram` | 12×8 | `histogram` options and field config |
+| `NodeGraphPanel` | `nodeGraph` | 24×12 | `nodegraph` options |
+| `XYChartPanel` | `xychart` | 12×8 | `xychart` options and field config |
+| `TrendPanel` | `trend` | 12×8 | `trend` options and field config |
+| `CanvasPanel` | `canvas` | 12×10 | `canvas` options |
+| `GeomapPanel` | `geomap` | 12×10 | `geomap` options |
+| `FlameGraphPanel` | `flamegraph` | 24×12 | `FlameGraphOptions`, typed by hand |
+| `AlertListPanel` | `alertlist` | 8×10 | `AlertListOptions`, typed by hand |
 
 Every panel takes `title`, `description`, `gridPos`, `datasource`, `targets`, `options`, `fieldConfig`, `transformations`, `links`, `repeat` (a variable or its name), `repeatDirection`, `maxPerRow`, `maxDataPoints`, `interval`, `timeFrom`, `timeShift`, `hideTimeOverride`, `transparent`, `pluginVersion` and `id`.
 
 `options` and `fieldConfig.defaults.custom` are the panel plugin's own types from the pinned schema, with every field optional: Grafana fills in what a panel leaves out. `schema.timeseries.Options` and the other namespaces under `schema` are exported for anyone who wants the full types.
+
+The alert list and flame graph panels define their options in Grafana's TypeScript, with no CUE kind, so there is no schema to generate from. `AlertListOptions` and `FlameGraphOptions` are written by hand from Grafana 13.2.2's source and exported. GRAF107 checks these two panels, and the traces panel, against the dashboard's `Panel` definition but not their `options`.
 
 ### Datasources on a panel
 

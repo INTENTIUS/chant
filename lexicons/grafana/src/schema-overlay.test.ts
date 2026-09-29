@@ -49,8 +49,8 @@ describe("the overlay files", () => {
     }
   });
 
-  test("the dashboard, timeseries, table and logs schemas are patched; the vendored bytes are not", () => {
-    expect(SCHEMA_NAMES.filter((n) => loadOverlay(n))).toEqual(["dashboard", "timeseries", "table", "logs"]);
+  test("the schemas with an overlay are patched; the vendored bytes are not", () => {
+    expect(SCHEMA_NAMES.filter((n) => loadOverlay(n))).toEqual(["dashboard", "timeseries", "table", "logs", "piechart", "nodegraph", "xychart", "trend", "canvas", "geomap"]);
     const vendored = loadVendoredSchema("dashboard").definitions as Record<string, Json>;
     const patched = loadSchema("dashboard").definitions as Record<string, Json>;
     expect((vendored.MatcherConfig.properties as Json).scope).toBeUndefined();
