@@ -55,7 +55,7 @@ GRAF101 and GRAF102 count it as declared. A plain `{ type: "prometheus", uid: "m
 | `TempoQuery` | `tempo` | `query` (TraceQL) | `tempo` `Dataquery`; `filters` defaults to `[]` and `queryType` to `"traceql"` |
 | `LokiQuery` | `loki` | `expr` (LogQL) | `loki` `Dataquery` |
 
-The fields are the plugin's query model at the pinned schema version, less `datasource`, which takes a `Datasource`, a `DatasourceVariable` or a `{ type, uid }` ref of the query's own plugin type. The expression is a string: this lexicon does not parse PromQL, TraceQL or LogQL.
+The fields are the plugin's query model at the pinned schema version, less `datasource`, which takes a `Datasource`, a `DatasourceVariable` or a `{ type, uid }` ref of the query's own plugin type. The expression is a string. After a build, GRAF108 parses the PromQL of every query that reaches a Prometheus datasource, with template variables substituted first; TraceQL and LogQL are not parsed.
 
 Each query becomes one of the panel's `targets`, carrying its datasource ref and `refId`.
 

@@ -2,7 +2,7 @@
  * The grafana lexicon's chant audit catalog, contributed via
  * `grafanaPlugin.auditCatalog()` (#687, #1346).
  *
- * GRAF101-GRAF107 read the emitted dashboard JSON and provisioning files, so
+ * GRAF101-GRAF108 read the emitted dashboard JSON and provisioning files, so
  * they fire on an audit of files chant didn't build too, and are
  * `yamlBased`. GRAF001 and GRAF002 read TypeScript source, so they are
  * constructed with `yamlBased: false`; they are listed for a reader who
@@ -82,6 +82,14 @@ export const grafanaAuditCatalog: Record<string, RuleMeta> = {
     "guidance",
     "Dashboard does not match the Grafana schema",
     "Fix the key or value the message names; the panel option types generated from the same schema show what is allowed.",
+    { category: "correctness" },
+  ),
+  GRAF108: auditRule(
+    "GRAF108",
+    "merge-worthy",
+    "guidance",
+    "Query sent to Prometheus is not valid PromQL",
+    "Fix the expression at the offset the message names: an unbalanced bracket or quote, a bad range duration, a missing operator. Template variables are substituted before the check, so $var, ${var} and $__rate_interval are fine where Grafana accepts them.",
     { category: "correctness" },
   ),
 };
