@@ -94,7 +94,7 @@ Anything else is `foreign`: a dashboard saved in the UI, or loaded by another pr
 chant import --from staging --lexicon grafana --output src
 ```
 
-Every dashboard and datasource in the organisation is written, each dashboard in a directory named after its uid, laid out the way [`chant import`](./importing/) lays out a dashboard file. The dashboards refer to the exported datasources by uid.
+Every dashboard and datasource in the organisation is written, each dashboard in a directory named after its uid, laid out the way [`chant import`](../importing/) lays out a dashboard file. The dashboards refer to the exported datasources by uid.
 
 - `--type Grafana::Dashboard` or `--type Grafana::Datasource` exports one kind; `--name <uid>` exports one dashboard or datasource.
 - `--owned` exports only chant's dashboards, and no datasources.

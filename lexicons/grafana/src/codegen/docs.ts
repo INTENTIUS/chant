@@ -81,7 +81,7 @@ datasources and files that were built.
   not in the JSON: for a provisioned dashboard, the name of the provider that
   loaded it, which is \`chant\` unless a \`DashboardProvider\` names another.
   \`chant lifecycle diff --live\` reads that back (see
-  [Drift and Live Export](./observing/)).
+  [Drift and Live Export](../observing/)).
 `;
 
 export async function generateDocs(opts?: { verbose?: boolean }): Promise<void> {

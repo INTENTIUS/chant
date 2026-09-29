@@ -66,7 +66,7 @@ Paths are in the terms you wrote the dashboard in, not Grafana's JSON: `panels[0
 What is not reported, because it is not a difference:
 
 - what the build fills in when you leave it out: panel ids, grid positions of auto-laid-out panels, query `refId`s, a panel's datasource taken from its queries, the dashboard's uid, and `timezone: "browser"`;
-- what Grafana adds or drops when it stores a dashboard: its `id` and `version`, the built-in "Annotations & Alerts" annotation, empty `options` and `fieldConfig`, `null` values;
+- what Grafana adds or drops when it serves a stored dashboard: its `id` and `version`, and, through `dashboard.grafana.app`, the built-in "Annotations & Alerts" annotation, empty `options` and `fieldConfig`, and `null` values;
 - a value written out at the one Grafana assumes (`editable: true`, `graphTooltip: "default"`);
 - `[]`, `{}` and a missing key, which mean the same.
 
@@ -97,7 +97,7 @@ Anything else is `foreign`: a dashboard saved in the UI, or loaded by another pr
 chant import --from staging --lexicon grafana --output src
 ```
 
-Every dashboard and datasource in the organisation is written, each dashboard in a directory named after its uid, laid out the way [`chant import`](./importing/) lays out a dashboard file. The dashboards refer to the exported datasources by uid.
+Every dashboard and datasource in the organisation is written, each dashboard in a directory named after its uid, laid out the way [`chant import`](../importing/) lays out a dashboard file. The dashboards refer to the exported datasources by uid.
 
 - `--type Grafana::Dashboard` or `--type Grafana::Datasource` exports one kind; `--name <uid>` exports one dashboard or datasource.
 - `--owned` exports only chant's dashboards, and no datasources.
