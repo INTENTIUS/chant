@@ -6,6 +6,10 @@
  * lexicon's `spanMetricsNames()`: its namespace, its histogram unit, the
  * default dimensions it keeps, and optionally the `prometheus` exporter's
  * namespace. Renaming the connector's namespace moves every query here.
+ *
+ * The queries count server and consumer spans only by default, the spans
+ * that handle a request or a message, so a service's outgoing calls and
+ * its internal spans don't inflate its rate or dilute its error ratio.
  */
 
 import { Composite, type CompositeInstance } from "@intentius/chant/composite";
@@ -21,6 +25,7 @@ import { slugUid } from "../util";
 import {
   dashboardProps,
   durationUnit,
+  errorRatio,
   legend,
   quantile,
   quantileName,
@@ -41,7 +46,35 @@ export interface RedDashboardProps extends DashboardOptions {
   exporter?: OTelComponent<"exporter", "prometheus", PrometheusExporterConfig> | PrometheusNaming;
   /** Duration quantiles, one panel each (default p50, p95 and p99). */
   quantiles?: number[];
+  /**
+   * The span kinds the queries count (default server and consumer spans).
+   * `[]` counts every kind. With the default, a connector that excludes
+   * `span.kind` gets no kind filter; naming kinds for such a connector is
+   * an error.
+   */
+  spanKinds?: SpanKind[];
 }
+
+/** The `span_kind` label values the spanmetrics connector writes. */
+export type SpanKind =
+  | "SPAN_KIND_UNSPECIFIED"
+  | "SPAN_KIND_INTERNAL"
+  | "SPAN_KIND_SERVER"
+  | "SPAN_KIND_CLIENT"
+  | "SPAN_KIND_PRODUCER"
+  | "SPAN_KIND_CONSUMER";
+
+const SPAN_KINDS: readonly SpanKind[] = [
+  "SPAN_KIND_UNSPECIFIED",
+  "SPAN_KIND_INTERNAL",
+  "SPAN_KIND_SERVER",
+  "SPAN_KIND_CLIENT",
+  "SPAN_KIND_PRODUCER",
+  "SPAN_KIND_CONSUMER",
+];
+
+/** The kinds `RedDashboard` counts unless told otherwise: the spans that serve a request or consume a message. */
+export const RED_DEFAULT_SPAN_KINDS: readonly SpanKind[] = Object.freeze(["SPAN_KIND_SERVER", "SPAN_KIND_CONSUMER"]);
 
 export type RedDashboardMembers = { dashboard: DashboardEntity };
 
@@ -50,26 +83,63 @@ export type RedDashboardInstance = CompositeInstance<RedDashboardMembers> & RedD
 
 const DEFAULT_QUANTILES = [0.5, 0.95, 0.99];
 
+function cap(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
 function isNames(x: unknown): x is SpanMetricsNames {
   return typeof x === "object" && x !== null && "calls" in x && "labels" in x && "errorStatus" in x;
 }
 
-/** The PromQL the RED dashboard runs, from the connector's names. Exposed for tests and for panels of your own. */
-export function redQueries(names: SpanMetricsNames, quantiles: number[] = DEFAULT_QUANTILES, serviceFilter = "$service") {
+/**
+ * The span-kind matcher for `kinds`, or none: none for `[]`, and none for
+ * the default kinds when the connector excludes `span.kind`.
+ */
+function spanKindMatchers(names: SpanMetricsNames, kinds: readonly SpanKind[] | undefined): Matcher[] {
+  const label = names.labels.spanKind;
+  if (kinds === undefined) return label ? [[label, "=~", RED_DEFAULT_SPAN_KINDS.join("|")]] : [];
+  for (const k of kinds) {
+    if (!SPAN_KINDS.includes(k)) throw new Error(`RedDashboard: unknown span kind ${JSON.stringify(k)}; use one of ${SPAN_KINDS.join(", ")}`);
+  }
+  if (kinds.length === 0) return [];
+  if (!label) throw new Error("RedDashboard: the connector excludes span.kind, so the metrics can't be filtered by spanKinds");
+  return [[label, "=~", [...new Set(kinds)].join("|")]];
+}
+
+/**
+ * The PromQL the RED dashboard runs, from the connector's names. Exposed for
+ * tests and for panels of your own. `spanKinds` defaults to server and
+ * consumer spans; `[]` counts every kind.
+ */
+export function redQueries(
+  names: SpanMetricsNames,
+  quantiles: number[] = DEFAULT_QUANTILES,
+  serviceFilter = "$service",
+  spanKinds?: readonly SpanKind[],
+) {
   const svc = names.labels.service;
   const status = names.labels.statusCode;
   if (!svc) throw new Error("RedDashboard: the connector excludes service.name, so there is no service to break the metrics down by");
   if (!status) throw new Error("RedDashboard: the connector excludes status.code, so errors can't be told from successes");
-  const bySvc: Matcher[] = [[svc, "=~", serviceFilter]];
-  const calls = selector(names.calls.prometheus, bySvc);
-  const errors = selector(names.calls.prometheus, [...bySvc, [status, "=", names.errorStatus]]);
-  const buckets = names.duration ? selector(`${names.duration.prometheus}_bucket`, bySvc) : undefined;
+  const kind = spanKindMatchers(names, spanKinds);
+  const scope: Matcher[] = [[svc, "=~", serviceFilter], ...kind];
+  const calls = selector(names.calls.prometheus, scope);
+  const errors = selector(names.calls.prometheus, [...scope, [status, "=", names.errorStatus]]);
+  const buckets = names.duration ? selector(`${names.duration.prometheus}_bucket`, scope) : undefined;
   return {
     rate: sumRate(calls, [svc]),
-    errorRatio: `${sumRate(errors, [svc])}\n/\n${sumRate(calls, [svc])}`,
+    errorRatio: errorRatio(errors, calls, [svc]),
     duration: buckets ? quantiles.map((q) => ({ quantile: q, expr: quantile(q, buckets, [svc]) })) : [],
-    services: `label_values(${names.calls.prometheus}, ${svc})`,
+    services: `label_values(${selector(names.calls.prometheus, kind)}, ${svc})`,
   };
+}
+
+/** "server and consumer spans", for panel descriptions. */
+function kindsText(names: SpanMetricsNames, kinds: readonly SpanKind[] | undefined): string {
+  const counted = kinds ?? (names.labels.spanKind ? RED_DEFAULT_SPAN_KINDS : []);
+  if (counted.length === 0) return "spans";
+  const words = [...new Set(counted)].map((k) => k.replace(/^SPAN_KIND_/, "").toLowerCase());
+  return `${words.length > 1 ? `${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}` : words[0]} spans`;
 }
 
 /**
@@ -94,7 +164,8 @@ export const RedDashboard = Composite<RedDashboardProps, RedDashboardMembers>((p
   for (const q of quantiles) {
     if (!(typeof q === "number" && q > 0 && q < 1)) throw new Error(`RedDashboard: a quantile must be between 0 and 1, got ${String(q)}`);
   }
-  const q = redQueries(names, quantiles);
+  const q = redQueries(names, quantiles, "$service", props.spanKinds);
+  const counted = kindsText(names, props.spanKinds);
   const svc = names.labels.service!;
   const ds = props.datasource;
 
@@ -112,7 +183,7 @@ export const RedDashboard = Composite<RedDashboardProps, RedDashboardMembers>((p
 
   const rate = new TimeSeriesPanel({
     title: "Rate",
-    description: `Spans per second by service, from ${names.calls.prometheus}.`,
+    description: `${cap(counted)} per second by service, from ${names.calls.prometheus}.`,
     datasource: ds,
     gridPos: { w: 12, h: 8 },
     targets: [new PromQuery({ expr: q.rate, legendFormat: legend(svc) })],
@@ -120,7 +191,7 @@ export const RedDashboard = Composite<RedDashboardProps, RedDashboardMembers>((p
   });
   const errors = new TimeSeriesPanel({
     title: "Errors",
-    description: `Share of spans with ${names.labels.statusCode}="${names.errorStatus}", by service.`,
+    description: `Share of ${counted} with ${names.labels.statusCode}="${names.errorStatus}", by service.`,
     datasource: ds,
     gridPos: { w: 12, h: 8 },
     targets: [new PromQuery({ expr: q.errorRatio, legendFormat: legend(svc) })],
@@ -135,7 +206,7 @@ export const RedDashboard = Composite<RedDashboardProps, RedDashboardMembers>((p
       (d) =>
         new TimeSeriesPanel({
           title: `Duration ${quantileName(d.quantile)}`,
-          description: `${quantileName(d.quantile)} span duration by service, from ${names.duration!.prometheus}.`,
+          description: `${quantileName(d.quantile)} duration of ${counted} by service, from ${names.duration!.prometheus}.`,
           datasource: ds,
           gridPos: { w: width, h: 8 },
           targets: [new PromQuery({ expr: d.expr, legendFormat: legend(svc) })],

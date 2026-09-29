@@ -17,7 +17,10 @@ import { agentRuns } from "./slo";
 
 const FOLDER = "Agent observability";
 
-const services = RedDashboard({ spanMetrics: red, exporter: scrapeEndpoint, datasource: prometheusDatasource, folder: FOLDER });
+// RedDashboard counts server and consumer spans by default. The demo agent
+// serves no requests: its runs and tool calls are internal spans and its
+// model calls client spans, so this dashboard counts every kind.
+const services = RedDashboard({ spanMetrics: red, exporter: scrapeEndpoint, spanKinds: [], datasource: prometheusDatasource, folder: FOLDER });
 
 const agentSlo = SloDashboard({ slo: agentRuns, datasource: prometheusDatasource, folder: FOLDER });
 
