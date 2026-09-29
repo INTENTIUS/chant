@@ -14,6 +14,7 @@ import { GrafanaParser } from "./import/parser";
 import { GrafanaGenerator } from "./import/generator";
 import { dashboardImporter } from "./import/embedded";
 import { grafanaSkills } from "./skill-defs";
+import { DEFAULT_TEMPLATE, K8S_PODS_TEMPLATE, RED_TEMPLATE, SLO_TEMPLATE } from "./init-templates";
 import { BUILTIN_CATALOG } from "./catalog";
 import { GRAFANA_SCHEMA_PIN } from "./pin";
 import { compositeCatalog } from "./composites/catalog";
@@ -127,6 +128,14 @@ export const grafanaPlugin: LexiconPlugin = {
 
   mcpResources() {
     return [catalogResource];
+  },
+
+  // `chant init --lexicon grafana [--template red|k8s-pods|slo]`; see ./init-templates.ts.
+  initTemplates(template?: string) {
+    if (template === "red") return RED_TEMPLATE;
+    if (template === "k8s-pods") return K8S_PODS_TEMPLATE;
+    if (template === "slo") return SLO_TEMPLATE;
+    return DEFAULT_TEMPLATE;
   },
 
   detectTemplate(data: unknown) {

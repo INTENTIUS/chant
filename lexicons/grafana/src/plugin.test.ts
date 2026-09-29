@@ -38,8 +38,15 @@ describe("grafana plugin", () => {
 
   it("loads its skills with content", () => {
     const skills = grafanaPlugin.skills!();
-    expect(skills.map((s) => s.name)).toEqual(["chant-grafana", "chant-grafana-provisioning", "chant-grafana-alerting"]);
+    expect(skills.map((s) => s.name)).toEqual(["chant-grafana", "chant-grafana-provisioning", "chant-grafana-alerting", "chant-grafana-operations"]);
     for (const s of skills) expect(s.content.length).toBeGreaterThan(200);
+  });
+
+  it("offers a default init template and three named ones", () => {
+    const names = [undefined, "red", "k8s-pods", "slo"];
+    const sets = names.map((n) => grafanaPlugin.initTemplates!(n));
+    expect(new Set(sets).size).toBe(4);
+    for (const set of sets) expect(Object.keys(set.src).length).toBeGreaterThan(0);
   });
 
   it("registers namespaced MCP contributions", async () => {
