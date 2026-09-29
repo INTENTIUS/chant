@@ -2,7 +2,7 @@
  * The grafana lexicon's chant audit catalog, contributed via
  * `grafanaPlugin.auditCatalog()` (#687, #1346).
  *
- * GRAF101-GRAF109, GRAF111-GRAF114 and GRAF115 read the emitted dashboard
+ * GRAF101-GRAF110, GRAF111-GRAF114 and GRAF115 read the emitted dashboard
  * JSON and provisioning files (alerting included), so
  * they fire on an audit of files chant didn't build too, and are
  * `yamlBased`. GRAF001 and GRAF002 read TypeScript source, so they are
@@ -99,6 +99,14 @@ export const grafanaAuditCatalog: Record<string, RuleMeta> = {
     "guidance",
     "Dashboard provisioning puts a dashboard somewhere other than its declared folder, or loads it twice",
     "Give each dashboard provider its own path; set foldersFromFilesStructure: true (and no folder) on the provider when dashboards declare a folder; for a nested folder, run Grafana 13.1 or later or use a single-level folder.",
+    { category: "correctness" },
+  ),
+  GRAF110: auditRule(
+    "GRAF110",
+    "merge-worthy",
+    "guidance",
+    "Panel or row repeats over a variable that cannot give it more than one value",
+    "Repeat over a query, custom, datasource or group by variable, and set multi or includeAll on a query, custom or datasource one; Grafana shows a panel repeated over anything else once.",
     { category: "correctness" },
   ),
   GRAF111: auditRule(

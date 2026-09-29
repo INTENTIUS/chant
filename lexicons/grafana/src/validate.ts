@@ -58,6 +58,9 @@ export const REQUIRED_NAMES = [
   "DatasourceVariable",
   "ConstantVariable",
   "TextboxVariable",
+  "AdhocVariable",
+  "GroupByVariable",
+  "SwitchVariable",
 ];
 
 const pkgDir = dirname(dirname(fileURLToPath(import.meta.url)));

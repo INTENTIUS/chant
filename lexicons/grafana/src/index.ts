@@ -231,6 +231,17 @@ export {
   type DatasourceVariableProps,
   type ConstantVariableProps,
   type TextboxVariableProps,
+  AdhocVariable,
+  GroupByVariable,
+  SwitchVariable,
+  MULTI_VALUE_KINDS,
+  type AdhocVariableProps,
+  type GroupByVariableProps,
+  type SwitchVariableProps,
+  type AdhocFilter,
+  type VariableKeyOption,
+  type VariableQueryObject,
+  type PrometheusVariableQuery,
 } from "./variables";
 
 // The generated schema types and their pin

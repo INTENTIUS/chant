@@ -68,6 +68,9 @@ const VARIABLES: Array<[string, string, string]> = [
   ["DatasourceVariable", "datasource", "A choice of datasource of one plugin type; usable wherever a datasource is"],
   ["ConstantVariable", "constant", "A hidden, fixed value"],
   ["TextboxVariable", "textbox", "A free-text box"],
+  ["AdhocVariable", "adhoc", "Key/value filters Grafana adds to every query sent to the variable's datasource"],
+  ["GroupByVariable", "groupby", "A choice of label keys Grafana groups every query to the variable's datasource by (experimental in Grafana)"],
+  ["SwitchVariable", "switch", "An on/off switch with a value for each state (Grafana 12.3 and later)"],
 ];
 
 const EXPRESSIONS: Array<[string, string, string]> = [

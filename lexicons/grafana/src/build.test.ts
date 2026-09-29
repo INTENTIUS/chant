@@ -6,11 +6,14 @@ import { load } from "js-yaml";
 import { Row, StatPanel, TextPanel, TimeSeriesPanel, TablePanel, definePanel } from "./panels";
 import { PromQuery, TempoQuery, LokiQuery, defineQuery } from "./query";
 import {
+  AdhocVariable,
   CustomVariable,
   ConstantVariable,
   DatasourceVariable,
+  GroupByVariable,
   IntervalVariable,
   QueryVariable,
+  SwitchVariable,
   TextboxVariable,
 } from "./variables";
 import { panelsJson, renderDashboard, variableModel, dashboardJson, grafanaFiles, buildGrafana, customVariableOptions, type PanelJson } from "./build";
@@ -304,6 +307,53 @@ describe("variables", () => {
     expect(variableModel(new TextboxVariable({ name: "q" }))).toMatchObject({ type: "textbox", query: "" });
   });
 
+  test("an object query is written as it is, its text as the definition", () => {
+    const query = { qryType: 1 as const, query: "label_values(up, job)", refId: "PrometheusVariableQueryEditor-VariableQuery" };
+    expect(variableModel(new QueryVariable({ name: "job", datasource: prometheus, query }))).toMatchObject({ query, definition: "label_values(up, job)" });
+    expect(variableModel(new QueryVariable({ name: "ns", datasource: prometheus, query: { namespace: "AWS/EC2" }, definition: "Namespaces" }))).toMatchObject({
+      query: { namespace: "AWS/EC2" },
+      definition: "Namespaces",
+    });
+  });
+
+  test("ad hoc, group by and switch variables as Grafana writes them", () => {
+    const ds = new DatasourceVariable({ name: "ds", pluginType: "prometheus" });
+    expect(variableModel(new AdhocVariable({ name: "f", datasource: ds, filters: [{ key: "ns", operator: "=", value: "shop" }] }))).toEqual({
+      type: "adhoc",
+      name: "f",
+      datasource: { type: "prometheus", uid: "${ds}" },
+      filters: [{ key: "ns", operator: "=", value: "shop" }],
+      baseFilters: [],
+    });
+    expect(variableModel(new GroupByVariable({ name: "by", datasource: prometheus, options: ["pod", { text: "Node", value: "node" }], defaultValue: ["pod"] }))).toEqual({
+      type: "groupby",
+      name: "by",
+      datasource: { type: "prometheus", uid: prometheus.uid },
+      options: [
+        { text: "pod", value: "pod" },
+        { text: "Node", value: "node" },
+      ],
+      current: { text: ["pod"], value: ["pod"] },
+      defaultValue: { text: ["pod"], value: ["pod"] },
+    });
+    expect(variableModel(new SwitchVariable({ name: "on" }))).toEqual({
+      type: "switch",
+      name: "on",
+      current: { text: "false", value: "false" },
+      options: [
+        { text: "true", value: "true" },
+        { text: "false", value: "false" },
+      ],
+    });
+    expect(variableModel(new SwitchVariable({ name: "q", enabled: true, enabledValue: "0.99", disabledValue: "0.5" }))).toMatchObject({
+      current: { text: "0.99", value: "0.99" },
+      options: [
+        { text: "0.99", value: "0.99" },
+        { text: "0.5", value: "0.5" },
+      ],
+    });
+  });
+
   test("a custom value in Grafana's `text : value` syntax shows the text and sets the value (#2944)", () => {
     const v = variableModel(new CustomVariable({ name: "env", values: ["Production : prod", "Staging : stg", "dev"] }));
     expect(v).toMatchObject({
@@ -359,6 +409,10 @@ describe("variables", () => {
         new DatasourceVariable({ name: "ds", pluginType: "prometheus" }),
         new ConstantVariable({ name: "cluster", value: "x" }),
         new TextboxVariable({ name: "q", value: "y" }),
+        new QueryVariable({ name: "pods", datasource: prometheus, query: { qryType: 1, query: "label_values(kube_pod_info, pod)" } }),
+        new AdhocVariable({ name: "f", datasource: prometheus, baseFilters: [{ key: "cluster", operator: "=", value: "prod" }], defaultKeys: [{ text: "pod" }] }),
+        new GroupByVariable({ name: "by", datasource: prometheus, options: ["pod"] }),
+        new SwitchVariable({ name: "on", enabled: true }),
       ],
     });
     expect(validateDashboardSchema(renderDashboard(dash) as unknown as Record<string, unknown>)).toEqual([]);

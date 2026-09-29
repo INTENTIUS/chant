@@ -10,8 +10,8 @@
  * - Query types (#2951): the same, through `registeredQueries()`, keyed by
  *   datasource plugin type; any other type gets a `defineQuery`.
  * - Variable types (#2952): `VARIABLE_MAPPINGS` has one entry per type the
- *   lexicon has a class for. A type with no entry (adhoc, groupby, switch)
- *   is reported and left out. Add an entry when the class lands.
+ *   lexicon has a class for. A type with no entry (`system`, `snapshot`,
+ *   which Grafana does not save) is reported and left out.
  * - Dashboard and panel fields (any new prop): `DASHBOARD_FIELDS`,
  *   `PANEL_FIELDS` and `ROW_FIELDS` list the JSON keys copied onto a prop as
  *   they are. Annotations (#2953) are read by the parser's `annotations()`,
@@ -23,7 +23,7 @@
 import { registeredPanels, type PanelDefinition } from "../panels";
 import { registeredQueries, type QueryDefinition } from "../query";
 import type { VariableHide } from "../variables";
-import { splitValues } from "./normalize";
+import { deepEqual, splitValues } from "./normalize";
 
 type Json = Record<string, unknown>;
 
@@ -167,29 +167,15 @@ export const VARIABLE_MAPPINGS: Readonly<Record<string, VariableMapping>> = {
     keys: ["datasource", "query", "definition", "regex", "refresh", "sort", "options", "current", ...MULTI_KEYS],
     convert(ctx) {
       const { json } = ctx;
-      let query = str(json.query);
-      if (query === undefined && json.query !== null && typeof json.query === "object") {
-        const obj = json.query as Json;
-        query = str(obj.query);
-        if (query === undefined) {
-          ctx.dropVariable("its query is an object with no query string, which QueryVariable cannot hold yet (#2952)");
-          return undefined;
-        }
-        // refId is the editor's own id for the query, which Grafana gives the string form back.
-        const rest = Object.keys(obj).filter((k) => k !== "query" && k !== "refId");
-        ctx.replace(
-          "query",
-          query,
-          rest.length === 0 ? undefined : `is an object; it is written as its query string, and its ${rest.join(" and ")} ${rest.length === 1 ? "is" : "are"} not carried (#2952)`,
-        );
-      }
-      query ??= "";
-      if (nonEmpty(json.definition) && json.definition !== query) ctx.drop("definition", `(it differs from the query, which is kept)`);
+      // The object form (Prometheus writes `{ qryType, query, refId }`) is carried as it is: the datasource reads all of it.
+      const query: string | Json = json.query !== null && typeof json.query === "object" && !Array.isArray(json.query) ? (json.query as Json) : (str(json.query) ?? "");
+      const text = typeof query === "string" ? query : str(query.query);
       const refresh = typeof json.refresh === "number" ? json.refresh : 1;
       if (refresh === 0 && nonEmpty(json.options)) {
         ctx.drop("options", "(QueryVariable does not store options; with refresh never, Grafana shows none until it is refreshed)");
       }
       const out: Json = { datasource: ctx.datasource(json.datasource, `${ctx.path}/datasource`), query };
+      if (nonEmpty(json.definition) && json.definition !== text) out.definition = json.definition;
       if (out.datasource === undefined) {
         ctx.dropVariable("it has no datasource chant can refer to, and QueryVariable needs one");
         return undefined;
@@ -259,7 +245,87 @@ export const VARIABLE_MAPPINGS: Readonly<Record<string, VariableMapping>> = {
       return value === "" ? {} : { value };
     },
   },
+  adhoc: {
+    className: "AdhocVariable",
+    keys: ["datasource", "filters", "baseFilters", "defaultKeys", "allowCustomValue", "enableGroupBy", "current", "options"],
+    convert(ctx) {
+      const { json } = ctx;
+      const out: Json = { datasource: ctx.datasource(json.datasource, `${ctx.path}/datasource`) };
+      if (out.datasource === undefined) {
+        ctx.dropVariable("it has no datasource chant can refer to, and AdhocVariable needs one");
+        return undefined;
+      }
+      if (filters(json.filters)) out.filters = json.filters;
+      if (filters(json.baseFilters)) out.baseFilters = json.baseFilters;
+      if (Array.isArray(json.defaultKeys)) out.defaultKeys = json.defaultKeys;
+      if (json.allowCustomValue === false) out.allowCustomValue = false;
+      if (json.enableGroupBy === true) out.enableGroupBy = true;
+      return out;
+    },
+  },
+  groupby: {
+    className: "GroupByVariable",
+    // A group by variable is always multi-value; Grafana reads no `multi` on it.
+    keys: ["datasource", "options", "current", "defaultValue", "allowCustomValue", "multi"],
+    convert(ctx) {
+      const { json } = ctx;
+      const out: Json = { datasource: ctx.datasource(json.datasource, `${ctx.path}/datasource`) };
+      if (out.datasource === undefined) {
+        ctx.dropVariable("it has no datasource chant can refer to, and GroupByVariable needs one");
+        return undefined;
+      }
+      if (Array.isArray(json.options) && json.options.length > 0) out.options = json.options.map(keyOption);
+      const def = json.defaultValue as Json | undefined;
+      if (nonEmpty(def)) out.defaultValue = Array.isArray(def!.value) && deepEqual(def!.text, def!.value) ? def!.value : def;
+      // The build writes the default as the current selection when there is no other.
+      if (nonEmpty(json.current) && !deepEqual(json.current, def)) out.current = json.current;
+      if (json.allowCustomValue === false) out.allowCustomValue = false;
+      return out;
+    },
+  },
+  switch: {
+    className: "SwitchVariable",
+    // Grafana reads no `query` on a switch (the v2 down-conversion writes an empty one).
+    keys: ["current", "options", "query"],
+    convert(ctx) {
+      const { json } = ctx;
+      const options = Array.isArray(json.options) ? json.options : [];
+      // Grafana keeps the enabled value first and the disabled value second.
+      const on = firstValue(options[0]) ?? "true";
+      const off = firstValue(options[1]) ?? "false";
+      const out: Json = {};
+      if (on !== "true") out.enabledValue = on;
+      if (off !== "false") out.disabledValue = off;
+      const value = firstValue(json.current);
+      if (value === on) out.enabled = true;
+      else if (value !== off) {
+        ctx.replace("current", { text: off, value: off }, `is ${value === undefined ? "missing" : `"${value}", neither the enabled nor the disabled value`}; the switch starts off`);
+      }
+      return out;
+    },
+  },
 };
+
+/** An ad hoc filter list, or undefined when it is empty (the build writes `[]`). */
+function filters(v: unknown): unknown[] | undefined {
+  return Array.isArray(v) && v.length > 0 ? v : undefined;
+}
+
+/** A `{ text, value }` option as the shortest prop that builds back to it: the value when the text is the same. */
+function keyOption(o: unknown): unknown {
+  if (o && typeof o === "object" && !Array.isArray(o)) {
+    const { text, value, ...rest } = o as Json;
+    if (Object.keys(rest).length === 0 && typeof value === "string" && text === value) return value;
+  }
+  return o;
+}
+
+/** The first value of a `VariableOption`'s value, which may be a list. */
+function firstValue(o: unknown): string | undefined {
+  if (!o || typeof o !== "object") return undefined;
+  const v = (o as Json).value;
+  return typeof v === "string" ? v : Array.isArray(v) && typeof v[0] === "string" ? v[0] : undefined;
+}
 
 /** Keys every variable type reads: the ones `CommonVariableProps` has, and `type`. */
 export const COMMON_VARIABLE_KEYS: readonly string[] = ["type", "name", "label", "description", "hide", "skipUrlSync"];

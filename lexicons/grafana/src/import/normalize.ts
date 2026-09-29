@@ -89,6 +89,7 @@ export const VARIABLE_DEFAULTS: Readonly<Json> = {
 /** Per variable type, Grafana's value for a key the JSON leaves out, over `VARIABLE_DEFAULTS`. */
 export const VARIABLE_TYPE_DEFAULTS: Readonly<Record<string, Json>> = {
   query: { refresh: 1 },
+  adhoc: { filters: [], baseFilters: [], enableGroupBy: false },
   datasource: { refresh: 1 },
   interval: { refresh: 2, auto: false, auto_count: 30, auto_min: "10s" },
 };
@@ -264,12 +265,40 @@ function normalizeVariable(variable: unknown): unknown {
   else if (out.datasource !== undefined) out.datasource = canonicalRef(out.datasource);
   const query = typeof out.query === "string" ? out.query : undefined;
   switch (type) {
-    case "query":
-      // `definition` is the query as the editor shows it; Grafana reads `query`.
-      if (out.definition === undefined || out.definition === "" || (query !== undefined && out.definition === query)) delete out.definition;
+    case "query": {
+      // `definition` is the query as the editor shows it; Grafana reads `query` (an object query's text is its `query`).
+      const text = query ?? (isObject(out.query) && typeof out.query.query === "string" ? out.query.query : undefined);
+      if (out.definition === undefined || out.definition === "" || (text !== undefined && out.definition === text)) delete out.definition;
       // Grafana runs the query again when the dashboard loads (or the time range changes).
       if (out.refresh !== 0) delete out.options;
       break;
+    }
+    case "adhoc":
+      // The filters are the selection; Grafana reads neither of these for an ad hoc variable.
+      delete out.current;
+      delete out.options;
+      break;
+    case "groupby": {
+      // With nothing selected, Grafana starts from the default.
+      const cur = isObject(out.current) ? out.current : undefined;
+      const empty = !cur || Object.keys(cur).length === 0 || (Array.isArray(cur.value) && cur.value.length === 0);
+      if (empty || deepEqual(cur, out.defaultValue)) delete out.current;
+      if (Array.isArray(out.options) && out.options.length === 0) delete out.options;
+      // Always multi-value.
+      delete out.multi;
+      break;
+    }
+    case "switch": {
+      // Grafana reads only the values: the enabled one first, the disabled one second, and the current one.
+      const value = (o: unknown): unknown => (isObject(o) ? (Array.isArray(o.value) ? o.value[0] : o.value) : undefined);
+      const opts = Array.isArray(out.options) ? out.options : [];
+      const on = value(opts[0]) ?? "true";
+      const off = value(opts[1]) ?? "false";
+      out.options = [on, off];
+      out.current = value(out.current) ?? off;
+      delete out.query;
+      break;
+    }
     case "custom":
     case "interval": {
       const values = splitValues(query ?? "");
