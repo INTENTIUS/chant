@@ -5,6 +5,7 @@
 
 import type { DatasourceInput } from "../query";
 import type { DashboardLinkInput } from "../dashboard";
+import type { FolderEntity } from "../folder";
 import type { ThresholdsConfig } from "../schema/dashboard.gen";
 
 /** Dashboard settings every composite takes; each has a default derived from what it reads. */
@@ -16,8 +17,8 @@ export interface DashboardOptions {
   uid?: string;
   description?: string;
   tags?: string[];
-  /** The Grafana folder to provision it into. */
-  folder?: string;
+  /** The Grafana folder to provision it into: a path, or a `Folder` to pin its uid. */
+  folder?: string | FolderEntity;
   /** Initial time range. */
   time?: { from: string; to: string };
   /** Auto-refresh interval, e.g. `30s`. */

@@ -7,6 +7,16 @@ order: 1
 
 This walks through one dashboard with a Prometheus datasource, a variable and two panels, then loads it into Grafana.
 
+To start from a scaffold instead, `chant init --lexicon grafana <dir>` writes a datasource and a job overview dashboard. `--template` picks one of three others:
+
+| Template | What it writes |
+|---|---|
+| `red` | A `RedDashboard` over the collector's span metrics, counting server and consumer spans, on an `ExternalDatasource`, in a `Folder` with a pinned uid |
+| `k8s-pods` | CPU, memory, restarts and pod phase per namespace, delivered as ConfigMaps for the Grafana sidecar with `GrafanaConfigMaps` from `@intentius/chant-lexicon-grafana/k8s`. Builds with the k8s lexicon |
+| `slo` | An `Slo`'s recording rules, its `SloDashboard`, and its burn-rate alerts as `SloAlertRules`. Builds with the prometheus lexicon |
+
+Each one builds clean and passes the GRAF checks.
+
 ## 1. Install and register the lexicon
 
 ```bash
