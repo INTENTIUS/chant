@@ -15,6 +15,14 @@
  *    changed. The same command reports exactly those two paths as drift.
  * 3. Live export of the environment generates TypeScript that carries the
  *    edit, and the generated project builds.
+ * 4. On 13.x only (#2947): the dashboard is recreated through the v2 API,
+ *    so Grafana stores it as v2 and a classic read of it is a lossy
+ *    down-conversion. (A v2 PUT over a dashboard stored as v0 keeps it at
+ *    v0, converting v2-only layout away on write, so the test deletes it and
+ *    creates it at v2.) The diff reads it at v2 instead. With a panel renamed
+ *    the drift is exactly the classic-edit paths, so the v2 read adds no
+ *    noise; with its row moved into a tab, the tab is a row the declaration
+ *    does not have. Export names the tab.
  *
  * Containers come from the shared helpers in ../test/e2e/containers.ts
  * (unique names, random host ports, removed in afterAll even on failure;
@@ -194,5 +202,54 @@ describe.skipIf(!hasDocker).each(GRAFANA_IMAGES)(`a dashboard edited in Grafana 
     symlinkSync(join(repoRoot, "node_modules"), join(exported, "node_modules"), "dir");
     const built = await chant(exported, {}, "build", "src", "--lexicon", "grafana", "-o", join(exported, "dist", "index.json"));
     expect(built.status, `${built.stdout}\n${built.stderr}`).toBe(0);
+  });
+
+  it.runIf(/:13\./.test(image))("stored as v2: read at v2, a rename is drift at the classic path, and a tab is a row the declaration lacks", { timeout: 300_000 }, async () => {
+    const path = "/apis/dashboard.grafana.app/v2/namespaces/default/dashboards/api-overview";
+    type V2Spec = { elements: Record<string, { spec: { title: string } }>; layout: unknown };
+    /** Delete the dashboard and create it again at v2 with `edit` applied, so Grafana stores it as v2. */
+    const recreateAtV2 = async (edit: (spec: V2Spec) => void) => {
+      const { status, body: resource } = await grafana.api(path);
+      expect(status).toBe(200);
+      edit(resource.spec as V2Spec);
+      const deleted = await grafana.api(path, { method: "DELETE" });
+      expect(deleted.status, JSON.stringify(deleted.body)).toBe(200);
+      const { name, labels, annotations } = resource.metadata;
+      const created = await grafana.api("/apis/dashboard.grafana.app/v2/namespaces/default/dashboards", {
+        method: "POST",
+        body: JSON.stringify({ apiVersion: resource.apiVersion, kind: "Dashboard", metadata: { name, labels, annotations }, spec: resource.spec }),
+      });
+      expect(created.status, JSON.stringify(created.body)).toBeLessThan(300);
+      // Grafana stores it as v2 now: its v1 read says so, and is the lossy copy chant must not read.
+      const v1 = await grafana.api("/apis/dashboard.grafana.app/v1/namespaces/default/dashboards/api-overview");
+      expect(v1.body.status?.conversion?.storedVersion).toBe("v2");
+    };
+    const driftOf = async () => {
+      const report = (await diff()).lexicons.grafana;
+      expect(report.resources.unobserved.map((u) => `${u.name}:${u.reason}`)).toEqual(["provider:unsupported-kind"]);
+      // Observed, not unsupported-kind. Created through the API it is no longer the file provider's: Grafana does not
+      // keep the provisioning manager annotations a client sends, so the v2 resource's own metadata makes it foreign.
+      expect(report.observed.apiOverview).toMatchObject({ status: "PRESENT", ownership: "foreign" });
+      return (report.deep.drifted.find((d) => d.name === "apiOverview")?.changes ?? []).map((c) => ({ path: c.path, kind: c.kind, live: c.live }));
+    };
+
+    // Only a rename: the v2 read adds no noise, so the drift is the earlier edit plus the new title, at the paths a classic read gives.
+    await recreateAtV2((spec) => {
+      Object.values(spec.elements).find((e) => e.spec.title === "5xx")!.spec.title = "Errors (v2)";
+    });
+    expect((await driftOf()).sort((a, b) => a.path.localeCompare(b.path))).toEqual([
+      { path: "panels[0].panels[0].targets[0].expr", kind: "changed", live: "sum(rate(http_requests_total[1m]))" },
+      { path: "panels[0].panels[1].title", kind: "changed", live: "Errors (v2)" },
+    ]);
+
+    // The row moved into a tab: the tab is an expanded row ahead of it, which the declaration does not have.
+    await recreateAtV2((spec) => {
+      spec.layout = { kind: "TabsLayout", spec: { tabs: [{ kind: "TabsLayoutTab", spec: { title: "Everything", layout: spec.layout } }] } };
+    });
+    expect(await driftOf()).toContainEqual({ path: "panels[0].title", kind: "changed", live: "Everything" });
+
+    const ir = await exportResources({ environment: "e2e", config: { grafana: { profiles: { e2e: profile() } } }, env, selector: { name: "api-overview" } });
+    expect(ir.warnings).toContainEqual(expect.stringMatching(/^dashboard api-overview is stored as v2 and exported in the classic model: layout: the dashboard's tabs "Everything" become expanded rows/));
+    expect(new GrafanaGenerator().generate(ir).map((f) => f.content).join("\n")).toContain('"Errors (v2)"');
   });
 });
