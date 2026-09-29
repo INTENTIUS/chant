@@ -46,7 +46,7 @@ export const bucket = new _.Bucket({
 
 Simple string, number, and boolean properties are allowed inline. Only nested object literals and arrays containing objects are flagged.
 
-The rule looks only at resource constructors. A property-kind declarable, one a lexicon builds with `createProperty` and names in its plugin's `propertyClassNames()`, is already a nested value inside the resource that holds it, so the objects passed to it are not flagged. Grafana's panels, rows, queries and variables are property-kind, which lets a panel carry its `fieldConfig` and `options` inline:
+The rule looks only at resource constructors. A property-kind declarable is one a lexicon builds with `createProperty` and lists in its plugin's `propertyClassNames()`. It is already a nested value inside the resource that holds it, so the objects passed to it are not flagged. Grafana declares its panel classes this way, so a panel can carry its `fieldConfig` and `options` inline.
 
 ```typescript
 // OK: TimeSeriesPanel is property-kind
@@ -98,7 +98,7 @@ Only applies to exported variables initialized with `new` expressions.
 
 Files should not contain too many resource declarations. The default limit is 8.
 
-Only resources count. Property-kind declarables, the classes a lexicon names in its plugin's `propertyClassNames()`, are left out, so a Grafana dashboard with twenty panels, queries and variables in one file counts as one. A lexicon that does not implement `propertyClassNames()` has every declarable counted, as before.
+Only resources count. The classes a lexicon lists in its plugin's `propertyClassNames()` are property-kind and are left out. A Grafana dashboard file with twenty panels inside one dashboard counts as one declarable. A lexicon that does not implement `propertyClassNames()` has every declarable counted, as before.
 
 **Severity:** warning
 
