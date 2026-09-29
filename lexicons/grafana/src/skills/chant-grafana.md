@@ -55,7 +55,7 @@ export const overview = new Dashboard({
 });
 ```
 
-Leave `gridPos` out and panels are placed left to right, wrapping at 24 columns; give `x` and `y` to place one exactly. `Row({ title, panels, collapsed })` starts a full-width row. Dashboard uids default to the export name as a uid (`overview`).
+Leave `gridPos` out and panels are placed left to right, wrapping at 24 columns and flowing around explicitly placed panels; give `x` and `y` to place one exactly. `Row({ title, panels, collapsed })` starts a full-width row. Dashboard uids default to the export name as a uid (`overview`).
 
 chant's lint wants flat declarations: extract nested objects (`time`, `options`) to named consts, keep at most eight declarations per file, and export entities with `export { a, b }`.
 

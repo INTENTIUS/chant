@@ -47,9 +47,9 @@ A query uses its own `datasource`, else the panel's. The panel's emitted `dataso
 
 ### Layout
 
-Grafana's grid is 24 columns. A panel with both `gridPos.x` and `gridPos.y` is placed exactly there. Any other panel is placed by the dashboard: left to right in declaration order, wrapping to a new line when the next panel would pass column 24, using `gridPos.w`/`h` if given and the class's default size otherwise.
+Grafana's grid is 24 columns. A panel with both `gridPos.x` and `gridPos.y` is placed exactly there, and its cells are reserved before anything else is placed, wherever it is declared. Any other panel is placed by the dashboard: left to right in declaration order, wrapping to a new line when the next panel would pass column 24, using `gridPos.w`/`h` if given and the class's default size otherwise. It skips cells already taken, so it never lands on an explicitly placed panel. A panel with only `x` keeps that column and goes on the first line where it is free, after the panel before it; a panel with only `y` takes the first free column on that line, or on the first line below with room.
 
-A `Row` starts below everything placed so far and takes one grid unit of height. Its `panels` are placed below it. With `collapsed: true` they are written inside the row (Grafana's format for a collapsed row) and the next item starts right under the row header.
+A `Row` starts on the first free line below everything placed so far and takes the full width and one grid unit of height. Its `panels` are placed below it. With `collapsed: true` they are written inside the row (Grafana's format for a collapsed row), laid out on their own grid starting under the header, and the next item starts right under the row header.
 
 GRAF105 reports a panel wider than the grid and any two panels that overlap.
 
