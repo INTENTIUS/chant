@@ -25,9 +25,39 @@ docker run --rm -p 3000:3000 \
 
 ## Kubernetes
 
-Mount the datasource file and the provider file from ConfigMaps under `/etc/grafana/provisioning/datasources` and `/etc/grafana/provisioning/dashboards`, and the dashboard JSON from another ConfigMap under `/var/lib/grafana/dashboards`. A dashboard with a `folder` is written to `dashboards/<folder>/`; mount one ConfigMap per folder at the matching subdirectory.
+`GrafanaConfigMaps`, from `@intentius/chant-lexicon-grafana/k8s`, turns the same declarations into k8s ConfigMaps in a k8s build root. It is a composite: export it, and the k8s build writes its members.
 
-`grafanaFiles(entities)` returns the same files keyed by path, for code that builds those ConfigMaps from the declarations directly.
+```ts
+import { GrafanaConfigMaps, grafanaVolumes } from "@intentius/chant-lexicon-grafana/k8s";
+
+const delivered = { entities: [prometheus, tempo, services.dashboard, agentSlo.dashboard] };
+export const grafanaConfigMaps = GrafanaConfigMaps({ ...delivered, namespace: "observability" });
+```
+
+It writes three kinds of ConfigMap:
+
+| ConfigMap | Holds | Label and annotation |
+|---|---|---|
+| `grafana-dashboard-<uid>`, one per dashboard | `<uid>.json`, the text of `dashboardJson(dashboard)` | `grafana_dashboard: "1"`; the folder in `k8s-sidecar-target-directory` |
+| `grafana-datasources` | the datasource provisioning file | `grafana_datasource: "1"` |
+| `grafana-dashboard-providers` | the dashboard provider file | none |
+
+The labels and the annotation are the defaults of the sidecar that the Grafana Helm chart and kube-prometheus-stack run (kiwigrid/k8s-sidecar), so a Grafana installed that way picks the dashboards and datasources up with no mounts. Set `sidecar.dashboards.provider.foldersFromFilesStructure: true` in the chart for the folders. `name` changes the `grafana` prefix, `labels` adds labels to every ConfigMap, and `dashboardLabel`, `datasourceLabel` and `folderAnnotation` take another key and value, or `false` for none. The provider ConfigMap is only for the case below; the sidecar has its own provider.
+
+A dashboard ConfigMap is what `chant import` of a k8s manifest reads back into a grafana `Dashboard` with `dashboardJson(dashboard)` as its value, so delivery and import are symmetric.
+
+For a Grafana without the sidecar, such as a plain Deployment, `grafanaVolumes()` returns the pod `volumes` and container `volumeMounts` that mount the same ConfigMaps where Grafana reads them. Pass it the same `entities` and `name`:
+
+```ts
+const { volumes, volumeMounts } = grafanaVolumes(delivered);
+// containers: [{ ..., volumeMounts: [...yours, ...volumeMounts] }], volumes: [...yours, ...volumes]
+```
+
+The provisioning files go under `/etc/grafana/provisioning`. Each dashboard folder is a projected volume of its own under `/var/lib/grafana/dashboards` (or `dashboardsPath`), because inside a ConfigMap volume a subdirectory is a symlink, and Grafana's dashboard provider does not follow symlinked directories. `examples/agent-observability` runs Grafana this way.
+
+A Grafana run by the Grafana Operator reads `GrafanaDashboard` and `GrafanaDatasource` resources instead, which this lexicon does not write yet.
+
+`grafanaFiles(entities)` still returns every file keyed by path, for any other layout.
 
 ## Folders
 

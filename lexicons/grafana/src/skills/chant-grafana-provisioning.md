@@ -25,7 +25,7 @@ docker run -p 3000:3000 \
 
 ## Kubernetes
 
-Put the two provisioning files in one ConfigMap mounted at `/etc/grafana/provisioning/datasources` and `/etc/grafana/provisioning/dashboards` (a `subPath` each, or two ConfigMaps), and the dashboard JSON in another mounted at `/var/lib/grafana/dashboards`. `grafanaFiles(entities)` returns every file by path, so a k8s composite can build those ConfigMaps from the same declarations without a second build.
+Use `GrafanaConfigMaps({ entities, namespace })` from `@intentius/chant-lexicon-grafana/k8s` in a k8s build root. It writes one ConfigMap per dashboard labelled `grafana_dashboard: "1"`, with the folder in the `k8s-sidecar-target-directory` annotation. The datasource file goes in a ConfigMap labelled `grafana_datasource: "1"`, and the provider file in a third. The Grafana Helm chart's sidecar picks these up as they are. For a Grafana without the sidecar, spread `grafanaVolumes({ entities })`'s `volumes` and `volumeMounts` into the Deployment: provisioning goes under `/etc/grafana/provisioning`, and each dashboard folder gets a projected volume of its own. `grafanaFiles(entities)` still returns every file by path for any other layout.
 
 ## Changing where dashboards live
 
