@@ -7,7 +7,7 @@ import type { LexiconPlugin } from "../../lexicon";
 import { importCommand, importFromContent } from "./import";
 
 // A lexicon that recognizes a template but has no templateParser, as grafana
-// does today (#2940). Import must say it cannot import, not throw
+// did until #2945 (#2940). Import must say it cannot import, not throw
 // "plugin.templateParser is not a function".
 const { detectOnly } = vi.hoisted(() => ({
   detectOnly: {

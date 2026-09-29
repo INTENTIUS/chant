@@ -508,7 +508,7 @@ export function renderDashboard(dashboard: DashboardEntity, exportName?: string)
     liveNow: p.liveNow,
     panels: panelsJson(p.panels ?? []),
     refresh: p.refresh,
-    schemaVersion: DASHBOARD_SCHEMA_VERSION,
+    schemaVersion: p.schemaVersion ?? DASHBOARD_SCHEMA_VERSION,
     tags: p.tags ?? [],
     templating: { list: (p.variables ?? []).filter(isVariableEntity).map(variableModel) },
     time: p.time ?? { from: "now-6h", to: "now" },

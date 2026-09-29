@@ -174,7 +174,7 @@ export {
 } from "./datasource-refs";
 export { validateDashboardSchema, type SchemaProblem } from "./schema-validate";
 export { looksLikeDashboard, looksLikeDatasourceProvisioning, looksLikeDashboardProvisioning } from "./detect";
-export { slugUid, isValidUid, UID_PATTERN, type DeepPartial } from "./util";
+export { slugUid, isValidUid, UID_PATTERN, type DeepPartial, type PropsOf } from "./util";
 
 // Composites: dashboards built from a spanmetrics connector, an Slo and the GenAI preset
 export {

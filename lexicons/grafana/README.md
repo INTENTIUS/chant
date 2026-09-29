@@ -37,6 +37,10 @@ export const checkoutSlo = SloDashboard({ slo: checkout, datasource: prometheus 
 export const agents = AgentDashboard({ genAi: genAiMetrics(), datasource: prometheus });
 ```
 
+## Importing existing dashboards
+
+`chant import dashboard.json --output src` turns dashboard JSON exported from Grafana (with or without "Export for sharing externally") into this lexicon's TypeScript, in a directory named after the dashboard's uid: variables, one module per row with its panels and their queries, and the `Dashboard`. Panel ids, positions and refIds are kept, datasources named by uid become `ExternalDatasource`s, and `__inputs` datasources become `DatasourceVariable`s of the same name. A panel or datasource type chant has no class for is declared with `definePanel` or `defineQuery`. What the lexicon cannot express yet (annotations, library panels, ad hoc variables) is printed as a warning. A v2 dashboard is reported and not imported (#2947). `chant build` on the result gives back the same dashboard: the round-trip tests in `src/import/roundtrip.test.ts` hold Grafana 12.4.11 and 13.2.2 UI exports, community dashboards from grafana.com such as Node Exporter Full, and the examples' output to that. Datasource and dashboard provisioning files import too.
+
 ## Checks
 
 GRAF001 and GRAF002 run on source (uid and variable-name syntax, literal secrets). GRAF101 to GRAF108 run after a build: undeclared or mistyped datasources, undeclared variables, duplicate uids and ids, panels off the grid or overlapping, uids Grafana rejects, validation against the pinned dashboard, panel and query schemas (an unknown key is a warning), and a PromQL syntax check on every query sent to a Prometheus.

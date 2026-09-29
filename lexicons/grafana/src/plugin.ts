@@ -9,6 +9,8 @@ import { grafanaAuditCatalog } from "./lint/audit-catalog";
 import { completions } from "./lsp/completions";
 import { hover } from "./lsp/hover";
 import { detectTemplate } from "./detect";
+import { GrafanaParser } from "./import/parser";
+import { GrafanaGenerator } from "./import/generator";
 import { grafanaSkills } from "./skill-defs";
 import { BUILTIN_CATALOG } from "./catalog";
 import { GRAFANA_SCHEMA_PIN } from "./pin";
@@ -105,6 +107,14 @@ export const grafanaPlugin: LexiconPlugin = {
 
   detectTemplate(data: unknown) {
     return detectTemplate(data);
+  },
+
+  templateParser() {
+    return new GrafanaParser();
+  },
+
+  templateGenerator() {
+    return new GrafanaGenerator();
   },
 
   completionProvider(ctx: CompletionContext) {

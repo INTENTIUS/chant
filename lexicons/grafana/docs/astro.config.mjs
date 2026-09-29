@@ -37,6 +37,10 @@ export default defineConfig({
                               "slug": "provisioning"
                         },
                         {
+                              "label": "Importing Dashboards",
+                              "slug": "importing"
+                        },
+                        {
                               "label": "Other Panel and Datasource Plugins",
                               "slug": "custom-plugins"
                         },
