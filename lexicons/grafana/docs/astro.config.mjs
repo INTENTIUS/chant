@@ -45,6 +45,10 @@ export default defineConfig({
                               "slug": "custom-plugins"
                         },
                         {
+                              "label": "Drift and Live Export",
+                              "slug": "observing"
+                        },
+                        {
                               "label": "Examples",
                               "slug": "examples"
                         }

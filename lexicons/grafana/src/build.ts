@@ -34,6 +34,7 @@ import type {
 import { DASHBOARD_SCHEMA_VERSION } from "./schema/dashboard.gen";
 import { GRAFANA_SCHEMA_PIN } from "./pin";
 import { compact, slugUid } from "./util";
+import { DEFAULT_PROVIDER_NAME } from "./ownership";
 
 export type { DashboardJson, PanelJson, RowPanelJson, VariableModel, DataSourceRef };
 
@@ -639,7 +640,7 @@ export function buildGrafana(entities: Map<string, Declarable> | Iterable<Declar
     declaredProviders.length > 0
       ? declaredProviders.map(provisionedProvider)
       : dashboards.length > 0
-        ? [provisionedProvider({ name: "chant" })]
+        ? [provisionedProvider({ name: DEFAULT_PROVIDER_NAME })]
         : [];
 
   if (datasources.length > 0) files[DATASOURCES_FILE] = datasourcesYaml(datasources);

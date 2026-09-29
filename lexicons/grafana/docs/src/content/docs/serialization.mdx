@@ -29,5 +29,8 @@ datasources and files that were built.
   about key order.
 - The dashboard JSON carries no ownership marker. Grafana keeps who manages a
   dashboard in the resource's metadata on its `dashboard.grafana.app` API,
-  not in the JSON.
+  not in the JSON: for a provisioned dashboard, the name of the provider that
+  loaded it, which is `chant` unless a `DashboardProvider` names another.
+  `chant lifecycle diff --live` reads that back (see
+  [Drift and Live Export](../observing/)).
 
