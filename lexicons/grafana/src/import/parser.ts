@@ -7,10 +7,8 @@
  * carries one resource per dashboard, of type `Grafana::Dashboard`, whose
  * properties are a `Plan` (./model.ts): the declarations the dashboard
  * becomes and the references between them. The generator lays the plan out
- * in modules. (Core splits an IR with more than three resources into one
- * generate() call per category and keeps only the first file of each,
- * which would lose the imports between a row and its panels; #2964 lets a
- * lexicon opt out of that.)
+ * in modules, and says so with `ownsLayout` (#2964), so core writes its
+ * files as they are.
  *
  * What each JSON key becomes is decided by the tables in ./mappings.ts.
  * Whatever cannot be carried is named in `warnings` and recorded as an

@@ -409,6 +409,9 @@ export function generatePlan(plan: Plan): GeneratedFile[] {
 
 /** The Grafana TypeScript generator `chant import` runs. */
 export class GrafanaGenerator implements TypeScriptGenerator {
+  /** Core writes exactly the files returned: a dashboard's modules refer to each other and live in its own directory. */
+  readonly ownsLayout = true;
+
   generate(ir: TemplateIR): GeneratedFile[] {
     const files: GeneratedFile[] = [];
     for (const r of ir.resources) {

@@ -192,3 +192,7 @@ describe("modules", () => {
 test("an IR with no dashboard (a v2 one, reported by the parser) generates nothing", () => {
   expect(new GrafanaGenerator().generate({ resources: [], parameters: [] })).toEqual([]);
 });
+
+test("the generator owns its layout, so core writes its files as they are (#2964)", () => {
+  expect(new GrafanaGenerator().ownsLayout).toBe(true);
+});
