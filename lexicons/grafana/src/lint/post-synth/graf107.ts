@@ -1,7 +1,7 @@
 /**
  * GRAF107: A dashboard does not match the pinned Grafana schema
  *
- * The dashboard is validated against the dashboard schema at GRAFANA_SCHEMA_PIN, with the correction overlay in src/spec/overlay/ applied, and each panel's options, fieldConfig.defaults.custom and queries against their plugin's schema with required fields relaxed (Grafana fills those in). A value the schema does not allow is an error: the edits Grafana would otherwise need on import. A key the schema does not know is a warning, since newer Grafana versions add keys before the pin catches up.
+ * The dashboard is validated against the dashboard schema at GRAFANA_SCHEMA_PIN, with the correction overlay in src/spec/overlay/ applied, and each panel's options, fieldConfig.defaults.custom and queries against their plugin's schema with required fields relaxed (Grafana fills those in). Library panel models embedded in an export's __elements are checked the same way. A value the schema does not allow is an error: the edits Grafana would otherwise need on import. A key the schema does not know is a warning, since newer Grafana versions add keys before the pin catches up.
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
