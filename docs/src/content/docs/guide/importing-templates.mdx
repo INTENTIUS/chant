@@ -38,3 +38,5 @@ The Kubernetes lexicon includes a full roundtrip suite and optional k3d cluster 
 The OpenTelemetry Collector lexicon imports collector YAML and checks that every fixture builds back to the same config, with `otelcol validate` over the result when `otelcol-contrib` is installed. See [Importing a Collector Config](/chant/lexicons/otel/importing/).
 
 Prometheus rule files and `alertmanager.yml` import the same way: every fixture must build back to the same file, and `promtool check rules` and `amtool check-config` run over the result when those are installed. [Importing Rule Files and alertmanager.yml](/chant/lexicons/prometheus/importing/) has the details.
+
+The Grafana lexicon imports dashboard JSON exported from Grafana's UI and checks that Grafana 12.4 and 13.2 exports and community dashboards from grafana.com build back to the same dashboard, with anything it cannot carry printed as a warning. See [Importing Dashboards](/chant/lexicons/grafana/importing/).

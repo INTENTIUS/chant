@@ -7,6 +7,14 @@ export type DeepPartial<T> = T extends (infer U)[]
     ? { [K in keyof T]?: DeepPartial<T[K]> }
     : T;
 
+/**
+ * The props a declaration class takes: `PropsOf<typeof TimeSeriesPanel>["options"]`
+ * types a const that is passed as a panel's `options`. The TypeScript
+ * `chant import` writes annotates its lifted consts this way.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type PropsOf<C extends abstract new (props: any) => unknown> = NonNullable<ConstructorParameters<C>[0]>;
+
 /** Grafana's uid alphabet: letters, digits, `-` and `_`, at most 40 characters. */
 export const UID_PATTERN = /^[A-Za-z0-9_-]{1,40}$/;
 

@@ -40,6 +40,13 @@ export interface DashboardProps {
   graphTooltip?: "default" | "sharedCrosshair" | "sharedTooltip";
   /** Whether users may edit it in the UI. Defaults to true, as in Grafana. */
   editable?: boolean;
+  /**
+   * The dashboard schema version the JSON is written at. Leave it out for
+   * the pinned one (`DASHBOARD_SCHEMA_VERSION`). `chant import` sets it for
+   * a dashboard saved by an older Grafana, so Grafana still runs its
+   * migrations when it loads the rebuilt JSON.
+   */
+  schemaVersion?: number;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   variables?: VariableEntity<any>[];
   /** Panels and rows, top to bottom. A row's own `panels` follow it. */

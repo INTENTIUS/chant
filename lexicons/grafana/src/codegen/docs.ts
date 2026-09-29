@@ -34,6 +34,9 @@ options and query fields are generated from Grafana's own schemas at a pinned
 version, corrected against Grafana's CUE, and track Grafana 12.4 and 13.x. Every
 build validates the dashboards against the same schemas.
 \`definePanel\` and \`defineQuery\` add plugins chant doesn't ship.
+\`chant import\` turns dashboard JSON exported from Grafana into this TypeScript,
+and it builds back to the same dashboard (see
+[Importing Dashboards](./importing/)).
 
 Three composites build whole dashboards from declarations in other lexicons:
 \`RedDashboard\` from an otel \`spanmetrics\` connector, \`SloDashboard\` from a
