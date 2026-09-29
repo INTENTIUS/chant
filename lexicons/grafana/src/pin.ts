@@ -33,7 +33,7 @@ export interface GrafanaSchemaPin {
    */
   kindRegistry: string;
   /** sha256 of each vendored file, keyed by schema name (`src/spec/schemas/<name>.jsonschema.json`). */
-  files: Readonly<Record<SchemaName, string>>;
+  files: Readonly<Record<VendoredSchemaName, string>>;
 }
 
 export const SCHEMA_NAMES = [
@@ -52,6 +52,22 @@ export const SCHEMA_NAMES = [
 
 export type SchemaName = (typeof SCHEMA_NAMES)[number];
 
+/**
+ * Schemas vendored from the same commit for reading, not for types: no
+ * `.gen.ts` is generated from them and GRAF107 does not use them, since chant
+ * builds classic dashboards. `dashboardv2` is the v2 dashboard kind the
+ * importer reads (#2947); `src/import/v2.test.ts` checks the importer knows
+ * every key it defines.
+ */
+export const IMPORT_ONLY_SCHEMA_NAMES = ["dashboardv2"] as const;
+
+export type ImportOnlySchemaName = (typeof IMPORT_ONLY_SCHEMA_NAMES)[number];
+
+/** Every schema file under `src/spec/schemas/`. */
+export type VendoredSchemaName = SchemaName | ImportOnlySchemaName;
+
+export const VENDORED_SCHEMA_NAMES: readonly VendoredSchemaName[] = [...SCHEMA_NAMES, ...IMPORT_ONLY_SCHEMA_NAMES];
+
 export const GRAFANA_SCHEMA_PIN: GrafanaSchemaPin = Object.freeze({
   source: "github.com/grafana/grafana-foundation-sdk/jsonschema",
   ref: "v0.0.20",
@@ -69,10 +85,11 @@ export const GRAFANA_SCHEMA_PIN: GrafanaSchemaPin = Object.freeze({
     prometheus: "726fc97eeb1e37791dbbf988c3cf40de17bb8e623926e6979c4a3f947cb1af87",
     tempo: "21aec4c333c9b8e5e9228e85a6225c76161975abb54002e6f12e919e3b4e54ae",
     loki: "03b81d6b952e3d31785c4b52637e2b7b1c170cc2ea8ec7ec671c21599508e31b",
+    dashboardv2: "a2cfb8b731ff9f48c41f5aa06ade134cf0d93ab9f6f0567a34a4bc39a9fd984e",
   }),
 });
 
 /** The raw URL of one schema file at the pinned commit. */
-export function schemaUrl(name: SchemaName, pin: GrafanaSchemaPin = GRAFANA_SCHEMA_PIN): string {
+export function schemaUrl(name: VendoredSchemaName, pin: GrafanaSchemaPin = GRAFANA_SCHEMA_PIN): string {
   return `https://raw.githubusercontent.com/grafana/grafana-foundation-sdk/${pin.commit}/jsonschema/${name}.jsonschema.json`;
 }

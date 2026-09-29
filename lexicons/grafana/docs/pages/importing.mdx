@@ -9,13 +9,13 @@ order: 5
 
 ## Import a dashboard
 
-Export the dashboard from Grafana (Export > Export as JSON, with the Classic model), then, from a chant project whose `chant.config.ts` lists `grafana`:
+Export the dashboard from Grafana (Export > Export as JSON; the Classic and V2 Resource models both work), then, from a chant project whose `chant.config.ts` lists `grafana`:
 
 ```bash
 chant import checkout.json --output src
 ```
 
-Outside a project, name the lexicon: `chant import checkout.json --lexicon grafana --output src`. Either export works, with or without "Export for sharing externally". The importer also reads a dashboard as `GET /api/dashboards/uid/<uid>` returns it, a `dashboard.grafana.app` v1 resource, and Grafana's datasource and dashboard provisioning files.
+Outside a project, name the lexicon: `chant import checkout.json --lexicon grafana --output src`. Either export works, with or without "Export for sharing externally". The importer also reads a dashboard as `GET /api/dashboards/uid/<uid>` returns it, a `dashboard.grafana.app` v1 or v2 resource, and Grafana's datasource and dashboard provisioning files. See [v2 dashboards](#v2-dashboards) for what happens to a v2 one.
 
 Each dashboard is written to a directory of its own, named after its uid, so a second import into the same `src` does not collide with the first:
 
@@ -94,7 +94,28 @@ The stored copy's `id`, `version` and `iteration` are Grafana's bookkeeping, not
 
 The dashboard's `schemaVersion` is carried, so Grafana still runs its migrations when it loads the rebuilt JSON. What the importer cannot carry is a panel from the AngularJS era (`graph`, `singlestat`), which keeps its settings as top-level panel keys: the panel is imported, its settings are reported and left out. To keep them, load the dashboard in Grafana 11 or later, which converts those panels, export it again and import that export. A dashboard saved before Grafana 5.0, with its panels inside a top-level `rows` list, is reported and not imported at all; the same re-export fixes it.
 
-A v2 dashboard (Grafana 13's default "V2 Resource" export) is recognised and reported, and nothing is imported. Export it with the Classic model instead. Reading v2 is #2947.
+## v2 dashboards
+
+Grafana 13 stores a dashboard built in its UI as v2 (`dashboard.grafana.app/v2`), and "V2 Resource" is its default export. chant builds classic (v1) dashboard JSON, so the importer reads a v2 dashboard (a `v2` or `v2beta1` resource, or a bare v2 spec) into the classic model the same way Grafana does when it serves that dashboard at v1, then imports the result like any classic dashboard. The rebuilt dashboard is what Grafana's own v1 read gives, and the first warning says the dashboard was v2.
+
+Grafana's v1 read drops what the classic model cannot hold without saying so. The importer names each of these in a warning:
+
+| v2 | Becomes |
+|---|---|
+| tabs | one expanded row per tab, in order, so every tab's panels show on one page |
+| an auto grid | fixed positions, as many to a row as its column count, heights from its row height mode; the panels no longer resize with the screen |
+| rows or tabs inside a row or tab | rows of their own after it, since classic rows do not nest |
+| a hidden row header after the first row | nothing: its panels join the row before them |
+| conditional rendering on a row, tab or panel | nothing: it always shows |
+| section variables, a row's `fillScreen`, dashboard `preferences` | nothing |
+| a variable shown in the controls menu | a variable in the variable bar |
+| a link or variable provided by a datasource (`origin`) | the dashboard's own |
+| an annotation placed in the controls menu | a toggle in the usual place |
+| a key the pinned `dashboardv2` schema does not have | nothing |
+
+What the classic model has but chant does not yet (library panels, annotations, ad hoc, group by and switch variables) is reported as for a classic dashboard; see below. `dashboard.grafana.app/v2alpha1` is not read: read the dashboard at v2 instead.
+
+A v0 or v1 read of a dashboard Grafana stores as v2 is refused. Grafana marks it with `status.conversion.storedVersion: v2`, and it has already lost what v2 has and v1 does not, with nothing in the spec to show it; building it and writing it back would overwrite the tabs. The warning says to read the dashboard at `dashboard.grafana.app/v2` (or export it with the V2 Resource model) and import that. Code that calls the parser directly can accept such a read anyway with `new GrafanaParser({ acceptLossyV1: true })`, which imports it with a warning. `GET /api/dashboards/uid/<uid>` carries no such marker, so a v2 dashboard read through it cannot be told from a classic one: prefer the v2 export.
 
 ## Keys outside the typed options
 
@@ -102,4 +123,4 @@ The panel and query types follow the schemas at the pin (see [Where the Types Co
 
 ## How the round trip is checked
 
-`src/import/roundtrip.test.ts` imports every dashboard in the lexicon's corpus, builds it, and compares the result with the source: Grafana 12.4.11 and 13.2.2 UI exports, Node Exporter Full and other community dashboards from grafana.com (their sources and licenses are in `test/fixtures/community/README.md`), and what the lexicon's own examples build. The comparison applies the importer's edits to the source (each key left out, each value written in another form) and then puts both sides through `normalizeDashboard`, which removes the keys Grafana fills in or derives. A dashboard chant built comes back as the same text.
+`src/import/roundtrip.test.ts` imports every dashboard in the lexicon's corpus, builds it, and compares the result with the source: Grafana 12.4.11 and 13.2.2 UI exports, two v2 dashboards from 13.2.2 (compared through their classic form), Node Exporter Full and other community dashboards from grafana.com (their sources and licenses are in `test/fixtures/community/README.md`), and what the lexicon's own examples build. The comparison applies the importer's edits to the source (each key left out, each value written in another form) and then puts both sides through `normalizeDashboard`, which removes the keys Grafana fills in or derives. A dashboard chant built comes back as the same text. `src/import/v2.test.ts` checks the v2 reading against Grafana 13.2.2's own v1 read of the same dashboard, and checks that every key the pinned `dashboardv2` schema defines is either carried or reported.
