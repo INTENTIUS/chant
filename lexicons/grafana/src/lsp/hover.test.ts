@@ -14,6 +14,13 @@ describe("grafana LSP hover", () => {
     expect(info?.contents).toContain("Panel plugin `stat`");
   });
 
+  it("names the schema a panel's options come from, or that there is none", () => {
+    const at = (word: string) => hover({ uri: "file:///d.ts", content: `new ${word}({})`, position: { line: 0, character: 6 }, word, lineText: `new ${word}({})` })?.contents;
+    expect(at("NodeGraphPanel")).toContain("Panel plugin `nodeGraph`. Options typed from");
+    expect(at("NodeGraphPanel")).toContain("(`nodegraph`)");
+    expect(at("AlertListPanel")).toContain("Grafana publishes no options schema for it");
+  });
+
   it("describes a query and its datasource type", () => {
     const info = hover({ uri: "file:///q.ts", content: "new TempoQuery({})", position: { line: 0, character: 6 }, word: "TempoQuery", lineText: "new TempoQuery({})" });
     expect(info?.contents).toContain("`tempo` datasources");

@@ -64,7 +64,7 @@ const requestRateEnv = new TimeSeriesPanel({
 
 Panel ids, positions and query refIds are carried as they are, so the rebuilt dashboard keeps its layout and any links to `viewPanel=<id>`. A panel's `repeat` names the variable constant, and a panel or query that uses a datasource variable holds that variable. A key left at the value Grafana assumes when it is missing (`transparent: false`, an empty `options`) is not written.
 
-A panel type chant has no class for yet (`piechart`, `bargauge`) is declared with `definePanel` in `plugins.ts`, and a query to a datasource type chant has no class for with `defineQuery`. Their options are carried as data, typed `Record<string, unknown>`; see [Other Panel and Datasource Plugins](../custom-plugins/) to type them.
+A panel type chant has no class for (a community plugin such as `grafana-clock-panel`) is declared with `definePanel` in `plugins.ts`, and a query to a datasource type chant has no class for with `defineQuery`. Their options are carried as data, typed `Record<string, unknown>`; see [Other Panel and Datasource Plugins](../custom-plugins/) to type them.
 
 ## Datasources
 

@@ -51,6 +51,28 @@ Advanced options in the export drawer, since 13.2 defaults to V2 Resource.
 There is no 12.4.11 capture because the `accessible` line style is new in
 13.x.
 
+### Every other built-in panel type (chant #2950)
+
+`grafana-12.4.11/panels.json`, `grafana-13.2.2/panels.json` and their
+`.external.json` exports were captured on 2026-09-28 from the same two
+images, from `seed/panels.json`: one panel each of bar chart, bar gauge, pie
+chart, state timeline, status history, histogram, node graph, XY chart,
+trend, canvas, geomap, flame graph, alert list and traces. Besides the
+Prometheus and Loki datasources above, a Tempo (uid `tempo`) and a Grafana
+Pyroscope (uid `pyroscope`) datasource were created, again with nothing
+behind them. The seed's XY chart carries `pluginVersion: "11.1.0"` so that
+Grafana keeps its manual series mapping as written instead of migrating it
+from the pre-11.1 format.
+
+The dashboard was opened in headless Chromium at 1600x3000 and scrolled to
+the end, so every panel plugin loaded, then exported from the toolbar's
+Export > Export as JSON in the same page (a fresh load of
+`?shareView=export` exports before the panels load). In 12.4.11 the export
+therefore carries each plugin's defaults and a `pluginVersion`, which is
+where the overlay patches for `piechart`, `nodegraph`, `trend`, `canvas` and
+`geomap` come from. The 13.2.2 Classic export is converted from the stored
+V2 model and carries the panels as they were saved.
+
 ### A dashboard stored as v2 (chant #2947)
 
 `grafana-13.2.2/tabs.v2-resource.json` and `tabs.v1-resource.json` were
