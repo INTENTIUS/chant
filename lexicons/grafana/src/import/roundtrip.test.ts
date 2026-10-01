@@ -350,6 +350,19 @@ describe("dashboard JSON -> TypeScript -> dashboard JSON", () => {
     expect(out.warnings).toEqual([]);
   });
 
+  test("the candlestick, annotations list, dashboard list, news and data grid panels are declared with their classes (#2998)", async () => {
+    const classes = ["CandlestickPanel", "AnnotationsListPanel", "DashboardListPanel", "NewsPanel"];
+    const v12 = await expectRoundTrip(read("exports/grafana-12.4.11/lists.json"));
+    for (const cls of [...classes, "DataGridPanel"]) expect(v12.source).toMatch(new RegExp(`new ${cls}\\(\\{`));
+    expect(v12.source).not.toContain("definePanel");
+    expect(v12.warnings).toEqual([]);
+    // Grafana 13 removed the data grid panel, so its export has the other four.
+    const v13 = await expectRoundTrip(read("exports/grafana-13.2.2/lists.json"));
+    for (const cls of classes) expect(v13.source).toMatch(new RegExp(`new ${cls}\\(\\{`));
+    expect(v13.source).not.toContain("definePanel");
+    expect(v13.warnings).toEqual([]);
+  });
+
   test("a panel type chant has no class for goes through definePanel", async () => {
     // The Traefik dashboard with its pie chart swapped for a community plugin chant does not ship.
     const out = await expectRoundTrip(read("community/traefik.json").split('"type": "piechart"').join('"type": "grafana-polystat-panel"'));

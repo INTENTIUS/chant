@@ -103,6 +103,20 @@ where the overlay patches for `piechart`, `nodegraph`, `trend`, `canvas` and
 `geomap` come from. The 13.2.2 Classic export is converted from the stored
 V2 model and carries the panels as they were saved.
 
+### Candlestick, annotations list, dashboard list, news and data grid (chant #2998)
+
+`lists.json` and `lists.external.json` in both version directories were
+captured on 2026-10-01 from the same two images, from `seed/lists.json`
+(a Prometheus datasource named Prometheus, uid `prom`, nothing behind it),
+the same way as `panels.json`: opened in headless Chromium, then exported
+from Export > Export as code, with "Export for sharing externally" for the
+external file and the Classic model under Advanced options on 13.2.2. The
+JSON is the clipboard text of the drawer, reformatted with `jq .`. The data
+grid panel was removed in Grafana 13, so the 13.2.2 files are captured from
+the seed without it. The candlestick overlay patches (`options.annotations`,
+`showValues`, the `accessible` line style) come from its CUE, not from these
+exports, which only use options the vendored schema already had.
+
 ### Every datasource with a query class (chant #2951)
 
 `grafana-12.4.11/queries.json`, `grafana-13.2.2/queries.json` and their
