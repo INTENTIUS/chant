@@ -41,7 +41,7 @@ Emits `receivers.otlp`, `processors.memory_limiter` and `processors.batch`, `exp
 | Kind | Types |
 |---|---|
 | receivers | otlp, prometheus, hostmetrics, filelog, k8s_cluster, kubeletstats |
-| processors | batch, memory_limiter, resource, attributes, k8sattributes, resourcedetection, filter, transform, redaction, tail_sampling, probabilistic_sampler |
+| processors | batch, memory_limiter, resource, attributes, k8sattributes, resourcedetection, filter, transform, redaction, tail_sampling, probabilistic_sampler, deltatocumulative |
 | exporters | otlp, otlphttp, debug, prometheus, googlecloud, loadbalancing |
 | connectors | spanmetrics, servicegraph, routing, forward, count, sum, signaltometrics |
 | extensions | health_check, pprof, zpages, k8s_leader_elector |
@@ -68,7 +68,7 @@ For services that emit GenAI spans, start from the preset instead of writing the
 export const collector = genAiPipeline({ traceExporters: [tempo], metricExporters: [prom] });
 ```
 
-It deletes prompt, completion, system-instruction and tool-call content from spans, span events and logs, and derives call, error, duration and token metrics (`genai_calls_total`, `genai_duration_seconds`, `genai_tokens_input_total`, `genai_tokens_output_total`) from every GenAI span before sampling. Keep content only when asked, with `keepContent: true`. `genAiComponents()` returns the pieces for hand-built pipelines.
+It deletes prompt, completion, system-instruction and tool-call content from spans, span events and logs, and derives call, error, duration and token metrics (`genai_calls_total`, `genai_duration_seconds`, `genai_tokens_input_total`, `genai_tokens_output_total`) from every GenAI span before sampling. Keep content only when asked, with `keepContent: true`. `genAiComponents()` returns the pieces for hand-built pipelines. The token sums are deltas: with a `prometheusremotewrite` exporter pass `deltaToCumulative: "auto"`, and with `otlp` to a backend that stores cumulative data pass `deltaToCumulative: true`, so a `deltatocumulative` processor goes in front of the export.
 
 ## Rules
 

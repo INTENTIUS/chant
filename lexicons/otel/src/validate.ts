@@ -31,6 +31,7 @@ export const REQUIRED_NAMES = [
   "RedactionProcessor",
   "TailSamplingProcessor",
   "ProbabilisticSamplerProcessor",
+  "DeltaToCumulativeProcessor",
   "OtlpExporter",
   "OtlpHttpExporter",
   "DebugExporter",

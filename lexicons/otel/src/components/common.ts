@@ -13,6 +13,23 @@
  */
 export type Duration = string | number;
 
+const GO_DURATION_UNITS: Record<string, number> = { ns: 1e-6, us: 1e-3, "µs": 1e-3, "μs": 1e-3, ms: 1, s: 1e3, m: 60e3, h: 3600e3 };
+
+/** A Go duration in milliseconds, `fallback` when unset, or undefined when it isn't one this can read. */
+export function goDurationMs(d: Duration | undefined, fallback: number): number | undefined {
+  if (d === undefined) return fallback;
+  if (typeof d === "number") return d / 1e6;
+  // time.ParseDuration takes a bare "0" without a unit.
+  if (/^[+-]?0$/.test(d.trim())) return 0;
+  const m = d.trim().match(/^([+-]?)((?:\d+(?:\.\d*)?|\.\d+)(?:ns|us|µs|μs|ms|s|m|h))+$/);
+  if (!m) return undefined;
+  let total = 0;
+  for (const part of d.trim().matchAll(/(\d+(?:\.\d*)?|\.\d+)(ns|us|µs|μs|ms|s|m|h)/g)) {
+    total += Number(part[1]) * GO_DURATION_UNITS[part[2]];
+  }
+  return m[1] === "-" ? -total : total;
+}
+
 export interface TLSClientSettings {
   insecure?: boolean;
   insecure_skip_verify?: boolean;

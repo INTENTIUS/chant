@@ -27,7 +27,7 @@ Like [`otlpCollector()`](../composites/), it returns entities: pass them to `col
 |---|---|---|---|
 | `traces` | `otlp` | `memory_limiter`, `transform/genai_content`, `redaction/genai_content`, `batch` | `traceExporters`, `forward/genai` |
 | `traces/genai` | `forward/genai` | `filter/genai_spans` | `spanmetrics/genai`, `sum/genai_tokens` |
-| `metrics/genai` | `spanmetrics/genai`, `sum/genai_tokens` | `batch` | `metricExporters` |
+| `metrics/genai` | `spanmetrics/genai`, `sum/genai_tokens` | `deltatocumulative/genai` when `deltaToCumulative` asks for it, `batch` | `metricExporters` |
 | `logs` | `otlp` | `memory_limiter`, `transform/genai_content`, `redaction/genai_content`, `batch` | `logExporters` |
 
 The `otlp` receiver listens on 4317 and 4318, and a `health_check` extension on 13133 unless `healthCheck: false`. Exporters default to one `debug` exporter. `logs: false` leaves out the logs pipeline.
@@ -85,7 +85,30 @@ Errors are `genai_calls_total` with `status_code="STATUS_CODE_ERROR"`. A label i
 
 `genAiMetrics(options)` returns these names, Prometheus names and dimensions for the same options, so a dashboard can read them instead of repeating strings, and a renamed `namespace` moves the panels with it.
 
-Two things about the `sum` connector at the pinned collector release: it emits delta sums, which the `prometheus` exporter accumulates but an exporter that needs cumulative input does not; and it adds each value once per attribute it splits by, so the preset splits by the model alone. OTEL107 reports a `sum` metric with more than one attribute.
+Two things about the `sum` connector at the pinned collector release. It emits delta sums. The `prometheus` exporter accumulates them, but `prometheusremotewrite` drops non-cumulative sums and histograms, and some OTLP backends store only cumulative data. And it adds each value once per attribute it splits by, so the preset splits by the model alone; OTEL107 reports a `sum` metric with more than one attribute.
+
+`deltaToCumulative` puts a `deltatocumulative/genai` processor in front of `batch` on `metrics/genai`, which turns the token sums into cumulative ones and leaves the span metrics, already cumulative, alone:
+
+| `deltaToCumulative` | Inserted |
+|---|---|
+| unset or `false` | never; the output is what it was before the option existed |
+| `"auto"` | when a metric exporter's type is in `CUMULATIVE_ONLY_EXPORTERS` (`prometheusremotewrite`) |
+| `true` | always, for an `otlp` or `otlphttp` exporter whose backend stores cumulative data |
+
+```ts
+import { defineComponent, genAiPipeline } from "@intentius/chant-lexicon-otel";
+
+const RemoteWrite = defineComponent<{ endpoint: string }>()({
+  kind: "exporter",
+  type: "prometheusremotewrite",
+  pin: { source: "github.com/open-telemetry/opentelemetry-collector-contrib/exporter/prometheusremotewriteexporter", version: "v0.130.0" },
+});
+const mimir = new RemoteWrite({ endpoint: "http://mimir:9009/api/v1/push" });
+
+export default genAiPipeline({ metricExporters: [mimir], deltaToCumulative: "auto" });
+```
+
+It is opt-in so that a config built before the option existed comes out byte-identical. The processor keeps a running total per stream in memory, so with more than one collector replica each stream has to reach the same one.
 
 ## Semantic-conventions pin
 

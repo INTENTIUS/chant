@@ -90,6 +90,8 @@ export {
   GENAI_TOKEN_DIMENSIONS,
   GENAI_DURATION_BUCKETS,
   GENAI_UNKNOWN_MODEL,
+  CUMULATIVE_ONLY_EXPORTERS,
+  genAiNeedsDeltaToCumulative,
   type GenAiPipelineOptions,
   type GenAiComponentsOptions,
   type GenAiComponents,

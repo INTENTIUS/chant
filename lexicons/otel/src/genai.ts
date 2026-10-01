@@ -17,12 +17,18 @@
  * output tokens by model). `spanmetrics` counts spans and
  * cannot sum an attribute, which is why token usage comes from the `sum`
  * connector.
+ *
+ * `sum` emits delta sums. The `prometheus` exporter accumulates them itself,
+ * but `prometheusremotewrite` drops them, and some OTLP backends store only
+ * cumulative data. `deltaToCumulative` puts a `deltatocumulative` processor on
+ * `metrics/genai` for those; it is off unless asked for, so a config built
+ * without it is unchanged.
  */
 
 import type { Declarable } from "@intentius/chant/declarable";
 import { GENAI_SEMCONV_PIN, type OTelComponent, type SchemaPin } from "./define";
 import { OtlpReceiver } from "./components/receivers";
-import { BatchProcessor, MemoryLimiterProcessor } from "./components/processors";
+import { BatchProcessor, DeltaToCumulativeProcessor, MemoryLimiterProcessor } from "./components/processors";
 import { DebugExporter } from "./components/exporters";
 import { HealthCheckExtension } from "./components/extensions";
 import {
@@ -361,6 +367,24 @@ export function genAiComponents(options: GenAiComponentsOptions = {}): GenAiComp
 
 // ── The whole collector ──────────────────────────────────────────────
 
+/**
+ * Metric exporters that read only cumulative data. At COLLECTOR_PIN,
+ * `prometheusremotewrite` drops non-cumulative monotonic sums, histograms and
+ * summaries (its README at collector-contrib v0.130.0).
+ */
+export const CUMULATIVE_ONLY_EXPORTERS: readonly string[] = Object.freeze(["prometheusremotewrite"]);
+
+/** Whether `deltaToCumulative` puts a `deltatocumulative` processor on `metrics/genai` for these exporters. */
+export function genAiNeedsDeltaToCumulative(
+  setting: GenAiPipelineOptions["deltaToCumulative"],
+  metricExporters: readonly Exporter[],
+): boolean {
+  if (setting === true) return true;
+  if (setting === "auto") return metricExporters.some((e) => CUMULATIVE_ONLY_EXPORTERS.includes(e.componentType));
+  if (setting === undefined || setting === false) return false;
+  throw new Error(`genAiPipeline: deltaToCumulative must be true, false or "auto", got ${JSON.stringify(setting)}`);
+}
+
 export interface GenAiPipelineOptions extends GenAiComponentsOptions {
   /** Where traces go. Default: one `debug` exporter at `basic` verbosity. */
   traceExporters?: Exporter[];
@@ -378,6 +402,18 @@ export interface GenAiPipelineOptions extends GenAiComponentsOptions {
   sampling?: Processor[];
   /** Serve `health_check` on 0.0.0.0:13133. Default: true. */
   healthCheck?: boolean;
+  /**
+   * Put a `deltatocumulative/genai` processor on `metrics/genai`, so the
+   * `sum` connector's delta token sums reach exporters that need cumulative
+   * data. `"auto"`: when a metric exporter is in `CUMULATIVE_ONLY_EXPORTERS`
+   * (`prometheusremotewrite`). `true`: always, such as for `otlp` to a
+   * backend that stores cumulative data; the processor leaves the cumulative
+   * span metrics alone. `false` or unset: never, which is the output from
+   * before the option existed. The processor keeps running totals in memory,
+   * so a collector behind a load balancer needs each stream to reach one
+   * replica.
+   */
+  deltaToCumulative?: boolean | "auto";
 }
 
 /**
@@ -393,6 +429,9 @@ export function genAiPipeline(options: GenAiPipelineOptions = {}): Declarable[] 
   const { traceExporters = [debug], metricExporters = [debug], logExporters = [debug], logs = true, sampling = [], healthCheck = true } =
     options;
   const parts = genAiComponents(options);
+  const cumulative = genAiNeedsDeltaToCumulative(options.deltaToCumulative, metricExporters)
+    ? [new DeltaToCumulativeProcessor({ name: "genai" })]
+    : [];
 
   const otlp = new OtlpReceiver({
     protocols: {
@@ -447,7 +486,7 @@ export function genAiPipeline(options: GenAiPipelineOptions = {}): Declarable[] 
       signal: "metrics",
       name: "genai",
       receivers: [parts.spanMetrics, parts.tokenUsage],
-      processors: [batch],
+      processors: [...cumulative, batch],
       exporters: metricExporters,
     }),
   );
