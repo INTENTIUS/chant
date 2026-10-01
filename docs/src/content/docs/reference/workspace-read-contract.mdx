@@ -134,7 +134,8 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `record-supersedes-conflict` | record, `records` | A second closed record supersedes one another record already superseded. |
 | `record-remediates-unknown` | record, `records` | A `remediates` link names an id no record has. |
 | `record-remediates-not-closed` | record, `records` | A `remediates` link names a record that isn't closed; a record still open is amended instead. |
-| `session-seal-mismatch` | record, `records` | A closed session's seal is not the digest of its text: the session changed after it closed. |
+| `record-seal-mismatch` | record, `records` | A closed record's seal is not the whole-file seal of its text now: the record changed after it closed. |
+| `session-seal-mismatch` | record, `records` | A closed session's seal is not the whole-file seal of its text now: the session changed after it closed, or was sealed by the rule before #2546. |
 | `session-verdict-unknown-record` | record, `records` | A session's verdict names a record that none of the session kind's subject records has. |
 | `asset-drift` | warning, `records` | A file the record pins by hash has changed: its bytes no longer hash to the pinned `sha256`. The record stays valid. |
 | `asset-missing` | warning, `records` | A file the record pins by hash does not exist in the tree read. The record stays valid. |

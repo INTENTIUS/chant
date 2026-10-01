@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "urn:intentius:chant:session:1",
   "title": "Review session",
-  "description": "The front matter of a review-session file (#2673, #2650 C10): a group walking an agenda of records together, who attended, and the verdicts the session produced. Each verdict is also an entry in the judged record's reviews list, whose session field names this session. A closed session is sealed: closed_digest is the lowercase hex SHA-256 of the file with LF line endings and without its closed_digest line, and chant workspace records checks it on every read (session-seal-mismatch).",
+  "description": "The front matter of a review-session file (#2673, #2650 C10): a group walking an agenda of records together, who attended, and the verdicts the session produced. Each verdict is also an entry in the judged record's reviews list, whose session field names this session. A closed session is sealed: closed_digest is sha256: and the lowercase hex SHA-256 of the JCS form of the whole session without closed_digest (its front matter as core and the text below it as body, line endings LF, #2546), and chant workspace records checks it on every read (session-seal-mismatch).",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema", "id", "title", "state", "agenda", "attendance", "opened", "closed", "verdicts"],
@@ -85,7 +85,7 @@
     "closed_digest": {
       "description": "The seal, written when the session closes.",
       "type": "string",
-      "pattern": "^[0-9a-f]{64}$"
+      "pattern": "^sha256:[0-9a-f]{64}$"
     }
   },
   "definitions": {

@@ -5,7 +5,7 @@ diataxis: reference
 ---
 
 :::note[First-test slice]
-This command is the first slice of workspace records ([#2546](https://github.com/INTENTIUS/chant/issues/2546)) and the read contract ([#2536](https://github.com/INTENTIUS/chant/issues/2536)). It exists so a hosted design studio built on hud can show the workspace design's decision files for review ([#2555](https://github.com/INTENTIUS/chant/issues/2555)). Each record reports its provenance level ([#2547](https://github.com/INTENTIUS/chant/issues/2547)). A review verdict can carry a seal by its reviewer ([#2687](https://github.com/INTENTIUS/chant/issues/2687)), and a record a seal by its author ([#2688](https://github.com/INTENTIUS/chant/issues/2688)). Kinds are named with `--kind`, or by [`chant.workspace.json`](/chant/reference/workspace-declaration/#record-kinds) when `--kind` is not given ([#2680](https://github.com/INTENTIUS/chant/issues/2680)).
+This command is the first slice of workspace records ([#2546](https://github.com/INTENTIUS/chant/issues/2546)) and the read contract ([#2536](https://github.com/INTENTIUS/chant/issues/2536)). It exists so a hosted design studio built on hud can show the workspace design's decision files for review ([#2555](https://github.com/INTENTIUS/chant/issues/2555)). Each record reports its provenance level ([#2547](https://github.com/INTENTIUS/chant/issues/2547)). A review verdict can carry a seal by its reviewer ([#2687](https://github.com/INTENTIUS/chant/issues/2687)), and a record a seal by its author ([#2688](https://github.com/INTENTIUS/chant/issues/2688)). A closed record carries a whole-file seal, and `--current` without `--kind` prints the workspace's spec ([#2546](https://github.com/INTENTIUS/chant/issues/2546)). Kinds are named with `--kind`, or by [`chant.workspace.json`](/chant/reference/workspace-declaration/#record-kinds) when `--kind` is not given ([#2680](https://github.com/INTENTIUS/chant/issues/2680)).
 :::
 
 ## Synopsis
@@ -52,6 +52,8 @@ export const recordKind = {
   stateField: "state",
   states: ["proposed", "decided", "ratified", "superseded", "withdrawn"],
   closedStates: ["ratified", "superseded"],
+  seal: { field: "closed_digest" },
+  spec: true,
   supersedes: { field: "supersedes", key: "decision" },
   remediates: { field: "remediates", key: "decision" },
   approval: { proposed: 0, withdrawn: 0, decided: 1, ratified: 2, superseded: 2 },
@@ -67,6 +69,8 @@ export const recordKind = {
 `location.dir` and `schema.path` are relative to the kind's own directory. Subdirectories are skipped, and a name has to match `location.match` to be read. The `$id` inside the schema must equal `schema.id`.
 
 `approval`, `pins`, `constrains`, `reviews`, `proposedBy`, `remediates`, `outOfScope` and `session` are optional, and `approval` ranks the states for [supersession](#supersession). `remediates` is shaped like `supersedes` and names a closed record a later one fixes the consequence of, without replacing it (see [Remediation](#remediation)). `pins.field` names the list whose entries may pin a workspace file (see [Asset pins](#asset-pins)). `constrains.field` names the list of what a record governs, whose `member:<name>` and `path:<path>` entries become the record's links in [`chant workspace graph --kind`](/chant/cli/workspace-graph/#record-links). For `reviews`, `field` is the list of review verdicts and `decider` is the field holding the decider, and with them each record gets a digest and a quorum (see [Reviews and quorum](#reviews-and-quorum)). Its optional `ratified` names the state a record enters only once its quorum is met, `ratified` for decisions (see [Ratifying](#ratifying)), and it must be one of `states`. It is new in 0.95.0, and older chants reject the key. `proposedBy` works the other end of a record's life: its `field` says where a new record's proposer goes, apart from the decider (see [Naming a proposer](#naming-a-proposer)). chant 0.82.0 and older refuse a kind file that has `approval`, `pins` or `constrains`. `session` makes the kind a [review-session kind](#review-sessions), and chant 0.81.0 and older refuse it too. `source.field` names the object that says where a record came from, and opts the kind in to the [source block](#where-a-proposal-came-from). `outOfScope.field` names the list of paths a change under the record must leave alone, and the [forward coverage check](/chant/cli/workspace-check/#the-forward-coverage-check) reports a change to one of them as `change-out-of-scope` ([#2773](https://github.com/INTENTIUS/chant/issues/2773)). The decision and work kinds both call that list `out_of_scope`. A chant released before `remediates`, `outOfScope` or the source block existed refuses a kind file that has any of them, as it refuses any key it does not know.
+
+The kind's `seal` block holds the field for a closed record's whole-file seal, `closed_digest` for decisions (see [Seals on closed records](#seals-on-closed-records)). A kind with `seal` must have states, and a session kind that gives both `seal` and `session.seal` must name the same field in each. `spec: true` puts the kind's current records, and the files they pin, in the workspace's [spec](#the-spec). Both are new with [#2546](https://github.com/INTENTIUS/chant/issues/2546), and an older chant refuses a kind file that has either.
 
 A kind with a `work` block is a work kind ([#2683](https://github.com/INTENTIUS/chant/issues/2683)), such as the reference workspace's `work/work.kind.mjs`, whose block reads as follows.
 
@@ -155,6 +159,39 @@ The example leaves out each document's other fields. `declared.member` is the me
 
 A workspace whose declaration names no kinds, and a directory with no declaration, fail as before with `--kind <kind file> is required`. A declaration that can't be read fails with its code.
 
+## The spec
+
+A workspace's spec is the current records of every declared kind marked `spec: true`, with the files they pin (D20 of [#2524](https://github.com/INTENTIUS/chant/issues/2524), [#2546](https://github.com/INTENTIUS/chant/issues/2546)). An agent resumes from the declaration and one read:
+
+```bash
+chant workspace records --current --json
+```
+
+With `--current`, the set of declared kinds gains a `spec` object beside `kinds`:
+
+```json
+"spec": {
+  "kinds": [{ "member": null, "path": "decisions/decision.kind.mjs", "name": null }],
+  "records": [
+    {
+      "kind": "decision",
+      "id": "ref-002",
+      "path": "reference-workspace/decisions/ref-002-where-the-screen-design-lives.md",
+      "state": "decided",
+      "valid": true,
+      "digest": "57782e4b...",
+      "assets": [
+        { "path": "design/screens/home.json", "sha256": "074e55f5...", "actual": "074e55f5...", "state": "pinned" }
+      ]
+    }
+  ]
+}
+```
+
+`spec.kinds` lists the spec kinds as the declaration names them. `spec.records` lists the current records of those kinds in the kinds' order, then by path. Each one carries its digest and the files it pins. Each pin has the `path` from the workspace root and the `sha256` the record pins, with `actual` and `state` as under [Asset pins](#asset-pins). An invalid record is listed with `valid: false`, and a kind whose read failed is left out of `spec` and listed under `kinds` with its error. Without `--current` there is no `spec`, and with `--kind` the document for that one kind already holds its current records and their pins. Each kind's document says whether it is a spec kind in `kind.spec`.
+
+The chant repo's declaration names its decision kind, and the reference workspace's names its own, both marked `spec: true`. In the reference workspace the spec holds `ref-002` with its pin on the design member's `design/screens/home.json`.
+
 ## Work items
 
 On a work kind the output has five more fields. The guide page [Work items](/chant/guide/work-items/) shows how an agent picks ready work from them.
@@ -227,17 +264,11 @@ attendance:
 opened: "2026-09-24T18:00:00Z"
 closed: "2026-09-24T18:40:00Z"
 verdicts: []
-closed_digest: "0b33bd62..."
+closed_digest: "sha256:4a3e5f4f..."
 ---
 ```
 
-The seal is the lowercase hex SHA-256 of the file's text with LF line endings and without the front-matter line that holds the seal field. Everything else, the `---` lines and the body included, is kept. It is the rule of a record's [`digest`](#reviews-and-quorum) applied to the seal field in place of the reviews list, and since the seal is one line, only that line is removed. For a JSON session kind the seal member is removed by the JSON rule of the digest instead. This shell recipe computes it:
-
-```bash
-awk 'NR==1&&/^---$/{f=1;print;next} f&&/^---$/{f=0} f&&/^closed_digest:/{next} {print}' S-0001.md | shasum -a 256
-```
-
-The recipe assumes the file already uses LF and ends in one. Reading a session kind also reads its subject records from the same tree, the working tree or the commit under `--at`. A closed session whose text no longer hashes to its seal gets `session-seal-mismatch`, and a verdict naming a record the subjects don't have gets `session-verdict-unknown-record`. Both make the session invalid. Each session record in the output also carries `citedBy`: the subjects' review entries whose `session` names it, each as `{id, path, index, reviewer, verdict}`.
+The seal is the [record seal](#seals-on-closed-records) with the seal field left out: it covers the whole file, front matter and body. Reading a session kind also reads its subject records from the same tree, the working tree or the commit under `--at`. A closed session whose seal no longer matches gets `session-seal-mismatch`, and a verdict naming a record the subjects don't have gets `session-verdict-unknown-record`. Both make the session invalid. Each session record in the output also carries `citedBy`: the subjects' review entries whose `session` names it, each as `{id, path, index, reviewer, verdict}`.
 
 ### Sessions from a UI
 
@@ -448,6 +479,8 @@ reviews:
 
 A kind whose `reviews` names a `ratified` state removes its state field's block in step 2 as well, `state` for decisions ([#2873](https://github.com/INTENTIUS/chant/issues/2873)). Moving a record to the ratified state then leaves its digest where it was, so the verdicts that met the quorum still count on the ratified record.
 
+A kind that declares [`seal`](#seals-on-closed-records) removes the block of its seal field in step 2 too, `closed_digest` for decisions ([#2546](https://github.com/INTENTIUS/chant/issues/2546)). That field is written when the record closes, so the verdicts that ratified it still count on the sealed record.
+
 `seal` is the record's author seal ([#2688](https://github.com/INTENTIUS/chant/issues/2688)), only at column 0. A `seal` inside a verdict is part of the reviews block. A record with no top-level `seal` hashes exactly as it did before author seals existed, so no earlier digest moved.
 
 For a kind with `format: "json"`, step 2 removes the top-level reviews member instead, and then the top-level `seal` member from what is left. When the kind names a `ratified` state, the state member goes next. The removed text runs from the whitespace right before the member's name to the end of its value. One comma goes with it, along with the whitespace right before that comma. The comma is the one after the value when another member follows, and otherwise the one before the member. In a file written with one member per line, that is deleting the member's lines and the comma that separated it from its neighbour. Everything else stays byte for byte, the final newline included. A file that is not a JSON record, or has neither member, is hashed after step 1 only.
@@ -457,10 +490,10 @@ Text with no front matter, or neither key, is hashed after step 1 only. So addin
 `records --json` prints each record's `digest`, which is the value to copy into a new verdict. To check one by hand, for a file with LF line endings that ends in a newline, run this from the file's directory:
 
 ```bash
-awk 'NR==1&&$0=="---"{fm=1;print;next} fm&&$0=="---"{fm=0;skip=0;print;next} fm&&/^(reviews|seal|state)[ \t]*:/{skip=1;next} fm&&skip&&/^([ \t#-]|$)/{next} {skip=0;print}' ws-003-seal-scope.md | shasum -a 256
+awk 'NR==1&&$0=="---"{fm=1;print;next} fm&&$0=="---"{fm=0;skip=0;print;next} fm&&/^(reviews|seal|state|closed_digest)[ \t]*:/{skip=1;next} fm&&skip&&/^([ \t#-]|$)/{next} {skip=0;print}' ws-003-seal-scope.md | shasum -a 256
 ```
 
-The pattern lists `state` because the decision kind names a ratified state. For a kind that doesn't, leave `state` out of it. The digest in the example above is `ws-003`'s in the chant repo at the time of writing. A verdict with no `digest` still counts, which keeps records written before digests working. The record gets the warning `review-undigested`, which names the reviewers, since an amendment won't stop those verdicts counting.
+The pattern lists `state` because the decision kind names a ratified state, and `closed_digest` because it declares a seal field. For a kind that doesn't, leave those out of it. The digest in the example above is `ws-003`'s in the chant repo at the time of writing. A verdict with no `digest` still counts, which keeps records written before digests working. The record gets the warning `review-undigested`, which names the reviewers, since an amendment won't stop those verdicts counting.
 
 ### The quorum
 
@@ -607,6 +640,40 @@ ssh-keygen -Y verify -f .chant/allowed_signers -I alice@example.com -n chant-rec
 
 `$DIGEST` is the record's `digest` from `records --json`, or the `awk` pipeline above. Put the `signature` string in `record.sig`, turning each `\n` escape into a real line break.
 
+## Seals on closed records
+
+chant seals each record of a kind that declares `seal` as it closes ([#2546](https://github.com/INTENTIUS/chant/issues/2546), [ws-063](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-063-seal-and-review-digest.md)). For decisions that is the move to `ratified` or `superseded`. The seal goes into the kind's seal field as the last change of the closing write, and the result lists that field in `changed`. The writes that close a record are `records amend` and `records new`, and for a review session `records close`. A closed record never changes again (`record-closed`), and fields given with `--from` or `--set` that set the seal field are refused with `write-input-invalid`.
+
+The seal covers the whole file, as [ws-003](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-003-seal-scope.md) chose. It is `sha256:` and the lowercase hex SHA-256 of the record's RFC 8785 (JCS) form:
+
+1. Every line ending is LF: CRLF and a lone CR are each read as one LF.
+2. The structured core is parsed as the kind's format says (front matter as the JSON subset of YAML, or a JSON file's object), and the seal field is removed from it.
+3. For a Markdown record the value is `{"body": <the text after the closing --- line>, "core": <the core>}`. For a JSON record it is the core.
+4. The value is written in JCS and hashed as UTF-8. JCS sorts object keys and drops whitespace, and it uses JavaScript's forms for numbers and strings.
+
+Every value in the record and every byte of its body is sealed, the reviews, the author seal and the state included. The key order, quoting and indentation of the front matter are not, so a record written another way has the same seal. A YAML comment in the front matter is not part of the record and is not sealed ([#3066](https://github.com/INTENTIUS/chant/issues/3066)).
+
+The seal and the review [digest](#digest-rule) are two hashes. A verdict names the digest. The digest leaves out the reviews and the author seal. For decisions it also leaves out the state and `closed_digest`. Adding a verdict or ratifying therefore never stops earlier verdicts counting. The seal is written once, at the close, and covers all of those. The digest of a record with no seal field is what it was before #2546.
+
+On read, a closed record whose seal field doesn't match gets `record-seal-mismatch`, and a closed session `session-seal-mismatch`, and either is invalid. A closed record with no seal field, such as one closed by hand, is read without the check. To check a seal by hand, with Node and the js-yaml package:
+
+```bash
+node -e '
+const fs = require("fs"), crypto = require("crypto"), yaml = require("js-yaml");
+const text = fs.readFileSync(process.argv[1], "utf8").replace(/\r\n?/g, "\n");
+const [, front, body] = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/.exec(text);
+const { closed_digest, ...core } = yaml.load(front, { schema: yaml.JSON_SCHEMA });
+const jcs = (v) => v === null || typeof v !== "object" ? JSON.stringify(v)
+  : Array.isArray(v) ? `[${v.map(jcs)}]`
+  : `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${jcs(v[k])}`)}}`;
+console.log("sha256:" + crypto.createHash("sha256").update(jcs({ body, core })).digest("hex"));
+' S-0001-first-walk-of-the-reference-decisions.md
+```
+
+A seal is a hash anyone can recompute, so without an attestor, seals detect accidental edits only. Anyone who edits a closed record on purpose can write a matching seal. What says who closed a record is the author seal under a signers file ([Sealing a record](#sealing-a-record)) and the commit's signature ([Provenance](#provenance)), with CI enforcing them at the target branch.
+
+Seals written before #2546 used another rule, the bare hex SHA-256 of the file's text without the seal line. Such a seal reads as `session-seal-mismatch` now, with a message naming the old rule. chant never rewrites a closed record, so a workspace with one seals it again by hand with the recipe above. The reference workspace's `S-0001` was sealed again that way.
+
 ## Exit codes
 
 | Code | Meaning |
@@ -670,7 +737,7 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
 }
 ```
 
-`data` holds the whole front matter, or the whole object for a JSON kind; the example shortens it. `at` is the full commit id when `--at` is given. `trust` and `provenance` were added within contract 1 by [#2547](https://github.com/INTENTIUS/chant/issues/2547), and `workspaceRoot`, `assets` and `warnings` by [#2549](https://github.com/INTENTIUS/chant/issues/2549). `digest` and `quorum` were added by [#2672](https://github.com/INTENTIUS/chant/issues/2672) and [#2671](https://github.com/INTENTIUS/chant/issues/2671), and only a kind with `reviews` has `quorum`. `citedBy`, on a session kind's records only, was added by [#2673](https://github.com/INTENTIUS/chant/issues/2673). `kind.format` was added by [#2664](https://github.com/INTENTIUS/chant/issues/2664). `ready`, `blockedBy`, `implements` and the document's `decisions` were added by [#2683](https://github.com/INTENTIUS/chant/issues/2683), on a work kind only, and `lease` by [#2732](https://github.com/INTENTIUS/chant/issues/2732). Records of a kind with `reviews` also carry `attested` and `attestation`, and may carry the warning `record-unattested`, since [#2688](https://github.com/INTENTIUS/chant/issues/2688). `remediatedBy` was added by [#2774](https://github.com/INTENTIUS/chant/issues/2774), holding the ids of records whose `remediates` link names this one; it is empty on a kind without `remediates`, and on a record nothing remediates. A record of a kind with `approval` ranks that is not a work kind carries `decidedIn` in a git repository: the commit that last moved it into an approved state and kept it there, as `{ sha, date, subject }`, or `null` when it is not approved in the history read. [The intent graph](/chant/reference/workspace-read-contract/#the-intent-graph) opens the record's window at that commit.
+`data` holds the whole front matter, or the whole object for a JSON kind; the example shortens it. `at` is the full commit id when `--at` is given. `trust` and `provenance` were added within contract 1 by [#2547](https://github.com/INTENTIUS/chant/issues/2547), and `workspaceRoot`, `assets` and `warnings` by [#2549](https://github.com/INTENTIUS/chant/issues/2549). `digest` and `quorum` were added by [#2672](https://github.com/INTENTIUS/chant/issues/2672) and [#2671](https://github.com/INTENTIUS/chant/issues/2671), and only a kind with `reviews` has `quorum`. `citedBy`, on a session kind's records only, was added by [#2673](https://github.com/INTENTIUS/chant/issues/2673). `kind.format` was added by [#2664](https://github.com/INTENTIUS/chant/issues/2664), and `kind.spec` and the set's `spec` by [#2546](https://github.com/INTENTIUS/chant/issues/2546) ([The spec](#the-spec)). `ready`, `blockedBy`, `implements` and the document's `decisions` were added by [#2683](https://github.com/INTENTIUS/chant/issues/2683), on a work kind only, and `lease` by [#2732](https://github.com/INTENTIUS/chant/issues/2732). Records of a kind with `reviews` also carry `attested` and `attestation`, and may carry the warning `record-unattested`, since [#2688](https://github.com/INTENTIUS/chant/issues/2688). `remediatedBy` was added by [#2774](https://github.com/INTENTIUS/chant/issues/2774), holding the ids of records whose `remediates` link names this one; it is empty on a kind without `remediates`, and on a record nothing remediates. A record of a kind with `approval` ranks that is not a work kind carries `decidedIn` in a git repository: the commit that last moved it into an approved state and kept it there, as `{ sha, date, subject }`, or `null` when it is not approved in the history read. [The intent graph](/chant/reference/workspace-read-contract/#the-intent-graph) opens the record's window at that commit.
 
 A failed read prints `{ "$schema", "contract", "error": { "code", "message" } }` instead. Without `--kind`, the output is the set of [Declared kinds](#declared-kinds), added within contract 1 by [#2680](https://github.com/INTENTIUS/chant/issues/2680).
 
@@ -685,7 +752,8 @@ A failed read prints `{ "$schema", "contract", "error": { "code", "message" } }`
 | `record-supersedes-conflict` | supersedes a record another closed record already supersedes |
 | `record-remediates-unknown` | names an id in `remediates` that no record has |
 | `record-remediates-not-closed` | remediates a record that isn't closed; a record still open is amended instead |
-| `session-seal-mismatch` | is a closed session whose text no longer hashes to its seal, so it changed after it closed |
+| `record-seal-mismatch` | is a closed record whose seal field no longer matches its [record seal](#seals-on-closed-records), so it changed after it closed |
+| `session-seal-mismatch` | is a closed session that changed after it closed, or that holds a seal by the rule before #2546 |
 | `session-verdict-unknown-record` | is a session with a verdict naming a record that none of the kind's subject records has |
 
 ### Warning codes
@@ -778,6 +846,9 @@ A refusal prints `{ "$schema", "contract", "error": { "code", "message" } }`, an
 ```bash
 # Every current decision in the chant repo
 chant workspace records --kind docs/design/decisions/decision.kind.mjs --current --json
+
+# The spec: every declared kind's current records, and those of spec kinds with their pins under spec
+chant workspace records --current --json
 
 # The same decisions as they were at a commit
 chant workspace records --kind docs/design/decisions/decision.kind.mjs --current --json --at 91c7547e

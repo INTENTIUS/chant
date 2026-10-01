@@ -70,8 +70,9 @@ export const REASONS = {
   "record-supersedes-conflict": "A second closed record supersedes a record another one already superseded.",
   "record-remediates-unknown": "A remediates link names an id no record has.",
   "record-remediates-not-closed": "A remediates link names a record that isn't closed; a record still open is amended instead.",
+  "record-seal-mismatch": "A closed record's seal is not the whole-file seal of its text now: the record changed after it closed.",
   // A review session that isn't valid (records, #2673).
-  "session-seal-mismatch": "A closed session's seal is not the digest of its text: the session changed after it closed.",
+  "session-seal-mismatch": "A closed session's seal is not the whole-file seal of its text now: the session changed after it closed, or was sealed by the rule before #2546.",
   "session-verdict-unknown-record": "A session's verdict names a record that none of the session kind's subject records has.",
   // A record that is valid but warned about (records, #2549).
   "asset-drift": "A file the record pins by hash has changed: its bytes no longer hash to the pinned sha256.",
