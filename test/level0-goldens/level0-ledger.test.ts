@@ -18,7 +18,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { parseYAML } from "@intentius/chant/yaml";
 import { childTmp, copyExample, git, makeScratch, runChant, type ChantRun } from "./harness";
@@ -107,5 +107,48 @@ describe("chant #2526 — a project with no workspace file", () => {
         "chant.intentius.io/env": "local",
       });
     }
+  });
+});
+
+/**
+ * A level-0 project in a subdirectory of its repository. Through v0.81 a bare
+ * `git ls-tree` run from there listed only that subdirectory's part of the
+ * orphan `chant/lifecycle` tree, which is nothing, so the second append
+ * rebuilt the branch from an empty tree and its compare-and-swap refused it.
+ * #2610 runs `ls-tree --full-tree`; the change is on the level-0 exception
+ * list (#2525), accepted without a warning release on 2026-09-30.
+ */
+describe("chant #2525 — a level-0 project in a repository subdirectory", () => {
+  const subScratch = makeScratch("ledger-subdir");
+  let repo: string;
+  let sub: string;
+  let first: ChantRun;
+  let second: ChantRun;
+
+  beforeAll(async () => {
+    const ops = { [join("ops", "hello.op.ts")]: readFileSync(join(FIXTURE_OPS, "hello.ts"), "utf-8") };
+    repo = join(subScratch, "repo");
+    mkdirSync(repo);
+    sub = copyExample("getting-started", repo, ops);
+    // copyExample makes the copy its own repository; move that repository up
+    // one level so the project is the subdirectory `getting-started/`.
+    renameSync(join(sub, ".git"), join(repo, ".git"));
+    git(repo, ["add", "-A"]);
+    git(repo, ["commit", "-q", "-m", "project in a subdirectory"]);
+    first = await runChant(sub, ["run", "hello"], { timeoutMs: TIMEOUT_MS });
+    second = await runChant(sub, ["run", "hello"], { timeoutMs: TIMEOUT_MS });
+  }, TIMEOUT_MS);
+
+  afterAll(() => {
+    rmSync(subScratch, { recursive: true, force: true });
+  });
+
+  test("both runs append to the ledger, and the paths stay flat at the branch root", () => {
+    expect(first.exit, first.stderr).toBe(0);
+    expect(second.exit, second.stderr).toBe(0);
+    const paths = git(repo, ["ls-tree", "-r", "--name-only", "--full-tree", "chant/lifecycle"]).split("\n").filter(Boolean);
+    expect(paths).toEqual(["local/runs__hello.jsonl"]);
+    const runs = git(repo, ["show", "chant/lifecycle:local/runs__hello.jsonl"]).split("\n").filter(Boolean);
+    expect(runs).toHaveLength(2);
   });
 });

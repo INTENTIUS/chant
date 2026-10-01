@@ -2,6 +2,13 @@
 
 This file records changes to what chant prints or writes for a plain project, the level-0 changes listed in [#2525](https://github.com/INTENTIUS/chant/issues/2525). The full list, with the release that warned about each one, is on the [level-0 exceptions](docs/src/content/docs/reference/level-0-exceptions.mdx) page.
 
+## Unreleased
+
+Two level-0 changes that shipped in 0.81.0 without a warning release are now on the [level-0 exceptions](docs/src/content/docs/reference/level-0-exceptions.mdx) list. The maintainer accepted both on 2026-09-30.
+
+- [#2550](https://github.com/INTENTIUS/chant/issues/2550) ledger reads and writes run `git ls-tree --full-tree`, so a project in a subdirectory of its repository appends to `chant/lifecycle` instead of having its second append refused. Ledger paths do not move. `level0-ledger.test.ts` now holds the subdirectory case ([#2610](https://github.com/INTENTIUS/chant/pull/2610)).
+- [#2535](https://github.com/INTENTIUS/chant/issues/2535) `chant check-lexicon` prints a tier-1 row for the `./workspace-kinds` subpath for every lexicon, which passes when a lexicon has no such subpath ([#2631](https://github.com/INTENTIUS/chant/pull/2631)).
+
 ## 0.81.0
 
 The level-1 workspace release: `chant.workspace.json`, `chant workspace init`, `ls`, `check`, `build`, `lint`, `audit`, `graph`, `status`, `records`, `verify` and `upgrade`, member ledgers, member links, template parameters at `chant init --from`, and the read contract. None of it runs for a project without a declaration. The level-0 changes below shipped their warnings in 0.80.0.

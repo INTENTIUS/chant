@@ -41,6 +41,11 @@ export interface TopologyComponent {
   schema?: SchemaPin;
   /** Addresses it listens on or sends to, as the config states them. Empty when the config names none. */
   endpoints: string[];
+  /**
+   * The wire protocols it speaks, as OTLP SDKs name them (`grpc`, `http/protobuf`, `http/json`).
+   * Empty when its definition states none, which a protocol check reads as unknown.
+   */
+  protocols: string[];
   /** The pipelines that use it. For a connector, those on either side; for an extension, empty. */
   pipelines: string[];
 }
@@ -87,6 +92,16 @@ export interface CollectorTopology {
   semconv: SemconvUsage[];
 }
 
+function protocolsOf(kind: ComponentKind, type: string, config: Record<string, unknown> | null | undefined): string[] {
+  const def = definitionOf(kind, type);
+  if (!def?.protocols) return [];
+  try {
+    return def.protocols((config ?? {}) as never);
+  } catch {
+    return [];
+  }
+}
+
 function endpointsOf(kind: ComponentKind, type: string, config: Record<string, unknown> | null | undefined): string[] {
   const def = definitionOf(kind, type);
   const cfg = config ?? {};
@@ -131,6 +146,7 @@ export function collectorTopology(config: CollectorConfig): CollectorTopology {
         builtin: def?.builtin ?? false,
         ...(def ? { schema: { ...def.pin } } : {}),
         endpoints: endpointsOf(kind, type, cfg),
+        protocols: protocolsOf(kind, type, cfg),
         pipelines: inPipelines,
       });
     }

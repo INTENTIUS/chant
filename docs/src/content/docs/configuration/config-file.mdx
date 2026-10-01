@@ -87,6 +87,16 @@ The marker is the record that later lets `delete` be precise without an authorit
 
 The marker carries **stack identity**, not just `managed=true`, so one stack never mistakes another's resources for its own. Ownership means "carries chant's marker", not "carries only chant's marker" — co-stamping with other tools (ArgoCD, Terraform) is fine, and explicit per-resource tags/labels win on key collisions. Walk-away cost stays zero: these are standard tags/labels, nothing proprietary.
 
+### `telemetry`
+
+Telemetry attribution ([#2558](https://github.com/INTENTIUS/chant/issues/2558)). A lexicon that declares workloads stamps the attributes that name the declaration (`chant.workspace`, `chant.member`, `chant.decl`, `service.name` and `deployment.environment.name`) as `OTEL_SERVICE_NAME` and `OTEL_RESOURCE_ATTRIBUTES` in each workload's environment. The docker lexicon does so today.
+
+```typescript
+telemetry: { attribution: true },
+```
+
+Inside a [workspace](/chant/reference/workspace-declaration/) attribution is on, and `attribution: false` turns it off. Outside one it is off, and `attribution: true` turns it on with the attributes that need no workspace. A project with neither a workspace declaration nor this key builds the same bytes as before. See [how a reader joins a span](/chant/reference/workspace-read-contract/#joining-a-span-to-a-member).
+
 ### `environments`
 
 An optional array of environment names the project deploys to. An environment is just a named identity chant threads through the operational layer — there is no per-environment config block to maintain.

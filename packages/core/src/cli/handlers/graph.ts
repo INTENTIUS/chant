@@ -702,6 +702,27 @@ async function buildPipelineProjection(
  * Lint-gated: the IR represents valid infra, so we refuse to emit for source that
  * does not pass lint. Non-zero on discovery errors or a layout-engine failure.
  */
+/**
+ * Add what the lexicons' `graphMeta` hooks report to `ir.meta` (#2559). A
+ * lexicon with nothing to report leaves the IR as it was, so a project that
+ * declares none of their entities prints what it did before. Two lexicons
+ * that answer the same key keep the first and say so on stderr.
+ */
+function withGraphMeta(ir: GraphIR, plugins: LexiconPlugin[], entities: Map<string, import("../../declarable").Declarable>): GraphIR {
+  const added: Record<string, unknown> = {};
+  for (const p of plugins) {
+    if (!p.graphMeta) continue;
+    for (const [key, value] of Object.entries(p.graphMeta(entities) ?? {})) {
+      if (key in added || (ir.meta && key in ir.meta)) {
+        console.error(formatWarning({ message: `the ${p.name} lexicon reports graph meta "${key}", which another source already set; its value is dropped` }));
+        continue;
+      }
+      added[key] = value;
+    }
+  }
+  return Object.keys(added).length === 0 ? ir : { ...ir, meta: { ...(ir.meta ?? {}), ...added } };
+}
+
 /** Returned instead of a graph when the prediction cannot be attempted honestly. */
 const REFUSED = Symbol("behaviour-refused");
 
@@ -855,6 +876,7 @@ async function runGraphView(
     });
     if (predicted === REFUSED) return 1;
     ir = predicted;
+    ir = withGraphMeta(ir, plugins as LexiconPlugin[], result.entities);
   }
 
   if (ctx.args.lens) {

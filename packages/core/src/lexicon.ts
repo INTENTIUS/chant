@@ -1259,6 +1259,22 @@ export interface LexiconPlugin {
    */
   buildRoots?(ctx: BuildRootContext): Promise<BuildRootContribution>;
 
+  /**
+   * Facts about the whole read that this lexicon's entities imply, for the
+   * graph IR's `meta` bag (#2559). The otel lexicon answers
+   * `{ collector: <topology> }`, which `chant workspace graph` lifts into its
+   * `collectors` section, so core carries the shape of the answer and never
+   * imports the lexicon that computes it.
+   *
+   * Called by `chant graph --format ir` with the discovered entities of the
+   * project, after the plugins are loaded. Return `undefined` or an empty
+   * object when the project declares nothing this lexicon reports; the IR is
+   * then unchanged. Keys must be unique to the lexicon (two lexicons writing
+   * one key is a conflict the graph refuses). Omit for lexicons with nothing
+   * to report.
+   */
+  graphMeta?(entities: ReadonlyMap<string, Declarable>): Record<string, unknown> | undefined;
+
   // LSP
   /** Provide completions for LSP */
   completionProvider?(ctx: CompletionContext): CompletionItem[];

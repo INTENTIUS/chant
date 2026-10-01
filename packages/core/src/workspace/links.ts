@@ -29,10 +29,22 @@
 import { joinKey, joinLabel, type JoinLabel } from "../join-key";
 import type { Declaration, LinkDeclaration, Member } from "./declaration";
 import type { KindRegistry, MemberKind } from "./kinds";
+import type { MemberCollector } from "./compose-graph";
 
-/** The link kinds chant knows. Closed: a link of any other kind fails closed. */
-export const LINK_KINDS = ["output"] as const;
+/**
+ * The link kinds chant knows. Closed: a link of any other kind fails closed.
+ * `output` reads a named output of the producer. `telemetry` (#2558, D22)
+ * sends the consumer's telemetry to a pipeline or exporter of the producer's
+ * collector.
+ */
+export const LINK_KINDS = ["output", "telemetry"] as const;
 export const DEFAULT_LINK_KIND = "output";
+
+/** The kind a link has when it names a collector target (#2558). */
+export const TELEMETRY_LINK_KIND = "telemetry";
+
+/** The OTLP protocols a telemetry link may state, as `OTEL_EXPORTER_OTLP_PROTOCOL` names them. */
+export const TELEMETRY_PROTOCOLS = ["grpc", "http/protobuf", "http/json"] as const;
 
 /** How a row was found: written down, or inferred by the named rule. */
 export type LinkOrigin = "declared" | "inferred:joinKey";
@@ -84,6 +96,21 @@ export interface LinkRow extends RowBase {
   to?: string;
   /** The declared link's JSON Pointer in the declaration. */
   pointer?: string;
+  /** A telemetry link: the OTLP protocol it states (#2558). */
+  protocol?: string;
+  /** A telemetry link that found its target: what `output` named, a `pipeline` or an `exporter` of the producer's collector. */
+  target?: "pipeline" | "exporter";
+}
+
+/**
+ * What a telemetry link reads from the producers (#2558): each composed
+ * member's collector, as `chant workspace graph` lists it, and which members
+ * were composed. `chant workspace check` reads source and runs no member, so
+ * it passes none and a telemetry link stays unresolved there.
+ */
+export interface TelemetryTargets {
+  collectors: ReadonlyMap<string, MemberCollector>;
+  composed: ReadonlySet<string>;
 }
 
 /** A parameter that joins outputs of two or more producers (or two outputs of one). */
@@ -145,7 +172,7 @@ function nearNames(name: string, outputs: JoinHandle[]): string[] {
  * missing from it is unresolved. Declared rows come first, in declaration
  * order; inferred and ambiguous rows follow, sorted by consumer and parameter.
  */
-export function resolveLinks(declaration: Declaration, handles: ReadonlyMap<string, MemberHandles>): LinkTableRow[] {
+export function resolveLinks(declaration: Declaration, handles: ReadonlyMap<string, MemberHandles>, telemetry?: TelemetryTargets): LinkTableRow[] {
   const rows: LinkTableRow[] = [];
   const declaredTargets = new Map<string, Set<string>>();
 
@@ -164,6 +191,7 @@ export function resolveLinks(declaration: Declaration, handles: ReadonlyMap<stri
         status: "resolved",
         reason: null,
         pointer: link.pointer,
+        ...(link.protocol ? { protocol: link.protocol } : {}),
       };
       rows.push(row);
       const targetProblem = linkTargetProblem(declaration, consumer, link);
@@ -176,6 +204,15 @@ export function resolveLinks(declaration: Declaration, handles: ReadonlyMap<stri
       if (!(LINK_KINDS as readonly string[]).includes(kind)) {
         row.status = "invalid";
         row.reason = `the link kind ${kind} is not one chant knows; known link kinds: ${LINK_KINDS.join(", ")}`;
+        continue;
+      }
+      if (kind === TELEMETRY_LINK_KIND) {
+        resolveTelemetryLink(row, telemetry);
+        continue;
+      }
+      if (link.protocol) {
+        row.status = "invalid";
+        row.reason = `protocol applies to telemetry links; this link has kind ${kind}`;
         continue;
       }
       const producer = handles.get(link.member);
@@ -260,6 +297,54 @@ export function resolveLinks(declaration: Declaration, handles: ReadonlyMap<stri
   return [...rows, ...inferred];
 }
 
+/**
+ * Resolve a telemetry link against the producer's collector (#2558): the
+ * target exists (presence), and when the link states a protocol, the target
+ * speaks it. A pipeline speaks what its receivers speak; an exporter speaks
+ * what its definition says. A target whose protocols the collector's
+ * definitions don't state leaves the link unresolved rather than failed.
+ */
+function resolveTelemetryLink(row: LinkRow, telemetry: TelemetryTargets | undefined): void {
+  if (!telemetry) {
+    row.status = "unresolved";
+    row.reason = `the collector of ${row.producer} is read by chant workspace graph; chant workspace check reads source and runs no member`;
+    return;
+  }
+  const collector = telemetry.collectors.get(row.producer);
+  if (!collector) {
+    if (!telemetry.composed.has(row.producer)) {
+      row.status = "unresolved";
+      row.reason = `the collector of ${row.producer} was not read: ${row.producer} was not composed`;
+    } else {
+      row.status = "missing";
+      row.reason = `${row.producer} declares no collector: its build reports no collector pipelines or components`;
+    }
+    return;
+  }
+  const pipeline = collector.pipelines.find((p) => p.id === row.output);
+  const exporter = pipeline ? undefined : collector.exporters.find((e) => e.id === row.output);
+  if (!pipeline && !exporter) {
+    row.status = "missing";
+    row.reason =
+      `${row.producer}'s collector has no pipeline or exporter ${row.output}` +
+      `; pipelines: ${collector.pipelines.map((p) => p.id).join(", ") || "none"}` +
+      `; exporters: ${collector.exporters.map((e) => e.id).join(", ") || "none"}`;
+    return;
+  }
+  row.target = pipeline ? "pipeline" : "exporter";
+  if (!row.protocol) return;
+  const ids = pipeline ? pipeline.receivers : [exporter!.id];
+  const speaks = [...new Set(collector.components.filter((c) => ids.includes(c.id)).flatMap((c) => c.protocols))];
+  const what = pipeline ? `the receivers of pipeline ${row.output}` : `exporter ${row.output}`;
+  if (speaks.length === 0) {
+    row.status = "unresolved";
+    row.reason = `${what} state no protocols, so ${row.protocol} could not be confirmed`;
+  } else if (!speaks.includes(row.protocol)) {
+    row.status = "invalid";
+    row.reason = `${what} speak ${speaks.join(", ")}, and the link sends ${row.protocol}`;
+  }
+}
+
 // ── Where the handles come from ──────────────────────────────────────────────
 
 /**
@@ -282,6 +367,8 @@ export function kindHandles(m: Member, kind: MemberKind): MemberHandles | undefi
 export interface ComposedHandles {
   /** Members whose IR was composed. */
   composed: readonly string[];
+  /** The collectors those members report (#2558); a telemetry link resolves against them. */
+  collectors?: readonly MemberCollector[];
   exports: readonly { member: string; name: string; node?: string }[];
   imports: readonly { member: string; name: string; node: string }[];
 }
@@ -322,7 +409,11 @@ export function graphLinks(declaration: Declaration, graph: ComposedHandles, kin
     const listed = kindHandles(m, kind);
     if (listed) handles.set(m.name, listed);
   }
-  return resolveLinks(declaration, handles).map((row) => {
+  const telemetry: TelemetryTargets = {
+    collectors: new Map((graph.collectors ?? []).map((c) => [c.member, c])),
+    composed: new Set(graph.composed),
+  };
+  return resolveLinks(declaration, handles, telemetry).map((row) => {
     if (row.status === "ambiguous" || row.origin !== "declared") return row;
     // The declaration's pointer means nothing to a graph reader.
     const { pointer: _pointer, ...rest } = row;

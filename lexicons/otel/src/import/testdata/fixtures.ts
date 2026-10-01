@@ -213,6 +213,19 @@ export function everyBuiltin(): Declarable[] {
   const sum = new c.SumConnector({
     spans: { "span.bytes": { source_attribute: "bytes", description: "Bytes by route", conditions: ['attributes["bytes"] != nil'] } },
   });
+  const signalToMetrics = new c.SignalToMetricsConnector({
+    spans: [
+      {
+        name: "span.duration",
+        unit: "ms",
+        attributes: [{ key: "http.route", default_value: "none" }, { key: "error.type", optional: true }],
+        include_resource_attributes: [{ key: "service.name" }],
+        conditions: ["kind == SPAN_KIND_SERVER"],
+        histogram: { buckets: [5, 50, 500], value: "Milliseconds(end_time - start_time)" },
+      },
+    ],
+    logs: [{ name: "logrecord.count", sum: { value: "1" } }],
+  });
 
   const health = new c.HealthCheckExtension({ endpoint: "0.0.0.0:13133", path: "/health", response_body: { healthy: "ok" } });
   const pprof = new c.PprofExtension({ endpoint: "localhost:1777", block_profile_fraction: 3 });
@@ -248,6 +261,7 @@ export function everyBuiltin(): Declarable[] {
     forward,
     count,
     sum,
+    signalToMetrics,
     health,
     pprof,
     zpages,
@@ -255,17 +269,22 @@ export function everyBuiltin(): Declarable[] {
       signal: "traces",
       receivers: [otlp],
       processors: [memoryLimiter, k8sattributes, resourcedetection, resource, attributes, filter, transform, redaction, probabilistic],
-      exporters: [spanmetrics, servicegraph, count, sum, forward, routing, loadbalancing],
+      exporters: [spanmetrics, servicegraph, count, sum, signalToMetrics, forward, routing, loadbalancing],
     }),
     new Pipeline({ signal: "traces", name: "acme", receivers: [routing], processors: [tailSampling, batch], exporters: [otlpOut] }),
     new Pipeline({ signal: "traces", name: "rest", receivers: [routing, forward], processors: [batch], exporters: [googlecloud, debug] }),
     new Pipeline({
       signal: "metrics",
-      receivers: [otlp, prometheusIn, hostmetrics, cluster, kubelet, spanmetrics, servicegraph, count, sum],
+      receivers: [otlp, prometheusIn, hostmetrics, cluster, kubelet, spanmetrics, servicegraph, count, sum, signalToMetrics],
       processors: [memoryLimiter, filter, batch],
       exporters: [prometheusOut, otlphttp],
     }),
-    new Pipeline({ signal: "logs", receivers: [otlp, filelog], processors: [memoryLimiter, redaction, batch], exporters: [otlphttp, debug] }),
+    new Pipeline({
+      signal: "logs",
+      receivers: [otlp, filelog],
+      processors: [memoryLimiter, redaction, batch],
+      exporters: [otlphttp, debug, signalToMetrics],
+    }),
     new Service({
       extensions: [health, zpages, pprof],
       telemetry: { logs: { level: "warn", encoding: "json" }, metrics: { level: "normal" }, resource: { "service.name": "gw" } },

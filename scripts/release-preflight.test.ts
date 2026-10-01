@@ -154,6 +154,13 @@ describe("release-lib.sh (#2816)", () => {
     expect(lib("release_max 0.9.0 0.10.0 '' 0.2.1").stdout).toBe("0.10.0");
   });
 
+  it("names the reference workspace tag for a minor or major release only (#2543)", () => {
+    expect(lib("release_reference_tag 0.101.0").stdout).toBe("reference-workspace-v0.101");
+    expect(lib("release_reference_tag 1.0.0").stdout).toBe("reference-workspace-v1.0");
+    expect(lib("release_reference_tag 0.101.1").stdout).toBe("");
+    expect(lib("release_reference_tag 0.101.1").code).toBe(0);
+  });
+
   it("merges the tagged bump into a main that moved, keeping main's edits", () => {
     const green = commit("green", {
       "packages/core/package.json": pkg("0.91.0"),
@@ -177,7 +184,8 @@ describe("release-lib.sh (#2816)", () => {
       git add packages/core/package.json package-lock.json
       git commit -q -m chant-v0.92.0
       git tag chant-v0.92.0
-      release_ship chant-v0.92.0 "Merge chant-v0.92.0 into main"
+      git tag reference-workspace-v0.92
+      release_ship chant-v0.92.0 "Merge chant-v0.92.0 into main" reference-workspace-v0.92
     `;
     const r = lib(body);
     expect(r.stderr).toBe("");
@@ -192,6 +200,10 @@ describe("release-lib.sh (#2816)", () => {
       "0.92.0",
     );
     expect(git(work, "show", "origin/main:later.txt")).toBe("later");
+    // The reference workspace tag reached origin on the same commit.
+    expect(git(work, "ls-remote", "--tags", "origin", "reference-workspace-v0.92")).toContain(
+      git(work, "rev-parse", "chant-v0.92.0"),
+    );
     // Nothing was rewritten: the pre-release main is still an ancestor.
     expect(git(work, "rev-parse", "origin/main^1")).toBe(git(work, "rev-parse", "main"));
     // No worktree is left behind.

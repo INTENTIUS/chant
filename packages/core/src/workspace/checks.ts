@@ -24,7 +24,7 @@
  * | WSP001 to WSP011 | the declaration and member kinds (this file) |
  * | WSP071, WSP072 | member ledgers |
  * | WSP081 to WSP083 | recorded pipelines |
- * | WSP091 to WSP097 | member links (#2539) |
+ * | WSP091 to WSP098 | member links (#2539, #2558) |
  * | WSP101 to WSP106 | generated files |
  * | WSP111 to WSP114 | records read with `--kind` (#2549) |
  * | WSP115 | the record kinds the declaration names (#2680) |
@@ -319,7 +319,7 @@ export const WORKSPACE_CHECKS: readonly WorkspaceCheck[] = [
   ...LEDGER_CHECKS,
   // Recorded pipelines (#2542).
   ...PIPELINE_CHECKS,
-  // Member links (#2539), WSP091 to WSP097.
+  // Member links (#2539, #2558), WSP091 to WSP098.
   ...LINK_CHECKS,
   // Generated files (#2541).
   ...GENERATED_CHECKS,
