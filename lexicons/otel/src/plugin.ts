@@ -14,6 +14,8 @@ import { OtelCollectorGenerator } from "./import/generator";
 import { collectorConfigImporter } from "./import/embedded";
 import { otelSkills } from "./skill-defs";
 import { BUILTIN_CATALOG } from "./catalog";
+import { compositeCatalog } from "./composites/catalog";
+import { DEFAULT_TEMPLATE, GENAI_TEMPLATE, K8S_AGENT_TEMPLATE } from "./init-templates";
 import { COLLECTOR_PIN } from "./define";
 import { collectorTopologyOf } from "./topology";
 
@@ -96,12 +98,23 @@ export const otelPlugin: LexiconPlugin = {
 
   skills: otelSkills,
 
+  composites() {
+    return compositeCatalog;
+  },
+
   mcpTools() {
     return [createDiffTool(otelSerializer, "Compare current collector config output against the previous build", "otel")];
   },
 
   mcpResources() {
     return [catalogResource];
+  },
+
+  // `chant init --lexicon otel [--template k8s-agent|genai]`; see ./init-templates.ts.
+  initTemplates(template?: string) {
+    if (template === "k8s-agent") return K8S_AGENT_TEMPLATE;
+    if (template === "genai") return GENAI_TEMPLATE;
+    return DEFAULT_TEMPLATE;
   },
 
   detectTemplate(data: unknown) {

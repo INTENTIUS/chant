@@ -155,7 +155,7 @@ function otelcolValidate(yaml: string): { ok: boolean; output: string } {
 describe("YAML -> TypeScript -> YAML", () => {
   test("the otel examples' built output", async () => {
     const outputs = await exampleOutputs();
-    expect(outputs.map(([n]) => n)).toEqual(["custom-component", "genai-agent", "getting-started", "k8s-node-agent"]);
+    expect(outputs.map(([n]) => n)).toEqual(["custom-component", "genai-agent", "getting-started", "k8s-node-agent", "tail-sampling-gateway"]);
     for (const [name, yaml] of outputs) {
       const out = await expectRoundTrip(yaml);
       // The `# chant:` header comes back too: the custom component's pin, the semconv line.

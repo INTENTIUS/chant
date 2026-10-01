@@ -85,8 +85,22 @@ Run it with `otelcol-contrib --config collector.yaml`.
 
 `chant lint src` runs the source rules (OTEL001, OTEL002) and `chant build` runs the post-synth checks. Remove `memoryLimiter` from the chain but leave it declared, and OTEL103 warns that it is declared and unused. Replace `tempo` with the string `"otlp/tmepo"` and OTEL101 fails the build, because no exporter has that id.
 
+## Starting from a template
+
+`chant init --lexicon otel` scaffolds a project with a collector like the one above. Two templates start from a particular kind of collector instead, and each builds clean with the otel lexicon alone:
+
+| Template | What it declares |
+|----------|------------------|
+| (default) | OTLP in, `memory_limiter` and `batch`, traces to an OTLP backend and logs to `debug`, with `health_check` |
+| `k8s-agent` | A per-node Kubernetes agent from [`NodeAgent`](../composites/#nodeagent): OTLP, host metrics, container logs and kubelet stats, Kubernetes metadata on all of it, traces and logs on to a gateway, metrics served for Prometheus |
+| `genai` | The [GenAI pipeline](../genai-pipeline/) with the conventions' client metrics derived, content removed and card-number-like values masked, traces to Tempo and metrics served for Prometheus |
+
+```bash
+npx chant init --lexicon otel --template k8s-agent
+```
+
 ## Next
 
 - [Components](../components/) lists the built-in set and the rules each one checks.
 - [Custom components](../custom-components/) adds a component chant doesn't ship.
-- [Composites](../composites/) runs a declared config on a platform.
+- [Composites](../composites/) declares a per-node agent with `NodeAgent`, and runs a declared config on a platform.

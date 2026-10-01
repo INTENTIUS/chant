@@ -31,6 +31,14 @@ The [GenAI preset](../genai-pipeline/) for an agent service: content removed, va
 {{file:genai-agent/src/collector.ts}}
 ```
 
+## tail-sampling-gateway
+
+A gateway tier: every span becomes `spanmetrics` metrics first, then a `forward` connector hands the spans to a `traces/sampled` pipeline whose `tail_sampling` keeps errors, traces of 500ms or more and a 10% baseline, and sends them to Tempo. Split into components, sampling and pipelines.
+
+```ts title="src/pipelines.ts"
+{{file:tail-sampling-gateway/src/pipelines.ts}}
+```
+
 ## custom-component
 
 A Splunk HEC exporter defined with `defineComponent`, with a schema pin and its own validation, used next to built-ins. See [Custom components](../custom-components/).
