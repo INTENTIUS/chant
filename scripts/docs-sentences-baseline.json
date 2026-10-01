@@ -1001,6 +1001,18 @@
   "formatting/em-dash-density": 2,
   "claude/colon-reveal": 2
  },
+ "docs/src/content/docs/reference/decision-kind.mdx": {
+  "formatting/em-dash-density": 2,
+  "discourse/punchy-fragments": 2,
+  "claude/colon-reveal": 3,
+  "dead-metaphor/rare-lemma": 1
+ },
+ "docs/src/content/docs/reference/decision-review-views.mdx": {
+  "formatting/em-dash-density": 2,
+  "discourse/punchy-fragments": 1,
+  "claude/colon-reveal": 3,
+  "anaphora/repeated-opening": 2
+ },
  "docs/src/content/docs/reference/level-0-exceptions.mdx": {
   "formatting/em-dash-density": 2,
   "discourse/punchy-fragments": 1,

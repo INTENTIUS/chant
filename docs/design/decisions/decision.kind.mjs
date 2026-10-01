@@ -2,8 +2,9 @@
 //
 // chant workspace records --kind docs/design/decisions/decision.kind.mjs --current --json
 //
-// Paths are relative to this file. The kind lives here, beside its schema,
-// until the development-model plugin takes it over. Core ships no decision kind.
+// Paths are relative to this file. Core ships no decision kind: this file and
+// decision.schema.json are its specification, and a development-model plugin
+// or another workspace carries a copy of both (ws-064, reference/decision-kind).
 export const recordKind = {
   name: "decision",
   location: { dir: ".", match: "^[a-z][a-z0-9]{0,15}-[0-9]{3,}-.+\\.md$" },
