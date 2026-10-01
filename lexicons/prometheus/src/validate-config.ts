@@ -20,6 +20,7 @@ import {
   type RuleGroupConfig,
 } from "./model";
 import { checkPromql } from "./promql";
+import { validateGlobalSettings, validateReceiverIntegrations } from "./validate-integrations";
 
 export type PrometheusIssueCode =
   | "PROM101"
@@ -37,7 +38,8 @@ export type PrometheusIssueCode =
   | "PROM206"
   | "PROM207"
   | "PROM208"
-  | "PROM209";
+  | "PROM209"
+  | "PROM210";
 
 export interface PrometheusIssue {
   code: PrometheusIssueCode;
@@ -221,7 +223,7 @@ function visitRoutes(root: RouteConfig | undefined): RouteVisit[] {
 
 const AM_DURATIONS = ["group_wait", "group_interval", "repeat_interval"] as const;
 
-/** Check an `alertmanager.yml` on its own (PROM201, PROM203-PROM209). */
+/** Check an `alertmanager.yml` on its own (PROM201, PROM203-PROM210). */
 export function validateAlertmanagerConfig(config: AlertmanagerConfig): PrometheusIssue[] {
   const issues: PrometheusIssue[] = [];
   const receivers = Array.isArray(config?.receivers) ? config.receivers : [];
@@ -307,41 +309,16 @@ export function validateAlertmanagerConfig(config: AlertmanagerConfig): Promethe
     }
   });
 
-  if (global.resolve_timeout !== undefined && !isValidDuration(global.resolve_timeout)) {
-    issues.push({ code: "PROM208", severity: "error", subject: "global", message: `global.resolve_timeout "${str(global.resolve_timeout)}" is not a duration` });
-  }
+  // PROM208, PROM210: global settings
+  issues.push(...validateGlobalSettings(global));
 
-  // PROM207: unused receivers; PROM209: incomplete integrations
+  // PROM207: unused receivers; PROM208-PROM210: integrations (./validate-integrations.ts)
   for (const r of receivers) {
     const name = str(r?.name ?? "");
     if (!usedReceivers.has(name)) {
       issues.push({ code: "PROM207", severity: "warning", subject: name, message: `receiver "${name}" is declared but no route sends to it` });
     }
-    for (const [i, w] of (r.webhook_configs ?? []).entries()) {
-      if (!w.url && !w.url_file) issues.push({ code: "PROM209", severity: "error", subject: name, message: `receiver "${name}" webhook_configs[${i}] has no url or url_file` });
-      if (w.timeout !== undefined && !isValidDuration(w.timeout)) {
-        issues.push({ code: "PROM208", severity: "error", subject: name, message: `receiver "${name}" webhook_configs[${i}].timeout "${str(w.timeout)}" is not a duration` });
-      }
-    }
-    for (const [i, s] of (r.slack_configs ?? []).entries()) {
-      if (!s.api_url && !s.api_url_file && !global.slack_api_url && !global.slack_api_url_file) {
-        issues.push({ code: "PROM209", severity: "error", subject: name, message: `receiver "${name}" slack_configs[${i}] has no api_url or api_url_file, and global sets no slack_api_url` });
-      }
-    }
-    for (const [i, p] of (r.pagerduty_configs ?? []).entries()) {
-      if (!p.routing_key && !p.routing_key_file && !p.service_key && !p.service_key_file) {
-        issues.push({ code: "PROM209", severity: "error", subject: name, message: `receiver "${name}" pagerduty_configs[${i}] has no routing_key(_file) or service_key(_file)` });
-      }
-    }
-    for (const [i, e] of (r.email_configs ?? []).entries()) {
-      if (!e.to) issues.push({ code: "PROM209", severity: "error", subject: name, message: `receiver "${name}" email_configs[${i}] has no to address` });
-      if (!e.smarthost && !global.smtp_smarthost) {
-        issues.push({ code: "PROM209", severity: "error", subject: name, message: `receiver "${name}" email_configs[${i}] has no smarthost, and global sets no smtp_smarthost` });
-      }
-      if (!e.from && !global.smtp_from) {
-        issues.push({ code: "PROM209", severity: "error", subject: name, message: `receiver "${name}" email_configs[${i}] has no from address, and global sets no smtp_from` });
-      }
-    }
+    issues.push(...validateReceiverIntegrations(r, global));
     // A receiver with no integrations at all is valid: it is how Alertmanager drops alerts.
   }
 

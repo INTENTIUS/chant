@@ -92,6 +92,8 @@ Pass the `prometheus` exporter as `exporter` to `RedDashboard` when its `namespa
 - GRAF109: the dashboard providers put each dashboard in its declared folder, and no two load the same files.
 - GRAF110: a panel or row repeats over a query, custom or datasource variable with `multi` or `includeAll`, or a group by variable; anything else shows it once (warning).
 - GRAF115 (warning): every panel unit is a Grafana unit id (`bytes`, `s`, `percent`, `reqps`, ...) or a custom unit (`suffix: cores`, `prefix:$`, `si:mF`, `count:reqs`, `currency:EUR`). Grafana shows anything else as literal text after the value.
+- GRAF116: every query, annotation query and query variable stream selector sent to a Loki parses as LogQL, alert rule queries included (template variables substituted as for GRAF108; an error at a variable is not reported).
+- GRAF117 (warning): every TraceQL query sent to a Tempo parses. Grafana's TraceQL grammar trails Tempo's, so newer syntax such as `with (sample=true)` is flagged; check it against Tempo before changing a query that runs.
 - GRAF111-GRAF114: alert rules, contact points, policies and mute timings; see the chant-grafana-alerting skill.
 
 GRAF101 and GRAF102 compare against the datasources in the same build root, so keep datasources and dashboards in one `chant build` (chant #1939). For a datasource that exists in Grafana but is provisioned elsewhere, declare `new ExternalDatasource({ type: "prometheus", uid: "mimir" })` and use it like a `Datasource`; it is checked against, never provisioned.

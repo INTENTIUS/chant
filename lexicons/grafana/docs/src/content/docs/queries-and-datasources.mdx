@@ -102,7 +102,7 @@ GRAF101 and GRAF102 count it as declared. A plain `{ type: "prometheus", uid: "m
 
 The fields are the plugin's query model at the pinned schema version, less `datasource`, which takes a `Datasource`, a `DatasourceVariable` or a `{ type, uid }` ref of the query's own plugin type. A field the schema requires but Grafana fills in when it is missing is optional; the class's doc comment cites where Grafana does it. The SQL plugins have no schema upstream, so their shared model is typed by hand in `src/query-models.ts` and GRAF107 checks only the panel around them. The OpenSearch plugin has neither a schema nor a copy in Grafana 13.2.2, so it keeps `defineQuery` (see [Other Panel and Datasource Plugins](../custom-plugins/)).
 
-The expression is a string. After a build, GRAF108 parses the PromQL of every query that reaches a Prometheus datasource, with template variables substituted first. It goes by the datasource a query resolves to, not by field name: a Cloud Monitoring `promQLQuery.expr`, a Loki `expr` and SQL are not parsed.
+The expression is a string. After a build, GRAF108 parses the PromQL of every query that reaches a Prometheus datasource, with template variables substituted first. It goes by the datasource a query resolves to, not by field name: a Cloud Monitoring `promQLQuery.expr` and SQL are not parsed. GRAF116 parses the LogQL of every query that reaches a Loki (its `expr`), and GRAF117 the TraceQL of every query that reaches a Tempo (its `query`, when `queryType` is `traceql`).
 
 Each query becomes one of the panel's `targets`, carrying its datasource ref and `refId`.
 

@@ -20,7 +20,8 @@
     "node_modules",
     "dist",
     "docs",
-    "src/import/testdata"
+    "src/import/testdata",
+    "src/testdata"
   ],
   "tsc-alias": {
     "resolveFullPaths": true

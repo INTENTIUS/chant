@@ -1,7 +1,7 @@
 /**
  * PROM209: A receiver integration is missing its destination or credential
  *
- * A webhook needs url or url_file, Slack an api_url (or the global one), PagerDuty a routing_key or service_key, and email a to address, a smarthost and a from address (or their global defaults).
+ * Every one of Alertmanager's 18 integrations is checked for the destination, credential and required fields its config validation asks for, with the global defaults it falls back to: e.g. a webhook url, an Opsgenie api_key (or global.opsgenie_api_key), a Telegram chat_id and bot token, a Webex room_id and authorization, an SNS target, a Jira project and issue_type.
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";

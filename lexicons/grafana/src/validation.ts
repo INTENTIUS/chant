@@ -1,5 +1,5 @@
 /**
- * `@intentius/chant-lexicon-grafana/validation`: the GRAF101-GRAF115 checks
+ * `@intentius/chant-lexicon-grafana/validation`: the GRAF101-GRAF117 checks
  * as plain functions over built Grafana output, and the schema validation
  * behind GRAF107, for code that checks dashboards without a build.
  *
