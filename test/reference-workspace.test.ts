@@ -78,6 +78,7 @@ import { loadPlugins, resolveProjectLexicons } from "@intentius/chant/cli";
 import { parseFrontMatter } from "@intentius/chant/workspace/records";
 import { queryRecords } from "@intentius/chant/workspace/records-cli";
 import { initFromCommand } from "@intentius/chant/workspace/lineage-init";
+import { resolveUpgradeTarget } from "@intentius/chant/workspace/lineage-upgrade";
 import { parseDeclaration } from "@intentius/chant/workspace/declaration";
 import { candidates, parsePoints, quorumOf } from "@intentius/chant/workspace/points";
 import { askPoint } from "@intentius/chant/workspace/decide";
@@ -913,6 +914,31 @@ describe("chant init --from on the fixture", () => {
       expect((JSON.parse(check.stdout) as { ok: boolean; lock: string | null }).lock).not.toBeNull();
     } finally {
       rmSync(dirname(target), { recursive: true, force: true });
+    }
+  });
+
+  // The design client gets a lock of its own once there is a client to vendor (#2550): the copy's root lock is not touched.
+  test("a member made from a template of its own is upgraded as that member, apart from the root's lock", async () => {
+    const scratch = mkdtempSync(join(tmpdir(), "chant-2550-member-"));
+    try {
+      const target = join(scratch, "ws");
+      const made = await initFromCommand({ from: `${repoRoot}@HEAD#reference-workspace`, path: target });
+      expect(made.success, made.error).toBe(true);
+      const client = join(scratch, "client-template");
+      mkdirSync(client);
+      writeFileSync(join(client, "index.html"), "<p>client</p>\n");
+      const member = await initFromCommand({ from: client, path: join(target, "design-client"), force: true });
+      expect(member.success, member.error).toBe(true);
+
+      expect(resolveUpgradeTarget(target, "design-client")).toEqual({ root: join(target, "design-client"), scope: ".", member: "design-client" });
+      // Every other scope argument keeps resolving against the root's own lock.
+      expect(resolveUpgradeTarget(target, ".")).toEqual({ root: target, scope: "." });
+      // A member with no lock of its own has nothing to upgrade.
+      expect(() => resolveUpgradeTarget(target, "delivery")).toThrow(/member "delivery" \(delivery\) has no \.chant\/workspace\.lock\.json/);
+      const rootLock = JSON.parse(readFileSync(join(target, ".chant", "workspace.lock.json"), "utf-8")) as { scopes: Record<string, unknown> };
+      expect(Object.keys(rootLock.scopes)).toEqual(["."]);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
     }
   });
 

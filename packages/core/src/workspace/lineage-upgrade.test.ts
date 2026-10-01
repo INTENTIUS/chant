@@ -571,3 +571,94 @@ describe("chant workspace upgrade with template parameters (#2627)", () => {
     await expect(stageUpgrade({ root: proj, to: "v2.0.0", runChant: passing })).rejects.toThrow(/region has no default/);
   });
 });
+
+describe("chant workspace upgrade of a member scope (#2550)", () => {
+  let ws: string;
+  const declaration = {
+    name: "ws",
+    schema: 1,
+    members: [
+      { name: "shop", dir: "shop", kind: "other", because: "made from a template" },
+      { name: "plain", dir: "plain", kind: "other", because: "written by hand" },
+    ],
+  };
+
+  beforeEach(async () => {
+    ws = join(root, "ws");
+    mkdirSync(ws);
+    git(ws, ["init", "-q", "-b", "main"]);
+    put(ws, "chant.workspace.json", JSON.stringify(declaration));
+    put(ws, "plain/readme.md", "by hand\n");
+    const made = await initFromCommand({ from: `${tpl}@v1.0.0`, path: join(ws, "shop") });
+    expect(made.error).toBeUndefined();
+    git(ws, ["add", "-A"]);
+    git(ws, ["commit", "-q", "-m", "workspace"]);
+  });
+
+  test("upgrades the member from the workspace root, writes only inside it, and gates under the member's name", async () => {
+    release("v2.0.0", { "README.md": "starter v2\n", "src/new.ts": "new\n" });
+    const l = ledger();
+    const result = await upgradeCommand({ root: ws, scope: "shop", to: "v2.0.0", runChant: passing, ledger: l, json: true });
+    expect(result.outcome).toBe("gated");
+    expect(result.exitCode).toBe(3);
+    expect(l.pending[0].gate).toBe("shop");
+    const staged = result.staged!;
+    expect(staged.member).toBe("shop");
+    expect(staged.scope).toBe(".");
+    expect(staged.changedPaths.every((p) => p.startsWith("shop/"))).toBe(true);
+
+    l.approve(staged.digest, new Date().toISOString());
+    const applied = await upgradeCommand({ root: ws, scope: "shop", to: "v2.0.0", runChant: passing, ledger: l, json: true });
+    expect(applied.outcome).toBe("applied");
+    expect(read(ws, "shop/README.md")).toBe("starter v2\n");
+    expect(read(ws, "plain/readme.md")).toBe("by hand\n");
+    expect(readLock(join(ws, "shop"))!.scopes["."].ref).toBe("v2.0.0");
+  });
+
+  test("a member is named by directory too, and a member with no lock is refused with the reason", async () => {
+    release("v2.0.0", { "README.md": "starter v2\n" });
+    const staged = await stageUpgrade({ root: ws, scope: "shop/", to: "v2.0.0", runChant: passing });
+    try {
+      expect(staged.member).toBe("shop");
+    } finally {
+      staged.dispose();
+    }
+    await expect(stageUpgrade({ root: ws, scope: "plain", runChant: passing })).rejects.toThrow(/member "plain" \(plain\) has no \.chant\/workspace\.lock\.json, so it was not made from a template/);
+    await expect(stageUpgrade({ root: ws, scope: "nobody", runChant: passing })).rejects.toThrow(/no .*workspace\.lock\.json/);
+  });
+
+  test("a scope the root lock holds is used as written, even when a member has the same directory", async () => {
+    // The root lock records the member's subtree as a scope: the member's own lock is not consulted.
+    const own = readLock(join(ws, "shop"))!;
+    // The recorded repository is relative to the lock's directory, so point it at the template as the root sees it.
+    const moved = { ...own.scopes["."], source: { ...own.scopes["."].source, url: tpl } } as (typeof own.scopes)["."];
+    writeLock(ws, { lockVersion: own.lockVersion, scopes: { shop: moved } });
+    git(ws, ["rm", "-rq", "--cached", "shop/.chant"]);
+    rmSync(join(ws, "shop/.chant"), { recursive: true });
+    commitProject2();
+    release("v2.0.0", { "README.md": "starter v2\n" });
+    const staged = await stageUpgrade({ root: ws, scope: "shop", to: "v2.0.0", runChant: passing });
+    try {
+      expect(staged.member).toBeUndefined();
+      expect(staged.scope).toBe("shop");
+      expect(staged.written).toEqual(["README.md"]);
+      expect(staged.changedPaths.sort()).toEqual([".chant/workspace.lock.json", "shop/README.md"]);
+    } finally {
+      staged.dispose();
+    }
+  });
+
+  test("a scope made by init --template is refused with its reason", async () => {
+    const lock = readLock(join(ws, "shop"))!;
+    lock.scopes["."] = { ...lock.scopes["."], kind: "template", source: { type: "lexicon", lexicon: "aws", template: "basic" } as never, template: "aws/basic" } as never;
+    writeLock(join(ws, "shop"), lock);
+    git(ws, ["add", "-A"]);
+    git(ws, ["commit", "-q", "-m", "lock"]);
+    await expect(stageUpgrade({ root: ws, scope: "shop", runChant: passing })).rejects.toThrow(/made by `chant init --template` \(aws\/basic\) is refused: .*no versioned source/);
+  });
+
+  function commitProject2(): void {
+    git(ws, ["add", "-A"]);
+    git(ws, ["commit", "-q", "-m", "root lock"]);
+  }
+});

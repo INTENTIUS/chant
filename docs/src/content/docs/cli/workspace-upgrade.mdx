@@ -12,7 +12,7 @@ chant workspace upgrade [<scope>] [--to <ref|dir>] [--allow-code] [--dry-run] [-
 
 ## Description
 
-`chant workspace upgrade` brings one scope of the [lineage lock](/chant/reference/lineage-lock/) to a newer version of its template. `<scope>` is a key of the lock's `scopes`: `.` (the default) for a project made by `chant init --from`, or a vendor scope's directory such as `vendor/web-app`. It needs no `chant.workspace.json`. The design is D9 of [#2524](https://github.com/INTENTIUS/chant/issues/2524), with decisions ws-005 (merge per file) and ws-032 (a core command plus a propose-only activity).
+`chant workspace upgrade` brings one scope of the [lineage lock](/chant/reference/lineage-lock/) to a newer version of its template. `<scope>` is a key of the lock's `scopes`: `.` (the default) for a project made by `chant init --from`, or a vendor scope's directory such as `vendor/web-app`. A plain project with a lock upgrades the same way, with no `chant.workspace.json`. In a workspace, `<scope>` may also name a [member](#member-scopes). The design is D9 of [#2524](https://github.com/INTENTIUS/chant/issues/2524), with decisions ws-005 (merge per file) and ws-032 (a core command plus a propose-only activity).
 
 The upgrade is a core command. A template never ships its own upgrader, so an upgrade cannot change the rules that decide whether it is accepted. Each run takes these steps:
 
@@ -23,7 +23,7 @@ The upgrade is a core command. A template never ships its own upgrader, so an up
 | 3. Migrate | A git worktree is checked out at HEAD under `.chant/upgrade/`. The template's [migrations](/chant/reference/template-migrations/) run there, in version order. A gap in the chain refuses the upgrade. Then each [migration chant ships](#migrations-chant-ships) that finds something to move runs there too. |
 | 4. Merge | Each file follows the [update rules](/chant/reference/lineage-lock/#update-rules). An edited file that the template also changed takes the change only when every hunk merges cleanly. Otherwise it stays as it was, and the lock records one manual step for it. |
 | 5. Check | In the worktree: `chant build` and `chant lint` when the project has a `chant.config`, and the lineage checks of [`chant workspace check`](/chant/cli/workspace-check/). A failure stops the upgrade before its gate. |
-| 6. Gate | The gate `workspace-upgrade` / `<scope>` on the gate ledger binds the digest of the patch the steps produced. |
+| 6. Gate | The gate `workspace-upgrade` / `<scope>` (or `<member>` for a member scope) on the gate ledger binds the digest of the patch the steps produced. |
 
 The project's tree is untouched until the gate is approved. Before that, everything happens in the worktree, which is removed when the command ends.
 
@@ -72,6 +72,12 @@ chant workspace upgrade . --to /opt/studio/tool-v2#template
 ```
 
 Without `--to`, or when the recorded directory is gone or holds different files, the upgrade is refused. The message says the scope can later be adopted into a git lineage with `chant workspace adopt-lineage` ([#2551](https://github.com/INTENTIUS/chant/issues/2551)). A directory has no version, so a template whose migrations have not all been applied cannot be upgraded from one.
+
+### Member scopes
+
+A member of a workspace can be made from a template of its own: `chant init --from <template> <member dir>` writes the lock inside the member's directory. From the workspace root, `chant workspace upgrade <member>` takes the member by name or directory from `chant.workspace.json`, and runs the whole upgrade from that directory, as if it were a project. An upgrade whose patch touches a path outside the member's directory and its lock is refused. The gate is `workspace-upgrade` / `<member>` and the proposal branch is `chant/upgrade/<member>`, so two members never share a gate. A member with no lock of its own is refused, and the message says it was not made from a template.
+
+A scope the root's lock holds is used as it is, even when its key is a member's directory, so a lock at the root that records a member's subtree as a scope works too. Scopes made by `chant init --template` stay refused (see below).
 
 ### Migrations chant ships
 
@@ -147,7 +153,7 @@ An Op schedules upgrades with the `proposeWorkspaceUpgrade` activity rather than
 
 - The project is in a git repository with at least one commit, and the scope and the lock have no uncommitted changes.
 - The scope has no open manual steps.
-- Scopes made by `chant init --template <name>` cannot be upgraded yet. Their merge base is the older lexicon's render, and chant cannot rebuild it offline.
+- A scope made by `chant init --template <name>` is refused, with that reason. It has no versioned source to fetch, and its merge base is the render of the chant version that wrote it, which chant cannot rebuild offline. Anything made by `chant init --from`, and every vendor scope, is not affected.
 
 ## Scheduling upgrades from an Op
 
