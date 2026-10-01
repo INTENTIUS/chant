@@ -153,7 +153,7 @@ bench:
 smoke-workspace:
     docker build -f test/Dockerfile.smoke -t chant-smoke-workspace . && docker run -it --rm chant-smoke-workspace
 
-# Build and run npm tarball smoke test (all 9 lexicons)
+# Build and run npm tarball smoke test (the lexicons in test/smoke-npm-lexicons.txt)
 smoke-npm:
     ./test/smoke.sh npm
 
