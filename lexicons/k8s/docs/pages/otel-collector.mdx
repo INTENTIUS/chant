@@ -113,8 +113,11 @@ export const gateway = OtelCollectorGateway({
 | `configMap` | ConfigMap | The rendered collector config, named `<name>-config` |
 | `podDisruptionBudget` | PodDisruptionBudget | With more than one replica: `maxUnavailable: 1` |
 | `clusterRole`, `clusterRoleBinding` | ClusterRole, ClusterRoleBinding | Only when `clusterRules` is set |
+| `leaseRole`, `leaseRoleBinding` | Role, RoleBinding | Only when the config enables a `k8s_leader_elector` extension; named `<name>-leases`, in its `lease_namespace` |
 
 The gateway reads nothing from the Kubernetes API by default, so it gets no ClusterRole. A config that does, such as one with a `k8s_cluster` receiver or a `k8sattributes` processor, passes the rules it needs as `clusterRules`.
+
+A multi-replica gateway running `k8s_cluster` puts the receiver behind a `k8s_leader_elector` extension (the otel lexicon's `K8sLeaderElectorExtension`), so only the replica holding a Lease collects; see [WK8603](/chant/lexicons/k8s/otel-placement-checks/#wk8603-k8s_cluster-in-every-collector-copy). When `service.extensions` enables one, the gateway adds a Role on `leases` in `coordination.k8s.io`, in the extension's `lease_namespace`, bound to its ServiceAccount, with the verbs the extension's README suggests at collector-contrib v0.130.0 (`get`, `list`, `watch`, `create`, `update`, `patch`, `delete`). The gateway grants Lease access in one namespace, so electors with Leases in two namespaces are refused; use one `lease_namespace`.
 
 | Prop | Default | Meaning |
 |------|---------|---------|

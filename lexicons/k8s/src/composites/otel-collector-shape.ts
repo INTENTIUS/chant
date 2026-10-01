@@ -139,3 +139,22 @@ export function k8sResolverNamespaces(built: BuiltCollector, ownNamespace: strin
   }
   return out;
 }
+
+/**
+ * The namespaces of the Leases a config's `k8s_leader_elector` extensions
+ * take, for those `service.extensions` enables (the collector starts no
+ * other). An elector without `lease_namespace` fails the otel lexicon's
+ * OTEL107 and is skipped here.
+ */
+export function leaderElectorLeaseNamespaces(built: BuiltCollector): string[] {
+  const out: string[] = [];
+  const enabled = built.config.service?.extensions ?? [];
+  for (const [id, cfg] of Object.entries(built.config.extensions ?? {})) {
+    if (id !== "k8s_leader_elector" && !id.startsWith("k8s_leader_elector/")) continue;
+    if (!enabled.includes(id)) continue;
+    const ns = (cfg as { lease_namespace?: unknown } | null)?.lease_namespace;
+    if (typeof ns !== "string" || ns === "") continue;
+    if (!out.includes(ns)) out.push(ns);
+  }
+  return out;
+}

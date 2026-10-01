@@ -82,6 +82,7 @@ export function everyBuiltin(): Declarable[] {
     node_conditions_to_report: ["Ready", "MemoryPressure"],
     allocatable_types_to_report: ["cpu", "memory"],
     metrics: { "k8s.pod.phase": { enabled: false } },
+    k8s_leader_elector: "k8s_leader_elector/cluster",
   });
   const kubelet = new c.KubeletStatsReceiver({
     auth_type: "serviceAccount",
@@ -230,6 +231,15 @@ export function everyBuiltin(): Declarable[] {
   const health = new c.HealthCheckExtension({ endpoint: "0.0.0.0:13133", path: "/health", response_body: { healthy: "ok" } });
   const pprof = new c.PprofExtension({ endpoint: "localhost:1777", block_profile_fraction: 3 });
   const zpages = new c.ZPagesExtension({ endpoint: "localhost:55679" });
+  const leaderElector = new c.K8sLeaderElectorExtension({
+    name: "cluster",
+    auth_type: "serviceAccount",
+    lease_name: "otel-k8s-cluster",
+    lease_namespace: "observability",
+    lease_duration: "20s",
+    renew_deadline: "15s",
+    retry_period: "3s",
+  });
 
   return [
     otlp,
@@ -265,6 +275,7 @@ export function everyBuiltin(): Declarable[] {
     health,
     pprof,
     zpages,
+    leaderElector,
     new Pipeline({
       signal: "traces",
       receivers: [otlp],
@@ -286,7 +297,7 @@ export function everyBuiltin(): Declarable[] {
       exporters: [otlphttp, debug, signalToMetrics],
     }),
     new Service({
-      extensions: [health, zpages, pprof],
+      extensions: [health, zpages, pprof, leaderElector],
       telemetry: { logs: { level: "warn", encoding: "json" }, metrics: { level: "normal" }, resource: { "service.name": "gw" } },
     }),
   ];

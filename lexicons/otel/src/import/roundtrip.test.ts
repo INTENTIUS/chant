@@ -208,6 +208,14 @@ describe("YAML -> TypeScript -> YAML", () => {
     expect(out.warnings).toEqual([]);
   });
 
+  test("a k8s_leader_elector extension imports to the typed class", async () => {
+    const out = await expectRoundTrip(read("k8s-leader-elector.yaml"));
+    expect(out.source).toContain("new K8sLeaderElectorExtension(");
+    expect(out.source).not.toContain("defineComponent");
+    expect(out.source).toContain('lease_name: "otel-k8s-cluster"');
+    expect(out.warnings).toEqual([]);
+  });
+
   test("the collector configs of examples/agent-observability", async () => {
     for (const file of ["agent-observability-agent.yaml", "agent-observability-gateway.yaml"]) {
       await expectRoundTrip(read(file));

@@ -59,7 +59,7 @@ It fires on evidence, not on absence. A multi-replica tail sampling gateway with
 
 The `k8s_cluster` receiver reports cluster-level metrics and entity events (nodes, workloads, pods, quotas) by watching the Kubernetes API. Every copy of the collector reports every object, so in a DaemonSet the whole cluster is reported once per node, and in a two-replica gateway twice: duplicated series in the backend and one set of API watches per copy.
 
-Run it in a single-replica Deployment, or set the receiver's `k8s_leader_elector` field to the id of a `k8s_leader_elector` extension that is declared and enabled in `service.extensions`, so only the replica holding the lease collects. Both components ship in the `otelcol-contrib` and `otelcol-k8s` distributions at the collector version the otel lexicon pins (v0.130.0). The elector takes a Lease, so the collector's ServiceAccount also needs access to `leases` in the `coordination.k8s.io` group (the extension's README suggests `get`, `list`, `watch`, `create`, `update`, `patch` and `delete`); with `OtelCollectorGateway` pass that rule in `clusterRules`.
+Run it in a single-replica Deployment, or set the receiver's `k8s_leader_elector` field to the id of a `k8s_leader_elector` extension that is declared and enabled in `service.extensions`, so only the replica holding the lease collects. Both components ship in the `otelcol-contrib` and `otelcol-k8s` distributions at the collector version the otel lexicon pins (v0.130.0). The elector takes a Lease, so the collector's ServiceAccount also needs access to `leases` in the `coordination.k8s.io` group (the extension's README suggests `get`, `list`, `watch`, `create`, `update`, `patch` and `delete`). `OtelCollectorGateway` adds that Role, in the Lease's namespace, when its config enables the extension.
 
 ```yaml
 receivers:
@@ -73,4 +73,11 @@ service:
   extensions: [k8s_leader_elector]
 ```
 
-The check fires when the field is missing, names something that isn't a declared `k8s_leader_elector` extension, or names one that `service.extensions` doesn't enable. The otel lexicon has no typed class for the extension yet, so declare it with `defineComponent` (see the otel lexicon's custom components page) or run the receiver in a single-replica Deployment.
+The check fires when the field is missing, names something that isn't a declared `k8s_leader_elector` extension, or names one that `service.extensions` doesn't enable. In the otel lexicon the extension is `K8sLeaderElectorExtension`, and the receiver names it by `componentId`:
+
+```ts
+import { K8sClusterReceiver, K8sLeaderElectorExtension } from "@intentius/chant-lexicon-otel";
+
+export const elector = new K8sLeaderElectorExtension({ lease_name: "otel-cluster-receiver", lease_namespace: "observability" });
+export const cluster = new K8sClusterReceiver({ auth_type: "serviceAccount", k8s_leader_elector: elector.componentId });
+```

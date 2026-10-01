@@ -41,6 +41,7 @@ export const REQUIRED_NAMES = [
   "HealthCheckExtension",
   "PprofExtension",
   "ZPagesExtension",
+  "K8sLeaderElectorExtension",
   "Pipeline",
   "Service",
 ];

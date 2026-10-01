@@ -44,7 +44,7 @@ Emits `receivers.otlp`, `processors.memory_limiter` and `processors.batch`, `exp
 | processors | batch, memory_limiter, resource, attributes, k8sattributes, resourcedetection, filter, transform, redaction, tail_sampling, probabilistic_sampler |
 | exporters | otlp, otlphttp, debug, prometheus, googlecloud, loadbalancing |
 | connectors | spanmetrics, servicegraph, routing, forward, count, sum, signaltometrics |
-| extensions | health_check, pprof, zpages |
+| extensions | health_check, pprof, zpages, k8s_leader_elector |
 
 Anything else goes through `defineComponent`; see the `chant-otel-custom-components` skill.
 
