@@ -266,6 +266,7 @@
                 "record-supersedes-conflict",
                 "record-remediates-unknown",
                 "record-remediates-not-closed",
+                "record-seal-mismatch",
                 "session-seal-mismatch",
                 "session-verdict-unknown-record"
               ]

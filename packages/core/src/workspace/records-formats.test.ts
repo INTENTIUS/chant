@@ -154,7 +154,8 @@ const SESSION_SCHEMA = {
     comments: { type: "array" },
     follow_ups: { type: "array", items: ref("contractId") },
     closed_at: ref("datetime"),
-    seal: ref("sha256"),
+    // The whole-file seal (#2546): sha256: and the hex SHA-256 of the session's JCS form without it.
+    seal: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
   },
 };
 
@@ -294,7 +295,7 @@ const SESSION = {
   comments: [],
   follow_ups: ["C-002"],
   closed_at: "2026-09-24T11:00:00.000Z",
-  seal: "e".repeat(64),
+  seal: `sha256:${"e".repeat(64)}`,
 };
 
 // ── 1. The json format ───────────────────────────────────────────────────────
@@ -372,11 +373,16 @@ describe("format json", () => {
 });
 
 describe("a JSON session kind (#2673)", () => {
-  test("its seal is the digest without the seal member, by the JSON rule", async () => {
+  test("its seal is the whole-file JCS seal without the seal member (#2546)", async () => {
     write("design/session.kind.mjs", kindFile({ ...KINDS.session, session: { verdicts: "approvals", seal: "seal", subjects: { kind: "contract.kind.mjs" } } }));
     write("design/contracts/C-001-first.md", '---\nid: "C-001"\nstatus: "approved"\n---\n');
+    // JCS of the object without its seal: keys sorted, no whitespace. The member order and indentation of the file play no part.
+    const sorted = (v: unknown): unknown =>
+      v === null || typeof v !== "object" ? v : Array.isArray(v) ? v.map(sorted) : Object.fromEntries(Object.keys(v).sort().map((k) => [k, sorted((v as Record<string, unknown>)[k])]));
+    const jcsSeal = (v: object): string => `sha256:${sha256(JSON.stringify(sorted(v)))}`;
     const { seal: _drop, ...unsealed } = SESSION;
-    const seal = sha256(json(unsealed));
+    const seal = jcsSeal(unsealed);
+    // Sealed over SESSION, then changed: a verdict added, or the id.
     write("design/sessions/S-0001.json", json({ ...SESSION, approvals: [{ record: "C-001" }], seal }));
     write("design/sessions/S-0002.json", json({ ...SESSION, id: "S-0002", seal }));
     const doc = await query("session");
@@ -385,7 +391,7 @@ describe("a JSON session kind (#2673)", () => {
       ["S-0002", ["session-seal-mismatch"]],
     ]);
     const good = { ...unsealed, id: "S-0003" };
-    write("design/sessions/S-0003.json", json({ ...good, seal: sha256(json(good)) }));
+    write("design/sessions/S-0003.json", `${JSON.stringify({ seal: jcsSeal(good), ...Object.fromEntries(Object.entries(good).reverse()) })}\n`);
     const [, , third] = (await query("session")).records;
     expect([third.id, codes(third)]).toEqual(["S-0003", []]);
   });
@@ -547,6 +553,8 @@ describe("kinds without a lifecycle", () => {
     ["neither idField nor idFrom", { ...KINDS.closure, idField: undefined }, /idField: a kind names its id with exactly one of idField and idFrom/],
     ["an unknown format", { ...KINDS.closure, format: "yaml" }, /format/],
     ["a session block without states", { ...KINDS.closure, session: { verdicts: "approvals", seal: "seal", subjects: { kind: "contract.kind.mjs" } } }, /session: a session kind must have states/],
+    ["a seal without states (#2546)", { ...KINDS.closure, seal: { field: "seal" } }, /seal: a kind without states cannot have seal/],
+    ["a seal naming another field than session.seal (#2546)", { ...KINDS.session, session: { verdicts: "approvals", seal: "seal", subjects: { kind: "contract.kind.mjs" } }, seal: { field: "closed_digest" } }, /seal: seal.field and session.seal name the field/],
   ])("a kind with %s is kind-invalid, naming the field", async (_label, kind, why) => {
     write("design/closure.kind.mjs", kindFile(kind));
     const error = await failure("closure");

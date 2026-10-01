@@ -10,7 +10,7 @@ import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { parseFrontMatter, recordTextDigest as textDigest } from "./records";
+import { parseFrontMatter, recordSeal, recordTextDigest as textDigest } from "./records";
 import { queryRecords } from "./records-cli";
 import { allocateId, amendRecord, newRecord, renderRecord, reviewRecord, toYaml } from "./records-write";
 
@@ -21,7 +21,7 @@ const KIND = "decisions/decision.kind.mjs";
 type Data = Record<string, unknown>;
 
 /** The digest of a decision: the kind names a ratified state, so the state leaves the digest with the reviews and seal (#2873). */
-const recordTextDigest = (text: string) => textDigest(text, ["reviews", "seal", "state"]);
+const recordTextDigest = (text: string) => textDigest(text, ["reviews", "seal", "state", "closed_digest"]);
 
 const SAMPLE = (() => {
   const fm = parseFrontMatter(readFileSync(join(DECISIONS, "ws-003-seal-scope.md"), "utf-8"));
@@ -287,7 +287,7 @@ describe("records amend", () => {
     const evidence = [{ title: "A spec", url: "https://example.com/spec" }];
     expect(await amendRecord({ kind: KIND, id: "ws-001", fields: fields({ evidence }), cwd: dir })).toMatchObject({ changed: ["evidence"] });
     for (const by of ["alice", "bob"]) await reviewRecord({ kind: KIND, id: "ws-001", verdict: "agree", by, cwd: dir });
-    expect(await amendRecord({ kind: KIND, id: "ws-001", fields: fields({ state: "ratified" }), cwd: dir })).toMatchObject({ changed: ["state"] });
+    expect(await amendRecord({ kind: KIND, id: "ws-001", fields: fields({ state: "ratified" }), cwd: dir })).toMatchObject({ changed: ["state", "closed_digest"] });
     put("ws-006-six.md", decision({ id: "ws-006", title: "Six" }));
     expect(code(await amendRecord({ kind: KIND, id: "ws-006", fields: fields({ state: "withdrawn" }), cwd: dir }))).toBe("amend-supersede-instead");
   });
@@ -353,10 +353,41 @@ describe("ratifying against the quorum (#2873)", () => {
     await agree("alice");
     await agree("bob");
     const judged = recordTextDigest(text("ws-001-one.md"));
-    expect(await ratify()).toMatchObject({ changed: ["state"] });
+    expect(await ratify()).toMatchObject({ changed: ["state", "closed_digest"] });
     expect(data("ws-001-one.md").state).toBe("ratified");
     expect(recordTextDigest(text("ws-001-one.md"))).toBe(judged);
     expect(await quorumOf("ws-001")).toMatchObject({ need: 2, agreed: 2, met: true, notCounted: [] });
+  });
+
+  test("ratifying writes the whole-file seal, which covers the reviews and the state the digest leaves out (#2546)", async () => {
+    await agree("alice");
+    await agree("bob");
+    const judged = textDigest(text("ws-001-one.md"), ["reviews", "seal", "state", "closed_digest"]);
+    await ratify();
+    const sealed = text("ws-001-one.md");
+    expect(data("ws-001-one.md").closed_digest).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(data("ws-001-one.md").closed_digest).toBe(recordSeal(sealed, "closed_digest"));
+    // The closed_digest line goes last in the front matter, and the digest leaves it out.
+    expect(sealed).toMatch(/\nclosed_digest: "sha256:[0-9a-f]{64}"\n---\n/);
+    expect(textDigest(sealed, ["reviews", "seal", "state", "closed_digest"])).toBe(judged);
+    const read = async () => (await queryRecords({ kind: KIND, cwd: dir })) as { records: { id: string; valid: boolean; reasons: { code: string; message: string }[] }[] };
+    expect((await read()).records.find((r) => r.id === "ws-001")).toMatchObject({ valid: true, reasons: [] });
+    // A verdict, a state or a byte of the body edited by hand after the close breaks the seal.
+    for (const edit of [
+      (t: string) => t.replace('verdict: "agree"', 'verdict: "dissent"\n    note: "no"'),
+      (t: string) => t.replace('state: "ratified"', 'state: "superseded"'),
+      (t: string) => `${t}\nAn afterthought.\n`,
+    ]) {
+      writeFileSync(join(dir, "decisions", "ws-001-one.md"), edit(sealed));
+      const r = (await read()).records.find((x) => x.id === "ws-001")!;
+      expect(r.reasons.map((x) => x.code)).toContain("record-seal-mismatch");
+    }
+    // CRLF line endings, or a value quoted another way, leave the seal as it was.
+    writeFileSync(join(dir, "decisions", "ws-001-one.md"), sealed.replace('area: "D4"', "area: 'D4'").replace(/\n/g, "\r\n"));
+    expect((await read()).records.find((r) => r.id === "ws-001")).toMatchObject({ valid: true });
+    // And a closed record is never written again, so the seal can't be set by hand either.
+    writeFileSync(join(dir, "decisions", "ws-001-one.md"), sealed);
+    expect(code(await amendRecord({ kind: KIND, id: "ws-002", fields: fields({ closed_digest: `sha256:${"0".repeat(64)}` }), cwd: dir }))).toBe("write-input-invalid");
   });
 
   test("a met quorum with an open concern ratifies, and the concern stays listed", async () => {
@@ -379,7 +410,7 @@ describe("ratifying against the quorum (#2873)", () => {
     await agree("alice");
     const digest = recordTextDigest(text("ws-001-one.md"));
     const reviews = [...(data("ws-001-one.md").reviews as Data[]), { reviewer: "bob", verdict: "agree", on: "2026-09-26", digest }];
-    expect(await amendRecord({ kind: KIND, id: "ws-001", fields: fields({ state: "ratified", reviews }), cwd: dir })).toMatchObject({ changed: ["state", "reviews"] });
+    expect(await amendRecord({ kind: KIND, id: "ws-001", fields: fields({ state: "ratified", reviews }), cwd: dir })).toMatchObject({ changed: ["state", "reviews", "closed_digest"] });
     put("ws-006-six.md", decision({ id: "ws-006", title: "Six" }));
     await agree("alice", "ws-006");
     await agree("bob", "ws-006");
@@ -403,11 +434,11 @@ describe("ratifying against the quorum (#2873)", () => {
     expect(withRatified).toContain('reviews: { field: "reviews", decider: "decided_by", ratified: "ratified" },');
     writeFileSync(kindFile, withRatified.replace(', ratified: "ratified" }', " }"));
     const judged = textDigest(text("ws-001-one.md"), ["reviews", "seal"]);
-    expect(await ratify()).toMatchObject({ changed: ["state"] });
-    expect(textDigest(text("ws-001-one.md"), ["reviews", "seal"])).not.toBe(judged);
+    expect(await ratify()).toMatchObject({ changed: ["state", "closed_digest"] });
+    expect(textDigest(text("ws-001-one.md"), ["reviews", "seal", "closed_digest"])).not.toBe(judged);
     writeFileSync(kindFile, withRatified.replace('  reviews: { field: "reviews", decider: "decided_by", ratified: "ratified" },\n', ""));
     put("ws-006-six.md", decision({ id: "ws-006", title: "Six" }));
-    expect(await ratify("ws-006")).toMatchObject({ changed: ["state"] });
+    expect(await ratify("ws-006")).toMatchObject({ changed: ["state", "closed_digest"] });
   });
 
   test("a kind whose reviews.ratified is not one of its states is refused", async () => {

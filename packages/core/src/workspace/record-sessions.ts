@@ -12,7 +12,7 @@
  * `citedBy`. This module only reads; nothing here writes a seal into a file.
  */
 
-import { recordTextDigest, type RecordEntry, type RecordFormat, type RecordKind } from "./records";
+import { recordSeal, type RecordEntry, type RecordFormat, type RecordKind } from "./records";
 
 /** A subject record's review entry that names a session in its `session` field. */
 export interface SessionCitation {
@@ -29,19 +29,15 @@ export interface SessionCitation {
 }
 
 /**
- * The seal of a session record: {@link recordTextDigest} with the seal field
- * in place of the reviews list. That is the lowercase hex SHA-256 of the
- * file's text with LF line endings and without the front-matter line that
- * holds the seal, a quoted string on one line. Every other byte, the `---`
- * lines and the body included, is kept.
- *
- * `awk 'NR==1&&/^---$/{f=1;print;next} f&&/^---$/{f=0} f&&/^closed_digest:/{next} {print}' S-0001.md | shasum -a 256`
- * gives the same value for a file with LF line endings that ends in one.
- * For a session kind of format json (ws-053), the seal member is removed by
- * the JSON rule of {@link recordTextDigest} instead.
+ * The seal of a session record: {@link recordSeal} with the seal field, the
+ * whole-file JCS/SHA-256 every closed record of a sealed kind carries
+ * (#2546, ws-063). Until #2546 it was the SHA-256 of the file's text without
+ * the seal line; a session sealed by that rule holds a bare hex value and
+ * reads as `session-seal-mismatch` now. Null when the front matter can't be
+ * parsed.
  */
-export function sessionSeal(text: string, field: string, format: RecordFormat = "markdown-front-matter"): string {
-  return recordTextDigest(text, field, format);
+export function sessionSeal(text: string, field: string, format: RecordFormat = "markdown-front-matter"): string | null {
+  return recordSeal(text, field, format);
 }
 
 /**
@@ -86,7 +82,9 @@ export function joinSessions(kind: RecordKind, entries: RecordEntry[], texts: Ma
         if (actual !== seal) {
           e.reasons.push({
             code: "session-seal-mismatch",
-            message: `${decl.seal} is ${seal}, but the text hashes to ${actual}: the session changed after it closed`,
+            message: /^[0-9a-f]{64}$/.test(seal)
+              ? `${decl.seal} is ${seal}, a seal by the text rule chant used before #2546, and the session seals to ${actual} now: seal it again by hand, since a closed session is never rewritten by chant`
+              : `${decl.seal} is ${seal}, but the session seals to ${actual}: the session changed after it closed`,
           });
         }
       }

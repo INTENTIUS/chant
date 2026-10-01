@@ -20,7 +20,9 @@
  * `records close` is in `records-close.ts`.
  *
  * `new --sign` and `amend --sign` seal the record's author (#2688), and
- * `review --sign` seals a verdict (#2687): see `trust/seal.ts`.
+ * `review --sign` seals a verdict (#2687): see `trust/seal.ts`. A record of
+ * a kind that declares `seal` gets its whole-file seal when `new` or `amend`
+ * writes it into a closed state (#2546, ws-063).
  */
 
 import { readFileSync, statSync, writeFileSync } from "node:fs";
@@ -37,6 +39,7 @@ import {
   RecordReadError,
   RECORD_SEAL_FIELD,
   digestFields,
+  recordSeal,
   recordTextDigest,
   type LoadedRecordKind,
   type RecordEntry,
@@ -460,6 +463,33 @@ function refuseSealField(o: Opened, fields: Record<string, unknown>, flag: strin
   if (o.loaded.kind.reviews && RECORD_SEAL_FIELD in fields) {
     throw new RecordWriteError("write-input-invalid", `the fields given with ${flag} set ${RECORD_SEAL_FIELD}, and only --sign writes a record's seal`);
   }
+  const closed = o.loaded.kind.seal?.field;
+  if (closed !== undefined && !o.loaded.kind.session && closed in fields) {
+    throw new RecordWriteError("write-input-invalid", `the fields given with ${flag} set ${closed}, and chant writes it when the record closes`);
+  }
+}
+
+/**
+ * `text`, the record `data` holds, with its whole-file seal written into the
+ * kind's `seal.field` when the record is in a closed state (#2546, ws-063).
+ * The seal goes last, after the author seal, so it covers every other value
+ * and the body. `text` is returned as it is for a kind without `seal`, a
+ * session kind (whose seal `records close` writes), or an open record.
+ */
+function sealClosed(o: Opened, text: string, data: Record<string, unknown>, id: string): { text: string; data: Record<string, unknown> } {
+  const { kind } = o.loaded;
+  if (!kind.seal || kind.session || kind.stateField === undefined) return { text, data };
+  const state = data[kind.stateField];
+  if (typeof state !== "string" || !(kind.closedStates ?? []).includes(state)) return { text, data };
+  const field = kind.seal.field;
+  const seal = recordSeal(text, field, kind.format);
+  if (seal === null) throw new RecordWriteError("record-unparseable", `${id} can't be read, so it can't be sealed`);
+  const sealedData = { ...data, [field]: seal };
+  const sealed = replaceFields(text, { [field]: seal }, sealedData);
+  if (sealed === undefined || recordSeal(sealed, field, kind.format) !== seal) {
+    throw new RecordWriteError("record-unparseable", `the ${field} field can't be written into ${id} without changing the text it seals`);
+  }
+  return { text: sealed, data: sealedData };
 }
 
 /**
@@ -758,6 +788,7 @@ export async function newRecord(opts: NewRecordOptions & ChannelOptions): Promis
     let text = renderRecord(data, title ? `\n# ${title}\n` : "");
     let seal: AuthorSeal | undefined;
     if (opts.sign !== undefined) ({ text, seal } = await sealAuthor(o, text, data, id, opts.sign, opts.cwd));
+    ({ text } = sealClosed(o, text, seal ? { ...data, [RECORD_SEAL_FIELD]: seal } : data, id));
     const written = await validatedEntry(o, before, path, text);
     await refuseRatifyBelowQuorum(o, written, id);
     const warnings = written.warnings;
@@ -871,6 +902,12 @@ export async function amendRecord(opts: AmendRecordOptions & ChannelOptions): Pr
       sealDropped = `${opts.id} was sealed${typeof signer === "string" ? ` by ${signer}` : ""}, and the amendment moves its digest or its state, so the seal was removed: seal it again with records amend ${opts.id} --sign`;
     }
     if (stableJson(old[RECORD_SEAL_FIELD]) !== stableJson(merged[RECORD_SEAL_FIELD])) changed.push(RECORD_SEAL_FIELD);
+    // Entering a closed state seals the whole record, last (#2546, ws-063).
+    if (changed.length > 0 && kind.seal && !kind.session) {
+      const closedSeal = sealClosed(o, text, merged, opts.id);
+      text = closedSeal.text;
+      if (stableJson(old[kind.seal.field]) !== stableJson(closedSeal.data[kind.seal.field])) changed.push(kind.seal.field);
+    }
     let warnings = target.warnings;
     if (changed.length > 0) {
       const written = await validatedEntry(o, before, target.path, text);

@@ -5,9 +5,10 @@
  * decision reviews that cite it.
  */
 
-import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import yaml from "js-yaml";
 import { afterAll, describe, expect, test } from "vitest";
 import { cleanScratch, commitAll, contract, REPO } from "./__fixtures__/contract-repo";
 import { reviewed, sessionText, SESSIONS_KIND as SESSIONS, sessionsRepo as fixture } from "./__fixtures__/sessions";
@@ -34,14 +35,30 @@ describe("the session kind (#2673)", () => {
     expect(doc.records[0].citedBy).toEqual([]);
   });
 
-  test("the seal is the awk recipe the docs give", () => {
+  test("the seal is the whole-file JCS rule the docs give (#2546)", () => {
     const file = join(REPO, "reference-workspace", "design", "sessions", "S-0001-first-walk-of-the-reference-decisions.md");
-    const awk = execFileSync("sh", ["-c", `awk 'NR==1&&/^---$/{f=1;print;next} f&&/^---$/{f=0} f&&/^closed_digest:/{next} {print}' "$1" | shasum -a 256`, "sh", file], { encoding: "utf-8" });
     const text = readFileSync(file, "utf-8");
-    expect(awk.split(" ")[0]).toBe(sessionSeal(text, "closed_digest"));
-    expect(text).toContain(`closed_digest: "${sessionSeal(text, "closed_digest")}"`);
+    // The rule worked by hand: the front matter as JSON without closed_digest, the text below it, keys sorted, no whitespace.
+    const [, front, body] = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(text)!;
+    const { closed_digest: _seal, ...core } = yaml.load(front, { schema: yaml.JSON_SCHEMA }) as Record<string, unknown>;
+    const sorted = (v: unknown): unknown =>
+      v === null || typeof v !== "object" ? v : Array.isArray(v) ? v.map(sorted) : Object.fromEntries(Object.keys(v).sort().map((k) => [k, sorted((v as Record<string, unknown>)[k])]));
+    const byHand = `sha256:${createHash("sha256").update(JSON.stringify(sorted({ body, core })), "utf8").digest("hex")}`;
+    expect(sessionSeal(text, "closed_digest")).toBe(byHand);
+    expect(text).toContain(`closed_digest: "${byHand}"`);
     // CRLF line endings hash as LF.
-    expect(sessionSeal(text.replace(/\n/g, "\r\n"), "closed_digest")).toBe(sessionSeal(text, "closed_digest"));
+    expect(sessionSeal(text.replace(/\n/g, "\r\n"), "closed_digest")).toBe(byHand);
+  });
+
+  test("a session sealed by the text rule before #2546 reads as session-seal-mismatch, naming the old rule", async () => {
+    const root = fixture();
+    const file = join(root, "design", "sessions", "S-0001-first-walk-of-the-reference-decisions.md");
+    const text = readFileSync(file, "utf-8");
+    const old = createHash("sha256").update(text.replace(/^closed_digest: .*\n/m, ""), "utf8").digest("hex");
+    writeFileSync(file, text.replace(/^closed_digest: .*$/m, `closed_digest: "${old}"`));
+    const s1 = (await read(root)).records[0];
+    expect(s1.reasons.map((r) => r.code)).toContain("session-seal-mismatch");
+    expect(s1.reasons.find((r) => r.code === "session-seal-mismatch")!.message).toMatch(/the text rule chant used before #2546/);
   });
 
   test("a closed session edited after it closed is session-seal-mismatch", async () => {

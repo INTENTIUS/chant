@@ -12,8 +12,14 @@ export const recordKind = {
   idField: "id",
   stateField: "state",
   states: ["proposed", "decided", "ratified", "superseded", "withdrawn"],
-  // Sealed once reached (#2555).
+  // Sealed once reached (#2555): records amend and new write the whole-file
+  // seal into closed_digest when a decision enters one, and records checks it
+  // on every read (#2546, ws-063).
   closedStates: ["ratified", "superseded"],
+  seal: { field: "closed_digest" },
+  // The current decisions, with the files they pin, are the workspace's spec:
+  // records --current --json lists them under spec (#2524 D20, #2546).
+  spec: true,
   supersedes: { field: "supersedes", key: "decision" },
   // A remediates link names a closed decision this one fixes the consequence
   // of, without replacing it: the target's state never changes (#2774).

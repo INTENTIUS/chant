@@ -221,7 +221,7 @@ describe.skipIf(!hasSshKeygen)("author seals under a signers file at base", () =
     const digest = (await record(r)).digest;
     const doc = await amend(r, { state: "superseded" });
     if ("error" in doc) throw new Error(doc.error.message);
-    expect(doc.changed).toEqual(["state", "seal"]);
+    expect(doc.changed).toEqual(["state", "seal", "closed_digest"]);
     expect(doc.sealDropped).toMatch(/moves its digest or its state/);
     expect((await record(r)).digest).toBe(digest);
   });

@@ -13,15 +13,18 @@
  *
  * A record that fails any of that is still returned, with reason codes, and the
  * read succeeds. Only a failure to read the kind, its schema or the revision is
- * an error. Seals, attestation and the workspace declaration come later (#2546,
- * #2534); nothing here needs a `chant.workspace.json`.
+ * an error. A closed record of a kind that declares `seal` is checked against
+ * its whole-file seal ({@link recordSeal}, #2546); author and verdict seals
+ * are checked by `records-cli.ts` against the policy at base. Nothing here
+ * needs a `chant.workspace.json`.
  *
  * Everything under `workspace/` loads only when a `chant workspace` command
  * runs. The level-0 goldens (#2526) fail if a level-0 command loads it.
  */
 
 import { createHash } from "node:crypto";
-import { sha256Hex } from "../content-digest";
+import { contentDigest, sha256Hex } from "../content-digest";
+import { canonicalJson } from "../effect-receipt";
 import { readFileSync, statSync } from "node:fs";
 import { dirname, posix, relative, resolve, sep } from "node:path";
 import yaml from "js-yaml";
@@ -57,6 +60,8 @@ export const RECORD_REASON_CODES = [
   "record-remediates-unknown",
   /** A `remediates` link names a record that isn't closed: a record still open is amended instead (#2774). */
   "record-remediates-not-closed",
+  /** A closed record's seal is not the whole-file seal of its text now: it changed after it closed (#2546, ws-063). */
+  "record-seal-mismatch",
   /** A closed session's seal is not the digest of its text: it changed after it closed (#2673). */
   "session-seal-mismatch",
   /** A session's verdict names a record the kind's subject records do not have (#2673). */
@@ -171,11 +176,19 @@ export const RECORD_SEAL_FIELD = "seal";
  * moving a record to that state keeps the verdicts that ratified it
  * counting.
  */
-export function digestFields(kind: Pick<RecordKind, "reviews" | "stateField">): string[] | null {
+export function digestFields(kind: Pick<RecordKind, "reviews" | "stateField" | "seal">): string[] | null {
   if (!kind.reviews) return null;
   const fields = [kind.reviews.field, RECORD_SEAL_FIELD];
   if (kind.reviews.ratified !== undefined && kind.stateField !== undefined) fields.push(kind.stateField);
+  // The whole-file seal is written when the record closes (#2546, ws-063), so
+  // the verdicts that ratified it keep counting on the sealed record.
+  if (kind.seal !== undefined) fields.push(kind.seal.field);
   return fields;
+}
+
+/** The field holding a closed record's whole-file seal: the kind's `seal.field`, or a session kind's `session.seal` (#2546, #2673). */
+export function sealFieldOf(kind: Pick<RecordKind, "seal" | "session">): string | undefined {
+  return kind.seal?.field ?? kind.session?.seal;
 }
 
 /** What a verdict's seal establishes (#2687). See `trust/seal.ts`. */
@@ -430,8 +443,32 @@ export const recordKindSchema = z
      * Optional.
      */
     answers: z.object({ points: z.string().min(1) }).strict().optional(),
+    /**
+     * The top-level field that holds a closed record's seal (#2546, ws-003,
+     * ws-063): {@link recordSeal}, the whole-file JCS/SHA-256 of the record
+     * without that field. `records amend` and `records new` write it when a
+     * record enters one of `closedStates`, and `records` reports a closed
+     * record whose seal does not match as `record-seal-mismatch`. Requires
+     * states. A session kind's `session.seal` names the same field for a
+     * session, and when both are given they must agree. Optional.
+     */
+    seal: z.object({ field: z.string().min(1) }).strict().optional(),
+    /**
+     * The kind's current records, with the files they pin, are part of the
+     * workspace's spec (#2524 D20): `chant workspace records --current
+     * --json` lists them under `spec`. Optional, and false when left out.
+     */
+    spec: z.boolean().optional(),
   })
   .strict()
+  .refine((k) => k.states !== undefined || k.seal === undefined, {
+    message: "a kind without states cannot have seal: a record is sealed when it enters a closed state",
+    path: ["seal"],
+  })
+  .refine((k) => k.seal === undefined || k.session === undefined || k.seal.field === k.session.seal, {
+    message: "seal.field and session.seal name the field that holds a closed session's seal, and must be the same",
+    path: ["seal"],
+  })
   .refine((k) => (k.idField === undefined) !== (k.idFrom === undefined), {
     message: "a kind names its id with exactly one of idField and idFrom",
     path: ["idField"],
@@ -748,7 +785,9 @@ function nonJson(v: unknown, at: string, seen: Set<object>): string | undefined 
  * record's author seal (#2688; {@link digestFields}), so sealing a record
  * leaves its digest where it was too. A record with no `seal` hashes exactly
  * as it did before author seals existed. A kind with `reviews.ratified` adds
- * its state field (#2873).
+ * its state field (#2873), and a kind with `seal` its seal field (#2546), so
+ * the whole-file seal written at the close moves no digest. The digest is not
+ * that seal: {@link recordSeal} covers the whole record.
  *
  * The rule, which a hand-editor can follow with a text editor and
  * `sha256sum`:
@@ -774,6 +813,50 @@ export function recordTextDigest(text: string, field: string | readonly string[]
   const fields = field === null ? [] : typeof field === "string" ? [field] : field;
   const kept = format === "json" ? fields.reduce(withoutMember, lf) : withoutBlocks(lf, fields);
   return createHash("sha256").update(kept, "utf8").digest("hex");
+}
+
+// ── Record seal ──────────────────────────────────────────────────────────────
+
+/**
+ * The seal of a closed record (#2546, ws-003, ws-063): `sha256:` and the
+ * lowercase hex SHA-256 of the RFC 8785 (JCS) form of the whole record, with
+ * only the field that holds the seal left out. It is a separate hash from
+ * {@link recordTextDigest}, which a review verdict names: the digest leaves
+ * out the reviews, the author seal and the state so verdicts keep counting,
+ * and the seal covers all of them.
+ *
+ * 1. Line endings become LF (CRLF and a lone CR each become one LF).
+ * 2. The structured core is parsed as the kind's format says: the front
+ *    matter, as the JSON subset of YAML, or the whole JSON object. The
+ *    top-level member `field` is removed from it.
+ * 3. For a Markdown record the value hashed is the object
+ *    `{"body": <the text after the closing --- line>, "core": <the core>}`;
+ *    for a JSON record it is the core itself.
+ * 4. That value is written in JCS (keys sorted by UTF-16 code units, no
+ *    whitespace, ECMAScript number and string forms) and hashed as UTF-8.
+ *
+ * So every value in the record and every byte of its body is sealed, the
+ * reviews, the author seal and the state included, while the key order,
+ * quoting and indentation of the front matter are not: the same record
+ * written another way has the same seal. A YAML comment in the front matter
+ * is not part of the record, so it is not sealed either (#3066). Returns null when
+ * the core can't be parsed.
+ */
+export function recordSeal(text: string, field: string, format: RecordFormat = "markdown-front-matter"): string | null {
+  const lf = text.replace(/\r\n?/g, "\n");
+  const parsed = parseRecord(format, lf);
+  if (!parsed.ok) return null;
+  const core = { ...parsed.value };
+  delete core[field];
+  const sealed = format === "json" ? core : { body: bodyText(lf), core };
+  return contentDigest(canonicalJson(sealed));
+}
+
+/** The text below a Markdown file's front matter, with LF line endings: everything after the closing `---` line. */
+export function bodyText(text: string): string {
+  const normalised = text.replace(/\r\n?/g, "\n");
+  const m = normalised.match(/^---\n[\s\S]*?\n---(?:\n|$)/);
+  return m ? normalised.slice(m[0].length) : "";
 }
 
 /**
@@ -1280,6 +1363,14 @@ export async function readRecords(loaded: LoadedRecordKind, options: ReadRecords
         if (problems.length > 0) entry.reasons.push({ code: "record-schema-invalid", message: problems.join("; ") });
         const drift = transcriptDrift(block, kind.source.field, workspaceDir);
         if (drift) entry.warnings.push({ code: "source-transcript-drift", message: drift });
+      }
+    }
+    if (kind.seal && !kind.session && entry.state !== null && (kind.closedStates ?? []).includes(entry.state)) {
+      // A closed record's whole-file seal (#2546, ws-063). A session's is checked with its verdicts (#2673).
+      const seal = fm.value[kind.seal.field];
+      const actual = typeof seal === "string" ? recordSeal(text, kind.seal.field, kind.format) : null;
+      if (typeof seal === "string" && actual !== seal) {
+        entry.reasons.push({ code: "record-seal-mismatch", message: `${kind.seal.field} is ${seal}, but the record seals to ${actual}: it changed after it closed` });
       }
     }
     if (kind.pins) {

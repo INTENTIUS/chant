@@ -187,6 +187,7 @@
                 "record-id-duplicate",
                 "record-supersedes-unknown",
                 "record-supersedes-conflict",
+                "record-seal-mismatch",
                 "session-seal-mismatch",
                 "session-verdict-unknown-record",
                 "work-kind-missing",
