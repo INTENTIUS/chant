@@ -147,6 +147,10 @@ export const UNIT_INCLUDE = [
   // or agent-runtime package. Both read source only.
   "test/boundary-roster.test.ts",
   "test/no-listener.test.ts",
+  // chant #2555, ws-064: reference/decision-kind.mdx states the decision
+  // kind's keys, states and ranks as docs/design/decisions/decision.kind.mjs
+  // has them. Reads source only.
+  "test/decision-kind-doc.test.ts",
   // chant #2817 — the per-test budget's own value and message. The run that
   // shows a slow test failing on it is test/unit-test-budget.e2e.test.ts.
   "test/unit-test-budget.test.ts",

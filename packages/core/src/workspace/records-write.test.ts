@@ -448,6 +448,32 @@ describe("ratifying against the quorum (#2873)", () => {
     expect(code(doc)).toBe("kind-invalid");
     expect("error" in doc && doc.error.message).toMatch(/reviews\.ratified must be one of states/);
   });
+
+  test("on a copy of the chant repo's own decisions, verdicts count through ratifying and sealing (#2555, ws-063)", async () => {
+    for (const f of readdirSync(join(dir, "decisions"))) if (f.endsWith(".md")) rmSync(join(dir, "decisions", f));
+    for (const f of readdirSync(DECISIONS)) if (/^ws-\d{3}-.+\.md$/.test(f)) cpSync(join(DECISIONS, f), join(dir, "decisions", f));
+    const read = async () => {
+      const doc = await queryRecords({ kind: KIND, cwd: dir });
+      if ("error" in doc) throw new Error(doc.error.message);
+      return doc.records;
+    };
+    const decided = (await read()).filter((r) => r.state === "decided");
+    expect(decided.length).toBeGreaterThan(50);
+    // Every sixth one, and the last, keeps the test inside the unit-test budget (#2817).
+    const sample = decided.filter((_, i) => i % 6 === 0 || i === decided.length - 1);
+    const judged = new Map(sample.map((r) => [r.id!, r.digest]));
+    for (const id of judged.keys()) {
+      await agree("alice", id);
+      await agree("Bob ", id);
+      expect(await ratify(id)).toMatchObject({ changed: ["state", "closed_digest"] });
+    }
+    for (const r of (await read()).filter((x) => judged.has(x.id!))) {
+      expect(r, r.id!).toMatchObject({ state: "ratified", valid: true, reasons: [], digest: judged.get(r.id!) });
+      expect(r.quorum, r.id!).toMatchObject({ agreed: 2, met: true, notCounted: [] });
+      expect(r.quorum!.counted.map((c) => c.principal), r.id!).toEqual(["alice", "bob"]);
+      expect(r.data?.closed_digest, r.id!).toBe(recordSeal(readFileSync(join(dir, r.path), "utf-8"), "closed_digest"));
+    }
+  });
 });
 
 describe("records review", () => {
