@@ -113,7 +113,11 @@ export const spawnChant: ChantRunner = (command, cwd) =>
 export interface UpgradeOptions {
   /** The directory holding `.chant/workspace.lock.json`. */
   root: string;
-  /** The scope to upgrade: `"."` or a vendor scope's directory. */
+  /**
+   * The scope to upgrade: `"."`, a scope of the lock at `root` (a vendor
+   * scope's directory, or a member subtree recorded in it), or the name or
+   * directory of a declared member that keeps a lock of its own (#2550).
+   */
   scope?: string;
   /**
    * The target ref (git) or label (vendor). Defaults to the ref the scope is
@@ -138,7 +142,12 @@ export interface GovernanceChange {
 }
 
 export interface StagedUpgrade {
+  /** The scope in the lock that was upgraded: `"."` for a member with a lock of its own. */
   scope: string;
+  /** The declared member whose own lock this upgraded, when the scope argument named one. */
+  member?: string;
+  /** What the gate and the proposal branch are named: the member, else the scope. */
+  gate: string;
   template: string;
   kind: Lineage["kind"];
   /** The pin before and after. */
@@ -372,7 +381,7 @@ async function fetchUpstream(root: string, lineage: Lineage, ref: string | undef
   }
   if (source.type === "dir") return readDir(root, lineage, ref);
   throw new UpgradeError(
-    `scope made by \`chant init --template\` (${lineage.template}) cannot be upgraded yet: its merge base is the older lexicon's render, which is not available offline. Upgrade git-sourced and vendor scopes for now.`,
+    `scope made by \`chant init --template\` (${lineage.template}) is refused: it came from a lexicon's built-in template, which has no versioned source to fetch, and the merge base would be the render of the chant version that wrote it, which chant cannot rebuild offline. Scopes made by \`chant init --from\` (a git repository or a directory) and \`chant vendor\` scopes upgrade.`,
   );
 }
 
@@ -487,14 +496,43 @@ function chantMemberDirs(dir: string): string[] {
 }
 
 /**
+ * Resolve the scope argument against `root` (#2550). A scope the lock at
+ * `root` holds is used as it is. Otherwise a member the workspace
+ * declaration names (by name or directory) that keeps a lock of its own is
+ * upgraded from its directory, as the project it is, so its patch, gate and
+ * build stay inside it. A member without a lock was not made from a template.
+ */
+export function resolveUpgradeTarget(root: string, scopeArg: string | undefined): { root: string; scope: string; member?: string } {
+  const scope = scopeKey(scopeArg ?? ".");
+  const lock = readLock(root);
+  if (lock?.scopes[scope]) return { root, scope };
+  if (scope !== ".") {
+    let declared: Array<{ name: string; dir: string }> = [];
+    try {
+      declared = readDeclaration(workingTree(root)).members;
+    } catch (err) {
+      if (!(err instanceof WorkspaceReadError)) throw err;
+    }
+    const hit = declared.find((m) => m.dir !== "." && (m.name === scopeArg || scopeKey(m.dir) === scope));
+    if (hit) {
+      const memberRoot = join(root, hit.dir);
+      if (readLock(memberRoot)) return { root: memberRoot, scope: ".", member: hit.name };
+      throw new UpgradeError(
+        `member "${hit.name}" (${hit.dir}) has no ${LOCK_FILE}, so it was not made from a template and has nothing to upgrade. \`chant init --from <template> ${hit.dir}\` writes one; \`chant workspace adopt-lineage\` is for an older member.`,
+      );
+    }
+  }
+  return { root, scope };
+}
+
+/**
  * Stage an upgrade: steps 1 to 5 and the digest of step 6. Nothing in the
  * project's tree changes. The caller decides the gate, then applies the patch
  * with {@link applyStagedUpgrade} or commits it with {@link commitStagedUpgrade},
  * and always calls `dispose()`.
  */
 export async function stageUpgrade(options: UpgradeOptions): Promise<StagedUpgrade> {
-  const root = resolve(options.root);
-  const scope = scopeKey(options.scope ?? ".");
+  const { root, scope, member } = resolveUpgradeTarget(resolve(options.root), options.scope);
   const lock = readLock(root);
   if (!lock) throw new UpgradeError(`no ${LOCK_FILE} in ${root}`);
   const lineage = lock.scopes[scope];
@@ -621,6 +659,11 @@ export async function stageUpgrade(options: UpgradeOptions): Promise<StagedUpgra
     if (!lockTracked) gitOut(worktree, ["rm", "--cached", "-q", "--ignore-unmatch", "--", lockRepoPath]);
     const patch = gitOut(worktree, ["diff", "--cached", "--binary", "--full-index", "--no-color", "--no-ext-diff", head]);
     const changedPaths = gitOut(worktree, ["diff", "--cached", "--name-only", "-z", head]).split("\0").filter(Boolean).sort();
+    // An upgrade writes inside its scope and the lock that records it, and nowhere else.
+    const outside = changedPaths.filter((p) => scopeRepoPath !== "." && p !== lockRepoPath && p !== scopeRepoPath && !p.startsWith(`${scopeRepoPath}/`));
+    if (outside.length > 0) {
+      throw new UpgradeError(`the upgrade would change ${outside.slice(0, 5).join(", ")}${outside.length > 5 ? ", ..." : ""}, outside the scope "${scopeRepoPath}". An upgrade writes only inside its own scope.`);
+    }
     const lockChanged = !lockTracked && lockText !== readFileSync(join(root, LOCK_FILE), "utf-8");
     const changed = patch.length > 0 || lockChanged;
     const digest = computePlanDigest(UPGRADE_PLAN_KIND, lockTracked ? { scope, patch } : { scope, patch, lock: lockText });
@@ -682,6 +725,8 @@ export async function stageUpgrade(options: UpgradeOptions): Promise<StagedUpgra
 
     return {
       scope,
+      ...(member !== undefined ? { member } : {}),
+      gate: member ?? scope,
       template: lineage.template,
       kind: lineage.kind,
       from: fromDir ? sourcePin(lineage.source) : lineage.ref ?? null,
@@ -781,7 +826,7 @@ export function commitStagedUpgrade(staged: StagedUpgrade, branch: string, messa
 export function describeStaged(staged: StagedUpgrade): string[] {
   const lines: string[] = [];
   const at = (p: string) => (staged.scope === "." ? p : `${staged.scope}/${p}`);
-  lines.push(`${staged.scope}  ${staged.template}  ${staged.from ?? "(no ref)"} -> ${staged.to ?? "(no ref)"}`);
+  lines.push(`${staged.gate}  ${staged.template}  ${staged.from ?? "(no ref)"} -> ${staged.to ?? "(no ref)"}`);
   const chantIds = new Set(staged.chantMigrations.map((m) => m.id));
   for (const id of staged.migrations) if (!chantIds.has(id)) lines.push(`  migration: ${id}`);
   for (const m of staged.chantMigrations) {

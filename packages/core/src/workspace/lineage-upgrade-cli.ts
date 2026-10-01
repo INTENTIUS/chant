@@ -72,7 +72,7 @@ export async function upgradeCommand(opts: UpgradeCommandOptions): Promise<Upgra
       );
     }
     if (!staged.changed && staged.checksOk) {
-      if (!opts.json) console.error(formatSuccess(`scope "${staged.scope}" is already at ${staged.to ?? "its source"}; nothing to upgrade`));
+      if (!opts.json) console.error(formatSuccess(`scope "${staged.gate}" is already at ${staged.to ?? "its source"}; nothing to upgrade`));
       return report("up-to-date", 0);
     }
     if (opts.output) writeFileSync(resolve(opts.output), staged.patch);
@@ -90,11 +90,11 @@ export async function upgradeCommand(opts: UpgradeCommandOptions): Promise<Upgra
       return report("dry-run", 0);
     }
 
-    const gate = staged.scope;
+    const gate = staged.gate;
     const check = await evaluateGate(opts.ledger ?? gitGateLedgerPort({ cwd: staged.repo }), {
       op: WORKSPACE_UPGRADE_GATE_OP,
       gate,
-      description: `upgrade ${staged.template} ${staged.from ?? ""} -> ${staged.to ?? ""} in scope ${staged.scope}`.replace(/\s+/g, " "),
+      description: `upgrade ${staged.template} ${staged.from ?? ""} -> ${staged.to ?? ""} in scope ${staged.member ?? staged.scope}`.replace(/\s+/g, " "),
       planDigest: staged.digest,
       ...(staged.governance ? { approval: staged.governance.approval } : {}),
       ...(opts.now ? { now: opts.now } : {}),
@@ -115,7 +115,7 @@ export async function upgradeCommand(opts: UpgradeCommandOptions): Promise<Upgra
 
     applyStagedUpgrade(staged);
     if (!opts.json) {
-      console.error(formatSuccess(`applied the approved upgrade of "${staged.scope}" (${staged.digest}), approved by ${check.resolution.resolvedBy}. Review and commit it.`));
+      console.error(formatSuccess(`applied the approved upgrade of "${staged.gate}" (${staged.digest}), approved by ${check.resolution.resolvedBy}. Review and commit it.`));
       if (staged.manualSteps.length > 0) {
         console.error(formatInfo(`${staged.manualSteps.length} manual step(s) are open; \`chant workspace check\` fails until each is merged and resolved.`));
       }

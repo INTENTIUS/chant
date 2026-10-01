@@ -77,6 +77,43 @@ describe("chant #2550 — workspace upgrade", () => {
   );
 
   test(
+    "a member made from a template is upgraded from the workspace root, gated under its own name (#2550)",
+    async () => {
+      const root = makeScratch("ws-upgrade-member");
+      git(root, ["init", "-q", "-b", "main"]);
+      const tpl = makeScratch("ws-upgrade-member-tpl");
+      git(tpl, ["init", "-q", "-b", "main"]);
+      put(tpl, "README.md", "starter\n");
+      git(tpl, ["add", "-A"]);
+      git(tpl, ["commit", "-q", "-m", "v1"]);
+      git(tpl, ["tag", "v1.0.0"]);
+      put(tpl, "README.md", "starter v2\n");
+      git(tpl, ["commit", "-q", "-am", "v2"]);
+      git(tpl, ["tag", "v2.0.0"]);
+
+      put(root, "chant.workspace.json", JSON.stringify({ name: "ws", schema: 1, members: [{ name: "shop", dir: "shop", kind: "other", because: "from a template" }] }));
+      const made = await runChant(root, ["init", "--from", `${tpl}@v1.0.0`, "shop"]);
+      expect(made.exit, made.stderr).toBe(0);
+      git(root, ["add", "-A"]);
+      git(root, ["commit", "-q", "-m", "workspace"]);
+
+      const gated = await runChant(root, ["workspace", "upgrade", "shop", "--to", "v2.0.0"]);
+      expect(gated.exit, gated.stderr).toBe(3);
+      expect(gated.stderr).toContain("chant approve workspace-upgrade shop");
+      expect(readFileSync(join(root, "shop/README.md"), "utf-8")).toBe("starter\n");
+
+      const approve = await runChant(root, ["approve", "workspace-upgrade", "shop"]);
+      expect(approve.exit, approve.stderr).toBe(0);
+      const applied = await runChant(root, ["workspace", "upgrade", "shop", "--to", "v2.0.0"]);
+      expect(applied.exit, applied.stderr).toBe(0);
+      expect(readFileSync(join(root, "shop/README.md"), "utf-8")).toBe("starter v2\n");
+      expect(JSON.parse(readFileSync(join(root, "shop", LOCK), "utf-8")).scopes["."].ref).toBe("v2.0.0");
+      expect(git(root, ["diff", "--name-only"]).trim().split("\n")).toEqual(["shop/.chant/workspace.lock.json", "shop/README.md"]);
+    },
+    TIMEOUT_MS,
+  );
+
+  test(
     "workspace check with no lock has nothing to check",
     async () => {
       const root = makeScratch("ws-check");
