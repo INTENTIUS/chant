@@ -9,7 +9,8 @@
  * listed for a reader who meets them in a lint report.
  */
 
-import { auditRule, type RuleMeta } from "@intentius/chant/audit/catalog";
+import { applyLineage, auditRule, type RuleMeta } from "@intentius/chant/audit/catalog";
+import { prometheusAuditLineage } from "./audit-lineage";
 
 function sourceRule(id: string, category: RuleMeta["category"], title: string, remediation: string): RuleMeta {
   return { id, tier: "merge-worthy", fixKind: "guidance", category, title, remediation, yamlBased: false };
@@ -128,3 +129,6 @@ export const prometheusAuditCatalog: Record<string, RuleMeta> = {
     "Set one of each value and its *_file, and use a value Alertmanager allows (e.g. message_type text or markdown, parse_mode Markdown, MarkdownV2 or HTML).",
   ),
 };
+
+// Prior art credits live beside the rules in ./audit-lineage.ts (see core audit/prior-art.ts).
+applyLineage(prometheusAuditCatalog, prometheusAuditLineage);
