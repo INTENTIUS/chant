@@ -97,6 +97,19 @@ function makeBuildResult(entitiesByLexicon: Record<string, string[]>): BuildResu
   } as unknown as BuildResult;
 }
 
+/**
+ * #3001 — a build holding one resource and one property-kind declarable that
+ * the resource inlines, the shape every grafana dashboard with exported panels
+ * has. Only the resource has a live counterpart of its own.
+ */
+function buildWithPropertyKind(lexicon: string): BuildResult {
+  const build = makeBuildResult({ [lexicon]: ["board"] });
+  const panel = { lexicon, entityType: `${lexicon}::Panel`, kind: "property", props: { title: "CPU" } };
+  build.entities.set("board", { lexicon, entityType: `${lexicon}::Board`, kind: "resource", props: { panels: [panel] } } as never);
+  build.entities.set("cpuPanel", panel as never);
+  return build;
+}
+
 const meta = (overrides: Partial<ResourceMetadata> = {}): ResourceMetadata => ({
   type: "AWS::S3::Bucket",
   status: "CREATE_COMPLETE",
@@ -537,6 +550,37 @@ describe("runLifecycleDiff --live", () => {
   });
 
   // #1014 — property-level drift, gated purely on the deep capability.
+  test("hands only resource-kind entities to describeResources and observeResourcesDeep (#3001)", async () => {
+    buildMock.mockResolvedValue(buildWithPropertyKind("graf"));
+    fetchLifecycleMock.mockResolvedValue(undefined);
+    readSnapshotMock.mockResolvedValue(null);
+    const seen: { thin?: string[]; deep?: string[] } = {};
+    const plugins: LexiconPlugin[] = [
+      createMockPlugin({
+        name: "graf",
+        describeResources: async (opts) => {
+          seen.thin = [...opts.entities.keys()];
+          return { board: meta({ type: "graf::Board", physicalId: "uid-1" }) };
+        },
+        observeResourcesDeep: async (opts) => {
+          seen.deep = [...opts.entities.keys()];
+          return deepObservation({ board: { type: "graf::Board", properties: { panels: [{ title: "CPU" }] } } });
+        },
+      }),
+    ];
+    const exit = await runLifecycleDiff({
+      args: makeArgs({ path: "diff", extraPositional: "prod", live: true }),
+      plugins,
+      serializers: plugins.map((p) => p.serializer),
+    });
+    expect(exit).toBe(0);
+    expect(seen.thin).toEqual(["board"]);
+    expect(seen.deep).toEqual(["board"]);
+    const stdout = stdoutBuf.join("\n");
+    expect(stdout).not.toContain("cpuPanel");
+    expect(stdout).toContain("0 missing");
+  });
+
   describe("deep observation (#1014)", () => {
     const withDeep = (over: Parameters<typeof createMockPlugin>[0] = {}) =>
       createMockPlugin({
@@ -870,6 +914,29 @@ describe("runLifecyclePlan", () => {
     });
     expect(exit).toBe(0);
     expect(stdoutBuf.join("\n")).toContain("bucket");
+  });
+
+  test("proposes no create for a property-kind declarable its parent inlines (#3001)", async () => {
+    buildMock.mockResolvedValue(buildWithPropertyKind("graf"));
+    let names: string[] = [];
+    const plugins: LexiconPlugin[] = [
+      createMockPlugin({
+        name: "graf",
+        describeResources: async (opts) => {
+          names = opts.entityNames;
+          return { board: meta({ type: "graf::Board", physicalId: "uid-1" }) };
+        },
+      }),
+    ];
+    const exit = await runLifecyclePlan({
+      args: makeArgs({ path: "plan", extraPositional: "prod", json: true }),
+      plugins,
+      serializers: plugins.map((p) => p.serializer),
+    });
+    expect(exit).toBe(0);
+    expect(names).toEqual(["board"]);
+    const plan = JSON.parse(stdoutBuf.join("\n"));
+    expect(plan.entries.map((e: { name: string }) => e.name)).not.toContain("cpuPanel");
   });
 
   // #1983 — `--report markdown` emits the reviewer-facing projection instead
