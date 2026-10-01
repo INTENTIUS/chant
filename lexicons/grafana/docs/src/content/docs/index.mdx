@@ -65,7 +65,8 @@ Checks catch a query aimed at a datasource nobody declared, with
 wrong type (GRAF102), a `$variable` the dashboard doesn't declare (GRAF103),
 duplicate uids and ids (GRAF104), panels off the grid or overlapping (GRAF105),
 anything Grafana's dashboard schema rejects (GRAF107), PromQL sent to a
-Prometheus that doesn't parse (GRAF108), dashboard providers that load a
+Prometheus that doesn't parse (GRAF108), LogQL sent to a Loki and TraceQL
+sent to a Tempo that don't parse (GRAF116, GRAF117), dashboard providers that load a
 dashboard twice or not into its declared folder (GRAF109), a panel repeated over a variable that only ever
 holds one value (GRAF110), and a unit Grafana doesn't know (GRAF115). For alerting, they catch rules whose condition or expressions name
 no query (GRAF111), queries to undeclared datasources (GRAF112), routes to
@@ -82,10 +83,10 @@ duplicates Grafana refuses (GRAF114).
 | Services | 18 |
 | Intrinsic functions | 0 |
 | Pseudo-parameters | 0 |
-| Lint rules | 17 |
+| Lint rules | 19 |
 
 **Lexicon version:** 0.99.0  
 **Namespace:** `Grafana`
 
-- [All Rules](./rules) — 17 rules
+- [All Rules](./rules) — 19 rules
 - [Serialization](./serialization) — output format details
