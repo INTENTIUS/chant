@@ -28,10 +28,19 @@
  *
  * Nothing here listens on a port or authenticates anyone (ws-052): the server
  * speaks over stdio, and `by` is recorded as given, as `--by` is.
+ *
+ * An agent session (#2548): a server started with `CHANT_AGENT` set writes in
+ * that session, bound to its one member, and its writes are refused outside
+ * the session's write scope with the CLI's codes (`write-scope-member`,
+ * `write-scope-kind`, `agent-unknown`). `workspace-agent` returns what the
+ * session reloads from.
  */
 
 import { spawn } from "node:child_process";
 import type { ToolContext, ToolDefinition, ToolHandler } from "./types";
+
+/** `AGENT_ENV` of `workspace/write-scope.ts`, kept here so the server loads nothing under workspace/ until a tool is called. */
+const AGENT_ENV = "CHANT_AGENT";
 
 /** How the reads run chant: a command and its leading arguments. */
 export type ChantCommand = string[];
@@ -49,6 +58,8 @@ export interface WorkspaceToolsOptions {
   cwd: string;
   /** The chant the reads run. Defaults to {@link ownChantCommand}. */
   chantCommand?: ChantCommand;
+  /** The agent session the writes are made in (#2548). Defaults to `CHANT_AGENT`. */
+  agent?: string;
 }
 
 const PROTOCOL =
@@ -151,6 +162,17 @@ export const workspaceReadTools: ToolDefinition[] = [
         open: { type: "boolean", description: "Only the open questions (--open)." },
         kind: { type: "string", description: "One answer kind file, in place of the declared ones (--kind)." },
         at: atProp,
+      },
+    },
+  },
+  {
+    name: "workspace-agent",
+    description:
+      "An agent session and what it reloads from (#2548): chant workspace agent <name> --json (agent.schema.json). The one member it is bound to, the record kinds and verbs its write scope allows, and the spec records --current prints, read from the repository alone. Without name, this server's session (CHANT_AGENT). Returns the document unchanged.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "The session's name, as the declaration's agents list gives it." },
       },
     },
   },
@@ -334,6 +356,10 @@ export function readArgv(tool: string, params: Record<string, unknown>): string[
         "--json",
       ];
     }
+    case "workspace-agent": {
+      const name = str(params, "name", true)!;
+      return ["workspace", "agent", name, "--json"];
+    }
     case "workspace-work-history": {
       const item = str(params, "item", true)!;
       const kind = str(params, "kind");
@@ -413,10 +439,12 @@ export interface WorkspaceTool {
 export function createWorkspaceTools(options: WorkspaceToolsOptions): WorkspaceTool[] {
   const { cwd } = options;
   const chant = options.chantCommand ?? ownChantCommand();
+  const agent = options.agent ?? (process.env[AGENT_ENV] || undefined);
   const reads: WorkspaceTool[] = workspaceReadTools.map((definition) => ({
     definition,
     handler: async (params) => {
-      const argv = readArgv(definition.name, params);
+      const given = definition.name === "workspace-agent" && params.name === undefined && agent !== undefined ? { ...params, name: agent } : params;
+      const argv = readArgv(definition.name, given);
       const id = definition.name === "workspace-records" ? str(params, "id") : undefined;
       const doc = await runRead(chant, argv, cwd);
       return id !== undefined ? onlyRecord(doc, id) : doc;
@@ -446,6 +474,7 @@ export function createWorkspaceTools(options: WorkspaceToolsOptions): WorkspaceT
         sign: sign(params),
         dryRun: bool(params, "dryRun"),
         cwd,
+        agent,
         through: { source: mcpSource(context), opensInitial: true },
       });
     },
@@ -463,6 +492,7 @@ export function createWorkspaceTools(options: WorkspaceToolsOptions): WorkspaceT
         sign: sign(params),
         dryRun: bool(params, "dryRun"),
         cwd,
+        agent,
         through: { source: mcpSource(context) },
       });
     },
@@ -481,6 +511,7 @@ export function createWorkspaceTools(options: WorkspaceToolsOptions): WorkspaceT
         sign: sign(params),
         dryRun: bool(params, "dryRun"),
         cwd,
+        agent,
       });
     },
     "points-answer": async (params) => {
@@ -498,7 +529,7 @@ export function createWorkspaceTools(options: WorkspaceToolsOptions): WorkspaceT
       const named = str(params, "kind");
       const kind = named !== undefined ? w.resolveWriteKind(named, cwd) : await w.declaredSessionKind(RECORDS_CLOSE_SCHEMA_ID, cwd);
       if (typeof kind !== "string") return kind;
-      return closeRecord({ kind, id, dryRun: bool(params, "dryRun"), cwd });
+      return closeRecord({ kind, id, dryRun: bool(params, "dryRun"), cwd, agent });
     },
   };
 

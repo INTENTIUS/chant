@@ -107,6 +107,35 @@ export interface ChangesPolicy {
   ignore: string[];
 }
 
+/** The core principal classes (#2524 D5). */
+export const PRINCIPAL_CLASSES = ["human", "agent", "runner", "service"] as const;
+export type PrincipalClass = (typeof PRINCIPAL_CLASSES)[number];
+
+/** How a record is written, as the records commands name it (#2548). */
+export const WRITE_VERBS = ["new", "amend", "review", "close"] as const;
+export type WriteVerb = (typeof WRITE_VERBS)[number];
+
+/** One principal class's entry in the declaration's `writeScope` (#2548, ws-067). */
+export interface ClassScope {
+  /** The members whose files the class may write, or null for every path. Always null for the agent class: a session writes its own member. */
+  members: string[] | null;
+  /** Kind name to the verbs the class may write it with, or null for every kind in reach with every verb. */
+  records: Record<string, WriteVerb[]> | null;
+  pointer: string;
+}
+
+/** The declaration's `writeScope` block: an entry per restricted class. A class with no entry is not restricted. */
+export type WriteScope = Partial<Record<PrincipalClass, ClassScope>>;
+
+/** An agent session the declaration names (#2524 D20, #2548): bound to one member. */
+export interface AgentDeclaration {
+  name: string;
+  member: string;
+  /** Principals that write only as this session. */
+  principals: string[];
+  pointer: string;
+}
+
 export interface MemberRole {
   name: string;
   /** Relative to the member's directory, or null for the whole member. */
@@ -340,6 +369,10 @@ export interface Declaration {
   hosts: Host[];
   /** The forward coverage check's policy (#2773), or null when the declaration has no `changes` block. */
   changes: ChangesPolicy | null;
+  /** Who may write what (#2548), or null when the declaration has no `writeScope` block. */
+  writeScope: WriteScope | null;
+  /** The agent sessions, in file order (#2548). */
+  agents: AgentDeclaration[];
   /** The file, relative to the workspace root's tree (`chant.workspace.json` or `.jsonc`). */
   file: string;
 }
@@ -676,6 +709,8 @@ export function parseDeclaration(text: string, file: string, reader: string = re
   }
 
   const hosts = hostsOf(obj, members, at);
+  const writeScope = writeScopeOf(obj.writeScope, members, at);
+  const agents = agentsOf(obj.agents, members, at);
 
   const pins = ((obj.pins as Record<string, string>[] | undefined) ?? []).map((p) => ({
     package: p.package ?? null,
@@ -698,8 +733,72 @@ export function parseDeclaration(text: string, file: string, reader: string = re
     diagrams: ownDiagrams,
     hosts,
     changes: changesOf(obj.changes as Record<string, unknown> | undefined),
+    writeScope,
+    agents,
     file,
   };
+}
+
+/**
+ * The `writeScope` block, already validated, with the rule the schema can't
+ * say (#2548): a member it names is a declared member.
+ */
+function writeScopeOf(raw: unknown, members: Member[], at: (pointer: string, key?: boolean) => ErrorLocation): WriteScope | null {
+  if (raw === undefined) return null;
+  const block = raw as Partial<Record<PrincipalClass, { members?: "*" | string[]; records?: Record<string, WriteVerb[]> }>>;
+  const out: WriteScope = {};
+  for (const cls of PRINCIPAL_CLASSES) {
+    const entry = block[cls];
+    if (entry === undefined) continue;
+    const pointer = `/writeScope/${cls}`;
+    const list = entry.members === undefined || entry.members === "*" ? null : [...entry.members];
+    for (const [i, name] of (list ?? []).entries()) {
+      if (!members.some((m) => m.name === name)) {
+        throw new WorkspaceReadError(
+          "declaration-invalid",
+          `writeScope.${cls} names the member ${JSON.stringify(name)}, which the declaration does not declare; declared members: ${members.map((m) => m.name).join(", ") || "none"}`,
+          at(`${pointer}/members/${i}`),
+        );
+      }
+    }
+    const records = entry.records === undefined ? null : Object.fromEntries(Object.entries(entry.records).map(([k, v]) => [k, [...v]]));
+    out[cls] = { members: list, records, pointer };
+  }
+  return out;
+}
+
+/**
+ * The `agents` list, already validated, with the rules the schema can't say
+ * (#2548): names are unique, each names a declared member, and a principal
+ * is listed by one session at most.
+ */
+function agentsOf(raw: unknown, members: Member[], at: (pointer: string, key?: boolean) => ErrorLocation): AgentDeclaration[] {
+  const agents = ((raw as { name: string; member: string; principals?: string[] }[] | undefined) ?? []).map((a, i) => ({
+    name: a.name,
+    member: a.member,
+    principals: [...(a.principals ?? [])],
+    pointer: `/agents/${i}`,
+  }));
+  const byName = new Map<string, AgentDeclaration>();
+  const byPrincipal = new Map<string, AgentDeclaration>();
+  for (const a of agents) {
+    const first = byName.get(a.name);
+    if (first) throw new WorkspaceReadError("declaration-invalid", `the agent name ${JSON.stringify(a.name)} is already used by the agent at ${first.pointer}`, at(`${a.pointer}/name`));
+    byName.set(a.name, a);
+    if (!members.some((m) => m.name === a.member)) {
+      throw new WorkspaceReadError(
+        "declaration-invalid",
+        `agent ${a.name} is bound to ${JSON.stringify(a.member)}, which is not a declared member; an agent session is bound to one member, not an example group`,
+        at(`${a.pointer}/member`),
+      );
+    }
+    for (const [i, p] of a.principals.entries()) {
+      const other = byPrincipal.get(p);
+      if (other) throw new WorkspaceReadError("declaration-invalid", `the principal ${JSON.stringify(p)} is already listed by agent ${other.name}`, at(`${a.pointer}/principals/${i}`));
+      byPrincipal.set(p, a);
+    }
+  }
+  return agents;
 }
 
 /** The `changes` block, already validated, with its defaults (#2773). */

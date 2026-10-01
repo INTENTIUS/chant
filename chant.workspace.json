@@ -11,6 +11,22 @@
       "kind": "docs/design/decisions/decision.kind.mjs"
     }
   ],
+  "writeScope": {
+    "agent": {
+      "records": {
+        "decision": [
+          "new",
+          "review"
+        ]
+      }
+    }
+  },
+  "agents": [
+    {
+      "name": "decisions",
+      "member": "docs"
+    }
+  ],
   "members": [
     {
       "name": "docs",

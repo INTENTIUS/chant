@@ -56,6 +56,8 @@ chant finds the file by walking up from the current directory to the git root, t
 | `hosts` | no | The [hosts](#isolation) boxes run on, each with the port range its boxes share. It was added in chant 0.91.0. |
 | `diagrams` | no | The workspace's own [diagram artifacts](#diagrams), each pinned to the renderer its render was made with. It was added in chant 0.91.0. |
 | `changes` | no | The [forward coverage check](/chant/cli/workspace-check/#the-forward-coverage-check) of `chant workspace check --changes`: `severity` (`off`, `warn` or `fail`, default `warn`) and `ignore`, globs over file paths from the workspace root whose changes need no record, such as lockfiles and generated output. It was added in chant 0.92.0. |
+| `writeScope` | no | Who may write what: for each principal class, the members whose files it may write and the record kinds it may write, with which verbs. See [Write scope and agent sessions](#write-scope-and-agent-sessions). It was added in chant 0.101.0. |
+| `agents` | no | The agent sessions, each bound to one member. See [Write scope and agent sessions](#write-scope-and-agent-sessions). It was added in chant 0.101.0. |
 | `quorum` | no | How many agree verdicts besides the decider's a record needs, as an integer from 0. [`chant workspace records`](/chant/cli/workspace-records/#reviews-and-quorum) reports each record's quorum against it, and it applies to every record kind with a reviews list. The default is 2. It was added in chant 0.86.0, so a declaration that sets it should set `minReader` to `"0.86.0"`. |
 | `$schema`, `$comment` | no | Editor hints and notes. chant ignores them. |
 | `x-...` | no | Any field whose name starts with `x-`, for people and other tools. Allowed on every object in the file. |
@@ -173,6 +175,56 @@ Readers take the top-level list first. The members' lists follow in file order.
 | [`chant workspace graph --intent`](/chant/cli/workspace-graph/#the-intent-graph) | reads every one of them, and runs each one's commit joins, when `--kind` is not given |
 
 `--kind` still overrides the declaration in `records` and `graph --intent`. A kind file is looked for in the tree read, which is the revision under `--at`. It is loaded from the working tree, the way a `--kind` file is. A declaration that uses `records` should set `minReader` to `"0.86.0"`. An older chant then reports `reader-too-old`, where it would otherwise refuse the field as unknown.
+
+## Write scope and agent sessions
+
+`writeScope` says who may write what, per member and per record kind, for each principal class ([#2548](https://github.com/INTENTIUS/chant/issues/2548), [ws-067](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-067-write-scope-and-agent-sessions.md)). `agents` names the agent sessions, each bound to one member. Both are opt-in: without them nothing is restricted.
+
+```json
+{
+  "name": "studio",
+  "schema": 1,
+  "minReader": "0.101.0",
+  "members": [
+    { "name": "app", "dir": "app", "kind": "other", "because": "a Node server" },
+    { "name": "design", "dir": "design", "kind": "design", "records": [{ "kind": "sessions/session.kind.mjs" }] }
+  ],
+  "records": [{ "kind": "decisions/decision.kind.mjs" }],
+  "writeScope": {
+    "agent": { "records": { "decision": ["new", "review"] } },
+    "runner": { "members": ["app"], "records": { "decision": ["review"] } }
+  },
+  "agents": [{ "name": "app", "member": "app", "principals": ["app-bot@example.com"] }]
+}
+```
+
+`writeScope` has an entry for each class it restricts: `human`, `agent`, `runner` or `service`. A class with no entry isn't restricted.
+
+| Field | Value |
+|---|---|
+| `members` | The members whose files the class may write, by name, or `"*"` for every path. Without it, every path. A path in no member, such as `chant.workspace.json` at the root, is in scope only under `"*"`. The `agent` entry takes no `members`: a session writes only the member it is bound to. |
+| `records` | Kind names, as the kind file's `recordKind.name` or the name the declaration gives it, each with the verbs the class may write it with: `new`, `amend`, `review` and `close`. A kind left out can't be written at all. Without `records`, every kind in reach with every verb. |
+
+A kind a member declares is in reach when that member is. The workspace's own kinds, from the top-level `records`, are in every writer's reach, so an agent bound to `app` can propose a decision that lives at the root. A record is never deleted under a restricted scope.
+
+Each entry in `agents` is a session:
+
+| Field | Required | Value |
+|---|---|---|
+| `name` | yes | The session's name, unique among agents, in the [name grammar](#names). |
+| `member` | yes | The one member the session is bound to: a declared member, not an example group. |
+| `principals` | no | Principals that write only as this session. A commit attested by one, or a write whose `by` names one, is judged as the session. A principal is listed by one session at most. |
+
+A writer's class comes from the role grants in the trust policy at base: a principal holding the `agent`, `runner` or `service` role is in that class, in that order, and anyone else is `human`. A write that names a session is in the `agent` class. Naming a session only ever narrows what the writer may do, so chant honours a session name it can't verify.
+
+| Where | How the session is named | What happens outside scope |
+|---|---|---|
+| [`chant workspace records new`, `amend`, `review` and `close`](/chant/cli/workspace-records/#writing-records), and the MCP record tools | the `CHANT_AGENT` environment variable, set by whatever runs the agent | refused with `write-scope-member`, `write-scope-kind` or `agent-unknown`; nothing is written |
+| [`chant workspace check --changes`](/chant/cli/workspace-check/#write-scope) | a `Chant-Agent: <name>` commit trailer, or an attested principal a session lists | a finding for each path, and the check fails |
+
+All three read `writeScope` and `agents` from the declaration at base (`origin/HEAD`, `main` or `master`, or the range's base for `check --changes`), with the trust policy read there too. An agent can't widen its own scope by editing its copy of the declaration, and an edit to the declaration by a writer restricted to members is itself out of scope. On a developer machine this detects; run in CI with an attestation policy at base, the principal is the signer the policy trusts ([ws-002](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-002-local-promise.md)).
+
+[`chant workspace agent <name>`](/chant/cli/workspace-agent/) prints what a session reloads from: its member, its scope and the spec.
 
 ## Diagrams
 

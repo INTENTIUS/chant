@@ -28,6 +28,7 @@
         "paths",
         "findings",
         "summary",
+        "scope",
         "ok"
       ],
       "properties": {
@@ -198,9 +199,20 @@
             }
           }
         },
+        "scope": {
+          "description": "The write scope check (#2548, ws-067): each commit in the range, merges left out, judged against the writeScope and agents of the declaration at the range's base, with the trust policy read there. Null when the base has no declaration, or one with no writeScope block and no agents. Every finding fails the check, whatever severity says.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/scope"
+            }
+          ]
+        },
         "ok": {
           "type": "boolean",
-          "description": "False only when severity is fail and there is a finding."
+          "description": "False when severity is fail and there is a finding, or when scope has a finding."
         }
       }
     },
@@ -466,6 +478,172 @@
           }
         },
         "paths": false
+      }
+    },
+    "scope": {
+      "type": "object",
+      "required": [
+        "base",
+        "restricted",
+        "agents",
+        "commits",
+        "findings"
+      ],
+      "properties": {
+        "base": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40,64}$",
+          "description": "The commit the declaration and the trust policy were read at: the range's base."
+        },
+        "restricted": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "human",
+              "agent",
+              "runner",
+              "service"
+            ]
+          },
+          "description": "The principal classes with a writeScope entry, and agent when any agent session is declared."
+        },
+        "agents": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The agent sessions the declaration at base names."
+        },
+        "commits": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/scopeCommit"
+          }
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/scopeFinding"
+          }
+        }
+      }
+    },
+    "scopeCommit": {
+      "type": "object",
+      "required": [
+        "commit",
+        "subject",
+        "principal",
+        "attested",
+        "class",
+        "agent",
+        "paths"
+      ],
+      "properties": {
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40,64}$"
+        },
+        "subject": {
+          "type": "string"
+        },
+        "principal": {
+          "type": "string",
+          "description": "The signer that attests the commit under the policy at base, or else the author's email, which the commit only claims."
+        },
+        "attested": {
+          "type": "boolean",
+          "description": "Whether principal is an attested signer."
+        },
+        "class": {
+          "enum": [
+            "human",
+            "agent",
+            "runner",
+            "service"
+          ],
+          "description": "agent for a commit naming a session with a Chant-Agent trailer or by a principal a session lists; otherwise the class the principal's role grants at base give."
+        },
+        "agent": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The agent session, or null."
+        },
+        "paths": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many paths in the workspace the commit writes."
+        }
+      }
+    },
+    "scopeFinding": {
+      "type": "object",
+      "required": [
+        "id",
+        "code",
+        "commit",
+        "path",
+        "principal",
+        "class",
+        "agent",
+        "verb",
+        "message"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "code": {
+          "enum": [
+            "write-scope-member",
+            "write-scope-kind",
+            "agent-unknown"
+          ]
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40,64}$"
+        },
+        "path": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "From the workspace root; null for agent-unknown, a finding on the whole commit."
+        },
+        "principal": {
+          "type": "string"
+        },
+        "class": {
+          "enum": [
+            "human",
+            "agent",
+            "runner",
+            "service"
+          ]
+        },
+        "agent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "verb": {
+          "enum": [
+            "new",
+            "amend",
+            "review",
+            "close",
+            "delete",
+            null
+          ],
+          "description": "For a record file of a kind the declaration at base names: how the commit wrote it. A modified record is review when only its reviews (or a session's verdicts) changed, close when a session entered a closed state, and amend otherwise."
+        },
+        "message": {
+          "type": "string"
+        }
       }
     }
   }

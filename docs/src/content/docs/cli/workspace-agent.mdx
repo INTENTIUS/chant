@@ -1,0 +1,49 @@
+---
+title: "chant workspace agent"
+description: Print an agent session from the declaration, with its member, its write scope and the spec it reloads from
+diataxis: reference
+---
+
+## Synopsis
+
+```
+chant workspace agent [<name>] [--json]
+```
+
+## Description
+
+An agent session is declared in the declaration's [`agents` list](/chant/reference/workspace-declaration/#write-scope-and-agent-sessions) and bound to one member ([#2548](https://github.com/INTENTIUS/chant/issues/2548), [#2524](https://github.com/INTENTIUS/chant/issues/2524) D20). `chant workspace agent <name>` prints what the session reloads from:
+
+- the session, with the member it is bound to and the principals it lists;
+- its write scope: the one member whose files it writes, and each declared record kind in its reach with the verbs (`new`, `amend`, `review`, `close`) it may write the kind with;
+- the spec, the `spec` block [`chant workspace records --current --json`](/chant/cli/workspace-records/#the-spec) prints: the current records of the kinds marked `spec: true`, each with the files it pins.
+
+An agent that resumes runs this and reads nothing else. It needs no memory of an earlier run and no state outside the checkout. The session and its scope are read from the declaration at base (`origin/HEAD`, `main` or `master`), as the [record writes](/chant/cli/workspace-records/#writing-records) and [`check --changes`](/chant/cli/workspace-check/#write-scope) read them, or from the working tree when there is no base or no declaration at it. The spec is read in the working tree, since that is what the agent works on. Without a name, the command prints the session `CHANT_AGENT` names.
+
+Whatever runs the agent sets `CHANT_AGENT=<name>` in its environment. The record writes and the MCP record tools then refuse a write outside the session's scope. A commit the agent makes carries a `Chant-Agent: <name>` trailer, so `check --changes` judges it as the session.
+
+```
+$ chant workspace agent app
+agent     app, bound to member app (app), scope read from base
+records   decision (decisions/decision.kind.mjs): new, review
+records   work (work/work.kind.mjs): new, amend, review, close
+spec      3 current records of 1 spec kinds
+          decision/ref-001 decided decisions/ref-001-how-the-app-is-deployed.md
+          ...
+reload    chant workspace agent app --json; chant workspace records --current --json
+```
+
+## Options
+
+| Option | Effect |
+|---|---|
+| `--json` | Print the [read contract](/chant/reference/workspace-read-contract/#agent-sessions) document, which follows `https://intentius.io/chant/schemas/workspace/agent/v1/agent.schema.json` |
+
+`chant serve mcp` serves the same document as the `workspace-agent` tool.
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | The session was printed |
+| 1 | No name was given and `CHANT_AGENT` is unset, the declaration can't be read (its reason code), or it declares no such session (`agent-unknown`) |

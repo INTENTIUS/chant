@@ -50,6 +50,8 @@ import { policyAtBase, resolveBase } from "./trust/provenance";
 import { WorkspaceReadError } from "./declaration";
 import { findSessionKinds, headCommit, sessionKindsFor } from "./session-kinds";
 import { workingTree } from "./tree";
+import { AGENT_ENV, refuseRecordWrite, WRITE_SCOPE_CODES, WriteScopeError } from "./write-scope";
+import type { WriteVerb } from "./declaration";
 
 // ── Contract ─────────────────────────────────────────────────────────────────
 
@@ -75,6 +77,7 @@ export const NEW_ERROR_CODES = [
   "source-harvest-not-proposed",
   "record-state-not-initial",
   "ratify-quorum-not-met",
+  ...WRITE_SCOPE_CODES,
   ...RECORD_REASON_CODES,
 ] as const satisfies readonly ReasonCode[];
 
@@ -89,6 +92,7 @@ export const AMEND_ERROR_CODES = [
   "amend-supersede-instead",
   "record-sign-failed",
   "ratify-quorum-not-met",
+  ...WRITE_SCOPE_CODES,
   ...RECORD_REASON_CODES,
 ] as const satisfies readonly ReasonCode[];
 
@@ -103,6 +107,7 @@ export const REVIEW_ERROR_CODES = [
   "review-sign-failed",
   "session-unknown",
   "session-not-open",
+  ...WRITE_SCOPE_CODES,
   ...RECORD_REASON_CODES,
 ] as const satisfies readonly ReasonCode[];
 
@@ -349,6 +354,15 @@ export async function open(kind: string, cwd: string): Promise<Opened> {
     view: { name: loaded.kind.name, schema: loaded.kind.schema.id, file: relative(root, loaded.file).split("\\").join("/") },
     dirRel,
   };
+}
+
+/**
+ * Refuse a write outside the writer's scope (#2548): the kind `o` opened,
+ * written with `verb`, by the session `agent` names (`CHANT_AGENT`) or the
+ * principal `by` names. Throws a {@link WriteScopeError}.
+ */
+export function refuseOutOfScope(o: Opened, verb: WriteVerb, cwd: string, writer: { agent?: string; by?: string }): void {
+  refuseRecordWrite(cwd, { kindName: o.loaded.kind.name, kindFile: o.loaded.file, recordsDir: o.loaded.dir, verb, agent: writer.agent, principal: writer.by });
 }
 
 /**
@@ -614,7 +628,7 @@ function today(): string {
 }
 
 export function failure<C>(schema: string, err: unknown): WriteFailure<C> {
-  if (err instanceof RecordWriteError || err instanceof RecordReadError) {
+  if (err instanceof RecordWriteError || err instanceof RecordReadError || err instanceof WriteScopeError) {
     return { $schema: schema, contract: RECORDS_WRITE_CONTRACT_VERSION, error: { code: err.code as C, message: err.message } };
   }
   throw err;
@@ -674,6 +688,8 @@ export interface NewRecordOptions {
    * `reviews.decider` field, which the fields must set.
    */
   sign?: string | true;
+  /** The agent session the write is made in (`CHANT_AGENT`, #2548), which its write scope binds. */
+  agent?: string;
 }
 
 /**
@@ -757,6 +773,7 @@ export async function newRecord(opts: NewRecordOptions & ChannelOptions): Promis
       throw new RecordWriteError("write-usage-invalid", `--prefix takes letters and digits, starting with a letter, not ${JSON.stringify(opts.prefix)}`);
     }
     const o = await open(opts.kind, opts.cwd);
+    refuseOutOfScope(o, "new", opts.cwd, opts);
     const fields = applyChannel(o, parseFields(opts.fields, "--from"), opts, true, "--from");
     const { kind, schema } = o.loaded;
     refuseSealField(o, fields, "--from");
@@ -820,6 +837,8 @@ export interface AmendRecordOptions {
   cwd: string;
   /** Seal the amended record's author, as `records new` does (#2688). */
   sign?: string | true;
+  /** The agent session the write is made in (#2548). */
+  agent?: string;
 }
 
 /**
@@ -839,6 +858,7 @@ export interface AmendRecordOptions {
 export async function amendRecord(opts: AmendRecordOptions & ChannelOptions): Promise<AmendDocument> {
   try {
     const o = await open(opts.kind, opts.cwd);
+    refuseOutOfScope(o, "amend", opts.cwd, opts);
     const given = applyChannel(o, parseFields(opts.fields, "--set"), opts, false, "--set");
     const { kind } = o.loaded;
     refuseSealField(o, given, "--set");
@@ -953,6 +973,8 @@ export interface ReviewRecordOptions {
    * git's `user.signingkey`. Without it the verdict is written unsealed.
    */
   sign?: string | true;
+  /** The agent session the write is made in (#2548). */
+  agent?: string;
 }
 
 /**
@@ -969,6 +991,7 @@ export async function reviewRecord(opts: ReviewRecordOptions): Promise<ReviewDoc
     if (opts.by.trim() === "") throw new RecordWriteError("write-usage-invalid", "--by needs the reviewer's name");
     if (opts.session !== undefined && opts.session === "") throw new RecordWriteError("write-usage-invalid", "--session needs a session id");
     const o = await open(opts.kind, opts.cwd);
+    refuseOutOfScope(o, "review", opts.cwd, opts);
     const { kind } = o.loaded;
     if (!kind.reviews) {
       throw new RecordWriteError("review-unsupported", `the ${kind.name} kind declares no reviews field, so its records take no review`);
@@ -983,6 +1006,8 @@ export async function reviewRecord(opts: ReviewRecordOptions): Promise<ReviewDoc
       throw new RecordWriteError("review-note-required", `a dissent needs a reason: pass --note <text> with the concern`);
     }
     const inSession = opts.session !== undefined ? await openSession(o, opts.session, opts.cwd) : undefined;
+    // The verdict is appended to the session too, so the session's kind must be in scope as well.
+    if (inSession) refuseOutOfScope(inSession.so, "review", opts.cwd, opts);
     const reviews = target.data[field] ?? [];
     if (!Array.isArray(reviews)) throw new RecordWriteError("record-schema-invalid", `${target.path}: ${field} is not a list`);
     const current = o.source.read(target.path);
@@ -1166,6 +1191,8 @@ export async function runRecordsWrite(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
   const cwd = process.cwd();
   const verb = args.extraPositional;
+  // The agent session the write is made in (#2548): set by the harness that runs the agent.
+  const agent = process.env[AGENT_ENV] || undefined;
   const print = (doc: object): number => {
     console.log(JSON.stringify(doc, null, 2));
     return "error" in doc ? 1 : 0;
@@ -1177,7 +1204,7 @@ export async function runRecordsWrite(ctx: CommandContext): Promise<number> {
     if (!id) return print(usage(RECORDS_CLOSE_SCHEMA_ID, "close needs the session's id"));
     const kind = args.kind !== undefined ? resolveWriteKind(args.kind, cwd) : await declaredSessionKind(RECORDS_CLOSE_SCHEMA_ID, cwd);
     if (typeof kind !== "string") return print(kind);
-    return print(await closeRecord({ kind, id, dryRun: args.dryRun, cwd }));
+    return print(await closeRecord({ kind, id, dryRun: args.dryRun, cwd, agent }));
   }
   if (verb === "new") {
     const named = args.extraPositional2 ?? args.kind;
@@ -1185,7 +1212,7 @@ export async function runRecordsWrite(ctx: CommandContext): Promise<number> {
     if (typeof kind !== "string") return print(kind);
     const input = readInput(RECORDS_NEW_SCHEMA_ID, "--from", args.migrateFrom, cwd);
     if (typeof input !== "string") return print(input);
-    return print(await newRecord({ kind, fields: input, prefix: args.prefix, by: args.by, sign: args.sign, dryRun: args.dryRun, cwd }));
+    return print(await newRecord({ kind, fields: input, prefix: args.prefix, by: args.by, sign: args.sign, dryRun: args.dryRun, cwd, agent }));
   }
   const schema = verb === "amend" ? RECORDS_AMEND_SCHEMA_ID : RECORDS_REVIEW_SCHEMA_ID;
   const id = args.extraPositional2;
@@ -1196,11 +1223,11 @@ export async function runRecordsWrite(ctx: CommandContext): Promise<number> {
     if (args.by !== undefined) return print(usage(schema, "--by is not taken by amend: set decided_by, or a kind's proposedBy field, with --set"));
     const input = readInput(schema, "--set", args.set, cwd);
     if (typeof input !== "string") return print(input);
-    return print(await amendRecord({ kind, id, fields: input, sign: args.sign, dryRun: args.dryRun, cwd }));
+    return print(await amendRecord({ kind, id, fields: input, sign: args.sign, dryRun: args.dryRun, cwd, agent }));
   }
   if (args.verdict === undefined) return print(usage(schema, "--verdict agree|dissent|abstain is required"));
   if (args.by === undefined) return print(usage(schema, "--by <principal> is required"));
   return print(
-    await reviewRecord({ kind, id, verdict: args.verdict, by: args.by, note: args.note, session: args.session, sign: args.sign, dryRun: args.dryRun, cwd }),
+    await reviewRecord({ kind, id, verdict: args.verdict, by: args.by, note: args.note, session: args.session, sign: args.sign, dryRun: args.dryRun, cwd, agent }),
   );
 }
