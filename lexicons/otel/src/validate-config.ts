@@ -519,6 +519,17 @@ const LISTENERS: Record<"receiver" | "exporter" | "extension", Record<string, Li
   },
 };
 
+/**
+ * The config key paths to the addresses a receiver of this type listens on,
+ * from the table OTEL117 checks. Empty for a type not in the table, whose
+ * `endpoint` may be a server the collector connects to. `collectorEndpoints`
+ * reads the receiver ports from here, so the ports a platform composite
+ * publishes and the listeners OTEL117 compares are the same set.
+ */
+export function receiverListenerPaths(type: string): string[][] {
+  return (LISTENERS.receiver[type] ?? []).map((spec) => spec.path);
+}
+
 /** The collector's own metrics endpoint when `service.telemetry.metrics` names no reader. */
 const DEFAULT_TELEMETRY_METRICS = { host: "localhost", port: 8888 };
 
