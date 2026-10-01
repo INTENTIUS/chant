@@ -235,6 +235,33 @@ export const trustConfigSchema = z
           .strict(),
       )
       .optional(),
+    /**
+     * Signers admitted for the work one return brought back (#2552, D10,
+     * ws-004). Each entry names the return by its id (the file
+     * `.chant/returns/<id>.json` the import wrote) and the keys it admits.
+     * An admitted key verifies only the returned commits and seals of that
+     * return, never a commit made in this repository.
+     */
+    admitted: z
+      .array(
+        z
+          .object({
+            return: z.string().regex(/^ret-[0-9a-f]{12}$/, "a return id, ret-<12 hex>"),
+            signers: z
+              .array(
+                z
+                  .object({
+                    principal: z.string().min(1),
+                    key: z.string().regex(/^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com) [A-Za-z0-9+/]+={0,2}$/, "an ssh public key, with no comment"),
+                  })
+                  .strict(),
+              )
+              .min(1),
+            note: z.string().optional(),
+          })
+          .strict(),
+      )
+      .optional(),
   })
   .strict();
 
@@ -267,6 +294,15 @@ export interface TrustPolicy {
   runners: RunnerKey[];
   /** Runner entries that are not used, and why. */
   excludedRunners: Array<{ principal: string; reason: string }>;
+  /** Signers admitted per return (#2552), keyed by return id. They verify that return's commits and seals only. */
+  admitted: Record<string, Signer[]>;
+  /**
+   * Set on a copy of the policy used for one returned record (#2552): the
+   * return it came back in. A seal by a principal the policy does not list
+   * then reads as unverifiable rather than unlisted, until an admin admits
+   * the signer. Never set on the policy read at base.
+   */
+  returnedFrom?: string;
   /** Why the policy could not be read, when it could not. Nothing verifies then. */
   problems: string[];
   /**
@@ -291,7 +327,7 @@ export function policyWriters(policy: TrustPolicy): Set<string> {
 
 /** A policy with nothing in it: attestation off. */
 export function emptyPolicy(base: string | null, problems: string[] = []): TrustPolicy {
-  return { base, signersPath: DEFAULT_SIGNERS_PATH, active: false, signers: [], excluded: [], roles: {}, adopted: [], runners: [], excludedRunners: [], problems };
+  return { base, signersPath: DEFAULT_SIGNERS_PATH, active: false, signers: [], excluded: [], roles: {}, adopted: [], runners: [], excludedRunners: [], admitted: {}, problems };
 }
 
 /**
@@ -345,8 +381,27 @@ export function readTrustPolicy(source: RecordSource, base: string | null): Trus
     adopted: config.adopted ?? [],
     runners,
     excludedRunners,
+    admitted: admittedOf(config),
     problems: [],
   };
+}
+
+/** The admitted signers, by return id. Two entries for one return add up. */
+function admittedOf(config: TrustConfig): Record<string, Signer[]> {
+  const out: Record<string, Signer[]> = {};
+  for (const a of config.admitted ?? []) {
+    out[a.return] = [...(out[a.return] ?? []), ...a.signers.map((s) => ({ principal: s.principal, key: s.key, line: 0 }))];
+  }
+  return out;
+}
+
+/**
+ * The policy for work that came back in return `id` (#2552): the signers at
+ * base plus the ones admitted for that return, marked with the return so a
+ * seal by an unknown signer reads as unverifiable.
+ */
+export function returnedPolicy(policy: TrustPolicy, id: string): TrustPolicy {
+  return { ...policy, signers: [...policy.signers, ...(policy.admitted[id] ?? [])], returnedFrom: id };
 }
 
 /** A file's text through `source`, or undefined when it is not there. */

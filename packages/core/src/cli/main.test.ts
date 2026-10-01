@@ -747,14 +747,17 @@ describe("workspace init and ls (#2534)", () => {
     expect(resolveCommand(init, commandRegistry)?.def.name).toBe("workspace init");
     expect(commandRegistry.filter((c) => c.name === "workspace" || c.name.startsWith("workspace ")).map((c) => c.name).sort()).toEqual([
       "workspace",
+      "workspace admit",
       "workspace adopt-lineage",
       "workspace agent",
       "workspace audit",
       "workspace build",
       "workspace check",
       "workspace evidence",
+      "workspace export",
       "workspace graph",
       "workspace hash-index",
+      "workspace import",
       "workspace init",
       "workspace lineage",
       "workspace lint",
@@ -781,6 +784,18 @@ describe("workspace init and ls (#2534)", () => {
     expect(parseArgs(["workspace", "upgrade", "--source", "acme/upstream", "--to", "v2.0.0"])).toMatchObject({ source: "acme/upstream", migrateTo: "v2.0.0" });
     expect(() => parseArgs(["workspace", "adopt-lineage", "--tags"])).toThrow(/--tags needs a tag glob/);
     expect(() => parseArgs(["workspace", "upgrade", "--source", "--to"])).toThrow(/--source needs a template/);
+  });
+
+  test("export, import and admit take their arguments (#2552)", () => {
+    const exp = parseArgs(["workspace", "export", "app,design", "--to", "out", "--param", "domain=example.com", "--dry-run", "--json"]);
+    expect(exp).toMatchObject({ command: "workspace", path: "export", extraPositional: "app,design", migrateTo: "out", param: ["domain=example.com"], dryRun: true, json: true });
+    expect(resolveCommand(exp, commandRegistry)?.def.name).toBe("workspace export");
+    const imp = parseArgs(["workspace", "import", "../copy", "--remove"]);
+    expect(imp).toMatchObject({ path: "import", extraPositional: "../copy", remove: true });
+    expect(resolveCommand(imp, commandRegistry)?.def.name).toBe("workspace import");
+    const admit = parseArgs(["workspace", "admit", "ret-0123456789ab", "--note", "returned from the studio"]);
+    expect(admit).toMatchObject({ path: "admit", extraPositional: "ret-0123456789ab", note: "returned from the studio" });
+    expect(resolveCommand(admit, commandRegistry)?.def.name).toBe("workspace admit");
   });
 
   test("workspace work takes its verb, id and lease flags (#2732)", () => {

@@ -116,15 +116,19 @@ export const sshCommitAttestor: CommitAttestor = {
     const memo = `${ctx.repo}\0${commit}\0${renderAllowedSigners(signers)}`;
     const hit = cache.get(memo);
     if (hit) return hit;
-    const answer = attest(ctx.repo, commit, signers);
+    const raw = execFileSync("git", ["cat-file", "commit", commit], { cwd: ctx.repo, maxBuffer: 64 * 1024 * 1024 });
+    const answer = judgeRaw(raw, objectFormat(ctx.repo) === "sha256" ? "gpgsig-sha256" : "gpgsig", signers);
     cache.set(memo, answer);
     return answer;
   },
+  attestRaw(ctx: AttestorContext, raw: Buffer): CommitAttestation {
+    // A commit from another repository: its object format shows in its tree line.
+    const tree = /^tree ([0-9a-f]+)$/m.exec(raw.subarray(0, 200).toString("latin1"))?.[1];
+    return judgeRaw(raw, tree?.length === 64 ? "gpgsig-sha256" : "gpgsig", ctx.policy.signers);
+  },
 };
 
-function attest(repo: string, commit: string, signers: Signer[]): CommitAttestation {
-  const raw = execFileSync("git", ["cat-file", "commit", commit], { cwd: repo, maxBuffer: 64 * 1024 * 1024 });
-  const header = objectFormat(repo) === "sha256" ? "gpgsig-sha256" : "gpgsig";
+function judgeRaw(raw: Buffer, header: string, signers: Signer[]): CommitAttestation {
   const { payload, signature } = splitSignedCommit(raw, header);
   if (!signature) return { level: "unattested", attestor: NAME, reason: "the commit is not signed" };
   if (!signature.startsWith("-----BEGIN SSH SIGNATURE-----")) {
@@ -135,4 +139,49 @@ function attest(repo: string, commit: string, signers: Signer[]): CommitAttestat
   if (r.ok) return { level: "attested", attestor: NAME, principal: r.principal, ...(r.key ? { key: r.key } : {}), reason: `signed by ${r.principal}` };
   if (r.missing) return { level: "attested-unverifiable-here", attestor: NAME, reason: r.reason };
   return { level: "unattested", attestor: NAME, reason: r.reason };
+}
+
+/**
+ * The public key inside an armored ssh signature (the SSHSIG format), as
+ * `<type> <base64>`, or undefined when the text is not one. The key is what
+ * made the signature; whether anyone trusts it is a separate question.
+ */
+export function sshSignatureKey(signature: string): string | undefined {
+  const body = signature
+    .replace(/-----BEGIN SSH SIGNATURE-----/, "")
+    .replace(/-----END SSH SIGNATURE-----/, "")
+    .replace(/\s+/g, "");
+  let buf: Buffer;
+  try {
+    buf = Buffer.from(body, "base64");
+  } catch {
+    return undefined;
+  }
+  if (buf.length < 14 || buf.subarray(0, 6).toString("latin1") !== "SSHSIG") return undefined;
+  const len = buf.readUInt32BE(10);
+  const blob = buf.subarray(14, 14 + len);
+  if (blob.length !== len || len < 4) return undefined;
+  const typeLen = blob.readUInt32BE(0);
+  const type = blob.subarray(4, 4 + typeLen).toString("latin1");
+  if (!/^[a-z0-9@.-]+$/.test(type)) return undefined;
+  return `${type} ${blob.toString("base64")}`;
+}
+
+/**
+ * Whether an ssh signature over `payload` in `namespace` is intact, whoever
+ * made it (`ssh-keygen -Y check-novalidate`). Returns the key's fingerprint,
+ * false when it does not check, or null when ssh-keygen is not installed.
+ */
+export function sshSignatureIntact(payload: Buffer, signature: string, namespace: string): string | false | null {
+  const dir = mkdtempSync(join(tmpdir(), "chant-intact-"));
+  try {
+    const sigFile = join(dir, "signature");
+    writeFileSync(sigFile, signature);
+    const r = sshKeygen(["-Y", "check-novalidate", "-n", namespace, "-s", sigFile], payload);
+    if (r.missing) return null;
+    if (r.status !== 0) return false;
+    return /key (SHA256:[A-Za-z0-9+/=]+)/.exec(r.stdout + r.stderr)?.[1] ?? "";
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }

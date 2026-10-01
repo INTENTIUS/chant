@@ -176,6 +176,17 @@ function checkSeal(policy: TrustPolicy, s: SealSubject): SealCheck {
   if (typeof s.payload === "string") return { attested: false, code: "seal-signature-invalid", message: s.payload };
   if (!policy.active) return checkIntegrity(s.principal, s.payload, seal.signature, s.namespace);
   const listed = policy.signers.filter((x) => normalise(x.principal) === normalise(s.principal));
+  if (listed.length === 0 && policy.returnedFrom !== undefined) {
+    // Returned work (#2552, ws-004): a signer the service never saw is unverifiable until an admin admits them.
+    const intact = checkIntegrity(s.principal, s.payload, seal.signature, s.namespace);
+    if (intact.attested === false) return intact;
+    return {
+      attested: null,
+      code: "seal-unverifiable",
+      message: `${s.what} came back in return ${policy.returnedFrom}, sealed by ${s.principal}${intact.key ? ` with ${intact.key}` : ""}, whom neither ${where} nor an admission for that return lists; it counts once an admin admits the signer (chant workspace admit ${policy.returnedFrom})`,
+      ...(intact.key ? { key: intact.key } : {}),
+    };
+  }
   if (listed.length === 0) {
     return { attested: false, code: "seal-signer-unlisted", message: `${s.principal} has no key in ${where}, so the seal can't count` };
   }

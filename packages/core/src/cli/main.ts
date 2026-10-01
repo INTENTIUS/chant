@@ -594,6 +594,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       // #2551 — `chant workspace adopt-lineage --index <file>`.
       result.index = args[++i];
       if (!result.index || result.index.startsWith("-")) throw new Error("--index needs a hash index file: --index <file>");
+    } else if (arg === "--remove") {
+      // #2552 — `chant workspace import --remove` removes the export member instead of writing it again.
+      result.remove = true;
     } else if (arg === "--available") {
       // #2551 — `chant workspace versions --available` lists the template's version tags.
       result.available = true;
@@ -985,6 +988,21 @@ Workspace (level 1, #2524):
                         every lineage lock under <dir>, grouped into families
                         by template; --available also lists each git
                         template's version tags and where each lock sits
+  workspace export [<member>[,<member>...]] [--to <member>] [--param name=value] [--dry-run] [--json]
+                        Write members that set travel, with their lineage and
+                        records, into the export member (role export) as a
+                        workspace of their own; with no member named, every
+                        member that travels and the workspace's own records.
+                        --param gives a host-bound parameter its value there
+  workspace import [<dir>] [--remove] [--dry-run] [--json]
+                        Bring an export back: merge per file against the
+                        export's hashes, switch host values back, record the
+                        return in .chant/returns/<id>.json with the commits the
+                        files were made in, then write the export member again
+                        or, with --remove, remove it
+  workspace admit <return id> [--note <text>] [--dry-run] [--json]
+                        Admit the signers of a return in .chant/trust.json, so
+                        its signed work reads as attested once merged
   workspace check [--at <rev>] [--json] [--format stylish|json|sarif] [--generated] [--kind <kind file>] [--live --env <env>]
                         Fail on an unreadable lineage lock or an open manual
                         step, and, in a declared workspace, on a WSP check of
@@ -1540,6 +1558,10 @@ export const commandRegistry: CommandDef[] = [
   // #2551 — adopt a lineage, the hash index it matches against, and the versions of a family of workspaces.
   { name: "workspace adopt-lineage", handler: async (ctx) => (await import("../workspace/lineage-adopt-cli")).runWorkspaceAdoptLineage(ctx) },
   { name: "workspace hash-index", handler: async (ctx) => (await import("../workspace/lineage-adopt-cli")).runWorkspaceHashIndex(ctx) },
+  // #2552 — export a workspace or members, bring an export back, and admit a return's signers.
+  { name: "workspace export", handler: async (ctx) => (await import("../workspace/export-cli")).runWorkspaceExport(ctx) },
+  { name: "workspace import", handler: async (ctx) => (await import("../workspace/export-cli")).runWorkspaceImport(ctx) },
+  { name: "workspace admit", handler: async (ctx) => (await import("../workspace/export-cli")).runWorkspaceAdmit(ctx) },
   { name: "workspace versions", handler: async (ctx) => (await import("../workspace/lineage-versions")).runWorkspaceVersions(ctx) },
   // #2641 — workspace check reads member configs statically and never runs one.
   { name: "workspace check", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/lineage-check")).runWorkspaceCheck(ctx) },

@@ -26,6 +26,12 @@ export interface RecordProvenance {
   principal?: string;
   key?: string;
   reason: string;
+  /**
+   * Set when the content came back in a return (#2552): the return's id, the
+   * commit in the returned copy that the level judges, and the commit here
+   * that holds the content. `commit` above is that commit here.
+   */
+  returned?: { id: string; commit?: string; importedIn: string | null };
 }
 
 /** Where the base revision came from. */
@@ -171,6 +177,12 @@ export interface ProvenanceQuery {
   at: string | null;
   paths: string[];
   attestors: readonly CommitAttestor[];
+  /**
+   * A second look at each committed path, given the provenance of the commit
+   * that holds it here. Returned work (#2552) uses it to judge the commit the
+   * content was made in, which a return carries. Undefined keeps the answer.
+   */
+  revisit?: (path: string, host: RecordProvenance) => RecordProvenance | undefined;
 }
 
 /**
@@ -199,7 +211,8 @@ export function recordProvenance(q: ProvenanceQuery): Map<string, RecordProvenan
       out.set(p, { level: "unattested", commit: null, reason: "no commit holds this file" });
       continue;
     }
-    out.set(p, commitProvenance(q.repo, q.policy, c, q.attestors));
+    const host = commitProvenance(q.repo, q.policy, c, q.attestors);
+    out.set(p, q.revisit?.(p, host) ?? host);
   }
   return out;
 }

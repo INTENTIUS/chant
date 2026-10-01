@@ -358,6 +358,10 @@
           "minLength": 1,
           "description": "Where an embedded member's files come from. Versions live in the lock."
         },
+        "travel": {
+          "type": "boolean",
+          "description": "Whether the member goes with an export (#2524 D10, #2552). chant workspace export writes only members that set travel to true into the export member, and refuses to name one that does not. Added in schema 1 by chant 0.101.0, so a declaration that uses it sets minReader to 0.101.0 or newer."
+        },
         "because": {
           "type": "string",
           "minLength": 1,

@@ -35,7 +35,7 @@ import {
   type Lineage,
 } from "./lineage-lock";
 import { MIGRATIONS_DIR } from "./lineage-migrations";
-import { TEMPLATE_MANIFEST, readManifest, resolveParameters, substituteParameters } from "./template-manifest";
+import { TEMPLATE_MANIFEST, hostBoundFiles, readManifest, resolveParameters, substituteParameters } from "./template-manifest";
 import { repinSubstituted, type RepinnedRecord } from "./template-pins";
 
 // ── The template spec ────────────────────────────────────────────────────────
@@ -432,10 +432,12 @@ export async function initFromCommand(options: InitFromOptions): Promise<InitFro
   let parameters: Record<string, string>;
   let contents: Map<string, Buffer>;
   let repinned: RepinnedRecord[];
+  let hostBound: Record<string, string[]> | undefined;
   try {
     const raw = new Map([...fetched.files].map(([path, f]) => [path, f.data]));
     const manifest = readManifest(raw);
     parameters = resolveParameters(manifest, options.params ?? {});
+    hostBound = hostBoundFiles(raw, manifest);
     // Records that pin a substituted file get its new hash, so a copy's pins hold (#2549).
     ({ files: contents, repinned } = repinSubstituted(raw, substituteParameters(raw, manifest, parameters), manifest?.files ?? []));
   } catch (err) {
@@ -462,6 +464,7 @@ export async function initFromCommand(options: InitFromOptions): Promise<InitFro
 
   const common = {
     parameters,
+    ...(hostBound ? { hostBound } : {}),
     ...(repinned.length > 0 ? { repinned: repinned.filter((r) => written.has(r.record)) } : {}),
     migrations: [],
     files: fileEntries(written, declaredFilesAt(targetDir)),

@@ -30,7 +30,7 @@ Two files hold the policy. Both are optional, and both are read at base.
 |---|---|
 | `.chant/allowed_signers` | The signers, in ssh-keygen's [allowed signers format](https://man.openbsd.org/ssh-keygen#ALLOWED_SIGNERS). It's the same file `git log --show-signature` can use. |
 | `.chant/allowed_signers.rotation.json` | The current version of the signer set, its threshold, and the signatures that admitted it. See [`chant workspace signers`](/chant/cli/workspace-signers/). |
-| `.chant/trust.json` | Where the signers file is, if not at the default path; the role grants; any adopted commit ranges; and the runner keys that sign [evidence](/chant/cli/workspace-evidence/). |
+| `.chant/trust.json` | Where the signers file is, if not at the default path; the role grants; any adopted commit ranges; the runner keys that sign [evidence](/chant/cli/workspace-evidence/); and the signers admitted for a [return](/chant/cli/workspace-export/#hosted-return). |
 
 ```json
 {
@@ -42,6 +42,8 @@ Two files hold the policy. Both are optional, and both are read at base.
 ```
 
 The same signers file checks sealed review verdicts, which are signed in the `chant-review` namespace ([#2687](https://github.com/INTENTIUS/chant/issues/2687)), and records sealed by their author, signed in the `chant-record` namespace ([#2688](https://github.com/INTENTIUS/chant/issues/2688)). A line restricted with `namespaces="git"` signs commits only. A reviewer's line needs `chant-review` in its `namespaces`, an author's needs `chant-record`, and a line with no `namespaces` option signs all three. [Sealing a verdict](/chant/cli/workspace-records/#sealing-a-verdict) and [Sealing a record](/chant/cli/workspace-records/#sealing-a-record) have the rest.
+
+An entry under `admitted`, `{ "return": "ret-<12 hex>", "signers": [{ "principal": "...", "key": "ssh-ed25519 ..." }], "note": "..." }`, admits keys for one return only. They verify the commits and seals that return carries, and never a commit made in this repository. [`chant workspace admit`](/chant/cli/workspace-export/#admitting-the-signers) writes it.
 
 Role grants live in `trust.json` for now. Once `chant.workspace.json` exists ([#2534](https://github.com/INTENTIUS/chant/issues/2534)), they move into the declaration.
 

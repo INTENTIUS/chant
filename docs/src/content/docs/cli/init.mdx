@@ -131,7 +131,7 @@ The manifest sits at the root of the directory a project is made from, which is 
 | `parameters.<name>.type` | `"string"`, the only type so far. |
 | `parameters.<name>.default` | Optional. The value used when `--param` does not set one. A parameter with no default must be given at init. |
 | `parameters.<name>.pattern` | Optional. A regular expression every value must match, the default included. Values are inserted as written, so a pattern is how a template keeps a value from breaking the file around it, for example a quote inside a JSON string. |
-| `parameters.<name>.hostBound` | Optional. Marks a value that differs per host. #2524 D9 records such values per host, and that part belongs to export and import ([#2552](https://github.com/INTENTIUS/chant/issues/2552)). Until it lands, a host-bound value goes into `parameters` like any other. |
+| `parameters.<name>.hostBound` | Optional. Marks a value that differs per host, such as the domain a hosted service serves the app on. The value goes into `parameters` like any other, and the lock's [`hostBound`](/chant/reference/lineage-lock/#a-lineage) lists the files that carry it, so [`chant workspace export`](/chant/cli/workspace-export/) can switch it and `import` can switch it back ([#2552](https://github.com/INTENTIUS/chant/issues/2552)). |
 | `parameters.<name>.description` | Optional. For people reading the manifest. |
 | `files` | The paths, relative to the manifest's directory, whose placeholders are substituted. Each must be a file in the template. Files not listed are copied byte for byte. |
 | `$comment` | Optional. Ignored. |

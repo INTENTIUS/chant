@@ -180,6 +180,15 @@ describe("chant init --from with parameters (#2627)", () => {
     expect(scope.files["chant.template.json"]).toBeUndefined();
     // The merge base is the file as written, with the value in it.
     expect(scope.files["src/main.ts"].sha256).toBe(fileHash(readFileSync(join(target, "src/main.ts"))));
+    // The host-bound parameter, with the listed files that carry it, for export and import (#2552).
+    expect(scope.hostBound).toEqual({ url: ["src/main.ts"] });
+  });
+
+  test("a template with no host-bound parameter records no hostBound (#2552)", async () => {
+    declare({ parameters: { name: MANIFEST.parameters.name }, files: ["package.json"] }, { "src/main.ts": "plain\n" });
+    const target = join(root, "proj");
+    expect((await initFromCommand({ from: `${tpl}@main#svc`, path: target })).error).toBeUndefined();
+    expect(readLock(target)!.scopes["."]).not.toHaveProperty("hostBound");
   });
 
   test("an undeclared --param is refused with the declared names listed, and nothing is written", async () => {

@@ -141,6 +141,8 @@ export interface ParsedArgs {
   index?: string;
   /** `chant workspace versions --available` (#2551): list each git template's version tags. */
   available?: boolean;
+  /** `chant workspace import --remove` (#2552): remove the export member instead of writing it again. */
+  remove?: boolean;
   /** `chant lifecycle rollback --dry-run` — compute the rollback delta and print it; open no PR, push nothing, leave no branch. */
   dryRun?: boolean;
   /** `chant lifecycle teardown <env> --yes` — execute the planned deletion

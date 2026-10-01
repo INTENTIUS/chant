@@ -32,7 +32,7 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | Category | Where the code keeps it | chant | hud | plugin |
 |---|---|---|---|---|
 | boundary cell | the table of #2657, one row per cell | 6 | 5 | 3 |
-| workspace command | `commandRegistry` in `cli/main.ts`, and each sub-verb its help names | 36 | 0 | 0 |
+| workspace command | `commandRegistry` in `cli/main.ts`, and each sub-verb its help names | 39 | 0 | 0 |
 | member kind | `BUILTIN_KIND_NAMES` in `kinds.ts` | 5 | 0 | 0 |
 | record kind | none in core; `decision` and `session` are this repository's, the rest a plugin's | 4 | 0 | 4 |
 | member link kind | `LINK_KINDS` in `links.ts` | 2 | 0 | 0 |
@@ -94,6 +94,9 @@ Each row follows, in the order of the table above.
 | workspace command | `workspace adopt-lineage` | chant | chant workspace adopt-lineage --json | Gives a scope with no lineage one matched against the template's versions, or moves a directory lineage onto git. |
 | workspace command | `workspace hash-index` | chant | chant workspace hash-index | Computes the per-version file hashes adopt-lineage matches a scope against, for a template's CI to publish. |
 | workspace command | `workspace versions` | chant | chant workspace versions --json | Reports the template, chant and lexicon versions of every lineage lock under a directory, by template family. |
+| workspace command | `workspace export` | chant | chant workspace export --json | Writes the members that travel, with their lineage and records, into the export member as a workspace of their own, switching host-bound values. |
+| workspace command | `workspace import` | chant | chant workspace import --json | Brings an export back per file against its recorded hashes, switches host values back, and records the return with the commits the files were made in. |
+| workspace command | `workspace admit` | chant | chant workspace admit --json | Adds a return's signers to .chant/trust.json under admitted, so the returned work reads as attested once an admin merges it. |
 | workspace command | `workspace build` | chant | chant workspace build | Builds every chant member and example project, each under its own chant. |
 | workspace command | `workspace lint` | chant | chant workspace lint | Runs each member's own lint, with one SARIF run per member. |
 | workspace command | `workspace audit` | chant | chant workspace audit | Audits each member's files on disk with its own audit config, adding a member field to each finding. |

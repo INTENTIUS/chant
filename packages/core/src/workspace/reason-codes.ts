@@ -106,7 +106,7 @@ export const REASONS = {
   "seal-missing": "The verdict, or the record, carries no seal.",
   "seal-signer-unlisted": "The reviewer, or the record's author, has no key in the signers file at base, so the seal can't count.",
   "seal-signature-invalid": "The seal is malformed, names a signer other than the reviewer or author, or its signature does not verify over the verdict or record.",
-  "seal-unverifiable": "Nothing here can say whose seal it is: there is no signers file at base, or ssh-keygen is not installed.",
+  "seal-unverifiable": "Nothing here can say whose seal it is: there is no signers file at base, ssh-keygen is not installed, or the record came back in a return sealed by a signer no admission lists yet.",
   // A record whose author seal is not attested under a signers file at base (records, #2688). A warning: the record is still read.
   "record-unattested": "A signers file is active at base, and the record names an author whose seal does not verify: it has none, the author has no key in the file, or the signature fails.",
   // A records read that fails (records).

@@ -249,6 +249,9 @@
   "formatting/em-dash-density": 2,
   "claude/colon-reveal": 2
  },
+ "docs/src/content/docs/cli/workspace-export.mdx": {
+  "claude/colon-reveal": 2
+ },
  "docs/src/content/docs/cli/workspace-init.mdx": {
   "formatting/em-dash-density": 2,
   "claude/colon-reveal": 2
