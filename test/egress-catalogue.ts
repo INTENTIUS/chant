@@ -58,7 +58,7 @@ export const EGRESS_PHASES: readonly EgressPhase[] = [
     id: "apply",
     label: "Reading and changing an estate",
     summary:
-      "`chant lifecycle diff --live`, `plan`, `snapshot`, `apply`, `converge`, `chant search --live`, `chant import --live`, `chant run` and every component verb talk to the substrate they manage. This is the provider API, not a chant service — the same endpoint a console session or an SDK call would use, with the same credentials.",
+      "`chant lifecycle diff --live`, `plan`, `snapshot`, `apply`, `converge`, `chant search --live`, `chant import --live`, `chant workspace graph --live`, `chant workspace check --live`, `chant run` and every component verb talk to the substrate they manage. The two workspace commands do it through each member's own `chant graph --live`, so they reach what that member's lexicon reaches, and they are the only workspace commands that do (`chant workspace check` without `--live` reads files only). This is the provider API, not a chant service — the same endpoint a console session or an SDK call would use, with the same credentials.",
   },
   {
     id: "emulator",

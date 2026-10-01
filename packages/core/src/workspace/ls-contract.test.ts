@@ -129,7 +129,7 @@ describe("chant workspace ls on built workspaces", () => {
       ["tools", false, "kind-probe-failed"],
       ["vendor", true, null],
     ]);
-    expect(doc.members[2].reason?.message).toMatch(/known kinds: chant, other, workspace/);
+    expect(doc.members[2].reason?.message).toMatch(/known kinds: chant, design, other, workspace/);
     expect(doc.members[0].roles).toEqual([{ name: "frontend", path: "src" }]);
     expect(doc.groups[0].reason?.code).toBe("no-matches");
     expect(doc.summary).toEqual({ members: 5, unreadable: 3, groups: 1, matches: 0 });

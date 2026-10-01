@@ -111,7 +111,7 @@ describe("declaration checks (#2535)", () => {
         column: 15,
         ruleId: "WSP003",
         severity: "error",
-        message: "member infra has kind terraform, which no built-in kind or pinned package supplies; known kinds: chant, other, workspace",
+        message: "member infra has kind terraform, which no built-in kind or pinned package supplies; known kinds: chant, design, other, workspace",
         entity: "infra",
       },
     ]);
