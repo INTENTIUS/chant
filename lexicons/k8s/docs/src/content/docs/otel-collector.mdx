@@ -32,12 +32,26 @@ export const collector = OtelCollector({
 | `daemonSet` | DaemonSet | One collector per node, the config mounted at `/etc/otel/config.yaml` |
 | `service` | Service | `internalTrafficPolicy: Local`, so each pod's traffic stays on its own node |
 | `serviceAccount` | ServiceAccount | Named `<name>-sa` |
-| `clusterRole` | ClusterRole | Read access to pods, nodes, endpoints, replica sets and jobs, the same rules `GkeOtelCollector` grants |
+| `clusterRole` | ClusterRole | What `k8sattributes` and the config's receivers read from the Kubernetes API; see [RBAC](#rbac) |
 | `clusterRoleBinding` | ClusterRoleBinding | Binds the role to the service account |
 | `configMap` | ConfigMap | The rendered collector config, named `<name>-config` |
-| `endpointsRole`, `endpointsRoleBinding` | Role, RoleBinding | Only when the config has a `loadbalancing` exporter with the `k8s` resolver; see [agents to the gateway](#agents-to-the-gateway) |
+| `endpointsRole`, `endpointsRoleBinding` | Role, RoleBinding | Only when the config has a `loadbalancing` exporter with the `k8s` resolver; one pair per namespace, see [agents to the gateway](#agents-to-the-gateway) |
 
 Pods send OTLP to `otel-collector.observability.svc:4317` (gRPC) or `:4318` (HTTP) with the default name and namespace.
+
+### RBAC
+
+The ClusterRole is the one `GkeOtelCollector` grants too. It holds what the `k8sattributes` processor reads, so an agent can add pod metadata without extra rules, plus what the config's Kubernetes receivers read. The rules follow each component's README at collector-contrib v0.130.0, the version the otel lexicon pins.
+
+| Component | Rules |
+|-----------|-------|
+| `k8sattributes` (always) | `get`, `list`, `watch` on pods, namespaces and nodes, and on `apps` replicasets |
+| `k8sattributes` extracting labels or annotations `from: deployment` | adds `apps` deployments |
+| `kubeletstats` | `get` on `nodes/stats` |
+| `kubeletstats` with `extra_metadata_labels`, or a `*_request_utilization` or `*_limit_utilization` metric enabled | adds `get` on `nodes/proxy` |
+| `kubeletstats` with `k8s_api_config` | adds `get` on persistentvolumeclaims and persistentvolumes |
+
+Rules in `defaults.clusterRole.rules` are appended, for a component the table does not cover.
 
 ## Props
 
@@ -121,7 +135,7 @@ export const gateway = OtelCollectorGateway({
 
 The gateway reads nothing from the Kubernetes API by default, so it gets no ClusterRole. A config that does, such as one with a `k8s_cluster` receiver or a `k8sattributes` processor, passes the rules it needs as `clusterRules`.
 
-A multi-replica gateway running `k8s_cluster` puts the receiver behind a `k8s_leader_elector` extension (the otel lexicon's `K8sLeaderElectorExtension`), so only the replica holding a Lease collects; see [WK8603](/chant/lexicons/k8s/otel-placement-checks/#wk8603-k8s_cluster-in-every-collector-copy). When `service.extensions` enables one, the gateway adds a Role on `leases` in `coordination.k8s.io`, in the extension's `lease_namespace`, bound to its ServiceAccount, with the verbs the extension's README suggests at collector-contrib v0.130.0 (`get`, `list`, `watch`, `create`, `update`, `patch`, `delete`). The gateway grants Lease access in one namespace, so electors with Leases in two namespaces are refused; use one `lease_namespace`.
+A multi-replica gateway running `k8s_cluster` puts the receiver behind a `k8s_leader_elector` extension (the otel lexicon's `K8sLeaderElectorExtension`), so only the replica holding a Lease collects; see [WK8603](/chant/lexicons/k8s/otel-placement-checks/#wk8603-k8s_cluster-in-every-collector-copy). When `service.extensions` enables one, the gateway adds a Role on `leases` in `coordination.k8s.io`, in the extension's `lease_namespace`, bound to its ServiceAccount, with the verbs the extension's README suggests at collector-contrib v0.130.0 (`get`, `list`, `watch`, `create`, `update`, `patch`, `delete`). Electors with Leases in several namespaces get one Role and RoleBinding in each: the first namespace's are `leaseRole` and `leaseRoleBinding`, and each further one's are `leaseRoleIn<Namespace>` and `leaseRoleBindingIn<Namespace>`, with the namespace in PascalCase (`team-a` gives `leaseRoleInTeamA`). `defaults.leaseRole` and `defaults.leaseRoleBinding` apply to each.
 
 | Prop | Default | Meaning |
 |------|---------|---------|
@@ -157,18 +171,21 @@ export const agent = OtelCollector({
 
 By default the exporter is `otlp/gateway`, sending to `<name>.<namespace>.svc:<port>` through the ClusterIP Service. gRPC keeps a connection open to one pod, so each agent sticks to one replica; that is fine for metrics and logs, and for traces when nothing on the gateway needs to see a whole trace.
 
+With `protocol: "http"` it is `otlphttp/gateway`, sending OTLP over HTTP to `http://<name>.<namespace>.svc:<port>` on the gateway's `otlp-http` port. A `tls` without `insecure` makes the scheme `https://` and is passed on without `insecure`. The `loadbalancing` exporter sends OTLP over gRPC only at the pinned collector version, so `protocol: "http"` with `loadBalance` is refused.
+
 With `loadBalance: true` it is `loadbalancing/gateway`, routing by trace id to the headless Service, so every span of a trace reaches the same replica. A multi-replica gateway that runs `tail_sampling` or `spanmetrics` needs this; otherwise each replica decides on a fragment of the trace.
 
 | Option | Default | Meaning |
 |--------|---------|---------|
-| `name` | `gateway` | Exporter name: `otlp/<name>` or `loadbalancing/<name>` |
+| `name` | `gateway` | Exporter name: `otlp/<name>`, `otlphttp/<name>` or `loadbalancing/<name>` |
+| `protocol` | `grpc` | `grpc` for an `otlp` exporter, `http` for an `otlphttp` exporter |
 | `loadBalance` | `false` | Use a `loadbalancing` exporter on the headless Service |
 | `resolver` | `k8s` | `k8s` watches the headless Service's Endpoints (`<name>-headless.<namespace>`); `dns` resolves `<name>-headless.<namespace>.svc` |
 | `routingKey` | `traceID` | What the `loadbalancing` exporter hashes on |
-| `port` | `otlp-grpc` | The gateway Service port to send to, by name |
+| `port` | `otlp-grpc`, or `otlp-http` with `protocol: "http"` | The gateway Service port to send to, by name |
 | `tls` | `{ insecure: true }` | TLS for the connection; plaintext inside the cluster by default |
 
-The `loadbalancing` exporter runs in the agent, so the `k8s` resolver needs the agent to read the gateway's Endpoints. When an agent's config has a `loadbalancing` exporter with the `k8s` resolver, whether from `gatewayExporter` or written by hand, `OtelCollector` adds a Role and RoleBinding named `<agent>-endpoints` in the resolved Service's namespace. They grant the agent's ServiceAccount `get`, `list` and `watch` on Endpoints, which the resolver watches at the pinned collector version, and on EndpointSlices, which later versions watch. One agent resolves Services in one namespace; a config that points `k8s` resolvers at two namespaces is refused.
+The `loadbalancing` exporter runs in the agent, so the `k8s` resolver needs the agent to read the gateway's Endpoints. When an agent's config has a `loadbalancing` exporter with the `k8s` resolver, whether from `gatewayExporter` or written by hand, `OtelCollector` adds a Role and RoleBinding named `<agent>-endpoints` in the resolved Service's namespace. They grant the agent's ServiceAccount `get`, `list` and `watch` on Endpoints, which the resolver watches at the pinned collector version, and on EndpointSlices, which later versions watch. A config whose `k8s` resolvers point at several namespaces gets one Role and RoleBinding in each: the first namespace's are `endpointsRole` and `endpointsRoleBinding`, and each further one's are `endpointsRoleIn<Namespace>` and `endpointsRoleBindingIn<Namespace>` (`team-a` gives `endpointsRoleInTeamA`). `defaults.endpointsRole` and `defaults.endpointsRoleBinding` apply to each.
 
 ## Deployment shape in the built manifests
 

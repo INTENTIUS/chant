@@ -108,13 +108,26 @@ describe("OtelCollectorGateway", () => {
     expect(OtelCollectorGateway({}).leaseRole).toBeUndefined();
   });
 
-  test("k8s_leader_elector extensions in two lease namespaces are refused", () => {
+  test("k8s_leader_elector extensions in two lease namespaces get a Role and RoleBinding in each", () => {
     const a = new K8sLeaderElectorExtension({ name: "a", lease_name: "a", lease_namespace: "one" });
-    const b = new K8sLeaderElectorExtension({ name: "b", lease_name: "b", lease_namespace: "two" });
+    const b = new K8sLeaderElectorExtension({ name: "b", lease_name: "b", lease_namespace: "team-two" });
     const debug = new DebugExporter({});
     const otlp = new OtlpReceiver({ protocols: { grpc: { endpoint: "0.0.0.0:4317" } } });
     const config = [new Pipeline({ signal: "traces", receivers: [otlp], exporters: [debug] }), new CollectorService({ extensions: [a, b] })];
-    expect(() => OtelCollectorGateway({ name: "gw", config })).toThrow(/Leases in one and two/);
+    const gw = OtelCollectorGateway({ name: "gw", namespace: "obs", config });
+    expect(p(gw.leaseRole).metadata).toMatchObject({ name: "gw-leases", namespace: "one" });
+    expect(p(gw.leaseRoleBinding).metadata).toMatchObject({ name: "gw-leases", namespace: "one" });
+    expect(p(gw.leaseRoleInTeamTwo).metadata).toMatchObject({ name: "gw-leases", namespace: "team-two" });
+    expect(p(gw.leaseRoleInTeamTwo).rules).toEqual(p(gw.leaseRole).rules);
+    expect(p(gw.leaseRoleBindingInTeamTwo).metadata).toMatchObject({ name: "gw-leases", namespace: "team-two" });
+    expect(p(gw.leaseRoleBindingInTeamTwo).subjects).toEqual([{ kind: "ServiceAccount", name: "gw-sa", namespace: "obs" }]);
+    const roles = manifests({ gw }).filter((d) => d.kind === "Role" || d.kind === "RoleBinding");
+    expect(roles.map((d) => `${d.kind}/${d.metadata.namespace}/${d.metadata.name}`).sort()).toEqual([
+      "Role/one/gw-leases",
+      "Role/team-two/gw-leases",
+      "RoleBinding/one/gw-leases",
+      "RoleBinding/team-two/gw-leases",
+    ]);
   });
 
   test("the Deployment and ConfigMap say they are a gateway and name each other", () => {
@@ -179,6 +192,36 @@ describe("gatewayExporter", () => {
     expect(() => gatewayExporter(gw)).toThrow(/no port named "otlp-grpc" \(it has: otlp-http\)/);
   });
 
+  test("with protocol http, an otlphttp exporter at the gateway's OTLP HTTP port", () => {
+    const exporter = gatewayExporter(OtelCollectorGateway({}), { protocol: "http" });
+    expect(exporter.componentId).toBe("otlphttp/gateway");
+    expect(p(exporter)).toEqual({ name: "gateway", endpoint: "http://otel-gateway.observability.svc:4318" });
+    const agent = agentOf(exporter, { name: "agent" });
+    expect(config(agent).exporters?.["otlphttp/gateway"]).toEqual({ endpoint: "http://otel-gateway.observability.svc:4318" });
+    expect(p(agent.configMap).metadata.annotations[A.gateways]).toBe("observability/otel-gateway=service");
+    expect(validateCollectorConfig(config(agent))).toEqual([]);
+  });
+
+  test("with protocol http and TLS, https and the TLS settings without insecure", () => {
+    const exporter = gatewayExporter(OtelCollectorGateway({ name: "gw", namespace: "obs" }), { protocol: "http", tls: { ca_file: "/certs/ca.pem" } });
+    expect(p(exporter)).toEqual({ name: "gateway", endpoint: "https://gw.obs.svc:4318", tls: { ca_file: "/certs/ca.pem" } });
+  });
+
+  test("with protocol grpc, the default otlp exporter", () => {
+    const gw = OtelCollectorGateway({});
+    expect(p(gatewayExporter(gw, { protocol: "grpc" }))).toEqual(p(gatewayExporter(gw)));
+  });
+
+  test("protocol http with loadBalance is refused", () => {
+    expect(() => gatewayExporter(OtelCollectorGateway({}), { protocol: "http", loadBalance: true })).toThrow(/gRPC only/);
+  });
+
+  test("a gateway without an OTLP HTTP port is refused for protocol http", () => {
+    const otlp = new OtlpReceiver({ protocols: { grpc: { endpoint: "0.0.0.0:4317" } } });
+    const gw = OtelCollectorGateway({ config: [new Pipeline({ signal: "traces", receivers: [otlp], exporters: [new DebugExporter({})] })] });
+    expect(() => gatewayExporter(gw, { protocol: "http" })).toThrow(/no port named "otlp-http" \(it has: otlp-grpc\)/);
+  });
+
   test("the otel topology reports the gateway as the exporter's endpoint", () => {
     const agent = agentOf(gatewayExporter(OtelCollectorGateway({ namespace: "obs" }), { loadBalance: true }));
     const exporters = collectorTopology(config(agent)).exporters;
@@ -214,13 +257,35 @@ describe("OtelCollector wired to a gateway", () => {
     expect(p(agent.configMap).metadata.annotations[A.gateways]).toBeUndefined();
   });
 
-  test("resolvers in two namespaces are refused", () => {
+  test("resolvers in two namespaces get a Role and RoleBinding in each", () => {
     const otlp = new OtlpReceiver({ protocols: { grpc: { endpoint: "0.0.0.0:4317" } } });
     const a = gatewayExporter(OtelCollectorGateway({ namespace: "one" }), { loadBalance: true, name: "a" });
-    const b = gatewayExporter(OtelCollectorGateway({ namespace: "two" }), { loadBalance: true, name: "b" });
-    expect(() =>
-      OtelCollector({ config: [new Pipeline({ signal: "traces", receivers: [otlp], exporters: [a, b] })] }),
-    ).toThrow(/resolve Services in one and two/);
+    const b = gatewayExporter(OtelCollectorGateway({ namespace: "team-two" }), { loadBalance: true, name: "b" });
+    const agent = OtelCollector({ name: "agent", namespace: "agents", config: [new Pipeline({ signal: "traces", receivers: [otlp], exporters: [a, b] })] });
+    expect(p(agent.endpointsRole).metadata).toMatchObject({ name: "agent-endpoints", namespace: "one" });
+    expect(p(agent.endpointsRoleInTeamTwo).metadata).toMatchObject({ name: "agent-endpoints", namespace: "team-two" });
+    expect(p(agent.endpointsRoleInTeamTwo).rules).toEqual(p(agent.endpointsRole).rules);
+    for (const binding of [agent.endpointsRoleBinding, agent.endpointsRoleBindingInTeamTwo]) {
+      expect(p(binding).roleRef).toEqual({ apiGroup: "rbac.authorization.k8s.io", kind: "Role", name: "agent-endpoints" });
+      expect(p(binding).subjects).toEqual([{ kind: "ServiceAccount", name: "agent-sa", namespace: "agents" }]);
+    }
+    expect(p(agent.endpointsRoleBindingInTeamTwo).metadata.namespace).toBe("team-two");
+    const roles = manifests({ agent }).filter((d) => d.kind === "Role" || d.kind === "RoleBinding");
+    expect(roles.map((d) => `${d.kind}/${d.metadata.namespace}/${d.metadata.name}`).sort()).toEqual([
+      "Role/one/agent-endpoints",
+      "Role/team-two/agent-endpoints",
+      "RoleBinding/one/agent-endpoints",
+      "RoleBinding/team-two/agent-endpoints",
+    ]);
+  });
+
+  test("resolvers in one namespace keep a single Role", () => {
+    const otlp = new OtlpReceiver({ protocols: { grpc: { endpoint: "0.0.0.0:4317" } } });
+    const gw = OtelCollectorGateway({ namespace: "one" });
+    const a = gatewayExporter(gw, { loadBalance: true, name: "a" });
+    const b = gatewayExporter(gw, { loadBalance: true, name: "b", routingKey: "service" });
+    const agent = OtelCollector({ config: [new Pipeline({ signal: "traces", receivers: [otlp], exporters: [a, b] })] });
+    expect(Object.keys((agent as any).members).filter((k) => k.startsWith("endpoints")).sort()).toEqual(["endpointsRole", "endpointsRoleBinding"]);
   });
 
   test("the agent's ConfigMap and DaemonSet name the gateway and how they reach it", () => {
