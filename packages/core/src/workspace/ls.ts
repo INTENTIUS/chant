@@ -21,7 +21,7 @@
  */
 
 import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import { formatError } from "../cli/format";
 import type { CommandContext } from "../cli/registry";
 import {
@@ -37,6 +37,7 @@ import {
   type WorkspaceErrorCode,
 } from "./declaration";
 import type { ReasonCode } from "./reason-codes";
+import { memberGenerated, type LsGenerated } from "./ls-generated";
 import { loadKindRegistry, probeKind, type KindRegistry } from "./kinds";
 import type { WorkspaceTree } from "./tree";
 import { handToRootChant, locateWorkspace } from "./which-chant";
@@ -89,6 +90,8 @@ export interface LsRecordKind {
   acceptance: LsAcceptance[] | null;
 }
 
+export type { LsGenerated } from "./ls-generated";
+
 /** A work item's acceptance criteria, counted (#2772). */
 export interface LsAcceptance {
   item: string;
@@ -108,6 +111,8 @@ export interface LsMember {
   reason: { code: MemberReasonCode; message: string } | null;
   /** The record kinds the member declares, in file order (#2680). */
   records: LsRecordKind[];
+  /** The files the member generates, and the job names inside its forge CI files (#3050). */
+  generated: LsGenerated[];
 }
 
 /**
@@ -231,6 +236,7 @@ function readListing(query: LsQuery): { doc: LsDocument; declaration?: Declarati
     // for --at: they are read as data, never run (#2535).
     const kinds = query.kinds ?? loadKindRegistry(declaration.pins, rootOnDisk).registry;
     const groups = resolveGroups(declaration, tree);
+    const repoPrefix = isAbsolute(located.root) ? "." : located.root;
     const members: LsMember[] = declaration.members.map((m) => {
       const reason = memberReason(m, tree, kinds);
       return {
@@ -243,6 +249,7 @@ function readListing(query: LsQuery): { doc: LsDocument; declaration?: Declarati
         readable: reason === null,
         reason,
         records: unloaded(m.records),
+        generated: memberGenerated(m, tree, repoPrefix),
       };
     });
     const lsGroups: LsGroup[] = groups.map((g) => ({
