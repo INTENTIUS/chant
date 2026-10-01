@@ -251,11 +251,13 @@ describe("datasources and targets", () => {
     expect(panel.targets!.map((t) => (t as { datasource?: unknown }).datasource)).toEqual([{ type: "prometheus", uid: "prometheus" }, undefined]);
   });
 
-  test("a panel takes its queries' shared datasource, and a row passes its own down", () => {
+  test("a panel takes its queries' shared datasource, and a row's datasource stays on the row (#2983)", () => {
     const [shared] = panelsOnly([new StatPanel({ targets: [new PromQuery({ expr: "up", datasource: prometheus })] })]);
     expect(shared.datasource).toEqual({ type: "prometheus", uid: "prometheus" });
-    const [, child] = panelsOnly([new Row({ title: "r", datasource: prometheus, panels: [new StatPanel({ targets: [new PromQuery({ expr: "up" })] })] })]);
-    expect((child.targets![0] as { datasource: unknown }).datasource).toEqual({ type: "prometheus", uid: "prometheus" });
+    const [rowJson, child] = panelsOnly([new Row({ title: "r", datasource: prometheus, panels: [new StatPanel({ targets: [new PromQuery({ expr: "up" })] })] })]);
+    expect(rowJson.datasource).toEqual({ type: "prometheus", uid: "prometheus" });
+    expect(child.datasource).toBeUndefined();
+    expect((child.targets![0] as { datasource?: unknown }).datasource).toBeUndefined();
   });
 
   test("a datasource variable is referenced as ${name}; a plain ref passes through", () => {

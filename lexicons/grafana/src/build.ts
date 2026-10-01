@@ -497,10 +497,10 @@ function explicitIds(items: Array<PanelEntity | RowEntity>): Set<number> {
   return out;
 }
 
-function panelJson(panel: PanelEntity, gridPos: GridPos, id: number, inherited?: DataSourceRef): PanelJson {
+function panelJson(panel: PanelEntity, gridPos: GridPos, id: number): PanelJson {
   const p = panel.props;
   const def = panel.panelDefinition;
-  const own = datasourceRef(p.datasource) ?? inherited;
+  const own = datasourceRef(p.datasource);
   const queries = (p.targets ?? []).filter(isQueryEntity);
   // A query under a Mixed panel names its own datasource; one that names none goes to the default, not to Mixed.
   const targets = queries.map((q, i) => targetJson(q, i, sameRef(own, MIXED) ? undefined : own));
@@ -564,7 +564,7 @@ export function panelsJson(items: Array<PanelEntity | RowEntity>): Array<PanelJs
       if (collapsed) for (const p of panels) rowLayout.reserve(p.props.gridPos, p.panelDefinition.defaultSize);
       const children = panels.map((p) => {
         const gp = rowLayout.place(p.props.gridPos, p.panelDefinition.defaultSize);
-        return panelJson(p, gp, ids.take(p.props.id), rowRef);
+        return panelJson(p, gp, ids.take(p.props.id));
       });
       out.push(
         compact({

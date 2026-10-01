@@ -103,7 +103,7 @@ An object literal is checked against its id: an unknown id, a misspelt option or
 
 ### Datasources on a panel
 
-A query uses its own `datasource`, else the panel's. The panel's emitted `datasource` is its own, or the one all its queries share, or Grafana's `-- Mixed --` when they differ. A panel can also be given `{ type: "datasource", uid: "-- Mixed --" }` itself; its queries then each use their own datasource, and one that names none goes to Grafana's default datasource. A panel inside a `Row` with a `datasource` inherits the row's.
+A query uses its own `datasource`, else the panel's. The panel's emitted `datasource` is its own, or the one all its queries share, or Grafana's `-- Mixed --` when they differ. A panel can also be given `{ type: "datasource", uid: "-- Mixed --" }` itself; its queries then each use their own datasource, and one that names none goes to Grafana's default datasource. A `Row`'s `datasource` is written on the row header only; a panel inside the row does not inherit it, as in Grafana, so a panel or query with no datasource uses the dashboard's default.
 
 ### Layout
 
