@@ -732,7 +732,7 @@ class DashboardConverter {
   }
 
   /** One panel, with its queries; returns the panel's declaration id. */
-  panel(json: unknown, path: string, module: string, rowDatasource: Resolution): string | undefined {
+  panel(json: unknown, path: string, module: string): string | undefined {
     if (!isObject(json)) {
       this.report.drop(path, "panels", "", "(an entry that is not a panel) is not carried");
       return undefined;
@@ -768,18 +768,8 @@ class DashboardConverter {
     const own = this.resolveDatasource(json.datasource, `${path}/datasource`, subject);
     if (own === "mixed") props.datasource = this.mixed(json.datasource, `${path}/datasource`, subject).value;
     else if (own !== undefined) props.datasource = own.value;
-    // A panel without a datasource of its own inherits its row's in the build; Grafana does not do that.
-    const inherited = own === undefined && rowDatasource !== undefined && rowDatasource !== "mixed" ? rowDatasource : undefined;
-    if (inherited && (json.datasource === undefined || json.datasource === null)) {
-      this.report.replace(
-        `${path}/datasource`,
-        inherited.written,
-        subject,
-        "datasource",
-        "is missing, and a panel in a chant Row without a datasource takes the row's, so it gets the row's datasource",
-      );
-    }
-    const panelDs: Resolution = own ?? inherited;
+    // A panel without a datasource of its own stays without one, as in Grafana: it takes the dashboard default, never its row's.
+    const panelDs: Resolution = own;
 
     const queries: DeclRef[] = [];
     const targets = Array.isArray(json.targets) ? json.targets : json.targets === undefined || json.targets === null ? [] : undefined;
@@ -860,7 +850,7 @@ class DashboardConverter {
     const subject = `row "${String(json.title ?? "")}"`;
     const panels: DeclRef[] = [];
     for (const c of children) {
-      const pid = this.panel(c.json, c.path, rowModule, ds);
+      const pid = this.panel(c.json, c.path, rowModule);
       if (pid) panels.push(declRef(pid));
     }
     const props: Json = { title: typeof json.title === "string" ? json.title : "" };
@@ -918,7 +908,7 @@ class DashboardConverter {
         }
         out.push(declRef(this.row(p, path, children, rowModule, ds)));
       } else {
-        const pid = this.panel(p, path, topModule(), undefined);
+        const pid = this.panel(p, path, topModule());
         if (pid) out.push(declRef(pid));
         i++;
       }
