@@ -5,6 +5,7 @@
  * `--kind` is not given, while `--kind` still overrides.
  */
 
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -197,6 +198,38 @@ describe("records without --kind reads every declared kind (#2680)", () => {
     const printed = JSON.parse(out.join("\n"));
     expectValid(printed);
     expect(printed.kinds.map((k: { records: { id: string }[] }) => k.records.map((r) => r.id))).toEqual([["ref-001"], ["ref-001"]]);
+  });
+
+  test("--current adds the spec: the current records of spec: true kinds, with the files they pin (#2546, #2524 D20)", async () => {
+    const server = "export const port = 8080;\n";
+    const sha256 = createHash("sha256").update(server).digest("hex");
+    // ref-004 supersedes ref-001 and pins the app's server file; the note kind is not part of the spec.
+    const ref004 = REF_001.replace('id: "ref-001"', 'id: "ref-004"')
+      .replace("supersedes: []", 'supersedes:\n  - decision: "ref-001"')
+      .replace(/^evidence:\n/m, `evidence:\n  - title: "The server"\n    path: "app/server.mjs"\n    sha256: "${sha256}"\n`);
+    const root = workspace({
+      "decisions/ref-004-how-the-app-is-deployed-now.md": ref004,
+      "design/notes/note.kind.mjs": NOTE_KIND.replace("spec: true", "spec: false"),
+    });
+    expect(await run(root, "--current", "--json")).toBe(0);
+    const printed = JSON.parse(out.join("\n"));
+    expectValid(printed);
+    expect(printed.kinds.map((k: { kind: { spec: boolean } }) => k.kind.spec)).toEqual([true, false]);
+    expect(printed.spec.kinds).toEqual([{ member: null, path: "decisions/decision.kind.mjs", name: null }]);
+    expect(printed.spec.records).toEqual([
+      expect.objectContaining({
+        kind: "decision",
+        id: "ref-004",
+        path: "decisions/ref-004-how-the-app-is-deployed-now.md",
+        state: "decided",
+        valid: true,
+        assets: [{ path: "app/server.mjs", sha256, actual: sha256, state: "pinned" }],
+      }),
+    ]);
+    // Without --current there is no spec: superseded records are still listed under kinds.
+    out.length = 0;
+    expect(await run(root, "--json")).toBe(0);
+    expect(JSON.parse(out.join("\n")).spec).toBeUndefined();
   });
 
   test("a kind that can't be read is listed with its error, the others are read, and the exit code is 1", async () => {

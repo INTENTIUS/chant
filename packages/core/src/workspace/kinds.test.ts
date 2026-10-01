@@ -61,10 +61,10 @@ function pkg(name: string, version: string, kinds: unknown[] | null, extra: Reco
 }
 
 describe("the built-in kinds (#2535)", () => {
-  test("are chant, workspace and other, and the group kind examples", () => {
-    expect(BUILTIN_KINDS.map((k) => `${k.name}:${k.shape}`)).toEqual(["chant:member", "workspace:member", "other:member", "examples:group"]);
+  test("are chant, workspace, design and other, and the group kind examples", () => {
+    expect(BUILTIN_KINDS.map((k) => `${k.name}:${k.shape}`)).toEqual(["chant:member", "workspace:member", "other:member", "design:member", "examples:group"]);
     const registry = builtinKindRegistry();
-    expect(registry.names()).toEqual(["chant", "other", "workspace"]);
+    expect(registry.names()).toEqual(["chant", "design", "other", "workspace"]);
     expect(registry.get(EXAMPLES_KIND)?.shape).toBe("group");
   });
 
@@ -203,7 +203,7 @@ describe("loadKindRegistry: kinds from the pins", () => {
     const { registry, problems } = loadKindRegistry([{ package: "@acme/chant-lexicon-tf", version: "1.2.3", path: null }], root);
     expect(problems).toEqual([]);
     expect(registry.get("terraform")).toMatchObject({ source: "@acme/chant-lexicon-tf", precedence: 400 });
-    expect(registry.names()).toEqual(["chant", "other", "terraform", "workspace"]);
+    expect(registry.names()).toEqual(["chant", "design", "other", "terraform", "workspace"]);
     expect(existsSync(join(root, "node_modules/@acme/chant-lexicon-tf/IMPORTED"))).toBe(false);
     expect((globalThis as { __chantKindsImported?: boolean }).__chantKindsImported).toBeUndefined();
   });
@@ -223,7 +223,7 @@ describe("loadKindRegistry: kinds from the pins", () => {
       ],
       root,
     );
-    expect(registry.names()).toEqual(["chant", "other", "workspace"]);
+    expect(registry.names()).toEqual(["chant", "design", "other", "workspace"]);
     expect(problems).toEqual([
       { pin: 1, message: "pinned package absent is not installed; install it to read the kinds it supplies" },
       { pin: 2, message: "tf-kinds is pinned at 1.0.0, and 2.0.0 is installed" },

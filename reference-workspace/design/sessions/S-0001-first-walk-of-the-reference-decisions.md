@@ -16,7 +16,7 @@ attendance:
 opened: "2026-09-24T18:00:00Z"
 closed: "2026-09-24T18:40:00Z"
 verdicts: []
-closed_digest: "0b33bd628763079289b56ed9b7fabe781a1b8a235ce6de011cbcaa77689b2524"
+closed_digest: "sha256:4a3e5f4f21fdb3545f74ae737ef490b33c3e745ced83cae22387eacdc54debe1"
 ---
 
 # First walk of the reference decisions

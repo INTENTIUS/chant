@@ -49,6 +49,7 @@ export const k8sAuditCatalog: Record<string, RuleMeta> = {
   WK8601: auditRule("WK8601", "merge-worthy", "guidance", "OpenTelemetry Collector runs tail_sampling on every node", "Move tail_sampling from the DaemonSet agent to a gateway Deployment, and send traces to it through a loadbalancing exporter routed by traceID.", { category: "correctness" }),
   WK8602: auditRule("WK8602", "merge-worthy", "guidance", "Multi-replica tail sampling gateway reached without trace-aware load balancing", "Send traces to the gateway through a loadbalancing exporter with routing_key traceID (k8s resolver, or dns on a headless Service), or run the gateway with one replica. It goes silent when the senders are in another build root (chant #1939).", { category: "correctness" }),
   WK8603: auditRule("WK8603", "merge-worthy", "guidance", "k8s_cluster receiver runs in every collector copy", "Run the k8s_cluster receiver in a single-replica Deployment, or set its k8s_leader_elector to a k8s_leader_elector extension enabled in service.extensions.", { category: "correctness" }),
+  WK8604: auditRule("WK8604", "merge-worthy", "guidance", "Collector config in a ConfigMap fails the otel config checks", "Fix the collector config the ConfigMap carries: each finding keeps its OTEL1xx id and names the ConfigMap and key. Change the declared components and pipelines, not the rendered YAML.", { category: "correctness" }),
 };
 
 // Prior art credits live beside the rules in ./audit-lineage.ts (see core audit/prior-art.ts).

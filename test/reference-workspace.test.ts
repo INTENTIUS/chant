@@ -111,7 +111,7 @@ const EXPECTED_MEMBERS = [
   { name: "app", dir: "app", kind: "other", roles: [] },
   { name: "delivery", dir: "delivery", kind: "chant", roles: [] },
   { name: "design-client", dir: "design-client", kind: "other", roles: [{ name: "design-app", path: null }] },
-  { name: "design", dir: "design", kind: "other", roles: [] },
+  { name: "design", dir: "design", kind: "design", roles: [] },
 ];
 
 const CLI_TIMEOUT_MS = 60_000;
@@ -1006,11 +1006,18 @@ describe("the README states what the fixture is (#2543)", () => {
     expect(readme).not.toMatch(/exists \(#2550\)/);
   });
 
-  test("the design member is described as kind other and points at #2549", () => {
+  test("the design member has kind design (#2549), and the floor says which chant reads it", () => {
     const decl = JSON.parse(readFileSync(join(fixture, "chant.workspace.json"), "utf-8"));
     const design = decl.members.find((m: { name: string }) => m.name === "design");
-    expect(design.kind).toBe("other");
-    expect(design.because).toContain("#2549");
+    expect(design.kind).toBe("design");
     expect(readme).toContain("issues/2549");
+    expect(readme).toMatch(/\| Chant floor \| 0\.101\.0 \|/);
+  });
+
+  test("the design client stays a placeholder until a hud client package exists", () => {
+    const decl = JSON.parse(readFileSync(join(fixture, "chant.workspace.json"), "utf-8"));
+    const client = decl.members.find((m: { name: string }) => m.name === "design-client");
+    expect(client.kind).toBe("other");
+    expect(client.because).toContain("placeholder");
   });
 });

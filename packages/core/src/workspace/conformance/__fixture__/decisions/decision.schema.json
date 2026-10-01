@@ -227,6 +227,11 @@
         "signature": { "description": "The armored ssh signature, as ssh-keygen -Y sign prints it.", "type": "string", "pattern": "^-----BEGIN SSH SIGNATURE-----\\n" }
       }
     },
+    "closed_digest": {
+      "description": "The decision's whole-file seal (#2546, ws-063): sha256: and the lowercase hex SHA-256 of the JCS form of {body, core}, where core is this front matter without closed_digest and body is the text below it, line endings LF. chant workspace records amend and new write it when the decision enters a closed state (ratified or superseded), and records reports record-seal-mismatch if the file changes afterwards. It covers the reviews, the author seal and the state, which the review digest leaves out, and the digest leaves this field out.",
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
     "constrains": {
       "description": "What this decision governs: issues (owner/repo#n), other decisions (their ids), workspace members (member:<name>) or files and directories in the workspace (path:<path>, the grammar of an evidence path, #2549). At least one entry: a decision that governs nothing is refused.",
       "type": "array",

@@ -222,7 +222,9 @@ export function planMembers(verb: WorkspaceVerb, root: string, options: PlanOpti
       const why =
         entry.kind === "workspace"
           ? "a nested workspace runs its own chant workspace commands"
-          : `chant workspace ${verb} runs members of kind chant, and this one is kind ${entry.kind}`;
+          : entry.kind === "design"
+            ? "a design member is data: chant reads its files for record pins and builds nothing"
+            : `chant workspace ${verb} runs members of kind chant, and this one is kind ${entry.kind}`;
       skipped.push({ name: entry.name, dir: entry.dir, kind: entry.kind, reason: { code: "kind-not-run", message: why } });
       continue;
     }

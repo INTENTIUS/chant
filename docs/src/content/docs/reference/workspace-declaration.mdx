@@ -70,11 +70,11 @@ A member is an object with `name`, `dir` and `kind`.
 |---|---|---|
 | `name` | yes | The member's name, in the [name grammar](#names). Frozen once the member deploys. |
 | `dir` | yes | Its directory relative to the workspace root, with `/` separators. `"."` is the root member. |
-| `kind` | yes | How to read it: `chant`, `workspace`, `other`, or a kind a pinned package supplies. |
+| `kind` | yes | How to read it: `chant`, `workspace`, `design`, `other`, or a kind a pinned package supplies. |
 | `roles` | no | Roles the member plays. Each is a role name, or `{ "name": "...", "path": "..." }` with a path inside the member. |
 | `generated` | no | The files a command writes in the member, with the command that writes each (see [Generated files](#generated-files)). |
 | `links` | no | The [member links](#member-links) this member reads, each `{ "member": "...", "output": "..." }`. |
-| `outputs` | no | For a member of kind `other` or a kind from a package, the outputs it exposes to [links](#member-links). A `chant` member's outputs are read from its source instead. |
+| `outputs` | no | For a member of kind `other`, `design` or a kind from a package, the outputs it exposes to [links](#member-links). A `chant` member's outputs are read from its source instead. |
 | `records` | no | The [record kinds](#record-kinds) the member holds, each `{ "kind": "<path>" }` with the path from the member's directory. It was added in chant 0.86.0. |
 | `diagrams` | no | The [diagram artifacts](#diagrams) this member holds. It was added in chant 0.91.0. |
 | `box` | no | The member is a [box](#boxes), or holds a box's declarations: the capabilities it reaches through a broker, each with its broker and scope. It was added in chant 0.91.0. |
@@ -152,7 +152,7 @@ The declaration names the workspace's record kinds, so a reader never has to gue
   "schema": 1,
   "minReader": "0.86.0",
   "members": [
-    { "name": "design", "dir": "design", "kind": "other", "because": "the design data member", "records": [{ "kind": "notes/note.kind.mjs", "name": "notes" }] }
+    { "name": "design", "dir": "design", "kind": "design", "records": [{ "kind": "notes/note.kind.mjs", "name": "notes" }] }
   ],
   "records": [{ "kind": "decisions/decision.kind.mjs" }]
 }

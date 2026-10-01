@@ -129,7 +129,7 @@ export type RecordsDocument =
   | {
       $schema: string;
       contract: number;
-      kind: { name: string; schema: string; file: string; format: RecordFormat };
+      kind: { name: string; schema: string; file: string; format: RecordFormat; spec: boolean };
       at: string | null;
       /** The directory pinned paths resolve in, from the repository root: the workspace holding the kind file, or the repository root (#2549). */
       workspaceRoot: string;
@@ -161,6 +161,47 @@ export interface RecordsSetDocument {
   $schema: string;
   contract: number;
   kinds: (RecordsDocument & { declared: DeclaredKindView })[];
+  /** With `--current`: the workspace's spec (#2524 D20, #2546), from the kinds marked `spec: true`. */
+  spec?: SpecView;
+}
+
+/**
+ * The spec (#2524 D20): the current records of every declared kind marked
+ * `spec: true`, each with the workspace files it pins. `records --current
+ * --json` prints it beside the kinds, so an agent resumes from the
+ * declaration and this one read.
+ */
+export interface SpecView {
+  /** The spec kinds, as the declaration names them, in its order. */
+  kinds: DeclaredKindView[];
+  records: SpecRecord[];
+}
+
+/** One current record of a spec kind. */
+export interface SpecRecord {
+  /** The kind's name, such as decision. */
+  kind: string;
+  id: string | null;
+  path: string;
+  state: string | null;
+  valid: boolean;
+  /** The digest a verdict names (#2672). */
+  digest: string;
+  /** Each workspace file the record pins: its path from the workspace root, the sha256 pinned, and how it compares with the tree read (#2549). */
+  assets: RecordEntry["assets"];
+}
+
+/** The spec of a set of declared kinds already read with `--current`. */
+export function specOf(kinds: RecordsSetDocument["kinds"]): SpecView {
+  const spec: SpecView = { kinds: [], records: [] };
+  for (const doc of kinds) {
+    if ("error" in doc || !doc.kind.spec) continue;
+    spec.kinds.push(doc.declared);
+    for (const r of doc.records) {
+      spec.records.push({ kind: doc.kind.name, id: r.id, path: r.path, state: r.state, valid: r.valid, digest: r.digest, assets: r.assets });
+    }
+  }
+  return spec;
 }
 
 /**
@@ -186,7 +227,7 @@ export async function queryDeclaredRecords(kinds: { declared: RecordKindDeclarat
     const doc = await queryRecords({ ...query, kind: k.file });
     out.push({ ...doc, declared: { member: k.declared.member, path: k.declared.path, name: k.declared.name } });
   }
-  return { $schema: RECORDS_OUTPUT_SCHEMA_ID, contract: RECORDS_CONTRACT_VERSION, kinds: out };
+  return { $schema: RECORDS_OUTPUT_SCHEMA_ID, contract: RECORDS_CONTRACT_VERSION, kinds: out, ...(query.current ? { spec: specOf(out) } : {}) };
 }
 
 /** A records read, before provenance. */
@@ -353,6 +394,7 @@ export async function queryRecords(query: RecordsQuery): Promise<RecordsDocument
         schema: loaded.kind.schema.id,
         file: relative(root, loaded.file).split("\\").join("/"),
         format: loaded.kind.format,
+        spec: loaded.kind.spec === true,
       },
       at,
       workspaceRoot,

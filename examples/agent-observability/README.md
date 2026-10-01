@@ -44,7 +44,7 @@ npm run lint
 
 The Prometheus, Alertmanager and Grafana workloads mount ConfigMaps holding exactly what the prometheus and grafana builds write (`ruleFileYaml`, `alertmanagerYaml`, and `GrafanaConfigMaps` with `grafanaVolumes` from `@intentius/chant-lexicon-grafana/k8s`), so the cluster runs the same files `chant build` emits. The Grafana ConfigMaps carry the Helm chart sidecar's `grafana_dashboard` and `grafana_datasource` labels, so the same ones would work with a sidecar too.
 
-Keeping everything in one build root is what lets the cross-document checks see both sides (chant #1939): WK8601 to WK8603 read each collector ConfigMap next to the workload that runs it, PROM202 reads the SLO's severities next to the routes, and GRAF101/GRAF102 read each panel's datasource next to the declared datasources. The collector configs live inside ConfigMaps here, where the OTEL post-build checks don't look; `test/build.test.ts` runs the same checks (`validateCollectorConfig`) over both.
+Keeping everything in one build root is what lets the cross-document checks see both sides (chant #1939): WK8601 to WK8603 read each collector ConfigMap next to the workload that runs it, PROM202 reads the SLO's severities next to the routes, and GRAF101/GRAF102 read each panel's datasource next to the declared datasources. The collector configs live inside ConfigMaps here, and WK8604 runs the otel config checks (OTEL101 to OTEL106, OTEL112) over them, reporting each finding under its OTEL id with the ConfigMap's name and key. It is a k8s check, so the project needs only `k8s` in its lexicons.
 
 ## Run it on k3d
 

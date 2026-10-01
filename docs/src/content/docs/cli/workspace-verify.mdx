@@ -6,6 +6,8 @@ diataxis: reference
 
 :::caution[Detection on your machine, enforcement in CI]
 On a developer machine this check detects problems. It can't stop them, because an agent running as you can sign with your unlocked key or edit chant in `node_modules`, and it can skip the check entirely. Enforcement comes from CI running the same check on a protected branch, where the policy is read from the base revision and the change can't edit it. This is the promise in [#2524 D5](https://github.com/INTENTIUS/chant/issues/2524) and decision ws-002.
+
+The same holds for a closed record's [seal](/chant/cli/workspace-records/#seals-on-closed-records): it is a hash anyone can recompute, so without an attestor, seals detect accidental edits only.
 :::
 
 ## Synopsis
