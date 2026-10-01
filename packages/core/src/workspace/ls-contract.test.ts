@@ -269,3 +269,86 @@ describe("chant workspace ls on built workspaces", () => {
     expect(result(listWorkspace({ cwd: root })).members).toEqual([]);
   });
 });
+
+describe("chant workspace ls: generated files and job names (#3050)", () => {
+  const workflow = [
+    "name: ci",
+    "jobs:",
+    "  build:",
+    "    runs-on: ubuntu-latest",
+    "  deploy:",
+    "    name: Deploy to prod",
+    "    runs-on: ubuntu-latest",
+    "",
+  ].join("\n");
+  const gitlab = ["stages: [build]", "variables:", "  A: b", ".hidden:", "  script: [x]", "api-build:", "  stage: build", "  script: [x]", ""].join("\n");
+
+  function build(prefix: string) {
+    const p = (path: string) => (prefix === "" ? path : `${prefix}/${path}`);
+    const record = {
+      schema: 1,
+      files: [
+        { path: ".github/workflows/chant-api-prod.yml", command: "chant build --components --generate github --env prod", env: "prod" },
+        { path: ".gitlab/ci/chant-api-prod.gitlab-ci.yml", command: "chant build --components --generate gitlab --env prod", env: "prod" },
+        { path: p("services/api/dist/out.json"), command: "chant build" },
+      ],
+    };
+    return repo({
+      [p("chant.workspace.json")]: declaration([
+        { name: "api", dir: "services/api", kind: "other", because: "an api", generated: [{ path: "dist/out.json", generator: "chant build --out dist/out.json" }, { path: "NOTES.md", generator: "x", handWritten: { because: "kept by hand" } }] },
+        { name: "docs", dir: "docs", kind: "other", because: "the docs" },
+      ]),
+      [p("services/api/.chant/generated.json")]: JSON.stringify(record),
+      [p(".github/workflows/chant-api-prod.yml")]: workflow,
+      [p(".gitlab/ci/chant-api-prod.gitlab-ci.yml")]: gitlab,
+      [p("docs/README.md")]: "x",
+    });
+  }
+
+  test("lists each member's generated files with the job names in its CI files", () => {
+    const root = build("");
+    const doc = result(listWorkspace({ cwd: root }));
+    expectValid(doc);
+    const api = doc.members.find((m) => m.name === "api")!;
+    expect(api.generated).toEqual([
+      { path: ".github/workflows/chant-api-prod.yml", command: "chant build --components --generate github --env prod", env: "prod", jobs: ["build", "Deploy to prod"] },
+      { path: ".gitlab/ci/chant-api-prod.gitlab-ci.yml", command: "chant build --components --generate gitlab --env prod", env: "prod", jobs: ["api-build"] },
+      { path: "services/api/dist/out.json", command: "chant build --out dist/out.json", env: null, jobs: null },
+    ]);
+    expect(doc.members.find((m) => m.name === "docs")!.generated).toEqual([]);
+  });
+
+  test("names paths from the repository root for a workspace below it", () => {
+    const root = build("infra");
+    const doc = result(listWorkspace({ cwd: join(root, "infra") }));
+    expectValid(doc);
+    const api = doc.members.find((m) => m.name === "api")!;
+    expect(api.generated.map((g) => g.path)).toEqual([
+      ".github/workflows/chant-api-prod.yml",
+      ".gitlab/ci/chant-api-prod.gitlab-ci.yml",
+      "infra/services/api/dist/out.json",
+    ].sort());
+    expect(api.generated.find((g) => g.path.endsWith("chant-api-prod.yml"))!.jobs).toBeNull();
+  });
+
+  test("reads the job names at a revision", () => {
+    const root = build("");
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "x");
+    const rev = git(root, "rev-parse", "HEAD");
+    const doc = result(listWorkspace({ cwd: root, at: rev }));
+    expectValid(doc);
+    expect(doc.members.find((m) => m.name === "api")!.generated[0].jobs).toEqual(["build", "Deploy to prod"]);
+  });
+
+  test("lists a CI file with null jobs when it can't be parsed, and nothing when there is no record", () => {
+    const root = repo({
+      "chant.workspace.json": declaration([{ name: "api", dir: "api", kind: "other", because: "x" }]),
+      "api/.chant/generated.json": JSON.stringify({ schema: 1, files: [{ path: ".github/workflows/x.yml", command: "c" }] }),
+      ".github/workflows/x.yml": "jobs: [unclosed",
+    });
+    const doc = result(listWorkspace({ cwd: root }));
+    expectValid(doc);
+    expect(doc.members[0].generated).toEqual([{ path: ".github/workflows/x.yml", command: "c", env: null, jobs: null }]);
+  });
+});
