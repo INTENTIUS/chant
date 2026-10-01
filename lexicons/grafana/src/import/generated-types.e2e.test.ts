@@ -99,6 +99,15 @@ describe("the generated source type-checks against the lexicon's types", () => {
   test("community dashboards: what they carry outside the pinned types is where tsc points", () => {
     const found: Record<string, Record<string, number>> = {};
     for (const file of COMMUNITY) found[file] = byProperty(typeErrors({ [file]: generate(read(file)) }));
+    // What is left is not in Grafana's CUE at v13.2.2 (checked in the tree at that tag, so the overlay has nothing to cite):
+    //   step, metric: legacy Prometheus query fields. The Prometheus query model (grafana-prometheus dataquery.gen.ts) has
+    //     neither, and there is no Prometheus CUE at the tag; the vendored schema lists intervalFactor, not these.
+    //   unitScale (fieldConfig.defaults): in no CUE file or schema type; a leftover of an old panel plugin.
+    //   time_options (timepicker): the CUE TimePickerConfig has refresh_intervals, nowDelay and hidden, not time_options.
+    //   now (timepicker): same type, absent.
+    // They stay untyped on purpose: typing a key Grafana ignores would tell the user it is supported. The importer keeps them
+    // so the dashboard builds back to the same JSON, and GRAF107 warns about each one. The table footer and wrapText that
+    // GRAF107 used to report are typed since #3126, so kubernetes views no longer appear here.
     expect(found).toEqual({
       "community/node-exporter-full.json": { step: 273, metric: 1 },
       "community/k8s-views-global.json": {},
