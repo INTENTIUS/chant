@@ -509,6 +509,7 @@ A reader such as behold or hud builds one view from several commands. The join k
 | the workspace | `workspace.name`, `at` | `workspace.name`, `at` | `workspace.name`, `at` | `workspace.name` and `lifecycle.commit` |
 | a member | `members[].name` | `members[].name`, and `member` on every node and edge | `entity` on a declaration finding | `members[].name` |
 | a member's directory | `members[].dir` | `members[].dir` | none | `members[].dir` |
+| a collector | none | `collectors[].member`, then `pipelines[].id` and `exporters[].id` | none | none |
 | a record | none | `records[].id`, and `record` on a record link | the record's file on a `WSP111`, `WSP112` or `WSP113` finding | none |
 
 A reader starts with `ls`, which lists every member whether it can be read or not. It then reads `graph` for the nodes in `groups.byMember`, and matches each graph entry to the `ls` member of the same name. `check` findings attach to a member through `entity`, and `status` releases and gates attach through the member name. A gate's `component`, or a `status` release's, matches a `graph --composites` component's `name` in the same member. Node ids in `graph` are `<member>/<id>`, so a node never collides with another member's.

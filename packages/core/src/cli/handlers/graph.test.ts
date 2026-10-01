@@ -161,6 +161,7 @@ describe("runGraph", () => {
     observeMock.mockReset();
     buildMock.mockReset();
     loadPluginsMock.mockReset();
+    loadPluginsMock.mockResolvedValue([]);
     resolveLexMock.mockReset();
     loadChantConfigMock.mockReset();
     loadChantConfigMock.mockResolvedValue({ config: {} });
@@ -226,6 +227,47 @@ describe("runGraph", () => {
       const ir = JSON.parse(stdoutBuf.join("\n"));
       expect(ir.nodes.map((n: { id: string }) => n.id).sort()).toEqual(["pod", "subnet", "vpc"]);
       expect(ir.edges).toContainEqual({ from: "subnet", to: "vpc", kind: "ref", viaAttr: "network" });
+    });
+
+    // #2559 — a lexicon's graphMeta answer lands in the IR meta, so the
+    // workspace graph can list collector pipelines without core importing otel.
+    test("--format ir carries what a lexicon's graphMeta reports under meta", async () => {
+      lintClean(); discovered();
+      const seen: string[][] = [];
+      loadPluginsMock.mockResolvedValue([{
+        name: "gcp",
+        serializer: {},
+        graphMeta: (entities: Map<string, unknown>) => {
+          seen.push([...entities.keys()].sort());
+          return { collector: { pipelines: [] } };
+        },
+      }]);
+      resolveLexMock.mockResolvedValue(["gcp"]);
+      const exit = await runGraph({ args: makeArgs({ format: "ir" }), plugins: [], serializers: [] });
+      expect(exit).toBe(0);
+      expect(seen).toEqual([["pod", "subnet", "vpc"]]);
+      expect(JSON.parse(stdoutBuf.join("\n")).meta).toEqual({ collector: { pipelines: [] } });
+    });
+
+    test("--format ir has no meta when no lexicon reports anything", async () => {
+      lintClean(); discovered();
+      loadPluginsMock.mockResolvedValue([{ name: "gcp", serializer: {}, graphMeta: () => undefined }, { name: "k8s", serializer: {} }]);
+      resolveLexMock.mockResolvedValue(["gcp", "k8s"]);
+      const exit = await runGraph({ args: makeArgs({ format: "ir" }), plugins: [], serializers: [] });
+      expect(exit).toBe(0);
+      expect("meta" in JSON.parse(stdoutBuf.join("\n"))).toBe(false);
+    });
+
+    test("--format ir keeps the first answer when two lexicons report one key", async () => {
+      lintClean(); discovered();
+      loadPluginsMock.mockResolvedValue([
+        { name: "a", serializer: {}, graphMeta: () => ({ collector: 1 }) },
+        { name: "b", serializer: {}, graphMeta: () => ({ collector: 2 }) },
+      ]);
+      resolveLexMock.mockResolvedValue(["a", "b"]);
+      const exit = await runGraph({ args: makeArgs({ format: "ir" }), plugins: [], serializers: [] });
+      expect(exit).toBe(0);
+      expect(JSON.parse(stdoutBuf.join("\n")).meta).toEqual({ collector: 1 });
     });
 
     // #2529 — the IR carries its version, as the first key, so a reader can

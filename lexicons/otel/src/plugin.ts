@@ -15,6 +15,7 @@ import { collectorConfigImporter } from "./import/embedded";
 import { otelSkills } from "./skill-defs";
 import { BUILTIN_CATALOG } from "./catalog";
 import { COLLECTOR_PIN } from "./define";
+import { collectorTopologyOf } from "./topology";
 
 const catalogResource: McpResourceContribution = {
   uri: "otel:resource-catalog",
@@ -75,6 +76,14 @@ export const otelPlugin: LexiconPlugin = {
 
   lintRules() {
     return rules;
+  },
+
+  // Where this project's telemetry goes, for `chant workspace graph` (#2559).
+  // A project with no collector pipeline and no component reports nothing.
+  graphMeta(entities) {
+    const topology = collectorTopologyOf(entities.values());
+    if (topology.pipelines.length === 0 && topology.components.length === 0) return undefined;
+    return { collector: topology };
   },
 
   postSynthChecks() {
