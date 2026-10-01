@@ -18,10 +18,13 @@ import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { GRAFANA_NOTIFIERS_SOURCE, renderNotifiers, type NotifierResponse } from "./notifiers";
 
-async function readFrom(base: string): Promise<NotifierResponse[]> {
-  const res = await fetch(`${base}/api/alert-notifiers?version=2`, { headers: { authorization: `Basic ${Buffer.from("admin:admin").toString("base64")}` } });
-  if (!res.ok) throw new Error(`HTTP ${res.status} from ${base}/api/alert-notifiers`);
-  return (await res.json()) as NotifierResponse[];
+/** curl, not fetch: the response is read from a Grafana the caller runs, and the egress catalogue lists only the commands that reach a remote host. */
+function get(url: string, auth = false): string {
+  return execFileSync("curl", ["-sf", ...(auth ? ["-u", "admin:admin"] : []), url], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+}
+
+function readFrom(base: string): NotifierResponse[] {
+  return JSON.parse(get(`${base}/api/alert-notifiers?version=2`, true)) as NotifierResponse[];
 }
 
 async function viaDocker(): Promise<NotifierResponse[]> {
@@ -32,7 +35,12 @@ async function viaDocker(): Promise<NotifierResponse[]> {
     const port = docker("port", name, "3000/tcp").split("\n")[0].split(":").pop();
     const base = `http://127.0.0.1:${port}`;
     for (let i = 0; i < 60; i++) {
-      if ((await fetch(`${base}/api/health`).catch(() => undefined))?.ok) return await readFrom(base);
+      try {
+        get(`${base}/api/health`);
+        return readFrom(base);
+      } catch {
+        // not up yet
+      }
       await new Promise((r) => setTimeout(r, 2000));
     }
     throw new Error("Grafana did not become healthy in 120s");
@@ -41,7 +49,7 @@ async function viaDocker(): Promise<NotifierResponse[]> {
   }
 }
 
-const notifiers = process.argv[2] ? await readFrom(process.argv[2].replace(/\/$/, "")) : await viaDocker();
+const notifiers = process.argv[2] ? readFrom(process.argv[2].replace(/\/$/, "")) : await viaDocker();
 const out = join(dirname(fileURLToPath(import.meta.url)), "..", "contact-point-settings.gen.ts");
 writeFileSync(out, renderNotifiers(notifiers));
 console.log(`wrote ${out} (${notifiers.length} integrations)`);
