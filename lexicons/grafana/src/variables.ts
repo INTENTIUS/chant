@@ -19,8 +19,8 @@ export type VariableKind = "query" | "custom" | "interval" | "datasource" | "con
 /** The kinds Grafana can repeat a panel or row over: the ones that hold a list of values (`MultiValueVariable` in @grafana/scenes). */
 export const MULTI_VALUE_KINDS: ReadonlySet<string> = new Set(["query", "custom", "datasource", "groupby"]);
 
-/** Where the variable shows: with its label, without it, or not at all. */
-export type VariableHide = "label" | "valueOnly" | "hidden";
+/** Where the variable shows: with its label, without it, not at all, or under the dashboard's controls menu (Grafana 13). */
+export type VariableHide = "label" | "valueOnly" | "hidden" | "controlsMenu";
 
 interface CommonVariableProps {
   /** The name queries use, `$name`. Letters, digits and `_`. */
@@ -39,6 +39,8 @@ interface MultiValueProps {
   includeAll?: boolean;
   /** What `All` expands to, e.g. `.*` for a regex matcher. */
   allValue?: string;
+  /** Whether a value not in the list can be typed in. Grafana's default is true. */
+  allowCustomValue?: boolean;
 }
 
 /** A variable anything can hold before its datasource is known: its own datasource ref or a datasource variable. */
