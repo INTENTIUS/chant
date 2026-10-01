@@ -28,6 +28,11 @@ describe("load cost", () => {
     expect(ajvModulesAfterImporting("index.ts", "validation.ts")).toBe(0);
   });
 
+  test("importing the package root does not load core's Op module (#3026)", () => {
+    const script = `import(${JSON.stringify(join(srcDir, "index.ts"))}).then(() => console.log(Object.keys(require.cache).filter((k) => /packages\\/core\\/src\\/op\\//.test(k)).length))`;
+    expect(Number(execFileSync(tsx, ["-e", script], { encoding: "utf-8" }).trim())).toBe(0);
+  });
+
   test("validation reads the overlaid schemas from the generated module", () => {
     expect(schemaValidationUnavailable()).toBeUndefined();
     for (const name of SCHEMA_NAMES) expect(bundledSchema(name)).toEqual(loadSchema(name));
