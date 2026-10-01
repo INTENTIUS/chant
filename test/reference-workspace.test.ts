@@ -1,8 +1,9 @@
 /**
  * The reference workspace (#2543, #2524 D21) as chant's integration fixture.
  *
- * `reference-workspace/` is a level 1 workspace: its `chant.workspace.json`
- * (#2534) declares four members. This file checks it against the commit under
+ * `reference-workspace/` covers levels 1 to 4 (README: where each is
+ * exercised); level 3 is in reference-workspace-signing.e2e.test.ts. Its
+ * `chant.workspace.json` (#2534) declares four members. This file checks it against the commit under
  * test rather than a released chant:
  *
  * - the declaration validates against chant's declaration schema, and the
