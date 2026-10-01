@@ -386,6 +386,19 @@ describe("OTEL117 two started components on one address", () => {
     ).toEqual([]);
   });
 
+  test("a kubeletstats endpoint on a wildcard listener's port is not a collision (#3102)", () => {
+    expect(
+      run({
+        receivers: {
+          otlp: { protocols: { http: { endpoint: "0.0.0.0:10250" } } },
+          kubeletstats: { auth_type: "serviceAccount", endpoint: "https://${env:K8S_NODE_NAME}:10250" },
+        },
+        exporters: { debug: {} },
+        service: { pipelines: { metrics: { receivers: ["otlp", "kubeletstats"], exporters: ["debug"] } } },
+      }),
+    ).toEqual([]);
+  });
+
   test("reads the telemetry reader's address when one is set", () => {
     const diags = run({
       receivers: { otlp: { protocols: { http: { endpoint: "0.0.0.0:9000" } } } },
