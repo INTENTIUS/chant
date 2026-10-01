@@ -447,8 +447,11 @@ describe("GRAF108 over real Grafana exports", () => {
 
   test.each(files)("%s has no GRAF108 errors", (name) => {
     const text = readFileSync(join(exportsDir, name), "utf-8");
-    // Non-vacuous: every export in the corpus sends PromQL to a Prometheus.
-    expect(prometheusQueries(JSON.parse(text), knownDatasources([])).length).toBeGreaterThan(0);
+    // Non-vacuous: every export in the corpus sends PromQL to a Prometheus, except the OpenSearch one (#3017),
+    // whose Lucene and PPL no check parses.
+    const promql = prometheusQueries(JSON.parse(text), knownDatasources([])).length;
+    if (name.includes("opensearch")) expect(promql).toBe(0);
+    else expect(promql).toBeGreaterThan(0);
     expect(graf108.check(makePostSynthCtxFromFiles("grafana", { [name]: text }, "{}"))).toEqual([]);
   });
 });

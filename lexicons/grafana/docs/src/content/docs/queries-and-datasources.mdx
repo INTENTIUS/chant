@@ -1,6 +1,6 @@
 ---
 title: "Queries and Datasources"
-description: "Datasource and its typed settings, the query classes for twelve datasource plugins, and how references are written"
+description: "Datasource and its typed settings, the query classes for thirteen datasource plugins, and how references are written"
 diataxis: reference
 ---
 
@@ -52,6 +52,7 @@ const prometheus = new Datasource({
 | `loki` | `LokiJsonData` | `derivedFields[].datasourceUid`: tempo, jaeger, zipkin |
 | `tempo` | `TempoJsonData` | `tracesToLogsV2`: loki, elasticsearch and the external logs plugins; `tracesToMetrics`: prometheus; `tracesToProfiles`: grafana-pyroscope-datasource; `serviceMap`: prometheus |
 | `elasticsearch` | `ElasticsearchJsonData` | `dataLinks[].datasourceUid`: tempo, jaeger, zipkin |
+| `grafana-opensearch-datasource` | `OpenSearchJsonData` | `dataLinks[].datasourceUid`: tempo, jaeger, zipkin |
 | `cloudwatch` | `CloudWatchJsonData` | `tracingDatasourceUid`: grafana-x-ray-datasource |
 | `grafana-azure-monitor-datasource` | `AzureMonitorJsonData` | |
 | `stackdriver` | `CloudMonitoringJsonData` | |
@@ -96,11 +97,12 @@ GRAF101 and GRAF102 count it as declared. A plain `{ type: "prometheus", uid: "m
 | `CloudMonitoringQuery` | `stackdriver` | in `timeSeriesList`, `timeSeriesQuery` (MQL), `sloQuery` or `promQLQuery`, by `queryType` | `googlecloudmonitoring` `CloudMonitoringQuery` |
 | `BigQueryQuery` | `grafana-bigquery-datasource` | `rawSql` (GoogleSQL) | `bigquery` `Dataquery`; `format` and `rawSql` optional |
 | `PyroscopeQuery` | `grafana-pyroscope-datasource` | `labelSelector` | `grafanapyroscope` `Dataquery`; `labelSelector` and `groupBy` optional |
+| `OpenSearchQuery` | `grafana-opensearch-datasource` | `query` (Lucene, or PPL when `queryType` is `"PPL"`), with `metrics` and `bucketAggs` | by hand, `OpenSearchQueryModel` (grafana/opensearch-datasource v2.34.4) |
 | `PostgresQuery` | `grafana-postgresql-datasource`, and its old id `postgres` | `rawSql` | by hand, `SqlQueryModel` (`@grafana/sql` at v13.2.2) |
 | `MySQLQuery` | `mysql` | `rawSql` | by hand, `SqlQueryModel` |
 | `MSSQLQuery` | `mssql` | `rawSql` (T-SQL) | by hand, `SqlQueryModel` |
 
-The fields are the plugin's query model at the pinned schema version, less `datasource`, which takes a `Datasource`, a `DatasourceVariable` or a `{ type, uid }` ref of the query's own plugin type. A field the schema requires but Grafana fills in when it is missing is optional; the class's doc comment cites where Grafana does it. The SQL plugins have no schema upstream, so their shared model is typed by hand in `src/query-models.ts` and GRAF107 checks only the panel around them. The OpenSearch plugin has neither a schema nor a copy in Grafana 13.2.2, so it keeps `defineQuery` (see [Other Panel and Datasource Plugins](../custom-plugins/)).
+The fields are the plugin's query model at the pinned schema version, less `datasource`, which takes a `Datasource`, a `DatasourceVariable` or a `{ type, uid }` ref of the query's own plugin type. A field the schema requires but Grafana fills in when it is missing is optional; the class's doc comment cites where Grafana does it. The SQL plugins have no schema upstream, so their shared model is typed by hand in `src/query-models.ts` and GRAF107 checks only the panel around them. The OpenSearch plugin has neither a schema nor a copy in Grafana 13.2.2, so its model and settings are typed by hand from the plugin's source at v2.34.4. Its Lucene and PPL are not parsed by any check.
 
 The expression is a string. After a build, GRAF108 parses the PromQL of every query that reaches a Prometheus datasource, with template variables substituted first. It goes by the datasource a query resolves to, not by field name: a Cloud Monitoring `promQLQuery.expr` and SQL are not parsed. GRAF116 parses the LogQL of every query that reaches a Loki (its `expr`), and GRAF117 the TraceQL of every query that reaches a Tempo (its `query`, when `queryType` is `traceql`).
 

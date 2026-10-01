@@ -30,7 +30,7 @@ The uid defaults to the name as a uid (`prometheus`, `tempo`). Secrets go in `se
 
 ## Queries
 
-`PromQuery` (PromQL in `expr`), `TempoQuery` (TraceQL in `query`), `LokiQuery` (LogQL in `expr`), `ElasticsearchQuery`, `CloudWatchQuery`, `AzureMonitorQuery`, `CloudMonitoringQuery`, `BigQueryQuery`, `PyroscopeQuery`, and `PostgresQuery`, `MySQLQuery` and `MSSQLQuery` (SQL in `rawSql`). Fields are typed from Grafana's own query schemas, or by hand for SQL. `datasource` only accepts a datasource of the query's plugin type, so a PromQL query can't be pointed at Tempo.
+`PromQuery` (PromQL in `expr`), `TempoQuery` (TraceQL in `query`), `LokiQuery` (LogQL in `expr`), `ElasticsearchQuery`, `CloudWatchQuery`, `AzureMonitorQuery`, `CloudMonitoringQuery`, `BigQueryQuery`, `PyroscopeQuery`, `OpenSearchQuery`, and `PostgresQuery`, `MySQLQuery` and `MSSQLQuery` (SQL in `rawSql`). Fields are typed from Grafana's own query schemas, or by hand for SQL and OpenSearch. `datasource` only accepts a datasource of the query's plugin type, so a PromQL query can't be pointed at Tempo.
 
 ```ts
 const requestRate = new PromQuery({

@@ -211,6 +211,11 @@ describe("dashboard JSON -> TypeScript -> dashboard JSON", () => {
           expect(out.source).toContain(`new ${cls}(`);
         }
         expect(out.source).not.toContain("defineQuery");
+      } else if (file.includes("opensearch")) {
+        // Both the Lucene and the PPL queries are imported through OpenSearchQuery (#3017).
+        expect(out.source).toContain("new OpenSearchQuery(");
+        expect(out.source).not.toContain("defineQuery");
+        expect(out.source).toContain("queryType: \"PPL\"");
       } else if (file.includes("slo")) {
         expect(out.warnings).toContainEqual(expect.stringMatching(/is a library panel \("Burn rate", uid chant-fx-burn\)/));
       }
@@ -222,8 +227,10 @@ describe("dashboard JSON -> TypeScript -> dashboard JSON", () => {
         expect(out.warnings).toContain("dashboard: __elements is not carried (the library panels exported with it; library panels are not carried yet)");
       }
       if (file.includes(".external.")) {
-        expect(out.warnings).toContainEqual(expect.stringMatching(/^__inputs: (.*, )?DS_PROMETHEUS \(prometheus\)/));
-        expect(out.source).toContain("const dsPrometheus = new DatasourceVariable({");
+        // The OpenSearch dashboard asks for its one datasource only.
+        const [input, name] = file.includes("opensearch") ? ["DS_OPENSEARCH \\(grafana-opensearch-datasource\\)", "dsOpensearch"] : ["DS_PROMETHEUS \\(prometheus\\)", "dsPrometheus"];
+        expect(out.warnings).toContainEqual(expect.stringMatching(new RegExp(`^__inputs: (.*, )?${input}`)));
+        expect(out.source).toContain(`const ${name} = new DatasourceVariable({`);
       }
     });
   }

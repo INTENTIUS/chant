@@ -7,7 +7,7 @@
 import { describe, expect, test } from "vitest";
 import { Dashboard } from "./dashboard";
 import { Datasource } from "./datasource";
-import { TablePanel, TimeSeriesPanel } from "./panels";
+import { LogsPanel, TablePanel, TimeSeriesPanel } from "./panels";
 import {
   AzureMonitorQuery,
   BigQueryQuery,
@@ -20,6 +20,7 @@ import {
   PostgresQuery,
   PromQuery,
   PyroscopeQuery,
+  OpenSearchQuery,
   queryDefinitionFor,
   registeredQueries,
 } from "./query";
@@ -37,6 +38,7 @@ const az = new Datasource({ name: "Azure", type: "grafana-azure-monitor-datasour
 const gcm = new Datasource({ name: "GCM", type: "stackdriver" });
 const bq = new Datasource({ name: "BigQuery", type: "grafana-bigquery-datasource" });
 const py = new Datasource({ name: "Pyroscope", type: "grafana-pyroscope-datasource" });
+const os = new Datasource({ name: "OpenSearch", type: "grafana-opensearch-datasource" });
 const pg = new Datasource({ name: "Postgres", type: "grafana-postgresql-datasource" });
 const pgOld = new Datasource({ name: "Postgres old", type: "postgres" });
 const my = new Datasource({ name: "MySQL", type: "mysql" });
@@ -57,7 +59,7 @@ describe("query classes", () => {
       ["prometheus", "tempo", "loki", "elasticsearch", "cloudwatch", "azuremonitor", "googlecloudmonitoring", "bigquery", "grafanapyroscope"].sort(),
     );
     expect(schemas.every((s) => (SCHEMA_NAMES as readonly string[]).includes(s))).toBe(true);
-    expect(registeredQueries().filter((d) => d.builtin && !d.schema).map((d) => d.className).sort()).toEqual(["MSSQLQuery", "MySQLQuery", "PostgresQuery"]);
+    expect(registeredQueries().filter((d) => d.builtin && !d.schema).map((d) => d.className).sort()).toEqual(["MSSQLQuery", "MySQLQuery", "OpenSearchQuery", "PostgresQuery"]);
   });
 
   test("each renders as a target of its plugin and passes GRAF107", () => {
@@ -90,6 +92,13 @@ describe("query classes", () => {
       }),
       new TablePanel({ datasource: bq, targets: [new BigQueryQuery({ rawSql: "SELECT 1", project: "p" })] }),
       new TimeSeriesPanel({ datasource: py, targets: [new PyroscopeQuery({ profileTypeId: "process_cpu:cpu:nanoseconds:cpu:nanoseconds", queryType: "metrics" })] }),
+      new LogsPanel({
+        datasource: os,
+        targets: [
+          new OpenSearchQuery({ query: "level:error", queryType: "lucene", luceneQueryType: "Logs", timeField: "@timestamp", metrics: [{ id: "1", type: "logs" }] }),
+          new OpenSearchQuery({ query: "source = logs | head 10", queryType: "PPL", format: "table" }),
+        ],
+      }),
       new TablePanel({ datasource: pg, targets: [new PostgresQuery({ rawSql: "SELECT now()", format: "table", editorMode: "code", rawQuery: true })] }),
       new TablePanel({ datasource: my, targets: [new MySQLQuery({ rawSql: "SELECT 1" })] }),
       new TablePanel({ datasource: ms, targets: [new MSSQLQuery({ rawSql: "SELECT TOP 1 1" })] }),
@@ -102,11 +111,13 @@ describe("query classes", () => {
       "stackdriver",
       "grafana-bigquery-datasource",
       "grafana-pyroscope-datasource",
+      "grafana-opensearch-datasource",
       "grafana-postgresql-datasource",
       "mysql",
       "mssql",
     ]);
     expect(targetsOf(json, 1).map((t) => t.refId)).toEqual(["A", "B"]);
+    expect(targetsOf(json, 6).map((t) => [t.refId, t.queryType])).toEqual([["A", "lucene"], ["B", "PPL"]]);
     expect(validateDashboardSchema(json)).toEqual([]);
   });
 

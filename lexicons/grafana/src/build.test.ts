@@ -425,16 +425,16 @@ describe("variables", () => {
 describe("extension points", () => {
   test("definePanel and defineQuery produce classes that render and lay out like built-ins", () => {
     const ClockPanel = definePanel<{ mode?: "time" | "countdown" }>()({ type: "grafana-clock-panel", className: "ClockPanel", defaultSize: { w: 8, h: 8 } });
-    const OpenSearchQuery = defineQuery<{ query: string; refId?: string }>()({ datasourceType: "grafana-opensearch-datasource", className: "OpenSearchQuery" });
-    const os = new Datasource({ name: "Logs OS", type: "grafana-opensearch-datasource" });
+    const SplunkQuery = defineQuery<{ query: string; refId?: string }>()({ datasourceType: "grafana-splunk-datasource", className: "SplunkQuery" });
+    const os = new Datasource({ name: "Logs Splunk", type: "grafana-splunk-datasource" });
     const json = renderDashboard(
-      new Dashboard({ title: "Custom", panels: [new ClockPanel({ options: { mode: "countdown" }, datasource: os, targets: [new OpenSearchQuery({ query: "*" })] })] }),
+      new Dashboard({ title: "Custom", panels: [new ClockPanel({ options: { mode: "countdown" }, datasource: os, targets: [new SplunkQuery({ query: "*" })] })] }),
     );
     expect(json.panels![0]).toMatchObject({
       type: "grafana-clock-panel",
       gridPos: { w: 8, h: 8, x: 0, y: 0 },
       options: { mode: "countdown" },
-      datasource: { type: "grafana-opensearch-datasource", uid: "logs-os" },
+      datasource: { type: "grafana-splunk-datasource", uid: "logs-splunk" },
       targets: [{ refId: "A", query: "*" }],
     });
     expect(validateDashboardSchema(json as unknown as Record<string, unknown>)).toEqual([]);
