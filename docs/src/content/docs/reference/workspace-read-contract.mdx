@@ -37,6 +37,8 @@ Each schema ships in `@intentius/chant` at `src/workspace/<command>.schema.json`
 | the [`workEvidence`](/chant/guide/work-items/#acceptance-criteria) Op activity | its result, or the refusal it fails with | `https://intentius.io/chant/schemas/workspace/work-evidence/v1/work-evidence.schema.json` |
 | [`chant workspace work history`](/chant/cli/workspace-work/#reading-leases) | `--json` | `https://intentius.io/chant/schemas/workspace/work-history/v1/work-history.schema.json` |
 | [`chant workspace agent`](/chant/cli/workspace-agent/) | `--json` | `https://intentius.io/chant/schemas/workspace/agent/v1/agent.schema.json` |
+| [`chant workspace signers`](/chant/cli/workspace-signers/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/signers/v1/signers.schema.json` |
+| [`chant workspace evidence verify`](/chant/cli/workspace-evidence/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/evidence/v1/evidence.schema.json` |
 
 Each schema is a `oneOf` of a result and a failure. The `records` schema has a third branch for the set it prints without `--kind` ([#2680](https://github.com/INTENTIUS/chant/issues/2680)). The set holds a result or a failure for each record kind the declaration names. A failure has `error: { code, message }`, plus `location` for the commands that read the declaration, and exits 1. A result may still hold entries that couldn't be read, each with a `reason: { code, message }`. Only `check` fails on those ([ws-020](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-020-unreadable.md)). In `check`, a declaration that can't be read is the finding `WSP001` with the same `code`, not a failure.
 
@@ -247,6 +249,26 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `box-fountain-callback-undeclared` | finding, `check` | `WSP125`: a box member builds a fountain `Box`, whose persistent sandbox fountain gives a callback token scoped to its owner, and its box block doesn't declare `fountain-callback` brokered by `fountain` with scope `owner`. |
 | `box-intent-unknown` | finding, `check` | `WSP126`: a box block names an intent, and no record of a declared kind named `decision` has that id. |
 | `box-intent-unconstrained` | finding, `check` | `WSP127`: the decision record a box names as its intent constrains no member or path of this workspace at all. |
+| `signers-file-missing` | error, `signers` | There is no signers file at the base revision, so there is no signer history to read. |
+| `signers-removed` | broken history, `signers` and `verify` | The signers file was removed. Commits merged before the removal keep the set they were judged by; nothing after it verifies. |
+| `rotation-unparseable` | broken history, `signers`; rotation, `verify` | The rotation file beside the signers file is not JSON. |
+| `rotation-invalid` | broken history, `signers`; rotation, `verify` | The rotation file does not match its shape: schema 1, a version, the previous set's digest, a threshold and signatures. |
+| `rotation-first-version` | broken history, `signers`; rotation, `verify` | The first signer set's rotation file names a version other than 1, or a previous digest. |
+| `rotation-missing` | broken history, `signers`; rotation, `verify` | The signer set or its threshold changed with no rotation file signed by the set before it. |
+| `rotation-version-skew` | broken history, `signers`; rotation, `verify` | The rotation names a version other than the one after the set it replaces, as a replayed or skipped rotation does. |
+| `rotation-previous-mismatch` | broken history, `signers`; rotation, `verify` | The rotation names a previous digest other than the set it replaces, as a rollback does. |
+| `rotation-threshold-unsatisfiable` | broken history, `signers`; rotation, `verify` | The new threshold is more than the new set's distinct signers, so no later rotation could meet it. |
+| `rotation-threshold-not-met` | broken history, `signers`; rotation, `verify` | Fewer distinct signers of the set before signed the rotation, in the `chant-signers` namespace, than its threshold. |
+| `trust-policy-unreadable` | error, `evidence` | The trust policy at base can't be read, or its signer history is broken, so no runner key is trusted. |
+| `envelope-unreadable` | error, `evidence verify` | The `--envelope` file can't be read, or is not JSON. |
+| `envelope-invalid` | error, `evidence verify` | The file is not a DSSE envelope: `payloadType`, `payload` in canonical base64, and signatures with `keyid` and `sig`. |
+| `envelope-untrusted` | error, `evidence verify` | No signature in the envelope verifies against a runner key the policy at base lists. |
+| `evidence-payload-type` | error, `evidence verify` | The envelope's payload type is not `application/vnd.in-toto+json`. |
+| `evidence-statement-invalid` | error, `evidence verify` | The payload is not an in-toto Statement v1 with chant's runner-evidence predicate, or has a field the predicate does not define. |
+| `evidence-runner-mismatch` | error, `evidence verify` | The statement names a runner other than the one whose key signed it. |
+| `runner-key-invalid` | error, `evidence sign` | The key is not an Ed25519 private key in PEM. |
+| `runner-key-is-signer` | error, `evidence sign` | The key is a person's key in the signers file. Evidence is signed by a service or CI identity. |
+| `runner-key-unlisted` | error, `evidence sign` | The policy at base lists no runner with the key. |
 | `lock-invalid` | finding, `check` | The lineage lock can't be read. |
 | `manual-step-open` | finding, `check` | A scope in the lineage lock has an open manual step. |
 | `work-kind-missing` | error, `work` | No work kind to find the item in: `--kind` names a kind with no work block, or the declaration names no work kind. |

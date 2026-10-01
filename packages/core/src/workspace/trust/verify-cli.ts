@@ -49,6 +49,7 @@ function printReport(r: ChangeReport): void {
     lines.push(`  ${c.commit.slice(0, 8)}  ${c.level}${who}  ${c.subject}${note}`);
   }
   for (const w of r.protectedWrites) lines.push(`  protected write ${w.commit.slice(0, 8)} ${w.paths.join(", ")}: ${w.allowed ? "allowed" : "refused"}, ${w.reason}`);
+  if (r.rotation && "to" in r.rotation) lines.push(`  signer set: version ${r.rotation.from} to ${r.rotation.to}, signed by ${r.rotation.signedBy.join(", ")}`);
   for (const n of r.notes) lines.push(n);
   console.log(lines.join("\n"));
   if (r.ok) console.log(formatSuccess(`verified ${r.commits.length} commits against the policy at base`));

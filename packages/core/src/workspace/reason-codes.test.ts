@@ -37,6 +37,9 @@ import { POINTS_WRITE_ERROR_CODES } from "./decide";
 import { PATCH_ERROR_CODES } from "./patch";
 import { AGENT_ERROR_CODES } from "./agent-cli";
 import { WRITE_SCOPE_CODES } from "./write-scope";
+import { ROTATION_REFUSAL_CODES } from "./trust/rotation";
+import { SIGNERS_ERROR_CODES } from "./trust/signers-cli";
+import { EVIDENCE_ERROR_CODES } from "./trust/evidence";
 
 const HERE = import.meta.dirname;
 
@@ -88,6 +91,9 @@ const PER_COMMAND: Record<string, readonly string[]> = {
   PATCH_ERROR_CODES,
   AGENT_ERROR_CODES,
   WRITE_SCOPE_CODES,
+  ROTATION_REFUSAL_CODES,
+  SIGNERS_ERROR_CODES,
+  EVIDENCE_ERROR_CODES,
 };
 
 /** Every string in an `enum` under a property named `code`, anywhere in a schema. */
