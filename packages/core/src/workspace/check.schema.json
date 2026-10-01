@@ -146,6 +146,70 @@
         "ok": {
           "type": "boolean"
         },
+        "live": {
+          "description": "Present with --live --env (#2549, ws-062): the declared output links resolved against the live graph of the environment. Each member of kind chant ran chant graph --live. Added by chant 0.101.0.",
+          "type": "object",
+          "required": [
+            "env",
+            "links"
+          ],
+          "properties": {
+            "env": {
+              "type": "string"
+            },
+            "links": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "consumer",
+                  "producer",
+                  "output",
+                  "resolves",
+                  "status",
+                  "reason"
+                ],
+                "properties": {
+                  "consumer": {
+                    "type": "string"
+                  },
+                  "producer": {
+                    "type": "string"
+                  },
+                  "output": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "type": "string"
+                  },
+                  "origin": {
+                    "const": "declared"
+                  },
+                  "resolves": {
+                    "const": "live"
+                  },
+                  "status": {
+                    "enum": [
+                      "resolved",
+                      "missing",
+                      "unresolved",
+                      "invalid"
+                    ]
+                  },
+                  "reason": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "pointer": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
         "diagnostics": {
           "description": "Active findings, in the shape `chant lint --format json` prints, sorted by position.",
           "type": "array",

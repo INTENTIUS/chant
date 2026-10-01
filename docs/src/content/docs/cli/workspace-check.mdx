@@ -7,7 +7,7 @@ diataxis: reference
 ## Synopsis
 
 ```
-chant workspace check [--at <rev>] [--json] [--format stylish|json|sarif] [--generated] [--kind <kind file>]
+chant workspace check [--at <rev>] [--json] [--format stylish|json|sarif] [--generated] [--kind <kind file>] [--live --env <env>]
 chant workspace check --changes <base>..<head> [--work <id>] [--severity off|warn|fail] [--kind <kind file>...] [--json]
 ```
 
@@ -34,7 +34,7 @@ $ chant workspace check
 
 chant.workspace.json
     5:5    warning  member docs (docs) is kind other, which chant does not read: an npm package with no chant project  WSP009
-   17:15   error    member infra has kind terraform, which no built-in kind or pinned package supplies; known kinds: chant, other, workspace  WSP003
+   17:15   error    member infra has kind terraform, which no built-in kind or pinned package supplies; known kinds: chant, design, other, workspace  WSP003
 
 ✖ 1 error, 1 warning
 ```
@@ -96,7 +96,7 @@ A finding's location is the entry it is about, the link for `WSP091` to `WSP094`
 
 ### Member links
 
-`WSP091` to `WSP098` resolve every [member link](/chant/reference/workspace-declaration/#member-links) in source ([#2539](https://github.com/INTENTIUS/chant/issues/2539)). A `chant` producer's outputs are read from its TypeScript without running it, and other kinds expose what the kind and the entry list. Only files are read. No process starts and no network is reached, and a test runs the command under the [no-egress guard](/chant/reference/network-egress/). Resolving links against a live estate comes later, with `--live`.
+`WSP091` to `WSP098` resolve every [member link](/chant/reference/workspace-declaration/#member-links) in source ([#2539](https://github.com/INTENTIUS/chant/issues/2539)). A `chant` producer's outputs are read from its TypeScript without running it, and other kinds expose what the kind and the entry list. Only files are read. No process starts and no network is reached, and a test runs the command under the [no-egress guard](/chant/reference/network-egress/). [`--live`](#live-links) resolves the same links against a live estate.
 
 ```
 $ chant workspace check
@@ -121,6 +121,21 @@ The same pass infers the joins nobody declared and reports an ambiguous one as `
 | `status` | `resolved`, `missing`, `unresolved`, `invalid` or `ambiguous` |
 | `reason` | Why the row isn't `resolved`, or `null` |
 | `pointer` | Where a declared link sits in the declaration, as a JSON Pointer |
+
+### Live links
+
+`chant workspace check --live --env <env>` resolves each declared link against what its producer's estate publishes now, and is catalogued [egress](/chant/reference/network-egress/) ([#2549](https://github.com/INTENTIUS/chant/issues/2549), [ws-062](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-062-live-links-and-design-kind.md)). Each `chant` member runs `chant graph --live --env <env>` under its own toolchain, as [`chant workspace graph --live`](/chant/cli/workspace-graph/#the-live-read) does, and the outputs of that live graph, the stack outputs its lexicon's live read reports, are the names a link may match. The match is exact, as in source. The command reaches the account with the credentials the member's own `chant graph --live` uses, and nothing else. Without `--live` nothing here runs.
+
+Only declared links of kind `output` are resolved live. A `telemetry` link names a collector target that the graph reports from source, so it stays a source-checked link.
+
+| Id | Name | Default | Settable | Fails when |
+|---|---|---|---|---|
+| `WSP141` | link-live-missing | warning | yes | A `chant` producer was read live and published outputs, and none has the link's name. A declared output that is not deployed yet is a normal state before a release, so this is a warning |
+| `WSP142` | link-live-unresolved | info | yes | The link could not be resolved live: the producer's kind has no live reader (`other`, `design` or a kind from a package), its read failed, or its read returned no outputs at all |
+
+An empty live read is never reported as missing. `chant graph --live` reports an account it could not reach as warnings on stderr and exits 0, and a lexicon whose live read has no stack outputs looks the same, so a producer that returned no outputs leaves its links unresolved.
+
+`--json` and `--format json` add `declaration.live`, `{ env, links }`, where each link is a row of the table above with `resolves` set to `live`. The source rows stay in `declaration.links`. `--live` needs `--env` and takes no `--at`, since a live read is of the account now, and it needs a declaration.
 
 ### Severity and suppression
 
@@ -270,6 +285,8 @@ warning   change-uncovered: docs/readme.md, in member docs, is modified, and no 
 | `--format sarif` | Print SARIF 2.1.0 through lint's SARIF reporter, with the suppressed findings as suppressed results |
 | `--generated` | Run each declared generator and compare its output with the file in the tree, as described under [generated files](#generated-files). Off by default, since generators run member code |
 | `--kind <kind file>` | Read the records of this record kind and run the [record checks](#record-checks). The path is resolved against the current directory. With `--at`, the records and the files they pin are read at the revision. With `--changes` it repeats, and the kinds given replace the declared ones |
+| `--live` | Resolve each declared `output` link against the live graph of the environment named with `--env`, and run `WSP141` and `WSP142`. Reaches the account through each `chant` member's own `chant graph --live`. See [live links](#live-links) |
+| `--env <env>` | With `--live`: the environment each member's `chant graph --live` reads |
 | `--changes <range>` | Run the [forward coverage check](#the-forward-coverage-check) over `<base>..<head>`, `<base>...<head>` or `<base>`, in place of the checks above. Takes no `--at` |
 | `--work <id>` | With `--changes`: the work item in hand, whose `out_of_scope` and whose decisions' `out_of_scope` apply. An id no work record has is `work-item-unknown` |
 | `--severity off\|warn\|fail` | With `--changes`: in place of the declaration's `changes.severity` |

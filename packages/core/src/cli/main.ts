@@ -926,7 +926,7 @@ Workspace (level 1, #2524):
                         lint and workspace check there, then gate on the digest
                         of the patch (chant approve workspace-upgrade <scope>).
                         A second run with the approval applies the patch
-  workspace check [--at <rev>] [--json] [--format stylish|json|sarif] [--generated] [--kind <kind file>]
+  workspace check [--at <rev>] [--json] [--format stylish|json|sarif] [--generated] [--kind <kind file>] [--live --env <env>]
                         Fail on an unreadable lineage lock or an open manual
                         step, and, in a declared workspace, on a WSP check of
                         the declaration, member ledgers, pipelines or
@@ -934,7 +934,11 @@ Workspace (level 1, #2524):
                         and compares their output. --kind warns on records
                         whose pinned files changed. Needs no workspace file.
                         --at reads a commit's git objects; --format json
-                        prints the read-contract document
+                        prints the read-contract document. --live --env
+                        resolves each declared member link against the live
+                        graph of <env> (each chant member runs chant graph
+                        --live, which reaches the account) and reports
+                        WSP141 and WSP142
   workspace check --changes <base>..<head> [--work <id>] [--severity off|warn|fail] [--kind <kind file>...] [--json]
                         Map each path the diff changes to the current records
                         whose constrains cover it: change-uncovered when none

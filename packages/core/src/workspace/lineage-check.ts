@@ -1,5 +1,5 @@
 /**
- * `chant workspace check [--at <rev>] [--json] [--format stylish|json|sarif] [--generated] [--kind <kind file>]`:
+ * `chant workspace check [--at <rev>] [--json] [--format stylish|json|sarif] [--generated] [--kind <kind file>] [--live --env <env>]`:
  * the lineage checks (#2550, D9), and the declaration checks (#2535, D16)
  * when a declaration sits between the current directory and the git root.
  *
@@ -12,7 +12,10 @@
  * pipelines (#2542) and generated files (#2541) as well as the declaration
  * itself (#2641). `--generated` runs each declared generator too. `--kind`
  * reads a record kind's records and reports the files they pin by hash that
- * have changed since (#2549).
+ * have changed since (#2549). `--live --env <env>` resolves each declared
+ * member link against the live graph of `<env>` (`./checks/live.ts`, #2549):
+ * it is the one option that reaches a network, through each member's own
+ * `chant graph --live`, and is catalogued as egress.
  *
  * `chant workspace upgrade` runs the same checks in its staging worktree
  * before it reaches its gate.
@@ -88,7 +91,7 @@ export function findingKey(f: CheckFinding): string {
 }
 
 const USAGE =
-  "chant workspace check [--at <rev>] [--json] [--format stylish|json|sarif] [--generated] [--kind <kind file>]\n       chant workspace check --changes <base>..<head> [--work <id>] [--severity off|warn|fail] [--kind <kind file>...] [--json]";
+  "chant workspace check [--at <rev>] [--json] [--format stylish|json|sarif] [--generated] [--kind <kind file>] [--live --env <env>]\n       chant workspace check --changes <base>..<head> [--work <id>] [--severity off|warn|fail] [--kind <kind file>...] [--json]";
 const FORMATS = ["stylish", "json", "sarif"] as const;
 
 /** A lock finding as a lint diagnostic, for `--format json` and `--format sarif`. */
@@ -149,7 +152,7 @@ export type CheckDocument =
  * to `cwd`. `runGenerators` is `--generated`; with `at` it does nothing,
  * since the member facts describe the working tree, not the revision.
  */
-export async function runChecks(cwd: string, at?: string, options: { runGenerators?: boolean; kind?: string } = {}): Promise<CheckDocument> {
+export async function runChecks(cwd: string, at?: string, options: { runGenerators?: boolean; kind?: string; live?: { env: string; onStderr?: (text: string) => void } } = {}): Promise<CheckDocument> {
   // Loaded here, not at the top: `workspace upgrade` imports this module for checkLineage alone.
   const [{ findDeclarationDir, readDeclaration, readerVersion }, { gitTop, gitTree, resolveCommit, workingTree }] = await Promise.all([
     import("./declaration"),
@@ -196,6 +199,7 @@ export async function runChecks(cwd: string, at?: string, options: { runGenerato
       runGenerators: options.runGenerators === true,
       ...(commit !== null ? { tree } : {}),
       ...(records ? { records } : {}),
+      ...(options.live ? { live: options.live } : {}),
     });
     let name: string | null = null;
     try {
@@ -238,6 +242,19 @@ export async function runWorkspaceCheck(ctx: CommandContext): Promise<number> {
     if (handed !== undefined) return handed;
     return (await import("./changes-cli")).runWorkspaceChanges(ctx, root);
   }
+  if (ctx.args.live) {
+    // A live read is of the account now, and it needs the environment each member's `chant graph --live` reads.
+    const problem =
+      ctx.args.at !== undefined
+        ? "--live reads the account as it stands now, and --at reads the source at a revision; chant workspace check takes one of them"
+        : !ctx.args.env
+          ? "--live needs an environment, as each member's chant graph --live does: --live --env <env>"
+          : undefined;
+    if (problem) {
+      console.error(formatError({ message: problem, hint: USAGE }));
+      return 1;
+    }
+  }
   const format = (ctx.args.format || "stylish") as (typeof FORMATS)[number];
   if (!FORMATS.includes(format)) {
     console.error(formatError({ message: `--format ${format} is not a check format; use stylish, json or sarif`, hint: USAGE }));
@@ -250,10 +267,14 @@ export async function runWorkspaceCheck(ctx: CommandContext): Promise<number> {
     const handed = await handToRootChant(root, ctx.args.at);
     if (handed !== undefined) return handed;
   }
-  const doc = await runChecks(root, ctx.args.at, { runGenerators: ctx.args.generated === true, ...(ctx.args.kind !== undefined ? { kind: ctx.args.kind } : {}) });
+  const doc = await runChecks(root, ctx.args.at, { runGenerators: ctx.args.generated === true, ...(ctx.args.kind !== undefined ? { kind: ctx.args.kind } : {}), ...(ctx.args.live && ctx.args.env ? { live: { env: ctx.args.env, onStderr: (text: string) => process.stderr.write(text) } } : {}) });
   if ("error" in doc) {
     if (ctx.args.json || format === "json") console.log(JSON.stringify(doc, null, 2));
     else console.error(formatError({ message: `${doc.error.code}: ${doc.error.message}`, hint: USAGE }));
+    return 1;
+  }
+  if (ctx.args.live && !doc.declaration) {
+    console.error(formatError({ message: "--live resolves a workspace's member links, and there is no chant.workspace.json between here and the git root", hint: USAGE }));
     return 1;
   }
   const { declaration, ok } = doc;

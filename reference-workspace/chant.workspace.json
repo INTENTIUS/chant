@@ -25,8 +25,8 @@
     {
       "name": "design",
       "dir": "design",
-      "kind": "other",
-      "because": "the design data member; decisions pin its files by hash, and its kind comes with #2549",
+      "kind": "design",
+      "because": "the design data member: the screen spec and wireframe the design client edits. Decisions pin its files by hash, and chant reads it and builds nothing",
       "records": [{ "kind": "sessions/session.kind.mjs" }]
     }
   ],
