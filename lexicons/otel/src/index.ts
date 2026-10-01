@@ -98,6 +98,8 @@ export {
   GENAI_CLIENT_DURATION_BUCKETS,
   GENAI_CLIENT_TOKEN_BUCKETS,
   GENAI_TOKEN_TYPES,
+  DELTA_READY_EXPORTERS,
+  genAiNeedsDeltaToCumulative,
   type GenAiPipelineOptions,
   type GenAiComponentsOptions,
   type GenAiComponents,

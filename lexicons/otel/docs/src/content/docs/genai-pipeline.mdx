@@ -27,7 +27,7 @@ Like [`otlpCollector()`](../composites/), it returns entities: pass them to `col
 |---|---|---|---|
 | `traces` | `otlp` | `memory_limiter`, `transform/genai_content`, `redaction/genai_content`, `batch` | `traceExporters`, `forward/genai` |
 | `traces/genai` | `forward/genai` | `filter/genai_spans` | `spanmetrics/genai`, `sum/genai_tokens` |
-| `metrics/genai` | `spanmetrics/genai`, `sum/genai_tokens` | `batch` | `metricExporters` |
+| `metrics/genai` | `spanmetrics/genai`, `sum/genai_tokens` | `deltatocumulative/genai` when `deltaToCumulative` asks for it, `batch` | `metricExporters` |
 | `logs` | `otlp` | `memory_limiter`, `transform/genai_content`, `redaction/genai_content`, `batch` | `logExporters` |
 
 The `otlp` receiver listens on 4317 and 4318, and a `health_check` extension on 13133 unless `healthCheck: false`. Exporters default to one `debug` exporter. `logs: false` leaves out the logs pipeline. With `clientMetrics` set, `signaltometrics/genai_client` joins the `traces/genai` exporters and the `metrics/genai` receivers, and a `metrics` pipeline passes the SDK's OTLP metrics through (see [below](#the-conventions-client-metrics)).
@@ -87,7 +87,31 @@ Errors are `genai_calls_total` with `status_code="STATUS_CODE_ERROR"`. A label i
 
 `providerDimensions: true` adds `gen_ai.provider.name` and `gen_ai.response.model` to `genai.calls` and `genai.duration`. The token counters keep the model alone, for the reason below; `gen_ai.client.token.usage` splits tokens by both.
 
-Two things about the `sum` connector at the pinned collector release: it emits delta sums, which the `prometheus` exporter accumulates but an exporter that needs cumulative input does not; and it adds each value once per attribute it splits by, so the preset splits by the model alone. OTEL107 reports a `sum` metric with more than one attribute.
+Two things about the `sum` connector at the pinned collector release. It emits delta sums. The `prometheus` exporter accumulates them, but `prometheusremotewrite` drops non-cumulative sums and histograms, and some OTLP backends store only cumulative data. And it adds each value once per attribute it splits by, so the preset splits by the model alone; OTEL107 reports a `sum` metric with more than one attribute.
+
+`deltaToCumulative` puts a `deltatocumulative/genai` processor in front of `batch` on `metrics/genai`, which turns the token sums, and with `clientMetrics: "derive"` the client metric histograms, into cumulative ones and leaves the span metrics, already cumulative, alone:
+
+| `deltaToCumulative` | Inserted |
+|---|---|
+| `"auto"` | when a metric exporter's type is not in `DELTA_READY_EXPORTERS` (`prometheus`, `debug`), such as `prometheusremotewrite` or `otlp` |
+| `true` | always |
+| `false` | never, such as for an OTLP backend that wants deltas |
+| unset | `"auto"` with `clientMetrics: "derive"`; otherwise `false`, the output from before the option existed |
+
+```ts
+import { defineComponent, genAiPipeline } from "@intentius/chant-lexicon-otel";
+
+const RemoteWrite = defineComponent<{ endpoint: string }>()({
+  kind: "exporter",
+  type: "prometheusremotewrite",
+  pin: { source: "github.com/open-telemetry/opentelemetry-collector-contrib/exporter/prometheusremotewriteexporter", version: "v0.130.0" },
+});
+const mimir = new RemoteWrite({ endpoint: "http://mimir:9009/api/v1/push" });
+
+export default genAiPipeline({ metricExporters: [mimir], deltaToCumulative: "auto" });
+```
+
+Without `clientMetrics: "derive"` it is opt-in, so a config built before the option existed comes out byte-identical. The processor keeps a running total per stream in memory, so with more than one collector replica each stream has to reach the same one.
 
 ## The conventions' client metrics
 
@@ -129,7 +153,7 @@ To find out which applies, run with `"passthrough"` and look for `gen_ai_client_
 
 ### Delta temporality
 
-`signaltometrics` emits delta histograms for each batch. The `prometheus` exporter accumulates them, but an exporter that needs cumulative input, such as Prometheus remote write, needs a `deltatocumulative` processor in front, which the lexicon does not provide yet ([#2913](https://github.com/INTENTIUS/chant/issues/2913)). Until it does, `genAiPipeline()` with `clientMetrics: "derive"` accepts only `prometheus` and `debug` metric exporters and throws for any other. `"passthrough"` has no such limit, since the SDK sets the temporality.
+`signaltometrics` emits delta histograms for each batch. The `prometheus` exporter accumulates them, but an exporter that needs cumulative input, such as Prometheus remote write, needs a `deltatocumulative` processor in front. With `clientMetrics: "derive"`, `deltaToCumulative` defaults to `"auto"`, so `deltatocumulative/genai` goes on `metrics/genai` whenever a metric exporter is anything other than `prometheus` or `debug` (see the table above). Pass `deltaToCumulative: false` for an OTLP backend that wants deltas. The SDK's `metrics` pipeline gets no such processor, in either mode, since the SDK sets the temporality.
 
 `genAiMetrics({ clientMetrics })` returns the names under `client`, with `source` saying which mode built them:
 

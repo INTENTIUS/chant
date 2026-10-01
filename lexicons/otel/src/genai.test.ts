@@ -17,7 +17,7 @@ import { join } from "path";
 import { load } from "js-yaml";
 import type { Declarable } from "@intentius/chant/declarable";
 import { collectorYaml, buildCollectorConfig } from "./collector";
-import { COLLECTOR_PIN, GENAI_SEMCONV_PIN } from "./define";
+import { COLLECTOR_PIN, GENAI_SEMCONV_PIN, defineComponent } from "./define";
 import { collectorTopology, collectorTopologyOf } from "./topology";
 import { validateCollectorConfig, validateCollectorEntities } from "./validate-config";
 import type { CollectorConfig } from "./model";
@@ -68,6 +68,13 @@ function otelcolValidate(yaml: string): { ok: boolean; output: string } {
 function parsed(entities: Declarable[]): any {
   return load(collectorYaml(entities));
 }
+
+/** Not a chant built-in; declared the way a project would. */
+const RemoteWriteExporter = defineComponent<{ endpoint: string }>()({
+  kind: "exporter",
+  type: "prometheusremotewrite",
+  pin: { source: "github.com/open-telemetry/opentelemetry-collector-contrib/exporter/prometheusremotewriteexporter", version: "v0.130.0" },
+});
 
 describe("genAiPipeline: content", () => {
   test("content keys are deleted from spans, span events and log records by default", () => {
@@ -224,6 +231,45 @@ describe("genAiPipeline: metrics", () => {
     });
   });
 
+  test("deltaToCumulative unset or false leaves the output as it was, whatever the exporters", () => {
+    const remoteWrite = new RemoteWriteExporter({ endpoint: "http://mimir:9009/api/v1/push" });
+    for (const metricExporters of [undefined, [remoteWrite], [new OtlpExporter({ endpoint: "backend:4317" })]]) {
+      const before = collectorYaml(genAiPipeline({ metricExporters }));
+      expect(before).not.toContain("deltatocumulative");
+      expect(collectorYaml(genAiPipeline({ metricExporters, deltaToCumulative: false }))).toBe(before);
+    }
+  });
+
+  test('deltaToCumulative "auto" puts deltatocumulative before batch unless every exporter takes deltas', () => {
+    const remoteWrite = new RemoteWriteExporter({ endpoint: "http://mimir:9009/api/v1/push" });
+    const prometheus = new PrometheusExporter({ endpoint: "0.0.0.0:8889" });
+    const withRemote = parsed(genAiPipeline({ metricExporters: [prometheus, remoteWrite], deltaToCumulative: "auto" }));
+    expect(withRemote.service.pipelines["metrics/genai"]).toEqual({
+      receivers: ["spanmetrics/genai", "sum/genai_tokens"],
+      processors: ["deltatocumulative/genai", "batch"],
+      exporters: ["prometheus", "prometheusremotewrite"],
+    });
+    expect(withRemote.processors).toHaveProperty("deltatocumulative/genai");
+    for (const p of ["traces", "traces/genai", "logs"]) {
+      expect(withRemote.service.pipelines[p].processors).not.toContain("deltatocumulative/genai");
+    }
+
+    const promOnly = genAiPipeline({ metricExporters: [prometheus], deltaToCumulative: "auto" });
+    expect(collectorYaml(promOnly)).toBe(collectorYaml(genAiPipeline({ metricExporters: [prometheus] })));
+    expect(collectorYaml(genAiPipeline({ deltaToCumulative: "auto" }))).toBe(collectorYaml(genAiPipeline()));
+    const otlp = parsed(genAiPipeline({ metricExporters: [new OtlpExporter({ endpoint: "backend:4317" })], deltaToCumulative: "auto" }));
+    expect(otlp.service.pipelines["metrics/genai"].processors).toEqual(["deltatocumulative/genai", "batch"]);
+  });
+
+  test("deltaToCumulative: true inserts it for any exporter, such as otlp to a cumulative backend", () => {
+    const config = parsed(genAiPipeline({ metricExporters: [new OtlpExporter({ endpoint: "backend:4317" })], deltaToCumulative: true }));
+    expect(config.service.pipelines["metrics/genai"].processors).toEqual(["deltatocumulative/genai", "batch"]);
+  });
+
+  test("deltaToCumulative rejects other values", () => {
+    expect(() => genAiPipeline({ deltaToCumulative: "yes" as never })).toThrow(/deltaToCumulative/);
+  });
+
   test("logs: false leaves the logs pipeline out", () => {
     expect(Object.keys(parsed(genAiPipeline({ logs: false })).service.pipelines)).toEqual([
       "traces",
@@ -360,10 +406,23 @@ describe("genAiPipeline: the conventions' client metrics", () => {
     expect(genAiComponents({ clientMetrics: "derive" }).metrics).toEqual(genAiMetrics({ clientMetrics: "derive" }));
   });
 
-  test('clientMetrics: "derive" refuses exporters that need cumulative metrics, until deltatocumulative (#2913)', () => {
+  test('clientMetrics: "derive" converts its deltas for exporters other than prometheus and debug', () => {
     const otlp = new OtlpExporter({ name: "mimir", endpoint: "mimir:4317" });
-    expect(() => genAiPipeline({ clientMetrics: "derive", metricExporters: [otlp] })).toThrow(/prometheus and debug.*#2913.*otlp/);
-    expect(() => genAiPipeline({ clientMetrics: "derive" })).not.toThrow();
+    const config = parsed(genAiPipeline({ clientMetrics: "derive", metricExporters: [otlp] }));
+    expect(config.service.pipelines["metrics/genai"]).toEqual({
+      receivers: ["spanmetrics/genai", "sum/genai_tokens", "signaltometrics/genai_client"],
+      processors: ["deltatocumulative/genai", "batch"],
+      exporters: ["otlp/mimir"],
+    });
+    // The SDK's own metrics carry the SDK's temporality and are left alone.
+    expect(config.service.pipelines.metrics.processors).not.toContain("deltatocumulative/genai");
+
+    const prom = new PrometheusExporter({ endpoint: "0.0.0.0:8889" });
+    expect(collectorYaml(genAiPipeline({ clientMetrics: "derive", metricExporters: [prom] }))).not.toContain("deltatocumulative");
+    expect(collectorYaml(genAiPipeline({ clientMetrics: "derive" }))).not.toContain("deltatocumulative");
+    const off = parsed(genAiPipeline({ clientMetrics: "derive", metricExporters: [otlp], deltaToCumulative: false }));
+    expect(off.service.pipelines["metrics/genai"].processors).toEqual(["batch"]);
+    expect(collectorYaml(genAiPipeline({ clientMetrics: "passthrough", metricExporters: [otlp] }))).not.toContain("deltatocumulative");
     expect(() => genAiPipeline({ clientMetrics: "semconv" as never })).toThrow(/"derive" or "passthrough"/);
   });
 
@@ -389,8 +448,16 @@ describe("genAiPipeline: checks and topology", () => {
     ["keepContent", { keepContent: true }],
     ["masked and sampled", { maskValues: ["secret-[a-z]+"], sampling: [new FilterProcessor({ name: "s", traces: { span: ["false"] } })] }],
     ["prometheus", { metricExporters: [new PrometheusExporter({ endpoint: "0.0.0.0:8889" })], logs: false, healthCheck: false }],
+    [
+      "remote write with deltatocumulative",
+      { metricExporters: [new RemoteWriteExporter({ endpoint: "http://mimir:9009/api/v1/push" })], deltaToCumulative: "auto" },
+    ],
     ["client metrics derived", { clientMetrics: "derive", providerDimensions: true, metricExporters: [new PrometheusExporter({ endpoint: "0.0.0.0:8889" })] }],
     ["client metrics passed through", { clientMetrics: "passthrough" }],
+    [
+      "client metrics derived to remote write",
+      { clientMetrics: "derive", metricExporters: [new RemoteWriteExporter({ endpoint: "http://mimir:9009/api/v1/push" })] },
+    ],
   ];
 
   test.each(optionSets)("%s passes the lexicon's own checks", (_label, options) => {

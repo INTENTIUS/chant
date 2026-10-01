@@ -155,6 +155,7 @@ export function everyBuiltin(): Declarable[] {
     ],
   });
   const probabilistic = new c.ProbabilisticSamplerProcessor({ sampling_percentage: 12.5, mode: "proportional", sampling_precision: 4 });
+  const deltaToCumulative = new c.DeltaToCumulativeProcessor({ max_stale: "10m", max_streams: 50000 });
 
   const otlpOut = new c.OtlpExporter({
     name: "backend",
@@ -259,6 +260,7 @@ export function everyBuiltin(): Declarable[] {
     redaction,
     tailSampling,
     probabilistic,
+    deltaToCumulative,
     otlpOut,
     otlphttp,
     debug,
@@ -287,7 +289,7 @@ export function everyBuiltin(): Declarable[] {
     new Pipeline({
       signal: "metrics",
       receivers: [otlp, prometheusIn, hostmetrics, cluster, kubelet, spanmetrics, servicegraph, count, sum, signalToMetrics],
-      processors: [memoryLimiter, filter, batch],
+      processors: [memoryLimiter, filter, deltaToCumulative, batch],
       exporters: [prometheusOut, otlphttp],
     }),
     new Pipeline({

@@ -35,6 +35,7 @@ Every built-in follows the config of the collector-contrib release in `COLLECTOR
 | `RedactionProcessor` | `redaction` | `allow_all_keys` or `allowed_keys` is set; `allowed_keys` is not set alongside `allow_all_keys: true`; no empty pattern; `hash_function` has something blocked to hash |
 | `TailSamplingProcessor` | `tail_sampling` | `decision_wait` is set; `policies` is not empty; policy names are present and unique; each policy has the block its `type` names and what that block needs; `and`, `drop` and `composite` have sub-policies, and `policy_order` and `rate_allocation` name existing ones |
 | `ProbabilisticSamplerProcessor` | `probabilistic_sampler` | `sampling_percentage` is set and within 0 to 100; `sampling_precision` within 1 to 14; `attribute_source: record` has a `from_attribute`; `hash_seed` only in `hash_seed` mode |
+| `DeltaToCumulativeProcessor` | `deltatocumulative` | `max_stale` is a positive duration; `max_streams` is a whole number, 0 or more |
 
 Put `memory_limiter` first in every pipeline; OTEL105 warns otherwise.
 
@@ -83,6 +84,8 @@ new TailSamplingProcessor({
 ```
 
 Tail sampling needs every span of a trace in one collector. Run it on a gateway, and when the gateway has more than one replica put a `loadbalancing` exporter on the agents in front of it.
+
+`deltatocumulative` turns delta metrics into cumulative ones by keeping a running total per stream, and passes cumulative metrics through. Put it in a metrics pipeline fed by a connector that emits deltas (`sum`, `count`, `signaltometrics`) when an exporter reads only cumulative data, such as `prometheusremotewrite`, which drops the rest. `max_stale` (default `5m`) is how long a stream with no new samples is kept, and `max_streams` (default unlimited) caps how many are tracked; samples of streams past the cap are dropped. Because the totals live in one collector's memory, every delta of a stream has to reach the same replica. The type follows `config.go`, `factory.go` and the README of `processor/deltatocumulativeprocessor` at collector-contrib v0.130.0, where it is alpha for metrics and ships in the `otelcol-contrib` and `otelcol-k8s` distributions. `genAiPipeline({ deltaToCumulative })` inserts one for you; see [GenAI pipeline](../genai-pipeline/).
 
 ## Exporters
 
