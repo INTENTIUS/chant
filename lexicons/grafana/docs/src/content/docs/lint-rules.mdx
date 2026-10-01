@@ -113,7 +113,7 @@ The notification policy tree's receivers (the root's and every route's), each ru
 
 ## GRAF114
 
-What Grafana's file provisioner refuses: a rule or contact point receiver uid outside 1-40 letters, digits, `-` and `_`; a rule with no title or one over 190 characters; a group with no name or folder, or an interval that is not a positive multiple of 10s (Grafana's evaluation tick); a `for` or `keepFiringFor` that is not a duration; a `noDataState` or `execErrState` Grafana doesn't know. And what it keeps only one of, per organisation: rule uids, group names within a folder, contact point names, receiver uids, mute timing and template names, and policy trees.
+What Grafana's file provisioner refuses: a rule or contact point receiver uid outside 1-40 letters, digits, `-` and `_`; a rule with no title or one over 190 characters; a group with no name or folder, or an interval that is not a positive multiple of 10s (Grafana's evaluation tick); a `for` or `keepFiringFor` that is not a duration; a `noDataState` or `execErrState` Grafana doesn't know. A contact point receiver's `settings` are checked against the options Grafana lists for its integration: a required option left out is an error, and a key the integration does not take is a warning naming the nearest setting. Integrations without a table are not checked. And what it keeps only one of, per organisation: rule uids, group names within a folder, contact point names, receiver uids, mute timing and template names, and policy trees.
 
 ## GRAF115
 
