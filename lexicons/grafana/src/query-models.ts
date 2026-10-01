@@ -92,3 +92,82 @@ export interface SqlQueryModel {
   /** `SQLQueryMeta`, packages/grafana-sql/src/types.ts:44: which columns a variable query takes its values and texts from. */
   meta?: { valueField?: string; textField?: string };
 }
+
+/**
+ * OpenSearch has no schema upstream either, and its plugin
+ * (`grafana-opensearch-datasource`) is not bundled with grafana/grafana:13.2.2.
+ * The types below follow grafana/opensearch-datasource at v2.34.4: `src/types.ts`
+ * (`OpenSearchQuery`, `QueryType`, `LuceneQueryType`),
+ * `src/components/QueryEditor/MetricAggregationsEditor/aggregations.ts`,
+ * `.../BucketAggregationsEditor/aggregations.ts` and
+ * `.../PPLQueryEditor/PPLFormatEditor/FormatEditor.tsx` (`PPLFormatType`).
+ * GRAF107 does not check these queries' fields, and the query-language
+ * checks (GRAF108 and its siblings) route by datasource type, so none parses
+ * the Lucene or PPL.
+ */
+
+/** `QueryType`, src/types.ts:109-112. */
+export type OpenSearchQueryType = "lucene" | "PPL";
+
+/** `LuceneQueryType`, src/types.ts:120-126: what a Lucene query returns. */
+export type OpenSearchLuceneQueryType = "Traces" | "Metric" | "Logs" | "RawData" | "RawDocument";
+
+/** `PPLFormatType`, FormatEditor.tsx:10. */
+export type OpenSearchPplFormat = "table" | "logs" | "time_series";
+
+/**
+ * A metric aggregation: `MetricAggregation`, MetricAggregationsEditor/aggregations.ts.
+ * `type` is one of count, avg, sum, min, max, extended_stats, percentiles,
+ * cardinality, raw_document, raw_data, logs, moving_avg, moving_fn, derivative,
+ * cumulative_sum or bucket_script; `field` and `settings` depend on it and are carried as data.
+ */
+export interface OpenSearchMetricAggregation {
+  id: string;
+  type: string;
+  hide?: boolean;
+  field?: string;
+  settings?: Record<string, unknown>;
+  meta?: Record<string, unknown>;
+  pipelineAgg?: string;
+  pipelineVariables?: Array<{ name: string; pipelineAgg: string }>;
+}
+
+/**
+ * A bucket aggregation: `BucketAggregation`, BucketAggregationsEditor/aggregations.ts.
+ * `type` is terms, filters, geohash_grid, date_histogram or histogram.
+ */
+export interface OpenSearchBucketAggregation {
+  id: string;
+  type: string;
+  field?: string;
+  settings?: Record<string, unknown>;
+}
+
+/**
+ * An OpenSearch query: `OpenSearchQuery`, src/types.ts:75-88, over `DataQuery`
+ * from @grafana/schema. `queryType` picks Lucene (`query`, `metrics`,
+ * `bucketAggs`, `luceneQueryType`) or PPL (`query` is the PPL, `format` how
+ * the result is framed). `queryType` is absent in dashboards saved before
+ * PPL was added, and means Lucene.
+ */
+export interface OpenSearchQueryModel {
+  refId?: string;
+  hide?: boolean;
+  key?: string;
+  datasource?: { type?: string; uid?: string };
+  /** Lucene query string, or PPL when `queryType` is "PPL". */
+  query?: string;
+  queryType?: OpenSearchQueryType;
+  luceneQueryType?: OpenSearchLuceneQueryType;
+  format?: OpenSearchPplFormat;
+  alias?: string;
+  isLogsQuery?: boolean;
+  metrics?: OpenSearchMetricAggregation[];
+  bucketAggs?: OpenSearchBucketAggregation[];
+  timeField?: string;
+  /** Trace queries: show the service map, and how many traces to list. */
+  serviceMap?: boolean;
+  tracesSize?: string;
+  /** Index override. */
+  index?: string;
+}

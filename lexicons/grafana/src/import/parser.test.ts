@@ -131,6 +131,13 @@ describe("datasource references", () => {
     expect(decl(plan.declarations, "query:0:0").className).toBe("PromQuery");
   });
 
+  test("an OpenSearch query is declared with OpenSearchQuery, not a defineQuery", () => {
+    const os = { type: "grafana-opensearch-datasource", uid: "os" };
+    const { plan } = planDashboard(panelWith(os, [{ refId: "A", query: "source = logs | head 5", queryType: "PPL", format: "table", datasource: os }]));
+    expect(decl(plan.declarations, "query:0:0")).toMatchObject({ className: "OpenSearchQuery", props: { refId: "A", query: "source = logs | head 5", queryType: "PPL", format: "table" } });
+    expect(plan.customClasses).toEqual([]);
+  });
+
   test("$ds, ${ds} and [[ds]] are the datasource variable", () => {
     for (const uid of ["$ds", "${ds}", "[[ds]]"]) {
       const { plan, warnings } = planDashboard(panelWith({ type: "prometheus", uid }));

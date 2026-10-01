@@ -5,13 +5,13 @@
  * `BigQueryQuery` and `PyroscopeQuery` are typed from that plugin's query
  * schema at `GRAFANA_SCHEMA_PIN`. `PostgresQuery`, `MySQLQuery` and
  * `MSSQLQuery` have no schema upstream and are typed by hand from Grafana's
- * source (`./query-models.ts`).
+ * source, and `OpenSearchQuery` from the plugin's (`./query-models.ts`).
  *
  * The expression is a string. What the lexicon checks is where the query
  * goes: `datasource` only accepts a datasource of the query's own plugin
  * type, and GRAF101, GRAF102 and GRAF103 check the emitted references after
  * a build. GRAF108 parses the PromQL of every query that reaches a
- * Prometheus; TraceQL and LogQL are not parsed.
+ * Prometheus; TraceQL, LogQL and OpenSearch's Lucene and PPL are not parsed.
  *
  * `defineQuery` is the extension point for any other datasource plugin, and
  * the three built-ins are defined through it.
@@ -31,7 +31,7 @@ import type { MonitorQuery as AzureMonitorDataquery } from "./schema/azuremonito
 import type { CloudMonitoringQuery as CloudMonitoringDataquery } from "./schema/googlecloudmonitoring.gen";
 import type { Dataquery as BigQueryDataquery } from "./schema/bigquery.gen";
 import type { Dataquery as PyroscopeDataquery } from "./schema/grafanapyroscope.gen";
-import type { SqlQueryModel } from "./query-models";
+import type { OpenSearchQueryModel, SqlQueryModel } from "./query-models";
 
 /** Where a query or panel sends its request: a declared or external datasource, a datasource variable, or the ref of one declared elsewhere. */
 export type DatasourceInput<T extends string = string> =
@@ -139,12 +139,12 @@ function makeQueryClass<T extends string, M>(def: QueryDefinition<T, M>): QueryC
  *
  * @example
  * ```ts
- * interface OpenSearchQueryModel { query: string; queryType?: "lucene" | "PPL"; refId?: string }
+ * interface SplunkQueryModel { rawQuery: string; queryType?: "search" | "metrics"; refId?: string }
  *
- * export const OpenSearchQuery = defineQuery<OpenSearchQueryModel>()({
- *   datasourceType: "grafana-opensearch-datasource",
- *   className: "OpenSearchQuery",
- *   expressionField: "query",
+ * export const SplunkQuery = defineQuery<SplunkQueryModel>()({
+ *   datasourceType: "grafana-splunk-datasource",
+ *   className: "SplunkQuery",
+ *   expressionField: "rawQuery",
  * });
  * ```
  */
@@ -285,6 +285,20 @@ export const PyroscopeQuery = makeQueryClass<"grafana-pyroscope-datasource", Loo
 });
 
 /**
+ * An OpenSearch query (plugin `grafana-opensearch-datasource`, not bundled
+ * with Grafana): `query` is Lucene, or PPL when `queryType` is "PPL".
+ * `metrics` and `bucketAggs` are the Lucene aggregations. Typed by hand from
+ * grafana/opensearch-datasource v2.34.4 (`./query-models.ts`).
+ */
+export const OpenSearchQuery = makeQueryClass<"grafana-opensearch-datasource", OpenSearchQueryModel>({
+  datasourceType: "grafana-opensearch-datasource",
+  className: "OpenSearchQuery",
+  description: "An OpenSearch query; query is Lucene or PPL by queryType, metrics and bucketAggs the Lucene aggregations",
+  expressionField: "query",
+  builtin: true,
+});
+
+/**
  * A PostgreSQL query: `rawSql` is SQL with Grafana's macros. Also used for
  * the plugin's old id, `postgres` (an `aliasIDs` entry in the plugin.json of
  * grafana-postgresql-datasource 13.0.3, bundled with grafana/grafana:13.2.2).
@@ -325,6 +339,7 @@ export type AzureMonitorQueryEntity = InstanceType<typeof AzureMonitorQuery>;
 export type CloudMonitoringQueryEntity = InstanceType<typeof CloudMonitoringQuery>;
 export type BigQueryQueryEntity = InstanceType<typeof BigQueryQuery>;
 export type PyroscopeQueryEntity = InstanceType<typeof PyroscopeQuery>;
+export type OpenSearchQueryEntity = InstanceType<typeof OpenSearchQuery>;
 export type PostgresQueryEntity = InstanceType<typeof PostgresQuery>;
 export type MySQLQueryEntity = InstanceType<typeof MySQLQuery>;
 export type MSSQLQueryEntity = InstanceType<typeof MSSQLQuery>;

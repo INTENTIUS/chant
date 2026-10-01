@@ -84,6 +84,7 @@ describe("typed datasource settings", () => {
       loki: true,
       tempo: true,
       elasticsearch: true,
+      "grafana-opensearch-datasource": true,
       cloudwatch: true,
       "grafana-azure-monitor-datasource": true,
       stackdriver: true,

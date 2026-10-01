@@ -36,22 +36,20 @@ The second type parameter types `fieldConfig.defaults.custom`. `type` is the plu
 ```ts
 import { defineQuery } from "@intentius/chant-lexicon-grafana";
 
-interface OpenSearchQueryModel {
-  query: string;
-  queryType?: "lucene" | "PPL";
-  metrics?: Array<{ type: string; id: string; field?: string }>;
-  bucketAggs?: Array<{ type: string; id: string; field?: string }>;
+interface SplunkQueryModel {
+  rawQuery: string;
+  queryType?: "search" | "metrics";
   refId?: string;
 }
 
-export const OpenSearchQuery = defineQuery<OpenSearchQueryModel>()({
-  datasourceType: "grafana-opensearch-datasource",
-  className: "OpenSearchQuery",
-  expressionField: "query",
+export const SplunkQuery = defineQuery<SplunkQueryModel>()({
+  datasourceType: "grafana-splunk-datasource",
+  className: "SplunkQuery",
+  expressionField: "rawQuery",
 });
 ```
 
-`new OpenSearchQuery({ datasource })` accepts only a `grafana-opensearch-datasource` datasource, and GRAF101 to GRAF103 check its targets like any other. A datasource type chant ships a class for (see [Queries and Datasources](../queries-and-datasources/#queries)) cannot be redefined.
+`new SplunkQuery({ datasource })` accepts only a `grafana-splunk-datasource` datasource, and GRAF101 to GRAF103 check its targets like any other. A datasource type chant ships a class for (see [Queries and Datasources](../queries-and-datasources/#queries)) cannot be redefined.
 
 ## What is not checked
 
