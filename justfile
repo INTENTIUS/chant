@@ -324,7 +324,14 @@ release bump="patch" *args:
       echo "refusing to release: $(git rev-parse --short "$sha") is already released in $last" >&2
       exit 1
     fi
-    echo "Release $tag from $(git rev-parse --short "$sha") ($(git log -1 --format=%s "$sha"))"
+    # A minor or major release also tags the reference workspace (#2543),
+    # reference-workspace-v<major>.<minor>, on the same commit.
+    rtag=$(release_reference_tag "$next")
+    if [ -n "$rtag" ] && release_tag_exists "$rtag"; then
+      echo "refusing to release: $rtag already exists" >&2
+      exit 1
+    fi
+    echo "Release $tag${rtag:+ and $rtag} from $(git rev-parse --short "$sha") ($(git log -1 --format=%s "$sha"))"
     echo "Bumping $current → $next; main is at $(git rev-parse --short "$RELEASE_MAIN")"
     if [ "$RELEASE_DRY_RUN" = 1 ]; then
       echo "Dry run: nothing committed, tagged or pushed."
@@ -352,7 +359,8 @@ release bump="patch" *args:
     git add "${bump_files[@]}" package-lock.json
     git commit --quiet --no-verify -m "$tag"
     git tag "chant-v$next"
-    release_ship "$tag" "Merge $tag into main"
+    [ -z "$rtag" ] || git tag "$rtag"
+    release_ship "$tag" "Merge $tag into main" ${rtag:+"$rtag"}
     echo "Released $tag — publish workflow triggered (tag pattern chant-v*)"
 
 # Like `just release`, it releases the newest green commit on main (#2816).

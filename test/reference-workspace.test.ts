@@ -905,3 +905,24 @@ describe("chant init --from on the fixture", () => {
     }
   });
 });
+
+describe("the README states what the fixture is (#2543)", () => {
+  const readme = readFileSync(join(fixture, "README.md"), "utf-8");
+
+  test("no draft declaration stands in for the real one", () => {
+    expect(readdirSync(fixture).filter((f) => /^chant\.workspace.*draft/.test(f))).toEqual([]);
+  });
+
+  test("the floor is a chant minor, and the upgrade command is not described as missing", () => {
+    expect(readme).toMatch(/\| Chant floor \| 0\.\d+\.0 \|/);
+    expect(readme).not.toMatch(/exists \(#2550\)/);
+  });
+
+  test("the design member is described as kind other and points at #2549", () => {
+    const decl = JSON.parse(readFileSync(join(fixture, "chant.workspace.json"), "utf-8"));
+    const design = decl.members.find((m: { name: string }) => m.name === "design");
+    expect(design.kind).toBe("other");
+    expect(design.because).toContain("#2549");
+    expect(readme).toContain("issues/2549");
+  });
+});
