@@ -12,7 +12,7 @@ import { detectTemplate } from "./detect";
 import { PrometheusParser } from "./import/parser";
 import { PrometheusGenerator } from "./import/generator";
 import { ruleGroupsImporter } from "./import/embedded";
-import { initTemplates } from "./init-templates";
+import { DEFAULT_TEMPLATE, RULES_TEMPLATE, SLO_STYLE_TEMPLATE, SLO_TEMPLATE } from "./init-templates";
 import { prometheusSkills } from "./skill-defs";
 import { CATALOG } from "./catalog";
 import { PROMETHEUS_PIN } from "./pin";
@@ -125,8 +125,12 @@ export const prometheusPlugin: LexiconPlugin = {
     return [ruleGroupsImporter];
   },
 
+  // `chant init --lexicon prometheus [--template rules|slo-style|slo]`; see ./init-templates.ts.
   initTemplates(template?: string) {
-    return initTemplates(template);
+    if (template === "rules") return RULES_TEMPLATE;
+    if (template === "slo-style") return SLO_STYLE_TEMPLATE;
+    if (template === "slo") return SLO_TEMPLATE;
+    return DEFAULT_TEMPLATE;
   },
 
   completionProvider(ctx: CompletionContext) {
