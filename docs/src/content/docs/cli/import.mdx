@@ -41,7 +41,7 @@ Pass `--lexicon <name>` to skip detection, for example when no lexicon recognize
 
 ## Parser options
 
-A lexicon's template parser can take options. They are declared by the lexicon (`parserOptions()`), and `--parser-option` passes them through on a template import, whether the lexicon was named with `--lexicon` or detected. A name the lexicon does not declare fails the import before anything is parsed, with a message listing what the lexicon accepts. A lexicon that declares none refuses every `--parser-option`.
+A lexicon's template parser can take options. The lexicon declares them with `parserOptions()`. `--parser-option` passes them through on a template import, for a lexicon named with `--lexicon` and for a detected one alike. A name the lexicon does not declare fails the import before anything is parsed, with a message listing what the lexicon accepts. A lexicon that declares none refuses every `--parser-option`.
 
 ```bash
 chant import dashboard.json --lexicon grafana --parser-option acceptLossyV1
