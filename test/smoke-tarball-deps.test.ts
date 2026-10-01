@@ -20,12 +20,6 @@ const SMOKE_DOCKERFILES = {
   "test/Dockerfile.smoke-e2e": "test/e2e-smoke.sh",
 };
 
-/**
- * Workspace dependencies the smoke images still take from the registry. Both
- * are published; packing them is chant #2917, and this list goes when it lands.
- */
-const REGISTRY_RESOLVED = new Set(["@intentius/chant-lexicon-otel", "@intentius/chant-lexicon-github"]);
-
 interface Manifest {
   name: string;
   dependencies?: Record<string, string>;
@@ -102,19 +96,10 @@ describe("smoke images pack every workspace dependency of what they pack", () =>
 
   for (const [dockerfilePath, script] of Object.entries(SMOKE_DOCKERFILES)) {
     test(`${dockerfilePath} (for ${script})`, () => {
-      const missing = unpacked.get(dockerfilePath)!.filter(({ dep }) => !REGISTRY_RESOLVED.has(dep));
       expect(
-        missing.map(({ pkg, dep }) => `${pkg} depends on ${dep}`),
+        unpacked.get(dockerfilePath)!.map(({ pkg, dep }) => `${pkg} depends on ${dep}`),
         `pack these in ${dockerfilePath} and install their tarballs next to their dependents in ${script}`,
       ).toEqual([]);
     });
   }
-
-  test("every registry-resolved exception is still needed", () => {
-    const stillUnpacked = new Set([...unpacked.values()].flat().map(({ dep }) => dep));
-    expect(
-      [...REGISTRY_RESOLVED].filter((dep) => !stillUnpacked.has(dep)),
-      "drop these from REGISTRY_RESOLVED",
-    ).toEqual([]);
-  });
 });

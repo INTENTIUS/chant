@@ -36,8 +36,9 @@ PKGJSON
 
 install_from_tarballs() {
   # $1 = lexicon tarball path, or several separated by spaces when a lexicon
-  # depends on another one that may not be on the registry yet (k8s needs
-  # prometheus); core always included
+  # depends on another workspace lexicon (k8s needs prometheus and otel, fly
+  # needs otel, gitlab needs github), so npm installs this commit's copy of it
+  # rather than the registry's; core always included
   # shellcheck disable=SC2086
   pkg_install /tarballs/core.tgz $1
 }
@@ -72,7 +73,7 @@ verify_tarball_contains /tarballs/core.tgz "package/bin/chant" "core tarball con
 verify_tarball_contains /tarballs/core.tgz "package/src/cli/main.ts" "core tarball contains CLI entrypoint"
 verify_tarball_contains /tarballs/core.tgz "package/src/index.ts" "core tarball contains main export"
 
-for lex in aws azure gcp gitlab k8s docker fly fountain prometheus; do
+for lex in aws azure gcp gitlab k8s docker fly fountain prometheus otel github; do
   verify_tarball_contains "/tarballs/lexicon-$lex.tgz" "package/dist/manifest.json" "$lex tarball contains dist/manifest.json"
   verify_tarball_contains "/tarballs/lexicon-$lex.tgz" "package/dist/meta.json" "$lex tarball contains dist/meta.json"
   verify_tarball_contains "/tarballs/lexicon-$lex.tgz" "package/dist/types/index.d.ts" "$lex tarball contains dist/types/index.d.ts"
@@ -129,12 +130,12 @@ test_manual_project "aws" "/tarballs/lexicon-aws.tgz" \
 export const tags = defaultTags([{ Key: "Env", Value: "test" }]);'
 
 # GitLab manual project
-test_manual_project "gitlab" "/tarballs/lexicon-gitlab.tgz" \
+test_manual_project "gitlab" "/tarballs/lexicon-gitlab.tgz /tarballs/lexicon-github.tgz" \
   'import { Job } from "@intentius/chant-lexicon-gitlab";
 export const build = new Job({ stage: "build", script: ["echo hello"] });'
 
 # K8s manual project
-test_manual_project "k8s" "/tarballs/lexicon-k8s.tgz /tarballs/lexicon-prometheus.tgz" \
+test_manual_project "k8s" "/tarballs/lexicon-k8s.tgz /tarballs/lexicon-prometheus.tgz /tarballs/lexicon-otel.tgz" \
   'import { Deployment } from "@intentius/chant-lexicon-k8s";
 export const app = new Deployment({
   metadata: { name: "test" },
@@ -218,7 +219,7 @@ test_fly_org_slug() {
   if [ "$INSTALL_MODE" = "registry" ]; then
     install_from_registry "@intentius/chant-lexicon-fly"
   else
-    install_from_tarballs /tarballs/lexicon-fly.tgz
+    install_from_tarballs "/tarballs/lexicon-fly.tgz /tarballs/lexicon-otel.tgz"
   fi
 
   cat > src/infra.ts <<'SRC'
@@ -348,11 +349,11 @@ test_init_flow "aws" "/tarballs/lexicon-aws.tgz" \
   'import { defaultTags } from "@intentius/chant-lexicon-aws";
 export const tags = defaultTags([{ Key: "Env", Value: "smoke" }]);'
 
-test_init_flow "gitlab" "/tarballs/lexicon-gitlab.tgz" \
+test_init_flow "gitlab" "/tarballs/lexicon-gitlab.tgz /tarballs/lexicon-github.tgz" \
   'import { Job } from "@intentius/chant-lexicon-gitlab";
 export const deploy = new Job({ stage: "deploy", script: ["echo deploy"] });'
 
-test_init_flow "k8s" "/tarballs/lexicon-k8s.tgz /tarballs/lexicon-prometheus.tgz" \
+test_init_flow "k8s" "/tarballs/lexicon-k8s.tgz /tarballs/lexicon-prometheus.tgz /tarballs/lexicon-otel.tgz" \
   'import { Service } from "@intentius/chant-lexicon-k8s";
 export const svc = new Service({
   metadata: { name: "smoke" },
@@ -407,9 +408,15 @@ test_example() {
     for lex in "${lexicons[@]}"; do
       install_args+=("@intentius/chant-lexicon-$lex@latest")
     done
-  elif [[ " ${install_args[*]} " == *" /tarballs/lexicon-k8s.tgz "* ]]; then
-    # k8s depends on prometheus, which may not be on the registry yet.
-    install_args+=(/tarballs/lexicon-prometheus.tgz)
+  else
+    # Install the workspace lexicons these depend on from their tarballs too,
+    # so npm does not take them from the registry.
+    if [[ " ${install_args[*]} " == *" /tarballs/lexicon-k8s.tgz "* ]]; then
+      install_args+=(/tarballs/lexicon-prometheus.tgz /tarballs/lexicon-otel.tgz)
+    fi
+    if [[ " ${install_args[*]} " == *" /tarballs/lexicon-gitlab.tgz "* ]]; then
+      install_args+=(/tarballs/lexicon-github.tgz)
+    fi
   fi
   pkg_install "${install_args[@]}"
 
