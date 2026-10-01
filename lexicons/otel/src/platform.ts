@@ -17,6 +17,7 @@ import { DebugExporter } from "./components/exporters";
 import { HealthCheckExtension } from "./components/extensions";
 import { Pipeline } from "./pipeline";
 import { SIGNALS, parseComponentId, type CollectorConfig, type Signal } from "./model";
+import { receiverListenerPaths } from "./validate-config";
 
 /** The contrib collector image at the version the built-in components are typed against. */
 export const COLLECTOR_IMAGE = `otel/opentelemetry-collector-contrib:${COLLECTOR_PIN.version.replace(/^v/, "")}`;
@@ -95,35 +96,38 @@ function portName(parts: string[]): string {
   return name.slice(0, 15).replace(/-$/, "");
 }
 
-/** Every `endpoint` value under a receiver's config, with the key path that led to it. */
-function receiverEndpoints(value: unknown, path: string[], out: Array<{ path: string[]; endpoint: unknown }>): void {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return;
-  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-    if (key === "endpoint") out.push({ path, endpoint: child });
-    else receiverEndpoints(child, [...path, key], out);
+/** The value at a key path, if every key on the way is there. */
+function valueAt(value: unknown, path: string[]): unknown {
+  let cur: unknown = value;
+  for (const key of path) {
+    if (!cur || typeof cur !== "object" || Array.isArray(cur)) return undefined;
+    cur = (cur as Record<string, unknown>)[key];
   }
+  return cur;
 }
 
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
 
 /**
- * The ports a built collector config listens on: every receiver `endpoint`,
+ * The ports a built collector config listens on: the endpoint of every
+ * receiver that listens (otlp, zipkin, jaeger; the receivers OTEL117 knows),
  * named after the receiver and the protocol key above it (`otlp-grpc`,
- * `otlp-http`), and the `health_check` port if the service enables it.
+ * `otlp-http`), and the `health_check` port if the service enables it. A
+ * receiver whose `endpoint` is a server it connects to, such as
+ * kubeletstats' kubelet, adds no port, and neither does a receiver type the
+ * table doesn't list.
  */
 export function collectorEndpoints(config: CollectorConfig): CollectorEndpoints {
   const ports: CollectorPort[] = [];
   const seen = new Set<number>();
   for (const [id, receiverConfig] of Object.entries(config.receivers ?? {})) {
-    const found: Array<{ path: string[]; endpoint: unknown }> = [];
-    receiverEndpoints(receiverConfig, [], found);
     const parsed = parseComponentId(id);
     const base = parsed ? [parsed.type, ...(parsed.name ? [parsed.name] : [])] : [id];
-    for (const { path, endpoint } of found) {
-      const p = portOf(endpoint);
+    for (const path of receiverListenerPaths(parsed?.type ?? id)) {
+      const p = portOf(valueAt(receiverConfig, path));
       if (!p || seen.has(p.port)) continue;
       seen.add(p.port);
-      const protocol = path.filter((k) => k !== "protocols");
+      const protocol = path.slice(0, -1).filter((k) => k !== "protocols");
       ports.push({ name: portName([...base, ...protocol]), port: p.port });
     }
   }

@@ -462,9 +462,11 @@ export { GrafanaClient, GrafanaApiError, grafanaHttp, namespaceOf, statusVerdict
 export type { GrafanaAuth, GrafanaHttp, GrafanaResponse, GrafanaTarget, StatusVerdict } from "./api/client";
 export { bindGrafana, classifyGrafanaFailure, GrafanaBindingError } from "./api/bind";
 
-// The API applier (#2948): the typed Op step, and the pieces an embedding
-// caller composes (the activity itself is `./op/activities`).
-export { grafanaApply } from "./op/builders";
+// The API applier (#2948): the pieces an embedding caller composes. The typed
+// Op step `grafanaApply` is not exported here, because it pulls core's whole Op
+// module onto every import of the root (#3026). Import it from
+// `@intentius/chant-lexicon-grafana/op/builders`; the activity itself is
+// `@intentius/chant-lexicon-grafana/op/activities`.
 export { applyGrafana, planFromDashboards, GRAFANA_APPLY_KINDS } from "./api/apply";
 export type { GrafanaApplyPlan, GrafanaApplyOutcome, DashboardPlan, BuiltDashboardInput } from "./api/apply";
 export { folderUidFor, foldersForDashboards, resolveFolders, liveFolderPath, type FolderPlan, type ResolvedFolders } from "./api/folders";
