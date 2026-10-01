@@ -41,7 +41,7 @@ const requestRate = new PromQuery({
 
 ## Panels and dashboards
 
-Panel classes: `TimeSeriesPanel`, `StatPanel`, `GaugePanel`, `TablePanel`, `LogsPanel`, `TracesPanel`, `HeatmapPanel`, `TextPanel`, `BarChartPanel`, `BarGaugePanel`, `PieChartPanel`, `StateTimelinePanel`, `StatusHistoryPanel`, `HistogramPanel`, `NodeGraphPanel`, `XYChartPanel`, `TrendPanel`, `CanvasPanel`, `GeomapPanel`, `FlameGraphPanel`, `AlertListPanel`, plus `Row`. `options` and `fieldConfig.defaults.custom` are typed from each panel's schema, and every option is optional because Grafana fills in the rest.
+Panel classes: `TimeSeriesPanel`, `StatPanel`, `GaugePanel`, `TablePanel`, `LogsPanel`, `TracesPanel`, `HeatmapPanel`, `TextPanel`, `BarChartPanel`, `BarGaugePanel`, `PieChartPanel`, `StateTimelinePanel`, `StatusHistoryPanel`, `HistogramPanel`, `NodeGraphPanel`, `XYChartPanel`, `TrendPanel`, `CanvasPanel`, `GeomapPanel`, `CandlestickPanel`, `AnnotationsListPanel`, `DashboardListPanel`, `NewsPanel`, `DataGridPanel`, `FlameGraphPanel`, `AlertListPanel`, plus `Row`. `options` and `fieldConfig.defaults.custom` are typed from each panel's schema, and every option is optional because Grafana fills in the rest.
 
 ```ts
 const rate = new TimeSeriesPanel({ title: "Request rate", datasource: prometheus, targets: [requestRate] });
