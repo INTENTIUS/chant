@@ -12,7 +12,6 @@
  * | `Dashboard` | `/apis/dashboard.grafana.app/<v>/.../dashboards/<uid>` (Grafana 11: `/api/dashboards/uid/<uid>`) | absent | a v2-stored dashboard the server does not serve at v2: `unsupported-kind` |
  * | `Datasource`, `ExternalDatasource` | `/api/datasources/uid/<uid>` | absent | |
  * | `Folder` | `/apis/folder.grafana.app/<v>/.../folders/<uid>` (Grafana 11: `/api/folders/<uid>`) | absent | |
- * | a panel, row, query or variable | its dashboard's read (./members.ts) | its dashboard's | its dashboard's |
  * | `DashboardProvider` | none: a provisioning-file setting Grafana serves no API for | | `unsupported-kind` |
  *
  * A dashboard Grafana stores as v2 is read at v2 and converted (#2947);
@@ -42,7 +41,6 @@ import { classicDashboardOf, dashboardApi, readDashboard } from "./api/dashboard
 import { readDatasource } from "./api/datasources";
 import { DASHBOARD_PROVIDER_TYPE, DASHBOARD_TYPE } from "./dashboard";
 import { DATASOURCE_TYPE, EXTERNAL_DATASOURCE_TYPE } from "./datasource";
-import { dashboardMembers, isDashboardPart } from "./members";
 import { readFolder } from "./api/folders";
 import { FOLDER_TYPE, folderUidOf } from "./folder";
 import { chantProviderNames, dashboardOwnership, folderOwnership, ownershipGap } from "./ownership";
@@ -68,10 +66,6 @@ export function declaredUid(name: string, entityType: string, props: Record<stri
 /** What `unsupported-kind` says about a provider. */
 export const PROVIDER_NOT_OBSERVABLE =
   "a dashboard provider is a setting in Grafana's provisioning file, which Grafana serves no API for; its dashboards are observed instead";
-
-/** What `unsupported-kind` says about a panel, row, query or variable that no declared dashboard holds. */
-export const ORPHAN_PART =
-  "panels, rows, queries and variables exist in Grafana only inside a dashboard, and no declared dashboard holds this one";
 
 /** A GrafanaApiError as the harness's per-entity verdict; anything else is rethrown for the harness to record. */
 function unobservedFrom(err: unknown): EntityObservation {
@@ -187,8 +181,8 @@ async function observeDatasource(client: GrafanaClient, entity: DeclaredEntity, 
 
 function adapter(options: GrafanaObserveOptions): ObserverAdapter<GrafanaClient> {
   const providers = chantProviderNames(options.entities.values());
-  const members = dashboardMembers(options.entities);
-  // One read per dashboard, however many of its members are asked about.
+  // One read per dashboard. Its panels, rows, queries and variables are
+  // property-kind, so core never asks about them on their own (#3001).
   const dashboardOnce = (client: GrafanaClient, uid: string) => client.once(`observe:${uid}`, () => observeDashboard(client, uid, providers, options.owned));
 
   return {
@@ -203,19 +197,6 @@ function adapter(options: GrafanaObserveOptions): ObserverAdapter<GrafanaClient>
     async read(client, entity): Promise<EntityObservation> {
       if (entity.type === DASHBOARD_PROVIDER_TYPE) {
         return { unobserved: { reason: "unsupported-kind", detail: PROVIDER_NOT_OBSERVABLE } };
-      }
-      if (isDashboardPart(entity.type)) {
-        const holder = members.get(entity.name);
-        const dashboard = holder !== undefined ? options.entities.get(holder) : undefined;
-        const uid = holder !== undefined && dashboard ? declaredUid(holder, DASHBOARD_TYPE, dashboard.props) : undefined;
-        if (!uid) return { unobserved: { reason: "unsupported-kind", detail: ORPHAN_PART } };
-        const verdict = await dashboardOnce(client, uid);
-        if (!("present" in verdict)) return verdict;
-        const { ownership, marker } = verdict.present;
-        return {
-          present: { type: entity.type, physicalId: uid, status: "PRESENT", ...(ownership ? { ownership } : {}), ...(marker ? { marker } : {}), attributes: { dashboard: uid } },
-          ...(verdict.queried ? { queried: verdict.queried } : {}),
-        };
       }
       const uid = declaredUid(entity.name, entity.type, entity.props);
       if (entity.type === DASHBOARD_TYPE) {
