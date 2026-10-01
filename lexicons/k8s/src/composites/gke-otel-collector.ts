@@ -21,6 +21,7 @@ import {
 } from "@intentius/chant-lexicon-otel";
 import { collectorAgentResources, type CollectorAgentResources } from "./otel-collector-agent";
 import { agentClusterRules } from "./otel-collector-rbac";
+import { collectorNodeAccess } from "./otel-collector-node";
 
 export interface GkeOtelCollectorProps {
   /** GKE cluster name. */
@@ -121,6 +122,7 @@ export const GkeOtelCollector = Composite((props: GkeOtelCollectorProps) => {
     new Pipeline({ signal: "traces", receivers: [otlp], processors: [batch, resourceDetection], exporters: [googleCloud] }),
   ];
   const otelConfig = collectorYaml(entities);
+  const built = buildCollectorConfig(entities).config;
 
   // The DaemonSet, RBAC and ConfigMap are the ones OtelCollector builds too.
   return collectorAgentResources({
@@ -133,7 +135,10 @@ export const GkeOtelCollector = Composite((props: GkeOtelCollectorProps) => {
     configDir: "/etc/otel",
     // The ClusterRole OtelCollector shares: k8sattributes' rules, and none
     // for receivers, since the config's only receiver is otlp (#2923).
-    clusterRules: agentClusterRules(buildCollectorConfig(entities).config),
+    clusterRules: agentClusterRules(built),
+    // Derived like OtelCollector's (#3103). The config reads nothing from the
+    // node, so this adds no variable or mount and the output is unchanged.
+    nodeAccess: collectorNodeAccess(built, "/etc/otel"),
     ports: [
       { containerPort: 4317, name: "otlp-grpc" },
       { containerPort: 4318, name: "otlp-http" },

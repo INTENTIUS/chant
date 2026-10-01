@@ -2954,6 +2954,12 @@ export const compositeCatalog: CompositeEntry[] = [
         "description": "Additional labels."
       },
       {
+        "name": "logAccess",
+        "type": "CollectorLogAccess",
+        "required": false,
+        "description": "How a config with a `filelog` receiver reads the node's container logs, which are root's."
+      },
+      {
         "name": "cpuRequest",
         "type": "string",
         "required": false,

@@ -17,7 +17,7 @@ export default { lexicons: ["otel"] };
 
 `chant init --lexicon otel` scaffolds a collector; `--template k8s-agent` scaffolds a per-node Kubernetes agent and `--template genai` a GenAI collector.
 
-For a per-node Kubernetes agent, `NodeAgent({ exporters, metricExporters?, clusterName?, kubeletStats? })` declares the whole config: OTLP, host metrics, container logs, `k8sattributes` filtered to the node, and `memory_limiter` first and `batch` last on every pipeline. Pass `Object.values(agent.members)` wherever an entity list is taken, such as the k8s lexicon's `OtelCollector` `config`.
+For a per-node Kubernetes agent, `NodeAgent({ exporters, metricExporters?, clusterName?, kubeletStats? })` declares the whole config: OTLP, host metrics, container logs, `k8sattributes` filtered to the node, and `memory_limiter` first and `batch` last on every pipeline. Pass `Object.values(agent.members)` wherever an entity list is taken, such as the k8s lexicon's `OtelCollector` `config`, which adds what the config reads from the node: `K8S_NODE_NAME` from `spec.nodeName`, the host root at `/hostfs` and `/var/log/pods` read-only, group 0 for the log files, and the RBAC.
 
 ## Declaring components
 

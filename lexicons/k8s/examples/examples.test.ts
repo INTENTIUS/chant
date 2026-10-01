@@ -55,6 +55,33 @@ describeAllExamples(
         expect(config.service?.pipelines?.traces?.exporters).toEqual(["otlp/tempo"]);
       },
     },
+    "otel-node-agent": {
+      checks: (output) => {
+        const docs = loadAll(output) as Array<{ kind: string; metadata: { name: string }; [k: string]: any }>;
+        const byKind = new Map(docs.map((d) => [d.kind, d]));
+        const pod = byKind.get("DaemonSet")!.spec.template.spec;
+        const container = pod.containers[0];
+
+        // What NodeAgent's config reads from the node, added by OtelCollector (#3103).
+        expect(container.env).toEqual([{ name: "K8S_NODE_NAME", valueFrom: { fieldRef: { fieldPath: "spec.nodeName" } } }]);
+        expect(container.volumeMounts).toEqual([
+          { name: "config", mountPath: "/etc/otel", readOnly: true },
+          { name: "hostfs", mountPath: "/hostfs", readOnly: true, mountPropagation: "HostToContainer" },
+          { name: "host-var-log-pods", mountPath: "/var/log/pods", readOnly: true },
+        ]);
+        expect(pod.volumes.slice(1)).toEqual([
+          { name: "hostfs", hostPath: { path: "/" } },
+          { name: "host-var-log-pods", hostPath: { path: "/var/log/pods" } },
+        ]);
+        expect(pod.securityContext).toEqual({ supplementalGroups: [0] });
+        expect(container.securityContext).toMatchObject({ runAsNonRoot: true, runAsUser: 10001 });
+        expect(byKind.get("ClusterRole")!.rules).toContainEqual({ apiGroups: [""], resources: ["nodes/stats"], verbs: ["get"] });
+
+        const config = load(byKind.get("ConfigMap")!.data["config.yaml"]) as CollectorConfig;
+        expect(validateCollectorConfig(config)).toEqual([]);
+        expect(Object.keys(config.receivers ?? {}).sort()).toEqual(["filelog", "hostmetrics", "kubeletstats", "otlp"]);
+      },
+    },
     "otel-gateway": {
       checks: (output) => {
         const docs = loadAll(output) as Array<{ kind: string; metadata: { name: string; namespace?: string; annotations?: Record<string, string> }; [k: string]: any }>;
