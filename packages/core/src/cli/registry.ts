@@ -75,6 +75,8 @@ export interface ParsedArgs {
   migrateFrom?: string;
   /** `chant import --kustomize <dir>` — render the kustomization, then import (#1548) */
   kustomize?: string;
+  /** `chant import --parser-option key[=value]`, repeatable (#2994): options for the lexicon's template parser */
+  parserOption?: string[];
   /** `chant carve advise --state <path>` — opt-in .tfstate for accurate instance counts */
   statePath?: string;
   /** `chant carve emit --select <tf-address>` — the Terraform resource to carve */

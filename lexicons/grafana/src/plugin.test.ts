@@ -1,9 +1,22 @@
 import { describe, expect, it } from "vitest";
 import { isLexiconPlugin } from "@intentius/chant/lexicon";
+import { resolveParserOptions } from "@intentius/chant/import/parser-options";
 import { grafanaPlugin } from "./plugin";
+import { LOSSY_V1_EXPORT, read } from "./import/testdata/fixtures";
 import { grafanaAuditCatalog } from "./lint/audit-catalog";
 
 describe("grafana plugin", () => {
+  it("declares acceptLossyV1 as its parser option and passes it to the parser (#2994)", () => {
+    expect(grafanaPlugin.parserOptions!()).toEqual([expect.objectContaining({ name: "acceptLossyV1", type: "boolean" })]);
+    const lossy = read(LOSSY_V1_EXPORT);
+    expect(grafanaPlugin.templateParser!().parse(lossy).resources).toEqual([]);
+    const accepted = grafanaPlugin.templateParser!({ acceptLossyV1: true }).parse(lossy);
+    expect(accepted.resources).toHaveLength(1);
+    const resolved = resolveParserOptions(grafanaPlugin, ["acceptLossyV1"]);
+    expect(resolved).toEqual({ options: { acceptLossyV1: true } });
+    expect(resolveParserOptions(grafanaPlugin, ["acceptLossy"])).toHaveProperty("error");
+  });
+
   it("is a valid LexiconPlugin", () => {
     expect(isLexiconPlugin(grafanaPlugin)).toBe(true);
   });

@@ -3,7 +3,7 @@ import type { Declarable } from "./declarable";
 import type { LintRule } from "./lint/rule";
 import type { RuleSpec } from "./lint/declarative";
 import type { PostSynthCheck } from "./lint/post-synth";
-import type { TemplateParser, TemplateIR, ParseContext } from "./import/parser";
+import type { TemplateParser, TemplateIR, ParseContext, ParserOptions, ParserOptionSpec } from "./import/parser";
 import type { TypeScriptGenerator } from "./import/generator";
 import type { EmbeddedContentImporter } from "./import/embedded";
 import type { AgentConfigImporter } from "./agents/importer";
@@ -1160,8 +1160,19 @@ export interface LexiconPlugin {
    */
   detectTemplate?(data: unknown): boolean;
 
-  /** Return a parser for importing external templates into IR */
-  templateParser?(): TemplateParser;
+  /**
+   * Return a parser for importing external templates into IR. `options` holds
+   * the `chant import --parser-option` values, already checked against
+   * `parserOptions()` and converted to their declared types; it is empty when
+   * none were given.
+   */
+  templateParser?(options?: ParserOptions): TemplateParser;
+
+  /**
+   * The options `templateParser` accepts. `chant import --parser-option` refuses
+   * any name not listed here, so a lexicon with no options leaves this out.
+   */
+  parserOptions?(): ParserOptionSpec[];
 
   /** Return a generator for converting IR to TypeScript */
   templateGenerator?(): TypeScriptGenerator;

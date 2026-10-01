@@ -78,6 +78,26 @@ export interface ParseContext {
   readonly embedded?: EmbeddedContentResolver;
 }
 
+/** A value a parser option takes. */
+export type ParserOptionValue = string | number | boolean;
+
+/** The options `chant import --parser-option` hands a lexicon's parser, by name. */
+export type ParserOptions = Record<string, ParserOptionValue>;
+
+/**
+ * One option a lexicon's parser accepts, declared by `LexiconPlugin.parserOptions()`.
+ * `chant import --parser-option <name>[=<value>]` is checked against this list and
+ * the value is converted to `type` before `templateParser(options)` sees it.
+ */
+export interface ParserOptionSpec {
+  /** The key after `--parser-option`, e.g. "acceptLossyV1". */
+  name: string;
+  /** `boolean` takes `true`/`false`, and a bare `--parser-option name` means true. */
+  type: "boolean" | "string" | "number";
+  /** One line, shown when the option is refused and in the docs. */
+  description: string;
+}
+
 /**
  * Interface for template parsers that convert external formats to IR
  */
