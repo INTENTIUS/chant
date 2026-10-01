@@ -281,7 +281,11 @@ export function checkDuplicates(a: GrafanaArtifacts): GrafanaIssue[] {
   for (const [uid, n] of dupes(a.dashboards, (d) => (typeof d.json.uid === "string" ? d.json.uid : undefined))) {
     push(`${n} dashboards share the uid "${uid}"; Grafana keeps one of them.`, uid);
   }
-  const allUids = [...a.datasources.map((d) => d.uid), ...(a.externalDatasources ?? []).map((d) => d.uid)];
+  // Two ExternalDatasources with the same uid, type and name describe the one datasource in Grafana
+  // (two imported dashboards each declare the datasource they name), so they count once.
+  const externals = new Map<string, ExternalDatasourceRecord>();
+  for (const d of a.externalDatasources ?? []) externals.set(JSON.stringify([d.uid, d.type, d.name ?? null]), d);
+  const allUids = [...a.datasources.map((d) => d.uid), ...[...externals.values()].map((d) => d.uid)];
   for (const [uid, n] of dupes(allUids, (u) => u)) push(`${n} datasources share the uid "${uid}".`, uid);
   for (const [name, n] of dupes(a.datasources, (d) => d.name)) push(`${n} datasources share the name "${name}"; Grafana needs names to be unique.`, name);
   for (const [uid, n] of dupes(a.folders ?? [], (f) => f.uid)) {
