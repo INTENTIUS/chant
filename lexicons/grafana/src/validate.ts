@@ -58,6 +58,7 @@ export const REQUIRED_NAMES = [
   "CloudMonitoringQuery",
   "BigQueryQuery",
   "PyroscopeQuery",
+  "OpenSearchQuery",
   "PostgresQuery",
   "MySQLQuery",
   "MSSQLQuery",
