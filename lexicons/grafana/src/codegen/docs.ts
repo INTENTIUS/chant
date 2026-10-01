@@ -31,7 +31,7 @@ export const overview = new Dashboard({ title: "Overview", panels: [requests] })
 
 Panels: time series, stat, gauge, table, logs, traces, heatmap, text, bar
 chart, bar gauge, pie chart, state timeline, status history, histogram, node
-graph, XY chart, trend, canvas, geomap, flame graph and alert list, plus rows.
+graph, XY chart, trend, canvas, geomap, candlestick, annotations list, dashboard list, news, data grid, flame graph and alert list, plus rows.
 Queries: Prometheus (PromQL), Tempo (TraceQL), Loki (LogQL), Elasticsearch,
 CloudWatch, Azure Monitor, Cloud Monitoring, BigQuery, Pyroscope, and SQL for
 PostgreSQL, MySQL and MSSQL. Panel options and query fields are generated from

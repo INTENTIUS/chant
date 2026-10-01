@@ -20,7 +20,7 @@ export { prometheus, rate, requests, overview };
 | Kind | Classes |
 |---|---|
 | dashboards | `Dashboard`, `Row`, `DashboardProvider` |
-| panels | `TimeSeriesPanel`, `StatPanel`, `GaugePanel`, `TablePanel`, `LogsPanel`, `TracesPanel`, `HeatmapPanel`, `TextPanel`, `BarChartPanel`, `BarGaugePanel`, `PieChartPanel`, `StateTimelinePanel`, `StatusHistoryPanel`, `HistogramPanel`, `NodeGraphPanel`, `XYChartPanel`, `TrendPanel`, `CanvasPanel`, `GeomapPanel`, `FlameGraphPanel`, `AlertListPanel` |
+| panels | `TimeSeriesPanel`, `StatPanel`, `GaugePanel`, `TablePanel`, `LogsPanel`, `TracesPanel`, `HeatmapPanel`, `TextPanel`, `BarChartPanel`, `BarGaugePanel`, `PieChartPanel`, `StateTimelinePanel`, `StatusHistoryPanel`, `HistogramPanel`, `NodeGraphPanel`, `XYChartPanel`, `TrendPanel`, `CanvasPanel`, `GeomapPanel`, `CandlestickPanel`, `AnnotationsListPanel`, `DashboardListPanel`, `NewsPanel`, `DataGridPanel`, `FlameGraphPanel`, `AlertListPanel` |
 | queries | `PromQuery` (PromQL), `TempoQuery` (TraceQL), `LokiQuery` (LogQL), `ElasticsearchQuery`, `CloudWatchQuery`, `AzureMonitorQuery`, `CloudMonitoringQuery`, `BigQueryQuery`, `PyroscopeQuery`, `PostgresQuery`, `MySQLQuery`, `MSSQLQuery` |
 | variables | `QueryVariable`, `CustomVariable`, `IntervalVariable`, `DatasourceVariable`, `ConstantVariable`, `TextboxVariable`, `AdhocVariable`, `GroupByVariable`, `SwitchVariable` |
 | datasources | `Datasource`, generic in its plugin type |
