@@ -108,6 +108,40 @@ describe("k8s import offers embedded content (#2962)", () => {
     expect(main.content).not.toContain("import { render");
   });
 
+  test("a GrafanaDashboard's spec.json is offered as text, and replaced by the owner's reference (#3015)", () => {
+    const seen: EmbeddedContent[] = [];
+    const embedded = new EmbeddedImports([{ lexicon: "acme", importer: claimAll(seen) }]);
+    const ir = new K8sParser().parse(
+      `
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: api
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: grafana
+  folderRef: grafana-folder-services
+  json: '{"title": "API", "panels": [], "schemaVersion": 41}'
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: remote
+spec:
+  instanceSelector: {}
+  url: https://grafana.com/api/dashboards/1860/revisions/37/download
+`,
+      { embedded },
+    );
+    expect(seen.map((c) => [c.location, c.directory, c.text, c.expectedOwner?.lexicon])).toEqual([
+      ["GrafanaDashboard api spec.json", "api", '{"title": "API", "panels": [], "schemaVersion": 41}', "grafana"],
+    ]);
+    const [main] = new K8sGenerator().generate(ir);
+    expect(main.content).toContain("json: render(thing),");
+    expect(main.content).toContain('folderRef: "grafana-folder-services",');
+  });
+
   test("an alertmanager.yml and a v2 dashboard name their expected owners (#3031)", () => {
     const embedded = new EmbeddedImports([]);
     new K8sParser().parse(

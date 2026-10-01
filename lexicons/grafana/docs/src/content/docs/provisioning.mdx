@@ -58,7 +58,35 @@ const { volumes, volumeMounts } = grafanaVolumes(delivered);
 
 The provisioning files go under `/etc/grafana/provisioning`. Each dashboard folder is a projected volume of its own under `/var/lib/grafana/dashboards` (or `dashboardsPath`), because inside a ConfigMap volume a subdirectory is a symlink, and Grafana's dashboard provider does not follow symlinked directories. `examples/agent-observability` runs Grafana this way.
 
-A Grafana run by the Grafana Operator reads `GrafanaDashboard` and `GrafanaDatasource` resources instead, which this lexicon does not write yet.
+### Grafana Operator
+
+A Grafana run by the [Grafana Operator](https://grafana.github.io/grafana-operator/) reads custom resources instead of files. `GrafanaOperatorResources`, from the same subpath, writes them from the same declarations, as the k8s lexicon types them from the operator's v5.25.0 CRDs (`grafana.integreatly.org/v1beta1`):
+
+```ts
+import { GrafanaOperatorResources } from "@intentius/chant-lexicon-grafana/k8s";
+
+export const grafanaResources = GrafanaOperatorResources({
+  ...delivered,
+  namespace: "observability",
+  instanceSelector: { matchLabels: { dashboards: "grafana" } },
+});
+```
+
+| Resource | Spec |
+|---|---|
+| `grafana-folder-<uid>`, a `GrafanaFolder` per folder | the folder's `uid` and `title`, and `parentFolderRef` naming its parent's resource |
+| `grafana-dashboard-<uid>`, a `GrafanaDashboard` per dashboard | `json`, the text of `dashboardJson(dashboard)`, and `folderRef` naming its folder's resource |
+| `grafana-datasource-<uid>`, a `GrafanaDatasource` per datasource | `uid`, and the provisioning entry as `datasource` |
+
+`instanceSelector` picks the `Grafana` resources that take these, usually by the labels on your `Grafana`. The operator requires one and a selector that matches nothing delivers nothing, so it has no default. `name`, `labels`, `allowCrossNamespaceImport` and `resyncPeriod` go on every resource.
+
+Pick the delivery by what runs your Grafana: export `GrafanaConfigMaps` for the Helm chart's sidecar or a plain Deployment, and `GrafanaOperatorResources` for the operator. To export both, set `dashboardSource: "configMap"` and use the same `name`: each `GrafanaDashboard` then reads its JSON from the dashboard ConfigMap through `configMapRef`, so it is stored once.
+
+Folders are always `GrafanaFolder` resources with the uids the build gives them, so a nested `folder` or a `Folder` with `parent` keeps its place and its uid. Dashboard providers are not written; the operator does not use them.
+
+The operator has no environment to expand, so a datasource field written as `${NAME}` or `$__env{NAME}` (in `url`, `user`, `basicAuthUser`, `database` or `secureJsonData`) reads key `NAME` of the Secret named by `secretName`, through `spec.valuesFrom`. Without `secretName` such a field is an error, and so is `$__file{...}`. `withCredentials`, `version` and `orgId` are not in the operator's datasource and are left out.
+
+`chant import` of a `GrafanaDashboard` reads `spec.json` back into a grafana `Dashboard`, as it does a dashboard ConfigMap.
 
 `grafanaFiles(entities)` still returns every file keyed by path, for any other layout.
 

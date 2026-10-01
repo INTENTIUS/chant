@@ -20,14 +20,20 @@
  * subdirectory is a symlink, and Grafana's dashboard provider does not
  * follow symlinked directories.
  *
+ * A Grafana run by the Grafana Operator reads custom resources instead
+ * (#3015): `GrafanaOperatorResources` writes a `GrafanaDashboard` per
+ * dashboard, a `GrafanaDatasource` per datasource and a `GrafanaFolder` per
+ * folder, all `grafana.integreatly.org/v1beta1` as the k8s lexicon types
+ * them from the operator's CRDs (pinned in its `crd-sources.ts`).
+ *
  * This module is the only part of the grafana lexicon that loads the k8s
  * lexicon; nothing else imports it.
  */
 
 import { Composite, type CompositeInstance } from "@intentius/chant/composite";
 import type { Declarable } from "@intentius/chant/declarable";
-import { ConfigMap } from "@intentius/chant-lexicon-k8s/generated/index";
-import { buildGrafana, DASHBOARD_PROVIDERS_FILE, DASHBOARDS_DIR, DATASOURCES_FILE } from "./build";
+import { ConfigMap, GrafanaDashboard, GrafanaDatasource, GrafanaFolder } from "@intentius/chant-lexicon-k8s/generated/index";
+import { buildGrafana, DASHBOARD_PROVIDERS_FILE, DASHBOARDS_DIR, DATASOURCES_FILE, type ProvisionedDatasource } from "./build";
 import { DEFAULT_DASHBOARDS_PATH } from "./dashboard";
 
 /** The label the Grafana Helm chart's sidecar looks for on dashboard ConfigMaps (`sidecar.dashboards.label`). */
@@ -195,3 +201,181 @@ export function grafanaVolumes(props: Pick<GrafanaConfigMapsProps, "entities" | 
   });
   return { volumes, volumeMounts };
 }
+
+// ── Grafana Operator delivery (#3015) ─────────────────────────────────
+
+/** The `spec.instanceSelector` of every operator resource: which `Grafana` custom resources take it. */
+export interface GrafanaInstanceSelector {
+  matchLabels?: Record<string, string>;
+  matchExpressions?: Array<{ key: string; operator: "In" | "NotIn" | "Exists" | "DoesNotExist"; values?: string[] }>;
+}
+
+export interface GrafanaOperatorResourcesProps {
+  /** The grafana declarations to deliver: dashboards, datasources and `Folder`s. Anything else is ignored. */
+  entities: Iterable<Declarable>;
+  /**
+   * Which `Grafana` resources pick these up, usually the labels on your
+   * `Grafana` custom resource (the operator's examples use
+   * `{ matchLabels: { dashboards: "grafana" } }`). The operator requires one,
+   * and one that matches nothing delivers nothing, so there is no default.
+   */
+  instanceSelector: GrafanaInstanceSelector;
+  namespace?: string;
+  /** Prefix of every resource name. Defaults to `grafana`. */
+  name?: string;
+  /** Labels added to every resource. */
+  labels?: Record<string, string>;
+  /** Let a `Grafana` in another namespace take these resources (`spec.allowCrossNamespaceImport`). */
+  allowCrossNamespaceImport?: boolean;
+  /** How often the operator re-applies each resource (`spec.resyncPeriod`, e.g. `"5m"`). The operator's default is 10m. */
+  resyncPeriod?: string;
+  /**
+   * Where each `GrafanaDashboard` reads its JSON from. `"json"` (the default)
+   * puts `dashboardJson(dashboard)` in `spec.json`. `"configMap"` points
+   * `spec.configMapRef` at the ConfigMap `GrafanaConfigMaps` writes for the
+   * same dashboard, for a build that exports both with the same `name`, so
+   * the JSON is stored once.
+   */
+  dashboardSource?: "json" | "configMap";
+  /**
+   * The Secret that datasource secrets come from. A datasource field written
+   * as `${NAME}` or `$__env{NAME}` (the way file provisioning reads the
+   * environment) becomes a `spec.valuesFrom` entry reading key `NAME` of
+   * this Secret, which the operator substitutes for `${NAME}`. Required when
+   * any datasource has such a reference.
+   */
+  secretName?: string;
+}
+
+type OperatorEntity = (InstanceType<typeof GrafanaDashboard> | InstanceType<typeof GrafanaDatasource> | InstanceType<typeof GrafanaFolder>) & Declarable;
+
+export type GrafanaOperatorResourcesMembers = Record<string, OperatorEntity>;
+export type GrafanaOperatorResourcesInstance = CompositeInstance<GrafanaOperatorResourcesMembers> & GrafanaOperatorResourcesMembers;
+
+/** The fields of a datasource that file provisioning expands variables in, and the operator substitutes `valuesFrom` into. */
+const DATASOURCE_STRING_FIELDS = ["url", "user", "basicAuthUser", "database"] as const;
+
+const VARIABLE = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$__env\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z][A-Za-z0-9_]*)/g;
+
+/**
+ * A provisioned datasource as `GrafanaDatasource.spec.datasource`, and the
+ * `valuesFrom` entries its `${NAME}` references need. `$__env{NAME}` is
+ * rewritten to `${NAME}`, the form the operator substitutes. Fields the CRD
+ * does not have (`withCredentials`, `version`) and the ones the operator
+ * overrides (`uid`, which goes in `spec.uid`, and `orgId`) are left out.
+ */
+export function operatorDatasource(
+  ds: ProvisionedDatasource,
+  secretName: string | undefined,
+): { datasource: Record<string, unknown>; valuesFrom: Array<Record<string, unknown>> } {
+  const { uid: _uid, orgId: _orgId, withCredentials: _wc, version: _version, ...rest } = ds;
+  const datasource: Record<string, unknown> = { ...rest };
+  const valuesFrom: Array<Record<string, unknown>> = [];
+  const substitute = (targetPath: string, value: string): string => {
+    if (value.includes("$__file{")) {
+      throw new Error(`grafana: datasource "${ds.name}" reads ${targetPath} from a file ($__file{...}); the Grafana Operator cannot, so give it as \${NAME} from a Secret instead`);
+    }
+    const names = new Set<string>();
+    const out = value.replace(VARIABLE, (match, braced?: string, env?: string, bare?: string) => {
+      const name = braced ?? env ?? bare!;
+      names.add(name);
+      return env ? `\${${name}}` : match;
+    });
+    if (names.size > 0 && !secretName) {
+      throw new Error(
+        `grafana: datasource "${ds.name}" reads ${[...names].map((n) => `\${${n}}`).join(", ")} in ${targetPath}; ` +
+          "pass secretName to GrafanaOperatorResources, the Secret holding those keys",
+      );
+    }
+    for (const key of [...names].sort()) valuesFrom.push({ targetPath, valueFrom: { secretKeyRef: { name: secretName, key } } });
+    return out;
+  };
+  for (const field of DATASOURCE_STRING_FIELDS) {
+    const value = datasource[field];
+    if (typeof value === "string") datasource[field] = substitute(field, value);
+  }
+  if (ds.secureJsonData) {
+    datasource.secureJsonData = Object.fromEntries(
+      Object.entries(ds.secureJsonData).map(([key, value]) => {
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+          throw new Error(`grafana: datasource "${ds.name}" has the secureJsonData key "${key}", which the operator's valuesFrom targetPath cannot address`);
+        }
+        return [key, substitute(`secureJsonData.${key}`, value)];
+      }),
+    );
+  }
+  return { datasource, valuesFrom };
+}
+
+/**
+ * The Grafana Operator's custom resources for a set of grafana declarations
+ * (`grafana.integreatly.org/v1beta1`, Grafana Operator v5.25.0):
+ *
+ * - a `GrafanaFolder` per folder, `<name>-folder-<uid>`, with the folder's uid,
+ *   its title, and its parent as `parentFolderRef`;
+ * - a `GrafanaDashboard` per dashboard, `<name>-dashboard-<uid>`, holding
+ *   `dashboardJson(dashboard)` in `spec.json` and naming its folder with
+ *   `folderRef`;
+ * - a `GrafanaDatasource` per datasource, `<name>-datasource-<uid>`.
+ *
+ * Every resource carries `instanceSelector`. Export the result from a k8s
+ * build root, beside or instead of `GrafanaConfigMaps`.
+ */
+export const GrafanaOperatorResources = Composite<GrafanaOperatorResourcesProps, GrafanaOperatorResourcesMembers>((props) => {
+  const prefix = dnsName(props.name ?? "grafana");
+  const built = buildGrafana(props.entities);
+  const taken = new Set<string>();
+  const unique = (base: string) => {
+    let out = dnsName(base);
+    for (let n = 2; taken.has(out); n++) out = `${dnsName(base)}-${n}`;
+    taken.add(out);
+    return out;
+  };
+  const metadata = (name: string) => ({
+    name,
+    ...(props.namespace ? { namespace: props.namespace } : {}),
+    ...(props.labels ? { labels: { ...props.labels } } : {}),
+  });
+  const common = {
+    instanceSelector: props.instanceSelector,
+    ...(props.allowCrossNamespaceImport !== undefined ? { allowCrossNamespaceImport: props.allowCrossNamespaceImport } : {}),
+    ...(props.resyncPeriod !== undefined ? { resyncPeriod: props.resyncPeriod } : {}),
+  };
+  const members: GrafanaOperatorResourcesMembers = {};
+
+  // Folders first, parents before children (FolderPlan is sorted by path), so a child's parentFolderRef names a resource already made.
+  const folderRef = new Map<string, string>();
+  for (const f of built.folders) {
+    if (folderRef.has(f.uid)) continue; // two paths with one uid: GRAF104 reports it; one resource can hold only one
+    const name = unique(`${prefix}-folder-${f.uid}`);
+    folderRef.set(f.uid, name);
+    const parent = f.parentUid !== undefined ? folderRef.get(f.parentUid) : undefined;
+    members[memberName(name, prefix)] = new GrafanaFolder({
+      metadata: metadata(name),
+      spec: { ...common, uid: f.uid, title: f.title, ...(parent ? { parentFolderRef: parent } : {}) },
+    }) as OperatorEntity;
+  }
+
+  const configMaps = props.dashboardSource === "configMap" ? grafanaConfigMapLayout({ entities: props.entities, name: prefix }).dashboards : undefined;
+  built.dashboards.forEach((d, i) => {
+    const name = unique(`${prefix}-dashboard-${d.uid}`);
+    const folder = d.folderUid !== undefined ? folderRef.get(d.folderUid) : undefined;
+    const source = configMaps
+      ? { configMapRef: { name: configMaps[i].configMap, key: configMaps[i].key } }
+      : { json: built.files[d.file] };
+    members[memberName(name, prefix)] = new GrafanaDashboard({
+      metadata: metadata(name),
+      spec: { ...common, ...source, ...(folder ? { folderRef: folder } : {}) },
+    }) as OperatorEntity;
+  });
+
+  for (const ds of built.datasources) {
+    const name = unique(`${prefix}-datasource-${ds.uid}`);
+    const { datasource, valuesFrom } = operatorDatasource(ds, props.secretName);
+    members[memberName(name, prefix)] = new GrafanaDatasource({
+      metadata: metadata(name),
+      spec: { ...common, uid: ds.uid, datasource, ...(valuesFrom.length > 0 ? { valuesFrom } : {}) },
+    }) as OperatorEntity;
+  }
+  return members;
+}, "GrafanaOperatorResources");

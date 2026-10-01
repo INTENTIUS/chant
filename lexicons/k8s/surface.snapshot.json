@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-08-25T16:51:35.600Z",
+  "generatedAt": "2026-10-01T19:48:49.930Z",
   "entries": {
     "APIGroup": {
       "kind": "resource",
@@ -1023,6 +1023,10 @@
         "metadata:false"
       ]
     },
+    "ConfigMapRef": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaDashboard.configMapRef"
+    },
     "Configuration": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::ObjectStore.configuration"
@@ -1402,14 +1406,6 @@
         "metadata:false"
       ]
     },
-    "Env": {
-      "kind": "property",
-      "resourceType": "K8s::Cnpg::Cluster.env"
-    },
-    "EnvFrom": {
-      "kind": "property",
-      "resourceType": "K8s::Cnpg::Cluster.envFrom"
-    },
     "EnvFromSource": {
       "kind": "property",
       "resourceType": "K8s::Core::EnvFromSource"
@@ -1779,6 +1775,114 @@
     "GitRepository_Verify": {
       "kind": "property",
       "resourceType": "K8s::Flux::GitRepository.verify"
+    },
+    "GrafanaCom": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaDashboard.grafanaCom"
+    },
+    "GrafanaDashboard": {
+      "kind": "resource",
+      "resourceType": "K8s::Grafana::GrafanaDashboard",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "GrafanaDashboard_ConfigMapRef": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaDashboard.configMapRef"
+    },
+    "GrafanaDashboard_Datasource": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaDashboard.datasources"
+    },
+    "GrafanaDashboard_Env": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaDashboard.envs"
+    },
+    "GrafanaDashboard_EnvFrom": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaDashboard.envFrom"
+    },
+    "GrafanaDashboard_GrafanaCom": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaDashboard.grafanaCom"
+    },
+    "GrafanaDashboard_InstanceSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaDashboard.instanceSelector"
+    },
+    "GrafanaDashboard_JsonnetLib": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaDashboard.jsonnetLib"
+    },
+    "GrafanaDashboard_Oci": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaDashboard.oci"
+    },
+    "GrafanaDashboard_Plugin": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaDashboard.plugins"
+    },
+    "GrafanaDashboard_PublicSharing": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaDashboard.publicSharing"
+    },
+    "GrafanaDashboard_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaDashboard.status"
+    },
+    "GrafanaDashboard_UrlAuthorization": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaDashboard.urlAuthorization"
+    },
+    "GrafanaDashboard_Variable": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaDashboard.variables"
+    },
+    "GrafanaDatasource": {
+      "kind": "resource",
+      "resourceType": "K8s::Grafana::GrafanaDatasource",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "GrafanaDatasource_Datasource": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaDatasource.datasource"
+    },
+    "GrafanaDatasource_InstanceSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaDatasource.instanceSelector"
+    },
+    "GrafanaDatasource_Plugin": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaDatasource.plugins"
+    },
+    "GrafanaDatasource_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaDatasource.status"
+    },
+    "GrafanaDatasource_ValuesFrom": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaDatasource.valuesFrom"
+    },
+    "GrafanaFolder": {
+      "kind": "resource",
+      "resourceType": "K8s::Grafana::GrafanaFolder",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "GrafanaFolder_InstanceSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaFolder.instanceSelector"
+    },
+    "GrafanaFolder_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaFolder.status"
     },
     "Group": {
       "kind": "property",
@@ -2468,6 +2572,10 @@
         "metadata:false"
       ]
     },
+    "JsonnetLib": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaDashboard.jsonnetLib"
+    },
     "K3sHelmChart": {
       "kind": "resource",
       "resourceType": "K8s::K3s::HelmChart",
@@ -3140,6 +3248,10 @@
       "kind": "property",
       "resourceType": "K8s::Cnpg::ObjectStore.status"
     },
+    "Oci": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaDashboard.oci"
+    },
     "OidcIdentityProviderConfig": {
       "kind": "property",
       "resourceType": "K8s::Controlplane::AWSManagedControlPlane.oidcIdentityProviderConfig"
@@ -3263,10 +3375,6 @@
     "Pgbouncer": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::Pooler.pgbouncer"
-    },
-    "Plugin": {
-      "kind": "property",
-      "resourceType": "K8s::Cnpg::Cluster.plugins"
     },
     "Pod": {
       "kind": "resource",
@@ -3558,6 +3666,10 @@
     "PublicAccessBlock": {
       "kind": "property",
       "resourceType": "K8s::S3::Bucket.publicAccessBlock"
+    },
+    "PublicSharing": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaDashboard.publicSharing"
     },
     "Push": {
       "kind": "property",
@@ -4657,6 +4769,10 @@
       "kind": "property",
       "resourceType": "K8s::Ray::RayService.upgradeStrategy"
     },
+    "UrlAuthorization": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaDashboard.urlAuthorization"
+    },
     "User": {
       "kind": "resource",
       "resourceType": "K8s::Iam::User",
@@ -4729,9 +4845,9 @@
         "metadata:false"
       ]
     },
-    "ValuesFrom": {
+    "Variable": {
       "kind": "property",
-      "resourceType": "K8s::Flux::HelmRelease.valuesFrom"
+      "resourceType": "K8s::Grafana::GrafanaDashboard.variables"
     },
     "Versioning": {
       "kind": "property",

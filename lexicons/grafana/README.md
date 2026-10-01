@@ -61,6 +61,6 @@ GRAF101 and GRAF102 compare dashboards with the datasources declared in the same
 ## Plain-data API
 
 - `buildGrafana(entities)` and `grafanaFiles(entities)` render every file by path, for embedding in another lexicon's output (a ConfigMap, a volume).
-- `GrafanaConfigMaps` and `grafanaVolumes` from `@intentius/chant-lexicon-grafana/k8s` deliver dashboards and provisioning to Kubernetes as ConfigMaps labelled for the Grafana Helm chart's sidecar (`grafana_dashboard`, `grafana_datasource`), or mounted into a plain Grafana Deployment.
+- `GrafanaConfigMaps` and `grafanaVolumes` from `@intentius/chant-lexicon-grafana/k8s` deliver dashboards and provisioning to Kubernetes as ConfigMaps labelled for the Grafana Helm chart's sidecar (`grafana_dashboard`, `grafana_datasource`), or mounted into a plain Grafana Deployment. `GrafanaOperatorResources` from the same subpath writes `GrafanaDashboard`, `GrafanaDatasource` and `GrafanaFolder` resources for a Grafana the Grafana Operator runs.
 - `renderDashboard(dashboard)` and `dashboardJson(dashboard)` render one dashboard.
 - `validateGrafanaOutput({ dashboards, datasources })` and `validateDashboardSchema(json)`, from `@intentius/chant-lexicon-grafana/validation`, run the checks without a build. They are not on the package root, so declaring dashboards does not load them; ajv loads the first time a schema is checked.
