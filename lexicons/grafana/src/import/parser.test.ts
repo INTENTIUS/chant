@@ -318,8 +318,18 @@ describe("variables", () => {
       { type: "custom", name: "env", query: "a", allowCustomValue: true, valuesFormat: "csv", useTags: false, tagsQuery: "" },
       { type: "custom", name: "e2", query: "a", allowCustomValue: false },
     ]);
-    expect(edits).toContainEqual({ op: "remove", path: "/templating/list/0/allowCustomValue" });
-    expect(warnings).toEqual(['variable "e2": allowCustomValue is not carried (no prop takes it)']);
+    expect(edits).toContainEqual({ op: "remove", path: "/templating/list/0/valuesFormat" });
+    expect(warnings).toEqual([]);
+  });
+
+  test("carries allowCustomValue false and hide 3 on a variable", () => {
+    const { plan: p, warnings } = plan([
+      { type: "custom", name: "e2", query: "a", allowCustomValue: false, hide: 3 },
+      { type: "datasource", name: "ds", query: "loki", allowCustomValue: false, hide: 1 },
+    ]);
+    expect(warnings).toEqual([]);
+    expect(decl(p.declarations, "variable:e2").props).toEqual({ name: "e2", hide: "controlsMenu", values: ["a"], allowCustomValue: false });
+    expect(decl(p.declarations, "variable:ds").props).toMatchObject({ hide: "valueOnly", pluginType: "loki", allowCustomValue: false });
   });
 
   test("a textbox's current value, and a visible constant, are named", () => {
