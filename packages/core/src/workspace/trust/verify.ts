@@ -16,7 +16,7 @@ import { execFileSync } from "node:child_process";
 import { type CommitAttestor, type ProvenanceLevel } from "./attestor";
 import { policyAtBase, commitProvenance, resolveBase, type BaseSource, type RecordProvenance } from "./provenance";
 import { policyWriters, protectedPaths, type ExcludedSigner, type TrustPolicy } from "./policy";
-import { fileAt, nextVersion, rotationPath, signerHistory } from "./rotation";
+import { fileAt, nextVersion, rotationPath, signerHistory, type RotationRefusalCode } from "./rotation";
 
 export interface CommitVerdict extends RecordProvenance {
   commit: string;
@@ -52,8 +52,12 @@ export interface ChangeReport {
   /** Protected paths whose content differs between the merge base and head. */
   protectedChanged: string[];
   protectedWrites: ProtectedWrite[];
-  /** When the change edits the signer set: the version it proposes and who signed it (#2553). */
-  rotation: { from: number; to: number; signedBy: string[] } | null;
+  /**
+   * When the change edits the signer set (#2553): the version it proposes and
+   * who signed it, or, when the new set is refused, the version it had to
+   * follow and why.
+   */
+  rotation: { from: number; to: number; signedBy: string[] } | { from: number; code: RotationRefusalCode; reason: string } | null;
   notes: string[];
   failures: string[];
   ok: boolean;
@@ -194,8 +198,10 @@ export function verifyChange(opts: VerifyOptions): ChangeReport {
     const latest = signerHistory(repo, base.commit, policy.signersPath).versions.at(-1);
     if (next.signers !== undefined && latest && latest.version > 0) {
       const v = nextVersion(latest, next, null);
-      if ("reason" in v) report.failures.push(`the signer set at head is not a valid rotation of the set at base: ${v.reason}`);
-      else if (v !== latest) report.rotation = { from: latest.version, to: v.version, signedBy: v.signedBy };
+      if ("code" in v) {
+        report.rotation = { from: latest.version, code: v.code, reason: v.reason };
+        report.failures.push(`the signer set at head is not a valid rotation of the set at base (${v.code}): ${v.reason}`);
+      } else if (v !== latest) report.rotation = { from: latest.version, to: v.version, signedBy: v.signedBy };
     }
   }
 

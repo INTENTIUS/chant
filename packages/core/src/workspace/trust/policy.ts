@@ -324,9 +324,13 @@ export function readTrustPolicy(source: RecordSource, base: string | null): Trus
   const humanNames = new Set(set.signers.map((s) => s.principal));
   const runners: RunnerKey[] = [];
   const excludedRunners: Array<{ principal: string; reason: string }> = [];
-  for (const r of config.runners ?? []) {
+  const all = config.runners ?? [];
+  for (const r of all) {
     if (humanKeys.has(r.key) || humanNames.has(r.principal)) {
       excludedRunners.push({ principal: r.principal, reason: `${signersPath} lists this ${humanKeys.has(r.key) ? "key" : "principal"}; runner keys belong to a service or CI identity, never to a signer` });
+    } else if (all.filter((o) => o.key === r.key || o.principal === r.principal).length > 1) {
+      // One key under two names, or one name with two entries, would leave it unclear who signed.
+      excludedRunners.push({ principal: r.principal, reason: "another runner entry has the same key or principal; each runner is one principal with one key" });
     } else {
       runners.push(r);
     }

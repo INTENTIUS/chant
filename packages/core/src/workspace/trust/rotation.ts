@@ -35,8 +35,30 @@ import { execFileSync } from "node:child_process";
 import { posix } from "node:path";
 import { z } from "zod";
 import { canonicalJson } from "../../effect-receipt";
+import type { ReasonCode } from "../reason-codes";
+import { sshFingerprint } from "./dsse";
 import { parseAllowedSigners, type ExcludedSigner, type Signer } from "./policy";
 import { verifySshSignature } from "./ssh-commit";
+
+/** Why a signer set is not a valid next version (#2553). Each is in `reason-codes.ts` and in `signers.schema.json`. */
+export const ROTATION_REFUSAL_CODES = [
+  "signers-removed",
+  "rotation-unparseable",
+  "rotation-invalid",
+  "rotation-first-version",
+  "rotation-missing",
+  "rotation-version-skew",
+  "rotation-previous-mismatch",
+  "rotation-threshold-unsatisfiable",
+  "rotation-threshold-not-met",
+] as const satisfies readonly ReasonCode[];
+export type RotationRefusalCode = (typeof ROTATION_REFUSAL_CODES)[number];
+
+/** A refused version: the code and a sentence for people. */
+export interface RotationRefusal {
+  code: RotationRefusalCode;
+  reason: string;
+}
 
 /** The ssh-keygen namespace rotation signatures are made in. Never `git`. */
 export const ROTATION_NAMESPACE = "chant-signers";
@@ -87,7 +109,7 @@ export interface SignerVersion {
 export interface SignerHistory {
   versions: SignerVersion[];
   /** Where the chain broke, when it did. Nothing verifies then. */
-  broken?: { commit: string | null; reason: string };
+  broken?: { commit: string | null } & RotationRefusal;
 }
 
 /** The state of the signer files at one point, as text. */
@@ -101,8 +123,8 @@ export interface SignerFiles {
  * the reason it is not valid. `prev` undefined means there was no signer set,
  * so `next` is a first version and needs no signatures.
  */
-export function nextVersion(prev: SignerVersion | undefined, next: SignerFiles, commit: string | null): SignerVersion | { reason: string } {
-  if (next.signers === undefined) return { reason: "the signers file was removed" };
+export function nextVersion(prev: SignerVersion | undefined, next: SignerFiles, commit: string | null): SignerVersion | RotationRefusal {
+  if (next.signers === undefined) return { code: "signers-removed", reason: "the signers file was removed" };
   const digest = signersDigest(next.signers);
   let rotation: RotationFile | undefined;
   if (next.rotation !== undefined) {
@@ -110,46 +132,87 @@ export function nextVersion(prev: SignerVersion | undefined, next: SignerFiles, 
     try {
       raw = JSON.parse(next.rotation);
     } catch (err) {
-      return { reason: `the rotation file is not JSON: ${err instanceof Error ? err.message : String(err)}` };
+      return { code: "rotation-unparseable", reason: `the rotation file is not JSON: ${err instanceof Error ? err.message : String(err)}` };
     }
     const parsed = rotationFileSchema.safeParse(raw);
-    if (!parsed.success) return { reason: `the rotation file is invalid: ${parsed.error.issues.map((i) => `${i.path.join(".") || "/"}: ${i.message}`).join("; ")}` };
+    if (!parsed.success) return { code: "rotation-invalid", reason: `the rotation file is invalid: ${parsed.error.issues.map((i) => `${i.path.join(".") || "/"}: ${i.message}`).join("; ")}` };
     rotation = parsed.data;
   }
   const set = parseAllowedSigners(next.signers);
   const threshold = rotation?.threshold ?? 1;
+  // A threshold no future rotation could meet would freeze the set for good.
+  const holders = distinctHolders(set.signers);
+  if (threshold > holders) {
+    return {
+      code: "rotation-threshold-unsatisfiable",
+      reason: `the threshold is ${threshold}, and the set has ${holders} distinct signer${holders === 1 ? "" : "s"} to meet it`,
+    };
+  }
 
   if (!prev) {
     if (rotation && (rotation.version !== 1 || rotation.previous !== null)) {
-      return { reason: `a first signer set must be version 1 with no previous digest, not version ${rotation.version}` };
+      return { code: "rotation-first-version", reason: `a first signer set must be version 1 with no previous digest, not version ${rotation.version}` };
     }
     return { version: 1, commit, digest, threshold, signers: set.signers, excluded: set.excluded, signedBy: [] };
   }
   if (digest === prev.digest && threshold === prev.threshold) return prev;
-  if (!rotation) return { reason: `the signer set changed from version ${prev.version} with no rotation file signed by the set before it` };
-  if (rotation.version !== prev.version + 1) return { reason: `the rotation says version ${rotation.version}; the next version is ${prev.version + 1}` };
-  if (rotation.previous !== prev.digest) return { reason: `the rotation names previous ${rotation.previous}, but version ${prev.version} is ${prev.digest}` };
+  if (!rotation) return { code: "rotation-missing", reason: `the signer set changed from version ${prev.version} with no rotation file signed by the set before it` };
+  if (rotation.version !== prev.version + 1) return { code: "rotation-version-skew", reason: `the rotation says version ${rotation.version}; the next version is ${prev.version + 1}` };
+  if (rotation.previous !== prev.digest) return { code: "rotation-previous-mismatch", reason: `the rotation names previous ${rotation.previous}, but version ${prev.version} is ${prev.digest}` };
 
   const statement = rotationStatement(rotation, digest);
+  // Each signature counts once per key and once per principal: one key listed
+  // under two names is one signer, and so is one person with two keys.
   const keys = new Set<string>();
   const signedBy: string[] = [];
   for (const s of rotation.signatures) {
+    if (signedBy.includes(s.principal)) continue;
     const mine = prev.signers.filter((x) => x.principal === s.principal);
     const r = verifySshSignature(mine, statement, s.signature, ROTATION_NAMESPACE);
     if (!r.ok) continue;
-    const key = mine.find((x) => x.principal === r.principal)?.key ?? r.principal;
+    const key = r.key ?? (mine.length === 1 ? sshFingerprint(mine[0].key) : `principal:${r.principal}`);
     if (keys.has(key)) continue;
     keys.add(key);
     signedBy.push(r.principal);
   }
   if (keys.size < prev.threshold) {
     return {
+      code: "rotation-threshold-not-met",
       reason: `version ${rotation.version} is signed by ${keys.size} of the ${prev.threshold} signers of version ${prev.version} it needs${
         signedBy.length ? ` (${signedBy.join(", ")})` : ""
       }`,
     };
   }
   return { version: rotation.version, commit, digest, threshold, signers: set.signers, excluded: set.excluded, signedBy };
+}
+
+/**
+ * How many signers could each give a counted signature: principals and keys
+ * are both distinct, so this is the size of a largest matching between them.
+ */
+export function distinctHolders(signers: readonly Signer[]): number {
+  const keysOf = new Map<string, Set<string>>();
+  for (const s of signers) {
+    const set = keysOf.get(s.principal) ?? new Set<string>();
+    set.add(s.key);
+    keysOf.set(s.principal, set);
+  }
+  const owner = new Map<string, string>();
+  const tryAssign = (p: string, seen: Set<string>): boolean => {
+    for (const k of keysOf.get(p) ?? []) {
+      if (seen.has(k)) continue;
+      seen.add(k);
+      const o = owner.get(k);
+      if (o === undefined || tryAssign(o, seen)) {
+        owner.set(k, p);
+        return true;
+      }
+    }
+    return false;
+  };
+  let n = 0;
+  for (const p of keysOf.keys()) if (tryAssign(p, new Set())) n++;
+  return n;
 }
 
 function git(repo: string, args: string[]): string {
@@ -186,7 +249,7 @@ export function signerHistory(repo: string, base: string, signersPath: string): 
       continue;
     }
     const next = nextVersion(prev, files, commit);
-    if ("reason" in next) return { versions, broken: { commit, reason: next.reason } };
+    if ("code" in next) return { versions, broken: { commit, code: next.code, reason: next.reason } };
     if (next !== prev) versions.push(next);
     prev = next;
   }

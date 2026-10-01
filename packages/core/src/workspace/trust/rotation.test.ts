@@ -12,7 +12,11 @@ import { afterEach, describe, expect, test } from "vitest";
 import { queryRecords, type RecordView } from "../records-cli";
 import { activeAttestors } from "./attestor";
 import { policyAtBase, resolveBase } from "./provenance";
-import { signerHistory } from "./rotation";
+import { distinctHolders, signerHistory } from "./rotation";
+import { parseAllowedSigners } from "./policy";
+import { SIGNERS_OUTPUT_SCHEMA_ID, signersDocument } from "./signers-cli";
+import { contract } from "../__fixtures__/contract-repo";
+import signersSchema from "../signers.schema.json";
 import { verifyChange } from "./verify";
 import { hasSshKeygen, note, TestRepo, writeRecordKind, writeRotation, type Key } from "./test-repo";
 
@@ -86,6 +90,7 @@ describe.skipIf(!hasSshKeygen)("signer rotation", () => {
     const report = await verify(r);
     expect(report.ok).toBe(false);
     expect(report.failures.join("\n")).toMatch(/signed by 0 of the 1 signers of version 1/);
+    expect(report.rotation).toMatchObject({ from: 1, code: "rotation-threshold-not-met" });
   });
 
   test("a threshold of 2 needs two distinct keys; one key under two names counts once", async () => {
@@ -106,7 +111,7 @@ describe.skipIf(!hasSshKeygen)("signer rotation", () => {
     r.commit("two signatures", alice);
     const report = await verify(r);
     expect(report.failures).toEqual([]);
-    expect(report.rotation?.signedBy.sort()).toEqual(["alice@example.test", "bob@example.test"]);
+    expect(report.rotation && "to" in report.rotation && report.rotation.signedBy.sort()).toEqual(["alice@example.test", "bob@example.test"]);
   });
 
   test("attack: a commit signature, in the git namespace, is not a rotation signature", async () => {
@@ -115,7 +120,9 @@ describe.skipIf(!hasSshKeygen)("signer rotation", () => {
     r.write(".chant/allowed_signers", signers(["alice@example.test", alice], ["bob@example.test", bob], ["carol@example.test", carol]));
     writeRotation(r, { previousText: v1, version: 2, by: [["alice@example.test", alice]], namespace: "git" });
     r.commit("add carol", alice);
-    expect((await verify(r)).ok).toBe(false);
+    const report = await verify(r);
+    expect(report.ok).toBe(false);
+    expect(report.rotation).toMatchObject({ code: "rotation-threshold-not-met" });
   });
 
   test("attack: rolling back to an older set, or replaying an old rotation, is refused", async () => {
@@ -132,12 +139,12 @@ describe.skipIf(!hasSshKeygen)("signer rotation", () => {
     r.write(".chant/allowed_signers", v1);
     r.write(".chant/allowed_signers.rotation.json", replay);
     r.commit("bring bob back", alice);
-    expect((await verify(r)).failures.join("\n")).toMatch(/the next version is 3/);
+    expect((await verify(r)).failures.join("\n")).toMatch(/\(rotation-version-skew\).*the next version is 3/);
 
     // Or claim to be version 3 with version 1's digest as previous.
     writeRotation(r, { previousText: v1, version: 3, by: [["alice@example.test", alice], ["bob@example.test", bob]] });
     r.commit("claim v3", alice);
-    expect((await verify(r)).failures.join("\n")).toMatch(/names previous/);
+    expect((await verify(r)).failures.join("\n")).toMatch(/\(rotation-previous-mismatch\).*names previous/);
   });
 
   test("attack: a signer set changed on main without a rotation breaks the history, and nothing verifies", async () => {
@@ -148,6 +155,7 @@ describe.skipIf(!hasSshKeygen)("signer rotation", () => {
     r.commit("pushed straight to main", alice);
     const policy = policyAtBase(r.dir, resolveBase(r.dir, "main"));
     expect(policy.problems[0]).toMatch(/signer history .* is broken/);
+    expect(signerHistory(r.dir, "main", ".chant/allowed_signers").broken).toMatchObject({ code: "rotation-missing" });
     expect(level(await records(r, kind), "n1")).toBe("unattested");
     r.git(["checkout", "-q", "-b", "change"]);
     expect((await verify(r)).ok).toBe(false);
@@ -197,5 +205,54 @@ describe.skipIf(!hasSshKeygen)("signer rotation", () => {
     const rs = await records(r, kind);
     expect(level(rs, "n1")).toBe("unattested");
     expect(level(rs, "n2")).toBe("attested");
+  });
+
+  test("attack: one person with two keys signs twice, and counts once", async () => {
+    const r = new TestRepo("two-keys");
+    repos.push(r);
+    const a1 = r.key("alice1");
+    const a2 = r.key("alice2");
+    const bob = r.key("bob");
+    const v1 = signers(["alice@example.test", a1], ["alice@example.test", a2], ["bob@example.test", bob]);
+    r.write(".chant/allowed_signers", v1);
+    r.write(".chant/allowed_signers.rotation.json", JSON.stringify({ schema: 1, version: 1, previous: null, threshold: 2, signatures: [] }));
+    r.commit("v1, threshold 2", a1);
+    r.git(["checkout", "-q", "-b", "change"]);
+    r.write(".chant/allowed_signers", signers(["alice@example.test", a1], ["bob@example.test", bob]));
+    writeRotation(r, { previousText: v1, version: 2, threshold: 2, by: [["alice@example.test", a1], ["alice@example.test", a2]] });
+    r.commit("alice twice", a1);
+    const report = await verify(r);
+    expect(report.rotation).toMatchObject({ code: "rotation-threshold-not-met" });
+    expect(report.failures.join("\n")).toMatch(/signed by 1 of the 2/);
+  });
+
+  test("a threshold the new set cannot meet is refused, so the set can never be frozen", async () => {
+    const { r, alice, v1 } = setup("unsatisfiable");
+    r.git(["checkout", "-q", "-b", "change"]);
+    // Two lines, one principal: one distinct signer for a threshold of 2.
+    r.write(".chant/allowed_signers", signers(["alice@example.test", alice], ["alice@example.test", r.key("alice-laptop")]));
+    writeRotation(r, { previousText: v1, version: 2, threshold: 2, by: [["alice@example.test", alice]] });
+    r.commit("threshold 2", alice);
+    const report = await verify(r);
+    expect(report.rotation).toMatchObject({ code: "rotation-threshold-unsatisfiable" });
+    expect(distinctHolders(parseAllowedSigners(signers(["a", alice], ["b", alice])).signers)).toBe(1);
+  });
+
+  test("signers --json prints a document signers.schema.json accepts, intact or broken", async () => {
+    const { r, alice, carol, v1 } = setup("contract");
+    const { expectValid } = contract(signersSchema);
+    r.write(".chant/allowed_signers", signers(["alice@example.test", alice], ["carol@example.test", carol]));
+    writeRotation(r, { previousText: v1, version: 2, by: [["alice@example.test", alice]] });
+    r.commit("v2", alice);
+    const base = r.head();
+    let doc = signersDocument(r.dir, base, ".chant/allowed_signers", signerHistory(r.dir, base, ".chant/allowed_signers"));
+    expect(doc).toMatchObject({ $schema: SIGNERS_OUTPUT_SCHEMA_ID, broken: null, versions: [{ version: 1 }, { version: 2, principals: ["alice@example.test", "carol@example.test"], signedBy: ["alice@example.test"] }] });
+    expectValid(doc);
+    r.write(".chant/allowed_signers", v1);
+    r.commit("rolled back by hand", alice);
+    doc = signersDocument(r.dir, r.head(), ".chant/allowed_signers", signerHistory(r.dir, r.head(), ".chant/allowed_signers"));
+    expect("broken" in doc && doc.broken).toMatchObject({ code: "rotation-version-skew" });
+    expectValid(doc);
+    expectValid({ $schema: SIGNERS_OUTPUT_SCHEMA_ID, contract: 1, chant: "0.0.0", error: { code: "signers-file-missing", message: "m" } });
   });
 });

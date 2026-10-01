@@ -8,11 +8,14 @@
 
 import { execFileSync } from "node:child_process";
 import { generateKeyPairSync } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { canonicalJson } from "../../effect-receipt";
 import { loadRunnerKey, pae, signEnvelope, sshFingerprint, ed25519FromSsh, sshFromEd25519, verifyEnvelope, IN_TOTO_PAYLOAD_TYPE } from "./dsse";
-import { signRecordsEvidence } from "./evidence-cli";
+import { EVIDENCE_OUTPUT_SCHEMA_ID, signRecordsEvidence, verifyEvidenceFile } from "./evidence-cli";
+import { contract } from "../__fixtures__/contract-repo";
+import evidenceSchema from "../evidence.schema.json";
 import { verifyEvidence } from "./evidence";
 import { policyAtBase, resolveBase } from "./provenance";
 import { hasSshKeygen, note, TestRepo, writeRecordKind, writeRotation } from "./test-repo";
@@ -83,7 +86,7 @@ describe.skipIf(!hasSshKeygen)("runner evidence", () => {
   test("evidence signed by a runner verifies offline, and goes stale when a record changes", async () => {
     const { r, ci, kind, alice } = setup("good");
     const s = await sign(r, kind, ci.pem);
-    if ("error" in s) throw new Error(s.error);
+    if ("error" in s) throw new Error(s.error.message);
     expect(s.statement.subject.map((x) => x.name)).toEqual(["records/n1.md", "records/n2.md"]);
     expect(s.statement.predicate).toMatchObject({ runner: "ci@example.test", check: "schema-lint", environment: { sha256: expect.any(String) } });
 
@@ -101,7 +104,7 @@ describe.skipIf(!hasSshKeygen)("runner evidence", () => {
     const { r, kind, alice } = setup("person");
     // A developer's own ssh key is not a runner key.
     const own = await sign(r, kind, readFileSync(alice.file, "utf-8"));
-    expect("error" in own).toBe(true);
+    expect("error" in own && own.error.code).toBe("runner-key-invalid");
     // A developer who converts their ed25519 key to PEM is refused by name.
     const { privateKey } = generateKeyPairSync("ed25519");
     const pem = privateKey.export({ format: "pem", type: "pkcs8" }).toString();
@@ -110,7 +113,7 @@ describe.skipIf(!hasSshKeygen)("runner evidence", () => {
     r.write(".chant/trust.json", JSON.stringify({ schema: 1, runners: [{ principal: "ci@example.test", class: "runner", key: loadRunnerKey(pem).publicKey }] }));
     r.commit("dev key in both places", alice);
     const dev = await sign(r, kind, pem);
-    expect("error" in dev && dev.error).toMatch(/signer's key/);
+    expect("error" in dev && dev.error).toMatchObject({ code: "runner-key-is-signer", message: expect.stringMatching(/signer's key/) });
     // Listing alice's key as a runner at base is refused when the policy is read.
     r.write(".chant/trust.json", JSON.stringify({ schema: 1, runners: [{ principal: "laptop", class: "runner", key: alice.pub }] }));
     r.commit("alice as a runner", alice);
@@ -130,41 +133,109 @@ describe.skipIf(!hasSshKeygen)("runner evidence", () => {
     r.write(".chant/trust.json", JSON.stringify({ schema: 1, runners: [{ principal: "rogue", class: "runner", key: rogue.pub }] }));
     r.commit("add a runner", alice);
     const s = await sign(r, kind, rogue.pem);
-    expect("error" in s && s.error).toMatch(/lists no runner with this key/);
+    expect("error" in s && s.error).toMatchObject({ code: "runner-key-unlisted", message: expect.stringMatching(/lists no runner with this key/) });
     // Hand-made evidence with that key fails too.
     const { key } = loadRunnerKey(rogue.pem);
     const env = signEnvelope(IN_TOTO_PAYLOAD_TYPE, Buffer.from("{}"), key, rogue.pub);
-    expect(verifyEvidence(env, runners(r), r.dir, r.head()).ok).toBe(false);
+    expect(verifyEvidence(env, runners(r), r.dir, r.head())).toMatchObject({ ok: false, code: "envelope-untrusted" });
   });
 
   test("attack: one runner cannot put another runner's name in the statement", async () => {
     const { r, ci, kind } = setup("impersonate");
     const s = await sign(r, kind, ci.pem);
-    if ("error" in s) throw new Error(s.error);
+    if ("error" in s) throw new Error(s.error.message);
     const forged = { ...s.statement, predicate: { ...s.statement.predicate, runner: "release@example.test" } };
     const { key } = loadRunnerKey(ci.pem);
     const env = signEnvelope(IN_TOTO_PAYLOAD_TYPE, Buffer.from(canonicalJson(forged)), key, ci.pub);
     const v = verifyEvidence(env, runners(r), r.dir, r.head());
     expect(v.ok).toBe(false);
     expect(!v.ok && v.reason).toMatch(/names runner/);
+    expect(!v.ok && v.code).toBe("evidence-runner-mismatch");
   });
 
   test("attack: a payload edited after signing does not verify", async () => {
     const { r, ci, kind } = setup("tamper");
     const s = await sign(r, kind, ci.pem);
-    if ("error" in s) throw new Error(s.error);
+    if ("error" in s) throw new Error(s.error.message);
     const statement = JSON.parse(Buffer.from(s.envelope.payload, "base64").toString());
     statement.subject[0].digest.sha256 = "0".repeat(64);
     const env = { ...s.envelope, payload: Buffer.from(JSON.stringify(statement)).toString("base64") };
-    expect(verifyEvidence(env, runners(r), r.dir, r.head()).ok).toBe(false);
+    expect(verifyEvidence(env, runners(r), r.dir, r.head())).toMatchObject({ ok: false, code: "envelope-untrusted" });
   });
 
   test("a removed runner key no longer verifies evidence it signed", async () => {
     const { r, ci, kind, alice } = setup("revoked");
     const s = await sign(r, kind, ci.pem);
-    if ("error" in s) throw new Error(s.error);
+    if ("error" in s) throw new Error(s.error.message);
     r.write(".chant/trust.json", JSON.stringify({ schema: 1 }));
     r.commit("retire the runner", alice);
-    expect(verifyEvidence(s.envelope, runners(r), r.dir, r.head()).ok).toBe(false);
+    expect(verifyEvidence(s.envelope, runners(r), r.dir, r.head())).toMatchObject({ ok: false, code: "envelope-untrusted" });
+  });
+
+  test("attack: a statement signed by a listed runner, with a field the predicate does not define or a path outside the repository, is refused", async () => {
+    const { r, ci, kind } = setup("strict");
+    const s = await sign(r, kind, ci.pem);
+    if ("error" in s) throw new Error(s.error.message);
+    const { key } = loadRunnerKey(ci.pem);
+    const extra = { ...s.statement, predicate: { ...s.statement.predicate, reused: true } };
+    const escape = { ...s.statement, subject: [{ name: "../outside.md", digest: { sha256: "0".repeat(64) } }] };
+    for (const forged of [extra, escape]) {
+      const env = signEnvelope(IN_TOTO_PAYLOAD_TYPE, Buffer.from(canonicalJson(forged)), key, ci.pub);
+      expect(verifyEvidence(env, runners(r), r.dir, r.head())).toMatchObject({ ok: false, code: "evidence-statement-invalid" });
+    }
+    const other = signEnvelope("text/plain", Buffer.from(canonicalJson(s.statement)), key, ci.pub);
+    expect(verifyEvidence(other, runners(r), r.dir, r.head())).toMatchObject({ ok: false, code: "evidence-payload-type" });
+    expect(verifyEvidence({ ...s.envelope, payload: "not base64!" }, runners(r), r.dir, r.head())).toMatchObject({ ok: false, code: "envelope-invalid" });
+  });
+
+  test("one runner key under two names, or one name with two keys, is trusted under neither", () => {
+    const { r, alice } = setup("duplicate");
+    const a = runnerKey();
+    const b = runnerKey();
+    r.write(
+      ".chant/trust.json",
+      JSON.stringify({
+        schema: 1,
+        runners: [
+          { principal: "ci@example.test", class: "runner", key: a.pub },
+          { principal: "deploy@example.test", class: "service", key: a.pub },
+          { principal: "nightly@example.test", class: "runner", key: b.pub },
+          { principal: "nightly@example.test", class: "runner", key: runnerKey().pub },
+        ],
+      }),
+    );
+    r.commit("duplicates", alice);
+    const policy = policyAtBase(r.dir, resolveBase(r.dir, "main"));
+    expect(policy.runners).toEqual([]);
+    expect(policy.excludedRunners.map((e) => e.principal)).toEqual(["ci@example.test", "deploy@example.test", "nightly@example.test", "nightly@example.test"]);
+  });
+
+  test("verify --json prints a document evidence.schema.json accepts, for a result and for each refusal", async () => {
+    const { r, ci, kind, alice } = setup("contract");
+    const { expectValid } = contract(evidenceSchema);
+    const s = await sign(r, kind, ci.pem);
+    if ("error" in s) throw new Error(s.error.message);
+    const file = join(r.dir, "evidence.json");
+    writeFileSync(file, JSON.stringify(s.envelope));
+    const good = verifyEvidenceFile(r.dir, file, { base: "main" });
+    expect(good).toMatchObject({ $schema: EVIDENCE_OUTPUT_SCHEMA_ID, contract: 1, status: "current" });
+    expectValid(good);
+
+    writeFileSync(file, "{");
+    const unreadable = verifyEvidenceFile(r.dir, file, { base: "main" });
+    expect("error" in unreadable && unreadable.error.code).toBe("envelope-unreadable");
+    expectValid(unreadable);
+
+    const refused = await sign(r, kind, readFileSync(alice.file, "utf-8"));
+    if (!("error" in refused)) throw new Error("expected a refusal");
+    expectValid({ $schema: EVIDENCE_OUTPUT_SCHEMA_ID, contract: 1, chant: "0.0.0", at: null, error: refused.error });
+
+    // A signer history that breaks at base leaves no runner key trusted.
+    r.write(".chant/allowed_signers", `alice@example.test ${alice.pub}\nmallory@example.test ${r.key("mallory").pub}\n`);
+    r.commit("signers changed with no rotation", alice);
+    writeFileSync(file, JSON.stringify(s.envelope));
+    const broken = verifyEvidenceFile(r.dir, file, { base: "main" });
+    expect("error" in broken && broken.error.code).toBe("trust-policy-unreadable");
+    expectValid(broken);
   });
 });

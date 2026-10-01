@@ -16,7 +16,9 @@
 
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
+import { z } from "zod";
 import { canonicalJson } from "../../effect-receipt";
+import type { ReasonCode } from "../reason-codes";
 import { IN_TOTO_PAYLOAD_TYPE, signEnvelope, verifyEnvelope, type DsseEnvelope } from "./dsse";
 import type { KeyObject } from "node:crypto";
 import type { RunnerKey } from "./policy";
@@ -24,19 +26,66 @@ import type { RunnerKey } from "./policy";
 export const STATEMENT_TYPE = "https://in-toto.io/Statement/v1";
 export const RUNNER_EVIDENCE_PREDICATE = "https://intentius.io/chant/runner-evidence/v1";
 
-export interface EvidenceStatement {
-  _type: typeof STATEMENT_TYPE;
-  subject: Array<{ name: string; digest: { sha256: string } }>;
-  predicateType: typeof RUNNER_EVIDENCE_PREDICATE;
-  predicate: {
-    runner: string;
-    commit: string;
-    tree: string;
-    check: string;
-    claim?: { sha256: string };
-    environment?: { sha256: string };
-  };
-}
+/**
+ * Why evidence is refused, by `evidence sign` or `evidence verify` (#2553).
+ * Each is in `reason-codes.ts` and in `evidence.schema.json`. A sign or verify
+ * that can't read the record kind fails with the records read's own code.
+ */
+export const EVIDENCE_ERROR_CODES = [
+  "not-a-git-repository",
+  "revision-unknown",
+  "trust-policy-unreadable",
+  "envelope-unreadable",
+  "envelope-invalid",
+  "envelope-untrusted",
+  "evidence-payload-type",
+  "evidence-statement-invalid",
+  "evidence-runner-mismatch",
+  "runner-key-invalid",
+  "runner-key-is-signer",
+  "runner-key-unlisted",
+  "kind-unreadable",
+  "kind-invalid",
+  "schema-unreadable",
+  "schema-id-mismatch",
+  "schema-invalid",
+  "location-missing",
+] as const satisfies readonly ReasonCode[];
+export type EvidenceErrorCode = (typeof EVIDENCE_ERROR_CODES)[number];
+
+const sha256Hex = z.string().regex(/^[0-9a-f]{64}$/);
+const fullCommit = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/);
+
+/** The statement a runner signs. Strict, so a verifier never acts on a field it does not know. */
+export const evidenceStatementSchema = z
+  .object({
+    _type: z.literal(STATEMENT_TYPE),
+    subject: z
+      .array(
+        z
+          .object({
+            name: z
+              .string()
+              .min(1)
+              .refine((n) => !n.startsWith("/") && !n.split("/").includes(".."), "a path inside the repository"),
+            digest: z.object({ sha256: sha256Hex }).strict(),
+          })
+          .strict(),
+      ),
+    predicateType: z.literal(RUNNER_EVIDENCE_PREDICATE),
+    predicate: z
+      .object({
+        runner: z.string().min(1),
+        commit: fullCommit,
+        tree: fullCommit,
+        check: z.string().min(1),
+        claim: z.object({ sha256: sha256Hex }).strict().optional(),
+        environment: z.object({ sha256: sha256Hex }).strict().optional(),
+      })
+      .strict(),
+  })
+  .strict();
+export type EvidenceStatement = z.infer<typeof evidenceStatementSchema>;
 
 /** SHA-256 of a record's text, line endings normalised as seals do (#2524 D4). */
 export function recordHash(text: string): string {
@@ -114,7 +163,7 @@ export type EvidenceVerdict =
       statement: EvidenceStatement;
       subjects: SubjectVerdict[];
     }
-  | { ok: false; reason: string };
+  | { ok: false; code: EvidenceErrorCode; reason: string };
 
 /**
  * Verify an envelope against the runner keys at base, then compare each
@@ -123,24 +172,27 @@ export type EvidenceVerdict =
 export function verifyEvidence(envelope: unknown, runners: readonly RunnerKey[], repo: string, at: string): EvidenceVerdict {
   const v = verifyEnvelope(envelope, runners);
   if (!v.ok) return v;
-  if (v.payloadType !== IN_TOTO_PAYLOAD_TYPE) return { ok: false, reason: `payload type ${v.payloadType} is not ${IN_TOTO_PAYLOAD_TYPE}` };
-  let statement: EvidenceStatement;
+  if (v.payloadType !== IN_TOTO_PAYLOAD_TYPE) return { ok: false, code: "evidence-payload-type", reason: `payload type ${v.payloadType} is not ${IN_TOTO_PAYLOAD_TYPE}` };
+  let raw: unknown;
   try {
-    statement = JSON.parse(v.payload.toString("utf8")) as EvidenceStatement;
+    raw = JSON.parse(v.payload.toString("utf8"));
   } catch {
-    return { ok: false, reason: "the payload is not JSON" };
+    return { ok: false, code: "evidence-statement-invalid", reason: "the payload is not JSON" };
   }
-  if (statement._type !== STATEMENT_TYPE || statement.predicateType !== RUNNER_EVIDENCE_PREDICATE || !Array.isArray(statement.subject)) {
-    return { ok: false, reason: `the payload is not a ${RUNNER_EVIDENCE_PREDICATE} statement` };
+  const parsed = evidenceStatementSchema.safeParse(raw);
+  if (!parsed.success) {
+    const detail = parsed.error.issues.map((i) => `${i.path.join(".") || "/"}: ${i.message}`).join("; ");
+    return { ok: false, code: "evidence-statement-invalid", reason: `the payload is not a ${RUNNER_EVIDENCE_PREDICATE} statement: ${detail}` };
   }
+  const statement = parsed.data;
   // The runner named inside must be the one whose key signed: a runner cannot speak for another.
-  if (statement.predicate?.runner !== v.principal) {
-    return { ok: false, reason: `the statement names runner ${JSON.stringify(statement.predicate?.runner)}, but ${v.principal}'s key signed it` };
+  if (statement.predicate.runner !== v.principal) {
+    return { ok: false, code: "evidence-runner-mismatch", reason: `the statement names runner ${JSON.stringify(statement.predicate.runner)}, but ${v.principal}'s key signed it` };
   }
   const subjects = statement.subject.map((s) => {
     const text = blobAt(repo, at, s.name);
     const now = text === undefined ? null : recordHash(text);
-    return { name: s.name, signed: s.digest?.sha256, now, matches: now !== null && now === s.digest?.sha256 };
+    return { name: s.name, signed: s.digest.sha256, now, matches: now !== null && now === s.digest.sha256 };
   });
   const runner = runners.find((r) => r.principal === v.principal)!;
   return {

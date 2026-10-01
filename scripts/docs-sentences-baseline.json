@@ -146,7 +146,6 @@
   "anaphora/repeated-opening": 1
  },
  "docs/src/content/docs/cli/init.mdx": {
-  "formatting/em-dash-density": 2,
   "claude/colon-reveal": 2,
   "tricolon/comma-series": 1
  },
@@ -241,12 +240,11 @@
   "formatting/em-dash-density": 2
  },
  "docs/src/content/docs/cli/workspace-check.mdx": {
-  "formatting/em-dash-density": 2,
-  "claude/colon-reveal": 2,
-  "dead-metaphor/rare-lemma": 1
+  "claude/colon-reveal": 2
  },
- "docs/src/content/docs/cli/workspace-graph.mdx": {
-  "formatting/em-dash-density": 2
+ "docs/src/content/docs/cli/workspace-evidence.mdx": {
+  "formatting/em-dash-density": 2,
+  "claude/colon-reveal": 2
  },
  "docs/src/content/docs/cli/workspace-init.mdx": {
   "formatting/em-dash-density": 2,
@@ -272,20 +270,20 @@
   "claude/colon-reveal": 2
  },
  "docs/src/content/docs/cli/workspace-points.mdx": {
-  "formatting/em-dash-density": 2,
   "claude/colon-reveal": 2,
   "dead-metaphor/rare-lemma": 1
  },
  "docs/src/content/docs/cli/workspace-records.mdx": {
-  "formatting/em-dash-density": 2,
   "claude/colon-reveal": 2
  },
+ "docs/src/content/docs/cli/workspace-signers.mdx": {
+  "claude/colon-reveal": 2,
+  "dead-metaphor/rare-lemma": 2
+ },
  "docs/src/content/docs/cli/workspace-status.mdx": {
-  "formatting/em-dash-density": 2,
   "claude/colon-reveal": 2
  },
  "docs/src/content/docs/cli/workspace-upgrade.mdx": {
-  "formatting/em-dash-density": 2,
   "claude/colon-reveal": 2
  },
  "docs/src/content/docs/cli/workspace-verify.mdx": {
@@ -293,7 +291,6 @@
   "claude/colon-reveal": 2
  },
  "docs/src/content/docs/cli/workspace-work.mdx": {
-  "formatting/em-dash-density": 2,
   "claude/colon-reveal": 2,
   "dead-metaphor/rare-lemma": 1
  },
@@ -709,7 +706,6 @@
   "tricolon/comma-series": 1
  },
  "docs/src/content/docs/guide/recording-decisions-by-hand.mdx": {
-  "formatting/em-dash-density": 2,
   "claude/colon-reveal": 2
  },
  "docs/src/content/docs/guide/resource-naming.mdx": {
@@ -730,7 +726,6 @@
   "formatting/bold-first-bullet": 1
  },
  "docs/src/content/docs/guide/work-items.mdx": {
-  "formatting/em-dash-density": 3,
   "claude/colon-reveal": 3
  },
  "docs/src/content/docs/guide/writing-resources.mdx": {
@@ -1027,7 +1022,6 @@
   "claude/colon-reveal": 3
  },
  "docs/src/content/docs/reference/lineage-lock.mdx": {
-  "formatting/em-dash-density": 2,
   "discourse/punchy-fragments": 1,
   "claude/colon-reveal": 3
  },
@@ -1044,13 +1038,11 @@
   "claude/colon-reveal": 3
  },
  "docs/src/content/docs/reference/workspace-declaration.mdx": {
-  "formatting/em-dash-density": 2,
   "discourse/punchy-fragments": 1,
   "claude/colon-reveal": 2,
   "anaphora/repeated-opening": 1
  },
  "docs/src/content/docs/reference/workspace-kinds.mdx": {
-  "formatting/em-dash-density": 2,
   "discourse/punchy-fragments": 1,
   "claude/colon-reveal": 3
  },

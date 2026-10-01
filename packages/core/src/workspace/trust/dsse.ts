@@ -98,13 +98,13 @@ export interface TrustedKey {
 
 export type EnvelopeVerdict =
   | { ok: true; principal: string; keyid: string; payloadType: string; payload: Buffer }
-  | { ok: false; reason: string };
+  | { ok: false; code: "envelope-invalid" | "envelope-untrusted"; reason: string };
 
 /** Verify an envelope against `trusted`. One valid signature by a trusted key is enough. */
 export function verifyEnvelope(envelope: unknown, trusted: readonly TrustedKey[]): EnvelopeVerdict {
-  if (!isEnvelope(envelope)) return { ok: false, reason: "not a DSSE envelope: it needs payloadType, payload and signatures" };
+  if (!isEnvelope(envelope)) return { ok: false, code: "envelope-invalid", reason: "not a DSSE envelope: it needs payloadType, payload and signatures" };
   const payload = Buffer.from(envelope.payload, "base64");
-  if (payload.toString("base64") !== envelope.payload.replace(/\s/g, "")) return { ok: false, reason: "the payload is not valid base64" };
+  if (payload.toString("base64") !== envelope.payload) return { ok: false, code: "envelope-invalid", reason: "the payload is not canonical base64" };
   const message = pae(envelope.payloadType, payload);
   const byId = new Map(trusted.map((t) => [sshFingerprint(t.key), t]));
   for (const s of envelope.signatures) {
@@ -119,7 +119,7 @@ export function verifyEnvelope(envelope: unknown, trusted: readonly TrustedKey[]
     if (good) return { ok: true, principal: t.principal, keyid: s.keyid, payloadType: envelope.payloadType, payload };
   }
   const ids = envelope.signatures.map((s) => s.keyid).join(", ") || "none";
-  return { ok: false, reason: `no signature verifies against a runner key the policy at base lists (key ids: ${ids})` };
+  return { ok: false, code: "envelope-untrusted", reason: `no signature verifies against a runner key the policy at base lists (key ids: ${ids})` };
 }
 
 function isEnvelope(v: unknown): v is DsseEnvelope {

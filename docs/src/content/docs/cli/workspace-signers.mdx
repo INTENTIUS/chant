@@ -7,7 +7,7 @@ diataxis: reference
 ## Synopsis
 
 ```
-chant workspace signers [--base <rev>]
+chant workspace signers [--base <rev>] [--json]
 chant workspace signers rotate [--threshold <n>]
 chant workspace signers sign --key <ssh private key>
 ```
@@ -26,9 +26,13 @@ The signer set is the signers file (`.chant/allowed_signers` by default) togethe
 }
 ```
 
-Each signature is made with `ssh-keygen -Y sign -n chant-signers` over a canonical JSON statement. The statement names the new version and its threshold. It also carries two digests, one of the previous signers file and one of the new file. The version number and the previous digest stop anyone replaying an older set that was once valid. The `chant-signers` namespace stops a commit signature from standing in for a rotation signature. A key listed twice, under two names, counts once toward the threshold.
+Each signature is made with `ssh-keygen -Y sign -n chant-signers` over a canonical JSON statement. The statement names the new version and its threshold. It also carries two digests, one of the previous signers file and one of the new file. The version number and the previous digest stop anyone replaying an older set that was once valid. The `chant-signers` namespace stops a commit signature from standing in for a rotation signature. Each signer counts once toward the threshold. A key listed under two names is one signer, and so is one name with two keys.
 
 The first signer set is version 1 and needs no signatures. Without a rotation file, its threshold is 1. The commit that adds it attests nothing itself, because no signer set was in effect before it.
+
+A threshold above the number of distinct signers in the new set is refused, because no later rotation could meet it. A signer line restricted with `namespaces="git"` can't sign a rotation, since rotation signatures are in the `chant-signers` namespace. List it without the option, or with both namespaces.
+
+One change carries one rotation. A branch that rotates twice before it merges is refused, because the second version names the first as its previous set and the base has never seen the first.
 
 ## Revocation by position
 
@@ -54,6 +58,43 @@ Removing the signers file is a protected write. Once it's gone, nothing verifies
 | `--base <rev>` | The revision whose history is read. Defaults to `origin/HEAD`, then `main`, then `master`. |
 | `--threshold <n>` | With `rotate`: the new set's threshold, at least 1 and at most the number of keys in the new set. |
 | `--key <file>` | With `sign`: your ssh private key. It must be in the current version of the signer set. |
+| `--json` | With no subcommand: print the history as JSON. |
+
+## Output
+
+With `--json`, the command prints a document that `signers.schema.json` describes (`https://intentius.io/chant/schemas/workspace/signers/v1/signers.schema.json`).
+
+| Field | Holds |
+|---|---|
+| `versions` | Each set in order, oldest first. An entry has the commit that made it, the digest of its file, its threshold, its principals and the principals whose signatures admitted it. |
+| `broken` | Null, or where the chain fails, with a `code` and a `message`. |
+| `error` | Only in a failure, with a `code` and a `message`. |
+
+## Reason codes
+
+A version that isn't a valid rotation of the one before carries one of these codes, in `broken` here and in the rotation failure of `chant workspace verify`. They are part of the [read contract's closed list](/chant/reference/workspace-read-contract/#reason-codes).
+
+| Code | Meaning |
+|---|---|
+| `signers-removed` | The signers file was removed. |
+| `rotation-unparseable` | The rotation file is not JSON. |
+| `rotation-invalid` | The rotation file does not match its shape. |
+| `rotation-first-version` | The first set's rotation file names a version other than 1, or a previous digest. |
+| `rotation-missing` | The set or its threshold changed with no rotation file. |
+| `rotation-version-skew` | The rotation names a version other than the next one, as a replay does. |
+| `rotation-previous-mismatch` | The rotation names another previous digest, as a rollback does. |
+| `rotation-threshold-unsatisfiable` | The new threshold is more than the new set's distinct signers. |
+| `rotation-threshold-not-met` | Too few distinct signers of the set before signed it. |
+
+`--json` fails with `not-a-git-repository`, `revision-unknown` or `signers-file-missing`.
+
+## In the chant repository
+
+The chant repository's `.chant/allowed_signers` is version 1: one key, added with no rotation file, so its threshold is 1. `chant workspace signers` on main reads one version and an unbroken history. The `trust` job's `chant workspace verify` now checks the history too, so the next change to that file needs a rotation file signed by that key.
+
+## Limits
+
+Record seals, a verdict's or an author's, are checked against the latest set at base, not the set in effect where the record entered the history. A seal by a key that a rotation removed stops counting ([#3077](https://github.com/INTENTIUS/chant/issues/3077)).
 
 ## Exit codes
 

@@ -931,14 +931,14 @@ Workspace (level 1, #2524):
                         trusted at base, and a new signer set needs a
                         threshold of the old one. Does nothing without a
                         signers file
-  workspace signers [rotate [--threshold <n>] | sign --key <file>]
+  workspace signers [--json] [rotate [--threshold <n>] | sign --key <file>]
                         Show the signer history at base, or propose the next
                         signer set and sign it with a current signer's key
   workspace evidence sign --kind <kind file> --key <runner.pem> --check-id <id>
                         Sign runner evidence over the records' hashes in a
                         DSSE envelope, with a runner key .chant/trust.json
                         lists. For CI and services, never a person's key
-  workspace evidence verify --envelope <file> [--at <rev>]
+  workspace evidence verify --envelope <file> [--at <rev>] [--json]
                         Verify runner evidence offline, and whether the
                         records it covers are unchanged
   workspace lineage [--json]
