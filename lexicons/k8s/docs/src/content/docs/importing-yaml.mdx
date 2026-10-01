@@ -29,6 +29,7 @@ The importer reads multi-document YAML, identifies each resource’s `apiVersion
 | A `PrometheusRule`'s `spec.groups` | prometheus `RuleGroup`s, listed in `spec.groups` |
 | A ConfigMap value holding an `alertmanager.yml`, such as the one the alertmanager Helm chart renders | prometheus receivers, time intervals, the root `Route`, inhibit rules and `AlertmanagerSettings`, and `alertmanagerYaml([...])` in the ConfigMap |
 | A ConfigMap value holding classic Grafana dashboard JSON, such as a dashboard labelled `grafana_dashboard` for the Grafana sidecar | a grafana `Dashboard`, and `dashboardJson(dashboard)` in the ConfigMap |
+| A Grafana Operator `GrafanaDashboard`'s `spec.json` | a grafana `Dashboard`, and `dashboardJson(dashboard)` in `spec.json` |
 
 Each is written in a directory named after the resource (and the key, when the ConfigMap has several), with the owner's usual modules, and the k8s module imports what it references. The workload still mounts the ConfigMap by name, and `chant build` renders the same content back into it. The content comes back as the owner's serializer writes it: an `alertmanager.yml` has its receivers sorted by name, and Alertmanager's deprecated `match` spellings rewritten as matchers, as a standalone `chant import alertmanager.yml` does.
 

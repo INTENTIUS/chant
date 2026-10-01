@@ -7,7 +7,8 @@ import { Datasource } from "./datasource";
 import { StatPanel } from "./panels";
 import { PromQuery } from "./query";
 import { dashboardJson } from "./build";
-import { GrafanaConfigMaps, grafanaConfigMapLayout, grafanaVolumes } from "./k8s";
+import { Folder } from "./folder";
+import { GrafanaConfigMaps, grafanaConfigMapLayout, grafanaVolumes, GrafanaOperatorResources, operatorDatasource } from "./k8s";
 
 const prometheus = new Datasource({ name: "Prometheus", type: "prometheus", url: "http://prometheus:9090" });
 const stat = () => new StatPanel({ title: "Up", datasource: prometheus, targets: [new PromQuery({ expr: "sum(up)" })] });
@@ -18,7 +19,7 @@ const entities = [prometheus, top, red, slo];
 
 type Manifest = { kind: string; metadata: { name: string; namespace?: string; labels?: Record<string, string>; annotations?: Record<string, string> }; data: Record<string, string> };
 
-function manifests(instance: ReturnType<typeof GrafanaConfigMaps>): Manifest[] {
+function manifests(instance: ReturnType<typeof GrafanaConfigMaps> | ReturnType<typeof GrafanaOperatorResources>): Manifest[] {
   const out = k8sSerializer.serialize(expandComposite("grafana", instance));
   return (loadAll(typeof out === "string" ? out : out.primary) as Manifest[]).filter(Boolean);
 }
@@ -94,5 +95,79 @@ describe("grafanaVolumes", () => {
       ["g-provisioning", "/etc/grafana/provisioning"],
       ["g-dashboards-0", "/dash/Services"],
     ]);
+  });
+});
+
+type OperatorManifest = { apiVersion: string; kind: string; metadata: Manifest["metadata"]; spec: Record<string, unknown> };
+
+describe("GrafanaOperatorResources (#3015)", () => {
+  const selector = { matchLabels: { dashboards: "grafana" } };
+  const ops = (props: Partial<Parameters<typeof GrafanaOperatorResources>[0]> = {}) =>
+    manifests(GrafanaOperatorResources({ entities, instanceSelector: selector, ...props })) as unknown as OperatorManifest[];
+
+  test("a GrafanaFolder per folder, a GrafanaDashboard per dashboard and a GrafanaDatasource per datasource", () => {
+    const docs = ops({ namespace: "obs", labels: { team: "sre" } });
+    expect(docs.map((d) => [d.apiVersion, d.kind, d.metadata.name])).toEqual([
+      ["grafana.integreatly.org/v1beta1", "GrafanaFolder", "grafana-folder-services"],
+      ["grafana.integreatly.org/v1beta1", "GrafanaDashboard", "grafana-dashboard-top-level"],
+      ["grafana.integreatly.org/v1beta1", "GrafanaDashboard", "grafana-dashboard-red"],
+      ["grafana.integreatly.org/v1beta1", "GrafanaDashboard", "grafana-dashboard-slo"],
+      ["grafana.integreatly.org/v1beta1", "GrafanaDatasource", `grafana-datasource-${prometheus.uid}`],
+    ]);
+    const [folder, topDb, redDb, , ds] = docs;
+    expect(folder.metadata).toEqual({ name: "grafana-folder-services", namespace: "obs", labels: { team: "sre" } });
+    expect(folder.spec).toEqual({ instanceSelector: selector, uid: "services", title: "Services" });
+    expect(topDb.spec).toEqual({ instanceSelector: selector, json: dashboardJson(top) });
+    expect(redDb.spec).toEqual({ instanceSelector: selector, json: dashboardJson(red), folderRef: "grafana-folder-services" });
+    expect(ds.spec).toEqual({
+      instanceSelector: selector,
+      uid: prometheus.uid,
+      datasource: { name: "Prometheus", type: "prometheus", access: "proxy", url: "http://prometheus:9090", editable: false },
+    });
+  });
+
+  test("nested folders name their parent; options reach every resource", () => {
+    const platform = new Folder({ title: "Platform", uid: "platform" });
+    const k8s = new Folder({ title: "Kubernetes", uid: "platform-k8s", parent: platform });
+    const nodes = new Dashboard({ title: "Nodes", uid: "nodes", folder: k8s });
+    const docs = manifests(
+      GrafanaOperatorResources({ entities: [nodes], instanceSelector: {}, name: "obs", allowCrossNamespaceImport: true, resyncPeriod: "5m" }),
+    ) as unknown as OperatorManifest[];
+    expect(docs.map((d) => [d.kind, d.metadata.name, d.spec.parentFolderRef ?? d.spec.folderRef])).toEqual([
+      ["GrafanaFolder", "obs-folder-platform", undefined],
+      ["GrafanaFolder", "obs-folder-platform-k8s", "obs-folder-platform"],
+      ["GrafanaDashboard", "obs-dashboard-nodes", "obs-folder-platform-k8s"],
+    ]);
+    for (const d of docs) expect(d.spec).toMatchObject({ instanceSelector: {}, allowCrossNamespaceImport: true, resyncPeriod: "5m" });
+  });
+
+  test("dashboardSource configMap points at the ConfigMap GrafanaConfigMaps writes", () => {
+    const docs = ops({ entities: [red], dashboardSource: "configMap" });
+    const sidecar = grafanaConfigMapLayout({ entities: [red] }).dashboards[0];
+    expect(docs[1].spec).toEqual({ instanceSelector: selector, configMapRef: { name: sidecar.configMap, key: sidecar.key }, folderRef: "grafana-folder-services" });
+  });
+
+  test("datasource secrets become valuesFrom entries reading the Secret", () => {
+    const loki = new Datasource({
+      name: "Loki",
+      type: "loki",
+      url: "http://loki:3100",
+      basicAuth: true,
+      basicAuthUser: "${LOKI_USER}",
+      secureJsonData: { basicAuthPassword: "$__env{LOKI_PASSWORD}" },
+    });
+    const [doc] = manifests(GrafanaOperatorResources({ entities: [loki], instanceSelector: selector, secretName: "grafana-secrets" })) as unknown as OperatorManifest[];
+    expect(doc.spec.datasource).toMatchObject({ basicAuthUser: "${LOKI_USER}", secureJsonData: { basicAuthPassword: "${LOKI_PASSWORD}" } });
+    expect(doc.spec.valuesFrom).toEqual([
+      { targetPath: "basicAuthUser", valueFrom: { secretKeyRef: { name: "grafana-secrets", key: "LOKI_USER" } } },
+      { targetPath: "secureJsonData.basicAuthPassword", valueFrom: { secretKeyRef: { name: "grafana-secrets", key: "LOKI_PASSWORD" } } },
+    ]);
+    expect(() => GrafanaOperatorResources({ entities: [loki], instanceSelector: selector })).toThrow(/pass secretName/);
+  });
+
+  test("a $__file secret, and fields the CRD lacks", () => {
+    const base = { name: "X", type: "loki", uid: "x" };
+    expect(() => operatorDatasource({ ...base, secureJsonData: { password: "$__file{/run/secret}" } }, "s")).toThrow(/cannot/);
+    expect(operatorDatasource({ ...base, orgId: 1, version: 2, withCredentials: true }, undefined)).toEqual({ datasource: { name: "X", type: "loki" }, valuesFrom: [] });
   });
 });
