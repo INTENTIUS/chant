@@ -101,11 +101,8 @@ describe("a v2 dashboard read as classic JSON", () => {
   test("gives what Grafana 13.2.2 serves for the same dashboard at v1, but for what is reported", () => {
     const { dashboard } = readV2Dashboard(json(TABS));
     const grafana = (json(LOSSY_V1_EXPORT).spec as Json) ?? {};
-    // Grafana writes "show in controls menu" as hide 3, which chant has no value for; the importer reports it and leaves it out.
-    const expected = structuredClone(grafana);
-    const list = (expected.templating as { list: Json[] }).list;
-    delete list.find((v) => v.name === "job")!.hide;
-    expect(normalizeDashboard(dashboard)).toEqual(normalizeDashboard({ ...expected, uid: "chant-fx-tabs" }));
+    // "Show in controls menu" is hide 3, in Grafana's own v1 and in the read.
+    expect(normalizeDashboard(dashboard)).toEqual(normalizeDashboard({ ...structuredClone(grafana), uid: "chant-fx-tabs" }));
   });
 
   test("the checkout V2 Resource export carries every panel and variable the Classic export of it has", () => {
@@ -144,7 +141,6 @@ describe("a v2 dashboard read as classic JSON", () => {
       'layout: the rows inside the tab "Details" come after its row as rows of their own, since classic rows do not nest',
       'layout: the row "Logs": fillScreen is not carried (a classic row does not stretch to fill the screen)',
       'layout: the row "Logs": conditionalRendering is not carried (conditional rendering has no classic form, so the row always shows)',
-      'variable "job": hide is not carried (it shows in the controls menu, which a classic dashboard does not have, so it shows in the variable bar)',
     ]);
   });
 

@@ -160,7 +160,7 @@ const VARIABLE_SPECS: Readonly<Record<string, string>> = {
 };
 
 const CURSOR_SYNC: Readonly<Record<string, number>> = { Off: 0, Crosshair: 1, Tooltip: 2 };
-const VARIABLE_HIDE: Readonly<Record<string, number>> = { dontHide: 0, hideLabel: 1, hideVariable: 2 };
+const VARIABLE_HIDE: Readonly<Record<string, number>> = { dontHide: 0, hideLabel: 1, hideVariable: 2, inControlsMenu: 3 };
 const VARIABLE_REFRESH: Readonly<Record<string, number>> = { never: 0, onDashboardLoad: 1, onTimeRangeChanged: 2 };
 const VARIABLE_SORT: Readonly<Record<string, number>> = {
   disabled: 0,
@@ -591,9 +591,7 @@ class V2Reader {
 
     const out: Json = { name: spec.name };
     const hide = str(spec.hide);
-    if (hide === "inControlsMenu") {
-      this.warn(`${subject}: hide is not carried (it shows in the controls menu, which a classic dashboard does not have, so it shows in the variable bar)`);
-    } else if (hide !== undefined && hide in VARIABLE_HIDE) {
+    if (hide !== undefined && hide in VARIABLE_HIDE) {
       out.hide = VARIABLE_HIDE[hide];
     }
     if (spec.label !== undefined) out.label = spec.label;

@@ -86,7 +86,7 @@ export const GRAPH_TOOLTIP: Readonly<Record<number, "default" | "sharedCrosshair
 };
 
 /** A variable's `hide` as Grafana stores it, and as the variable classes take it. */
-export const VARIABLE_HIDE: Readonly<Record<number, VariableHide>> = { 0: "label", 1: "valueOnly", 2: "hidden" };
+export const VARIABLE_HIDE: Readonly<Record<number, VariableHide>> = { 0: "label", 1: "valueOnly", 2: "hidden", 3: "controlsMenu" };
 
 /** A query variable's `refresh` as Grafana stores it, and as `QueryVariable` takes it. */
 export const QUERY_REFRESH: Readonly<Record<number, "never" | "onLoad" | "onTimeRangeChange">> = {
@@ -156,6 +156,7 @@ function multiValue(json: Json): Json {
   if (json.multi === true) out.multi = true;
   if (json.includeAll === true) out.includeAll = true;
   if (nonEmpty(json.allValue)) out.allValue = json.allValue;
+  if (json.allowCustomValue === false) out.allowCustomValue = false;
   return out;
 }
 
@@ -163,7 +164,7 @@ function current(json: Json): Json {
   return nonEmpty(json.current) ? { current: json.current } : {};
 }
 
-const MULTI_KEYS = ["multi", "includeAll", "allValue"];
+const MULTI_KEYS = ["multi", "includeAll", "allValue", "allowCustomValue"];
 
 /** Per Grafana variable type, the class and props it becomes. */
 export const VARIABLE_MAPPINGS: Readonly<Record<string, VariableMapping>> = {
