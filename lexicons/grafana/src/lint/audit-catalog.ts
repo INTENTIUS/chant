@@ -2,7 +2,7 @@
  * The grafana lexicon's chant audit catalog, contributed via
  * `grafanaPlugin.auditCatalog()` (#687, #1346).
  *
- * GRAF101-GRAF110, GRAF111-GRAF114 and GRAF115 read the emitted dashboard
+ * GRAF101-GRAF110, GRAF111-GRAF114 and GRAF115-GRAF117 read the emitted dashboard
  * JSON and provisioning files (alerting included), so
  * they fire on an audit of files chant didn't build too, and are
  * `yamlBased`. GRAF001 and GRAF002 read TypeScript source, so they are
@@ -147,6 +147,22 @@ export const grafanaAuditCatalog: Record<string, RuleMeta> = {
     "guidance",
     "Panel unit Grafana doesn't know",
     'Use a unit id from Grafana\'s unit picker ("bytes", "s", "percent", "reqps"), or a custom unit such as "suffix: cores", "prefix:$", "si:mF", "count:reqs" or "currency:EUR". Grafana shows an unknown unit as a literal suffix.',
+    { category: "correctness" },
+  ),
+  GRAF116: auditRule(
+    "GRAF116",
+    "merge-worthy",
+    "guidance",
+    "Query sent to Loki is not valid LogQL",
+    "Fix the query at the offset the message names: an unclosed {} stream selector or quote, a pipeline stage Loki doesn't have, a range written outside [...]. Template variables are substituted before the check, and an error at a variable is not reported.",
+    { category: "correctness" },
+  ),
+  GRAF117: auditRule(
+    "GRAF117",
+    "merge-worthy",
+    "guidance",
+    "Query sent to Tempo is not valid TraceQL",
+    "Fix the query at the offset the message names: an unclosed { } spanset or quote, an operator with no value, an unknown intrinsic. Grafana's TraceQL grammar can trail Tempo's, so check newer syntax against Tempo itself before changing a query that runs.",
     { category: "correctness" },
   ),
 };

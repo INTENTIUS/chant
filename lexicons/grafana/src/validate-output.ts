@@ -1,5 +1,5 @@
 /**
- * The checks behind GRAF101-GRAF110, GRAF111-GRAF114 and GRAF115, as plain
+ * The checks behind GRAF101-GRAF110, GRAF111-GRAF114 and GRAF115-GRAF117, as plain
  * functions over built Grafana output: dashboard JSON documents, provisioned
  * datasources, dashboard providers and alerting provisioning files (the
  * alerting checks are in `validate-alerting.ts`). The
@@ -31,7 +31,8 @@ import { isBuiltinVariable, MULTI_VALUE_KINDS } from "./variables";
 import { isValidUid } from "./util";
 import { schemaValidationUnavailable, validateDashboardSchema } from "./schema-validate";
 import { checkGrafanaPromql, prometheusQueries } from "./promql-check";
-import { checkAlertingIdentity, checkNotificationRefs, checkRuleDatasources, checkRulePromql, checkRuleQueries, type AlertingDoc } from "./validate-alerting";
+import { checkGrafanaLogql, checkGrafanaTraceql, lokiQueries, tempoQueries } from "./query-syntax";
+import { checkAlertingIdentity, checkNotificationRefs, checkRuleDatasources, checkRuleLogql, checkRulePromql, checkRuleQueries, type AlertingDoc } from "./validate-alerting";
 import { closestGrafanaUnit, isGrafanaUnit } from "./spec/units";
 
 export type GrafanaIssueCode =
@@ -49,7 +50,9 @@ export type GrafanaIssueCode =
   | "GRAF112"
   | "GRAF113"
   | "GRAF114"
-  | "GRAF115";
+  | "GRAF115"
+  | "GRAF116"
+  | "GRAF117";
 
 export interface GrafanaIssue {
   code: GrafanaIssueCode;
@@ -469,6 +472,42 @@ export function checkPromqlSyntax(a: GrafanaArtifacts): GrafanaIssue[] {
   return issues;
 }
 
+// ── GRAF116 and GRAF117: LogQL and TraceQL syntax ──────────────
+
+/**
+ * Each panel query, annotation query and query variable stream selector
+ * that reaches a Loki datasource is parsed as LogQL, and each alert rule
+ * query to Loki too (GRAF116, an error). Each panel query that reaches a
+ * Tempo datasource is parsed as TraceQL (GRAF117, a warning: Grafana's
+ * TraceQL grammar trails Tempo's own parser). See `query-syntax.ts`.
+ */
+export function checkLogqlSyntax(a: GrafanaArtifacts): GrafanaIssue[] {
+  const issues: GrafanaIssue[] = [];
+  const known = knownDatasourcesOf(a);
+  for (const { json: d } of a.dashboards) {
+    for (const { where, expr } of lokiQueries(d, known)) {
+      const checked = checkGrafanaLogql(expr);
+      if (checked.ok) continue;
+      issues.push({ code: "GRAF116", severity: "error", message: `${dashName(d)} ${where} is not valid LogQL: ${checked.message}.`, entity: String(d.uid ?? "") });
+    }
+  }
+  issues.push(...checkRuleLogql(a.alerting ?? [], known));
+  return issues;
+}
+
+export function checkTraceqlSyntax(a: GrafanaArtifacts): GrafanaIssue[] {
+  const issues: GrafanaIssue[] = [];
+  const known = knownDatasourcesOf(a);
+  for (const { json: d } of a.dashboards) {
+    for (const { where, expr } of tempoQueries(d, known)) {
+      const checked = checkGrafanaTraceql(expr);
+      if (checked.ok) continue;
+      issues.push({ code: "GRAF117", severity: "warning", message: `${dashName(d)} ${where} is not valid TraceQL: ${checked.message}.`, entity: String(d.uid ?? "") });
+    }
+  }
+  return issues;
+}
+
 // ── GRAF110: repeats ────────────────────────────────────────────
 
 /**
@@ -694,6 +733,8 @@ const BY_CODE: Record<GrafanaIssueCode, (a: GrafanaArtifacts) => GrafanaIssue[]>
   GRAF113: (a) => checkNotificationRefs(a.alerting ?? []),
   GRAF114: (a) => checkAlertingIdentity(a.alerting ?? []),
   GRAF115: checkUnits,
+  GRAF116: checkLogqlSyntax,
+  GRAF117: checkTraceqlSyntax,
 };
 
 /** The issues one check finds. */

@@ -1,5 +1,5 @@
 /**
- * The checks behind GRAF111-GRAF114, and the alert-rule half of GRAF108, as
+ * The checks behind GRAF111-GRAF114, and the alert-rule half of GRAF108 and GRAF116, as
  * plain functions over alerting provisioning files (parsed). The
  * post-synth checks run them over a build's output; a test or another
  * lexicon holding the same YAML can call them directly.
@@ -28,6 +28,7 @@ import type { KnownDatasource } from "./datasource-refs";
 import { isValidUid } from "./util";
 import { schemaValidationUnavailable, validateExpressionSchema } from "./schema-validate";
 import { checkGrafanaPromql } from "./promql-check";
+import { checkGrafanaLogql } from "./query-syntax";
 
 type Json = Record<string, unknown>;
 
@@ -37,7 +38,7 @@ export interface AlertingDoc {
   json: Json;
 }
 
-export type AlertingIssueCode = "GRAF108" | "GRAF111" | "GRAF112" | "GRAF113" | "GRAF114";
+export type AlertingIssueCode = "GRAF108" | "GRAF111" | "GRAF112" | "GRAF113" | "GRAF114" | "GRAF116";
 
 export interface AlertingIssue {
   code: AlertingIssueCode;
@@ -224,8 +225,12 @@ export function checkRuleDatasources(docs: readonly AlertingDoc[], known: Readon
   return issues;
 }
 
-/** Every PromQL expression an alert rule sends to Prometheus, and where it is written. */
-export function alertRulePromql(docs: readonly AlertingDoc[], known: ReadonlyMap<string, KnownDatasource>): Array<{ where: string; expr: string; entity: string }> {
+/** Every `expr` an alert rule sends to a datasource of one plugin type (PromQL to `prometheus`, LogQL to `loki`), and where it is written. */
+export function alertRuleExprs(
+  docs: readonly AlertingDoc[],
+  known: ReadonlyMap<string, KnownDatasource>,
+  pluginType: string,
+): Array<{ where: string; expr: string; entity: string }> {
   const out: Array<{ where: string; expr: string; entity: string }> = [];
   for (const { rule, where } of alertRules(docs)) {
     for (const q of queriesOf(rule)) {
@@ -233,11 +238,16 @@ export function alertRulePromql(docs: readonly AlertingDoc[], known: ReadonlyMap
       if (!r) continue;
       const type = r.declared?.type ?? r.statedType;
       const expr = modelOf(q).expr;
-      if (type !== "prometheus" || typeof expr !== "string" || expr.trim() === "") continue;
+      if (type !== pluginType || typeof expr !== "string" || expr.trim() === "") continue;
       out.push({ where: `${where} query ${String(q.refId ?? "?")}`, expr, entity: String(rule.uid ?? rule.title ?? "") });
     }
   }
   return out;
+}
+
+/** Every PromQL expression an alert rule sends to Prometheus, and where it is written. */
+export function alertRulePromql(docs: readonly AlertingDoc[], known: ReadonlyMap<string, KnownDatasource>): Array<{ where: string; expr: string; entity: string }> {
+  return alertRuleExprs(docs, known, "prometheus");
 }
 
 /** GRAF108 over alert rules: the PromQL of each query that reaches Prometheus parses. */
@@ -246,6 +256,16 @@ export function checkRulePromql(docs: readonly AlertingDoc[], known: ReadonlyMap
   for (const { where, expr, entity } of alertRulePromql(docs, known)) {
     const checked = checkGrafanaPromql(expr);
     if (!checked.ok) issues.push({ code: "GRAF108", severity: "error", message: `${where} is not valid PromQL: ${checked.message}.`, entity });
+  }
+  return issues;
+}
+
+/** GRAF116 over alert rules: the LogQL of each query that reaches Loki parses. */
+export function checkRuleLogql(docs: readonly AlertingDoc[], known: ReadonlyMap<string, KnownDatasource>): AlertingIssue[] {
+  const issues: AlertingIssue[] = [];
+  for (const { where, expr, entity } of alertRuleExprs(docs, known, "loki")) {
+    const checked = checkGrafanaLogql(expr);
+    if (!checked.ok) issues.push({ code: "GRAF116", severity: "error", message: `${where} is not valid LogQL: ${checked.message}.`, entity });
   }
   return issues;
 }

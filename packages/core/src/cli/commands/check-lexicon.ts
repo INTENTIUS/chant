@@ -107,6 +107,36 @@ export async function coverageReportCheck(plugin: LexiconPlugin | undefined): Pr
 }
 
 /**
+ * #3104 — how many composites a lexicon ships.
+ *
+ * This counted every `.ts` file in `src/composites/` except `index.ts`, so
+ * `catalog.ts`, `catalog.test.ts`, `composites.test.ts` and helper modules all
+ * counted: otel reported "4 composite(s)" for `NodeAgent` alone. The same rule
+ * as #1342 applies: a capability is what the plugin exposes, and a lexicon
+ * with composites exposes them through `composites()`, the catalog generated
+ * from its real exports (#2662). Ask that when it is there. Only a lexicon
+ * without it falls back to the files, and then not to tests, the catalog, the
+ * barrel or helper modules.
+ */
+export function countComposites(
+  plugin: LexiconPlugin | undefined,
+  dir: string,
+): { count: number; detail: string } {
+  if (registers(plugin, "composites")) {
+    const { items, error } = safeList(plugin!.composites!.bind(plugin));
+    if (error !== undefined) return { count: 0, detail: `composites() threw: ${error}` };
+    const names = new Set(items.map((e) => e.name));
+    return { count: names.size, detail: `${names.size} composite(s) in composites()` };
+  }
+  const files = listTsFiles(join(dir, "src/composites"), ["index.ts", "catalog.ts", "helpers.ts", "shared.ts"])
+    .filter((f) => !f.endsWith(".test.ts") && !f.endsWith(".d.ts") && !f.endsWith("-helpers.ts"));
+  return {
+    count: files.length,
+    detail: `${files.length} composite file(s) in src/composites/; the plugin has no composites()`,
+  };
+}
+
+/**
  * #2535 — a lexicon that supplies member kinds publishes them as data at a
  * `./workspace-kinds` subpath (ws-031). The file must be JSON, validate as
  * kind data, and ship in the package. A lexicon without the subpath passes
@@ -551,12 +581,12 @@ export async function checkLexicon(dir: string): Promise<CheckResult> {
       : "reads no config namespace of its own",
   });
 
-  const compositeFiles = listTsFiles(join(dir, "src/composites"), ["index.ts"]);
+  const composites = countComposites(plugin, dir);
   items.push({
-    name: "At least 1 composite in src/composites/",
+    name: "At least 1 composite",
     tier: 2,
-    pass: compositeFiles.length > 0,
-    detail: compositeFiles.length > 0 ? `${compositeFiles.length} composite(s)` : undefined,
+    pass: composites.count > 0,
+    detail: composites.detail,
   });
 
   items.push({
@@ -678,8 +708,8 @@ export async function checkLexicon(dir: string): Promise<CheckResult> {
   items.push({
     name: "At least 5 composites",
     tier: 3,
-    pass: compositeFiles.length >= 5,
-    detail: `${compositeFiles.length} composite(s)`,
+    pass: composites.count >= 5,
+    detail: composites.detail,
   });
 
   const hasActions = existsSync(join(dir, "src/actions")) &&

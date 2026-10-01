@@ -71,7 +71,7 @@ export function ruleFileDiagnostics(ctx: PostSynthContext, code: PrometheusIssue
   );
 }
 
-/** Diagnostics for one Alertmanager code (PROM201, PROM203-PROM209) across every `alertmanager.yml` in the output. */
+/** Diagnostics for one Alertmanager code (PROM201, PROM203-PROM210) across every `alertmanager.yml` in the output. */
 export function alertmanagerDiagnostics(ctx: PostSynthContext, code: PrometheusIssueCode): PostSynthDiagnostic[] {
   return prometheusDocs(ctx).alertmanager.flatMap(({ source, config }) =>
     validateAlertmanagerConfig(config)

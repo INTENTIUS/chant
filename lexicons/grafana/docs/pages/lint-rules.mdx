@@ -26,6 +26,8 @@ The grafana lexicon's rules use the `GRAF` prefix. `GRAF0xx` rules read your Typ
 | GRAF113 | error / warning | a policy route or rule sending to a contact point, or naming a mute timing, the build does not declare, or a policy matcher that does not parse (error); a build that declares none, so they cannot be checked (warning) |
 | GRAF114 | error | an alerting uid, title, group interval, duration or state Grafana rejects, or a rule uid, group, contact point, receiver uid, policy tree, mute timing or template declared twice |
 | GRAF115 | warning | a panel unit that is neither a Grafana unit id nor a custom unit |
+| GRAF116 | error | a panel query, query variable stream selector, annotation query or alert rule query sent to a Loki datasource that is not valid LogQL |
+| GRAF117 | warning | a panel query sent to a Tempo datasource that is not valid TraceQL |
 
 ## GRAF001
 
@@ -73,7 +75,7 @@ The dashboard is validated against the dashboard schema at `GRAFANA_SCHEMA_PIN`,
 
 ## GRAF108
 
-Every panel query, query variable and annotation query whose datasource resolves to a `prometheus` one is parsed with the grammar the Prometheus web UI's editor uses (`@prometheus-io/lezer-promql`, through the prometheus lexicon's `checkPromql`). The datasource is resolved the way GRAF101 and GRAF102 resolve it: the query's own ref, else its panel's, a datasource variable's `pluginType`, or the `type` on a ref to a datasource the build doesn't declare. A query whose datasource can't be told, one with no ref anywhere, is not parsed, and neither is LogQL or TraceQL. Library panels in an export's `__elements` are checked too. A query variable in object form (Prometheus writes `{ qryType, query, refId }`) is checked on its `query`.
+Every panel query, query variable and annotation query whose datasource resolves to a `prometheus` one is parsed with the grammar the Prometheus web UI's editor uses (`@prometheus-io/lezer-promql`, through the prometheus lexicon's `checkPromql`). The datasource is resolved the way GRAF101 and GRAF102 resolve it: the query's own ref, else its panel's, a datasource variable's `pluginType`, or the `type` on a ref to a datasource the build doesn't declare. A query whose datasource can't be told, one with no ref anywhere, is not parsed. LogQL and TraceQL are GRAF116 and GRAF117. Library panels in an export's `__elements` are checked too. A query variable in object form (Prometheus writes `{ qryType, query, refId }`) is checked on its `query`.
 
 Grafana replaces template variables before Prometheus sees the query, so the check does too. `$var`, `${var}`, `${var:format}`, `[[var]]` and the `$__` macros become a duration inside `[...]` or after `offset` (`[$__rate_interval]`, `[$window]`), a number for `$__range_s`, `$__interval_ms`, `$__from` and `$__to`, and a name anywhere else (`$metric{...}`, `by ($label)`). Inside a quoted string they are left alone. A query variable's `label_values(selector, label)`, `label_names(selector)` and `query_result(expr)` are checked on the selector or expression; `metrics(regex)` and bare `label_values(label)` hold no PromQL.
 
@@ -127,3 +129,15 @@ The accepted ids are the ones registered in Grafana v13.2.2's [`categories.ts`](
 | `bool:<true>/<false>` | text for true and false |
 
 It is a warning because the dashboard still renders. The message names the closest registered id when one is a case change or a couple of letters away (`"Bytes"`, `"celcius"`), and says to write `suffix:<text>` if the text was meant.
+
+## GRAF116
+
+Every panel query, annotation query and alert rule query whose datasource resolves to a `loki` one, and the stream selector of a Loki query variable (`label_values({app="x"}, pod)`, or the `stream` of the object form), is parsed with the grammar behind Grafana's Loki query editor (`@grafana/lezer-logql`). Queries are routed the way GRAF108 routes PromQL, library panels in `__elements` included, and template variables are substituted the same way. A variable can stand for more than a name in LogQL (`{app="x"} $filters` with a textbox holding a whole pipeline stage), so a parse error at or right after a variable is not reported.
+
+It is a syntax check: `{app="x"` (an unclosed selector), `rate({app="x"}[1]m)` and a pipeline stage Loki doesn't have fail. The message gives the offset in the query as written.
+
+## GRAF117
+
+Every panel query whose datasource resolves to a `tempo` one and whose `queryType` is `traceql` is parsed with the grammar behind Grafana's Tempo query editor (`@grafana/lezer-traceql`). A query with no `queryType` is parsed unless it is a trace id; search, service graph and trace id queries hold no TraceQL. Template variables are substituted as for GRAF108, and an error at a variable is not reported.
+
+GRAF117 is a warning because Grafana's TraceQL grammar trails Tempo's own parser: syntax newer than the grammar (query hints such as `{ } with (sample=true)`) is flagged though Tempo runs it. Check such a query against Tempo before changing it.

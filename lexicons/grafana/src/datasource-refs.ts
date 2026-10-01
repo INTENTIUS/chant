@@ -211,3 +211,27 @@ export function datasourceUses(dashboard: Json, known: ReadonlyMap<string, Known
   }
   return out;
 }
+
+/** A dashboard, or a one-panel stand-in for a library panel its export embeds; `library` names the `__elements` key. */
+export interface DashboardScope {
+  json: Json;
+  library?: string;
+}
+
+/**
+ * The dashboard itself, then one stand-in per library panel model in an
+ * export's `__elements`. A stand-in carries the dashboard's variables, so a
+ * library panel's `${DS_...}` ref resolves as the dashboard's would.
+ */
+export function dashboardScopes(dashboard: Json): DashboardScope[] {
+  const out: DashboardScope[] = [{ json: dashboard }];
+  const elements = dashboard.__elements;
+  if (!elements || typeof elements !== "object" || Array.isArray(elements)) return out;
+  const templating = { list: variablesOf(dashboard) };
+  for (const [key, element] of Object.entries(elements as Json)) {
+    const model = element && typeof element === "object" ? (element as Json).model : undefined;
+    if (!model || typeof model !== "object" || Array.isArray(model)) continue;
+    out.push({ json: { templating, panels: [model] }, library: key });
+  }
+  return out;
+}

@@ -1,13 +1,14 @@
 /**
- * Lightweight YAML emitter and parser.
+ * YAML emitter and parser.
  *
- * Covers the subset of YAML used by Chant lexicons (scalars, block arrays,
- * nested objects, block scalars, tagged values, anchors, aliases and merge
- * keys). Not a full YAML implementation: flow collections are read only when
- * they are JSON. `splitYAMLDocuments` splits a multi-document stream. The
- * parser throws a `YAMLParseError` on a line it cannot place instead of
- * dropping it (#2991).
+ * The emitter writes the block-style YAML chant's serializers produce. The
+ * parser is js-yaml with chant's schema (#3006): YAML 1.2 core types,
+ * merge keys, `yes`/`no` booleans, and local tags such as `!reference` read
+ * as strings. `splitYAMLDocuments` splits a multi-document stream. Input the
+ * parser cannot read throws a `YAMLParseError` naming the line.
  */
+
+import yaml from "js-yaml";
 
 // ---------------------------------------------------------------------------
 // Emitter
@@ -79,7 +80,13 @@ export function emitYAML(value: unknown, indent: number): string {
       value.startsWith("'") ||
       value.startsWith('"') ||
       value.startsWith("$") ||
-      /^\d/.test(value)
+      /^\d/.test(value) ||
+      // What a YAML parser reads as something other than this string: an
+      // indicator that cannot start a plain scalar, a trailing colon, edge
+      // whitespace, a signed or dotted number, and the other spellings of
+      // booleans, null and the float constants (#3006).
+      /^[-?:](?:\s|$)|^[,\]}|>%@`]|:$|^\s|\s$|^[-+.]\d/.test(value) ||
+      /^(?:true|false|null|~|yes|no|[-+]?\.(?:inf|nan))$/i.test(value)
     ) {
       // Use single quotes, escaping internal single quotes
       return `'${value.replace(/'/g, "''")}'`;
@@ -147,21 +154,24 @@ export function emitYAML(value: unknown, indent: number): string {
   return String(value);
 }
 
+/**
+ * `key: value` at column `indent * 2`, for a serializer that writes a
+ * document key by key. A block value follows the colon on the next line; an
+ * inline one (a scalar, `{}`, `[]`) needs a space after the colon, or
+ * `jobs:{}` is the plain scalar "jobs:{}" rather than a key (#3006).
+ */
+export function emitYAMLEntry(key: string, value: unknown, indent = 0): string {
+  const emitted = emitYAML(value, indent + 1);
+  return `${"  ".repeat(indent)}${key}:${emitted.startsWith("\n") ? "" : " "}${emitted}`;
+}
+
 // ---------------------------------------------------------------------------
 // Parser
 // ---------------------------------------------------------------------------
 
-/** Result of parsing a YAML block. */
-export interface ParseResult {
-  value: unknown;
-  endIndex: number;
-}
-
 /**
- * Input the parser cannot place (#2991). The parser used to skip such a line,
- * or read it as a key of whatever mapping was open at the top level, so a
- * mis-indented or unsupported construct came back as a quietly different
- * document. Now it is an error naming the line.
+ * A document the parser cannot read. Its message and `line` name the line,
+ * so `chant import` can report "YAML line N: ..." instead of a stack trace.
  */
 export class YAMLParseError extends Error {
   /** 1-based line number within the text handed to the parser. */
@@ -174,157 +184,141 @@ export class YAMLParseError extends Error {
   }
 }
 
-/**
- * A mapping key: a double-quoted or single-quoted scalar, which may hold a
- * colon, or a plain run of text up to the first colon.
- */
-const KEY = String.raw`("(?:[^"\\]|\\.)*"|'(?:[^']|'')*'|[^\s:"'][^:]*?)`;
-
-/**
- * `key: value` on a line of its own (`KEY_LINE`, capturing the indent) and the
- * same after a sequence item's `- ` (`ITEM_KEY`).
- *
- * The lookahead is the rule both patterns used to miss: a `:` opens a mapping
- * only when what follows it is whitespace or the end of the line, and a plain
- * scalar may carry any other colon (YAML 1.2 §7.4.2). Written as `:\s*`, which
- * matches zero whitespace, EVERY colon opened one — so a bare URL in a
- * sequence,
- *
- *     sourceRepos:
- *     - https://github.com/INTENTIUS/behold
- *
- * came back as `{ https: "//github.com/INTENTIUS/behold" }`, and the CRD-schema
- * post-synth check (#1372) re-reading emitted YAML reported the string list
- * this file's own emitter had just written as a list of objects (#2013). By the
- * same rule `- key:value` is the scalar `"key:value"`, not a mapping.
- */
-const KEY_LINE = new RegExp(String.raw`^(\s*)${KEY}:(?=\s|$)\s*(.*)$`);
-const ITEM_KEY = new RegExp(String.raw`^${KEY}:(?=\s|$)\s*(.*)$`);
-
-/**
- * A block sequence entry: `- value`, or a dash alone on its line whose value
- * is the block below it. `-1` and `---` are not entries.
- */
-const SEQ_ENTRY = /^(\s*)-(?:([ \t]+)(.*))?$/;
-
 /** A document start (`---`) or end (`...`) marker, optionally followed by a comment. */
 const DOCUMENT_MARKER = /^(?:---|\.\.\.)(?:[ \t]+#.*)?[ \t]*$/;
 
-function isBlankOrComment(line: string): boolean {
-  const t = line.trim();
-  return t === "" || t.startsWith("#");
-}
+/**
+ * Booleans as YAML 1.2's core schema reads them, plus `yes` and `no`, which
+ * this parser has always read as booleans and its callers expect.
+ */
+const BOOL = new yaml.Type("tag:yaml.org,2002:bool", {
+  kind: "scalar",
+  resolve: (data: string | null) => data !== null && /^(?:true|True|TRUE|false|False|FALSE|yes|no)$/.test(data),
+  construct: (data: string) => /^(?:true|True|TRUE|yes)$/.test(data),
+  predicate: (value: unknown) => typeof value === "boolean",
+  represent: { lowercase: (value: object) => (value ? "true" : "false") },
+  defaultStyle: "lowercase",
+});
 
-/** The first line at or after `from` that holds content, or `lines.length`. */
-function nextContentLine(lines: string[], from: number): number {
-  let i = from;
-  while (i < lines.length && isBlankOrComment(lines[i])) i++;
-  return i;
-}
-
-function indentOf(line: string): number {
-  return line.search(/\S/);
-}
-
-function isSeqEntry(line: string): boolean {
-  return SEQ_ENTRY.test(line);
-}
-
-/** A key as written, with the quotes and escapes of a quoted key removed. */
-function keyName(raw: string): string {
-  const key = raw.trim();
-  return key.startsWith('"') || key.startsWith("'") ? String(parseScalar(key)) : key;
+/** A tagged value written back as text, the way it appeared: `!reference [.base, script]`. */
+function flowText(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(flowText).join(", ")}]`;
+  if (typeof value === "object" && value !== null) {
+    return `{${Object.entries(value).map(([k, v]) => `${k}: ${flowText(v)}`).join(", ")}}`;
+  }
+  return String(value);
 }
 
 /**
- * Split text into lines for the parser: `\r\n` and `\r` become `\n`, and a
- * document marker becomes a blank line. `parseYAML` has always read a
- * `---`-led file (a compose file, a GitLab CI file) by skipping the marker;
- * that is kept, now that a line the parser cannot place is an error.
+ * Local tags (`!reference`, `!Ref`, `!GetAtt`) on a scalar or a sequence read
+ * as the string `"<tag> <value>"`, as they always have: GitLab CI's
+ * `!reference [.base, script]` is the string `"!reference [.base, script]"`.
+ * A tag on a mapping has no such form and is an error.
  */
-function toLines(content: string): string[] {
-  return content
+const TAGGED_SCALAR = new yaml.Type("!", {
+  kind: "scalar",
+  multi: true,
+  construct: (data: string | null, tag?: string) => (data === null || data === "" ? tag : `${tag} ${data}`),
+});
+const TAGGED_SEQUENCE = new yaml.Type("!", {
+  kind: "sequence",
+  multi: true,
+  construct: (data: unknown[] | null, tag?: string) => `${tag} ${flowText(data ?? [])}`,
+});
+
+/** The merge key `<<`, as js-yaml's own merge type reads it (its typings omit `types`). */
+const MERGE = new yaml.Type("tag:yaml.org,2002:merge", {
+  kind: "scalar",
+  resolve: (data: string | null) => data === "<<" || data === null,
+});
+
+/**
+ * YAML 1.2's core schema (no timestamps, so a date stays a string) with merge
+ * keys, `yes`/`no` booleans and local tags read as strings.
+ */
+const SCHEMA = yaml.CORE_SCHEMA.extend({
+  implicit: [BOOL, MERGE],
+  explicit: [TAGGED_SCALAR, TAGGED_SEQUENCE],
+});
+
+/**
+ * Give every alias its own copy of the anchored value. js-yaml shares one
+ * object between an anchor and its aliases, so a caller editing the alias
+ * would edit the anchor too.
+ */
+function unshareAliases(value: unknown, seen = new Set<object>()): unknown {
+  if (typeof value !== "object" || value === null) return value;
+  if (seen.has(value)) return unshareAliases(structuredClone(value), seen);
+  seen.add(value);
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) value[i] = unshareAliases(value[i], seen);
+  } else {
+    const obj = value as Record<string, unknown>;
+    for (const key of Object.keys(obj)) obj[key] = unshareAliases(obj[key], seen);
+  }
+  return value;
+}
+
+/**
+ * The 1-based line to report for a js-yaml error. js-yaml marks where it
+ * gave up, which for a stray line of text above a key is the key's line:
+ * `a: 1\njust text\nb: 2` fails at `b: 2`, reading `just text b` as one
+ * multiline key. Report the line where that key starts instead, the text
+ * that is not a key.
+ */
+function errorLine(lines: string[], err: yaml.YAMLException): number {
+  let line = err.mark?.line ?? 0;
+  if (/multiline key may not be an implicit key/.test(err.reason)) {
+    const indent = lines[line]?.search(/\S/) ?? -1;
+    for (let k = line - 1; k >= 0; k--) {
+      const prev = lines[k];
+      if (prev.trim() === "" || prev.trim().startsWith("#")) continue;
+      if (prev.search(/\S/) !== indent || /:(?:\s|$)/.test(prev) || /^\s*-(?:\s|$)/.test(prev)) break;
+      line = k;
+    }
+  }
+  return line + 1;
+}
+
+/**
+ * Read one YAML document with js-yaml (#3006).
+ *
+ * Kept from the line parser this replaced: `---` and `...` lines are skipped
+ * (so a stream reads as one document, as it always has), duplicate keys take
+ * the last value, and a document that is not a mapping or a sequence is a
+ * {@link YAMLParseError}, as is anything js-yaml rejects. An empty document is
+ * `{}`.
+ */
+function loadDocument(content: string): unknown {
+  const text = content
     .replace(/\r\n?/g, "\n")
     .split("\n")
-    .map((line) => (DOCUMENT_MARKER.test(line) ? "" : line));
-}
-
-/**
- * Parse a whole document with `parse`, starting at its first content line
- * `first`, and require it to account for every line (#2991). The recursive
- * parsers stop at a line they cannot place and hand it back to their caller;
- * one that reaches the top is unplaceable, and throws.
- */
-function parseWhole(
-  lines: string[],
-  first: number,
-  parse: (lines: string[], startIndex: number, baseIndent: number) => ParseResult,
-): unknown {
-  const outer = anchors;
-  anchors = new Map();
+    .map((line) => (DOCUMENT_MARKER.test(line) ? "" : line))
+    .join("\n");
+  let value: unknown;
   try {
-    const result = parse(lines, first, indentOf(lines[first]));
-    const rest = nextContentLine(lines, result.endIndex);
-    if (rest < lines.length) {
-      throw new YAMLParseError(
-        rest + 1,
-        `cannot place ${JSON.stringify(lines[rest].trim())} at column ${indentOf(lines[rest]) + 1}; ` +
-          "check its indentation, or the construct is one this parser does not read",
-      );
-    }
-    return result.value;
-  } finally {
-    anchors = outer;
+    value = yaml.load(text, { schema: SCHEMA, json: true });
+  } catch (err) {
+    if (!(err instanceof yaml.YAMLException)) throw err;
+    const line = errorLine(text.split("\n"), err);
+    const tag = err.reason.match(/^unknown tag !<(![^>]*)>/)?.[1];
+    throw new YAMLParseError(line, tag ? `the tag ${JSON.stringify(tag)} on a mapping is not supported` : err.reason);
   }
-}
-
-/**
- * The anchors (`&name`) seen so far in the document being parsed, for its
- * aliases (`*name`) and merge keys (`<<: *name`). GitLab CI templates and
- * Alertmanager configs use all three; before #2991 an anchored block was
- * hoisted into its parent and an alias read as the string `"*name"`.
- * `parseWhole` gives each document its own map.
- */
-let anchors = new Map<string, unknown>();
-
-const ANCHOR = /^&([^\s,[\]{}]+)(?:[ \t]+(.*))?$/;
-const ALIAS = /^\*([^\s,[\]{}]+)(?:[ \t]+#.*)?$/;
-/** A flow sequence of aliases, the usual way to merge several anchors: `<<: [*a, *b]`. */
-const ALIAS_LIST = /^\[\s*\*[^\s,[\]{}]+(?:\s*,\s*\*[^\s,[\]{}]+)*\s*\](?:[ \t]+#.*)?$/;
-
-function resolveAlias(name: string, line: number): unknown {
-  if (!anchors.has(name)) throw new YAMLParseError(line, `the alias *${name} has no anchor &${name} before it`);
-  return structuredClone(anchors.get(name));
-}
-
-/** The merge key: its value's mappings fill in the keys a mapping does not set itself. */
-const MERGE_KEY = "<<";
-
-/**
- * Set `key` on a mapping under construction. A merge key's sources are held
- * in `merges` and applied by {@link applyMerges} once the mapping is
- * complete, because a key the mapping sets itself wins wherever it appears.
- */
-function setKey(obj: Record<string, unknown>, merges: unknown[], key: string, value: unknown): void {
-  if (key === MERGE_KEY) merges.push(...(Array.isArray(value) ? value : [value]));
-  else obj[key] = value;
-}
-
-function applyMerges(obj: Record<string, unknown>, merges: unknown[], line: number): void {
-  for (const source of merges) {
-    if (typeof source !== "object" || source === null || Array.isArray(source)) {
-      throw new YAMLParseError(line, "a merge key (<<) takes a mapping or a list of mappings");
-    }
-    for (const [k, v] of Object.entries(source)) if (!(k in obj)) obj[k] = v;
+  if (value === undefined || value === null) return {};
+  if (typeof value !== "object") {
+    const line = text.split("\n").findIndex((l) => l.trim() !== "" && !l.trim().startsWith("#")) + 1;
+    throw new YAMLParseError(line, `expected a mapping or a sequence, found the scalar ${JSON.stringify(value)}`);
   }
+  return /[&]/.test(text) ? unshareAliases(value) : value;
 }
 
 /**
  * Parse a YAML document (or JSON document) into a plain object.
  *
- * Tries `JSON.parse` first; falls back to a line-based YAML parser that
- * handles the subset of YAML commonly found in CI configuration files. Throws
- * {@link YAMLParseError} on a line it cannot place rather than dropping it.
+ * Tries `JSON.parse` first, then js-yaml (#3006). A top-level sequence reads
+ * as `{}`, since callers rely on getting a mapping back; use
+ * {@link parseYAMLDocument} for the list. Throws {@link YAMLParseError} with
+ * the line number on input it cannot read.
  */
 export function parseYAML(content: string): Record<string, unknown> {
   try {
@@ -332,21 +326,14 @@ export function parseYAML(content: string): Record<string, unknown> {
   } catch {
     // Fall through to YAML parsing
   }
-
-  const lines = toLines(content);
-  const first = nextContentLine(lines, 0);
-  // A document with no content, or (see parseYAMLDocument) a top-level list,
-  // reads as an empty mapping; the callers rely on getting a mapping back.
-  if (first === lines.length || isSeqEntry(lines[first])) return {};
-  return parseWhole(lines, first, parseYAMLLines) as Record<string, unknown>;
+  const value = loadDocument(content);
+  return Array.isArray(value) ? {} : (value as Record<string, unknown>);
 }
 
 /**
  * Parse one YAML (or JSON) document whose top level may be a sequence
- * (#2965). {@link parseYAML} reads only a top-level mapping and returns `{}`
- * for a file like `- a\n- b`; its callers rely on getting a mapping back, so
- * it keeps doing that. This returns the list instead, and otherwise defers to
- * `parseYAML`.
+ * (#2965). {@link parseYAML} returns `{}` for a file like `- a\n- b`; this
+ * returns the list.
  */
 export function parseYAMLDocument(content: string): unknown {
   try {
@@ -354,11 +341,7 @@ export function parseYAMLDocument(content: string): unknown {
   } catch {
     // Fall through to YAML parsing
   }
-
-  const lines = toLines(content);
-  const first = nextContentLine(lines, 0);
-  if (first === lines.length) return {};
-  return parseWhole(lines, first, isSeqEntry(lines[first]) ? parseYAMLArray : parseYAMLLines);
+  return loadDocument(content);
 }
 
 /**
@@ -382,397 +365,6 @@ export function splitYAMLDocuments(content: string): string[] {
   }
   flush();
   return documents;
-}
-
-/**
- * A block-scalar header: `|` (literal, keep newlines) or `>` (folded, newlines →
- * spaces), with a chomping indicator (`-` strip trailing newlines, `+` keep them,
- * default clip to a single one). Returns null when `inline` isn't a block header.
- */
-interface BlockScalarHeader {
-  style: "literal" | "folded";
-  chomp: "clip" | "strip" | "keep";
-}
-function blockScalarHeader(inline: string): BlockScalarHeader | null {
-  const m = inline.match(/^([|>])([+-]?)(?:\s+#.*)?$/);
-  if (!m) return null;
-  return {
-    style: m[1] === "|" ? "literal" : "folded",
-    chomp: m[2] === "-" ? "strip" : m[2] === "+" ? "keep" : "clip",
-  };
-}
-
-/**
- * Parse a block scalar's body — the lines indented past `parentIndent`, dedented
- * by the block's own indent (the first content line's). Handles literal/folded
- * styles and clip/strip/keep chomping, matching js-yaml. Returns the string value
- * and the index of the first line that is NOT part of the block.
- */
-function parseBlockScalar(
-  lines: string[],
-  startIndex: number,
-  parentIndent: number,
-  header: BlockScalarHeader,
-): { value: string; endIndex: number } {
-  const raw: string[] = [];
-  let blockIndent = -1;
-  let i = startIndex;
-  for (; i < lines.length; i++) {
-    const line = lines[i];
-    if (line.trim() === "") {
-      raw.push(""); // a blank line is part of the block (kept/chomped later)
-      continue;
-    }
-    const ni = line.search(/\S/);
-    if (ni <= parentIndent) break; // dedented out of the block
-    if (blockIndent === -1) blockIndent = ni;
-    if (ni < blockIndent) break;
-    raw.push(line.slice(blockIndent));
-  }
-  // Trailing blank lines belong to the block (chomping decides their fate).
-  let text: string;
-  if (header.style === "folded") {
-    // Fold each run of non-empty lines into a space-joined paragraph; a run of N
-    // blank lines between paragraphs becomes N newlines (a single blank → one
-    // newline), matching YAML folded semantics.
-    text = "";
-    let buf: string[] = [];
-    let blankRun = 0;
-    let wrote = false;
-    const flush = (): void => {
-      if (buf.length === 0) return;
-      if (wrote) text += "\n".repeat(blankRun);
-      text += buf.join(" ");
-      buf = [];
-      blankRun = 0;
-      wrote = true;
-    };
-    for (const l of raw) {
-      if (l === "") { flush(); blankRun++; }
-      else buf.push(l);
-    }
-    flush();
-  } else {
-    text = raw.join("\n");
-  }
-  const trailing = text.match(/\n*$/)?.[0].length ?? 0;
-  const stripped = text.replace(/\n+$/, "");
-  if (header.chomp === "strip") text = stripped;
-  else if (header.chomp === "keep") text = stripped + "\n".repeat(Math.max(trailing, raw.length > 0 ? 1 : 0));
-  else text = stripped === "" ? "" : stripped + "\n"; // clip
-  return { value: text, endIndex: i };
-}
-
-/**
- * Parse indentation-based YAML lines into a key-value object: the mapping
- * whose keys sit at column `baseIndent`, starting at `startIndex`.
- *
- * It ends at the first line that is not one of its keys: a line at another
- * column, a sequence entry, or text that is not `key:`. That line goes back
- * to the caller in `endIndex`; if no caller owns it, `parseYAML` reports it
- * (#2991). This function never skips a content line.
- */
-export function parseYAMLLines(
-  lines: string[],
-  startIndex: number,
-  baseIndent: number,
-): ParseResult {
-  const result: Record<string, unknown> = {};
-  const merges: unknown[] = [];
-  let i = startIndex;
-
-  while (i < lines.length) {
-    const line = lines[i];
-    if (isBlankOrComment(line)) {
-      i++;
-      continue;
-    }
-    if (indentOf(line) !== baseIndent || isSeqEntry(line)) break;
-    const keyMatch = line.match(KEY_LINE);
-    if (!keyMatch) break;
-    const value = parseValue(keyMatch[3].trim(), lines, i, baseIndent);
-    setKey(result, merges, keyName(keyMatch[2]), value.value);
-    i = value.endIndex;
-  }
-  applyMerges(result, merges, startIndex + 1);
-
-  return { value: result, endIndex: i };
-}
-
-/**
- * Parse the value of the key on line `at`, whose text after the colon is
- * `inline` and whose own column is `keyIndent`. Used for mapping keys and for
- * the keys of a sequence item alike.
- *
- * An empty inline value (or only a comment) means the value is the block on
- * the next content line. Blank, whitespace-only and comment lines between the
- * key and that block do not end it (#2991): Helm renders an empty `{{ if }}`
- * as exactly such a line, and treating it as the end of the value turned
- *
- *     spec:
- *
- *       serviceAccountName: collector
- *
- * into `spec: null` with `serviceAccountName` hoisted to the parent.
- *
- * The two nested shapes do NOT share a threshold (#1311), except below a
- * sequence entry (`sequenceAtKeyColumn` false), where a `-` at the entry's
- * own column is the next entry:
- *
- *   - a SEQUENCE may sit at the key's own column (valid YAML, and what
- *     kubectl and Kubernetes manifests emit);
- *   - a MAPPING must be indented past it, otherwise the next line is a
- *     sibling key and this key's value is null:
- *
- *         - name: a
- *           meta:          <- no value
- *           other: b       <- a sibling, NOT meta's content
- */
-function parseValue(
-  inline: string,
-  lines: string[],
-  at: number,
-  keyIndent: number,
-  sequenceAtKeyColumn = true,
-): ParseResult {
-  const anchor = inline.match(ANCHOR);
-  if (anchor) {
-    const value = parseValue((anchor[2] ?? "").trim(), lines, at, keyIndent, sequenceAtKeyColumn);
-    anchors.set(anchor[1], structuredClone(value.value));
-    return value;
-  }
-  const alias = inline.match(ALIAS);
-  if (alias) return { value: resolveAlias(alias[1], at + 1), endIndex: at + 1 };
-  if (ALIAS_LIST.test(inline)) {
-    const names = [...inline.matchAll(/\*([^\s,[\]{}]+)/g)].map((m) => m[1]);
-    return { value: names.map((name) => resolveAlias(name, at + 1)), endIndex: at + 1 };
-  }
-  if (inline === "" || inline.startsWith("#")) {
-    const k = nextContentLine(lines, at + 1);
-    if (k < lines.length) {
-      const ni = indentOf(lines[k]);
-      const nested = isSeqEntry(lines[k]) && sequenceAtKeyColumn ? ni >= keyIndent : ni > keyIndent;
-      if (nested) return parseNode(lines, k, keyIndent);
-    }
-    return { value: null, endIndex: at + 1 };
-  }
-  if (inline.startsWith("[") || inline.startsWith("{")) {
-    // Inline array or object
-    try {
-      return { value: JSON.parse(inline), endIndex: at + 1 };
-    } catch {
-      return { value: inline, endIndex: at + 1 };
-    }
-  }
-  const header = blockScalarHeader(inline);
-  if (header) return parseBlockScalar(lines, at + 1, keyIndent, header);
-  return parseFlowScalar(inline, lines, at + 1, keyIndent);
-}
-
-/**
- * Parse the node that starts on content line `k`, below a key or a bare `-`
- * at column `parentIndent`: a sequence, a mapping, or a scalar written on the
- * line after its key.
- */
-function parseNode(lines: string[], k: number, parentIndent: number): ParseResult {
-  const line = lines[k];
-  if (isSeqEntry(line)) return parseYAMLArray(lines, k, indentOf(line));
-  if (KEY_LINE.test(line)) return parseYAMLLines(lines, k, indentOf(line));
-  return parseValue(line.trim(), lines, k, parentIndent);
-}
-
-/**
- * The index of the quote that closes a quoted scalar opened by `quote`,
- * scanning `text` from `from`, or -1. A double-quoted scalar escapes with a
- * backslash, a single-quoted one by doubling the quote.
- */
-function closingQuote(text: string, quote: string, from: number): number {
-  for (let i = from; i < text.length; i++) {
-    const ch = text[i];
-    if (quote === '"' && ch === "\\") {
-      i++;
-      continue;
-    }
-    if (ch === quote) {
-      if (quote === "'" && text[i + 1] === "'") {
-        i++;
-        continue;
-      }
-      return i;
-    }
-  }
-  return -1;
-}
-
-/** Whether `text` is exactly one quoted scalar, e.g. `"80:80"`. */
-function isWholeQuotedScalar(text: string): boolean {
-  const quote = text[0];
-  if (quote !== '"' && quote !== "'") return false;
-  return closingQuote(text, quote, 1) === text.length - 1;
-}
-
-/**
- * Parse a plain or quoted scalar whose first line is `first` and whose
- * continuation lines, if any, start at `from` and are indented past
- * `parentIndent`. YAML lets both kinds span lines, and go-yaml (so Helm's
- * `toYaml`) wraps long strings that way. Lines fold into one: a line break
- * becomes a space, and each blank line in between becomes a newline.
- *
- * These continuation lines used to be skipped, keeping only the first line.
- */
-function parseFlowScalar(first: string, lines: string[], from: number, parentIndent: number): ParseResult {
-  const quote = first[0];
-  if (quote === '"' || quote === "'") {
-    if (closingQuote(first, quote, 1) !== -1) return { value: parseScalar(first), endIndex: from };
-    return parseMultilineQuoted(first, lines, from, parentIndent, quote);
-  }
-
-  let text = first;
-  let endIndex = from;
-  let blanks = 0;
-  for (let j = from; j < lines.length; j++) {
-    const line = lines[j];
-    const t = line.trim();
-    if (t === "") {
-      blanks++;
-      continue;
-    }
-    // A comment ends a plain scalar; so does a line back at the parent's column.
-    if (t.startsWith("#") || indentOf(line) <= parentIndent) break;
-    if (KEY_LINE.test(line)) {
-      throw new YAMLParseError(
-        j + 1,
-        /^!\S*$/.test(first)
-          ? `the tag ${JSON.stringify(first)} before a nested block is not supported`
-          : `${JSON.stringify(t)} is indented under the value ${JSON.stringify(first)}, ` +
-              "and a scalar cannot hold a mapping; check its indentation",
-      );
-    }
-    text += blanks > 0 ? "\n".repeat(blanks) : " ";
-    text += t;
-    blanks = 0;
-    endIndex = j + 1;
-  }
-  return { value: parseScalar(text), endIndex };
-}
-
-/**
- * The rest of a quoted scalar left open on its first line: lines up to the
- * closing quote, folded as {@link parseFlowScalar} describes. For a
- * double-quoted scalar a line ending in `\` is an escaped line break that
- * joins the next line with nothing between; it is kept as `\` + newline for
- * `unescapeDoubleQuoted`, which removes it with the indentation after it.
- */
-function parseMultilineQuoted(
-  first: string,
-  lines: string[],
-  from: number,
-  parentIndent: number,
-  quote: string,
-): ParseResult {
-  const segments = [first.slice(1)];
-  for (let j = from; j < lines.length; j++) {
-    const line = lines[j];
-    if (line.trim() !== "" && indentOf(line) <= parentIndent) break;
-    const close = closingQuote(line, quote, 0);
-    if (close === -1) {
-      segments.push(line);
-      continue;
-    }
-    segments.push(line.slice(0, close));
-    let body = "";
-    let blanks = 0;
-    let escapedBreak = false;
-    segments.forEach((raw, n) => {
-      const isFirst = n === 0;
-      const isLast = n === segments.length - 1;
-      let s = raw;
-      if (!isFirst && !escapedBreak) s = s.replace(/^[ \t]+/, "");
-      const endsEscaped = !isLast && quote === '"' && /(?:^|[^\\])(?:\\\\)*\\$/.test(s);
-      if (!isLast && !endsEscaped) s = s.replace(/[ \t]+$/, "");
-      if (!isFirst && !isLast && s === "" && !escapedBreak) {
-        blanks++;
-        return;
-      }
-      if (!isFirst) body += escapedBreak ? "\n" : blanks > 0 ? "\n".repeat(blanks) : " ";
-      body += s;
-      blanks = 0;
-      escapedBreak = endsEscaped;
-    });
-    return { value: parseScalar(quote + body + quote), endIndex: j + 1 };
-  }
-  throw new YAMLParseError(from, `unterminated ${quote === '"' ? "double" : "single"}-quoted scalar`);
-}
-
-/**
- * Parse a block array: the `- ` entries at column `baseIndent`, starting at
- * `startIndex`. Like {@link parseYAMLLines} it ends at the first line that is
- * not one of its entries and hands that line back in `endIndex`.
- */
-export function parseYAMLArray(
-  lines: string[],
-  startIndex: number,
-  baseIndent: number,
-): ParseResult {
-  const result: unknown[] = [];
-  let i = startIndex;
-
-  while (i < lines.length) {
-    const line = lines[i];
-    if (isBlankOrComment(line)) {
-      i++;
-      continue;
-    }
-    const itemMatch = line.match(SEQ_ENTRY);
-    if (!itemMatch || indentOf(line) !== baseIndent) break;
-    const itemValue = (itemMatch[3] ?? "").trim();
-
-    // The column the entry's content starts at, which is where the keys of a
-    // mapping entry sit: two past the dash for `- key`, more for `-   key`.
-    const keyIndent = baseIndent + 1 + (itemMatch[2]?.length ?? 1);
-    // A quoted scalar holding a colon (e.g. "80:80") is not a key-value pair.
-    const kvMatch = isWholeQuotedScalar(itemValue) ? null : itemValue.match(ITEM_KEY);
-    if (kvMatch) {
-      const obj: Record<string, unknown> = {};
-      const merges: unknown[] = [];
-      const firstValue = parseValue(kvMatch[2].trim(), lines, i, keyIndent);
-      setKey(obj, merges, keyName(kvMatch[1]), firstValue.value);
-      // The entry's other keys, at the first key's column. Each value's
-      // parse reports where it ended, nested block, same-column sequence
-      // (#1311) and block scalar (#910) alike.
-      let j = firstValue.endIndex;
-      while (j < lines.length) {
-        const nextLine = lines[j];
-        if (isBlankOrComment(nextLine)) {
-          j++;
-          continue;
-        }
-        if (indentOf(nextLine) !== keyIndent || isSeqEntry(nextLine)) break;
-        const nextKV = nextLine.match(KEY_LINE);
-        if (!nextKV) break;
-        const value = parseValue(nextKV[3].trim(), lines, j, keyIndent);
-        setKey(obj, merges, keyName(nextKV[2]), value.value);
-        j = value.endIndex;
-      }
-      applyMerges(obj, merges, i + 1);
-      result.push(obj);
-      i = j;
-      continue;
-    }
-
-    // Anything else is read the way a mapping value is: a scalar, an inline
-    // list or object, an anchor or alias, a block scalar, or, for a dash alone
-    // on its line (#1286), the block below it after any blank or comment
-    // lines, or null. A block scalar's body (`- |`) is indented past the
-    // dash's column; before #1482 the header parsed as the literal string "|"
-    // and the body lines leaked into whatever came next, hoisting a
-    // container's keys after `args:` to the document root.
-    const item = parseValue(itemValue, lines, i, baseIndent, false);
-    result.push(item.value);
-    i = item.endIndex;
-  }
-
-  return { value: result, endIndex: i };
 }
 
 /**
