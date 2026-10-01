@@ -61,7 +61,7 @@ Warnings — these make the lexicon useful in practice.
 | `auditCatalog() covers every post-synth check` | Metadata for `chant audit` — title, tier, fix kind, category. A lexicon that omits it contributes nothing, silently (chant #1346) |
 | `Any declared ownership channel names paths the plugin implements` | A declared marker channel must name read paths the plugin actually implements, with complete keys (chant #1348) |
 | `Declares a configSchema if it reads its own config namespace` | A lexicon reading `config.<name>` should declare its shape, or an unknown key there is silently ignored (chant #1344) |
-| `At least 1 composite in src/composites/` | `.ts` files other than `index.ts` |
+| `At least 1 composite` | Asked of the plugin's `composites()`, the catalog generated from its exports. A lexicon without it falls back to the `.ts` files in `src/composites/`, leaving out `index.ts`, `catalog.ts`, tests and helper modules (chant #3104) |
 | `At least 3 examples` | Broader usage coverage |
 | `src/lsp/completions.test.ts exists` | LSP completions tested |
 | `src/lsp/hover.test.ts exists` | LSP hover tested |
@@ -81,7 +81,7 @@ Informational — tracks depth of testing and feature coverage.
 | `Each post-synth check has a .test.ts` | Per-check or consolidated coverage (e.g. `post-synth.test.ts`) |
 | `typecheck.test.ts exists` | Type-level verification |
 | `roundtrip.test.ts exists` | Serialize/deserialize round-trip |
-| `At least 5 composites` | Rich composition library |
+| `At least 5 composites` | Rich composition library, counted as above |
 | `src/actions/ with at least 1 action` | Automation actions |
 | `validate.ts checks at least 30 required names` | Deep artifact validation across resources, property types, and bundle files |
 | `Composite test file exists` | `composites.test.ts` covering props, types, defaults, dependencies |
@@ -181,12 +181,13 @@ After scaffolding with `chant init lexicon`:
 
 Counts below are what `chant dev check-lexicon` reports at chant 0.57.0, and
 they move with every lexicon change, so run the tool rather than trusting the
-table for anything that matters.
+table for anything that matters. The composite counts are from `composites()`
+(chant #3104); earlier releases counted catalog, test and helper files too.
 
 | Lexicon | Post-synth checks | Skills | Composites | Doc pages | Tier-3 required names |
 |---|---|---|---|---|---|
-| k8s | 40 | 10 | 50 | 37 | 30, passes |
-| aws | 62 | 3 | 40 | 24 | 6, fails |
+| k8s | 40 | 10 | 46 | 37 | 30, passes |
+| aws | 62 | 3 | 37 | 24 | 6, fails |
 | azure | 24 | 4 | 19 | 25 | 25, fails |
 
 k8s is the most complete of the three and the one to read first. aws has the
