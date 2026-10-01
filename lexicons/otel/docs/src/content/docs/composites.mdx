@@ -1,6 +1,6 @@
 ---
 title: "Composites"
-description: "Run a declared collector config on a platform: the shared helpers, and the Docker, Kubernetes, Fly and GKE composites built on them"
+description: "NodeAgent, the per-node agent config, and running a declared collector config on a platform: the shared helpers, and the Docker, Kubernetes, Fly and GKE composites built on them"
 diataxis: reference
 ---
 
@@ -9,6 +9,37 @@ diataxis: reference
 
 
 The otel lexicon writes collector config. Running a collector is the platform's job, so platform composites live in the platform lexicons and use `collectorYaml()` to render a declared config into whatever file the platform mounts.
+
+## `NodeAgent`
+
+`NodeAgent` declares the collector config a per-node agent runs on Kubernetes, one collector per node as a DaemonSet. It takes OTLP from the node's pods, reads the node's own telemetry, puts Kubernetes metadata on all of it and hands it on, usually to a gateway.
+
+```ts
+import { NodeAgent, OtlpExporter, PrometheusExporter } from "@intentius/chant-lexicon-otel";
+
+const gateway = new OtlpExporter({ name: "gateway", endpoint: "otel-gateway.observability.svc:4317", tls: { insecure: true } });
+const scrape = new PrometheusExporter({ endpoint: "0.0.0.0:8889" });
+
+export const agent = NodeAgent({ exporters: [gateway], metricExporters: [scrape], clusterName: "prod-eu-1" });
+```
+
+| Prop | Default | What it does |
+|------|---------|--------------|
+| `exporters` | required | Where traces and logs go, and metrics unless `metricExporters` is set |
+| `metricExporters` | `exporters` | Where metrics go, e.g. a `prometheus` exporter scraped on each node |
+| `clusterName` | none | Adds a `resource` processor that sets `k8s.cluster.name` |
+| `nodeNameEnv` | `K8S_NODE_NAME` | The environment variable holding the node name; `k8sattributes` filters to this node's pods by it |
+| `hostMetrics` | on, every 30s | `hostmetrics` with the CPU, memory, load, filesystem and network scrapers, reading the host root at `/hostfs` (`{ interval, rootPath }`) |
+| `containerLogs` | on | `filelog` over `/var/log/pods` with the `container` parser, leaving out the agent's own container (`{ selfContainer }`, default `otel-collector`) |
+| `kubeletStats` | off | `kubeletstats` against this node's kubelet with the service account (`{ interval }`) |
+| `memoryLimitMib` | 400 | `memory_limiter`'s limit; the spike limit is a quarter of it |
+| `healthCheck` | on | A `health_check` extension on 0.0.0.0:13133 |
+
+Every pipeline runs `memory_limiter`, `k8sattributes`, `resourcedetection` (`env`, `system`), the cluster-name `resource` processor when there is one, and `batch`, in that order. `k8sattributes` matches a record to its pod by `k8s.pod.ip`, then `k8s.pod.uid` (which the `container` log parser sets), then the connection. There is no tail sampling: an agent sees only its own node's spans of a trace, so sample on the gateway. The members are named (`agent.otlp`, `agent.traces`, ...), and `Object.values(agent.members)` is the entity list `collectorYaml` and the platform composites take.
+
+The pod has to provide the node name in `nodeNameEnv` (from `spec.nodeName`), the host root mounted read-only at `/hostfs`, `/var/log/pods` mounted read-only, and a service account that may read pods, namespaces, nodes and replicasets (and `nodes/stats` with `kubeletStats`). The k8s lexicon's `OtelCollector` takes the members as its `config` and derives the RBAC and ports from them; it does not yet add the node name variable or the host mounts (chant #3103).
+
+`chant init --lexicon otel --template k8s-agent` scaffolds a project around it.
 
 ## `collectorYaml(entities)`
 

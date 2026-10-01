@@ -124,7 +124,8 @@ function classKind(symbol: ts.Symbol, checker: ts.TypeChecker): ClassKind | unde
       return kind;
     }
     if (ts.isCallExpression(init) && ts.isIdentifier(init.expression)) {
-      if (init.expression.text === "createResource") return "resource";
+      // The otel lexicon's built-in components come from `defineBuiltin`, its own createResource wrapper.
+      if (init.expression.text === "createResource" || init.expression.text === "defineBuiltin") return "resource";
       if (init.expression.text === "createProperty") return "property";
       return undefined;
     }

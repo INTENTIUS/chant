@@ -157,6 +157,30 @@ export const collector = genAiPipeline({
 ```
 ```
 
+## tail-sampling-gateway
+
+A gateway tier: every span becomes `spanmetrics` metrics first, then a `forward` connector hands the spans to a `traces/sampled` pipeline whose `tail_sampling` keeps errors, traces of 500ms or more and a 10% baseline, and sends them to Tempo. Split into components, sampling and pipelines.
+
+```ts title="src/pipelines.ts"
+```typescript title="pipelines.ts"
+/**
+ * The gateway's pipelines: every span to the span metrics and on to
+ * sampling, the sampled traces to Tempo, the metrics to Prometheus.
+ */
+import { Pipeline } from "@intentius/chant-lexicon-otel";
+import { otlp, memoryLimiter, batch, spanmetrics, tempo, prometheus } from "./components";
+import { toSampling, sampling } from "./sampling";
+
+const traces = new Pipeline({ signal: "traces", receivers: [otlp], processors: [memoryLimiter], exporters: [spanmetrics, toSampling] });
+
+const sampled = new Pipeline({ signal: "traces", name: "sampled", receivers: [toSampling], processors: [sampling, batch], exporters: [tempo] });
+
+const metrics = new Pipeline({ signal: "metrics", receivers: [spanmetrics], processors: [batch], exporters: [prometheus] });
+
+export { traces, sampled, metrics };
+```
+```
+
 ## custom-component
 
 A Splunk HEC exporter defined with `defineComponent`, with a schema pin and its own validation, used next to built-ins. See [Custom components](../custom-components/).

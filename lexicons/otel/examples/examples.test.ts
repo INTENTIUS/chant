@@ -51,6 +51,18 @@ describeAllExamples(
         expect(topo.semconv.map((s) => [s.namespace, s.version])).toEqual([["gen_ai", "v1.41.1"]]);
       },
     },
+    "tail-sampling-gateway": {
+      checks: (output) => {
+        const config = clean(output);
+        const pipelines = config.service?.pipelines ?? {};
+        // Metrics come off the traces pipeline before tail_sampling, so they count every span.
+        expect(pipelines.traces?.exporters).toEqual(["spanmetrics", "forward/sampling"]);
+        expect(pipelines["traces/sampled"]?.processors).toEqual(["tail_sampling", "batch"]);
+        expect(pipelines.metrics?.receivers).toEqual(["spanmetrics"]);
+        const policies = (config.processors?.tail_sampling as { policies: Array<{ name: string }> }).policies;
+        expect(policies.map((p) => p.name)).toEqual(["errors", "slow", "baseline"]);
+      },
+    },
     "custom-component": {
       checks: (output) => {
         expect(output.split("\n")[0]).toBe(

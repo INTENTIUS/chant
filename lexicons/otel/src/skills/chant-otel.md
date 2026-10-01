@@ -15,6 +15,10 @@ The otel lexicon (`@intentius/chant-lexicon-otel`) types collector config. Each 
 export default { lexicons: ["otel"] };
 ```
 
+`chant init --lexicon otel` scaffolds a collector; `--template k8s-agent` scaffolds a per-node Kubernetes agent and `--template genai` a GenAI collector.
+
+For a per-node Kubernetes agent, `NodeAgent({ exporters, metricExporters?, clusterName?, kubeletStats? })` declares the whole config: OTLP, host metrics, container logs, `k8sattributes` filtered to the node, and `memory_limiter` first and `batch` last on every pipeline. Pass `Object.values(agent.members)` wherever an entity list is taken, such as the k8s lexicon's `OtelCollector` `config`.
+
 ## Declaring components
 
 Every component class takes the collector's own config keys (snake_case, as in the collector docs) plus an optional `name`. The id is `type`, or `type/name` when `name` is set.

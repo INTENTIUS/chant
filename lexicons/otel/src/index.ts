@@ -66,6 +66,9 @@ export {
 } from "./topology";
 export { semconvUsage, SEMCONV_VOCABULARIES, type SemconvVocabulary } from "./semconv";
 
+// Composites
+export { NodeAgent, nodeAgentPropsProblem, type NodeAgentProps, type NodeAgentMembers, type NodeAgentInstance } from "./composites";
+
 // What the platform collector composites (docker, k8s, fly) share
 export {
   otlpCollector,

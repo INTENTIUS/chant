@@ -2149,11 +2149,15 @@ export const compositeCatalog: CompositeEntry[] = [
     "lexicon": "k8s",
     "description": "Create a GkeOtelCollector composite — returns prop objects for a DaemonSet, ServiceAccount, ClusterRole, ClusterRoleBinding, and ConfigMap.",
     "bundles": [
+      "BatchProcessor",
       "ClusterRole",
       "ClusterRoleBinding",
       "ConfigMap",
       "DaemonSet",
+      "GoogleCloudExporter",
+      "OtlpReceiver",
       "Pipeline",
+      "ResourceDetectionProcessor",
       "ServiceAccount"
     ],
     "params": [
