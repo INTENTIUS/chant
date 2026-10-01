@@ -16,7 +16,7 @@
  * is promoted.
  *
  * Every row says how it was found (`declared` or `inferred:joinKey`), where it
- * resolved (`source`; `check --live` comes later) and its status. A link that
+ * resolved (`source`, or `live` for the rows of `check --live`, #2549) and its status. A link that
  * can't be resolved is kept, with the reason.
  *
  * {@link resolveLinks} takes the members' handles as plain data, so the same
@@ -77,7 +77,7 @@ interface RowBase {
   consumer: string;
   kind: string;
   origin: LinkOrigin;
-  resolves: "source";
+  resolves: "source" | "live";
   /** Why the row is not `resolved`, or null. */
   reason: string | null;
 }

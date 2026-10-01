@@ -153,6 +153,6 @@ describe("behold's member kinds from their packages (#2545)", () => {
     await runWorkspaceLs({ args: parseArgs(["workspace", "ls", root, "--json"]), plugins: [] } as never);
     const doc = JSON.parse(out.join("\n")) as Extract<LsDocument, { members: unknown }>;
     expect(doc.members.map((m) => m.reason?.code ?? null)).toEqual(["unknown-kind", "unknown-kind", "unknown-kind", null]);
-    expect(doc.members[0].reason?.message).toMatch(/known kinds: chant, other, workspace$/);
+    expect(doc.members[0].reason?.message).toMatch(/known kinds: chant, design, other, workspace$/);
   });
 });

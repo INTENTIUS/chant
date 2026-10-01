@@ -34,6 +34,7 @@
  * | WSP123, WSP124 | box isolation: no shared port, state path or cookie, no literal machine path (#2727) |
  * | WSP125 | boxes: a fountain Box declares the callback token fountain gives its sandbox (#2780) |
  * | WSP126, WSP127 | box intent: the decision record a box names exists, and constrains a member or path of this workspace (#2850, #2857) |
+ * | WSP141, WSP142 | member links resolved against a live read, with `--live` (#2549) |
  * | WSP131 to WSP133 | diagram artifacts: source and render exist, a recorded source hash still matches (#2764) |
  */
 
@@ -47,10 +48,11 @@ import { parseJsonText, pointerToken, type TextLocation } from "./jsonc";
 import { loadKindRegistry, probeKind, resolveKind, type KindLoadProblem, type KindRegistry } from "./kinds";
 import { gitTop, workingTree, type WorkspaceTree } from "./tree";
 import { LINK_CHECKS, linkTable } from "./checks/links";
-import type { LinkTableRow } from "./links";
+import type { LinkRow, LinkTableRow } from "./links";
 import { gatherGeneratedFacts, GENERATED_CHECKS, type GeneratedFileFacts } from "./checks/generated";
 import { gatherLedgerFacts, LEDGER_CHECKS, type MemberLedgerFacts } from "./checks/ledgers";
 import { gatherPipelineFacts, PIPELINE_CHECKS, type MemberPipelineFacts } from "./checks/pipelines";
+import { gatherLiveLinkFacts, LIVE_CHECKS, type LiveLinkFacts } from "./checks/live";
 import { RECORD_CHECKS, type RecordFacts } from "./checks/records";
 import { BOX_CHECKS } from "./checks/boxes";
 import { DIAGRAM_CHECKS } from "./checks/diagrams";
@@ -73,6 +75,8 @@ export interface WorkspaceFacts {
   records?: RecordFacts;
   /** The record kinds the declaration names, each loaded, or only looked for under `--at` (#2680). */
   declaredKinds?: readonly DeclaredKind[];
+  /** The declared links resolved against a live read, with `--live` (#2549). */
+  live?: LiveLinkFacts;
   /** The decision record each box's intent names, read from the working tree (#2850). */
   boxIntents?: readonly ResolvedBoxIntent[];
 }
@@ -137,6 +141,8 @@ export interface DeclarationCheckReport {
   suppressed: SuppressedFinding[];
   /** The member links, declared and inferred, as resolved in source (#2539). */
   links: LinkTableRow[];
+  /** With `--live`, the declared links as resolved against a live read of `env` (#2549). */
+  live?: { env: string; links: LinkRow[] };
   /** Whether an error-severity finding is active. */
   ok: boolean;
 }
@@ -329,6 +335,8 @@ export const WORKSPACE_CHECKS: readonly WorkspaceCheck[] = [
   ...BOX_CHECKS,
   // Diagram artifacts (#2764).
   ...DIAGRAM_CHECKS,
+  // Links resolved against a live read, with --live (#2549), WSP141 and WSP142.
+  ...LIVE_CHECKS,
 ];
 
 const BY_ID = new Map(WORKSPACE_CHECKS.map((c) => [c.id, c]));
@@ -406,6 +414,13 @@ export interface DeclarationCheckOptions {
   tree?: WorkspaceTree;
   /** The records read with `--kind`, in the same tree (#2549). Given with or without `tree`. */
   records?: RecordFacts;
+  /**
+   * Resolve the declared links against a live read of this environment
+   * (`--live --env`, #2549). Each `chant` member runs `chant graph --live`, so
+   * this reaches whatever those reach. Not with `tree`: a live read is of the
+   * account now. `onStderr` gets each member's stderr.
+   */
+  live?: { env: string; onStderr?: (text: string) => void };
 }
 
 /**
@@ -480,6 +495,7 @@ export async function runDeclarationChecks(
     ...(options.records ? { records: options.records } : {}),
     ...(declaredKinds ? { declaredKinds } : {}),
     ...(boxIntents ? { boxIntents } : {}),
+    ...(options.live && !options.tree ? { live: await gatherLiveLinkFacts(root, declaration, registry, options.live.env, options.live.onStderr) } : {}),
   };
   const ctx: WorkspaceCheckContext = { declaration, tree, groups, kinds: registry, kindProblems: problems, facts };
   const findings = runWorkspaceChecks(ctx);
@@ -507,6 +523,7 @@ export async function runDeclarationChecks(
     diagnostics,
     suppressed: suppressed.map((s) => ({ ...toFinding(s), reason: s.reason })).sort(order),
     links: linkTable(ctx),
+    ...(facts.live ? { live: { env: facts.live.env, links: facts.live.rows } } : {}),
     ok: !diagnostics.some((d) => d.severity === "error"),
   };
 }

@@ -33,7 +33,7 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 |---|---|---|---|---|
 | boundary cell | the table of #2657, one row per cell | 6 | 5 | 3 |
 | workspace command | `commandRegistry` in `cli/main.ts`, and each sub-verb its help names | 27 | 0 | 0 |
-| member kind | `BUILTIN_KIND_NAMES` in `kinds.ts` | 4 | 0 | 0 |
+| member kind | `BUILTIN_KIND_NAMES` in `kinds.ts` | 5 | 0 | 0 |
 | record kind | none in core; `decision` and `session` are this repository's, the rest a plugin's | 4 | 0 | 4 |
 | member link kind | `LINK_KINDS` in `links.ts` | 2 | 0 | 0 |
 | record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 |
@@ -41,7 +41,7 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | intent edge kind | the edge kinds of `intent.schema.json` | 9 | 0 | 3 |
 | reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 137 | 0 | 0 |
 | finding code | the finding codes of `intent.schema.json` | 17 | 0 | 0 |
-| WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 48 | 0 | 0 |
+| WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 50 | 0 | 0 |
 | hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 |
 
 Each row follows, in the order of the table above.
@@ -92,6 +92,7 @@ Each row follows, in the order of the table above.
 | member kind | `chant` | chant | declaration.schema.json, workspace-kinds.schema.json | A chant project, with a chant.config.ts or chant.config.json in its directory. |
 | member kind | `workspace` | chant | declaration.schema.json, workspace-kinds.schema.json | A nested workspace with its own declaration, opaque to the outer one. |
 | member kind | `other` | chant | declaration.schema.json, workspace-kinds.schema.json | A directory chant does not read; the entry says why in because. |
+| member kind | `design` | chant | declaration.schema.json, workspace-kinds.schema.json | A data member holding the design artifacts the workspace owns; chant reads its files for record pins and builds nothing. |
 | member kind | `examples` | chant | declaration.schema.json, workspace-kinds.schema.json | An example group: every chant project its glob matches is built and linted. |
 | record kind | `decision` | chant | docs/design/decisions/decision.kind.mjs, decision.schema.json | The decision record chant's own design and the reference workspace use; the intent graph reads decisions as core nodes. |
 | record kind | `work` | chant | reference-workspace/work/work.kind.mjs, work.schema.json | A work item: a record with needs and implements links that people and agents share as one queue with no server. records gives each one ready and blockedBy, and the intent graph reads work items as core nodes (#2683). jhgaylor/chud#78 makes units work items. |
@@ -331,6 +332,8 @@ Each row follows, in the order of the table above.
 | WSP check | `WSP125` `box-fountain-callback-undeclared` | chant | check.schema.json | A box member that builds a fountain Box declares the callback token fountain gives its persistent sandbox: the fountain-callback capability, brokered by fountain, with scope owner. |
 | WSP check | `WSP126` `box-intent-unknown` | chant | check.schema.json | The intent a box block names is the id of a record of a declared kind named decision, the record that says what the box is for. |
 | WSP check | `WSP127` `box-intent-unconstrained` | chant | check.schema.json | The decision record a box names as its intent constrains a member or path of this workspace, with member: and a declared member's name or a path: entry at, above or inside one's directory; not necessarily the box's own member. |
+| WSP check | `WSP141` `link-live-missing` | chant | check.schema.json | With --live, a declared member link names an output its producer's estate publishes now, matched exactly. |
+| WSP check | `WSP142` `link-live-unresolved` | chant | check.schema.json | With --live, a declared member link that could not be resolved against a live read is kept, unresolved, and reported. |
 | hud view | H1 | hud | alecraso/hud | Review queue: decided records grouped by area, oldest first, each as a decision card. It reads records --current --json. |
 | hud view | H2 | hud | alecraso/hud | Decision page: options side by side with rejected options kept, the supersession chain, amendment history and provenance. It reads records --json, records --at. |
 | hud view | H3 | hud | alecraso/hud | Review actions: agree, dissent with a required reason, abstain and propose, each verdict a pull request under the signed-in principal. It reads records, and writes through records review and records new in a pull request. |

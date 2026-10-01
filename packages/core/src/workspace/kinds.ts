@@ -3,8 +3,8 @@
  * `examples`).
  *
  * A kind is data: a name, a precedence and a probe that says what its
- * directory holds. Probes run no code (K3). Four kinds are built in: the
- * member kinds `chant`, `workspace` and `other`, and the group kind
+ * directory holds. Probes run no code (K3). Five kinds are built in: the
+ * member kinds `chant`, `workspace`, `design` and `other`, and the group kind
  * `examples`. Every other kind comes from a pinned package, which publishes
  * its kinds as a JSON file at a `./workspace-kinds` subpath, the way a
  * lexicon publishes a slim `./detect` entry (#426). chant finds that file
@@ -111,6 +111,9 @@ export interface KindRegistry {
 /** The group kind (ws-051). An entry of this kind is a group, not a member. */
 export const EXAMPLES_KIND = "examples";
 
+/** The data member kind that holds design artifacts (#2549, ws-062). */
+export const DESIGN_KIND = "design";
+
 export const BUILTIN_KINDS: readonly MemberKind[] = [
   {
     name: "chant",
@@ -133,6 +136,15 @@ export const BUILTIN_KINDS: readonly MemberKind[] = [
   {
     name: "other",
     description: "a directory chant does not read; the entry says why in `because`",
+    probe: { directory: true },
+    precedence: 0,
+    shape: "member",
+    outputs: { from: "declared", names: [] },
+    source: "builtin",
+  },
+  {
+    name: DESIGN_KIND,
+    description: "a data member holding the design artifacts the workspace owns; chant reads its files for record pins and builds nothing",
     probe: { directory: true },
     precedence: 0,
     shape: "member",
