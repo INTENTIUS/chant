@@ -14,6 +14,10 @@ fetch-schemas:
 fetch-units:
     npx tsx src/spec/fetch-units-cli.ts
 
+# Rewrite the contact point settings types from a running Grafana's /api/alert-notifiers (starts one under Docker)
+fetch-notifiers:
+    npx tsx src/spec/fetch-notifiers-cli.ts
+
 # Validate generated artifacts
 validate:
     npx tsx src/validate-cli.ts

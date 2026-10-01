@@ -21,6 +21,7 @@ import type { TimePeriodConfig } from "@intentius/chant-lexicon-prometheus/model
 import type { MatchOp } from "@intentius/chant-lexicon-prometheus/matchers";
 import type { DatasourceInput, QueryEntity } from "./query";
 import type { DashboardEntity } from "./dashboard";
+import type { ContactPointSettingsByType } from "./contact-point-settings.gen";
 import type { TypeClassicConditions, TypeMath, TypeReduce, TypeResample, TypeSql, TypeThreshold } from "./schema/expr.gen";
 
 /** The datasource uid Grafana gives server-side expressions. */
@@ -250,46 +251,34 @@ export function isAlertRuleGroupEntity(value: unknown): value is AlertRuleGroupE
 // ── Contact points ──────────────────────────────────────────────
 
 /** The integrations Grafana 12.4 and 13.2 offer (`GET /api/alert-notifiers`). Any other plugin id is accepted as a string. */
-export type ContactPointIntegrationType =
-  | "dingding"
-  | "discord"
-  | "email"
-  | "googlechat"
-  | "jira"
-  | "kafka"
-  | "line"
-  | "mqtt"
-  | "oncall"
-  | "opsgenie"
-  | "pagerduty"
-  | "prometheus-alertmanager"
-  | "pushover"
-  | "sensugo"
-  | "slack"
-  | "sns"
-  | "teams"
-  | "telegram"
-  | "threema"
-  | "victorops"
-  | "webex"
-  | "webhook"
-  | "wechat"
-  | "wecom";
+export type ContactPointIntegrationType = keyof ContactPointSettingsByType;
 
 /** One integration of a contact point. */
-export interface ContactPointReceiver {
+export interface ContactPointReceiverBase {
   /** Stable id, at most 40 characters. Defaults to the contact point's name and the integration type as a uid. */
   uid?: string;
-  // eslint-disable-next-line @typescript-eslint/ban-types
-  type: ContactPointIntegrationType | (string & {});
-  /**
-   * The integration's settings. Write secrets (webhook URLs, tokens,
-   * passwords) as `$__env{NAME}` or `$__file{/path}`: Grafana expands them
-   * when it reads the file, and GRAF002 flags a literal.
-   */
-  settings: Record<string, unknown>;
   disableResolveMessage?: boolean;
 }
+
+/**
+ * A receiver of one of the 24 integrations Grafana lists, its `settings`
+ * typed from `GET /api/alert-notifiers`. Write secrets (webhook URLs,
+ * tokens, passwords) as `$__env{NAME}` or `$__file{/path}`: Grafana expands
+ * them when it reads the file, and GRAF002 flags a literal. GRAF114 reports
+ * a setting the integration does not take and a missing required one.
+ */
+export type KnownContactPointReceiver = {
+  [K in ContactPointIntegrationType]: ContactPointReceiverBase & { type: K; settings: ContactPointSettingsByType[K] };
+}[ContactPointIntegrationType];
+
+/** An integration this lexicon has no settings type for (a plugin id, or one a newer Grafana added). Its settings are not checked. */
+export interface OtherContactPointReceiver extends ContactPointReceiverBase {
+  // eslint-disable-next-line @typescript-eslint/ban-types
+  type: string & {};
+  settings: Record<string, unknown>;
+}
+
+export type ContactPointReceiver = KnownContactPointReceiver | OtherContactPointReceiver;
 
 export interface ContactPointProps {
   /** The name policies and rules route to. */

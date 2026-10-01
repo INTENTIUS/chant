@@ -1,49 +1,23 @@
+import { CONTACT_POINT_NOTIFIERS, type NotifierOptionSchema } from "./contact-point-settings.gen";
+
+/** The dotted paths of the options marked `secure`, through nested objects (`tlsConfig.clientKey`). */
+function securePaths(options: readonly NotifierOptionSchema[], prefix = ""): string[] {
+  return options.flatMap((o) => [...(o.secure ? [`${prefix}${o.key}`] : []), ...(o.options ? securePaths(o.options, `${prefix}${o.key}.`) : [])]);
+}
+
 /**
  * The contact point settings Grafana stores encrypted, per integration: the
  * options marked `secure` by `GET /api/alert-notifiers?version=2` on
- * `grafana/grafana:13.2.2` (commit 1bea008f; the same list on 12.4.11).
- * Nested settings are dotted paths (`tlsConfig.clientKey`).
+ * `grafana/grafana:13.2.2` (the same list on 12.4.11), read from the table
+ * `just fetch-notifiers` writes. Nested settings are dotted paths
+ * (`tlsConfig.clientKey`).
  *
  * GRAF002 flags a literal at one of these paths, and the importer replaces
  * the `[REDACTED]` that an export without secrets writes there.
  */
-export const CONTACT_POINT_SECRET_SETTINGS: Readonly<Record<string, readonly string[]>> = Object.freeze({
-  dingding: ["url"],
-  discord: ["url"],
-  email: [],
-  googlechat: ["url"],
-  jira: ["user", "password", "api_token"],
-  kafka: ["password"],
-  line: ["token"],
-  mqtt: ["password", "tlsConfig.caCertificate", "tlsConfig.clientCertificate", "tlsConfig.clientKey"],
-  oncall: ["password", "authorization_credentials"],
-  opsgenie: ["apiKey"],
-  pagerduty: ["integrationKey"],
-  "prometheus-alertmanager": ["basicAuthPassword"],
-  pushover: ["apiToken", "userKey"],
-  sensugo: ["apikey"],
-  slack: ["token", "url"],
-  sns: ["sigv4.access_key", "sigv4.secret_key"],
-  teams: [],
-  telegram: ["bottoken"],
-  threema: ["api_secret"],
-  victorops: ["url"],
-  webex: ["bot_token"],
-  webhook: [
-    "password",
-    "authorization_credentials",
-    "tlsConfig.caCertificate",
-    "tlsConfig.clientCertificate",
-    "tlsConfig.clientKey",
-    "hmacConfig.secret",
-    "http_config.oauth2.client_secret",
-    "http_config.oauth2.tls_config.caCertificate",
-    "http_config.oauth2.tls_config.clientCertificate",
-    "http_config.oauth2.tls_config.clientKey",
-  ],
-  wechat: ["api_secret", "http_config.basic_auth.password", "http_config.authorization.credentials", "http_config.oauth2.client_secret"],
-  wecom: ["url", "secret"],
-});
+export const CONTACT_POINT_SECRET_SETTINGS: Readonly<Record<string, readonly string[]>> = Object.freeze(
+  Object.fromEntries(Object.entries(CONTACT_POINT_NOTIFIERS).map(([type, schema]) => [type, securePaths(schema.options)])),
+);
 
 /** How Grafana provisioning reads a value from outside the file: `$VAR`, `${VAR}`, `$__env{…}`, `$__file{…}`, `$__vault{…}`. */
 export const EXPANDED_VALUE = /\$(\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*|__(env|file|vault)\{[^}]+\})/;
