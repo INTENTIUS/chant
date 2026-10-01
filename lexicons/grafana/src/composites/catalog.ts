@@ -15,8 +15,14 @@ export const compositeCatalog: CompositeEntry[] = [
       {
         "name": "genAi",
         "type": "GenAiMetrics | { metrics: GenAiMetrics }",
-        "required": true,
+        "required": false,
         "description": "The preset's metrics: `genAiMetrics(options)` with the options the collector was built with, or `genAiComponents(options)`."
+      },
+      {
+        "name": "rules",
+        "type": "GenAiRulesInstance | RuleGroupEntity | GenAiRuleMetrics",
+        "required": false,
+        "description": "Read the series a prometheus `GenAiRules` records instead of the preset's metrics."
       },
       {
         "name": "quantile",
@@ -53,9 +59,9 @@ export const compositeCatalog: CompositeEntry[] = [
       },
       {
         "name": "folder",
-        "type": "string",
+        "type": "string | FolderEntity",
         "required": false,
-        "description": "The Grafana folder to provision it into."
+        "description": "The Grafana folder to provision it into: a path, or a `Folder` to pin its uid."
       },
       {
         "name": "time",
@@ -137,9 +143,9 @@ export const compositeCatalog: CompositeEntry[] = [
       },
       {
         "name": "folder",
-        "type": "string",
+        "type": "string | FolderEntity",
         "required": false,
-        "description": "The Grafana folder to provision it into."
+        "description": "The Grafana folder to provision it into: a path, or a `Folder` to pin its uid."
       },
       {
         "name": "time",
@@ -279,9 +285,9 @@ export const compositeCatalog: CompositeEntry[] = [
       },
       {
         "name": "folder",
-        "type": "string",
+        "type": "string | FolderEntity",
         "required": false,
-        "description": "The Grafana folder to provision it into."
+        "description": "The Grafana folder to provision it into: a path, or a `Folder` to pin its uid."
       },
       {
         "name": "time",

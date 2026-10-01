@@ -425,6 +425,7 @@ export {
   sloQueries,
   AgentDashboard,
   agentQueries,
+  agentRuleQueries,
   type RedDashboardProps,
   type RedDashboardMembers,
   type RedDashboardInstance,

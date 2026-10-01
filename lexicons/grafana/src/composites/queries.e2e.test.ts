@@ -2,8 +2,8 @@
  * The composites' PromQL against real series, through Grafana.
  *
  * Builds the dashboards-from-declarations example (RedDashboard,
- * SloDashboard and AgentDashboard over its spanmetrics connector, its Slo
- * and the GenAI preset), backfills a Prometheus with series named the way
+ * SloDashboard and AgentDashboard over its spanmetrics connector, its Slo,
+ * the GenAI preset and its GenAiRules), backfills a Prometheus with series named the way
  * those declarations name them, provisions the build into each Grafana
  * release in `GRAFANA_IMAGES` on the same Docker network, and runs every
  * panel's target through `/api/ds/query` the way the dashboard would, with
@@ -24,6 +24,9 @@
  *   token totals are one instant value each.
  * - SLO: the recording rules' outputs, seeded as plain series (the rules
  *   themselves are the prometheus lexicon's, checked there).
+ * - GenAI rules: the same for `GenAiRules`, named by `genAiRuleMetrics()`,
+ *   for the rules-mode AgentDashboard: two providers, a model with no
+ *   traffic, two tools, and cost in two currencies that are never added.
  *
  * Skipped, with the reason in the suite name, without Docker.
  * On demand: `npx vitest run --project e2e lexicons/grafana/src/composites/queries.e2e.test.ts`.
@@ -35,7 +38,10 @@ import { build } from "@intentius/chant/build";
 import type { SerializerResult } from "@intentius/chant/serializer";
 import { otelSerializer } from "@intentius/chant-lexicon-otel/serializer";
 import { prometheusSerializer } from "@intentius/chant-lexicon-prometheus/serializer";
+import { genAiRuleMetrics } from "@intentius/chant-lexicon-prometheus/composites/genai";
 import { grafanaSerializer } from "../serializer";
+import { agentRuleQueries } from "./agent-dashboard";
+import { genaiRules } from "../../examples/dashboards-from-declarations/src/genai-rules";
 import { DockerScope, GRAFANA_IMAGES, dockerAvailable, waitFor, type GrafanaContainer } from "../../test/e2e/containers";
 import { dsQuery, lastBy, type Target } from "../../test/e2e/ds-query";
 import { openMetrics, type Family } from "../../test/e2e/openmetrics";
@@ -69,7 +75,59 @@ const agent = (model: string, tool: string, status: string, errorType = "") => (
   ...(errorType ? { error_type: errorType } : {}),
 });
 
+/** The GenAI rules' series, as the example's `GenAiRules` names them. */
+const R = genAiRuleMetrics(genaiRules);
+const RL = R.labels;
+const RSVC = agentRuleQueries(R).labels.service!;
+const [USD_PRICE, EUR_PRICE] = R.prices;
+const ruleModel = (provider: string, model: string) => ({ [RL.provider!]: provider, [RL.model]: model, [RL.operation]: "chat", [RSVC]: "agent" });
+const BIG = ruleModel(USD_PRICE.provider, USD_PRICE.model);
+const SMALL = ruleModel(EUR_PRICE.provider, EUR_PRICE.model);
+const IDLE = ruleModel(EUR_PRICE.provider, "idle-model");
+const ruleTokens = (model: string, type: string) => ({ [RL.model]: model, [RSVC]: "agent", [RL.tokenType]: type });
+const ruleTool = (tool: string) => ({ [RL.tool!]: tool, [RSVC]: "agent" });
+/** Tokens per second: big 100 in and 20 out, small 10 in and 5 out. */
+const RULE_TOKENS: Array<[string, string, number]> = [
+  [USD_PRICE.model, "input", 100],
+  [USD_PRICE.model, "output", 20],
+  [EUR_PRICE.model, "input", 10],
+  [EUR_PRICE.model, "output", 5],
+];
+/** The example's prices per million tokens: big 3 in and 15 out (USD), small 1 in and 4 out (EUR). */
+const RULE_COST: Array<[Record<string, string>, string, number]> = [
+  [{ [RL.provider!]: USD_PRICE.provider, [RL.model]: USD_PRICE.model, [RL.currency]: "USD" }, "input", (100 * 3) / 1e6],
+  [{ [RL.provider!]: USD_PRICE.provider, [RL.model]: USD_PRICE.model, [RL.currency]: "USD" }, "output", (20 * 15) / 1e6],
+  [{ [RL.provider!]: EUR_PRICE.provider, [RL.model]: EUR_PRICE.model, [RL.currency]: "EUR" }, "input", (10 * 1) / 1e6],
+  [{ [RL.provider!]: EUR_PRICE.provider, [RL.model]: EUR_PRICE.model, [RL.currency]: "EUR" }, "output", (5 * 4) / 1e6],
+];
+
+const RULE_FAMILIES: Family[] = [
+  { type: "gauge", name: R.requests, series: [{ labels: BIG, value: 1.25 }, { labels: SMALL, value: 0.5 }, { labels: IDLE, value: 0 }] },
+  { type: "gauge", name: R.errors, series: [{ labels: { ...BIG, [RL.errorType]: "timeout" }, value: 0.25 }] },
+  {
+    type: "gauge",
+    name: R.latency.record,
+    series: R.latency.quantiles.flatMap((q) => [
+      { labels: { ...BIG, [RL.quantile]: q }, value: 2 * Number(q) },
+      { labels: { ...SMALL, [RL.quantile]: q }, value: 0.4 * Number(q) },
+    ]),
+  },
+  { type: "gauge", name: R.tokens, series: RULE_TOKENS.map(([model, type, value]) => ({ labels: ruleTokens(model, type), value })) },
+  { type: "gauge", name: R.cost!, series: RULE_COST.map(([labels, type, value]) => ({ labels: { ...labels, [RSVC]: "agent", [RL.tokenType]: type }, value })) },
+  { type: "gauge", name: R.tool!.calls, series: [{ labels: ruleTool("search"), value: 0.25 }, { labels: ruleTool("fetch"), value: 0.1 }] },
+  { type: "gauge", name: R.tool!.errors, series: [{ labels: ruleTool("search"), value: 0.05 }] },
+  {
+    type: "gauge",
+    name: R.tool!.latency.record,
+    series: [
+      { labels: { ...ruleTool("search"), [RL.quantile]: "0.95" }, value: 1.9 },
+      { labels: { ...ruleTool("fetch"), [RL.quantile]: "0.95" }, value: 0.38 },
+    ],
+  },
+];
+
 const FAMILIES: Family[] = [
+  ...RULE_FAMILIES,
   {
     type: "counter",
     name: "shop_calls",
@@ -348,6 +406,74 @@ describe.skipIf(!hasDocker)(`composite queries against a seeded Prometheus, thro
           expect(r.series.length, title).toBe(1);
           expect(r.series[0].values.length, title).toBe(1);
           expect(r.series[0].values[0]!, title).toBeCloseTo(perSecond * RANGE_S, 3);
+        }
+      });
+    });
+
+    describe("AgentDashboard from GenAiRules", () => {
+      const uid = "genai-agents";
+
+      it("requests, error ratio and latency per model, from the recorded series", async () => {
+        const requests = lastBy((await runPanel(uid, "Requests by model")).series, RL.model);
+        expect(requests).toEqual({ big: 1.25, small: 0.5, "idle-model": 0 });
+        const errors = lastBy((await runPanel(uid, "Errors by model")).series, RL.model);
+        expect(errors.big).toBeCloseTo(0.2, 9);
+        expect(errors.small).toBe(0);
+        expect(errors["idle-model"]).toBeNaN();
+        const latency = lastBy((await runPanel(uid, "Latency p95 by model")).series, RL.model);
+        expect(Object.keys(latency).sort()).toEqual(["big", "small"]);
+        expect(latency.big).toBeCloseTo(1.9, 9);
+        expect(latency.small).toBeCloseTo(0.38, 9);
+      });
+
+      it("requests and error ratio per provider", async () => {
+        const requests = lastBy((await runPanel(uid, "Requests by provider")).series, RL.provider!);
+        expect(requests).toEqual({ anthropic: 1.25, mistral: 0.5 });
+        const errors = lastBy((await runPanel(uid, "Errors by provider")).series, RL.provider!);
+        expect(errors.anthropic).toBeCloseTo(0.2, 9);
+        expect(errors.mistral).toBe(0);
+      });
+
+      it("per tool, errors by type, and no alert firing", async () => {
+        expect(lastBy((await runPanel(uid, "Tool calls")).series, RL.tool!)).toEqual({ search: 0.25, fetch: 0.1 });
+        const errors = lastBy((await runPanel(uid, "Errors by tool")).series, RL.tool!);
+        expect(errors.search).toBeCloseTo(0.2, 9);
+        expect(errors.fetch).toBe(0);
+        const latency = lastBy((await runPanel(uid, "Latency p95 by tool")).series, RL.tool!);
+        expect(latency.search).toBeCloseTo(1.9, 9);
+        expect(lastBy((await runPanel(uid, "Errors by type")).series, RL.errorType)).toEqual({ timeout: 0.25 });
+        const firing = await runPanel(uid, "GenAI alerts firing");
+        expect(firing.series[0].values).toEqual([0]);
+      });
+
+      it("token rates per model, and totals over the range", async () => {
+        expect(lastBy((await runPanel(uid, "Input tokens by model")).series, RL.model)).toEqual({ big: 100, small: 10 });
+        expect(lastBy((await runPanel(uid, "Output tokens by model")).series, RL.model)).toEqual({ big: 20, small: 5 });
+        for (const [title, perSecond] of [
+          ["Input tokens", 110],
+          ["Output tokens", 25],
+        ] as const) {
+          const r = await runPanel(uid, title);
+          expect(r.series.length, title).toBe(1);
+          expect(r.series[0].values.length, title).toBe(1);
+          expect(r.series[0].values[0]!, title).toBeCloseTo(perSecond * RANGE_S, 3);
+        }
+      });
+
+      it("spend per currency, each priced model in its own currency only", async () => {
+        const usd = lastBy((await runPanel(uid, "Spend per hour in USD")).series, RL.model);
+        expect(Object.keys(usd)).toEqual(["big"]);
+        expect(usd.big).toBeCloseTo((6e-4) * 3600, 9);
+        const eur = lastBy((await runPanel(uid, "Spend per hour in EUR")).series, RL.model);
+        expect(Object.keys(eur)).toEqual(["small"]);
+        expect(eur.small).toBeCloseTo((3e-5) * 3600, 9);
+        for (const [currency, perSecond] of [
+          ["USD", 6e-4],
+          ["EUR", 3e-5],
+        ] as const) {
+          const r = await runPanel(uid, `Spend in ${currency}, prices as of 2026-09-29`);
+          expect(r.series.length, currency).toBe(1);
+          expect(r.series[0].values[0]!, currency).toBeCloseTo(perSecond * RANGE_S, 9);
         }
       });
     });

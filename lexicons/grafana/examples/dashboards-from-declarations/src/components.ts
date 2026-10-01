@@ -36,7 +36,7 @@ const spans = new SpanMetricsConnector({ namespace: "shop", histogram: milliseco
 /** Served on 8889 for Prometheus to scrape. */
 const metricsEndpoint = new PrometheusExporter({ endpoint: "0.0.0.0:8889" });
 
-/** The GenAI preset's pieces, its metric names under `agents`. */
-const genai = genAiComponents({ namespace: "agents" });
+/** The GenAI preset's pieces, its metric names under `agents`, calls and durations also by provider. */
+const genai = genAiComponents({ namespace: "agents", providerDimensions: true });
 
 export { otlp, memoryLimiter, batch, tempoTraces, spans, metricsEndpoint, genai };
