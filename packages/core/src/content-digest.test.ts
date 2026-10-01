@@ -104,13 +104,13 @@ describe("other hashes use contentDigest over canonicalJson (#2514)", () => {
   test("a plan digest", () => {
     const subject = { b: 1, a: [true, null] };
     expect(computePlanDigest("lifecycle-diff", subject)).toBe(
-      contentDigest(canonicalJson({ kind: "lifecycle-diff", subject })),
+      `jcs1-${contentDigest(canonicalJson({ kind: "lifecycle-diff", subject }))}`,
     );
   });
 
   test("a plan digest orders keys by code unit, not by locale", () => {
     // localeCompare puts "a" before "B"; canonicalJson puts "B" first.
-    expect(computePlanDigest("k", { a: 1, B: 2 })).toBe(contentDigest('{"kind":"k","subject":{"B":2,"a":1}}'));
+    expect(computePlanDigest("k", { a: 1, B: 2 })).toBe(`jcs1-${contentDigest('{"kind":"k","subject":{"B":2,"a":1}}')}`);
   });
 
   test("a props hash, which drops what JSON cannot hold instead of throwing", () => {

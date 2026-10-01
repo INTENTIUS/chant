@@ -104,6 +104,11 @@
           "type": "array",
           "items": { "$ref": "#/$defs/recordKind" }
         },
+        "generated": {
+          "description": "Added in contract 1 by #3050. The files the member generates, from its declared generated entries and from the record `chant build --components --generate` and `chant run --generate` write, sorted by path. A hand-written entry is not listed.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/generatedFile" }
+        },
         "reason": {
           "oneOf": [
             { "type": "null" },
@@ -162,6 +167,20 @@
               }
             }
           ]
+        }
+      }
+    },
+    "generatedFile": {
+      "type": "object",
+      "required": ["path", "command", "env", "jobs"],
+      "properties": {
+        "path": { "type": "string", "description": "From the repository root, with / separators, which is how a forge reads a CI file. For a workspace below the git root, that includes the workspace root." },
+        "command": { "type": "string", "description": "The command that regenerates the file, run in the member's directory. Empty when a record names none." },
+        "env": { "type": ["string", "null"], "description": "The environment a component pipeline deploys, or null." },
+        "jobs": {
+          "description": "The check names a forge CI file declares: for GitHub, Forgejo and Gitea the job's name, else its id; for GitLab the job's key. Null for any other file, and for a CI file that is missing from the tree read or can't be parsed.",
+          "type": ["array", "null"],
+          "items": { "type": "string" }
         }
       }
     },

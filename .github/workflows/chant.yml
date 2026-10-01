@@ -361,6 +361,30 @@ jobs:
           fi
           [ "${SHARDS}" = "success" ] && [ "${E2E}" = "success" ]
 
+  # chant#2547 — the trust policy is read from the base branch, so this job
+  # judges a pull request by the signers main already has. A commit that
+  # changes .chant/allowed_signers or .chant/trust.json must be signed by a
+  # key listed there. Every other commit needs no signature. Pull requests
+  # only: a push to main has no base to read a policy from.
+  trust:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Whole history, so origin/<base> and the commits between it and the head are there.
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm install --ignore-scripts
+      - name: Verify the change against the policy at base
+        # --head is the pull request's own tip, not the merge commit GitHub makes for the run.
+        run: npx tsx packages/core/src/cli/main.ts workspace verify --base origin/${{ github.base_ref }} --head ${{ github.event.pull_request.head.sha }}
+
   validate:
     runs-on: ubuntu-latest
     # Same failure as the test job in #1993: runs land at 4m20s-4m49s against

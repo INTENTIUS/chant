@@ -44,7 +44,7 @@ chant.workspace.json
 | Id | Name | Default | Settable | Fails when |
 |---|---|---|---|---|
 | `WSP001` | declaration-unreadable | error | no | The declaration can't be read. The message starts with the [error code](/chant/reference/workspace-declaration/#errors) |
-| `WSP002` | kinds-unreadable | error | no | A pinned package isn't installed, is installed at another version, or publishes kind data that doesn't validate ([kinds](/chant/reference/workspace-kinds/#which-packages-are-read)) |
+| `WSP002` | kinds-unreadable | error | no | A pinned package isn't installed, is installed at another version, publishes kind data that doesn't validate, or is a path pin whose directory doesn't hash to its `integrity` ([pins](/chant/reference/workspace-declaration/#integrity-of-a-plugin-pinned-by-path), [kinds](/chant/reference/workspace-kinds/#which-packages-are-read)) |
 | `WSP003` | kind-unknown | error | no | A member's kind is neither built in nor supplied by a pinned package. The message lists the known kinds |
 | `WSP004` | member-dir-missing | error | yes | A member's directory does not exist |
 | `WSP005` | kind-probe-failed | error | yes | A member's directory is not what its kind reads, such as a `chant` member with no chant config |

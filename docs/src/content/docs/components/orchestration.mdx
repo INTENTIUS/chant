@@ -38,14 +38,14 @@ A component has no Plan phase, so its plan digest is taken over what the run wil
 | the recorded digest a promote, rollback or redeploy deploys | the run id and the time |
 | environment config passed as `vars` | |
 
-A release recorded before real SHA-256 digests ([#2514](https://github.com/INTENTIUS/chant/issues/2514)) keeps its `legacy-digest` value, and the plan takes that value as recorded. The plan digest itself is always real SHA-256.
+A release recorded before real SHA-256 digests ([#2514](https://github.com/INTENTIUS/chant/issues/2514)) keeps its `legacy-digest` value, and the plan takes that value as recorded. The plan digest itself is always real SHA-256, written as `jcs1-sha256:` and the hex of the SHA-256 of the RFC 8785 canonical JSON of the plan ([#2547](https://github.com/INTENTIUS/chant/issues/2547)). Before that it was `sha256:` and the same hex. A pending gate or an approval recorded under the bare prefix still matches the plan with the same hex, and nothing in the ledger is rewritten.
 
 A deploy to prod does not accept an approval given for staging. A promote does not accept one given for a plain deploy or for another digest, and an edited composition does not accept one given before the edit. `chant run --components`, `chant components promote`, `chant components rollback`, `chant components redeploy` and the components inside `chant components fan-out` all decide gates this way.
 
 An approval recorded before this change records neither an environment nor a plan, and is refused. The run stops at the gate, names the old approval, and prints the command that replaces it:
 
 ```
-Gate "release" is approved, but not for this plan. approved: (none — recorded before plan-bound gates) (by alex at 2026-09-20T10:00:00.000Z); planned: sha256:4c1e0b...
+Gate "release" is approved, but not for this plan. approved: (none — recorded before plan-bound gates) (by alex at 2026-09-20T10:00:00.000Z); planned: jcs1-sha256:4c1e0b...
 That approval predates environment- and plan-bound component gates (#2574) and records neither, so it cannot answer for this one. Approving again binds it: chant approve search-service release --env prod
 ```
 

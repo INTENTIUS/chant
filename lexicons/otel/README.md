@@ -46,7 +46,7 @@ Each connector supports fixed signal pairs (`spanmetrics`: traces to metrics). O
 
 ## GenAI preset
 
-`genAiPipeline(options)` returns a collector for workloads that emit OpenTelemetry GenAI spans. Prompt, completion, system-instruction and tool-call content is deleted from spans, span events and log records unless `keepContent: true` is set, and every GenAI span becomes call, error, duration and token metrics before any sampling. The attribute keys follow `GENAI_SEMCONV_PIN` (semantic-conventions v1.41.1), which `collectorTopology()` returns under `semconv`. `genAiComponents()` gives the pieces for pipelines of your own, and `genAiMetrics()` the metric names a dashboard reads.
+`genAiPipeline(options)` returns a collector for workloads that emit OpenTelemetry GenAI spans. Prompt, completion, system-instruction and tool-call content is deleted from spans, span events and log records unless `keepContent: true` is set, and every GenAI span becomes call, error, duration and token metrics before any sampling. The attribute keys follow `GENAI_SEMCONV_PIN` (semantic-conventions v1.41.1), which `collectorTopology()` returns under `semconv`. `genAiComponents()` gives the pieces for pipelines of your own, and `genAiMetrics()` the metric names a dashboard reads. `clientMetrics: "derive"` also emits the conventions' `gen_ai.client.operation.duration` and `gen_ai.client.token.usage`, and `"passthrough"` forwards the SDK's own.
 
 ## Components chant doesn't ship
 

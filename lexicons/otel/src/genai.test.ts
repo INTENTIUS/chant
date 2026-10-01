@@ -10,7 +10,7 @@
 
 import { describe, expect, test } from "vitest";
 import { spawn, spawnSync } from "child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { createServer } from "net";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -23,6 +23,9 @@ import { validateCollectorConfig, validateCollectorEntities } from "./validate-c
 import type { CollectorConfig } from "./model";
 import { DebugExporter, FilterProcessor, OtlpExporter, PrometheusExporter, SumConnector } from "./components";
 import {
+  GENAI_CLIENT_DURATION_BUCKETS,
+  GENAI_CLIENT_METRIC_ATTRIBUTES,
+  GENAI_CLIENT_TOKEN_BUCKETS,
   GENAI_CONTENT_ATTRIBUTES,
   GENAI_SPAN_METRIC_DIMENSIONS,
   genAiComponents,
@@ -237,7 +240,7 @@ describe("genAiPipeline: metrics", () => {
     }
   });
 
-  test('deltaToCumulative "auto" puts deltatocumulative before batch only for exporters that need cumulative data', () => {
+  test('deltaToCumulative "auto" puts deltatocumulative before batch unless every exporter takes deltas', () => {
     const remoteWrite = new RemoteWriteExporter({ endpoint: "http://mimir:9009/api/v1/push" });
     const prometheus = new PrometheusExporter({ endpoint: "0.0.0.0:8889" });
     const withRemote = parsed(genAiPipeline({ metricExporters: [prometheus, remoteWrite], deltaToCumulative: "auto" }));
@@ -253,6 +256,9 @@ describe("genAiPipeline: metrics", () => {
 
     const promOnly = genAiPipeline({ metricExporters: [prometheus], deltaToCumulative: "auto" });
     expect(collectorYaml(promOnly)).toBe(collectorYaml(genAiPipeline({ metricExporters: [prometheus] })));
+    expect(collectorYaml(genAiPipeline({ deltaToCumulative: "auto" }))).toBe(collectorYaml(genAiPipeline()));
+    const otlp = parsed(genAiPipeline({ metricExporters: [new OtlpExporter({ endpoint: "backend:4317" })], deltaToCumulative: "auto" }));
+    expect(otlp.service.pipelines["metrics/genai"].processors).toEqual(["deltatocumulative/genai", "batch"]);
   });
 
   test("deltaToCumulative: true inserts it for any exporter, such as otlp to a cumulative backend", () => {
@@ -273,6 +279,169 @@ describe("genAiPipeline: metrics", () => {
   });
 });
 
+describe("genAiPipeline: the conventions' client metrics", () => {
+  // Rendered from the preset before clientMetrics and providerDimensions existed.
+  const fixture = (name: string) => readFileSync(join(import.meta.dirname, "testdata", name), "utf-8");
+  const configured = (extra: GenAiPipelineOptions = {}): GenAiPipelineOptions => ({
+    namespace: "agents.support",
+    dimensions: [{ name: "gen_ai.agent.name" }],
+    sampling: [new FilterProcessor({ name: "sampler", traces: { span: ["status.code != STATUS_CODE_ERROR"] } })],
+    traceExporters: [new OtlpExporter({ name: "tempo", endpoint: "tempo:4317", tls: { insecure: true } })],
+    metricExporters: [new PrometheusExporter({ endpoint: "0.0.0.0:8889" })],
+    maskValues: ["secret-[a-z]+"],
+    ...extra,
+  });
+  const prometheus = () => [new PrometheusExporter({ endpoint: "0.0.0.0:8889" })];
+
+  test("without the options the YAML is byte for byte what it was", () => {
+    expect(collectorYaml(genAiPipeline())).toBe(fixture("genai-default.yaml"));
+    expect(collectorYaml(genAiPipeline({ clientMetrics: undefined, providerDimensions: false }))).toBe(fixture("genai-default.yaml"));
+    expect(collectorYaml(genAiPipeline(configured()))).toBe(fixture("genai-configured.yaml"));
+    expect(genAiMetrics()).not.toHaveProperty("client");
+    const parts = genAiComponents();
+    expect(parts).not.toHaveProperty("clientMetrics");
+    expect(parts).not.toHaveProperty("sdkClientMetricsFilter");
+  });
+
+  test('clientMetrics: "derive" emits both metrics with the attributes, units and buckets of v1.41.1', () => {
+    const config = parsed(genAiPipeline({ clientMetrics: "derive", metricExporters: prometheus() }));
+    const [duration, input, output] = config.connectors["signaltometrics/genai_client"].spans;
+    const optional = GENAI_CLIENT_METRIC_ATTRIBUTES.slice(1).map((key) => ({ key, optional: true }));
+    expect(duration).toEqual({
+      name: "gen_ai.client.operation.duration",
+      description: "GenAI operation duration.",
+      unit: "s",
+      attributes: [{ key: "gen_ai.operation.name" }, ...optional],
+      histogram: {
+        buckets: [0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.28, 2.56, 5.12, 10.24, 20.48, 40.96, 81.92],
+        value: "Double(Microseconds(end_time - start_time)) / 1000000.0",
+      },
+    });
+    expect(GENAI_CLIENT_METRIC_ATTRIBUTES).toEqual([
+      "gen_ai.operation.name",
+      "gen_ai.provider.name",
+      "gen_ai.request.model",
+      "gen_ai.response.model",
+      "server.address",
+      "server.port",
+      "error.type",
+    ]);
+    for (const [entry, type, source] of [
+      [input, "input", "gen_ai.usage.input_tokens"],
+      [output, "output", "gen_ai.usage.output_tokens"],
+    ] as const) {
+      expect(entry.name).toBe("gen_ai.client.token.usage");
+      expect(entry.unit).toBe("{token}");
+      // One metric: the connector merges entries with the same name, unit and description.
+      expect(entry.description).toBe("Number of input and output tokens used.");
+      expect(entry.attributes).toEqual([{ key: "gen_ai.operation.name" }, ...optional, { key: "gen_ai.token.type", default_value: type }]);
+      expect(entry.histogram).toEqual({
+        buckets: [1, 4, 16, 64, 256, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864],
+        value: `attributes["${source}"]`,
+      });
+      // Numeric counts only, and not the in-process agent and workflow spans the sum connector skips too.
+      expect(entry.conditions).toHaveLength(1);
+      expect(entry.conditions[0]).toContain(`IsInt(attributes["${source}"]) or IsDouble(attributes["${source}"])`);
+      expect(entry.conditions[0]).toContain(config.connectors["sum/genai_tokens"].spans["genai.tokens.input"].conditions[0].split(" and ").slice(1).join(" and "));
+    }
+    expect([...GENAI_CLIENT_DURATION_BUCKETS]).toEqual(duration.histogram.buckets);
+    expect([...GENAI_CLIENT_TOKEN_BUCKETS]).toEqual(input.histogram.buckets);
+  });
+
+  test('clientMetrics: "derive" wires the connector into the metrics branch and passes the SDK\'s metrics through without its copies', () => {
+    const config = parsed(genAiPipeline({ clientMetrics: "derive", metricExporters: prometheus() }));
+    const p = config.service.pipelines;
+    expect(p["traces/genai"].exporters).toEqual(["spanmetrics/genai", "sum/genai_tokens", "signaltometrics/genai_client"]);
+    expect(p["metrics/genai"].receivers).toEqual(["spanmetrics/genai", "sum/genai_tokens", "signaltometrics/genai_client"]);
+    expect(p.metrics).toEqual({
+      receivers: ["otlp"],
+      processors: ["memory_limiter", "filter/genai_sdk_client", "batch"],
+      exporters: ["prometheus"],
+    });
+    expect(config.processors["filter/genai_sdk_client"]).toEqual({
+      error_mode: "ignore",
+      metrics: { metric: ['name == "gen_ai.client.operation.duration"', 'name == "gen_ai.client.token.usage"'] },
+    });
+    // The genai.* metrics are unchanged.
+    const plain = parsed(genAiPipeline({ metricExporters: prometheus() }));
+    expect(config.connectors["spanmetrics/genai"]).toEqual(plain.connectors["spanmetrics/genai"]);
+    expect(config.connectors["sum/genai_tokens"]).toEqual(plain.connectors["sum/genai_tokens"]);
+  });
+
+  test('clientMetrics: "passthrough" derives nothing and passes the SDK\'s metrics through', () => {
+    const tempo = new OtlpExporter({ name: "mimir", endpoint: "mimir:4317" });
+    const config = parsed(genAiPipeline({ clientMetrics: "passthrough", metricExporters: [tempo] }));
+    expect(Object.keys(config.connectors)).toEqual(["forward/genai", "spanmetrics/genai", "sum/genai_tokens"]);
+    expect(config.processors["filter/genai_sdk_client"]).toBeUndefined();
+    expect(config.service.pipelines.metrics).toEqual({ receivers: ["otlp"], processors: ["memory_limiter", "batch"], exporters: ["otlp/mimir"] });
+    const parts = genAiComponents({ clientMetrics: "passthrough" });
+    expect(parts.clientMetrics).toBeUndefined();
+    expect(parts.metrics.client?.source).toBe("passthrough");
+  });
+
+  test("genAiMetrics reports the conventions' names, Prometheus names and attributes", () => {
+    for (const source of ["derive", "passthrough"] as const) {
+      const m = genAiMetrics({ clientMetrics: source, namespace: "agents" });
+      expect(m.client).toEqual({
+        source,
+        operationDuration: {
+          name: "gen_ai.client.operation.duration",
+          prometheus: "gen_ai_client_operation_duration_seconds",
+          type: "histogram",
+          unit: "s",
+          dimensions: [...GENAI_CLIENT_METRIC_ATTRIBUTES],
+        },
+        tokenUsage: {
+          name: "gen_ai.client.token.usage",
+          prometheus: "gen_ai_client_token_usage",
+          type: "histogram",
+          unit: "{token}",
+          dimensions: [...GENAI_CLIENT_METRIC_ATTRIBUTES, "gen_ai.token.type"],
+        },
+      });
+      // The preset's own metrics keep their namespace and shape.
+      const { client: _client, ...rest } = m;
+      expect(rest).toEqual(genAiMetrics({ namespace: "agents" }));
+    }
+    expect(genAiComponents({ clientMetrics: "derive" }).metrics).toEqual(genAiMetrics({ clientMetrics: "derive" }));
+  });
+
+  test('clientMetrics: "derive" converts its deltas for exporters other than prometheus and debug', () => {
+    const otlp = new OtlpExporter({ name: "mimir", endpoint: "mimir:4317" });
+    const config = parsed(genAiPipeline({ clientMetrics: "derive", metricExporters: [otlp] }));
+    expect(config.service.pipelines["metrics/genai"]).toEqual({
+      receivers: ["spanmetrics/genai", "sum/genai_tokens", "signaltometrics/genai_client"],
+      processors: ["deltatocumulative/genai", "batch"],
+      exporters: ["otlp/mimir"],
+    });
+    // The SDK's own metrics carry the SDK's temporality and are left alone.
+    expect(config.service.pipelines.metrics.processors).not.toContain("deltatocumulative/genai");
+
+    const prom = new PrometheusExporter({ endpoint: "0.0.0.0:8889" });
+    expect(collectorYaml(genAiPipeline({ clientMetrics: "derive", metricExporters: [prom] }))).not.toContain("deltatocumulative");
+    expect(collectorYaml(genAiPipeline({ clientMetrics: "derive" }))).not.toContain("deltatocumulative");
+    const off = parsed(genAiPipeline({ clientMetrics: "derive", metricExporters: [otlp], deltaToCumulative: false }));
+    expect(off.service.pipelines["metrics/genai"].processors).toEqual(["batch"]);
+    expect(collectorYaml(genAiPipeline({ clientMetrics: "passthrough", metricExporters: [otlp] }))).not.toContain("deltatocumulative");
+    expect(() => genAiPipeline({ clientMetrics: "semconv" as never })).toThrow(/"derive" or "passthrough"/);
+  });
+
+  test("providerDimensions adds the provider and response model to genai.calls and genai.duration only", () => {
+    const config = parsed(genAiPipeline({ providerDimensions: true, dimensions: [{ name: "gen_ai.agent.name" }] }));
+    expect(config.connectors["spanmetrics/genai"].dimensions.map((d: { name: string }) => d.name)).toEqual([
+      ...GENAI_SPAN_METRIC_DIMENSIONS,
+      "gen_ai.provider.name",
+      "gen_ai.response.model",
+      "gen_ai.agent.name",
+    ]);
+    expect(config.connectors["sum/genai_tokens"]).toEqual(parsed(genAiPipeline()).connectors["sum/genai_tokens"]);
+    const m = genAiMetrics({ providerDimensions: true });
+    expect(m.calls.dimensions).toEqual(expect.arrayContaining(["gen_ai.provider.name", "gen_ai.response.model"]));
+    expect(m.duration.dimensions).toEqual(m.calls.dimensions);
+    expect(m.inputTokens.dimensions).toEqual(["gen_ai.request.model"]);
+  });
+});
+
 describe("genAiPipeline: checks and topology", () => {
   const optionSets: Array<[string, GenAiPipelineOptions]> = [
     ["default", {}],
@@ -282,6 +451,12 @@ describe("genAiPipeline: checks and topology", () => {
     [
       "remote write with deltatocumulative",
       { metricExporters: [new RemoteWriteExporter({ endpoint: "http://mimir:9009/api/v1/push" })], deltaToCumulative: "auto" },
+    ],
+    ["client metrics derived", { clientMetrics: "derive", providerDimensions: true, metricExporters: [new PrometheusExporter({ endpoint: "0.0.0.0:8889" })] }],
+    ["client metrics passed through", { clientMetrics: "passthrough" }],
+    [
+      "client metrics derived to remote write",
+      { clientMetrics: "derive", metricExporters: [new RemoteWriteExporter({ endpoint: "http://mimir:9009/api/v1/push" })] },
     ],
   ];
 
@@ -313,8 +488,10 @@ describe("genAiPipeline: checks and topology", () => {
   });
 
   test("a parsed YAML file gives the same topology as the declaration", () => {
-    const entities = genAiPipeline();
-    expect(collectorTopology(load(collectorYaml(entities)) as CollectorConfig)).toEqual(collectorTopologyOf(entities));
+    for (const options of [{}, { clientMetrics: "derive" }] satisfies GenAiPipelineOptions[]) {
+      const entities = genAiPipeline(options);
+      expect(collectorTopology(load(collectorYaml(entities)) as CollectorConfig)).toEqual(collectorTopologyOf(entities));
+    }
   });
 
   test("the YAML says which semconv version its keys follow", () => {
@@ -382,6 +559,29 @@ describe.skipIf(!OTELCOL)(`otelcol${OTELCOL ? "" : " (skipped: no otelcol-contri
     const kept = await runCollector({ keepContent: true });
     for (const secret of SECRETS) expect(kept.output).toContain(secret);
   }, 60_000);
+
+  test("derived client metrics split tokens by provider and model without doubling, and skip agent aggregates", async () => {
+    const { metrics } = await runCollector({ clientMetrics: "derive" }, clientPayload());
+    const client = genAiMetrics({ clientMetrics: "derive" }).client!;
+    const value = (series: string, labels: Record<string, string>): number[] =>
+      metrics
+        .split("\n")
+        .filter((l) => l.startsWith(`${series}{`) && Object.entries(labels).every(([k, v]) => l.includes(`${k}="${v}"`)))
+        .map((l) => Number(l.slice(l.lastIndexOf(" ") + 1)));
+    const tokens = `${client.tokenUsage.prometheus}_sum`;
+    // Two openai m1 calls of 100 and 10, one anthropic m2 call of 50 and 5; the invoke_agent span's 1000 are not added.
+    expect(value(tokens, { gen_ai_provider_name: "openai", gen_ai_request_model: "m1", gen_ai_token_type: "input" })).toEqual([200]);
+    expect(value(tokens, { gen_ai_provider_name: "openai", gen_ai_request_model: "m1", gen_ai_token_type: "output" })).toEqual([20]);
+    expect(value(tokens, { gen_ai_provider_name: "anthropic", gen_ai_request_model: "m2", gen_ai_token_type: "input" })).toEqual([50]);
+    expect(value(tokens, { gen_ai_token_type: "input" }).reduce((a, b) => a + b, 0)).toBe(250);
+    expect(value(tokens, { gen_ai_operation_name: "invoke_agent" })).toEqual([]);
+    const count = `${client.operationDuration.prometheus}_count`;
+    expect(value(count, { gen_ai_provider_name: "openai", gen_ai_request_model: "m1", gen_ai_response_model: "m1-2025", server_port: "443" })).toEqual([2]);
+    // A span without a provider is still timed, and the agent span is timed as its own operation.
+    expect(value(count, { gen_ai_operation_name: "execute_tool", error_type: "timeout" })).toEqual([1]);
+    expect(value(count, { gen_ai_operation_name: "invoke_agent" })).toEqual([1]);
+    expect(value(`${client.operationDuration.prometheus}_bucket`, { gen_ai_request_model: "m2", le: "0.04" })).toEqual([1]);
+  }, 60_000);
 });
 
 function variants(): Array<[string, GenAiPipelineOptions]> {
@@ -391,6 +591,8 @@ function variants(): Array<[string, GenAiPipelineOptions]> {
     ["masked", { maskValues: ["secret-[a-z]+"], hashFunction: "sha3" }],
     ["sampled", { sampling: [new FilterProcessor({ name: "sampler", traces: { span: ["status.code != STATUS_CODE_ERROR"] } })] }],
     ["namespaced", { namespace: "agents.support", dimensions: [{ name: "gen_ai.agent.name" }], logs: false }],
+    ["client metrics derived", { clientMetrics: "derive", providerDimensions: true }],
+    ["client metrics passed through", { clientMetrics: "passthrough" }],
   ];
 }
 
@@ -524,7 +726,52 @@ async function waitFor<T>(fn: () => Promise<T | undefined>, timeoutMs: number): 
   }
 }
 
-async function runCollector(options: GenAiPipelineOptions): Promise<{ output: string; metrics: string }> {
+/** Spans for the client metrics: known token counts across two providers, an agent aggregate and a tool call. */
+function clientPayload() {
+  const { traces } = payloads();
+  const [base] = traces.resourceSpans[0]!.scopeSpans[0]!.spans as Array<Record<string, any>>;
+  const now = BigInt(base!.startTimeUnixNano);
+  let id = 0;
+  const span = (name: string, kind: number, attributes: unknown[], ms: number, extra: Record<string, unknown> = {}) => ({
+    traceId: "6b8efff798038103d269b633813fc60c",
+    spanId: (0xeee19b7ec3c1b200n + BigInt(id++)).toString(16),
+    name,
+    kind,
+    startTimeUnixNano: String(now),
+    endTimeUnixNano: String(now + BigInt(ms) * 1_000_000n),
+    attributes,
+    ...extra,
+  });
+  const chat = (provider: string, model: string, input: number, output: number, ms: number) =>
+    span(`chat ${model}`, 3, [
+      str("gen_ai.operation.name", "chat"),
+      str("gen_ai.provider.name", provider),
+      str("gen_ai.request.model", model),
+      str("gen_ai.response.model", `${model}-2025`),
+      str("server.address", "api.example.com"),
+      int("server.port", 443),
+      int("gen_ai.usage.input_tokens", input),
+      int("gen_ai.usage.output_tokens", output),
+    ], ms);
+  const spans = [
+    span("invoke_agent planner", 1, [
+      str("gen_ai.operation.name", "invoke_agent"),
+      str("gen_ai.provider.name", "openai"),
+      str("gen_ai.request.model", "m1"),
+      int("gen_ai.usage.input_tokens", 1000),
+      int("gen_ai.usage.output_tokens", 1000),
+    ], 5000),
+    chat("openai", "m1", 100, 10, 1500),
+    chat("openai", "m1", 100, 10, 300),
+    chat("anthropic", "m2", 50, 5, 30),
+    span("execute_tool search", 1, [str("gen_ai.operation.name", "execute_tool"), str("gen_ai.tool.name", "search"), str("error.type", "timeout")], 70, {
+      status: { code: 2 },
+    }),
+  ];
+  return { resourceSpans: [{ resource: { attributes: [str("service.name", "agent-demo")] }, scopeSpans: [{ scope: { name: "test" }, spans }] }] };
+}
+
+async function runCollector(options: GenAiPipelineOptions, tracesOverride?: unknown): Promise<{ output: string; metrics: string }> {
   const [grpc, http, prom] = [await freePort(), await freePort(), await freePort()];
   const detail = new DebugExporter({ name: "detail", verbosity: "detailed" });
   const yaml = collectorYaml(
@@ -547,7 +794,8 @@ async function runCollector(options: GenAiPipelineOptions): Promise<{ output: st
   child.stdout.on("data", (d) => (output += String(d)));
   child.stderr.on("data", (d) => (output += String(d)));
   try {
-    const { traces, logs } = payloads();
+    const { traces: defaultTraces, logs } = payloads();
+    const traces = tracesOverride ?? defaultTraces;
     const post = (path: string, body: unknown) =>
       fetch(`http://127.0.0.1:${http}${path}`, {
         method: "POST",

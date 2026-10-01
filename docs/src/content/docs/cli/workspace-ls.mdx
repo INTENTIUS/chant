@@ -78,7 +78,15 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
       "because": "an npm workspace package with no chant project",
       "readable": true,
       "reason": null,
-      "records": []
+      "records": [],
+      "generated": [
+        {
+          "path": ".github/workflows/chant-lexicon-aws-production.yml",
+          "command": "chant build --components --generate github --env production",
+          "env": "production",
+          "jobs": ["build", "Deploy to production"]
+        }
+      ]
     }
   ],
   "groups": [
@@ -118,6 +126,17 @@ The example shortens the lists. `chant` is the version that read the workspace. 
 | `acceptance` | for a work kind with [acceptance criteria](/chant/guide/work-items/#acceptance-criteria), each current item that lists criteria as `{ item, state, met, total }`, read in the tree read ([#2772](https://github.com/INTENTIUS/chant/issues/2772)). `null` for any other kind, and when the kind or its records can't be read |
 
 The kind file is looked for in the tree read, which is the revision under `--at`. It is loaded from the working tree, which imports it. A kind that can't be loaded leaves its member readable, and `chant workspace check` fails on it with `WSP115`.
+
+Each member's `generated` lists the files it generates, sorted by path ([#3050](https://github.com/INTENTIUS/chant/issues/3050), [ws-061](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-061-generated-jobs.md)). It merges the member's declared [`generated`](/chant/reference/workspace-declaration/) entries with the record `chant build --components --generate` and `chant run --generate` keep in the member's `.chant/generated.json`. A hand-written entry is not listed. The fields of an entry are:
+
+| Field | Value |
+|---|---|
+| `path` | from the repository root, with `/` separators, which is how a forge reads a CI file. A workspace below the git root has its root in the path |
+| `command` | the command that regenerates the file, run in the member's directory. Empty when a record names none |
+| `env` | the environment a component pipeline deploys, else `null` |
+| `jobs` | for a forge CI file, the check names it declares: a GitHub, Forgejo or Gitea job's `name`, else its id, and a GitLab job's key. `null` for any other file, for a CI file missing from the tree read, and for one that can't be parsed |
+
+A forge CI file is one in `.github/workflows/`, `.forgejo/workflows/`, `.gitea/workflows/` or `.gitlab/ci/`, or the root `.gitlab-ci.yml`. chant reads the file from the tree read, so `--at` gives the names at the revision, and runs nothing. A reader that requires checks, such as github-warden, takes them from `jobs`.
 
 `diagrams` is one flat array for every declared [diagram artifact](/chant/reference/workspace-declaration/#diagrams), a contract 1 addition from [#2764](https://github.com/INTENTIUS/chant/issues/2764). `member` on each entry says who declares it, `null` for the workspace's own. `name`, `title`, `source`, `render` and `renderer` come straight off the declaration. `source` and `render` are paths from the workspace root. `render` is `null` for a `mermaid` or `excalidraw` diagram that commits no render, which a reader draws from its source. chant loads nothing to print this and runs no renderer. A missing source or render, or one that drifted, is `chant workspace check`'s job: it reports those as `WSP131` to `WSP133`.
 

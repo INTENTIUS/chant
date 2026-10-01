@@ -42,11 +42,11 @@ $ chant workspace upgrade . --to v2.0.0
   lint: passed
   workspace check: passed
   patch: 5 file(s), sha256:3c1f…
-ℹ Gated: the patch sha256:3c1f… waits for approval. Review it (--output <file> writes it), then run `chant approve workspace-upgrade .` and repeat this command to apply it.
+ℹ Gated: the patch jcs1-sha256:3c1f… waits for approval. Review it (--output <file> writes it), then run `chant approve workspace-upgrade .` and repeat this command to apply it.
 
 $ chant approve workspace-upgrade .
 $ chant workspace upgrade . --to v2.0.0
-✓ applied the approved upgrade of "." (sha256:3c1f…), approved by alex. Review and commit it.
+✓ applied the approved upgrade of "." (jcs1-sha256:3c1f…), approved by alex. Review and commit it.
 ```
 
 The second run stages the upgrade again. The approval counts only when the new patch has the approved digest, which is the rule `chant approve` applies to plans since [#2300](https://github.com/INTENTIUS/chant/issues/2300). If anything changed in between, whether in the template, the project or a migration, the digest differs. The command then asks for a new approval. The patch is applied to the working tree and left uncommitted.

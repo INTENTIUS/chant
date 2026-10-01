@@ -44,7 +44,7 @@ import {
   type PendingGateInput,
   type PendingGateRecord,
 } from "../lifecycle/gate-ledger";
-import { describePlanDigest } from "../lifecycle/plan-digest";
+import { describePlanDigest, samePlanDigest } from "../lifecycle/plan-digest";
 import { isModelAuthored } from "../lifecycle/gate-origin";
 import { sortedJsonReplacer } from "../utils";
 import type { GateApprover, ResolvedGateApproval } from "./gate-approval";
@@ -325,7 +325,7 @@ export function tallyGateApprovals(
   let mismatched: GateResolutionRecord | undefined;
   for (const r of records) {
     if (r.gate !== gate || at(r) < since) continue;
-    if (planDigest !== undefined && r.planDigest !== planDigest) {
+    if (planDigest !== undefined && !samePlanDigest(r.planDigest, planDigest)) {
       if (!mismatched || at(r) >= at(mismatched)) mismatched = r;
       continue;
     }
@@ -447,7 +447,7 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
   // under another policy version or another context would have `chant
   // approve` evaluate the policy against something this run no longer has.
   if (
-    standing && !isPendingGateExpired(standing, now) && standing.planDigest === input.planDigest &&
+    standing && !isPendingGateExpired(standing, now) && samePlanDigest(standing.planDigest, input.planDigest) &&
     sameApproval(standing.approval, input.approval)
   ) {
     return { satisfied: false, pending: standing, recorded: false, ...asMismatch };

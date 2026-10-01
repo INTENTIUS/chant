@@ -38,6 +38,7 @@
 import { resolve, dirname } from "node:path";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { loadChantConfig, resolveAutoReleaseDisabled, type ChantConfig } from "../../config";
+import { samePlanDigest } from "../../lifecycle/plan-digest";
 import { affectedStacks } from "../../lifecycle/affected";
 import { deriveFanOut, fanOutRegistry } from "../../components/fan-out-support";
 import { runFanOut } from "../../components/fan-out-run";
@@ -242,7 +243,7 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
       console.error(formatError({ message: `--resume: could not read "${args.resume}": ${err instanceof Error ? err.message : String(err)}` }));
       return 1;
     }
-    if (attempt && attempt.digest !== derived.plan.digest) {
+    if (attempt && !samePlanDigest(attempt.digest, derived.plan.digest)) {
       console.error(formatWarning({
         message: `--resume: "${args.resume}" records a different fan-out (${attempt.digest || "no digest"}), so its progress does not apply here`,
         hint: "The derivation changed, which makes this a different change. Everything selected will run.",

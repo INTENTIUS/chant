@@ -90,7 +90,13 @@ export {
   GENAI_TOKEN_DIMENSIONS,
   GENAI_DURATION_BUCKETS,
   GENAI_UNKNOWN_MODEL,
-  CUMULATIVE_ONLY_EXPORTERS,
+  GENAI_PROVIDER_DIMENSIONS,
+  GENAI_CLIENT_METRIC_NAMES,
+  GENAI_CLIENT_METRIC_ATTRIBUTES,
+  GENAI_CLIENT_DURATION_BUCKETS,
+  GENAI_CLIENT_TOKEN_BUCKETS,
+  GENAI_TOKEN_TYPES,
+  DELTA_READY_EXPORTERS,
   genAiNeedsDeltaToCumulative,
   type GenAiPipelineOptions,
   type GenAiComponentsOptions,
@@ -98,6 +104,8 @@ export {
   type GenAiMetricsOptions,
   type GenAiMetrics,
   type GenAiMetric,
+  type GenAiClientMetrics,
+  type GenAiClientMetricsSource,
 } from "./genai";
 
 // Metric names as Prometheus serves them, for dashboards and SLOs built from a declaration

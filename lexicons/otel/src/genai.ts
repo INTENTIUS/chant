@@ -18,11 +18,20 @@
  * cannot sum an attribute, which is why token usage comes from the `sum`
  * connector.
  *
+ * With `clientMetrics: "derive"`, a `signaltometrics` connector on the same
+ * branch also emits the two client metrics the conventions define at the pin,
+ * `gen_ai.client.operation.duration` and `gen_ai.client.token.usage`, under
+ * their own names, attributes, units and buckets. `clientMetrics:
+ * "passthrough"` derives nothing and relies on the SDK to send them. Either
+ * way a `metrics` pipeline passes the SDK's OTLP metrics through. Without the
+ * option the output is what it was before the option existed.
+ *
  * `sum` emits delta sums. The `prometheus` exporter accumulates them itself,
  * but `prometheusremotewrite` drops them, and some OTLP backends store only
- * cumulative data. `deltaToCumulative` puts a `deltatocumulative` processor on
- * `metrics/genai` for those; it is off unless asked for, so a config built
- * without it is unchanged.
+ * cumulative data; `signaltometrics` emits delta histograms too.
+ * `deltaToCumulative` puts a `deltatocumulative` processor on `metrics/genai`
+ * for those. It is on by default only with `clientMetrics: "derive"`, so a
+ * config built without either option is unchanged.
  */
 
 import type { Declarable } from "@intentius/chant/declarable";
@@ -42,9 +51,13 @@ import {
 } from "./components/filtering";
 import {
   ForwardConnector,
+  SignalToMetricsConnector,
   SpanMetricsConnector,
   SumConnector,
   type ForwardConnectorConfig,
+  type SignalToMetricsAttribute,
+  type SignalToMetricsConnectorConfig,
+  type SignalToMetricsMetric,
   type SpanMetricsConnectorConfig,
   type SpanMetricsDimension,
   type SumConnectorConfig,
@@ -67,6 +80,11 @@ export const GENAI_ATTRIBUTES = Object.freeze({
   outputTokens: "gen_ai.usage.output_tokens",
   /** From the general conventions; GenAI spans set it on failure. */
   errorType: "error.type",
+  /** A metric attribute only: `input` or `output` on `gen_ai.client.token.usage`. */
+  tokenType: "gen_ai.token.type",
+  /** From the general conventions: the GenAI server's host and port. */
+  serverAddress: "server.address",
+  serverPort: "server.port",
 } as const);
 
 /**
@@ -141,8 +159,73 @@ export const GENAI_DURATION_BUCKETS: readonly Duration[] = Object.freeze([
   "80s",
 ]);
 
+/**
+ * Dimensions `providerDimensions: true` adds to `genai.calls` and
+ * `genai.duration`. The token sums keep the model alone (see
+ * `GENAI_TOKEN_DIMENSIONS`); `gen_ai.client.token.usage` splits tokens by both.
+ */
+export const GENAI_PROVIDER_DIMENSIONS: readonly string[] = Object.freeze([
+  GENAI_ATTRIBUTES.providerName,
+  GENAI_ATTRIBUTES.responseModel,
+]);
+
+// ── The conventions' client metrics, at GENAI_SEMCONV_PIN ────────────
+
+/** The client metrics the conventions define that one span carries enough to derive. */
+export const GENAI_CLIENT_METRIC_NAMES = Object.freeze({
+  operationDuration: "gen_ai.client.operation.duration",
+  tokenUsage: "gen_ai.client.token.usage",
+} as const);
+
+/** The values of `gen_ai.token.type` on `gen_ai.client.token.usage`. */
+export const GENAI_TOKEN_TYPES = Object.freeze({ input: "input", output: "output" } as const);
+
+/**
+ * The attributes the conventions give both client metrics: required
+ * (`gen_ai.operation.name`, `gen_ai.provider.name`), conditionally required
+ * (`gen_ai.request.model`, `error.type`) and recommended
+ * (`gen_ai.response.model`, `server.address`, `server.port`).
+ * `gen_ai.client.token.usage` adds `gen_ai.token.type`.
+ */
+export const GENAI_CLIENT_METRIC_ATTRIBUTES: readonly string[] = Object.freeze([
+  GENAI_ATTRIBUTES.operationName,
+  GENAI_ATTRIBUTES.providerName,
+  GENAI_ATTRIBUTES.requestModel,
+  GENAI_ATTRIBUTES.responseModel,
+  GENAI_ATTRIBUTES.serverAddress,
+  GENAI_ATTRIBUTES.serverPort,
+  GENAI_ATTRIBUTES.errorType,
+]);
+
+/** The bucket boundaries the conventions advise for `gen_ai.client.operation.duration`, in seconds. */
+export const GENAI_CLIENT_DURATION_BUCKETS: readonly number[] = Object.freeze([
+  0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.28, 2.56, 5.12, 10.24, 20.48, 40.96, 81.92,
+]);
+
+/** The bucket boundaries the conventions advise for `gen_ai.client.token.usage`, in tokens. */
+export const GENAI_CLIENT_TOKEN_BUCKETS: readonly number[] = Object.freeze([
+  1, 4, 16, 64, 256, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864,
+]);
+
+/**
+ * Where the conventions' client metrics come from. `derive`: the collector
+ * builds them from spans. `passthrough`: the SDK already sends them, so the
+ * collector passes them on and derives nothing, since both would double
+ * every series.
+ */
+export type GenAiClientMetricsSource = "derive" | "passthrough";
+
 /** One metric the preset emits, as the collector names it and as Prometheus exposes it. */
 export type GenAiMetric = CollectorMetric;
+
+/** The conventions' client metrics, under their own names. */
+export interface GenAiClientMetrics {
+  source: GenAiClientMetricsSource;
+  /** `gen_ai.client.operation.duration`, a histogram in seconds. Its `_count` is the operation count. */
+  operationDuration: GenAiMetric;
+  /** `gen_ai.client.token.usage`, a histogram in tokens; select `gen_ai_token_type` `input` or `output`. */
+  tokenUsage: GenAiMetric;
+}
 
 export interface GenAiMetrics {
   /** Span count, with `status.code` = `STATUS_CODE_ERROR` for errors. */
@@ -150,6 +233,8 @@ export interface GenAiMetrics {
   duration: GenAiMetric;
   inputTokens: GenAiMetric;
   outputTokens: GenAiMetric;
+  /** The conventions' client metrics. Present only when `clientMetrics` is set. */
+  client?: GenAiClientMetrics;
 }
 
 export interface GenAiMetricsOptions {
@@ -157,6 +242,16 @@ export interface GenAiMetricsOptions {
   namespace?: string;
   /** Dimensions added to the span metrics beyond the GenAI ones. */
   dimensions?: SpanMetricsDimension[];
+  /** Add `gen_ai.provider.name` and `gen_ai.response.model` to `genai.calls` and `genai.duration`. Default false. */
+  providerDimensions?: boolean;
+  /**
+   * Also produce the conventions' client metrics, `gen_ai.client.operation.duration`
+   * and `gen_ai.client.token.usage`. `derive` builds them from spans;
+   * `passthrough` expects the SDK to send them. Either adds a `metrics`
+   * pipeline that passes the SDK's OTLP metrics through. Unset (the default)
+   * leaves the output as it was. The `genai.*` metrics are emitted either way.
+   */
+  clientMetrics?: GenAiClientMetricsSource;
 }
 
 const DEFAULT_NAMESPACE = "genai";
@@ -170,10 +265,10 @@ export function genAiMetrics(options: GenAiMetricsOptions = {}): GenAiMetrics {
   const ns = options.namespace ?? DEFAULT_NAMESPACE;
   const spanDims = [
     ...SPANMETRICS_DEFAULT_DIMENSIONS,
-    ...GENAI_SPAN_METRIC_DIMENSIONS,
-    ...(options.dimensions ?? []).map((d) => d.name),
+    ...spanMetricDimensions(options).map((d) => d.name),
   ];
   const tokenDims = [...GENAI_TOKEN_DIMENSIONS];
+  const source = clientMetricsSource(options);
   return {
     calls: { name: `${ns}.calls`, prometheus: prometheusMetricName(`${ns}.calls`, "sum"), type: "sum", dimensions: spanDims },
     duration: {
@@ -195,7 +290,47 @@ export function genAiMetrics(options: GenAiMetricsOptions = {}): GenAiMetrics {
       type: "sum",
       dimensions: tokenDims,
     },
+    ...(source ? { client: clientMetrics(source) } : {}),
   };
+}
+
+function clientMetricsSource(options: GenAiMetricsOptions): GenAiClientMetricsSource | undefined {
+  const source = options.clientMetrics;
+  if (source === undefined) return undefined;
+  if (source !== "derive" && source !== "passthrough") {
+    throw new Error(`genAi: clientMetrics must be "derive" or "passthrough", got ${JSON.stringify(source)}`);
+  }
+  return source;
+}
+
+function clientMetrics(source: GenAiClientMetricsSource): GenAiClientMetrics {
+  const { operationDuration, tokenUsage } = GENAI_CLIENT_METRIC_NAMES;
+  return {
+    source,
+    operationDuration: {
+      name: operationDuration,
+      prometheus: prometheusMetricName(operationDuration, "histogram", "s"),
+      type: "histogram",
+      unit: "s",
+      dimensions: [...GENAI_CLIENT_METRIC_ATTRIBUTES],
+    },
+    tokenUsage: {
+      name: tokenUsage,
+      prometheus: prometheusMetricName(tokenUsage, "histogram", "{token}"),
+      type: "histogram",
+      unit: "{token}",
+      dimensions: [...GENAI_CLIENT_METRIC_ATTRIBUTES, GENAI_ATTRIBUTES.tokenType],
+    },
+  };
+}
+
+/** The spanmetrics dimensions beyond the connector's defaults, in config order. */
+function spanMetricDimensions(options: GenAiMetricsOptions): SpanMetricsDimension[] {
+  return [
+    ...GENAI_SPAN_METRIC_DIMENSIONS.map((name) => ({ name })),
+    ...(options.providerDimensions ? GENAI_PROVIDER_DIMENSIONS.map((name) => ({ name })) : []),
+    ...(options.dimensions ?? []),
+  ];
 }
 
 // ── Components ───────────────────────────────────────────────────────
@@ -241,6 +376,19 @@ export interface GenAiComponents {
   spanMetrics: OTelComponent<"connector", "spanmetrics", SpanMetricsConnectorConfig>;
   /** Input and output token sums (`sum/genai_tokens`). */
   tokenUsage: OTelComponent<"connector", "sum", SumConnectorConfig>;
+  /**
+   * `gen_ai.client.operation.duration` and `gen_ai.client.token.usage` from
+   * spans (`signaltometrics/genai_client`). Present with `clientMetrics: "derive"`;
+   * wire it like `spanMetrics`.
+   */
+  clientMetrics?: OTelComponent<"connector", "signaltometrics", SignalToMetricsConnectorConfig>;
+  /**
+   * Drops the SDK's own copies of the derived client metrics from metrics
+   * passed through from the SDK (`filter/genai_sdk_client`), so each series
+   * is counted once. Present with `clientMetrics: "derive"`; put it on the
+   * pipeline that receives the SDK's OTLP metrics.
+   */
+  sdkClientMetricsFilter?: OTelComponent<"processor", "filter", FilterProcessorConfig>;
   metrics: GenAiMetrics;
   /** The semantic conventions the attribute keys follow. */
   semconv: SchemaPin;
@@ -321,7 +469,7 @@ export function genAiComponents(options: GenAiComponentsOptions = {}): GenAiComp
   const spanMetrics = new SpanMetricsConnector({
     name: "genai",
     namespace: options.namespace ?? DEFAULT_NAMESPACE,
-    dimensions: [...GENAI_SPAN_METRIC_DIMENSIONS.map((name) => ({ name })), ...(options.dimensions ?? [])],
+    dimensions: spanMetricDimensions(options),
     histogram: { unit: "s", explicit: { buckets: [...(options.buckets ?? GENAI_DURATION_BUCKETS)] } },
     metrics_flush_interval: flush,
   });
@@ -348,6 +496,18 @@ export function genAiComponents(options: GenAiComponentsOptions = {}): GenAiComp
     },
   });
 
+  let clientMetricsConnector: GenAiComponents["clientMetrics"];
+  let sdkClientMetricsFilter: GenAiComponents["sdkClientMetricsFilter"];
+  if (metrics.client?.source === "derive") {
+    clientMetricsConnector = deriveClientMetrics(metrics.client, notAggregate);
+    const names = [metrics.client.operationDuration.name, metrics.client.tokenUsage.name];
+    sdkClientMetricsFilter = new FilterProcessor({
+      name: "genai_sdk_client",
+      error_mode: "ignore",
+      metrics: { metric: names.map((n) => `name == ${quote(n)}`) },
+    });
+  }
+
   const processors: Processor[] = [];
   if (contentRemoval) processors.push(contentRemoval);
   if (redaction) processors.push(redaction);
@@ -360,19 +520,70 @@ export function genAiComponents(options: GenAiComponentsOptions = {}): GenAiComp
     genAiSpans,
     spanMetrics,
     tokenUsage,
+    ...(clientMetricsConnector ? { clientMetrics: clientMetricsConnector } : {}),
+    ...(sdkClientMetricsFilter ? { sdkClientMetricsFilter } : {}),
     metrics,
     semconv: GENAI_SEMCONV_PIN,
   };
 }
 
+/**
+ * The `signaltometrics` connector for the conventions' client metrics. Every
+ * GenAI span records its duration. Token usage is one histogram fed by two
+ * entries, input and output, each setting `gen_ai.token.type` through the
+ * attribute's `default_value` (spans don't carry that key); the connector
+ * merges entries with the same name, unit and description into one metric.
+ * Token entries skip the in-process agent and workflow spans the `sum`
+ * connector skips, and spans whose count is not a number, which would
+ * otherwise fail the batch.
+ */
+function deriveClientMetrics(client: GenAiClientMetrics, notAggregate: string) {
+  const [operation, ...rest] = GENAI_CLIENT_METRIC_ATTRIBUTES;
+  // Spans always have the operation (filter/genai_spans keeps no other); the
+  // rest are optional, so a span that lacks one, such as a tool call without
+  // a provider, is still counted.
+  const attributes: SignalToMetricsAttribute[] = [{ key: operation! }, ...rest.map((key) => ({ key, optional: true }))];
+  const duration: SignalToMetricsMetric = {
+    name: client.operationDuration.name,
+    description: "GenAI operation duration.",
+    unit: client.operationDuration.unit!,
+    attributes,
+    histogram: {
+      buckets: [...GENAI_CLIENT_DURATION_BUCKETS],
+      value: "Double(Microseconds(end_time - start_time)) / 1000000.0",
+    },
+  };
+  const tokens = (tokenType: string, source: string): SignalToMetricsMetric => {
+    const attr = `attributes[${quote(source)}]`;
+    return {
+      name: client.tokenUsage.name,
+      description: "Number of input and output tokens used.",
+      unit: client.tokenUsage.unit!,
+      attributes: [...attributes, { key: GENAI_ATTRIBUTES.tokenType, default_value: tokenType }],
+      conditions: [`(IsInt(${attr}) or IsDouble(${attr})) and ${notAggregate}`],
+      histogram: { buckets: [...GENAI_CLIENT_TOKEN_BUCKETS], value: attr },
+    };
+  };
+  return new SignalToMetricsConnector({
+    name: "genai_client",
+    spans: [
+      duration,
+      tokens(GENAI_TOKEN_TYPES.input, GENAI_ATTRIBUTES.inputTokens),
+      tokens(GENAI_TOKEN_TYPES.output, GENAI_ATTRIBUTES.outputTokens),
+    ],
+  });
+}
+
 // ── The whole collector ──────────────────────────────────────────────
 
 /**
- * Metric exporters that read only cumulative data. At COLLECTOR_PIN,
- * `prometheusremotewrite` drops non-cumulative monotonic sums, histograms and
- * summaries (its README at collector-contrib v0.130.0).
+ * Metric exporters that take delta sums and histograms as they are: the
+ * `prometheus` exporter accumulates them itself, and `debug` prints them.
+ * Any other exporter gets cumulative data under `deltaToCumulative: "auto"`.
+ * `prometheusremotewrite`, for one, drops non-cumulative monotonic sums,
+ * histograms and summaries (its README at collector-contrib v0.130.0).
  */
-export const CUMULATIVE_ONLY_EXPORTERS: readonly string[] = Object.freeze(["prometheusremotewrite"]);
+export const DELTA_READY_EXPORTERS: readonly string[] = Object.freeze(["prometheus", "debug"]);
 
 /** Whether `deltaToCumulative` puts a `deltatocumulative` processor on `metrics/genai` for these exporters. */
 export function genAiNeedsDeltaToCumulative(
@@ -380,7 +591,7 @@ export function genAiNeedsDeltaToCumulative(
   metricExporters: readonly Exporter[],
 ): boolean {
   if (setting === true) return true;
-  if (setting === "auto") return metricExporters.some((e) => CUMULATIVE_ONLY_EXPORTERS.includes(e.componentType));
+  if (setting === "auto") return metricExporters.some((e) => !DELTA_READY_EXPORTERS.includes(e.componentType));
   if (setting === undefined || setting === false) return false;
   throw new Error(`genAiPipeline: deltaToCumulative must be true, false or "auto", got ${JSON.stringify(setting)}`);
 }
@@ -388,7 +599,11 @@ export function genAiNeedsDeltaToCumulative(
 export interface GenAiPipelineOptions extends GenAiComponentsOptions {
   /** Where traces go. Default: one `debug` exporter at `basic` verbosity. */
   traceExporters?: Exporter[];
-  /** Where the span and token metrics go. Default: the same `debug` exporter. */
+  /**
+   * Where the span and token metrics go, and with `clientMetrics` the SDK's
+   * metrics too. Default: the same `debug` exporter. See `deltaToCumulative`
+   * for exporters that need cumulative data.
+   */
   metricExporters?: Exporter[];
   /** Where logs (and events sent as logs) go. Default: the same `debug` exporter. */
   logExporters?: Exporter[];
@@ -403,12 +618,15 @@ export interface GenAiPipelineOptions extends GenAiComponentsOptions {
   /** Serve `health_check` on 0.0.0.0:13133. Default: true. */
   healthCheck?: boolean;
   /**
-   * Put a `deltatocumulative/genai` processor on `metrics/genai`, so the
-   * `sum` connector's delta token sums reach exporters that need cumulative
-   * data. `"auto"`: when a metric exporter is in `CUMULATIVE_ONLY_EXPORTERS`
-   * (`prometheusremotewrite`). `true`: always, such as for `otlp` to a
-   * backend that stores cumulative data; the processor leaves the cumulative
-   * span metrics alone. `false` or unset: never, which is the output from
+   * Put a `deltatocumulative/genai` processor in front of `batch` on
+   * `metrics/genai`, so the delta token sums of the `sum` connector, and with
+   * `clientMetrics: "derive"` the delta histograms of `signaltometrics`, reach
+   * exporters as cumulative data. The span metrics are cumulative already and
+   * pass through unchanged. `"auto"`: when a metric exporter is not in
+   * `DELTA_READY_EXPORTERS` (`prometheus`, `debug`), such as
+   * `prometheusremotewrite` or `otlp`. `true`: always. `false`: never, such
+   * as for an OTLP backend that wants deltas. Unset: `"auto"` with
+   * `clientMetrics: "derive"`, otherwise `false`, which is the output from
    * before the option existed. The processor keeps running totals in memory,
    * so a collector behind a load balancer needs each stream to reach one
    * replica.
@@ -429,7 +647,10 @@ export function genAiPipeline(options: GenAiPipelineOptions = {}): Declarable[] 
   const { traceExporters = [debug], metricExporters = [debug], logExporters = [debug], logs = true, sampling = [], healthCheck = true } =
     options;
   const parts = genAiComponents(options);
-  const cumulative = genAiNeedsDeltaToCumulative(options.deltaToCumulative, metricExporters)
+  const client = parts.metrics.client;
+  // derive mode is opt-in and newer than the option, so it can default to "auto".
+  const cumulativeSetting = options.deltaToCumulative ?? (client?.source === "derive" ? "auto" : false);
+  const cumulative = genAiNeedsDeltaToCumulative(cumulativeSetting, metricExporters)
     ? [new DeltaToCumulativeProcessor({ name: "genai" })]
     : [];
 
@@ -480,16 +701,28 @@ export function genAiPipeline(options: GenAiPipelineOptions = {}): Declarable[] 
       name: "genai",
       receivers: [parts.forward],
       processors: [parts.genAiSpans],
-      exporters: [parts.spanMetrics, parts.tokenUsage],
+      exporters: [parts.spanMetrics, parts.tokenUsage, ...(parts.clientMetrics ? [parts.clientMetrics] : [])],
     }),
     new Pipeline({
       signal: "metrics",
       name: "genai",
-      receivers: [parts.spanMetrics, parts.tokenUsage],
+      receivers: [parts.spanMetrics, parts.tokenUsage, ...(parts.clientMetrics ? [parts.clientMetrics] : [])],
       processors: [...cumulative, batch],
       exporters: metricExporters,
     }),
   );
+  if (client) {
+    // The SDK's own metrics: the client metrics in passthrough, and the
+    // ones no span carries (time to first chunk, gen_ai.server.*) either way.
+    entities.push(
+      new Pipeline({
+        signal: "metrics",
+        receivers: [otlp],
+        processors: [memoryLimiter, ...(parts.sdkClientMetricsFilter ? [parts.sdkClientMetricsFilter] : []), batch],
+        exporters: metricExporters,
+      }),
+    );
+  }
   if (logs) {
     entities.push(
       new Pipeline({

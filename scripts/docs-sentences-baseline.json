@@ -263,6 +263,10 @@
   "formatting/em-dash-density": 2,
   "claude/colon-reveal": 2
  },
+ "docs/src/content/docs/cli/workspace-pin.mdx": {
+  "formatting/em-dash-density": 2,
+  "claude/colon-reveal": 2
+ },
  "docs/src/content/docs/cli/workspace-points.mdx": {
   "formatting/em-dash-density": 2,
   "claude/colon-reveal": 2,
