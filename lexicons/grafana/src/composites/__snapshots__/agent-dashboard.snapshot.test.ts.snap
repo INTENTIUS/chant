@@ -1,0 +1,1581 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`AgentDashboard output without rules > a preset with the conventions' client metrics and provider dimensions 1`] = `
+{
+  "dashboards/genai-agents.json": "{
+  "annotations": {
+    "list": []
+  },
+  "description": "Calls, errors and latency per model and tool, and token usage per model, from the genai GenAI metrics.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "type": "row",
+      "collapsed": false,
+      "title": "Models",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "id": 2,
+      "title": "Calls by model",
+      "description": "GenAI operations per second, from genai_calls_total.",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "sum by (gen_ai_request_model) (rate(genai_calls_total{service_name=~\\"$service\\", gen_ai_request_model=~\\"$model\\"}[$__rate_interval]))",
+          "legendFormat": "{{gen_ai_request_model}}"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 3,
+      "title": "Errors by model",
+      "description": "Share of operations that ended with status_code=\\"STATUS_CODE_ERROR\\".",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "(\\nsum by (gen_ai_request_model) (rate(genai_calls_total{service_name=~\\"$service\\", gen_ai_request_model=~\\"$model\\", status_code=\\"STATUS_CODE_ERROR\\"}[$__rate_interval]))\\nor\\nsum by (gen_ai_request_model) (rate(genai_calls_total{service_name=~\\"$service\\", gen_ai_request_model=~\\"$model\\"}[$__rate_interval])) * 0\\n)\\n/\\nsum by (gen_ai_request_model) (rate(genai_calls_total{service_name=~\\"$service\\", gen_ai_request_model=~\\"$model\\"}[$__rate_interval]))",
+          "legendFormat": "{{gen_ai_request_model}}"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 4,
+      "title": "Latency p95 by model",
+      "description": "From genai_duration_seconds.",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, gen_ai_request_model) (rate(genai_duration_seconds_bucket{service_name=~\\"$service\\", gen_ai_request_model=~\\"$model\\"}[$__rate_interval])))",
+          "legendFormat": "{{gen_ai_request_model}}"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "row",
+      "collapsed": false,
+      "title": "Tools",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 9
+      },
+      "id": 5,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "id": 6,
+      "title": "Tool calls",
+      "description": "Operations with a gen_ai.tool.name, per second.",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 10
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "sum by (gen_ai_tool_name) (rate(genai_calls_total{service_name=~\\"$service\\", gen_ai_request_model=~\\"$model\\", gen_ai_tool_name!=\\"\\"}[$__rate_interval]))",
+          "legendFormat": "{{gen_ai_tool_name}}"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 7,
+      "title": "Errors by tool",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 10
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "(\\nsum by (gen_ai_tool_name) (rate(genai_calls_total{service_name=~\\"$service\\", gen_ai_request_model=~\\"$model\\", gen_ai_tool_name!=\\"\\", status_code=\\"STATUS_CODE_ERROR\\"}[$__rate_interval]))\\nor\\nsum by (gen_ai_tool_name) (rate(genai_calls_total{service_name=~\\"$service\\", gen_ai_request_model=~\\"$model\\", gen_ai_tool_name!=\\"\\"}[$__rate_interval])) * 0\\n)\\n/\\nsum by (gen_ai_tool_name) (rate(genai_calls_total{service_name=~\\"$service\\", gen_ai_request_model=~\\"$model\\", gen_ai_tool_name!=\\"\\"}[$__rate_interval]))",
+          "legendFormat": "{{gen_ai_tool_name}}"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 8,
+      "title": "Latency p95 by tool",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 10
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, gen_ai_tool_name) (rate(genai_duration_seconds_bucket{service_name=~\\"$service\\", gen_ai_request_model=~\\"$model\\", gen_ai_tool_name!=\\"\\"}[$__rate_interval])))",
+          "legendFormat": "{{gen_ai_tool_name}}"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "row",
+      "collapsed": false,
+      "title": "Errors",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 18
+      },
+      "id": 9,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "id": 10,
+      "title": "Errors by type",
+      "description": "Failed operations per second by error.type.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 19
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "sum by (error_type) (rate(genai_calls_total{service_name=~\\"$service\\", gen_ai_request_model=~\\"$model\\", status_code=\\"STATUS_CODE_ERROR\\"}[$__rate_interval]))",
+          "legendFormat": "{{error_type}}"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "row",
+      "collapsed": false,
+      "title": "Tokens",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 27
+      },
+      "id": 11,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "id": 12,
+      "title": "Input tokens by model",
+      "description": "Tokens per second by model, from genai_tokens_input_total.",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 28
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "sum by (gen_ai_request_model) (rate(genai_tokens_input_total{gen_ai_request_model=~\\"$model\\"}[$__rate_interval]))",
+          "legendFormat": "{{gen_ai_request_model}}"
+        }
+      ],
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 13,
+      "title": "Output tokens by model",
+      "description": "Tokens per second by model, from genai_tokens_output_total.",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 28
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "sum by (gen_ai_request_model) (rate(genai_tokens_output_total{gen_ai_request_model=~\\"$model\\"}[$__rate_interval]))",
+          "legendFormat": "{{gen_ai_request_model}}"
+        }
+      ],
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "id": 14,
+      "title": "Input tokens",
+      "description": "Over the dashboard's time range.",
+      "gridPos": {
+        "h": 8,
+        "w": 4,
+        "x": 16,
+        "y": 28
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "sum(increase(genai_tokens_input_total{gen_ai_request_model=~\\"$model\\"}[$__range]))",
+          "legendFormat": "Input tokens",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "options": {
+        "graphMode": "none",
+        "colorMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "id": 15,
+      "title": "Output tokens",
+      "description": "Over the dashboard's time range.",
+      "gridPos": {
+        "h": 8,
+        "w": 4,
+        "x": 20,
+        "y": 28
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "sum(increase(genai_tokens_output_total{gen_ai_request_model=~\\"$model\\"}[$__range]))",
+          "legendFormat": "Output tokens",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "options": {
+        "graphMode": "none",
+        "colorMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0
+        },
+        "overrides": []
+      }
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 42,
+  "tags": [
+    "genai",
+    "agents"
+  ],
+  "templating": {
+    "list": [
+      {
+        "type": "query",
+        "name": "service",
+        "label": "Service",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(genai_calls_total, service_name)",
+        "definition": "label_values(genai_calls_total, service_name)",
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "options": []
+      },
+      {
+        "type": "query",
+        "name": "model",
+        "label": "Model",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(genai_calls_total, gen_ai_request_model)",
+        "definition": "label_values(genai_calls_total, gen_ai_request_model)",
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "options": []
+      }
+    ]
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Agents: models, tools and tokens",
+  "uid": "genai-agents",
+  "weekStart": ""
+}
+",
+}
+`;
+
+exports[`AgentDashboard output without rules > another namespace, quantile and dashboard options 1`] = `
+{
+  "dashboards/AI/agents-agents.json": "{
+  "annotations": {
+    "list": []
+  },
+  "description": "Calls, errors and latency per model and tool, and token usage per model, from the agents GenAI metrics.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "type": "row",
+      "collapsed": false,
+      "title": "Models",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "id": 2,
+      "title": "Calls by model",
+      "description": "GenAI operations per second, from agents_calls_total.",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "sum by (gen_ai_request_model) (rate(agents_calls_total{service_name=~\\"$service\\", gen_ai_request_model=~\\"$model\\"}[$__rate_interval]))",
+          "legendFormat": "{{gen_ai_request_model}}"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 3,
+      "title": "Errors by model",
+      "description": "Share of operations that ended with status_code=\\"STATUS_CODE_ERROR\\".",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "(\\nsum by (gen_ai_request_model) (rate(agents_calls_total{service_name=~\\"$service\\", gen_ai_request_model=~\\"$model\\", status_code=\\"STATUS_CODE_ERROR\\"}[$__rate_interval]))\\nor\\nsum by (gen_ai_request_model) (rate(agents_calls_total{service_name=~\\"$service\\", gen_ai_request_model=~\\"$model\\"}[$__rate_interval])) * 0\\n)\\n/\\nsum by (gen_ai_request_model) (rate(agents_calls_total{service_name=~\\"$service\\", gen_ai_request_model=~\\"$model\\"}[$__rate_interval]))",
+          "legendFormat": "{{gen_ai_request_model}}"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 4,
+      "title": "Latency p99 by model",
+      "description": "From agents_duration_seconds.",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "histogram_quantile(0.99, sum by (le, gen_ai_request_model) (rate(agents_duration_seconds_bucket{service_name=~\\"$service\\", gen_ai_request_model=~\\"$model\\"}[$__rate_interval])))",
+          "legendFormat": "{{gen_ai_request_model}}"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "row",
+      "collapsed": false,
+      "title": "Tools",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 9
+      },
+      "id": 5,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "id": 6,
+      "title": "Tool calls",
+      "description": "Operations with a gen_ai.tool.name, per second.",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 10
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "sum by (gen_ai_tool_name) (rate(agents_calls_total{service_name=~\\"$service\\", gen_ai_request_model=~\\"$model\\", gen_ai_tool_name!=\\"\\"}[$__rate_interval]))",
+          "legendFormat": "{{gen_ai_tool_name}}"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 7,
+      "title": "Errors by tool",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 10
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "(\\nsum by (gen_ai_tool_name) (rate(agents_calls_total{service_name=~\\"$service\\", gen_ai_request_model=~\\"$model\\", gen_ai_tool_name!=\\"\\", status_code=\\"STATUS_CODE_ERROR\\"}[$__rate_interval]))\\nor\\nsum by (gen_ai_tool_name) (rate(agents_calls_total{service_name=~\\"$service\\", gen_ai_request_model=~\\"$model\\", gen_ai_tool_name!=\\"\\"}[$__rate_interval])) * 0\\n)\\n/\\nsum by (gen_ai_tool_name) (rate(agents_calls_total{service_name=~\\"$service\\", gen_ai_request_model=~\\"$model\\", gen_ai_tool_name!=\\"\\"}[$__rate_interval]))",
+          "legendFormat": "{{gen_ai_tool_name}}"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 8,
+      "title": "Latency p99 by tool",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 10
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "histogram_quantile(0.99, sum by (le, gen_ai_tool_name) (rate(agents_duration_seconds_bucket{service_name=~\\"$service\\", gen_ai_request_model=~\\"$model\\", gen_ai_tool_name!=\\"\\"}[$__rate_interval])))",
+          "legendFormat": "{{gen_ai_tool_name}}"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "row",
+      "collapsed": false,
+      "title": "Errors",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 18
+      },
+      "id": 9,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "id": 10,
+      "title": "Errors by type",
+      "description": "Failed operations per second by error.type.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 19
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "sum by (error_type) (rate(agents_calls_total{service_name=~\\"$service\\", gen_ai_request_model=~\\"$model\\", status_code=\\"STATUS_CODE_ERROR\\"}[$__rate_interval]))",
+          "legendFormat": "{{error_type}}"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "row",
+      "collapsed": false,
+      "title": "Tokens",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 27
+      },
+      "id": 11,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "id": 12,
+      "title": "Input tokens by model",
+      "description": "Tokens per second by model, from agents_tokens_input_total.",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 28
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "sum by (gen_ai_request_model) (rate(agents_tokens_input_total{gen_ai_request_model=~\\"$model\\"}[$__rate_interval]))",
+          "legendFormat": "{{gen_ai_request_model}}"
+        }
+      ],
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 13,
+      "title": "Output tokens by model",
+      "description": "Tokens per second by model, from agents_tokens_output_total.",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 28
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "sum by (gen_ai_request_model) (rate(agents_tokens_output_total{gen_ai_request_model=~\\"$model\\"}[$__rate_interval]))",
+          "legendFormat": "{{gen_ai_request_model}}"
+        }
+      ],
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "id": 14,
+      "title": "Input tokens",
+      "description": "Over the dashboard's time range.",
+      "gridPos": {
+        "h": 8,
+        "w": 4,
+        "x": 16,
+        "y": 28
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "sum(increase(agents_tokens_input_total{gen_ai_request_model=~\\"$model\\"}[$__range]))",
+          "legendFormat": "Input tokens",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "options": {
+        "graphMode": "none",
+        "colorMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "id": 15,
+      "title": "Output tokens",
+      "description": "Over the dashboard's time range.",
+      "gridPos": {
+        "h": 8,
+        "w": 4,
+        "x": 20,
+        "y": 28
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "sum(increase(agents_tokens_output_total{gen_ai_request_model=~\\"$model\\"}[$__range]))",
+          "legendFormat": "Output tokens",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "options": {
+        "graphMode": "none",
+        "colorMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0
+        },
+        "overrides": []
+      }
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 42,
+  "tags": [
+    "ai"
+  ],
+  "templating": {
+    "list": [
+      {
+        "type": "query",
+        "name": "service",
+        "label": "Service",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(agents_calls_total, service_name)",
+        "definition": "label_values(agents_calls_total, service_name)",
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "options": []
+      },
+      {
+        "type": "query",
+        "name": "model",
+        "label": "Model",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(agents_calls_total, gen_ai_request_model)",
+        "definition": "label_values(agents_calls_total, gen_ai_request_model)",
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "options": []
+      }
+    ]
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Agents",
+  "uid": "agents-agents",
+  "weekStart": ""
+}
+",
+}
+`;
+
+exports[`AgentDashboard output without rules > default preset 1`] = `
+{
+  "dashboards/genai-agents.json": "{
+  "annotations": {
+    "list": []
+  },
+  "description": "Calls, errors and latency per model and tool, and token usage per model, from the genai GenAI metrics.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "type": "row",
+      "collapsed": false,
+      "title": "Models",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "id": 2,
+      "title": "Calls by model",
+      "description": "GenAI operations per second, from genai_calls_total.",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "sum by (gen_ai_request_model) (rate(genai_calls_total{service_name=~\\"$service\\", gen_ai_request_model=~\\"$model\\"}[$__rate_interval]))",
+          "legendFormat": "{{gen_ai_request_model}}"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 3,
+      "title": "Errors by model",
+      "description": "Share of operations that ended with status_code=\\"STATUS_CODE_ERROR\\".",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "(\\nsum by (gen_ai_request_model) (rate(genai_calls_total{service_name=~\\"$service\\", gen_ai_request_model=~\\"$model\\", status_code=\\"STATUS_CODE_ERROR\\"}[$__rate_interval]))\\nor\\nsum by (gen_ai_request_model) (rate(genai_calls_total{service_name=~\\"$service\\", gen_ai_request_model=~\\"$model\\"}[$__rate_interval])) * 0\\n)\\n/\\nsum by (gen_ai_request_model) (rate(genai_calls_total{service_name=~\\"$service\\", gen_ai_request_model=~\\"$model\\"}[$__rate_interval]))",
+          "legendFormat": "{{gen_ai_request_model}}"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 4,
+      "title": "Latency p95 by model",
+      "description": "From genai_duration_seconds.",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 1
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, gen_ai_request_model) (rate(genai_duration_seconds_bucket{service_name=~\\"$service\\", gen_ai_request_model=~\\"$model\\"}[$__rate_interval])))",
+          "legendFormat": "{{gen_ai_request_model}}"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "row",
+      "collapsed": false,
+      "title": "Tools",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 9
+      },
+      "id": 5,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "id": 6,
+      "title": "Tool calls",
+      "description": "Operations with a gen_ai.tool.name, per second.",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 10
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "sum by (gen_ai_tool_name) (rate(genai_calls_total{service_name=~\\"$service\\", gen_ai_request_model=~\\"$model\\", gen_ai_tool_name!=\\"\\"}[$__rate_interval]))",
+          "legendFormat": "{{gen_ai_tool_name}}"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 7,
+      "title": "Errors by tool",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 10
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "(\\nsum by (gen_ai_tool_name) (rate(genai_calls_total{service_name=~\\"$service\\", gen_ai_request_model=~\\"$model\\", gen_ai_tool_name!=\\"\\", status_code=\\"STATUS_CODE_ERROR\\"}[$__rate_interval]))\\nor\\nsum by (gen_ai_tool_name) (rate(genai_calls_total{service_name=~\\"$service\\", gen_ai_request_model=~\\"$model\\", gen_ai_tool_name!=\\"\\"}[$__rate_interval])) * 0\\n)\\n/\\nsum by (gen_ai_tool_name) (rate(genai_calls_total{service_name=~\\"$service\\", gen_ai_request_model=~\\"$model\\", gen_ai_tool_name!=\\"\\"}[$__rate_interval]))",
+          "legendFormat": "{{gen_ai_tool_name}}"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 8,
+      "title": "Latency p95 by tool",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 10
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, gen_ai_tool_name) (rate(genai_duration_seconds_bucket{service_name=~\\"$service\\", gen_ai_request_model=~\\"$model\\", gen_ai_tool_name!=\\"\\"}[$__rate_interval])))",
+          "legendFormat": "{{gen_ai_tool_name}}"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "row",
+      "collapsed": false,
+      "title": "Errors",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 18
+      },
+      "id": 9,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "id": 10,
+      "title": "Errors by type",
+      "description": "Failed operations per second by error.type.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 19
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "sum by (error_type) (rate(genai_calls_total{service_name=~\\"$service\\", gen_ai_request_model=~\\"$model\\", status_code=\\"STATUS_CODE_ERROR\\"}[$__rate_interval]))",
+          "legendFormat": "{{error_type}}"
+        }
+      ],
+      "options": {},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "row",
+      "collapsed": false,
+      "title": "Tokens",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 27
+      },
+      "id": 11,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "id": 12,
+      "title": "Input tokens by model",
+      "description": "Tokens per second by model, from genai_tokens_input_total.",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 28
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "sum by (gen_ai_request_model) (rate(genai_tokens_input_total{gen_ai_request_model=~\\"$model\\"}[$__rate_interval]))",
+          "legendFormat": "{{gen_ai_request_model}}"
+        }
+      ],
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 13,
+      "title": "Output tokens by model",
+      "description": "Tokens per second by model, from genai_tokens_output_total.",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 28
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "sum by (gen_ai_request_model) (rate(genai_tokens_output_total{gen_ai_request_model=~\\"$model\\"}[$__rate_interval]))",
+          "legendFormat": "{{gen_ai_request_model}}"
+        }
+      ],
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "id": 14,
+      "title": "Input tokens",
+      "description": "Over the dashboard's time range.",
+      "gridPos": {
+        "h": 8,
+        "w": 4,
+        "x": 16,
+        "y": 28
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "sum(increase(genai_tokens_input_total{gen_ai_request_model=~\\"$model\\"}[$__range]))",
+          "legendFormat": "Input tokens",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "options": {
+        "graphMode": "none",
+        "colorMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "id": 15,
+      "title": "Output tokens",
+      "description": "Over the dashboard's time range.",
+      "gridPos": {
+        "h": 8,
+        "w": 4,
+        "x": 20,
+        "y": 28
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "sum(increase(genai_tokens_output_total{gen_ai_request_model=~\\"$model\\"}[$__range]))",
+          "legendFormat": "Output tokens",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "options": {
+        "graphMode": "none",
+        "colorMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0
+        },
+        "overrides": []
+      }
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 42,
+  "tags": [
+    "genai",
+    "agents"
+  ],
+  "templating": {
+    "list": [
+      {
+        "type": "query",
+        "name": "service",
+        "label": "Service",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(genai_calls_total, service_name)",
+        "definition": "label_values(genai_calls_total, service_name)",
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "options": []
+      },
+      {
+        "type": "query",
+        "name": "model",
+        "label": "Model",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(genai_calls_total, gen_ai_request_model)",
+        "definition": "label_values(genai_calls_total, gen_ai_request_model)",
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "options": []
+      }
+    ]
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Agents: models, tools and tokens",
+  "uid": "genai-agents",
+  "weekStart": ""
+}
+",
+}
+`;

@@ -25,7 +25,7 @@ A service overview over Prometheus, Tempo and Loki: RED panels over span metrics
 
 ## dashboards-from-declarations
 
-A collector, an SLO and three dashboards in one build root, built with `chant build src --lexicon otel`, `--lexicon prometheus` and `--lexicon grafana`. The collector turns every span into RED metrics through a `spanmetrics` connector with the namespace `shop`, and GenAI spans into per-model metrics and token sums through the GenAI preset under `agents`. The checkout SLO writes its SLI with the names `spanMetricsNames()` reads from the same connector. `RedDashboard`, `SloDashboard` and `AgentDashboard` build their dashboards from the connector, the `Slo` and the preset, so changing `namespace: "shop"` moves the SLO's rules and the RED dashboard's queries together. See [Dashboards from Declarations](../composites/).
+A collector, an SLO, GenAI recording rules and four dashboards in one build root, built with `chant build src --lexicon otel`, `--lexicon prometheus` and `--lexicon grafana`. The collector turns every span into RED metrics through a `spanmetrics` connector with the namespace `shop`, and GenAI spans into per-model metrics and token sums through the GenAI preset under `agents`. The checkout SLO writes its SLI with the names `spanMetricsNames()` reads from the same connector. `RedDashboard`, `SloDashboard` and `AgentDashboard` build their dashboards from the connector, the `Slo` and the preset, so changing `namespace: "shop"` moves the SLO's rules and the RED dashboard's queries together. `GenAiRules` records per-provider series and cost from a made-up price table, and a second `AgentDashboard` reads them. See [Dashboards from Declarations](../composites/).
 
 ```ts title="src/components.ts"
 {{file:dashboards-from-declarations/src/components.ts}}
@@ -33,6 +33,10 @@ A collector, an SLO and three dashboards in one build root, built with `chant bu
 
 ```ts title="src/slo.ts"
 {{file:dashboards-from-declarations/src/slo.ts}}
+```
+
+```ts title="src/genai-rules.ts"
+{{file:dashboards-from-declarations/src/genai-rules.ts}}
 ```
 
 ```ts title="src/dashboards.ts"

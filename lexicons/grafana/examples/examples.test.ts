@@ -7,9 +7,10 @@ import { load } from "js-yaml";
 import { grafanaSerializer, type GrafanaIndex, type ProvisionedDatasource } from "@intentius/chant-lexicon-grafana";
 import { validateGrafanaOutput } from "@intentius/chant-lexicon-grafana/validation";
 import { otelSerializer, spanMetricsNames } from "@intentius/chant-lexicon-otel";
-import { prometheusSerializer, sloMetrics } from "@intentius/chant-lexicon-prometheus";
+import { genAiRuleMetrics, prometheusSerializer, sloMetrics } from "@intentius/chant-lexicon-prometheus";
 import { spans, genai } from "./dashboards-from-declarations/src/components";
 import { checkout } from "./dashboards-from-declarations/src/slo";
+import { genaiRules } from "./dashboards-from-declarations/src/genai-rules";
 import { checkout as checkoutSlo } from "./alerting/src/slo";
 
 describeAllExamples(
@@ -77,12 +78,12 @@ describe("the alerting example", () => {
 describe("the dashboards-from-declarations example", () => {
   const srcDir = join(import.meta.dirname, "dashboards-from-declarations", "src");
 
-  test("builds the collector, the SLO rules and three dashboards from one build root, all clean", async () => {
+  test("builds the collector, the SLO and GenAI rules and four dashboards from one build root, all clean", async () => {
     const result = await build(srcDir, [otelSerializer, prometheusSerializer, grafanaSerializer]);
     expect(result.errors).toHaveLength(0);
     const grafana = result.outputs.get("grafana") as SerializerResult;
     const index = JSON.parse(grafana.primary) as GrafanaIndex;
-    expect(index.dashboards.map((d) => d.uid).sort()).toEqual(["agents-agents", "red-shop", "slo-checkout"]);
+    expect(index.dashboards.map((d) => d.uid).sort()).toEqual(["agents-agents", "genai-agents", "red-shop", "slo-checkout"]);
     expect(index.datasources.map((d) => d.type)).toEqual(["prometheus", "tempo"]);
 
     const dashboards = index.dashboards.map((d) => ({ source: d.file, json: JSON.parse(grafana.files![d.file]) as Record<string, unknown> }));
@@ -97,6 +98,8 @@ describe("the dashboards-from-declarations example", () => {
     for (const b of sloMetrics(checkout).burnRates) expect(dashboard("slo-checkout")).toContain(b.longRecord);
     expect(dashboard("agents-agents")).toContain(genai.metrics.calls.prometheus);
     expect(dashboard("agents-agents")).toContain(genai.metrics.inputTokens.prometheus);
+    const recorded = genAiRuleMetrics(genaiRules);
+    for (const series of [recorded.requests, recorded.tokens, recorded.cost!]) expect(dashboard("genai-agents")).toContain(series);
 
     // The SLO's rules and the collector read the same connector.
     const output = (key: string) => {
@@ -104,6 +107,7 @@ describe("the dashboards-from-declarations example", () => {
       return typeof out === "string" ? out : out.primary;
     };
     expect(output("prometheus")).toContain(red.calls.prometheus);
+    expect(output("prometheus")).toContain(`record: ${recorded.cost}`);
     expect(output("otel")).toContain("namespace: shop");
   });
 });
