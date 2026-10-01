@@ -21,7 +21,7 @@
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
-import { getPrimaryOutput, extractActionRefs, extractUsesComment, parseActionUses } from "./yaml-helpers";
+import { getPrimaryOutput, extractActionRefs, extractUsesComment, parseActionUses, usesLineComments } from "./yaml-helpers";
 
 const SHA_RE = /^[0-9a-f]{40}$/;
 
@@ -49,9 +49,17 @@ export function findStalePinAnnotations(yaml: string): StalePinFinding[] {
   const findings: StalePinFinding[] = [];
 
   // First pass: missing annotations.
+  // The parsed value carries no comment, so match each ref to its `uses:`
+  // line, in document order, to read the label.
+  const lines = usesLineComments(yaml);
+  const commentFor = (ref: string): string | undefined => {
+    const k = lines.findIndex((l) => l.ref === ref);
+    if (k === -1) return extractUsesComment(ref);
+    return lines.splice(k, 1)[0].comment;
+  };
   const withComment: Array<{ job: string; ref: string; slug: string; sha: string; comment: string }> = [];
   for (const { job, ref, parsed } of refs) {
-    const comment = extractUsesComment(ref);
+    const comment = commentFor(ref);
     if (!comment) {
       findings.push({ job, ref, slug: parsed.slug, sha: parsed.gitRef, kind: "missing" });
     } else {
