@@ -913,6 +913,11 @@ Workspace (level 1, #2524):
                         Print the integrity value that pins the plugin at
                         <path>, to put in a path pin of chant.workspace.json.
                         chant checks it before it reads the plugin
+  workspace agent [<name>] [--json]
+                        Print an agent session from the declaration: the one
+                        member it is bound to, the record kinds and verbs its
+                        write scope allows, and the spec records --current
+                        prints. Without a name, the session CHANT_AGENT names
   workspace verify [--base <rev>] [--head <rev>] [--require attested]
                         Check the commits in base..head against the signers
                         and roles read from base. A change to the signers file
@@ -949,7 +954,10 @@ Workspace (level 1, #2524):
                         does, change-out-of-scope when a record in hand (the
                         --work item and its decisions) lists it in
                         out_of_scope. The declaration's changes block sets
-                        the severity (warn by default) and ignore globs
+                        the severity (warn by default) and ignore globs. When
+                        the declaration at base has writeScope or agents, each
+                        commit that writes outside its writer's scope fails
+                        the check (write-scope-member, write-scope-kind)
   workspace patch <base>..<head>|<base>...<head>|<commit> [--path <p>...] [--max-bytes <n>] [--json]
   workspace patch [<commit>] --worktree [--path <p>...] [--max-bytes <n>] [--json]
                         The hunks of a diff, file by file: a range, a work
@@ -1493,6 +1501,8 @@ export const commandRegistry: CommandDef[] = [
   // Each unit decides for itself whether its config is loaded (runCommandInProcess).
   { name: "workspace member-run", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/member-run")).runWorkspaceMemberRun(ctx, runCommandInProcess) },
   { name: "workspace pin", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/pin-cli")).runWorkspacePin(ctx) },
+  // #2548 — an agent session's member, write scope and spec, for a session that resumes.
+  { name: "workspace agent", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/agent-cli")).runWorkspaceAgent(ctx) },
   { name: "workspace verify", handler: async (ctx) => (await import("../workspace/trust/verify-cli")).runWorkspaceVerify(ctx) },
 
   // State subcommands

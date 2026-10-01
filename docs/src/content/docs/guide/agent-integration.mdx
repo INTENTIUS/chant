@@ -85,6 +85,7 @@ A server started inside a declared workspace also has tools for the workspace's 
 | `workspace-changes` | The forward coverage check over a diff: each changed path with the records covering it, and the uncovered or out-of-scope ones |
 | `workspace-records` | The records of a kind, with quorum and warnings, or what changed since a revision |
 | `workspace-points` | The workspace's decision points, and the questions asked of them, with the open ones a person answers |
+| `workspace-agent` | An agent session's member, write scope and the spec it reloads from |
 | `workspace-work-history` | A work item's lease history: each claim, and whether it was released, with what outcome, or never released |
 | `records-new` | Propose a record; it opens `proposed` and says it came through MCP |
 | `records-amend` | Set fields of a record, under the same approval rule as the CLI |
@@ -93,6 +94,8 @@ A server started inside a declared workspace also has tools for the workspace's 
 | `points-answer` | Record people's answer to an open decision point question, or confirm a model's proposal |
 
 A record written this way is a proposal until people review it. `by` must name whoever actually decided.
+
+To bind a harness to one member, declare an [agent session](/chant/reference/workspace-declaration/#write-scope-and-agent-sessions) and start the server with `CHANT_AGENT=<name>`. Its record writes are then held to the session's write scope, and the agent resumes from `workspace-agent` (or `chant workspace agent <name>`) with no state of its own. Commits it makes carry a `Chant-Agent: <name>` trailer, so `chant workspace check --changes` in CI judges them as the session ([#2548](https://github.com/INTENTIUS/chant/issues/2548)).
 
 ### Resources
 

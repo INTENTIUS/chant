@@ -40,17 +40,18 @@ import { execFileSync } from "node:child_process";
 import { relative, resolve, sep } from "node:path";
 // @ts-ignore — picomatch has no types declaration
 import picomatch from "picomatch";
-import { declaredRecordKinds, readDeclaration, readerVersion, WORKSPACE_ERROR_CODES, WorkspaceReadError, type ChangeSeverity } from "./declaration";
+import { declaredRecordKinds, readDeclaration, readerVersion, WORKSPACE_ERROR_CODES, WorkspaceReadError, type ChangeSeverity, type Declaration } from "./declaration";
 import { declaredKindFile } from "./declared-kinds";
 import { isGeneratedPath } from "./generated-files";
 import { parseRegion } from "./intent";
 import { constraintCovers, isWorkspacePath, memberHolding } from "./record-assets";
-import { RecordReadError, type LoadedRecordKind, type RecordEntry } from "./records";
+import { loadRecordKind, RecordReadError, type LoadedRecordKind, type RecordEntry } from "./records";
 import { readRecordsFor } from "./records-cli";
 import type { ReasonCode } from "./reason-codes";
 import { joinPath } from "./tree";
 import { locateWorkspace } from "./which-chant";
 import { idList, isDecided } from "./work";
+import { checkWriteScope, type CheckKind, type ScopeReport } from "./write-scope";
 
 /** The version of the `changes` document this chant writes. */
 export const CHANGES_CONTRACT_VERSION = 1;
@@ -172,7 +173,13 @@ export type ChangesDocument =
       paths: ChangedPath[];
       findings: ChangeFinding[];
       summary: { paths: number; covered: number; uncovered: number; outOfScope: number; ignored: number; records: number };
-      /** False only when severity is fail and there are findings. */
+      /**
+       * The write scope check (#2548): each commit in the range judged
+       * against the writeScope and agents the declaration at base gives,
+       * or null when that declaration restricts no one.
+       */
+      scope: ScopeReport | null;
+      /** False when severity is fail and there are findings, or when a commit writes outside its writer's scope. */
       ok: boolean;
     })
   | (Head & { error: { code: ChangesErrorCode; message: string } });
@@ -463,6 +470,7 @@ async function run(query: ChangesQuery, head: Head): Promise<Exclude<ChangesDocu
     }
   }
   const count = (s: ChangeStatus) => paths.filter((p) => p.status === s).length;
+  const scope = await writeScopeAtBase(query, top, range, workspacePrefix);
   return {
     ...head,
     workspace: { name: declaration.name, root: located.root },
@@ -474,8 +482,54 @@ async function run(query: ChangesQuery, head: Head): Promise<Exclude<ChangesDocu
     paths,
     findings,
     summary: { paths: paths.length, covered: count("covered"), uncovered: count("uncovered"), outOfScope: count("out-of-scope"), ignored: count("ignored"), records: count("record") },
-    ok: !(severity === "fail" && findings.length > 0),
+    scope,
+    ok: !(severity === "fail" && findings.length > 0) && (scope === null || scope.findings.length === 0),
   };
+}
+
+/**
+ * The write scope check over the range (#2548), with the declaration, its
+ * record kinds and the trust policy read at the range's base, so a change
+ * can't widen its own scope. Null when the base has no declaration, or one
+ * that restricts no one. The base is read without the root-chant rule: a
+ * change may move the chant pin, and the scope is data either chant reads.
+ */
+async function writeScopeAtBase(query: ChangesQuery, top: string, range: { base: string; head: string }, prefix: string): Promise<ScopeReport | null> {
+  let located: ReturnType<typeof locateWorkspace>;
+  let declaration: Declaration;
+  try {
+    located = locateWorkspace(query.cwd, range.base);
+    declaration = readDeclaration(located.tree);
+  } catch (err) {
+    if (err instanceof WorkspaceReadError && err.code === "declaration-missing") return null;
+    throw err;
+  }
+  if (declaration.writeScope === null && declaration.agents.length === 0) return null;
+  const kinds: CheckKind[] = [];
+  for (const d of declaredRecordKinds(declaration)) {
+    let loaded: LoadedRecordKind;
+    try {
+      loaded = await loadRecordKind(declaredKindFile(d, located.rootOnDisk), query.cwd);
+    } catch (err) {
+      // A kind that doesn't load here: its files are judged as plain paths.
+      if (err instanceof RecordReadError) continue;
+      throw err;
+    }
+    const { kind } = loaded;
+    const session = kind.session;
+    kinds.push({
+      scoped: { name: kind.name, declaredName: d.name, member: d.member, declared: true },
+      dir: toPosix(relative(top, loaded.dir)) || ".",
+      match: new RegExp(kind.location.match),
+      reviewFields: [kind.reviews?.field, session?.verdicts].filter((f): f is string => typeof f === "string"),
+      session:
+        session && kind.stateField !== undefined
+          ? { stateField: kind.stateField, closed: kind.closedStates ?? [], fills: [session.openedRev].filter((f): f is string => typeof f === "string") }
+          : null,
+      format: kind.format,
+    });
+  }
+  return checkWriteScope({ top, base: range.base, head: range.head, prefix, declaration, kinds });
 }
 
 function finding(code: ChangesFindingCode, p: ChangedPath, severity: "warn" | "fail", message: string, records: string[]): ChangeFinding {
