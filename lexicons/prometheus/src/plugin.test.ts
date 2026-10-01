@@ -37,6 +37,7 @@ describe("prometheus plugin", () => {
       "PROM207",
       "PROM208",
       "PROM209",
+      "PROM210",
     ]);
   });
 

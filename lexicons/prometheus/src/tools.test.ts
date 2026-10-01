@@ -17,6 +17,7 @@ import {
   promtoolCheckRules,
   ruleFileYaml,
 } from "./index";
+import { INTEGRATION_CASES, amWith } from "./testdata/integration-cases";
 
 const PROMTOOL = process.env.PROMTOOL ?? "promtool";
 const AMTOOL = process.env.AMTOOL ?? "amtool";
@@ -111,6 +112,11 @@ describe("amtool check-config", () => {
   test.skipIf(!hasAmtool)("rejects what PROM201 flags, so the two agree", () => {
     const r = amtoolCheckConfig(alertmanagerYaml([new Route({ receiver: "nobody" })]), AMTOOL);
     expect(r.ok).toBe(false);
+  });
+
+  test.skipIf(!hasAmtool).each(INTEGRATION_CASES.filter((c) => c[4].length > 0))("rejects what PROM208-PROM210 flag: %s", (_label, key, entry, global) => {
+    const r = amtoolCheckConfig(amWith(key, entry, global), AMTOOL);
+    expect(r.ok, r.output).toBe(false);
   });
 
   test("reports ran: false when the binary is missing", () => {
