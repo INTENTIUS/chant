@@ -35,8 +35,9 @@
  * request, withheld by `owned`, a v2-stored dashboard the server cannot
  * serve at v2) is NOT-OBSERVED with its reason; a
  * provider has no API and is `unsupported-kind`. Nothing unreadable comes
- * back as a clean tree. A declared panel, row, query or variable has no tree
- * of its own (./members.ts): its properties are in its dashboard's.
+ * back as a clean tree. A panel, row, query or variable is property-kind:
+ * core never asks about one on its own (#3001), and its properties are
+ * compared as part of its dashboard's tree.
  */
 
 import type { DeepObservationResult, DeepResourceObservation, UnobservedEntity } from "@intentius/chant/lexicon";
@@ -51,8 +52,7 @@ import { readDatasource } from "./api/datasources";
 import { DASHBOARD_PROVIDER_TYPE, DASHBOARD_TYPE } from "./dashboard";
 import { DATASOURCE_TYPE, EXTERNAL_DATASOURCE_TYPE } from "./datasource";
 import { grafanaDeepNormalizationHooks } from "./deep-observe-hooks";
-import { ORPHAN_PART, PROVIDER_NOT_OBSERVABLE, declaredUid, type GrafanaObserveOptions } from "./describe-resources";
-import { dashboardMembers, isDashboardPart } from "./members";
+import { PROVIDER_NOT_OBSERVABLE, declaredUid, type GrafanaObserveOptions } from "./describe-resources";
 import { dashboardTree, datasourceProps } from "./import/live-export";
 import { chantProviderNames, dashboardOwnership, folderOwnership, ownershipGap } from "./ownership";
 
@@ -137,21 +137,12 @@ export async function observeResourcesDeepGrafana(options: GrafanaObserveOptions
   }
 
   const providers = chantProviderNames(options.entities.values());
-  const members = dashboardMembers(options.entities);
   const resources: Record<string, DeepResourceObservation> = {};
   const unobserved: Record<string, UnobservedEntity> = {};
 
   await boundedConcurrently([...options.entities], async ([name, { entityType, props }]) => {
     if (entityType === DASHBOARD_PROVIDER_TYPE) {
       unobserved[name] = { type: entityType, reason: "unsupported-kind", detail: PROVIDER_NOT_OBSERVABLE };
-      return;
-    }
-    // A panel, row, query or variable is compared as part of its
-    // dashboard's tree, so it has no tree of its own: in neither map, which
-    // the deep diff reads as nothing to compare (helm does the same for its
-    // chart-authoring entities). One on no dashboard cannot be observed.
-    if (isDashboardPart(entityType)) {
-      if (!members.has(name)) unobserved[name] = { type: entityType, reason: "unsupported-kind", detail: ORPHAN_PART };
       return;
     }
     const isDashboard = entityType === DASHBOARD_TYPE;
