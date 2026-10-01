@@ -9,7 +9,7 @@
  * parses as a collector config (a `service.pipelines` map) goes through the
  * otel lexicon's `validateCollectorConfig`.
  *
- * Findings keep the otel rule ids (OTEL101-OTEL106, OTEL112-OTEL116, and any config
+ * Findings keep the otel rule ids (OTEL101-OTEL106, OTEL112-OTEL117, and any config
  * check the otel lexicon adds later), so `lint.rules` and suppressions name
  * one id wherever the config lives. Each message names the ConfigMap's
  * namespace, name and key. Needs only the k8s lexicon in the project.

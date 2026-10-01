@@ -54,8 +54,8 @@ convert (OTEL112), pipelines feeding each other in a cycle (OTEL113), a
 connector id shared with a receiver or exporter (OTEL114), a \`routing\` route
 to a pipeline that doesn't receive from it (OTEL115), a connector
 splitting metrics by a per-request GenAI attribute such as
-\`gen_ai.conversation.id\` (OTEL116), and a literal
-credential in source (OTEL002).
+\`gen_ai.conversation.id\` (OTEL116), two started components listening
+on the same address (OTEL117), and a literal credential in source (OTEL002).
 `;
 
 const outputFormat = `The otel lexicon serializes every otel entity in a build into **one

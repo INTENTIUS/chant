@@ -33,7 +33,8 @@ export type CollectorIssueCode =
   | "OTEL113"
   | "OTEL114"
   | "OTEL115"
-  | "OTEL116";
+  | "OTEL116"
+  | "OTEL117";
 
 export interface CollectorIssue {
   code: CollectorIssueCode;
@@ -65,8 +66,9 @@ function describePairs(pairs: ReadonlyArray<ConnectorSignalPair>): string {
  * Check a collector config's references and pipeline shape (OTEL101-OTEL106),
  * each connector's signals against its definition (OTEL112), cycles through
  * connectors (OTEL113), connector ids shared with a receiver or exporter
- * (OTEL114), `routing` connector targets (OTEL115), and the attributes
- * connectors split metrics by (OTEL116).
+ * (OTEL114), `routing` connector targets (OTEL115), the attributes
+ * connectors split metrics by (OTEL116), and started components that listen
+ * on the same address (OTEL117).
  */
 export function validateCollectorConfig(config: CollectorConfig): CollectorIssue[] {
   const issues: CollectorIssue[] = [];
@@ -226,6 +228,7 @@ export function validateCollectorConfig(config: CollectorConfig): CollectorIssue
     ...connectorIdIssues(config),
     ...routingTargetIssues(config),
     ...metricAttributeIssues(config),
+    ...listenerIssues(config),
   );
 
   return issues;
@@ -460,6 +463,164 @@ function metricAttributeIssues(config: CollectorConfig): CollectorIssue[] {
         severity: "warning",
         component: id,
         message: `connector "${id}" splits metrics by "${key}" (${field}); ${why}, so every value starts new time series. Drop it from the metric's attributes, or keep it on spans and logs`,
+      });
+    }
+  }
+  return issues;
+}
+
+/** One address a started component listens on. */
+interface Listener {
+  /** Who listens: `receiver "otlp" (protocols.grpc.endpoint)`. */
+  owner: string;
+  component?: string;
+  host: string;
+  port: number;
+  transport: "tcp" | "udp";
+}
+
+/**
+ * The listeners OTEL117 knows, by component type: the config key path to an
+ * address, its default at `COLLECTOR_PIN` (collector and contrib v0.130.0,
+ * each component's `factory.go`), and the transport. `present` means the
+ * default applies only when the key's parent is in the config: an otlp or
+ * jaeger protocol that isn't listed doesn't start. A type not listed here is
+ * not checked, since its `endpoint` may be a server it connects to (the
+ * kubeletstats receiver's is the kubelet).
+ */
+interface ListenerSpec {
+  path: string[];
+  default?: string;
+  transport?: "udp";
+  present?: boolean;
+}
+
+const LISTENERS: Record<"receiver" | "exporter" | "extension", Record<string, ListenerSpec[]>> = {
+  receiver: {
+    otlp: [
+      { path: ["protocols", "grpc", "endpoint"], default: "localhost:4317", present: true },
+      { path: ["protocols", "http", "endpoint"], default: "localhost:4318", present: true },
+    ],
+    zipkin: [{ path: ["endpoint"], default: "localhost:9411" }],
+    jaeger: [
+      { path: ["protocols", "grpc", "endpoint"], default: "localhost:14250", present: true },
+      { path: ["protocols", "thrift_http", "endpoint"], default: "localhost:14268", present: true },
+      { path: ["protocols", "thrift_binary", "endpoint"], default: "localhost:6832", present: true, transport: "udp" },
+      { path: ["protocols", "thrift_compact", "endpoint"], default: "localhost:6831", present: true, transport: "udp" },
+    ],
+  },
+  exporter: {
+    prometheus: [{ path: ["endpoint"] }],
+  },
+  extension: {
+    health_check: [{ path: ["endpoint"], default: "localhost:13133" }],
+    zpages: [{ path: ["endpoint"], default: "localhost:55679" }],
+    pprof: [{ path: ["endpoint"], default: "localhost:1777" }],
+  },
+};
+
+/** The collector's own metrics endpoint when `service.telemetry.metrics` names no reader. */
+const DEFAULT_TELEMETRY_METRICS = { host: "localhost", port: 8888 };
+
+const WILDCARD_HOSTS = new Set(["", "0.0.0.0", "::", "[::]"]);
+
+function splitAddress(address: unknown): { host: string; port: number } | undefined {
+  if (typeof address !== "string") return undefined;
+  const m = address.match(/^(.*):(\d+)$/);
+  if (!m) return undefined;
+  return { host: m[1], port: Number(m[2]) };
+}
+
+function at(value: unknown, path: string[]): { found: boolean; value: unknown } {
+  let cur: unknown = value;
+  for (const key of path) {
+    if (typeof cur !== "object" || cur === null || !(key in (cur as Record<string, unknown>))) return { found: false, value: undefined };
+    cur = (cur as Record<string, unknown>)[key];
+  }
+  return { found: true, value: cur };
+}
+
+function componentListeners(kind: "receiver" | "exporter" | "extension", id: string, body: unknown): Listener[] {
+  const type = parseComponentId(id)?.type ?? id;
+  const out: Listener[] = [];
+  for (const spec of LISTENERS[kind][type] ?? []) {
+    if (spec.present && !at(body, spec.path.slice(0, -1)).found) continue;
+    const { found, value } = at(body, spec.path);
+    const address = splitAddress(found && value !== undefined && value !== null ? value : spec.default);
+    if (!address) continue;
+    out.push({ owner: `${kind} "${id}" (${spec.path.join(".")})`, component: id, ...address, transport: spec.transport ?? "tcp" });
+  }
+  return out;
+}
+
+/** The collector's own metrics endpoints, from `service.telemetry.metrics`. */
+function telemetryListeners(config: CollectorConfig): Listener[] {
+  const metrics = (config.service?.telemetry as Record<string, unknown> | undefined)?.metrics as Record<string, unknown> | undefined;
+  if (metrics?.level === "none") return [];
+  const readers = Array.isArray(metrics?.readers) ? (metrics.readers as unknown[]) : undefined;
+  if (!readers) return [{ owner: "the collector's own metrics (service.telemetry.metrics, by default)", ...DEFAULT_TELEMETRY_METRICS, transport: "tcp" }];
+  const out: Listener[] = [];
+  readers.forEach((reader, i) => {
+    const prom = at(reader, ["pull", "exporter", "prometheus"]);
+    if (!prom.found || typeof prom.value !== "object" || prom.value === null) return;
+    const { host, port } = prom.value as { host?: unknown; port?: unknown };
+    const portNumber = typeof port === "number" ? port : typeof port === "string" && /^\d+$/.test(port) ? Number(port) : undefined;
+    if (portNumber === undefined) return;
+    out.push({
+      owner: `the collector's own metrics (service.telemetry.metrics.readers[${i}])`,
+      host: typeof host === "string" ? host : "localhost",
+      port: portNumber,
+      transport: "tcp",
+    });
+  });
+  return out;
+}
+
+function sameAddress(a: Listener, b: Listener): boolean {
+  if (a.port !== b.port || a.transport !== b.transport) return false;
+  return a.host === b.host || WILDCARD_HOSTS.has(a.host) || WILDCARD_HOSTS.has(b.host);
+}
+
+/**
+ * OTEL117: two things the collector starts listen on the same address, so
+ * the second bind fails with "address already in use" and the collector
+ * exits. `otelcol validate` builds the config without binding, so it does
+ * not catch this. Started means: a receiver or exporter some pipeline lists,
+ * an extension in `service.extensions`, and the collector's own metrics
+ * endpoint. A wildcard host (`0.0.0.0`, `::`, empty) overlaps every host on
+ * its port; an `${env:...}` host is compared as written.
+ */
+function listenerIssues(config: CollectorConfig): CollectorIssue[] {
+  const pipelines = Object.values(config.service?.pipelines ?? {});
+  const started = (refs: Array<string[] | undefined>) => new Set(refs.flatMap((r) => (r ?? []).map(String)));
+  const receivers = started(pipelines.map((p) => p?.receivers));
+  const exporters = started(pipelines.map((p) => p?.exporters));
+  const extensions = new Set((config.service?.extensions ?? []).map(String));
+
+  const listeners: Listener[] = [];
+  const sections: Array<["receiver" | "exporter" | "extension", Record<string, unknown> | undefined, Set<string>]> = [
+    ["receiver", config.receivers, receivers],
+    ["exporter", config.exporters, exporters],
+    ["extension", config.extensions, extensions],
+  ];
+  for (const [kind, section, startedIds] of sections) {
+    for (const [id, body] of Object.entries(section ?? {})) {
+      if (startedIds.has(id)) listeners.push(...componentListeners(kind, id, body));
+    }
+  }
+  listeners.push(...telemetryListeners(config));
+
+  const issues: CollectorIssue[] = [];
+  for (let i = 0; i < listeners.length; i++) {
+    for (let j = 0; j < i; j++) {
+      const [first, second] = [listeners[j], listeners[i]];
+      if (!sameAddress(first, second)) continue;
+      const udp = first.transport === "udp" ? " (UDP)" : "";
+      issues.push({
+        code: "OTEL117",
+        severity: "error",
+        ...(second.component ? { component: second.component } : first.component ? { component: first.component } : {}),
+        message: `${first.owner} listens on ${first.host}:${first.port}${udp} and ${second.owner} on ${second.host}:${second.port}${udp}; the second bind fails with "address already in use" and the collector exits. Move one of them to another port`,
       });
     }
   }
