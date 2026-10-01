@@ -36,6 +36,9 @@ function releaseTagShapes(): Array<{ recipe: string; example: string }> {
   // `git tag "chant-v$next"` / `git tag "lexicon-{{name}}-v$next"`
   for (const m of justfile.matchAll(/git tag "([^"]+)"/g)) {
     const raw = m[1];
+    // The reference workspace's tag (`release_reference_tag`, #2543) rides
+    // along with a chant release and publishes nothing by design.
+    if (raw === "$rtag") continue;
     const example = raw
       .replace(/\{\{name\}\}/g, "docker")
       .replace(/\$\{?next\}?/g, "9.9.9");
@@ -196,7 +199,8 @@ describe("release wiring: release the newest green commit (#2816)", () => {
     }
     const lib = readFileSync(join(repoRoot, "scripts", "release-lib.sh"), "utf-8");
     // main and the tag land together or not at all, and nothing is forced.
-    expect(lib).toMatch(/git push --quiet --atomic origin "HEAD:refs\/heads\/main" "refs\/tags\/\$tag"/);
+    expect(lib).toMatch(/push_refs=\("refs\/tags\/\$tag"\)/);
+    expect(lib).toMatch(/git push --quiet --atomic origin "HEAD:refs\/heads\/main" "\$\{push_refs\[@\]\}"/);
     expect(lib).not.toMatch(/git push[^\n]*(--force|\s-f\b)/);
   });
 
