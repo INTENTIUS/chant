@@ -47,6 +47,11 @@ import type * as xychart from "./schema/xychart.gen";
 import type * as trend from "./schema/trend.gen";
 import type * as canvas from "./schema/canvas.gen";
 import type * as geomap from "./schema/geomap.gen";
+import type * as candlestick from "./schema/candlestick.gen";
+import type * as annotationslist from "./schema/annotationslist.gen";
+import type * as dashboardlist from "./schema/dashboardlist.gen";
+import type * as news from "./schema/news.gen";
+import type * as datagrid from "./schema/datagrid.gen";
 import type { AlertListOptions, FlameGraphOptions } from "./panel-options";
 import type { Transformation } from "./transformations";
 
@@ -356,6 +361,51 @@ export const GeomapPanel = makePanelClass<"geomap", geomap.Options, Record<strin
   description: "Geomap: data on a world map, as markers, heatmaps or routes",
   defaultSize: { w: 12, h: 10 },
   schema: "geomap",
+  builtin: true,
+});
+
+export const CandlestickPanel = makePanelClass<"candlestick", candlestick.Options, candlestick.FieldConfig>({
+  type: "candlestick",
+  className: "CandlestickPanel",
+  description: "Candlestick: open, high, low and close values over time, as candles or OHLC bars",
+  defaultSize: { w: 12, h: 8 },
+  schema: "candlestick",
+  builtin: true,
+});
+
+export const AnnotationsListPanel = makePanelClass<"annolist", annotationslist.Options, Record<string, unknown>>({
+  type: "annolist",
+  className: "AnnotationsListPanel",
+  description: "Annotations list: recent annotations, filterable by dashboard, time range and tag, no queries",
+  defaultSize: { w: 8, h: 10 },
+  schema: "annotationslist",
+  builtin: true,
+});
+
+export const DashboardListPanel = makePanelClass<"dashlist", dashboardlist.Options, Record<string, unknown>>({
+  type: "dashlist",
+  className: "DashboardListPanel",
+  description: "Dashboard list: starred, recent or searched dashboards as links, no queries",
+  defaultSize: { w: 8, h: 10 },
+  schema: "dashboardlist",
+  builtin: true,
+});
+
+export const NewsPanel = makePanelClass<"news", news.Options, Record<string, unknown>>({
+  type: "news",
+  className: "NewsPanel",
+  description: "News: items from an RSS or Atom feed, no queries",
+  defaultSize: { w: 8, h: 10 },
+  schema: "news",
+  builtin: true,
+});
+
+export const DataGridPanel = makePanelClass<"datagrid", datagrid.Options, Record<string, unknown>>({
+  type: "datagrid",
+  className: "DataGridPanel",
+  description: "Data grid: an editable table of a series' values (experimental in Grafana)",
+  defaultSize: { w: 12, h: 8 },
+  schema: "datagrid",
   builtin: true,
 });
 

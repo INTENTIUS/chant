@@ -330,6 +330,10 @@ const EXPECTED_RUN_FALLBACK: ReadonlyMap<string, string> = new Map<string, strin
     "`export default`; the capture edge then takes the files that read its exports",
   ],
   [
+    "lexicons/k8s/examples/otel-node-agent",
+    "`Object.values(agent.members)` as a value: it reads the NodeAgent composite's members at run time",
+  ],
+  [
     "lexicons/k8s/examples/otel-gateway",
     "`gatewayExporter(...)` as a value: it reads the gateway composite's Services at run time; the taint fixpoint then takes the files it imports",
   ],

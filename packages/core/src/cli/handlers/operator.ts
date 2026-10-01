@@ -9,7 +9,7 @@
 import { lexiconNames } from "../../lexicon-module";
 import { loadChantConfig } from "../../config";
 import { build } from "../../build";
-import { isResourceDeclarable } from "../../declarable";
+import { isObservableDeclarable } from "../../declarable";
 import { collectBuildRootContributors, collectChangeSubscribers } from "../plugins";
 import { discoverOps, discoverStewards } from "../../op/discover";
 import { pickSteward, stewardBesideOf, stewardFormFor, stewardLeaseName, stewardTurnOps, DEFAULT_STEWARD_ENV } from "../../op/steward";
@@ -116,7 +116,7 @@ async function collectOperatorSubscribers(
     // subscription may watch.
     const entities = new Map<string, Map<string, { entityType: string; props: Record<string, unknown> }>>();
     for (const [name, entity] of buildResult.entities) {
-      if (!isResourceDeclarable(entity)) continue;
+      if (!isObservableDeclarable(entity)) continue;
       let perLexicon = entities.get(entity.lexicon);
       if (!perLexicon) entities.set(entity.lexicon, (perLexicon = new Map()));
       perLexicon.set(name, {

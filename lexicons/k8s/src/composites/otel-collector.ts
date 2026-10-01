@@ -23,7 +23,8 @@ import {
   type Signal,
 } from "@intentius/chant-lexicon-otel";
 import { Service, Role, RoleBinding } from "../generated";
-import { collectorAgentResources, type CollectorAgentResources } from "./otel-collector-agent";
+import { collectorAgentResources, type CollectorAgentResources, type CollectorLogAccess } from "./otel-collector-agent";
+import { collectorNodeAccess } from "./otel-collector-node";
 import { agentClusterRules, namespacedRoles } from "./otel-collector-rbac";
 import {
   collectorRuntime,
@@ -52,6 +53,14 @@ export interface OtelCollectorProps {
   signals?: Signal[];
   /** Additional labels. */
   labels?: Record<string, string>;
+  /**
+   * How a config with a `filelog` receiver reads the node's container logs,
+   * which are root's: `group` (default) keeps user 10001 and adds the pod to
+   * group 0, enough where the runtime writes them group-readable
+   * (containerd); `root` runs the container as user 0. Ignored when the
+   * config reads no logs from the node.
+   */
+  logAccess?: CollectorLogAccess;
   /** CPU request (default: "100m"). */
   cpuRequest?: string;
   /** Memory request (default: "256Mi"). */
@@ -106,6 +115,7 @@ export const OtelCollector = Composite((props: OtelCollectorProps) => {
     namespace = "observability",
     image = COLLECTOR_IMAGE,
     labels: extraLabels = {},
+    logAccess = "group",
     cpuRequest = "100m",
     memoryRequest = "256Mi",
     cpuLimit = "500m",
@@ -139,6 +149,10 @@ export const OtelCollector = Composite((props: OtelCollectorProps) => {
     configDir: runtime.configDir,
     ports: runtime.containerPorts,
     clusterRules: agentClusterRules(runtime.built.config),
+    // The node name, host mounts and log access the config's node-reading
+    // components need (#3103); nothing for a config that reads no node.
+    nodeAccess: collectorNodeAccess(runtime.built.config, runtime.configDir),
+    logAccess,
     cpuRequest,
     memoryRequest,
     cpuLimit,

@@ -10,7 +10,8 @@
  * meets them in a lint report.
  */
 
-import { auditRule, type RuleMeta } from "@intentius/chant/audit/catalog";
+import { applyLineage, auditRule, type RuleMeta } from "@intentius/chant/audit/catalog";
+import { grafanaAuditLineage } from "./audit-lineage";
 
 function sourceRule(id: string, category: RuleMeta["category"], title: string, remediation: string): RuleMeta {
   return { id, tier: "merge-worthy", fixKind: "guidance", category, title, remediation, yamlBased: false };
@@ -166,3 +167,6 @@ export const grafanaAuditCatalog: Record<string, RuleMeta> = {
     { category: "correctness" },
   ),
 };
+
+// Prior art credits live beside the rules in ./audit-lineage.ts (see core audit/prior-art.ts).
+applyLineage(grafanaAuditCatalog, grafanaAuditLineage);

@@ -49,6 +49,33 @@ The ClusterRole is the one `GkeOtelCollector` grants too. It holds what the `k8s
 
 Rules in `defaults.clusterRole.rules` are appended, for a component the table does not cover.
 
+### Node access
+
+A per-node agent reads the node it runs on: the otel lexicon's [`NodeAgent`](/chant/lexicons/otel/composites/#nodeagent) puts Kubernetes metadata on its node's pods, scrapes the node's metrics and reads its pods' logs. The DaemonSet gives the config what its components read from the node, worked out from the config the way the RBAC is. Only components a pipeline runs count, and a config that reads nothing from the node, like the default one, gets none of it. Each row follows the component's README at collector-contrib v0.130.0.
+
+| Component | The DaemonSet gets |
+|-----------|--------------------|
+| `k8sattributes` with `filter.node_from_env_var` | That variable set from `spec.nodeName` with the downward API ("Deployment scenarios") |
+| `kubeletstats` with `${env:VAR}` in `node`, or in `endpoint` where `VAR` ends in `NODE_NAME` | `VAR` from `spec.nodeName` ("Service Account Authentication Example"); an `endpoint` variable ending in `NODE_IP` or `HOST_IP` gets `status.hostIP` |
+| `hostmetrics` with `root_path` | The host root mounted read-only at `root_path`, with `HostToContainer` propagation ("Collecting host metrics from inside a container") |
+| `filelog` | Each directory its `include` patterns read, mounted read-only from the host at the same path: the fixed part of the pattern, so `/var/log/pods/*/*/*.log` mounts `/var/log/pods`. Reading `/var/log/containers` also mounts `/var/log/pods`, where its symlinks point |
+
+The kubelet's container logs are owned by root. With `logAccess: "group"`, the default, the container keeps running as user 10001 and the pod joins group 0 (`supplementalGroups: [0]`), which reads them where the runtime writes them group-readable, as containerd does (mode 0640). For a runtime that writes them readable by root only, `logAccess: "root"` runs the container as user 0, with the rest of its security context unchanged. Neither applies to a config that reads no logs from the node.
+
+So `NodeAgent` runs as it is:
+
+```typescript
+import { OtelCollector } from "@intentius/chant-lexicon-k8s";
+import { NodeAgent, OtlpExporter } from "@intentius/chant-lexicon-otel";
+
+const gateway = new OtlpExporter({ name: "gateway", endpoint: "otel-gateway.observability.svc:4317", tls: { insecure: true } });
+const agent = NodeAgent({ exporters: [gateway], kubeletStats: true });
+
+export const collector = OtelCollector({ config: Object.values(agent.members) });
+```
+
+The DaemonSet sets `K8S_NODE_NAME`, mounts the host root at `/hostfs` and `/var/log/pods`, both read-only, and the ClusterRole gets `nodes/stats` for `kubeletstats`. [WK8605](../otel-placement-checks/#wk8605-a-node-reading-config-without-the-node) reports a workload that runs such a config without them. The example project is `lexicons/k8s/examples/otel-node-agent`.
+
 ## Props
 
 | Prop | Default | Meaning |
@@ -60,6 +87,7 @@ Rules in `defaults.clusterRole.rules` are appended, for a component the table do
 | `config` | none | A full config as otel entities; replaces the default, and `exporters` and `signals` are ignored |
 | `image` | the contrib image at the otel lexicon's pinned version | Collector image |
 | `labels` | none | Extra labels on every resource |
+| `logAccess` | `group` | How a config with a `filelog` receiver reads the node's root-owned container logs: `group` adds the pod to group 0, `root` runs the container as user 0; see [node access](#node-access) |
 | `cpuRequest`, `memoryRequest` | `100m`, `256Mi` | Container requests |
 | `cpuLimit`, `memoryLimit` | `500m`, `512Mi` | Container limits |
 | `defaults` | none | Per-member overrides for each member above |
@@ -92,7 +120,7 @@ export const collector = OtelCollector({
 
 Each receiver endpoint becomes a container port and a Service port, named after the receiver and its protocol (`otlp-grpc`, `otlp-http`). When the service enables a `health_check` extension that listens on an address other than localhost, its port is added to the container as `health`, and the liveness and readiness probes call it. A config without one gets no probes.
 
-The container runs as user 10001 with a read-only root filesystem and every capability dropped.
+The container runs as user 10001 with a read-only root filesystem and every capability dropped, unless `logAccess: "root"` applies (see [node access](#node-access)).
 
 The container runs with `imagePullPolicy: IfNotPresent`, since the default image is pinned to a version.
 

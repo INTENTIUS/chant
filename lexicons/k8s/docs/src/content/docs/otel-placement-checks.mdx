@@ -1,6 +1,6 @@
 ---
 title: "Collector Placement Checks"
-description: "WK8601 to WK8604: tail sampling and the k8s_cluster receiver in collectors that run in the wrong place, and the otel config checks over ConfigMap configs"
+description: "WK8601 to WK8605: tail sampling and the k8s_cluster receiver in collectors that run in the wrong place, the otel config checks over ConfigMap configs, and node-reading configs in workloads that don't give them the node"
 diataxis: reference
 ---
 
@@ -8,7 +8,7 @@ diataxis: reference
     Edit lexicons/k8s/docs/pages/otel-placement-checks.mdx instead; changes here are overwritten. */}
 
 
-Some OpenTelemetry Collector mistakes are about where a config runs, not what it says. A config with `tail_sampling` is valid YAML and passes `otelcol validate` whether it runs on one gateway pod or on every node, but only one of those samples whole traces. These three post-synth checks read each collector config together with the workload that runs it and warn when the placement defeats the component.
+Some OpenTelemetry Collector mistakes are about where a config runs, not what it says. A config with `tail_sampling` is valid YAML and passes `otelcol validate` whether it runs on one gateway pod or on every node, but only one of those samples whole traces. These post-synth checks read each collector config together with the workload that runs it and warn when the placement defeats the component, or when the workload doesn't give a node-reading config the node.
 
 | Rule | Severity | Fires when |
 |------|----------|------------|
@@ -16,6 +16,7 @@ Some OpenTelemetry Collector mistakes are about where a config runs, not what it
 | [WK8602](#wk8602-multi-replica-gateway-without-trace-aware-routing) | warning | a gateway with more than one replica runs `tail_sampling`, and a collector in the build sends it traces without a `loadbalancing` exporter routed by `traceID` |
 | [WK8603](#wk8603-k8s_cluster-in-every-collector-copy) | warning | a DaemonSet, or a workload with more than one replica, runs the `k8s_cluster` receiver without a working `k8s_leader_elector` |
 | [WK8604](#wk8604-the-otel-config-checks-on-configmap-configs) | per finding | a collector config in a ConfigMap fails one of the otel lexicon's config checks; reported under the OTEL id |
+| [WK8605](#wk8605-a-node-reading-config-without-the-node) | warning | a collector config reads the node, and the container running it lacks the node name variable or a host mount the config reads |
 
 They are in the k8s lexicon because they read Kubernetes manifests. The otel lexicon sees only the collector config. The OTEL110 and OTEL111 ids first planned for the tail sampling checks were never used.
 
@@ -99,3 +100,15 @@ ConfigMap observability/otel-agent-config, key config.yaml: pipeline "logs" uses
 
 It needs only the k8s lexicon in the project's `lexicons`. The entity checks OTEL107 to OTEL109 read the otel lexicon's declared entities and are not part of it.
 
+
+## WK8605: a node-reading config without the node
+
+A per-node agent config reads the node it runs on, and that only works when the pod provides it. `k8sattributes` with `filter.node_from_env_var`, or `kubeletstats` addressing the kubelet as `${env:K8S_NODE_NAME}`, needs that variable set from `spec.nodeName`; `hostmetrics` with `root_path: /hostfs` needs the host root mounted there; `filelog` needs the directories its `include` patterns read mounted from the host. None of these stops the collector from starting. Without them the `k8sattributes` filter matches no pod, the kubelet address doesn't resolve, `hostmetrics` reports on the collector's own container, and `filelog` finds no files.
+
+The check works out what a config needs with the same function [`OtelCollector`](../otel-collector/#node-access) uses to add it, so the composite's own output passes, and it fires on a hand-written workload that leaves something out. Only the containers that pass `--config` count (every container when none does), so a sidecar's variables don't satisfy it. A variable counts as set whatever its source. A host path counts as mounted when a `hostPath` volume covers it at the path the config reads: a mount of the node's `/var/log` at `/var/log` covers `/var/log/pods`, and for `hostmetrics` a mount of part of the host root under `root_path` (the node's `/proc` at `/hostfs/proc`) is enough, as the receiver's README allows.
+
+```
+DaemonSet observability/otel-agent runs a collector config that reads the node (ConfigMap otel-agent-config, config.yaml), but: no K8S_NODE_NAME variable (set it from spec.nodeName with the downward API); filelog reads host /var/log/pods at /var/log/pods, which no hostPath volume mounts. ...
+```
+
+Whether the container may read the log files is not checked: the kubelet's container logs are root's, and what else can read them depends on the container runtime.

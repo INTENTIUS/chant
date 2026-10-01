@@ -17,6 +17,16 @@
 import { mergeDefaults } from "@intentius/chant";
 import { DaemonSet, ServiceAccount, ClusterRole, ClusterRoleBinding, ConfigMap } from "../generated";
 import type { CollectorPolicyRule } from "./otel-collector-rbac";
+import { nodeVolumeMounts, nodeVolumes, type CollectorNodeAccess } from "./otel-collector-node";
+
+/**
+ * How a collector that reads the kubelet's container logs gets past their
+ * owner. The files are root's, readable by group root (containerd writes
+ * them mode 0640), so `group` keeps user 10001 and adds the pod to group 0
+ * with `supplementalGroups`. `root` runs the container as user 0 instead,
+ * for a runtime that writes the logs readable by their owner only.
+ */
+export type CollectorLogAccess = "group" | "root";
 
 export interface CollectorAgentOptions {
   name: string;
@@ -45,6 +55,10 @@ export interface CollectorAgentOptions {
   workloadAnnotations?: Record<string, string>;
   /** Annotations on the ConfigMap. */
   configMapAnnotations?: Record<string, string>;
+  /** What the config reads from the node, from `collectorNodeAccess`: the node name variables and host mounts. */
+  nodeAccess?: CollectorNodeAccess;
+  /** How a config that reads container logs gets read access to them (default `group`). */
+  logAccess?: CollectorLogAccess;
   defaults?: {
     daemonSet?: Partial<Record<string, unknown>>;
     serviceAccount?: Partial<Record<string, unknown>>;
@@ -69,7 +83,15 @@ export function collectorAgentResources(opts: CollectorAgentOptions): CollectorA
   const bindingName = `${name}-binding`;
   const configMapName = `${name}-config`;
 
-  const container = collectorContainer(opts);
+  const access = opts.nodeAccess;
+  const asRoot = access?.readsLogs === true && opts.logAccess === "root";
+  const baseContainer = collectorContainer({
+    ...opts,
+    env: access?.env,
+    extraVolumeMounts: access ? nodeVolumeMounts(access.mounts) : undefined,
+  });
+  const container = asRoot ? runAsRoot(baseContainer) : baseContainer;
+  const podSecurity = access?.readsLogs && !asRoot ? { securityContext: { supplementalGroups: [0] } } : {};
 
   const daemonSet = new DaemonSet(mergeDefaults({
     metadata: {
@@ -87,8 +109,10 @@ export function collectorAgentResources(opts: CollectorAgentOptions): CollectorA
           containers: [container],
           volumes: [
             { name: "config", configMap: { name: configMapName } },
+            ...(access ? nodeVolumes(access.mounts) : []),
           ],
           tolerations: [{ operator: "Exists" }],
+          ...podSecurity,
         },
       },
     },
@@ -139,7 +163,12 @@ export function collectorAgentResources(opts: CollectorAgentOptions): CollectorA
 export type CollectorContainerOptions = Pick<
   CollectorAgentOptions,
   "name" | "image" | "configDir" | "ports" | "cpuRequest" | "memoryRequest" | "cpuLimit" | "memoryLimit" | "containerExtra"
->;
+> & {
+  /** Environment variables, such as the node name from the downward API. Left out when empty. */
+  env?: Array<Record<string, unknown>>;
+  /** Mounts after the config mount, such as read-only host directories. */
+  extraVolumeMounts?: Array<Record<string, unknown>>;
+};
 
 /**
  * The collector container: the image, the config file argument, the ports,
@@ -152,6 +181,7 @@ export function collectorContainer(opts: CollectorContainerOptions): Record<stri
     name: opts.name,
     image: opts.image,
     args: [`--config=${opts.configDir}/config.yaml`],
+    ...(opts.env?.length ? { env: opts.env } : {}),
     ports: opts.ports,
     resources: {
       requests: { cpu: opts.cpuRequest, memory: opts.memoryRequest },
@@ -159,6 +189,7 @@ export function collectorContainer(opts: CollectorContainerOptions): Record<stri
     },
     volumeMounts: [
       { name: "config", mountPath: opts.configDir, readOnly: true },
+      ...(opts.extraVolumeMounts ?? []),
     ],
     securityContext: {
       runAsNonRoot: true,
@@ -168,6 +199,12 @@ export function collectorContainer(opts: CollectorContainerOptions): Record<stri
     },
     ...opts.containerExtra,
   };
+}
+
+/** The container run as user 0, for `logAccess: "root"`; the rest of its security context is kept. */
+function runAsRoot(container: Record<string, unknown>): Record<string, unknown> {
+  const sc = (container.securityContext ?? {}) as Record<string, unknown>;
+  return { ...container, securityContext: { ...sc, runAsNonRoot: false, runAsUser: 0 } };
 }
 
 /** The ConfigMap holding the rendered collector config under `config.yaml`. */
