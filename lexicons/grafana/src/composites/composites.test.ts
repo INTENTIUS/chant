@@ -10,12 +10,13 @@ import { PrometheusExporter, SpanMetricsConnector } from "@intentius/chant-lexic
 import { genAiComponents, genAiMetrics } from "@intentius/chant-lexicon-otel/genai";
 import { spanMetricsNames } from "@intentius/chant-lexicon-otel/metric-names";
 import { Slo, sloMetrics, type SloProps } from "@intentius/chant-lexicon-prometheus/composites/slo";
+import { GenAiRules, genAiRuleMetrics, type GenAiPrice } from "@intentius/chant-lexicon-prometheus/composites/genai";
 import { checkPromql } from "@intentius/chant-lexicon-prometheus/promql";
 import { Datasource } from "../datasource";
 import { buildGrafana, type DashboardJson } from "../build";
 import { validateGrafanaOutput } from "../validate-output";
 import { validateDashboardSchema } from "../schema-validate";
-import { AgentDashboard, RedDashboard, redQueries, SloDashboard } from "./index";
+import { AgentDashboard, agentRuleQueries, RedDashboard, redQueries, SloDashboard } from "./index";
 
 const prometheus = new Datasource({ name: "Prometheus", type: "prometheus", url: "http://prometheus:9090" });
 
@@ -45,7 +46,7 @@ function exprs(json: DashboardJson): string[] {
 
 /** Grafana's built-in variables as a parser would see them once Grafana fills them in. */
 function asPromql(expr: string): string {
-  return expr.replaceAll("$__rate_interval", "5m").replaceAll("$__range", "1h");
+  return expr.replaceAll("$__rate_interval", "5m").replaceAll("$__range_s", "3600").replaceAll("$__range", "1h");
 }
 
 function expectClean(json: DashboardJson, out: ReturnType<typeof buildGrafana>) {
@@ -373,6 +374,151 @@ describe("AgentDashboard", () => {
     const stripped = { ...m, calls: { ...m.calls, dimensions: m.calls.dimensions.filter((d) => d !== "gen_ai.tool.name") } };
     expect(() => AgentDashboard({ genAi: stripped, datasource: prometheus })).toThrow(/gen_ai\.tool\.name/);
     expect(() => AgentDashboard({ genAi: {} as never, datasource: prometheus })).toThrow(/genAiMetrics/);
+  });
+});
+
+describe("AgentDashboard from GenAiRules", () => {
+  const prices: GenAiPrice[] = [
+    { provider: "anthropic", model: "big", inputPerMTok: 3, outputPerMTok: 15, currency: "USD", source: "https://example.com/a", asOf: "2026-09-29" },
+    { provider: "openai", model: "small", inputPerMTok: 1, outputPerMTok: 4, currency: "USD", source: "https://example.com/o", asOf: "2026-09-01" },
+    { provider: "mistral", model: "eu", inputPerMTok: 2, outputPerMTok: 6, currency: "EUR", source: "https://example.com/m" },
+  ];
+  const titles = (json: DashboardJson) => panels(json).map((p) => p.title);
+  const expr = (json: DashboardJson, title: string) => (panelByTitle(json, title).targets as Json[])[0].expr as string;
+  const varNames = (json: DashboardJson) => (json.templating as unknown as { list: Json[] }).list.map((v) => v.name);
+
+  test("the conventions' client metrics: provider, tools, cost per currency and alerts", () => {
+    const rules = GenAiRules({
+      genAi: genAiMetrics({ clientMetrics: "derive" }),
+      prices,
+      groupBy: ["service_name"],
+      alerts: { errorRatio: true, budgets: [{ amount: 50, currency: "USD", per: "day" }] },
+    });
+    const m = genAiRuleMetrics(rules);
+    expect(m.source).toBe("client");
+    const { json, out } = built(AgentDashboard({ rules, datasource: prometheus }).dashboard, rules.rules);
+    expectClean(json, out);
+    expect(json.uid).toBe("genai-agents");
+    expect(json.title).toBe("Agents: models, tools, tokens and cost");
+    expect(varNames(json)).toEqual(["service", "provider", "model"]);
+    expect(titles(json)).toEqual([
+      "Requests by model",
+      "Errors by model",
+      "Latency p95 by model",
+      "Requests by provider",
+      "Errors by provider",
+      "Tokens by provider",
+      "Tool calls",
+      "Errors by tool",
+      "Latency p95 by tool",
+      "Errors by type",
+      "GenAI alerts firing",
+      "Input tokens by model",
+      "Output tokens by model",
+      "Input tokens",
+      "Output tokens",
+      "Spend per hour in USD",
+      "Spend in USD, prices as of 2026-09-01 to 2026-09-29",
+      "Spend per hour in EUR",
+      "Spend in EUR",
+    ]);
+    const scope = 'service_name=~"$service", gen_ai_provider_name=~"$provider", gen_ai_request_model=~"$model"';
+    expect(expr(json, "Requests by model")).toBe(
+      `sum by (gen_ai_provider_name, gen_ai_request_model, gen_ai_operation_name) (${m.requests}{${scope}})`,
+    );
+    expect(expr(json, "Latency p95 by model")).toBe(`${m.latency.record}{${scope}, quantile="0.95"}`);
+    expect(expr(json, "Errors by provider")).toBe(
+      "(\n" +
+        `sum by (gen_ai_provider_name) (${m.errors}{${scope}})\n` +
+        "or\n" +
+        `sum by (gen_ai_provider_name) (${m.requests}{${scope}}) * 0\n` +
+        ")\n/\n" +
+        `sum by (gen_ai_provider_name) (${m.requests}{${scope}})`,
+    );
+    expect(expr(json, "Input tokens")).toBe(
+      `sum(avg_over_time(${m.tokens}{${scope}, gen_ai_token_type="input"}[$__range])) * $__range_s`,
+    );
+    // Each currency is its own query; no expression adds two currencies.
+    expect(expr(json, "Spend per hour in USD")).toBe(
+      `sum by (gen_ai_provider_name, gen_ai_request_model) (${m.cost}{${scope}, currency="USD"}) * 3600`,
+    );
+    expect(expr(json, "Spend in EUR")).toBe(`sum(avg_over_time(${m.cost}{${scope}, currency="EUR"}[$__range])) * $__range_s`);
+    for (const e of exprs(json).filter((x) => x.includes(m.cost!))) expect(e).toMatch(/currency="(USD|EUR)"/);
+    expect((panelByTitle(json, "Spend in USD, prices as of 2026-09-01 to 2026-09-29").fieldConfig as { defaults: Json }).defaults.unit).toBe("currencyUSD");
+    expect(String(panelByTitle(json, "Spend in EUR").description)).toContain("Models without a price are not counted");
+    expect(panelByTitle(json, "Input tokens").targets).toMatchObject([{ instant: true, range: false }]);
+    expect(expr(json, "GenAI alerts firing")).toBe(
+      'sum(ALERTS{alertname=~"GenAiErrorRatioHigh|GenAiSpendOverBudget", alertstate="firing"}) or vector(0)',
+    );
+    expect(expr(json, "Latency p95 by tool")).toBe(`${m.tool!.latency.record}{service_name=~"$service", quantile="0.95"}`);
+    // Every series the dashboard reads is one the rules record.
+    const recorded = new Set([m.requests, m.errors, m.latency.record, m.tokens, m.cost!, m.tool!.calls, m.tool!.errors, m.tool!.latency.record, "ALERTS"]);
+    for (const e of exprs(json)) {
+      const names = [...e.matchAll(/([A-Za-z_:][A-Za-z0-9_:]*)\{/g)].map((x) => x[1]);
+      expect(names.length, e).toBeGreaterThan(0);
+      for (const n of names) expect(recorded.has(n), `${n} in ${e}`).toBe(true);
+    }
+  });
+
+  test("span metrics without provider dimensions or groupBy: no provider or service picker", () => {
+    const rules = GenAiRules({ genAi: genAiComponents({ namespace: "agents" }), prices: [prices[0]] });
+    const m = genAiRuleMetrics(rules);
+    expect(m.source).toBe("spans");
+    expect(m.labels.provider).toBeUndefined();
+    const { json, out } = built(AgentDashboard({ rules, datasource: prometheus, quantile: 0.99 }).dashboard);
+    expectClean(json, out);
+    expect(varNames(json)).toEqual(["model"]);
+    expect(titles(json)).not.toContain("Requests by provider");
+    expect(titles(json)).toContain("Latency p99 by model");
+    expect(titles(json)).toContain("Spend in USD, prices as of 2026-09-29");
+    expect(String(json.description)).toContain("groupBy service_name or job");
+    expect(expr(json, "Requests by model")).toBe(`sum by (gen_ai_request_model, gen_ai_operation_name) (${m.requests}{gen_ai_request_model=~"$model"})`);
+    // The cost series carry the price's provider even though the span token sums don't.
+    expect(expr(json, "Spend per hour in USD")).toBe(
+      `sum by (gen_ai_provider_name, gen_ai_request_model) (${m.cost}{gen_ai_request_model=~"$model", currency="USD"}) * 3600`,
+    );
+  });
+
+  test("span metrics with provider dimensions: the provider picker leaves the model-only token sums alone", () => {
+    const rules = GenAiRules({ genAi: genAiMetrics({ providerDimensions: true }), groupBy: ["job"] });
+    const { json, out } = built(AgentDashboard({ rules, datasource: prometheus }).dashboard);
+    expectClean(json, out);
+    expect(varNames(json)).toEqual(["service", "provider", "model"]);
+    expect(titles(json)).toContain("Requests by provider");
+    expect(titles(json)).not.toContain("Tokens by provider");
+    expect(expr(json, "Input tokens by model")).not.toContain("$provider");
+    expect(expr(json, "Input tokens by model")).toContain('job=~"$service"');
+  });
+
+  test("a panel whose series is absent is left out, not shown empty", () => {
+    const m = genAiMetrics({ clientMetrics: "passthrough" });
+    const noTool = { ...m, calls: { ...m.calls, dimensions: m.calls.dimensions.filter((d) => d !== "gen_ai.tool.name") } };
+    const rules = GenAiRules({ genAi: noTool });
+    expect(genAiRuleMetrics(rules).tool).toBeUndefined();
+    const { json, out } = built(AgentDashboard({ rules, datasource: prometheus }).dashboard);
+    expectClean(json, out);
+    expect(json.title).toBe("Agents: models, tools and tokens");
+    const rows = (json.panels as unknown as Json[]).filter((p) => p.type === "row").map((p) => p.title);
+    expect(rows).toEqual(["Models", "Providers", "Errors", "Tokens"]);
+    for (const absent of ["Tool calls", "GenAI alerts firing", "Spend per hour in USD"]) expect(titles(json)).not.toContain(absent);
+    expect((panelByTitle(json, "Errors by type").gridPos as Json).w).toBe(24);
+  });
+
+  test("reads the GenAiRules result, its rule group and genAiRuleMetrics() the same", () => {
+    const rules = GenAiRules({ genAi: genAiMetrics({ clientMetrics: "derive" }), prices });
+    const a = built(AgentDashboard({ rules, datasource: prometheus }).dashboard).json;
+    const b = built(AgentDashboard({ rules: rules.rules, datasource: prometheus }).dashboard).json;
+    const c = built(AgentDashboard({ rules: genAiRuleMetrics(rules), datasource: prometheus }).dashboard).json;
+    expect(b).toEqual(a);
+    expect(c).toEqual(a);
+  });
+
+  test("refuses both modes at once, an unrecorded quantile, and something that isn't GenAiRules", () => {
+    const rules = GenAiRules({ genAi: genAiMetrics() });
+    expect(() => AgentDashboard({ rules, genAi: genAiMetrics(), datasource: prometheus })).toThrow(/genAi or rules, not both/);
+    expect(() => AgentDashboard({ rules, quantile: 0.9, datasource: prometheus })).toThrow(/0\.5, 0\.95, 0\.99, not 0\.9/);
+    expect(() => AgentDashboard({ rules: {} as never, datasource: prometheus })).toThrow(/GenAiRules/);
+    expect(() => agentRuleQueries(genAiRuleMetrics(rules), 0.75)).toThrow(/not 0\.75/);
   });
 });
 

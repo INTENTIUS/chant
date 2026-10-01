@@ -140,7 +140,7 @@ The lexicon's tests build the rules from both `genAiMetrics()` and `genAiMetrics
 
 ## `genAiRuleMetrics()`
 
-`genAiRuleMetrics(rules)` returns what the rules record, so a dashboard reads series names from the declaration instead of repeating them. It takes the `GenAiRules(...)` result, its `rules` group, or the props.
+`genAiRuleMetrics(rules)` returns what the rules record, so a dashboard reads series names from the declaration instead of repeating them. It takes the `GenAiRules(...)` result, its `rules` group, or the props. The grafana lexicon's [`AgentDashboard`](/chant/lexicons/grafana/composites/#from-genairules) builds a dashboard from it with `AgentDashboard({ rules, datasource })`; build the rules with `groupBy: ["service_name"]` or `["job"]` if the dashboard should have a service picker.
 
 ```ts
 import { genAiRuleMetrics } from "@intentius/chant-lexicon-prometheus";

@@ -118,7 +118,7 @@ export { serviceOverview };
 
 ## dashboards-from-declarations
 
-A collector, an SLO and three dashboards in one build root, built with `chant build src --lexicon otel`, `--lexicon prometheus` and `--lexicon grafana`. The collector turns every span into RED metrics through a `spanmetrics` connector with the namespace `shop`, and GenAI spans into per-model metrics and token sums through the GenAI preset under `agents`. The checkout SLO writes its SLI with the names `spanMetricsNames()` reads from the same connector. `RedDashboard`, `SloDashboard` and `AgentDashboard` build their dashboards from the connector, the `Slo` and the preset, so changing `namespace: "shop"` moves the SLO's rules and the RED dashboard's queries together. See [Dashboards from Declarations](../composites/).
+A collector, an SLO, GenAI recording rules and four dashboards in one build root, built with `chant build src --lexicon otel`, `--lexicon prometheus` and `--lexicon grafana`. The collector turns every span into RED metrics through a `spanmetrics` connector with the namespace `shop`, and GenAI spans into per-model metrics and token sums through the GenAI preset under `agents`. The checkout SLO writes its SLI with the names `spanMetricsNames()` reads from the same connector. `RedDashboard`, `SloDashboard` and `AgentDashboard` build their dashboards from the connector, the `Slo` and the preset, so changing `namespace: "shop"` moves the SLO's rules and the RED dashboard's queries together. `GenAiRules` records per-provider series and cost from a made-up price table, and a second `AgentDashboard` reads them. See [Dashboards from Declarations](../composites/).
 
 ```ts title="src/components.ts"
 ```typescript title="components.ts"
@@ -160,8 +160,8 @@ const spans = new SpanMetricsConnector({ namespace: "shop", histogram: milliseco
 /** Served on 8889 for Prometheus to scrape. */
 const metricsEndpoint = new PrometheusExporter({ endpoint: "0.0.0.0:8889" });
 
-/** The GenAI preset's pieces, its metric names under `agents`. */
-const genai = genAiComponents({ namespace: "agents" });
+/** The GenAI preset's pieces, its metric names under `agents`, calls and durations also by provider. */
+const genai = genAiComponents({ namespace: "agents", providerDimensions: true });
 
 export { otlp, memoryLimiter, batch, tempoTraces, spans, metricsEndpoint, genai };
 ```
@@ -199,16 +199,45 @@ export { checkout };
 ```
 ```
 
+```ts title="src/genai-rules.ts"
+```typescript title="genai-rules.ts"
+/**
+ * Recording rules over the GenAI preset's metrics, with cost from a price
+ * table. `groupBy: ["service_name"]` keeps the service on every recorded
+ * series, so the dashboard that reads them can offer a service picker.
+ *
+ * The prices are made up for the example. The lexicon ships none: read
+ * them from each provider's pricing page and record where and when.
+ */
+import { GenAiRules } from "@intentius/chant-lexicon-prometheus";
+import { genai } from "./components";
+
+const genaiRules = GenAiRules({
+  genAi: genai,
+  groupBy: ["service_name"],
+  prices: [
+    { provider: "anthropic", model: "big", inputPerMTok: 3, outputPerMTok: 15, currency: "USD", source: "https://example.com/pricing", asOf: "2026-09-29" },
+    { provider: "mistral", model: "small", inputPerMTok: 1, outputPerMTok: 4, currency: "EUR", source: "https://example.com/pricing", asOf: "2026-09-29" },
+  ],
+  alerts: { errorRatio: true },
+});
+
+export { genaiRules };
+```
+```
+
 ```ts title="src/dashboards.ts"
 ```typescript title="dashboards.ts"
 /**
- * Three dashboards, each built from the declaration it reads: RED per
+ * Four dashboards, each built from the declaration it reads: RED per
  * service from the spanmetrics connector, the checkout SLO from its `Slo`,
- * and agent calls, errors and tokens from the GenAI preset.
+ * agent calls, errors and tokens from the GenAI preset, and the same per
+ * provider with cost from the GenAI recording rules.
  */
 import { AgentDashboard, RedDashboard, SloDashboard } from "@intentius/chant-lexicon-grafana";
 import { genai, metricsEndpoint, spans } from "./components";
 import { prometheus } from "./datasources";
+import { genaiRules } from "./genai-rules";
 import { checkout } from "./slo";
 
 const services = RedDashboard({ spanMetrics: spans, exporter: metricsEndpoint, datasource: prometheus, folder: "Observability" });
@@ -217,7 +246,9 @@ const checkoutSlo = SloDashboard({ slo: checkout, datasource: prometheus, folder
 
 const agents = AgentDashboard({ genAi: genai, datasource: prometheus, folder: "Observability" });
 
-export { services, checkoutSlo, agents };
+const agentCost = AgentDashboard({ rules: genaiRules, datasource: prometheus, folder: "Observability" });
+
+export { services, checkoutSlo, agents, agentCost };
 ```
 ```
 

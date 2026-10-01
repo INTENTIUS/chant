@@ -73,11 +73,12 @@ import { checkout } from "./slo";            // a prometheus Slo(...)
 const services = RedDashboard({ spanMetrics: spans, datasource: prometheus });     // rate, errors, p50/p95/p99 per service
 const checkoutSlo = SloDashboard({ slo: checkout, datasource: prometheus });      // SLI, budget left, burn rate per alert window
 const agents = AgentDashboard({ genAi: genai, datasource: prometheus });          // per model and tool, tokens per model
+const agentCost = AgentDashboard({ rules: genaiRules, datasource: prometheus });  // from a prometheus GenAiRules: per provider, cost per currency, alerts
 
 export { services, checkoutSlo, agents };
 ```
 
-Pass the `prometheus` exporter as `exporter` to `RedDashboard` when its `namespace` changes the names. `RedDashboard` counts server and consumer spans only; pass `spanKinds` to count others, or `[]` for every kind. `datasource` may be a `{ type: "prometheus", uid }` ref to a datasource declared elsewhere. Never hand-write the span-metric or SLO series names in a query next to these; use `spanMetricsNames()` (otel), `sloMetrics()` (prometheus) or `genAiMetrics()` (otel), or the composites' `redQueries`, `sloQueries` and `agentQueries`.
+Pass the `prometheus` exporter as `exporter` to `RedDashboard` when its `namespace` changes the names. `RedDashboard` counts server and consumer spans only; pass `spanKinds` to count others, or `[]` for every kind. `datasource` may be a `{ type: "prometheus", uid }` ref to a datasource declared elsewhere. Never hand-write the span-metric or SLO series names in a query next to these; use `spanMetricsNames()` (otel), `sloMetrics()` (prometheus), `genAiMetrics()` (otel) or `genAiRuleMetrics()` (prometheus), or the composites' `redQueries`, `sloQueries`, `agentQueries` and `agentRuleQueries`. For a `$service` picker on the rules-mode `AgentDashboard`, build the `GenAiRules` with `groupBy: ["service_name"]` or `["job"]`.
 
 ## Rules
 
