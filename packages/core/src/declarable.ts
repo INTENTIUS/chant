@@ -130,3 +130,22 @@ function carriesForeignDeclarableMarker(value: object): boolean {
 export function isPropertyDeclarable(value: Declarable): boolean {
   return value.kind === "property";
 }
+
+/**
+ * A declarable with a live counterpart of its own: what the live paths
+ * (`describeResources`, `observeResourcesDeep`, the snapshot, the diff and the
+ * change set) put in front of a lexicon's reader.
+ *
+ * Outputs, parameters and serializer directives carry no `props` and are
+ * already left out by {@link isResourceDeclarable}. A property-kind declarable
+ * (`createProperty`: Grafana's panels, an aws `SecurityGroup_Ingress`) does
+ * carry `props`, but it exists only inside the resource that holds it, and the
+ * deep diff already compares it as part of that resource's tree (#1314).
+ * Asking a reader about one on its own makes the answer either "absent", so
+ * `lifecycle plan` proposes a `create`, or "not observed", a hole for
+ * something read in full (#3001). This is the same test `graph-ir.ts` uses to
+ * keep property-kind declarables off the graph's nodes.
+ */
+export function isObservableDeclarable(value: Declarable): value is ResourceDeclarable {
+  return isResourceDeclarable(value) && !isPropertyDeclarable(value);
+}
