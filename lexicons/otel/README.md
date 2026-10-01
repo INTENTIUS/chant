@@ -58,7 +58,7 @@ Each connector supports fixed signal pairs (`spanmetrics`: traces to metrics). O
 
 ## Checks
 
-OTEL001 and OTEL002 run on source (id syntax, literal credentials). OTEL101 to OTEL109 and OTEL112 run after a build: undeclared or unused components (a connector must be on both sides), empty pipelines, extension wiring, `memory_limiter` placement, id syntax, each component's own config rules, duplicate ids, missing schema pins, and connector signal pairs.
+OTEL001 and OTEL002 run on source (id syntax, literal credentials). OTEL101 to OTEL109 and OTEL112 to OTEL115 run after a build: undeclared or unused components (a connector must be on both sides), empty pipelines, extension wiring, `memory_limiter` placement, id syntax, each component's own config rules, duplicate ids, missing schema pins, connector signal pairs, cycles through connectors, connector ids shared with a receiver or exporter, and `routing` targets that don't receive from the connector.
 
 ## Plain-data API
 

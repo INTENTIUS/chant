@@ -1,0 +1,23 @@
+# OTEL113 failing fixture: traces/a feeds traces/b through forward/ab, and
+# traces/b feeds traces/a back through forward/ba.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 127.0.0.1:4317
+
+exporters:
+  debug: {}
+
+connectors:
+  forward/ab: {}
+  forward/ba: {}
+
+service:
+  pipelines:
+    traces/a:
+      receivers: [otlp, forward/ba]
+      exporters: [forward/ab]
+    traces/b:
+      receivers: [forward/ab]
+      exporters: [forward/ba, debug]

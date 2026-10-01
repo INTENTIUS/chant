@@ -13,6 +13,7 @@ import { definitionFor, definitionOf, isOTelComponent, isUsablePin, runValidator
 import { componentConfig } from "./collector";
 import { isComponentId, parseComponentId, pipelineSignal, SIGNALS, type CollectorConfig, type ConnectorSignalPair } from "./model";
 import { isPipelineEntity } from "./pipeline";
+import { collectorTopology, type TopologyEdge } from "./topology";
 // OTEL112 reads the built-in connectors' signal pairs from the registry.
 import "./components/connectors";
 
@@ -26,7 +27,10 @@ export type CollectorIssueCode =
   | "OTEL107"
   | "OTEL108"
   | "OTEL109"
-  | "OTEL112";
+  | "OTEL112"
+  | "OTEL113"
+  | "OTEL114"
+  | "OTEL115";
 
 export interface CollectorIssue {
   code: CollectorIssueCode;
@@ -56,7 +60,9 @@ function describePairs(pairs: ReadonlyArray<ConnectorSignalPair>): string {
 
 /**
  * Check a collector config's references and pipeline shape (OTEL101-OTEL106),
- * and each connector's signals against its definition (OTEL112).
+ * each connector's signals against its definition (OTEL112), cycles through
+ * connectors (OTEL113), connector ids shared with a receiver or exporter
+ * (OTEL114), and `routing` connector targets (OTEL115).
  */
 export function validateCollectorConfig(config: CollectorConfig): CollectorIssue[] {
   const issues: CollectorIssue[] = [];
@@ -211,6 +217,153 @@ export function validateCollectorConfig(config: CollectorConfig): CollectorIssue
     }
   }
 
+  issues.push(...connectorCycleIssues(config), ...connectorIdIssues(config), ...routingTargetIssues(config));
+
+  return issues;
+}
+
+/**
+ * OTEL113: the pipelines and the connectors between them must form a graph
+ * with no cycle, or the collector refuses to start. Reads the edges
+ * `collectorTopology()` returns, so an edge counts only for a signal pair the
+ * connector supports, as in the collector's own graph. Reports each strongly
+ * connected group of pipelines once, with one cycle through it.
+ */
+function connectorCycleIssues(config: CollectorConfig): CollectorIssue[] {
+  const { pipelines, edges } = collectorTopology(config);
+  const out = new Map<string, TopologyEdge[]>();
+  for (const e of edges) out.set(e.from, [...(out.get(e.from) ?? []), e]);
+
+  // Tarjan's strongly connected components, in pipeline order.
+  const order = pipelines.map((p) => p.id);
+  const index = new Map<string, number>();
+  const low = new Map<string, number>();
+  const stack: string[] = [];
+  const onStack = new Set<string>();
+  const groups: string[][] = [];
+  const visit = (v: string) => {
+    index.set(v, index.size);
+    low.set(v, index.get(v)!);
+    stack.push(v);
+    onStack.add(v);
+    for (const { to } of out.get(v) ?? []) {
+      if (!index.has(to)) {
+        visit(to);
+        low.set(v, Math.min(low.get(v)!, low.get(to)!));
+      } else if (onStack.has(to)) {
+        low.set(v, Math.min(low.get(v)!, index.get(to)!));
+      }
+    }
+    if (low.get(v) === index.get(v)) {
+      const group: string[] = [];
+      let w: string;
+      do {
+        w = stack.pop()!;
+        onStack.delete(w);
+        group.push(w);
+      } while (w !== v);
+      groups.push(group);
+    }
+  };
+  for (const id of order) if (!index.has(id)) visit(id);
+
+  const issues: CollectorIssue[] = [];
+  for (const group of groups) {
+    const members = new Set(group);
+    const start = order.find((id) => members.has(id))!;
+    const path = shortestCycle(start, members, out);
+    if (!path) continue; // a single pipeline with no edge to itself
+    const hops = path.map((e) => `${e.from} -> ${e.connector}`).join(" -> ");
+    issues.push({
+      code: "OTEL113",
+      severity: "error",
+      pipeline: start,
+      message: `pipelines form a cycle through connectors: ${hops} -> ${start}; the collector refuses to start`,
+    });
+  }
+  return issues;
+}
+
+/** The shortest path of edges from `start` back to itself, staying inside `members`. */
+function shortestCycle(start: string, members: Set<string>, out: Map<string, TopologyEdge[]>): TopologyEdge[] | undefined {
+  const via = new Map<string, TopologyEdge>();
+  const queue = [start];
+  while (queue.length > 0) {
+    const v = queue.shift()!;
+    for (const e of out.get(v) ?? []) {
+      if (!members.has(e.to)) continue;
+      if (e.to === start) {
+        const path = [e];
+        for (let at = v; at !== start; at = via.get(at)!.from) path.unshift(via.get(at)!);
+        return path;
+      }
+      if (!via.has(e.to)) {
+        via.set(e.to, e);
+        queue.push(e.to);
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * OTEL114: a pipeline names a connector the same way it names a receiver or
+ * an exporter, so the collector refuses a connector id that is also declared
+ * under receivers or exporters, used or not.
+ */
+function connectorIdIssues(config: CollectorConfig): CollectorIssue[] {
+  const receivers = ids(config.receivers);
+  const exporters = ids(config.exporters);
+  const issues: CollectorIssue[] = [];
+  for (const id of ids(config.connectors)) {
+    const clashes = [receivers.has(id) ? "receiver" : "", exporters.has(id) ? "exporter" : ""].filter(Boolean);
+    if (clashes.length === 0) continue;
+    const type = parseComponentId(id)?.type ?? id;
+    issues.push({
+      code: "OTEL114",
+      severity: "error",
+      component: id,
+      message: `connector "${id}" has the same id as a declared ${clashes.join(" and ")}, so a pipeline listing "${id}" is ambiguous and the collector refuses to start; rename one of them (e.g. "${type}/connector")`,
+    });
+  }
+  return issues;
+}
+
+/**
+ * OTEL115: each pipeline a `routing` connector routes to, in `table[].pipelines`
+ * or `default_pipelines`, must list that connector in its receivers. The
+ * connector can only hand data to the pipelines it feeds, and the collector
+ * refuses to start when a route names any other.
+ */
+function routingTargetIssues(config: CollectorConfig): CollectorIssue[] {
+  const pipelines = config.service?.pipelines ?? {};
+  const issues: CollectorIssue[] = [];
+  for (const [id, raw] of Object.entries(config.connectors ?? {})) {
+    if (parseComponentId(id)?.type !== "routing") continue;
+    const cfg = (raw ?? {}) as { table?: Array<{ pipelines?: unknown }>; default_pipelines?: unknown };
+    const targets: Array<[string, string]> = [];
+    (Array.isArray(cfg.table) ? cfg.table : []).forEach((item, i) => {
+      for (const t of Array.isArray(item?.pipelines) ? item.pipelines : []) targets.push([String(t), `table[${i}].pipelines`]);
+    });
+    for (const t of Array.isArray(cfg.default_pipelines) ? cfg.default_pipelines : []) targets.push([String(t), "default_pipelines"]);
+
+    const reported = new Set<string>();
+    for (const [target, where] of targets) {
+      if (reported.has(target)) continue;
+      const pipeline = Object.prototype.hasOwnProperty.call(pipelines, target) ? pipelines[target] : undefined;
+      if (pipeline && (pipeline.receivers ?? []).map(String).includes(id)) continue;
+      reported.add(target);
+      issues.push({
+        code: "OTEL115",
+        severity: "error",
+        pipeline: target,
+        component: id,
+        message: pipeline
+          ? `routing connector "${id}" routes to pipeline "${target}" (${where}), which does not list "${id}" in its receivers; the collector refuses to start`
+          : `routing connector "${id}" routes to pipeline "${target}" (${where}), which is not declared under service.pipelines; the collector refuses to start`,
+      });
+    }
+  }
   return issues;
 }
 
