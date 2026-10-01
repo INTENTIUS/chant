@@ -32,7 +32,7 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | Category | Where the code keeps it | chant | hud | plugin |
 |---|---|---|---|---|
 | boundary cell | the table of #2657, one row per cell | 6 | 5 | 3 |
-| workspace command | `commandRegistry` in `cli/main.ts`, and each sub-verb its help names | 27 | 0 | 0 |
+| workspace command | `commandRegistry` in `cli/main.ts`, and each sub-verb its help names | 28 | 0 | 0 |
 | member kind | `BUILTIN_KIND_NAMES` in `kinds.ts` | 5 | 0 | 0 |
 | record kind | none in core; `decision` and `session` are this repository's, the rest a plugin's | 4 | 0 | 4 |
 | member link kind | `LINK_KINDS` in `links.ts` | 2 | 0 | 0 |
@@ -82,6 +82,7 @@ Each row follows, in the order of the table above.
 | workspace command | `workspace points ask` | chant | points-write.schema.json | Asks a point's table, model and quorum deciders for one set of inputs and records the answer, proposed when a model gave it; chant calls no model, and a backend's response is handed in with --response. |
 | workspace command | `workspace points answer` | chant | points-write.schema.json | Records people's answer to an open question, or their confirmation of a model's proposal, once the point's quorum is met. |
 | workspace command | `workspace verify` | chant | chant workspace verify | Checks the commits in base..head against the signers and roles read from base. |
+| workspace command | `workspace pin` | chant | chant workspace pin --json | Prints the integrity value that pins a plugin loaded by path, and says whether the declared pin matches it. |
 | workspace command | `workspace lineage` | chant | chant workspace lineage --json | Shows each scope in the lineage lock with its template, pin, edited files and open manual steps. |
 | workspace command | `workspace lineage resolve` | chant | chant workspace lineage resolve &lt;path&gt; | Closes a manual step once the file has been merged by hand. |
 | workspace command | `workspace upgrade` | chant | chant workspace upgrade | Brings a lineage scope to a newer template version in a worktree and gates the patch on its digest. |

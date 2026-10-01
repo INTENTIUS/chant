@@ -1047,7 +1047,7 @@ export async function recordGateApproval(
   if (opts.plan !== undefined) {
     if (!isPlanDigest(opts.plan)) {
       console.error(formatError({
-        message: `--plan must be a plan digest ("sha256:" and 64 hex characters), got "${opts.plan}"`,
+        message: `--plan must be a plan digest ("jcs1-sha256:" or "sha256:", then 64 hex characters), got "${opts.plan}"`,
         hint: "Copy it from the gated run's `plan :` line, or from the pending-gate summary. It is not a plan file path.",
       }));
       return { ok: false };

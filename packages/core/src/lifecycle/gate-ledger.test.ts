@@ -298,6 +298,20 @@ describe("latestResolutionForPlan (#2300)", () => {
     expect(found.mismatched).toBeUndefined();
   });
 
+  // #2547: plan digests carry a version prefix now. An approval written under
+  // the bare prefix is still an approval of the same plan.
+  test("a resolution recorded under the bare sha256: prefix answers the same plan's jcs1 digest", () => {
+    const found = latestResolutionForPlan([resolution({ planDigest: PLAN_A })], "approve-live-apply", EPOCH, `jcs1-${PLAN_A}`);
+    expect(found.resolution?.resolvedBy).toBe("alex");
+    expect(found.mismatched).toBeUndefined();
+  });
+
+  test("the prefix never makes a different plan match", () => {
+    const found = latestResolutionForPlan([resolution({ planDigest: PLAN_B })], "approve-live-apply", EPOCH, `jcs1-${PLAN_A}`);
+    expect(found.resolution).toBeUndefined();
+    expect(found.mismatched?.planDigest).toBe(PLAN_B);
+  });
+
   test("a resolution for another plan does not, and comes back named", () => {
     const found = latestResolutionForPlan([resolution({ planDigest: PLAN_B })], "approve-live-apply", EPOCH, PLAN_A);
     expect(found.resolution).toBeUndefined();

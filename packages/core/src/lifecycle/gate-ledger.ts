@@ -41,6 +41,7 @@
  * (absent on the resolution lines written before #2119, which is why
  * `"resolution"` is the default reading).
  */
+import { samePlanDigest } from "./plan-digest";
 import { sortedJsonReplacer } from "../utils";
 import { currentGateOrigin, type GateOrigin } from "./gate-origin";
 import type { GateApprover, GatePolicyDecision, ResolvedGateApproval } from "../op/gate-approval";
@@ -513,7 +514,7 @@ export function latestResolutionForPlan(
     if (new Date(r.timestamp).getTime() < since) continue;
     const newest = (best: GateResolutionRecord | undefined) =>
       !best || new Date(r.timestamp).getTime() >= new Date(best.timestamp).getTime();
-    if (r.planDigest === planDigest) {
+    if (samePlanDigest(r.planDigest, planDigest)) {
       if (newest(matched)) matched = r;
     } else if (newest(mismatched)) {
       mismatched = r;

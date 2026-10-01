@@ -517,7 +517,19 @@ A pin names the toolchain or a plugin that reads the workspace.
 
 A pin of `@intentius/chant` names the root's chant, which is the chant that reads the declaration ([which chant reads it](/chant/reference/workspace-read-contract/#which-chant-reads-the-declaration)). The workspace commands of any other chant version hand themselves to it when it is installed at the root, and refuse with `root-chant-required` when it isn't.
 
-`integrity` is a Subresource Integrity digest such as `sha512-...`. chant records pins and lists them in `chant workspace ls --json`. Member kinds come only from pinned packages, which chant reads as data and never imports ([Workspace Kinds](/chant/reference/workspace-kinds/#which-packages-are-read)). chant doesn't verify `integrity` yet.
+`integrity` is a Subresource Integrity digest such as `sha256-...`. chant records pins and lists them in `chant workspace ls --json`. Member kinds come only from pinned packages, which chant reads as data and never imports ([Workspace Kinds](/chant/reference/workspace-kinds/#which-packages-are-read)).
+
+### Integrity of a plugin pinned by path
+
+A path pin with `integrity` is checked whenever chant loads kinds from it: the directory's content hash must equal `integrity`, or chant reads nothing from the plugin, and `chant workspace check` reports `WSP002` on the pin with the value it expected and the one it computed ([ws-065](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-065-path-plugin-hash.md)). `chant workspace pin <path>` prints the value to put there. A pin with no `integrity` is not checked.
+
+| Covered | Left out |
+|---|---|
+| every regular file under the directory, at any depth, by its bytes and its path from the directory | anything inside a `node_modules` or `.git` directory |
+
+The value is `sha256-`, `sha384-` or `sha512-` and the base64 of that algorithm over a manifest with one line per file, `<hex digest of the file> <path>`, sorted by path. A file path is hashed by its bytes. A symbolic link inside the directory makes the check fail, since it can point outside the plugin. The hash is of the working tree, so build output or untracked files inside the directory change it: pin a directory that holds only committed files.
+
+The check covers kinds read from a path pin. It doesn't cover a package pin's `integrity`, which names a registry tarball and is still not recomputed, or the record kind files named in `records`, which have no `integrity` field. The declaration is read from the working tree, so a change that edits a plugin and its pin together passes: the pin guards a plugin edited on its own.
 
 ## Ledgers
 

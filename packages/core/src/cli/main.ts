@@ -909,6 +909,10 @@ Workspace (level 1, #2524):
   workspace points answer <id> --answer <value> --by <name>... [--kind <kind file>] [--dry-run]
                         Record people's answer to an open question, or confirm
                         a model's proposal, once the point's quorum is met
+  workspace pin <path> [--json]
+                        Print the integrity value that pins the plugin at
+                        <path>, to put in a path pin of chant.workspace.json.
+                        chant checks it before it reads the plugin
   workspace verify [--base <rev>] [--head <rev>] [--require attested]
                         Check the commits in base..head against the signers
                         and roles read from base. A change to the signers file
@@ -1488,6 +1492,7 @@ export const commandRegistry: CommandDef[] = [
   { name: "workspace graph", handler: async (ctx) => (await import("../workspace/member-commands")).runWorkspaceMembers(ctx, "graph") },
   // Each unit decides for itself whether its config is loaded (runCommandInProcess).
   { name: "workspace member-run", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/member-run")).runWorkspaceMemberRun(ctx, runCommandInProcess) },
+  { name: "workspace pin", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/pin-cli")).runWorkspacePin(ctx) },
   { name: "workspace verify", handler: async (ctx) => (await import("../workspace/trust/verify-cli")).runWorkspaceVerify(ctx) },
 
   // State subcommands

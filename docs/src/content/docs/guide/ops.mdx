@@ -207,7 +207,7 @@ The run records that digest on the pending fact; `chant approve` copies it onto 
 
 The digest covers the change set: the addresses, the actions and the values that would be written. It deliberately excludes the moment the plan was taken, the run that took it and the plan file's bytes. Re-planning an unchanged root produces the same digest, so an approval does not expire on the clock.
 
-`chant approve` refuses when the gate has no pending fact to take a digest from, naming `chant run <op>` as the fix; `--plan <digest>` approves one explicitly. Resolutions recorded before `#2300` carry no digest and do not satisfy a plan-bound gate: they prove somebody approved something and nothing about what. A gate standing open across that upgrade needs one more approval after its next run.
+`chant approve` refuses when the gate has no pending fact to take a digest from, naming `chant run <op>` as the fix; `--plan <digest>` approves one explicitly, and takes either spelling of a digest: `jcs1-sha256:` and the hex, or the bare `sha256:` an older run recorded ([#2547](https://github.com/INTENTIUS/chant/issues/2547)). Resolutions recorded before `#2300` carry no digest and do not satisfy a plan-bound gate: they prove somebody approved something and nothing about what. A gate standing open across that upgrade needs one more approval after its next run.
 
 ### Quorum, roles and an approval policy
 

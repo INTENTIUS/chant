@@ -718,7 +718,7 @@ export async function runWorkspaceUnknown(ctx: CommandContext): Promise<number> 
   console.error(
     formatError({
       message: sub ? `Unknown workspace subcommand: ${sub}` : "chant workspace needs a subcommand",
-      hint: `Workspace subcommands: audit, build, check, graph, init, lineage, lint, ls, records, status, upgrade, verify, work. Run "chant --help" for their options.`,
+      hint: `Workspace subcommands: audit, build, check, graph, init, lineage, lint, ls, pin, records, status, upgrade, verify, work. Run "chant --help" for their options.`,
     }),
   );
   return 1;
