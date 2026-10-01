@@ -7,7 +7,7 @@ diataxis: reference
 ## Synopsis
 
 ```
-chant workspace upgrade [<scope>] [--to <ref|dir>] [--allow-code] [--dry-run] [--output <patch file>] [--json]
+chant workspace upgrade [<scope>] [--to <ref|dir>] [--source <repo>[#<member>]] [--allow-code] [--dry-run] [--output <patch file>] [--json]
 ```
 
 ## Description
@@ -71,7 +71,29 @@ A scope made by `chant init --from <dir>` has no git history, so the merge base 
 chant workspace upgrade . --to /opt/studio/tool-v2#template
 ```
 
-Without `--to`, or when the recorded directory is gone or holds different files, the upgrade is refused. The message says the scope can later be adopted into a git lineage with `chant workspace adopt-lineage` ([#2551](https://github.com/INTENTIUS/chant/issues/2551)). A directory has no version, so a template whose migrations have not all been applied cannot be upgraded from one.
+Without `--to`, or when the recorded directory is gone or holds different files, the upgrade is refused. A host that replaces the directory on each release, such as a studio box image, moves the scope onto the git repository the directory was copied from with [`chant workspace adopt-lineage --from <repo>[#<member>]`](/chant/cli/workspace-adopt-lineage/#a-directory-lineage). From then on `--to` names a ref of that repository. A directory has no version, so a template whose migrations have not all been applied cannot be upgraded from one.
+
+### Moving to another template
+
+`--source <repo>[#<member>]` moves the scope to another template while it upgrades, at the version `--to` names. This brings a fork-born workspace forward: adopt its lineage against the fork with [`chant workspace adopt-lineage`](/chant/cli/workspace-adopt-lineage/), then move it onto the template the fork came from.
+
+```
+$ chant workspace upgrade . --source acme/starter --to v2.0.0
+.  github.com/someone/starter-fork  v1.1.0 -> v2.0.0
+  template: github.com/someone/starter-fork -> github.com/acme/starter
+  migration: from-fork
+  updated: README.md
+  merged: src/main.ts
+  ...
+```
+
+The chain starts with a [bridge migration](/chant/reference/template-migrations/#bridge-migrations) that the new template ships for the old one. Its `from.template` names the scope's current template, and its `from.versions` accepts the scope's version. The new template's own migrations then run from the version the bridge lands on. The merge base still comes from the scope's recorded source, so edits the workspace made since then merge as in any other upgrade. Once the upgrade applies, the lock names the new template and its source, pinned at the new ref.
+
+When no bridge accepts the scope's version and the new template has migrations of its own, the move is refused, because the scope's place in the new template's history is unknown. A new template with no migrations needs no bridge. Only a git scope can move, and the move needs `--to`.
+
+### Nested workspaces
+
+A member of kind `workspace` upgrades itself with its own `chant workspace upgrade`, run in its directory. Naming it from the outer root is refused. So is an upgrade of the outer workspace whose patch would change a file inside a nested workspace, and the message names the files ([#2551](https://github.com/INTENTIUS/chant/issues/2551)).
 
 ### Member scopes
 
@@ -144,6 +166,7 @@ An Op schedules upgrades with the `proposeWorkspaceUpgrade` activity rather than
 | Option | Effect |
 |---|---|
 | `--to <ref>`, `--to <dir>` | The template version to upgrade to: a git ref, usually a tag. Defaults to the scope's current ref, which follows a moving ref such as a branch. For a vendor scope it only relabels `ref`. For a scope made from a directory it is required, and names the directory that holds the new version (see [Scopes made from a directory](#scopes-made-from-a-directory)). |
+| `--source <repo>[#<member>]` | Move the scope to this template, through its bridge migration. Needs `--to`. See [Moving to another template](#moving-to-another-template). |
 | `--allow-code` | Run migrations whose body is code. Without it, a chain holding a code migration is refused. |
 | `--dry-run` | Stage and check, then stop. No gate is recorded. |
 | `--output <file>` | Write the patch to a file for review. |
@@ -181,6 +204,7 @@ export default Op({
 | `base` | The pull request's base, default the remote's default branch |
 | `remote` | Default `origin` |
 | `allowCode` | Run code migrations, default false |
+| `source` | Move the scope to this template, as `--source` does. Needs `to`. |
 | `cwd` | The directory holding the lock, default the working directory |
 
 It returns `scope`, `mode`, `changed`, `proposed`, `checksOk`, `from`, `to`, `digest`, `manualSteps` (a count), `governance`, and, when written, `branch`, `commit`, `pushed` and `prUrl`. A failed check leaves `proposed` false. The pull request body names the patch digest, the same value the command's gate binds.
@@ -190,5 +214,5 @@ It returns `scope`, `mode`, `changed`, `proposed`, `checksOk`, `from`, `to`, `di
 | Code | Meaning |
 |---|---|
 | 0 | Applied, already up to date, or `--dry-run` |
-| 1 | Refused (no lock, no such scope, uncommitted changes, open manual steps, a gap in the migration chain, a failed post-condition, a code migration without `--allow-code`), or a check failed in the worktree, including a migration chant ships that has a conflict |
+| 1 | Refused (no lock, no such scope, uncommitted changes, open manual steps, a gap in the migration chain, a move with no bridge, a patch that reaches into a nested workspace, a failed post-condition, a code migration without `--allow-code`), or a check failed in the worktree, including a migration chant ships that has a conflict |
 | 3 | Gated: the patch waits for `chant approve workspace-upgrade <scope>` |

@@ -249,6 +249,8 @@ export default defineConfig({
 								{ label: 'workspace evidence', slug: 'cli/workspace-evidence' },
 								{ label: 'workspace lineage', slug: 'cli/workspace-lineage' },
 								{ label: 'workspace upgrade', slug: 'cli/workspace-upgrade' },
+								{ label: 'workspace adopt-lineage', slug: 'cli/workspace-adopt-lineage' },
+								{ label: 'workspace versions', slug: 'cli/workspace-versions' },
 								{ label: 'workspace check', slug: 'cli/workspace-check' },
 								{ label: 'workspace patch', slug: 'cli/workspace-patch' },
 								{ label: 'workspace build', slug: 'cli/workspace-build' },

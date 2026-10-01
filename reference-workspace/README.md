@@ -11,7 +11,7 @@ cd reference-workspace
 chant workspace ls
 ```
 
-The chant repo's own [`chant.workspace.json`](../chant.workspace.json) lists this directory as a member of kind `workspace`, a nested workspace that the outer one does not look inside.
+The chant repo's own [`chant.workspace.json`](../chant.workspace.json) lists this directory as a member of kind `workspace`, a nested workspace. The outer one never writes inside it, and `chant workspace graph` at the chant root reads it only through this workspace's own `chant workspace graph`, with ids such as `reference-workspace/delivery/appService` (#2551).
 
 ## Members
 

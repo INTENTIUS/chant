@@ -120,6 +120,49 @@ const ManualStepSchema = z
   .strict();
 export type ManualStep = z.infer<typeof ManualStepSchema>;
 
+const CommitId = z.string().regex(/^[0-9a-f]{40,64}$/);
+
+/**
+ * How a scope got its lineage from `chant workspace adopt-lineage` (#2551, D5,
+ * D9, requirement P7), rather than from `chant init`.
+ *
+ * - `by: "files"`: the scope had no lineage. Its files were matched against
+ *   the template's versions, and the history before the lock is vouched for
+ *   by an exact commit range, `commits.to` and every commit before it. The
+ *   range is the one `.chant/trust.json` lists under `adopted`; once that
+ *   entry is at the base revision, an admin has admitted it, and the scope
+ *   reads as provenance `adopted` (D5). Until then it reads as `unattested`.
+ * - `by: "lineage"`: the scope had a directory lineage (#2647), and it was
+ *   moved onto a git source whose files at the chosen ref reproduce every hash
+ *   the lock recorded. The merge base is unchanged, so no history needs
+ *   vouching for, and `previous` keeps the source it replaced.
+ */
+const AdoptionSchema = z
+  .object({
+    by: z.enum(["files", "lineage"]),
+    /** HEAD when the scope was adopted: the range `.chant/trust.json` admits ends here. */
+    commits: z.object({ to: CommitId }).strict(),
+    /** How the chosen version held up against the scope. */
+    match: z
+      .object({
+        /** Files the template has at that version. */
+        files: z.number().int().nonnegative(),
+        /** Of those, the ones the scope holds (or the lock recorded) byte for byte. */
+        identical: z.number().int().nonnegative(),
+        /** The ones it holds with other content: edited since. */
+        edited: z.number().int().nonnegative(),
+        /** The ones it does not hold. */
+        missing: z.number().int().nonnegative(),
+      })
+      .strict(),
+    /** Where the hash index came from: computed from the template, or a cached copy chant re-checked at the chosen version. */
+    index: z.enum(["computed", "cache"]),
+    /** For `by: "lineage"`: the template and source the lineage had before. */
+    previous: z.object({ template: z.string().min(1), source: SourceSchema }).strict().optional(),
+  })
+  .strict();
+export type Adoption = z.infer<typeof AdoptionSchema>;
+
 const LineageSchema = z
   .object({
     kind: z.enum(["template", "vendor"]),
@@ -144,6 +187,8 @@ const LineageSchema = z
     /** Per file, relative to the scope directory, in sorted order. */
     files: z.record(z.string(), LockFileEntrySchema),
     manualSteps: z.array(ManualStepSchema),
+    /** Present when the lineage was adopted rather than written at init (#2551). */
+    adoption: AdoptionSchema.optional(),
   })
   .strict();
 export type Lineage = z.infer<typeof LineageSchema>;
@@ -259,6 +304,7 @@ function canonical(lock: LineageLock): LineageLock {
       migrations: s.migrations,
       files,
       manualSteps: [...s.manualSteps].sort((a, b) => a.path.localeCompare(b.path)),
+      ...(s.adoption !== undefined ? { adoption: s.adoption } : {}),
     };
   }
   return { lockVersion: lock.lockVersion, scopes };

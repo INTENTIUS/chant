@@ -110,6 +110,30 @@ describe("every schema against the reference workspace (#2543)", () => {
     TIMEOUT,
   );
 
+  test(
+    "graph from the chant repo expands the nested reference workspace read-only, with outer/inner/id ids (#2551)",
+    async () => {
+      const { expectValid } = contract(graphSchema);
+      const before = git(REPO, "status", "--porcelain", "--untracked-files=all", "--", "reference-workspace");
+      for (const at of [undefined, "HEAD"]) {
+        const { doc, failed } = await workspaceGraph({ cwd: REPO, at, members: ["reference-workspace"], reader });
+        expectValid(doc);
+        if ("error" in doc) throw new Error(doc.error.message);
+        expect(failed, JSON.stringify(doc.members)).toBe(false);
+        const nested = doc.members.find((m) => m.name === "reference-workspace")!;
+        expect(nested).toMatchObject({ kind: "workspace", status: "composed", reason: null });
+        expect(nested.nested?.name).toBe("reference");
+        expect(nested.nested?.members.find((m) => m.name === "delivery")).toMatchObject({ status: "composed", dir: "delivery" });
+        expect(doc.nodes.length).toBeGreaterThan(0);
+        expect(doc.nodes.every((n) => n.id.startsWith("reference-workspace/delivery/") && n.member === "reference-workspace" && n.nested === "delivery")).toBe(true);
+        expect(doc.groups.byMember["reference-workspace"]).toEqual(doc.nodes.map((n) => n.id).sort());
+      }
+      // The outer read never writes inside the nested workspace.
+      expect(git(REPO, "status", "--porcelain", "--untracked-files=all", "--", "reference-workspace")).toBe(before);
+    },
+    TIMEOUT,
+  );
+
   test("check, in the working tree and at HEAD", async () => {
     const { expectValid } = contract(checkSchema);
     for (const at of [undefined, "HEAD"]) {

@@ -258,6 +258,8 @@ export async function workspaceGraph(query: GraphQuery): Promise<GraphResult> {
     }
     // Links (#2539) resolve against the declaration that was read, the revision's for --at, and the kinds installed now.
     const graph = composeWorkspaceGraph({ name: declaration.name, root: located.root }, inputs, { declaration, kinds });
+    // Nested workspaces (#2551, ws-071): read-only, through their own chant workspace graph.
+    const nestedFailed = await expandNested(graph, declaration.members, query, located.rootOnDisk, located.at);
     let recordsFailed = false;
     if (query.kind !== undefined) {
       // Artifact relationships come from records (#2549): a record's pins and
@@ -274,7 +276,7 @@ export async function workspaceGraph(query: GraphQuery): Promise<GraphResult> {
         query.onStderr?.(`${formatError({ message: `--kind ${query.kind}: ${err.code}: ${err.message}`, hint: USAGE })}\n`);
       }
     }
-    return { doc: { ...head, at: located.at, ...graph }, failed: failed || recordsFailed, ...(components ? { components } : {}) };
+    return { doc: { ...head, at: located.at, ...graph }, failed: failed || recordsFailed || nestedFailed, ...(components ? { components } : {}) };
   } catch (err) {
     if (!(err instanceof WorkspaceReadError)) throw err;
     return { doc: { ...head, error: { code: err.code, message: err.message, location: err.location ?? null } }, failed: true };
@@ -282,6 +284,50 @@ export async function workspaceGraph(query: GraphQuery): Promise<GraphResult> {
     readers?.cleanup();
     if (exported) rmSync(dirname(exported), { recursive: true, force: true });
   }
+}
+
+/**
+ * Expand every member of kind `workspace` the query covers, read-only (#2551,
+ * ws-071). Returns whether one could not be read.
+ */
+async function expandNested(
+  graph: WorkspaceGraph,
+  members: readonly { name: string; dir: string; kind: string }[],
+  query: GraphQuery,
+  rootOnDisk: string,
+  at: string | null,
+): Promise<boolean> {
+  const nested = members.filter((m) => m.kind === "workspace" && (!query.members?.length || query.members.includes(m.name)));
+  if (nested.length === 0) return false;
+  const { foldNested, readNested } = await import("./nested-graph");
+  const reads = await Promise.all(
+    nested.map(async (m) => {
+      const abs = join(rootOnDisk, ...m.dir.split("/"));
+      if (!existsSync(abs)) return { m, read: null };
+      return { m, read: await readNested(abs, query.args ?? {}, at, GRAPH_OUTPUT_SCHEMA_ID, GRAPH_CONTRACT_VERSION, query.reader) };
+    }),
+  );
+  let failed = false;
+  for (const { m, read } of reads) {
+    const member = graph.members.find((x) => x.name === m.name);
+    if (!member) continue;
+    if (!read) {
+      failed = true;
+      member.status = "failed";
+      member.reason = { code: "dir-missing", message: `the nested workspace's directory ${m.dir} does not exist` };
+      continue;
+    }
+    if (read.stderr.trim() && query.onStderr) query.onStderr(read.stderr.endsWith("\n") ? read.stderr : `${read.stderr}\n`);
+    member.chant = read.chant;
+    if (read.ok) {
+      foldNested(graph, member, read.doc);
+    } else {
+      failed = true;
+      member.status = "failed";
+      member.reason = { code: read.code, message: read.message };
+    }
+  }
+  return failed;
 }
 
 export async function runWorkspaceGraph(ctx: CommandContext): Promise<number> {

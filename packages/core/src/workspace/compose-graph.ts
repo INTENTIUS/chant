@@ -87,9 +87,27 @@ export interface ComposedMember {
   cached?: boolean;
   /** The member's stamp (#2876): what the cache keys the read on, or null when none could be taken. */
   stamp?: string | null;
+  /**
+   * For a member of kind `workspace` (#2551, ws-071): the nested workspace's
+   * own view, read through its own `chant workspace graph`. Its nodes are in
+   * the outer `nodes` with `outer/inner/id` ids.
+   */
+  nested?: NestedWorkspace;
   /** Whole-read facts the member's IR carried (`meta`, `pipeline`), kept apart from the composed sections. */
   meta?: Record<string, unknown>;
   pipeline?: unknown;
+}
+
+/** A nested workspace as the outer graph shows it (#2551, ./nested-graph.ts). */
+export interface NestedWorkspace {
+  /** The nested declaration's name. */
+  name: string;
+  /** The contract version of the document the nested read printed. */
+  contract: number;
+  /** The nested workspace's members, as its own graph lists them. */
+  members: ComposedMember[];
+  /** The nested workspace's links, with member names as the nested side writes them. */
+  links: (LinkTableRow | RecordLinkRow)[];
 }
 
 /**
@@ -136,7 +154,8 @@ export interface MemberCollector {
 /** The meta key a lexicon's `graphMeta` hook answers the collector under. */
 export const COLLECTOR_META_KEY = "collector";
 
-export type ComposedNode = IRNode & { member: string };
+/** `nested` names the nested workspace's member a node was read through (#2551); absent for the outer workspace's own nodes. */
+export type ComposedNode = IRNode & { member: string; nested?: string };
 export type ComposedEdge = IREdge & { member: string };
 
 export interface WorkspaceGraph {

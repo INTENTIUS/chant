@@ -110,6 +110,7 @@ chant writes the file with sorted keys and two-space indentation, so it diffs cl
 | `files` | Every file chant wrote into the scope, keyed by its path relative to the scope directory. |
 | `repinned` | Optional. The decision records init re-pinned after substituting parameters ([#2549](https://github.com/INTENTIUS/chant/issues/2549)), each as `{record, paths}`: the record's path in the scope and the pinned paths it rewrote. A record's `evidence` pin on a file the manifest substitutes gets the hash of the substituted file, but only when the pin held in the template. `chant workspace upgrade` re-pins the merge base and the new version the same way and rewrites this list. |
 | `manualSteps` | Paths an update left alone because the project had its own version (see [Manual steps](#manual-steps)). |
+| `adoption` | Optional. Present when [`chant workspace adopt-lineage`](/chant/cli/workspace-adopt-lineage/) recorded the lineage (see [Adoption](#adoption)). |
 
 ### Sources
 
@@ -141,6 +142,20 @@ chant writes the file with sorted keys and two-space indentation, so it diffs cl
 | `tree` | `git` | The git tree of the scope's directory at that commit. |
 | `package`, `version` | `lexicon` | The lexicon package and its installed version. For a lexicon the config declares by path, `package` is that path and `version` is `null`, as it is when chant cannot find the package. |
 | `chant` | `lexicon` | The chant version that rendered core's part of the scaffold, such as `package.json`. |
+
+### Adoption
+
+`chant workspace adopt-lineage` records how it chose the lineage ([#2551](https://github.com/INTENTIUS/chant/issues/2551)). An upgrade keeps the field as it is.
+
+| Field | Meaning |
+|---|---|
+| `by` | `files` when the scope had no lineage and its files were matched against the template's versions. `lineage` when a directory lineage was moved onto git at a version that reproduces every recorded file. |
+| `commits.to` | HEAD when the scope was adopted. For `files`, the adopted range is this commit and every commit before it, the range `.chant/trust.json` lists under `adopted`. |
+| `match` | `files`, `identical`, `edited` and `missing`: how the chosen version held up against the scope, or for `lineage` against the hashes the lock recorded. |
+| `index` | `computed` when chant computed the hash index from the template, `cache` when a cached copy chose the version and chant re-checked it. |
+| `previous` | For `lineage`: the `template` and `source` the lineage had before. |
+
+A lineage adopted by its files reads as provenance `adopted` once the trust policy at the base revision admits its range, and as `unattested` until then. [`chant workspace lineage`](/chant/cli/workspace-lineage/) and [`chant workspace versions`](/chant/cli/workspace-versions/) report which.
 
 ## Files
 
@@ -199,5 +214,7 @@ Files in a scope directory that the lineage does not list are never touched.
 | [`chant vendor pull`](/chant/cli/vendor/#chant-vendor-pull-name) | Updates vendor scopes file by file |
 | [`chant workspace lineage`](/chant/cli/workspace-lineage/) | Reads it |
 | [`chant workspace lineage resolve <path>`](/chant/cli/workspace-lineage/) | Closes a manual step |
-| [`chant workspace upgrade <scope>`](/chant/cli/workspace-upgrade/) | Writes the scope's new `ref`, `address`, `parameters`, `migrations`, `files` and `manualSteps`, through the approved patch |
+| [`chant workspace upgrade <scope>`](/chant/cli/workspace-upgrade/) | Writes the scope's new `ref`, `address`, `parameters`, `migrations`, `files` and `manualSteps`, through the approved patch. With `--source`, also its `template` and `source` |
+| [`chant workspace adopt-lineage`](/chant/cli/workspace-adopt-lineage/) | Adds a lineage for a scope with none, or moves a directory lineage onto git, with an `adoption` |
+| [`chant workspace versions`](/chant/cli/workspace-versions/) | Reads every lock under a directory |
 | [`chant workspace check`](/chant/cli/workspace-check/) | Reads it, and fails on open manual steps |

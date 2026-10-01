@@ -582,6 +582,21 @@ export function parseArgs(args: string[]): ParsedArgs {
       // #2550 — `chant workspace upgrade` runs a template's code migrations
       // only when asked to.
       result.allowCode = true;
+    } else if (arg === "--source") {
+      // #2551 — `chant workspace upgrade --source <repo>[#<member>]`.
+      result.source = args[++i];
+      if (!result.source || result.source.startsWith("-")) throw new Error("--source needs a template: --source <repo>[#<member>]");
+    } else if (arg === "--tags") {
+      // #2551 — `chant workspace adopt-lineage --tags <glob>`, also hash-index and versions.
+      result.tags = args[++i];
+      if (!result.tags || result.tags.startsWith("-")) throw new Error("--tags needs a tag glob: --tags 'v*'");
+    } else if (arg === "--index") {
+      // #2551 — `chant workspace adopt-lineage --index <file>`.
+      result.index = args[++i];
+      if (!result.index || result.index.startsWith("-")) throw new Error("--index needs a hash index file: --index <file>");
+    } else if (arg === "--available") {
+      // #2551 — `chant workspace versions --available` lists the template's version tags.
+      result.available = true;
     } else if (arg === "--root-only") {
       // #2537 — `chant build` and `chant lint` at a declared workspace root
       // run on the root project alone instead of refusing with WSP000.
@@ -947,12 +962,29 @@ Workspace (level 1, #2524):
                         manual steps. Needs no workspace file
   workspace lineage resolve <path>
                         Close a manual step once the file is merged by hand
-  workspace upgrade [<scope>] [--to <ref|dir>] [--allow-code] [--dry-run] [--output <file>]
+  workspace upgrade [<scope>] [--to <ref|dir>] [--source <repo>[#<member>]] [--allow-code] [--dry-run] [--output <file>]
                         Bring a lineage scope to a newer template version: fetch
                         it, migrate and merge per file in a worktree, run build,
                         lint and workspace check there, then gate on the digest
                         of the patch (chant approve workspace-upgrade <scope>).
-                        A second run with the approval applies the patch
+                        A second run with the approval applies the patch.
+                        --source <repo>[#<member>] moves the scope to another
+                        template through that template's bridge migration
+  workspace adopt-lineage [<scope>] --from <repo>[@<ref>][#<member>] [--tags <glob>]
+                        [--index <file>] [--param name=value] [--dry-run] [--json]
+                        Give a scope a git lineage: match a scope with none
+                        against the template's versions and record the best
+                        one, with the adopted commit range in .chant/trust.json,
+                        or move a directory lineage onto the version that
+                        reproduces its recorded files
+  workspace hash-index --from <repo>[#<member>] [--tags <glob>] [--output <file>]
+                        Compute the per-version file hashes adopt-lineage
+                        matches against, for a template's CI to publish
+  workspace versions [<dir>] [--template <id>] [--available [--tags <glob>]] [--json]
+                        Report the template, chant and lexicon versions of
+                        every lineage lock under <dir>, grouped into families
+                        by template; --available also lists each git
+                        template's version tags and where each lock sits
   workspace check [--at <rev>] [--json] [--format stylish|json|sarif] [--generated] [--kind <kind file>] [--live --env <env>]
                         Fail on an unreadable lineage lock or an open manual
                         step, and, in a declared workspace, on a WSP check of
@@ -1505,6 +1537,10 @@ export const commandRegistry: CommandDef[] = [
   { name: "workspace status", handler: async (ctx) => (await import("../workspace/status")).runWorkspaceStatus(ctx) },
   { name: "workspace lineage", handler: async (ctx) => (await import("../workspace/lineage-cli")).runWorkspaceLineage(ctx) },
   { name: "workspace upgrade", handler: async (ctx) => (await import("../workspace/lineage-upgrade-cli")).runWorkspaceUpgrade(ctx) },
+  // #2551 — adopt a lineage, the hash index it matches against, and the versions of a family of workspaces.
+  { name: "workspace adopt-lineage", handler: async (ctx) => (await import("../workspace/lineage-adopt-cli")).runWorkspaceAdoptLineage(ctx) },
+  { name: "workspace hash-index", handler: async (ctx) => (await import("../workspace/lineage-adopt-cli")).runWorkspaceHashIndex(ctx) },
+  { name: "workspace versions", handler: async (ctx) => (await import("../workspace/lineage-versions")).runWorkspaceVersions(ctx) },
   // #2641 — workspace check reads member configs statically and never runs one.
   { name: "workspace check", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/lineage-check")).runWorkspaceCheck(ctx) },
   // The hunks of a diff, for a reader that runs no git of its own.
