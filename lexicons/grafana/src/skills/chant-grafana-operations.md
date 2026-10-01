@@ -88,7 +88,7 @@ When the build's files can't be mounted into Grafana, or you want real folders w
 ```ts
 // ops/grafana.op.ts, with "build:grafana": "chant build src --lexicon grafana -o dist/grafana.json" in package.json
 import { Op, phase, build } from "@intentius/chant/op";
-import { grafanaApply } from "@intentius/chant-lexicon-grafana";
+import { grafanaApply } from "@intentius/chant-lexicon-grafana/op/builders";
 
 export default Op({
   name: "grafana-prod",

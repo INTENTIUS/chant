@@ -44,6 +44,32 @@ describe("collectorEndpoints", () => {
     expect(collectorEndpoints(config).ports).toEqual([{ name: "otlp-edge-grpc", port: 14317 }]);
   });
 
+  test("a receiver's client endpoint is not a port: kubeletstats and k8s_cluster beside otlp add none (#3102)", () => {
+    const config: CollectorConfig = {
+      receivers: {
+        otlp: { protocols: { grpc: { endpoint: "0.0.0.0:4317" } } },
+        kubeletstats: { auth_type: "serviceAccount", endpoint: "https://${env:K8S_NODE_NAME}:10250" },
+        k8s_cluster: { auth_type: "serviceAccount" },
+        prometheus: { config: { scrape_configs: [] }, target_allocator: { endpoint: "http://ta:8080" } },
+      },
+    };
+    expect(collectorEndpoints(config).ports).toEqual([{ name: "otlp-grpc", port: 4317 }]);
+  });
+
+  test("zipkin and jaeger listeners are ports", () => {
+    const config: CollectorConfig = {
+      receivers: {
+        zipkin: { endpoint: "0.0.0.0:9411" },
+        jaeger: { protocols: { grpc: { endpoint: "0.0.0.0:14250" }, thrift_http: { endpoint: "0.0.0.0:14268" } } },
+      },
+    };
+    expect(collectorEndpoints(config).ports).toEqual([
+      { name: "zipkin", port: 9411 },
+      { name: "jaeger-grpc", port: 14250 },
+      { name: "jaeger-thrift-h", port: 14268 },
+    ]);
+  });
+
   test("port names are cut to 15 characters", () => {
     const config: CollectorConfig = {
       receivers: { "otlp/very_long_name": { protocols: { http: { endpoint: "0.0.0.0:4318" } } } },
