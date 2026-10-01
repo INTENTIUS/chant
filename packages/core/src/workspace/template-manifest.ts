@@ -26,9 +26,12 @@
  * the merge base and the target version, so an unedited file carrying a value
  * still has its recorded hash.
  *
- * `hostBound` is declared and validated but not acted on yet: recording a
- * value per host belongs to export and import (#2552). A host-bound value is
- * recorded in `parameters` like any other until then.
+ * A parameter marked `hostBound` holds a value that differs per host, such
+ * as the domain a hosted service serves the app on. Its value is recorded in
+ * `parameters` like any other, and the lineage also records, under
+ * `hostBound`, the files whose template text carries it, so `chant workspace
+ * export` can switch the value for the export and `import` can switch it
+ * back without fetching the template (#2552).
  */
 
 import { posix } from "node:path";
@@ -54,7 +57,7 @@ const ParameterSchema = z
     default: z.string().optional(),
     /** A regular expression every value must match, checked before substitution. */
     pattern: z.string().optional(),
-    /** The value differs per host (#2524 D9). Recorded per host once #2552 lands. */
+    /** The value differs per host (#2524 D9): export and import switch it (#2552). */
     hostBound: z.boolean().optional(),
     description: z.string().optional(),
   })
@@ -218,4 +221,19 @@ export function carryParameters(manifest: TemplateManifest | null, recorded: Rec
     if (has(declared, name) && typeof value === "string") given[name] = value;
   }
   return resolveParameters(manifest, given);
+}
+
+/**
+ * The host-bound parameters of a template (#2552), each with the listed files
+ * whose text carries its placeholder. Undefined when the template declares none.
+ */
+export function hostBoundFiles(files: Map<string, Buffer>, manifest: TemplateManifest | null): Record<string, string[]> | undefined {
+  if (!manifest) return undefined;
+  const names = Object.keys(manifest.parameters).filter((n) => manifest.parameters[n].hostBound === true).sort();
+  if (names.length === 0) return undefined;
+  const out: Record<string, string[]> = {};
+  for (const name of names) {
+    out[name] = manifest.files.filter((f) => files.get(f)?.toString("utf-8").includes(placeholder(name))).sort();
+  }
+  return out;
 }

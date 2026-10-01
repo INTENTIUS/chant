@@ -57,6 +57,12 @@ export interface CommitAttestor {
   /** A stable name, such as `ssh-commit`. */
   readonly name: string;
   attestCommit(ctx: AttestorContext, commit: string): CommitAttestation;
+  /**
+   * Judge a commit object that is not in this repository, given its raw bytes
+   * (`git cat-file commit` output), such as one a return carries (#2552).
+   * Optional: an attestor without it is not asked.
+   */
+  attestRaw?(ctx: AttestorContext, raw: Buffer): CommitAttestation;
 }
 
 const registered: CommitAttestor[] = [];
@@ -84,6 +90,15 @@ export function attestCommit(ctx: AttestorContext, commit: string, attestors: re
     if (!best || (best.level === "unattested" && r.level === "attested-unverifiable-here")) best = r;
   }
   return best ?? { level: "unattested", attestor: "none", reason: "no attestor is registered" };
+}
+
+/** {@link attestCommit} for a raw commit object, asking only the attestors that judge one. */
+export function attestRawCommit(ctx: AttestorContext, raw: Buffer, attestors: readonly CommitAttestor[]): CommitAttestation {
+  return attestCommit(
+    ctx,
+    "",
+    attestors.filter((a) => a.attestRaw).map((a) => ({ name: a.name, attestCommit: (c: AttestorContext) => a.attestRaw!(c, raw) })),
+  );
 }
 
 /** The attestors in use: the built-in ones first, then any registered. */

@@ -251,6 +251,7 @@ export default defineConfig({
 								{ label: 'workspace upgrade', slug: 'cli/workspace-upgrade' },
 								{ label: 'workspace adopt-lineage', slug: 'cli/workspace-adopt-lineage' },
 								{ label: 'workspace versions', slug: 'cli/workspace-versions' },
+								{ label: 'workspace export', slug: 'cli/workspace-export' },
 								{ label: 'workspace check', slug: 'cli/workspace-check' },
 								{ label: 'workspace patch', slug: 'cli/workspace-patch' },
 								{ label: 'workspace build', slug: 'cli/workspace-build' },

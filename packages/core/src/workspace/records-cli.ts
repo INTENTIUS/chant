@@ -50,9 +50,9 @@ import {
 } from "./records";
 import { gitTree, workingTree, type WorkspaceTree } from "./tree";
 import type { DecisionWork } from "./work";
-import { activeAttestors, type ProvenanceLevel } from "./trust/attestor";
+import { activeAttestors, type CommitAttestor, type ProvenanceLevel } from "./trust/attestor";
 import { policyAtBase, recordProvenance, resolveBase, type BaseSource, type RecordProvenance } from "./trust/provenance";
-import type { TrustPolicy } from "./trust/policy";
+import { returnedPolicy, type TrustPolicy } from "./trust/policy";
 import type { SealedRecord } from "./trust/seal";
 
 /** The version of the `records` output this chant writes. */
@@ -361,21 +361,30 @@ export async function queryRecords(query: RecordsQuery): Promise<RecordsDocument
     // Provenance, judged by the policy at base and never by the tree read (#2547).
     const base = top ? resolveBase(top, query.base) : { commit: null, from: null };
     const policy = top ? policyAtBase(top, base) : policyAtBase(root, base);
+    const attestors = policy.active ? await activeAttestors() : [];
     const provenance = recordProvenance({
       repo: top,
       policy,
       at,
       paths: result.records.map((r) => r.path),
-      attestors: policy.active ? await activeAttestors() : [],
+      attestors,
+      ...(policy.active ? { revisit: await returnedRevisit(tree, workspaceRoot, policy, attestors) } : {}),
     });
     const seals = loaded.kind.reviews ? await import("./trust/seal") : undefined;
     const quorumOptions = await quorumOptionsFor(loaded, tree, policy);
-    const records: RecordView[] = result.records.map((r) => ({
-      ...r,
-      provenance: provenance.get(r.path)!,
-      ...(quorumOptions ? { quorum: computeQuorum(loaded.kind, r, quorumOptions) } : {}),
-      ...(seals ? authorSeal(loaded.kind, r, policy, seals.checkRecordSeal) : {}),
-    }));
+    const records: RecordView[] = [];
+    for (const r of result.records) {
+      const p = provenance.get(r.path)!;
+      // Returned work (#2552): its seals verify against the signers admitted for its return too.
+      const recordPolicy = p.returned ? returnedPolicy(policy, p.returned.id) : policy;
+      const options = p.returned ? await quorumOptionsFor(loaded, tree, recordPolicy) : quorumOptions;
+      records.push({
+        ...r,
+        provenance: p,
+        ...(options ? { quorum: computeQuorum(loaded.kind, r, options) } : {}),
+        ...(seals ? authorSeal(loaded.kind, r, recordPolicy, seals.checkRecordSeal) : {}),
+      });
+    }
     if (loaded.kind.approval && !loaded.kind.work && top) {
       const decided = decidedCommits(top, at ?? "HEAD", records.map((r) => r.path), loaded.kind);
       for (const r of records) r.decidedIn = decided.get(r.path) ?? null;
@@ -408,6 +417,36 @@ export async function queryRecords(query: RecordsQuery): Promise<RecordsDocument
     if (!(err instanceof RecordReadError)) throw err;
     return { $schema: RECORDS_OUTPUT_SCHEMA_ID, contract: RECORDS_CONTRACT_VERSION, error: { code: err.code, message: err.message } };
   }
+}
+
+/**
+ * The second look recordProvenance takes at each record (#2552): a record
+ * whose bytes came back in a return is judged by the commit it was made in,
+ * which the return carries, rather than by the import here. `tree` is the
+ * workspace root's tree, as read; record paths are from the repository root.
+ */
+async function returnedRevisit(
+  tree: WorkspaceTree,
+  workspaceRoot: string,
+  policy: TrustPolicy,
+  attestors: readonly CommitAttestor[],
+): Promise<((path: string, host: RecordProvenance) => RecordProvenance | undefined) | undefined> {
+  const { readReturns, returnedProvenance } = await import("./returns");
+  const { returns } = readReturns(tree);
+  if (returns.length === 0) return undefined;
+  const prefix = workspaceRoot === "." ? "" : `${workspaceRoot}/`;
+  return (path, host) => {
+    if (!path.startsWith(prefix)) return undefined;
+    const rel = path.slice(prefix.length);
+    const holding = returns.filter((r) => r.paths[rel] !== undefined);
+    if (holding.length === 0 || tree.stat(rel) !== "file") return undefined;
+    const content = Buffer.from(tree.bytes ? tree.bytes(rel) : tree.read(rel));
+    for (const r of holding) {
+      const p = returnedProvenance(policy, attestors, r, rel, content, host);
+      if (p) return p;
+    }
+    return undefined;
+  };
 }
 
 /**

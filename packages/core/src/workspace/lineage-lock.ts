@@ -177,6 +177,13 @@ const LineageSchema = z
     /** The parameter values the template was instantiated with. Always empty for vendor scopes. */
     parameters: z.record(z.string(), z.unknown()),
     /**
+     * The parameters the template marks `hostBound` (#2524 D9, #2552), each
+     * with the files, relative to the scope, whose template text carries its
+     * placeholder. `chant workspace export` switches their values for the
+     * export, and `import` switches them back. Absent when the template has none.
+     */
+    hostBound: z.record(z.string(), z.array(z.string().min(1))).optional(),
+    /**
      * Records whose evidence pins were re-pinned to the substituted content
      * of a parameterised file (#2549): each record's path in the scope, and the
      * pinned paths. An upgrade re-pins the base and the target the same way.
@@ -300,6 +307,7 @@ function canonical(lock: LineageLock): LineageLock {
       ...(s.ref !== undefined ? { ref: s.ref } : {}),
       address: s.address,
       parameters: s.parameters,
+      ...(s.hostBound !== undefined ? { hostBound: Object.fromEntries(Object.keys(s.hostBound).sort().map((k) => [k, [...s.hostBound![k]].sort()])) } : {}),
       ...(s.repinned !== undefined ? { repinned: s.repinned } : {}),
       migrations: s.migrations,
       files,

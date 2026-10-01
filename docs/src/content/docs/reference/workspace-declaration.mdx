@@ -82,6 +82,7 @@ A member is an object with `name`, `dir` and `kind`.
 | `box` | no | The member is a [box](#boxes), or holds a box's declarations: the capabilities it reaches through a broker, each with its broker and scope. It was added in chant 0.91.0. |
 | `upstream` | no | Where an embedded member's files come from. Versions live in the lock, not here. |
 | `because` | for `other` | Why the member is there. |
+| `travel` | no | `true` when the member goes with an export. [`chant workspace export`](/chant/cli/workspace-export/) takes only members that set it. It was added in chant 0.101.0. |
 | `suppress` | no | Declaration checks turned off for this member, each `{ "check": "WSP009", "because": "..." }`. See [severity and suppression](/chant/cli/workspace-check/#severity-and-suppression). |
 
 Three kinds are built in.
@@ -89,7 +90,7 @@ Three kinds are built in.
 | Kind | The directory holds |
 |---|---|
 | `chant` | a chant project, with `chant.config.ts` or `chant.config.json` directly in it |
-| `workspace` | a nested workspace with its own declaration. The outer workspace never runs commands or writes inside it. [`chant workspace graph`](/chant/cli/workspace-graph/#nested-workspaces) reads it read-only, through its own `chant workspace graph` |
+| `workspace` | a nested workspace with its own declaration. The outer workspace never runs commands or writes inside it, except [`chant workspace export`](/chant/cli/workspace-export/) into a member with the role `export`. [`chant workspace graph`](/chant/cli/workspace-graph/#nested-workspaces) reads it read-only, through its own `chant workspace graph` |
 | `other` | anything chant does not read. `because` is required |
 
 A pinned package can supply more kinds, as data at its `./workspace-kinds` subpath. [Workspace Kinds](/chant/reference/workspace-kinds/) describes the format, which packages are read, and how chant decides when several kinds' probes claim one directory. A member whose kind no built-in or pinned package supplies is listed with the reason `unknown-kind`, and `chant workspace check` fails on it.

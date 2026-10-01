@@ -395,13 +395,15 @@ Every record carries a `provenance` object whose `level` is one of four values:
 | Level | The record |
 |---|---|
 | `attested` | was last changed by a commit whose ssh signature verifies against a signer listed at base |
-| `attested-unverifiable-here` | was last changed by a signed commit that this machine can't check, such as an OpenPGP signature or one checked without `ssh-keygen` installed |
+| `attested-unverifiable-here` | was last changed by a signed commit that this machine can't check, such as an OpenPGP signature or one checked without `ssh-keygen` installed, or came back in a return signed by a key no one has admitted yet |
 | `adopted` | wasn't attested, but its commit falls in a range that `.chant/trust.json` at base adopts |
 | `unattested` | none of the above, including a file with uncommitted changes |
 
 Signers and role grants are read from the base revision, never from the tree being read, so a change can't vouch for itself. The files and their rules are described in [`chant workspace verify`](/chant/cli/workspace-verify/). Attestation is opt-in. With no signers file at base, nothing is checked and every record is `unattested`. `trust.active` in the output says which case applies.
 
 On a developer machine this detects problems. It doesn't enforce anything, because an agent running as you can sign with your unlocked key or skip the check. Enforcement is CI running `chant workspace verify` and `records --require attested` against the target branch.
+
+A record that came back in a [return](/chant/cli/workspace-export/#hosted-return) with the commit it was made in is judged by that commit instead, against the signers at base plus those admitted for the return. Its `provenance.returned` holds the return's `id`, that `commit`, and `importedIn`, the commit here that holds the record. A key neither the signers file nor an admission lists reads as `attested-unverifiable-here` until an admin runs `chant workspace admit` and merges it. Its seals read as `seal-unverifiable` for the same reason.
 
 `provenance` judges the commit that last changed the file. A record of a kind with `reviews` can also carry its author's seal, which `records` reports apart from it in `attested` and `attestation` ([Sealing a record](#sealing-a-record)). A sealed record in an unsigned commit is `unattested` in `provenance` and `attested: true` beside it, so neither implies the other.
 
@@ -622,6 +624,7 @@ On read, each parsed record of a kind with `reviews` carries `attested` and `att
 | active | has a seal that verifies for its author | `true` | none | none |
 | active | names an author and has no seal | `false` | `seal-missing` | `record-unattested` |
 | active | its author has no key in the file | `false` | `seal-signer-unlisted` | `record-unattested` |
+| active | came back in a [return](/chant/cli/workspace-export/#hosted-return), and its author has no key in the file and no admission for the return, with an intact seal | `null` | `seal-unverifiable` | `record-unattested` |
 | active | has a seal that is malformed, by another signer, or fails | `false` | `seal-signature-invalid` | `record-unattested` |
 | active | `ssh-keygen` isn't installed | `null` | `seal-unverifiable` | `record-unattested` |
 | either | names no author and has no seal | `null` | `seal-missing` | none |

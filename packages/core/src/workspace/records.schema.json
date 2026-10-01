@@ -446,7 +446,17 @@
         "attestor": { "type": "string", "description": "The attestor that answered, such as ssh-commit." },
         "principal": { "type": "string", "description": "The signer, when attested." },
         "key": { "type": "string", "description": "The signing key's fingerprint, when known." },
-        "reason": { "type": "string" }
+        "reason": { "type": "string" },
+        "returned": {
+          "description": "Added in contract 1 by #2552. Set when the record's bytes came back in a return that carries the commit they were made in: level, principal and key then judge that commit, with the signers at base plus those admitted for the return, and commit is the commit here that holds the bytes. A signer neither lists reads as attested-unverifiable-here until an admin admits it.",
+          "type": "object",
+          "required": ["id", "importedIn"],
+          "properties": {
+            "id": { "type": "string", "pattern": "^ret-[0-9a-f]{12}$", "description": "The return, .chant/returns/<id>.json at the workspace root." },
+            "commit": { "type": "string", "pattern": "^[0-9a-f]{40,64}$", "description": "The commit in the returned copy that last changed the file." },
+            "importedIn": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40,64}$", "description": "The commit here that holds the returned bytes." }
+          }
+        }
       }
     },
     "reason": {

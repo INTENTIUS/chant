@@ -323,6 +323,8 @@ export interface Member {
   box: BoxDeclaration | null;
   upstream: string | null;
   because: string | null;
+  /** Whether `chant workspace export` takes the member (#2552, D10). False when the entry does not say. */
+  travel: boolean;
   suppress: Suppression[];
   /** The entry's JSON Pointer in the file, for messages. */
   pointer: string;
@@ -602,6 +604,7 @@ export function parseDeclaration(text: string, file: string, reader: string = re
       box,
       upstream: (e.upstream as string | undefined) ?? null,
       because: (e.because as string | undefined) ?? null,
+      travel: e.travel === true,
       suppress,
       pointer,
     };

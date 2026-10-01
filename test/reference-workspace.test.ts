@@ -917,6 +917,56 @@ describe("chant init --from on the fixture", () => {
     }
   });
 
+  // Export and import (#2552): the members that travel go into the export member with the lineage and records, and come back.
+  test("a copy exports its members into an export member, and an edit there imports back", async () => {
+    const scratch = mkdtempSync(join(tmpdir(), "chant-2552-ref-"));
+    const gitIn = (cwd: string, ...args: string[]) =>
+      execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.test", "-c", "commit.gpgsign=false", ...args], { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] });
+    try {
+      const target = join(scratch, "ws");
+      const made = await initFromCommand({ from: `${repoRoot}#reference-workspace`, path: target });
+      expect(made.success, made.error).toBe(true);
+      const decl = JSON.parse(readFileSync(join(target, "chant.workspace.json"), "utf-8")) as { members: Record<string, unknown>[] };
+      for (const m of decl.members) if (m.name === "app" || m.name === "design") m.travel = true;
+      decl.members.push({ name: "out", dir: "out", kind: "workspace", roles: ["export"] });
+      writeFileSync(join(target, "chant.workspace.json"), JSON.stringify(decl, null, 2) + "\n");
+      gitIn(target, "init", "-q", "-b", "main");
+      gitIn(target, "add", "-A");
+      gitIn(target, "commit", "-q", "-m", "copy");
+
+      const exported = chant(target, "workspace", "export", "--json");
+      expect(exported.status, exported.stderr).toBe(0);
+      const report = JSON.parse(exported.stdout) as { manifest: { members: string[]; dirs: string[]; dropped: { links: unknown[]; agents: string[] } } };
+      expect(report.manifest.members).toEqual(["app", "design"]);
+      expect(report.manifest.dirs).toContain("decisions");
+      // The app's telemetry link names delivery, which stays.
+      expect(report.manifest.dropped.links).toEqual([{ member: "app", to: "delivery" }]);
+      // Nothing outside the export member changed.
+      expect(gitIn(target, "status", "--porcelain", "--untracked-files=all").split("\n").filter(Boolean).every((l) => l.slice(3).startsWith("out/"))).toBe(true);
+      // The export is a workspace: it lists the two members and reads its decisions.
+      expect(lsJson(join(target, "out")).members.map((m) => m.name)).toEqual(["app", "design"]);
+      const doc = await queryRecords({ kind: "decisions/decision.kind.mjs", cwd: join(target, "out") });
+      if ("error" in doc) throw new Error(`${doc.error.code}: ${doc.error.message}`);
+      expect(doc.records.map((r) => r.id)).toContain("ref-002");
+      expect(readFileSync(join(target, "out", "decisions", "ref-002-where-the-screen-design-lives.md")).equals(readFileSync(join(target, "decisions", "ref-002-where-the-screen-design-lives.md")))).toBe(true);
+      gitIn(target, "add", "-A");
+      gitIn(target, "commit", "-q", "-m", "export");
+
+      writeFileSync(join(target, "out", "app", "NOTES.md"), "written in the export\n");
+      const imported = chant(target, "workspace", "import", "--json");
+      expect(imported.status, imported.stderr).toBe(0);
+      const back = JSON.parse(imported.stdout) as { written: string[]; returnRecord: string; member: { action: string } };
+      expect(back.written).toEqual(["app/NOTES.md"]);
+      expect(readFileSync(join(target, "app", "NOTES.md"), "utf-8")).toBe("written in the export\n");
+      expect(existsSync(join(target, back.returnRecord))).toBe(true);
+      expect(back.member.action).toBe("regenerated");
+      const check = chant(target, "workspace", "check", "--json");
+      expect(check.status, check.stderr + check.stdout).toBe(0);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
   // The design client gets a lock of its own once there is a client to vendor (#2550): the copy's root lock is not touched.
   test("a member made from a template of its own is upgraded as that member, apart from the root's lock", async () => {
     const scratch = mkdtempSync(join(tmpdir(), "chant-2550-member-"));
