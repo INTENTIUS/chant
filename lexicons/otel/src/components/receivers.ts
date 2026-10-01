@@ -35,6 +35,11 @@ export const OtlpReceiver = defineBuiltin<OtlpReceiverConfig, "receiver", "otlp"
     if (c.protocols && "http" in c.protocols) out.push(c.protocols.http?.endpoint ?? "localhost:4318");
     return out;
   },
+  // The HTTP receiver takes protobuf and JSON bodies on the same port.
+  protocols: (c) => [
+    ...(c.protocols && "grpc" in c.protocols ? ["grpc"] : []),
+    ...(c.protocols && "http" in c.protocols ? ["http/protobuf", "http/json"] : []),
+  ],
 });
 
 // ── prometheus ───────────────────────────────────────────────────────

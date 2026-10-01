@@ -111,6 +111,8 @@ export interface CollectorComponent {
   kind: string;
   type: string;
   endpoints: string[];
+  /** The wire protocols it speaks (`grpc`, `http/protobuf`, `http/json`); empty when unknown (#2558). */
+  protocols: string[];
   pipelines: string[];
 }
 
@@ -237,6 +239,7 @@ function readCollector(member: string, value: unknown): MemberCollector | null {
       kind: String(c.kind),
       type: String(c.type),
       endpoints: strings(c.endpoints),
+      protocols: strings(c.protocols),
       pipelines: strings(c.pipelines),
     })),
     exporters: records(v.exporters).map((e) => ({
@@ -341,7 +344,7 @@ export function composeWorkspaceGraph(
     exports,
     imports,
     links: links
-      ? graphLinks(links.declaration, { composed: inputs.filter((i) => i.ir).map((i) => i.member.name), exports, imports }, links.kinds)
+      ? graphLinks(links.declaration, { composed: inputs.filter((i) => i.ir).map((i) => i.member.name), collectors, exports, imports }, links.kinds)
       : [],
     collectors,
     records: [],

@@ -321,8 +321,8 @@ describe("the declaration's link fields", () => {
     expect(d.members[0].outputs).toEqual(["One", "Two"]);
     expect(d.members[1].outputs).toBeNull();
     expect(d.members[1].links).toEqual([
-      { member: "a", output: "One", kind: null, pointer: "/members/1/links/0" },
-      { member: "a", output: "Two", kind: "output", pointer: "/members/1/links/1" },
+      { member: "a", output: "One", kind: null, protocol: null, pointer: "/members/1/links/0" },
+      { member: "a", output: "Two", kind: "output", protocol: null, pointer: "/members/1/links/1" },
     ]);
   });
 
@@ -332,6 +332,125 @@ describe("the declaration's link fields", () => {
     expect(() => read([{ name: "b", dir: "b", kind: "chant", links: [{ member: "a" }] }])).toThrow(/missing required field "output"/);
     expect(() => read([{ name: "b", dir: "b", kind: "chant", links: [{ member: "a", output: "" }] }])).toThrow(WorkspaceReadError);
     expect(read([{ name: "b", dir: "b", kind: "chant", links: [{ member: "a", output: "One", "x-note": "hi" }] }]).members[0].links).toHaveLength(1);
+  });
+});
+
+describe("telemetry links (#2558)", () => {
+  const collector = {
+    member: "ops",
+    pipelines: [
+      { id: "traces", signal: "traces", receivers: ["otlp"], processors: [], exporters: ["otlphttp/backend"] },
+      { id: "metrics", signal: "metrics", receivers: ["custom"], processors: [], exporters: ["otlphttp/backend"] },
+    ],
+    components: [
+      { id: "otlp", kind: "receiver", type: "otlp", endpoints: ["0.0.0.0:4318"], protocols: ["http/protobuf", "http/json"], pipelines: ["traces"] },
+      { id: "custom", kind: "receiver", type: "custom", endpoints: [], protocols: [], pipelines: ["metrics"] },
+      { id: "otlphttp/backend", kind: "exporter", type: "otlphttp", endpoints: ["https://b"], protocols: ["http/protobuf"], pipelines: ["traces", "metrics"] },
+    ],
+    exporters: [{ id: "otlphttp/backend", type: "otlphttp", endpoints: ["https://b"], pipelines: ["traces", "metrics"], signals: ["traces", "metrics"] }],
+  };
+  const decl = (link: Record<string, unknown>) =>
+    parseDeclaration(
+      declaration([
+        { name: "ops", dir: "ops", kind: "chant" },
+        { name: "web", dir: "web", kind: "chant" },
+        { name: "docs", dir: "docs", kind: "other", because: "prose" },
+        { name: "app", dir: "app", kind: "other", because: "x", links: [{ kind: "telemetry", ...link }] },
+      ]),
+      "chant.workspace.json",
+    );
+  const targets = (collectors: (typeof collector)[], composed = ["ops", "web"]) => ({
+    collectors: new Map(collectors.map((c) => [c.member, c])),
+    composed: new Set(composed),
+  });
+  const rowFor = (link: Record<string, unknown>, t?: ReturnType<typeof targets>) => resolveLinks(decl(link), new Map(), t)[0] as Extract<LinkTableRow, { producer: string }>;
+
+  test("resolves to a pipeline of the producer's collector, and says it is a pipeline", () => {
+    const row = rowFor({ member: "ops", output: "traces" }, targets([collector]));
+    expect(row).toMatchObject({ kind: "telemetry", status: "resolved", reason: null, target: "pipeline", output: "traces", producer: "ops" });
+  });
+
+  test("resolves to an exporter when no pipeline has the name", () => {
+    expect(rowFor({ member: "ops", output: "otlphttp/backend" }, targets([collector]))).toMatchObject({ status: "resolved", target: "exporter" });
+  });
+
+  test("is missing when the collector has no such pipeline or exporter, and lists what it has", () => {
+    const row = rowFor({ member: "ops", output: "logs" }, targets([collector]));
+    expect(row.status).toBe("missing");
+    expect(row.reason).toBe("ops's collector has no pipeline or exporter logs; pipelines: traces, metrics; exporters: otlphttp/backend");
+    expect(row.target).toBeUndefined();
+  });
+
+  test("is missing when a composed producer declares no collector, and unresolved when it was not composed", () => {
+    expect(rowFor({ member: "web", output: "traces" }, targets([collector]))).toMatchObject({ status: "missing", reason: expect.stringContaining("web declares no collector") });
+    expect(rowFor({ member: "docs", output: "traces" }, targets([collector]))).toMatchObject({ status: "unresolved", reason: expect.stringContaining("docs was not composed") });
+  });
+
+  test("checks the protocol against a pipeline's receivers", () => {
+    expect(rowFor({ member: "ops", output: "traces", protocol: "http/protobuf" }, targets([collector]))).toMatchObject({ status: "resolved", protocol: "http/protobuf" });
+    const bad = rowFor({ member: "ops", output: "traces", protocol: "grpc" }, targets([collector]));
+    expect(bad).toMatchObject({ status: "invalid", target: "pipeline" });
+    expect(bad.reason).toBe("the receivers of pipeline traces speak http/protobuf, http/json, and the link sends grpc");
+  });
+
+  test("checks the protocol against an exporter's own", () => {
+    expect(rowFor({ member: "ops", output: "otlphttp/backend", protocol: "http/protobuf" }, targets([collector])).status).toBe("resolved");
+    expect(rowFor({ member: "ops", output: "otlphttp/backend", protocol: "grpc" }, targets([collector])).status).toBe("invalid");
+  });
+
+  test("leaves the link unresolved when the target's definitions state no protocols", () => {
+    const row = rowFor({ member: "ops", output: "metrics", protocol: "grpc" }, targets([collector]));
+    expect(row).toMatchObject({ status: "unresolved", reason: "the receivers of pipeline metrics state no protocols, so grpc could not be confirmed" });
+  });
+
+  test("a link with no protocol checks presence only", () => {
+    expect(rowFor({ member: "ops", output: "metrics" }, targets([collector])).status).toBe("resolved");
+  });
+
+  test("without collectors, as in chant workspace check, a telemetry link is kept unresolved", () => {
+    const row = rowFor({ member: "ops", output: "traces" });
+    expect(row).toMatchObject({ status: "unresolved", reason: expect.stringContaining("read by chant workspace graph") });
+  });
+
+  test("a protocol on a link that isn't a telemetry link is invalid", () => {
+    const d = parseDeclaration(
+      declaration([{ name: "ops", dir: "ops", kind: "chant" }, { name: "app", dir: "app", kind: "other", because: "x", links: [{ member: "ops", output: "Url", protocol: "grpc" }] }]),
+      "chant.workspace.json",
+    );
+    const row = resolveLinks(d, new Map())[0] as Extract<LinkTableRow, { producer: string }>;
+    expect(row).toMatchObject({ status: "invalid", reason: "protocol applies to telemetry links; this link has kind output" });
+  });
+
+  test("graphLinks resolves a telemetry link from the composed collectors, and drops the pointer", () => {
+    const rows = graphLinks(decl({ member: "ops", output: "traces", protocol: "http/protobuf" }), { composed: ["ops", "web"], collectors: [collector], exports: [], imports: [] });
+    expect(rows).toEqual([
+      expect.objectContaining({ consumer: "app", producer: "ops", output: "traces", kind: "telemetry", status: "resolved", protocol: "http/protobuf", target: "pipeline" }),
+    ]);
+    expect("pointer" in rows[0]!).toBe(false);
+  });
+
+  test("the declaration refuses an unknown protocol, and reads a telemetry link's protocol", () => {
+    expect(() => decl({ member: "ops", output: "traces", protocol: "carrier-pigeon" })).toThrow(WorkspaceReadError);
+    expect(decl({ member: "ops", output: "traces", protocol: "grpc" }).members[3]!.links[0]).toMatchObject({ kind: "telemetry", protocol: "grpc" });
+  });
+
+  test("WSP098 flags a protocol on a link of another kind, and WSP092 accepts telemetry", async () => {
+    const root = repo({
+      "chant.workspace.json": declaration([
+        { name: "ops", dir: "ops", kind: "chant" },
+        { name: "app", dir: "app", kind: "other", because: "x", links: [{ member: "ops", output: "Url", protocol: "grpc" }, { member: "ops", output: "traces", kind: "telemetry", protocol: "grpc" }] },
+      ]),
+      "ops/chant.config.ts": "export default {};\n",
+      "app/README.md": "",
+    });
+    const report = await runDeclarationChecks(root);
+    const ids = report.diagnostics.map((d) => d.ruleId);
+    expect(ids).toContain("WSP098");
+    expect(ids).not.toContain("WSP092");
+    expect(report.diagnostics.find((d) => d.ruleId === "WSP098")!.message).toContain("states protocol grpc");
+    expect(report.diagnostics.filter((d) => d.ruleId === "WSP098")).toHaveLength(1);
+    // The telemetry link is kept unresolved here: check reads source.
+    expect(report.diagnostics.find((d) => d.ruleId === "WSP094")!.message).toContain("read by chant workspace graph");
   });
 });
 
