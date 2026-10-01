@@ -102,7 +102,7 @@ describe("the generated source type-checks against the lexicon's types", () => {
     expect(found).toEqual({
       "community/node-exporter-full.json": { step: 273, metric: 1 },
       "community/k8s-views-global.json": {},
-      "community/k8s-views-pods.json": { wrapText: 2 },
+      "community/k8s-views-pods.json": {},
       "community/traefik.json": {},
       "community/redis.json": { metric: 11, step: 6, time_options: 1, unitScale: 13 },
       "community/prometheus-2-stats.json": { metric: 3, now: 1, step: 18 },

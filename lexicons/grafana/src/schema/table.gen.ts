@@ -92,6 +92,26 @@ export interface TableFieldOptions {
    * options for the footer for this field
    */
   footer?: TableFieldFooterOptions;
+  /**
+   * Controls whether the column can be sorted. Every column is sortable by default; set to false to disable sorting for this column.
+   */
+  sortable?: boolean;
+  /**
+   * if true, wrap the text content of the cell
+   */
+  wrapText?: boolean;
+  /**
+   * Enables text wrapping for column headers
+   */
+  wrapHeaderText?: boolean;
+  /**
+   * Selecting or hovering this field will show a tooltip containing the content within the target field
+   */
+  tooltip?: TableCellTooltipOptions;
+  /**
+   * The name of the field which contains styling overrides for this cell
+   */
+  styleField?: string;
 }
 
 /**
@@ -368,4 +388,23 @@ export interface TableFieldFooterOptions {
    * footer reducers to apply to this field
    */
   reducers?: string[];
+}
+
+/**
+ * Where the cell tooltip is placed
+ */
+export type TableCellTooltipPlacement = "top" | "bottom" | "left" | "right" | "auto";
+
+/**
+ * Tooltip shown when a cell of this field is selected or hovered
+ */
+export interface TableCellTooltipOptions {
+  /**
+   * The name of the field to get the tooltip content from
+   */
+  field: string;
+  /**
+   * placement of the tooltip
+   */
+  placement?: TableCellTooltipPlacement;
 }
