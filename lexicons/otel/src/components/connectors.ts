@@ -1,5 +1,6 @@
 /**
- * Built-in connectors: spanmetrics, servicegraph, routing, forward, count, sum.
+ * Built-in connectors: spanmetrics, servicegraph, routing, forward, count, sum,
+ * signaltometrics.
  *
  * A connector is an exporter in one pipeline and a receiver in another. Put
  * the same entity in `exporters` of the pipeline that feeds it and in
@@ -273,4 +274,211 @@ export const SumConnector = defineBuiltin<SumConnectorConfig, "connector", "sum"
     if (total === 0) problems.push("no metric is configured, so the connector emits nothing");
     return problems;
   },
+});
+
+// ── signaltometrics ──────────────────────────────────────────────────
+//
+// Typed against connector/signaltometricsconnector at COLLECTOR_PIN
+// (collector-contrib v0.130.0): config/config.go and README.md at that tag,
+// https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/v0.130.0/connector/signaltometricsconnector
+// The collector type is `signaltometrics`. Upstream marks every signal pair
+// alpha. At v0.130.0 there is no span event section; spans, data points,
+// logs and profiles each take a list of metrics.
+
+/** The input sections of a `signaltometrics` connector, one per signal it reads. */
+export const SIGNAL_TO_METRICS_SIGNALS = ["spans", "datapoints", "logs", "profiles"] as const;
+export type SignalToMetricsSignal = (typeof SIGNAL_TO_METRICS_SIGNALS)[number];
+
+/** The metric types a `signaltometrics` entry can produce. Each entry names exactly one. */
+export const SIGNAL_TO_METRICS_TYPES = ["sum", "gauge", "histogram", "exponential_histogram"] as const;
+export type SignalToMetricsType = (typeof SIGNAL_TO_METRICS_TYPES)[number];
+
+/**
+ * The connector's default explicit histogram bounds, used when `histogram`
+ * sets no `buckets`. They are plain numbers in whatever unit `value` returns,
+ * not durations.
+ */
+export const SIGNAL_TO_METRICS_DEFAULT_BUCKETS: readonly number[] = Object.freeze([
+  2, 4, 6, 8, 10, 50, 100, 200, 400, 800, 1000, 1400, 2000, 5000, 10_000, 15_000,
+]);
+
+/**
+ * An attribute of the produced metric.
+ *
+ * In `attributes`: without `default_value` or `optional`, an item lacking the
+ * attribute is not counted at all; with `default_value`, it is counted under
+ * that value; with `optional: true`, it is counted without the attribute.
+ * Set at most one of the two.
+ *
+ * In `include_resource_attributes`: an include list. `default_value` fills a
+ * missing resource attribute; `optional` changes nothing.
+ */
+export interface SignalToMetricsAttribute {
+  key: string;
+  default_value?: string | number | boolean;
+  optional?: boolean;
+}
+
+/** A delta sum of `value` over the items in each batch. */
+export interface SignalToMetricsSum {
+  /** OTTL value expression; its result type (int or double) is the sum's. A constant is a string: `"1"`. */
+  value: string;
+}
+
+/** The last `value` seen in each batch. */
+export interface SignalToMetricsGauge {
+  /** OTTL value expression. With `ExtractGrokPatterns`, select one key: `ExtractGrokPatterns(...)["key"]`. */
+  value: string;
+}
+
+/** An explicit-bucket histogram of `value`. */
+export interface SignalToMetricsHistogram {
+  /** Upper bounds, increasing, in the unit `value` returns. Default `SIGNAL_TO_METRICS_DEFAULT_BUCKETS`. */
+  buckets?: number[];
+  /** OTTL value expression for how many observations each item counts as. Default: one per item. */
+  count?: string;
+  /** OTTL value expression for the observed value, e.g. `Seconds(end_time - start_time)` or an attribute. */
+  value: string;
+}
+
+/** A base-2 exponential histogram of `value`. */
+export interface SignalToMetricsExponentialHistogram {
+  /** Buckets per positive or negative range, 2 to 16384. Default 160. */
+  max_size?: number;
+  /** OTTL value expression for how many observations each item counts as. Default: one per item. */
+  count?: string;
+  /** OTTL value expression for the observed value. */
+  value: string;
+}
+
+/** What every `signaltometrics` entry has, whatever metric type it produces. */
+export interface SignalToMetricsMetricBase {
+  /** The OTLP metric name, used as written. */
+  name: string;
+  description?: string;
+  /** The metric's unit, e.g. `s` or `{token}`. */
+  unit?: string;
+  /** Resource attributes the metric keeps. Unset or empty keeps them all. */
+  include_resource_attributes?: SignalToMetricsAttribute[];
+  /** Attributes of the item (span, data point, log record) the metric is split by. Unset: no attributes. */
+  attributes?: SignalToMetricsAttribute[];
+  /** OTTL conditions, ORed; an item counts when any matches. Unset counts every item. */
+  conditions?: string[];
+}
+
+type OneMetricType<K extends SignalToMetricsType, V> = { [P in K]: V } & { [P in Exclude<SignalToMetricsType, K>]?: never };
+
+/** One metric a `signaltometrics` connector produces: a name and exactly one metric type. */
+export type SignalToMetricsMetric = SignalToMetricsMetricBase &
+  (
+    | OneMetricType<"sum", SignalToMetricsSum>
+    | OneMetricType<"gauge", SignalToMetricsGauge>
+    | OneMetricType<"histogram", SignalToMetricsHistogram>
+    | OneMetricType<"exponential_histogram", SignalToMetricsExponentialHistogram>
+  );
+
+/**
+ * The metrics to produce, per input signal. The connector emits delta
+ * temporality and aggregates only within each batch it receives, so an
+ * exporter that needs cumulative input (Prometheus remote write) wants a
+ * `deltatocumulative` processor in front of it.
+ */
+export interface SignalToMetricsConnectorConfig {
+  spans?: SignalToMetricsMetric[];
+  datapoints?: SignalToMetricsMetric[];
+  logs?: SignalToMetricsMetric[];
+  profiles?: SignalToMetricsMetric[];
+}
+
+/** One entry of a `signaltometrics` config, with where it sits. */
+export interface SignalToMetricsEntry {
+  signal: SignalToMetricsSignal;
+  index: number;
+  metric: SignalToMetricsMetric;
+  /** The metric types the entry names. A valid entry names exactly one. */
+  types: SignalToMetricsType[];
+}
+
+/** Every metric entry of a `signaltometrics` config, in section order. Reads untyped config too. */
+export function signalToMetricsEntries(config: SignalToMetricsConnectorConfig): SignalToMetricsEntry[] {
+  const out: SignalToMetricsEntry[] = [];
+  for (const signal of SIGNAL_TO_METRICS_SIGNALS) {
+    const list = (config as Record<string, unknown>)?.[signal];
+    if (!Array.isArray(list)) continue;
+    list.forEach((metric, index) => {
+      const m = (metric ?? {}) as Record<string, unknown>;
+      const types = SIGNAL_TO_METRICS_TYPES.filter((t) => m[t] !== undefined && m[t] !== null);
+      out.push({ signal, index, metric: m as unknown as SignalToMetricsMetric, types });
+    });
+  }
+  return out;
+}
+
+const GROK_KEY_SELECTOR = /ExtractGrokPatterns\([^)]*\)\s*\[[^\]]+\]/;
+
+/** The checks config/config.go makes at v0.130.0 that need no OTTL parser, plus increasing buckets. */
+function validateSignalToMetrics(c: SignalToMetricsConnectorConfig): string[] {
+  const problems: string[] = [];
+  const entries = signalToMetricsEntries(c);
+  if (entries.length === 0) {
+    problems.push("no metric is configured under spans, datapoints, logs or profiles; the collector refuses the connector");
+  }
+  for (const { signal, index, metric, types } of entries) {
+    const m = metric as unknown as SignalToMetricsMetricBase & Partial<Record<SignalToMetricsType, Record<string, unknown>>>;
+    const at = m.name ? `${signal}[${index}] (${m.name})` : `${signal}[${index}]`;
+    if (!m.name) problems.push(`${at}: name is missing`);
+    if (types.length !== 1) {
+      problems.push(
+        `${at}: name exactly one metric type (sum, gauge, histogram or exponential_histogram); ${types.length === 0 ? "found none" : `found ${types.join(" and ")}`}`,
+      );
+    }
+    for (const t of types) {
+      const body = m[t];
+      if (typeof body?.value !== "string" || body.value === "") problems.push(`${at}: ${t}.value is missing`);
+    }
+    const buckets = m.histogram?.buckets;
+    if (Array.isArray(buckets) && buckets.some((b, i) => i > 0 && !((b as number) > (buckets[i - 1] as number)))) {
+      problems.push(`${at}: histogram.buckets must increase`);
+    }
+    const maxSize = m.exponential_histogram?.max_size;
+    if (typeof maxSize === "number" && maxSize !== 0 && (maxSize < 2 || maxSize > 16384)) {
+      problems.push(`${at}: exponential_histogram.max_size must be between 2 and 16384`);
+    }
+    const gauge = m.gauge?.value;
+    if (typeof gauge === "string" && gauge.includes("ExtractGrokPatterns") && !GROK_KEY_SELECTOR.test(gauge)) {
+      problems.push(`${at}: gauge.value with ExtractGrokPatterns needs one key selector, ExtractGrokPatterns(...)["key"]`);
+    }
+    const seen = new Set<string>();
+    (m.attributes ?? []).forEach((a, i) => {
+      if (!a?.key) {
+        problems.push(`${at}: attributes[${i}]: key is missing`);
+        return;
+      }
+      if (a.default_value !== undefined && a.optional) {
+        problems.push(`${at}: attributes "${a.key}": set default_value or optional, not both`);
+      }
+      if (seen.has(a.key)) problems.push(`${at}: attributes "${a.key}" is listed twice`);
+      seen.add(a.key);
+    });
+  }
+  return problems;
+}
+
+/**
+ * Builds metrics from spans, data points, logs or profiles, each with the
+ * name, type, unit, attributes and conditions you choose. A histogram, sum or
+ * gauge takes its value from an OTTL expression, such as an attribute or the
+ * span's duration.
+ */
+export const SignalToMetricsConnector = defineBuiltin<SignalToMetricsConnectorConfig, "connector", "signaltometrics">({
+  kind: "connector",
+  type: "signaltometrics",
+  description: "Builds named sum, gauge and histogram metrics from spans, data points, logs or profiles, with values and conditions in OTTL",
+  connects: [
+    { from: "traces", to: "metrics" },
+    { from: "metrics", to: "metrics" },
+    { from: "logs", to: "metrics" },
+    { from: "profiles", to: "metrics" },
+  ],
+  validate: validateSignalToMetrics,
 });
