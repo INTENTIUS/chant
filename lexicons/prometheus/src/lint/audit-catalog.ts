@@ -118,6 +118,13 @@ export const prometheusAuditCatalog: Record<string, RuleMeta> = {
     "merge-worthy",
     "correctness",
     "Receiver integration missing its destination or credential",
-    "Set the integration's url, api_url, routing_key or to/smarthost/from (or their *_file and global equivalents).",
+    "Set the integration's destination and credential (url, webhook_url, api_key, routing_key, chat_id, room_id, to/smarthost/from, ...), through its *_file or global equivalent where there is one.",
+  ),
+  PROM210: outputRule(
+    "PROM210",
+    "merge-worthy",
+    "correctness",
+    "Integration or global setting Alertmanager rejects",
+    "Set one of each value and its *_file, and use a value Alertmanager allows (e.g. message_type text or markdown, parse_mode Markdown, MarkdownV2 or HTML).",
   ),
 };

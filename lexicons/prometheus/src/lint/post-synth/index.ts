@@ -16,6 +16,7 @@ import { prom206 } from "./prom206";
 import { prom207 } from "./prom207";
 import { prom208 } from "./prom208";
 import { prom209 } from "./prom209";
+import { prom210 } from "./prom210";
 
 export const postSynthChecks: PostSynthCheck[] = [
   prom101,
@@ -34,4 +35,5 @@ export const postSynthChecks: PostSynthCheck[] = [
   prom207,
   prom208,
   prom209,
+  prom210,
 ];

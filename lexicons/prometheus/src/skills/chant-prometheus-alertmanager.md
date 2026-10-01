@@ -57,6 +57,8 @@ Import it rather than retyping it: `chant import alertmanager.yml --output src` 
 - Routes name receivers and time intervals that exist (PROM201, PROM204). Reference the entity rather than a string and TypeScript does most of this.
 - Every `severity` an alert in the same build root carries is matched by some route below the root (PROM202). The check only sees one build root (chant #1939): keep the rules and the Alertmanager config in the same one, or it goes quiet.
 - Credentials go in `*_file` fields. Alertmanager does not expand environment variables in its config, and a literal `api_url`, `routing_key` or `auth_password` is flagged (PROM001).
-- Each integration has somewhere to send (PROM209): a webhook `url`, a Slack `api_url` (or `global.slack_api_url`), a PagerDuty key, an email `to`/`smarthost`/`from` (or the global SMTP defaults).
+- Each integration has its destination, credential and required fields, or the `global` default it falls back to (PROM209): a webhook `url`, a Slack `api_url` or app token, an Opsgenie `api_key`, a Telegram `chat_id` and bot token, a Webex `room_id` and `http_config.authorization`, one SNS target, a Jira `project` and `issue_type`, an email `to`/`smarthost`/`from`, and so on.
+- No setting Alertmanager rejects (PROM210): a value and its `*_file` both set, a Slack `api_url` with an app token, `update_message` without `api_url: https://slack.com/api/chat.postMessage`, a WeChat `message_type` other than `text`/`markdown`, a Telegram `parse_mode` other than `Markdown`/`MarkdownV2`/`HTML`.
+- Durations parse (PROM208). Route timers and `resolve_timeout` take `1d`; the integration `timeout`s and Pushover `retry`/`expire`/`ttl` are Go durations and take `24h`, not `1d`.
 
 Run `amtoolCheckConfig(alertmanagerYaml(entities))` in a test to have `amtool check-config` confirm it when installed.
