@@ -95,7 +95,9 @@ Neither side depends on the other. The contract is in `packages/core/src/import/
 - Core finds the owner at run time. When the parser offers anything, core asks the project's lexicons and every installed lexicon whose `/detect` module's `detectTemplate` recognizes an offered document, loads only those in full, and parses again with their importers. It writes each import's modules in a directory of its own beside the host's files. Warnings name content the owner could not carry, an import that failed, and content whose expected owner is not installed. That content is kept as written.
 - The host's generator renders the reference with `renderEmbeddedReference(ref, scope)`. An `EmbeddedImportScope` collects the imports the module needs and aliases a name the module already uses (a second collector's `otlp` becomes `otlp2`).
 
-k8s is the only host so far (`lexicons/k8s/src/import/embedded.ts`). otel, prometheus and grafana are the owners, each in its `src/import/embedded.ts`. The round trip over real manifests is `lexicons/k8s/src/import/embedded-roundtrip.test.ts`.
+`chant import --from <env>` delegates the same way ([#2995](https://github.com/INTENTIUS/chant/issues/2995)). An export has no parser call of its own, so an exporter that maps through its import parser returns `reparse(context)` on its `ExportedTemplate`: the same objects parsed again with a `ParseContext`, with no second read of the live target. Core probes and resolves through it exactly as above, and writes the owners' modules beside the generated files. An export without `reparse` keeps embedded content as read. See [Implementing Live Export](/chant/lexicon-authoring/live-export/#embedded-content).
+
+k8s is the only host so far (`lexicons/k8s/src/import/embedded.ts`). otel, prometheus and grafana are the owners, each in its `src/import/embedded.ts`. The round trip over real manifests is `lexicons/k8s/src/import/embedded-roundtrip.test.ts`, and the same through live import against a fake cluster is `embedded-live.test.ts` beside it.
 
 ## The three files
 

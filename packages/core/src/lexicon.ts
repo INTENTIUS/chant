@@ -3,7 +3,7 @@ import type { Declarable } from "./declarable";
 import type { LintRule } from "./lint/rule";
 import type { RuleSpec } from "./lint/declarative";
 import type { PostSynthCheck } from "./lint/post-synth";
-import type { TemplateParser, TemplateIR } from "./import/parser";
+import type { TemplateParser, TemplateIR, ParseContext } from "./import/parser";
 import type { TypeScriptGenerator } from "./import/generator";
 import type { EmbeddedContentImporter } from "./import/embedded";
 import type { AgentConfigImporter } from "./agents/importer";
@@ -2005,6 +2005,14 @@ export interface ResourceSelector {
 export type ExportedTemplate = TemplateIR & {
   /** Phantom marker — never present at runtime. */
   readonly __fidelity?: "full-config";
+  /**
+   * The same export parsed again with a {@link ParseContext}, from the
+   * objects already read: no second read of the live target. An exporter
+   * that maps through its import parser offers this so `chant import --from`
+   * can hand embedded content to the lexicon that owns it, as file import
+   * does (#2995). Without it, embedded content is kept as written.
+   */
+  readonly reparse?: (context: ParseContext) => TemplateIR;
 };
 
 /**
