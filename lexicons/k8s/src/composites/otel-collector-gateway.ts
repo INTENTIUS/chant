@@ -21,6 +21,7 @@ import {
   otlpCollector,
   LoadBalancingExporter,
   OtlpExporter,
+  OtlpHttpExporter,
   COLLECTOR_IMAGE,
   type LoadBalancingRoutingKey,
   type OTelComponent,
@@ -39,6 +40,7 @@ import {
   RoleBinding,
 } from "../generated";
 import { collectorConfigMap, collectorContainer } from "./otel-collector-agent";
+import { namespacedRoles, type CollectorPolicyRule } from "./otel-collector-rbac";
 import {
   collectorRuntime,
   leaderElectorLeaseNamespaces,
@@ -47,13 +49,7 @@ import {
   type GatewayRouting,
 } from "./otel-collector-shape";
 
-/** One RBAC rule, as a ClusterRole lists it. */
-export interface CollectorPolicyRule {
-  apiGroups: string[];
-  resources: string[];
-  verbs: string[];
-  resourceNames?: string[];
-}
+export type { CollectorPolicyRule };
 
 export interface OtelCollectorGatewayProps {
   /** Gateway name (default: "otel-gateway"). */
@@ -116,9 +112,15 @@ export type OtelCollectorGatewayResult = {
   podDisruptionBudget?: InstanceType<typeof PodDisruptionBudget>;
   clusterRole?: InstanceType<typeof ClusterRole>;
   clusterRoleBinding?: InstanceType<typeof ClusterRoleBinding>;
-  /** Access to Leases for a `k8s_leader_elector` extension the config enables, in the Lease's namespace. */
+  /**
+   * Access to Leases for the `k8s_leader_elector` extensions the config
+   * enables, in the first `lease_namespace`. Each further namespace gets
+   * `leaseRoleIn<Namespace>` and `leaseRoleBindingIn<Namespace>`.
+   */
   leaseRole?: InstanceType<typeof Role>;
   leaseRoleBinding?: InstanceType<typeof RoleBinding>;
+  [member: `leaseRoleIn${string}`]: InstanceType<typeof Role>;
+  [member: `leaseRoleBindingIn${string}`]: InstanceType<typeof RoleBinding>;
 };
 
 /**
@@ -258,50 +260,40 @@ export const OtelCollectorGateway = Composite((props: OtelCollectorGatewayProps)
 
   // A k8s_leader_elector extension takes a Lease in its lease_namespace, so
   // the gateway's ServiceAccount gets the access the extension's README
-  // suggests (collector-contrib v0.130.0, extension/k8sleaderelector).
-  const leaseNamespaces = leaderElectorLeaseNamespaces(runtime.built);
-  if (leaseNamespaces.length > 1) {
-    throw new Error(
-      `OtelCollectorGateway ${name}: k8s_leader_elector extensions take Leases in ${leaseNamespaces.join(" and ")}; ` +
-        `the gateway grants Lease access in one namespace. Use one lease_namespace, or grant the rest through clusterRules`,
-    );
-  }
-  const leaseRbac = leaseNamespaces.length
-    ? {
-        leaseRole: new Role(mergeDefaults({
-          metadata: {
-            name: `${name}-leases`,
-            namespace: leaseNamespaces[0],
-            labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
-          },
-          rules: [
-            {
-              apiGroups: ["coordination.k8s.io"],
-              resources: ["leases"],
-              verbs: ["get", "list", "watch", "create", "update", "patch", "delete"],
-            },
-          ],
-        }, defs?.leaseRole)),
-        leaseRoleBinding: new RoleBinding(mergeDefaults({
-          metadata: {
-            name: `${name}-leases`,
-            namespace: leaseNamespaces[0],
-            labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
-          },
-          roleRef: { apiGroup: "rbac.authorization.k8s.io", kind: "Role", name: `${name}-leases` },
-          subjects: [{ kind: "ServiceAccount", name: saName, namespace }],
-        }, defs?.leaseRoleBinding)),
-      }
-    : {};
+  // suggests (collector-contrib v0.130.0, extension/k8sleaderelector), with
+  // one Role and RoleBinding in each namespace the electors use.
+  const leaseRbac = namespacedRoles({
+    key: "lease",
+    name: `${name}-leases`,
+    namespaces: leaderElectorLeaseNamespaces(runtime.built),
+    rules: [
+      {
+        apiGroups: ["coordination.k8s.io"],
+        resources: ["leases"],
+        verbs: ["get", "list", "watch", "create", "update", "patch", "delete"],
+      },
+    ],
+    labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
+    serviceAccount: { name: saName, namespace },
+    roleDefaults: defs?.leaseRole,
+    roleBindingDefaults: defs?.leaseRoleBinding,
+  });
 
-  return { deployment, service, headlessService, serviceAccount, configMap, ...pdb, ...rbac, ...leaseRbac };
+  return { deployment, service, headlessService, serviceAccount, configMap, ...pdb, ...rbac, ...leaseRbac } as OtelCollectorGatewayResult;
 }, "OtelCollectorGateway");
 
 // ── Agent side ───────────────────────────────────────────────────────
 
 export interface GatewayExporterOptions {
-  /** Exporter name, so the id is `otlp/<name>` or `loadbalancing/<name>` (default: "gateway"). */
+  /** Exporter name, so the id is `otlp/<name>`, `otlphttp/<name>` or `loadbalancing/<name>` (default: "gateway"). */
   name?: string;
+  /**
+   * OTLP over gRPC (an `otlp` exporter) or over HTTP (an `otlphttp`
+   * exporter). The `loadbalancing` exporter sends OTLP over gRPC only at the
+   * pinned collector version, so `http` cannot be combined with
+   * `loadBalance`. Default: "grpc".
+   */
+  protocol?: "grpc" | "http";
   /**
    * Send each trace to one gateway replica through the headless Service with
    * a `loadbalancing` exporter, instead of to the ClusterIP Service with an
@@ -317,9 +309,13 @@ export interface GatewayExporterOptions {
   resolver?: "k8s" | "dns";
   /** What the `loadbalancing` exporter hashes on (default: "traceID"). */
   routingKey?: LoadBalancingRoutingKey;
-  /** The gateway Service port to send to, by name (default: "otlp-grpc"). */
+  /** The gateway Service port to send to, by name (default: "otlp-grpc", or "otlp-http" with `protocol: "http"`). */
   port?: string;
-  /** TLS for the connection to the gateway (default: `{ insecure: true }`, plaintext inside the cluster). */
+  /**
+   * TLS for the connection to the gateway (default: `{ insecure: true }`,
+   * plaintext inside the cluster). Over HTTP, `insecure` picks the scheme
+   * (`http://`, or `https://` without it) and the other settings are passed on.
+   */
   tls?: TLSClientSettings;
 }
 
@@ -340,6 +336,9 @@ function serviceMeta(service: InstanceType<typeof Service>): ServiceMeta {
  * config listens on.
  *
  * By default an `otlp` exporter at `<service>.<namespace>.svc:<port>`. With
+ * `protocol: "http"`, an `otlphttp` exporter at
+ * `http://<service>.<namespace>.svc:<port>` (`https://` when `tls` is not
+ * `insecure`), sending to the gateway's OTLP HTTP port. With
  * `loadBalance`, a `loadbalancing` exporter routing by trace id to the
  * headless Service, through the `k8s` resolver (`<headless>.<namespace>`) or
  * the `dns` resolver (`<headless>.<namespace>.svc`). Put it in the agent's
@@ -349,8 +348,15 @@ function serviceMeta(service: InstanceType<typeof Service>): ServiceMeta {
 export function gatewayExporter(
   gateway: OtelCollectorGatewayResult,
   options: GatewayExporterOptions = {},
-): InstanceType<typeof OtlpExporter> | InstanceType<typeof LoadBalancingExporter> {
-  const { name = "gateway", loadBalance = false, resolver = "k8s", routingKey = "traceID", port: portName = "otlp-grpc", tls = { insecure: true } } = options;
+): InstanceType<typeof OtlpExporter> | InstanceType<typeof OtlpHttpExporter> | InstanceType<typeof LoadBalancingExporter> {
+  const { name = "gateway", protocol = "grpc", loadBalance = false, resolver = "k8s", routingKey = "traceID", tls = { insecure: true } } = options;
+  const portName = options.port ?? (protocol === "http" ? "otlp-http" : "otlp-grpc");
+  if (protocol === "http" && loadBalance) {
+    throw new Error(
+      `gatewayExporter: the loadbalancing exporter sends OTLP over gRPC only; ` +
+        `use protocol "grpc" with loadBalance, or drop loadBalance to send OTLP over HTTP to the gateway's Service`,
+    );
+  }
   const deploymentName = (gateway.deployment as unknown as { props: { metadata: { name: string } } }).props.metadata.name;
   const target = serviceMeta(loadBalance ? gateway.headlessService : gateway.service);
   const port = target.ports.find((p) => p.name === portName)?.port;
@@ -358,7 +364,7 @@ export function gatewayExporter(
     const names = target.ports.map((p) => p.name).join(", ") || "none";
     throw new Error(
       `gatewayExporter: Service ${target.namespace}/${target.name} has no port named "${portName}" (it has: ${names}); ` +
-        `give the gateway an OTLP gRPC receiver or pass the port name`,
+        `give the gateway an OTLP ${protocol === "http" ? "HTTP" : "gRPC"} receiver or pass the port name`,
     );
   }
   const routing: GatewayRouting = loadBalance ? "loadbalancing" : "service";
@@ -373,8 +379,25 @@ export function gatewayExporter(
             ? { dns: { hostname: `${target.name}.${target.namespace}.svc`, port: String(port) } }
             : { k8s: { service: `${target.name}.${target.namespace}`, ports: [port] } },
       })
-    : new OtlpExporter({ name, endpoint: `${target.name}.${target.namespace}.svc:${port}`, tls });
+    : protocol === "http"
+      ? otlpHttpExporter(name, `${target.name}.${target.namespace}.svc:${port}`, tls)
+      : new OtlpExporter({ name, endpoint: `${target.name}.${target.namespace}.svc:${port}`, tls });
 
   markGatewayExporter(exporter, { name: deploymentName, namespace: target.namespace, routing });
   return exporter;
+}
+
+/**
+ * An `otlphttp` exporter to `host:port`. Its endpoint is a URL, so TLS is the
+ * scheme: `insecure` gives `http://`, anything else `https://` with the
+ * remaining TLS settings (a CA, a client certificate) kept.
+ */
+function otlpHttpExporter(name: string, hostPort: string, tls: TLSClientSettings): InstanceType<typeof OtlpHttpExporter> {
+  const { insecure, ...rest } = tls;
+  const scheme = insecure ? "http" : "https";
+  return new OtlpHttpExporter({
+    name,
+    endpoint: `${scheme}://${hostPort}`,
+    ...(Object.keys(rest).length ? { tls: rest } : {}),
+  });
 }

@@ -24,6 +24,7 @@ import {
 } from "@intentius/chant-lexicon-otel";
 import { Service, Role, RoleBinding } from "../generated";
 import { collectorAgentResources, type CollectorAgentResources } from "./otel-collector-agent";
+import { agentClusterRules, namespacedRoles } from "./otel-collector-rbac";
 import {
   collectorRuntime,
   gatewaysAnnotation,
@@ -74,9 +75,15 @@ export interface OtelCollectorProps {
 
 export type OtelCollectorResult = CollectorAgentResources & {
   service: InstanceType<typeof Service>;
-  /** Read access to Endpoints for a `loadbalancing` exporter's `k8s` resolver, in the resolved Service's namespace. */
+  /**
+   * Read access to Endpoints for a `loadbalancing` exporter's `k8s` resolver,
+   * in the first namespace the resolvers point at. Each further namespace
+   * gets `endpointsRoleIn<Namespace>` and `endpointsRoleBindingIn<Namespace>`.
+   */
   endpointsRole?: InstanceType<typeof Role>;
   endpointsRoleBinding?: InstanceType<typeof RoleBinding>;
+  [member: `endpointsRoleIn${string}`]: InstanceType<typeof Role>;
+  [member: `endpointsRoleBindingIn${string}`]: InstanceType<typeof RoleBinding>;
 };
 
 /**
@@ -131,6 +138,7 @@ export const OtelCollector = Composite((props: OtelCollectorProps) => {
     configYaml: runtime.configYaml,
     configDir: runtime.configDir,
     ports: runtime.containerPorts,
+    clusterRules: agentClusterRules(runtime.built.config),
     cpuRequest,
     memoryRequest,
     cpuLimit,
@@ -165,39 +173,22 @@ export const OtelCollector = Composite((props: OtelCollectorProps) => {
   // The loadbalancing exporter's k8s resolver runs in this agent and watches
   // the gateway's headless Service, so the agent's ServiceAccount gets read
   // access to Endpoints (what the resolver watches at the pinned collector
-  // version) and EndpointSlices (what later versions watch) in that namespace.
-  const resolverNamespaces = k8sResolverNamespaces(runtime.built, namespace);
-  if (resolverNamespaces.length > 1) {
-    throw new Error(
-      `OtelCollector ${name}: loadbalancing exporters resolve Services in ${resolverNamespaces.join(" and ")}; ` +
-        `one agent can watch Endpoints in one namespace. Use one gateway namespace, or grant the rest through defaults.clusterRole`,
-    );
-  }
+  // version) and EndpointSlices (what later versions watch), with one Role
+  // and RoleBinding in each namespace the resolvers point at.
   const saName = (resources.serviceAccount as unknown as { props: { metadata: { name: string } } }).props.metadata.name;
-  const endpointsRbac = resolverNamespaces.length
-    ? {
-        endpointsRole: new Role(mergeDefaults({
-          metadata: {
-            name: `${name}-endpoints`,
-            namespace: resolverNamespaces[0],
-            labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
-          },
-          rules: [
-            { apiGroups: [""], resources: ["endpoints"], verbs: ["get", "list", "watch"] },
-            { apiGroups: ["discovery.k8s.io"], resources: ["endpointslices"], verbs: ["get", "list", "watch"] },
-          ],
-        }, defs?.endpointsRole)),
-        endpointsRoleBinding: new RoleBinding(mergeDefaults({
-          metadata: {
-            name: `${name}-endpoints`,
-            namespace: resolverNamespaces[0],
-            labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
-          },
-          roleRef: { apiGroup: "rbac.authorization.k8s.io", kind: "Role", name: `${name}-endpoints` },
-          subjects: [{ kind: "ServiceAccount", name: saName, namespace }],
-        }, defs?.endpointsRoleBinding)),
-      }
-    : {};
+  const endpointsRbac = namespacedRoles({
+    key: "endpoints",
+    name: `${name}-endpoints`,
+    namespaces: k8sResolverNamespaces(runtime.built, namespace),
+    rules: [
+      { apiGroups: [""], resources: ["endpoints"], verbs: ["get", "list", "watch"] },
+      { apiGroups: ["discovery.k8s.io"], resources: ["endpointslices"], verbs: ["get", "list", "watch"] },
+    ],
+    labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
+    serviceAccount: { name: saName, namespace },
+    roleDefaults: defs?.endpointsRole,
+    roleBindingDefaults: defs?.endpointsRoleBinding,
+  });
 
-  return { ...resources, service, ...endpointsRbac };
+  return { ...resources, service, ...endpointsRbac } as OtelCollectorResult;
 }, "OtelCollector");

@@ -2991,6 +2991,8 @@ export const compositeCatalog: CompositeEntry[] = [
       "ConfigMap",
       "Deployment",
       "PodDisruptionBudget",
+      "Role",
+      "RoleBinding",
       "Service",
       "ServiceAccount"
     ],

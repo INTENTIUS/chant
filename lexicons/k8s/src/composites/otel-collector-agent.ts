@@ -2,7 +2,8 @@
  * The Kubernetes resources an OpenTelemetry Collector agent needs, shared by
  * `OtelCollector` and `GkeOtelCollector`: a DaemonSet running the collector
  * with its config mounted from a ConfigMap, and a ServiceAccount bound to a
- * ClusterRole that reads pods, nodes and workloads.
+ * ClusterRole with the rules the caller works out from its config (see
+ * `agentClusterRules` in `otel-collector-rbac.ts`).
  *
  * The caller renders the collector config (with the otel lexicon's
  * `collectorYaml`) and says which ports the container exposes. Everything
@@ -15,6 +16,7 @@
 
 import { mergeDefaults } from "@intentius/chant";
 import { DaemonSet, ServiceAccount, ClusterRole, ClusterRoleBinding, ConfigMap } from "../generated";
+import type { CollectorPolicyRule } from "./otel-collector-rbac";
 
 export interface CollectorAgentOptions {
   name: string;
@@ -29,6 +31,8 @@ export interface CollectorAgentOptions {
   /** Directory the config is mounted in. The file is `<dir>/config.yaml`. */
   configDir: string;
   ports: Array<{ containerPort: number; name: string }>;
+  /** The ClusterRole's rules, from `agentClusterRules`. */
+  clusterRules: CollectorPolicyRule[];
   cpuRequest: string;
   memoryRequest: string;
   cpuLimit: string;
@@ -104,14 +108,7 @@ export function collectorAgentResources(opts: CollectorAgentOptions): CollectorA
       name: clusterRoleName,
       labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
     },
-    rules: [
-      { apiGroups: [""], resources: ["pods", "nodes", "endpoints"], verbs: ["get", "list", "watch"] },
-      { apiGroups: ["apps"], resources: ["replicasets"], verbs: ["get", "list", "watch"] },
-      { apiGroups: ["batch"], resources: ["jobs"], verbs: ["get", "list", "watch"] },
-      { apiGroups: [""], resources: ["nodes/proxy"], verbs: ["get"] },
-      { apiGroups: [""], resources: ["nodes/stats", "configmaps", "events"], verbs: ["create", "get"] },
-      { apiGroups: [""], resources: ["configmaps"], verbs: ["get", "update", "create"], resourceNames: ["otel-container-insight-clusterleader"] },
-    ],
+    rules: opts.clusterRules,
   }, defs?.clusterRole));
 
   const clusterRoleBinding = new ClusterRoleBinding(mergeDefaults({

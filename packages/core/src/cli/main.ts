@@ -456,6 +456,12 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant workspace records new <kind> --prefix <prefix>` (#2670): the id prefix to allocate under.
       result.prefix = args[++i];
       if (!result.prefix || result.prefix.startsWith("-")) throw new Error("--prefix needs an id prefix: --prefix <prefix>");
+    } else if (arg === "--key" || arg === "--check-id" || arg === "--claim" || arg === "--environment" || arg === "--envelope" || arg === "--threshold") {
+      // `chant workspace evidence sign|verify` and `chant workspace signers` (#2553)
+      const value = args[++i];
+      if (value === undefined || value.startsWith("-")) throw new Error(`${arg} needs a value`);
+      const field = ({ "--key": "key", "--check-id": "checkId", "--claim": "claim", "--environment": "environment", "--envelope": "envelope", "--threshold": "threshold" } as const)[arg];
+      result[field] = value;
     } else if (arg === "--require") {
       // `chant workspace records|verify --require attested` (#2547)
       result.require = args[++i];
@@ -922,7 +928,19 @@ Workspace (level 1, #2524):
                         Check the commits in base..head against the signers
                         and roles read from base. A change to the signers file
                         or .chant/trust.json needs a signature by a signer
-                        trusted at base. Does nothing without a signers file
+                        trusted at base, and a new signer set needs a
+                        threshold of the old one. Does nothing without a
+                        signers file
+  workspace signers [--json] [rotate [--threshold <n>] | sign --key <file>]
+                        Show the signer history at base, or propose the next
+                        signer set and sign it with a current signer's key
+  workspace evidence sign --kind <kind file> --key <runner.pem> --check-id <id>
+                        Sign runner evidence over the records' hashes in a
+                        DSSE envelope, with a runner key .chant/trust.json
+                        lists. For CI and services, never a person's key
+  workspace evidence verify --envelope <file> [--at <rev>] [--json]
+                        Verify runner evidence offline, and whether the
+                        records it covers are unchanged
   workspace lineage [--json]
                         Show each scope in .chant/workspace.lock.json: its
                         template and pin, locally edited files and open
@@ -1504,6 +1522,8 @@ export const commandRegistry: CommandDef[] = [
   // #2548 — an agent session's member, write scope and spec, for a session that resumes.
   { name: "workspace agent", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/agent-cli")).runWorkspaceAgent(ctx) },
   { name: "workspace verify", handler: async (ctx) => (await import("../workspace/trust/verify-cli")).runWorkspaceVerify(ctx) },
+  { name: "workspace signers", handler: async (ctx) => (await import("../workspace/trust/signers-cli")).runWorkspaceSigners(ctx) },
+  { name: "workspace evidence", handler: async (ctx) => (await import("../workspace/trust/evidence-cli")).runWorkspaceEvidence(ctx) },
 
   // State subcommands
   { name: "lifecycle snapshot", requiresPlugins: true, handler: runLifecycleSnapshot },

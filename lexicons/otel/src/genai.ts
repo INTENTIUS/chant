@@ -25,12 +25,19 @@
  * "passthrough"` derives nothing and relies on the SDK to send them. Either
  * way a `metrics` pipeline passes the SDK's OTLP metrics through. Without the
  * option the output is what it was before the option existed.
+ *
+ * `sum` emits delta sums. The `prometheus` exporter accumulates them itself,
+ * but `prometheusremotewrite` drops them, and some OTLP backends store only
+ * cumulative data; `signaltometrics` emits delta histograms too.
+ * `deltaToCumulative` puts a `deltatocumulative` processor on `metrics/genai`
+ * for those. It is on by default only with `clientMetrics: "derive"`, so a
+ * config built without either option is unchanged.
  */
 
 import type { Declarable } from "@intentius/chant/declarable";
 import { GENAI_SEMCONV_PIN, type OTelComponent, type SchemaPin } from "./define";
 import { OtlpReceiver } from "./components/receivers";
-import { BatchProcessor, MemoryLimiterProcessor } from "./components/processors";
+import { BatchProcessor, DeltaToCumulativeProcessor, MemoryLimiterProcessor } from "./components/processors";
 import { DebugExporter } from "./components/exporters";
 import { HealthCheckExtension } from "./components/extensions";
 import {
@@ -610,19 +617,35 @@ function deriveClientMetrics(client: GenAiClientMetrics, notAggregate: string) {
   });
 }
 
-/** Exporters that accept the delta temporality `signaltometrics` emits, until #2913 adds `deltatocumulative`. */
-const DELTA_READY_EXPORTERS = new Set(["prometheus", "debug"]);
-
 // ── The whole collector ──────────────────────────────────────────────
+
+/**
+ * Metric exporters that take delta sums and histograms as they are: the
+ * `prometheus` exporter accumulates them itself, and `debug` prints them.
+ * Any other exporter gets cumulative data under `deltaToCumulative: "auto"`.
+ * `prometheusremotewrite`, for one, drops non-cumulative monotonic sums,
+ * histograms and summaries (its README at collector-contrib v0.130.0).
+ */
+export const DELTA_READY_EXPORTERS: readonly string[] = Object.freeze(["prometheus", "debug"]);
+
+/** Whether `deltaToCumulative` puts a `deltatocumulative` processor on `metrics/genai` for these exporters. */
+export function genAiNeedsDeltaToCumulative(
+  setting: GenAiPipelineOptions["deltaToCumulative"],
+  metricExporters: readonly Exporter[],
+): boolean {
+  if (setting === true) return true;
+  if (setting === "auto") return metricExporters.some((e) => !DELTA_READY_EXPORTERS.includes(e.componentType));
+  if (setting === undefined || setting === false) return false;
+  throw new Error(`genAiPipeline: deltaToCumulative must be true, false or "auto", got ${JSON.stringify(setting)}`);
+}
 
 export interface GenAiPipelineOptions extends GenAiComponentsOptions {
   /** Where traces go. Default: one `debug` exporter at `basic` verbosity. */
   traceExporters?: Exporter[];
   /**
    * Where the span and token metrics go, and with `clientMetrics` the SDK's
-   * metrics too. Default: the same `debug` exporter. With `clientMetrics:
-   * "derive"`, only `prometheus` and `debug` exporters, which accept delta
-   * histograms.
+   * metrics too. Default: the same `debug` exporter. See `deltaToCumulative`
+   * for exporters that need cumulative data.
    */
   metricExporters?: Exporter[];
   /** Where logs (and events sent as logs) go. Default: the same `debug` exporter. */
@@ -637,6 +660,21 @@ export interface GenAiPipelineOptions extends GenAiComponentsOptions {
   sampling?: Processor[];
   /** Serve `health_check` on 0.0.0.0:13133. Default: true. */
   healthCheck?: boolean;
+  /**
+   * Put a `deltatocumulative/genai` processor in front of `batch` on
+   * `metrics/genai`, so the delta token sums of the `sum` connector, and with
+   * `clientMetrics: "derive"` the delta histograms of `signaltometrics`, reach
+   * exporters as cumulative data. The span metrics are cumulative already and
+   * pass through unchanged. `"auto"`: when a metric exporter is not in
+   * `DELTA_READY_EXPORTERS` (`prometheus`, `debug`), such as
+   * `prometheusremotewrite` or `otlp`. `true`: always. `false`: never, such
+   * as for an OTLP backend that wants deltas. Unset: `"auto"` with
+   * `clientMetrics: "derive"`, otherwise `false`, which is the output from
+   * before the option existed. The processor keeps running totals in memory,
+   * so a collector behind a load balancer needs each stream to reach one
+   * replica.
+   */
+  deltaToCumulative?: boolean | "auto";
 }
 
 /**
@@ -653,14 +691,11 @@ export function genAiPipeline(options: GenAiPipelineOptions = {}): Declarable[] 
     options;
   const parts = genAiComponents(options);
   const client = parts.metrics.client;
-  if (client?.source === "derive") {
-    const other = metricExporters.map((e) => (e as { componentType?: string }).componentType ?? "?").filter((t) => !DELTA_READY_EXPORTERS.has(t));
-    if (other.length > 0) {
-      throw new Error(
-        `genAiPipeline: clientMetrics "derive" emits delta histograms, which only the prometheus and debug exporters accept until a deltatocumulative processor is available (#2913); got ${[...new Set(other)].join(", ")}`,
-      );
-    }
-  }
+  // derive mode is opt-in and newer than the option, so it can default to "auto".
+  const cumulativeSetting = options.deltaToCumulative ?? (client?.source === "derive" ? "auto" : false);
+  const cumulative = genAiNeedsDeltaToCumulative(cumulativeSetting, metricExporters)
+    ? [new DeltaToCumulativeProcessor({ name: "genai" })]
+    : [];
 
   const otlp = new OtlpReceiver({
     protocols: {
@@ -715,7 +750,7 @@ export function genAiPipeline(options: GenAiPipelineOptions = {}): Declarable[] 
       signal: "metrics",
       name: "genai",
       receivers: [parts.spanMetrics, parts.tokenUsage, ...(parts.clientMetrics ? [parts.clientMetrics] : [])],
-      processors: [batch],
+      processors: [...cumulative, batch],
       exporters: metricExporters,
     }),
   );

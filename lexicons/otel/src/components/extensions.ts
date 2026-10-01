@@ -3,7 +3,7 @@
  */
 
 import { defineBuiltin } from "../define";
-import type { Duration, TLSServerSettings } from "./common";
+import { goDurationMs, type Duration, type TLSServerSettings } from "./common";
 import type { K8sAuthType } from "./k8s-receivers";
 
 export interface HealthCheckExtensionConfig {
@@ -75,21 +75,6 @@ export interface K8sLeaderElectorExtensionConfig {
   renew_deadline?: Duration;
   /** How long to wait between attempts to acquire or renew. Default `2s`. */
   retry_period?: Duration;
-}
-
-const GO_DURATION_UNITS: Record<string, number> = { ns: 1e-6, us: 1e-3, "µs": 1e-3, "μs": 1e-3, ms: 1, s: 1e3, m: 60e3, h: 3600e3 };
-
-/** A Go duration string in milliseconds, or undefined when it isn't one this can read. */
-function goDurationMs(d: Duration | undefined, fallback: number): number | undefined {
-  if (d === undefined) return fallback;
-  if (typeof d === "number") return d / 1e6;
-  const m = d.trim().match(/^([+-]?)((?:\d+(?:\.\d*)?|\.\d+)(?:ns|us|µs|μs|ms|s|m|h))+$/);
-  if (!m) return undefined;
-  let total = 0;
-  for (const part of d.trim().matchAll(/(\d+(?:\.\d*)?|\.\d+)(ns|us|µs|μs|ms|s|m|h)/g)) {
-    total += Number(part[1]) * GO_DURATION_UNITS[part[2]];
-  }
-  return m[1] === "-" ? -total : total;
 }
 
 /**

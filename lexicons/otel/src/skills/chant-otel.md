@@ -41,7 +41,7 @@ Emits `receivers.otlp`, `processors.memory_limiter` and `processors.batch`, `exp
 | Kind | Types |
 |---|---|
 | receivers | otlp, prometheus, hostmetrics, filelog, k8s_cluster, kubeletstats |
-| processors | batch, memory_limiter, resource, attributes, k8sattributes, resourcedetection, filter, transform, redaction, tail_sampling, probabilistic_sampler |
+| processors | batch, memory_limiter, resource, attributes, k8sattributes, resourcedetection, filter, transform, redaction, tail_sampling, probabilistic_sampler, deltatocumulative |
 | exporters | otlp, otlphttp, debug, prometheus, googlecloud, loadbalancing |
 | connectors | spanmetrics, servicegraph, routing, forward, count, sum, signaltometrics |
 | extensions | health_check, pprof, zpages, k8s_leader_elector |
@@ -68,7 +68,7 @@ For services that emit GenAI spans, start from the preset instead of writing the
 export const collector = genAiPipeline({ traceExporters: [tempo], metricExporters: [prom] });
 ```
 
-It deletes prompt, completion, system-instruction and tool-call content from spans, span events and logs, and derives call, error, duration and token metrics (`genai_calls_total`, `genai_duration_seconds`, `genai_tokens_input_total`, `genai_tokens_output_total`) from every GenAI span before sampling. Keep content only when asked, with `keepContent: true`. When a dashboard or backend expects the semantic conventions' names, add `clientMetrics: "derive"` for `gen_ai.client.operation.duration` and `gen_ai.client.token.usage` from spans (prometheus or debug metric exporters only, until `deltatocumulative` exists), or `"passthrough"` when the SDK already records them; never both. Read metric names from `genAiMetrics(options)` (`.client` for the conventions' ones) instead of writing them out. `genAiComponents()` returns the pieces for hand-built pipelines.
+It deletes prompt, completion, system-instruction and tool-call content from spans, span events and logs, and derives call, error, duration and token metrics (`genai_calls_total`, `genai_duration_seconds`, `genai_tokens_input_total`, `genai_tokens_output_total`) from every GenAI span before sampling. Keep content only when asked, with `keepContent: true`. When a dashboard or backend expects the semantic conventions' names, add `clientMetrics: "derive"` for `gen_ai.client.operation.duration` and `gen_ai.client.token.usage` from spans, or `"passthrough"` when the SDK already records them; never both. Read metric names from `genAiMetrics(options)` (`.client` for the conventions' ones) instead of writing them out. `genAiComponents()` returns the pieces for hand-built pipelines. The token sums and derived client metrics are deltas: `deltaToCumulative: "auto"` puts a `deltatocumulative` processor in front of any metric exporter other than `prometheus` or `debug` (the default with `clientMetrics: "derive"`), `true` always, `false` never.
 
 ## Rules
 

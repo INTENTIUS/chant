@@ -4,7 +4,9 @@
  * `OtelCollector`, `OtelCollectorGateway` and `GkeOtelCollector` share the
  * collector resources in `otel-collector-agent.ts`. The snapshot was recorded
  * before the gateway work touched that file, so any change to the GKE output
- * made through the shared code fails here.
+ * made through the shared code fails here. #2923 changed it on purpose: the
+ * shared ClusterRole was narrowed to what k8sattributes and the config's
+ * receivers need (see `agentClusterRules`).
  */
 import { describe, expect, test } from "vitest";
 import { expandComposite } from "@intentius/chant";

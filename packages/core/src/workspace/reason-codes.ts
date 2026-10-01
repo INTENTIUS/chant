@@ -221,6 +221,28 @@ export const REASONS = {
   // A box whose isolation fails (check, #2727). Each is also a WSP finding.
   "box-isolation-collision": "Two boxes on one host resolve to the same port, state path or cookie name, or two ports in one box share an offset.",
   "box-isolation-literal": "A host's stateRoot or a box's state entry is a literal machine path instead of one derived from an environment reference and the box's name.",
+  // The signer set's history (signers and verify, #2553): why a version is not a valid rotation of the one before. Nothing verifies past it.
+  "signers-file-missing": "There is no signers file at the base revision, so there is no signer history to read.",
+  "signers-removed": "The signers file was removed. Commits merged before the removal keep the set they were judged by; nothing after it verifies.",
+  "rotation-unparseable": "The rotation file beside the signers file is not JSON.",
+  "rotation-invalid": "The rotation file does not match its shape: schema 1, a version, the previous set's digest, a threshold and signatures.",
+  "rotation-first-version": "The first signer set's rotation file names a version other than 1, or a previous digest.",
+  "rotation-missing": "The signer set or its threshold changed and no rotation file signed by the set before it came with the change.",
+  "rotation-version-skew": "The rotation names a version other than the one after the set it replaces, as a replayed or skipped rotation does.",
+  "rotation-previous-mismatch": "The rotation names a previous digest other than the set it replaces, as a rollback to an older set does.",
+  "rotation-threshold-unsatisfiable": "The new threshold is more than the number of distinct signers in the new set, so no later rotation could meet it.",
+  "rotation-threshold-not-met": "Fewer distinct signers of the set before signed the rotation, in the chant-signers namespace, than that set's threshold.",
+  // Runner evidence (evidence sign and verify, #2553): why evidence is refused.
+  "trust-policy-unreadable": "The trust policy at base can't be read, or its signer history is broken, so no runner key is trusted.",
+  "envelope-unreadable": "The --envelope file can't be read, or is not JSON.",
+  "envelope-invalid": "The file is not a DSSE envelope: payloadType, payload in canonical base64, and signatures with keyid and sig.",
+  "envelope-untrusted": "No signature in the envelope verifies against a runner key the policy at base lists.",
+  "evidence-payload-type": "The envelope's payload type is not application/vnd.in-toto+json.",
+  "evidence-statement-invalid": "The payload is not an in-toto Statement v1 with chant's runner-evidence predicate, or has a field the predicate does not define.",
+  "evidence-runner-mismatch": "The statement names a runner other than the one whose key signed it.",
+  "runner-key-invalid": "The key given to evidence sign is not an Ed25519 private key in PEM.",
+  "runner-key-is-signer": "The key given to evidence sign is a person's key in the signers file. Evidence is signed by a service or CI identity.",
+  "runner-key-unlisted": "The policy at base lists no runner with the key given to evidence sign.",
   // The lineage lock (check).
   "lock-invalid": "The lineage lock can't be read.",
   "manual-step-open": "A scope in the lineage lock has an open manual step.",
