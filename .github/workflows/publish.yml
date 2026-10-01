@@ -48,10 +48,19 @@ jobs:
   # package's prepack under CHANT_RELEASE_GATE, so the build and the release
   # gate run on what ships. The job keeps the name `test` so `publish` and
   # `untag` read its result as before.
+  #
+  # #3027: the run it checks may still be queued or running when the tag
+  # lands, so the script waits for it (up to 45 minutes, or 5 for a run to
+  # appear at all) instead of failing at once. It reports how it ended in the
+  # `gate` output; on `timeout` the tag is kept (see `untag`). The job timeout
+  # sits above the script's own so a slow CI ends as `timeout`, not as a
+  # cancelled job.
   test:
     if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 55
+    outputs:
+      gate: ${{ steps.verify.outputs.outcome }}
     permissions:
       contents: read
       actions: read
@@ -61,6 +70,7 @@ jobs:
           # The bump commit and its parent, the commit `chant` ran on.
           fetch-depth: 2
       - name: Require a green chant run on the released commit
+        id: verify
         env:
           GH_TOKEN: ${{ github.token }}
         run: bash scripts/publish-verify-ci.sh
@@ -129,9 +139,15 @@ jobs:
   # A partial publish is recovered by fixing the cause and running this
   # workflow via workflow_dispatch on main (the skip-if-unchanged guard
   # publishes only what is still missing), or by cutting the next release.
+  #
+  # One exception (#3027): when the gate failed only because the `chant` run
+  # was still going after 45 minutes (needs.test.outputs.gate == 'timeout'),
+  # the release is not known to be bad, so the tag stays and nothing was
+  # published. Once that run is green, `gh run rerun <id> --failed` re-runs
+  # the gate and publishes. A cancelled gate (no output) still untags.
   untag:
     needs: [test, publish]
-    if: ${{ always() && startsWith(github.ref, 'refs/tags/') && (contains(fromJSON('["failure","cancelled"]'), needs.test.result) || contains(fromJSON('["failure","cancelled"]'), needs.publish.result)) }}
+    if: ${{ always() && startsWith(github.ref, 'refs/tags/') && needs.test.outputs.gate != 'timeout' && (contains(fromJSON('["failure","cancelled"]'), needs.test.result) || contains(fromJSON('["failure","cancelled"]'), needs.publish.result)) }}
     runs-on: ubuntu-latest
     permissions:
       contents: write

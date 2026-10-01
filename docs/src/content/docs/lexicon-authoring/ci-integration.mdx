@@ -149,6 +149,22 @@ main's HEAD. It commits the version bump on top of that commit, tags it, and
 merges the tag back into main, so main ends up on the released version without
 any history being rewritten.
 
+The publish workflow's `test` job is the CI gate. Instead of running the suite
+again, `scripts/publish-verify-ci.sh` looks up the `chant` run through the API.
+A bump commit that changes only version fields is checked through its parent,
+the green commit the recipe picked; any other commit needs a green run of its
+own. Because the push that lands the tag is also what starts that run, the gate
+polls until the run finishes rather than failing on a queued one. A successful
+run lets the release through. The gate fails when every run has completed
+without success, or when no run has appeared after 5 minutes, and then the
+`untag` job deletes the tag. A failed publish deletes it too, so a tag exists
+only for a release that reached npm.
+
+The tag survives one case. When the run is still going after 45 minutes the
+gate ends with outcome `timeout` and nothing is published. Wait for that run
+to go green, then re-run the gate and the publish with
+`gh run rerun <publish-run-id> --failed`.
+
 To move a single lexicon without a full release:
 
 ```bash

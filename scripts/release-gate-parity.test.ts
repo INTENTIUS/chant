@@ -77,4 +77,12 @@ describe("release gate parity (#1481)", () => {
     const del = stepsRunning(untag, /git push origin ":refs\/tags\//);
     expect(del).toHaveLength(1);
   });
+
+  // #3027: the gate waits for the chant run; a gate that ran out of time
+  // waiting has not shown the release is bad, so the tag stays.
+  it("a gate that only timed out waiting keeps the tag", () => {
+    const test = publish.jobs.test as Job & { outputs?: Record<string, string> };
+    expect(test.outputs?.gate).toMatch(/steps\.verify\.outputs\.outcome/);
+    expect(publish.jobs.untag.if).toMatch(/needs\.test\.outputs\.gate != 'timeout'/);
+  });
 });
