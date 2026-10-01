@@ -356,6 +356,18 @@ describe("AgentDashboard", () => {
     expect(b).toEqual(a);
   });
 
+  test("builds against a preset that also emits the conventions' client metrics", () => {
+    for (const source of ["derive", "passthrough"] as const) {
+      const m = genAiMetrics({ clientMetrics: source, providerDimensions: true });
+      expect(m.client?.operationDuration.prometheus).toBe("gen_ai_client_operation_duration_seconds");
+      expect(m.client?.tokenUsage.prometheus).toBe("gen_ai_client_token_usage");
+      const { json, out } = built(AgentDashboard({ genAi: m, datasource: prometheus }).dashboard);
+      expectClean(json, out);
+      const c = built(AgentDashboard({ genAi: genAiComponents({ clientMetrics: source, providerDimensions: true }), datasource: prometheus }).dashboard);
+      expect(c.json).toEqual(json);
+    }
+  });
+
   test("refuses metrics without the dimensions it breaks down by", () => {
     const m = genAiMetrics();
     const stripped = { ...m, calls: { ...m.calls, dimensions: m.calls.dimensions.filter((d) => d !== "gen_ai.tool.name") } };
