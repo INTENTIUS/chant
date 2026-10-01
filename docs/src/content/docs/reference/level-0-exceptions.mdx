@@ -12,7 +12,7 @@ Workspaces ([#2524](https://github.com/INTENTIUS/chant/issues/2524)) come in lev
 |---|---|
 | `chant build`, `chant graph` (the Op view, `--stacks` and `--format ir`), `chant lint --format json`, `chant audit --format json` and `chant run list` | CLI goldens in `test/level0-goldens/goldens/`, one file per command and example |
 | Files a command leaves in the project, such as `build` writing `dist/ops/<op>/op.json` | the `wrote` section of each golden |
-| Ledger paths on the `chant/lifecycle` branch: `<env>/runs__<op>.jsonl` and `_gates/<op>.jsonl` | `test/level0-goldens/level0-ledger.test.ts` |
+| Ledger paths on the `chant/lifecycle` branch: `<env>/runs__<op>.jsonl` and `_gates/<op>.jsonl`, also for a project in a subdirectory of its repository | `test/level0-goldens/level0-ledger.test.ts` |
 | Ownership markers: `app.kubernetes.io/managed-by`, `chant.intentius.io/stack` and `chant.intentius.io/env` | the same ledger fixture, plus the build goldens |
 | No workspace code loads | every golden run records the modules its process loaded and fails on any file under core's `workspace/` directory, or any chant module whose name starts with `workspace` |
 
@@ -20,7 +20,7 @@ The goldens run the real CLI over copies of `getting-started`, `local-op-quickst
 
 ## The exceptions
 
-The `version` field has shipped, and `v0.80.0` is the warning release for the other four entries, so each of their changes can land in any release after `v0.80.0`. A new entry gets its warning release when that release goes out, and its change can land from the release after.
+The `version` field has shipped, and `v0.80.0` is the warning release for the other four entries, so each of their changes can land in any release after `v0.80.0`. A new entry gets its warning release when that release goes out, and its change can land from the release after. The last two rows shipped without a warning release, which the maintainer accepted on 2026-09-30.
 
 | Change | Issue | Warning release |
 |---|---|---|
@@ -29,6 +29,8 @@ The `version` field has shipped, and `v0.80.0` is the warning release for the ot
 | `chant audit` reports a truncated scan, and TF023 reads a nested `.gitignore` | [#2528](https://github.com/INTENTIUS/chant/issues/2528) | `v0.80.0` warns on stderr when the walk stops at its file limit and for each TF023 path a nested `.gitignore` covers, see [chant audit](/chant/cli/audit/#scan-limits) |
 | Component gate approvals are bound to the environment and plan digest they were given for, and older approvals are refused | [#2574](https://github.com/INTENTIUS/chant/issues/2574) | `v0.80.0` warns on stderr when a component gate passes on an approval with no plan. Shipped after `v0.80.0` ([#2594](https://github.com/INTENTIUS/chant/pull/2594)): an approval recorded without an environment and a plan is refused and the refusal names the `chant approve --env` command that replaces it, and no golden moved. See [Gate approvals and environments](/chant/components/orchestration/#gate-approvals-and-environments) |
 | An additive `version` field on `chant graph --format ir` output | [#2529](https://github.com/INTENTIUS/chant/issues/2529) ([#2524](https://github.com/INTENTIUS/chant/issues/2524) D8) | shipped: merged after v0.79.0 with no separate warning release, since the field is additive and consumers ignore fields they do not know. The `graph-format-ir` goldens record it |
+| Ledger reads and writes list the `chant/lifecycle` tree with `git ls-tree --full-tree`. A project in a subdirectory of its repository used to list nothing there, so its second ledger append was refused as a concurrent change; now it appends, and the paths are the same flat ones as at a repository root | [#2550](https://github.com/INTENTIUS/chant/issues/2550) ([#2610](https://github.com/INTENTIUS/chant/pull/2610)) | none: shipped in `v0.81.0` as a bug fix. `level0-ledger.test.ts` holds the subdirectory case |
+| `chant check-lexicon` prints one more tier-1 row, `Any ./workspace-kinds subpath holds valid kind data`, for every lexicon. A lexicon without the subpath passes it. `chant doctor` is unchanged outside a declared workspace | [#2535](https://github.com/INTENTIUS/chant/issues/2535) ([#2631](https://github.com/INTENTIUS/chant/pull/2631)) | none: shipped in `v0.81.0`. `doctor.test.ts` checks that doctor adds nothing outside a workspace |
 
 ## Landing a listed change
 
