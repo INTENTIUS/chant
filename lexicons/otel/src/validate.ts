@@ -37,6 +37,7 @@ export const REQUIRED_NAMES = [
   "PrometheusExporter",
   "GoogleCloudExporter",
   "LoadBalancingExporter",
+  "SignalToMetricsConnector",
   "HealthCheckExtension",
   "PprofExtension",
   "ZPagesExtension",

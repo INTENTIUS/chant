@@ -109,6 +109,7 @@ A connector is an exporter in one pipeline and a receiver in another. List the s
 | `ForwardConnector` | `forward` | same signal in and out | none |
 | `CountConnector` | `count` | traces, metrics, logs or profiles to metrics | metric names are not empty; counts of `metrics` take no attributes |
 | `SumConnector` | `sum` | traces, metrics or logs to metrics | at least one metric; each has a `source_attribute`; sums of `metrics` take no attributes; at most one attribute, since the pinned release adds each value once per attribute |
+| `SignalToMetricsConnector` | `signaltometrics` | traces, metrics, logs or profiles to metrics | at least one metric; each has a `name` and exactly one of `sum`, `gauge`, `histogram` or `exponential_histogram`, with a `value`; histogram `buckets` increase; `exponential_histogram.max_size` is 2 to 16384; an attribute key is set, listed once, and has `default_value` or `optional`, not both; a gauge using `ExtractGrokPatterns` selects one key |
 
 ```ts
 import { OtlpReceiver, OtlpExporter, PrometheusExporter, SpanMetricsConnector, Pipeline } from "@intentius/chant-lexicon-otel";
@@ -120,6 +121,30 @@ export const spanmetrics = new SpanMetricsConnector({ dimensions: [{ name: "http
 
 export const traces = new Pipeline({ signal: "traces", receivers: [otlp], exporters: [tempo, spanmetrics] });
 export const red = new Pipeline({ signal: "metrics", name: "red", receivers: [spanmetrics], exporters: [prom] });
+```
+
+`signaltometrics` builds metrics you name from spans, data points, logs or profiles. Each section (`spans`, `datapoints`, `logs`, `profiles`) is a list of metrics; each metric has a `name`, optional `description` and `unit`, `attributes` to split by, `include_resource_attributes` to keep, OTTL `conditions` (ORed), and exactly one metric type whose `value` is an OTTL value expression. A histogram takes optional `buckets` (plain numbers in the unit `value` returns, default `SIGNAL_TO_METRICS_DEFAULT_BUCKETS`) and an optional `count` expression. The TypeScript type allows one metric type per entry; OTEL107 catches the rest, such as an imported config with two. The type follows `config/config.go` and the README of `connector/signaltometricsconnector` at collector-contrib v0.130.0, where it is alpha for every signal and has no span event section. It emits delta temporality and aggregates only within each batch it receives, so an exporter that needs cumulative input wants `deltatocumulative` in front of it. `signalToMetricsEntries(config)` lists every entry with its signal and the metric types it names.
+
+```ts
+import { OtlpReceiver, PrometheusExporter, SignalToMetricsConnector, Pipeline } from "@intentius/chant-lexicon-otel";
+
+export const otlp = new OtlpReceiver({ protocols: { grpc: { endpoint: "0.0.0.0:4317" } } });
+export const prom = new PrometheusExporter({ endpoint: "0.0.0.0:8889" });
+export const genai = new SignalToMetricsConnector({
+  name: "genai",
+  spans: [
+    {
+      name: "gen_ai.client.operation.duration",
+      unit: "s",
+      conditions: ['attributes["gen_ai.operation.name"] != nil'],
+      attributes: [{ key: "gen_ai.operation.name" }, { key: "gen_ai.request.model", default_value: "unknown" }],
+      histogram: { buckets: [0.01, 0.1, 1, 10], value: "Double(Microseconds(end_time - start_time)) / 1000000.0" },
+    },
+  ],
+});
+
+export const traces = new Pipeline({ signal: "traces", receivers: [otlp], exporters: [genai] });
+export const metrics = new Pipeline({ signal: "metrics", name: "genai", receivers: [genai], exporters: [prom] });
 ```
 
 `spanMetricsNames(connector, exporter?)` returns the names Prometheus serves a `spanmetrics` connector's metrics under, read from its `namespace`, dimensions and histogram unit, and from the `prometheus` exporter's `namespace` and `add_metric_suffixes` when you pass it. The connector above gives `traces_span_metrics_calls_total` and `traces_span_metrics_duration_milliseconds`, with labels `service_name`, `span_name`, `span_kind` and `status_code`. A query, an SLO or a dashboard built from those names follows a renamed namespace; the grafana lexicon's `RedDashboard` reads them this way.

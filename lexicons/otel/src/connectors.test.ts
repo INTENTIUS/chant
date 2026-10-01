@@ -15,8 +15,11 @@ import {
   PrometheusExporter,
   RoutingConnector,
   ServiceGraphConnector,
+  SignalToMetricsConnector,
   SpanMetricsConnector,
   SumConnector,
+  signalToMetricsEntries,
+  type SignalToMetricsConnectorConfig,
 } from "./components";
 import { collectorYaml } from "./collector";
 import { COLLECTOR_PIN, componentEntityType, defineComponent } from "./define";
@@ -62,7 +65,15 @@ describe("connector as a component kind", () => {
   });
 
   test("the built-ins are connectors pinned to the collector release", () => {
-    for (const Cls of [SpanMetricsConnector, ServiceGraphConnector, RoutingConnector, ForwardConnector, CountConnector, SumConnector]) {
+    for (const Cls of [
+      SpanMetricsConnector,
+      ServiceGraphConnector,
+      RoutingConnector,
+      ForwardConnector,
+      CountConnector,
+      SumConnector,
+      SignalToMetricsConnector,
+    ]) {
       expect(Cls.definition.kind).toBe("connector");
       expect(Cls.definition.builtin).toBe(true);
       expect(Cls.definition.pin).toEqual(COLLECTOR_PIN);
@@ -332,6 +343,180 @@ describe("connector config rules (OTEL107)", () => {
   });
 });
 
+/** Spans into a duration histogram and logs into a count, both feeding one metrics pipeline through signaltometrics. */
+function signalToMetricsCollector(): Declarable[] {
+  const otlp = new OtlpReceiver({ protocols: { grpc: { endpoint: "0.0.0.0:4317" } } });
+  const s2m = new SignalToMetricsConnector({
+    name: "genai",
+    spans: [
+      {
+        name: "gen_ai.client.operation.duration",
+        description: "GenAI operation duration",
+        unit: "s",
+        conditions: ['attributes["gen_ai.operation.name"] != nil'],
+        attributes: [{ key: "gen_ai.operation.name" }, { key: "gen_ai.request.model", default_value: "unknown" }, { key: "error.type", optional: true }],
+        histogram: { buckets: [0.01, 0.1, 1, 10], value: "Double(Microseconds(end_time - start_time)) / 1000000.0" },
+      },
+    ],
+    logs: [{ name: "logrecord.count", sum: { value: "1" } }],
+  });
+  const debug = new DebugExporter({ verbosity: "basic" });
+  const prom = new PrometheusExporter({ endpoint: "0.0.0.0:8889" });
+  return [
+    otlp,
+    s2m,
+    debug,
+    prom,
+    new Pipeline({ signal: "traces", receivers: [otlp], exporters: [debug, s2m] }),
+    new Pipeline({ signal: "logs", receivers: [otlp], exporters: [s2m] }),
+    new Pipeline({ signal: "metrics", name: "genai", receivers: [s2m], exporters: [prom] }),
+  ];
+}
+
+describe("signaltometrics", () => {
+  const problems = (config: SignalToMetricsConnectorConfig) =>
+    validateCollectorEntities([new SignalToMetricsConnector(config)]).map((i) => i.message);
+
+  test("is typed against the pinned release and reads every signal into metrics", () => {
+    expect(SignalToMetricsConnector.definition.type).toBe("signaltometrics");
+    expect(SignalToMetricsConnector.definition.pin).toBe(COLLECTOR_PIN);
+    expect(SignalToMetricsConnector.definition.connects).toEqual([
+      { from: "traces", to: "metrics" },
+      { from: "metrics", to: "metrics" },
+      { from: "logs", to: "metrics" },
+      { from: "profiles", to: "metrics" },
+    ]);
+  });
+
+  test("serializes each signal's metric list, and the pipelines it joins pass every check", () => {
+    const entities = signalToMetricsCollector();
+    const config = load(collectorYaml(entities)) as CollectorConfig;
+    expect(config.connectors?.["signaltometrics/genai"]).toEqual({
+      spans: [
+        {
+          name: "gen_ai.client.operation.duration",
+          description: "GenAI operation duration",
+          unit: "s",
+          conditions: ['attributes["gen_ai.operation.name"] != nil'],
+          attributes: [
+            { key: "gen_ai.operation.name" },
+            { key: "gen_ai.request.model", default_value: "unknown" },
+            { key: "error.type", optional: true },
+          ],
+          histogram: { buckets: [0.01, 0.1, 1, 10], value: "Double(Microseconds(end_time - start_time)) / 1000000.0" },
+        },
+      ],
+      logs: [{ name: "logrecord.count", sum: { value: "1" } }],
+    });
+    expect(validateCollectorConfig(config)).toEqual([]);
+    expect(validateCollectorEntities(entities)).toEqual([]);
+    expect(collectorTopologyOf(entities).edges.map((e) => [e.from, e.to])).toEqual([
+      ["traces", "metrics/genai"],
+      ["logs", "metrics/genai"],
+    ]);
+  });
+
+  test("OTEL112: it cannot feed a traces pipeline", () => {
+    const yaml = `receivers:
+  otlp: {protocols: {grpc: {}}}
+exporters:
+  debug: {}
+connectors:
+  signaltometrics:
+    spans: [{name: n, sum: {value: "1"}}]
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [signaltometrics]
+    traces/out:
+      receivers: [signaltometrics]
+      exporters: [debug]
+`;
+    expect(otel112.check(ctxFor(yaml)).map((d) => d.entity)).toEqual(["signaltometrics", "signaltometrics"]);
+  });
+
+  test("entries list each metric with the types it names", () => {
+    const entries = signalToMetricsEntries({
+      spans: [{ name: "a", sum: { value: "1" } }],
+      datapoints: [{ name: "b", gauge: { value: "value_double" } }],
+    });
+    expect(entries.map((e) => [e.signal, e.index, e.metric.name, e.types])).toEqual([
+      ["spans", 0, "a", ["sum"]],
+      ["datapoints", 0, "b", ["gauge"]],
+    ]);
+  });
+
+  test("OTEL107 passes valid entries of every metric type", () => {
+    expect(
+      problems({
+        spans: [
+          { name: "s.sum", sum: { value: "Int(AdjustedCount())" } },
+          { name: "s.hist", histogram: { value: "Milliseconds(end_time - start_time)", count: "1" } },
+          { name: "s.exp", exponential_histogram: { max_size: 160, value: "Microseconds(end_time - start_time)" } },
+        ],
+        logs: [{ name: "l.gauge", gauge: { value: 'ExtractGrokPatterns(body, "Memory usage %{NUMBER:memory_mb:int}MB")["memory_mb"]' } }],
+        profiles: [{ name: "p.count", sum: { value: "1" } }],
+      }),
+    ).toEqual([]);
+  });
+
+  test("OTEL107: each entry names exactly one metric type, with a value", () => {
+    const bad = {
+      spans: [
+        { name: "none" },
+        { name: "two", sum: { value: "1" }, histogram: { value: "1" } },
+        { name: "nohistvalue", histogram: { count: "1" } },
+        { name: "nosumvalue", sum: {} },
+      ],
+    } as unknown as SignalToMetricsConnectorConfig;
+    expect(problems(bad)).toEqual([
+      'connector "signaltometrics": spans[0] (none): name exactly one metric type (sum, gauge, histogram or exponential_histogram); found none',
+      'connector "signaltometrics": spans[1] (two): name exactly one metric type (sum, gauge, histogram or exponential_histogram); found sum and histogram',
+      'connector "signaltometrics": spans[2] (nohistvalue): histogram.value is missing',
+      'connector "signaltometrics": spans[3] (nosumvalue): sum.value is missing',
+    ]);
+  });
+
+  test("OTEL107: names, attributes, buckets, max_size and grok selectors", () => {
+    const bad = {
+      logs: [
+        { name: "", sum: { value: "1" } },
+        {
+          name: "attrs",
+          attributes: [{ key: "a", default_value: "x", optional: true }, { key: "b" }, { key: "b" }, { key: "" }],
+          histogram: { buckets: [1, 5, 5], value: "1" },
+        },
+        { name: "exp", exponential_histogram: { max_size: 1, value: "1" } },
+        { name: "grok", gauge: { value: 'ExtractGrokPatterns(body, "%{NUMBER:n:int}")' } },
+      ],
+    } as unknown as SignalToMetricsConnectorConfig;
+    expect(problems(bad)).toEqual([
+      'connector "signaltometrics": logs[0]: name is missing',
+      'connector "signaltometrics": logs[1] (attrs): histogram.buckets must increase',
+      'connector "signaltometrics": logs[1] (attrs): attributes "a": set default_value or optional, not both',
+      'connector "signaltometrics": logs[1] (attrs): attributes "b" is listed twice',
+      'connector "signaltometrics": logs[1] (attrs): attributes[3]: key is missing',
+      'connector "signaltometrics": logs[2] (exp): exponential_histogram.max_size must be between 2 and 16384',
+      'connector "signaltometrics": logs[3] (grok): gauge.value with ExtractGrokPatterns needs one key selector, ExtractGrokPatterns(...)["key"]',
+    ]);
+  });
+
+  test("OTEL107: a connector with no metrics", () => {
+    expect(problems({})).toEqual([
+      'connector "signaltometrics": no metric is configured under spans, datapoints, logs or profiles; the collector refuses the connector',
+    ]);
+  });
+
+  test("the type allows exactly one metric type per entry", () => {
+    // @ts-expect-error: two metric types
+    const two: SignalToMetricsConnectorConfig = { spans: [{ name: "x", sum: { value: "1" }, gauge: { value: "1" } }] };
+    // @ts-expect-error: no metric type
+    const none: SignalToMetricsConnectorConfig = { spans: [{ name: "x" }] };
+    expect([two, none]).toHaveLength(2);
+  });
+});
+
 // `otelcol validate` is the acceptance test for the emitted YAML. CI has no
 // collector binary, so this runs only when one is on PATH (the contrib build,
 // which ships the connectors) and is skipped, with the reason shown, when not.
@@ -359,6 +544,17 @@ describe.skipIf(!otelcol)(
       try {
         const file = join(dir, "config.yaml");
         writeFileSync(file, collectorYaml(spanMetricsCollector()));
+        expect(() => execFileSync(otelcol!, ["validate", `--config=${file}`], { stdio: "pipe" })).not.toThrow();
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    test("the signaltometrics example validates", () => {
+      const dir = mkdtempSync(join(tmpdir(), "chant-otel-connectors-"));
+      try {
+        const file = join(dir, "config.yaml");
+        writeFileSync(file, collectorYaml(signalToMetricsCollector()));
         expect(() => execFileSync(otelcol!, ["validate", `--config=${file}`], { stdio: "pipe" })).not.toThrow();
       } finally {
         rmSync(dir, { recursive: true, force: true });

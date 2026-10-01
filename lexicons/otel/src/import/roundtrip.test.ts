@@ -197,6 +197,17 @@ describe("YAML -> TypeScript -> YAML", () => {
     }
   });
 
+  test("a signaltometrics connector imports to the typed class", async () => {
+    const out = await expectRoundTrip(read("signaltometrics.yaml"));
+    expect(out.source).toContain("new SignalToMetricsConnector(");
+    expect(out.source).not.toContain("defineComponent");
+    // The connector is one entity, on both sides of the join.
+    expect(out.source).toContain("receivers: [signaltometricsGenai]");
+    // A constant OTTL value stays a string.
+    expect(load(out.yaml)).toMatchObject({ connectors: { "signaltometrics/genai": { logs: [{ sum: { value: "1" } }] } } });
+    expect(out.warnings).toEqual([]);
+  });
+
   test("the collector configs of examples/agent-observability", async () => {
     for (const file of ["agent-observability-agent.yaml", "agent-observability-gateway.yaml"]) {
       await expectRoundTrip(read(file));
@@ -214,6 +225,7 @@ describe("YAML -> TypeScript -> YAML", () => {
     // Not the agent-observability agent: its k8s resolver needs a cluster to build (that example's own tests swap it for dns).
     const yamls: Array<[string, string]> = [
       ["gateway.yaml", read("gateway.yaml")],
+      ["signaltometrics.yaml", read("signaltometrics.yaml")],
       ["agent-observability-gateway.yaml", read("agent-observability-gateway.yaml")],
       ["genAiPipeline()", collectorYaml(genAiPipeline())],
       ...UPSTREAM_BUILTIN_ONLY.map((f): [string, string] => [f, read("upstream", f)]),
