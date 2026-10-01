@@ -195,7 +195,7 @@ function dashboardLink(link: DashboardLinkInput | PanelLink): DashboardLink {
 
 // ── Variables ───────────────────────────────────────────────────
 
-const HIDE: Record<VariableHide, 0 | 1 | 2> = { label: 0, valueOnly: 1, hidden: 2 };
+const HIDE: Record<VariableHide, 0 | 1 | 2 | 3> = { label: 0, valueOnly: 1, hidden: 2, controlsMenu: 3 };
 const REFRESH = { never: 0, onLoad: 1, onTimeRangeChange: 2 } as const;
 
 /** A custom variable value in its `query`: a comma is escaped as `\\,`, and one already escaped is left alone. */
@@ -235,7 +235,7 @@ export function variableModel(variable: VariableEntity): VariableModel {
     hide: p.hide === undefined ? undefined : HIDE[p.hide as VariableHide],
     skipUrlSync: p.skipUrlSync,
   };
-  const multi = { multi: p.multi, includeAll: p.includeAll, allValue: p.allValue };
+  const multi = { multi: p.multi, includeAll: p.includeAll, allValue: p.allValue, allowCustomValue: p.allowCustomValue };
   switch (variable.variableKind) {
     case "query":
       return compact({

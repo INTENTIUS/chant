@@ -303,6 +303,7 @@ describe("variables", () => {
     });
     expect(variableModel(new IntervalVariable({ name: "step", values: ["1m", "5m"] }))).toMatchObject({ type: "interval", query: "1m,5m", auto: false, refresh: 2 });
     expect(variableModel(new DatasourceVariable({ name: "ds", pluginType: "loki", hide: "valueOnly" }))).toMatchObject({ type: "datasource", query: "loki", hide: 1 });
+    expect(variableModel(new CustomVariable({ name: "env", values: ["a"], hide: "controlsMenu", allowCustomValue: false }))).toMatchObject({ hide: 3, allowCustomValue: false });
     expect(variableModel(new ConstantVariable({ name: "cluster", value: "prod-1" }))).toMatchObject({ type: "constant", query: "prod-1", hide: 2 });
     expect(variableModel(new TextboxVariable({ name: "q" }))).toMatchObject({ type: "textbox", query: "" });
   });
