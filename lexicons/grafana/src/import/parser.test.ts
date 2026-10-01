@@ -416,7 +416,7 @@ describe("panels and rows", () => {
       }),
     );
     expect(decl(plan.declarations, "panel:0").props!.datasource).toBeUndefined();
-    expect(edits.filter((e) => e.path.endsWith("/datasource"))).toEqual([]);
+    expect(edits).toEqual([]);
     expect(warnings).toEqual([]);
   });
 
