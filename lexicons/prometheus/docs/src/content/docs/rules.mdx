@@ -6,7 +6,7 @@ description: "Every lint rule and post-synth check provided by the Prometheus le
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-prometheus` — DO NOT EDIT.
     Edit lexicons/prometheus/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-The Prometheus lexicon provides **19** rules: 3 lint rules and 16 post-synth checks.
+The Prometheus lexicon provides **20** rules: 3 lint rules and 17 post-synth checks.
 
 ## Lint Rules
 
@@ -38,3 +38,4 @@ Post-synth checks validate the serialized output after the build pipeline comple
 | `PROM207` | A receiver is declared but no route sends to it |
 | `PROM208` | An Alertmanager duration is not a duration |
 | `PROM209` | A receiver integration is missing its destination or credential |
+| `PROM210` | A receiver integration or global setting is one Alertmanager rejects |
