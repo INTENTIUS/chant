@@ -40,7 +40,7 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { computePlanDigest } from "../lifecycle/plan-digest";
 import type { ResolvedGateApproval } from "../op/gate-approval";
 import { checkLineage, findingKey, type CheckFinding } from "./lineage-check";
-import { dirLabel, git, parseDirSpec, readTemplateDir, readTemplateTree, recordedDirPath } from "./lineage-init";
+import { dirLabel, git, parseDirSpec, parseTemplateSource, portableUrl, readTemplateDir, readTemplateTree, recordedDirPath } from "./lineage-init";
 import {
   LOCK_FILE,
   LockError,
@@ -60,6 +60,7 @@ import { reportPlan, runChantMigrations, type ChantMigrationReport } from "./cha
 import { readDeclaration, readerVersion, WorkspaceReadError } from "./declaration";
 import { assertCodeAllowed, planMigrations, runMigration, splitMigrations, type LoadedMigration } from "./lineage-migrations";
 import { applyUpstream, type UpdateResult } from "./lineage-update";
+import { pathsInsideNested } from "./nesting";
 import { carryParameters, readManifest, substituteParameters } from "./template-manifest";
 import { repinSubstituted, type RepinnedRecord } from "./template-pins";
 import { workingTree } from "./tree";
@@ -128,6 +129,12 @@ export interface UpgradeOptions {
   to?: string;
   /** Run migrations whose body is code. */
   allowCode?: boolean;
+  /**
+   * `<repo>[#<member>]`: move the scope to this template (#2551). The chain
+   * starts with the new template's bridge migration from the scope's current
+   * template. Needs `to`, and a git scope.
+   */
+  source?: string;
   /** Replaces the child-process build and lint. For tests. */
   runChant?: ChantRunner;
 }
@@ -149,6 +156,8 @@ export interface StagedUpgrade {
   /** What the gate and the proposal branch are named: the member, else the scope. */
   gate: string;
   template: string;
+  /** Set when the upgrade moves the scope to another template (`--source`, #2551): that template's id. */
+  switchedTo?: string;
   kind: Lineage["kind"];
   /** The pin before and after. */
   from: string | null;
@@ -235,11 +244,13 @@ function instantiate(
  * fail (a server that refuses fetches by commit); the base is then left empty,
  * and every edited file the template changed becomes a manual step.
  */
-function fetchGit(root: string, lineage: Lineage, ref: string): Upstream {
+function fetchGit(root: string, lineage: Lineage, ref: string, onto?: Onto): Upstream {
   const source = lineage.source;
   if (source.type !== "git") throw new UpgradeError("not a git source");
-  const url = source.url.startsWith(".") ? resolve(root, source.url) : source.url;
-  const label = `${source.repo}@${ref}`;
+  const baseUrl = source.url.startsWith(".") ? resolve(root, source.url) : source.url;
+  // With --source (#2551) the target comes from the other template; the base always from the scope's own.
+  const url = onto ? onto.url : baseUrl;
+  const label = `${onto ? onto.repo : source.repo}@${ref}`;
   const scratch = mkdtempSync(join(tmpdir(), "chant-upgrade-"));
   try {
     git(scratch, ["init", "-q"]);
@@ -251,7 +262,7 @@ function fetchGit(root: string, lineage: Lineage, ref: string): Upstream {
       throw new UpgradeError(`could not fetch ${label}${stderr ? `: ${stderr}` : ""}`);
     }
     const commit = git(scratch, ["rev-parse", "FETCH_HEAD^{commit}"]);
-    const target = readTemplateTree(scratch, commit, source.path, label);
+    const target = readTemplateTree(scratch, commit, onto ? onto.path : source.path, label);
 
     const raw = new Map<string, Buffer>();
     const executable = new Set<string>();
@@ -267,7 +278,7 @@ function fetchGit(root: string, lineage: Lineage, ref: string): Upstream {
     const baseCommit = lineage.address?.commit;
     if (baseCommit && baseCommit !== commit) {
       try {
-        git(scratch, ["fetch", "-q", "--depth", "1", url, baseCommit]);
+        git(scratch, ["fetch", "-q", "--depth", "1", baseUrl, baseCommit]);
         const oldLabel = `${source.repo}@${baseCommit.slice(0, 12)}`;
         const old = readTemplateTree(scratch, baseCommit, source.path, oldLabel);
         // The base is rebuilt the way init wrote it: the old version's
@@ -306,7 +317,7 @@ function dirRefusal(lineage: Lineage, why: string): UpgradeError {
   const source = lineage.source as Extract<LineageSource, { type: "dir" }>;
   return new UpgradeError(
     `${why}. The scope was made from the directory ${dirLabel(source.path, source.member)}, which has no git history to rebuild a merge base from. ` +
-      `Upgrade with --to <dir> while ${source.path} still holds the files the scope was made from, or adopt the scope into a git lineage with \`chant workspace adopt-lineage\` (#2551).`,
+      `Upgrade with --to <dir> while ${source.path} still holds the files the scope was made from, or move the scope onto the git repository the directory was copied from with \`chant workspace adopt-lineage --from <repo>[#<member>]\`.`,
   );
 }
 
@@ -368,11 +379,19 @@ function readDir(root: string, lineage: Lineage, to: string | undefined): Upstre
   };
 }
 
-async function fetchUpstream(root: string, lineage: Lineage, ref: string | undefined): Promise<Upstream> {
+/** The template an upgrade moves the scope to (`--source`, #2551). */
+interface Onto {
+  url: string;
+  repo: string;
+  path?: string;
+  id: string;
+}
+
+async function fetchUpstream(root: string, lineage: Lineage, ref: string | undefined, onto?: Onto): Promise<Upstream> {
   const source = lineage.source;
   if (source.type === "git") {
     if (!ref) throw new UpgradeError("the scope records no ref; pass --to <ref>");
-    return fetchGit(root, lineage, ref);
+    return fetchGit(root, lineage, ref, onto);
   }
   if (source.type === "local" || source.type === "archive") {
     const { resolveVendorSource } = await import("../cli/commands/vendor");
@@ -507,13 +526,17 @@ export function resolveUpgradeTarget(root: string, scopeArg: string | undefined)
   const lock = readLock(root);
   if (lock?.scopes[scope]) return { root, scope };
   if (scope !== ".") {
-    let declared: Array<{ name: string; dir: string }> = [];
+    let declared: Array<{ name: string; dir: string; kind: string }> = [];
     try {
       declared = readDeclaration(workingTree(root)).members;
     } catch (err) {
       if (!(err instanceof WorkspaceReadError)) throw err;
     }
     const hit = declared.find((m) => m.dir !== "." && (m.name === scopeArg || scopeKey(m.dir) === scope));
+    if (hit?.kind === "workspace") {
+      // A nested workspace upgrades itself; the outer one never writes inside it (D2, #2551).
+      throw new UpgradeError(`member "${hit.name}" is a nested workspace, which upgrades itself: run chant workspace upgrade in ${hit.dir}`);
+    }
     if (hit) {
       const memberRoot = join(root, hit.dir);
       if (readLock(memberRoot)) return { root: memberRoot, scope: ".", member: hit.name };
@@ -572,16 +595,29 @@ export async function stageUpgrade(options: UpgradeOptions): Promise<StagedUpgra
     );
   }
 
+  // A move to another template (#2551): a git scope only, and to a named ref.
+  let onto: Onto | undefined;
+  if (options.source !== undefined) {
+    const spec = parseTemplateSource(options.source, root, "--source");
+    if (spec.ref !== undefined) throw new UpgradeError(`--source ${options.source}: name the version with --to, not "@${spec.ref}"`);
+    if (options.to === undefined) throw new UpgradeError("--source moves the scope to another template, so it needs --to <ref>: a version of that template");
+    if (lineage.source.type !== "git") {
+      throw new UpgradeError(`scope "${scope}" has a ${lineage.source.type} source; only a git scope moves to another template. A directory scope moves onto git with chant workspace adopt-lineage first.`);
+    }
+    onto = { url: spec.url, repo: spec.repo, ...(spec.member ? { path: spec.member } : {}), id: spec.id };
+  }
+  const switching = onto !== undefined && onto.id !== lineage.template;
+
   // 1. Fetch. A directory source has no ref: `--to` names the directory.
   const fromDir = lineage.source.type === "dir";
   const ref = fromDir ? undefined : options.to ?? lineage.ref;
-  const upstream = await fetchUpstream(root, lineage, fromDir ? options.to : ref);
+  const upstream = await fetchUpstream(root, lineage, fromDir ? options.to : ref, onto);
 
   // 2. The merge base, offline from here on.
   const base = rebuildBase(join(root, scope), lineage, upstream.base);
 
   // Plan the chain before anything is staged, so a gap refuses early.
-  const plan = lineage.kind === "template" ? planMigrations(lineage, ref, upstream.migrations) : { chain: [] };
+  const plan = lineage.kind === "template" ? planMigrations(lineage, ref, upstream.migrations, onto?.id) : { chain: [] };
   assertCodeAllowed(plan.chain, !!options.allowCode);
 
   // 3. The worktree, inside the project so the project's packages resolve.
@@ -651,6 +687,10 @@ export async function stageUpgrade(options: UpgradeOptions): Promise<StagedUpgra
     }
     if (upstream.commit) staged.address = { ...staged.address!, commit: upstream.commit, tree: upstream.tree };
     if (upstream.source) staged.source = upstream.source;
+    if (onto) {
+      staged.template = onto.id;
+      staged.source = { type: "git", repo: onto.repo, url: portableUrl(onto.url, root), ...(onto.path ? { path: onto.path } : {}) };
+    }
     writeLock(worktreeProject, next);
     const lockText = renderLock(next);
 
@@ -667,6 +707,14 @@ export async function stageUpgrade(options: UpgradeOptions): Promise<StagedUpgra
     const lockChanged = !lockTracked && lockText !== readFileSync(join(root, LOCK_FILE), "utf-8");
     const changed = patch.length > 0 || lockChanged;
     const digest = computePlanDigest(UPGRADE_PLAN_KIND, lockTracked ? { scope, patch } : { scope, patch, lock: lockText });
+
+    // The outer workspace never writes inside a nested one (D2, #2551): that one upgrades itself.
+    const inNested = pathsInsideNested(worktreeProject, projectRel, changedPaths);
+    if (inNested.length > 0) {
+      throw new UpgradeError(
+        `the upgrade would change files inside the nested workspace ${inNested[0].member} (${inNested.slice(0, 5).map((p) => p.path).join(", ")}). A nested workspace upgrades itself with its own chant workspace upgrade, and the outer one never writes inside it.`,
+      );
+    }
 
     // Governance: decided by the rules at HEAD, never by the upgraded files.
     const governed = changedPaths.filter(isGovernancePath);
@@ -728,6 +776,7 @@ export async function stageUpgrade(options: UpgradeOptions): Promise<StagedUpgra
       ...(member !== undefined ? { member } : {}),
       gate: member ?? scope,
       template: lineage.template,
+      ...(switching ? { switchedTo: onto!.id } : {}),
       kind: lineage.kind,
       from: fromDir ? sourcePin(lineage.source) : lineage.ref ?? null,
       to: fromDir ? sourcePin(staged.source) : staged.ref ?? null,
@@ -827,6 +876,7 @@ export function describeStaged(staged: StagedUpgrade): string[] {
   const lines: string[] = [];
   const at = (p: string) => (staged.scope === "." ? p : `${staged.scope}/${p}`);
   lines.push(`${staged.gate}  ${staged.template}  ${staged.from ?? "(no ref)"} -> ${staged.to ?? "(no ref)"}`);
+  if (staged.switchedTo) lines.push(`  template: ${staged.template} -> ${staged.switchedTo}`);
   const chantIds = new Set(staged.chantMigrations.map((m) => m.id));
   for (const id of staged.migrations) if (!chantIds.has(id)) lines.push(`  migration: ${id}`);
   for (const m of staged.chantMigrations) {

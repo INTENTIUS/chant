@@ -82,7 +82,7 @@ export const EGRESS_PHASES: readonly EgressPhase[] = [
     id: "upgrade",
     label: "Upgrading a project from its template",
     summary:
-      "`chant workspace upgrade <scope>` fetches the target version of a git template, and the commit the scope was made from, to rebuild the merge base. Everything after the fetch runs offline in a local worktree. A vendor scope is read from its source as `chant vendor pull` reads it, and a scope made from a directory reads the `--to` directory from disk and reaches nothing. The `proposeWorkspaceUpgrade` activity stages the same upgrade, then pushes a proposal branch and opens or edits a pull request. Every step is a `git` or `gh` child process, listed below as shell-outs.",
+      "`chant workspace upgrade <scope>` fetches the target version of a git template, and the commit the scope was made from, to rebuild the merge base. Everything after the fetch runs offline in a local worktree. A vendor scope is read from its source as `chant vendor pull` reads it, and a scope made from a directory reads the `--to` directory from disk and reaches nothing. The `proposeWorkspaceUpgrade` activity stages the same upgrade, then pushes a proposal branch and opens or edits a pull request. `chant workspace adopt-lineage` and `chant workspace hash-index` list a template's tags and fetch the versions they compare, and `chant workspace versions --available` lists the tags of each git template. Every step is a `git` or `gh` child process, listed below as shell-outs.",
   },
   {
     id: "audit",
@@ -266,8 +266,26 @@ export const NETWORK_SHELL_OUTS: readonly NetworkShellOut[] = [
     command: "chant workspace upgrade <scope>",
     file: "packages/core/src/workspace/lineage-upgrade.ts",
     phase: "upgrade",
-    destination: "the template repository the lineage lock records for the scope (`source.url`). A local repository reaches nothing",
-    why: "`git fetch --depth 1 <url> <ref>` for the target version, then `git fetch --depth 1 <url> <commit>` for the commit the scope was made from, into a scratch repository deleted afterwards. The second fetch rebuilds the merge base; when a server refuses it, the upgrade goes on without a base for edited files. Credentials are git's own, and `GIT_TERMINAL_PROMPT=0` stops it asking for any (#2550).",
+    destination: "the template repository the lineage lock records for the scope (`source.url`), or the one `--source` names when the upgrade moves the scope to another template. A local repository reaches nothing",
+    why: "`git fetch --depth 1 <url> <ref>` for the target version, then `git fetch --depth 1 <url> <commit>` for the commit the scope was made from, into a scratch repository deleted afterwards. The second fetch rebuilds the merge base, always from the scope's recorded source; when a server refuses it, the upgrade goes on without a base for edited files. Credentials are git's own, and `GIT_TERMINAL_PROMPT=0` stops it asking for any (#2550, #2551).",
+  },
+  {
+    binary: "git",
+    subcommand: "ls-remote",
+    command: "chant workspace adopt-lineage --from <repo>, chant workspace hash-index --from <repo> and chant workspace versions --available",
+    file: "packages/core/src/workspace/lineage-hash-index.ts",
+    phase: "upgrade",
+    destination: "the template repository named in `--from`, or for `versions --available` the one each family's lock records. A local repository reaches nothing",
+    why: "`git ls-remote --tags <url>` lists the template's tags and the commit each names, so a cached hash index is reused only for tags that still name the same commit, and `versions` can say how many versions are newer than each lock (#2551).",
+  },
+  {
+    binary: "git",
+    subcommand: "fetch",
+    command: "chant workspace adopt-lineage --from <repo> and chant workspace hash-index --from <repo>",
+    file: "packages/core/src/workspace/lineage-hash-index.ts",
+    phase: "upgrade",
+    destination: "the template repository named in `--from`. A local repository reaches nothing",
+    why: "`git fetch --depth 1 --no-tags <url> refs/tags/<tag>...` for the version tags the index has to compute, or `git fetch --depth 1 <url> <ref>` for the one ref `--from <repo>@<ref>` names, then a cached winner's tag again to re-check it, into a scratch repository deleted afterwards. Credentials are git's own, and `GIT_TERMINAL_PROMPT=0` stops it asking for any (#2551).",
   },
   {
     binary: "git",

@@ -747,12 +747,14 @@ describe("workspace init and ls (#2534)", () => {
     expect(resolveCommand(init, commandRegistry)?.def.name).toBe("workspace init");
     expect(commandRegistry.filter((c) => c.name === "workspace" || c.name.startsWith("workspace ")).map((c) => c.name).sort()).toEqual([
       "workspace",
+      "workspace adopt-lineage",
       "workspace agent",
       "workspace audit",
       "workspace build",
       "workspace check",
       "workspace evidence",
       "workspace graph",
+      "workspace hash-index",
       "workspace init",
       "workspace lineage",
       "workspace lint",
@@ -766,8 +768,19 @@ describe("workspace init and ls (#2534)", () => {
       "workspace status",
       "workspace upgrade",
       "workspace verify",
+      "workspace versions",
       "workspace work",
     ]);
+  });
+
+  test("adopt-lineage, hash-index, versions and upgrade --source take their flags (#2551)", () => {
+    const adopt = parseArgs(["workspace", "adopt-lineage", "app", "--from", "acme/starter#svc", "--tags", "v*", "--index", "i.json", "--param", "name=x", "--dry-run"]);
+    expect(adopt).toMatchObject({ command: "workspace", path: "adopt-lineage", extraPositional: "app", migrateFrom: "acme/starter#svc", tags: "v*", index: "i.json", param: ["name=x"], dryRun: true });
+    expect(resolveCommand(adopt, commandRegistry)?.def.name).toBe("workspace adopt-lineage");
+    expect(parseArgs(["workspace", "versions", "--available", "--template", "x"])).toMatchObject({ path: "versions", available: true, template: "x" });
+    expect(parseArgs(["workspace", "upgrade", "--source", "acme/upstream", "--to", "v2.0.0"])).toMatchObject({ source: "acme/upstream", migrateTo: "v2.0.0" });
+    expect(() => parseArgs(["workspace", "adopt-lineage", "--tags"])).toThrow(/--tags needs a tag glob/);
+    expect(() => parseArgs(["workspace", "upgrade", "--source", "--to"])).toThrow(/--source needs a template/);
   });
 
   test("workspace work takes its verb, id and lease flags (#2732)", () => {

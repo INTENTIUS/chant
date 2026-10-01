@@ -338,6 +338,40 @@
         },
         "pipeline": {
           "description": "The member IR's pipeline projection, when it has one."
+        },
+        "nested": {
+          "type": "object",
+          "description": "For a member of kind workspace (#2551): the nested workspace, read read-only through its own chant workspace graph. Its nodes, edges, exports and imports are in the outer sections with `<member>/<nested member>/<id>` ids, and each node names its nested member in `nested`. The outer workspace never writes inside it.",
+          "required": [
+            "name",
+            "contract",
+            "members",
+            "links"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "The nested declaration's name."
+            },
+            "contract": {
+              "type": "integer",
+              "description": "The contract version of the nested read's document."
+            },
+            "members": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/member"
+              },
+              "description": "The nested workspace's members as its own graph lists them, with their own names and directories (relative to the nested root)."
+            },
+            "links": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/link"
+              },
+              "description": "The nested workspace's links, naming its members as the nested side does."
+            }
+          }
         }
       },
       "if": {
@@ -403,6 +437,10 @@
         },
         "runtimeOwner": {
           "type": "string"
+        },
+        "nested": {
+          "type": "string",
+          "description": "For a node read through a nested workspace (#2551): the nested workspace's member it belongs to. `member` is then the outer member, and the id is `<member>/<nested>/<id>`."
         },
         "sourceLoc": {
           "type": "object",

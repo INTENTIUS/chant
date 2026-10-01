@@ -32,7 +32,7 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | Category | Where the code keeps it | chant | hud | plugin |
 |---|---|---|---|---|
 | boundary cell | the table of #2657, one row per cell | 6 | 5 | 3 |
-| workspace command | `commandRegistry` in `cli/main.ts`, and each sub-verb its help names | 33 | 0 | 0 |
+| workspace command | `commandRegistry` in `cli/main.ts`, and each sub-verb its help names | 36 | 0 | 0 |
 | member kind | `BUILTIN_KIND_NAMES` in `kinds.ts` | 5 | 0 | 0 |
 | record kind | none in core; `decision` and `session` are this repository's, the rest a plugin's | 4 | 0 | 4 |
 | member link kind | `LINK_KINDS` in `links.ts` | 2 | 0 | 0 |
@@ -91,12 +91,15 @@ Each row follows, in the order of the table above.
 | workspace command | `workspace lineage` | chant | chant workspace lineage --json | Shows each scope in the lineage lock with its template, pin, edited files and open manual steps. |
 | workspace command | `workspace lineage resolve` | chant | chant workspace lineage resolve &lt;path&gt; | Closes a manual step once the file has been merged by hand. |
 | workspace command | `workspace upgrade` | chant | chant workspace upgrade | Brings a lineage scope to a newer template version in a worktree and gates the patch on its digest. |
+| workspace command | `workspace adopt-lineage` | chant | chant workspace adopt-lineage --json | Gives a scope with no lineage one matched against the template's versions, or moves a directory lineage onto git. |
+| workspace command | `workspace hash-index` | chant | chant workspace hash-index | Computes the per-version file hashes adopt-lineage matches a scope against, for a template's CI to publish. |
+| workspace command | `workspace versions` | chant | chant workspace versions --json | Reports the template, chant and lexicon versions of every lineage lock under a directory, by template family. |
 | workspace command | `workspace build` | chant | chant workspace build | Builds every chant member and example project, each under its own chant. |
 | workspace command | `workspace lint` | chant | chant workspace lint | Runs each member's own lint, with one SARIF run per member. |
 | workspace command | `workspace audit` | chant | chant workspace audit | Audits each member's files on disk with its own audit config, adding a member field to each finding. |
 | workspace command | `workspace member-run` | chant | chant workspace member-run | The internal entry one member's process runs under when a per-member command fans out; not for readers. |
 | member kind | `chant` | chant | declaration.schema.json, workspace-kinds.schema.json | A chant project, with a chant.config.ts or chant.config.json in its directory. |
-| member kind | `workspace` | chant | declaration.schema.json, workspace-kinds.schema.json | A nested workspace with its own declaration, opaque to the outer one. |
+| member kind | `workspace` | chant | declaration.schema.json, workspace-kinds.schema.json | A nested workspace with its own declaration, read by the outer one only through its own chant workspace graph and never written. |
 | member kind | `other` | chant | declaration.schema.json, workspace-kinds.schema.json | A directory chant does not read; the entry says why in because. |
 | member kind | `design` | chant | declaration.schema.json, workspace-kinds.schema.json | A data member holding the design artifacts the workspace owns; chant reads its files for record pins and builds nothing. |
 | member kind | `examples` | chant | declaration.schema.json, workspace-kinds.schema.json | An example group: every chant project its glob matches is built and linted. |

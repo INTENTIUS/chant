@@ -127,7 +127,7 @@ export const BUILTIN_KINDS: readonly MemberKind[] = [
   },
   {
     name: "workspace",
-    description: "a nested workspace, with its own chant.workspace.json; opaque to the outer one",
+    description: "a nested workspace, with its own chant.workspace.json; the outer one reads it through its own chant workspace graph and never writes inside it",
     probe: { anyFile: ["chant.workspace.json", "chant.workspace.jsonc"] },
     precedence: 1000,
     shape: "member",

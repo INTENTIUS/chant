@@ -32,6 +32,16 @@ Every node id becomes `<member>/<id>`. Member names can't contain `/`, and `::` 
 
 The `links` section holds the [member links](#links), followed by the [record links](#record-links) when `--kind` names a record kind. The `records` section lists the records of that kind, and it is empty without `--kind`.
 
+## Nested workspaces
+
+A member of kind `workspace` holds its own declaration. The outer workspace reads it read-only, through the nested workspace's own command ([#2551](https://github.com/INTENTIUS/chant/issues/2551), [ws-007](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-007-nesting.md), [ws-071](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-071-nested-reads.md)). chant runs `chant workspace graph` in the nested root, which hands itself to the nested workspace's own chant when it has one, as at any root. The outer read passes on `--at`, `--env`, `--live`, `--overlay`, `--traffic` and `--no-cache`, and nothing that writes. The answer must be a graph document of a contract this chant reads.
+
+The nested document is folded in under the outer member's name. A node `delivery/appService` of the nested workspace `reference-workspace` becomes `reference-workspace/delivery/appService`, so ids read `outer/inner/id`. Every other reference to a node gets the same prefix, as described under [Composition](#composition). Each such node keeps `member` as the outer member and names the nested member in `nested`, and its `sourceLoc.file` is relative to the nested root. The outer member's entry is `composed`. Its `nested` object holds the nested declaration's name and contract version, with the nested workspace's own member list and links. A nested workspace that can't be read leaves the member `failed`, with `command-failed`, `output-unreadable` or `ir-version-unsupported`.
+
+The chant repository declares `reference-workspace/` this way, so `chant workspace graph --member reference-workspace` at the chant root shows the reference workspace's `delivery` member under `reference-workspace/delivery/`.
+
+The outer workspace never writes inside a nested one. `build`, `lint` and `audit` skip it with `kind-not-run`, and [`chant workspace upgrade`](/chant/cli/workspace-upgrade/#nested-workspaces) refuses a patch that reaches into it.
+
 ## The live read
 
 With `--live`, each member runs `chant graph --live` under its own toolchain, so its graph is the account as it stands rather than its source ([#2875](https://github.com/INTENTIUS/chant/issues/2875)). `--overlay` and `--traffic <level>` are passed along too, and a member's chant then writes the drift overlay and the behaviour prediction onto its nodes. Composition keeps every attribute a member printed and rewrites only `$ref` values, so the `_drift`, `_overlay` and `_behaviour` attributes arrive as the member's chant wrote them. A member's `meta`, where the prediction's whole-estate figures sit, stays on its entry.
