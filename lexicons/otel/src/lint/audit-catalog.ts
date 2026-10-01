@@ -2,7 +2,7 @@
  * The otel lexicon's chant audit catalog, contributed via
  * `otelPlugin.auditCatalog()` (#687, #1346).
  *
- * OTEL101-OTEL106 and OTEL112 read the emitted collector YAML, so they are
+ * OTEL101-OTEL106 and OTEL112-OTEL115 read the emitted collector YAML, so they are
  * `yamlBased`.
  * OTEL107-OTEL109 read the declared entities (a component's definition, its
  * schema pin), which a standalone YAML file does not carry, so they are
@@ -106,6 +106,30 @@ export const otelAuditCatalog: Record<string, RuleMeta> = {
     "guidance",
     "Connector joins pipelines whose signals it does not convert",
     "Feed the connector from, and receive from it into, pipelines of the signals it supports (spanmetrics: traces in, metrics out).",
+    { category: "correctness" },
+  ),
+  OTEL113: auditRule(
+    "OTEL113",
+    "merge-worthy",
+    "guidance",
+    "Pipelines form a cycle through connectors",
+    "Break the cycle the message names: drop one connector hop, or send that pipeline's data to an exporter instead of back upstream.",
+    { category: "correctness" },
+  ),
+  OTEL114: auditRule(
+    "OTEL114",
+    "merge-worthy",
+    "guidance",
+    "Connector id also declared as a receiver or exporter",
+    'Give the connector, or the receiver or exporter, its own name (e.g. "datadog/connector") and update the pipelines that list it.',
+    { category: "correctness" },
+  ),
+  OTEL115: auditRule(
+    "OTEL115",
+    "merge-worthy",
+    "guidance",
+    "Routing connector routes to a pipeline that does not receive from it",
+    "List the routing connector in the receivers of every pipeline its table and default_pipelines name, or remove the pipeline from the route.",
     { category: "correctness" },
   ),
 };

@@ -94,7 +94,7 @@ Checks that read each collector config together with the workload that runs it, 
 | WK8601 | A DaemonSet collector runs `tail_sampling`, so it samples partial traces |
 | WK8602 | A multi-replica gateway runs `tail_sampling`, and a collector in the build sends it traces without a `loadbalancing` exporter routed by `traceID` |
 | WK8603 | A DaemonSet or multi-replica collector runs the `k8s_cluster` receiver without a `k8s_leader_elector` |
-| WK8604 | A collector config in a ConfigMap fails the otel config checks (reported as OTEL101 to OTEL106, OTEL112) |
+| WK8604 | A collector config in a ConfigMap fails the otel config checks (reported as OTEL101 to OTEL106, OTEL112 to OTEL115) |
 
 ### Argo CD
 
