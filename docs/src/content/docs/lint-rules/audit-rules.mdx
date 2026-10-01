@@ -1322,6 +1322,12 @@ Send traces to the gateway through a loadbalancing exporter with routing_key tra
 
 Run the k8s_cluster receiver in a single-replica Deployment, or set its k8s_leader_elector to a k8s_leader_elector extension enabled in service.extensions.
 
+### WK8604
+
+**Collector config in a ConfigMap fails the otel config checks** — merge-worthy · guidance
+
+Fix the collector config the ConfigMap carries: each finding keeps its OTEL1xx id and names the ConfigMap and key. Change the declared components and pipelines, not the rendered YAML.
+
 ## Docker (DKRD)
 
 Run against Dockerfiles and Compose files.

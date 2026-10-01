@@ -6,7 +6,7 @@ description: "Every lint rule and post-synth check provided by the Kubernetes le
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-k8s` — DO NOT EDIT.
     Edit lexicons/k8s/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-The Kubernetes lexicon provides **49** rules: 6 lint rules and 43 post-synth checks.
+The Kubernetes lexicon provides **50** rules: 6 lint rules and 44 post-synth checks.
 
 ## Lint Rules
 
@@ -68,3 +68,4 @@ Post-synth checks validate the serialized output after the build pipeline comple
 | `WK8601` | OpenTelemetry Collector runs tail_sampling as a per-node DaemonSet; each agent sees only its node's spans, so decisions are made on partial traces. Sees one build root at a time (chant #1939). |
 | `WK8602` | OpenTelemetry Collector gateway runs tail_sampling on more than one replica, but collectors send it traces without a loadbalancing exporter routed by traceID. Sees one build root at a time (chant #1939). |
 | `WK8603` | OpenTelemetry Collector runs the k8s_cluster receiver in a DaemonSet or multi-replica workload without a k8s_leader_elector; every copy reports every cluster object. Sees one build root at a time (chant #1939). |
+| `WK8604` | OpenTelemetry Collector config in a ConfigMap fails the otel lexicon's config checks; findings are reported under their OTEL1xx ids, naming the ConfigMap and key. |

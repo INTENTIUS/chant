@@ -12,7 +12,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, test } from "vitest";
 import { dump, load } from "js-yaml";
-import { validateCollectorConfig, GENAI_CONTENT_ATTRIBUTES, genAiMetrics, spanMetricsNames } from "@intentius/chant-lexicon-otel";
+import type { PostSynthContext } from "@intentius/chant/lint/post-synth";
+import { GENAI_CONTENT_ATTRIBUTES, genAiMetrics, spanMetricsNames } from "@intentius/chant-lexicon-otel";
+import { wk8604 } from "@intentius/chant-lexicon-k8s/lint/post-synth/wk8604";
 import {
   amtoolCheckConfig,
   promtoolCheckRules,
@@ -142,10 +144,8 @@ describe("the collectors", () => {
     expect(fixture("agent-observability-gateway.yaml")).toBe(built.gatewayConfigYaml);
   });
 
-  test("both configs pass the otel lexicon's config checks (OTEL101-OTEL106, OTEL112)", () => {
-    for (const config of [built.agentConfig, built.gatewayConfig]) {
-      expect(validateCollectorConfig(config).filter((i) => i.severity === "error")).toEqual([]);
-    }
+  test("both ConfigMap configs pass the otel config checks, as `chant build` runs them through WK8604", () => {
+    expect(wk8604.check({ outputs: new Map([["k8s", built.k8sYaml]]) } as PostSynthContext)).toEqual([]);
   });
 
   test.skipIf(!OTELCOL)(`both configs pass otelcol validate${OTELCOL ? "" : " (skipped: otelcol-contrib is not installed)"}`, () => {

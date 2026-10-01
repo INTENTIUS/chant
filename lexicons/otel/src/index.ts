@@ -47,6 +47,7 @@ export {
 export * from "./model";
 export { buildCollectorConfig, collectorYaml, componentConfig, type BuiltCollector } from "./collector";
 export { emitCollectorYaml, type EmitOptions } from "./yaml";
+export { configMapCollectorConfigs, describeConfigMapConfig, parseCollectorConfig, type ConfigMapCollectorConfig } from "./configmap";
 export {
   validateCollectorConfig,
   validateCollectorEntities,
