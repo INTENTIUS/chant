@@ -407,16 +407,17 @@ describe("panels and rows", () => {
     expect(warnings).toEqual(['panel "a" (id 1): gridPos is missing, so the build places the panel itself, which can differ from where Grafana would put it (#3029)']);
   });
 
-  test("a panel with no datasource in a row with one is reported: the build gives it the row's", () => {
-    const { edits, warnings } = planDashboard(
+  test("a panel with no datasource in a row with one stays without, as in Grafana, with no warning (#2983)", () => {
+    const { plan, edits, warnings } = planDashboard(
       dashboard({
         panels: [
           { type: "row", id: 1, title: "R", collapsed: true, datasource: prom, panels: [{ type: "stat", id: 2, title: "s", gridPos: { h: 4, w: 6, x: 0, y: 0 }, targets: [{ refId: "A", expr: "up" }] }] },
         ],
       }),
     );
-    expect(edits).toContainEqual({ op: "replace", path: "/panels/0/panels/0/datasource", value: prom });
-    expect(warnings).toEqual([expect.stringMatching(/^panel "s" \(id 2\): datasource is missing, and a panel in a chant Row without a datasource takes the row's/)]);
+    expect(decl(plan.declarations, "panel:0").props!.datasource).toBeUndefined();
+    expect(edits).toEqual([]);
+    expect(warnings).toEqual([]);
   });
 
   test("a library panel is reported and left out", () => {
