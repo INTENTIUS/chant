@@ -59,6 +59,24 @@ The step reports each resource once, in core's apply envelope:
 
 A failed write stops the step with Grafana's status and message.
 
+## Apply with ApplyOp
+
+`ApplyOp` takes `target: "grafana"` and runs the same applier after its Build and Plan phases, with an approval gate when `delete` is `"gated"`. `env` picks the `grafana.profiles.<env>` entry, and any `delete` other than `"never"` turns on prune. The Build phase runs the project's `build` script, and `output` (default `dist/grafana.json`) has to name the index that script writes:
+
+```ts
+// ops/grafana.op.ts, with "build": "chant build src --lexicon grafana -o dist/grafana.json" in package.json
+import { ApplyOp } from "@intentius/chant/op";
+
+export const { op } = ApplyOp({
+  name: "grafana-prod",
+  env: "prod",
+  target: "grafana",
+  delete: "gated",
+});
+```
+
+The ownership stack and env still come from `chant.config.ts`. `ApplyOp` reports the counts (`applied`, `pruned`, `notAttempted`), and the per-resource lines go to the step's log. Use the `grafanaApply` step above when you need `stack`, `ownershipEnv` or `cwd`, which `ApplyOp` does not pass.
+
 ## What gets written
 
 - **Folders.** A dashboard's `folder` is a path or a `Folder` (see [Provisioning](../provisioning/#folders)). The applier makes one folder per level, parents first, each under its parent, with the uid its `Folder` pins or one made from its path (`"Team A"` becomes `team-a`, `"Platform/Kubernetes"` a `platform-kubernetes` inside `platform`), so the next apply finds it again. It reads them from the build's index, which also lists a `Folder` no dashboard is in yet. A folder that already has that uid is used, moved under its declared parent and labelled.

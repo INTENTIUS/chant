@@ -70,6 +70,7 @@ export type {
   AzureApplier,
   GcpApplier,
   FlyApplier,
+  GrafanaApplier,
   AwsApplier,
   AwsRollback,
 } from "./apply";
