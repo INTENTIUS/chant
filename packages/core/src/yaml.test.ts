@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { load as jsYamlLoad } from "js-yaml";
-import { emitYAML, parseYAML, parseYAMLDocument, parseScalar, splitYAMLDocuments, YAMLParseError } from "./yaml";
+import { emitYAML, emitYAMLEntry, parseYAML, parseYAMLDocument, parseScalar, splitYAMLDocuments, YAMLParseError } from "./yaml";
 
 // ---------------------------------------------------------------------------
 // emitYAML
@@ -779,5 +779,115 @@ describe("parseYAML — anchors, aliases and merge keys (#2991)", () => {
 
   test("a merge key needs a mapping", () => {
     expect(() => parseYAML("a: &v 1\nb:\n  <<: *v\n")).toThrow(YAMLParseError);
+  });
+});
+
+// #3006: parseYAML is js-yaml with chant's schema. Before it, an inline
+// comment stayed in the value and a flow collection that was not JSON came
+// back as a string, without a warning.
+describe("parseYAML — comments and flow collections (#3006)", () => {
+  const same = (src: string): void => {
+    expect(parseYAMLDocument(src)).toEqual(jsYamlLoad(src));
+  };
+
+  test("an inline comment is not part of the value", () => {
+    expect(parseYAML("replicas: 1 # comment\n")).toEqual({ replicas: 1 });
+    expect(parseYAML("image: nginx:1.27 # pinned\nport: 80\t# tab\n")).toEqual({ image: "nginx:1.27", port: 80 });
+    same("items:\n  - a # one\n  - name: b # two\n    url: http://x/#frag\n");
+  });
+
+  test("a # inside a quoted or plain scalar is kept", () => {
+    expect(parseYAML("a: 'x # y'\nb: \"x # y\"\nc: x#y\n")).toEqual({ a: "x # y", b: "x # y", c: "x#y" });
+  });
+
+  test("flow sequences and mappings that are not JSON", () => {
+    expect(parseYAML("args: [--foo, --bar]\n")).toEqual({ args: ["--foo", "--bar"] });
+    same("weekdays: [saturday, sunday]\ndays: ['1:7']\nmeta: { name: gw, labels: { app: x } }\n");
+    same("times:\n  - { start_time: \"00:00\", end_time: \"24:00\" }\n");
+  });
+
+  test("a flow collection spanning lines", () => {
+    same("args: [\n  --foo,\n  --bar\n]\nmeta: {\n  a: 1,\n  b: [x, y]\n}\n");
+  });
+
+  test("a nested sequence on one line, as Grafana writes object matchers", () => {
+    expect(parseYAML("matchers:\n  - - severity\n    - =\n    - page\n")).toEqual({ matchers: [["severity", "=", "page"]] });
+  });
+
+  test("a folded scalar keeps the line breaks of its more-indented lines (#2925)", () => {
+    same("msg: >\n  a\n    indented\n  b\n");
+  });
+});
+
+describe("parseYAML — what chant keeps from its old parser (#3006)", () => {
+  test("yes and no are booleans; on and off stay strings", () => {
+    expect(parseYAML("a: yes\nb: no\nc: on\nd: off\n")).toEqual({ a: true, b: false, c: "on", d: "off" });
+  });
+
+  test("a date stays a string", () => {
+    expect(parseYAML("date: 2024-01-01\nat: 2024-01-01T00:00:00Z\n")).toEqual({ date: "2024-01-01", at: "2024-01-01T00:00:00Z" });
+  });
+
+  test("a local tag on a scalar or sequence reads as its text", () => {
+    expect(parseYAML("s: !reference [.base, script]\nr: !Ref MyApi\n")).toEqual({
+      s: "!reference [.base, script]",
+      r: "!Ref MyApi",
+    });
+    expect(parseYAML(emitYAMLEntry("s", { tag: "!reference", value: [".base", "script"] }))).toEqual({
+      s: "!reference [.base, script]",
+    });
+  });
+
+  test("a duplicate key takes the last value", () => {
+    expect(parseYAML("a: 1\na: 2\n")).toEqual({ a: 2 });
+  });
+
+  test("a `---`-separated stream reads as one mapping, as before", () => {
+    expect(parseYAML("a: 1\n---\nb: 2\n")).toEqual({ a: 1, b: 2 });
+  });
+
+  test("a scalar document is an error naming its line", () => {
+    expect(() => parseYAML("# header\njust text\n")).toThrow(/YAML line 2:/);
+    expect(parseYAML("")).toEqual({});
+    expect(parseYAML("# only a comment\n")).toEqual({});
+  });
+
+  test("a merged block is a copy, not shared with its anchor", () => {
+    const doc = parseYAML("a: &a\n  x: { n: 1 }\nb:\n  <<: *a\n") as { a: { x: { n: number } }; b: { x: { n: number } } };
+    doc.b.x.n = 2;
+    expect(doc.a.x.n).toBe(1);
+  });
+});
+
+describe("emitYAMLEntry (#3006)", () => {
+  test("an inline value gets a space after the colon", () => {
+    expect(emitYAMLEntry("jobs", {})).toBe("jobs: {}");
+    expect(emitYAMLEntry("stages", [])).toBe("stages: []");
+    expect(emitYAMLEntry("name", "x")).toBe("name: x");
+  });
+
+  test("a block value follows on the next line", () => {
+    expect(emitYAMLEntry("stages", ["a", "b"])).toBe("stages:\n  - a\n  - b");
+    expect(emitYAMLEntry("b", { c: 1 }, 1)).toBe("  b:\n    c: 1");
+  });
+
+  test("what it writes parses back", () => {
+    const doc = { on: {}, env: { A: "1" }, stages: [], jobs: { build: { script: ["make"] } } };
+    const text = Object.entries(doc).map(([k, v]) => emitYAMLEntry(k, v)).join("\n");
+    expect(parseYAML(text)).toEqual(doc);
+  });
+});
+
+describe("emitYAML quotes strings a parser would read as something else (#3006)", () => {
+  const values = ["foo:", "- x", "? x", "|x", ">x", "@x", "`x", "%x", ",x", "]x", "}x", "True", "NULL", "~", ".inf", "-.inf", ".NaN", " lead", "trail ", "-1", "+1", ".5", "Yes"];
+
+  for (const v of values) {
+    test(`round-trips ${JSON.stringify(v)}`, () => {
+      expect(parseYAML(`k: ${emitYAML(v, 0)}\n`).k).toBe(v);
+    });
+  }
+
+  test("strings that were safe stay plain", () => {
+    for (const v of ["--flag", "-x", "a:b", "http://a/b", "on"]) expect(emitYAML(v, 0)).toBe(v);
   });
 });

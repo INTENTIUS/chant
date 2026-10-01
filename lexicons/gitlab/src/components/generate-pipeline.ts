@@ -32,7 +32,7 @@
  * touching the component declarations.
  */
 
-import { emitYAML } from "@intentius/chant/yaml";
+import { emitYAMLEntry } from "@intentius/chant/yaml";
 import { resolveComponentGraph, type DriverComponent } from "@intentius/chant/components/driver";
 import { hasPublishStep, promoteArchivePaths } from "@intentius/chant/components/promote";
 import { memberGitlabChanges, memberRepoPath, memberShellDir } from "@intentius/chant/lexicon";
@@ -187,22 +187,17 @@ export function generateGitlabPipeline(
   }
 
   const sections: string[] = [];
-  // `emitYAML` returns a `\n`-led block for a non-empty sequence and an inline
-  // `[]` for an empty one, so the header needs a space in the second case.
-  // `stages:[]` is the plain scalar "stages:[]" — a colon opens a mapping only
-  // when whitespace or the line's end follows it — which is how GitLab's own
-  // reader takes it, and now how `parseYAML` does too (chant #2013).
-  sections.push("workflow:" + emitYAML(doc.workflow, 1));
+  sections.push(emitYAMLEntry("workflow", doc.workflow));
   // The promote stage is YAML only: `stages` in the result stays one entry
   // per graph wave.
   const yamlStages = promoteJob ? [...stages, "promote"] : stages;
-  sections.push(yamlStages.length > 0 ? "stages:" + emitYAML(yamlStages, 1) : "stages: []");
-  if (doc.variables) sections.push("variables:" + emitYAML(doc.variables, 1));
+  sections.push(emitYAMLEntry("stages", yamlStages));
+  if (doc.variables) sections.push(emitYAMLEntry("variables", doc.variables));
   for (const job of jobs) {
     const props = doc[job.jobName] as Record<string, unknown>;
-    sections.push(`${job.jobName}:` + emitYAML(props, 1));
+    sections.push(emitYAMLEntry(job.jobName, props));
   }
-  if (promoteJob) sections.push(`${promoteJob}:` + emitYAML(doc[promoteJob], 1));
+  if (promoteJob) sections.push(emitYAMLEntry(promoteJob, doc[promoteJob]));
 
   return { yaml: sections.join("\n\n") + "\n", stages, jobs, env };
 }

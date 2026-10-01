@@ -105,7 +105,7 @@
  * beside it does not also point.
  */
 
-import { emitYAML } from "@intentius/chant/yaml";
+import { emitYAMLEntry } from "@intentius/chant/yaml";
 import { memberGitlabChanges, memberRepoPath, memberShellDir, resolveOpTrigger } from "@intentius/chant/lexicon";
 import type {
   ComponentPipelineOptions as GenerateGitlabOpOptions,
@@ -521,10 +521,10 @@ export function generateGitlabOpPipeline(
   headerLines.push("#", ...opLines);
 
   const sections: string[] = [];
-  sections.push("stages:" + emitYAML(doc.stages, 1));
-  if (doc.variables) sections.push("variables:" + emitYAML(doc.variables, 1));
+  sections.push(emitYAMLEntry("stages", doc.stages));
+  if (doc.variables) sections.push(emitYAMLEntry("variables", doc.variables));
   for (const { jobName } of jobs) {
-    sections.push(`${jobName}:` + emitYAML(doc[jobName], 1));
+    sections.push(emitYAMLEntry(jobName, doc[jobName]));
   }
 
   const yaml = headerLines.join("\n") + "\n\n" + sections.join("\n\n") + "\n";

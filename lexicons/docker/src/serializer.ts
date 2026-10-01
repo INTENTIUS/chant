@@ -16,7 +16,7 @@ import { mergeResourceAttributes, telemetryEnvironment, type TelemetryAttributio
 import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
 import { INTRINSIC_MARKER } from "@intentius/chant/intrinsic";
-import { emitYAML } from "@intentius/chant/yaml";
+import { emitYAMLEntry } from "@intentius/chant/yaml";
 
 // ── Helpers ───────────────────────────────────────────────────────
 
@@ -236,13 +236,13 @@ function emitComposeDocument(doc: Record<string, unknown>): string {
   for (const key of ORDER) {
     if (key in doc && doc[key] !== undefined) {
       emitted.add(key);
-      sections.push(`${key}:` + emitYAML(doc[key], 1));
+      sections.push(emitYAMLEntry(key, doc[key]));
     }
   }
 
   for (const [key, value] of Object.entries(doc)) {
     if (!emitted.has(key) && value !== undefined) {
-      sections.push(`${key}:` + emitYAML(value, 1));
+      sections.push(emitYAMLEntry(key, value));
     }
   }
 
