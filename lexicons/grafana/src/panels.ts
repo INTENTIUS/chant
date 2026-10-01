@@ -439,7 +439,9 @@ export interface RowProps {
    * Written on the row header only. Grafana does not pass it to the row's
    * panels: a panel or query with no datasource of its own uses the
    * dashboard's default datasource, so name the datasource on the panel
-   * or its queries.
+   * or its queries. Checked against Grafana v12.4.9 and v13.2.3: neither the
+   * frontend (`DashboardModel`, `transformSaveModelToScene`) nor grafana
+   * 13.2.2's v1 to v2 conversion carries a row's datasource into its panels.
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   datasource?: DatasourceInput<any>;
