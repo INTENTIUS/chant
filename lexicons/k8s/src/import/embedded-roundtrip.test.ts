@@ -10,7 +10,8 @@
  * dashboard ConfigMap with the Grafana sidecar label, the k8s build output
  * of examples/agent-observability, the alertmanager Helm chart's ConfigMap
  * holding Alertmanager's example config, and a ConfigMap holding a v2
- * dashboard Grafana 13 exported (#3031).
+ * dashboard Grafana 13 exported (#3031), and a Grafana Operator
+ * GrafanaDashboard holding the kube-prometheus dashboard in spec.json (#3015).
  *
  * "The same" is per owner: a collector config equal as parsed YAML, rule
  * groups equal as parsed YAML, an alertmanager.yml equal as the prometheus
@@ -162,6 +163,25 @@ describe("manifest -> TypeScript -> manifest, with embedded content imported by 
       (before.data as Json)["alertmanager-overview.json"] as string,
       (after.data as Json)["alertmanager-overview.json"] as string,
     );
+    expect(actual).toEqual(expected);
+  });
+
+  test("a Grafana Operator GrafanaDashboard's spec.json becomes a grafana Dashboard (#3015)", async () => {
+    const out = await roundTrip("grafana-operator-dashboard.yaml");
+    expect(out.buildErrors).toEqual([]);
+
+    const main = out.files["main.ts"];
+    expect(main).toContain('import { dashboardJson } from "@intentius/chant-lexicon-grafana";');
+    expect(main).toMatch(/json: dashboardJson\(\w+\)/);
+    expect(out.files["alertmanager-overview/dashboard.ts"]).toContain("new Dashboard(");
+
+    const before = find(out.input, "GrafanaDashboard", "alertmanager-overview");
+    const after = find(out.output, "GrafanaDashboard", "alertmanager-overview");
+    expect(after.metadata).toEqual(before.metadata);
+    const { json: beforeJson, ...beforeSpec } = before.spec as Json;
+    const { json: afterJson, ...afterSpec } = after.spec as Json;
+    expect(afterSpec).toEqual(beforeSpec);
+    const { expected, actual } = dashboards(beforeJson as string, afterJson as string);
     expect(actual).toEqual(expected);
   });
 
