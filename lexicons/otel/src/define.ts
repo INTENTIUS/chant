@@ -99,6 +99,15 @@ export interface ComponentDefinition<K extends ComponentKind = ComponentKind, T 
   /** Where this component sends or listens, for `collectorTopology()`. */
   endpoints?: (config: C) => string[];
   /**
+   * The wire protocols this component speaks, as OTLP SDKs name them
+   * (`grpc`, `http/protobuf`, `http/json`), for `collectorTopology()`. A
+   * telemetry endpoint link states the protocol its service sends, and the
+   * workspace graph checks it against a pipeline's receivers (#2558). A
+   * component that omits it is reported with none, and a link's protocol is
+   * then left unconfirmed rather than failed.
+   */
+  protocols?: (config: C) => string[];
+  /**
    * Connectors only: the signal pairs the connector supports, as its factory
    * registers them. OTEL112 checks each pipeline a connector joins against
    * these, and `collectorTopology()` reports an edge only for a supported

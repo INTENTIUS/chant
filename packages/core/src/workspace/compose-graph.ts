@@ -92,6 +92,50 @@ export interface ComposedMember {
   pipeline?: unknown;
 }
 
+/**
+ * A collector pipeline as a member's IR reports it (#2559). Plain data, so
+ * core never imports the lexicon that computes it.
+ */
+export interface CollectorPipeline {
+  /** The id under `service.pipelines`, such as `traces` or `traces/backend`. */
+  id: string;
+  signal: string;
+  receivers: string[];
+  processors: string[];
+  exporters: string[];
+}
+
+/** One collector component with the addresses its config states. */
+export interface CollectorComponent {
+  id: string;
+  kind: string;
+  type: string;
+  endpoints: string[];
+  /** The wire protocols it speaks (`grpc`, `http/protobuf`, `http/json`); empty when unknown (#2558). */
+  protocols: string[];
+  pipelines: string[];
+}
+
+/** An exporter and the signals that reach it: where a member's telemetry goes. */
+export interface CollectorExporter {
+  id: string;
+  type: string;
+  endpoints: string[];
+  pipelines: string[];
+  signals: string[];
+}
+
+/** The topology of one member's collector config, from the lexicon that types it. */
+export interface MemberCollector {
+  member: string;
+  pipelines: CollectorPipeline[];
+  components: CollectorComponent[];
+  exporters: CollectorExporter[];
+}
+
+/** The meta key a lexicon's `graphMeta` hook answers the collector under. */
+export const COLLECTOR_META_KEY = "collector";
+
 export type ComposedNode = IRNode & { member: string };
 export type ComposedEdge = IREdge & { member: string };
 
@@ -110,6 +154,11 @@ export interface WorkspaceGraph {
    * the records read with `--kind` (#2549). Empty when no declaration is given.
    */
   links: (LinkTableRow | RecordLinkRow)[];
+  /**
+   * The collector pipelines and exporters of each member that declares a
+   * collector, in declaration order (#2559). Empty when none does.
+   */
+  collectors: MemberCollector[];
   /** The records read with `--kind` (#2524 D4, #2549). Empty without it. */
   records: GraphRecord[];
 }
@@ -163,6 +212,46 @@ export interface ComposeInput {
 
 const prefix = (member: string, id: string): string => `${member}/${id}`;
 
+const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+const records = (v: unknown): Record<string, unknown>[] =>
+  Array.isArray(v) ? v.filter((x): x is Record<string, unknown> => typeof x === "object" && x !== null) : [];
+
+/**
+ * A member's collector topology from its IR meta, or null when the meta holds
+ * none or something that isn't one. Read defensively: the topology comes from
+ * a lexicon the member's own toolchain loaded, which may be newer or older
+ * than this chant.
+ */
+function readCollector(member: string, value: unknown): MemberCollector | null {
+  if (typeof value !== "object" || value === null || !Array.isArray((value as { pipelines?: unknown }).pipelines)) return null;
+  const v = value as Record<string, unknown>;
+  return {
+    member,
+    pipelines: records(v.pipelines).map((p) => ({
+      id: String(p.id),
+      signal: String(p.signal),
+      receivers: strings(p.receivers),
+      processors: strings(p.processors),
+      exporters: strings(p.exporters),
+    })),
+    components: records(v.components).map((c) => ({
+      id: String(c.id),
+      kind: String(c.kind),
+      type: String(c.type),
+      endpoints: strings(c.endpoints),
+      protocols: strings(c.protocols),
+      pipelines: strings(c.pipelines),
+    })),
+    exporters: records(v.exporters).map((e) => ({
+      id: String(e.id),
+      type: String(e.type),
+      endpoints: strings(e.endpoints),
+      pipelines: strings(e.pipelines),
+      signals: strings(e.signals),
+    })),
+  };
+}
+
 function prefixRefs(value: unknown, member: string): unknown {
   if (Array.isArray(value)) return value.map((v) => prefixRefs(v, member));
   if (value === null || typeof value !== "object") return value;
@@ -202,6 +291,7 @@ export function composeWorkspaceGraph(
   const shared: Record<"byLexicon" | "byComposite", Record<string, string[]>> = { byLexicon: {}, byComposite: {} };
   const scoped: Record<"byStack" | "byContainer" | "byWave", Record<string, string[]>> = { byStack: {}, byContainer: {}, byWave: {} };
   const derivedAttrs: Record<string, Set<string>> = {};
+  const collectors: MemberCollector[] = [];
 
   for (const { member, ir } of inputs) {
     if (!ir) continue;
@@ -225,7 +315,14 @@ export function composeWorkspaceGraph(
     for (const e of ir.exports ?? []) exports.push({ ...e, ...(e.node ? { node: prefix(m, e.node) } : {}), member: m });
     for (const i of ir.imports ?? []) imports.push({ ...i, node: prefix(m, i.node), member: m });
     for (const [kind, attrs] of Object.entries(ir.derivedAttrs ?? {})) for (const a of attrs) (derivedAttrs[kind] ??= new Set()).add(a);
-    if (ir.meta) member.meta = ir.meta;
+    if (ir.meta) {
+      // The collector topology has a section of its own; the rest of the meta stays on the member.
+      const { [COLLECTOR_META_KEY]: collector, ...rest } = ir.meta;
+      const read = readCollector(m, collector);
+      if (read) collectors.push(read);
+      if (!read) member.meta = ir.meta;
+      else if (Object.keys(rest).length > 0) member.meta = rest;
+    }
     if (ir.pipeline) member.pipeline = ir.pipeline;
   }
 
@@ -247,8 +344,9 @@ export function composeWorkspaceGraph(
     exports,
     imports,
     links: links
-      ? graphLinks(links.declaration, { composed: inputs.filter((i) => i.ir).map((i) => i.member.name), exports, imports }, links.kinds)
+      ? graphLinks(links.declaration, { composed: inputs.filter((i) => i.ir).map((i) => i.member.name), collectors, exports, imports }, links.kinds)
       : [],
+    collectors,
     records: [],
   };
   if (Object.keys(derivedAttrs).length) {

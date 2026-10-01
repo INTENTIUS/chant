@@ -1,6 +1,7 @@
 import type { Declarable } from "./declarable";
 import type { LexiconOutput } from "./lexicon-output";
 import type { OwnershipMarker } from "./ownership";
+import type { TelemetryAttribution } from "./telemetry-attribution";
 
 /**
  * Build-time context passed to a serializer. Optional — serializers that don't
@@ -32,6 +33,14 @@ export interface SerializeContext {
    * safe default.
    */
   receipts?: ReadonlyMap<string, Declarable>;
+
+  /**
+   * Telemetry attribution (#2558, D22): the facts a workload lexicon stamps
+   * as resource attributes. Set only inside a workspace, or when the project
+   * opts in with `telemetry.attribution: true`; a serializer that ignores it,
+   * and every serializer at level 0, is unchanged. See `./telemetry-attribution.ts`.
+   */
+  telemetry?: TelemetryAttribution;
 }
 
 /**

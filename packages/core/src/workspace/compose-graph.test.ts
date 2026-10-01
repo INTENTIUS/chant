@@ -146,3 +146,50 @@ describe("the links section (#2539)", () => {
     ]);
   });
 });
+
+describe("collectors (#2559)", () => {
+  const topology = {
+    pipelines: [{ id: "traces", signal: "traces", receivers: ["otlp"], processors: ["batch"], exporters: ["otlphttp/honeycomb"] }],
+    components: [
+      { id: "otlp", kind: "receiver", type: "otlp", builtin: true, endpoints: ["0.0.0.0:4317"], protocols: ["grpc"], pipelines: ["traces"] },
+      { id: "otlphttp/honeycomb", kind: "exporter", type: "otlphttp", builtin: true, endpoints: ["https://api.honeycomb.io"], protocols: ["http/protobuf"], pipelines: ["traces"] },
+    ],
+    exporters: [{ id: "otlphttp/honeycomb", type: "otlphttp", endpoints: ["https://api.honeycomb.io"], pipelines: ["traces"], signals: ["traces"] }],
+    edges: [],
+    semconv: [],
+  };
+  const withMeta = (meta: Record<string, unknown>): GraphIR => ({ ...structuredClone(db), meta });
+
+  test("lifts a member's meta.collector into a section and keeps the rest of its meta", () => {
+    const inputs = [
+      { member: member("web", "web"), ir: structuredClone(web) },
+      { member: member("ops", "ops"), ir: withMeta({ collector: topology, other: 1 }) },
+    ];
+    const doc = composeWorkspaceGraph({ name: "acme", root: "/w" }, inputs);
+    expect(doc.collectors).toEqual([
+      {
+        member: "ops",
+        pipelines: topology.pipelines,
+        components: topology.components.map(({ builtin: _b, ...c }) => c),
+        exporters: topology.exporters,
+      },
+    ]);
+    expect(doc.members.find((m) => m.name === "ops")!.meta).toEqual({ other: 1 });
+  });
+
+  test("is empty when no member reports a collector, and leaves meta alone", () => {
+    const doc = composeWorkspaceGraph({ name: "acme", root: "/w" }, [
+      { member: member("web", "web"), ir: structuredClone(web) },
+      { member: member("ops", "ops"), ir: withMeta({ _behaviour: { engine: "x" } }) },
+    ]);
+    expect(doc.collectors).toEqual([]);
+    expect(doc.members.find((m) => m.name === "ops")!.meta).toEqual({ _behaviour: { engine: "x" } });
+  });
+
+  test("ignores a meta.collector that is not a topology", () => {
+    for (const bad of ["x", 1, null, {}, { pipelines: "no" }]) {
+      const doc = composeWorkspaceGraph({ name: "acme", root: "/w" }, [{ member: member("ops", "ops"), ir: withMeta({ collector: bad }) }]);
+      expect(doc.collectors, JSON.stringify(bad)).toEqual([]);
+    }
+  });
+});

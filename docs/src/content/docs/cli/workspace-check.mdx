@@ -61,12 +61,13 @@ chant.workspace.json
 | `WSP082` | generated-outside-member | error | yes | A member records a generated file outside its directory, and the file is not a forge CI file like those in `.github/workflows/` |
 | `WSP083` | linked-environments-disjoint | warning | yes | Two members joined by a declared [member link](#member-links) share no environment name |
 | `WSP091` | link-target-unknown | error | no | A [member link](#member-links) names no member, an example group, or the member that states it |
-| `WSP092` | link-kind-unknown | error | no | A member link's `kind` is not one chant knows. `output` is the only one so far |
+| `WSP092` | link-kind-unknown | error | no | A member link's `kind` is not one chant knows. They are `output` and `telemetry` |
 | `WSP093` | link-output-missing | error | yes | The producer exposes no output with the linked name, as when it was renamed. The message names outputs that differ only in case or punctuation |
-| `WSP094` | link-unresolved | info | yes | The producer's outputs can't all be read in source, and the linked name wasn't found. The link is kept |
+| `WSP094` | link-unresolved | info | yes | The producer's outputs can't all be read in source, and the linked name wasn't found, or the link is a [telemetry link](/chant/reference/workspace-declaration/#telemetry-links), which `chant workspace graph` resolves. The link is kept |
 | `WSP095` | join-ambiguous | warning | yes | An inferred join is ambiguous: a parameter matches outputs of two producers, or two outputs of one |
 | `WSP096` | link-duplicate | error | yes | A member states the same link twice |
 | `WSP097` | outputs-not-listable | error | yes | An entry lists `outputs` for a kind that doesn't take them from the entry, such as `chant` |
+| `WSP098` | link-protocol-misplaced | error | yes | A link states a `protocol` and its kind is not `telemetry` |
 | `WSP101` | generated-drift | error | yes | A [generated file](#generated-files) differs from what its generator writes |
 | `WSP102` | generated-missing | error | yes | A declared generated file does not exist |
 | `WSP103` | generator-failed | error | yes | A generator can't be run, exits non-zero, or writes nothing |
@@ -95,7 +96,7 @@ A finding's location is the entry it is about, the link for `WSP091` to `WSP094`
 
 ### Member links
 
-`WSP091` to `WSP097` resolve every [member link](/chant/reference/workspace-declaration/#member-links) in source ([#2539](https://github.com/INTENTIUS/chant/issues/2539)). A `chant` producer's outputs are read from its TypeScript without running it, and other kinds expose what the kind and the entry list. Only files are read. No process starts and no network is reached, and a test runs the command under the [no-egress guard](/chant/reference/network-egress/). Resolving links against a live estate comes later, with `--live`.
+`WSP091` to `WSP098` resolve every [member link](/chant/reference/workspace-declaration/#member-links) in source ([#2539](https://github.com/INTENTIUS/chant/issues/2539)). A `chant` producer's outputs are read from its TypeScript without running it, and other kinds expose what the kind and the entry list. Only files are read. No process starts and no network is reached, and a test runs the command under the [no-egress guard](/chant/reference/network-egress/). Resolving links against a live estate comes later, with `--live`.
 
 ```
 $ chant workspace check

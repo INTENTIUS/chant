@@ -114,7 +114,8 @@ A member link says that one member reads an output of another ([#2524](https://g
 |---|---|---|
 | `member` | yes | The producer, another member of this workspace. An example group can't be one. |
 | `output` | yes | The producer's output. It is matched exactly, the way deploy matches it. |
-| `kind` | no | The link kind. `output`, the default, is the only one so far, and any other value fails closed. |
+| `kind` | no | The link kind: `output`, the default, or `telemetry` ([below](#telemetry-links)). Any other value fails closed. |
+| `protocol` | no | For a `telemetry` link, the OTLP protocol the consumer sends: `grpc`, `http/protobuf` or `http/json`. Any other link kind refuses it (`WSP098`). |
 
 The outputs a producer exposes depend on its kind.
 
@@ -128,6 +129,18 @@ The outputs a producer exposes depend on its kind.
 [`chant workspace check`](/chant/cli/workspace-check/#member-links) resolves every link in source and never reaches the network. A link whose output the producer no longer exposes fails, so renaming an output fails the check for every consumer that links to it. When chant can't read all of a `chant` producer's outputs without running its code, such as an output whose name is computed, a link to a name it didn't find is kept and reported as unresolved.
 
 Joins nobody wrote down are inferred. Each parameter of a `chant` member, written `export const name = new Parameter(...)`, is matched to the other members' outputs by the core function `joinKey()`. That function ignores case and punctuation. An inferred join is labelled `exact` when the names are equal and `folded` when they differ only in case or punctuation, so `clusterArn` joins `ClusterArn` as `folded`. A parameter that matches outputs of two producers is reported as ambiguous and joins neither. A declared link from the same consumer to one of the matched outputs replaces the inferred join, and writing one down is how an inferred join becomes declared.
+
+### Telemetry links
+
+A `telemetry` link says that a member sends its telemetry to the collector of another ([#2558](https://github.com/INTENTIUS/chant/issues/2558), D22 of [#2524](https://github.com/INTENTIUS/chant/issues/2524), [ws-060](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-060-telemetry-attribution.md)). The service is the consumer and the member that declares the collector is the producer. `output` names a pipeline id (`traces`, `traces/backend`) or an exporter id (`otlphttp/backend`) in the producer's collector, which the otel lexicon reports for `chant workspace graph` ([#2559](https://github.com/INTENTIUS/chant/issues/2559)).
+
+```json
+{ "name": "app", "dir": "app", "kind": "other", "because": "...", "links": [{ "member": "delivery", "output": "traces", "kind": "telemetry", "protocol": "http/protobuf" }] }
+```
+
+The graph command, `chant workspace graph`, checks the link in its `links` section and gives it one of four statuses. It is `resolved` when the producer's collector has that pipeline or exporter. It is `missing` when the collector doesn't, or when the producer declares no collector. With a `protocol`, a pipeline must have a receiver that speaks it and an exporter must speak it itself, and a mismatch is `invalid` with a reason that lists what the target speaks. A target whose definition states no protocols leaves the link `unresolved`. A resolved row also says whether the target is a `pipeline` or an `exporter`.
+
+Because `chant workspace check` reads source and runs no member, it can't read a collector, and so a telemetry link stays unresolved there (`WSP094`) while the graph resolves it. A declaration that uses a telemetry link sets `minReader` to 0.101.0 or newer, since an older chant refuses the link kind.
 
 ## Record kinds
 

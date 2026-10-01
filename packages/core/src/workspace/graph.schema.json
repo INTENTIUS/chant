@@ -29,6 +29,7 @@
         "exports",
         "imports",
         "links",
+        "collectors",
         "records"
       ],
       "properties": {
@@ -221,6 +222,13 @@
           "description": "Member links (#2524 D6, #2539): the ones declared on a consumer and the ones inferred from join keys, resolved against the composed graph. A reader draws a row from its `from` node to its `to` node when both are set. With --kind, the links of the records read follow (#2549): an `asset` row for each file a record pins by hash, and a `constrains` row for each member or path it governs. These rows have `record` and `target` instead of `consumer` and `producer`.",
           "items": {
             "$ref": "#/$defs/link"
+          }
+        },
+        "collectors": {
+          "type": "array",
+          "description": "The collector pipelines and exporters of each member that declares a collector, in declaration order (#2559). A member reports them from its own IR (`meta.collector`), which the lexicon that types the collector config writes, so chant itself reads no collector config. Empty when no member declares one. A reader joins a telemetry endpoint to the pipeline or exporter it names through `exporters[].endpoints` and `pipelines[].id`.",
+          "items": {
+            "$ref": "#/$defs/collector"
           }
         },
         "records": {
@@ -544,7 +552,7 @@
             },
             "kind": {
               "type": "string",
-              "description": "What the link joins, such as output."
+              "description": "What the link joins: `output`, or `telemetry` (#2558), where the consumer sends its telemetry to a pipeline or exporter of the producer's collector and `output` names it."
             },
             "origin": {
               "enum": [
@@ -599,6 +607,21 @@
             "pointer": {
               "type": "string",
               "description": "The declared link's JSON Pointer in the declaration; left out of the graph for a declared link."
+            },
+            "protocol": {
+              "enum": [
+                "grpc",
+                "http/protobuf",
+                "http/json"
+              ],
+              "description": "A telemetry link: the OTLP protocol it states."
+            },
+            "target": {
+              "enum": [
+                "pipeline",
+                "exporter"
+              ],
+              "description": "A telemetry link that found its target: whether `output` named a pipeline or an exporter in the producer's `collectors` entry."
             }
           }
         },
@@ -763,6 +786,150 @@
           }
         }
       ]
+    },
+    "collector": {
+      "type": "object",
+      "required": [
+        "member",
+        "pipelines",
+        "components",
+        "exporters"
+      ],
+      "properties": {
+        "member": {
+          "type": "string",
+          "description": "The member whose source declares the collector."
+        },
+        "pipelines": {
+          "type": "array",
+          "description": "Each pipeline under `service.pipelines`.",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "signal",
+              "receivers",
+              "processors",
+              "exporters"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "The pipeline id, such as `traces` or `traces/backend`."
+              },
+              "signal": {
+                "type": "string",
+                "description": "`traces`, `metrics` or `logs`."
+              },
+              "receivers": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "processors": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "exporters": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "components": {
+          "type": "array",
+          "description": "Every receiver, processor, exporter, connector and extension, with the addresses its config states.",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "kind",
+              "type",
+              "endpoints",
+              "protocols",
+              "pipelines"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "The collector id, `type` or `type/name`."
+              },
+              "kind": {
+                "type": "string",
+                "description": "`receiver`, `processor`, `exporter`, `connector` or `extension`."
+              },
+              "type": {
+                "type": "string"
+              },
+              "endpoints": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "protocols": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The wire protocols the component speaks, as OTLP SDKs name them: `grpc`, `http/protobuf` or `http/json`. Empty when its definition states none, which a telemetry link's protocol check reads as unknown."
+              },
+              "pipelines": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "exporters": {
+          "type": "array",
+          "description": "The exporters again, with the signals that reach each: where the member's telemetry is sent.",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "type",
+              "endpoints",
+              "pipelines",
+              "signals"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "endpoints": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "pipelines": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "signals": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
     },
     "record": {
       "type": "object",

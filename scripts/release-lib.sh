@@ -89,12 +89,27 @@ release_tag_exists() {
     || [ -n "$(git ls-remote --tags origin "refs/tags/$1" 2>/dev/null)" ]
 }
 
-# release_ship <tag> <merge-message> merges the tagged bump commit (the
-# worktree's HEAD) into origin/main and pushes main and the tag together.
+# release_reference_tag <version> prints the reference workspace's tag for a
+# release (#2543): reference-workspace-v<major>.<minor> when the version is a
+# minor or major release (patch 0), nothing for a patch release. The recipe
+# tags the same bump commit as chant-v<version> and passes it to release_ship
+# as an extra tag, so both reach origin together or not at all.
+release_reference_tag() {
+  local major minor patch
+  IFS='.' read -r major minor patch <<< "$1"
+  [ "$patch" = 0 ] && echo "reference-workspace-v$major.$minor" || true
+}
+
+# release_ship <tag> <merge-message> [<extra-tag>...] merges the tagged bump
+# commit (the worktree's HEAD) into origin/main and pushes main and the tags
+# together.
 # If main moves meanwhile, the push is refused as a whole and this retries on
 # the new main. Nothing is force-pushed.
 release_ship() {
   local tag="$1" message="$2" bumped attempt f unmerged extra
+  shift 2
+  local extra_tags=("$@") push_refs=("refs/tags/$tag")
+  for f in "${extra_tags[@]}"; do push_refs+=("refs/tags/$f"); done
   bumped=$(git rev-parse HEAD)
   for attempt in 1 2 3 4 5; do
     git fetch --quiet origin main
@@ -134,8 +149,8 @@ release_ship() {
       fi
       git commit --quiet --no-verify -m "$message"
     fi
-    if git push --quiet --atomic origin "HEAD:refs/heads/main" "refs/tags/$tag"; then
-      echo "Pushed $tag ($(git rev-parse --short "$bumped")) and main ($(git rev-parse --short HEAD))"
+    if git push --quiet --atomic origin "HEAD:refs/heads/main" "${push_refs[@]}"; then
+      echo "Pushed $tag${extra_tags[*]:+ and ${extra_tags[*]}} ($(git rev-parse --short "$bumped")) and main ($(git rev-parse --short HEAD))"
       return 0
     fi
     echo "release: push refused (main moved?), retrying on the new main ($attempt/5)" >&2
@@ -147,7 +162,9 @@ release_ship() {
 # release_unship <tag> <reason>: nothing reached origin, so drop the local tag
 # and the next run starts clean.
 release_unship() {
-  git tag -d "$1" >/dev/null 2>&1 || true
+  # extra_tags is release_ship's array, visible here through bash's dynamic scope.
+  local t
+  for t in "$1" "${extra_tags[@]}"; do git tag -d "$t" >/dev/null 2>&1 || true; done
   echo "release: $2" >&2
   echo "release: nothing was pushed; the local tag $1 is deleted." >&2
 }

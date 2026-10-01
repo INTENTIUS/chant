@@ -10,7 +10,15 @@ import { otel106 } from "./otel106";
 import { otel107 } from "./otel107";
 import { otel108 } from "./otel108";
 import { otel109 } from "./otel109";
-import { BatchProcessor, DebugExporter, FileLogReceiver, MemoryLimiterProcessor, OtlpReceiver } from "../../components";
+import {
+  BatchProcessor,
+  DebugExporter,
+  FileLogReceiver,
+  MemoryLimiterProcessor,
+  OtlpReceiver,
+  SignalToMetricsConnector,
+  type SignalToMetricsConnectorConfig,
+} from "../../components";
 import { defineComponent } from "../../define";
 import { Pipeline } from "../../pipeline";
 
@@ -160,6 +168,24 @@ describe("entity-level checks", () => {
     const limiter = new MemoryLimiterProcessor({ check_interval: "1s", limit_percentage: 80 });
     const otlp = new OtlpReceiver({ protocols: { grpc: {} } });
     expect(otel107.check(makePostSynthCtx("otel", "", entities([limiter, otlp, new BatchProcessor({})])))).toEqual([]);
+  });
+
+  test("OTEL107: a signaltometrics entry names exactly one metric type, with a value", () => {
+    const good = new SignalToMetricsConnector({
+      name: "good",
+      spans: [{ name: "span.duration", unit: "ms", histogram: { value: "Milliseconds(end_time - start_time)" } }],
+    });
+    const bad = new SignalToMetricsConnector({
+      name: "bad",
+      spans: [{ name: "both", sum: { value: "1" }, gauge: { value: "1" } }, { name: "nothing" }, { name: "h", histogram: { count: "1" } }],
+    } as unknown as SignalToMetricsConnectorConfig);
+    const diags = otel107.check(makePostSynthCtx("otel", "", entities([good, bad])));
+    expect(diags.map((d) => d.entity)).toEqual(["signaltometrics/bad", "signaltometrics/bad", "signaltometrics/bad"]);
+    expect(diags.map((d) => d.message.replace(/^.*?\): /, ""))).toEqual([
+      "name exactly one metric type (sum, gauge, histogram or exponential_histogram); found sum and gauge",
+      "name exactly one metric type (sum, gauge, histogram or exponential_histogram); found none",
+      "histogram.value is missing",
+    ]);
   });
 
   test("OTEL108 flags duplicate component and pipeline ids", () => {

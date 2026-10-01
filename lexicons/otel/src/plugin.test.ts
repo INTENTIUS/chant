@@ -56,4 +56,17 @@ describe("otel plugin", () => {
     expect(otelPlugin.mcpTools!().map((t) => t.name)).toEqual(["otel:diff"]);
     expect(otelPlugin.mcpResources!().map((r) => r.uri)).toEqual(["otel:resource-catalog"]);
   });
+
+  it("reports the collector topology for the graph, and nothing for a project without one", async () => {
+    const { OtlpReceiver, DebugExporter } = await import("./components");
+    const { Pipeline } = await import("./pipeline");
+    expect(otelPlugin.graphMeta!(new Map())).toBeUndefined();
+    expect(otelPlugin.graphMeta!(new Map([["other", { lexicon: "k8s", entityType: "Pod" } as never]]))).toBeUndefined();
+    const otlp = new OtlpReceiver({ protocols: { grpc: { endpoint: "0.0.0.0:4317" } } });
+    const debug = new DebugExporter({});
+    const meta = otelPlugin.graphMeta!(new Map<string, never>([["otlp", otlp as never], ["debug", debug as never], ["p", new Pipeline({ signal: "traces", receivers: [otlp], exporters: [debug] }) as never]]));
+    const collector = meta!.collector as { pipelines: { id: string }[]; exporters: { id: string; signals: string[] }[] };
+    expect(collector.pipelines.map((p) => p.id)).toEqual(["traces"]);
+    expect(collector.exporters.map((e) => [e.id, e.signals])).toEqual([["debug", ["traces"]]]);
+  });
 });

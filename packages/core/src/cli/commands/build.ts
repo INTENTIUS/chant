@@ -8,6 +8,7 @@ import {
   resolveKnowledgeDir,
 } from "../../config";
 import { resolveBuildModes, resolveProjectBuildOptions } from "../build-options";
+import { resolveTelemetryAttribution } from "../../telemetry-attribution";
 import { loadOkfBundle } from "../../okf-read";
 import { unknownEnvError } from "../../env";
 import type { OwnershipMarker } from "../../ownership";
@@ -320,6 +321,7 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
       modes,
       ownership,
       buildParams: paramsResolution.provenance,
+      telemetry: await resolveTelemetryAttribution(configDir, config as unknown as Record<string, unknown>, env),
     }),
   );
 

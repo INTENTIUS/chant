@@ -37,7 +37,7 @@ k8s_cluster and kubeletstats receivers; batch, memory_limiter, resource,
 attributes, k8sattributes, resourcedetection, filter, transform, redaction,
 tail_sampling and probabilistic_sampler processors; otlp, otlphttp, debug,
 prometheus, googlecloud and loadbalancing exporters; spanmetrics,
-servicegraph, routing, forward, count and sum connectors; and the
+servicegraph, routing, forward, count, sum and signaltometrics connectors; and the
 health_check, pprof and zpages extensions. \`genAiPipeline()\` is a preset for
 GenAI workloads: it removes prompt and completion content and derives agent
 RED and token metrics.

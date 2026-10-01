@@ -51,13 +51,21 @@
  *   to a kept or left work item, are end to end and live in
  *   test/reference-workspace-triage.e2e.test.ts (#2817).
  *
+ * - `chant workspace graph` (#2559) lists delivery's collector in `collectors`:
+ *   the traces pipeline and the exporter's endpoint, read from delivery's own
+ *   build through the otel lexicon, and the document validates.
+ *
+ * - the app member's telemetry link (#2558) resolves to delivery's traces
+ *   pipeline with its protocol checked, delivery's Compose service carries the
+ *   span attributes, and the same project outside a workspace stamps none.
+ *
  * The per-member workspace commands and their contract tests join here as
  * each phase lands (#2537, #2536).
  */
 
 import { describe, expect, test } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -229,8 +237,10 @@ describe("delivery member", () => {
   test("builds, and the Compose file builds the app from its Dockerfile", async () => {
     const src = join(delivery, "src");
     const plugins = await loadPlugins(await resolveProjectLexicons(src));
-    const serializers = plugins.map((p) => p.serializer).filter((s) => s.name === "docker");
-    expect(serializers).toHaveLength(1);
+    // The collector (#2559) is otel entities, so the build serializes both lexicons. `npm run build`
+    // names `--lexicon docker`, and the compose file comes from that one.
+    const serializers = plugins.map((p) => p.serializer).filter((s) => s.name === "docker" || s.name === "otel");
+    expect(serializers.map((s) => s.name).sort()).toEqual(["docker", "otel"]);
 
     const out = mkdtempSync(join(tmpdir(), "chant-2543-delivery-"));
     try {
@@ -245,6 +255,10 @@ describe("delivery member", () => {
       };
       // DockerWebService keys the service by the export name plus `Service` (#2662).
       expect(Object.keys(compose.services)).toEqual(["appService"]);
+      // The docker lexicon stamps the span attributes inside a workspace (#2558, D22).
+      const env = (compose.services.appService as { environment?: Record<string, string> }).environment!;
+      expect(env.OTEL_SERVICE_NAME).toBe("appService");
+      expect(env.OTEL_RESOURCE_ATTRIBUTES).toBe("chant.workspace=reference,chant.member=delivery,chant.decl=appService");
       const build = compose.services.appService?.build;
       expect(build).toBeDefined();
       // The package.json build script writes the file to delivery/dist/, and
@@ -546,6 +560,80 @@ describe("workspace commands on the fixture", () => {
     const run = chant(fixture, "workspace", "check", "--json");
     expect(run.status, run.stderr + run.stdout).toBe(0);
     expect((JSON.parse(run.stdout) as { ok: boolean }).ok).toBe(true);
+  });
+});
+
+describe("the collector on the fixture (#2559)", () => {
+  const graphSchema = JSON.parse(readFileSync(join(workspaceSrc, "graph.schema.json"), "utf-8")) as object;
+
+  test("graph lists delivery's traces pipeline and the endpoint its exporter sends to", () => {
+    const run = chant(fixture, "workspace", "graph", "--member", "delivery", "--no-cache");
+    expect(run.status, run.stderr).toBe(0);
+    const doc = JSON.parse(run.stdout) as {
+      collectors: { member: string; pipelines: { id: string; signal: string; receivers: string[]; processors: string[]; exporters: string[] }[]; exporters: { id: string; endpoints: string[]; signals: string[] }[] }[];
+      members: { name: string; meta?: Record<string, unknown> }[];
+    };
+    const validate = compile2020(graphSchema);
+    expect(validate(doc), JSON.stringify(validate.errors, null, 2)).toBe(true);
+    expect(doc.collectors).toHaveLength(1);
+    const [collector] = doc.collectors;
+    expect(collector!.member).toBe("delivery");
+    expect(collector!.pipelines).toEqual([
+      { id: "traces", signal: "traces", receivers: ["otlp"], processors: ["memory_limiter", "batch"], exporters: ["otlphttp/backend"] },
+    ]);
+    expect(collector!.exporters).toEqual([
+      expect.objectContaining({ id: "otlphttp/backend", endpoints: ["https://telemetry.example.com:4318"], signals: ["traces"] }),
+    ]);
+    expect(doc.members.find((m) => m.name === "delivery")!.meta).toBeUndefined();
+  });
+
+  test("the app's telemetry link resolves to delivery's traces pipeline, and its protocol is checked (#2558)", () => {
+    const run = chant(fixture, "workspace", "graph", "--member", "delivery", "--no-cache");
+    expect(run.status, run.stderr).toBe(0);
+    const doc = JSON.parse(run.stdout) as { links: Record<string, unknown>[] };
+    expect(doc.links).toEqual([
+      expect.objectContaining({ consumer: "app", producer: "delivery", output: "traces", kind: "telemetry", protocol: "http/protobuf", target: "pipeline", status: "resolved", reason: null }),
+    ]);
+  });
+
+  test("the same delivery project outside a workspace stamps nothing, and opts in with telemetry.attribution (#2558)", async () => {
+    const made: string[] = [];
+    // A copy of delivery with no workspace declaration above it. Each build gets its own copy: a config module loads once per path.
+    const build = async (optIn: boolean) => {
+      const dir = mkdtempSync(join(tmpdir(), "chant-2558-level0-"));
+      made.push(dir);
+      cpSync(join(fixture, "delivery"), dir, { recursive: true, filter: (src) => !src.includes("node_modules") });
+      mkdirSync(join(dir, ".git"));
+      symlinkSync(join(repoRoot, "node_modules"), join(dir, "node_modules"), "dir");
+      if (optIn) writeFileSync(join(dir, "chant.config.ts"), readFileSync(join(dir, "chant.config.ts"), "utf-8").replace("lint:", "telemetry: { attribution: true },\n  lint:"));
+      const src = join(dir, "src");
+      const plugins = await loadPlugins(await resolveProjectLexicons(src));
+      const serializers = plugins.map((p) => p.serializer).filter((s) => s.name === "docker" || s.name === "otel");
+      const output = join(dir, "compose.yml");
+      const result = await buildCommand({ path: src, output, format: "yaml", serializers, plugins });
+      expect(result.success, result.errors.join("\n")).toBe(true);
+      return readFileSync(output, "utf-8");
+    };
+    try {
+      expect(await build(false)).not.toContain("OTEL_");
+      const optedIn = await build(true);
+      expect(optedIn).toContain("OTEL_SERVICE_NAME: appService");
+      expect(optedIn).toContain("OTEL_RESOURCE_ATTRIBUTES: chant.decl=appService");
+      expect(optedIn).not.toContain("chant.workspace");
+    } finally {
+      for (const dir of made) rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("the collector builds to YAML through the otel lexicon", () => {
+    const out = mkdtempSync(join(tmpdir(), "chant-2559-collector-"));
+    try {
+      const run = chant(join(fixture, "delivery"), "build", "src", "--lexicon", "otel", "-o", join(out, "collector.yaml"));
+      expect(run.status, run.stderr).toBe(0);
+      expect(readFileSync(join(out, "collector.yaml"), "utf-8")).toContain("otlphttp/backend:");
+    } finally {
+      rmSync(out, { recursive: true, force: true });
+    }
   });
 });
 
@@ -903,5 +991,26 @@ describe("chant init --from on the fixture", () => {
     } finally {
       rmSync(dirname(target), { recursive: true, force: true });
     }
+  });
+});
+
+describe("the README states what the fixture is (#2543)", () => {
+  const readme = readFileSync(join(fixture, "README.md"), "utf-8");
+
+  test("no draft declaration stands in for the real one", () => {
+    expect(readdirSync(fixture).filter((f) => /^chant\.workspace.*draft/.test(f))).toEqual([]);
+  });
+
+  test("the floor is a chant minor, and the upgrade command is not described as missing", () => {
+    expect(readme).toMatch(/\| Chant floor \| 0\.\d+\.0 \|/);
+    expect(readme).not.toMatch(/exists \(#2550\)/);
+  });
+
+  test("the design member is described as kind other and points at #2549", () => {
+    const decl = JSON.parse(readFileSync(join(fixture, "chant.workspace.json"), "utf-8"));
+    const design = decl.members.find((m: { name: string }) => m.name === "design");
+    expect(design.kind).toBe("other");
+    expect(design.because).toContain("#2549");
+    expect(readme).toContain("issues/2549");
   });
 });
