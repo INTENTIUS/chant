@@ -273,6 +273,20 @@ describe("GRAF104 and GRAF106 on external datasources", () => {
     expect(graf104.check(ctxOf({ prometheus, clash })).map((d) => d.message)).toEqual([expect.stringContaining('2 datasources share the uid "prometheus"')]);
   });
 
+  test("accepts identical ExternalDatasources, as two imported dashboards declare them", () => {
+    const a = new ExternalDatasource({ type: "prometheus", uid: "prom" });
+    const b = new ExternalDatasource({ type: "prometheus", uid: "prom" });
+    expect(graf104.check(ctxOf({ a, b }))).toEqual([]);
+  });
+
+  test("flags ExternalDatasources sharing a uid with another type or name", () => {
+    const a = new ExternalDatasource({ type: "prometheus", uid: "prom" });
+    const other = new ExternalDatasource({ type: "loki", uid: "prom" });
+    expect(graf104.check(ctxOf({ a, other })).map((d) => d.message)).toEqual([expect.stringContaining('2 datasources share the uid "prom"')]);
+    const named = new ExternalDatasource({ type: "prometheus", uid: "prom", name: "Other" });
+    expect(graf104.check(ctxOf({ a, named })).map((d) => d.message)).toEqual([expect.stringContaining('2 datasources share the uid "prom"')]);
+  });
+
   test("flags an ExternalDatasource uid Grafana rejects", () => {
     const bad = new ExternalDatasource({ type: "prometheus", uid: "has space" });
     expect(graf106.check(ctxOf({ bad })).map((d) => d.message)).toEqual([expect.stringContaining('ExternalDatasource "has space"')]);
