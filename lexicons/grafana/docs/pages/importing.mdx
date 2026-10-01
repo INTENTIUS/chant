@@ -89,8 +89,6 @@ An export made for sharing names its datasources through `__inputs` and `${DS_PR
 - a textbox variable's current value when it differs from its default;
 - `-- Mixed --` anywhere but on a panel (a row, a query or a variable). A panel's Mixed datasource is carried as a `DatasourceRef` const.
 
-One is reported but not left out: a panel with no datasource inside a row that has one. A chant `Row` gives such a panel the row's datasource, which Grafana does not.
-
 The stored copy's `id`, `version` and `iteration` are Grafana's bookkeeping, not part of the dashboard, and are dropped without a warning.
 
 ## Older dashboards

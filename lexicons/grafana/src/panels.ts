@@ -435,6 +435,12 @@ export interface RowProps {
   panels?: PanelEntity<any, any>[];
   /** Repeat the row once per value of this variable. */
   repeat?: VariableEntity | string;
+  /**
+   * Written on the row header only. Grafana does not pass it to the row's
+   * panels: a panel or query with no datasource of its own uses the
+   * dashboard's default datasource, so name the datasource on the panel
+   * or its queries.
+   */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   datasource?: DatasourceInput<any>;
   id?: number;
