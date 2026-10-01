@@ -1,0 +1,92 @@
+---
+title: Decision Review Views
+description: What a reader such as hud needs to show decision records for review, view by view, and which chant command gives it each piece.
+diataxis: reference
+---
+
+These are the reader requirements for reviewing [decision records](/chant/reference/decision-kind/) ([#2555](https://github.com/INTENTIUS/chant/issues/2555)). Each view below starts with what the reviewer sees and does. Its table gives the commands it reads and writes, and the cases it has to show. The views are H1 to H7 of the research in [#2650](https://github.com/INTENTIUS/chant/issues/2650), and each has a row on [chant and hud Boundary](/chant/reference/boundary/#the-roster). hud builds them in [alecraso/hud](https://github.com/alecraso/hud). chant's part is the data, and this page names it.
+
+Every view follows the boundary of [ws-052](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-052-chant-hud-boundary.md). A reader gets records only from [`chant workspace records`](/chant/cli/workspace-records/) and the other read-contract commands, and changes them only with `records new`, `amend`, `review` and `close`. It never parses a record file or runs git for provenance, and it takes each digest and quorum from chant's output. It ignores fields it does not know. The reason, warning and error codes are closed lists ([read contract](/chant/reference/workspace-read-contract/)).
+
+## H1 Review queue
+
+The reviewer sees every decision in state `decided` as a card, grouped by `data.area` with the oldest `data.decided_on` first. The table lists what a card shows.
+
+| | |
+|---|---|
+| Reads | `chant workspace records --current --json`, the decision kind's records |
+| Shows | `id`, `data.title`, `data.question`, `data.area`, `data.decided_by`, `data.decided_on`, `provenance.level`, `quorum.agreed` against `quorum.need`, `valid` |
+| Must show | an invalid record (`valid: false`) with its `reasons`; a record with `warnings` such as `asset-drift`; a record with open concerns (`quorum.openConcerns` not empty) |
+| Writes | nothing |
+
+## H2 Decision page
+
+The reviewer sees one decision whole, with every option side by side and the rejected ones kept beside the choice. The page also shows what the decision replaced and what replaced it.
+
+| | |
+|---|---|
+| Reads | `records --json` for the record, `records --at <rev>` for it at an earlier commit, `records --since <rev> --at <rev>` for what changed between two |
+| Shows | `data.options`, `data.choice`, `data.rejected`, `data.evidence`, `data.source`, `data.proposed_by`, `supersededBy`, `remediatedBy`, `data.supersedes`, `decidedIn`, `provenance`, `attested` and `attestation` |
+| Must show | the supersession chain in both directions, including a link still pending (`record-supersedes-pending`); a sealed record (`data.closed_digest` present) as closed, and a `record-seal-mismatch` as a changed closed record; an option field that is null as missing, not as empty |
+| Writes | nothing |
+
+The commits that touched the file come from the forge. The page reads the record at each of them with `--at`, so the history it shows went through the same validation as the current record.
+
+## H3 Review actions
+
+The reviewer gives a verdict (agree, dissent with a reason, or abstain) or proposes an alternative. Each action becomes a pull request under the signed-in principal.
+
+| | |
+|---|---|
+| Reads | `records --json`, for the digest and the current verdicts |
+| Writes | `records review <id> --verdict agree\|dissent\|abstain --by <principal> [--note <text>] [--sign]`; for a proposal, `records new` with a `proposed` decision, then a dissent whose `proposes` names it |
+| Must enforce | a dissent needs a note, which the schema also requires; the decider and a principal with the `agent` role get no verdict button, since neither counts |
+| Must show | the refusal chant returns, by its error code, when a write is refused, such as `record-closed` on a ratified decision |
+
+The verdict carries the digest chant prints for the record, and `records review` writes it, so the reader never computes one. Ratifying is a separate action for a person once the quorum is met: `records amend <id> --set` with `{"state": "ratified"}`, which chant refuses below the quorum with `ratify-quorum-not-met` and which writes `closed_digest`.
+
+## H4 Quorum meter
+
+The reviewer sees how many distinct reviewers agreed against the quorum, who did not count and why, and any open concern.
+
+| | |
+|---|---|
+| Reads | `quorum` on each record in `records --json` |
+| Shows | `need` and `needFrom`, `agreed`, `counted`, `notCounted` with each `reason.code`, `openConcerns` |
+| Must show | `metWithObjections: true` as met with objections, never as consensus; a verdict on an older digest (`review-older-digest`) as a reviewer who has to look again |
+
+## H5 Review session
+
+A group walks an agenda of decisions together. The session shows who attended, the live meters of each decision on the agenda and, at the close, what the session changed.
+
+| | |
+|---|---|
+| Reads | the session kind's records (`agenda`, `attendance`, `verdicts`, `state`, `citedBy`); `records --since <session id> --json` for what changed |
+| Writes | `records new <session kind>` to open, `records review --session <id>` for each verdict, `records close <session id>` to close and seal |
+| Must show | an agent attendee as present but without a verdict; `session-seal-mismatch` and `session-verdict-unknown-record` on a closed session |
+
+Presence and follow mode are hud's own state and are not records.
+
+## H6 Impact
+
+The reviewer sees what the decision governs, each target's live state, and the decisions and work that build on it, with provisional dependencies flagged.
+
+| | |
+|---|---|
+| Reads | `data.constrains` of every record in `records --json`; [`graph --kind`](/chant/cli/workspace-graph/#record-links) for the `member:` and `path:` links; `ls --json` for each member's status; the forge for issue state |
+| Shows | each target with its state, and each other decision whose `constrains` names this one |
+| Must show | a dependant that builds on a `decided` record, as provisional, since only a ratified decision constrains other work |
+
+chant has no reverse query from a target to the records that constrain it, so the reader builds that index from the `constrains` lists in one `records --json` read ([#3068](https://github.com/INTENTIUS/chant/issues/3068)).
+
+## H7 Evidence drift
+
+The reviewer sees each file the decision pins, whether it still matches, and the pinned and current file side by side.
+
+| | |
+|---|---|
+| Reads | `assets` on each record in `records --json`, each with `path`, `sha256`, `actual` and `state` |
+| Shows | `pinned`, `drifted`, `missing` and `stale`, with the matching warnings `asset-drift`, `asset-missing` and `asset-stale` |
+| Must show | a drifted pin as a question for the reviewer, not as an invalid record, since the record stays valid |
+
+The pinned bytes for the side-by-side view come from the forge, at the commit that `records --since` reports the pin changing in.

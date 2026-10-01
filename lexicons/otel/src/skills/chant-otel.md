@@ -58,7 +58,7 @@ export const traces = new Pipeline({ signal: "traces", receivers: [otlp], export
 export const red = new Pipeline({ signal: "metrics", name: "red", receivers: [spanmetrics], exporters: [prom] });
 ```
 
-`spanmetrics` and `servicegraph` turn traces into metrics, `count` and `sum` turn any signal into metrics (`sum` adds up a numeric attribute), `signaltometrics` builds metrics you name, of any type, from any signal with OTTL values, `routing` and `forward` keep the signal. A connector on one side only fails OTEL101; a pipeline whose signal the connector can't pair fails OTEL112.
+`spanmetrics` and `servicegraph` turn traces into metrics, `count` and `sum` turn any signal into metrics (`sum` adds up a numeric attribute), `signaltometrics` builds metrics you name, of any type, from any signal with OTTL values, `routing` and `forward` keep the signal. A connector on one side only fails OTEL101; a pipeline whose signal the connector can't pair fails OTEL112. Pipelines that feed each other in a loop through connectors fail OTEL113, a connector id that is also a receiver or exporter id fails OTEL114, and every pipeline a `routing` connector routes to must list it in `receivers` (OTEL115).
 
 ## GenAI workloads
 
