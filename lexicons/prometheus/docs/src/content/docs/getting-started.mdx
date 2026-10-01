@@ -10,6 +10,16 @@ diataxis: tutorial
 
 This walks through one alert for an HTTP API, from declaration to a rule file Prometheus loads and an `alertmanager.yml` that routes the alert.
 
+To start from a scaffold instead, `chant init --lexicon prometheus <dir>` writes the rule group and routing this page builds. `--template` picks one of three others:
+
+| Template | What it writes |
+|---|---|
+| `rules` | The rule group only, for a setup whose Alertmanager config lives elsewhere |
+| `slo-style` | An error ratio recorded over two windows and a burn-rate alert that needs both, written out as plain rules |
+| `slo` | An `Slo`, which builds the error ratios, the error budget and the page and ticket burn-rate alerts, and the routing for both severities, with a page muting the same SLO's ticket. See [SLOs](../slos/) |
+
+Each one builds clean and passes the PROM checks.
+
 ## 1. Install and register the lexicon
 
 ```bash
