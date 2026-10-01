@@ -118,7 +118,7 @@ describe("datasource references", () => {
   function panelWith(datasource: unknown, targets: Json[] = [{ refId: "A", expr: "up" }]) {
     return dashboard({
       templating: { list: [{ type: "datasource", name: "ds", query: "prometheus" }] },
-      panels: [{ type: "timeseries", id: 1, title: "p", datasource, targets }],
+      panels: [{ type: "timeseries", id: 1, title: "p", gridPos: { h: 4, w: 6, x: 0, y: 0 }, datasource, targets }],
     });
   }
 
@@ -164,7 +164,7 @@ describe("datasource references", () => {
   });
 
   test("a panel with no queries keeps its Mixed datasource (kube-prometheus apiserver)", () => {
-    const { plan, warnings } = planDashboard(dashboard({ panels: [{ type: "text", id: 1, datasource: { type: "datasource", uid: "-- Mixed --" }, targets: [] }] }));
+    const { plan, warnings } = planDashboard(dashboard({ panels: [{ type: "text", id: 1, gridPos: { h: 4, w: 6, x: 0, y: 0 }, datasource: { type: "datasource", uid: "-- Mixed --" }, targets: [] }] }));
     expect(decl(plan.declarations, "panel:0").props!.datasource).toEqual({ $decl: "datasource:datasource:-- Mixed --" });
     expect(warnings).toEqual([]);
   });
@@ -384,11 +384,24 @@ describe("panels and rows", () => {
     expect(warnings).toEqual(['panel "b" (id 2): gridPos.h and gridPos.w are missing, so the dashboard schema\'s default is written (h 9, w 12)']);
   });
 
+  test("a panel with no gridPos is left to the build's auto-layout, with a warning (#3029)", () => {
+    const { plan, warnings } = planDashboard(
+      dashboard({
+        panels: [
+          { type: "stat", id: 1, title: "a" },
+          { type: "stat", id: 2, title: "b", gridPos: { h: 4, w: 6, x: 0, y: 0 } },
+        ],
+      }),
+    );
+    expect(decl(plan.declarations, "panel:0").props!.gridPos).toBeUndefined();
+    expect(warnings).toEqual(['panel "a" (id 1): gridPos is missing, so the build places the panel itself, which can differ from where Grafana would put it (#3029)']);
+  });
+
   test("a panel with no datasource in a row with one is reported: the build gives it the row's", () => {
     const { edits, warnings } = planDashboard(
       dashboard({
         panels: [
-          { type: "row", id: 1, title: "R", collapsed: true, datasource: prom, panels: [{ type: "stat", id: 2, title: "s", targets: [{ refId: "A", expr: "up" }] }] },
+          { type: "row", id: 1, title: "R", collapsed: true, datasource: prom, panels: [{ type: "stat", id: 2, title: "s", gridPos: { h: 4, w: 6, x: 0, y: 0 }, targets: [{ refId: "A", expr: "up" }] }] },
         ],
       }),
     );
@@ -411,7 +424,7 @@ describe("panels and rows", () => {
   });
 
   test("a panel key no prop takes is named, unless it is at Grafana's default", () => {
-    const { warnings } = planDashboard(dashboard({ panels: [{ type: "stat", id: 1, title: "s", transparent: false, cacheTimeout: null, libraryPanelX: 1 }] }));
+    const { warnings } = planDashboard(dashboard({ panels: [{ type: "stat", id: 1, title: "s", gridPos: { h: 4, w: 6, x: 0, y: 0 }, transparent: false, cacheTimeout: null, libraryPanelX: 1 }] }));
     expect(warnings).toEqual(['panel "s" (id 1): libraryPanelX is not carried (no prop takes it)']);
   });
 });

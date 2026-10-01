@@ -215,6 +215,35 @@ describe("the issue's reproductions", () => {
     expect(validateDashboardSchema(json)).toEqual([]);
   });
 
+  test("the 13.x per-field table options are typed and validate", () => {
+    const panel = new TablePanel({
+      title: "T",
+      fieldConfig: {
+        defaults: {
+          custom: {
+            align: "auto",
+            inspect: false,
+            cellOptions: { type: "auto" },
+            sortable: false,
+            wrapText: true,
+            wrapHeaderText: true,
+            tooltip: { field: "details", placement: "left" },
+            styleField: "style",
+          },
+        },
+      },
+    });
+    const json = renderDashboard(new Dashboard({ title: "Table", uid: "table", panels: [panel] })) as unknown as Json;
+    expect(validateDashboardSchema(json)).toEqual([]);
+    expect(((json.panels as Json[])[0].fieldConfig as Json).defaults).toMatchObject({ custom: { wrapText: true, sortable: false } });
+    const bad = structuredClone(json);
+    (((((bad.panels as Json[])[0].fieldConfig as Json).defaults as Json).custom as Json).tooltip as Json).placement = "middle";
+    expect(validateDashboardSchema(bad).map((p) => [p.severity, p.path])).toContainEqual([
+      "error",
+      "/panels/0/fieldConfig/defaults/custom/tooltip/placement",
+    ]);
+  });
+
   test("a table cellOptions matching several variants is accepted", () => {
     const panel = new TablePanel({ title: "T", fieldConfig: { defaults: { custom: { cellOptions: { type: "auto" } } } } });
     const json = renderDashboard(new Dashboard({ title: "Table", uid: "table", panels: [panel] })) as unknown as Json;
