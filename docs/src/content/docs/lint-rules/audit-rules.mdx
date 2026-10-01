@@ -1328,6 +1328,12 @@ Run the k8s_cluster receiver in a single-replica Deployment, or set its k8s_lead
 
 Fix the collector config the ConfigMap carries: each finding keeps its OTEL1xx id and names the ConfigMap and key. Change the declared components and pipelines, not the rendered YAML.
 
+### WK8605
+
+**Collector config reads the node but its workload lacks the node name or host mounts** — merge-worthy · guidance
+
+Set the node name variable from spec.nodeName with the downward API and mount the host paths hostmetrics and filelog read, read-only; OtelCollector adds them from the config.
+
 ## Docker (DKRD)
 
 Run against Dockerfiles and Compose files.

@@ -88,8 +88,10 @@ const AGENT = `/**
  * The config each node's collector runs. The pod needs the node name in
  * K8S_NODE_NAME (from spec.nodeName), the host root mounted read-only at
  * /hostfs, /var/log/pods mounted read-only, and a service account that can
- * read pods, namespaces, nodes and replicasets. Pass \`Object.values(agent.members)\`
- * as the k8s lexicon's OtelCollector \`config\` to run it as a DaemonSet.
+ * read pods, namespaces, nodes and replicasets (and nodes/stats, for kubelet
+ * stats). Pass \`Object.values(agent.members)\` as the k8s lexicon's
+ * OtelCollector \`config\` to run it as a DaemonSet: it adds all of these,
+ * worked out from the config.
  */
 import { NodeAgent } from "@intentius/chant-lexicon-otel";
 import { gateway, scrape } from "./exporters";

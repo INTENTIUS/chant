@@ -67,6 +67,7 @@ export { GkeFluentBitAgent } from "./gke-fluent-bit-agent";
 export type { GkeFluentBitAgentProps, GkeFluentBitAgentResult } from "./gke-fluent-bit-agent";
 export { OtelCollector } from "./otel-collector";
 export type { OtelCollectorProps, OtelCollectorResult } from "./otel-collector";
+export type { CollectorLogAccess } from "./otel-collector-agent";
 export { OtelCollectorGateway, gatewayExporter } from "./otel-collector-gateway";
 export type {
   OtelCollectorGatewayProps,

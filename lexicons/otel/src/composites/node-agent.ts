@@ -29,8 +29,9 @@
  * read-only for `filelog`, and a service account that may get, list and
  * watch pods, namespaces and nodes (and replicasets, for
  * `k8s.deployment.name`). The k8s lexicon's `OtelCollector` takes this
- * composite's entities as its `config` and derives the RBAC and ports from
- * them.
+ * composite's entities as its `config` and derives all of that from them:
+ * the variable, the read-only host mounts, group 0 for the root-owned log
+ * files, the RBAC and the ports.
  */
 
 import { Composite, type CompositeInstance } from "@intentius/chant/composite";

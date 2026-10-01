@@ -171,7 +171,7 @@ Composites are higher-level functions that produce multiple coordinated K8s reso
 | Multi-host TLS Ingress (cert-manager) | **SecureIngress** | Ingress + optional Certificate |
 | HPA metrics provider | **MetricsServer** | Deployment + Service + RBAC + APIService |
 | CockroachDB cluster | **CockroachDbCluster** | StatefulSet + Services + PVCs + RBAC + optional CertificateRequests |
-| OpenTelemetry agent on every node | **OtelCollector** | DaemonSet + node-local Service + RBAC + ConfigMap |
+| OpenTelemetry agent on every node | **OtelCollector** | DaemonSet + node-local Service + RBAC + ConfigMap; a node-reading config (otel's `NodeAgent`) also gets the node name variable and read-only host mounts |
 | OpenTelemetry gateway tier | **OtelCollectorGateway** | Deployment + ClusterIP and headless Services + PDB + ConfigMap; point agents at it with `gatewayExporter(gateway, { loadBalance: true })` |
 
 ### Decision Tree — AWS (EKS) Composites
