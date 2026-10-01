@@ -35,13 +35,13 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | workspace command | `commandRegistry` in `cli/main.ts`, and each sub-verb its help names | 27 | 0 | 0 |
 | member kind | `BUILTIN_KIND_NAMES` in `kinds.ts` | 4 | 0 | 0 |
 | record kind | none in core; `decision` and `session` are this repository's, the rest a plugin's | 4 | 0 | 4 |
-| member link kind | `LINK_KINDS` in `links.ts` | 1 | 0 | 0 |
+| member link kind | `LINK_KINDS` in `links.ts` | 2 | 0 | 0 |
 | record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 |
 | intent node kind | the node kinds of `intent.schema.json` | 9 | 0 | 3 |
 | intent edge kind | the edge kinds of `intent.schema.json` | 9 | 0 | 3 |
 | reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 137 | 0 | 0 |
 | finding code | the finding codes of `intent.schema.json` | 17 | 0 | 0 |
-| WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 47 | 0 | 0 |
+| WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 48 | 0 | 0 |
 | hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 |
 
 Each row follows, in the order of the table above.
@@ -101,7 +101,8 @@ Each row follows, in the order of the table above.
 | record kind | `evidence` | plugin | a record kind file and its schema, passed with --kind; jhgaylor/chud (transitional owner, jhgaylor/chud#78, #79, #80) | The result of a check run on a tree, cited by a contract or unit. |
 | record kind | `driver` | plugin | a record kind file and its schema, passed with --kind; jhgaylor/chud (transitional owner, jhgaylor/chud#78, #79, #80) | A record that groups contracts under one intent, which a split unit serves in place of a contract. |
 | record kind | `session` | chant | reference-workspace/design/sessions/session.kind.mjs, session.schema.json | A review session with its agenda, attendance and the verdicts it produced, sealed on close; chud's numbered session files, such as sessions/S-0001.json, are the shape it started from (#2673). |
-| member link kind | `output` | chant | graph.schema.json, check.schema.json | A consumer names a producer's output, matched exactly; the default and only member link kind. |
+| member link kind | `output` | chant | graph.schema.json, check.schema.json | A consumer names a producer's output, matched exactly; the default member link kind. |
+| member link kind | `telemetry` | chant | graph.schema.json, check.schema.json | A consumer sends its telemetry to a pipeline or exporter of the producer's collector, with the protocol it states checked against the target (#2558). |
 | record link kind | `asset` | chant | graph.schema.json | A current record pins a file by hash. |
 | record link kind | `constrains` | chant | graph.schema.json | A current record governs a member or a workspace path. |
 | intent node kind | `region` | chant | intent.schema.json | The path, and optional line range, the intent graph is over. |
@@ -300,12 +301,13 @@ Each row follows, in the order of the table above.
 | WSP check | `WSP082` `generated-outside-member` | chant | check.schema.json | A member's recorded generated files sit in its own directory, or are forge CI files at the fixed paths forges read. |
 | WSP check | `WSP083` `linked-environments-disjoint` | chant | check.schema.json | Linked members share at least one environment name, matched exactly, when both name any. |
 | WSP check | `WSP091` `link-target-unknown` | chant | check.schema.json | Every member link names another member of the workspace. A link to an unknown name, an example group or the consumer itself fails closed. |
-| WSP check | `WSP092` `link-kind-unknown` | chant | check.schema.json | Every member link's kind is one chant knows. Unknown link kinds fail closed; output is the default and the only one so far. |
+| WSP check | `WSP092` `link-kind-unknown` | chant | check.schema.json | Every member link's kind is one chant knows. Unknown link kinds fail closed; output is the default, and telemetry is the other. |
 | WSP check | `WSP093` `link-output-missing` | chant | check.schema.json | Every member link names an output its producer exposes, matched exactly. A producer that renames an output fails this for every consumer that links to the old name. |
 | WSP check | `WSP094` `link-unresolved` | chant | check.schema.json | A member link whose producer's outputs can't be read in source is kept, unresolved, and reported. |
 | WSP check | `WSP095` `join-ambiguous` | chant | check.schema.json | No inferred join is ambiguous: a parameter that matches outputs of two producers (or two outputs of one) needs a declared link saying which. |
 | WSP check | `WSP096` `link-duplicate` | chant | check.schema.json | A link is stated once: no consumer lists the same member and output twice. |
 | WSP check | `WSP097` `outputs-not-listable` | chant | check.schema.json | An entry lists outputs only when its kind takes them from the entry: other, or a kind from a package. A chant member's outputs are read from its source, and a nested workspace exposes none. |
+| WSP check | `WSP098` `link-protocol-misplaced` | chant | check.schema.json | A link states a protocol only when it is a telemetry link: protocol is the OTLP protocol the consumer sends to the producer's collector, and no other link kind has one. |
 | WSP check | `WSP101` `generated-drift` | chant | check.schema.json | A generated file is what its generator writes. Declared generators run only with --generated. |
 | WSP check | `WSP102` `generated-missing` | chant | check.schema.json | Every declared generated file exists. |
 | WSP check | `WSP103` `generator-failed` | chant | check.schema.json | A declared generator runs, exits 0 and writes the file. |

@@ -520,6 +520,26 @@ Documents read at the same `at` belong together. Mixing a working-tree `ls` with
 
 hud reads exactly as behold does, and caches per member. At a commit, a member's entry and nodes don't change once read. A cache keyed on the workspace name, `at` and the member name stays valid while the member's toolchain (`chant` on its `graph` entry) stays the same. A working-tree read has `at: null` and is read again.
 
+## Joining a span to a member
+
+A span names the declaration and the release that produced it, so a reader can walk from a trace to the workspace's graph, ledger and records ([#2558](https://github.com/INTENTIUS/chant/issues/2558), D22 of [#2524](https://github.com/INTENTIUS/chant/issues/2524), [ws-060](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-060-telemetry-attribution.md)). The attributes are on the span's resource. They use OpenTelemetry conventions where these exist and a `chant.*` namespace otherwise.
+
+| Attribute | Joins to |
+|---|---|
+| `chant.workspace` | `workspace.name` in every document, and `at` pins the revision |
+| `chant.member` | `members[].name` in `ls`, `graph`, `check` and `status` |
+| `chant.decl` | the node `<chant.member>/<chant.decl>` in `graph`, whose `groups.byMember` lists it |
+| `service.name` | the service, which is the declaration's name |
+| `deployment.environment.name` | `members[].environments[].env` in `status` |
+| `service.version` | `releases[].digest` of that member and environment in `status` |
+| `vcs.ref.head.revision` | `releases[].gitSha` in `status`, or `at` in a `graph` read at that commit |
+
+A reader joins in this order. It takes `chant.workspace` and `chant.member` to the `graph` document of the workspace and finds the member's entry. `chant.decl` prefixed with the member is the node id, so the span lands on one node. The records that constrain that node are the `constrains` rows of `links` whose `target` is `member:<chant.member>`, read with `graph --kind`. `status` lists the member's releases for `deployment.environment.name`, and the one whose `digest` equals `service.version` is the release that produced the span. Its `gitSha` is `vcs.ref.head.revision`, and `graph --at <that commit>` reads the workspace as it was then.
+
+The docker lexicon stamps `service.name`, `chant.workspace`, `chant.member`, `chant.decl` and `deployment.environment.name` as `OTEL_SERVICE_NAME` and `OTEL_RESOURCE_ATTRIBUTES` in each Compose service's environment, when it builds inside a workspace. A build knows the environment only from `--env` or `ownership.env`, so a build with neither leaves that attribute out. It stamps `service.version` when the service's image is pinned by digest. `vcs.ref.head.revision` and a `service.version` the build can't know are set by whatever deploys the release, which knows the digest and the commit: the build's output does not change with each commit. A project with no `chant.workspace.json` is unchanged. It opts in with `telemetry.attribution: true` in `chant.config.ts` and gets the attributes that need no workspace, and inside a workspace `telemetry.attribution: false` turns stamping off. A value a service already sets in `OTEL_SERVICE_NAME` or `OTEL_RESOURCE_ATTRIBUTES` is kept, and only the missing attributes are added.
+
+Where the service's telemetry goes is a [telemetry link](/chant/reference/workspace-declaration/#telemetry-links): the service's member links to a pipeline or exporter in the `collectors` section of `graph`. A link row says `resolved`, or why it isn't.
+
 ## Writing records
 
 A reader writes only through chant commands ([ws-052](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-052-chant-hud-boundary.md)). For records those are [`records new`, `amend`, `review` and `close`](/chant/cli/workspace-records/#writing-records) ([#2670](https://github.com/INTENTIUS/chant/issues/2670), [#2693](https://github.com/INTENTIUS/chant/issues/2693)). Each validates the record it would write the way `records` reads it and then writes one file or none, leaving the commit to the caller. `review --session` is the one exception, and it writes the decision and the session together. The document each prints follows its own schema:

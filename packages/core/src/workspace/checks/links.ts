@@ -16,12 +16,13 @@
  * | WSP095 | an inferred join is ambiguous: a parameter matches two or more outputs |
  * | WSP096 | a consumer states the same link twice |
  * | WSP097 | an entry lists `outputs` for a kind that doesn't take them from the entry |
+ * | WSP098 | a link states a `protocol` and its kind is not `telemetry` (#2558) |
  */
 
 import type { WorkspaceCheck, WorkspaceCheckContext, WorkspaceDiagnostic } from "../checks";
 import type { Member } from "../declaration";
 import { sourceMemberHandles } from "../member-handles";
-import { DEFAULT_LINK_KIND, LINK_KINDS, linkTargetProblem, resolveLinks, type AmbiguousRow, type LinkRow, type LinkTableRow } from "../links";
+import { DEFAULT_LINK_KIND, LINK_KINDS, TELEMETRY_LINK_KIND, linkTargetProblem, resolveLinks, type AmbiguousRow, type LinkRow, type LinkTableRow } from "../links";
 
 const tables = new WeakMap<WorkspaceCheckContext, LinkTableRow[]>();
 
@@ -62,7 +63,7 @@ export const LINK_CHECKS: readonly WorkspaceCheck[] = [
   {
     id: "WSP092",
     name: "link-kind-unknown",
-    description: `Every member link's kind is one chant knows. Unknown link kinds fail closed; ${DEFAULT_LINK_KIND} is the default and the only one so far.`,
+    description: `Every member link's kind is one chant knows. Unknown link kinds fail closed; ${DEFAULT_LINK_KIND} is the default, and ${LINK_KINDS.filter((k) => k !== DEFAULT_LINK_KIND).join(", ")} is the other.`,
     severity: "error",
     configurable: false,
     check(ctx) {
@@ -178,6 +179,26 @@ export const LINK_CHECKS: readonly WorkspaceCheck[] = [
             },
           ];
         });
+    },
+  },
+  {
+    id: "WSP098",
+    name: "link-protocol-misplaced",
+    description: "A link states a protocol only when it is a telemetry link: protocol is the OTLP protocol the consumer sends to the producer's collector, and no other link kind has one.",
+    severity: "error",
+    configurable: true,
+    check(ctx) {
+      return ctx.declaration.members.flatMap((m) =>
+        m.links
+          .filter((l) => l.protocol !== null && (l.kind ?? DEFAULT_LINK_KIND) !== TELEMETRY_LINK_KIND)
+          .map((l) => ({
+            checkId: this.id,
+            severity: this.severity,
+            message: `member ${m.name}'s link to ${l.member} output ${l.output} states protocol ${l.protocol}, and its kind is ${l.kind ?? DEFAULT_LINK_KIND}; protocol belongs to a ${TELEMETRY_LINK_KIND} link`,
+            entity: m.name,
+            pointer: `${l.pointer}/protocol`,
+          })),
+      );
     },
   },
 ];

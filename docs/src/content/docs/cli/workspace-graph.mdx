@@ -114,13 +114,14 @@ A declared link replaces the inferred edge it covers, so the same join never app
 |---|---|
 | `consumer` | The member that reads the output |
 | `producer`, `output` | The member and output it reads. An ambiguous row has `candidates` instead, each with `producer`, `output`, `label` and `to` |
-| `kind` | The link kind, `output` |
+| `kind` | The link kind, `output` or `telemetry` |
 | `origin` | `declared`, or `inferred:joinKey` |
 | `label` | `exact` or `folded`. A declared link is always `exact` |
 | `input` | The consumer's import an inferred join feeds, or `null` for a declared link |
 | `from`, `to` | The composed ids of the import and export nodes, when the IRs name them |
 | `resolves` | `source` |
 | `status` | `resolved`, `missing`, `unresolved`, `invalid` or `ambiguous` |
+| `protocol`, `target` | A [telemetry link](/chant/reference/workspace-declaration/#telemetry-links) only: the OTLP protocol it states, and whether `output` named a `pipeline` or an `exporter` of the producer's [collector](#collectors) |
 | `reason` | Why the row isn't `resolved`, or `null` |
 
 [`chant workspace check`](/chant/cli/workspace-check/#member-links) resolves the same links from source without running any member, and fails on a link whose output is missing.
@@ -135,10 +136,12 @@ chant core reads no collector config. The otel lexicon's `graphMeta` hook answer
 |---|---|
 | `member` | The member whose source declares the collector |
 | `pipelines` | Each pipeline under `service.pipelines`, with its `id` (`traces`, `traces/backend`), its `signal`, and its `receivers`, `processors` and `exporters` as collector ids |
-| `components` | Every receiver, processor, exporter, connector and extension, with its `id`, `kind`, `type`, the `endpoints` its config states and the `pipelines` that use it |
+| `components` | Every receiver, processor, exporter, connector and extension, with its `id`, `kind`, `type`, the `endpoints` its config states, the wire `protocols` it speaks (empty when unknown) and the `pipelines` that use it |
 | `exporters` | The exporters again, each with its `endpoints`, its `pipelines` and the `signals` that reach it |
 
 An exporter's `endpoints` are the addresses its config names, so a reader can say where a member's traces go without reading the collector YAML.
+
+A [telemetry link](/chant/reference/workspace-declaration/#telemetry-links) in `links` targets an entry of this list: the pipeline or exporter its `output` names.
 
 ## Record links
 

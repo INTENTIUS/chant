@@ -7,7 +7,8 @@
       "dir": "app",
       "kind": "other",
       "because": "a Node HTTP server with its own Dockerfile and test; no app kind exists yet (#2535)",
-      "box": { "intent": "ref-003" }
+      "box": { "intent": "ref-003" },
+      "links": [{ "member": "delivery", "output": "traces", "kind": "telemetry", "protocol": "http/protobuf" }]
     },
     {
       "name": "delivery",

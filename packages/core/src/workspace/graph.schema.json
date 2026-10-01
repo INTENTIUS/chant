@@ -552,7 +552,7 @@
             },
             "kind": {
               "type": "string",
-              "description": "What the link joins, such as output."
+              "description": "What the link joins: `output`, or `telemetry` (#2558), where the consumer sends its telemetry to a pipeline or exporter of the producer's collector and `output` names it."
             },
             "origin": {
               "enum": [
@@ -607,6 +607,21 @@
             "pointer": {
               "type": "string",
               "description": "The declared link's JSON Pointer in the declaration; left out of the graph for a declared link."
+            },
+            "protocol": {
+              "enum": [
+                "grpc",
+                "http/protobuf",
+                "http/json"
+              ],
+              "description": "A telemetry link: the OTLP protocol it states."
+            },
+            "target": {
+              "enum": [
+                "pipeline",
+                "exporter"
+              ],
+              "description": "A telemetry link that found its target: whether `output` named a pipeline or an exporter in the producer's `collectors` entry."
             }
           }
         },
@@ -837,6 +852,7 @@
               "kind",
               "type",
               "endpoints",
+              "protocols",
               "pipelines"
             ],
             "properties": {
@@ -856,6 +872,13 @@
                 "items": {
                   "type": "string"
                 }
+              },
+              "protocols": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The wire protocols the component speaks, as OTLP SDKs name them: `grpc`, `http/protobuf` or `http/json`. Empty when its definition states none, which a telemetry link's protocol check reads as unknown."
               },
               "pipelines": {
                 "type": "array",

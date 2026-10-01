@@ -284,6 +284,18 @@ export interface ChantConfig {
   lint?: LintConfig;
 
   /**
+   * Telemetry attribution (#2558, D22): lexicons that declare workloads stamp
+   * resource attributes (`chant.workspace`, `chant.member`, `chant.decl`,
+   * `service.name`, `deployment.environment.name`) as `OTEL_*` environment
+   * variables. Inside a workspace this is on; `attribution: false` turns it
+   * off. Outside a workspace it is off, and `attribution: true` turns it on
+   * with the attributes that need no workspace. See `./telemetry-attribution.ts`.
+   */
+  telemetry?: {
+    attribution?: boolean;
+  };
+
+  /**
    * Opt-in cloud-side ownership marking. When `stack` is set (and `enabled`
    * is not false), the serializer stamps a chant ownership marker carrying
    * this stack/env identity onto every supported resource. See {@link

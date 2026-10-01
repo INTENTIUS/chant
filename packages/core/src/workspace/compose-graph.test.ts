@@ -151,8 +151,8 @@ describe("collectors (#2559)", () => {
   const topology = {
     pipelines: [{ id: "traces", signal: "traces", receivers: ["otlp"], processors: ["batch"], exporters: ["otlphttp/honeycomb"] }],
     components: [
-      { id: "otlp", kind: "receiver", type: "otlp", builtin: true, endpoints: ["0.0.0.0:4317"], pipelines: ["traces"] },
-      { id: "otlphttp/honeycomb", kind: "exporter", type: "otlphttp", builtin: true, endpoints: ["https://api.honeycomb.io"], pipelines: ["traces"] },
+      { id: "otlp", kind: "receiver", type: "otlp", builtin: true, endpoints: ["0.0.0.0:4317"], protocols: ["grpc"], pipelines: ["traces"] },
+      { id: "otlphttp/honeycomb", kind: "exporter", type: "otlphttp", builtin: true, endpoints: ["https://api.honeycomb.io"], protocols: ["http/protobuf"], pipelines: ["traces"] },
     ],
     exporters: [{ id: "otlphttp/honeycomb", type: "otlphttp", endpoints: ["https://api.honeycomb.io"], pipelines: ["traces"], signals: ["traces"] }],
     edges: [],
