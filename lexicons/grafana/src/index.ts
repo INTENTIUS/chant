@@ -202,6 +202,8 @@ export {
   type ProvisionedTemplate,
 } from "./alerting-build";
 export { CONTACT_POINT_SECRET_SETTINGS } from "./contact-point-secrets";
+export { CONTACT_POINT_NOTIFIERS } from "./contact-point-settings.gen";
+export type * from "./contact-point-settings.gen";
 
 // Panels and rows, and the extension point for other panel plugins
 export {

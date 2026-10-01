@@ -12,7 +12,8 @@
  *   `ExternalDatasource`), and of the type the query model says.
  * - GRAF113: the policy tree and rules route to contact points and mute
  *   timings the build declares, and their matchers parse.
- * - GRAF114: uids, names, titles and intervals Grafana accepts, and nothing
+ * - GRAF114: uids, names, titles and intervals Grafana accepts, contact point
+ *   settings the integration takes (and the required ones present), and nothing
  *   declared twice (a duplicate stops Grafana provisioning every alerting
  *   file at startup).
  *
@@ -29,6 +30,7 @@ import { isValidUid } from "./util";
 import { schemaValidationUnavailable, validateExpressionSchema } from "./schema-validate";
 import { checkGrafanaPromql } from "./promql-check";
 import { checkGrafanaLogql } from "./query-syntax";
+import { checkContactPointSettings } from "./contact-point-check";
 
 type Json = Record<string, unknown>;
 
@@ -410,6 +412,9 @@ export function checkAlertingIdentity(docs: readonly AlertingDoc[]): AlertingIss
         if (typeof uid !== "string" || !isValidUid(uid)) push(`Contact point "${name}" has a ${String(r.type)} receiver with uid ${JSON.stringify(uid)}; Grafana needs 1-40 letters, digits, "-" and "_".`, name);
         else count(receiverUids, `${orgOf(c)}\u0000${uid}`);
         if (!isObject(r.settings) || Object.keys(r.settings).length === 0) push(`Contact point "${name}" has a ${String(r.type)} receiver with no settings; Grafana refuses the file.`, name);
+        else if (typeof r.type === "string") {
+          for (const p of checkContactPointSettings(r.type, r.settings)) push(`Contact point "${name}" ${r.type} receiver: ${p.message}.`, name, p.severity);
+        }
       }
     }
     for (const p of listOf(json, "policies")) count(policyOrgs, String(orgOf(p)));
