@@ -381,6 +381,21 @@ function untypedComment(what: string, keys: string[]): string[] {
 
 /** Generate the TypeScript declaring one `alertmanager.yml`. */
 export function generateAlertmanagerFiles(config: AlertmanagerConfig): GeneratedFile[] {
+  return generateAlertmanager(config).files;
+}
+
+/** A declaration an `alertmanager.yml` import exports: its module and variable. */
+export interface AlertmanagerDeclaration {
+  readonly path: string;
+  readonly name: string;
+}
+
+/**
+ * Generate the TypeScript declaring one `alertmanager.yml`, and list every
+ * declaration it exports, module by module (#3031: a ConfigMap holding the
+ * file becomes `alertmanagerYaml([...])` over them).
+ */
+export function generateAlertmanager(config: AlertmanagerConfig): { files: GeneratedFile[]; declarations: AlertmanagerDeclaration[] } {
   const names = new Names([...LEXICON_NAMES, "global", "tracing"]);
   const modules: Module[] = [];
   const receiverVars = new Map<string, { v: string; mod: Module }>();
@@ -558,7 +573,10 @@ export function generateAlertmanagerFiles(config: AlertmanagerConfig): Generated
     mod.exports.push(v);
   }
 
-  return modules.map((m) => ({ path: m.path, content: m.render() }));
+  return {
+    files: modules.map((m) => ({ path: m.path, content: m.render() })),
+    declarations: modules.flatMap((m) => m.exports.map((name) => ({ path: m.path, name }))),
+  };
 }
 
 /** The rule file and `alertmanager.yml` TypeScript generator `chant import` runs. */

@@ -40,7 +40,7 @@ A file with more than eight groups or receivers is split into `rules-1.ts`, `rul
 chant build src --lexicon prometheus -o dist/rules.yml   # also writes dist/alertmanager.yml
 ```
 
-Rule groups inside Kubernetes manifests are imported the same way when you import the manifest with the k8s lexicon. A `PrometheusRule`'s `spec.groups` becomes the list of imported `RuleGroup`s, and a rule file held in a ConfigMap becomes `ruleFileYaml([...])`. See the k8s lexicon's [Importing Existing YAML](/chant/lexicons/k8s/importing-yaml/).
+Rule groups inside Kubernetes manifests are imported the same way when you import the manifest with the k8s lexicon. A `PrometheusRule`'s `spec.groups` becomes the list of imported `RuleGroup`s, a rule file held in a ConfigMap becomes `ruleFileYaml([...])`, and an `alertmanager.yml` held in a ConfigMap becomes `alertmanagerYaml([...])` over the receivers, time intervals, route, inhibit rules and settings it declares. See the k8s lexicon's [Importing Existing YAML](/chant/lexicons/k8s/importing-yaml/).
 
 ## What the generated source looks like
 

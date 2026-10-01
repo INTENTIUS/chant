@@ -34,7 +34,7 @@ A module with more than eight declarations is split into `row-cpu-1.ts`, `row-cp
 chant build src --lexicon grafana -o dist/grafana/index.json
 ```
 
-A dashboard held in a Kubernetes ConfigMap, such as one labelled `grafana_dashboard` for the Grafana sidecar, is imported the same way when you import the manifest with the k8s lexicon. The ConfigMap's value becomes `dashboardJson(dashboard)`. See the k8s lexicon's [Importing Existing YAML](/chant/lexicons/k8s/importing-yaml/).
+A dashboard held in a Kubernetes ConfigMap, such as one labelled `grafana_dashboard` for the Grafana sidecar, is imported the same way when you import the manifest with the k8s lexicon. The ConfigMap's value becomes `dashboardJson(dashboard)`. A v2 dashboard in a ConfigMap is the exception: it stays a string, with a warning, because the lexicon builds v1 JSON and the ConfigMap would change from v2 to v1 on the next build. See the k8s lexicon's [Importing Existing YAML](/chant/lexicons/k8s/importing-yaml/).
 
 ## What the generated source looks like
 

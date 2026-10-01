@@ -7,14 +7,19 @@
  * Fixtures (testdata/embedded/, provenance in its README.md): the
  * opentelemetry-collector Helm chart's rendered daemonset-only example, the
  * node-exporter PrometheusRule of kube-prometheus, a kube-prometheus
- * dashboard ConfigMap with the Grafana sidecar label, and the k8s build
- * output of examples/agent-observability.
+ * dashboard ConfigMap with the Grafana sidecar label, the k8s build output
+ * of examples/agent-observability, the alertmanager Helm chart's ConfigMap
+ * holding Alertmanager's example config, and a ConfigMap holding a v2
+ * dashboard Grafana 13 exported (#3031).
  *
  * "The same" is per owner: a collector config equal as parsed YAML, rule
- * groups equal as parsed YAML, a dashboard equal after the grafana lexicon's
+ * groups equal as parsed YAML, an alertmanager.yml equal as the prometheus
+ * importer reads it (receivers and time intervals sorted by name, which the
+ * serializer does), a dashboard equal after the grafana lexicon's
  * `normalizeDashboard` with its importer's edits applied (the grafana round
- * trip's own measure). Content no lexicon claims must come back as the same
- * text. embedded-types.e2e.test.ts type-checks the generated source.
+ * trip's own measure). Content no lexicon claims, and a v2 dashboard, which
+ * grafana keeps as written, must come back as the same text.
+ * embedded-types.e2e.test.ts type-checks the generated source.
  */
 
 import { describe, expect, test } from "vitest";
@@ -30,7 +35,7 @@ import { parseGrafana, type DashboardResourceMetadata } from "@intentius/chant-l
 import { applyEdits } from "@intentius/chant-lexicon-grafana/import/edits";
 import { normalizeDashboard } from "@intentius/chant-lexicon-grafana/import/normalize";
 import { k8sSerializer } from "../serializer";
-import { importManifest, read, removeDir, type Imported } from "./testdata/embedded/fixtures";
+import { alertmanagerConfig, importManifest, read, removeDir, type Imported } from "./testdata/embedded/fixtures";
 
 type Json = Record<string, unknown>;
 
@@ -160,10 +165,45 @@ describe("manifest -> TypeScript -> manifest, with embedded content imported by 
     expect(actual).toEqual(expected);
   });
 
+  test("the alertmanager chart's ConfigMap becomes typed prometheus declarations through alertmanagerYaml (#3031)", async () => {
+    const out = await roundTrip("alertmanager-configmap.yaml");
+    expect(out.buildErrors).toEqual([]);
+    expect(out.result.warnings).toEqual([]);
+
+    const main = out.files["main.ts"];
+    expect(main).toContain('import { alertmanagerYaml } from "@intentius/chant-lexicon-prometheus";');
+    expect(main).toMatch(/"alertmanager\.yml": alertmanagerYaml\(\[\s+teamXMails,/);
+    expect(embeddedDirs(out.files)).toEqual(["alertmanager"]);
+    expect(out.files["alertmanager/receivers.ts"]).toContain("new Receiver(");
+    expect(out.files["alertmanager/routes.ts"]).toContain("new Route(");
+    expect(out.files["alertmanager/inhibit-rules.ts"]).toContain("new InhibitRule(");
+    expect(out.files["alertmanager/settings.ts"]).toContain("new AlertmanagerSettings(");
+
+    const before = find(out.input, "ConfigMap", "alertmanager");
+    const after = find(out.output, "ConfigMap", "alertmanager");
+    expect(after.metadata).toEqual(before.metadata);
+    const text = (after.data as Json)["alertmanager.yml"] as string;
+    expect(alertmanagerConfig(text)).toEqual(alertmanagerConfig((before.data as Json)["alertmanager.yml"] as string));
+  });
+
+  test("a v2 dashboard ConfigMap is kept as written, with a warning saying why (#3031)", async () => {
+    const out = await roundTrip("grafana-v2-dashboard-configmap.yaml");
+    expect(out.buildErrors).toEqual([]);
+    expect(out.result.warnings).toHaveLength(1);
+    expect(out.result.warnings[0]).toContain('ConfigMap grafana-dashboard-checkout-v2 data["checkout.json"] is a Grafana dashboard, kept as written:');
+    expect(out.result.warnings[0]).toContain("v2 dashboard");
+    expect(embeddedDirs(out.files)).toEqual([]);
+    expect(out.files["main.ts"]).not.toContain("dashboardJson");
+
+    const name = "grafana-dashboard-checkout-v2";
+    expect(find(out.output, "ConfigMap", name)).toEqual(find(out.input, "ConfigMap", name));
+  });
+
   test("examples/agent-observability's k8s output: every ConfigMap value comes back, the owned ones typed", async () => {
     const out = await roundTrip("agent-observability.yaml");
     expect(out.buildErrors).toEqual([]);
     expect(embeddedDirs(out.files)).toEqual([
+      "alertmanager-config",
       "grafana-dashboard-genai-agents",
       "grafana-dashboard-red-traces-span-metrics",
       "grafana-dashboard-slo-support-agent-runs",
@@ -213,11 +253,17 @@ describe("manifest -> TypeScript -> manifest, with embedded content imported by 
       read("otel-collector-daemonset.yaml"),
       read("node-exporter-prometheusrule.yaml"),
       read("grafana-dashboard-configmap.yaml"),
+      read("alertmanager-configmap.yaml"),
     ].join("\n---\n");
     const imported = await importManifest(yaml);
     try {
       const dirs = embeddedDirs(imported.files);
-      expect(dirs).toEqual(["example-opentelemetry-collector-agent", "grafana-dashboard-alertmanager-overview", "node-exporter-rules"]);
+      expect(dirs).toEqual([
+        "alertmanager",
+        "example-opentelemetry-collector-agent",
+        "grafana-dashboard-alertmanager-overview",
+        "node-exporter-rules",
+      ]);
       for (const dir of dirs) {
         const lint = await lintCommand({ path: join(imported.srcDir, dir), format: "stylish" });
         if (lint.errorCount + lint.warningCount > 0) console.log(lint.output);

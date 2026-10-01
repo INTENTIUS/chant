@@ -107,6 +107,36 @@ describe("k8s import offers embedded content (#2962)", () => {
     const [main] = new K8sGenerator().generate(ir);
     expect(main.content).not.toContain("import { render");
   });
+
+  test("an alertmanager.yml and a v2 dashboard name their expected owners (#3031)", () => {
+    const embedded = new EmbeddedImports([]);
+    new K8sParser().parse(
+      `
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager
+data:
+  alertmanager.yml: |
+    route:
+      receiver: team
+    receivers:
+      - name: team
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dashboards-v2
+data:
+  checkout.json: '{"apiVersion": "dashboard.grafana.app/v2beta1", "kind": "Dashboard", "spec": {"elements": {}, "layout": {}}}'
+`,
+      { embedded },
+    );
+    expect(embedded.offered.map((c) => c.expectedOwner)).toEqual([
+      { lexicon: "prometheus", what: "an Alertmanager config" },
+      { lexicon: "grafana", what: "a Grafana dashboard" },
+    ]);
+  });
 });
 
 describe("the k8s generator's imports", () => {

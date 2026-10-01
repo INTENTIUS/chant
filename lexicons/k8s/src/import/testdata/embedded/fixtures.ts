@@ -8,6 +8,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "fs";
 import { join, relative, resolve } from "path";
 import { importCommand, type ImportResult } from "@intentius/chant/cli/commands/import";
+import { parsePrometheusYaml } from "@intentius/chant-lexicon-prometheus/import/parser";
 
 export const pkgDir = resolve(import.meta.dirname, "../../../..");
 export const repoRoot = resolve(pkgDir, "../..");
@@ -50,4 +51,21 @@ export async function importManifest(yaml: string, options: { detect?: boolean }
 
 export function removeDir(dir: string): void {
   rmSync(dir, { recursive: true, force: true });
+}
+
+/**
+ * An alertmanager.yml as the prometheus importer reads it, receivers and
+ * time intervals sorted by name (the serializer sorts them): what an
+ * imported ConfigMap's `alertmanager.yml` must give back (#3031).
+ */
+export function alertmanagerConfig(text: string): Record<string, unknown> {
+  const parsed = parsePrometheusYaml(text);
+  if (parsed.kind !== "alertmanager") throw new Error("not an alertmanager.yml");
+  const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name);
+  const { receivers, time_intervals, ...rest } = parsed.config;
+  return {
+    ...rest,
+    ...(receivers ? { receivers: [...receivers].sort(byName) } : {}),
+    ...(time_intervals ? { time_intervals: [...time_intervals].sort(byName) } : {}),
+  };
 }
