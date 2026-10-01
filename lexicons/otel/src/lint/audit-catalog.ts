@@ -2,7 +2,7 @@
  * The otel lexicon's chant audit catalog, contributed via
  * `otelPlugin.auditCatalog()` (#687, #1346).
  *
- * OTEL101-OTEL106 and OTEL112-OTEL116 read the emitted collector YAML, so they are
+ * OTEL101-OTEL106 and OTEL112-OTEL117 read the emitted collector YAML, so they are
  * `yamlBased`.
  * OTEL107-OTEL109 read the declared entities (a component's definition, its
  * schema pin), which a standalone YAML file does not carry, so they are
@@ -139,5 +139,13 @@ export const otelAuditCatalog: Record<string, RuleMeta> = {
     "Connector splits metrics by a high-cardinality GenAI attribute",
     "Remove the conversation, response, tool call, session or user id, or the content key, from the connector's dimensions or attributes. Keep it on spans and logs, where a per-request value costs nothing extra.",
     { category: "efficiency" },
+  ),
+  OTEL117: auditRule(
+    "OTEL117",
+    "merge-worthy",
+    "guidance",
+    "Two started components listen on the same address",
+    "Give one of them another port, or a specific host that doesn't overlap the other's. The collector's own metrics listen on localhost:8888 unless service.telemetry.metrics sets a reader or level none.",
+    { category: "correctness" },
   ),
 };

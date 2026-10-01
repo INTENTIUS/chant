@@ -11,6 +11,7 @@ import { otel107 } from "./otel107";
 import { otel108 } from "./otel108";
 import { otel109 } from "./otel109";
 import { otel116 } from "./otel116";
+import { otel117 } from "./otel117";
 import {
   BatchProcessor,
   DebugExporter,
@@ -318,5 +319,88 @@ describe("OTEL116 high-cardinality GenAI attributes as metric attributes", () =>
     const diags = collectorConfigDiagnostics(makePostSynthCtx("k8s", dump(configMap, { lineWidth: -1 })), { configMapsOnly: true }).filter((d) => d.checkId === "OTEL116");
     expect(diags).toHaveLength(FIELDS.length);
     expect(diags[0].message).toMatch(/^ConfigMap observability\/otel-agent-config, key config\.yaml: connector "spanmetrics" splits metrics by "gen_ai\.conversation\.id"/);
+  });
+});
+
+describe("OTEL117 two started components on one address", () => {
+  const run = (config: object) => otel117.check(makePostSynthCtx("otel", dump(config)));
+  const otlpOnly = { receivers: ["otlp"], exporters: ["debug"] };
+
+  test("reports a prometheus exporter on the collector's own default metrics port", () => {
+    const diags = run({
+      receivers: { otlp: { protocols: { grpc: { endpoint: "0.0.0.0:4317" } } } },
+      exporters: { prometheus: { endpoint: "0.0.0.0:8888" } },
+      service: { pipelines: { metrics: { receivers: ["otlp"], exporters: ["prometheus"] } } },
+    });
+    expect(diags).toHaveLength(1);
+    expect(diags[0]).toMatchObject({ checkId: "OTEL117", severity: "error" });
+    expect(diags[0].message).toContain('exporter "prometheus" (endpoint) listens on 0.0.0.0:8888');
+    expect(diags[0].message).toContain("the collector's own metrics (service.telemetry.metrics, by default) on localhost:8888");
+  });
+
+  test("reports two otlp receivers left on the default grpc port", () => {
+    const diags = run({
+      receivers: { otlp: { protocols: { grpc: {} } }, "otlp/2": { protocols: { grpc: {}, http: { endpoint: "0.0.0.0:4319" } } } },
+      exporters: { debug: {} },
+      service: { pipelines: { traces: { receivers: ["otlp"], exporters: ["debug"] }, logs: { receivers: ["otlp/2"], exporters: ["debug"] } } },
+    });
+    expect(diags.map((d) => d.message)).toEqual([
+      expect.stringMatching(/^receiver "otlp" \(protocols\.grpc\.endpoint\) listens on localhost:4317 and receiver "otlp\/2" \(protocols\.grpc\.endpoint\) on localhost:4317/),
+    ]);
+  });
+
+  test("a wildcard host overlaps a specific host on the same port, and an extension counts", () => {
+    const diags = run({
+      receivers: { zipkin: { endpoint: "127.0.0.1:13133" } },
+      exporters: { debug: {} },
+      extensions: { health_check: { endpoint: "0.0.0.0:13133" } },
+      service: { extensions: ["health_check"], pipelines: { traces: { receivers: ["zipkin"], exporters: ["debug"] } } },
+    });
+    expect(diags).toHaveLength(1);
+    expect(diags[0].message).toContain('extension "health_check" (endpoint) on 0.0.0.0:13133');
+  });
+
+  test("passes different hosts on one port, UDP beside TCP, and telemetry moved off 8888 or turned off", () => {
+    const base = {
+      receivers: {
+        otlp: { protocols: { grpc: { endpoint: "10.0.0.1:4317" }, http: { endpoint: "0.0.0.0:6831" } } },
+        "otlp/b": { protocols: { grpc: { endpoint: "10.0.0.2:4317" } } },
+        jaeger: { protocols: { thrift_compact: {} } },
+      },
+      exporters: { prometheus: { endpoint: "0.0.0.0:8888" } },
+    };
+    const pipelines = { traces: { receivers: ["otlp", "otlp/b", "jaeger"], exporters: ["prometheus"] } };
+    const reader = { pull: { exporter: { prometheus: { host: "0.0.0.0", port: 8889 } } } };
+    expect(run({ ...base, service: { telemetry: { metrics: { readers: [reader] } }, pipelines } })).toEqual([]);
+    expect(run({ ...base, service: { telemetry: { metrics: { level: "none" } }, pipelines } })).toEqual([]);
+  });
+
+  test("a component nothing starts doesn't count, nor does an endpoint the collector connects to", () => {
+    expect(
+      run({
+        receivers: { otlp: { protocols: { grpc: {} } }, "otlp/unused": { protocols: { grpc: {} } }, kubeletstats: { endpoint: "localhost:4317" } },
+        exporters: { debug: {}, prometheus: { endpoint: "localhost:8888" }, otlp: { endpoint: "localhost:4317" } },
+        extensions: { zpages: { endpoint: "localhost:4317" } },
+        service: { pipelines: { traces: otlpOnly, metrics: { receivers: ["kubeletstats"], exporters: ["otlp"] } } },
+      }),
+    ).toEqual([]);
+  });
+
+  test("reads the telemetry reader's address when one is set", () => {
+    const diags = run({
+      receivers: { otlp: { protocols: { http: { endpoint: "0.0.0.0:9000" } } } },
+      exporters: { debug: {} },
+      service: { telemetry: { metrics: { readers: [{ pull: { exporter: { prometheus: { host: "0.0.0.0", port: 9000 } } } }] } }, pipelines: { logs: { receivers: ["otlp"], exporters: ["debug"] } } },
+    });
+    expect(diags).toHaveLength(1);
+    expect(diags[0].message).toContain("service.telemetry.metrics.readers[0]");
+  });
+
+  test("WK8604's entry point reports it for a config in a ConfigMap", () => {
+    const config = { receivers: { otlp: { protocols: { grpc: {} } } }, exporters: { prometheus: { endpoint: ":8888" } }, service: { pipelines: { metrics: { receivers: ["otlp"], exporters: ["prometheus"] } } } };
+    const configMap = { apiVersion: "v1", kind: "ConfigMap", metadata: { name: "otel-agent-config", namespace: "observability" }, data: { "config.yaml": dump(config) } };
+    const diags = collectorConfigDiagnostics(makePostSynthCtx("k8s", dump(configMap, { lineWidth: -1 })), { configMapsOnly: true }).filter((d) => d.checkId === "OTEL117");
+    expect(diags).toHaveLength(1);
+    expect(diags[0].message).toMatch(/^ConfigMap observability\/otel-agent-config, key config\.yaml: exporter "prometheus"/);
   });
 });

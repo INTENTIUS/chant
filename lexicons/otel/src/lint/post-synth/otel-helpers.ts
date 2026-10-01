@@ -74,7 +74,7 @@ function toDiagnostic(issue: CollectorIssue, found?: Omit<FoundCollectorConfig, 
 }
 
 /**
- * Every config-level diagnostic (OTEL101-OTEL106, OTEL112-OTEL116 and any later
+ * Every config-level diagnostic (OTEL101-OTEL106, OTEL112-OTEL117 and any later
  * config check) over the collector configs in the output. `configMapsOnly`
  * keeps the configs held in ConfigMaps, which is what WK8604 reads.
  */
@@ -84,7 +84,7 @@ export function collectorConfigDiagnostics(ctx: PostSynthContext, opts: { config
     .flatMap(({ config, ...found }) => validateCollectorConfig(config).map((i) => toDiagnostic(i, found)));
 }
 
-/** Diagnostics for one config-level code (OTEL101-OTEL106, OTEL112-OTEL116) across every collector config in the output. */
+/** Diagnostics for one config-level code (OTEL101-OTEL106, OTEL112-OTEL117) across every collector config in the output. */
 export function configDiagnostics(ctx: PostSynthContext, code: CollectorIssueCode): PostSynthDiagnostic[] {
   return collectorConfigs(ctx).flatMap(({ config, ...found }) =>
     validateCollectorConfig(config)

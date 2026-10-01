@@ -33,6 +33,7 @@ describe("otel plugin", () => {
       "OTEL114",
       "OTEL115",
       "OTEL116",
+      "OTEL117",
     ]);
     for (const id of ids) expect(id.startsWith("OTEL")).toBe(true);
   });
