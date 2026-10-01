@@ -36,8 +36,12 @@ run_workspace() {
 }
 
 run_npm() {
-  echo "Running codegen (prepack) for all lexicons..."
-  for lex in aws azure gcp gitlab k8s docker fly fountain k3s terraform otel; do
+  # The npm image tars each lexicon's local dist/, so prepack exactly the
+  # lexicons it packs: the list Dockerfile.smoke-npm reads (#3096).
+  local lexicons
+  lexicons=$(<"$SCRIPT_DIR/smoke-npm-lexicons.txt")
+  echo "Running codegen (prepack) for the lexicons the npm image packs..."
+  for lex in $lexicons; do
     echo "  prepack lexicons/$lex"
     npm run --prefix "$PROJECT_DIR/lexicons/$lex" prepack
   done
@@ -48,8 +52,11 @@ run_npm() {
 }
 
 build_e2e_image() {
-  echo "Running codegen (prepack) for all lexicons..."
-  for lex in aws azure gcp gitlab k8s docker fly fountain k3s terraform; do
+  # The list Dockerfile.smoke-e2e packs (#3096).
+  local lexicons
+  lexicons=$(<"$SCRIPT_DIR/smoke-e2e-lexicons.txt")
+  echo "Running codegen (prepack) for the lexicons the e2e image packs..."
+  for lex in $lexicons; do
     echo "  prepack lexicons/$lex"
     npm run --prefix "$PROJECT_DIR/lexicons/$lex" prepack
   done
