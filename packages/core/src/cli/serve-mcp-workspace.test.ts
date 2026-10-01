@@ -70,7 +70,7 @@ describe("chant serve mcp at a workspace root with no lexicon of its own (#2700)
     expect(init.serverInfo.name).toBe("chant");
     for (const name of CORE_TOOLS) expect(tools).toContain(name);
     expect(tools).toContain("docker:diff");
-    expect(init.instructions).toContain("Member delivery (delivery/) declares docker.");
+    expect(init.instructions).toContain("Member delivery (delivery/) declares docker, otel.");
   }, TIMEOUT);
 
   test("a lexiconless root, lexicons only in a member, serves core and the lexicons that load", () => {

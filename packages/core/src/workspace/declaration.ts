@@ -135,6 +135,8 @@ export interface LinkDeclaration {
   output: string;
   /** The link kind as written, or null for the default (`output`). */
   kind: string | null;
+  /** A telemetry link's OTLP protocol as written (#2558), or null. */
+  protocol: string | null;
   /** The link's JSON Pointer in the file, for messages. */
   pointer: string;
 }
@@ -543,10 +545,11 @@ export function parseDeclaration(text: string, file: string, reader: string = re
       handWritten: g.handWritten ? { because: (g.handWritten as { because: string }).because } : null,
       pointer: `${pointer}/generated/${j}`,
     }));
-    const links = ((e.links as { member: string; output: string; kind?: string }[] | undefined) ?? []).map((l, j) => ({
+    const links = ((e.links as { member: string; output: string; kind?: string; protocol?: string }[] | undefined) ?? []).map((l, j) => ({
       member: l.member,
       output: l.output,
       kind: l.kind ?? null,
+      protocol: l.protocol ?? null,
       pointer: `${pointer}/links/${j}`,
     }));
     const records = recordKindsOf(e.records, e.dir as string, e.name as string, `${pointer}/records`);

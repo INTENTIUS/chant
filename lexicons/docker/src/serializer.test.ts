@@ -317,3 +317,52 @@ describe("dockerSerializer.serialize — name gen", () => {
     expect(output).toContain("myWebServer:");
   });
 });
+
+// ── Telemetry attribution (#2558, D22) ─────────────────────────────
+
+describe("telemetry attribution", () => {
+  const run = (props: Record<string, unknown>, telemetry?: { workspace?: string; member?: string; environment?: string }) => {
+    const result = dockerSerializer.serialize(new Map([["api", new MockService(props)]]), [], telemetry ? { telemetry } : undefined);
+    return typeof result === "string" ? result : result.primary;
+  };
+  const attrs = { workspace: "acme", member: "delivery", environment: "prod" };
+
+  test("a build with no telemetry context is the same bytes as one that passes an empty context", () => {
+    const props = { image: "nginx:1" };
+    expect(run(props)).toBe(dockerSerializer.serialize(new Map([["api", new MockService(props)]]), [], {}) as string);
+    expect(run(props)).not.toContain("OTEL_");
+  });
+
+  test("stamps the service name and the resource attributes into the environment", () => {
+    const out = run({ image: "nginx:1" }, attrs);
+    expect(out).toContain("OTEL_SERVICE_NAME: api");
+    expect(out).toContain("OTEL_RESOURCE_ATTRIBUTES: chant.workspace=acme,chant.member=delivery,chant.decl=api,deployment.environment.name=prod");
+  });
+
+  test("leaves out an attribute the build does not know", () => {
+    const out = run({ image: "nginx:1" }, { workspace: "acme" });
+    expect(out).toContain("OTEL_RESOURCE_ATTRIBUTES: chant.workspace=acme,chant.decl=api");
+    expect(out).not.toContain("chant.member");
+    expect(out).not.toContain("deployment.environment.name");
+  });
+
+  test("stamps service.version when the image is pinned by digest", () => {
+    const out = run({ image: "ghcr.io/acme/api@sha256:abc123" }, attrs);
+    expect(out).toContain("service.version=sha256%3Aabc123");
+  });
+
+  test("keeps the keys a map environment already sets and appends the missing attributes", () => {
+    const out = run({ image: "x", environment: { OTEL_SERVICE_NAME: "checkout", OTEL_RESOURCE_ATTRIBUTES: "chant.member=mine,team=pay", PORT: "80" } }, attrs);
+    expect(out).toContain("OTEL_SERVICE_NAME: checkout");
+    expect(out).toContain("OTEL_RESOURCE_ATTRIBUTES: chant.member=mine,team=pay,chant.workspace=acme,chant.decl=api,deployment.environment.name=prod");
+    expect(out).toContain("PORT:");
+  });
+
+  test("adds the variables to a list environment, keeping an entry already there", () => {
+    const out = run({ image: "x", environment: ["PORT=80", "OTEL_SERVICE_NAME=checkout"] }, attrs);
+    expect(out).toContain("- PORT=80");
+    expect(out).toContain("- OTEL_SERVICE_NAME=checkout");
+    expect(out).not.toContain("OTEL_SERVICE_NAME=api");
+    expect(out).toContain("- OTEL_RESOURCE_ATTRIBUTES=chant.workspace=acme,chant.member=delivery");
+  });
+});

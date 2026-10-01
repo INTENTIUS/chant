@@ -173,7 +173,7 @@
     },
     "link": {
       "type": "object",
-      "description": "A member link: this member reads output of member (#2539).",
+      "description": "A member link: this member reads output of member (#2539), or sends its telemetry to a pipeline of its collector (#2558).",
       "required": [
         "member",
         "output"
@@ -185,11 +185,19 @@
         },
         "output": {
           "$ref": "#/$defs/outputName",
-          "description": "The producer's output, matched exactly. It must be one the producer's kind exposes."
+          "description": "The producer's output, matched exactly. It must be one the producer's kind exposes. For a telemetry link, the id of a pipeline or an exporter in the producer's collector."
         },
         "kind": {
           "$ref": "#/$defs/kindName",
-          "description": "The link kind. output, the default, is the only one so far: the consumer reads the named output."
+          "description": "The link kind. output, the default: the consumer reads the named output. telemetry (#2558): the consumer sends its telemetry to the named pipeline or exporter of the producer's collector, and chant workspace graph checks that it exists and, when protocol is given, that it speaks it. A declaration that uses telemetry sets minReader to 0.101.0 or newer."
+        },
+        "protocol": {
+          "enum": [
+            "grpc",
+            "http/protobuf",
+            "http/json"
+          ],
+          "description": "For a telemetry link, the OTLP protocol the consumer sends, as OTEL_EXPORTER_OTLP_PROTOCOL names it. Refused on any other kind. Added in schema 1 by chant 0.101.0."
         }
       },
       "patternProperties": {

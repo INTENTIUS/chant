@@ -55,13 +55,17 @@
  *   the traces pipeline and the exporter's endpoint, read from delivery's own
  *   build through the otel lexicon, and the document validates.
  *
+ * - the app member's telemetry link (#2558) resolves to delivery's traces
+ *   pipeline with its protocol checked, delivery's Compose service carries the
+ *   span attributes, and the same project outside a workspace stamps none.
+ *
  * The per-member workspace commands and their contract tests join here as
  * each phase lands (#2537, #2536).
  */
 
 import { describe, expect, test } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -251,6 +255,10 @@ describe("delivery member", () => {
       };
       // DockerWebService keys the service by the export name plus `Service` (#2662).
       expect(Object.keys(compose.services)).toEqual(["appService"]);
+      // The docker lexicon stamps the span attributes inside a workspace (#2558, D22).
+      const env = (compose.services.appService as { environment?: Record<string, string> }).environment!;
+      expect(env.OTEL_SERVICE_NAME).toBe("appService");
+      expect(env.OTEL_RESOURCE_ATTRIBUTES).toBe("chant.workspace=reference,chant.member=delivery,chant.decl=appService");
       const build = compose.services.appService?.build;
       expect(build).toBeDefined();
       // The package.json build script writes the file to delivery/dist/, and
@@ -577,6 +585,44 @@ describe("the collector on the fixture (#2559)", () => {
       expect.objectContaining({ id: "otlphttp/backend", endpoints: ["https://telemetry.example.com:4318"], signals: ["traces"] }),
     ]);
     expect(doc.members.find((m) => m.name === "delivery")!.meta).toBeUndefined();
+  });
+
+  test("the app's telemetry link resolves to delivery's traces pipeline, and its protocol is checked (#2558)", () => {
+    const run = chant(fixture, "workspace", "graph", "--member", "delivery", "--no-cache");
+    expect(run.status, run.stderr).toBe(0);
+    const doc = JSON.parse(run.stdout) as { links: Record<string, unknown>[] };
+    expect(doc.links).toEqual([
+      expect.objectContaining({ consumer: "app", producer: "delivery", output: "traces", kind: "telemetry", protocol: "http/protobuf", target: "pipeline", status: "resolved", reason: null }),
+    ]);
+  });
+
+  test("the same delivery project outside a workspace stamps nothing, and opts in with telemetry.attribution (#2558)", async () => {
+    const made: string[] = [];
+    // A copy of delivery with no workspace declaration above it. Each build gets its own copy: a config module loads once per path.
+    const build = async (optIn: boolean) => {
+      const dir = mkdtempSync(join(tmpdir(), "chant-2558-level0-"));
+      made.push(dir);
+      cpSync(join(fixture, "delivery"), dir, { recursive: true, filter: (src) => !src.includes("node_modules") });
+      mkdirSync(join(dir, ".git"));
+      symlinkSync(join(repoRoot, "node_modules"), join(dir, "node_modules"), "dir");
+      if (optIn) writeFileSync(join(dir, "chant.config.ts"), readFileSync(join(dir, "chant.config.ts"), "utf-8").replace("lint:", "telemetry: { attribution: true },\n  lint:"));
+      const src = join(dir, "src");
+      const plugins = await loadPlugins(await resolveProjectLexicons(src));
+      const serializers = plugins.map((p) => p.serializer).filter((s) => s.name === "docker" || s.name === "otel");
+      const output = join(dir, "compose.yml");
+      const result = await buildCommand({ path: src, output, format: "yaml", serializers, plugins });
+      expect(result.success, result.errors.join("\n")).toBe(true);
+      return readFileSync(output, "utf-8");
+    };
+    try {
+      expect(await build(false)).not.toContain("OTEL_");
+      const optedIn = await build(true);
+      expect(optedIn).toContain("OTEL_SERVICE_NAME: appService");
+      expect(optedIn).toContain("OTEL_RESOURCE_ATTRIBUTES: chant.decl=appService");
+      expect(optedIn).not.toContain("chant.workspace");
+    } finally {
+      for (const dir of made) rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test("the collector builds to YAML through the otel lexicon", () => {

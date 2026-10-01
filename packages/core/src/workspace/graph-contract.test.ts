@@ -140,6 +140,43 @@ describe("the collectors section (#2559)", () => {
     expect(g.members.find((m) => m.name === "ops")!.meta).toBeUndefined();
   });
 
+  test("telemetry links resolve against the collectors and validate (#2558)", async () => {
+    const withProtocols = {
+      pipelines: topology.pipelines,
+      components: [
+        { id: "otlp", kind: "receiver", type: "otlp", endpoints: ["0.0.0.0:4318"], protocols: ["http/protobuf", "http/json"], pipelines: ["traces"] },
+        { id: "otlphttp", kind: "exporter", type: "otlphttp", endpoints: ["https://collector.example:4318"], protocols: ["http/protobuf"], pipelines: ["traces"] },
+      ],
+      exporters: topology.exporters,
+    };
+    const cwd = repo({
+      "chant.workspace.json": declaration([
+        { name: "ops", dir: "ops", kind: "chant" },
+        {
+          name: "web",
+          dir: "web",
+          kind: "chant",
+          links: [
+            { member: "ops", output: "traces", kind: "telemetry", protocol: "http/protobuf" },
+            { member: "ops", output: "traces", kind: "telemetry", protocol: "grpc" },
+            { member: "ops", output: "logs", kind: "telemetry" },
+          ],
+        },
+      ]),
+      "ops/chant.config.ts": "export default {};\n",
+      "ops/ir.json": JSON.stringify({ version: 1, nodes: [], edges: [], groups: {}, meta: { collector: withProtocols } }),
+      "web/chant.config.ts": "export default {};\n",
+      "web/ir.json": JSON.stringify({ version: 1, nodes: [], edges: [], groups: {} }),
+      ".gitignore": "node_modules\n",
+      "node_modules/.bin/chant": { text: FAKE_FILE_GRAPH_CHANT, mode: 0o755 },
+    });
+    const { doc } = await workspaceGraph({ cwd });
+    const g = result(doc);
+    expectValid(g);
+    const rows = (g.links as LinkTableRow[]).filter((r) => r.kind === "telemetry").map((r) => (r.status === "ambiguous" ? "" : `${r.output} ${r.protocol ?? "-"} ${r.status} ${r.target ?? "-"}`));
+    expect(rows).toEqual(["traces http/protobuf resolved pipeline", "traces grpc invalid pipeline", "logs - missing -"]);
+  });
+
   test("a workspace with no collector prints an empty list", async () => {
     const { doc } = await workspaceGraph({ cwd: fakeWorkspace() });
     const g = result(doc);

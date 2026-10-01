@@ -75,7 +75,7 @@ describe("the WSP catalog", () => {
     expect(list.filter((id) => /^WSP(07|08|09|10)\d$/.test(id))).toEqual([
       "WSP071", "WSP072", "WSP073",
       "WSP081", "WSP082", "WSP083",
-      "WSP091", "WSP092", "WSP093", "WSP094", "WSP095", "WSP096", "WSP097",
+      "WSP091", "WSP092", "WSP093", "WSP094", "WSP095", "WSP096", "WSP097", "WSP098",
       "WSP101", "WSP102", "WSP103", "WSP104", "WSP105", "WSP106",
     ]);
   });
