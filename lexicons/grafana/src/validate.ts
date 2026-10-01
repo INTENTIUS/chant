@@ -27,6 +27,8 @@ export const REQUIRED_NAMES = [
   "DashboardProvider",
   "DatasourceProvisioning",
   "Folder",
+  "LibraryPanel",
+  "LibraryPanelRef",
   "Row",
   "TimeSeriesPanel",
   "StatPanel",

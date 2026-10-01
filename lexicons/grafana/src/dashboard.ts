@@ -9,7 +9,7 @@
 
 import { createResource } from "@intentius/chant/runtime";
 import type { Declarable } from "@intentius/chant/declarable";
-import type { PanelEntity, RowEntity } from "./panels";
+import type { DashboardItem } from "./panels";
 import type { VariableEntity } from "./variables";
 import type { DashboardLink, TimePickerConfig } from "./schema/dashboard.gen";
 import { isFolderEntity, type FolderEntity } from "./folder";
@@ -51,9 +51,12 @@ export interface DashboardProps {
   schemaVersion?: number;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   variables?: VariableEntity<any>[];
-  /** Panels and rows, top to bottom. A row's own `panels` follow it. */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  panels?: Array<PanelEntity<any, any> | RowEntity>;
+  /**
+   * Panels and rows, top to bottom. A row's own `panels` follow it. A
+   * `LibraryPanel` here is placed like a panel; a `LibraryPanelRef` places one
+   * with its own `gridPos`, `id` and `title`.
+   */
+  panels?: DashboardItem[];
   links?: DashboardLinkInput[];
   /**
    * Annotation queries: events drawn on the dashboard's time series panels

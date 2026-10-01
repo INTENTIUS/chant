@@ -5,8 +5,9 @@
  * activity, through its build output (the index and the dashboard files):
  *
  * 1. Apply: three folders (one nested in another, with a pinned uid), a
- *    library panel and three dashboards are created, each dashboard and
- *    folder labelled with the project's marker.
+ *    library panel (declared with `LibraryPanel`, kept in the nested folder,
+ *    #3010) and three dashboards are created, each dashboard and folder
+ *    labelled with the project's marker.
  * 2. Re-apply: nothing is created, and nothing is written.
  * 3. A panel title is edited in the source and applied: that dashboard is
  *    updated, the rest unchanged.
@@ -16,10 +17,6 @@
  *    their own into it.
  * 5. Once that dashboard is gone, the next prune deletes the empty folder.
  *
- * The build does not write `__elements` yet (library panels are not
- * declared in the lexicon), so the library panel is added to one built
- * dashboard's file the way an exported dashboard carries it.
- *
  * Containers come from ../../../test/e2e/containers.ts (unique names,
  * random host ports, removed in afterAll even on failure;
  * `CHANT_GRAFANA_IMAGES` overrides the image pair). Skipped, with the reason
@@ -27,7 +24,7 @@
  * `~/checkouts/intentius/chant-worktrees/.docker-slot.sh <label> -- npx vitest run lexicons/grafana/src/op/activities/grafana-apply.e2e.test.ts`
  */
 
-import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { build } from "@intentius/chant/build";
@@ -41,18 +38,29 @@ const skipReason = hasDocker ? "" : " (skipped: Docker is not running)";
 const repoRoot = resolve(import.meta.dirname, "..", "..", "..", "..", "..");
 
 const MARKER_LABELS = { "app.kubernetes.io/managed-by": "chant", "chant.intentius.io/stack": "e2e-shop", "chant.intentius.io/env": "e2e" };
-const LIBRARY_PANEL = { uid: "chant-e2e-burn", name: "Error budget burn", kind: 1, model: { type: "stat", title: "Error budget burn", description: "shared" } };
+const LIBRARY_PANEL = { uid: "chant-e2e-burn", name: "Error budget burn" };
 
 function source(opts: { requestsTitle: string; withErrors: boolean }): string {
-  return `import { Dashboard, Folder, StatPanel } from "@intentius/chant-lexicon-grafana";
+  return `import { Dashboard, Folder, LibraryPanel, LibraryPanelRef, StatPanel } from "@intentius/chant-lexicon-grafana";
 
+export const teamA = new Folder({ title: "Team A" });
+export const payments = new Folder({ title: "Payments", uid: "chant-e2e-payments", parent: teamA });
+export const burn = new LibraryPanel({
+  uid: ${JSON.stringify(LIBRARY_PANEL.uid)},
+  name: ${JSON.stringify(LIBRARY_PANEL.name)},
+  folder: payments,
+  panel: new StatPanel({ title: ${JSON.stringify(LIBRARY_PANEL.name)}, description: "shared" }),
+});
 export const requests = new StatPanel({ title: ${JSON.stringify(opts.requestsTitle)} });
 export const latency = new StatPanel({ title: "Latency" });
 export const fiveHundreds = new StatPanel({ title: "5xx" });
-export const apiOverview = new Dashboard({ title: "API overview", folder: "Team A", tags: ["api"], panels: [requests, latency] });
-${opts.withErrors ? `export const errors = new Dashboard({ title: "Errors", folder: "Team B", panels: [fiveHundreds] });\n` : ""}export const teamA = new Folder({ title: "Team A" });
-export const payments = new Folder({ title: "Payments", uid: "chant-e2e-payments", parent: teamA });
-export const home = new Dashboard({ title: "Home", folder: payments });
+export const apiOverview = new Dashboard({
+  title: "API overview",
+  folder: "Team A",
+  tags: ["api"],
+  panels: [requests, latency, new LibraryPanelRef({ libraryPanel: burn, id: 99, gridPos: { x: 0, y: 20, w: 12, h: 6 } })],
+});
+${opts.withErrors ? `export const errors = new Dashboard({ title: "Errors", folder: "Team B", panels: [fiveHundreds] });\n` : ""}export const home = new Dashboard({ title: "Home", folder: payments });
 `;
 }
 
@@ -66,8 +74,7 @@ describe.skipIf(!hasDocker).each(GRAFANA_IMAGES)(`grafanaApply applies, re-appli
   let deps: GrafanaApplyDeps;
 
   /**
-   * Build the project as `opts` declares it, into `dist/`, with the library
-   * panel added to api-overview's file. Each build is a fresh project
+   * Build the project as `opts` declares it, into `dist/`. Each build is a fresh project
    * directory: the build imports the source modules, and a module path
    * already imported in this process would be served from the cache.
    */
@@ -88,12 +95,6 @@ describe.skipIf(!hasDocker).each(GRAFANA_IMAGES)(`grafanaApply applies, re-appli
     }
     indexPath = join(dist, "grafana.json");
     writeFileSync(indexPath, out.primary);
-    const index = JSON.parse(out.primary) as { dashboards: Array<{ uid: string; file: string }> };
-    const file = join(dist, index.dashboards.find((d) => d.uid === "api-overview")!.file);
-    const json = JSON.parse(readFileSync(file, "utf8")) as { panels: unknown[] } & Record<string, unknown>;
-    json.__elements = { [LIBRARY_PANEL.uid]: LIBRARY_PANEL };
-    json.panels.push({ id: 99, gridPos: { x: 0, y: 20, w: 12, h: 6 }, libraryPanel: { uid: LIBRARY_PANEL.uid, name: LIBRARY_PANEL.name } });
-    writeFileSync(file, JSON.stringify(json, null, 2));
   };
 
   const apply = (prune = false) => grafanaApply({ indexPath, environment: "e2e", ...(prune ? { prune: true } : {}) }, undefined, deps);
@@ -144,6 +145,9 @@ describe.skipIf(!hasDocker).each(GRAFANA_IMAGES)(`grafanaApply applies, re-appli
     expect(home.metadata.annotations["grafana.app/folder"]).toBe("chant-e2e-payments");
     const connections = (await grafana.api(`/api/library-elements/${LIBRARY_PANEL.uid}/connections`)).body as { result: Array<{ connectionUid: string }> };
     expect(connections.result.map((c) => c.connectionUid)).toEqual(["api-overview"]);
+    // In the folder its LibraryPanel names, not the folder of the dashboard that carries it.
+    const library = (await grafana.api(`/api/library-elements/${LIBRARY_PANEL.uid}`)).body as { result: { name: string; folderUid: string } };
+    expect(library.result).toMatchObject({ name: LIBRARY_PANEL.name, folderUid: "chant-e2e-payments" });
   });
 
   it("re-apply: nothing is created and nothing changes", { timeout: 240_000 }, async () => {

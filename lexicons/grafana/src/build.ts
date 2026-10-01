@@ -30,9 +30,17 @@ import {
   type DashboardProviderEntityProps,
 } from "./dashboard";
 import { annotationJson } from "./annotations";
-import { folderLevels, isFolderEntity, type FolderEntity } from "./folder";
+import { folderLevels, folderUidFor, isFolderEntity, type FolderEntity } from "./folder";
 import { resolveFolders, type FolderPlan } from "./api/folders";
-import { isPanelEntity, isRowEntity, type PanelEntity, type RowEntity, type PanelLink } from "./panels";
+import { isPanelEntity, isRowEntity, type DashboardItem, type PanelEntity, type RowEntity, type PanelLink } from "./panels";
+import {
+  isLibraryPanelEntity,
+  isLibraryPanelRefEntity,
+  referencedLibraryPanel,
+  type LibraryPanelEntity,
+  type LibraryPanelRefEntity,
+} from "./library-panel";
+import { LIBRARY_PANEL_KIND } from "./api/library-panels";
 import { isQueryEntity, type QueryEntity, type DatasourceInput } from "./query";
 import { isDatasourceVariable, isVariableEntity, type VariableEntity, type VariableHide } from "./variables";
 import type {
@@ -51,6 +59,16 @@ import { ALERTING_FILE, alertingYaml, buildAlerting, type AlertingFile, type Ale
 import { DEFAULT_PROVIDER_NAME } from "./ownership";
 
 export type { DashboardJson, PanelJson, RowPanelJson, VariableModel, DataSourceRef };
+
+/** A library panel as a dashboard's `__elements` carries it. */
+export interface LibraryElementJson {
+  name: string;
+  uid: string;
+  kind: number;
+  model: Record<string, unknown>;
+  /** The folder the API applier writes it to, when the `LibraryPanel` names one. Grafana's own exports leave it out. */
+  folderUid?: string;
+}
 
 /** Grafana's grid is 24 columns wide. */
 export const GRID_COLUMNS = 24;
@@ -488,13 +506,55 @@ class Ids {
   }
 }
 
-function explicitIds(items: Array<PanelEntity | RowEntity>): Set<number> {
+/** The `id` an item sets, if any. A `LibraryPanel` listed as it is has none: its panel's `id` is not the reference's. */
+function ownId(item: DashboardItem): number | undefined {
+  if (isLibraryPanelEntity(item)) return undefined;
+  return typeof item.props.id === "number" ? item.props.id : undefined;
+}
+
+/** The `gridPos` an item sets, if any. */
+function ownGridPos(item: Exclude<DashboardItem, RowEntity>): Partial<GridPos> | undefined {
+  return isLibraryPanelEntity(item) ? undefined : item.props.gridPos;
+}
+
+/** The size an item takes when its `gridPos` leaves `w` or `h` out: its panel class's, for a library panel the panel it holds. */
+function defaultSize(item: Exclude<DashboardItem, RowEntity>): { w: number; h: number } {
+  if (isPanelEntity(item)) return item.panelDefinition.defaultSize;
+  const lp = referencedLibraryPanel(item as LibraryPanelEntity | LibraryPanelRefEntity).entity;
+  return lp && isPanelEntity(lp.props.panel) ? lp.props.panel.panelDefinition.defaultSize : LIBRARY_PANEL_SIZE;
+}
+
+/** The size of a reference to a library panel the project does not declare, when its `gridPos` leaves it out. */
+const LIBRARY_PANEL_SIZE = { w: 12, h: 8 };
+
+function isPlaceable(item: unknown): item is Exclude<DashboardItem, RowEntity> {
+  return isPanelEntity(item) || isLibraryPanelEntity(item) || isLibraryPanelRefEntity(item);
+}
+
+function explicitIds(items: readonly DashboardItem[]): Set<number> {
   const out = new Set<number>();
   for (const item of items) {
-    if (typeof item.props.id === "number") out.add(item.props.id);
-    if (isRowEntity(item)) for (const p of item.props.panels ?? []) if (typeof p.props.id === "number") out.add(p.props.id);
+    const id = ownId(item);
+    if (id !== undefined) out.add(id);
+    if (isRowEntity(item)) for (const p of item.props.panels ?? []) if (ownId(p) !== undefined) out.add(ownId(p)!);
   }
   return out;
+}
+
+/** A library panel reference as the dashboard holds it: Grafana draws the panel from the library. */
+function libraryRefJson(item: LibraryPanelEntity | LibraryPanelRefEntity, gridPos: GridPos, id: number): PanelJson {
+  const { uid, name } = referencedLibraryPanel(item);
+  return compact({
+    id,
+    gridPos,
+    libraryPanel: { uid, name },
+    title: isLibraryPanelRefEntity(item) ? item.props.title : undefined,
+  }) as unknown as PanelJson;
+}
+
+/** One placed item: a panel, or a reference to a library panel. */
+function itemJson(item: Exclude<DashboardItem, RowEntity>, gridPos: GridPos, id: number): PanelJson {
+  return isPanelEntity(item) ? panelJson(item, gridPos, id) : libraryRefJson(item as LibraryPanelEntity | LibraryPanelRefEntity, gridPos, id);
 }
 
 function panelJson(panel: PanelEntity, gridPos: GridPos, id: number): PanelJson {
@@ -540,14 +600,14 @@ function panelJson(panel: PanelEntity, gridPos: GridPos, id: number): PanelJson 
   }) as PanelJson;
 }
 
-/** A dashboard's `panels` array: rows and panels, laid out, with ids. */
-export function panelsJson(items: Array<PanelEntity | RowEntity>): Array<PanelJson | RowPanelJson> {
+/** A dashboard's `panels` array: rows, panels and library panel references, laid out, with ids. */
+export function panelsJson(items: readonly DashboardItem[]): Array<PanelJson | RowPanelJson> {
   const layout = new Layout();
   // Panels on the dashboard's grid with both x and y, and rows with a y, take their cells first; a collapsed row's panels are laid out on their own.
   for (const item of items) {
     if (isRowEntity(item)) layout.reserveRow(item.props.gridPos?.y);
-    const onGrid = isRowEntity(item) ? (item.props.collapsed ? [] : (item.props.panels ?? [])) : [item];
-    for (const p of onGrid.filter(isPanelEntity)) layout.reserve(p.props.gridPos, p.panelDefinition.defaultSize);
+    const onGrid: readonly unknown[] = isRowEntity(item) ? (item.props.collapsed ? [] : (item.props.panels ?? [])) : [item];
+    for (const p of onGrid.filter(isPlaceable)) layout.reserve(ownGridPos(p), defaultSize(p));
   }
   const ids = new Ids(explicitIds(items));
   const out: Array<PanelJson | RowPanelJson> = [];
@@ -560,11 +620,11 @@ export function panelsJson(items: Array<PanelEntity | RowEntity>): Array<PanelJs
       const collapsed = r.collapsed ?? false;
       // A collapsed row's panels sit under its header on a grid of their own; the next item starts right under the header.
       const rowLayout = collapsed ? new Layout(pos.y + 1) : layout;
-      const panels = (r.panels ?? []).filter(isPanelEntity);
-      if (collapsed) for (const p of panels) rowLayout.reserve(p.props.gridPos, p.panelDefinition.defaultSize);
+      const panels = ((r.panels ?? []) as readonly unknown[]).filter(isPlaceable);
+      if (collapsed) for (const p of panels) rowLayout.reserve(ownGridPos(p), defaultSize(p));
       const children = panels.map((p) => {
-        const gp = rowLayout.place(p.props.gridPos, p.panelDefinition.defaultSize);
-        return panelJson(p, gp, ids.take(p.props.id));
+        const gp = rowLayout.place(ownGridPos(p), defaultSize(p));
+        return itemJson(p, gp, ids.take(ownId(p)));
       });
       out.push(
         compact({
@@ -579,9 +639,9 @@ export function panelsJson(items: Array<PanelEntity | RowEntity>): Array<PanelJs
         }),
       );
       if (!collapsed) out.push(...children);
-    } else if (isPanelEntity(item)) {
-      const gp = layout.place(item.props.gridPos, item.panelDefinition.defaultSize);
-      out.push(panelJson(item, gp, ids.take(item.props.id)));
+    } else if (isPlaceable(item)) {
+      const gp = layout.place(ownGridPos(item), defaultSize(item));
+      out.push(itemJson(item, gp, ids.take(ownId(item))));
     }
   }
   return out;
@@ -596,10 +656,51 @@ export function dashboardUid(dashboard: DashboardEntity, exportName?: string): s
   return dashboard.props.uid ?? slugUid(exportName ?? dashboard.props.title);
 }
 
-/** One dashboard as the JSON Grafana imports. */
-export function renderDashboard(dashboard: DashboardEntity, exportName?: string): DashboardJson {
+/** Every `LibraryPanel` a dashboard places, top level and in rows, each once, in order. */
+export function dashboardLibraryPanels(dashboard: DashboardEntity): LibraryPanelEntity[] {
+  const out = new Map<string, LibraryPanelEntity>();
+  const visit = (item: unknown) => {
+    if (!isLibraryPanelEntity(item) && !isLibraryPanelRefEntity(item)) return;
+    const lp = referencedLibraryPanel(item).entity;
+    if (!lp) return;
+    const prior = out.get(lp.uid);
+    if (prior && prior !== lp) throw new Error(`grafana: dashboard "${dashboard.props.title}" places two different LibraryPanels with the uid "${lp.uid}"`);
+    out.set(lp.uid, lp);
+  };
+  for (const item of dashboard.props.panels ?? []) {
+    if (isRowEntity(item)) for (const p of item.props.panels ?? []) visit(p);
+    else visit(item);
+  }
+  return [...out.values()];
+}
+
+/** A library panel's own panel JSON: a panel's, without the `gridPos` and `id` each reference has. */
+export function libraryPanelModel(lp: LibraryPanelEntity): Record<string, unknown> {
+  if (!isPanelEntity(lp.props.panel)) throw new Error(`grafana: LibraryPanel "${lp.props.name}" has no panel`);
+  const { gridPos: _gridPos, id: _id, ...model } = panelJson(lp.props.panel, { h: 0, w: 0, x: 0, y: 0 }, 0) as unknown as Record<string, unknown>;
+  return model;
+}
+
+/**
+ * The `__elements` entry of a library panel, as Grafana's "Export for
+ * sharing externally" writes it, plus the uid of its folder when it names
+ * one (`folderUid` maps a folder path to its uid; the build passes the one
+ * that knows the declared `Folder`s).
+ */
+export function libraryElementJson(lp: LibraryPanelEntity, folderUid: (path: string) => string | undefined = folderUidFor): LibraryElementJson {
+  const inFolder = lp.folderEntity?.uid ?? (lp.props.folder && folderLevels(lp.props.folder).length > 0 ? folderUid(lp.props.folder) : undefined);
+  return compact({ name: lp.props.name, uid: lp.uid, kind: LIBRARY_PANEL_KIND, model: libraryPanelModel(lp), folderUid: inFolder });
+}
+
+/**
+ * One dashboard as the JSON Grafana imports. The library panels it places
+ * are written into `__elements`, keyed by uid.
+ */
+export function renderDashboard(dashboard: DashboardEntity, exportName?: string, folderUid?: (path: string) => string | undefined): DashboardJson {
   const p = dashboard.props;
+  const libraryPanels = dashboardLibraryPanels(dashboard);
   return compact({
+    __elements: libraryPanels.length > 0 ? Object.fromEntries(libraryPanels.map((lp) => [lp.uid, libraryElementJson(lp, folderUid)])) : undefined,
     annotations: { list: (p.annotations ?? []).map((a) => annotationJson(a, datasourceRef)) },
     description: p.description,
     editable: p.editable ?? true,
@@ -751,21 +852,33 @@ export function buildGrafana(entities: Map<string, Declarable> | Iterable<Declar
     .map(([, e]) => externalDatasourceRecord(e as ExternalDatasourceEntity))
     .sort((a, b) => a.uid.localeCompare(b.uid));
 
-  // Folders: every declared `Folder` and every one a dashboard holds, with their parents, pin uids; every path a dashboard names is a folder per level.
+  // Library panels: every one declared, and every one a dashboard places.
+  const libraryPanels = new Set<LibraryPanelEntity>();
+  for (const [, e] of named) {
+    if (isLibraryPanelEntity(e)) libraryPanels.add(e);
+    else if (isDashboardEntity(e)) for (const lp of dashboardLibraryPanels(e)) libraryPanels.add(lp);
+  }
+
+  // Folders: every declared `Folder` and every one a dashboard or library panel holds, with their parents, pin uids; every path either names is a folder per level.
   const declaredFolders = new Set<FolderEntity>();
   for (const [, e] of named) {
     if (isFolderEntity(e)) withAncestors(e, declaredFolders);
     else if (isDashboardEntity(e) && e.folderEntity) withAncestors(e.folderEntity, declaredFolders);
   }
+  for (const lp of libraryPanels) if (lp.folderEntity) withAncestors(lp.folderEntity, declaredFolders);
   const resolved = resolveFolders({
     declared: [...declaredFolders].map((f) => ({ uid: f.uid, path: f.path })),
-    paths: named.flatMap(([, e]) => (isDashboardEntity(e) && e.props.folder ? [e.props.folder] : [])),
+    paths: [
+      ...named.flatMap(([, e]) => (isDashboardEntity(e) && e.props.folder ? [e.props.folder] : [])),
+      ...[...libraryPanels].flatMap((lp) => (lp.props.folder ? [lp.props.folder] : [])),
+    ],
   }, { duplicateUids: "keep" });
+  const folderUidOfPath = (path: string) => resolved.uidOf(folderDir(path)) ?? folderUidFor(path);
 
   const dashboards: BuiltDashboard[] = [];
   for (const [name, e] of named) {
     if (!isDashboardEntity(e)) continue;
-    const json = renderDashboard(e, name);
+    const json = renderDashboard(e, name, folderUidOfPath);
     const uid = json.uid as string;
     const folder = e.props.folder;
     const sub = folder ? folderDir(folder) : "";

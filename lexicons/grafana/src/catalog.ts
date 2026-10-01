@@ -7,6 +7,7 @@
 import type { LexiconEntry } from "@intentius/chant/lsp/lexicon-providers";
 import { DATASOURCE_PROVISIONING_TYPE, DATASOURCE_TYPE, EXTERNAL_DATASOURCE_TYPE } from "./datasource";
 import { FOLDER_TYPE } from "./folder";
+import { LIBRARY_PANEL_REF_TYPE, LIBRARY_PANEL_TYPE } from "./library-panel";
 import { DASHBOARD_TYPE, DASHBOARD_PROVIDER_TYPE } from "./dashboard";
 import * as panels from "./panels";
 import * as queries from "./query";
@@ -22,7 +23,7 @@ import {
   NOTIFICATION_TEMPLATE_TYPE,
 } from "./alerting";
 
-export type CatalogKind = "dashboard" | "folder" | "datasource" | "provider" | "panel" | "row" | "query" | "variable" | "alerting" | "expression";
+export type CatalogKind = "dashboard" | "folder" | "datasource" | "provider" | "panel" | "library" | "row" | "query" | "variable" | "alerting" | "expression";
 
 export interface CatalogEntry {
   className: string;
@@ -112,6 +113,13 @@ export const BUILTIN_CATALOG: CatalogEntry[] = [
     description: "A folder with a stable uid, nested with parent; a dashboard's folder may be one instead of a path",
   },
   {
+    className: "LibraryPanel",
+    entityType: LIBRARY_PANEL_TYPE,
+    kind: "library",
+    entityKind: "resource",
+    description: "A panel kept in Grafana's library and shared by dashboards; the build writes it into their __elements, and the API applier into the library",
+  },
+  {
     className: "DatasourceProvisioning",
     entityType: DATASOURCE_PROVISIONING_TYPE,
     kind: "provider",
@@ -131,6 +139,13 @@ export const BUILTIN_CATALOG: CatalogEntry[] = [
     kind: "row",
     entityKind: "property",
     description: "A full-width row header; its panels are placed below it, or inside it when collapsed",
+  },
+  {
+    className: "LibraryPanelRef",
+    entityType: LIBRARY_PANEL_REF_TYPE,
+    kind: "library",
+    entityKind: "property",
+    description: "A library panel placed on a dashboard, with its own gridPos, id and title; names a LibraryPanel, or { uid, name } of one already in Grafana",
   },
   {
     className: "AlertRuleGroup",

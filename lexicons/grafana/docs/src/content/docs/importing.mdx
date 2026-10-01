@@ -92,11 +92,12 @@ A datasource provisioning file becomes one `Datasource` per entry, with its `jso
 
 An export made for sharing names its datasources through `__inputs` and `${DS_PROMETHEUS}`, which Grafana's import dialog fills in. The importer turns each such input into a `DatasourceVariable` of the same name, so every `${DS_PROMETHEUS}` in the dashboard still resolves, now to whatever the variable selects. A constant input (`${VAR_SERVICE}`) is replaced by its value, as the import dialog would. Both are reported.
 
+The same export carries the library panels it uses in `__elements`. Each becomes a `LibraryPanel` with the uid and name it has in Grafana and its model as a panel, and each panel that places it a `LibraryPanelRef` with the reference's `id`, `gridPos` and `title`; the build writes them back the same way (see [Library panels](../dashboards-and-panels/#library-panels)). A plain export has only the references, so the importer writes each as `libraryPanel: { uid, name }`, a library panel that must already exist in Grafana, and says so in a warning; import the export for sharing externally to get the library panel too. An element no panel places, and a library variable, are reported and left out, and so are the panel keys Grafana 8 and 9 saved on a reference beside `libraryPanel`, which Grafana does not read.
+
 ## What is not carried
 
 `chant import` prints a warning for each of these, and leaves it out:
 
-- library panels, and the `__elements` that carry their models;
 - a top-level dashboard or panel key no prop takes, such as `gnetId`, and the `__requires` plugin list;
 - a textbox variable's current value when it differs from its default;
 - `-- Mixed --` anywhere but on a panel (a row, a query or a variable). A panel's Mixed datasource is carried as a `DatasourceRef` const.
@@ -126,7 +127,7 @@ Grafana's v1 read drops what the classic model cannot hold without saying so. Th
 | an annotation placed in the controls menu | a toggle in the usual place |
 | a key the pinned `dashboardv2` schema does not have | nothing |
 
-What the classic model has but chant does not yet (library panels) is reported as for a classic dashboard; see below. Ad hoc, group by and switch variables are imported as they are from a classic dashboard. `dashboard.grafana.app/v2alpha1` is not read: read the dashboard at v2 instead.
+A library panel element becomes a reference to the library panel, as in Grafana's v1 read; a v2 export does not carry the library panel's model, so the reference names it by `{ uid, name }`, with the warning a plain classic export gets. Ad hoc, group by and switch variables are imported as they are from a classic dashboard. `dashboard.grafana.app/v2alpha1` is not read: read the dashboard at v2 instead.
 
 A v0 or v1 read of a dashboard Grafana stores as v2 is refused. Grafana marks it with `status.conversion.storedVersion: v2`, and it has already lost what v2 has and v1 does not, with nothing in the spec to show it; building it and writing it back would overwrite the tabs. The warning says to read the dashboard at `dashboard.grafana.app/v2` (or export it with the V2 Resource model) and import that. To accept such a read anyway, run `chant import dashboard.json --lexicon grafana --parser-option acceptLossyV1` (a `--parser-option` is a boolean here, so `=true` is optional), or call the parser directly with `new GrafanaParser({ acceptLossyV1: true })`. Either imports it with a warning. `acceptLossyV1` is the only parser option grafana declares; any other name is refused. `GET /api/dashboards/uid/<uid>` carries no such marker, so a v2 dashboard read through it cannot be told from a classic one: prefer the v2 export.
 

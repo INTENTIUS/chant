@@ -220,15 +220,22 @@ describe("dashboard JSON -> TypeScript -> dashboard JSON", () => {
         expect(out.source).toContain("new OpenSearchQuery(");
         expect(out.source).not.toContain("defineQuery");
         expect(out.source).toContain("queryType: \"PPL\"");
-      } else if (file.includes("slo")) {
-        expect(out.warnings).toContainEqual(expect.stringMatching(/is a library panel \("Burn rate", uid chant-fx-burn\)/));
       }
-      // A library panel, and the models an external export carries in __elements, are named.
+      // Library panels (#3010): one an external export carries in __elements becomes a LibraryPanel, and the reference
+      // a LibraryPanelRef to it, with no warning; the rebuilt dashboard carries it in __elements again. A plain
+      // export's reference names the library panel by { uid, name }, with a warning that it must exist in Grafana.
       const source = JSON.parse(read(file)) as Json;
-      const libraryPanels = (source.panels as Json[]).filter((p) => p.libraryPanel !== undefined).length;
-      expect(out.warnings.filter((w) => w.includes("is a library panel")).length).toBe(libraryPanels);
-      if (source.__elements && Object.keys(source.__elements as Json).length > 0) {
-        expect(out.warnings).toContain("dashboard: __elements is not carried (the library panels exported with it; library panels are not carried yet)");
+      const references = (source.panels as Json[]).filter((p) => p.libraryPanel !== undefined);
+      const elements = Object.keys((source.__elements as Json | undefined) ?? {});
+      const external = out.warnings.filter((w) => w.includes("which the dashboard does not carry"));
+      if (elements.length > 0) {
+        expect(out.source).toMatch(/= new LibraryPanel\(\{\n {2}name: "(Burn rate|Service owners)",\n {2}uid: "chant-fx-(burn|owners)",\n {2}panel: new \w+Panel\(\{/);
+        expect(out.source).toMatch(/new LibraryPanelRef\(\{\s*libraryPanel: (burnRate|serviceOwners),\s*id: \d,\s*gridPos: /);
+        expect(Object.keys(out.rebuilt!.__elements as Json)).toEqual(elements);
+        expect(external).toEqual([]);
+      } else {
+        expect(external.length).toBe(references.length);
+        if (references.length > 0) expect(out.source).toMatch(/libraryPanel: \{ uid: "chant-fx-(burn|owners)", name: "(Burn rate|Service owners)" \}/);
       }
       if (file.includes(".external.")) {
         // The OpenSearch dashboard asks for its one datasource only.

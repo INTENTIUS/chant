@@ -41,6 +41,14 @@
  *   dialog would.
  * - The stored copy's `id`, `version` and `iteration` are Grafana's
  *   bookkeeping and are dropped without a warning.
+ *
+ * Library panels (#3010): each library panel an export carries in
+ * `__elements` becomes a `LibraryPanel`, and each panel that references one
+ * (`libraryPanel: { uid, name }`) a `LibraryPanelRef` to it. A reference to
+ * a library panel the dashboard does not carry (a plain export) names it by
+ * `{ uid, name }`, with a warning that it must exist in Grafana. An element
+ * no panel references is left out, with a warning, since the build writes
+ * only the library panels a dashboard places.
  */
 
 import * as jsYaml from "js-yaml";
@@ -208,6 +216,8 @@ const PACKAGE_CLASS_NAMES = new Set([
   "ExternalDatasource",
   "DatasourceProvisioning",
   "Folder",
+  "LibraryPanel",
+  "LibraryPanelRef",
 ]);
 
 function words(text: string): string[] {
@@ -251,6 +261,9 @@ interface DatasourceVariableInfo {
   pluginType: string;
 }
 
+/** Why the keys of a library panel reference besides its id, gridPos, title and libraryPanel are not carried. */
+const LIBRARY_REF_KEYS = "(Grafana draws a library panel from the library's copy, and does not read them from the reference)";
+
 /** The state of one dashboard's conversion. */
 class DashboardConverter {
   readonly declarations: Declaration[] = [];
@@ -266,6 +279,9 @@ class DashboardConverter {
   private legacyPanels = 0;
   private readonly legacyTypes = new Set<string>();
   private readonly takenModuleFiles = new Set<string>();
+  /** `__elements` by key, and the `LibraryPanel` declared for each one a panel references. */
+  private readonly elements = new Map<string, unknown>();
+  private readonly libraryPanels = new Map<string, string>();
 
   constructor(
     private readonly d: Json,
@@ -733,23 +749,19 @@ class DashboardConverter {
     }).filter((t) => t !== undefined);
   }
 
-  /** One panel, with its queries; returns the panel's declaration id. */
-  panel(json: unknown, path: string, module: string): string | undefined {
+  /**
+   * One panel, with its queries; returns the panel's declaration id. A
+   * library panel's model (`model`) has no place of its own on the grid: its
+   * `gridPos`, `id` and `libraryPanel` belong to each reference, and are left
+   * out.
+   */
+  panel(json: unknown, path: string, module: string, opts: { model?: string } = {}): string | undefined {
     if (!isObject(json)) {
       this.report.drop(path, "panels", "", "(an entry that is not a panel) is not carried");
       return undefined;
     }
-    const subject = describePanel(json);
-    if (isObject(json.libraryPanel)) {
-      const lp = json.libraryPanel;
-      this.report.drop(
-        path,
-        subject,
-        "",
-        `is a library panel ("${String(lp.name ?? lp.uid)}", uid ${String(lp.uid)}); library panels are not carried yet, so it is left out`,
-      );
-      return undefined;
-    }
+    const subject = opts.model ?? describePanel(json);
+    if (!opts.model && json.libraryPanel !== undefined && json.libraryPanel !== null) return this.libraryPanelRef(json, path, subject, module);
     const type = typeof json.type === "string" ? json.type : "";
     // A built-in's id is taken as it is: core ids predate the lowercase rule (`nodeGraph`).
     if (type === "row" || (!builtinPanelFor(type) && !PLUGIN_ID.test(type))) {
@@ -765,7 +777,15 @@ class DashboardConverter {
     const fc = json.fieldConfig;
     if (isObject(fc) && deepEqual(fc, { defaults: {}, overrides: [] })) delete props.fieldConfig;
 
-    this.gridPos(json, path, subject, props);
+    if (opts.model) {
+      for (const key of ["gridPos", "id", "libraryPanel"]) {
+        if (!(key in json)) continue;
+        delete props[key];
+        this.report.drop(`${path}${pointer(key)}`, subject, key);
+      }
+    } else {
+      this.gridPos(json, path, subject, props);
+    }
 
     const own = this.resolveDatasource(json.datasource, `${path}/datasource`, subject);
     if (own === "mixed") props.datasource = this.mixed(json.datasource, `${path}/datasource`, subject).value;
@@ -817,6 +837,7 @@ class DashboardConverter {
     }
 
     const handled = new Set([...PANEL_FIELDS, "type", "datasource", "targets", "repeat", "libraryPanel"]);
+    if (opts.model) handled.add("gridPos").add("id");
     const extra: string[] = [];
     for (const key of Object.keys(json)) {
       if (handled.has(key)) continue;
@@ -845,6 +866,132 @@ class DashboardConverter {
       unit: id,
       property: cls.customClass === undefined,
     });
+  }
+
+  // ── library panels ──────────────────────────────────────────────
+
+  /**
+   * A panel that places a library panel: a `LibraryPanelRef` with the
+   * reference's id, gridPos and title, naming the `LibraryPanel` declared
+   * from `__elements`, or `{ uid, name }` when the dashboard does not carry
+   * it.
+   */
+  private libraryPanelRef(json: Json, path: string, subject: string, module: string): string | undefined {
+    const lp = json.libraryPanel;
+    if (!isObject(lp) || typeof lp.uid !== "string" || lp.uid === "") {
+      this.report.drop(path, subject, "", "is a library panel reference with no uid, so it is left out");
+      return undefined;
+    }
+    const uid = lp.uid;
+    const element = this.elements.get(uid);
+    const declared = element === undefined ? undefined : this.libraryPanel(uid, element);
+    const name = declared ? declared.name : typeof lp.name === "string" ? lp.name : "";
+    const target: unknown = declared ? declRef(declared.id) : { uid, name };
+    if (!declared) {
+      if (typeof lp.name !== "string") this.report.replace(`${path}/libraryPanel/name`, name, subject, "libraryPanel.name", 'is missing, so it is written as ""');
+      this.report.warn(
+        `${subject} places the library panel "${name}" (uid ${uid}), which the dashboard does not carry: it is referenced as { uid, name }, so it must exist in Grafana. ` +
+          "To import the library panel too, import the dashboard as exported for sharing externally, which carries it in __elements.",
+      );
+    } else if (lp.name !== name) {
+      this.report.replace(`${path}/libraryPanel/name`, name, subject, "libraryPanel.name", `is written as the library panel's name, "${name}"`);
+    }
+    for (const key of Object.keys(lp)) if (key !== "uid" && key !== "name") this.report.drop(`${path}/libraryPanel${pointer(key)}`, subject, `libraryPanel.${key}`, NO_PROP);
+
+    const index = this.panelCount++;
+    const id = `panel:${index}`;
+    const props: Json = { libraryPanel: target };
+    if (typeof json.id === "number") props.id = json.id;
+    if (isObject(json.gridPos)) props.gridPos = json.gridPos;
+    this.gridPos(json, path, subject, props);
+    if (typeof json.title === "string" && json.title !== "") props.title = json.title;
+    const ignored: string[] = [];
+    for (const key of Object.keys(json)) {
+      if (key === "libraryPanel" || key === "id" || key === "gridPos" || (key === "title" && typeof json.title === "string")) continue;
+      const v = json[key];
+      // Grafana 12.4 writes this placeholder type on a reference in a plain export.
+      const placeholder = key === "type" && v === "library-panel-ref";
+      this.report.drop(`${path}${pointer(key)}`, subject, key, placeholder || v === null ? undefined : LIBRARY_REF_KEYS);
+      if (!placeholder && v !== null) ignored.push(key);
+    }
+    return this.add({
+      id,
+      kind: "new",
+      className: "LibraryPanelRef",
+      props,
+      name: typeof json.title === "string" && json.title !== "" ? json.title : name || `panel ${String(json.id ?? index + 1)}`,
+      module,
+      unit: id,
+      property: true,
+    });
+  }
+
+  /** The `LibraryPanel` for an `__elements` entry, declared the first time a panel references it. */
+  private libraryPanel(key: string, element: unknown): { id: string; name: string } | undefined {
+    const declared = this.libraryPanels.get(key);
+    if (declared) return { id: declared, name: String((this.declarations.find((d) => d.id === declared)!.props as Json).name) };
+    const path = pointer("__elements", key);
+    const subject = `library panel "${key}"`;
+    if (!isObject(element) || typeof element.name !== "string" || element.name === "" || !isObject(element.model)) {
+      return undefined;
+    }
+    const module = this.module("library-panels", "library-panels", "Library panels the dashboard places, as its export carried them in __elements");
+    const pid = this.panel(element.model, `${path}/model`, module, { model: `library panel "${element.name}"` });
+    if (!pid) return undefined;
+    const props: Json = { name: element.name, uid: key, panel: declRef(pid) };
+    if (element.uid !== key) this.report.replace(`${path}/uid`, key, subject, "uid", element.uid === undefined ? undefined : `is written as its key in __elements, "${key}"`);
+    // Grafana reads an element without a kind as a library panel, which the build writes as kind 1.
+    if (element.kind !== 1) this.report.replace(`${path}/kind`, 1, subject, "kind");
+    for (const k of Object.keys(element)) {
+      if (k === "uid" || k === "name" || k === "kind" || k === "model") continue;
+      if (element[k] === null) this.report.drop(`${path}${pointer(k)}`, subject, k);
+      else if (k === "folderUid") this.report.drop(`${path}${pointer(k)}`, subject, k, "(the uid of the folder it is kept in; give the LibraryPanel a folder)");
+      else this.report.drop(`${path}${pointer(k)}`, subject, k, NO_PROP);
+    }
+    const id = `library-panel:${key}`;
+    this.add({ id, kind: "new", className: "LibraryPanel", props, name: element.name, module });
+    this.libraryPanels.set(key, id);
+    return { id, name: element.name };
+  }
+
+  /**
+   * Reads `__elements`: each library panel is declared when a panel first
+   * references it. Called before the panels; `settleElements` reports what
+   * was not used.
+   */
+  readElements(): void {
+    const els = this.d.__elements;
+    if (els === undefined) return;
+    if (!isObject(els)) {
+      this.report.drop(pointer("__elements"), "dashboard", "__elements", els === null ? undefined : "(it is not an object of library panels)");
+      return;
+    }
+    for (const [key, el] of Object.entries(els)) {
+      if (isObject(el) && el.kind !== undefined && el.kind !== 1) {
+        this.report.drop(pointer("__elements", key), `__elements entry "${key}"`, "", `is a library ${el.kind === 2 ? "variable" : `element of kind ${String(el.kind)}`}, which chant has no class for, so it is left out`);
+        continue;
+      }
+      if (!isObject(el) || typeof el.name !== "string" || el.name === "" || !isObject(el.model)) {
+        this.report.drop(pointer("__elements", key), `__elements entry "${key}"`, "", "has no name or panel model, so it is left out");
+        continue;
+      }
+      this.elements.set(key, el);
+    }
+  }
+
+  /** Elements no panel referenced: the build writes only the library panels a dashboard places. */
+  settleElements(): void {
+    const els = this.d.__elements;
+    for (const key of this.elements.keys()) {
+      if (this.libraryPanels.has(key)) continue;
+      this.report.drop(pointer("__elements", key), `library panel "${key}"`, "", "is in __elements but no panel places it, so it is left out");
+    }
+    if (isObject(els) && Object.keys(els).length === 0) this.report.drop(pointer("__elements"), "dashboard", "__elements");
+  }
+
+  /** The `LibraryPanel` declarations, which the plan exports so the build and observation see them. */
+  libraryPanelIds(): string[] {
+    return [...this.libraryPanels.values()];
   }
 
   /** A row, after its panels. */
@@ -924,14 +1071,12 @@ class DashboardConverter {
 
   convert(): Plan {
     const d = this.d;
-    for (const key of ["__requires", "__elements"]) {
-      if (!(key in d)) continue;
-      const v = d[key];
-      const empty = v === null || (Array.isArray(v) && v.length === 0) || (isObject(v) && Object.keys(v).length === 0);
-      if (empty) this.report.drop(pointer(key), "dashboard", key);
-      else if (key === "__requires") this.report.drop(pointer(key), "dashboard", key, "(the list of plugins it was exported with; Grafana does not need it to load the dashboard)");
-      else this.report.drop(pointer(key), "dashboard", key, "(the library panels exported with it; library panels are not carried yet)");
+    if ("__requires" in d) {
+      const v = d.__requires;
+      const empty = v === null || (Array.isArray(v) && v.length === 0);
+      this.report.drop(pointer("__requires"), "dashboard", "__requires", empty ? undefined : "(the list of plugins it was exported with; Grafana does not need it to load the dashboard)");
     }
+    this.readElements();
     if ("__inputs" in d) this.report.drop(pointer("__inputs"), "dashboard", "__inputs");
 
     const templating = isObject(d.templating) && Array.isArray(d.templating.list) ? d.templating.list : [];
@@ -947,6 +1092,7 @@ class DashboardConverter {
     const variableRefs = [...inputIds, ...templating.map((_, i) => varIds.get(i)).filter((x): x is string => x !== undefined)].map(declRef);
 
     const panelRefs = this.items();
+    this.settleElements();
     const annotations = this.annotations();
     this.settleExternals();
     if (this.legacyPanels > 0) {
@@ -1008,14 +1154,14 @@ class DashboardConverter {
     this.module("dashboard", "dashboard", `The dashboard "${String(props.title)}"`);
     this.add({ id: "dashboard", kind: "new", className: "Dashboard", props, name: String(props.title) || "dashboard", module: "dashboard" });
 
-    const order2 = ["plugins", "datasources", "variables", "panels"];
+    const order2 = ["plugins", "datasources", "variables", "library-panels", "panels"];
     const modules = [...this.modules.values()].sort((a, b) => rank(a.key, order2) - rank(b.key, order2));
     return {
       directory: slugUid(typeof d.uid === "string" && d.uid !== "" ? d.uid : String(props.title) || "dashboard"),
       modules,
       declarations: this.declarations,
       customClasses: [...this.customClasses.values()],
-      exports: [...this.externals, "dashboard"],
+      exports: [...this.externals, ...this.libraryPanelIds(), "dashboard"],
       main: "dashboard",
     };
   }

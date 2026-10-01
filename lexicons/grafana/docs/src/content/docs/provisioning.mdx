@@ -82,6 +82,8 @@ export const grafanaResources = GrafanaOperatorResources({
 
 Pick the delivery by what runs your Grafana: export `GrafanaConfigMaps` for the Helm chart's sidecar or a plain Deployment, and `GrafanaOperatorResources` for the operator. To export both, set `dashboardSource: "configMap"` and use the same `name`: each `GrafanaDashboard` then reads its JSON from the dashboard ConfigMap through `configMapRef`, so it is stored once.
 
+Library panels are not written as resources yet (#3186): a `GrafanaDashboard`'s `json` carries them in `__elements`, which does not create them, so apply them over the API.
+
 Folders are always `GrafanaFolder` resources with the uids the build gives them, so a nested `folder` or a `Folder` with `parent` keeps its place and its uid. Dashboard providers are not written; the operator does not use them.
 
 The operator has no environment to expand, so a datasource field written as `${NAME}` or `$__env{NAME}` (in `url`, `user`, `basicAuthUser`, `database` or `secureJsonData`) reads key `NAME` of the Secret named by `secretName`, through `spec.valuesFrom`. Without `secretName` such a field is an error, and so is `$__file{...}`. `withCredentials`, `version` and `orgId` are not in the operator's datasource and are left out.
@@ -145,8 +147,10 @@ Setting `folder` or `folderUid` on the provider turns `foldersFromFilesStructure
 
 ## Import by hand
 
-Each `dashboards/*.json` file is also what Dashboards → New → Import accepts, and what `POST /api/dashboards/db` takes as `dashboard`.
+Each `dashboards/*.json` file is also what Dashboards → New → Import accepts, and what `POST /api/dashboards/db` takes as `dashboard`. The import creates the library panels a file carries in `__elements`; `POST /api/dashboards/db` does not.
 
 ## Without mounting files
 
 When the files cannot be mounted into Grafana, `grafanaApply` writes the dashboards, their folders and any library panels over Grafana's HTTP API instead. See [Apply over the API](../applying/). Datasources still come from the provisioning file.
+
+File provisioning does not create library panels. A dashboard file carries the library panels it places in `__elements`, but Grafana stores them with the dashboard and draws each reference only once a library panel with that uid exists, so a project that declares `LibraryPanel`s applies them over the API (see [Library panels](../dashboards-and-panels/#library-panels)).

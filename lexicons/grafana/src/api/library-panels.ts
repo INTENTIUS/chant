@@ -36,7 +36,7 @@ export interface LibraryPanelPlan {
   readonly uid: string;
   readonly name: string;
   readonly model: Json;
-  /** The folder it goes in: that of the first dashboard that carries it. Absent for the General folder. */
+  /** The folder it goes in: the element's `folderUid`, else that of the first dashboard that carries it. Absent for the General folder. */
   readonly folderUid?: string;
 }
 
@@ -61,7 +61,9 @@ export function libraryPanelsOf(dashboard: Json, folderUid?: string): { panels: 
       skipped.push(uid);
       continue;
     }
-    panels.push({ uid, name: el.name, model: el.model, ...(folderUid ? { folderUid } : {}) });
+    // A build writes the folder a `LibraryPanel` names into its element; an export's elements have none, and go in the dashboard's.
+    const inFolder = typeof el.folderUid === "string" && el.folderUid !== "" ? el.folderUid : folderUid;
+    panels.push({ uid, name: el.name, model: el.model, ...(inFolder ? { folderUid: inFolder } : {}) });
   }
   return { panels, skipped };
 }

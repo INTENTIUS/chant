@@ -15,6 +15,8 @@ import { StatPanel, Row } from "./panels";
 import { PromQuery } from "./query";
 import { CustomVariable } from "./variables";
 import { Folder } from "./folder";
+import { LibraryPanel } from "./library-panel";
+import { emptyGrafana, writableGrafana } from "./api/fake-grafana-writes";
 
 type Entities = GrafanaObserveOptions["entities"];
 
@@ -243,5 +245,22 @@ describe("folders (#2953)", () => {
     // The fake serves folders over /api/folders only (Grafana 11), which carries no labels.
     expect(out.resources.k8s).toMatchObject({ physicalId: "k8s", ownership: "unknown", attributes: { title: "Kubernetes", parentUid: "platform" } });
     expect(out.resources.gone).toBeUndefined();
+  });
+});
+
+describe("library panels (#3010)", () => {
+  it("a LibraryPanel is read by its uid over /api/library-elements, with ownership unknown, and withheld from an owned read", async () => {
+    const burn = new LibraryPanel({ name: "Burn rate", panel: new StatPanel({ title: "Burn rate" }) });
+    const gone = new LibraryPanel({ name: "Gone", uid: "gone", panel: new StatPanel({}) });
+    const panels = entities({ burn, gone });
+    const s = emptyGrafana("v1");
+    s.libraryElements["burn-rate"] = { uid: "burn-rate", name: "Burn rate", kind: 1, model: {}, folderUid: "slos", version: 3 };
+    const read = (owned?: boolean) =>
+      describeResources({ environment: "prod", entityNames: [...panels.keys()], entities: panels, config: CONFIG, env: ENV, http: writableGrafana(s), ...(owned ? { owned } : {}) });
+    const out = normalizeObservation(await read());
+    expect(out.resources.burn).toMatchObject({ physicalId: "burn-rate", status: "PRESENT", ownership: "unknown", attributes: { name: "Burn rate", folderUid: "slos", version: 3 } });
+    expect(out.resources.gone).toBeUndefined();
+    const owned = normalizeObservation(await read(true));
+    expect(owned.unobserved?.burn?.reason).toBe("filtered");
   });
 });

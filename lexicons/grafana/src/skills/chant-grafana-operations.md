@@ -99,7 +99,7 @@ export default Op({
 });
 ```
 
-Run it with `chant run grafana-prod`, or from an agent through the MCP `op-run`, `op-status` and `op-signal` tools. The applier creates folders parents first with their uids, writes library panels found in `__elements`, and sends each dashboard with the project's labels. A dashboard whose live content already matches is `unchanged` and not written; a panel title edited in the UI is put back. `prune` deletes only dashboards and folders labelled with this project's stack and env. It never touches UI-saved or file-provisioned dashboards, library panels, or anything on Grafana 11, and does nothing when no `ownership.stack` is set. Datasources still come from the provisioning file.
+Run it with `chant run grafana-prod`, or from an agent through the MCP `op-run`, `op-status` and `op-signal` tools. The applier creates folders parents first with their uids, writes the library panels the build carries in `__elements` (each `LibraryPanel`, in its folder), and sends each dashboard with the project's labels. A dashboard whose live content already matches is `unchanged` and not written; a panel title edited in the UI is put back. `prune` deletes only dashboards and folders labelled with this project's stack and env. It never touches UI-saved or file-provisioned dashboards, library panels, or anything on Grafana 11, and does nothing when no `ownership.stack` is set. Datasources still come from the provisioning file.
 
 ## A loop that keeps UI edits
 
