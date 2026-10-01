@@ -495,7 +495,7 @@ describe("panels and rows", () => {
       const model = { ...burn.model, id: 9, gridPos: { h: 1, w: 1, x: 0, y: 0 }, libraryPanel: { uid: "lp", name: "Burn" } };
       const { warnings, edits } = planDashboard(dashboard({ __elements: { lp: { ...burn, model, folderUid: "slos" } }, panels: [ref] }));
       expect(warnings).toEqual(['library panel "lp": folderUid is not carried (the uid of the folder it is kept in; give the LibraryPanel a folder)']);
-      expect(edits.map((e) => e.path).sort()).toEqual(["/__elements/lp/folderUid", "/__elements/lp/model/gridPos", "/__elements/lp/model/id", "/__elements/lp/model/libraryPanel"]);
+      expect(edits.map((e) => ("path" in e ? e.path : "")).sort()).toEqual(["/__elements/lp/folderUid", "/__elements/lp/model/gridPos", "/__elements/lp/model/id", "/__elements/lp/model/libraryPanel"]);
     });
   });
 
