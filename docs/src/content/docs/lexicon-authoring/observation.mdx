@@ -47,7 +47,7 @@ describeResources?(options: {
 
 Every option after `entities` is optional on both sides. A lexicon whose substrate has no such concept ignores it; core omits it when the project declares none. The full contract with per-field commentary is `packages/core/src/lexicon.ts`.
 
-`entities` holds only the declared entities that have a live counterpart of their own. Core leaves out outputs, parameters and serializer directives, which carry no `props`, and property-kind declarables (`createProperty`: a Grafana panel, an aws `SecurityGroup_Ingress`). A property-kind declarable exists only inside the resource that holds it, so your reader sees it in that resource's `props` and never has to answer for it on its own. The deep diff compares it as part of the holder's tree. The same set reaches `observeResourcesDeep()`, the snapshot and the change set.
+`entities` holds only the declared entities that have a live counterpart of their own. An output or a parameter carries no `props`, so core leaves it out. Core also leaves out property-kind declarables (`createProperty`, such as a Grafana panel). A property-kind declarable exists only inside the resource that holds it, so your reader sees it in that resource's `props` and never has to answer for it on its own; the deep diff compares it as part of the holder's tree. `observeResourcesDeep()` receives the same set.
 
 Return a map keyed by **chant entity name** (the export name on the `*.ts` file), value is the `ResourceMetadata` chant uses to display status and detect drift.
 
