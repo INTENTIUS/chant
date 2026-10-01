@@ -18,7 +18,7 @@
  */
 
 import { checkPromql } from "@intentius/chant-lexicon-prometheus/promql";
-import { datasourceUses, variablesOf, type KnownDatasource } from "./datasource-refs";
+import { dashboardScopes, datasourceUses, type KnownDatasource } from "./datasource-refs";
 
 type Json = Record<string, unknown>;
 
@@ -46,6 +46,8 @@ export interface Substituted {
   text: string;
   /** Maps an offset in `text` back to one in the original query. */
   originalOffset(at: number): number;
+  /** Whether an offset in `text` falls in, or just after, a substituted placeholder. */
+  variableAt(at: number): boolean;
 }
 
 /** Replace every template variable outside a string literal with a placeholder that parses in its place. */
@@ -105,6 +107,9 @@ export function substituteTemplateVariables(query: string): Substituted {
         shift = s.original + s.originalLength - (s.at + s.length);
       }
       return at + shift;
+    },
+    variableAt(at: number): boolean {
+      return spans.some((s) => at >= s.at && at <= s.at + s.length);
     },
   };
 }
@@ -178,16 +183,5 @@ function usesOf(dashboard: Json, known: ReadonlyMap<string, KnownDatasource>, li
 
 /** Every PromQL query a dashboard sends to Prometheus: panel queries, query variables and the library panels an export embeds in `__elements`. */
 export function prometheusQueries(dashboard: Json, known: ReadonlyMap<string, KnownDatasource>): PromqlUse[] {
-  const out = usesOf(dashboard, known);
-  const elements = dashboard.__elements;
-  if (elements && typeof elements === "object" && !Array.isArray(elements)) {
-    // The dashboard's variables, so a library panel's `${DS_...}` ref resolves as the dashboard's would.
-    const templating = { list: variablesOf(dashboard) };
-    for (const [key, element] of Object.entries(elements as Json)) {
-      const model = element && typeof element === "object" ? (element as Json).model : undefined;
-      if (!model || typeof model !== "object" || Array.isArray(model)) continue;
-      out.push(...usesOf({ templating, panels: [model] }, known, key));
-    }
-  }
-  return out;
+  return dashboardScopes(dashboard).flatMap((scope) => usesOf(scope.json, known, scope.library));
 }
