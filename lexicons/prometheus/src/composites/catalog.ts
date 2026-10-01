@@ -5,6 +5,76 @@ import type { CompositeEntry } from "@intentius/chant/lexicon";
 
 export const compositeCatalog: CompositeEntry[] = [
   {
+    "name": "GenAiRules",
+    "lexicon": "prometheus",
+    "description": "Recording rules and opt-in alerts for GenAI calls, from the otel preset's metrics.",
+    "bundles": [
+      "RuleGroup"
+    ],
+    "params": [
+      {
+        "name": "genAi",
+        "type": "GenAiMetrics | { metrics: GenAiMetrics }",
+        "required": true,
+        "description": "The preset's metrics: `genAiMetrics(options)` with the options the collector was built with, or `genAiComponents(options)`."
+      },
+      {
+        "name": "source",
+        "type": "\"client\" | \"spans\"",
+        "required": false,
+        "description": "Which metrics the model rules read (default `client` when the metrics include the conventions' client metrics, else `spans`)."
+      },
+      {
+        "name": "prices",
+        "type": "GenAiPrice[]",
+        "required": false,
+        "description": "Prices per provider and model."
+      },
+      {
+        "name": "alerts",
+        "type": "GenAiAlerting",
+        "required": false,
+        "description": "Opt-in alerts (default: none)."
+      },
+      {
+        "name": "name",
+        "type": "string",
+        "required": false,
+        "description": "The rule group's name (default `genai`)."
+      },
+      {
+        "name": "prefix",
+        "type": "string",
+        "required": false,
+        "description": "The first part of every recorded series name (default `gen_ai`)."
+      },
+      {
+        "name": "rateWindow",
+        "type": "string",
+        "required": false,
+        "description": "The range every `rate` reads (default `5m`)."
+      },
+      {
+        "name": "groupBy",
+        "type": "string[]",
+        "required": false,
+        "description": "More Prometheus labels every rule keeps, e.g. `job` or `service_name`."
+      },
+      {
+        "name": "labels",
+        "type": "LabelSet",
+        "required": false,
+        "description": "Labels added to every rule, e.g. `team`."
+      },
+      {
+        "name": "interval",
+        "type": "string",
+        "required": false,
+        "description": "Evaluation interval of the group (default: Prometheus's `evaluation_interval`)."
+      }
+    ]
+  },
+  {
     "name": "Slo",
     "lexicon": "prometheus",
     "description": "An SLO, built to recording rules and multiwindow multi-burn-rate alerts.",

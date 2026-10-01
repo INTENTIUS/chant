@@ -36,9 +36,9 @@ PKGJSON
 
 install_from_tarballs() {
   # $1 = lexicon tarball path, or several separated by spaces when a lexicon
-  # depends on another workspace lexicon (k8s needs prometheus and otel, fly
-  # needs otel, gitlab needs github), so npm installs this commit's copy of it
-  # rather than the registry's; core always included
+  # depends on another workspace lexicon (k8s needs prometheus and otel,
+  # prometheus and fly need otel, gitlab needs github), so npm installs this
+  # commit's copy of it rather than the registry's; core always included
   # shellcheck disable=SC2086
   pkg_install /tarballs/core.tgz $1
 }
@@ -179,7 +179,7 @@ if [ "$INSTALL_MODE" = "registry" ]; then
 fi
 
 # Prometheus manual project
-test_manual_project "prometheus" "/tarballs/lexicon-prometheus.tgz" \
+test_manual_project "prometheus" "/tarballs/lexicon-prometheus.tgz /tarballs/lexicon-otel.tgz" \
   'import { RuleGroup, type Rule } from "@intentius/chant-lexicon-prometheus";
 const rules: Rule[] = [{ alert: "TargetDown", expr: "up == 0", for: "5m", labels: { severity: "page" }, annotations: { summary: "down" } }];
 export const smoke = new RuleGroup({ name: "smoke", rules });'

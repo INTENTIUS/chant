@@ -62,6 +62,10 @@ export default defineConfig({
                               "slug": "alertmanager"
                         },
                         {
+                              "label": "GenAI Rules",
+                              "slug": "genai-rules"
+                        },
+                        {
                               "label": "SLOs",
                               "slug": "slos"
                         },

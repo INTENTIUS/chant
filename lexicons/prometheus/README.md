@@ -27,6 +27,7 @@ export { api, oncall, fallback, root };
 |---|---|
 | `RuleGroup` | rule file |
 | `Slo` (composite) | rule file: SLI recording rules, error budget and multiwindow burn-rate alerts |
+| `GenAiRules` (composite) | rule file: request, error, latency, token and cost rules and opt-in alerts for the otel GenAI preset |
 | `Route`, `Receiver` (every Alertmanager integration), `InhibitRule`, `TimeInterval`, `AlertmanagerSettings` | `alertmanager.yml` |
 
 Types follow Prometheus `v3.15.0` and Alertmanager `v0.34.1` (`PROMETHEUS_PIN`).
@@ -47,6 +48,7 @@ PromQL is parsed with `@prometheus-io/lezer-promql`, the Prometheus project's ow
 - `validateRuleFile`, `validateAlertmanagerConfig`, `validateSeverityRouting` run the checks without a build.
 - `checkPromql`, `parseMatchers`, `isValidDuration` are the pieces underneath.
 - `sloMetrics(slo)` names the series an `Slo` records and its burn-rate thresholds, for dashboards.
+- `genAiRuleMetrics(rules)` names the series a `GenAiRules` records and the alerts it builds.
 
 ## Project structure
 
@@ -54,10 +56,11 @@ PromQL is parsed with `@prometheus-io/lezer-promql`, the Prometheus project's ow
 - `src/rules.ts`: `RuleGroup`
 - `src/alertmanager.ts`: the Alertmanager entities
 - `src/composites/slo.ts`: `Slo` and `sloMetrics`
+- `src/composites/genai.ts`: `GenAiRules` and `genAiRuleMetrics`
 - `src/build.ts`: entities to config to YAML
 - `src/promql.ts`, `src/matchers.ts`, `src/duration.ts`: parsing
 - `src/validate-config.ts`, `src/lint/`: checks
 - `src/tools.ts`: promtool and amtool
 - `src/import/`: `chant import` for rule files and `alertmanager.yml` (parser, generator, `Slo` recognition, round-trip tests and fixtures)
-- `src/rule-eval.ts`: a small rule evaluator the SLO tests run over synthetic series
+- `src/rule-eval.ts`: a small rule evaluator the SLO and GenAI tests run over synthetic series
 - `examples/`: getting-started, alerting, rules-from-data, slo, k3d-stack

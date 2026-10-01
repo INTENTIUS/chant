@@ -7,10 +7,15 @@
  * The PromQL it understands is the subset the lexicon's generated rules use:
  * number literals, vector and range selectors with `=`, `!=`, `=~` and `!~`
  * matchers, `rate`, `increase`, `avg_over_time`, `sum_over_time`,
- * `count_over_time`, `vector`, `sum` (with `by` or `without`), the
- * arithmetic and comparison operators and `and`, `or` and `unless` (with
- * `on` or `ignoring`). Anything else throws, so a test never passes by
- * silently evaluating something it does not understand.
+ * `count_over_time`, `vector`, `histogram_quantile`, `sum` (with `by` or
+ * `without`), the arithmetic and comparison operators (one-to-one, or
+ * many-to-one with `group_left` and no extra labels) and `and`, `or` and
+ * `unless` (with `on` or `ignoring`). Anything else throws, so a test never
+ * passes by silently evaluating something it does not understand.
+ *
+ * `histogram_quantile` interpolates linearly inside the bucket the rank
+ * falls in, as Prometheus does for classic buckets, and returns the upper
+ * bound of the highest finite bucket when the rank falls in `+Inf`.
  *
  * `rate` is the increase between the first and last sample in the range
  * over the time between them, without Prometheus's extrapolation to the
@@ -49,6 +54,7 @@ export interface FiringAlert {
 }
 
 const LOOKBACK_MS = 5 * 60_000;
+const RANGE_FUNCTIONS = new Set(["rate", "increase", "avg_over_time", "sum_over_time", "count_over_time"]);
 
 function key(labels: Labels): string {
   return JSON.stringify(Object.entries(labels).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
@@ -217,12 +223,15 @@ export class RuleEvaluator {
 
   private call(n: SyntaxNode, src: string, t: number): Value {
     const fn = this.text(n.getChild("FunctionIdentifier")!, src);
-    const [arg] = this.args(n.getChild("FunctionCallBody")!);
+    const [arg, second] = this.args(n.getChild("FunctionCallBody")!);
+    if (fn === "histogram_quantile") return this.histogramQuantile(arg, second, src, t);
     if (fn === "vector") {
       const v = this.node(arg, src, t);
       if (v.kind !== "scalar") throw new Error("rule-eval: vector() takes a scalar");
       return { kind: "vector", elements: [{ labels: {}, value: v.value }] };
     }
+    // Checked before any series is read, so an unsupported function throws even over no data.
+    if (!RANGE_FUNCTIONS.has(fn)) throw new Error(`rule-eval: function ${fn} is not supported`);
     if (arg.name !== "MatrixSelector") throw new Error(`rule-eval: ${fn}() needs a range selector`);
     const rangeMs = durationMs(this.text(arg.getChild("DurationExpr")!, src));
     if (rangeMs === undefined) throw new Error(`rule-eval: bad range in ${this.text(arg, src)}`);
@@ -250,6 +259,45 @@ export class RuleEvaluator {
           throw new Error(`rule-eval: function ${fn} is not supported`);
       }
       elements.push({ labels: withoutName(s.labels), value });
+    }
+    return { kind: "vector", elements };
+  }
+
+  private histogramQuantile(qNode: SyntaxNode, vNode: SyntaxNode, src: string, t: number): Value {
+    const q = this.node(qNode, src, t);
+    const v = this.node(vNode, src, t);
+    if (q.kind !== "scalar" || v.kind !== "vector") throw new Error("rule-eval: histogram_quantile takes a scalar and a vector");
+    const groups = new Map<string, { labels: Labels; buckets: { le: number; count: number }[] }>();
+    for (const e of v.elements) {
+      const { le, ...rest } = withoutName(e.labels);
+      if (le === undefined) continue;
+      const k = key(rest);
+      const g = groups.get(k) ?? { labels: rest, buckets: [] };
+      g.buckets.push({ le: le === "+Inf" ? Infinity : Number(le), count: e.value });
+      groups.set(k, g);
+    }
+    const elements: VectorElement[] = [];
+    for (const { labels, buckets } of groups.values()) {
+      buckets.sort((a, b) => a.le - b.le);
+      const last = buckets[buckets.length - 1];
+      if (!last || last.le !== Infinity) continue;
+      const total = last.count;
+      let value: number;
+      if (q.value < 0) value = -Infinity;
+      else if (q.value > 1) value = Infinity;
+      else if (!(total > 0)) value = NaN;
+      else {
+        const rank = q.value * total;
+        const i = buckets.findIndex((b) => b.count >= rank);
+        if (buckets[i].le === Infinity) value = buckets.length > 1 ? buckets[buckets.length - 2].le : NaN;
+        else {
+          const start = i === 0 ? 0 : buckets[i - 1].le;
+          const below = i === 0 ? 0 : buckets[i - 1].count;
+          const inBucket = buckets[i].count - below;
+          value = inBucket > 0 ? start + (buckets[i].le - start) * ((rank - below) / inBucket) : buckets[i].le;
+        }
+      }
+      elements.push({ labels, value });
     }
     return { kind: "vector", elements };
   }
@@ -293,11 +341,20 @@ export class RuleEvaluator {
     if (parts.some((p) => p.name === "BoolModifier")) throw new Error("rule-eval: bool modifier is not supported");
     let on: string[] | undefined;
     let ignoring: string[] = [];
+    let groupLeft = false;
     if (modifier) {
-      const names = (modifier.getChild("GroupingLabels")?.getChildren("LabelName") ?? []).map((l) => this.text(l, src));
+      const grouping = modifier.getChild("GroupingLabels");
+      const names = (grouping?.getChildren("LabelName") ?? []).map((l) => this.text(l, src));
       if (modifier.getChild("On")) on = names;
       else ignoring = names;
-      if (modifier.getChild("GroupLeft") || modifier.getChild("GroupRight")) throw new Error("rule-eval: group_left/right is not supported");
+      if (modifier.getChild("GroupRight")) throw new Error("rule-eval: group_right is not supported");
+      const left = modifier.getChild("GroupLeft");
+      if (left) {
+        // group_left(<labels>) copies labels from the one side; only the bare form is supported.
+        const after = left.nextSibling;
+        if (after && after.name === "GroupingLabels" && after !== grouping) throw new Error("rule-eval: group_left with labels is not supported");
+        groupLeft = true;
+      }
     }
     const lhs = this.node(lhsNode, src, t);
     const rhs = this.node(rhsNode, src, t);
@@ -376,6 +433,14 @@ export class RuleEvaluator {
       const s = signature(e.labels);
       if (bySig.has(s)) throw new Error("rule-eval: many-to-many matching is not supported");
       bySig.set(s, e);
+    }
+    if (!groupLeft) {
+      const seen = new Set<string>();
+      for (const e of l.elements) {
+        const s = signature(e.labels);
+        if (seen.has(s)) throw new Error("rule-eval: many-to-one matching needs group_left");
+        seen.add(s);
+      }
     }
     const elements: VectorElement[] = [];
     for (const e of l.elements) {

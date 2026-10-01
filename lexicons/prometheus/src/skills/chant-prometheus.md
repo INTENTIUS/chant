@@ -100,3 +100,25 @@ sloMetrics(checkout).errorRatio["1h"]; // "slo:sli_error:ratio_rate1h"
 - Write the objective as a fraction strictly between 0 and 1, and put `{{window}}` where each SLI expression's range goes (PROM003).
 - Alerts carry `severity` `page` or `ticket`; route both (PROM202).
 - Read series names from `sloMetrics()` in dashboards instead of repeating them.
+
+## GenAI rules
+
+`GenAiRules` builds rules for the otel lexicon's GenAI collector preset from the same `genAiMetrics(options)` the collector was built with: request rate, error ratio (also by `error.type`) and p50/p95/p99 latency per provider, model and operation, token rates, spend per second from a price table the project declares, and per-tool call rate, error ratio and p95 latency. Alerts are off unless `alerts` names them.
+
+```ts
+import { genAiMetrics } from "@intentius/chant-lexicon-otel";
+import { GenAiRules, genAiRuleMetrics } from "@intentius/chant-lexicon-prometheus";
+
+export const genai = GenAiRules({
+  genAi: genAiMetrics({ clientMetrics: "derive" }),
+  prices: [{ provider: "anthropic", model: "claude-x", inputPerMTok: 3, outputPerMTok: 15, currency: "USD", source: "https://example.com/pricing", asOf: "2026-09-29" }],
+  alerts: { errorRatio: true, latency: { thresholdSeconds: 20 }, budgets: [{ amount: 50, currency: "USD", per: "day" }] },
+});
+
+genAiRuleMetrics(genai).cost; // "gen_ai:cost:rate5m"
+```
+
+- Pass the collector's own options to `genAiMetrics()`; never write a metric name by hand.
+- Ship no prices in a lexicon or template. The project declares them, with `currency` and `source` on each.
+- A model missing from `prices` gets no cost series, so a sum of the cost series covers priced models only.
+- Read series names from `genAiRuleMetrics()` in dashboards.

@@ -164,7 +164,7 @@ m.client.tokenUsage.prometheus;        // "gen_ai_client_token_usage"
 m.client.tokenUsage.dimensions;        // [...GENAI_CLIENT_METRIC_ATTRIBUTES, "gen_ai.token.type"]
 ```
 
-Prometheus rules and dashboards for these metrics should read the names from there. Without `clientMetrics`, `genAiMetrics()` has no `client` field and the YAML is byte for byte what the preset produced before the option existed.
+Prometheus rules and dashboards for these metrics should read the names from there. The prometheus lexicon's [`GenAiRules`](/chant/lexicons/prometheus/genai-rules/) takes this object and builds rate, error, latency, token and cost rules from it. Without `clientMetrics`, `genAiMetrics()` has no `client` field and the YAML is byte for byte what the preset produced before the option existed.
 
 ## Semantic-conventions pin
 

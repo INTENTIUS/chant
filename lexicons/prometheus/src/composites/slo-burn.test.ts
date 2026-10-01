@@ -259,8 +259,32 @@ describe.skipIf(!hasPromtool)("each pair fires at its burn rate and not below it
 
 describe("rule-eval", () => {
   test("throws on PromQL it does not implement instead of guessing", () => {
-    const ev = new RuleEvaluator([{ name: "g", rules: [{ record: "x", expr: "histogram_quantile(0.9, rate(a[5m]))" }] }]);
+    const ev = new RuleEvaluator([{ name: "g", rules: [{ record: "x", expr: "max_over_time(a[5m])" }] }]);
     expect(() => ev.step(0)).toThrow(/not supported|needs a range/);
+    const left = new RuleEvaluator([{ name: "g", rules: [{ record: "x", expr: "a / ignoring (t) group_left (u) b" }] }]);
+    expect(() => left.step(0)).toThrow(/group_left with labels is not supported/);
+  });
+
+  test("histogram_quantile interpolates inside the bucket the rank falls in", () => {
+    const ev = new RuleEvaluator([]);
+    for (const [le, n] of [["0.5", 20], ["1", 60], ["2", 100], ["+Inf", 100]] as const) ev.add({ __name__: "d_bucket", job: "a", le }, 0, n);
+    for (const [le, n] of [["1", 0], ["+Inf", 10]] as const) ev.add({ __name__: "d_bucket", job: "b", le }, 0, n);
+    const at = (q: number) => Object.fromEntries(ev.query(`histogram_quantile(${q}, d_bucket)`, 0).map((e) => [e.labels.job, e.value]));
+    // a: rank 50 is 30 of the 40 in (0.5, 1]; rank 95 is 35 of the 40 in (1, 2].
+    expect(at(0.5).a).toBeCloseTo(0.875, 9);
+    expect(at(0.95).a).toBeCloseTo(1.875, 9);
+    // b: every observation is above the highest finite bound, which is what Prometheus returns.
+    expect(at(0.5).b).toBe(1);
+  });
+
+  test("group_left matches many series on the left to one on the right", () => {
+    const ev = new RuleEvaluator([]);
+    ev.add({ __name__: "errs", m: "x", t: "timeout" }, 0, 2);
+    ev.add({ __name__: "errs", m: "x", t: "refused" }, 0, 3);
+    ev.add({ __name__: "reqs", m: "x" }, 0, 10);
+    const r = ev.query("errs / ignoring (t) group_left reqs", 0);
+    expect(r.map((e) => [e.labels.t, e.value]).sort()).toEqual([["refused", 0.3], ["timeout", 0.2]]);
+    expect(() => ev.query("errs / ignoring (t) reqs", 0)).toThrow(/needs group_left/);
   });
 
   test("evaluates sums, ratios and set operators the way Prometheus does", () => {

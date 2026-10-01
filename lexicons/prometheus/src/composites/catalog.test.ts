@@ -19,7 +19,7 @@ const catalogued = compositeCatalog.map((entry) => entry.name).sort();
 
 describe("the prometheus composite catalog", () => {
   test("every exported composite has an entry, and every entry names an exported composite", () => {
-    expect(exported).toEqual(["Slo"]);
+    expect(exported).toEqual(["GenAiRules", "Slo"]);
     expect(catalogued, "regenerate with `npm run generate:composite-catalogs -- prometheus`").toEqual(exported);
   });
 
