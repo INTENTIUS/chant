@@ -1,10 +1,10 @@
 import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from "fs";
 import { join, resolve, basename, dirname } from "path";
 import { formatSuccess, formatWarning, formatError } from "../format";
-import type { TemplateIR, ResourceIR, ParameterIR, TemplateParser } from "../../import/parser";
+import type { TemplateIR, ResourceIR, ParameterIR, ParseContext } from "../../import/parser";
 import type { GeneratedFile, TypeScriptGenerator } from "../../import/generator";
 import { listInstalledLexicons, loadPlugin, loadPlugins, resolveProjectLexicons } from "../plugins";
-import type { LexiconPlugin, ResourceSelector } from "../../lexicon";
+import type { ExportedTemplate, LexiconPlugin, ResourceSelector } from "../../lexicon";
 import { parseYAMLDocument, splitYAMLDocuments } from "../../yaml";
 import { importLexiconPackage } from "../../lexicon-module";
 import { EmbeddedImports, type EmbeddedContent, type RegisteredEmbeddedImporter } from "../../import/embedded";
@@ -427,14 +427,15 @@ export async function importFromContent(options: ContentImportOptions): Promise<
 
 /**
  * The importers for the content a host's parser offered (#2962): those of the
- * project's lexicons, and of each installed lexicon whose `detectTemplate`
- * recognizes one of the offered documents. The recognizing is done with the
+ * plugins already loaded, of the project's lexicons, and of each installed
+ * lexicon whose `detectTemplate` recognizes one of the offered documents
+ * (#2995 adds the loaded ones). The recognizing is done with the
  * lexicon's light `/detect` module, so a lexicon is loaded in full only when
  * it may own something; one that fails to load is skipped.
  */
 async function embeddedImportersFor(
   offered: readonly EmbeddedContent[],
-  host: LexiconPlugin,
+  loaded: readonly LexiconPlugin[],
   projectDir: string,
 ): Promise<RegisteredEmbeddedImporter[]> {
   const documents = offered.map((c) => c.document).filter((d) => typeof d === "object" && d !== null);
@@ -446,7 +447,8 @@ async function embeddedImportersFor(
   } catch {
     projectNames = [];
   }
-  const candidates: string[] = [...projectNames];
+  // Plugins already loaded (the host, or live import's exporters) are asked too.
+  const candidates: string[] = [...new Set([...loaded.map((p) => p.name), ...projectNames])];
   for (const name of listInstalledLexicons(projectDir)) {
     if (candidates.includes(name)) continue;
     try {
@@ -471,7 +473,7 @@ async function embeddedImportersFor(
   for (const name of candidates) {
     let plugin: LexiconPlugin;
     try {
-      plugin = name === host.name ? host : await loadPlugin(name);
+      plugin = loaded.find((p) => p.name === name) ?? (await loadPlugin(name));
     } catch {
       continue;
     }
@@ -488,22 +490,24 @@ async function embeddedImportersFor(
 
 /**
  * Parse, resolving embedded content (#2962). A first parse with a probe
- * collects what the parser offers; when it offers anything, the owners'
- * importers are loaded and the content is parsed again with them. A parser
- * that offers nothing is parsed once, and nothing is loaded.
+ * collects what the parsers offer; when they offer anything, the owners'
+ * importers are loaded and each is parsed again with them, through one
+ * resolver so their directories stay distinct. A parse is a template
+ * parser over a file's content, or an export's `reparse` (#2995). Parsers
+ * that offer nothing are parsed once, and nothing is loaded. `loaded` are
+ * plugins already loaded, reused when one of them owns content.
  */
 async function parseWithEmbedded(
-  plugin: LexiconPlugin,
-  parser: TemplateParser,
-  content: string,
+  parses: ReadonlyArray<(context: ParseContext) => TemplateIR>,
+  loaded: readonly LexiconPlugin[],
   projectDir: string,
-): Promise<{ ir: TemplateIR; embedded?: EmbeddedImports }> {
+): Promise<{ irs: TemplateIR[]; embedded?: EmbeddedImports }> {
   const probe = new EmbeddedImports([], { quiet: true });
-  const ir = parser.parse(content, { embedded: probe });
-  if (probe.offered.length === 0) return { ir };
-  const importers = await embeddedImportersFor(probe.offered, plugin, projectDir);
+  const irs = parses.map((parse) => parse({ embedded: probe }));
+  if (probe.offered.length === 0) return { irs };
+  const importers = await embeddedImportersFor(probe.offered, loaded, projectDir);
   const embedded = new EmbeddedImports(importers);
-  return { ir: parser.parse(content, { embedded }), embedded };
+  return { irs: parses.map((parse) => parse({ embedded })), embedded };
 }
 
 /** The shared tail of every template import: parse → generate → write. */
@@ -535,7 +539,9 @@ async function parseAndWrite(
   let embedded: EmbeddedImports | undefined;
   try {
     const parser = plugin.templateParser();
-    ({ ir, embedded } = await parseWithEmbedded(plugin, parser, content, projectDir));
+    let irs: TemplateIR[];
+    ({ irs, embedded } = await parseWithEmbedded([(context) => parser.parse(content, context)], [plugin], projectDir));
+    ir = irs[0];
   } catch (err) {
     return {
       success: false,
@@ -701,6 +707,7 @@ export async function liveImportFromPlugins(
   options: LiveImportOptions,
 ): Promise<ImportResult> {
   const outputDir = resolve(options.output ?? "./infra/");
+  const projectDir = resolve(options.output ? dirname(options.output) : ".");
   const warnings: string[] = [];
 
   let exporters = plugins.filter((p) => p.exportResources && p.templateGenerator);
@@ -720,10 +727,10 @@ export async function liveImportFromPlugins(
   }
 
   // Collect IR from every exporter, tagging which lexicon produced output.
-  const irParts: TemplateIR[] = [];
+  let irParts: ExportedTemplate[] = [];
   let generatorLexicon: LexiconPlugin | undefined;
   for (const plugin of exporters) {
-    let ir: TemplateIR;
+    let ir: ExportedTemplate;
     try {
       ir = await plugin.exportResources!({
         environment: options.environment,
@@ -754,6 +761,23 @@ export async function liveImportFromPlugins(
     warnings.push("Multiple lexicons exported resources; generated with the first. Use --lexicon to target one.");
   }
 
+  // Content embedded in exported resources goes to the lexicon that owns it,
+  // as in file import (#2995). An export without `reparse` keeps it as read.
+  let embedded: EmbeddedImports | undefined;
+  if (irParts.some((part) => part.reparse)) {
+    try {
+      const parses = irParts.map((part) => part.reparse ?? (() => part));
+      let irs: TemplateIR[];
+      ({ irs, embedded } = await parseWithEmbedded(parses, plugins, projectDir));
+      irParts = irs;
+    } catch (err) {
+      warnings.push(
+        `Embedded content is kept as written, because resolving it failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    if (embedded) warnings.push(...embedded.warnings);
+  }
+
   const ir = mergeIR(irParts);
   const generator = generatorLexicon.templateGenerator!();
 
@@ -761,8 +785,10 @@ export async function liveImportFromPlugins(
     mkdirSync(outputDir, { recursive: true });
   }
 
-  const { files, warnings: layoutWarnings } = generateOrganizedFiles(ir, generator);
+  const { files: hostFiles, warnings: layoutWarnings } = generateOrganizedFiles(ir, generator);
   warnings.push(...layoutWarnings);
+  // The owners' modules for embedded content, each in a directory of its own.
+  const files = [...hostFiles, ...(embedded?.files ?? [])];
   const generatedFiles: string[] = [];
   for (const file of files) {
     const filePath = join(outputDir, file.path);

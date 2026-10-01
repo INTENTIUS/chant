@@ -66,6 +66,17 @@ Split the two halves across two files so the mapping tests without a transport. 
 
 Wire it from `plugin.ts` behind a dynamic import, the way every one of them does, so `chant build` never loads a live transport.
 
+### Embedded content
+
+When your import parser hands content embedded in a resource to its owner (a collector config in a k8s ConfigMap, see [Embedded content](/chant/lexicon-authoring/importing/#embedded-content)), return `reparse` on the export so `chant import --from` does the same:
+
+```typescript
+const parse = (context?: ParseContext) => select(new K8sParser().parse(content, context), selector);
+return { ...parse(), reparse: (context) => parse(context) };
+```
+
+`reparse(context)` parses the objects already read again with the given `ParseContext`. It must not read the target a second time, and it must apply the same `selector` and `owned` filters as the export. Core calls it once with a probe and, when anything is offered, once more with the owners' importers. That is `lexicons/k8s/src/import/live-export.ts`. Without `reparse`, embedded content is kept as read.
+
 ## The ownership marker
 
 Ownership is what later lets `delete` be precise without a hosted state file. The marker is stamped at synthesis time into the target's native metadata channel:
