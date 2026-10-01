@@ -54,13 +54,22 @@ import { PromQuery, TempoQuery, LokiQuery } from "@intentius/chant-lexicon-grafa
 const calls = 'traces_span_metrics_calls_total{service_name="$service"}';
 const buckets = 'traces_span_metrics_duration_milliseconds_bucket{service_name="$service"}';
 
+const serverSpans = 'service_name="$service", span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"';
+const serverCalls = `traces_span_metrics_calls_total{${serverSpans}}`;
+const serverErrors = `traces_span_metrics_calls_total{${serverSpans}, status_code="STATUS_CODE_ERROR"}`;
+const allRate = `sum(rate(${serverCalls}[$__rate_interval]))`;
+const errorRate = `sum(rate(${serverErrors}[$__rate_interval]))`;
+
 const requestRate = new PromQuery({
   expr: `sum by (span_name) (rate(${calls}[$__rate_interval]))`,
   legendFormat: "{{span_name}}",
 });
 
 const errorRatio = new PromQuery({
-  expr: `sum(rate(traces_span_metrics_calls_total{service_name="$service", status_code="STATUS_CODE_ERROR"}[$__rate_interval])) / sum(rate(${calls}[$__rate_interval]))`,
+  // The shape errorRatio() in the composites builds: (errors or all * 0) / all.
+  // The padded numerator reads 0% instead of "No data" while nothing errors.
+  // A constructor property has to be statically evaluable, so the call is not made here.
+  expr: `(${errorRate} or ${allRate} * 0) / ${allRate}`,
   instant: true,
 });
 
