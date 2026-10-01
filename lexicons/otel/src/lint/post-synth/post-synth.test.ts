@@ -193,7 +193,7 @@ describe("collector configs in Kubernetes ConfigMaps (chant #2930)", () => {
     const ctx = makePostSynthCtx("k8s", manifests(configMap({ "config.yaml": GOOD, "notes.txt": "not a config" }), { apiVersion: "v1", kind: "Service", metadata: { name: "x" } }));
     const found = collectorConfigs(ctx);
     expect(found.map((f) => [f.source, f.configMap])).toEqual([["k8s", { namespace: "observability", name: "otel-agent-config", key: "config.yaml" }]]);
-    expect(found[0].config.service?.pipelines.traces.processors).toEqual(["memory_limiter", "batch"]);
+    expect(found[0]?.config.service?.pipelines?.traces?.processors).toEqual(["memory_limiter", "batch"]);
   });
 
   test("a config-level check reports a ConfigMap config's issue, naming the ConfigMap and key", () => {
