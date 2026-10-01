@@ -52,7 +52,7 @@ describe("chant #2550 — workspace upgrade", () => {
       expect(gated.stdout).toContain("merged: src/a.ts");
       expect(gated.stdout).toContain("updated: README.md");
       expect(gated.stderr).toContain("chant approve workspace-upgrade .");
-      const digest = /patch: \d+ file\(s\), (sha256:[0-9a-f]{64})/.exec(gated.stdout)?.[1];
+      const digest = /patch: \d+ file\(s\), (jcs1-sha256:[0-9a-f]{64})/.exec(gated.stdout)?.[1];
       expect(digest).toBeDefined();
       expect(readFileSync(join(proj, "README.md"), "utf-8")).toBe("starter\n");
       expect(git(proj, ["show", "chant/lifecycle:_gates/workspace-upgrade.jsonl"])).toContain(digest!);

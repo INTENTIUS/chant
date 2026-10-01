@@ -19,6 +19,7 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { samePlanDigest } from "../lifecycle/plan-digest";
 import type { GateResolutionRecord, PendingGateRecord } from "../lifecycle/gate-ledger";
 import { isPendingGateExpired, latestPendingGate, latestResolutionForPlan, parseGateLedger } from "../lifecycle/gate-ledger";
 import { tallyGateApprovals } from "../op/gate";
@@ -138,7 +139,7 @@ function decide(component: string, standing: PendingGateRecord, resolutions: Gat
   } else {
     const at = (r: GateResolutionRecord) => new Date(r.timestamp).getTime();
     approvals = own
-      .filter((r) => r.gate === gate && at(r) >= new Date(since).getTime() && (planDigest === undefined || r.planDigest === planDigest))
+      .filter((r) => r.gate === gate && at(r) >= new Date(since).getTime() && (planDigest === undefined || samePlanDigest(r.planDigest, planDigest)))
       .sort((a, b) => at(a) - at(b));
     approved = approvals.length > 0;
     mismatched = latestResolutionForPlan(own, gate, since, planDigest).mismatched;

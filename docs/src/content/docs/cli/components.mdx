@@ -159,7 +159,7 @@ Run a change out across the components downstream of it, in an order chant deriv
 ```bash
 chant components fan-out --base origin/main --env prod --dry-run
 chant components fan-out --base origin/main --env prod --gate release --resume .chant/fan-out.json
-chant approve fan-out release --plan sha256:9fae3d7c...
+chant approve fan-out release --plan jcs1-sha256:9fae3d7c...
 chant components fan-out --base origin/main --env prod --gate release --resume .chant/fan-out.json
 ```
 
@@ -187,8 +187,8 @@ fan-out: 3 selected, 4 unaffected, 0 indeterminate
     billing    unaffected
     cluster-b  unaffected
     net        unaffected
-  plan: sha256:9fae3d7c...
-  approve: chant approve fan-out release --plan sha256:9fae3d7c...
+  plan: jcs1-sha256:9fae3d7c...
+  approve: chant approve fan-out release --plan jcs1-sha256:9fae3d7c...
 ```
 
 Each line answers a question an operator would otherwise have to ask.
@@ -210,7 +210,7 @@ Nothing runs while it stands open. The run prints the pending fact and exits 3.
 
 ```
 gated: nothing ran. Waiting on "release" on "fan-out".
-approve : chant approve fan-out release --plan sha256:9fae3d7c...
+approve : chant approve fan-out release --plan jcs1-sha256:9fae3d7c...
 ```
 
 The digest identifies the derivation. It covers the ordered selection and the waves, plus the seeds and the edges each component came from. It does not cover what each component would apply, so editing a template without changing the graph leaves the digest, and a standing approval, where they were. `planFanOut` takes per-component input digests when a caller has them, and this command does not supply any yet. A resolution recorded against a different digest does not let this fan-out through, since a fan-out that derives differently is a different change. Each component's own authored gates still decide per component. This adds a gate over the set without removing the ones inside it.

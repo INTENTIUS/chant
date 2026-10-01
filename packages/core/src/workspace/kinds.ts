@@ -23,6 +23,7 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import schema from "./workspace-kinds.schema.json";
 import type { WorkspaceTree } from "./tree";
 import { joinPath, skippedDir } from "./tree";
+import { checkPinIntegrity } from "./pin-integrity";
 
 export const KINDS_SCHEMA_ID = schema.$id;
 
@@ -483,6 +484,8 @@ export interface PinLike {
   package: string | null;
   version: string | null;
   path: string | null;
+  /** A path pin's content hash (#2547). Checked before anything is read from the directory. */
+  integrity?: string | null;
 }
 
 export interface KindLoadProblem {
@@ -533,6 +536,13 @@ export function loadKindRegistry(pins: readonly PinLike[], workspaceRoot: string
     } else if (pin.path) {
       source = pin.path;
       dir = join(workspaceRoot, ...pin.path.split("/"));
+      if (pin.integrity) {
+        const checked = checkPinIntegrity(dir, pin.integrity, pin.path);
+        if (!checked.ok) {
+          problems.push({ pin: i, message: checked.message });
+          return;
+        }
+      }
     } else {
       return;
     }

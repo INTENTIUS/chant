@@ -4,10 +4,11 @@ This file records changes to what chant prints or writes for a plain project, th
 
 ## Unreleased
 
-Two level-0 changes that shipped in 0.81.0 without a warning release are now on the [level-0 exceptions](docs/src/content/docs/reference/level-0-exceptions.mdx) list. The maintainer accepted both on 2026-09-30.
+Two level-0 changes that shipped in 0.81.0 without a warning release are now on the [level-0 exceptions](docs/src/content/docs/reference/level-0-exceptions.mdx) list, and so is a third, below. The maintainer accepted all three on 2026-09-30.
 
 - [#2550](https://github.com/INTENTIUS/chant/issues/2550) ledger reads and writes run `git ls-tree --full-tree`, so a project in a subdirectory of its repository appends to `chant/lifecycle` instead of having its second append refused. Ledger paths do not move. `level0-ledger.test.ts` now holds the subdirectory case ([#2610](https://github.com/INTENTIUS/chant/pull/2610)).
 - [#2535](https://github.com/INTENTIUS/chant/issues/2535) `chant check-lexicon` prints a tier-1 row for the `./workspace-kinds` subpath for every lexicon, which passes when a lexicon has no such subpath ([#2631](https://github.com/INTENTIUS/chant/pull/2631)).
+- [#2547](https://github.com/INTENTIUS/chant/issues/2547) plan digests are written as `jcs1-sha256:<hex>` instead of `sha256:<hex>`. The hex does not change, since the digest is still the SHA-256 of the RFC 8785 canonical JSON of the plan. The prefix shows in the `plan:` and `approve:` lines of a gated run, in `chant approve --plan`, in the pending facts and resolutions of `_gates/<name>.jsonl`, and in `chant workspace upgrade` output. A pending gate or an approval recorded as `sha256:<hex>` still matches the same plan, and `chant approve --plan` takes either prefix. No CLI golden moves.
 
 ## 0.81.0
 

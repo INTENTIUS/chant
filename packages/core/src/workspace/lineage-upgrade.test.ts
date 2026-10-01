@@ -110,7 +110,7 @@ describe("chant workspace upgrade", () => {
       expect(staged.written.sort()).toEqual(["README.md", "src/new.ts"]);
       expect(staged.manualSteps).toEqual([]);
       expect(staged.changedPaths).toEqual([LOCK_FILE, "README.md", "src/a.ts", "src/new.ts"]);
-      expect(staged.digest).toMatch(/^sha256:[0-9a-f]{64}$/);
+      expect(staged.digest).toMatch(/^jcs1-sha256:[0-9a-f]{64}$/);
       // The project's tree is untouched until the gate is approved.
       expect(read(proj, "README.md")).toBe("starter\n");
       expect(existsSync(join(proj, "src/new.ts"))).toBe(false);

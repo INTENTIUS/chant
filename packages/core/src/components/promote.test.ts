@@ -492,7 +492,7 @@ describe("a redeploy's gate approval is bound like a rollback's (#2574, #2604)",
     const first = await runPromotion({ ...opts, now: "2026-01-05T00:00:00Z" });
     expect(first.status).toBe("gated");
     expect(first.gate?.environment).toBe("prod");
-    expect(first.gate?.planDigest).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(first.gate?.planDigest).toMatch(/^jcs1-sha256:[0-9a-f]{64}$/);
     expect(ran).toEqual([]);
 
     resolutions.push(approval({ planDigest: first.gate!.planDigest!, environment: "prod" }, "2026-01-05T00:01:00Z"));
