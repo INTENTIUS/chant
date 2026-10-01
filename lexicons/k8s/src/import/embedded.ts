@@ -8,7 +8,8 @@
  *   a Prometheus rule file, an `alertmanager.yml`, a Grafana dashboard's
  *   JSON);
  * - a `monitoring.coreos.com` PrometheusRule's `spec.groups`, as the rule file
- *   `{ groups }` those groups would make.
+ *   `{ groups }` those groups would make;
+ * - a Grafana Operator `GrafanaDashboard`'s `spec.json`, as text (#3015).
  *
  * Which lexicon imports the content is decided by core at run time, from the
  * lexicons that register an `embeddedImporters()`; this module names none of
@@ -94,6 +95,24 @@ export function delegateEmbedded(
       if (ref) data[key] = ref;
     }
     properties.data = data;
+    return;
+  }
+
+  if (type === "K8s::Grafana::GrafanaDashboard" && isObject(properties.spec) && typeof properties.spec.json === "string") {
+    const text = properties.spec.json;
+    const doc = embeddedDocument(text);
+    if (!isObject(doc)) return;
+    const ref = embedded.resolve({
+      host: "k8s",
+      hostType: type,
+      location: `GrafanaDashboard ${name} spec.json`,
+      directory: name,
+      text,
+      document: doc,
+      labels,
+      expectedOwner: { lexicon: "grafana", what: "a Grafana dashboard" },
+    });
+    if (ref) properties.spec = { ...properties.spec, json: ref };
     return;
   }
 
