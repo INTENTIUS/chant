@@ -59,6 +59,7 @@
     "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete"
   },
   "dependencies": {
+    "@intentius/chant-lexicon-otel": "*",
     "@lezer/highlight": "^1.2.4",
     "@lezer/lr": "^1.4.10",
     "@prometheus-io/lezer-promql": "0.315.0",
