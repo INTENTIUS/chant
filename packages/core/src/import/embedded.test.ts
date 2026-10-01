@@ -85,6 +85,26 @@ describe("EmbeddedImports", () => {
     ]);
   });
 
+  test("an importer that keeps matched content as written is not asked to import it, and its reason is the warning", () => {
+    let imported = 0;
+    const resolver = new EmbeddedImports([
+      {
+        lexicon: "acme",
+        importer: {
+          ...widgets,
+          keepsAsWritten: (c) => ((c.document as { size?: number }).size === 3 ? "a size-3 widget builds back as size 4" : undefined),
+          import: (c) => (imported++, widgets.import(c)),
+        },
+      },
+    ]);
+    expect(resolver.resolve(site())).toBeUndefined();
+    expect(imported).toBe(0);
+    expect(resolver.files).toEqual([]);
+    expect(resolver.warnings).toEqual(['ConfigMap agent data["config.yaml"] is a widget, kept as written: a size-3 widget builds back as size 4']);
+    expect(isEmbeddedReference(resolver.resolve(site({ text: "kind: widget\nsize: 2\n" })))).toBe(true);
+    expect(imported).toBe(1);
+  });
+
   test("when two lexicons match, the first imports it and the other is named", () => {
     const resolver = new EmbeddedImports([
       { lexicon: "acme", importer: widgets },

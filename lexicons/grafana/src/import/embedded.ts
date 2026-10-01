@@ -8,6 +8,11 @@
  * The dashboard is imported exactly as `chant import dashboard.json` would
  * import it, into a directory of its own, and the host's value becomes
  * `dashboardJson(dashboard)`, the JSON text the grafana serializer writes.
+ *
+ * A v2 dashboard (`dashboard.grafana.app/v2*`, or a bare v2 spec) is matched
+ * but kept as written, with a warning (#3031). The importer reads v2 (#2947),
+ * but the build writes classic (v1) JSON, so delegating it would turn the
+ * ConfigMap's v2 dashboard into a v1 one on the next build.
  */
 
 import type { EmbeddedContentImporter, EmbeddedImport } from "@intentius/chant/import/embedded";
@@ -22,7 +27,17 @@ export const dashboardImporter: EmbeddedContentImporter = {
 
   matches(content) {
     if (typeof content.text !== "string" || content.select !== undefined) return false;
-    return looksLikeDashboard(content.document) && !looksLikeV2Dashboard(content.document);
+    return looksLikeDashboard(content.document) || looksLikeV2Dashboard(content.document);
+  },
+
+  keepsAsWritten(content) {
+    if (!looksLikeV2Dashboard(content.document)) return undefined;
+    return (
+      "it is a v2 dashboard, and the grafana lexicon builds classic (v1) dashboard JSON, so importing it would change " +
+      "this value from v2 to v1 on the next build. It stays a string. To manage it as a typed dashboard, import the " +
+      "JSON on its own with `chant import <file> --lexicon grafana`, which reports what v1 cannot hold, and put " +
+      "`dashboardJson(dashboard)` here."
+    );
   },
 
   import(content): EmbeddedImport {

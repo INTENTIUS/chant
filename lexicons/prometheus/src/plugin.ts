@@ -11,7 +11,7 @@ import { hover } from "./lsp/hover";
 import { detectTemplate } from "./detect";
 import { PrometheusParser } from "./import/parser";
 import { PrometheusGenerator } from "./import/generator";
-import { ruleGroupsImporter } from "./import/embedded";
+import { alertmanagerImporter, ruleGroupsImporter } from "./import/embedded";
 import { DEFAULT_TEMPLATE, RULES_TEMPLATE, SLO_STYLE_TEMPLATE, SLO_TEMPLATE } from "./init-templates";
 import { prometheusSkills } from "./skill-defs";
 import { CATALOG } from "./catalog";
@@ -122,7 +122,7 @@ export const prometheusPlugin: LexiconPlugin = {
   },
 
   embeddedImporters() {
-    return [ruleGroupsImporter];
+    return [ruleGroupsImporter, alertmanagerImporter];
   },
 
   // `chant init --lexicon prometheus [--template rules|slo-style|slo]`; see ./init-templates.ts.

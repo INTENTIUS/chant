@@ -1,5 +1,6 @@
 /**
- * What `chant import` generates for manifests with embedded content (#2962)
+ * What `chant import` generates for manifests with embedded content (#2962,
+ * #3031)
  * type-checks: the k8s module that references the owners' declarations, and
  * the owners' modules. Compiling takes longer than the unit-test budget
  * allows, so this runs with the e2e tests.
@@ -31,6 +32,7 @@ describe("the source generated for embedded content type-checks", () => {
     "node-exporter-prometheusrule.yaml",
     "grafana-dashboard-configmap.yaml",
     "agent-observability.yaml",
+    "alertmanager-configmap.yaml",
   ])("%s", async (fixture) => {
     const imported = await importManifest(read(fixture));
     try {

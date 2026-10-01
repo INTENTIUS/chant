@@ -102,6 +102,13 @@ export interface EmbeddedContentImporter {
   readonly what: string;
   /** Whether this content is one it imports. Must not throw on content that is not. */
   matches(content: EmbeddedContent): boolean;
+  /**
+   * Why content it matches is kept as written instead of imported, or
+   * `undefined` to import it. Asked before `import`; the reason is the
+   * warning's. grafana keeps a v2 dashboard, which it reads but would build
+   * back as v1 JSON (#3031).
+   */
+  keepsAsWritten?(content: EmbeddedContent): string | undefined;
   /** Import it. A throw keeps the content as written, with a warning. */
   import(content: EmbeddedContent): EmbeddedImport;
 }
@@ -231,6 +238,12 @@ export class EmbeddedImports implements EmbeddedContentResolver {
       this.warnings.push(
         `${content.location} is also importable by ${others.map((o) => o.lexicon).join(", ")}; imported with ${chosen.lexicon}.`,
       );
+    }
+
+    const kept = chosen.importer.keepsAsWritten?.(content);
+    if (kept !== undefined) {
+      this.warnings.push(`${content.location} is ${chosen.importer.what}, kept as written: ${kept}`);
+      return undefined;
     }
 
     let result: EmbeddedImport;

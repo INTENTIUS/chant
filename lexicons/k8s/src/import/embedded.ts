@@ -5,7 +5,8 @@
  * The parser offers two kinds of place to core's embedded-content resolver:
  *
  * - every `data` value of a ConfigMap, as text (a collector's `config.yaml`,
- *   a Prometheus rule file, a Grafana dashboard's JSON);
+ *   a Prometheus rule file, an `alertmanager.yml`, a Grafana dashboard's
+ *   JSON);
  * - a `monitoring.coreos.com` PrometheusRule's `spec.groups`, as the rule file
  *   `{ groups }` those groups would make.
  *
@@ -35,10 +36,19 @@ function hintFor(key: string, doc: unknown, labels: Record<string, string>): Emb
   if (Array.isArray(doc.panels) && (GRAFANA_DASHBOARD_LABEL in labels || key.endsWith(".json"))) {
     return { lexicon: "grafana", what: "a Grafana dashboard" };
   }
+  const v2Dashboard =
+    (doc.kind === "Dashboard" && typeof doc.apiVersion === "string" && doc.apiVersion.startsWith("dashboard.grafana.app/")) ||
+    (isObject(doc.elements) && isObject(doc.layout));
+  if (v2Dashboard && (GRAFANA_DASHBOARD_LABEL in labels || key.endsWith(".json"))) {
+    return { lexicon: "grafana", what: "a Grafana dashboard" };
+  }
   if (isObject(doc.service) && isObject(doc.service.pipelines)) {
     return { lexicon: "otel", what: "an OpenTelemetry Collector config" };
   }
   if (looksLikeRuleGroups(doc.groups)) return { lexicon: "prometheus", what: "a Prometheus rule file" };
+  if ((isObject(doc.route) || Array.isArray(doc.receivers)) && !("apiVersion" in doc) && !("kind" in doc)) {
+    return { lexicon: "prometheus", what: "an Alertmanager config" };
+  }
   return undefined;
 }
 

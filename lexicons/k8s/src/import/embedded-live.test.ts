@@ -1,8 +1,10 @@
 /**
  * Embedded content through `chant import --from <env>` (#2995): a ConfigMap
- * holding a collector config, or a PrometheusRule's groups, read from a
- * (fake) cluster imports as the owning lexicon's typed declarations, exactly
- * as `chant import <manifest>` does (embedded-roundtrip.test.ts).
+ * holding a collector config or an alertmanager.yml (#3031), or a
+ * PrometheusRule's groups, read from a (fake) cluster imports as the owning
+ * lexicon's typed declarations, exactly as `chant import <manifest>` does
+ * (embedded-roundtrip.test.ts). A v2 dashboard is kept as read, with the
+ * same warning.
  *
  * The cluster is `fakeCluster`: a real k8s client with the socket replaced.
  * The objects are the round trip's fixtures with the fields a server adds.
@@ -22,7 +24,7 @@ import { k8sPlugin } from "../plugin";
 import { k8sSerializer } from "../serializer";
 import { exportResources } from "../export-resources";
 import { fakeCluster, objectKey } from "../api/fake-cluster";
-import { pkgDir, read, removeDir } from "./testdata/embedded/fixtures";
+import { alertmanagerConfig, pkgDir, read, removeDir } from "./testdata/embedded/fixtures";
 
 type Json = Record<string, unknown>;
 
@@ -123,6 +125,46 @@ describe("chant import --from: embedded content imported by its owner (#2995)", 
       expect(out.result.generatedFiles).toEqual(["main.ts", "node-exporter-rules/rules.ts"]);
       expect(out.files["main.ts"]).toContain('from "./node-exporter-rules/rules";');
       expect(out.files["node-exporter-rules/rules.ts"]).toContain("new RuleGroup(");
+    } finally {
+      removeDir(out.dir);
+    }
+  });
+
+  test("a live alertmanager ConfigMap becomes typed prometheus declarations and builds back to the same config (#3031)", async () => {
+    const out = await importLive("alertmanager-configmap.yaml");
+    try {
+      expect(out.result.error).toBeUndefined();
+      expect(out.result.success).toBe(true);
+      expect(out.result.warnings.filter((w) => w.includes("kept as written"))).toEqual([]);
+      expect(out.result.generatedFiles).toContain("alertmanager/routes.ts");
+      expect(out.files["alertmanager/receivers.ts"]).toContain("new Receiver(");
+      const host = Object.entries(out.files).find(([p, text]) => !p.includes("/") && text.includes("alertmanagerYaml("));
+      expect(host, Object.keys(out.files).join(", ")).toBeDefined();
+      expect(host![1]).toContain('import { alertmanagerYaml } from "@intentius/chant-lexicon-prometheus";');
+
+      const result = await build(out.srcDir, [k8sSerializer, otelSerializer, prometheusSerializer]);
+      expect(result.errors).toEqual([]);
+      const rebuilt = (loadAll(primary(result.outputs.get("k8s"))) as Json[]).filter((d) => d);
+      const source = (loadAll(read("alertmanager-configmap.yaml")) as Json[]).filter((d) => d);
+      const before = (find(source, "ConfigMap", "alertmanager").data as Json)["alertmanager.yml"] as string;
+      const after = (find(rebuilt, "ConfigMap", "alertmanager").data as Json)["alertmanager.yml"] as string;
+      expect(alertmanagerConfig(after)).toEqual(alertmanagerConfig(before));
+    } finally {
+      removeDir(out.dir);
+    }
+  });
+
+  test("a live v2 dashboard ConfigMap is kept as read, with a warning saying why (#3031)", async () => {
+    const out = await importLive("grafana-v2-dashboard-configmap.yaml");
+    try {
+      expect(out.result.error).toBeUndefined();
+      expect(out.result.success).toBe(true);
+      const kept = out.result.warnings.filter((w) => w.includes("kept as written"));
+      expect(kept).toHaveLength(1);
+      expect(kept[0]).toContain('ConfigMap grafana-dashboard-checkout-v2 data["checkout.json"] is a Grafana dashboard, kept as written:');
+      expect(kept[0]).toContain("v2 dashboard");
+      expect(Object.keys(out.files).filter((p) => p.includes("/"))).toEqual([]);
+      expect(Object.values(out.files).join("\n")).not.toContain("dashboardJson");
     } finally {
       removeDir(out.dir);
     }
