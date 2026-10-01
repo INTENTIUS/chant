@@ -1,7 +1,7 @@
 import type { ChantConfig } from "@intentius/chant";
 
 export default {
-  lexicons: ["docker"],
+  lexicons: ["docker", "otel"],
   lint: {
     rules: {
       // COR004 flags an exported declarable nothing in its file references.

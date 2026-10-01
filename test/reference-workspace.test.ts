@@ -51,6 +51,10 @@
  *   to a kept or left work item, are end to end and live in
  *   test/reference-workspace-triage.e2e.test.ts (#2817).
  *
+ * - `chant workspace graph` (#2559) lists delivery's collector in `collectors`:
+ *   the traces pipeline and the exporter's endpoint, read from delivery's own
+ *   build through the otel lexicon, and the document validates.
+ *
  * The per-member workspace commands and their contract tests join here as
  * each phase lands (#2537, #2536).
  */
@@ -546,6 +550,42 @@ describe("workspace commands on the fixture", () => {
     const run = chant(fixture, "workspace", "check", "--json");
     expect(run.status, run.stderr + run.stdout).toBe(0);
     expect((JSON.parse(run.stdout) as { ok: boolean }).ok).toBe(true);
+  });
+});
+
+describe("the collector on the fixture (#2559)", () => {
+  const graphSchema = JSON.parse(readFileSync(join(workspaceSrc, "graph.schema.json"), "utf-8")) as object;
+
+  test("graph lists delivery's traces pipeline and the endpoint its exporter sends to", () => {
+    const run = chant(fixture, "workspace", "graph", "--member", "delivery", "--no-cache");
+    expect(run.status, run.stderr).toBe(0);
+    const doc = JSON.parse(run.stdout) as {
+      collectors: { member: string; pipelines: { id: string; signal: string; receivers: string[]; processors: string[]; exporters: string[] }[]; exporters: { id: string; endpoints: string[]; signals: string[] }[] }[];
+      members: { name: string; meta?: Record<string, unknown> }[];
+    };
+    const validate = compile2020(graphSchema);
+    expect(validate(doc), JSON.stringify(validate.errors, null, 2)).toBe(true);
+    expect(doc.collectors).toHaveLength(1);
+    const [collector] = doc.collectors;
+    expect(collector!.member).toBe("delivery");
+    expect(collector!.pipelines).toEqual([
+      { id: "traces", signal: "traces", receivers: ["otlp"], processors: ["memory_limiter", "batch"], exporters: ["otlphttp/backend"] },
+    ]);
+    expect(collector!.exporters).toEqual([
+      expect.objectContaining({ id: "otlphttp/backend", endpoints: ["https://telemetry.example.com:4318"], signals: ["traces"] }),
+    ]);
+    expect(doc.members.find((m) => m.name === "delivery")!.meta).toBeUndefined();
+  });
+
+  test("the collector builds to YAML through the otel lexicon", () => {
+    const out = mkdtempSync(join(tmpdir(), "chant-2559-collector-"));
+    try {
+      const run = chant(join(fixture, "delivery"), "build", "src", "--lexicon", "otel", "-o", join(out, "collector.yaml"));
+      expect(run.status, run.stderr).toBe(0);
+      expect(readFileSync(join(out, "collector.yaml"), "utf-8")).toContain("otlphttp/backend:");
+    } finally {
+      rmSync(out, { recursive: true, force: true });
+    }
   });
 });
 

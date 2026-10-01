@@ -14,7 +14,7 @@
 import { existsSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, describe, expect, test } from "vitest";
-import { cleanScratch, commitAll, contract, declaration, declaration as declaration_, FAKE_GRAPH_CHANT, git, REPO, repo, scratchDir, validSchema } from "./__fixtures__/contract-repo";
+import { cleanScratch, commitAll, contract, declaration, declaration as declaration_, FAKE_FILE_GRAPH_CHANT, FAKE_GRAPH_CHANT, git, REPO, repo, scratchDir, validSchema } from "./__fixtures__/contract-repo";
 import type { GraphIR } from "../graph-ir";
 import { composeWorkspaceGraph, MEMBER_RUN_REASON_CODES } from "./compose-graph";
 import { parseDeclaration, WORKSPACE_ERROR_CODES } from "./declaration";
@@ -103,6 +103,53 @@ describe("the links section (#2539)", () => {
     const doc = { $schema: GRAPH_OUTPUT_SCHEMA_ID, contract: 1, chant: "0.81.0", at: null, ...graph };
     expectValid(doc);
     expect((doc.links as LinkTableRow[]).map((r) => `${r.consumer} ${r.origin} ${r.status}`)).toEqual(["app declared resolved", "app declared missing", "jobs inferred:joinKey ambiguous"]);
+  });
+});
+
+describe("the collectors section (#2559)", () => {
+  const topology = {
+    pipelines: [{ id: "traces", signal: "traces", receivers: ["otlp"], processors: [], exporters: ["otlphttp"] }],
+    components: [{ id: "otlphttp", kind: "exporter", type: "otlphttp", endpoints: ["https://collector.example:4318"], pipelines: ["traces"] }],
+    exporters: [{ id: "otlphttp", type: "otlphttp", endpoints: ["https://collector.example:4318"], pipelines: ["traces"], signals: ["traces"] }],
+  };
+  /** A member whose chant answers from ir.json, as one whose project declares a collector does. */
+  const collectorWorkspace = () =>
+    repo({
+      "chant.workspace.json": declaration([{ name: "ops", dir: "ops", kind: "chant" }, { name: "web", dir: "web", kind: "chant" }]),
+      "ops/chant.config.ts": "export default {};\n",
+      "ops/ir.json": JSON.stringify({ version: 1, nodes: [], edges: [], groups: {}, meta: { collector: topology } }),
+      "web/chant.config.ts": "export default {};\n",
+      "web/ir.json": JSON.stringify({ version: 1, nodes: [], edges: [], groups: {} }),
+      ".gitignore": "node_modules\n",
+      "node_modules/.bin/chant": { text: FAKE_FILE_GRAPH_CHANT, mode: 0o755 },
+    });
+
+  test("the schema requires collectors and describes each entry", () => {
+    const required = (schema.$defs.result as { required: string[] }).required;
+    expect(required).toContain("collectors");
+    expect((schema.$defs.collector as { required: string[] }).required).toEqual(["member", "pipelines", "components", "exporters"]);
+  });
+
+  test("a workspace whose member declares a collector lists its pipelines and exporters, and validates", async () => {
+    const { doc } = await workspaceGraph({ cwd: collectorWorkspace() });
+    const g = result(doc);
+    expectValid(g);
+    expect(g.collectors.map((c) => c.member)).toEqual(["ops"]);
+    expect(g.collectors[0]!.pipelines.map((p) => p.id)).toEqual(["traces"]);
+    expect(g.collectors[0]!.exporters).toEqual(topology.exporters);
+    expect(g.members.find((m) => m.name === "ops")!.meta).toBeUndefined();
+  });
+
+  test("a workspace with no collector prints an empty list", async () => {
+    const { doc } = await workspaceGraph({ cwd: fakeWorkspace() });
+    const g = result(doc);
+    expectValid(g);
+    expect(g.collectors).toEqual([]);
+  });
+
+  test("a collector with no exporters list does not validate", () => {
+    const bad = { member: "ops", pipelines: [], components: [] };
+    expect(() => expectValid({ $schema: GRAPH_OUTPUT_SCHEMA_ID, contract: 1, chant: "0.81.0", at: null, ...composeWorkspaceGraph({ name: "x", root: "." }, []), collectors: [bad] })).toThrow();
   });
 });
 
