@@ -157,6 +157,15 @@ describe("ApplyOp: shape", () => {
     expect(applyStep.fn).toBe("nativeApply");
     expect(applyStep.args).toEqual({ target: "kubectl", env: "prod", output: "dist", deleteMode: "never" });
   });
+
+  test("target grafana applies the build index, dist/grafana.json by default (#3011)", () => {
+    const { op } = ApplyOp({ name: "p", env: "prod", target: "grafana", delete: "owned-only" });
+    const phases = getProps(op).phases as Array<Record<string, unknown>>;
+    const applyStep = (phases[2].steps as Array<Record<string, unknown>>)[0];
+    expect(applyStep.fn).toBe("nativeApply");
+    expect(applyStep.args).toEqual({ target: "grafana", env: "prod", output: "dist/grafana.json", deleteMode: "owned-only" });
+    expect(getProps(op).onFailure).toBeUndefined();
+  });
 });
 
 describe("ApplyOp: gating + deletes", () => {
@@ -274,7 +283,7 @@ describe("ApplyOp: compensation (#125, total-or-refused in #1449)", () => {
   });
 
   test("compensate: true is refused at build time for every rollback-less target (#1449)", () => {
-    for (const target of ["kubectl", "kustomize", "arm", "gcp", "fly"] as const) {
+    for (const target of ["kubectl", "kustomize", "arm", "gcp", "fly", "grafana"] as const) {
       expect(() => ApplyOp({ name: "p", env: "prod", target, compensate: true })).toThrow(
         new RegExp(`ApplyOp "p": compensate is enabled, but target "${target}" has no automatic rollback`),
       );
@@ -296,7 +305,7 @@ describe("ApplyOp: compensation (#125, total-or-refused in #1449)", () => {
   });
 
   test("an object without a command is refused the same way as true", () => {
-    for (const target of ["kubectl", "kustomize", "arm", "gcp", "fly"] as const) {
+    for (const target of ["kubectl", "kustomize", "arm", "gcp", "fly", "grafana"] as const) {
       expect(() => ApplyOp({ name: "p", env: "prod", target, compensate: {} })).toThrow(
         /has no automatic rollback/,
       );
@@ -304,7 +313,7 @@ describe("ApplyOp: compensation (#125, total-or-refused in #1449)", () => {
   });
 
   test("a command lifts the refusal on every target", () => {
-    for (const target of ["kubectl", "kustomize", "arm", "gcp", "fly", "cloudformation"] as const) {
+    for (const target of ["kubectl", "kustomize", "arm", "gcp", "fly", "grafana", "cloudformation"] as const) {
       const { op } = ApplyOp({
         name: "p",
         env: "prod",
