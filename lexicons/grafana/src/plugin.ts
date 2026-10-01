@@ -142,8 +142,19 @@ export const grafanaPlugin: LexiconPlugin = {
     return detectTemplate(data);
   },
 
-  templateParser() {
-    return new GrafanaParser();
+  parserOptions() {
+    return [
+      {
+        name: "acceptLossyV1",
+        type: "boolean" as const,
+        description:
+          "import a dashboard.grafana.app v0/v1 read of a dashboard Grafana stores as v2, a lossy down-conversion that is otherwise refused",
+      },
+    ];
+  },
+
+  templateParser(options) {
+    return new GrafanaParser({ acceptLossyV1: options?.acceptLossyV1 === true });
   },
 
   templateGenerator() {

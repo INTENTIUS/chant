@@ -11,7 +11,8 @@ The `chant import` command reads existing infrastructure files (YAML, JSON, Dock
 | Member | Returns | Drives |
 |---|---|---|
 | `detectTemplate(data)` | `boolean` | Which lexicon owns a template file. Core parses the file, asks the project's lexicons and then the installed ones, and takes the first `true` (`detectTemplateLexicon` in `packages/core/src/cli/commands/import.ts`). |
-| `templateParser()` | `TemplateParser` | Source format to `TemplateIR`. |
+| `templateParser(options?)` | `TemplateParser` | Source format to `TemplateIR`. `options` holds the `--parser-option` values, checked and typed. |
+| `parserOptions()` | `ParserOptionSpec[]` | Optional. The options `templateParser` takes (`name`, `type`, `description`). `chant import --parser-option` refuses any name not listed. |
 | `templateGenerator()` | `TypeScriptGenerator` | `TemplateIR` to `GeneratedFile[]`. |
 | `embeddedImporters()` | `EmbeddedContentImporter[]` | This lexicon's content when it sits inside another lexicon's resources, such as a collector config in a k8s ConfigMap. See [Embedded content](#embedded-content). |
 | `migrationSource(from)` | `MigrationSource \| undefined` | `chant migrate`: another provider's format into this lexicon's. |

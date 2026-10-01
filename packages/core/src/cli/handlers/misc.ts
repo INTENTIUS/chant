@@ -324,6 +324,7 @@ export async function runImport(ctx: CommandContext): Promise<number> {
       lexicon: "k8s",
       output: args.output,
       force: args.force,
+      parserOptions: args.parserOption,
     });
     printImportResult(result);
     return result.success ? 0 : 1;
@@ -381,6 +382,7 @@ export async function runImport(ctx: CommandContext): Promise<number> {
     output: ctx.args.output,
     force: ctx.args.force,
     lexicon: ctx.args.lexicon,
+    parserOptions: ctx.args.parserOption,
   });
 
   printImportResult(result);

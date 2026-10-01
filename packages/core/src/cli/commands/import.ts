@@ -7,6 +7,7 @@ import { listInstalledLexicons, loadPlugin, loadPlugins, resolveProjectLexicons 
 import type { ExportedTemplate, LexiconPlugin, ResourceSelector } from "../../lexicon";
 import { parseYAMLDocument, splitYAMLDocuments } from "../../yaml";
 import { importLexiconPackage } from "../../lexicon-module";
+import { resolveParserOptions } from "../../import/parser-options";
 import { EmbeddedImports, type EmbeddedContent, type RegisteredEmbeddedImporter } from "../../import/embedded";
 
 /**
@@ -24,6 +25,12 @@ export interface ImportOptions {
    * JSON/YAML check: the raw content goes straight to that plugin's parser.
    */
   lexicon?: string;
+  /**
+   * `--parser-option` entries (`key` or `key=value`) for the lexicon's parser
+   * (#2994). Checked against the lexicon's `parserOptions()`; an unknown name
+   * fails the import before anything is parsed.
+   */
+  parserOptions?: string[];
 }
 
 /**
@@ -345,6 +352,7 @@ export async function importCommand(options: ImportOptions): Promise<ImportResul
       lexicon: options.lexicon,
       output: options.output,
       force: options.force,
+      parserOptions: options.parserOptions,
     });
   }
 
@@ -383,7 +391,7 @@ export async function importCommand(options: ImportOptions): Promise<ImportResul
     );
   }
 
-  const result = await parseAndWrite(plugin, content, outputDir, options.force, warnings, generatedFiles, plugin.name, projectDir);
+  const result = await parseAndWrite(plugin, content, outputDir, options.force, warnings, generatedFiles, plugin.name, projectDir, options.parserOptions);
   return { ...result, detected: true };
 }
 
@@ -402,6 +410,8 @@ export interface ContentImportOptions {
   lexicon: string;
   output?: string;
   force?: boolean;
+  /** `--parser-option` entries for the lexicon's parser (#2994); see {@link ImportOptions.parserOptions}. */
+  parserOptions?: string[];
 }
 
 export async function importFromContent(options: ContentImportOptions): Promise<ImportResult> {
@@ -422,7 +432,7 @@ export async function importFromContent(options: ContentImportOptions): Promise<
     return { success: false, generatedFiles: [], warnings: [], error: `Lexicon "${options.lexicon}" not available.` };
   }
   const projectDir = resolve(options.output ? dirname(options.output) : ".");
-  return parseAndWrite(plugin, options.content, outputDir, options.force, [], [], plugin.name, projectDir);
+  return parseAndWrite(plugin, options.content, outputDir, options.force, [], [], plugin.name, projectDir, options.parserOptions);
 }
 
 /**
@@ -520,6 +530,7 @@ async function parseAndWrite(
   generatedFiles: string[],
   lexicon: string,
   projectDir: string,
+  parserOptionEntries?: readonly string[],
 ): Promise<ImportResult> {
   // A lexicon can recognize a template (detectTemplate) without being able to
   // import it (grafana had no parser until #2945). Every path funnels through here, so
@@ -534,11 +545,16 @@ async function parseAndWrite(
     };
   }
 
+  const resolved = resolveParserOptions(plugin, parserOptionEntries);
+  if ("error" in resolved) {
+    return { success: false, generatedFiles: [], warnings: [], error: resolved.error, lexicon: plugin.name };
+  }
+
   // Parse template
   let ir: TemplateIR;
   let embedded: EmbeddedImports | undefined;
   try {
-    const parser = plugin.templateParser();
+    const parser = plugin.templateParser(resolved.options);
     let irs: TemplateIR[];
     ({ irs, embedded } = await parseWithEmbedded([(context) => parser.parse(content, context)], [plugin], projectDir));
     ir = irs[0];

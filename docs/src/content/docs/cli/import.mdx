@@ -39,12 +39,23 @@ The output names the lexicon: `Detected lexicon: <name>` when detection chose it
 
 Pass `--lexicon <name>` to skip detection, for example when no lexicon recognizes the template. The raw file content then goes to that lexicon's parser, which decides what it accepts. Without `--lexicon`, a file that is neither JSON nor YAML fails with `Template is neither valid JSON nor YAML.`
 
+## Parser options
+
+A lexicon's template parser can take options. The lexicon declares them with `parserOptions()`. `--parser-option` passes them through on a template import, for a lexicon named with `--lexicon` and for a detected one alike. A name the lexicon does not declare fails the import before anything is parsed, with a message listing what the lexicon accepts. A lexicon that declares none refuses every `--parser-option`.
+
+```bash
+chant import dashboard.json --lexicon grafana --parser-option acceptLossyV1
+```
+
+`--parser-option` does not apply to `--from` (live import) or `--agents`. Grafana's options are listed in [Importing](/chant/lexicons/grafana/importing/).
+
 ## Flags
 
 | Flag | Description |
 |------|-------------|
 | `--from <env>` | Import from a live environment instead of a template file |
 | `--kustomize <dir>` | Render the kustomization at `dir` and import the output as Kubernetes manifests. Needs `kustomize` or `kubectl` on the path |
+| `--parser-option <key[=value]>` | Pass an option to the lexicon's template parser. Repeatable. Each lexicon lists the options it takes; any other name is refused. A boolean option can be given bare (`--parser-option acceptLossyV1`) or as `=true` / `=false` |
 | `-d, --lexicon <name>` | With a template file, import with this lexicon instead of detecting one. With `--from`, restrict to one lexicon (e.g. `aws`, `k8s`) |
 | `--type <ResourceType>` | With `--from`, export only resources of this type |
 | `--name <name>` | With `--from`, export only the resource with this name |
@@ -127,6 +138,9 @@ chant import deployment.yaml
 
 # Skip detection and name the lexicon
 chant import manifests.yaml --lexicon k8s --output src/
+
+# Pass an option to the lexicon's parser
+chant import dashboard.json --lexicon grafana --parser-option acceptLossyV1
 
 # Import live infrastructure from an environment
 chant import --from prod

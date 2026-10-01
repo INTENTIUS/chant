@@ -227,6 +227,12 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant import --kustomize <dir>` (#1548): render the overlay, import
       // the output through the k8s template parser.
       result.kustomize = args[++i];
+    } else if (arg === "--parser-option") {
+      // `chant import --parser-option key[=value]` (#2994), repeatable: checked
+      // against the lexicon's parserOptions() by the import command.
+      const v = args[++i];
+      if (!v || v.startsWith("-")) throw new Error("--parser-option needs key or key=value: --parser-option acceptLossyV1");
+      (result.parserOption ??= []).push(v);
     } else if (arg === "--type") {
       result.selectType = args[++i];
     } else if (arg === "--name") {
@@ -1287,6 +1293,7 @@ Examples:
   chant components export prod --component search-service -o ./dist/search-service
   chant import template.json --output ./infra/
   chant import manifest.yaml --lexicon k8s --output ./infra/
+  chant import dash.json --lexicon grafana --parser-option acceptLossyV1
   chant import --from prod --name my-bucket --output src/
   chant lint ./infra/
   chant lint ./infra/ --format sarif
