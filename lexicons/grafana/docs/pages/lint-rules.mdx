@@ -9,7 +9,7 @@ The grafana lexicon's rules use the `GRAF` prefix. `GRAF0xx` rules read your Typ
 
 | Id | Severity | Catches |
 |---|---|---|
-| GRAF001 | error | a literal dashboard or datasource `uid` Grafana rejects, or a variable `name` `$name` can't reference |
+| GRAF001 | error | a literal dashboard, datasource or library panel `uid` Grafana rejects, or a variable `name` `$name` can't reference |
 | GRAF002 | error | a literal secret in a datasource's `secureJsonData` or in a contact point setting Grafana stores encrypted |
 | GRAF101 | error / warning | a panel, query, query, ad hoc or group by variable, or annotation using a datasource no `Datasource` or `ExternalDatasource` in the build declares, or an `ExternalDatasource` the build's `deleteDatasources` deletes, or a datasource variable whose plugin type none has (error); queries with no datasource at all, or a build that declares no datasource, so references cannot be checked (warning) |
 | GRAF102 | error | a query sent to a datasource of another plugin type |

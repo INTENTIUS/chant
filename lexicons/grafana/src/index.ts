@@ -114,6 +114,22 @@ export {
 export { Folder, FOLDER_TYPE, isFolderEntity, folderLevels, type FolderProps, type FolderEntity } from "./folder";
 export { annotationJson, ANNOTATION_REF_ID, type AnnotationInput } from "./annotations";
 
+// Library panels
+export {
+  LibraryPanel,
+  LibraryPanelRef,
+  LIBRARY_PANEL_TYPE,
+  LIBRARY_PANEL_REF_TYPE,
+  isLibraryPanelEntity,
+  isLibraryPanelRefEntity,
+  type LibraryPanelProps,
+  type LibraryPanelEntity,
+  type LibraryPanelEntityProps,
+  type LibraryPanelRefProps,
+  type LibraryPanelRefEntity,
+  type ExternalLibraryPanel,
+} from "./library-panel";
+
 // Grafana-managed alerting
 export {
   AlertRuleGroup,
@@ -252,6 +268,7 @@ export {
   type PanelClass,
   type RowProps,
   type RowEntity,
+  type DashboardItem,
 } from "./panels";
 
 // Queries, and the extension point for other datasource plugins

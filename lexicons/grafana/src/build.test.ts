@@ -16,6 +16,9 @@ import {
   SwitchVariable,
   TextboxVariable,
 } from "./variables";
+import { LibraryPanel, LibraryPanelRef } from "./library-panel";
+import { planFromDashboards } from "./api/apply";
+import { validateGrafanaOutput } from "./validate-output";
 import { panelsJson, renderDashboard, variableModel, dashboardJson, grafanaFiles, buildGrafana, customVariableOptions, type PanelJson } from "./build";
 
 /** The panels array, read as plain panels (the tests below build no rows unless they say so). */
@@ -550,5 +553,87 @@ describe("datasource prune (#2953)", () => {
     expect(files([new DatasourceProvisioning({ deleteDatasources: [{ name: "Old" }] })])).toEqual({ apiVersion: 1, prune: true, deleteDatasources: [{ name: "Old" }], datasources: [] });
     expect(files([new ExternalDatasource({ type: "prometheus", uid: "p" })])).toBeNull();
     expect(() => buildGrafana([new DatasourceProvisioning({}), new DatasourceProvisioning({})])).toThrow(/at most one DatasourceProvisioning/);
+  });
+});
+
+describe("library panels (#3010)", () => {
+  const burn = new LibraryPanel({
+    name: "Burn rate",
+    folder: "SLOs",
+    panel: new TimeSeriesPanel({ title: "Burn rate", gridPos: { w: 24, h: 6 }, targets: [new PromQuery({ expr: "up", datasource: prometheus })] }),
+  });
+
+  test("a LibraryPanel in panels is a reference, laid out at its panel's size, and its model goes in __elements", () => {
+    const json = renderDashboard(new Dashboard({ title: "SLO", panels: [new StatPanel({ title: "s" }), burn] })) as unknown as Record<string, unknown>;
+    expect(json.panels).toEqual([
+      expect.objectContaining({ type: "stat", id: 1 }),
+      { id: 2, gridPos: { h: 8, w: 12, x: 6, y: 0 }, libraryPanel: { uid: "burn-rate", name: "Burn rate" } },
+    ]);
+    expect(json.__elements).toEqual({
+      "burn-rate": {
+        name: "Burn rate",
+        uid: "burn-rate",
+        kind: 1,
+        model: {
+          type: "timeseries",
+          title: "Burn rate",
+          datasource: { type: "prometheus", uid: "prometheus" },
+          targets: [{ datasource: { type: "prometheus", uid: "prometheus" }, refId: "A", expr: "up" }],
+          options: {},
+          fieldConfig: { defaults: {}, overrides: [] },
+        },
+        folderUid: "slos",
+      },
+    });
+    expect(validateDashboardSchema(json as never).filter((p) => p.severity === "error")).toEqual([]);
+  });
+
+  test("a LibraryPanelRef places it, in a row too; one in Grafana is referenced by { uid, name } and not written", () => {
+    const json = renderDashboard(
+      new Dashboard({
+        title: "SLO",
+        panels: [
+          new LibraryPanelRef({ libraryPanel: burn, id: 7, gridPos: { x: 0, y: 0, w: 24, h: 6 }, title: "Burn rate" }),
+          new Row({ title: "More", panels: [new LibraryPanelRef({ libraryPanel: { uid: "shared-owners", name: "Owners" } }), burn] }),
+        ],
+      }),
+    ) as unknown as Record<string, unknown>;
+    expect(json.panels).toEqual([
+      { id: 7, gridPos: { h: 6, w: 24, x: 0, y: 0 }, libraryPanel: { uid: "burn-rate", name: "Burn rate" }, title: "Burn rate" },
+      expect.objectContaining({ type: "row", title: "More" }),
+      { id: 2, gridPos: { h: 8, w: 12, x: 0, y: 7 }, libraryPanel: { uid: "shared-owners", name: "Owners" } },
+      { id: 3, gridPos: { h: 8, w: 12, x: 12, y: 7 }, libraryPanel: { uid: "burn-rate", name: "Burn rate" } },
+    ]);
+    expect(Object.keys(json.__elements as object)).toEqual(["burn-rate"]);
+    expect(() => new LibraryPanelRef({ libraryPanel: "burn-rate" as never })).toThrow(/must be a LibraryPanel or a \{ uid, name \}/);
+    expect(() => renderDashboard(new Dashboard({ title: "X", panels: [burn, new LibraryPanel({ name: "Other", uid: "burn-rate", panel: new StatPanel({}) })] }))).toThrow(
+      /two different LibraryPanels with the uid "burn-rate"/,
+    );
+  });
+
+  test("the build makes the library panel's folder, the checks pass, and the applier writes it there, before the dashboards", () => {
+    const slos = new Folder({ title: "SLOs", uid: "slo-folder" });
+    const pinned = new LibraryPanel({ name: "Pinned", folder: slos, panel: new StatPanel({ title: "Pinned" }) });
+    const built = buildGrafana(
+      new Map<string, never>([
+        ["prometheus", prometheus as never],
+        ["burn", burn as never],
+        ["slo", new Dashboard({ title: "SLO", folder: "Team A", panels: [burn, pinned] }) as never],
+        ["other", new Dashboard({ title: "Other", panels: [burn] }) as never],
+      ]),
+    );
+    expect(built.folders.map((f) => [f.path, f.uid])).toEqual([
+      ["SLOs", "slo-folder"],
+      ["Team A", "team-a"],
+    ]);
+    const issues = validateGrafanaOutput({ dashboards: built.dashboards.map((d) => ({ source: d.file, json: d.json as never })), datasources: built.datasources });
+    expect(issues.filter((i) => i.severity === "error")).toEqual([]);
+    const plan = planFromDashboards(built.dashboards.map((d) => ({ json: d.json as never, folder: d.folder, folderUid: d.folderUid })), built.folders);
+    // "SLOs" is a path on burn, and the Folder of that path pins its uid.
+    expect(plan.libraryPanels.map((p) => [p.uid, p.folderUid])).toEqual([
+      ["burn-rate", "slo-folder"],
+      ["pinned", "slo-folder"],
+    ]);
+    expect(plan.dashboards.every((d) => !("__elements" in d.json))).toBe(true);
   });
 });

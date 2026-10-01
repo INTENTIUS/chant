@@ -452,10 +452,51 @@ describe("panels and rows", () => {
     expect(warnings).toEqual([]);
   });
 
-  test("a library panel is reported and left out", () => {
-    const { plan, warnings } = planDashboard(dashboard({ panels: [{ id: 4, gridPos: {}, libraryPanel: { uid: "lp", name: "Burn" } }] }));
-    expect(plan.declarations.map((d) => d.id)).toEqual(["dashboard"]);
-    expect(warnings).toEqual(['panel (untitled) (id 4) is a library panel ("Burn", uid lp); library panels are not carried yet, so it is left out']);
+  describe("library panels (#3010)", () => {
+    const burn = { uid: "lp", name: "Burn", kind: 1, model: { type: "stat", title: "Burn", targets: [{ refId: "A", datasource: prom, expr: "up" }] } };
+    const ref = { id: 4, gridPos: { h: 6, w: 24, x: 0, y: 7 }, libraryPanel: { uid: "lp", name: "Burn" } };
+
+    test("an element a panel places becomes a LibraryPanel, and the panel a LibraryPanelRef to it", () => {
+      const { plan, warnings, edits } = planDashboard(dashboard({ __elements: { lp: burn }, panels: [ref] }));
+      expect(decl(plan.declarations, "library-panel:lp")).toMatchObject({ className: "LibraryPanel", props: { name: "Burn", uid: "lp", panel: { $decl: "panel:0" } } });
+      expect(decl(plan.declarations, "panel:0")).toMatchObject({ className: "StatPanel", property: true });
+      expect(decl(plan.declarations, "panel:1")).toMatchObject({
+        className: "LibraryPanelRef",
+        props: { libraryPanel: { $decl: "library-panel:lp" }, id: 4, gridPos: ref.gridPos },
+        property: true,
+      });
+      expect(plan.exports).toContain("library-panel:lp");
+      expect(warnings).toEqual([]);
+      expect(edits).toEqual([]);
+    });
+
+    test("a reference to a library panel the dashboard does not carry names it by { uid, name }, with a warning", () => {
+      const { plan, warnings } = planDashboard(dashboard({ panels: [{ ...ref, title: "Burn", type: "library-panel-ref" }] }));
+      expect(decl(plan.declarations, "panel:0").props).toEqual({ libraryPanel: { uid: "lp", name: "Burn" }, id: 4, gridPos: ref.gridPos, title: "Burn" });
+      expect(warnings).toEqual([expect.stringMatching(/^panel "Burn" \(id 4\) places the library panel "Burn" \(uid lp\), which the dashboard does not carry/)]);
+    });
+
+    test("a reference's own panel keys, as Grafana 8 and 9 saved them, are named and left out", () => {
+      const { warnings, edits } = planDashboard(dashboard({ __elements: { lp: burn }, panels: [{ ...ref, type: "stat", targets: [] }] }));
+      expect(warnings).toEqual(["panel (untitled) (id 4): type and targets are not carried (Grafana draws a library panel from the library's copy, and does not read them from the reference)"]);
+      expect(edits).toEqual([{ op: "remove", path: "/panels/0/type" }, { op: "remove", path: "/panels/0/targets" }]);
+    });
+
+    test("an element no panel places, and a library variable, are named and left out", () => {
+      const { plan, warnings } = planDashboard(dashboard({ __elements: { lp: burn, v: { uid: "v", name: "env", kind: 2, model: {} } }, panels: [] }));
+      expect(plan.declarations.map((d) => d.id)).toEqual(["dashboard"]);
+      expect(warnings).toEqual([
+        '__elements entry "v" is a library variable, which chant has no class for, so it is left out',
+        'library panel "lp" is in __elements but no panel places it, so it is left out',
+      ]);
+    });
+
+    test("a model's gridPos, id and libraryPanel are left out with no warning; a folderUid is named", () => {
+      const model = { ...burn.model, id: 9, gridPos: { h: 1, w: 1, x: 0, y: 0 }, libraryPanel: { uid: "lp", name: "Burn" } };
+      const { warnings, edits } = planDashboard(dashboard({ __elements: { lp: { ...burn, model, folderUid: "slos" } }, panels: [ref] }));
+      expect(warnings).toEqual(['library panel "lp": folderUid is not carried (the uid of the folder it is kept in; give the LibraryPanel a folder)']);
+      expect(edits.map((e) => e.path).sort()).toEqual(["/__elements/lp/folderUid", "/__elements/lp/model/gridPos", "/__elements/lp/model/id", "/__elements/lp/model/libraryPanel"]);
+    });
   });
 
   test("a panel type chant has no class for gets a definePanel", () => {

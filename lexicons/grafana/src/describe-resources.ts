@@ -12,6 +12,7 @@
  * | `Dashboard` | `/apis/dashboard.grafana.app/<v>/.../dashboards/<uid>` (Grafana 11: `/api/dashboards/uid/<uid>`) | absent | a v2-stored dashboard the server does not serve at v2: `unsupported-kind` |
  * | `Datasource`, `ExternalDatasource` | `/api/datasources/uid/<uid>` | absent | |
  * | `Folder` | `/apis/folder.grafana.app/<v>/.../folders/<uid>` (Grafana 11: `/api/folders/<uid>`) | absent | |
+ * | `LibraryPanel` | `/api/library-elements/<uid>` | absent | |
  * | `DashboardProvider` | none: a provisioning-file setting Grafana serves no API for | | `unsupported-kind` |
  *
  * A dashboard Grafana stores as v2 is read at v2 and converted (#2947);
@@ -23,7 +24,7 @@
  *
  * Ownership is read where Grafana has a channel (./ownership.ts): a
  * dashboard over `/apis` resolves `owned` or `foreign`; a dashboard over the
- * legacy API and every datasource say `unknown`, and an `owned: true` read
+ * legacy API, every datasource and every library panel say `unknown`, and an `owned: true` read
  * withholds them as `filtered`, since it cannot show they are chant's.
  */
 
@@ -43,6 +44,8 @@ import { DASHBOARD_PROVIDER_TYPE, DASHBOARD_TYPE } from "./dashboard";
 import { DATASOURCE_TYPE, EXTERNAL_DATASOURCE_TYPE } from "./datasource";
 import { readFolder } from "./api/folders";
 import { FOLDER_TYPE, folderUidOf } from "./folder";
+import { LIBRARY_PANEL_TYPE, libraryPanelUidOf } from "./library-panel";
+import { libraryPanelPath } from "./api/library-panels";
 import { chantProviderNames, dashboardOwnership, folderOwnership, ownershipGap } from "./ownership";
 import { slugUid } from "./util";
 
@@ -57,6 +60,7 @@ export interface GrafanaObserveOptions extends Omit<BindOptions, "environment"> 
 /** The uid a declared dashboard or datasource has in Grafana: the one the build gives it. */
 export function declaredUid(name: string, entityType: string, props: Record<string, unknown>): string | undefined {
   if (entityType === FOLDER_TYPE) return folderUidOf(props);
+  if (entityType === LIBRARY_PANEL_TYPE) return libraryPanelUidOf(props);
   if (typeof props.uid === "string" && props.uid !== "") return props.uid;
   if (entityType === DASHBOARD_TYPE) return slugUid(name || String(props.title ?? ""));
   if (entityType === DATASOURCE_TYPE && typeof props.name === "string") return slugUid(props.name);
@@ -179,6 +183,35 @@ async function observeDatasource(client: GrafanaClient, entity: DeclaredEntity, 
   };
 }
 
+/** A library panel, over `/api/library-elements`, which has no labels: its ownership is always `unknown`. */
+async function observeLibraryPanel(client: GrafanaClient, uid: string, owned: boolean | undefined): Promise<EntityObservation> {
+  const address = libraryPanelPath(uid);
+  let live: Record<string, unknown> | undefined;
+  try {
+    live = (await client.get<{ result?: Record<string, unknown> }>(address))?.result;
+  } catch (err) {
+    return unobservedFrom(err);
+  }
+  if (!live) return { absent: true, queried: address };
+  if (owned) {
+    return { unobserved: { reason: "filtered", detail: `library panel "${uid}" exists but its ownership cannot be read: the library elements API has no labels` }, queried: address };
+  }
+  return {
+    present: {
+      type: LIBRARY_PANEL_TYPE,
+      physicalId: uid,
+      status: "PRESENT",
+      ownership: "unknown",
+      attributes: {
+        name: live.name,
+        ...(typeof live.folderUid === "string" && live.folderUid !== "" ? { folderUid: live.folderUid } : {}),
+        ...(typeof live.version === "number" ? { version: live.version } : {}),
+      },
+    },
+    queried: address,
+  };
+}
+
 function adapter(options: GrafanaObserveOptions): ObserverAdapter<GrafanaClient> {
   const providers = chantProviderNames(options.entities.values());
   // One read per dashboard. Its panels, rows, queries and variables are
@@ -204,6 +237,9 @@ function adapter(options: GrafanaObserveOptions): ObserverAdapter<GrafanaClient>
       }
       if (entity.type === FOLDER_TYPE) {
         return uid ? observeFolder(client, uid, providers, options.owned) : { unobserved: { reason: "read-failed", detail: `"${entity.name}" does not resolve to a uid` } };
+      }
+      if (entity.type === LIBRARY_PANEL_TYPE) {
+        return uid ? observeLibraryPanel(client, uid, options.owned) : { unobserved: { reason: "read-failed", detail: `"${entity.name}" does not resolve to a uid` } };
       }
       if (entity.type === DATASOURCE_TYPE || entity.type === EXTERNAL_DATASOURCE_TYPE) {
         return uid ? observeDatasource(client, entity, uid, options.owned) : { unobserved: { reason: "read-failed", detail: `"${entity.name}" does not resolve to a uid` } };

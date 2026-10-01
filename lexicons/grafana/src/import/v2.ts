@@ -19,9 +19,10 @@
  * and which are reported; `v2.test.ts` checks it against the schema, so a
  * pin bump that adds a v2 key fails until the key is placed in one of them.
  *
- * What the classic model can hold but chant cannot yet (library panels,
- * annotations) is written to the classic JSON as Grafana would and reported
- * by the classic importer (`./parser.ts`), as for any classic dashboard. Ad
+ * Library panel references and annotations are written to the classic JSON
+ * as Grafana would, and imported by the classic importer (`./parser.ts`) as
+ * for any classic dashboard; a v2 export carries no library panel models,
+ * so each reference names its library panel by `{ uid, name }`. Ad
  * hoc, group by and switch variables are written the same way and imported
  * by the classic importer's variable mappings (`./mappings.ts`).
  *

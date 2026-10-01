@@ -4,13 +4,13 @@ import { UID_PATTERN } from "../../util";
 import { VARIABLE_NAME } from "../../variables";
 import { constructorArgs, literalText, position, propertyName } from "./grafana-ast";
 
-const UID_OWNERS = new Set(["Dashboard", "Datasource"]);
+const UID_OWNERS = new Set(["Dashboard", "Datasource", "LibraryPanel"]);
 const VARIABLE_CLASS = /Variable$/;
 
 /**
  * GRAF001: a uid Grafana rejects, or a variable name queries cannot reference.
  *
- * A literal `uid` on a `Dashboard` or `Datasource` must be 1-40 letters,
+ * A literal `uid` on a `Dashboard`, `Datasource` or `LibraryPanel` must be 1-40 letters,
  * digits, `-` and `_`; Grafana refuses anything else on import. A literal
  * `name` on a `*Variable` must be letters, digits and `_`, starting with a
  * letter or `_`, or `$name` in a query cannot refer to it. Caught in source,

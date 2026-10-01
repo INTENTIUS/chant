@@ -16,7 +16,7 @@
  * built one the same way.
  *
  * Only the dashboard, panel, row, target, variable and link levels are
- * touched. Nothing inside `options`, `fieldConfig`, `transformations` or a
+ * touched, and the panel model of each library panel in `__elements`. Nothing inside `options`, `fieldConfig`, `transformations` or a
  * query model is: a `null` in there (a threshold step's base value) means
  * something.
  */
@@ -369,6 +369,16 @@ function normalizeAnnotations(annotations: unknown): unknown {
   return rest.length === 0 ? undefined : { list: rest };
 }
 
+/** `__elements` with each library panel's model normalized as a panel; none at all is the same as an empty one. */
+function normalizeElements(elements: unknown): unknown {
+  if (elements === undefined || elements === null) return undefined;
+  if (!isObject(elements)) return elements;
+  if (Object.keys(elements).length === 0) return undefined;
+  return Object.fromEntries(
+    Object.entries(elements).map(([key, el]) => [key, isObject(el) && isObject(el.model) ? { ...el, model: normalizePanel(el.model) } : el]),
+  );
+}
+
 /**
  * The dashboard in canonical form: bookkeeping keys and keys at their
  * default removed, derived keys removed, every query with its datasource and
@@ -385,6 +395,9 @@ export function normalizeDashboard(dashboard: Json): Json {
   if (out.refresh === false) delete out.refresh;
   if (Array.isArray(out.links)) out.links = out.links.map(normalizeLink);
   if (Array.isArray(out.panels)) out.panels = out.panels.map(normalizePanel);
+  const elements = normalizeElements(out.__elements);
+  if (elements === undefined) delete out.__elements;
+  else out.__elements = elements;
   const list = isObject(out.templating) && Array.isArray(out.templating.list) ? out.templating.list : [];
   if (list.length > 0) out.templating = { list: list.map(normalizeVariable) };
   else delete out.templating;

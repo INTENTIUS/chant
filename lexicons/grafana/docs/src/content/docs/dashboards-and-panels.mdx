@@ -1,6 +1,6 @@
 ---
 title: "Dashboards and Panels"
-description: "Dashboard, Row, the 21 panel classes, variables, layout and ids"
+description: "Dashboard, Row, the 21 panel classes, library panels, variables, layout and ids"
 diataxis: reference
 ---
 
@@ -20,7 +20,7 @@ diataxis: reference
 | `graphTooltip` | `"default"` | `"sharedCrosshair"` or `"sharedTooltip"` |
 | `editable` | `true` | |
 | `variables` | `[]` | variable entities, in dropdown order |
-| `panels` | `[]` | panels and rows, top to bottom |
+| `panels` | `[]` | panels, rows and [library panels](#library-panels), top to bottom |
 | `links` | `[]` | `{ title, type, url?, … }`; the rest of Grafana's link fields are filled in |
 | `annotations` | `[]` | annotation queries: `{ name, datasource?, target?, … }`; `enable` defaults to `true`, `iconColor` to `red` |
 | `folder` | General | a path (a subdirectory of `dashboards/`; `"Platform/Kubernetes"` nests on Grafana 13.1 and later) or a `Folder`, which pins the folder's uid (see [Provisioning](../provisioning/#folders)) |
@@ -116,6 +116,45 @@ GRAF105 reports a panel wider than the grid and any two panels that overlap.
 ### Ids
 
 Panel and row ids default to 1, 2, 3… in the order they appear, skipping any id set explicitly. Query `refId`s default to A, B, C… within each panel.
+
+## Library panels
+
+A library panel is kept in Grafana's library and shared by dashboards: each dashboard holds a reference, `{ id, gridPos, libraryPanel: { uid, name } }`, and Grafana draws the library's copy. `LibraryPanel` declares that copy:
+
+```typescript
+import { Dashboard, LibraryPanel, LibraryPanelRef, PromQuery, StatPanel, TimeSeriesPanel } from "@intentius/chant-lexicon-grafana";
+
+export const burnRate = new LibraryPanel({
+  name: "Burn rate",
+  uid: "slo-burn-rate",
+  folder: "SLOs",
+  panel: new TimeSeriesPanel({ title: "Burn rate", targets: [new PromQuery({ expr: "slo:burn_rate:1h" })] }),
+});
+
+export const checkout = new Dashboard({
+  title: "Checkout",
+  panels: [
+    new StatPanel({ title: "Requests" }),
+    burnRate,
+    new LibraryPanelRef({ libraryPanel: burnRate, gridPos: { x: 0, y: 8, w: 24, h: 6 }, title: "Burn rate" }),
+  ],
+});
+```
+
+| `LibraryPanel` prop | Default | Notes |
+|---|---|---|
+| `name` | required | the name the library lists it under; references carry it too |
+| `uid` | the name as a uid | 1-40 letters, digits, `-`, `_` (GRAF001) |
+| `folder` | the folder of the first dashboard that uses it | a path or a `Folder` |
+| `panel` | required | any panel; its `gridPos` and `id` are left out, since each reference has its own |
+
+A `LibraryPanel` listed in `panels` (or in a `Row`'s) is laid out like a panel, at its panel class's default size. A `LibraryPanelRef` sets the reference's `gridPos`, `id` and `title`; Grafana shows the library panel's own title whatever the reference says. A `LibraryPanelRef` can also name a library panel the project does not declare, by `{ uid, name }`: one that already exists in Grafana, which the build references and never writes.
+
+The build writes each library panel a dashboard places into that dashboard's `__elements`, keyed by uid, as Grafana's "Export for sharing externally" does, plus the uid of its `folder` when it names one. GRAF107 checks the model as a panel. What creates the library panel in Grafana depends on how the dashboard gets there:
+
+- [Apply over the API](../applying/) writes it to the library before the dashboards, in its folder.
+- Grafana's own import (Dashboards → New → Import, or `POST /api/dashboards/import`) creates it from `__elements`.
+- File provisioning, and the sidecar ConfigMaps that load the same files, do not: Grafana stores the dashboard with its `__elements` and draws the reference only once a library panel with that uid exists. Checked against Grafana 12.4.11 and 13.2.2. `GrafanaOperatorResources` does not write them either yet (#3186).
 
 ## Variables
 

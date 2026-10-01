@@ -54,6 +54,7 @@ import type * as news from "./schema/news.gen";
 import type * as datagrid from "./schema/datagrid.gen";
 import type { AlertListOptions, FlameGraphOptions } from "./panel-options";
 import type { Transformation } from "./transformations";
+import type { LibraryPanelEntity, LibraryPanelRefEntity } from "./library-panel";
 
 /** `fieldConfig` with `defaults.custom` typed for the panel. */
 export interface PanelFieldConfig<C> {
@@ -431,8 +432,9 @@ export interface RowProps {
   title: string;
   /** Collapsed rows keep their panels inside the row until opened. */
   collapsed?: boolean;
+  /** Its panels, and library panels (a `LibraryPanel`, or a `LibraryPanelRef` to place one). */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  panels?: PanelEntity<any, any>[];
+  panels?: Array<PanelEntity<any, any> | LibraryPanelEntity | LibraryPanelRefEntity>;
   /** Repeat the row once per value of this variable. */
   repeat?: VariableEntity | string;
   /**
@@ -465,6 +467,10 @@ export const Row = function (this: object, props: RowProps) {
   RowBase.call(this, props as unknown as Record<string, unknown>);
 } as unknown as new (props: RowProps) => RowEntity;
 Object.defineProperty(Row, "name", { value: "Row" });
+
+/** What a dashboard's `panels` lists: panels, rows, and library panels (a `LibraryPanel`, or a `LibraryPanelRef` to place one). */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type DashboardItem = PanelEntity<any, any> | RowEntity | LibraryPanelEntity | LibraryPanelRefEntity;
 
 export function isRowEntity(value: unknown): value is RowEntity {
   return typeof value === "object" && value !== null && (value as Declarable).entityType === ROW_TYPE && (value as Declarable).lexicon === "grafana";

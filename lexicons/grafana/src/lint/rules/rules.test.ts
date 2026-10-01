@@ -17,6 +17,7 @@ describe("GRAF001 uid and variable-name syntax", () => {
         new Datasource({ name: "P", type: "prometheus", uid: "has space" });
         new QueryVariable({ name: "my-var", datasource: p, query: "q" });
         new CustomVariable({ name: "1st", values: [] });
+        new LibraryPanel({ name: "Burn", uid: "burn rate", panel: p });
       `),
     );
     expect(diags.map((d) => [d.ruleId, d.line])).toEqual([
@@ -24,6 +25,7 @@ describe("GRAF001 uid and variable-name syntax", () => {
       ["GRAF001", 3],
       ["GRAF001", 4],
       ["GRAF001", 5],
+      ["GRAF001", 6],
     ]);
   });
 
