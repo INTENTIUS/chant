@@ -59,7 +59,7 @@ Some signer lines are never used, and the command reports each one with the reas
 |---|---|
 | Attestation | A commit is `attested` when its ssh signature, in the `git` namespace, verifies against a key listed at base. Trailers, author names and environment variables count for nothing. |
 | Protected writes | A commit that changes the signers file, its rotation file or `.chant/trust.json` needs a signature from someone the base policy trusts. If an admin role is granted, only an admin's signature counts. Deleting the signers file is a protected write too. |
-| Rotation | A change to the signer set must be the next version, signed by a threshold of the set at base. See [`chant workspace signers`](/chant/cli/workspace-signers/). |
+| Rotation | A change to the signer set must be the next version, signed by a threshold of the set at base. In the `--json` report, `rotation` holds the version proposed and who signed it, or the version it had to follow with a [reason code](/chant/cli/workspace-signers/#reason-codes). See [`chant workspace signers`](/chant/cli/workspace-signers/). |
 | History | The signer history at base must be unbroken. Every version has to be signed by a threshold of the one before it. If it isn't, nothing verifies. |
 | `--require attested` | Every commit in the change must be `attested`. A merge with no changes of its own is skipped, and the commits it brings in are checked instead. |
 
