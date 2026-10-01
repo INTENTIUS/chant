@@ -142,6 +142,22 @@ from run to run; the export here is from a run where it did not. 12.4.11
 writes `fieldConfig.defaults.custom.footer` on each table panel, which the
 `table` overlay now allows.
 
+### OpenSearch queries (chant #3017)
+
+`grafana-13.2.2/opensearch.json` and `opensearch.external.json` were
+captured on 2026-10-01 from `grafana/grafana:13.2.2` (commit 1bea008f), from
+`seed/opensearch.json`: six panels querying an OpenSearch datasource, with a
+Lucene metrics query (count and avg over a date histogram), a Lucene logs
+query, a Lucene raw data query, and PPL queries in the table, time series
+and logs formats. The plugin is not bundled, so it was installed at start-up
+with `GF_PLUGINS_PREINSTALL_SYNC=grafana-opensearch-datasource@2.34.4`, and
+the datasource (uid `opensearch`, nothing behind it) was created through
+`POST /api/datasources`. The dashboard was opened in headless Chrome and
+exported from Export > Export as code with the Classic model under Advanced
+options, with "Share dashboard with another instance" for the external file;
+the JSON is the clipboard text of the drawer's Copy to clipboard, reformatted
+with `jq .`. There is no 12.4.11 capture.
+
 ### A dashboard stored as v2 (chant #2947)
 
 `grafana-13.2.2/tabs.v2-resource.json` and `tabs.v1-resource.json` were

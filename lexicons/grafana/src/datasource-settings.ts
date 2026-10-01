@@ -348,6 +348,53 @@ export interface ElasticsearchDataLink {
 
 export type ElasticsearchSecureJsonKey = "apiKey";
 
+// ── OpenSearch ────────────────────────────────────────────────────
+
+/**
+ * grafana-opensearch-datasource, grafana/opensearch-datasource v2.34.4 (the
+ * plugin is not bundled with grafana/grafana:13.2.2): src/types.ts
+ * OpenSearchOptions, DataLinkConfig, Flavor; src/configuration/ConfigEditor.tsx,
+ * OpenSearchDetails.tsx, LogsConfig.tsx.
+ *
+ * HTTP client: yes. The editor renders `DataSourceHttpSettings` with a
+ * SigV4 editor from @grafana/aws-sdk, so the settings include `HttpJsonData`,
+ * its sigV4 keys among them. The index is `database` in `jsonData`.
+ */
+export interface OpenSearchJsonData extends HttpJsonData {
+  /** Index name or pattern, e.g. "[logs-]YYYY.MM.DD". */
+  database?: string;
+  /** Index pattern interval, as for Elasticsearch. Omit for "no pattern". */
+  interval?: "Hourly" | "Daily" | "Weekly" | "Monthly" | "Yearly";
+  /** The time field of the index; the editor defaults it to "@timestamp". */
+  timeField?: string;
+  /** Min time interval, e.g. "10s". */
+  timeInterval?: string;
+  /** The server's version, which the editor writes when it detects it (the "Get Version and Save" button). */
+  version?: string;
+  versionLabel?: string;
+  flavor?: "elasticsearch" | "opensearch";
+  maxConcurrentShardRequests?: number | string;
+  logMessageField?: string;
+  logLevelField?: string;
+  /** Enable PPL queries; the editor treats an absent value as true. */
+  pplEnabled?: boolean;
+  /** Amazon OpenSearch Serverless: no index or version settings. */
+  serverless?: boolean;
+  dataLinks?: OpenSearchDataLink[];
+}
+
+export interface OpenSearchDataLink {
+  /** Exact field name or regex. */
+  field: string;
+  /** URL, or the query when datasourceUid is set. */
+  url: string;
+  title?: string;
+  datasourceUid?: LinkedDatasource<TracingDatasourceType>;
+}
+
+/** No secrets beyond the HTTP client's (`basicAuthPassword`, the sigV4 keys). */
+export type OpenSearchSecureJsonKey = never;
+
 // ── AWS auth (shared by CloudWatch) ───────────────────────────────
 
 /**
@@ -873,6 +920,7 @@ export interface DatasourceJsonDataTypes {
   loki: LokiJsonData;
   tempo: TempoJsonData;
   elasticsearch: ElasticsearchJsonData;
+  "grafana-opensearch-datasource": OpenSearchJsonData;
   cloudwatch: CloudWatchJsonData;
   "grafana-azure-monitor-datasource": AzureMonitorJsonData;
   stackdriver: CloudMonitoringJsonData;
@@ -890,6 +938,7 @@ export interface DatasourceSecureJsonKeys {
   loki: HttpSecureJsonKey;
   tempo: HttpSecureJsonKey;
   elasticsearch: HttpSecureJsonKey | ElasticsearchSecureJsonKey;
+  "grafana-opensearch-datasource": HttpSecureJsonKey | OpenSearchSecureJsonKey;
   cloudwatch: CloudWatchSecureJsonKey;
   "grafana-azure-monitor-datasource": HttpSecureJsonKey | AzureMonitorSecureJsonKey;
   stackdriver: HttpSecureJsonKey | CloudMonitoringSecureJsonKey;

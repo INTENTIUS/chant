@@ -162,6 +162,7 @@ const PACKAGE_CLASS_NAMES = new Set([
   "CloudMonitoringQuery",
   "BigQueryQuery",
   "PyroscopeQuery",
+  "OpenSearchQuery",
   "PostgresQuery",
   "MySQLQuery",
   "MSSQLQuery",
