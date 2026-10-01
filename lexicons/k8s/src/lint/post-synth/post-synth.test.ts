@@ -70,9 +70,9 @@ function manifestsCtx(...objs: unknown[]): PostSynthContext {
 }
 
 // ── WK8005: Secrets in env ──────────────────────────────────────────
-// Note: Tests with nested container properties (env, resources, securityContext,
-// ports, probes) use JSON format because the core parseYAML line-based parser
-// cannot handle deeply nested properties inside YAML array items.
+// Note: tests with nested container properties (env, resources, securityContext,
+// ports, probes) use JSON format, written when core's parseYAML was a line
+// parser that misread them. It is js-yaml now (#3006), so YAML works too.
 
 describe("WK8005: Hardcoded secrets in env", () => {
   test("flags hardcoded password in env", () => {

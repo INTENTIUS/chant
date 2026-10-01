@@ -70,7 +70,7 @@
  * that job either, same as `environment:` above does not).
  */
 
-import { emitYAML } from "@intentius/chant/yaml";
+import { emitYAML, emitYAMLEntry } from "@intentius/chant/yaml";
 import { memberPathFilter, resolveOpTrigger } from "@intentius/chant/lexicon";
 import type {
   ComponentPipelineOptions as GenerateGithubOpOptions,
@@ -822,14 +822,14 @@ export function emitOpPipelineYAML(doc: GithubOpPipelineDoc): string {
   // it was before the field existed.
   if (doc.header && doc.header.length > 0) sections.push(doc.header.join("\n"));
   if (doc.name) sections.push("name: " + emitYAML(doc.name, 0));
-  sections.push("on:" + emitYAML(doc.on, 1));
-  if (doc.env && Object.keys(doc.env).length > 0) sections.push("env:" + emitYAML(doc.env, 1));
-  sections.push("concurrency:" + emitYAML(doc.concurrency, 1));
-  if (Object.keys(doc.permissions).length > 0) sections.push("permissions:" + emitYAML(doc.permissions, 1));
+  sections.push(emitYAMLEntry("on", doc.on));
+  if (doc.env && Object.keys(doc.env).length > 0) sections.push(emitYAMLEntry("env", doc.env));
+  sections.push(emitYAMLEntry("concurrency", doc.concurrency));
+  if (Object.keys(doc.permissions).length > 0) sections.push(emitYAMLEntry("permissions", doc.permissions));
   // The gated-apply notice job rides in `jobs:` beside the Op's own job, but
   // is carried separately on the doc so a dialect that cannot run it (forgejo,
   // whose runner has no `gh` pointed at its own instance) drops it by omission.
-  sections.push("jobs:" + emitYAML({ ...doc.jobsDoc, ...(doc.gatedNoticeDoc ?? {}) }, 1));
+  sections.push(emitYAMLEntry("jobs", { ...doc.jobsDoc, ...(doc.gatedNoticeDoc ?? {}) }));
   return sections.join("\n\n") + "\n";
 }
 
