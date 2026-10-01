@@ -43,7 +43,7 @@ npm run lint
 `build` writes one output per lexicon under `dist/`. The k8s manifests carry the prometheus and grafana outputs in ConfigMaps, so the cluster runs exactly the files those builds wrote.
 
 <Aside type="note">
-Keep the declarations a check joins across in one build root. The placement checks (WK8601 tail sampling on a DaemonSet, WK8602 a multi-replica gateway without trace-aware routing, WK8603 `k8s_cluster` per node) read each collector ConfigMap next to its workload; PROM202 reads the SLO's severities next to the routes; GRAF101 and GRAF102 read panels next to datasources. Across build roots they go silent (chant #1939). WK8604 needs no join, since it runs the otel config checks (OTEL101 to OTEL106 and OTEL112) over the config inside each ConfigMap on its own.
+Keep the declarations a check joins across in one build root. The placement checks (WK8601 tail sampling on a DaemonSet, WK8602 a multi-replica gateway without trace-aware routing, WK8603 `k8s_cluster` per node) read each collector ConfigMap next to its workload; PROM202 reads the SLO's severities next to the routes; GRAF101 and GRAF102 read panels next to datasources. Across build roots they go silent (chant #1939). WK8604 needs no join, since it runs the otel config checks (the OTEL1xx ids that read collector YAML) over the config inside each ConfigMap on its own.
 </Aside>
 
 ## Run it

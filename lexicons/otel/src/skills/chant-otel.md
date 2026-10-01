@@ -76,6 +76,7 @@ It deletes prompt, completion, system-instruction and tool-call content from spa
 - Put `memory_limiter` first in `processors` (OTEL105).
 - Never write a credential literally. Use `"${env:NAME}"` and the collector reads it at start-up (OTEL002).
 - Every pipeline needs at least one receiver and one exporter (OTEL102). A declared component no pipeline uses is a warning (OTEL103).
+- Don't split metrics by a per-request id (`gen_ai.conversation.id`, `gen_ai.response.id`, `gen_ai.tool.call.id`, `session.id`, `user.id`, `enduser.id`) or a content key: each value starts new time series (OTEL116).
 - Declared extensions are enabled in declaration order unless a `Service` lists `extensions` itself.
 
 ## Starting from an existing config
