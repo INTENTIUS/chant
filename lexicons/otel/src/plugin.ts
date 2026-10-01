@@ -81,7 +81,7 @@ export const otelPlugin: LexiconPlugin = {
   // Where this project's telemetry goes, for `chant workspace graph` (#2559).
   // A project with no collector pipeline and no component reports nothing.
   graphMeta(entities) {
-    const topology = collectorTopologyOf(entities);
+    const topology = collectorTopologyOf(entities.values());
     if (topology.pipelines.length === 0 && topology.components.length === 0) return undefined;
     return { collector: topology };
   },

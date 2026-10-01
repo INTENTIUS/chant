@@ -233,8 +233,10 @@ describe("delivery member", () => {
   test("builds, and the Compose file builds the app from its Dockerfile", async () => {
     const src = join(delivery, "src");
     const plugins = await loadPlugins(await resolveProjectLexicons(src));
-    const serializers = plugins.map((p) => p.serializer).filter((s) => s.name === "docker");
-    expect(serializers).toHaveLength(1);
+    // The collector (#2559) is otel entities, so the build serializes both lexicons. `npm run build`
+    // names `--lexicon docker`, and the compose file comes from that one.
+    const serializers = plugins.map((p) => p.serializer).filter((s) => s.name === "docker" || s.name === "otel");
+    expect(serializers.map((s) => s.name).sort()).toEqual(["docker", "otel"]);
 
     const out = mkdtempSync(join(tmpdir(), "chant-2543-delivery-"));
     try {

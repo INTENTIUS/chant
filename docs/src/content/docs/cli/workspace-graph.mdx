@@ -100,7 +100,7 @@ The document follows the schema `https://intentius.io/chant/schemas/workspace/gr
 }
 ```
 
-`contract` is the read-contract version and `chant` the version that composed the graph. `at` is the full commit id with `--at`, and `null` for the working tree. `workspace.root` is the workspace root relative to the git root. `version` is the version of the composed graph format. A member's `chant` is the version its toolchain reported, or `null` when the member was read by a chant older than `member-run`. A member's `meta` and `pipeline`, when its IR has them, stay on the member's entry, except for the collector topology, which has its own [section](#collectors). A composed member also carries `cached`, which says whether the [member cache](#the-member-cache) answered it. Its `stamp` is the member's [stamp](/chant/reference/workspace-read-contract/#member-stamps), or `null` when none could be taken.
+`contract` is the read-contract version and `chant` the version that composed the graph. `at` is the full commit id with `--at`, and `null` for the working tree. `workspace.root` is the workspace root relative to the git root. `version` is the version of the composed graph format. A member's `chant` is the version its toolchain reported, or `null` when the member was read by a chant older than `member-run`. The `meta` and `pipeline` of a member's IR, when it has them, stay on the member's entry, except for the collector topology, which has its own [section](#collectors). A composed member also carries `cached`, which says whether the [member cache](#the-member-cache) answered it. Its `stamp` is the member's [stamp](/chant/reference/workspace-read-contract/#member-stamps), or `null` when none could be taken.
 
 When the declaration can't be read, the command prints `{ "$schema", "contract", "chant", "error": { "code", "message", "location" } }` instead, with one of the [declaration's error codes](/chant/reference/workspace-declaration/#errors) or an `--at` code, `not-a-git-repository` or `revision-unknown`. `--live` with `--at` fails with `live-at-revision`.
 
@@ -127,9 +127,9 @@ A declared link replaces the inferred edge it covers, so the same join never app
 
 ## Collectors
 
-`collectors` lists where each member's telemetry goes ([#2559](https://github.com/INTENTIUS/chant/issues/2559)). A member whose project declares OpenTelemetry Collector config through the otel lexicon has one entry, in declaration order. The list is empty when no member does.
+`collectors` lists where each member's telemetry goes ([#2559](https://github.com/INTENTIUS/chant/issues/2559)). Each member whose project declares OpenTelemetry Collector config through the otel lexicon has one entry, in declaration order. The list is empty when no member does.
 
-chant core reads no collector config. The otel lexicon's `graphMeta` hook answers the topology of the project's collector entities, the member's `chant graph --format ir` carries it as `meta.collector`, and composition lifts it into this section. A member whose toolchain has no otel lexicon, or whose project declares no collector, adds nothing.
+chant core reads no collector config. The otel lexicon's `graphMeta` hook answers the topology of the project's collector entities, the member's `chant graph --format ir` carries it as `meta.collector`, and composition lifts it into this section. Nothing is added for a member whose toolchain has no otel lexicon or whose project declares no collector.
 
 | Field | Value |
 |---|---|
