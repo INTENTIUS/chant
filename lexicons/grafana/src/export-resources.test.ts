@@ -74,7 +74,7 @@ describe("exportResources", () => {
 
   it("a dashboard refers to a datasource exported beside it by uid, rather than declaring it again", async () => {
     const files = new GrafanaGenerator().generate(await exportFrom(state()));
-    const dashboardDatasources = files.find((f) => f.path === "checkout/datasources.ts")!.content;
+    const dashboardDatasources = files.find((f) => f.path === "checkout/dashboard.ts")!.content;
     expect(dashboardDatasources).not.toContain("ExternalDatasource");
     expect(dashboardDatasources).toMatch(/const prom: DatasourceRef<"prometheus"> = \{ type: "prometheus", uid: "prom" \}/);
     expect(files.find((f) => f.path === "datasources.ts")!.content).toContain("new Datasource(");

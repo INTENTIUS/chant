@@ -45,8 +45,12 @@ export const dashboardImporter: EmbeddedContentImporter = {
     const resource = ir.resources.find((r) => r.type === DASHBOARD_RESOURCE_TYPE);
     if (!resource) throw new Error((ir.warnings ?? []).join(" ") || "no dashboard was read");
     const { plan } = resource.properties as unknown as PlanResourceProperties;
-    // Core gives the content a directory of its own; the plan's would nest a second one inside it.
-    const { files, exported } = generatePlanModules({ ...plan, directory: "" });
+    // Core gives the content a directory of its own; the plan's would nest a second one inside it. The host's
+    // project need not list grafana (a k8s project holding a dashboard ConfigMap), and then core lint does not know
+    // grafana's panels and queries are property-kind, so they keep the flat shape that lints clean without it: a
+    // const per declaration, nested values lifted, eight to a module (#2988).
+    const flat = { ...plan, directory: "", main: undefined, declarations: plan.declarations.map(({ property: _, ...d }) => d) };
+    const { files, exported } = generatePlanModules(flat);
     const dashboard = exported.get("dashboard");
     if (!dashboard) throw new Error("the import declared no dashboard");
     return {
