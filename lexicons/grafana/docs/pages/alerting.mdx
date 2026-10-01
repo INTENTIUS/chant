@@ -83,6 +83,8 @@ The expression classes are typed from Grafana's server-side expression schema at
 {{file:alerting/src/notifications.ts}}
 ```
 
+A receiver's `settings` are typed per integration from Grafana's `/api/alert-notifiers` (`SlackSettings`, `PagerdutySettings`, ...), so an editor completes the keys. An integration the lexicon has no type for is accepted with free-form settings. GRAF114 checks the settings after the build: a setting the integration does not take is a warning that names the nearest one (`recepient` for `recipient`), and a missing required one is an error. `just fetch-notifiers` rewrites the types from a running Grafana.
+
 A receiver without a `uid` gets one from the contact point's name and the integration type (`oncall-slack`). Write each secret setting as `$__env{NAME}` or `$__file{/path}`: Grafana expands it when it reads the file. GRAF002 flags a literal in a setting Grafana stores encrypted, per integration: a Slack `url` or `token`, a PagerDuty `integrationKey`, a webhook's `password`, `authorization_credentials` or TLS key, and the rest of the list in `CONTACT_POINT_SECRET_SETTINGS`, taken from Grafana 13.2.2's `/api/alert-notifiers`.
 
 A policy's `receiver`, a rule's `notification_settings.receiver`, and each entry of `mute_time_intervals` and `active_time_intervals` take the entity or its name. Passing the entity keeps the reference checked by TypeScript; a name is checked after the build by GRAF113. Routes match with `object_matchers` (`[label, op, value]`, what Grafana writes) or Alertmanager `matchers` strings. Provisioning a `NotificationPolicy` replaces the organisation's whole tree, so there is one per `orgId`.
@@ -132,7 +134,7 @@ A file with `apiVersion` and alerting lists (`groups`, `contactPoints`, `policie
 | GRAF111 | a condition, expression input or `record.from` naming no refId of the rule, duplicate refIds, an expression model the schema rejects |
 | GRAF112 | a query to a datasource the build does not declare, or whose model is for another plugin |
 | GRAF113 | a route or rule sending to a contact point, or naming a mute timing, the build does not declare; a matcher that does not parse |
-| GRAF114 | a uid, title, interval or state Grafana rejects, and anything declared twice |
+| GRAF114 | a uid, title, interval or state Grafana rejects, a contact point setting the integration does not take or lacks, and anything declared twice |
 
 Grafana stops provisioning alerting when one file in the directory is invalid, so these run on every build. See [Lint Rules](../lint-rules/).
 

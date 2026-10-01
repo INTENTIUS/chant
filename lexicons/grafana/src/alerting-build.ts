@@ -281,7 +281,7 @@ export function contactPointJson(cp: ContactPointEntity): ProvisionedContactPoin
     let uid = r.uid ?? slugUid(`${p.name} ${r.type}`);
     if (r.uid === undefined) for (let n = 2; taken.has(uid); n++) uid = slugUid(`${p.name} ${r.type} ${n}`);
     taken.add(uid);
-    return compact({ uid, type: r.type, settings: r.settings ?? {}, disableResolveMessage: r.disableResolveMessage });
+    return compact({ uid, type: r.type, settings: (r.settings ?? {}) as Json, disableResolveMessage: r.disableResolveMessage });
   });
   return compact({ orgId: p.orgId, name: p.name, receivers });
 }
