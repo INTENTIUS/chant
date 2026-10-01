@@ -21,7 +21,7 @@ export { otlp, batch, backend, traces };
 | processors | batch, memory_limiter, resource, attributes, k8sattributes, resourcedetection, filter, transform, redaction, tail_sampling, probabilistic_sampler |
 | exporters | otlp, otlphttp, debug, prometheus, googlecloud, loadbalancing |
 | connectors | spanmetrics, servicegraph, routing, forward, count, sum, signaltometrics |
-| extensions | health_check, pprof, zpages |
+| extensions | health_check, pprof, zpages, k8s_leader_elector |
 
 The config types follow the collector-contrib release in `COLLECTOR_PIN`.
 

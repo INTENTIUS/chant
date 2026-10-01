@@ -4,9 +4,12 @@ import { expandComposite } from "@intentius/chant";
 import type { Declarable } from "@intentius/chant/declarable";
 import {
   DebugExporter,
+  K8sClusterReceiver,
+  K8sLeaderElectorExtension,
   LoadBalancingExporter,
   OtlpReceiver,
   Pipeline,
+  Service as CollectorService,
   TailSamplingProcessor,
   collectorTopology,
   validateCollectorConfig,
@@ -83,6 +86,35 @@ describe("OtelCollectorGateway", () => {
     expect(p(gw.clusterRole).rules).toEqual(rules);
     expect(p(gw.clusterRoleBinding).subjects).toEqual([{ kind: "ServiceAccount", name: "gw-sa", namespace: "obs" }]);
     expect(p(gw.clusterRoleBinding).roleRef.name).toBe("gw-role");
+  });
+
+  test("an enabled k8s_leader_elector adds a Role for Leases in its lease_namespace", () => {
+    const elector = new K8sLeaderElectorExtension({ lease_name: "otel-cluster", lease_namespace: "leases" });
+    const cluster = new K8sClusterReceiver({ k8s_leader_elector: elector.componentId });
+    const debug = new DebugExporter({});
+    const pipeline = new Pipeline({ signal: "metrics", receivers: [cluster], exporters: [debug] });
+    const gw = OtelCollectorGateway({ name: "gw", namespace: "obs", config: [pipeline, new CollectorService({ extensions: [elector] })] });
+    expect(p(gw.leaseRole).metadata).toMatchObject({ name: "gw-leases", namespace: "leases" });
+    expect(p(gw.leaseRole).rules).toEqual([
+      { apiGroups: ["coordination.k8s.io"], resources: ["leases"], verbs: ["get", "list", "watch", "create", "update", "patch", "delete"] },
+    ]);
+    expect(p(gw.leaseRoleBinding).roleRef).toEqual({ apiGroup: "rbac.authorization.k8s.io", kind: "Role", name: "gw-leases" });
+    expect(p(gw.leaseRoleBinding).subjects).toEqual([{ kind: "ServiceAccount", name: "gw-sa", namespace: "obs" }]);
+
+    // Declared but left out of service.extensions: the collector never starts it, so no Role.
+    const idle = OtelCollectorGateway({ config: [pipeline, elector, new CollectorService({ extensions: [] })] });
+    expect(config(idle).extensions).toHaveProperty(["k8s_leader_elector"]);
+    expect(idle.leaseRole).toBeUndefined();
+    expect(OtelCollectorGateway({}).leaseRole).toBeUndefined();
+  });
+
+  test("k8s_leader_elector extensions in two lease namespaces are refused", () => {
+    const a = new K8sLeaderElectorExtension({ name: "a", lease_name: "a", lease_namespace: "one" });
+    const b = new K8sLeaderElectorExtension({ name: "b", lease_name: "b", lease_namespace: "two" });
+    const debug = new DebugExporter({});
+    const otlp = new OtlpReceiver({ protocols: { grpc: { endpoint: "0.0.0.0:4317" } } });
+    const config = [new Pipeline({ signal: "traces", receivers: [otlp], exporters: [debug] }), new CollectorService({ extensions: [a, b] })];
+    expect(() => OtelCollectorGateway({ name: "gw", config })).toThrow(/Leases in one and two/);
   });
 
   test("the Deployment and ConfigMap say they are a gateway and name each other", () => {

@@ -27,10 +27,21 @@ import {
   type Signal,
   type TLSClientSettings,
 } from "@intentius/chant-lexicon-otel";
-import { Deployment, Service, ServiceAccount, ClusterRole, ClusterRoleBinding, ConfigMap, PodDisruptionBudget } from "../generated";
+import {
+  Deployment,
+  Service,
+  ServiceAccount,
+  ClusterRole,
+  ClusterRoleBinding,
+  ConfigMap,
+  PodDisruptionBudget,
+  Role,
+  RoleBinding,
+} from "../generated";
 import { collectorConfigMap, collectorContainer } from "./otel-collector-agent";
 import {
   collectorRuntime,
+  leaderElectorLeaseNamespaces,
   markGatewayExporter,
   OTEL_COLLECTOR_ANNOTATIONS,
   type GatewayRouting,
@@ -90,6 +101,8 @@ export interface OtelCollectorGatewayProps {
     podDisruptionBudget?: Partial<Record<string, unknown>>;
     clusterRole?: Partial<Record<string, unknown>>;
     clusterRoleBinding?: Partial<Record<string, unknown>>;
+    leaseRole?: Partial<Record<string, unknown>>;
+    leaseRoleBinding?: Partial<Record<string, unknown>>;
   };
 }
 
@@ -103,13 +116,17 @@ export type OtelCollectorGatewayResult = {
   podDisruptionBudget?: InstanceType<typeof PodDisruptionBudget>;
   clusterRole?: InstanceType<typeof ClusterRole>;
   clusterRoleBinding?: InstanceType<typeof ClusterRoleBinding>;
+  /** Access to Leases for a `k8s_leader_elector` extension the config enables, in the Lease's namespace. */
+  leaseRole?: InstanceType<typeof Role>;
+  leaseRoleBinding?: InstanceType<typeof RoleBinding>;
 };
 
 /**
  * Create an OtelCollectorGateway composite. Returns a Deployment, a ClusterIP
  * Service, a headless Service, a ServiceAccount and a ConfigMap, a
- * PodDisruptionBudget when there is more than one replica, and a ClusterRole
- * and binding when `clusterRules` is set.
+ * PodDisruptionBudget when there is more than one replica, a ClusterRole
+ * and binding when `clusterRules` is set, and a Role and binding for Leases
+ * when the config enables a `k8s_leader_elector` extension.
  *
  * @example
  * ```ts
@@ -239,7 +256,45 @@ export const OtelCollectorGateway = Composite((props: OtelCollectorGatewayProps)
       }
     : {};
 
-  return { deployment, service, headlessService, serviceAccount, configMap, ...pdb, ...rbac };
+  // A k8s_leader_elector extension takes a Lease in its lease_namespace, so
+  // the gateway's ServiceAccount gets the access the extension's README
+  // suggests (collector-contrib v0.130.0, extension/k8sleaderelector).
+  const leaseNamespaces = leaderElectorLeaseNamespaces(runtime.built);
+  if (leaseNamespaces.length > 1) {
+    throw new Error(
+      `OtelCollectorGateway ${name}: k8s_leader_elector extensions take Leases in ${leaseNamespaces.join(" and ")}; ` +
+        `the gateway grants Lease access in one namespace. Use one lease_namespace, or grant the rest through clusterRules`,
+    );
+  }
+  const leaseRbac = leaseNamespaces.length
+    ? {
+        leaseRole: new Role(mergeDefaults({
+          metadata: {
+            name: `${name}-leases`,
+            namespace: leaseNamespaces[0],
+            labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
+          },
+          rules: [
+            {
+              apiGroups: ["coordination.k8s.io"],
+              resources: ["leases"],
+              verbs: ["get", "list", "watch", "create", "update", "patch", "delete"],
+            },
+          ],
+        }, defs?.leaseRole)),
+        leaseRoleBinding: new RoleBinding(mergeDefaults({
+          metadata: {
+            name: `${name}-leases`,
+            namespace: leaseNamespaces[0],
+            labels: { ...commonLabels, "app.kubernetes.io/component": "rbac" },
+          },
+          roleRef: { apiGroup: "rbac.authorization.k8s.io", kind: "Role", name: `${name}-leases` },
+          subjects: [{ kind: "ServiceAccount", name: saName, namespace }],
+        }, defs?.leaseRoleBinding)),
+      }
+    : {};
+
+  return { deployment, service, headlessService, serviceAccount, configMap, ...pdb, ...rbac, ...leaseRbac };
 }, "OtelCollectorGateway");
 
 // ── Agent side ───────────────────────────────────────────────────────
