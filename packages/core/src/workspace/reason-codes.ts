@@ -133,6 +133,10 @@ export const REASONS = {
   "source-harvest-not-proposed": "A harvested record (source.via harvest) was written in a state other than the kind's first: a harvest proposes, and a person decides.",
   "ratify-quorum-not-met": "The write puts a record in its kind's ratified state (reviews.ratified), and the record's quorum is not met: too few agreeing verdicts count.",
   "record-sign-failed": "--sign was given and no author seal could be made: the record names no author, the key can't be read or used, git names no ssh signing key, or ssh-keygen is not installed.",
+  // Write scope (#2548): a records write that is refused, and a commit check --changes reports, outside the writer's scope.
+  "write-scope-member": "The write is to a file, or to a record kind, of a member outside the writer's scope: an agent session writes only its own member, and writeScope.<class>.members leaves the member out.",
+  "write-scope-kind": "The write is to a record kind writeScope.<class>.records does not list, with a verb it does not list for the kind, or deletes a record.",
+  "agent-unknown": "CHANT_AGENT, or a commit's Chant-Agent trailer, names an agent session the declaration at base does not declare.",
   // A review given in a session (records review --session, #2693).
   "session-unknown": "--session names no session of a session kind whose subjects are the record's kind.",
   "session-not-open": "--session names a session in a closed state, which takes no more verdicts.",

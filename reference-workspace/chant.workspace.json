@@ -38,5 +38,19 @@
     { "kind": "constraints/constraint.kind.mjs" },
     { "kind": "preferences/preference.kind.mjs" }
   ],
-  "pins": []
+  "pins": [],
+  "writeScope": {
+    "agent": {
+      "records": {
+        "decision": ["new", "review"],
+        "work": ["new", "amend", "review"],
+        "lesson": ["new"],
+        "session": ["review"]
+      }
+    }
+  },
+  "agents": [
+    { "name": "app", "member": "app" },
+    { "name": "design", "member": "design" }
+  ]
 }

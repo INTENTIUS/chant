@@ -747,6 +747,7 @@ describe("workspace init and ls (#2534)", () => {
     expect(resolveCommand(init, commandRegistry)?.def.name).toBe("workspace init");
     expect(commandRegistry.filter((c) => c.name === "workspace" || c.name.startsWith("workspace ")).map((c) => c.name).sort()).toEqual([
       "workspace",
+      "workspace agent",
       "workspace audit",
       "workspace build",
       "workspace check",

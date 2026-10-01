@@ -214,6 +214,8 @@ A write calls the function `chant workspace records new`, `amend`, `review` or `
 
 Records are proposals until they are reviewed, and `by` must name the person or agent that actually proposed or decided it. Each write tool's description says so, for the model that reads it. The server listens on no port and authenticates nobody: it speaks over stdio, and `by` is recorded as given, as `--by` is.
 
+A server started with `CHANT_AGENT` set writes in that [agent session](/chant/reference/workspace-declaration/#write-scope-and-agent-sessions), bound to its one member ([#2548](https://github.com/INTENTIUS/chant/issues/2548)). Each write is judged against the session's write scope, read from the declaration at base, and refused with the CLI's `write-scope-member`, `write-scope-kind` or `agent-unknown`. A write whose `by` names a principal a session lists is judged as that session too.
+
 A value that starts with `-` is refused before any command runs, so no argument can be read as a flag.
 
 | Tool | Parameters | Returns |
@@ -223,6 +225,7 @@ A value that starts with `-` is refused before any command runs, so no argument 
 | `workspace-graph` | `kind` (a list), `intent`, `composites`, `at` | the document of `chant workspace graph --json` (`graph.schema.json`); with `intent`, the intent graph over that region (`intent.schema.json`); with `composites`, the composites joined to components (`composites.schema.json`) |
 | `workspace-changes` | `range` (required), `work`, `severity`, `kind` (a list) | the document of `chant workspace check --changes <range> --json` (`changes.schema.json`): each changed path with the records covering it, and the `change-uncovered` and `change-out-of-scope` findings ([#2773](https://github.com/INTENTIUS/chant/issues/2773)) |
 | `workspace-points` | `open`, `kind`, `at` | the document of `chant workspace points --json` (`points.schema.json`): the decision points and the questions asked of them, each open one with any model's answer and confidence ([ws-058](/chant/guide/decision-points/)) |
+| `workspace-agent` | `name` | the document of `chant workspace agent <name> --json` (`agent.schema.json`): the session's member, its write scope and the spec it reloads from; without `name`, this server's session ([#2548](https://github.com/INTENTIUS/chant/issues/2548)) |
 | `workspace-work-history` | `item` (required), `kind` | the document of `chant workspace work history <item> --json` (`work-history.schema.json`): the work item's claims, each with its token, holder and how it ended ([#2785](https://github.com/INTENTIUS/chant/issues/2785)) |
 | `workspace-records` | `kind`, `current`, `since`, `id`, `at` | the document of `chant workspace records --json` (`records.schema.json`), or with `since` the changes since a revision or session (`records-since.schema.json`); with `id`, only that record is kept in `records`, and `summary` stays the command's |
 | `records-new` | `record` (required), `kind`, `prefix`, `by`, `sign`, `dryRun` | the result of `chant workspace records new` (`records-new.schema.json`) |

@@ -27,6 +27,7 @@ import {
   readAll,
   RECORDS_WRITE_CONTRACT_VERSION,
   RecordWriteError,
+  refuseOutOfScope,
   replaceFields,
   stableJson,
   validateWrite,
@@ -34,6 +35,7 @@ import {
   type WriteResult,
 } from "./records-write";
 import { headCommit } from "./session-kinds";
+import { WRITE_SCOPE_CODES } from "./write-scope";
 
 export const RECORDS_CLOSE_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/records-close/v1/records-close.schema.json";
 
@@ -43,6 +45,7 @@ export const CLOSE_ERROR_CODES = [
   "write-usage-invalid",
   "record-not-found",
   "record-closed",
+  ...WRITE_SCOPE_CODES,
   ...RECORD_REASON_CODES,
 ] as const satisfies readonly ReasonCode[];
 export type CloseErrorCode = (typeof CLOSE_ERROR_CODES)[number];
@@ -66,6 +69,8 @@ export interface CloseRecordOptions {
   cwd: string;
   /** The close time. Defaults to now. */
   now?: Date;
+  /** The agent session the write is made in (#2548). */
+  agent?: string;
 }
 
 /** An ISO 8601 time in UTC to the second, as the reference session schema's dateTime takes it. */
@@ -77,6 +82,7 @@ function isoSeconds(d: Date): string {
 export async function closeRecord(opts: CloseRecordOptions): Promise<CloseDocument> {
   try {
     const o = await open(opts.kind, opts.cwd);
+    refuseOutOfScope(o, "close", opts.cwd, opts);
     const { kind } = o.loaded;
     const decl = kind.session;
     if (!decl || kind.stateField === undefined) {

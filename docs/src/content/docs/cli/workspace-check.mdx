@@ -274,6 +274,21 @@ warning   change-uncovered: docs/readme.md, in member docs, is modified, and no 
 
 `--json` prints the [read contract](/chant/reference/workspace-read-contract/#the-forward-coverage-check) document, which follows `https://intentius.io/chant/schemas/workspace/changes/v1/changes.schema.json`. `chant serve mcp` serves it as the `workspace-changes` tool. Each finding's `triage` is the gap source a work item seeded from it takes, for the finding-triage decision point ([#2741](https://github.com/INTENTIUS/chant/issues/2741)). When a work kind is read, `addressed` says whether a work item already came from that gap, and each path's `member` and `generated` fill the rest of the point's inputs ([#2794](https://github.com/INTENTIUS/chant/issues/2794)). See [From a change finding](/chant/guide/decision-points/#from-a-change-finding). An Op that changes the checkout runs the check on its own branch with the [`changeCoverage` activity](/chant/guide/ops/#checking-the-change-against-the-records). The lines the diff changes come from [`chant workspace patch`](/chant/cli/workspace-patch/), which reads a range the same way.
 
+### Write scope
+
+When the declaration at `<base>` has a [`writeScope` block or `agents`](/chant/reference/workspace-declaration/#write-scope-and-agent-sessions), `--changes` also judges every commit in the range against them ([#2548](https://github.com/INTENTIUS/chant/issues/2548)). The declaration, its record kinds and the trust policy are read at `<base>`, so a change can't widen its own scope. Merges are left out, and the commits they bring are judged instead.
+
+A commit with a `Chant-Agent: <name>` trailer is judged as that agent session, bound to its member. Otherwise its principal is the signer that attests it under the policy at base, or its author's email when nothing attests it, and a principal a session lists is judged as that session. Any other principal's class comes from the role grants at base. Each path a restricted writer wrote outside its scope is a finding: `write-scope-member` for a file or record kind of a member outside it, `write-scope-kind` for a record kind or verb its records rule leaves out, and `agent-unknown` for a trailer naming no declared session. A record file the commit adds is written with `new`. A changed one is a `review` when only its reviews changed, and a `close` when a session entered a closed state. Any other change to it is `amend`. A scope finding fails the check whatever the severity.
+
+```
+$ chant workspace check --changes main..HEAD
+...
+scope     3 commits judged against the declaration at 3f2a91c0; restricted: agent
+error     write-scope-member: 8b04d2e1 changes design/spec.md: agent session app, bound to member app, may not write design/spec.md, which is in member design: an agent session writes only its own member
+```
+
+On a developer machine the trailer and the author are what the commit claims, so this detects. In CI with an attestation policy at base, the principal is the signer the policy trusts.
+
 ## Options
 
 | Option | Effect |
@@ -296,4 +311,4 @@ warning   change-uncovered: docs/readme.md, in member docs, is modified, and no 
 | Code | Meaning |
 |---|---|
 | 0 | No lock finding and no declaration finding of error severity |
-| 1 | The lock cannot be read, a manual step is open, or a declaration check reports an error. With `--changes`: the range, the declaration, a kind or the `--work` item can't be read, or severity is `fail` and there is a finding |
+| 1 | The lock cannot be read, a manual step is open, or a declaration check reports an error. With `--changes`: the range, the declaration, a kind or the `--work` item can't be read, severity is `fail` and there is a finding, or a commit writes outside its writer's [scope](#write-scope) |

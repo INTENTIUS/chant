@@ -244,6 +244,7 @@ export default defineConfig({
 								{ label: 'workspace points', slug: 'cli/workspace-points' },
 								{ label: 'workspace verify', slug: 'cli/workspace-verify' },
 								{ label: 'workspace pin', slug: 'cli/workspace-pin' },
+								{ label: 'workspace agent', slug: 'cli/workspace-agent' },
 								{ label: 'workspace lineage', slug: 'cli/workspace-lineage' },
 								{ label: 'workspace upgrade', slug: 'cli/workspace-upgrade' },
 								{ label: 'workspace check', slug: 'cli/workspace-check' },
