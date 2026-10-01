@@ -29,7 +29,7 @@ chant import checkout.json --lexicon grafana --output src    # anywhere else
 chant build src --lexicon grafana -o dist/grafana/index.json
 ```
 
-The importer also reads `GET /api/dashboards/uid/<uid>` responses, `dashboard.grafana.app` v1 and v2 resources, and datasource, dashboard and alerting provisioning files. Each dashboard lands in `src/<uid>/`: `dashboard.ts`, `panels.ts`, one `row-<title>.ts` per row, `variables.ts`, and `datasources.ts` with an `ExternalDatasource` per datasource named by uid. Replace an `ExternalDatasource` with a `Datasource` of the same uid to provision it from chant too.
+The importer also reads `GET /api/dashboards/uid/<uid>` responses, `dashboard.grafana.app` v1 and v2 resources, and datasource, dashboard and alerting provisioning files. Each dashboard is written to `src/<uid>/dashboard.ts`, with its panels, rows, queries and variables inline in the `Dashboard` and an `ExternalDatasource` per datasource named by uid above it. A dashboard over 1,500 lines gets a `row-<title>.ts` per row, and one with more than eight `ExternalDatasource`s puts them in `datasources.ts`. Replace an `ExternalDatasource` with a `Datasource` of the same uid to provision it from chant too.
 
 Read every import warning. Anything the lexicon can't express is reported, never dropped. Common ones: a v2 dashboard's tabs become rows, an export made for sharing turns `${DS_*}` inputs into `DatasourceVariable`s, and two imported dashboards naming one datasource both declare it (GRAF104; delete one declaration and import it from the other file).
 

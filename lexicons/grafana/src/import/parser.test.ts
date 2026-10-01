@@ -131,6 +131,31 @@ describe("datasource references", () => {
     expect(decl(plan.declarations, "query:0:0").className).toBe("PromQuery");
   });
 
+  test("panels, rows, queries and variables are property-kind; datasources, the dashboard and a plugin's panel are not (#2988)", () => {
+    const { plan } = planDashboard(
+      dashboard({
+        templating: { list: [{ type: "textbox", name: "q", query: "" }] },
+        panels: [
+          { type: "row", id: 1, title: "R", collapsed: false, gridPos: { h: 1, w: 24, x: 0, y: 0 } },
+          { type: "timeseries", id: 2, title: "p", gridPos: { h: 4, w: 6, x: 0, y: 1 }, datasource: prom, targets: [{ refId: "A", expr: "up" }] },
+          { type: "grafana-clock-panel", id: 3, title: "c", gridPos: { h: 4, w: 6, x: 6, y: 1 } },
+        ],
+      }),
+    );
+    const property = Object.fromEntries(plan.declarations.map((d) => [d.id, d.property === true]));
+    expect(property).toEqual({
+      "variable:q": true,
+      "datasource:prometheus:prom": false,
+      "query:0:0": true,
+      "panel:0": true,
+      "panel:1": false,
+      "row:0": true,
+      dashboard: false,
+    });
+    expect(plan.main).toBe("dashboard");
+    expect(plan.modules.filter((m) => m.separable).map((m) => m.file)).toEqual(["row-r"]);
+  });
+
   test("an OpenSearch query is declared with OpenSearchQuery, not a defineQuery", () => {
     const os = { type: "grafana-opensearch-datasource", uid: "os" };
     const { plan } = planDashboard(panelWith(os, [{ refId: "A", query: "source = logs | head 5", queryType: "PPL", format: "table", datasource: os }]));

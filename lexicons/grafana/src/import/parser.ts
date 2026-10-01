@@ -274,12 +274,12 @@ class DashboardConverter {
 
   // ── modules and custom classes ──────────────────────────────────
 
-  private module(key: string, file: string, summary: string): string {
+  private module(key: string, file: string, summary: string, separable = false): string {
     if (!this.modules.has(key)) {
       let f = file;
       for (let n = 2; this.takenModuleFiles.has(f); n++) f = `${file}-${n}`;
       this.takenModuleFiles.add(f);
-      this.modules.set(key, { key, file: f, summary });
+      this.modules.set(key, { key, file: f, summary, ...(separable ? { separable } : {}) });
     }
     return key;
   }
@@ -527,6 +527,7 @@ class DashboardConverter {
         props,
         name: input.name,
         module: "variables",
+        property: true,
         comment: [`// From __inputs: the dashboard was exported for sharing, with ${input.name} for its ${input.pluginName ?? input.pluginId} datasource.`],
       });
       this.datasourceVariables.set(input.name, { declId: id, pluginType: input.pluginId });
@@ -648,7 +649,7 @@ class DashboardConverter {
 
     this.module("variables", "variables", "Variables, in the order the dashboard lists them");
     const id = `variable:${name}`;
-    this.add({ id, kind: "new", className: mapping.className, props, name, module: "variables" });
+    this.add({ id, kind: "new", className: mapping.className, props, name, module: "variables", property: true });
     this.variables.set(name, id);
     if (type === "datasource") {
       const pluginType = String(props.pluginType);
@@ -804,6 +805,7 @@ class DashboardConverter {
         name: { of: id, suffix: typeof t.refId === "string" && t.refId !== "" ? t.refId : `query ${i}` },
         module,
         unit: id,
+        property: qcls.customClass === undefined,
       });
       queries.push(declRef(qid));
     });
@@ -841,6 +843,7 @@ class DashboardConverter {
       name: title,
       module,
       unit: id,
+      property: cls.customClass === undefined,
     });
   }
 
@@ -876,7 +879,7 @@ class DashboardConverter {
       const v = json[key];
       this.report.drop(`${path}${pointer(key)}`, subject, key, v === null || isDefault(ROW_DEFAULTS, key, v) ? undefined : NO_PROP);
     }
-    return this.add({ id, kind: "new", className: "Row", props, name: `${String(json.title ?? "")} row`, module: rowModule, unit: id });
+    return this.add({ id, kind: "new", className: "Row", props, name: `${String(json.title ?? "")} row`, module: rowModule, unit: id, property: true });
   }
 
   /** The dashboard's panels list: top-level panels and rows, each row with the panels under it. */
@@ -890,7 +893,7 @@ class DashboardConverter {
       const path = pointer("panels", i);
       if (isObject(p) && p.type === "row") {
         const title = typeof p.title === "string" ? p.title : "";
-        const rowModule = this.module(`row:${i}`, `row-${slugUid(title || `row ${i}`)}`, `The row "${title}" and its panels`);
+        const rowModule = this.module(`row:${i}`, `row-${slugUid(title || `row ${i}`)}`, `The row "${title}" and its panels`, true);
         const ds = this.resolveDatasource(p.datasource, `${path}/datasource`, `row "${title}"`);
         const children: Array<{ json: unknown; path: string }> = [];
         const nested = Array.isArray(p.panels) ? p.panels : [];
@@ -1013,6 +1016,7 @@ class DashboardConverter {
       declarations: this.declarations,
       customClasses: [...this.customClasses.values()],
       exports: [...this.externals, "dashboard"],
+      main: "dashboard",
     };
   }
 }

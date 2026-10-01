@@ -186,8 +186,12 @@ describe("dashboard JSON -> TypeScript -> dashboard JSON", () => {
       expect(out.issues.filter((i) => !(i.code === "GRAF101" && i.severity === "warning" && i.message.includes("cannot check")))).toEqual([]);
       expect(out.paths.every((p) => p.startsWith("chant-fx-"))).toBe(true);
       // The ad hoc filter and the deploy annotation are carried (#2952, #2953).
+      // One module, its panels, queries and variables inline (#2988). The queries dashboard names eleven datasources by uid:
+      // with the dashboard, more declarables than COR009 allows in a file, so its ExternalDatasources get files of their own.
+      const modules = out.paths.map((p) => p.replace(/^[^/]+\//, ""));
+      expect(modules).toEqual(/\/queries\.json$/.test(file) ? ["datasources-1.ts", "datasources-2.ts", "dashboard.ts"] : ["dashboard.ts"]);
       if (file.includes("checkout")) {
-        expect(out.source).toContain("const filters = new AdhocVariable({");
+        expect(out.source).toContain("    new AdhocVariable({");
         expect(out.warnings.join("\n")).not.toContain("Deploys");
         expect(out.source).toContain('name: "Deploys"');
         expect((out.rebuilt!.annotations as { list: Json[] }).list.map((a) => a.name)).toEqual(["Deploys"]);
@@ -245,8 +249,8 @@ describe("dashboard JSON -> TypeScript -> dashboard JSON", () => {
         expect(out.warnings).toContainEqual(expect.stringMatching(/tabs "Overview" and "Details" become expanded rows/));
         expect((out.rebuilt!.panels as Json[]).filter((p) => p.type === "row").map((p) => p.title)).toEqual(["Overview", "Details", "Latency ($env)", "Logs"]);
         // Its switch and group by variables come through the classic variable mappings.
-        expect(out.source).toContain('const detailed = new SwitchVariable({ name: "detailed", label: "Detailed" });');
-        expect(out.source).toContain("const groupBy = new GroupByVariable({");
+        expect(out.source).toContain('    new SwitchVariable({ name: "detailed", label: "Detailed" }),');
+        expect(out.source).toContain("    new GroupByVariable({");
         expect(out.warnings.filter((w) => /^variable "(detailed|groupBy)"/.test(w))).toEqual([]);
       }
     });
@@ -273,7 +277,7 @@ describe("dashboard JSON -> TypeScript -> dashboard JSON", () => {
     expect(out.warnings).toContain(
       '__inputs: the constant VAR_SERVICE is written as its value "checkout", the value Grafana\'s import dialog fills in',
     );
-    expect(out.source).toContain('const service = new ConstantVariable({ name: "service", skipUrlSync: true, value: "checkout" });');
+    expect(out.source).toContain('    new ConstantVariable({ name: "service", skipUrlSync: true, value: "checkout" }),');
     // Every ${DS_LOKI} still resolves: the rebuilt dashboard declares it.
     const list = (out.rebuilt!.templating as { list: Json[] }).list;
     expect(list.slice(0, 2).map((v) => [v.name, v.type, v.query])).toEqual([
@@ -319,7 +323,7 @@ describe("dashboard JSON -> TypeScript -> dashboard JSON", () => {
   test("kube-prometheus: a row keeps its line over an empty band, and over panels it overlaps (#2992)", async () => {
     // Node Exporter / Nodes leaves lines 16 and 17 empty above its Disk row; Grafana closes the band when it draws the dashboard.
     const nodes = await expectRoundTrip(read("kube-prometheus/nodes.json"), NODES_ERRORS);
-    expect(nodes.source).toMatch(/const diskRowGridPos: PropsOf<typeof Row>\["gridPos"\] = \{ y: 18 \};/);
+    expect(nodes.source).toContain('    new Row({\n      title: "Disk",\n      id: 7,\n      gridPos: { y: 18 },');
     // Prometheus / Remote-Write puts its Shards row on the line of the panel after it: the build keeps the overlap, and Grafana resolves it.
     const remoteWrite = await expectRoundTrip(read("kube-prometheus/prometheus-remote-write.json"));
     const shards = (remoteWrite.rebuilt!.panels as Json[]).filter((p) => p.title === "Shards" || p.title === "Current Shards");
@@ -338,8 +342,9 @@ describe("dashboard JSON -> TypeScript -> dashboard JSON", () => {
     const source = JSON.parse(read("community/node-exporter-full.json")) as { panels: Json[] };
     const ids = (panels: Json[]): unknown[] => panels.flatMap((p) => [p.id, ...ids((p.panels as Json[] | undefined) ?? [])]);
     expect(ids(out.rebuilt!.panels as Json[])).toEqual(ids(source.panels));
-    // Split at eight declarables per module, a panel kept with its queries.
-    expect(out.paths.filter((p) => p.includes("/row-")).length).toBeGreaterThan(30);
+    // Too long for one module: each of its 16 rows is a module of its own, and the dashboard imports them (#2988).
+    expect(out.paths.filter((p) => p.includes("/row-")).length).toBe(source.panels.filter((p) => p.type === "row").length);
+    expect(out.source).toMatch(/import \{ cpuMemoryNetDiskRow \} from "\.\/row-cpu-memory-net-disk";/);
   });
 
   test("a panel type chant ships a class for is declared with it", async () => {
@@ -374,8 +379,10 @@ describe("dashboard JSON -> TypeScript -> dashboard JSON", () => {
     // The Traefik dashboard with its pie chart swapped for a community plugin chant does not ship.
     const out = await expectRoundTrip(read("community/traefik.json").split('"type": "piechart"').join('"type": "grafana-polystat-panel"'));
     expect(out.source).toContain("const GrafanaPolystatPanelPanel = definePanel()({");
-    expect(out.source).toContain('import { GrafanaPolystatPanelPanel } from "./plugins";');
-    expect(out.source).toMatch(/new GrafanaPolystatPanelPanel\(\{/);
+    // Written beside the dashboard that uses it, ahead of the panel: a declarable COR001 does not exempt, so its nested values are lifted.
+    expect(out.paths.map((p) => p.replace(/^[^/]+\//, ""))).toEqual(["dashboard.ts"]);
+    expect(out.source).toMatch(/const \w+ = new GrafanaPolystatPanelPanel\(\{/);
+    expect(out.source).toMatch(/: PropsOf<typeof GrafanaPolystatPanelPanel>\["options"\] = /);
   });
 
   test("an AngularJS-era dashboard: schemaVersion carried, top-level panel settings named", async () => {
@@ -495,14 +502,8 @@ describe("chant import dashboard.json", () => {
         expect(result.error).toBeUndefined();
         expect(result.success).toBe(true);
         expect(result.lexicon).toBe("grafana");
-        // Nine variables (the two __inputs datasources among them): more than COR009's eight per module.
-        expect(result.generatedFiles).toEqual([
-          "chant-fx-checkout/variables-1.ts",
-          "chant-fx-checkout/variables-2.ts",
-          "chant-fx-checkout/panels.ts",
-          "chant-fx-checkout/row-details-for-job.ts",
-          "chant-fx-checkout/dashboard.ts",
-        ]);
+        // Nine variables, five panels and a row: one module, since COR009 counts none of them (#2988).
+        expect(result.generatedFiles).toEqual(["chant-fx-checkout/dashboard.ts"]);
         expect(result.warnings.join("\n")).not.toContain("is not carried: chant has no");
         const built = await build(output, [grafanaSerializer]);
         expect(built.errors).toEqual([]);

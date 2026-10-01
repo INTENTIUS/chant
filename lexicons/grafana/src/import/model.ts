@@ -81,6 +81,16 @@ export interface Declaration {
   readonly unit?: string;
   /** Comment lines written above it. */
   readonly comment?: readonly string[];
+  /**
+   * For `new`: a property-kind declarable (a panel, row, query or variable),
+   * which core lint's COR001, COR004 and COR009 leave out (chant #2957). The
+   * generator writes it inline, as a `new` expression where it is used, when
+   * exactly one declaration in the same file refers to it, the plan does not
+   * export it and it has no comment; otherwise it is a const like any other.
+   * Either way its nested values stay inline and it does not count toward
+   * the declarables per file.
+   */
+  readonly property?: boolean;
 }
 
 /** A panel or query class the import declares, for a plugin chant has no class for. */
@@ -101,6 +111,12 @@ export interface ModuleSpec {
   /** File name without `.ts`; `-1`, `-2`, ... is added when the group is split. */
   readonly file: string;
   readonly summary: string;
+  /**
+   * Written into `Plan.main`'s file only while that file stays under the
+   * generator's line budget; past it, a file of its own (a row and its
+   * panels, in a long dashboard).
+   */
+  readonly separable?: boolean;
 }
 
 /** Everything one dashboard becomes. */
@@ -114,4 +130,10 @@ export interface Plan {
   readonly customClasses: readonly CustomClass[];
   /** Declarations exported even when no other module imports them (the dashboard). */
   readonly exports: readonly string[];
+  /**
+   * The module group the others are written into, so the plan is one file
+   * where COR009 allows (the dashboard). Without one, every group is a file
+   * of its own.
+   */
+  readonly main?: string;
 }
