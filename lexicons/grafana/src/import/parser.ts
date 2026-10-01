@@ -668,11 +668,15 @@ class DashboardConverter {
    * `y` is 0 to Grafana, as it is in the dashboard schema, but the build
    * would place the panel itself, so the 0 is written. A missing `h` or `w`
    * is written as the schema's default, with a warning, since the build
-   * would otherwise use the panel class's default size.
+   * would otherwise use the panel class's default size. A panel with no
+   * `gridPos` at all is left to the build's auto-layout, with a warning.
    */
   private gridPos(json: Json, path: string, subject: string, props: Json): void {
     const gp = json.gridPos;
-    if (!isObject(gp)) return;
+    if (!isObject(gp)) {
+      if (gp === undefined) this.report.warn(`${subject}: gridPos is missing, so the build places the panel itself, which can differ from where Grafana would put it (#3029)`);
+      return;
+    }
     const filled: Json = { ...gp };
     const sized: string[] = [];
     for (const [key, value] of Object.entries(GRID_POS_DEFAULTS)) {
