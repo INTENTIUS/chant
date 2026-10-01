@@ -13,7 +13,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
 import { build } from "@intentius/chant/build";
-import { isResourceDeclarable } from "@intentius/chant/declarable";
+import { isObservableDeclarable } from "@intentius/chant/declarable";
 import type { SerializerResult } from "@intentius/chant/serializer";
 import { otelSerializer } from "@intentius/chant-lexicon-otel/serializer";
 import { prometheusSerializer } from "@intentius/chant-lexicon-prometheus/serializer";
@@ -47,7 +47,7 @@ async function buildExample(name: string): Promise<Built> {
   const out = result.outputs.get("grafana") as SerializerResult;
   const entities: Entities = new Map();
   for (const [n, e] of result.entities) {
-    if (e.lexicon === "grafana" && isResourceDeclarable(e)) entities.set(n, { entityType: e.entityType, props: e.props as Record<string, unknown> });
+    if (e.lexicon === "grafana" && isObservableDeclarable(e)) entities.set(n, { entityType: e.entityType, props: e.props as Record<string, unknown> });
   }
   return { entities, index: JSON.parse(out.primary) as GrafanaIndex, files: out.files ?? {} };
 }

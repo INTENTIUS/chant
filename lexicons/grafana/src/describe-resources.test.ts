@@ -29,14 +29,15 @@ const row = new Row({ title: "Health", panels: [upPanel] });
 const env = new CustomVariable({ name: "env", values: ["prod", "staging"] });
 const overview = new Dashboard({ title: "Overview", variables: [env], panels: [row] });
 const legacy = new Dashboard({ title: "Legacy", uid: "legacy-board" });
-const lonely = new StatPanel({ title: "On no dashboard" });
 const provider = new DashboardProvider({ name: "ops" });
 
 function entities(pairs: Record<string, { entityType: string; props: unknown }>): Entities {
   return new Map(Object.entries(pairs).map(([n, e]) => [n, { entityType: e.entityType, props: e.props as Record<string, unknown> }]));
 }
 
-const ALL = entities({ overview, legacy, prometheus, loki, upPanel, up, row, env, provider });
+// Core hands a reader resource-kind entities only (#3001): the panels, row,
+// query and variable reach it inside `overview`'s props.
+const ALL = entities({ overview, legacy, prometheus, loki, provider });
 
 function state(overrides: Partial<FakeGrafanaState> = {}): FakeGrafanaState {
   return {
@@ -84,25 +85,6 @@ describe("describeResources", () => {
     expect(unobserved.loki).toBeUndefined();
   });
 
-  it("a panel, row, query or variable takes its dashboard's verdict, with one read of the dashboard", async () => {
-    const calls: string[] = [];
-    const { resources } = normalizeObservation(await run(state(), {}, calls));
-    for (const name of ["upPanel", "up", "row", "env"]) {
-      expect(resources[name], name).toMatchObject({ physicalId: "overview", ownership: "owned", attributes: { dashboard: "overview" } });
-    }
-    expect(calls.filter((c) => c.endsWith("/dashboards/overview"))).toHaveLength(1);
-  });
-
-  it("a part of a dashboard that is absent is absent", async () => {
-    const s = state();
-    delete s.dashboards.overview;
-    const { resources, unobserved } = normalizeObservation(await run(s));
-    for (const name of ["overview", "upPanel", "up", "row", "env"]) {
-      expect(resources[name], name).toBeUndefined();
-      expect(unobserved[name], name).toBeUndefined();
-    }
-  });
-
   it("reads chant's marker, stack and env included, from the labels of a dashboard written through the API", async () => {
     const { resources } = normalizeObservation(await run(state()));
     expect(resources.legacy).toMatchObject({ ownership: "owned", marker: { stack: "shop", env: "prod" } });
@@ -123,7 +105,7 @@ describeObservationConformance({
       name: "a provisioned estate on Grafana 13",
       declared: [...ALL.keys()],
       run: () => run(state()),
-      expectPresent: ["overview", "legacy", "prometheus", "upPanel", "up", "row", "env"],
+      expectPresent: ["overview", "legacy", "prometheus"],
       expectAbsent: ["loki"],
       expectUnobserved: ["provider"],
       expectMarker: { legacy: { stack: "shop", env: "prod" } },
@@ -171,12 +153,6 @@ describeObservationConformance({
         return run(s, { entityNames: ["overview"] });
       },
       expectUnobserved: ["overview"],
-    },
-    {
-      name: "a panel on no dashboard",
-      declared: ["lonely"],
-      run: () => run(state(), { entityNames: ["lonely"], entities: new Map([...ALL, ["lonely", { entityType: lonely.entityType, props: lonely.props as unknown as Record<string, unknown> }]]) }),
-      expectUnobserved: ["lonely"],
     },
   ],
 });
