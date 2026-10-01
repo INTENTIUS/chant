@@ -12,6 +12,8 @@ import { otel108 } from "./otel108";
 import { otel109 } from "./otel109";
 import { BatchProcessor, DebugExporter, FileLogReceiver, MemoryLimiterProcessor, OtlpReceiver } from "../../components";
 import { defineComponent } from "../../define";
+import { collectorConfigs } from "./otel-helpers";
+import { dump } from "js-yaml";
 import { Pipeline } from "../../pipeline";
 
 const GOOD = `receivers:
@@ -182,3 +184,23 @@ describe("entity-level checks", () => {
     expect(diags.map((d) => d.checkId)).toEqual(["OTEL109"]);
   });
 });
+
+describe("collector configs in Kubernetes ConfigMaps (chant #2930)", () => {
+  const manifests = (...docs: object[]) => docs.map((d) => dump(d, { lineWidth: -1 })).join("---\n");
+  const configMap = (data: Record<string, string>) => ({ apiVersion: "v1", kind: "ConfigMap", metadata: { name: "otel-agent-config", namespace: "observability" }, data });
+
+  test("collectorConfigs reads each ConfigMap value that parses as a config, with its namespace, name and key", () => {
+    const ctx = makePostSynthCtx("k8s", manifests(configMap({ "config.yaml": GOOD, "notes.txt": "not a config" }), { apiVersion: "v1", kind: "Service", metadata: { name: "x" } }));
+    const found = collectorConfigs(ctx);
+    expect(found.map((f) => [f.source, f.configMap])).toEqual([["k8s", { namespace: "observability", name: "otel-agent-config", key: "config.yaml" }]]);
+    expect(found[0].config.service?.pipelines.traces.processors).toEqual(["memory_limiter", "batch"]);
+  });
+
+  test("a config-level check reports a ConfigMap config's issue, naming the ConfigMap and key", () => {
+    const broken = GOOD.replace("exporters: [debug]", "exporters: [debug, otlp/backend]");
+    const diags = otel101.check(makePostSynthCtx("k8s", manifests(configMap({ "config.yaml": broken }))));
+    expect(diags.map((d) => d.checkId)).toEqual(["OTEL101"]);
+    expect(diags[0].message).toMatch(/^ConfigMap observability\/otel-agent-config, key config\.yaml: /);
+  });
+});
+

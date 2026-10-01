@@ -22,6 +22,16 @@ The otel lexicon's rules use the `OTEL` prefix. `OTEL0xx` rules read your TypeSc
 | OTEL109 | error | a custom component without a usable schema pin |
 | OTEL112 | error | a connector joining a pipeline whose signal it can't pair with any pipeline on the other side, e.g. `spanmetrics` as the receiver of a traces pipeline |
 
+## Configs in Kubernetes ConfigMaps
+
+`OtelCollector`, `OtelCollectorGateway` and `GkeOtelCollector` put the rendered config in a ConfigMap in the k8s output, under `config.yaml`. `chant build` hands each lexicon's checks only that lexicon's output, so the otel lexicon's checks never see it. The k8s lexicon's [WK8604](/chant/lexicons/k8s/otel-placement-checks/#wk8604-the-otel-config-checks-on-configmap-configs) runs the same config checks there, over every ConfigMap value that parses as a collector config, and reports each finding under its OTEL id with the ConfigMap's namespace, name and key:
+
+```
+error: [otlp/tmepo] ConfigMap observability/otel-agent-config, key config.yaml: pipeline "logs" uses exporter "otlp/tmepo", which is not declared under exporters; the collector refuses to start (otel)
+```
+
+A project that declares collectors only through the k8s composites needs only `k8s` in its `lexicons`. Adding `otel` as well also emits the components you export as a collector config of their own, with no pipelines, which OTEL103 then reports as unused. OTEL107 to OTEL109 read declared entities, so they don't run for such a project.
+
 ## OTEL002 and credentials
 
 The collector expands `${env:NAME}` and `${file:/path}` when it loads its config, so a credential never needs to be in the declaration. Any value containing `${` is treated as such a reference, and keys ending in `_file` are paths, not secrets. The check follows a setting lifted into a named `const` in the same file, the shape COR001 asks for and `chant import` writes, and looks inside lists, such as a Prometheus scrape job's `basic_auth`.

@@ -1,6 +1,6 @@
 ---
 title: "Collector Placement Checks"
-description: "WK8601, WK8602 and WK8603: tail sampling and the k8s_cluster receiver in collectors that run in the wrong place"
+description: "WK8601 to WK8604: tail sampling and the k8s_cluster receiver in collectors that run in the wrong place, and the otel config checks over ConfigMap configs"
 diataxis: reference
 ---
 
@@ -11,6 +11,7 @@ Some OpenTelemetry Collector mistakes are about where a config runs, not what it
 | [WK8601](#wk8601-tail-sampling-on-every-node) | warning | a DaemonSet collector runs `tail_sampling` in a traces pipeline |
 | [WK8602](#wk8602-multi-replica-gateway-without-trace-aware-routing) | warning | a gateway with more than one replica runs `tail_sampling`, and a collector in the build sends it traces without a `loadbalancing` exporter routed by `traceID` |
 | [WK8603](#wk8603-k8s_cluster-in-every-collector-copy) | warning | a DaemonSet, or a workload with more than one replica, runs the `k8s_cluster` receiver without a working `k8s_leader_elector` |
+| [WK8604](#wk8604-the-otel-config-checks-on-configmap-configs) | per finding | a collector config in a ConfigMap fails one of the otel lexicon's config checks; reported under the OTEL id |
 
 They are in the k8s lexicon because they read Kubernetes manifests. The otel lexicon sees only the collector config. The OTEL110 and OTEL111 ids first planned for the tail sampling checks were never used.
 
@@ -74,3 +75,16 @@ service:
 ```
 
 The check fires when the field is missing, names something that isn't a declared `k8s_leader_elector` extension, or names one that `service.extensions` doesn't enable. The otel lexicon has no typed class for the extension yet, so declare it with `defineComponent` (see the otel lexicon's custom components page) or run the receiver in a single-replica Deployment.
+
+## WK8604: the otel config checks on ConfigMap configs
+
+The otel lexicon's config checks (OTEL101 to OTEL106 and OTEL112) read collector YAML, but `chant build` gives them only the otel lexicon's output, and a config deployed through `OtelCollector`, `OtelCollectorGateway`, `GkeOtelCollector` or a hand-written manifest is a string inside a ConfigMap in the k8s output. WK8604 runs those checks there. Every ConfigMap data value that parses as a collector config (a `service.pipelines` map) is checked, whether or not a workload in the build mounts it. It doesn't use the workload join above.
+
+Findings keep their otel ids and severities, so `lint.rules` entries and suppressions for OTEL103 apply wherever the config lives. The message starts with the ConfigMap's namespace, name and key:
+
+```
+ConfigMap observability/otel-agent-config, key config.yaml: pipeline "logs" uses exporter "otlp/tmepo", which is not declared under exporters; the collector refuses to start
+```
+
+It needs only the k8s lexicon in the project's `lexicons`. The entity checks OTEL107 to OTEL109 read the otel lexicon's declared entities and are not part of it.
+

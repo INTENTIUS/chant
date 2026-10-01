@@ -25,7 +25,7 @@
  * `OTEL_COLLECTOR_ANNOTATIONS`.
  */
 
-import { load } from "js-yaml";
+import { parseCollectorConfig as parseOtelCollectorConfig } from "@intentius/chant-lexicon-otel/configmap";
 import { extractContainers, extractPodSpec, type K8sManifest } from "./k8s-helpers";
 
 export const PLACEMENT_ANNOTATIONS = {
@@ -80,17 +80,13 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-/** Parse a ConfigMap value as a collector config, or undefined when it isn't one. */
+/**
+ * Parse a ConfigMap value as a collector config, or undefined when it isn't
+ * one. The otel lexicon's parser, shared with its config checks (OTEL101 and
+ * the rest) and WK8604 so every check agrees on what counts as a config.
+ */
 export function parseCollectorConfig(text: unknown): CollectorConfigShape | undefined {
-  if (typeof text !== "string") return undefined;
-  let value: unknown;
-  try {
-    value = load(text);
-  } catch {
-    return undefined;
-  }
-  if (!isRecord(value) || !isRecord(value.service) || !isRecord(value.service.pipelines)) return undefined;
-  return value as unknown as CollectorConfigShape;
+  return parseOtelCollectorConfig(text) as CollectorConfigShape | undefined;
 }
 
 /** The `type` of a component id: `tail_sampling/errors` is `tail_sampling`. */
