@@ -3,7 +3,8 @@
  * session in one write. It sets the session's state to its kind's closed
  * state, the time it closed and the commit it closed at (the fields the
  * kind's `session` block names in `closedOn` and `closedRev`), and then the
- * seal by chant's rule ({@link sessionSeal}), so a UI never computes a seal.
+ * seal by chant's whole-file rule ({@link sessionSeal}, #2546), so a UI never
+ * computes a seal.
  *
  * Like `new`, `amend` and `review`, it reads the records again with the file
  * in place and writes only when the session comes back valid: a verdict
@@ -97,12 +98,13 @@ export async function closeRecord(opts: CloseRecordOptions): Promise<CloseDocume
       ...(decl.closedOn ? { [decl.closedOn]: isoSeconds(opts.now ?? new Date()) } : {}),
       ...(decl.closedRev ? { [decl.closedRev]: closedRev } : {}),
     };
-    // The seal line is written last, into text that already holds everything else, so the seal is the digest of the file without it.
+    // The seal is written last, into text that already holds everything else: the whole-file seal of the session without its seal field (#2546).
     const merged = { ...old, ...set };
     delete merged[decl.seal];
     const unsealed = replaceFields(o.source.read(target.path), set, merged);
     if (unsealed === undefined) throw new RecordWriteError("record-unparseable", `${target.path}: its fields can't be rewritten in place without changing the rest of the file`);
     const digest = sessionSeal(unsealed, decl.seal, kind.format);
+    if (digest === null) throw new RecordWriteError("record-unparseable", `${target.path} can't be read, so it can't be sealed`);
     const text = replaceFields(unsealed, { [decl.seal]: digest }, { ...merged, [decl.seal]: digest });
     if (text === undefined || sessionSeal(text, decl.seal, kind.format) !== digest) {
       throw new RecordWriteError("record-unparseable", `${target.path}: the ${decl.seal} line can't be added without changing the text it seals`);

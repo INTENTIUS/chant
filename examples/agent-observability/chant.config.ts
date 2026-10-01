@@ -4,5 +4,6 @@ import type { ChantConfig } from "@intentius/chant";
 // both sides: WK8601-WK8603 read the collector ConfigMaps next to the
 // DaemonSet and Deployment that run them, PROM202 reads the SLO's severities
 // next to the Alertmanager routes, and GRAF101/GRAF102 read every panel's
-// datasource next to the declared datasources.
+// datasource next to the declared datasources. WK8604 runs the otel config
+// checks over the collector ConfigMaps, so "otel" isn't needed in the list.
 export default { lexicons: ["k8s", "prometheus", "grafana", "k3d"] } satisfies ChantConfig;

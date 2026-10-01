@@ -6,6 +6,11 @@
       "path": "lexicons/terraform"
     }
   ],
+  "records": [
+    {
+      "kind": "docs/design/decisions/decision.kind.mjs"
+    }
+  ],
   "members": [
     {
       "name": "docs",

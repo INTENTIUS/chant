@@ -30,6 +30,7 @@ import { docsToManifests } from "./k8s-helpers";
 import { wk8601 } from "./wk8601";
 import { wk8602 } from "./wk8602";
 import { wk8603 } from "./wk8603";
+import { wk8604 } from "./wk8604";
 
 // ── Fixture builders ────────────────────────────────────────────────
 
@@ -399,3 +400,37 @@ service: { pipelines: { metrics: { receivers: [otlp], exporters: [debug] } } }
     expect(wk8603.check(yaml(configMap("c", { "config.yaml": unused }), workload({ kind: "DaemonSet", name: "agent", configMap: "c" })))).toEqual([]);
   });
 });
+
+// ── WK8604 ──────────────────────────────────────────────────────────
+
+describe("WK8604: the otel config checks over ConfigMap configs", () => {
+  test("reports an undeclared exporter under OTEL101, naming the ConfigMap and key", () => {
+    const broken = PLAIN_CONFIG.replace("exporters: [debug]", "exporters: [debug, otlp/tempo]");
+    const diags = wk8604.check(yaml(configMap("agent-config", { "config.yaml": broken })));
+    expect(diags).toHaveLength(1);
+    expect(diags[0]).toMatchObject({ checkId: "OTEL101", severity: "error", lexicon: "otel" });
+    expect(diags[0].message).toMatch(/^ConfigMap obs\/agent-config, key config\.yaml: /);
+    expect(diags[0].message).toContain("otlp/tempo");
+  });
+
+  test("checks every key that holds a config, defaulting the namespace", () => {
+    const unused = PLAIN_CONFIG.replace("exporters: { debug: {} }", "exporters: { debug: {} }\nprocessors: { batch: {} }");
+    const cm = { apiVersion: "v1", kind: "ConfigMap", metadata: { name: "c" }, data: { "a.yaml": PLAIN_CONFIG, "b.yaml": unused } };
+    const diags = wk8604.check(yaml(cm));
+    expect(diags.map((d) => [d.checkId, d.entity])).toEqual([["OTEL103", "batch"]]);
+    expect(diags[0].message).toContain("ConfigMap default/c, key b.yaml");
+  });
+
+  test("ignores ConfigMap values that are not collector configs", () => {
+    const ctx = yaml(configMap("prometheus-config", { "prometheus.yml": "scrape_configs: []\n", "rules.yml": "groups: [ {" }));
+    expect(wk8604.check(ctx)).toEqual([]);
+  });
+
+  test("passes what OtelCollector, OtelCollectorGateway and GkeOtelCollector render", () => {
+    const gke = GkeOtelCollector({ clusterName: "c", projectId: "p", gcpServiceAccountEmail: "o@p.iam.gserviceaccount.com" });
+    const gateway = samplingGateway(2);
+    const agent = agentSending(gatewayExporter(gateway, { loadBalance: true }));
+    expect(wk8604.check(built({ gke, gateway, agent }))).toEqual([]);
+  });
+});
+

@@ -28,8 +28,10 @@ export const recordKind = {
   // never supersedes another.
   supersedes: { field: "supersedes", key: "session" },
   // verdicts: the verdicts the session produced, each naming a decision.
-  // seal: the lowercase hex sha256 of the file with LF line endings and
-  // without the closed_digest line, written when the session closes.
+  // seal: the whole-file seal, sha256: and the hex SHA-256 of the JCS form
+  // of the session without closed_digest (front matter as core, the text
+  // below it as body, line endings LF), written when the session closes
+  // (#2546).
   // subjects: the decisions the verdicts name. Entries of their reviews list
   // (the decision kind's reviews.field) name a session.
   // openedRev, closedRev and closedOn (#2693): the fields records new and

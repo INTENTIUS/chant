@@ -84,8 +84,8 @@
             },
             "digest": {
               "type": "string",
-              "pattern": "^[0-9a-f]{64}$",
-              "description": "The seal written: the lowercase hex SHA-256 of the file with LF line endings and without its seal line, which records checks on every read (session-seal-mismatch)."
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "description": "The seal written: sha256: and the lowercase hex SHA-256 of the JCS form of the whole session without its seal field (its front matter as core and the text below it as body, line endings LF), which records checks on every read (session-seal-mismatch). Before #2546 it was the bare hex SHA-256 of the file's text without the seal line."
             }
           }
         },
@@ -178,6 +178,7 @@
                 "record-supersedes-conflict",
                 "record-remediates-unknown",
                 "record-remediates-not-closed",
+                "record-seal-mismatch",
                 "session-seal-mismatch",
                 "session-verdict-unknown-record"
               ]
