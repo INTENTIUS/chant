@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vitest";
 import { makePostSynthCtx, makePostSynthCtxFromFiles } from "@intentius/chant-test-utils";
 import { postSynthChecks } from "./index";
+import { RECEIVER_INTEGRATION_TYPES } from "../../integrations";
+import { INTEGRATION_CASES, SLACK_APP_URL, amWith } from "../../testdata/integration-cases";
 import { prom101 } from "./prom101";
 import { prom102 } from "./prom102";
 import { prom103 } from "./prom103";
@@ -17,6 +19,7 @@ import { prom206 } from "./prom206";
 import { prom207 } from "./prom207";
 import { prom208 } from "./prom208";
 import { prom209 } from "./prom209";
+import { prom210 } from "./prom210";
 
 const RULES = `groups:
   - name: api
@@ -242,6 +245,37 @@ receivers:
     expect(msgs.join("\n")).toContain("smarthost");
     const withGlobals = `global:\n  slack_api_url_file: /etc/slack\n  smtp_smarthost: "smtp:25"\n  smtp_from: am@b.c\n${am}`;
     expect(prom209.check(amOnly(withGlobals)).map((d) => d.message)).toHaveLength(2);
+  });
+});
+
+const integrationCodes = (text: string) =>
+  [prom208, prom209, prom210].flatMap((c) => c.check(amOnly(text))).map((d) => d.checkId).sort();
+
+describe("PROM208-PROM210 on every Alertmanager integration", () => {
+  test.each(INTEGRATION_CASES)("%s", (_label, key, entry, global, codes) => {
+    expect(integrationCodes(amWith(key, entry, global))).toEqual(codes);
+  });
+
+  test("every integration has a passing and a failing case", () => {
+    for (const key of Object.keys(RECEIVER_INTEGRATION_TYPES)) {
+      const cases = INTEGRATION_CASES.filter((c) => c[1] === key);
+      expect(cases.some((c) => c[4].length === 0), `${key} passing`).toBe(true);
+      expect(cases.some((c) => c[4].length > 0), `${key} failing`).toBe(true);
+    }
+  });
+
+  test("findings name the receiver and the entry", () => {
+    const [d] = prom209.check(amOnly(amWith("opsgenie_configs", {})));
+    expect(d).toMatchObject({ checkId: "PROM209", severity: "error", entity: "r" });
+    expect(d.message).toContain('receiver "r" opsgenie_configs[0] has no api_key');
+  });
+
+  test("PROM210 and PROM208 in global", () => {
+    const am = (global: Record<string, unknown>) => JSON.stringify({ global, route: { receiver: "r" }, receivers: [{ name: "r" }] });
+    expect(integrationCodes(am({ slack_app_token_file: "/t", slack_api_url: "https://hooks.slack.com/x" }))).toEqual(["PROM210"]);
+    expect(integrationCodes(am({ slack_app_token_file: "/t", slack_api_url: SLACK_APP_URL }))).toEqual([]);
+    expect(integrationCodes(am({ smtp_auth_password: "x", smtp_auth_password_file: "/p", smtp_smarthost: "smtp" }))).toEqual(["PROM210", "PROM210"]);
+    expect(integrationCodes(am({ resolve_timeout: "1.5m" }))).toEqual(["PROM208"]);
   });
 });
 

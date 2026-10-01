@@ -29,8 +29,9 @@ The prometheus lexicon's rules use the `PROM` prefix. `PROM0xx` rules read your 
 | PROM205 | error | no root route, a root route without a receiver, or a root route with matchers |
 | PROM206 | error | a route or inhibit-rule matcher that does not parse |
 | PROM207 | warning | a receiver no route sends to |
-| PROM208 | error | a `group_wait`, `group_interval`, `repeat_interval`, `resolve_timeout` or webhook `timeout` that is not a duration |
-| PROM209 | error | a webhook with no `url`, Slack with no `api_url`, PagerDuty with no key, or email with no `to`, `smarthost` or `from` (and no global default) |
+| PROM208 | error | an Alertmanager duration that does not parse: `group_wait`, `group_interval`, `repeat_interval`, `resolve_timeout` and Jira `reopen_duration` as Prometheus durations, and the webhook, Slack, PagerDuty and incident.io `timeout` and Pushover `retry`, `expire` and `ttl` as Go durations |
+| PROM209 | error | a receiver integration missing a destination, credential or required field that Alertmanager asks for, after its `global` default |
+| PROM210 | error | an integration or `global` setting Alertmanager rejects: a value and its `*_file` both set, settings that exclude each other, or a value outside the allowed set |
 
 ## PROM001: literal credential
 
@@ -58,9 +59,49 @@ For each `severity` value an alert in the build's rule files carries, some route
 
 Alertmanager requires exactly one root route with a receiver and no matchers. In chant, the root is the `Route` entity no other route nests; nest every other route under it.
 
-## PROM209: integrations without a destination
+## PROM208: two duration grammars
 
-`amtool check-config` rejects these too; the check catches them at build time and names the receiver. Slack falls back to `global.slack_api_url(_file)`, email to `global.smtp_smarthost` and `global.smtp_from`.
+Alertmanager reads its durations two ways. The route timers, `global.resolve_timeout` and Jira's `reopen_duration` are Prometheus durations: `30s`, `4h`, `1d`, no fractions. The `timeout` of webhook, Slack, PagerDuty and incident.io, and Pushover's `retry`, `expire` and `ttl`, are Go durations (`time.ParseDuration`): `1.5s` and `500ms` are fine, `1d` is not. Write `24h` where you would write `1d`.
+
+## PROM209 and PROM210: receiver integrations
+
+Both follow the checks Alertmanager v0.34.1 makes when it loads the file, so `amtool check-config` rejects the same configs; the checks catch them at build time and name the receiver and entry. Alertmanager stops at the first error, these report every one. The sources are each integration's `UnmarshalYAML` in `config/notifiers.go` and `notify/<name>/config.go`, and `Config.UnmarshalYAML` in `config/config.go` for the `global` fallbacks.
+
+PROM209, something missing:
+
+| Integration | Needs | Falls back to |
+|---|---|---|
+| `discord_configs`, `msteams_configs`, `msteamsv2_configs` | `webhook_url` or `webhook_url_file` | |
+| `email_configs` | `to`, `smarthost`, `from` | `global.smtp_smarthost`, `global.smtp_from` |
+| `incidentio_configs` | `url` or `url_file`; when `http_config` is set, `alert_source_token(_file)` or `http_config.authorization` | |
+| `jira_configs` | `project`, `issue_type`, `api_url` | `global.jira_api_url` (no default) |
+| `mattermost_configs` | `webhook_url` or `webhook_url_file` | `global.mattermost_webhook_url(_file)` |
+| `opsgenie_configs` | `api_key` or `api_key_file`; each responder an `id`, `username` or `name`, and a `type` | `global.opsgenie_api_key(_file)` |
+| `pagerduty_configs` | `routing_key(_file)` or `service_key(_file)` | |
+| `pushover_configs` | `user_key(_file)` and `token(_file)` | |
+| `rocketchat_configs` | `token_id(_file)` and `token(_file)` | `global.rocketchat_token_id(_file)`, `global.rocketchat_token(_file)` |
+| `slack_configs` | `api_url(_file)` or `app_token(_file)` | `global.slack_api_url(_file)`, or `global.slack_app_token(_file)` when the entry has no `http_config.authorization` |
+| `sns_configs` | one of `topic_arn`, `phone_number`, `target_arn` | |
+| `telegram_configs` | `chat_id` or `chat_id_file`, and `bot_token(_file)` | `global.telegram_bot_token(_file)` |
+| `victorops_configs` | `routing_key`, and `api_key(_file)` | `global.victorops_api_key(_file)` |
+| `webex_configs` | `room_id`, and `http_config.authorization` (or `bearer_token(_file)`) on the entry itself | |
+| `webhook_configs` | `url` or `url_file` | |
+| `wechat_configs` | `api_secret(_file)` and `corp_id` | `global.wechat_api_secret(_file)`, `global.wechat_api_corp_id` |
+
+Webex is checked before the `global.http_config` is applied, so a global authorization does not count. incident.io asks for a credential only when the entry has an `http_config`.
+
+PROM210, a setting Alertmanager rejects:
+
+- A value and its `*_file` sibling both set, on any integration (`webhook_url`, `url`, `api_key`, `routing_key`, `service_key`, `user_key`, `token`, `token_id`, `bot_token`, `chat_id`, `api_secret`, `alert_source_token`, `api_url`, `app_token`) or in `global` (`slack_api_url`, `slack_app_token`, `opsgenie_api_key`, `victorops_api_key`, `telegram_bot_token`, `smtp_auth_password`, `smtp_auth_secret`, `rocketchat_token`, `rocketchat_token_id`, `wechat_api_secret`, `mattermost_webhook_url`).
+- Slack: `api_url(_file)` with `app_token(_file)`; `app_token(_file)` with `http_config.authorization`; `update_message` without `api_url: https://slack.com/api/chat.postMessage` (the bot token then goes in `http_config.authorization`); a field without `title` and `value`; an action without `type`, `text`, and `url` or `name`; a confirmation without `text`. In `global`, `slack_app_token(_file)` with a `slack_api_url` other than the `slack_app_url`.
+- incident.io: `alert_source_token(_file)` with `http_config.authorization`.
+- Pushover: `html` and `monospace` together.
+- SNS: two of `topic_arn`, `phone_number`, `target_arn`. Alertmanager's check is a chained XOR, so all three pass it; PROM210 does the same.
+- Email: a `smarthost` (or `global.smtp_smarthost`) that is not `host:port`; the same header twice in different case; with `threading.enabled`, a `References` or `In-Reply-To` header, or a `thread_by_date` other than `none` or `daily`.
+- Values outside the allowed set: WeChat `message_type` (`text`, `markdown`), Telegram `parse_mode` (`Markdown`, `MarkdownV2`, `HTML`), Jira `api_type` (`auto`, `cloud`, `datacenter`), an Opsgenie responder `type` (`team`, `teams`, `user`, `escalation`, `schedule`, or a template), a VictorOps `custom_fields` key the integration reserves (`routing_key`, `message_type`, `state_message`, `entity_display_name`, `monitoring_tool`, `entity_id`, `entity_state`).
+- Mattermost: a field, on the message or an attachment, without `title` and `value`.
+
+The `http_config` block's own rules (one of `basic_auth`, `oauth2` and `authorization`, and so on) come from prometheus/common and are not checked here; `amtool check-config` catches them.
 
 ## Using the checks outside a build
 

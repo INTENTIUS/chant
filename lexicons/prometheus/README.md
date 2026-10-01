@@ -38,7 +38,7 @@ Types follow Prometheus `v3.15.0` and Alertmanager `v0.34.1` (`PROMETHEUS_PIN`).
 
 ## Checks
 
-PROM001 to PROM003 run on source (literal credentials, PromQL syntax in literals, `Slo` objective, window and SLI literals). PROM101 to PROM107 run over the built rule file: unique group names, duplicate rules, durations, PromQL syntax, rule shape, severity labels and summaries. PROM201 to PROM209 run over `alertmanager.yml`: receivers and time intervals that exist, every alert severity routed (PROM202, one build root at a time), root route shape, matcher syntax, unused receivers, durations and integrations without a destination.
+PROM001 to PROM003 run on source (literal credentials, PromQL syntax in literals, `Slo` objective, window and SLI literals). PROM101 to PROM107 run over the built rule file: unique group names, duplicate rules, durations, PromQL syntax, rule shape, severity labels and summaries. PROM201 to PROM210 run over `alertmanager.yml`: receivers and time intervals that exist, every alert severity routed (PROM202, one build root at a time), root route shape, matcher syntax, unused receivers, durations, and each of the 18 receiver integrations checked as Alertmanager checks it (a missing destination or credential, settings it rejects).
 
 PromQL is parsed with `@prometheus-io/lezer-promql`, the Prometheus project's own grammar. `promtoolCheckRules` and `amtoolCheckConfig` run the upstream tools when they are installed.
 
