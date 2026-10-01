@@ -89,6 +89,49 @@ export const GENAI_CONTENT_ATTRIBUTES: readonly string[] = Object.freeze([
 export const GENAI_INDEXED_CONTENT_PATTERN = "^gen_ai\\.(prompt|completion)\\.[0-9]+\\..+$";
 
 /**
+ * Attributes that take a new value per response, tool call, conversation,
+ * session or user. As a metric attribute, each one starts new time series
+ * for every value, so OTEL116 reports them (and the content keys above)
+ * wherever a connector splits a metric by one.
+ *
+ * At `GENAI_SEMCONV_PIN` (semantic-conventions v1.41.1) the conventions
+ * define `gen_ai.conversation.id`, `gen_ai.response.id` and
+ * `gen_ai.tool.call.id` in `model/gen-ai/registry.yaml`, `session.id` in
+ * `model/session/registry.yaml`, `user.id` in `model/user/registry.yaml` and
+ * `enduser.id` in `model/enduser/registry.yaml`. None of them is an attribute
+ * of any GenAI metric there (`model/gen-ai/metrics.yaml`).
+ * `gen_ai.request.previous_response.id` and `gen_ai.memory.record.id` are
+ * not at the pin: they come from the unreleased main of
+ * github.com/open-telemetry/semantic-conventions-genai, and are listed
+ * because instrumentation already sets them. Keys added with that pin
+ * (chant #3044) go here too.
+ */
+export const GENAI_HIGH_CARDINALITY_ATTRIBUTES: readonly string[] = Object.freeze([
+  "gen_ai.conversation.id",
+  "gen_ai.response.id",
+  "gen_ai.tool.call.id",
+  "gen_ai.request.previous_response.id",
+  "gen_ai.memory.record.id",
+  "session.id",
+  "user.id",
+  "enduser.id",
+]);
+
+const INDEXED_CONTENT = new RegExp(GENAI_INDEXED_CONTENT_PATTERN);
+
+/**
+ * Why a key must not be a metric attribute: `"identifier"` for a key in
+ * `GENAI_HIGH_CARDINALITY_ATTRIBUTES`, `"content"` for a content key
+ * (`GENAI_CONTENT_ATTRIBUTES` or the indexed pattern), which is unbounded
+ * and sensitive too. Undefined for any other key.
+ */
+export function genAiCardinalityRisk(key: string): "identifier" | "content" | undefined {
+  if (GENAI_HIGH_CARDINALITY_ATTRIBUTES.includes(key)) return "identifier";
+  if (GENAI_CONTENT_ATTRIBUTES.includes(key) || INDEXED_CONTENT.test(key)) return "content";
+  return undefined;
+}
+
+/**
  * Deprecated content events. Their content is in the log record body, not in
  * attributes, so the preset deletes `content`, `message` and `tool_calls`
  * from the body of these events.

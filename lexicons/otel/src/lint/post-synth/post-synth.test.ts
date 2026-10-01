@@ -10,6 +10,7 @@ import { otel106 } from "./otel106";
 import { otel107 } from "./otel107";
 import { otel108 } from "./otel108";
 import { otel109 } from "./otel109";
+import { otel116 } from "./otel116";
 import {
   BatchProcessor,
   DebugExporter,
@@ -20,7 +21,8 @@ import {
   type SignalToMetricsConnectorConfig,
 } from "../../components";
 import { defineComponent } from "../../define";
-import { collectorConfigs } from "./otel-helpers";
+import { collectorConfigDiagnostics, collectorConfigs } from "./otel-helpers";
+import { GENAI_CONTENT_ATTRIBUTES, GENAI_HIGH_CARDINALITY_ATTRIBUTES } from "../../genai";
 import { dump } from "js-yaml";
 import { Pipeline } from "../../pipeline";
 
@@ -230,3 +232,91 @@ describe("collector configs in Kubernetes ConfigMaps (chant #2930)", () => {
   });
 });
 
+
+describe("OTEL116 high-cardinality GenAI attributes as metric attributes", () => {
+  /** A config whose connectors split metrics by the given keys, in every field OTEL116 reads. */
+  function connectorsSplitBy(key: string) {
+    return {
+      receivers: { otlp: { protocols: { grpc: {} } } },
+      exporters: { debug: {} },
+      connectors: {
+        spanmetrics: {
+          dimensions: [{ name: key }],
+          calls_dimensions: [{ name: key }],
+          histogram: { dimensions: [{ name: key }] },
+          events: { enabled: true, dimensions: [{ name: key }] },
+        },
+        servicegraph: { dimensions: [key] },
+        count: { spans: { "genai.calls": { attributes: [{ key }] } } },
+        "sum/genai": { spans: { "genai.tokens": { source_attribute: "gen_ai.usage.input_tokens", attributes: [{ key, default_value: "none" }] } } },
+        signaltometrics: {
+          spans: [{ name: "gen_ai.client.operation.duration", histogram: { value: "Seconds(end_time - start_time)" }, attributes: [{ key }], include_resource_attributes: [{ key }] }],
+        },
+      },
+      service: {
+        pipelines: {
+          traces: { receivers: ["otlp"], exporters: ["spanmetrics", "servicegraph", "count", "sum/genai", "signaltometrics"] },
+          metrics: { receivers: ["spanmetrics", "servicegraph", "count", "sum/genai", "signaltometrics"], exporters: ["debug"] },
+        },
+      },
+    };
+  }
+  const FIELDS = [
+    ["spanmetrics", "dimensions"],
+    ["spanmetrics", "calls_dimensions"],
+    ["spanmetrics", "histogram.dimensions"],
+    ["spanmetrics", "events.dimensions"],
+    ["servicegraph", "dimensions"],
+    ["count", "spans.genai.calls.attributes"],
+    ["sum/genai", "spans.genai.tokens.attributes"],
+    ["signaltometrics", "spans[0] (gen_ai.client.operation.duration).attributes"],
+    ["signaltometrics", "spans[0] (gen_ai.client.operation.duration).include_resource_attributes"],
+  ];
+  const run = (config: object, lexicon = "otel") => otel116.check(makePostSynthCtx(lexicon, dump(config, { lineWidth: -1 })));
+
+  test.each(GENAI_HIGH_CARDINALITY_ATTRIBUTES.map((k) => [k]))("reports %s in every connector field", (key) => {
+    const diags = run(connectorsSplitBy(key));
+    expect(diags.map((d) => [d.entity, d.message.match(/\((.+)\);/)?.[1]])).toEqual(FIELDS);
+    expect(diags.every((d) => d.checkId === "OTEL116" && d.severity === "warning")).toBe(true);
+    expect(diags[0].message).toContain(`"${key}"`);
+    expect(diags[0].message).toContain("new value per request");
+  });
+
+  test.each([...GENAI_CONTENT_ATTRIBUTES, "gen_ai.prompt.0.content"].map((k) => [k]))("reports content key %s as unbounded and sensitive", (key) => {
+    const diags = run(connectorsSplitBy(key));
+    expect(diags).toHaveLength(FIELDS.length);
+    expect(diags[0].message).toContain("unbounded and sensitive");
+  });
+
+  test.each(["gen_ai.request.model", "gen_ai.provider.name", "gen_ai.prompt.name", "error.type"].map((k) => [k]))("passes bounded key %s", (key) => {
+    expect(run(connectorsSplitBy(key))).toEqual([]);
+  });
+
+  test("passes the v1.41.1 client metrics' attributes, and an empty include_resource_attributes", () => {
+    const semconv = ["gen_ai.operation.name", "gen_ai.provider.name", "gen_ai.request.model", "gen_ai.response.model", "server.address", "server.port", "error.type", "gen_ai.token.type"];
+    const config = {
+      ...connectorsSplitBy("gen_ai.request.model"),
+      connectors: {
+        signaltometrics: {
+          spans: [
+            {
+              name: "gen_ai.client.token.usage",
+              histogram: { value: 'attributes["gen_ai.usage.input_tokens"]' },
+              attributes: semconv.map((key) => ({ key, optional: true })),
+              include_resource_attributes: [],
+            },
+          ],
+        },
+      },
+      service: { pipelines: { traces: { receivers: ["otlp"], exporters: ["signaltometrics"] }, metrics: { receivers: ["signaltometrics"], exporters: ["debug"] } } },
+    };
+    expect(run(config)).toEqual([]);
+  });
+
+  test("WK8604's entry point reports it for a config in a ConfigMap", () => {
+    const configMap = { apiVersion: "v1", kind: "ConfigMap", metadata: { name: "otel-agent-config", namespace: "observability" }, data: { "config.yaml": dump(connectorsSplitBy("gen_ai.conversation.id")) } };
+    const diags = collectorConfigDiagnostics(makePostSynthCtx("k8s", dump(configMap, { lineWidth: -1 })), { configMapsOnly: true }).filter((d) => d.checkId === "OTEL116");
+    expect(diags).toHaveLength(FIELDS.length);
+    expect(diags[0].message).toMatch(/^ConfigMap observability\/otel-agent-config, key config\.yaml: connector "spanmetrics" splits metrics by "gen_ai\.conversation\.id"/);
+  });
+});

@@ -8,7 +8,7 @@ diataxis: reference
     Edit lexicons/otel/docs/pages/lint-rules.mdx instead; changes here are overwritten. */}
 
 
-The otel lexicon's rules use the `OTEL` prefix. `OTEL0xx` rules read your TypeScript source during `chant lint`. `OTEL1xx` checks run after a build: OTEL101 to OTEL106 and OTEL112 read the emitted collector YAML (and any other output document shaped like a collector config), OTEL107 to OTEL109 read the declared entities. OTEL110 and OTEL111 are unused: the tail sampling placement checks they were reserved for read Kubernetes manifests, so they ship in the k8s lexicon as [WK8601 to WK8603](/chant/lexicons/k8s/otel-placement-checks/).
+The otel lexicon's rules use the `OTEL` prefix. `OTEL0xx` rules read your TypeScript source during `chant lint`. `OTEL1xx` checks run after a build: OTEL101 to OTEL106, OTEL112 and OTEL116 read the emitted collector YAML (and any other output document shaped like a collector config), OTEL107 to OTEL109 read the declared entities. OTEL110 and OTEL111 are unused: the tail sampling placement checks they were reserved for read Kubernetes manifests, so they ship in the k8s lexicon as [WK8601 to WK8603](/chant/lexicons/k8s/otel-placement-checks/).
 
 | Id | Severity | Catches |
 |---|---|---|
@@ -24,6 +24,7 @@ The otel lexicon's rules use the `OTEL` prefix. `OTEL0xx` rules read your TypeSc
 | OTEL108 | error | two components, or two pipelines, declaring the same id |
 | OTEL109 | error | a custom component without a usable schema pin |
 | OTEL112 | error | a connector joining a pipeline whose signal it can't pair with any pipeline on the other side, e.g. `spanmetrics` as the receiver of a traces pipeline |
+| OTEL116 | warning | a connector splitting metrics by a GenAI id (`gen_ai.conversation.id`, `session.id` and others) or a content key, see [below](#otel116-high-cardinality-genai-attributes) |
 
 ## Configs in Kubernetes ConfigMaps
 
@@ -51,6 +52,38 @@ A connector is an exporter in one pipeline and a receiver in another, and the co
 
 OTEL112 applies the collector's rule: every pipeline feeding a connector must pair, through a supported pair, with some pipeline the connector feeds, and every pipeline it feeds must pair with some pipeline feeding it. The message names the connector's pairs. A custom connector is checked when its `defineComponent` call lists `connects`; without it, OTEL112 stays silent for that connector. Both rules read one collector config at a time, so pipelines split across build roots are not joined.
 
+## OTEL116: high-cardinality GenAI attributes
+
+A metric gets one time series per distinct set of attribute values. Some GenAI attributes take a new value on every request or conversation, so a connector that splits a metric by one of them adds series as fast as traffic arrives, until the backend runs out of memory. The collector accepts such a config without a warning. OTEL116 reports these keys:
+
+| Key | Defined in | Varies per |
+|---|---|---|
+| `gen_ai.conversation.id` | semantic-conventions v1.41.1, `model/gen-ai/registry.yaml` | conversation |
+| `gen_ai.response.id` | v1.41.1, `model/gen-ai/registry.yaml` | response |
+| `gen_ai.tool.call.id` | v1.41.1, `model/gen-ai/registry.yaml` | tool call |
+| `gen_ai.request.previous_response.id` | semantic-conventions-genai, unreleased main | request |
+| `gen_ai.memory.record.id` | semantic-conventions-genai, unreleased main | memory record |
+| `session.id` | v1.41.1, `model/session/registry.yaml` | session |
+| `user.id` | v1.41.1, `model/user/registry.yaml` | user |
+| `enduser.id` | v1.41.1, `model/enduser/registry.yaml` | end user |
+
+v1.41.1 is the lexicon's `GENAI_SEMCONV_PIN`. None of these keys is an attribute of any GenAI metric the conventions define at that pin (`model/gen-ai/metrics.yaml`), which use the operation, provider, model, server address and port, error type and token type. The two keys from `semantic-conventions-genai` are listed because instrumentation already sets them, before that repository has a release to pin.
+
+OTEL116 also reports the content keys `genAiPipeline()` deletes, `GENAI_CONTENT_ATTRIBUTES` (`gen_ai.input.messages`, `gen_ai.output.messages`, `gen_ai.system_instructions`, the tool call arguments and result, the retrieval query and documents, and the deprecated `gen_ai.prompt` and `gen_ai.completion`), and indexed keys such as `gen_ai.prompt.0.content`. A content value is unbounded, and putting it in a metric label also copies prompts and completions into the metrics backend.
+
+The check reads these fields of each connector in a collector config:
+
+| Connector | Fields |
+|---|---|
+| `spanmetrics` | `dimensions`, `calls_dimensions`, `histogram.dimensions`, `events.dimensions` |
+| `servicegraph` | `dimensions` |
+| `count`, `sum` | each metric's `attributes` |
+| `signaltometrics` | each metric's `attributes` and `include_resource_attributes` |
+
+An empty or unset `include_resource_attributes` keeps every resource attribute. Which ones those are depends on the SDK, not the config, so OTEL116 says nothing about it; `spanmetrics` keeps the resource attributes the same way. The keys live in `GENAI_HIGH_CARDINALITY_ATTRIBUTES` and `GENAI_CONTENT_ATTRIBUTES`, and `genAiCardinalityRisk(key)` tells you whether a key is one of them.
+
+Keep these attributes on spans and logs, where a per-request value costs nothing extra, and split metrics by the bounded ones. If you have bounded one of these keys some other way, for example a `transform` processor that maps user ids to a few tiers before the connector, turn the rule off for the project with `lint.rules: { OTEL116: "off" }`. Post-synth checks have no per-key option. `genAiPipeline()`'s own output passes OTEL116 with every option.
+
 ## Using the checks outside a build
 
-The same logic is exported as plain functions. `validateCollectorConfig(config)` returns OTEL101 to OTEL106 and OTEL112 findings for any parsed collector config, and `validateCollectorEntities(entities)` returns OTEL107 to OTEL109 for declared entities. The k8s lexicon's `GkeOtelCollector` tests use the first to check the config the composite renders.
+The same logic is exported as plain functions. `validateCollectorConfig(config)` returns OTEL101 to OTEL106, OTEL112 and OTEL116 findings for any parsed collector config, and `validateCollectorEntities(entities)` returns OTEL107 to OTEL109 for declared entities. The k8s lexicon's `GkeOtelCollector` tests use the first to check the config the composite renders.

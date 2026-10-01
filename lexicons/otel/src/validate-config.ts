@@ -13,6 +13,8 @@ import { definitionFor, definitionOf, isOTelComponent, isUsablePin, runValidator
 import { componentConfig } from "./collector";
 import { isComponentId, parseComponentId, pipelineSignal, SIGNALS, type CollectorConfig, type ConnectorSignalPair } from "./model";
 import { isPipelineEntity } from "./pipeline";
+import { signalToMetricsEntries, type SignalToMetricsConnectorConfig } from "./components/connectors";
+import { genAiCardinalityRisk } from "./genai";
 // OTEL112 reads the built-in connectors' signal pairs from the registry.
 import "./components/connectors";
 
@@ -26,7 +28,8 @@ export type CollectorIssueCode =
   | "OTEL107"
   | "OTEL108"
   | "OTEL109"
-  | "OTEL112";
+  | "OTEL112"
+  | "OTEL116";
 
 export interface CollectorIssue {
   code: CollectorIssueCode;
@@ -56,7 +59,8 @@ function describePairs(pairs: ReadonlyArray<ConnectorSignalPair>): string {
 
 /**
  * Check a collector config's references and pipeline shape (OTEL101-OTEL106),
- * and each connector's signals against its definition (OTEL112).
+ * each connector's signals against its definition (OTEL112), and the
+ * attributes connectors split metrics by (OTEL116).
  */
 export function validateCollectorConfig(config: CollectorConfig): CollectorIssue[] {
   const issues: CollectorIssue[] = [];
@@ -211,6 +215,97 @@ export function validateCollectorConfig(config: CollectorConfig): CollectorIssue
     }
   }
 
+  issues.push(...metricAttributeIssues(config));
+  return issues;
+}
+
+/** Where a connector lists the attribute keys it splits metrics by. */
+interface MetricAttributeUse {
+  key: string;
+  /** The config field, e.g. `dimensions` or `spans.genai.tokens.attributes`. */
+  field: string;
+}
+
+function list(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function keysOf(items: unknown, prop: "name" | "key", field: string): MetricAttributeUse[] {
+  return list(items).flatMap((item) => {
+    const key = typeof item === "string" ? item : (item as Record<string, unknown> | null)?.[prop];
+    return typeof key === "string" ? [{ key, field }] : [];
+  });
+}
+
+/**
+ * The attribute keys a built-in metrics connector puts on the metrics it
+ * makes, by type. An empty or unset `include_resource_attributes` keeps
+ * every resource attribute, whichever they are, so only listed keys can be
+ * named.
+ */
+function metricAttributeUses(type: string, config: Record<string, unknown>): MetricAttributeUse[] {
+  switch (type) {
+    case "spanmetrics": {
+      const histogram = config.histogram as Record<string, unknown> | undefined;
+      const events = config.events as Record<string, unknown> | undefined;
+      return [
+        ...keysOf(config.dimensions, "name", "dimensions"),
+        ...keysOf(config.calls_dimensions, "name", "calls_dimensions"),
+        ...keysOf(histogram?.dimensions, "name", "histogram.dimensions"),
+        ...keysOf(events?.dimensions, "name", "events.dimensions"),
+      ];
+    }
+    case "servicegraph":
+      return keysOf(config.dimensions, "name", "dimensions");
+    case "count":
+    case "sum":
+      return Object.entries(config).flatMap(([section, metrics]) =>
+        typeof metrics === "object" && metrics !== null && !Array.isArray(metrics)
+          ? Object.entries(metrics as Record<string, unknown>).flatMap(([name, info]) =>
+              keysOf((info as Record<string, unknown> | null)?.attributes, "key", `${section}.${name}.attributes`),
+            )
+          : [],
+      );
+    case "signaltometrics":
+      return signalToMetricsEntries(config as SignalToMetricsConnectorConfig).flatMap(({ signal, index, metric }) => {
+        const at = metric.name ? `${signal}[${index}] (${metric.name})` : `${signal}[${index}]`;
+        return [
+          ...keysOf(metric.attributes, "key", `${at}.attributes`),
+          ...keysOf(metric.include_resource_attributes, "key", `${at}.include_resource_attributes`),
+        ];
+      });
+    default:
+      return [];
+  }
+}
+
+/**
+ * OTEL116: a connector splits metrics by a GenAI attribute that takes a new
+ * value per response, tool call, conversation, session or user, or by a
+ * content attribute. Each value starts new time series, so the metric's
+ * series grow with traffic. The keys are `GENAI_HIGH_CARDINALITY_ATTRIBUTES`
+ * and the content keys in `genai.ts`.
+ */
+function metricAttributeIssues(config: CollectorConfig): CollectorIssue[] {
+  const issues: CollectorIssue[] = [];
+  for (const [id, raw] of Object.entries(config.connectors ?? {})) {
+    const type = parseComponentId(id)?.type ?? id;
+    const body = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
+    for (const { key, field } of metricAttributeUses(type, body)) {
+      const risk = genAiCardinalityRisk(key);
+      if (!risk) continue;
+      const why =
+        risk === "content"
+          ? "it carries message content, which is unbounded and sensitive"
+          : "it takes a new value per request, conversation or user";
+      issues.push({
+        code: "OTEL116",
+        severity: "warning",
+        component: id,
+        message: `connector "${id}" splits metrics by "${key}" (${field}); ${why}, so every value starts new time series. Drop it from the metric's attributes, or keep it on spans and logs`,
+      });
+    }
+  }
   return issues;
 }
 

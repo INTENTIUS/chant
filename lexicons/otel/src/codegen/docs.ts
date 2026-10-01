@@ -50,7 +50,9 @@ TypeScript (see Importing a Collector Config).
 Checks catch a pipeline that uses a component nobody declared (OTEL101), a
 pipeline with no receivers or exporters (OTEL102), a declared component no
 pipeline uses (OTEL103), a connector joining pipelines of signals it can't
-convert (OTEL112), and a literal credential in source (OTEL002).
+convert (OTEL112), a connector splitting metrics by a per-request GenAI
+attribute such as \`gen_ai.conversation.id\` (OTEL116), and a literal
+credential in source (OTEL002).
 `;
 
 const outputFormat = `The otel lexicon serializes every otel entity in a build into **one

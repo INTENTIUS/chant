@@ -44,22 +44,24 @@ TypeScript (see Importing a Collector Config).
 Checks catch a pipeline that uses a component nobody declared (OTEL101), a
 pipeline with no receivers or exporters (OTEL102), a declared component no
 pipeline uses (OTEL103), a connector joining pipelines of signals it can't
-convert (OTEL112), and a literal credential in source (OTEL002).
+convert (OTEL112), a connector splitting metrics by a per-request GenAI
+attribute such as `gen_ai.conversation.id` (OTEL116), and a literal
+credential in source (OTEL002).
 
 
 ## At a Glance
 
 | Metric | Count |
 |--------|-------|
-| Resources | 20 |
+| Resources | 36 |
 | Property types | 0 |
-| Services | 6 |
+| Services | 7 |
 | Intrinsic functions | 0 |
 | Pseudo-parameters | 0 |
-| Lint rules | 12 |
+| Lint rules | 13 |
 
 **Lexicon version:** 0.100.0  
 **Namespace:** `OTel`
 
-- [All Rules](./rules) — 12 rules
+- [All Rules](./rules) — 13 rules
 - [Serialization](./serialization) — output format details

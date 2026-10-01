@@ -6,7 +6,7 @@ description: "Every lint rule and post-synth check provided by the OpenTelemetry
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-otel` — DO NOT EDIT.
     Edit lexicons/otel/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-The OpenTelemetry Collector lexicon provides **12** rules: 2 lint rules and 10 post-synth checks.
+The OpenTelemetry Collector lexicon provides **13** rules: 2 lint rules and 11 post-synth checks.
 
 ## Lint Rules
 
@@ -31,3 +31,4 @@ Post-synth checks validate the serialized output after the build pipeline comple
 | `OTEL108` | Two components or two pipelines declare the same id |
 | `OTEL109` | A custom component has no schema pin |
 | `OTEL112` | A connector joins pipelines whose signals it does not convert |
+| `OTEL116` | A connector splits metrics by a high-cardinality GenAI attribute |
