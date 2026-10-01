@@ -386,8 +386,13 @@ describe("decision files", () => {
     expect(ref002.assets[0].sha256).toBe(createHash("sha256").update(readFileSync(join(fixture, "design", "screens", "home.json"))).digest("hex"));
     // ref-003, the app box's intent (#2850), is a proposed question with no
     // evidence yet, so its one warning is record-no-evidence. The decided
-    // records carry none.
-    expect(doc.records.map((r) => [r.id, r.warnings.map((w) => w.code)])).toEqual([
+    // records carry none of their own. record-unattested is left out: the
+    // trust policy is the enclosing repository's at base, and once the chant
+    // repo's .chant/allowed_signers (#2547) is at base, its unsealed decided
+    // records read unattested. Whether it is depends on the checkout's
+    // origin/HEAD, not on the fixture.
+    const own = (codes: string[]) => codes.filter((c) => c !== "record-unattested");
+    expect(doc.records.map((r) => [r.id, own(r.warnings.map((w) => w.code))])).toEqual([
       ["ref-001", []],
       ["ref-002", []],
       ["ref-003", ["record-no-evidence"]],
