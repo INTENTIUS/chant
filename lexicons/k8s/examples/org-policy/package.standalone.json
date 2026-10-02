@@ -13,6 +13,7 @@
     "@intentius/chant-lexicon-k8s": "^0.1.18"
   },
   "devDependencies": {
-    "typescript": "^0.1.18"
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.3 || ^7.0.0"
   }
 }

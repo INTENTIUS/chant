@@ -4,7 +4,7 @@ import { EbsStorageClass } from "@intentius/chant-lexicon-k8s";
 
 const ebs = EbsStorageClass({
   name: "gp3-encrypted",
-  volumeType: "gp3",
+  type: "gp3",
   encrypted: true,
   iops: "3000",
   throughput: "125",
