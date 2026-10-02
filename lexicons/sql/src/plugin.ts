@@ -15,6 +15,7 @@ import { postSynthChecks as postSynthCheckList } from "./lint/post-synth";
 import { sqlAuditCatalog } from "./lint/audit-catalog";
 import { completions } from "./lsp/completions";
 import { hover } from "./lsp/hover";
+import { sqlMcpResources, sqlMcpTools } from "./mcp";
 import { sqlConfigSchema } from "./config";
 import { versionFromReleaseTag } from "./spec/pin";
 
@@ -90,6 +91,14 @@ export const sqlPlugin: LexiconPlugin = {
 
   hoverProvider(ctx: HoverContext) {
     return hover(ctx);
+  },
+
+  mcpTools() {
+    return sqlMcpTools();
+  },
+
+  mcpResources() {
+    return sqlMcpResources();
   },
 
   async docs(options?: { verbose?: boolean }): Promise<void> {
