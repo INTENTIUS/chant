@@ -10,7 +10,7 @@
     "types": [
       "node"
     ],
-    "moduleResolution": "node",
+    "moduleResolution": "bundler",
     "strict": true,
     "esModuleInterop": true,
     "resolveJsonModule": true,
@@ -20,150 +20,149 @@
     "declarationMap": true,
     "sourceMap": true,
     "noEmit": true,
-    "baseUrl": ".",
     "paths": {
       "@intentius/chant": [
-        "packages/core/src/index.ts"
+        "./packages/core/src/index.ts"
       ],
       "@intentius/chant/*": [
-        "packages/core/src/*"
+        "./packages/core/src/*"
       ],
       "@intentius/chant-lexicon-aws": [
-        "lexicons/aws/src/index.ts"
+        "./lexicons/aws/src/index.ts"
       ],
       "@intentius/chant-lexicon-aws/*": [
-        "lexicons/aws/src/*"
+        "./lexicons/aws/src/*"
       ],
       "@intentius/chant-lexicon-cedar": [
-        "lexicons/cedar/src/index.ts"
+        "./lexicons/cedar/src/index.ts"
       ],
       "@intentius/chant-lexicon-cedar/*": [
-        "lexicons/cedar/src/*"
+        "./lexicons/cedar/src/*"
       ],
       "@intentius/chant-lexicon-cpln": [
-        "lexicons/cpln/src/index.ts"
+        "./lexicons/cpln/src/index.ts"
       ],
       "@intentius/chant-lexicon-cpln/*": [
-        "lexicons/cpln/src/*"
+        "./lexicons/cpln/src/*"
       ],
       "@intentius/chant-lexicon-gitlab": [
-        "lexicons/gitlab/src/index.ts"
+        "./lexicons/gitlab/src/index.ts"
       ],
       "@intentius/chant-lexicon-docker": [
-        "lexicons/docker/src/index.ts"
+        "./lexicons/docker/src/index.ts"
       ],
       "@intentius/chant-lexicon-docker/*": [
-        "lexicons/docker/src/*"
+        "./lexicons/docker/src/*"
       ],
       "@intentius/chant-lexicon-fly": [
-        "lexicons/fly/src/index.ts"
+        "./lexicons/fly/src/index.ts"
       ],
       "@intentius/chant-lexicon-fly/*": [
-        "lexicons/fly/src/*"
+        "./lexicons/fly/src/*"
       ],
       "@intentius/chant-lexicon-fountain": [
-        "lexicons/fountain/src/index.ts"
+        "./lexicons/fountain/src/index.ts"
       ],
       "@intentius/chant-lexicon-fountain/*": [
-        "lexicons/fountain/src/*"
+        "./lexicons/fountain/src/*"
       ],
       "@intentius/chant-lexicon-gitlab/*": [
-        "lexicons/gitlab/src/*"
+        "./lexicons/gitlab/src/*"
       ],
       "@intentius/chant-lexicon-helm": [
-        "lexicons/helm/src/index.ts"
+        "./lexicons/helm/src/index.ts"
       ],
       "@intentius/chant-lexicon-helm/*": [
-        "lexicons/helm/src/*"
+        "./lexicons/helm/src/*"
       ],
       "@intentius/chant-lexicon-gcp": [
-        "lexicons/gcp/src/index.ts"
+        "./lexicons/gcp/src/index.ts"
       ],
       "@intentius/chant-lexicon-gcp/*": [
-        "lexicons/gcp/src/*"
+        "./lexicons/gcp/src/*"
       ],
       "@intentius/chant-lexicon-k8s": [
-        "lexicons/k8s/src/index.ts"
+        "./lexicons/k8s/src/index.ts"
       ],
       "@intentius/chant-lexicon-k8s/*": [
-        "lexicons/k8s/src/*"
+        "./lexicons/k8s/src/*"
       ],
       "@intentius/chant-lexicon-azure": [
-        "lexicons/azure/src/index.ts"
+        "./lexicons/azure/src/index.ts"
       ],
       "@intentius/chant-lexicon-azure/*": [
-        "lexicons/azure/src/*"
+        "./lexicons/azure/src/*"
       ],
       "@intentius/chant-lexicon-github": [
-        "lexicons/github/src/index.ts"
+        "./lexicons/github/src/index.ts"
       ],
       "@intentius/chant-lexicon-github/*": [
-        "lexicons/github/src/*"
+        "./lexicons/github/src/*"
       ],
       "@intentius/chant-lexicon-forgejo": [
-        "lexicons/forgejo/src/index.ts"
+        "./lexicons/forgejo/src/index.ts"
       ],
       "@intentius/chant-lexicon-forgejo/*": [
-        "lexicons/forgejo/src/*"
+        "./lexicons/forgejo/src/*"
       ],
       "@intentius/chant-lexicon-k3d": [
-        "lexicons/k3d/src/index.ts"
+        "./lexicons/k3d/src/index.ts"
       ],
       "@intentius/chant-lexicon-k3d/*": [
-        "lexicons/k3d/src/*"
+        "./lexicons/k3d/src/*"
       ],
       "@intentius/chant-lexicon-k3s": [
-        "lexicons/k3s/src/index.ts"
+        "./lexicons/k3s/src/index.ts"
       ],
       "@intentius/chant-lexicon-k3s/*": [
-        "lexicons/k3s/src/*"
+        "./lexicons/k3s/src/*"
       ],
       "@intentius/chant-lexicon-otel": [
-        "lexicons/otel/src/index.ts"
+        "./lexicons/otel/src/index.ts"
       ],
       "@intentius/chant-lexicon-otel/*": [
-        "lexicons/otel/src/*"
+        "./lexicons/otel/src/*"
       ],
       "@intentius/chant-lexicon-render": [
-        "lexicons/render/src/index.ts"
+        "./lexicons/render/src/index.ts"
       ],
       "@intentius/chant-lexicon-render/*": [
-        "lexicons/render/src/*"
+        "./lexicons/render/src/*"
       ],
       "@intentius/chant-test-utils": [
-        "packages/test-utils/src/index.ts"
+        "./packages/test-utils/src/index.ts"
       ],
       "@intentius/chant-test-utils/*": [
-        "packages/test-utils/src/*"
+        "./packages/test-utils/src/*"
       ],
       "@intentius/chant-k8s-client": [
-        "packages/k8s-client/src/index.ts"
+        "./packages/k8s-client/src/index.ts"
       ],
       "@intentius/chant-k8s-client/*": [
-        "packages/k8s-client/src/*"
+        "./packages/k8s-client/src/*"
       ],
       "@intentius/chant-lexicon-terraform": [
-        "lexicons/terraform/src/index.ts"
+        "./lexicons/terraform/src/index.ts"
       ],
       "@intentius/chant-lexicon-terraform/*": [
-        "lexicons/terraform/src/*"
+        "./lexicons/terraform/src/*"
       ],
       "@intentius/chant-lexicon-grafana": [
-        "lexicons/grafana/src/index.ts"
+        "./lexicons/grafana/src/index.ts"
       ],
       "@intentius/chant-lexicon-grafana/*": [
-        "lexicons/grafana/src/*"
+        "./lexicons/grafana/src/*"
       ],
       "@intentius/chant-lexicon-prometheus": [
-        "lexicons/prometheus/src/index.ts"
+        "./lexicons/prometheus/src/index.ts"
       ],
       "@intentius/chant-lexicon-prometheus/*": [
-        "lexicons/prometheus/src/*"
+        "./lexicons/prometheus/src/*"
       ]
     }
   },
   "include": [
-    "packages/**/*",
+    "./packages/**/*",
     "lexicons/**/*",
     "types/**/*"
   ],
