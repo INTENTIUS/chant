@@ -7,6 +7,7 @@
  */
 
 import { auditRule, type RuleMeta } from "@intentius/chant/audit/catalog";
+import { sqlPostSynthAuditEntries } from "./post-synth/audit-entries";
 
 function sourceRule(id: string, category: RuleMeta["category"], title: string, remediation: string): RuleMeta {
   return { id, tier: "merge-worthy", fixKind: "guidance", category, title, remediation, yamlBased: false };
@@ -39,4 +40,5 @@ export const sqlAuditCatalog: Record<string, RuleMeta> = {
     "Use an engine from the pinned server's system.table_engines (or system.database_engines for a database).",
     { category: "correctness" },
   ),
+  ...sqlPostSynthAuditEntries,
 };
