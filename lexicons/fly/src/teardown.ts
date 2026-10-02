@@ -220,7 +220,7 @@ async function destroyMachineCandidate(
   }
 
   try {
-    await destroyMachine(ctx, app, live.id, http, undefined, wait ?? {});
+    await destroyMachine(ctx, app, live.id, http, undefined, { ...(wait ?? {}), state: live.state, name: live.name });
   } catch (err) {
     return { ...base, outcome: "failed", detail: err instanceof Error ? err.message : String(err) };
   }

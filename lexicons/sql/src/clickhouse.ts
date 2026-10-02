@@ -8,6 +8,30 @@
  * catalog does not carry comes from the overlays beside them.
  */
 
+export {
+  database,
+  table,
+  view,
+  literal,
+  SqlLiteral,
+  SqlTemplateError,
+  ClickHouseObject,
+  CLICKHOUSE_ENTITY_TYPES,
+  isClickHouseObject,
+  isColumnRef,
+  quoteIdentifier,
+  type ClickHouseEntityType,
+  type ClickHouseDatabase,
+  type ClickHouseRelation,
+  type ClickHouseTable,
+  type ClickHouseView,
+  type ColumnDef,
+  type DatabaseProps,
+  type EngineDef,
+  type LineageEdge,
+  type TableProps,
+  type ViewProps,
+} from "./clickhouse/entities";
 export * from "./generated/clickhouse";
 export type * from "./clickhouse/catalog-types";
 export { ENGINE_ARGUMENTS } from "./clickhouse/overlays/engines";

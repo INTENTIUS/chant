@@ -1,0 +1,25 @@
+---
+title: "All Rules"
+description: "Every lint rule and post-synth check provided by the SQL lexicon"
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-sql` — DO NOT EDIT.
+    Edit lexicons/sql/src/codegen/docs.ts instead; changes here are overwritten. */}
+
+The SQL lexicon provides **4** rules: 3 lint rules and 1 post-synth check.
+
+## Lint Rules
+
+| ID | Severity | Category | Description |
+|----|----------|----------|-------------|
+| `SQLCH001` | error | correctness | the DDL in a `database`, `table` or `view` template does not parse, |
+| `SQLCH002` | error | correctness | a `Nullable` column in a table's sort key or primary key. |
+| `SQLCH003` | error | correctness | a column written as `$\{events.kind\}` instead of |
+
+## Post-Synth Checks
+
+Post-synth checks validate the serialized output after the build pipeline completes.
+
+| ID | Description |
+|----|-------------|
+| `SQLCH101` | A ClickHouse object names an engine the pinned server does not have |

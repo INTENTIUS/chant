@@ -1,52 +1,110 @@
 /**
  * The sql serializer.
  *
- * Output is one JSON document per build: the declared schema objects, each
- * filed under its export name (the object's identity in chant) with its entity
- * type and its walked props. The entity model (chant #3197) gives each
- * dialect's objects their shape and adds the dependency order and the DDL; this
- * is the envelope they are written into.
+ * A build writes two things:
+ *
+ * - The primary output, one JSON document: the dialect, the order objects
+ *   must be created in, and each object filed under its export name (its
+ *   identity in chant) with its type, its parsed definition, the references it
+ *   makes and its DDL. Post-synth checks, planning and the applier read this.
+ * - `clickhouse.sql` beside it: every statement, in that order, as it will be
+ *   sent. Written verbatim.
+ *
+ * The order is the dependency order of the references: a view after the
+ * tables it reads, a materialized view after its target, a table after its
+ * database. Ties break by export name, so the output is the same however the
+ * files were discovered. A reference cycle is an error naming the cycle.
  *
  * Rule ids: `SQL` for rules that hold in every dialect, `SQLCH` for the
- * ClickHouse dialect's (a later dialect takes its own, e.g. `SQLPG`). Both fall
- * under `rulePrefix`, so one prefix covers the whole lexicon when it loads
- * beside others, and the dialect stays visible in the id.
+ * ClickHouse dialect's (#3199).
  */
 
-import type { Declarable, Serializer } from "@intentius/chant";
-import { isResourceDeclarable } from "@intentius/chant/declarable";
-import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
+import type { Declarable, Serializer, SerializerResult } from "@intentius/chant";
+import { isAttrRefLike } from "@intentius/chant/utils";
+import { isClickHouseObject, type ClickHouseObject, type LineageEdge } from "./clickhouse/entities";
 
-const visitor: SerializerVisitor = {
-  attrRef: (logicalName, attribute) => ({ ref: logicalName, attribute }),
-  resourceRef: (logicalName) => ({ ref: logicalName }),
-  propertyDeclarable(entity, walk) {
-    if (!isResourceDeclarable(entity) || typeof entity.props !== "object" || entity.props === null) return undefined;
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(entity.props as Record<string, unknown>)) {
-      if (v !== undefined) out[k] = walk(v);
+/** The file the statements are written to, beside the primary output. */
+export const CLICKHOUSE_DDL_FILE = "clickhouse.sql";
+
+function referenceName(value: unknown, names: Map<Declarable, string>): string | undefined {
+  if (isAttrRefLike(value)) {
+    const parent = value.parent.deref() as Declarable | undefined;
+    const owner = parent ? names.get(parent) : undefined;
+    return owner ? `${owner}.${value.attribute}` : undefined;
+  }
+  return names.get(value as Declarable);
+}
+
+/** Export names in creation order. */
+export function applyOrder(objects: Map<string, ClickHouseObject>, names: Map<Declarable, string>): string[] {
+  const deps = new Map<string, string[]>();
+  for (const [name, obj] of objects) {
+    const on = new Set<string>();
+    for (const ref of obj.dependsOn) {
+      const parent = isAttrRefLike(ref) ? (ref.parent.deref() as Declarable | undefined) : (ref as Declarable);
+      const dep = parent ? names.get(parent) : undefined;
+      if (dep !== undefined && dep !== name && objects.has(dep)) on.add(dep);
     }
-    return out;
-  },
-};
+    deps.set(name, [...on].sort());
+  }
+  const order: string[] = [];
+  const done = new Set<string>();
+  const visit = (n: string, stack: string[]) => {
+    if (done.has(n)) return;
+    if (stack.includes(n)) throw new Error(`sql: a reference cycle between schema objects: ${[...stack, n].join(" -> ")}`);
+    for (const d of deps.get(n) ?? []) visit(d, [...stack, n]);
+    done.add(n);
+    order.push(n);
+  };
+  for (const n of [...objects.keys()].sort()) visit(n, []);
+  return order;
+}
+
+function objectJson(name: string, obj: ClickHouseObject, names: Map<Declarable, string>): Record<string, unknown> {
+  const props = { ...(obj.props as Record<string, unknown>) };
+  delete props.source;
+  const ddl = props.ddl;
+  delete props.ddl;
+  if (props.reads) props.reads = (props.reads as unknown[]).map((r) => referenceName(r, names) ?? null);
+  if (props.to !== undefined && typeof props.to !== "string") props.to = referenceName(props.to, names) ?? null;
+  if (props.lineage) {
+    props.lineage = (props.lineage as LineageEdge[]).map((e) => ({
+      output: e.output,
+      expr: e.expr,
+      from: e.from.map((r) => referenceName(r, names) ?? null),
+    }));
+  }
+  const dependsOn = [...new Set(obj.dependsOn.map((r) => referenceName(r, names)).filter((n) => n !== undefined))];
+  return JSON.parse(
+    JSON.stringify({ export: name, type: obj.entityType, sqlName: obj.sqlName, ...props, dependsOn, ddl }),
+  ) as Record<string, unknown>;
+}
 
 export const sqlSerializer: Serializer = {
   name: "sql",
   rulePrefix: "SQL",
 
-  serialize(entities: Map<string, Declarable>): string {
-    if (entities.size === 0) return "";
+  serialize(entities: Map<string, Declarable>): string | SerializerResult {
+    const objects = new Map<string, ClickHouseObject>();
+    for (const [name, entity] of entities) if (isClickHouseObject(entity)) objects.set(name, entity);
+    if (objects.size === 0) return "";
 
     const names = new Map<Declarable, string>();
     for (const [name, entity] of entities) names.set(entity, name);
 
-    const objects: Array<Record<string, unknown>> = [];
-    for (const name of [...entities.keys()].sort()) {
-      const entity = entities.get(name)!;
-      if (entity.kind === "property") continue;
-      const props = isResourceDeclarable(entity) ? walkValue(entity.props, names, visitor) : {};
-      objects.push({ export: name, type: entity.entityType, props });
-    }
-    return `${JSON.stringify({ objects }, null, 2)}\n`;
+    const order = applyOrder(objects, names);
+    const doc = {
+      dialect: "clickhouse",
+      applyOrder: order,
+      objects: order.map((n) => objectJson(n, objects.get(n)!, names)),
+    };
+    const ddl = order
+      .map((n) => `${(objects.get(n)!.props as { ddl: string }).ddl};`)
+      .join("\n\n");
+    return {
+      primary: `${JSON.stringify(doc, null, 2)}\n`,
+      files: { [CLICKHOUSE_DDL_FILE]: `${ddl}\n` },
+      verbatimFiles: [CLICKHOUSE_DDL_FILE],
+    };
   },
 };
