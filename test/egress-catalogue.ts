@@ -58,7 +58,7 @@ export const EGRESS_PHASES: readonly EgressPhase[] = [
     id: "apply",
     label: "Reading and changing an estate",
     summary:
-      "`chant lifecycle diff --live`, `plan`, `snapshot`, `apply`, `converge`, `chant search --live`, `chant import --live`, `chant run` and every component verb talk to the substrate they manage. This is the provider API, not a chant service — the same endpoint a console session or an SDK call would use, with the same credentials.",
+      "`chant lifecycle diff --live`, `plan`, `snapshot`, `apply`, `converge`, `chant search --live`, `chant import --live`, `chant workspace graph --live`, `chant workspace check --live`, `chant run` and every component verb talk to the substrate they manage. The two workspace commands do it through each member's own `chant graph --live`, so they reach what that member's lexicon reaches, and they are the only workspace commands that do (`chant workspace check` without `--live` reads files only). This is the provider API, not a chant service — the same endpoint a console session or an SDK call would use, with the same credentials.",
   },
   {
     id: "emulator",
@@ -76,13 +76,13 @@ export const EGRESS_PHASES: readonly EgressPhase[] = [
     id: "template",
     label: "Starting a project from a template",
     summary:
-      "`chant init --from <repo>@<ref>` fetches one commit of a template repository, and nothing else in `chant init` reaches a network. `chant init --template <name>` renders a lexicon's templates from the installed package and reaches nothing. The fetch is a `git` child process, so it is listed below as a shell-out rather than as a module.",
+      "`chant init --from <repo>@<ref>` fetches one commit of a template repository, and nothing else in `chant init` reaches a network. `chant init --template <name>` renders a lexicon's templates from the installed package and reaches nothing, and `chant init --from <dir>` copies a template directory already on disk and reaches nothing (#2647). The fetch is a `git` child process, so it is listed below as a shell-out rather than as a module.",
   },
   {
     id: "upgrade",
     label: "Upgrading a project from its template",
     summary:
-      "`chant workspace upgrade <scope>` fetches the target version of a git template, and the commit the scope was made from, to rebuild the merge base. Everything after the fetch runs offline in a local worktree. A vendor scope is read from its source as `chant vendor pull` reads it. The `proposeWorkspaceUpgrade` activity stages the same upgrade, then pushes a proposal branch and opens or edits a pull request. Every step is a `git` or `gh` child process, listed below as shell-outs.",
+      "`chant workspace upgrade <scope>` fetches the target version of a git template, and the commit the scope was made from, to rebuild the merge base. Everything after the fetch runs offline in a local worktree. A vendor scope is read from its source as `chant vendor pull` reads it, and a scope made from a directory reads the `--to` directory from disk and reaches nothing. The `proposeWorkspaceUpgrade` activity stages the same upgrade, then pushes a proposal branch and opens or edits a pull request. `chant workspace adopt-lineage` and `chant workspace hash-index` list a template's tags and fetch the versions they compare, and `chant workspace versions --available` lists the tags of each git template. Every step is a `git` or `gh` child process, listed below as shell-outs.",
   },
   {
     id: "audit",
@@ -266,8 +266,26 @@ export const NETWORK_SHELL_OUTS: readonly NetworkShellOut[] = [
     command: "chant workspace upgrade <scope>",
     file: "packages/core/src/workspace/lineage-upgrade.ts",
     phase: "upgrade",
-    destination: "the template repository the lineage lock records for the scope (`source.url`). A local repository reaches nothing",
-    why: "`git fetch --depth 1 <url> <ref>` for the target version, then `git fetch --depth 1 <url> <commit>` for the commit the scope was made from, into a scratch repository deleted afterwards. The second fetch rebuilds the merge base; when a server refuses it, the upgrade goes on without a base for edited files. Credentials are git's own, and `GIT_TERMINAL_PROMPT=0` stops it asking for any (#2550).",
+    destination: "the template repository the lineage lock records for the scope (`source.url`), or the one `--source` names when the upgrade moves the scope to another template. A local repository reaches nothing",
+    why: "`git fetch --depth 1 <url> <ref>` for the target version, then `git fetch --depth 1 <url> <commit>` for the commit the scope was made from, into a scratch repository deleted afterwards. The second fetch rebuilds the merge base, always from the scope's recorded source; when a server refuses it, the upgrade goes on without a base for edited files. Credentials are git's own, and `GIT_TERMINAL_PROMPT=0` stops it asking for any (#2550, #2551).",
+  },
+  {
+    binary: "git",
+    subcommand: "ls-remote",
+    command: "chant workspace adopt-lineage --from <repo>, chant workspace hash-index --from <repo> and chant workspace versions --available",
+    file: "packages/core/src/workspace/lineage-hash-index.ts",
+    phase: "upgrade",
+    destination: "the template repository named in `--from`, or for `versions --available` the one each family's lock records. A local repository reaches nothing",
+    why: "`git ls-remote --tags <url>` lists the template's tags and the commit each names, so a cached hash index is reused only for tags that still name the same commit, and `versions` can say how many versions are newer than each lock (#2551).",
+  },
+  {
+    binary: "git",
+    subcommand: "fetch",
+    command: "chant workspace adopt-lineage --from <repo> and chant workspace hash-index --from <repo>",
+    file: "packages/core/src/workspace/lineage-hash-index.ts",
+    phase: "upgrade",
+    destination: "the template repository named in `--from`. A local repository reaches nothing",
+    why: "`git fetch --depth 1 --no-tags <url> refs/tags/<tag>...` for the version tags the index has to compute, or `git fetch --depth 1 <url> <ref>` for the one ref `--from <repo>@<ref>` names, then a cached winner's tag again to re-check it, into a scratch repository deleted afterwards. Credentials are git's own, and `GIT_TERMINAL_PROMPT=0` stops it asking for any (#2551).",
   },
   {
     binary: "git",
@@ -404,6 +422,13 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     why: "The cpln lexicon's read transport, injectable through `CplnHttp` so tests need no network.",
   },
   {
+    file: "lexicons/grafana/src/api/client.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "the Grafana HTTP API named by `grafana.profiles.<env>` or `GRAFANA_URL`",
+    why: "The grafana lexicon's transport for `lifecycle diff --live` and `import --from`, injectable through `GrafanaHttp` so tests need no network.",
+  },
+  {
     file: "lexicons/fly/src/op/activities/fly-apply.ts",
     primitives: ["fetch"],
     phase: "apply",
@@ -411,11 +436,39 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     why: "`flyApply` creates, updates and destroys Machines; pointing it at the emulator is how the Fly tutorials run offline.",
   },
   {
+    file: "lexicons/fly/src/op/activities/machine-release.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "the app's own health endpoint, at the URL a release step is given",
+    why: "`flyMachineVerify` checks that a released Machine's app answers its health endpoint with that release (#2736). The Machines API calls go through fly-apply.ts's client.",
+  },
+  {
+    file: "lexicons/fly/src/components/fly-release.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "the app's own health endpoint, through `flyMachineVerify`",
+    why: "The `fly-release` and `fly-rollback` capabilities hand an injectable `fetch` to `flyMachineVerify`, so tests reach no network (#2736).",
+  },
+  {
+    file: "lexicons/fly/src/op/activities/machines-local.ts",
+    primitives: ["node:net"],
+    phase: "emulator",
+    destination: "127.0.0.1 only: a free port for a Machine's service, and a connect that waits for it to listen",
+    why: "The opt-in running mode of the local Machines API runs each started Machine on this host and publishes its service on a loopback port (#2831). Only tests and a local runner reach it.",
+  },
+  {
     file: "lexicons/fly/src/op/activities/sprites.ts",
     primitives: ["fetch"],
     phase: "apply",
     destination: "the Sprites API, or `SPRITES_BASE_URL`",
     why: "Sprite lifecycle activities — create, exec, destroy — for the Sprites Ops.",
+  },
+  {
+    file: "lexicons/fly/src/op/activities/sprite-service-converge.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "a box service's own health URL, as the Op declares it",
+    why: "`spriteServicesObserve` probes each declared service's health URL for a ConvergeOp, and `spriteServiceRestart` waits for it after a restart (#2778). The Sprites API calls go through sprite-services.ts.",
   },
   {
     file: "lexicons/fly/src/op/activities/sprite-fs.ts",
@@ -465,6 +518,13 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     phase: "apply",
     destination: "whatever URL the Op step declares",
     why: "`httpCheck` is a generic probe step — the URL is the caller's, and the activity has no default of its own.",
+  },
+  {
+    file: "packages/core/src/op/decide-backend.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "a Jev-compatible `POST /v1/systemone` server a backend declares",
+    why: "The `decide` activity asks a decision point's model decider. It runs only as an Op step: no chant read calls a model (ws-052).",
   },
   {
     file: "packages/core/src/op/activities/workflow-audit.ts",
@@ -534,6 +594,20 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     why: "`just snapshot` refreshes the committed offline spec snapshot; run on a networked machine on purpose, and the snapshot is what everything else reads.",
   },
   {
+    file: "lexicons/grafana/src/spec/fetch-cli.ts",
+    primitives: ["fetch"],
+    phase: "codegen",
+    destination: "`raw.githubusercontent.com`, for the grafana-foundation-sdk JSON Schemas at the pinned commit",
+    why: "`just fetch-schemas` re-downloads the vendored Grafana schemas when bumping `GRAFANA_SCHEMA_PIN`; a maintainer command. Generate, bundle, validate, build and the tests read the committed files under `src/spec/schemas/` and reach nothing.",
+  },
+  {
+    file: "lexicons/grafana/src/spec/fetch-units-cli.ts",
+    primitives: ["fetch"],
+    phase: "codegen",
+    destination: "`raw.githubusercontent.com`, for Grafana's `valueFormats/categories.ts` at the tag in `GRAFANA_UNITS_SOURCE`",
+    why: "`just fetch-units` re-extracts the unit ids GRAF115 accepts when moving to a newer Grafana; a maintainer command. Build, lint and the tests read the committed `src/spec/units.gen.ts` and reach nothing.",
+  },
+  {
     file: "lexicons/azure/scripts/fetch-quickstart-templates.ts",
     primitives: ["fetch"],
     phase: "codegen",
@@ -587,7 +661,10 @@ export const EGRESS_SCAN_ROOTS = ["packages", "lexicons", "scripts", "ops"] as c
  * chant's, and cataloguing them would bury the rows that matter. `generated`
  * and `dist` are build output. Test files are excluded by extension below, for
  * the same reason: a test is not a path an adopter runs, and a recording
- * fetch mock in one would read as a network caller.
+ * fetch mock in one would read as a network caller. `e2e` holds the helpers
+ * the `*.e2e.test.ts` files share (chant #2956: the grafana lexicon's
+ * container helpers, which poll the containers they start on localhost), and
+ * is skipped for the same reason as the test files themselves.
  */
 export const EGRESS_SCAN_SKIP_DIRS = new Set([
   "node_modules",
@@ -598,6 +675,7 @@ export const EGRESS_SCAN_SKIP_DIRS = new Set([
   "__snapshots__",
   "coverage",
   ".git",
+  "e2e",
 ]);
 
 /** Client-side symbols per builtin. `createServer` is deliberately absent. */

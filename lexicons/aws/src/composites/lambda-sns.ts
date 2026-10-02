@@ -12,6 +12,7 @@ export interface LambdaSnsProps extends LambdaFunctionProps {
   };
 }
 
+/** A Lambda function subscribed to an SNS topic. */
 export const LambdaSns = Composite((props: LambdaSnsProps) => {
   const { defaults } = props;
   const { role, func } = LambdaFunction(props);

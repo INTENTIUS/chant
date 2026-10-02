@@ -1,0 +1,400 @@
+---
+title: "Examples"
+description: "The grafana lexicon's example projects"
+diataxis: how-to
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-grafana` — DO NOT EDIT.
+    Edit lexicons/grafana/docs/pages/examples.mdx instead; changes here are overwritten. */}
+
+
+Each example lives under `lexicons/grafana/examples/` and builds with `chant build src --lexicon grafana` (dashboards-from-declarations also with `--lexicon otel` and `--lexicon prometheus`, alerting also with `--lexicon prometheus`). The lexicon's tests build it, lint it with no warnings, run the GRAF1xx checks over the output, and validate each dashboard against the pinned Grafana schema.
+
+## getting-started
+
+A service overview over Prometheus, Tempo and Loki: RED panels over span metrics, a heatmap of latency buckets, a table of slow traces from TraceQL, the service's logs from LogQL, and a trace panel driven by a textbox variable. It uses every built-in panel type, two rows (one collapsed), a query variable, a dashboard link and a folder, and links the Tempo datasource to Loki and Prometheus through `jsonData`.
+
+```ts title="src/datasources.ts"
+```typescript title="datasources.ts"
+/**
+ * A service overview dashboard over Prometheus, Tempo and Loki, declared
+ * once and built into dashboard JSON and Grafana's provisioning files.
+ * This file: the three datasources, as the Grafana container reaches them.
+ */
+import { Datasource } from "@intentius/chant-lexicon-grafana";
+
+const loki = new Datasource({ name: "Loki", type: "loki", url: "http://loki:3100" });
+
+const prometheus = new Datasource({
+  name: "Prometheus",
+  type: "prometheus",
+  url: "http://prometheus:9090",
+  isDefault: true,
+});
+
+// Trace-to-logs: the declared Loki datasource is written as its uid.
+const tracesToLogs = { datasourceUid: loki, filterByTraceID: true, spanStartTimeShift: "-5m", spanEndTimeShift: "5m" };
+const tempoSettings = { tracesToLogsV2: tracesToLogs, serviceMap: { datasourceUid: prometheus } };
+
+const tempo = new Datasource({ name: "Tempo", type: "tempo", url: "http://tempo:3200", jsonData: tempoSettings });
+
+export { prometheus, tempo, loki };
+```
+```
+
+```ts title="src/queries.ts"
+```typescript title="queries.ts"
+/**
+ * The queries, one per question. PromQL over the span metrics the
+ * OpenTelemetry collector's spanmetrics connector produces, TraceQL for slow
+ * traces and one trace by id, LogQL for the service's logs.
+ */
+import { PromQuery, TempoQuery, LokiQuery } from "@intentius/chant-lexicon-grafana";
+
+const calls = 'traces_span_metrics_calls_total{service_name="$service"}';
+const buckets = 'traces_span_metrics_duration_milliseconds_bucket{service_name="$service"}';
+
+const serverSpans = 'service_name="$service", span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"';
+const serverCalls = `traces_span_metrics_calls_total{${serverSpans}}`;
+const serverErrors = `traces_span_metrics_calls_total{${serverSpans}, status_code="STATUS_CODE_ERROR"}`;
+const allRate = `sum(rate(${serverCalls}[$__rate_interval]))`;
+const errorRate = `sum(rate(${serverErrors}[$__rate_interval]))`;
+
+const requestRate = new PromQuery({
+  expr: `sum by (span_name) (rate(${calls}[$__rate_interval]))`,
+  legendFormat: "{{span_name}}",
+});
+
+const errorRatio = new PromQuery({
+  // The shape errorRatio() in the composites builds: (errors or all * 0) / all.
+  // The padded numerator reads 0% instead of "No data" while nothing errors.
+  // A constructor property has to be statically evaluable, so the call is not made here.
+  expr: `(${errorRate} or ${allRate} * 0) / ${allRate}`,
+  instant: true,
+});
+
+const latencyP95 = new PromQuery({
+  expr: `histogram_quantile(0.95, sum by (le) (rate(${buckets}[$__rate_interval])))`,
+  legendFormat: "p95",
+});
+
+const latencyBuckets = new PromQuery({ expr: `sum by (le) (rate(${buckets}[$__rate_interval]))`, format: "heatmap" });
+
+const slowTraces = new TempoQuery({ query: '{ resource.service.name = "$service" && duration > 500ms }', limit: 20, tableType: "traces" });
+
+const traceById = new TempoQuery({ query: "$traceId" });
+
+const serviceLogs = new LokiQuery({ expr: '{service_name="$service"} |= ``' });
+
+export { requestRate, errorRatio, latencyP95, latencyBuckets, slowTraces, traceById, serviceLogs };
+```
+```
+
+```ts title="src/dashboard.ts"
+```typescript title="dashboard.ts"
+/**
+ * The dashboard: variables, a row for the service's rates, errors and
+ * latency, and a collapsed row for digging into slow requests.
+ */
+import { Dashboard, Row } from "@intentius/chant-lexicon-grafana";
+import { service, traceId } from "./variables";
+import { intro, errors, errorGauge, rate, latency } from "./overview-panels";
+import { latencyDistribution, slowest, logs, trace } from "./debug-panels";
+
+const red = new Row({ title: "Rate, errors, duration", panels: [errors, errorGauge, rate, latency] });
+
+const investigate = new Row({ title: "Investigate", collapsed: true, panels: [latencyDistribution, slowest, logs, trace] });
+
+const lastHour = { from: "now-1h", to: "now" };
+const docs = { title: "Runbook", type: "link" as const, url: "https://example.com/runbooks/service", targetBlank: true };
+
+const serviceOverview = new Dashboard({
+  title: "Service overview",
+  uid: "service-overview",
+  tags: ["chant", "red"],
+  time: lastHour,
+  refresh: "30s",
+  graphTooltip: "sharedCrosshair",
+  variables: [service, traceId],
+  panels: [intro, red, investigate],
+  links: [docs],
+  folder: "Services",
+});
+
+export { serviceOverview };
+```
+```
+
+## dashboards-from-declarations
+
+A collector, an SLO, GenAI recording rules and four dashboards in one build root, built with `chant build src --lexicon otel`, `--lexicon prometheus` and `--lexicon grafana`. The collector turns every span into RED metrics through a `spanmetrics` connector with the namespace `shop`, and GenAI spans into per-model metrics and token sums through the GenAI preset under `agents`. The checkout SLO writes its SLI with the names `spanMetricsNames()` reads from the same connector. `RedDashboard`, `SloDashboard` and `AgentDashboard` build their dashboards from the connector, the `Slo` and the preset, so changing `namespace: "shop"` moves the SLO's rules and the RED dashboard's queries together. `GenAiRules` records per-provider series and cost from a made-up price table, and a second `AgentDashboard` reads them. See [Dashboards from Declarations](../composites/).
+
+```ts title="src/components.ts"
+```typescript title="components.ts"
+/**
+ * The collector's components. Every span becomes RED metrics through a
+ * `spanmetrics` connector; GenAI spans also become per-model and per-tool
+ * metrics and token sums through the GenAI preset; Prometheus scrapes it all
+ * from the `prometheus` exporter, and traces go to Tempo.
+ */
+import {
+  BatchProcessor,
+  genAiComponents,
+  MemoryLimiterProcessor,
+  OtlpExporter,
+  OtlpReceiver,
+  PrometheusExporter,
+  SpanMetricsConnector,
+  type OtlpReceiverConfig,
+  type SpanMetricsConnectorConfig,
+} from "@intentius/chant-lexicon-otel";
+
+const protocols: OtlpReceiverConfig["protocols"] = { grpc: { endpoint: "0.0.0.0:4317" }, http: { endpoint: "0.0.0.0:4318" } };
+const otlp = new OtlpReceiver({ protocols });
+
+const memoryLimiter = new MemoryLimiterProcessor({ check_interval: "1s", limit_percentage: 80, spike_limit_percentage: 20 });
+const batch = new BatchProcessor({});
+
+const plaintext = { insecure: true };
+const tempoTraces = new OtlpExporter({ name: "tempo", endpoint: "tempo:4317", tls: plaintext });
+
+const milliseconds: SpanMetricsConnectorConfig["histogram"] = {
+  unit: "ms",
+  explicit: { buckets: ["5ms", "10ms", "25ms", "50ms", "100ms", "250ms", "500ms", "1s", "2s", "5s"] },
+};
+
+/** Rename the namespace and the RED dashboard and the SLO follow. */
+const spans = new SpanMetricsConnector({ namespace: "shop", histogram: milliseconds, metrics_flush_interval: "15s" });
+
+/** Served on 8889 for Prometheus to scrape. */
+const metricsEndpoint = new PrometheusExporter({ endpoint: "0.0.0.0:8889" });
+
+/** The GenAI preset's pieces, its metric names under `agents`, calls and durations also by provider. */
+const genai = genAiComponents({ namespace: "agents", providerDimensions: true });
+
+export { otlp, memoryLimiter, batch, tempoTraces, spans, metricsEndpoint, genai };
+```
+```
+
+```ts title="src/slo.ts"
+```typescript title="slo.ts"
+/**
+ * An SLO on checkout, written over the span metrics the collector emits.
+ * The SLI takes the metric and label names from the connector declaration,
+ * so the SLO, its rules and its dashboard move together.
+ */
+import { spanMetricsNames } from "@intentius/chant-lexicon-otel";
+import { Slo } from "@intentius/chant-lexicon-prometheus";
+import { spans } from "./components";
+
+const names = spanMetricsNames(spans);
+const calls = names.calls.prometheus;
+const checkoutSpans = `${names.labels.spanName}="checkout"`;
+const failed = `${names.labels.statusCode}="${names.errorStatus}"`;
+
+const checkout = Slo({
+  name: "checkout",
+  objective: 0.999,
+  window: "30d",
+  description: "Checkout calls end without an error span.",
+  sli: {
+    errors: `sum(rate(${calls}{${checkoutSpans},${failed}}[{{window}}]))`,
+    total: `sum(rate(${calls}{${checkoutSpans}}[{{window}}]))`,
+  },
+  labels: { team: "payments" },
+});
+
+export { checkout };
+```
+```
+
+```ts title="src/genai-rules.ts"
+```typescript title="genai-rules.ts"
+/**
+ * Recording rules over the GenAI preset's metrics, with cost from a price
+ * table. `groupBy: ["service_name"]` keeps the service on every recorded
+ * series, so the dashboard that reads them can offer a service picker.
+ *
+ * The prices are made up for the example. The lexicon ships none: read
+ * them from each provider's pricing page and record where and when.
+ */
+import { GenAiRules } from "@intentius/chant-lexicon-prometheus";
+import { genai } from "./components";
+
+const genaiRules = GenAiRules({
+  genAi: genai,
+  groupBy: ["service_name"],
+  prices: [
+    { provider: "anthropic", model: "big", inputPerMTok: 3, outputPerMTok: 15, currency: "USD", source: "https://example.com/pricing", asOf: "2026-09-29" },
+    { provider: "mistral", model: "small", inputPerMTok: 1, outputPerMTok: 4, currency: "EUR", source: "https://example.com/pricing", asOf: "2026-09-29" },
+  ],
+  alerts: { errorRatio: true },
+});
+
+export { genaiRules };
+```
+```
+
+```ts title="src/dashboards.ts"
+```typescript title="dashboards.ts"
+/**
+ * Four dashboards, each built from the declaration it reads: RED per
+ * service from the spanmetrics connector, the checkout SLO from its `Slo`,
+ * agent calls, errors and tokens from the GenAI preset, and the same per
+ * provider with cost from the GenAI recording rules.
+ */
+import { AgentDashboard, RedDashboard, SloDashboard } from "@intentius/chant-lexicon-grafana";
+import { genai, metricsEndpoint, spans } from "./components";
+import { prometheus } from "./datasources";
+import { genaiRules } from "./genai-rules";
+import { checkout } from "./slo";
+
+const services = RedDashboard({ spanMetrics: spans, exporter: metricsEndpoint, datasource: prometheus, folder: "Observability" });
+
+const checkoutSlo = SloDashboard({ slo: checkout, datasource: prometheus, folder: "Observability" });
+
+const agents = AgentDashboard({ genAi: genai, datasource: prometheus, folder: "Observability" });
+
+const agentCost = AgentDashboard({ rules: genaiRules, datasource: prometheus, folder: "Observability" });
+
+export { services, checkoutSlo, agents, agentCost };
+```
+```
+
+## alerting
+
+Grafana-managed alerting in one build root with the SLO it alerts on, built with `chant build src --lexicon prometheus` and `--lexicon grafana`. `SloAlertRules` turns the checkout `Slo` into four burn-rate rules that read the error ratios the `Slo`'s Prometheus rules record; two hand-written rules use a reduce and a threshold with a recovery threshold, and a Loki query. Contact points read their secrets from the environment, the policy tree pages on `severity=page` and files tickets for the rest outside weekends. `src/alerting.e2e.test.ts` provisions it into Grafana 13.2.2 and reads it back. See [Alerting](../alerting/).
+
+```ts title="src/slo.ts"
+```typescript title="slo.ts"
+/**
+ * An SLO on checkout requests, and its burn-rate alerts as Grafana-managed
+ * rules. The Prometheus rule group records the error ratios; the Grafana
+ * rules read them, with the windows and thresholds `sloMetrics()` gives.
+ */
+import { Slo } from "@intentius/chant-lexicon-prometheus";
+import { SloAlertRules } from "@intentius/chant-lexicon-grafana";
+import { prometheus } from "./datasources";
+
+const checkout = Slo({
+  name: "checkout",
+  objective: 0.999,
+  window: "30d",
+  description: "Checkout requests answer without a 5xx.",
+  sli: {
+    errors: 'sum(rate(http_requests_total{job="checkout",code=~"5.."}[{{window}}]))',
+    total: 'sum(rate(http_requests_total{job="checkout"}[{{window}}]))',
+  },
+  labels: { team: "payments" },
+});
+
+const checkoutBurn = SloAlertRules({
+  slo: checkout,
+  datasource: prometheus,
+  folder: "SLOs",
+  labels: { team: "payments" },
+  annotations: { runbook_url: "https://runbooks.example.com/checkout-slo" },
+});
+
+export { checkout, checkoutBurn };
+```
+```
+
+```ts title="src/rules.ts"
+```typescript title="rules.ts"
+/**
+ * Two rules written by hand: a Prometheus latency rule built from typed
+ * server-side expressions (reduce, and a threshold with a recovery
+ * threshold), and a Loki rule that pages on panics.
+ */
+import {
+  AlertQuery,
+  AlertRule,
+  AlertRuleGroup,
+  LokiQuery,
+  PromQuery,
+  ReduceExpression,
+  ThresholdExpression,
+} from "@intentius/chant-lexicon-grafana";
+import { loki, prometheus } from "./datasources";
+
+const p99 = new PromQuery({
+  datasource: prometheus,
+  expr: 'histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{job="checkout"}[5m])))',
+  range: true,
+});
+const p99Max = new ReduceExpression({ expression: "A", reducer: "max" });
+const p99Threshold = new ThresholdExpression({
+  expression: "B",
+  conditions: [{ evaluator: { type: "gt", params: [0.5] }, unloadEvaluator: { type: "lt", params: [0.4] } }],
+});
+const latencyLabels = { severity: "ticket", team: "payments" };
+const latency = new AlertRule({
+  title: "Checkout p99 latency above 500ms",
+  uid: "checkout-p99-latency",
+  data: [p99, p99Max, p99Threshold],
+  relativeTimeRange: { from: "30m" },
+  for: "10m",
+  labels: latencyLabels,
+  annotations: { summary: "Checkout p99 is {{ humanizeDuration $values.B.Value }}" },
+});
+
+const panicsQuery = new LokiQuery({ datasource: loki, expr: 'sum(count_over_time({app="checkout"} |= "panic" [5m]))' });
+const panics = new AlertQuery({ query: panicsQuery, queryType: "instant", relativeTimeRange: { from: "5m" } });
+const panicsOverZero = new ThresholdExpression({ expression: "A", conditions: [{ evaluator: { type: "gt", params: [0] } }] });
+const panicLabels = { severity: "page", team: "payments" };
+const panicRule = new AlertRule({
+  title: "Checkout panicked",
+  uid: "checkout-panics",
+  data: [panics, panicsOverZero],
+  noDataState: "OK",
+  labels: panicLabels,
+});
+
+const checkoutAlerts = new AlertRuleGroup({ name: "checkout", folder: "Checkout", interval: "1m", rules: [latency, panicRule] });
+
+export { checkoutAlerts };
+```
+```
+
+```ts title="src/notifications.ts"
+```typescript title="notifications.ts"
+/**
+ * Where alerts go: two contact points, a policy tree that pages on
+ * `severity=page` and files tickets for the rest outside weekends, and the
+ * template the email uses. Secrets come from the environment Grafana runs
+ * in, never from this file (GRAF002).
+ */
+import { ContactPoint, MuteTiming, NotificationPolicy, NotificationTemplate } from "@intentius/chant-lexicon-grafana";
+
+const emailTemplate = new NotificationTemplate({
+  name: "checkout.email",
+  template: '{{ define "checkout.email.subject" }}{{ len .Alerts.Firing }} firing: {{ .CommonLabels.alertname }}{{ end }}',
+});
+
+const weekendIntervals: ConstructorParameters<typeof MuteTiming>[0]["time_intervals"] = [
+  { weekdays: ["saturday", "sunday"], location: "Europe/Berlin" },
+];
+const weekends = new MuteTiming({ name: "weekends", time_intervals: weekendIntervals });
+
+const oncallReceivers: ConstructorParameters<typeof ContactPoint>[0]["receivers"] = [
+  { type: "slack", settings: { url: "$__env{SLACK_ONCALL_WEBHOOK}", recipient: "#checkout-oncall" } },
+  { type: "email", settings: { addresses: "oncall@example.com", subject: '{{ template "checkout.email.subject" . }}' } },
+];
+const oncall = new ContactPoint({ name: "oncall", receivers: oncallReceivers });
+
+const ticketReceivers: ConstructorParameters<typeof ContactPoint>[0]["receivers"] = [
+  { type: "webhook", settings: { url: "https://tickets.example.com/hooks/grafana", authorization_credentials: "$__env{TICKETS_TOKEN}" } },
+];
+const tickets = new ContactPoint({ name: "tickets", receivers: ticketReceivers });
+
+const policyGroupBy = ["grafana_folder", "alertname", "slo"];
+const policyRoutes: ConstructorParameters<typeof NotificationPolicy>[0]["routes"] = [
+  { receiver: oncall, object_matchers: [["severity", "=", "page"]], group_wait: "10s" },
+  { receiver: tickets, object_matchers: [["severity", "!=", "page"]], mute_time_intervals: [weekends] },
+];
+const policy = new NotificationPolicy({ receiver: tickets, group_by: policyGroupBy, repeat_interval: "4h", routes: policyRoutes });
+
+export { emailTemplate, weekends, oncall, tickets, policy };
+```
+```

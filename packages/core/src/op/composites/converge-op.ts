@@ -45,9 +45,11 @@
 
 import { Op, phase, activity } from "../builders";
 import type { OpResource } from "../resource";
+import type { ActivityStep } from "../types";
+import { stepOutput } from "../step-output-ref";
 import { isWellFormedPredicate, duplicateRuleIds, type ConvergeRule } from "../converge-rule";
-import type { ConvergeSymptom } from "../../lifecycle/symptoms";
-import { CONVERGE_SYMPTOM_FIELDS } from "../../lifecycle/symptoms";
+import type { ConvergeSymptom, ResourceSymptom } from "../../lifecycle/symptoms";
+import { CONVERGE_SYMPTOM_FIELDS, RESOURCE_SYMPTOM_FIELDS } from "../../lifecycle/symptoms";
 
 /**
  * Authority level for this ConvergeOp's environment — issue #1484's own
@@ -96,7 +98,7 @@ import { CONVERGE_SYMPTOM_FIELDS } from "../../lifecycle/symptoms";
  */
 export type ConvergeDial = "observe" | "reconcile" | "apply";
 
-export interface ConvergeOpConfig {
+interface ConvergeOpCommon {
   /** Op name (kebab-case). Names the Op's output directory and is what `chant run` takes. */
   name: string;
   /** Environment to converge (e.g. "staging"). */
@@ -105,8 +107,6 @@ export interface ConvergeOpConfig {
   dial?: ConvergeDial;
   /** Max number of `run` dispatches per tick — the issue's "the worst tick is bounded" (Accessible Ops factor VI). Rules matched beyond the budget are recorded, not run. @default 3 */
   budget?: number;
-  /** The rule table — build with `when()`/`eq()`/`run()`/`report()` from `@intentius/chant/op`. Non-empty; every rule id must be unique. */
-  rules: ConvergeRule<ConvergeSymptom>[];
   /**
    * Cron expression. When set, it lands on the Op as `schedule` — the cadence
    * `chant operator` ticks this Op on and the CI generators render; omit for
@@ -114,9 +114,39 @@ export interface ConvergeOpConfig {
    * "one-shot runnable locally for a single tick").
    */
   schedule?: string;
+}
+
+/** A ConvergeOp that observes a chant environment through its lexicons. */
+export interface EnvironmentConvergeOpConfig extends ConvergeOpCommon {
+  /** The rule table — build with `when()`/`eq()`/`run()`/`report()` from `@intentius/chant/op`. Non-empty; every rule id must be unique. */
+  rules: ConvergeRule<ConvergeSymptom>[];
   /** Run `chant lifecycle diff --live` in the Observe phase (queries live state). @default true */
   live?: boolean;
+  observe?: undefined;
 }
+
+/**
+ * A ConvergeOp whose Observe phase is a step of its own (#2778), for
+ * resources no lexicon declares or observes, such as the services a
+ * supervisor runs in a box (the fly lexicon's `spriteServicesObserve`).
+ */
+export interface StepConvergeOpConfig extends ConvergeOpCommon {
+  /**
+   * The observer: an activity step that returns a `ResourceObservation`,
+   * `{ resources: [{ name, status: "in-sync" | "drifted" | "unknown", detail? }] }`,
+   * or a `shell()` step that prints one as JSON. Its id defaults to `observe`.
+   */
+  observe: ActivityStep;
+  /**
+   * The rule table, evaluated once per observed resource against a
+   * `ResourceSymptom` (`env`, `resource`, `status`, `detail`). A fired
+   * `run()` is dispatched for that resource: the dispatched Op reads its
+   * name from `CHANT_CONVERGE_RESOURCE`.
+   */
+  rules: ConvergeRule<ResourceSymptom>[];
+}
+
+export type ConvergeOpConfig = EnvironmentConvergeOpConfig | StepConvergeOpConfig;
 
 export interface ConvergeOpResources {
   /** Op resource — the observe-then-converge Op. */
@@ -126,7 +156,8 @@ export interface ConvergeOpResources {
 export function ConvergeOp(config: ConvergeOpConfig): ConvergeOpResources {
   const dial = config.dial ?? "observe";
   const budget = config.budget ?? 3;
-  const live = config.live ?? true;
+  const observer = config.observe !== undefined ? config.observe : undefined;
+  const fields = observer ? RESOURCE_SYMPTOM_FIELDS : CONVERGE_SYMPTOM_FIELDS;
 
   // ── Build-time refusals (#1484) ─────────────────────────────────────────
   // Thrown here, at Op-construction time — the same "refuse in the factory,
@@ -142,7 +173,7 @@ export function ConvergeOp(config: ConvergeOpConfig): ConvergeOpResources {
   if (config.rules.length === 0) {
     throw new Error(`ConvergeOp "${config.name}": at least one rule is required — an empty table has nothing to converge.`);
   }
-  const dupes = duplicateRuleIds(config.rules);
+  const dupes = duplicateRuleIds<unknown>(config.rules as ConvergeRule<unknown>[]);
   if (dupes.length > 0) {
     throw new Error(
       `ConvergeOp "${config.name}": duplicate rule id(s) [${dupes.join(", ")}] — flap-damping counters are keyed by id, so ids must be unique.`,
@@ -157,13 +188,40 @@ export function ConvergeOp(config: ConvergeOpConfig): ConvergeOpResources {
       // assembled by hand (bypassing when()) reaches here too.
       throw new Error(`ConvergeOp "${config.name}", rule "${rule.id}": every rule must carry its why — refused at build.`);
     }
-    if (!isWellFormedPredicate(rule.when, CONVERGE_SYMPTOM_FIELDS)) {
+    if (!isWellFormedPredicate(rule.when, fields)) {
       throw new Error(
         `ConvergeOp "${config.name}", rule "${rule.id}": predicate is outside the evaluable subset — build it from ` +
-          `eq/neq/gt/gte/lt/lte/truthy/falsy/allOf/anyOf over a field ConvergeSymptom actually produces.`,
+          `eq/neq/gt/gte/lt/lte/truthy/falsy/allOf/anyOf over a field ${observer ? "ResourceSymptom" : "ConvergeSymptom"} actually produces.`,
       );
     }
   }
+  if (observer && observer.kind !== "activity") {
+    throw new Error(`ConvergeOp "${config.name}": observe must be an activity step, such as shell() or spriteServicesObserve()`);
+  }
+
+  const labels = { Converge: "true", Env: config.env, Dial: dial, ...(observer ? { Observe: "step" } : {}) };
+  const schedule = config.schedule ? { schedule: { cron: config.schedule, overlap: "skip" as const } } : {};
+
+  if (observer) {
+    // #2778: the observer step is the Observe phase, and its whole result is
+    // the tick's observation.
+    const observeStep: ActivityStep = { ...observer, id: observer.id ?? "observe" };
+    const tickStep = activity(
+      "convergeTick",
+      { opName: config.name, env: config.env, dial, budget, rules: config.rules, observed: stepOutput(observeStep.id!) },
+      "longInfra",
+    );
+    tickStep.outcomeAttribute = { name: "Remediated", from: "remediated" };
+    const op = Op({
+      name: config.name,
+      overview: `Converge ${config.env}'s observed resources toward their declaration (dial: ${dial})`,
+      labels,
+      ...schedule,
+      phases: [phase("Observe", [observeStep]), phase("Converge", [tickStep])],
+    });
+    return { op };
+  }
+  const live = (config as EnvironmentConvergeOpConfig).live ?? true;
 
   const snapshotStep = activity("lifecycleSnapshot", { env: config.env }, { id: "snapshot" });
   const diffStep = activity("lifecycleDiff", { env: config.env, live }, { id: "diff", profile: "fastIdempotent" });
@@ -194,11 +252,7 @@ export function ConvergeOp(config: ConvergeOpConfig): ConvergeOpResources {
   const op = Op({
     name: config.name,
     overview: `Converge the ${config.env} environment toward its declaration (dial: ${dial})`,
-    labels: {
-      Converge: "true",
-      Env: config.env,
-      Dial: dial,
-    },
+    labels,
     // Overlap (#1484 acceptance criterion: "skip-and-report when a prior
     // remediation is in flight ... never queue"). `"skip"` is the only value
     // `OpSchedule` has, and it means exactly that: a fire arriving while the
@@ -206,7 +260,7 @@ export function ConvergeOp(config: ConvergeOpConfig): ConvergeOpResources {
     // alongside. There is no per-tick "in flight" ledger record for the
     // skipped fire to produce — nothing ran, so nothing observed, classified,
     // or dispatched.
-    ...(config.schedule ? { schedule: { cron: config.schedule, overlap: "skip" as const } } : {}),
+    ...schedule,
     phases: [phase("Observe", [snapshotStep, diffStep]), phase("Converge", [tickStep])],
   });
 

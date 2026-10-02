@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-import { findProjectConfig, findProjectRoot } from "./project-root";
+import { findProjectConfig, findProjectRoot, findWorkspaceRoot } from "./project-root";
 
 // Every test builds its own isolated directory tree under a fresh tmpdir —
 // never reused across tests, and never anywhere near the real repo's own
@@ -101,5 +101,70 @@ describe("findProjectConfig / findProjectRoot (chant #1117)", () => {
 
     expect(result.dir).toBe(projectRoot);
     expect(result.configPath).toBe(join(projectRoot, "chant.config.ts"));
+  });
+});
+
+describe("findWorkspaceRoot (chant #2534)", () => {
+  const declare = (dir: string, name = "chant.workspace.json") => {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, name), "{}");
+  };
+
+  test("walks up to the nearest declaration, and never looks at chant.config", () => {
+    mkdirSync(join(root, ".git"));
+    declare(root);
+    const deep = join(root, "lexicons", "aws", "examples", "one");
+    mkdirSync(deep, { recursive: true });
+    writeFileSync(join(root, "lexicons", "aws", "package.json"), "{}");
+    writeFileSync(join(deep, "chant.config.ts"), "export default {};");
+    expect(findWorkspaceRoot(deep)).toEqual({ dir: root, file: join(root, "chant.workspace.json") });
+    // findProjectConfig is unchanged: it still stops at the project's own config.
+    expect(findProjectConfig(deep).dir).toBe(deep);
+  });
+
+  test("the nearest declaration wins, so a nested workspace finds itself", () => {
+    mkdirSync(join(root, ".git"));
+    declare(root);
+    const inner = join(root, "vendor", "kit");
+    declare(inner, "chant.workspace.jsonc");
+    mkdirSync(join(inner, "src"));
+    expect(findWorkspaceRoot(join(inner, "src"))).toEqual({ dir: inner, file: join(inner, "chant.workspace.jsonc") });
+  });
+
+  test("stops at the git root after checking it", () => {
+    declare(root);
+    const repo = join(root, "repo");
+    mkdirSync(join(repo, ".git"), { recursive: true });
+    mkdirSync(join(repo, "src"));
+    expect(findWorkspaceRoot(join(repo, "src"))).toBeUndefined();
+    declare(repo);
+    expect(findWorkspaceRoot(join(repo, "src"))?.dir).toBe(repo);
+  });
+
+  test("a .git file (a worktree or submodule) is a git root too", () => {
+    declare(root);
+    const repo = join(root, "wt");
+    mkdirSync(repo);
+    writeFileSync(join(repo, ".git"), "gitdir: /elsewhere\n");
+    expect(findWorkspaceRoot(repo)).toBeUndefined();
+  });
+
+  test("outside a git repository only the start directory is checked", () => {
+    declare(root);
+    const sub = join(root, "sub");
+    mkdirSync(sub);
+    expect(findWorkspaceRoot(sub)).toBeUndefined();
+    expect(findWorkspaceRoot(root)?.dir).toBe(root);
+  });
+
+  test("both names present is reported, not thrown", () => {
+    mkdirSync(join(root, ".git"));
+    declare(root);
+    declare(root, "chant.workspace.jsonc");
+    expect(findWorkspaceRoot(root)).toEqual({
+      dir: root,
+      file: join(root, "chant.workspace.json"),
+      conflicting: join(root, "chant.workspace.jsonc"),
+    });
   });
 });

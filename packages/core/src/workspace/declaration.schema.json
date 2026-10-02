@@ -1,0 +1,998 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/declaration/v1/chant.workspace.schema.json",
+  "title": "chant.workspace.json",
+  "description": "A workspace declaration, schema 1 (#2524 D1, D2; ws-051). Only this file makes a directory a workspace. It may also be named chant.workspace.jsonc, which allows comments and trailing commas; having both is an error. Unknown fields are refused, except fields whose names start with x-. A field added later within schema 1 is optional, and a declaration that uses one sets minReader to the first chant that knows it, so an older chant says so instead of misreading the file. Uniqueness of names and the placement rules are checked in code, since JSON Schema cannot say them.",
+  "type": "object",
+  "required": [
+    "name",
+    "schema",
+    "members"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "An editor hint. chant ignores it."
+    },
+    "$comment": {
+      "type": "string",
+      "description": "A note for people. chant ignores it."
+    },
+    "name": {
+      "$ref": "#/$defs/name",
+      "description": "The workspace's name. With a git revision it identifies the workspace to readers (#2524 D15)."
+    },
+    "schema": {
+      "const": 1,
+      "description": "The declaration format version."
+    },
+    "minReader": {
+      "$ref": "#/$defs/version",
+      "description": "The oldest chant that may read this declaration. An older chant refuses it with reader-too-old."
+    },
+    "members": {
+      "type": "array",
+      "description": "Members and example groups, in the order readers list them.",
+      "items": {
+        "$ref": "#/$defs/entry"
+      }
+    },
+    "pins": {
+      "type": "array",
+      "description": "The toolchain and plugins that read this workspace, pinned (#2524 D3, threat model). Member kinds come only from pinned packages, read as data from their ./workspace-kinds subpath (#2535).",
+      "items": {
+        "$ref": "#/$defs/pin"
+      }
+    },
+    "quorum": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "How many agree verdicts besides the decider's a record needs, for every record kind with a reviews list (#2671). chant workspace records reports each record's quorum against it. Two when absent. Added in schema 1 by chant 0.86.0, so a declaration that sets it sets minReader to 0.86.0 or newer. A per-kind quorum comes later (#2650 C14)."
+    },
+    "records": {
+      "type": "array",
+      "description": "The workspace's own record kinds, each a kind file relative to the workspace root (#2680): the kinds whose records belong to no one member, such as a decisions directory at the root. A member names its own in its records. chant workspace ls lists them, and chant workspace records and graph --intent read every declared kind when --kind is not given. Added in schema 1 by chant 0.86.0, so a declaration that uses it sets minReader to 0.86.0 or newer.",
+      "items": {
+        "$ref": "#/$defs/recordKind"
+      }
+    },
+    "hosts": {
+      "type": "array",
+      "description": "The hosts boxes run on (#2727). A host is one machine reached under one hostname: boxes on it share its ports, its state root and, in a browser, its cookie jar, so chant workspace check compares the boxes on one host and never boxes on different hosts. A member's box block names its host. Added in schema 1 by chant 0.91.0, so a declaration that uses it sets minReader to 0.91.0 or newer.",
+      "items": {
+        "$ref": "#/$defs/host"
+      }
+    },
+    "diagrams": {
+      "type": "array",
+      "description": "The workspace's own diagram artifacts (#2764): the diagrams that belong to no one member, such as a diagrams directory at the root. A member names its own in its diagrams. chant workspace ls lists every declared diagram, and chant workspace check reports one whose render is stale for its source when the entry records a sourceHash. Added in schema 1 by chant 0.91.0, so a declaration that uses it sets minReader to 0.91.0 or newer.",
+      "items": {
+        "$ref": "#/$defs/diagram"
+      }
+    },
+    "checks": {
+      "type": "object",
+      "description": "Severity for the declaration checks that allow it, keyed by WSP id (#2535, ws-028): error, warning, info or off. chant workspace check refuses an id it does not know, and one whose severity is fixed.",
+      "propertyNames": {
+        "pattern": "^WSP[0-9]{3}$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/severity"
+      }
+    },
+    "changes": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The forward coverage check, chant workspace check --changes <base>..<head> (#2773): each path a diff changes is mapped to the current records whose constrains cover it. severity says what a finding does: off reports none, warn (the default) reports them and passes, fail reports them and fails. ignore lists globs over files whose changes need no record, such as lockfiles and generated output. Added in schema 1 by chant 0.92.0, so a declaration that uses it sets minReader to 0.92.0 or newer.",
+      "properties": {
+        "severity": {
+          "enum": [
+            "off",
+            "warn",
+            "fail"
+          ],
+          "description": "What a change-uncovered or change-out-of-scope finding does. warn when absent."
+        },
+        "ignore": {
+          "type": "array",
+          "description": "Globs over file paths from the workspace root: * and ? within one segment, ** across segments. A changed path one matches is listed as ignored and never reported.",
+          "items": {
+            "$ref": "#/$defs/fileGlob"
+          }
+        }
+      }
+    },
+    "writeScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Who may write what (#2524 D5, #2548, ws-067): for each principal class, the members whose files it may write and the record kinds it may write, with which verbs. A class with no entry is not restricted. An agent is always bound to its session's member (agents); its entry can only narrow the record kinds and verbs. chant workspace records new, amend, review and close and the MCP record tools refuse a write outside the writer's scope with write-scope-member or write-scope-kind, and chant workspace check --changes reports each commit that writes outside its author's scope, read from the declaration and the trust policy at the range's base. Added in schema 1 by chant 0.101.0, so a declaration that uses it sets minReader to 0.101.0 or newer.",
+      "properties": {
+        "human": {
+          "$ref": "#/$defs/classScope",
+          "description": "Principals holding none of the agent, runner and service roles in the trust policy at base."
+        },
+        "agent": {
+          "$ref": "#/$defs/agentScope",
+          "description": "An agent session (agents), or a principal holding the agent role in the trust policy at base."
+        },
+        "runner": {
+          "$ref": "#/$defs/classScope",
+          "description": "Principals holding the runner role in the trust policy at base, such as a CI job's signing identity."
+        },
+        "service": {
+          "$ref": "#/$defs/classScope",
+          "description": "Principals holding the service role in the trust policy at base."
+        }
+      }
+    },
+    "agents": {
+      "type": "array",
+      "description": "The agent sessions the workspace declares (#2524 D20, #2548, ws-067). Each is bound to one member: it writes that member's files and the records of kinds that member or the workspace declares, as writeScope.agent allows. A session resumes from chant workspace agent <name> --json, which prints its member, its scope and the spec, read from the repository alone. A write names its session with the CHANT_AGENT environment variable, or a commit with a Chant-Agent trailer. Added in schema 1 by chant 0.101.0, so a declaration that uses it sets minReader to 0.101.0 or newer.",
+      "items": {
+        "$ref": "#/$defs/agent"
+      }
+    }
+  },
+  "patternProperties": {
+    "^x-": true
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,39}$",
+      "description": "Lowercase letters, digits and hyphens, starting with a letter or digit, at most 40 characters. _workspace and _members are reserved; the pattern already rules them out."
+    },
+    "kindName": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,39}$"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$"
+    },
+    "dir": {
+      "type": "string",
+      "description": "A directory relative to the workspace root, with / separators: \".\" for the root itself, otherwise no leading /, no . or .. segments and no trailing /.",
+      "pattern": "^(\\.|(?!\\.\\.?(/|$))[^/\\\\]+(/(?!\\.\\.?(/|$))[^/\\\\]+)*)$"
+    },
+    "glob": {
+      "type": "string",
+      "description": "A glob over directories, relative to the workspace root: * and ? within one segment, ** across segments, [...] classes. No leading /, no . or .. segments.",
+      "pattern": "^(?!\\.\\.?(/|$))[^/\\\\]+(/(?!\\.\\.?(/|$))[^/\\\\]+)*$"
+    },
+    "severity": {
+      "enum": [
+        "error",
+        "warning",
+        "info",
+        "off"
+      ]
+    },
+    "suppress": {
+      "type": "array",
+      "description": "Declaration checks suppressed for this entry (#2535). Each names a WSP id and says why. A suppressed finding is still reported, as suppressed, and never fails check.",
+      "items": {
+        "type": "object",
+        "required": [
+          "check",
+          "because"
+        ],
+        "properties": {
+          "check": {
+            "type": "string",
+            "pattern": "^WSP[0-9]{3}$"
+          },
+          "because": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "patternProperties": {
+          "^x-": true
+        },
+        "additionalProperties": false
+      }
+    },
+    "outputName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255,
+      "pattern": "^[^\\u0000-\\u001f]+$",
+      "description": "An output's name, compared exactly."
+    },
+    "link": {
+      "type": "object",
+      "description": "A member link: this member reads output of member (#2539), or sends its telemetry to a pipeline of its collector (#2558).",
+      "required": [
+        "member",
+        "output"
+      ],
+      "properties": {
+        "member": {
+          "$ref": "#/$defs/name",
+          "description": "The producer: another member of this workspace."
+        },
+        "output": {
+          "$ref": "#/$defs/outputName",
+          "description": "The producer's output, matched exactly. It must be one the producer's kind exposes. For a telemetry link, the id of a pipeline or an exporter in the producer's collector."
+        },
+        "kind": {
+          "$ref": "#/$defs/kindName",
+          "description": "The link kind. output, the default: the consumer reads the named output. telemetry (#2558): the consumer sends its telemetry to the named pipeline or exporter of the producer's collector, and chant workspace graph checks that it exists and, when protocol is given, that it speaks it. A declaration that uses telemetry sets minReader to 0.101.0 or newer."
+        },
+        "protocol": {
+          "enum": [
+            "grpc",
+            "http/protobuf",
+            "http/json"
+          ],
+          "description": "For a telemetry link, the OTLP protocol the consumer sends, as OTEL_EXPORTER_OTLP_PROTOCOL names it. Refused on any other kind. Added in schema 1 by chant 0.101.0."
+        }
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false
+    },
+    "entry": {
+      "description": "A member, or an example group when kind is examples (ws-051).",
+      "type": "object",
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/kindName"
+        }
+      },
+      "if": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "const": "examples"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "$ref": "#/$defs/group"
+      },
+      "else": {
+        "$ref": "#/$defs/member"
+      }
+    },
+    "member": {
+      "type": "object",
+      "description": "A member (#2524 D2). Its directory leaves the root project, and it gets its own build, lint and ledger.",
+      "required": [
+        "name",
+        "dir",
+        "kind"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/name",
+          "description": "Frozen once the member deploys; a rename is an alias record."
+        },
+        "dir": {
+          "$ref": "#/$defs/dir"
+        },
+        "kind": {
+          "$ref": "#/$defs/kindName",
+          "description": "How to read the member: chant, workspace, other, or a kind a pinned plugin supplies (#2535)."
+        },
+        "roles": {
+          "type": "array",
+          "description": "Roles the member plays. A role may point at a path inside the member.",
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/kindName"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "$ref": "#/$defs/kindName"
+                  },
+                  "path": {
+                    "$ref": "#/$defs/dir",
+                    "description": "Relative to the member's directory."
+                  }
+                },
+                "patternProperties": {
+                  "^x-": true
+                },
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "generated": {
+          "type": "array",
+          "description": "Files in the member's directory that a command writes (#2524 D14, #2541). chant workspace check fails when one differs from what its generator writes, unless the entry is marked handWritten with a reason. The lineage lock classes the same files as generated. skills/*/SKILL.md, which chant update writes, is listed implicitly for a chant member.",
+          "items": {
+            "$ref": "#/$defs/generatedFile"
+          }
+        },
+        "outputs": {
+          "type": "array",
+          "uniqueItems": true,
+          "description": "The outputs this member exposes as link targets (#2539), for a member whose kind takes them from the entry: other, or a kind a pinned package supplies. A chant member's outputs are read from its source, and a nested workspace exposes none.",
+          "items": {
+            "$ref": "#/$defs/outputName"
+          }
+        },
+        "links": {
+          "type": "array",
+          "description": "Member links (#2524 D6, #2539): the outputs of other members this member reads. A link is stated once, here on the consumer, and matched exactly against the producer's outputs. chant workspace check resolves it in source.",
+          "items": {
+            "$ref": "#/$defs/link"
+          }
+        },
+        "records": {
+          "type": "array",
+          "description": "The record kinds this member holds, each a kind file relative to the member's directory (#2680). chant workspace ls lists them, and chant workspace records and graph --intent read every declared kind when --kind is not given. Added in schema 1 by chant 0.86.0, so a declaration that uses it sets minReader to 0.86.0 or newer.",
+          "items": {
+            "$ref": "#/$defs/recordKind"
+          }
+        },
+        "diagrams": {
+          "type": "array",
+          "description": "The diagram artifacts this member holds (#2764). chant workspace ls lists every declared diagram, and chant workspace check reports one whose render is stale for its source when the entry records a sourceHash. Added in schema 1 by chant 0.91.0, so a declaration that uses it sets minReader to 0.91.0 or newer.",
+          "items": {
+            "$ref": "#/$defs/diagram"
+          }
+        },
+        "box": {
+          "$ref": "#/$defs/box"
+        },
+        "upstream": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Where an embedded member's files come from. Versions live in the lock."
+        },
+        "travel": {
+          "type": "boolean",
+          "description": "Whether the member goes with an export (#2524 D10, #2552). chant workspace export writes only members that set travel to true into the export member, and refuses to name one that does not. Added in schema 1 by chant 0.101.0, so a declaration that uses it sets minReader to 0.101.0 or newer."
+        },
+        "because": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Why the member is there. Required for kind other."
+        },
+        "suppress": {
+          "$ref": "#/$defs/suppress"
+        }
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false,
+      "if": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "const": "other"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "because": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "because"
+        ]
+      }
+    },
+    "group": {
+      "type": "object",
+      "description": "An example group (ws-051): every directory the glob matches that holds a chant project is built and linted. A group has no ledger, releases or links, and its matches are never members. A match may sit inside a member's directory; that member leaves it to the group.",
+      "required": [
+        "name",
+        "kind",
+        "glob"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/name"
+        },
+        "kind": {
+          "const": "examples"
+        },
+        "glob": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/glob"
+            },
+            {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/glob"
+              }
+            }
+          ]
+        },
+        "suppress": {
+          "$ref": "#/$defs/suppress"
+        }
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false
+    },
+    "path": {
+      "type": "string",
+      "description": "A file or directory path with / separators: no leading /, no . or .. segments and no trailing /.",
+      "pattern": "^(?!\\.\\.?(/|$))[^/\\\\]+(/(?!\\.\\.?(/|$))[^/\\\\]+)*$"
+    },
+    "box": {
+      "type": "object",
+      "description": "The member is a box, or holds a box's declarations (#2726). A box holds no credential: each capability it needs outside itself is reached through a broker, a runtime such as a lobby or a door, which holds the credential and enforces the scope. chant workspace check fails when a file in the member's directory carries a literal secret (WSP121) and when a capability names no broker (WSP122). chant workspace status --json lists the capabilities, so a broker can read the scopes. Its host, slot, ports, state and cookies state the box's isolation (#2727): chant derives each value from the box's identity, its host, the member's name and its slot, and prints them in chant workspace status --json, so a runtime reads them instead of choosing its own. chant workspace check fails when two boxes on a host resolve to the same value (WSP123) and when a box hard-codes a machine path (WSP124). A member that builds the fountain lexicon's Box declares the callback token fountain gives its persistent sandbox as the capability fountain-callback, brokered by fountain, with scope owner, or chant workspace check fails (WSP125, #2780). Its intent names the decision record that says what the box is for (#2850): chant workspace status --json reports the record's state and answer, and chant workspace check fails when no decision record has the id (WSP126) and warns when the record constrains no member or path of this workspace (WSP127, #2857). Its services list what the box runs under its supervisor (#2880), which the fly lexicon observes, restarts and applies through sprite-env, and which chant workspace status --json prints. Added in schema 1 by chant 0.91.0, so a declaration that uses it sets minReader to 0.91.0 or newer.",
+      "properties": {
+        "intent": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The id of the decision record that says what the box is for (#2850), a record of a declared kind named decision. A new box starts as a question: the record is proposed with a null choice until the person who answers it decides it. The record constrains a member or path of this workspace, with member:<a member's name> or a path: entry at, above or inside a member's directory. It need not be this member: the intent can constrain the app the box runs when that app is another member (#2857). When it constrains this member, chant workspace graph --intent shows it for the box's files. Added by chant 0.94.0, so a declaration that uses it sets minReader to 0.94.0 or newer."
+        },
+        "services": {
+          "type": "array",
+          "description": "The services the box runs under its supervisor, sprite-env on a sprite (#2880). Each name is given once, every needs entry names a service of this list, the needs form no cycle, and at most one service sets httpPort; a declaration that breaks one of these can't be read (declaration-invalid). The fly lexicon's spriteServicesObserve and spriteServiceRestart read the list with box: true, and spriteApplyServices with box: true creates and replaces the services through sprite-env. None when omitted. Added by chant 0.95.0, so a declaration that uses it sets minReader to 0.95.0 or newer.",
+          "items": {
+            "$ref": "#/$defs/boxService"
+          }
+        },
+        "capabilities": {
+          "type": "array",
+          "description": "Each capability the box reaches outside itself, named once. None when omitted.",
+          "items": {
+            "$ref": "#/$defs/capability"
+          }
+        },
+        "host": {
+          "$ref": "#/$defs/name",
+          "description": "The host the box runs on, one of the top-level hosts (#2727). The box's name is the member's name."
+        },
+        "slot": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The box's number on its host (#2727). Its ports come from the slot's block of the host's range."
+        },
+        "ports": {
+          "type": "object",
+          "description": "The ports the box listens on, each a name and its offset in the box's block (#2727). The port is the block's first port plus the offset.",
+          "propertyNames": {
+            "$ref": "#/$defs/kindName"
+          },
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65534
+          }
+        },
+        "state": {
+          "type": "object",
+          "description": "State the box keeps outside its checkout, such as hud's identity and database, each a name and a path relative to the box's state directory (#2727). The name is usually the environment variable the runtime sets, such as HUD_IDENTITY_PATH. A path that is absolute, starts with ~ or an environment reference, or has a .. segment is a WSP124 finding.",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_-]{0,63}$"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "cookies": {
+          "type": "array",
+          "description": "Session cookie names the box's runtimes set, such as hud_session (#2727). A browser scopes a cookie to a host, not a port, so each resolves to <cookie>_<member name>.",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$"
+          }
+        }
+      },
+      "dependentRequired": {
+        "host": [
+          "slot"
+        ],
+        "slot": [
+          "host"
+        ],
+        "ports": [
+          "host"
+        ],
+        "state": [
+          "host"
+        ],
+        "cookies": [
+          "host"
+        ]
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false
+    },
+    "boxService": {
+      "type": "object",
+      "description": "A service a box runs under its supervisor (#2880).",
+      "required": [
+        "name",
+        "cmd"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/kindName",
+          "description": "The service's name in the supervisor. Unique within the box."
+        },
+        "cmd": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The command the supervisor runs (sprite-env services create --cmd). ${HOME} and other ${VAR} references are expanded from the environment of the process that applies the list, so the declaration holds no machine path."
+        },
+        "needs": {
+          "type": "array",
+          "uniqueItems": true,
+          "description": "Names of services of the same box that start before this one (sprite-env services create --needs).",
+          "items": {
+            "$ref": "#/$defs/kindName"
+          }
+        },
+        "httpPort": {
+          "$ref": "#/$defs/port",
+          "description": "The port the supervisor routes the sprite's URL to (sprite-env services create --http-port). At most one service of a box sets it."
+        },
+        "duration": {
+          "type": "string",
+          "pattern": "^[0-9]+(\\.[0-9]+)?(ms|s|m)$",
+          "description": "How long the service must stay up after it is created or started, such as 3s (sprite-env services create --duration)."
+        },
+        "health": {
+          "type": "string",
+          "pattern": "^https?://",
+          "description": "A URL that answers 200 while the service works. spriteServicesObserve probes it, and spriteServiceRestart waits for it after a restart. Without it, the supervisor's state decides."
+        },
+        "optional": {
+          "type": "boolean",
+          "description": "True for a service something else creates by name, such as a site a release Op makes: spriteApplyServices creates it only when its only names it, and spriteServicesObserve skips it while the supervisor has no such service."
+        }
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false
+    },
+    "capability": {
+      "type": "object",
+      "description": "A capability a box needs and does not hold the credential for, such as inference, fountain or a third-party API (#2726).",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/kindName",
+          "description": "The capability, such as inference or fountain. Unique within the box."
+        },
+        "broker": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What brokers the capability: the runtime that holds the credential and swaps the box's own token for it, such as lobby or door. It may name a member of this workspace, or a runtime outside it. Without it the capability is unbrokered, and chant workspace check fails with WSP122."
+        },
+        "scope": {
+          "type": "array",
+          "uniqueItems": true,
+          "description": "What of the box's own the broker lets it reach, which the broker enforces. For Fountain: agent (start conversations with its own agent), vault (attach its own vault), conversations and sandboxes (its own). The words are the broker's; chant records them.",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^\\u0000-\\u001f]+$"
+          }
+        }
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false
+    },
+    "recordKind": {
+      "type": "object",
+      "description": "A record kind the workspace declares (#2680): a kind file that exports recordKind. chant workspace check fails (WSP115) when the file is missing or does not load as a record kind.",
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/path",
+          "description": "The kind file, relative to the member's directory, or to the workspace root for the workspace's own records. A path is listed once across the declaration."
+        },
+        "name": {
+          "$ref": "#/$defs/kindName",
+          "description": "The name readers show for the kind. Without it, the kind file's own recordKind.name. Unique across the declaration."
+        }
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false
+    },
+    "diagram": {
+      "type": "object",
+      "description": "A diagram artifact the workspace declares (#2764): a rendered image with a source, pinned to the renderer that made it. A mermaid or excalidraw diagram may name no render: a reader draws it from its source. chant never runs the renderer.",
+      "required": [
+        "name",
+        "title",
+        "renderer"
+      ],
+      "if": {
+        "type": "object",
+        "properties": {
+          "renderer": {
+            "type": "object",
+            "properties": {
+              "tool": {
+                "enum": ["mermaid", "excalidraw"]
+              }
+            },
+            "required": [
+              "tool"
+            ]
+          }
+        },
+        "required": [
+          "renderer"
+        ]
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "$ref": "#/$defs/path"
+          }
+        },
+        "required": [
+          "source"
+        ]
+      },
+      "else": {
+        "type": "object",
+        "properties": {
+          "render": {
+            "$ref": "#/$defs/path"
+          }
+        },
+        "required": [
+          "render"
+        ]
+      },
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/name",
+          "description": "Unique across the declaration."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Shown above the diagram."
+        },
+        "source": {
+          "oneOf": [
+            { "$ref": "#/$defs/path" },
+            { "type": "null" }
+          ],
+          "description": "The source file, from the workspace root, with / separators. Null for an SVG with no source. Default null."
+        },
+        "render": {
+          "oneOf": [
+            { "$ref": "#/$defs/path" },
+            { "type": "null" }
+          ],
+          "description": "The rendered image, from the workspace root, with / separators. Required for d2 and graphviz. A mermaid or excalidraw diagram needs a source instead and may leave render out or null, from chant 0.96.0: a reader such as hud draws it from the source (an excalidraw diagram may still commit an exported SVG for docs)."
+        },
+        "renderer": {
+          "$ref": "#/$defs/diagramRenderer"
+        },
+        "sourceHash": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "sha256 hex of the source's bytes when render was last produced from it, or for a mermaid or excalidraw diagram without a render, when the source was last pinned. chant workspace check compares this against the source in the tree read and reports drift (WSP133) on a mismatch; without it, or without a source, the render is never checked for drift. Default null."
+        }
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false
+    },
+    "diagramRenderer": {
+      "type": "object",
+      "description": "The renderer a diagram's render was made with. chant records the pin; it never installs or runs the renderer (ws-052).",
+      "required": [
+        "tool",
+        "version"
+      ],
+      "properties": {
+        "tool": {
+          "enum": ["d2", "mermaid", "graphviz", "excalidraw"]
+        },
+        "version": {
+          "$ref": "#/$defs/version",
+          "description": "The exact release the render was made with, such as 0.9.0. For mermaid or excalidraw, the release of the library a reader draws the source with, such as 11.4.1."
+        },
+        "args": {
+          "type": "array",
+          "description": "Passed before the input and output paths, in order, such as [\"--layout=elk\", \"--theme=0\", \"--pad=40\", \"--omit-version\"]. Empty when absent.",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false
+    },
+    "generatedFile": {
+      "type": "object",
+      "description": "One generated file of a member (#2524 D14, #2541).",
+      "required": [
+        "path",
+        "generator"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/path",
+          "description": "The file, relative to the member's directory."
+        },
+        "generator": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The command line that writes the file, run in the member's directory with the member's own node_modules/.bin first on PATH, such as chant build ci --lexicon github -o ci.yml. When it passes -o or --output with this file's path, chant workspace check --generated points that flag at a temporary file. Otherwise the generator writes in place and check restores the tree afterwards."
+        },
+        "sources": {
+          "type": "array",
+          "description": "The files or directories the generator reads, relative to the workspace root, since a generator often reads other members.",
+          "items": {
+            "$ref": "#/$defs/path"
+          }
+        },
+        "handWritten": {
+          "type": "object",
+          "description": "The file is kept by hand instead of regenerated. chant workspace check reports it with the reason and never runs its generator, and the lock classes it owned.",
+          "required": [
+            "because"
+          ],
+          "properties": {
+            "because": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "patternProperties": {
+            "^x-": true
+          },
+          "additionalProperties": false
+        }
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false
+    },
+    "pin": {
+      "description": "An npm package at an exact version, or a local plugin by path. integrity is a Subresource Integrity digest.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "package",
+            "version"
+          ],
+          "properties": {
+            "package": {
+              "type": "string",
+              "pattern": "^(@[a-z0-9-~][a-z0-9-._~]*/)?[a-z0-9-~][a-z0-9-._~]*$"
+            },
+            "version": {
+              "$ref": "#/$defs/version"
+            },
+            "integrity": {
+              "type": "string",
+              "pattern": "^sha(256|384|512)-[A-Za-z0-9+/]+={0,2}$"
+            }
+          },
+          "patternProperties": {
+            "^x-": true
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "path"
+          ],
+          "properties": {
+            "path": {
+              "$ref": "#/$defs/dir"
+            },
+            "integrity": {
+              "type": "string",
+              "pattern": "^sha(256|384|512)-[A-Za-z0-9+/]+={0,2}$"
+            }
+          },
+          "patternProperties": {
+            "^x-": true
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "host": {
+      "type": "object",
+      "description": "A host boxes run on (#2727).",
+      "required": [
+        "name",
+        "ports"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/name",
+          "description": "The host's name, unique among hosts. A box block names it in host."
+        },
+        "ports": {
+          "type": "object",
+          "description": "The TCP ports boxes on this host take theirs from. Slot n owns the block from + n * perBox to from + (n + 1) * perBox - 1, which must end at or before to.",
+          "required": [
+            "from",
+            "to",
+            "perBox"
+          ],
+          "properties": {
+            "from": {
+              "$ref": "#/$defs/port",
+              "description": "The first port of the range."
+            },
+            "to": {
+              "$ref": "#/$defs/port",
+              "description": "The last port of the range, inclusive."
+            },
+            "perBox": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "description": "How many ports each box's block holds. A box's port offsets are below it."
+            }
+          },
+          "additionalProperties": false
+        },
+        "stateRoot": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Where boxes on this host keep state, as an environment reference such as ${XDG_STATE_HOME}/chant/boxes, which the runtime expands on the machine. A box's state directory is <stateRoot>/<member name>. A literal machine path, such as /Users/... or anything under $HOME, is a WSP124 finding. Default ${XDG_STATE_HOME}/chant/boxes."
+        }
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false
+    },
+    "port": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535
+    },
+    "fileGlob": {
+      "type": "string",
+      "description": "A glob over file paths, relative to the workspace root: * and ? within one segment, ** across segments, [...] classes and {a,b} alternatives. No leading /, no . or .. segments.",
+      "pattern": "^(?!\\.\\.?(/|$))[^/\\\\]+(/(?!\\.\\.?(/|$))[^/\\\\]+)*$"
+    },
+    "recordScope": {
+      "type": "object",
+      "description": "Record kind names, as the kind file's recordKind.name or the name the declaration gives it, each with the verbs the class may write it with: new, amend, review and close (a review session). A kind left out may not be written at all. A record file a commit deletes is never in scope.",
+      "propertyNames": {
+        "$ref": "#/$defs/kindName"
+      },
+      "additionalProperties": {
+        "type": "array",
+        "uniqueItems": true,
+        "items": {
+          "enum": [
+            "new",
+            "amend",
+            "review",
+            "close"
+          ]
+        }
+      }
+    },
+    "classScope": {
+      "type": "object",
+      "description": "A principal class's write scope.",
+      "properties": {
+        "members": {
+          "description": "The members whose files the class may write, by name, or * for every path. Without it, every path. A path in no member is in scope only under *.",
+          "oneOf": [
+            {
+              "const": "*"
+            },
+            {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/name"
+              }
+            }
+          ]
+        },
+        "records": {
+          "$ref": "#/$defs/recordScope",
+          "description": "The record kinds the class may write, and how. Without it, every kind in reach, with every verb. A kind a member declares is in reach when that member is; the workspace's own kinds always are."
+        }
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false
+    },
+    "agentScope": {
+      "type": "object",
+      "description": "The agent class's write scope. Its members are always its session's one member, so only the record kinds can be set.",
+      "properties": {
+        "records": {
+          "$ref": "#/$defs/recordScope",
+          "description": "The record kinds an agent may write, and how. Without it, every kind in reach of its member, with every verb."
+        }
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false
+    },
+    "agent": {
+      "type": "object",
+      "description": "An agent session (#2548).",
+      "required": [
+        "name",
+        "member"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/name",
+          "description": "The session's name, unique among agents: what CHANT_AGENT and a Chant-Agent trailer give."
+        },
+        "member": {
+          "$ref": "#/$defs/name",
+          "description": "The one member the session is bound to. It must be a declared member, not an example group."
+        },
+        "principals": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Principals that write only as this session: a commit attested by one, or a write whose by names one, is judged as the session. A principal is listed by one session at most."
+        }
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false
+    }
+  }
+}

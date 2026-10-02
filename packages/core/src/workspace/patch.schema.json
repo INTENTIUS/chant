@@ -1,0 +1,321 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/patch/v1/patch.schema.json",
+  "title": "chant workspace patch output",
+  "description": "What `chant workspace patch <range> --json` prints: each file a diff changes under the workspace root, with its line counts and hunks, cut to a size limit. The range is <base>..<head>, <base>...<head> (from the merge base), or one commit against its first parent, or against the empty tree for a root commit. Contract version 1 is written by chant 0.81.0 and newer, and this document was added to it by workspace patch; a chant without the command refuses it. Every code is in the one closed list of `reason-codes.ts`.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/result"
+    },
+    {
+      "$ref": "#/$defs/failure"
+    }
+  ],
+  "$defs": {
+    "result": {
+      "description": "The diff was read. Exit code 0.",
+      "type": "object",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "workspace",
+        "range",
+        "paths",
+        "limits",
+        "files",
+        "summary"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/patch/v1/patch.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string",
+          "description": "The chant that wrote the document."
+        },
+        "workspace": {
+          "type": "object",
+          "required": [
+            "name",
+            "root"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "root": {
+              "type": "string",
+              "description": "The workspace root relative to the git root, \".\" for the git root."
+            }
+          }
+        },
+        "range": {
+          "type": "object",
+          "required": [
+            "spec",
+            "form",
+            "base",
+            "head"
+          ],
+          "properties": {
+            "spec": {
+              "type": "string",
+              "description": "The range as given."
+            },
+            "form": {
+              "enum": [
+                "range",
+                "merge-base",
+                "commit",
+                "worktree"
+              ],
+              "description": "range: <base>..<head>. merge-base: <base>...<head>, so base is their merge base. commit: one commit, so base is its first parent, or the empty tree. worktree: --worktree, the working tree against one commit (HEAD unless given), untracked files that git does not ignore as added."
+            },
+            "base": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40,64}$",
+              "description": "The commit, or for a root commit the empty tree, the diff starts from."
+            },
+            "head": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^[0-9a-f]{40,64}$",
+              "description": "The commit the diff ends at; null for the working tree (worktree)."
+            }
+          }
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The --path filters, from the workspace root. Empty for the whole workspace."
+        },
+        "limits": {
+          "type": "object",
+          "required": [
+            "fileBytes",
+            "totalBytes"
+          ],
+          "properties": {
+            "fileBytes": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "The hunk text, headers included, one file gets: --max-bytes, or 65536."
+            },
+            "totalBytes": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "The hunk text every file gets together: 16 times fileBytes."
+            }
+          }
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/file"
+          },
+          "description": "In the order git lists them."
+        },
+        "summary": {
+          "type": "object",
+          "required": [
+            "files",
+            "additions",
+            "deletions",
+            "truncated"
+          ],
+          "properties": {
+            "files": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "additions": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "deletions": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "truncated": {
+              "type": "boolean",
+              "description": "Whether any file is truncated."
+            }
+          }
+        },
+        "error": false
+      }
+    },
+    "file": {
+      "type": "object",
+      "required": [
+        "path",
+        "change",
+        "from",
+        "binary",
+        "additions",
+        "deletions",
+        "hunkCount",
+        "bytes",
+        "hunks",
+        "truncated"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "From the workspace root."
+        },
+        "change": {
+          "enum": [
+            "added",
+            "modified",
+            "deleted",
+            "renamed",
+            "copied"
+          ]
+        },
+        "from": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "For a rename or a copy, the path it came from, from the workspace root."
+        },
+        "binary": {
+          "type": "boolean"
+        },
+        "additions": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Lines added, as git counts them; null for a binary file."
+        },
+        "deletions": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Lines deleted; null for a binary file."
+        },
+        "hunkCount": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many hunks git wrote for the file. hunks holds fewer when truncated."
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The bytes of hunk text git wrote for the file, headers included, before any cut."
+        },
+        "hunks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/hunk"
+          }
+        },
+        "truncated": {
+          "type": "boolean",
+          "description": "Whether hunks holds less than git wrote: the file's text passed fileBytes, or the total passed totalBytes. The last hunk kept may be cut short."
+        }
+      }
+    },
+    "hunk": {
+      "type": "object",
+      "required": [
+        "header",
+        "oldStart",
+        "oldLines",
+        "newStart",
+        "newLines",
+        "lines"
+      ],
+      "properties": {
+        "header": {
+          "type": "string",
+          "description": "The @@ line as git writes it."
+        },
+        "oldStart": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "oldLines": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "newStart": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "newLines": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "lines": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Each line with its leading space, +, - or backslash, without its newline."
+        }
+      }
+    },
+    "failure": {
+      "description": "The declaration could not be read, a revision is not a commit, or a --path is not inside the workspace, and nothing was read. Exit code 1.",
+      "type": "object",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "error"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/patch/v1/patch.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "enum": [
+                "declaration-missing",
+                "declaration-ambiguous",
+                "declaration-unparseable",
+                "declaration-invalid",
+                "placement-invalid",
+                "reader-too-old",
+                "root-chant-required",
+                "not-a-git-repository",
+                "revision-unknown",
+                "patch-path-invalid"
+              ]
+            },
+            "message": {
+              "type": "string"
+            }
+          }
+        },
+        "files": false
+      }
+    }
+  }
+}

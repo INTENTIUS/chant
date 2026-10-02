@@ -1,7 +1,9 @@
 import { describe, test, expect } from "vitest";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { checkLexicon, coverageReportCheck } from "./check-lexicon";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { checkLexicon, countComposites, coverageReportCheck } from "./check-lexicon";
 import { loadLexiconFromDir } from "./check-lexicon-plugin";
 import type { LexiconPlugin } from "../../lexicon";
 
@@ -74,5 +76,64 @@ describe("coverageReportCheck", () => {
     const item = await coverageReportCheck(loaded.plugin);
     expect(item.pass).toBe(true);
     expect(item.detail).toBe("all spec kinds accounted for");
+  });
+});
+
+// chant #3104 — the composite rows counted every .ts file in src/composites/
+// but index.ts, so otel's one composite (NodeAgent) reported as four: the
+// catalog, its test and composites.test.ts counted too.
+describe("countComposites", () => {
+  const entry = (name: string) => ({ name, lexicon: "x", description: "", bundles: [], params: [] });
+
+  test("asks the plugin's composites() when it has one, not the files", () => {
+    const plugin = { composites: () => [entry("A"), entry("B")] } as unknown as LexiconPlugin;
+    expect(countComposites(plugin, "/nonexistent")).toEqual({
+      count: 2,
+      detail: "2 composite(s) in composites()",
+    });
+  });
+
+  test("counts zero, with the error, when composites() throws", () => {
+    const plugin = {
+      composites: () => {
+        throw new Error("catalog broken");
+      },
+    } as unknown as LexiconPlugin;
+    const result = countComposites(plugin, "/nonexistent");
+    expect(result.count).toBe(0);
+    expect(result.detail).toContain("catalog broken");
+  });
+
+  test("without composites(), counts files but not tests, the catalog, the barrel or helpers", () => {
+    const dir = mkdtempSync(join(tmpdir(), "check-lexicon-3104-"));
+    try {
+      mkdirSync(join(dir, "src/composites"), { recursive: true });
+      for (const f of [
+        "web-app.ts",
+        "worker.ts",
+        "index.ts",
+        "catalog.ts",
+        "catalog.test.ts",
+        "composites.test.ts",
+        "web-app.snapshot.test.ts",
+        "otel-helpers.ts",
+        "helpers.ts",
+        "shared.ts",
+      ]) {
+        writeFileSync(join(dir, "src/composites", f), "");
+      }
+      expect(countComposites({} as LexiconPlugin, dir).count).toBe(2);
+      expect(countComposites(undefined, dir).count).toBe(2);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("otel reports its one composite", async () => {
+    const loaded = await loadLexiconFromDir(join(repoRoot, "lexicons", "otel"));
+    expect(countComposites(loaded.plugin, join(repoRoot, "lexicons", "otel"))).toEqual({
+      count: 1,
+      detail: "1 composite(s) in composites()",
+    });
   });
 });

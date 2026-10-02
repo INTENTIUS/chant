@@ -1,0 +1,56 @@
+---
+title: "chant workspace patch"
+description: Print the hunks of a diff file by file, for a range or one commit
+diataxis: reference
+---
+
+## Synopsis
+
+```
+chant workspace patch <base>..<head> [--path <p>...] [--max-bytes <n>] [--json]
+chant workspace patch <base>...<head> [--path <p>...] [--max-bytes <n>] [--json]
+chant workspace patch <commit> [--path <p>...] [--max-bytes <n>] [--json]
+chant workspace patch [<commit>] --worktree [--path <p>...] [--max-bytes <n>] [--json]
+```
+
+## Description
+
+`chant workspace patch` prints the lines a diff changes, for a reader that runs no git of its own, such as hud's review view. [`check --changes`](/chant/cli/workspace-check/#the-forward-coverage-check) maps the same diff to records and prints no lines of it.
+
+The range is read as `check --changes` reads one. `<base>..<head>` compares the two trees, and `<base>...<head>` compares `<head>` with the merge base, which is what a work branch needs: `main...chant/work/W-001` shows the branch's own change even after `main` has moved on. A single revision is that commit against its first parent, or against the empty tree for a root commit, so a reader can show one commit's change.
+
+`--worktree` compares a commit, `HEAD` unless one is given, with the working tree as it is on disk. Staged and unstaged edits both count. Each untracked file that git doesn't ignore is listed as added. The document's `range.form` is `worktree` and its `range.head` is `null`. A reader uses it to show a file's changes that nobody has committed yet.
+
+Each file the diff changes under the workspace root is listed in git's order, with renames and copies followed. Paths are from the workspace root. The [read contract](/chant/reference/workspace-read-contract/#the-patch-read) lists the fields of a file and of a hunk. A binary file has `null` counts and no hunks.
+
+The hunk text of one file stops at `--max-bytes`, which is 64 KiB by default and counts the headers. The whole document stops at sixteen times that. When a file is cut short it has `truncated: true`, and its last hunk may end early. Once the total is spent, the files after it keep their counts and `hunkCount` and have no hunks. `summary.truncated` says whether any file was cut. Git is read through a local `git` process, so the command needs no network.
+
+```
+$ chant workspace patch 3536c97 --path docs/smoke-claims.md
+patch     8429d384..3536c978 (3536c97, commit)
+modified  docs/smoke-claims.md +17 -8
+@@ -4,7 +4,7 @@
+ ...
+1 files, +17 -8
+```
+
+`--json` prints the [read contract](/chant/reference/workspace-read-contract/#the-patch-read) document, which follows `https://intentius.io/chant/schemas/workspace/patch/v1/patch.schema.json`.
+
+## Options
+
+| Option | Effect |
+|---|---|
+| `<base>..<head>` | The two trees to compare. `<head>` left out is `HEAD`. |
+| `<base>...<head>` | `<head>` against its merge base with `<base>`. |
+| `<commit>` | One commit against its first parent. With `--worktree`, the commit the working tree is compared with. |
+| `--worktree` | The working tree against the commit, or `HEAD`, untracked files included. |
+| `--path <p>` | Only this file, or the files under this directory, from the workspace root. Repeatable. |
+| `--max-bytes <n>` | The hunk text one file gets, in bytes. The total is sixteen times this. |
+| `--json` | Print the document as JSON instead of the text. |
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | The diff was read. |
+| 1 | The declaration couldn't be read, a revision names no commit (`revision-unknown`), or a `--path` is not inside the workspace (`patch-path-invalid`). |

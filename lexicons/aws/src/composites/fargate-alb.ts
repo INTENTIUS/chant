@@ -68,6 +68,7 @@ export interface FargateAlbProps {
   };
 }
 
+/** A Fargate service behind its own Application Load Balancer: cluster, task definition, service, target group, listener, logs and roles. */
 export const FargateAlb = Composite((props: FargateAlbProps) => {
   const containerPort = props.containerPort ?? 80;
   const cpu = props.cpu ?? "256";

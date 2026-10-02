@@ -5,13 +5,15 @@
   "type": "module",
   "workspaces": [
     "packages/*",
-    "lexicons/*"
+    "lexicons/*",
+    "lexicons/grafana/examples/*"
   ],
   "scripts": {
     "tsc": "tsc",
     "docs": "npm --prefix docs run dev",
     "generate": "for d in lexicons/*/; do (cd \"$d\" && npm run generate); done && npm run generate:barrels",
     "generate:barrels": "tsx scripts/generate-post-synth-barrels.ts",
+    "generate:composite-catalogs": "tsx scripts/generate-composite-catalogs.ts",
     "generate:egress-catalogue": "tsx scripts/generate-egress-catalogue.ts",
     "generate:behaviour-coverage": "tsx scripts/generate-behaviour-coverage.ts",
     "generate:fold-coverage": "tsx scripts/generate-fold-coverage.ts",
@@ -33,11 +35,13 @@
     "@intentius/chant-lexicon-gcp": "*",
     "@intentius/chant-lexicon-github": "*",
     "@intentius/chant-lexicon-gitlab": "*",
+    "@intentius/chant-lexicon-grafana": "workspace:*",
     "@intentius/chant-lexicon-helm": "*",
     "@intentius/chant-lexicon-k3d": "workspace:*",
     "@intentius/chant-lexicon-k3s": "workspace:*",
     "@intentius/chant-lexicon-k8s": "*",
     "@intentius/chant-lexicon-otel": "workspace:*",
+    "@intentius/chant-lexicon-prometheus": "workspace:*",
     "@intentius/chant-lexicon-render": "workspace:*",
     "@intentius/chant-lexicon-terraform": "workspace:*"
   },

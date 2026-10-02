@@ -1,0 +1,17 @@
+{
+  "name": "prometheus-alerting-example",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "chant build src --lexicon prometheus -o dist/rules.yml",
+    "lint": "chant lint src"
+  },
+  "dependencies": {
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-prometheus": "*"
+  },
+  "devDependencies": {
+    "typescript": "*"
+  }
+}

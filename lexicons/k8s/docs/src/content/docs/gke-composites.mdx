@@ -149,6 +149,7 @@ const result = GkeExternalDnsAgent({
 
 - Watches Ingress/Service resources and creates Cloud DNS records
 - Uses Workload Identity for authentication
+- Shares its ClusterRole with `OtelCollector`: read access to what `k8sattributes` needs (pods, namespaces, nodes, replica sets), and nothing for its receivers, since its only receiver is OTLP
 - `domainFilters` restricts which domains ExternalDNS can manage
 
 ## GkeFluentBitAgent
@@ -168,6 +169,7 @@ const result = GkeFluentBitAgent({
 - Deploys Fluent Bit as a DaemonSet with host path mounts for `/var/log`
 - Forwards container logs to Cloud Logging
 - Uses Workload Identity for authentication
+- Shares its ClusterRole with `OtelCollector`: read access to what `k8sattributes` needs (pods, namespaces, nodes, replica sets), and nothing for its receivers, since its only receiver is OTLP
 
 ## GkeOtelCollector
 
@@ -186,6 +188,7 @@ const result = GkeOtelCollector({
 - Deploys OTel collector as a DaemonSet collecting metrics and traces
 - Exports to Cloud Monitoring and Cloud Trace
 - Uses Workload Identity for authentication
+- Shares its ClusterRole with `OtelCollector`: read access to what `k8sattributes` needs (pods, namespaces, nodes, replica sets), and nothing for its receivers, since its only receiver is OTLP
 
 ## ConfigConnectorContext
 

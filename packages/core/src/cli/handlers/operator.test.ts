@@ -897,6 +897,74 @@ describe("runApprove — the resolution names the plan it approves (#2300)", () 
   });
 });
 
+/**
+ * #2574 — a component's gate ledger holds every environment's pending facts.
+ * The approval records the environment it answers, and `--env` picks it.
+ */
+describe("runApprove — a component gate approval names its environment (#2574)", () => {
+  const PLAN_STAGING = `sha256:${"c".repeat(64)}`;
+  const PLAN_PROD = `sha256:${"d".repeat(64)}`;
+  function seedTwoEnvironments(): void {
+    readGateLedgerMock.mockResolvedValue({
+      resolutions: [],
+      pending: [
+        {
+          version: 1, kind: "pending", op: "search-service", gate: "release",
+          timestamp: "2026-01-01T00:00:00.000Z", expiresAt: "2099-01-01T00:00:00.000Z",
+          planDigest: PLAN_STAGING, environment: "staging",
+        },
+        {
+          version: 1, kind: "pending", op: "search-service", gate: "release",
+          timestamp: "2026-01-02T00:00:00.000Z", expiresAt: "2099-01-01T00:00:00.000Z",
+          planDigest: PLAN_PROD, environment: "prod",
+        },
+      ],
+      malformed: 0,
+    });
+    appendGateResolutionMock.mockImplementation(async (input: object) => ({ commit: "sha", record: { version: 1, ...input } }));
+  }
+
+  test("without --env it approves the newest pending fact and records its environment", async () => {
+    seedTwoEnvironments();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(await runApprove(ctx({ path: "search-service", extraPositional: "release", actor: "alex" }))).toBe(0);
+    expect(appendGateResolutionMock).toHaveBeenCalledWith(expect.objectContaining({ planDigest: PLAN_PROD, environment: "prod" }));
+    expect(errSpy.mock.calls.map((c) => String(c[0])).join("\n")).toContain(`approves the plan ${PLAN_PROD} in environment "prod"`);
+    errSpy.mockRestore();
+  });
+
+  test("--env picks that environment's pending fact", async () => {
+    seedTwoEnvironments();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(await runApprove(ctx({ path: "search-service", extraPositional: "release", actor: "alex", env: "staging" }))).toBe(0);
+    expect(appendGateResolutionMock).toHaveBeenCalledWith(expect.objectContaining({ planDigest: PLAN_STAGING, environment: "staging" }));
+    errSpy.mockRestore();
+  });
+
+  test("--env with no pending fact there refuses and writes nothing", async () => {
+    seedTwoEnvironments();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(await runApprove(ctx({ path: "search-service", extraPositional: "release", actor: "alex", env: "dev" }))).toBe(1);
+    expect(appendGateResolutionMock).not.toHaveBeenCalled();
+    expect(errSpy.mock.calls.map((c) => String(c[0])).join("\n")).toContain('no pending fact in environment "dev"');
+    errSpy.mockRestore();
+  });
+
+  test("--env is ignored for a gate whose pending facts record no environment", async () => {
+    seedPending("fountain-apply", "rollout-gate", PLAN_A);
+    appendGateResolutionMock.mockImplementation(async (input: object) => ({ commit: "sha", record: { version: 1, ...input } }));
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(await runApprove(ctx({ path: "fountain-apply", extraPositional: "rollout-gate", actor: "alex", env: "prod" }))).toBe(0);
+    expect(appendGateResolutionMock.mock.calls[0][0]).toMatchObject({ planDigest: PLAN_A });
+    expect(appendGateResolutionMock.mock.calls[0][0]).not.toHaveProperty("environment");
+    errSpy.mockRestore();
+  });
+});
+
 describe("runApprove — the ledger branch is read before it is appended to (#2303)", () => {
   test("reads the branch before recording the resolution", async () => {
     seedPending("fountain-apply", "rollout-gate", PLAN_A);

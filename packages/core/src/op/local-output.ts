@@ -50,14 +50,40 @@ export function renderHuman(result: OpRunResult, write: Writer = stderr): void {
     if (record.refusal) {
       write(`    [refused] ${record.refusal}`);
     }
+    if (record.point) {
+      write(`    [waiting] decision point ${record.point.point}: ${record.point.id} is ${record.point.state}`);
+    }
     if (record.error) {
       write(`    ${record.error}`);
     }
   }
 
+  // The work lease (#2748): which item the run held, and how it ended.
+  const work = result.workLease;
+  if (work?.item) {
+    const end = work.lost
+      ? `lost (${work.lost})`
+      : work.released
+        ? `released ${work.outcome}`
+        : "not released; it runs out on its own";
+    write(`[work] ${work.item} held by ${work.holder}${work.branch ? ` on ${work.branch}` : ""}: ${end}`);
+  } else if (work?.refusal) {
+    write(`[work] nothing claimed: ${work.refusal}`);
+  }
+
   const total = `${(result.totalMs / 1000).toFixed(1)}s`;
   if (result.status === "ok") {
     write(`Op "${result.op}" completed in ${total}`);
+    return;
+  }
+  if (result.status === "waiting" && result.point) {
+    // An open decision point (#2749): a fact like a gate. A person answers the
+    // question, through hud or at a shell, and the next run reads the answer.
+    const { point } = result;
+    write(`Op "${result.op}" is waiting on decision point "${point.point}" after ${total}`);
+    write(`  question: ${point.id} (${point.state}) at ${point.path}`);
+    if (point.subject) write(`  subject : ${point.subject}`);
+    write(`  answer  : ${pointAnswerCommand(point.id)}`);
     return;
   }
   if (result.status === "fail" || !result.gate) {
@@ -74,7 +100,7 @@ export function renderHuman(result: OpRunResult, write: Writer = stderr): void {
   // #2300: the plan the approval will be bound to. Printed before the
   // command, because it is what the command approves.
   if (gate.planDigest) write(`  plan    : ${gate.planDigest}`);
-  write(`  approve : ${approveCommand(gate.op, gate.gate)}`);
+  write(`  approve : ${approveCommand(gate.op, gate.gate, undefined, gate.planDigest)}`);
   if (gate.url) write(`  approve at: ${gate.url}`);
   write(`  expires : ${gate.expiresAt}`);
   // #2310: this run's own append reached only the local chant/lifecycle
@@ -102,7 +128,7 @@ export function renderHuman(result: OpRunResult, write: Writer = stderr): void {
  * the gate doesn't have to reassemble it from the op and gate names.
  */
 export function renderJson(result: OpRunResult, write: Writer = stdout): void {
-  const approve = result.gate ? { approve: approveCommand(result.gate.op, result.gate.gate) } : {};
+  const approve = result.gate ? { approve: approveCommand(result.gate.op, result.gate.gate, undefined, result.gate.planDigest) } : {};
   // #2310: whether this run's own append reached the remote — not part of
   // the persisted ledger record (a replay has nothing new to report), but a
   // live run's JSON consumer needs it exactly where the human render shows it.
@@ -113,3 +139,8 @@ export function renderJson(result: OpRunResult, write: Writer = stdout): void {
 }
 
 export type { OpRunResult, StepRecord };
+
+/** The command a person answers an open decision point with (#2749). */
+export function pointAnswerCommand(id: string): string {
+  return `chant workspace points answer ${id} --answer <answer> --by <your name>`;
+}

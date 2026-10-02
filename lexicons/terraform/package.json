@@ -1,10 +1,11 @@
 {
   "name": "@intentius/chant-lexicon-terraform",
-  "version": "0.80.0",
+  "version": "0.101.0",
   "type": "module",
   "files": [
     "src/",
-    "dist/"
+    "dist/",
+    "workspace-kinds.json"
   ],
   "exports": {
     ".": {
@@ -12,6 +13,7 @@
       "types": "./dist/index.d.ts",
       "default": "./src/index.ts"
     },
+    "./workspace-kinds": "./workspace-kinds.json",
     "./*": {
       "development": "./src/*.ts",
       "types": "./dist/*.d.ts",
@@ -55,7 +57,7 @@
     "access": "public"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.80.0",
+    "@intentius/chant": "^0.101.0",
     "typescript": "^5.9.3",
     "zod": "^4.3.6"
   },

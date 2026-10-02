@@ -1,0 +1,16 @@
+apiVersion: 1
+muteTimes:
+    - orgId: 1
+      name: release-window
+      time_intervals:
+        - times:
+            - start_time: "22:00"
+              end_time: "23:30"
+          weekdays: ['tuesday:thursday']
+          days_of_month: ["1:7"]
+          months: ["1:3"]
+    - orgId: 1
+      name: weekends
+      time_intervals:
+        - weekdays: [saturday, sunday]
+          location: Europe/Berlin

@@ -1,5 +1,6 @@
 import * as ts from "typescript";
 import type { LintRule, LintContext, LintDiagnostic } from "../rule";
+import { isPropertyKindNew } from "./property-kind";
 
 /**
  * COR004: no-unused-declarable
@@ -10,6 +11,13 @@ import type { LintRule, LintContext, LintDiagnostic } from "../rule";
  *
  * Triggers on: export const bucket = new Bucket({...}) when bucket is never referenced
  * OK: export const bucket = new Bucket({...}); export const fn = new Function({ bucket: bucket.arn })
+ *
+ * Property-kind declarables (chant #2957), such as Grafana panels, are left
+ * out on both sides. One is never flagged itself: it only means something
+ * inside a resource, and a file of them is usually assembled into that
+ * resource from another file. A resource that holds one, inline or through
+ * a const declared in this file, is the root that emits it, so it is not
+ * flagged either: nothing ever references a dashboard, and that is fine.
  */
 
 interface DeclarableInfo {
@@ -31,8 +39,52 @@ function getNewExpressionClassName(expr: ts.NewExpression): string | undefined {
   return undefined;
 }
 
-function collectExportedDeclarables(sourceFile: ts.SourceFile): DeclarableInfo[] {
+/** Names of this file's top-level consts initialised with a property-kind `new`. */
+function collectPropertyKindConsts(context: LintContext): Set<string> {
+  const names = new Set<string>();
+  for (const stmt of context.sourceFile.statements) {
+    if (!ts.isVariableStatement(stmt)) continue;
+    for (const decl of stmt.declarationList.declarations) {
+      if (
+        ts.isIdentifier(decl.name) &&
+        decl.initializer &&
+        ts.isNewExpression(decl.initializer) &&
+        isPropertyKindNew(decl.initializer, context)
+      ) {
+        names.add(decl.name.text);
+      }
+    }
+  }
+  return names;
+}
+
+/**
+ * True when the constructor arguments hold a property-kind declarable,
+ * either inline (`panels: [new Row(…)]`) or through a const from
+ * `propertyConsts` (`panels: [red]`).
+ */
+function holdsPropertyKind(expr: ts.NewExpression, context: LintContext, propertyConsts: Set<string>): boolean {
+  let found = false;
+  function visit(node: ts.Node): void {
+    if (found) return;
+    if (ts.isNewExpression(node) && isPropertyKindNew(node, context)) {
+      found = true;
+      return;
+    }
+    if (ts.isIdentifier(node) && propertyConsts.has(node.text)) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  }
+  for (const arg of expr.arguments ?? []) visit(arg);
+  return found;
+}
+
+function collectExportedDeclarables(context: LintContext): DeclarableInfo[] {
   const declarables: DeclarableInfo[] = [];
+  const sourceFile = context.sourceFile;
+  const propertyConsts = collectPropertyKindConsts(context);
 
   ts.forEachChild(sourceFile, (node) => {
     if (!ts.isVariableStatement(node)) return;
@@ -53,6 +105,11 @@ function collectExportedDeclarables(sourceFile: ts.SourceFile): DeclarableInfo[]
 
       // Parameters are inherently cross-file (declared in params.ts, consumed via Ref() elsewhere)
       if (className === "Parameter") continue;
+
+      // chant #2957: a property-kind declarable is part of a resource, and a
+      // resource holding one is the root that emits it.
+      if (isPropertyKindNew(decl.initializer, context)) continue;
+      if (holdsPropertyKind(decl.initializer, context, propertyConsts)) continue;
 
       declarables.push({
         name: decl.name.text,
@@ -98,7 +155,7 @@ export const noUnusedDeclarableRule: LintRule = {
   description: "Detects exported declarables that are never referenced in the same file",
   check(context: LintContext): LintDiagnostic[] {
     const diagnostics: LintDiagnostic[] = [];
-    const declarables = collectExportedDeclarables(context.sourceFile);
+    const declarables = collectExportedDeclarables(context);
 
     for (const decl of declarables) {
       if (!collectReferences(decl.name, context.sourceFile, decl.node)) {

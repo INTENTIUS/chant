@@ -35,8 +35,12 @@ PKGJSON
 }
 
 install_from_tarballs() {
-  # $1 = lexicon tarball path (core always included)
-  pkg_install /tarballs/core.tgz "$1"
+  # $1 = lexicon tarball path, or several separated by spaces when a lexicon
+  # depends on another workspace lexicon (k8s needs prometheus and otel,
+  # prometheus and fly need otel, gitlab needs github), so npm installs this
+  # commit's copy of it rather than the registry's; core always included
+  # shellcheck disable=SC2086
+  pkg_install /tarballs/core.tgz $1
 }
 
 install_from_registry() {
@@ -69,12 +73,25 @@ verify_tarball_contains /tarballs/core.tgz "package/bin/chant" "core tarball con
 verify_tarball_contains /tarballs/core.tgz "package/src/cli/main.ts" "core tarball contains CLI entrypoint"
 verify_tarball_contains /tarballs/core.tgz "package/src/index.ts" "core tarball contains main export"
 
-for lex in aws azure gcp gitlab k8s docker fly fountain; do
-  verify_tarball_contains "/tarballs/lexicon-$lex.tgz" "package/dist/manifest.json" "$lex tarball contains dist/manifest.json"
-  verify_tarball_contains "/tarballs/lexicon-$lex.tgz" "package/dist/meta.json" "$lex tarball contains dist/meta.json"
-  verify_tarball_contains "/tarballs/lexicon-$lex.tgz" "package/dist/types/index.d.ts" "$lex tarball contains dist/types/index.d.ts"
-  verify_tarball_contains "/tarballs/lexicon-$lex.tgz" "package/src/index.ts" "$lex tarball contains src/index.ts"
+# Every lexicon tarball the image packed (test/smoke-npm-lexicons.txt), so a
+# lexicon added to that list is checked without editing this loop.
+for tarball in /tarballs/lexicon-*.tgz; do
+  lex=$(basename "$tarball" .tgz); lex=${lex#lexicon-}
+  verify_tarball_contains "$tarball" "package/dist/manifest.json" "$lex tarball contains dist/manifest.json"
+  verify_tarball_contains "$tarball" "package/dist/meta.json" "$lex tarball contains dist/meta.json"
+  verify_tarball_contains "$tarball" "package/dist/types/index.d.ts" "$lex tarball contains dist/types/index.d.ts"
+  verify_tarball_contains "$tarball" "package/src/index.ts" "$lex tarball contains src/index.ts"
 done
+
+# What grafana reads at run time beyond the root export (#2919). GRAF107
+# validates against the schemas bundled into src/spec/schemas.gen.ts (#2958),
+# not the vendored src/spec/schemas/ files, which only generate reads. The
+# /validation and /k8s subpaths resolve to src/validation.ts and src/k8s.ts.
+# test_grafana_project below checks that these work once installed.
+verify_tarball_contains /tarballs/lexicon-grafana.tgz "package/src/spec/schemas.gen.ts" "grafana tarball contains src/spec/schemas.gen.ts (GRAF107's schemas)"
+verify_tarball_contains /tarballs/lexicon-grafana.tgz "package/src/lint/post-synth/graf107.ts" "grafana tarball contains the GRAF107 check"
+verify_tarball_contains /tarballs/lexicon-grafana.tgz "package/src/validation.ts" "grafana tarball contains src/validation.ts (/validation subpath)"
+verify_tarball_contains /tarballs/lexicon-grafana.tgz "package/src/k8s.ts" "grafana tarball contains src/k8s.ts (/k8s subpath)"
 
 fi # INSTALL_MODE=tarball
 
@@ -126,12 +143,12 @@ test_manual_project "aws" "/tarballs/lexicon-aws.tgz" \
 export const tags = defaultTags([{ Key: "Env", Value: "test" }]);'
 
 # GitLab manual project
-test_manual_project "gitlab" "/tarballs/lexicon-gitlab.tgz" \
+test_manual_project "gitlab" "/tarballs/lexicon-gitlab.tgz /tarballs/lexicon-github.tgz" \
   'import { Job } from "@intentius/chant-lexicon-gitlab";
 export const build = new Job({ stage: "build", script: ["echo hello"] });'
 
 # K8s manual project
-test_manual_project "k8s" "/tarballs/lexicon-k8s.tgz" \
+test_manual_project "k8s" "/tarballs/lexicon-k8s.tgz /tarballs/lexicon-prometheus.tgz /tarballs/lexicon-otel.tgz" \
   'import { Deployment } from "@intentius/chant-lexicon-k8s";
 export const app = new Deployment({
   metadata: { name: "test" },
@@ -174,6 +191,111 @@ if [ "$INSTALL_MODE" = "registry" ]; then
   fi
 fi
 
+# Prometheus manual project
+test_manual_project "prometheus" "/tarballs/lexicon-prometheus.tgz /tarballs/lexicon-otel.tgz" \
+  'import { RuleGroup, type Rule } from "@intentius/chant-lexicon-prometheus";
+const rules: Rule[] = [{ alert: "TargetDown", expr: "up == 0", for: "5m", labels: { severity: "page" }, annotations: { summary: "down" } }];
+export const smoke = new RuleGroup({ name: "smoke", rules });'
+
+# Grafana manual project (#2919). grafana depends on the k8s, prometheus and
+# otel lexicons, so their tarballs go in too. Beyond build and lint, it checks
+# that the published package works at run time:
+#   - a clean dashboard builds with no grafana diagnostic, so GRAF101-GRAF117
+#     ran and passed (build is where post-synth checks run; GRAF107 only warns
+#     "not checked" when ajv or the bundled schemas fail to load, and that
+#     warning would show here)
+#   - a dashboard the pinned schema rejects fails the build with GRAF107's
+#     "(Grafana schema)" error, so schema validation really runs
+#   - the /validation and /k8s subpaths resolve and load under tsx
+test_grafana_project() {
+  local label="npm-manual-grafana"
+  echo ""
+  echo "=== Test: $label ==="
+
+  local dir="/tmp/test-$label"
+  rm -rf "$dir"
+  mkdir -p "$dir/src" "$dir/bad"
+  cd "$dir"
+
+  pkg_init
+  if [ "$INSTALL_MODE" = "registry" ]; then
+    install_from_registry "@intentius/chant-lexicon-grafana"
+  else
+    install_from_tarballs "/tarballs/lexicon-grafana.tgz /tarballs/lexicon-k8s.tgz /tarballs/lexicon-prometheus.tgz /tarballs/lexicon-otel.tgz"
+  fi
+
+  cat > src/dashboard.ts <<'SRC'
+import { Dashboard, Datasource, PromQuery, StatPanel, TimeSeriesPanel } from "@intentius/chant-lexicon-grafana";
+export const prometheus = new Datasource({ name: "Prometheus", type: "prometheus", url: "http://prometheus:9090", isDefault: true });
+const up = new StatPanel({ title: "Targets up", datasource: prometheus, targets: [new PromQuery({ expr: "sum(up)", instant: true })] });
+const rate = new TimeSeriesPanel({
+  title: "Requests per second",
+  datasource: prometheus,
+  targets: [new PromQuery({ expr: "sum(rate(http_requests_total[$__rate_interval]))" })],
+  fieldConfig: { defaults: { unit: "reqps" } },
+});
+export const overview = new Dashboard({ title: "npm smoke", uid: "npm-smoke", panels: [up, rate] });
+SRC
+
+  if pkg_run chant build src --lexicon grafana -o dist/index.json 2>build.err; then
+    pass "$label: chant build"
+  else
+    fail "$label: chant build"
+    sed 's/^/    /' build.err
+  fi
+  if jq -e '.uid == "npm-smoke" and (.panels | length) == 2' dist/dashboards/npm-smoke.json >/dev/null 2>&1; then
+    pass "$label: build writes the dashboard JSON"
+  else
+    fail "$label: build did not write dist/dashboards/npm-smoke.json"
+  fi
+  if grep -q "(grafana)" build.err; then
+    fail "$label: GRAF101-GRAF117 reported diagnostics on a clean dashboard"
+    grep "(grafana)" build.err | sed 's/^/    /'
+  else
+    pass "$label: GRAF101-GRAF117 pass"
+  fi
+
+  if pkg_run chant lint src 2>&1; then
+    pass "$label: chant lint"
+  else
+    fail "$label: chant lint"
+  fi
+
+  # GRAF107 on a value the pinned schema does not allow.
+  cat > bad/dashboard.ts <<'SRC'
+import { Dashboard, Datasource, PromQuery, StatPanel } from "@intentius/chant-lexicon-grafana";
+export const prometheus = new Datasource({ name: "Prometheus", type: "prometheus", url: "http://prometheus:9090", isDefault: true });
+const up = new StatPanel({ title: "Targets up", datasource: prometheus, options: { graphMode: "sparkline" }, targets: [new PromQuery({ expr: "sum(up)", instant: true })] });
+export const bad = new Dashboard({ title: "npm smoke bad", uid: "npm-smoke-bad", panels: [up] });
+SRC
+  if pkg_run chant build bad --lexicon grafana -o bad-dist/index.json >bad-build.log 2>&1; then
+    fail "$label: GRAF107 let an invalid graphMode through"
+  elif grep -q "graphMode.*(Grafana schema)" bad-build.log; then
+    pass "$label: GRAF107 rejects a value the pinned schema does not allow"
+  else
+    fail "$label: invalid dashboard failed the build, but not with GRAF107"
+    sed 's/^/    /' bad-build.log
+  fi
+
+  # The subpaths, loaded the way a consumer's code would load them.
+  cat > subpaths.ts <<'SRC'
+import { validateDashboardSchema, schemaValidationUnavailable } from "@intentius/chant-lexicon-grafana/validation";
+import { GrafanaConfigMaps } from "@intentius/chant-lexicon-grafana/k8s";
+const panel = { type: "stat", id: 1, title: "s", gridPos: { h: 4, w: 4, x: 0, y: 0 }, options: { graphMode: "sparkline" } };
+const problems = validateDashboardSchema({ title: "x", schemaVersion: 41, panels: [panel] });
+const unavailable = schemaValidationUnavailable();
+if (unavailable) throw new Error(unavailable);
+if (!problems.some((p) => p.path.includes("graphMode"))) throw new Error(`no graphMode problem: ${JSON.stringify(problems)}`);
+if (typeof GrafanaConfigMaps !== "function") throw new Error("/k8s does not export GrafanaConfigMaps");
+SRC
+  if tsx subpaths.ts 2>&1; then
+    pass "$label: /validation and /k8s subpaths resolve and validate"
+  else
+    fail "$label: /validation and /k8s subpaths resolve and validate"
+  fi
+}
+test_grafana_project
+
 # Azure manual project
 test_manual_project "azure" "/tarballs/lexicon-azure.tgz" \
   'import { StorageAccount, Azure } from "@intentius/chant-lexicon-azure";
@@ -209,7 +331,7 @@ test_fly_org_slug() {
   if [ "$INSTALL_MODE" = "registry" ]; then
     install_from_registry "@intentius/chant-lexicon-fly"
   else
-    install_from_tarballs /tarballs/lexicon-fly.tgz
+    install_from_tarballs "/tarballs/lexicon-fly.tgz /tarballs/lexicon-otel.tgz"
   fi
 
   cat > src/infra.ts <<'SRC'
@@ -279,7 +401,7 @@ fi
 
 test_init_flow() {
   local lexicon="$1"    # e.g. "aws"
-  local tarball="$2"    # e.g. "/tarballs/lexicon-aws.tgz"
+  local tarball="$2"    # e.g. "/tarballs/lexicon-aws.tgz"; several space-separated when one lexicon needs another
   local source="$3"     # TypeScript source to write into src/
   local label="npm-init-$lexicon"
 
@@ -312,7 +434,8 @@ test_init_flow() {
   if [ "$INSTALL_MODE" = "registry" ]; then
     pkg_install "@intentius/chant-lexicon-$lexicon@latest"
   else
-    pkg_install "$tarball"
+    # shellcheck disable=SC2086
+    pkg_install $tarball
   fi
 
   # Write a source file — init scaffolds config but not infra code
@@ -338,11 +461,11 @@ test_init_flow "aws" "/tarballs/lexicon-aws.tgz" \
   'import { defaultTags } from "@intentius/chant-lexicon-aws";
 export const tags = defaultTags([{ Key: "Env", Value: "smoke" }]);'
 
-test_init_flow "gitlab" "/tarballs/lexicon-gitlab.tgz" \
+test_init_flow "gitlab" "/tarballs/lexicon-gitlab.tgz /tarballs/lexicon-github.tgz" \
   'import { Job } from "@intentius/chant-lexicon-gitlab";
 export const deploy = new Job({ stage: "deploy", script: ["echo deploy"] });'
 
-test_init_flow "k8s" "/tarballs/lexicon-k8s.tgz" \
+test_init_flow "k8s" "/tarballs/lexicon-k8s.tgz /tarballs/lexicon-prometheus.tgz /tarballs/lexicon-otel.tgz" \
   'import { Service } from "@intentius/chant-lexicon-k8s";
 export const svc = new Service({
   metadata: { name: "smoke" },
@@ -397,6 +520,15 @@ test_example() {
     for lex in "${lexicons[@]}"; do
       install_args+=("@intentius/chant-lexicon-$lex@latest")
     done
+  else
+    # Install the workspace lexicons these depend on from their tarballs too,
+    # so npm does not take them from the registry.
+    if [[ " ${install_args[*]} " == *" /tarballs/lexicon-k8s.tgz "* ]]; then
+      install_args+=(/tarballs/lexicon-prometheus.tgz /tarballs/lexicon-otel.tgz)
+    fi
+    if [[ " ${install_args[*]} " == *" /tarballs/lexicon-gitlab.tgz "* ]]; then
+      install_args+=(/tarballs/lexicon-github.tgz)
+    fi
   fi
   pkg_install "${install_args[@]}"
 

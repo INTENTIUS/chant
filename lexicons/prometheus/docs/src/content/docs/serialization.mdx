@@ -1,0 +1,36 @@
+---
+title: "Serialization"
+description: "Output format for the Prometheus lexicon"
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-prometheus` — DO NOT EDIT.
+    Edit lexicons/prometheus/src/codegen/docs.ts instead; changes here are overwritten. */}
+
+The prometheus lexicon serializes two files:
+
+- **The rule file**, from every `RuleGroup` in the build: `groups:`, each
+  with its `name`, optional `interval`, `query_offset`, `limit` and
+  `labels`, and its `rules`. This is the file `rule_files:` points at and
+  `promtool check rules` reads.
+- **`alertmanager.yml`**, from the `AlertmanagerSettings`, `Route`,
+  `InhibitRule`, `Receiver` and `TimeInterval` entities, in that section
+  order: `global`, `templates`, `route`, `inhibit_rules`, `receivers`,
+  `time_intervals`, `tracing`.
+
+The rule file is the primary output when the build declares any rule
+groups, and `alertmanager.yml` is written beside it (`-o dist/rules.yml`
+also writes `dist/alertmanager.yml`). A build with only Alertmanager
+entities emits `alertmanager.yml` as its primary output.
+
+- Rules inside a group and child routes keep the order they are written in,
+  which is the order Prometheus evaluates and Alertmanager matches them.
+  Groups, receivers and time intervals, whose order carries no meaning, are
+  sorted by name, so the files are the same however they were built. Keys
+  inside a rule come out in the order Prometheus documents them (`record`
+  or `alert`, `expr`, `for`, `keep_firing_for`, `labels`,
+  `annotations`).
+- A route references its receiver and time intervals by name in the output,
+  whether the declaration used the entity or a string.
+- The root route is the one `Route` no other route lists as a child.
+- Neither file has a metadata channel, so no ownership marker is stamped.
+

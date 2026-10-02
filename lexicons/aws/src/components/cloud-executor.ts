@@ -109,6 +109,8 @@ export interface EcsServiceState {
   desiredCount: number;
   /** True once `runningCount === desiredCount` and no deployments are in flight. */
   stable: boolean;
+  /** The task definition the service is set to run, when the describe call reports one. */
+  taskDefinition?: string;
 }
 
 export interface EcsRunTaskArgs {
@@ -547,14 +549,20 @@ const realEcs: EcsClient = {
       `aws ecs describe-services --cluster ${q(cluster)} --services ${q(service)}`,
     );
     const described = JSON.parse(stdout) as {
-      services: Array<{ runningCount: number; desiredCount: number; deployments?: unknown[] }>;
+      services?: Array<{ runningCount: number; desiredCount: number; deployments?: unknown[]; taskDefinition?: string }>;
     };
-    const svc = described.services[0];
-    return { runningCount: svc?.runningCount ?? 0, desiredCount: svc?.desiredCount ?? 0, stable: ecsServiceStable(svc) };
+    const svc = described.services?.[0];
+    return {
+      runningCount: svc?.runningCount ?? 0,
+      desiredCount: svc?.desiredCount ?? 0,
+      stable: ecsServiceStable(svc),
+      ...(svc?.taskDefinition ? { taskDefinition: svc.taskDefinition } : {}),
+    };
   },
   async rollbackService(args) {
-    // Nothing here records a service's previous task definition, so a rollback
+    // The executor records no previous task definition itself, so a rollback
     // without one would leave the service as it is and still report success (#2605).
+    // Callers read it with describeService before they update (#2609).
     if (!args.taskDefinition) {
       throw new Error(
         `ecs rollback of service "${args.service}" on "${args.cluster}" needs the taskDefinition to roll back to`,

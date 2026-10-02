@@ -1,0 +1,16 @@
+# Vendored from github.com/prometheus/alertmanager v0.34.1, config/testdata/conf.mattermost-default-webhook-url-file.yml
+# (https://github.com/prometheus/alertmanager/blob/v0.34.1/config/testdata/conf.mattermost-default-webhook-url-file.yml). Apache-2.0.
+# Unchanged below this header.
+global:
+  mattermost_webhook_url_file: /global_file
+route:
+  receiver: team-X-mattermost
+
+receivers:
+  - name: team-X-mattermost
+    mattermost_configs:
+      - channel: team-X
+  - name: team-Y-mattermost
+    mattermost_configs:
+      - channel: team-Y
+        webhook_url_file: /override_file

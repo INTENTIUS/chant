@@ -251,18 +251,28 @@ export interface EcsUpdateServiceInput {
 export interface EcsUpdateServiceOutput {
   /** ARN of the new/updated service deployment. */
   deploymentId: string;
+  /**
+   * The task definition the service ran before this step updated it, read with
+   * `describe-services` ahead of `update-service`. The rollback sends it back.
+   * Absent when the service could not be described or reported none (#2609).
+   */
+  previousTaskDefinition?: string;
+  /** The service's desired count before this step, recorded only when the step sets `desiredCount`. */
+  previousDesiredCount?: number;
 }
 
 /**
  * Roll a new task definition/image out to an ECS service via `UpdateService`.
- * Rollback re-invokes `updateService` with the same input — a best-effort
- * capability-level compensation for the common case (recorded here so the
- * capability is never rollback-silent). Without an `imageRef` that re-apply has
- * no task definition to send, so the rollback fails rather than report a
- * restore that changed nothing (#2605). A component whose service swap needs
- * a specific prior task definition/count restored (rather than a re-apply of
- * the same input) supplies its own explicit rollback phase instead, such as
- * `rollback-previous` with that `taskDefinition`.
+ * Before the update, `run` reads the service with `describe-services` and
+ * records the task definition it was running in its output. The rollback sends
+ * that previous task definition back (and the previous desired count, when the
+ * step changed it). The step's own `imageRef` is never the rollback target:
+ * it is the revision the step just rolled out, so re-sending it restores
+ * nothing (#2609). When the previous task definition could not be read, the
+ * rollback fails with a message naming the service rather than report a
+ * restore that changed nothing (#2605). A component that needs a specific
+ * task definition restored can still give itself an explicit rollback phase,
+ * such as `rollback-previous` with that `taskDefinition`.
  */
 export function createEcsUpdateServiceCapability(
   executor: CloudExecutor = defaultCloudExecutor(),
@@ -270,6 +280,9 @@ export function createEcsUpdateServiceCapability(
   return {
     kind: "ecs-update-service",
     async run(_ctx, input) {
+      // A failed read only costs the rollback its target; the forward update
+      // still runs, and the rollback then fails saying it has nothing to restore.
+      const before = await executor.ecs.describeService(input.cluster, input.service).catch(() => undefined);
       const { deploymentId } = await executor.ecs.updateService({
         cluster: input.cluster,
         service: input.service,
@@ -277,20 +290,26 @@ export function createEcsUpdateServiceCapability(
         desiredCount: input.desiredCount,
         forceNewDeployment: input.forceNewDeployment,
       });
-      return { deploymentId };
+      return {
+        deploymentId,
+        ...(before?.taskDefinition ? { previousTaskDefinition: before.taskDefinition } : {}),
+        ...(before && input.desiredCount !== undefined ? { previousDesiredCount: before.desiredCount } : {}),
+      };
     },
-    async rollback(_ctx, input) {
-      if (!input.imageRef) {
+    async rollback(_ctx, input, output) {
+      const previous = output?.previousTaskDefinition;
+      if (!previous) {
         throw new Error(
-          `ecs-update-service rollback: service "${input.service}" has no imageRef to roll back to; ` +
-            `give the step an imageRef, or give the component a rollback phase that names the taskDefinition`,
+          `ecs-update-service rollback: the task definition service "${input.service}" ran before the step ` +
+            `was not recorded, so there is nothing to roll back to; ` +
+            `give the component a rollback phase that names the taskDefinition`,
         );
       }
       await executor.ecs.rollbackService({
         cluster: input.cluster,
         service: input.service,
-        taskDefinition: input.imageRef,
-        desiredCount: input.desiredCount,
+        taskDefinition: previous,
+        desiredCount: output?.previousDesiredCount,
       });
     },
   };

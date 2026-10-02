@@ -1,0 +1,68 @@
+---
+diataxis: reference
+description: Audit each chant member of a workspace with its own .chant-audit.json, adding a member field to every finding
+title: "chant workspace audit"
+---
+
+## Synopsis
+
+```
+chant workspace audit [dir] [--json] [-o <file>] [--member <name>] [--tier merge-worthy|all] [--fail-on <level>] [--dry-run]
+```
+
+## Description
+
+`chant workspace audit` runs [`chant audit .`](/chant/cli/audit/) inside every member of kind `chant`, under the member's own chant, so each member's `.chant-audit.json` applies to its own files ([#2537](https://github.com/INTENTIUS/chant/issues/2537), [ws-025](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-025-audit.md)). Every finding gains a `member` field naming the member it came from. Example groups are not audited. The toolchain each member gets works as described for [`chant workspace build`](/chant/cli/workspace-build/#which-chant-runs-a-member).
+
+`chant audit` itself is unchanged. At a workspace root it still scans the whole tree, members included.
+
+The audit of the root member `.` walks the whole root, as `chant audit` does. Findings in another member's directory are left to that member, so no finding is reported twice. The root member's entry says how many it left, in `leftToMembers`.
+
+## Output
+
+The text output lists each member's findings under a heading, one line per finding, and ends with the total.
+
+```
+── platform  .  (0 findings)
+── api  services/api  (1 finding)
+  manifests/pod.yaml  error  WK8202  Container "c" in Pod "bad" runs in privileged mode
+
+1 finding, 1 error
+```
+
+With `--json`, or `--format json`, the output is one document:
+
+```json
+{
+  "schemaVersion": "1.0",
+  "workspace": { "name": "acme", "root": "/work/acme" },
+  "members": [
+    { "member": "platform", "dir": ".", "exitCode": 0, "status": "ok", "summary": { "total": 1 }, "error": null, "leftToMembers": 1 },
+    { "member": "api", "dir": "services/api", "exitCode": 0, "status": "ok", "summary": { "total": 1 }, "error": null }
+  ],
+  "findings": [
+    { "checkId": "WK8202", "severity": "error", "file": "manifests/pod.yaml", "lexicon": "k8s", "member": "api" }
+  ],
+  "skipped": []
+}
+```
+
+The example shortens the findings. Each finding keeps every field of the [audit JSON report](/chant/cli/audit/), with `file` still relative to its member's directory. `schemaVersion` is the report schema the members wrote, or `null` when they disagree. A member's `status` is `ok`, `no-lexicons` or `failed`. A member with nothing to audit has `status` `ok` and a `note` holding what its audit printed.
+
+## Options
+
+| Option | Effect |
+|---|---|
+| `dir` | Where the walk up to the declaration starts. |
+| `--json`, `--format json` | Print the JSON document. |
+| `-o, --output <file>` | Write the JSON document to a file. |
+| `--member <name>` | Run only these members. Repeatable, and a comma list works too. |
+| `--tier`, `--fail-on`, `--max-files` | Passed to each member's audit. |
+| `--dry-run` | Print the plan and audit nothing. |
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | Every member's audit exited 0. |
+| 1 | A member's audit failed, or crossed its `--fail-on` level, or the declaration couldn't be read. |

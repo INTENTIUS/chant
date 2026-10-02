@@ -67,6 +67,18 @@ function opWith(config: Partial<OpConfig> & Pick<OpConfig, "phases">): Pick<OpCo
   return { name: "test-op", ...config };
 }
 
+describe("validateActivitySteps() — a step's own timeout (#2787)", () => {
+  it("accepts a duration up to six hours, and flags one that is not a duration, is zero, or is longer", () => {
+    const withTimeout = (timeout: string) => opWith({ phases: [phase("Build", [activity("lifecycleDiff", { env: "prod" }, { timeout })])] });
+    const contracts = new Map([["lifecycleDiff", lifecycleDiffContract]]);
+    for (const ok of ["45m", "1h30m", "6h"]) expect(validateActivitySteps(withTimeout(ok), contracts), ok).toEqual([]);
+    for (const [bad, why] of [["forever", /not a duration/], ["45 minutes", /not a duration/], ["0m", /more than zero/], ["7h", /longer than a step may run \(6h\)/]] as const) {
+      const issues = validateActivitySteps(withTimeout(bad), contracts);
+      expect(issues.map((i) => i.message), bad).toEqual([expect.stringMatching(why)]);
+    }
+  });
+});
+
 describe("validateActivitySteps() — passing Ops", () => {
   it("returns no issues for a step matching its contract exactly", () => {
     const config = opWith({ phases: [phase("Diff", [activity("lifecycleDiff", { env: "prod", live: true })])] });

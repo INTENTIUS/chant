@@ -29,6 +29,7 @@ export interface AlbSharedProps {
   };
 }
 
+/** A shared ECS cluster and internet-facing Application Load Balancer with its listener and execution role, for FargateService instances to attach to. */
 export const AlbShared = Composite((props: AlbSharedProps) => {
   const listenerPort = props.listenerPort ?? 80;
   const protocol = props.protocol ?? "HTTP";

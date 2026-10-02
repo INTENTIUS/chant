@@ -18,6 +18,25 @@ Input YAML → parse → generate TypeScript → export typed resources
 
 The importer reads multi-document YAML, identifies each resource’s `apiVersion` and `kind`, and generates the corresponding typed constructor call. The output is a valid `.k8s.ts` file you can immediately build with `chant build`.
 
+## Collector configs, rule groups, Alertmanager configs and dashboards inside manifests
+
+`chant import` hands content that another lexicon owns to that lexicon, when it is installed:
+
+| In the manifest | Imported as |
+|---|---|
+| A ConfigMap value holding an OpenTelemetry Collector config (any key: `config.yaml`, the Helm chart's `relay`) | otel components and pipelines, and `collectorYaml([...])` in the ConfigMap |
+| A ConfigMap value holding a Prometheus rule file | prometheus `RuleGroup`s (an `Slo`'s group as that `Slo`), and `ruleFileYaml([...])` in the ConfigMap |
+| A `PrometheusRule`'s `spec.groups` | prometheus `RuleGroup`s, listed in `spec.groups` |
+| A ConfigMap value holding an `alertmanager.yml`, such as the one the alertmanager Helm chart renders | prometheus receivers, time intervals, the root `Route`, inhibit rules and `AlertmanagerSettings`, and `alertmanagerYaml([...])` in the ConfigMap |
+| A ConfigMap value holding classic Grafana dashboard JSON, such as a dashboard labelled `grafana_dashboard` for the Grafana sidecar | a grafana `Dashboard`, and `dashboardJson(dashboard)` in the ConfigMap |
+| A Grafana Operator `GrafanaDashboard`'s `spec.json` | a grafana `Dashboard`, and `dashboardJson(dashboard)` in `spec.json` |
+
+Each is written in a directory named after the resource (and the key, when the ConfigMap has several), with the owner's usual modules, and the k8s module imports what it references. The workload still mounts the ConfigMap by name, and `chant build` renders the same content back into it. The content comes back as the owner's serializer writes it: an `alertmanager.yml` has its receivers sorted by name, and Alertmanager's deprecated `match` spellings rewritten as matchers, as a standalone `chant import alertmanager.yml` does.
+
+A v2 Grafana dashboard (`dashboard.grafana.app/v2`, Grafana 13's default export) in a ConfigMap stays a string, with a warning. The grafana lexicon reads v2, but it builds classic (v1) JSON, so importing it would turn the ConfigMap's v2 dashboard into a v1 one on the next build. To manage it as a typed dashboard, import the JSON on its own with the grafana lexicon (see its [v2 dashboards](/chant/lexicons/grafana/importing/#v2-dashboards)) and put `dashboardJson(dashboard)` in the ConfigMap yourself.
+
+The k8s lexicon does not depend on those lexicons for this. Core finds the owner at run time. If it is not installed, the value stays a string and the import warns, naming the package to install. Other ConfigMap values, such as a Loki or Tempo config, stay strings with no warning.
+
 ## Running the import roundtrip
 
 From the `lexicons/k8s` directory:

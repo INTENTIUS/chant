@@ -1,9 +1,12 @@
-import { describe, test, expect } from "vitest";
-import { fork } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { describe, test, expect, vi } from "vitest";
+import { fork, type ChildProcess } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runFallbackFilesSandboxed } from "./run";
+import { forkSandboxed, settleOnExitAfterChannelDrains } from "./fork";
+import { generateConfigDriverSource, generateDriverSource, generatePolicyDriverSource, sendFunctionSource } from "./driver";
 
 /**
  * chant#2461 — a child that ends without a usable result says which way it did.
@@ -22,13 +25,13 @@ import { runFallbackFilesSandboxed } from "./run";
  *   - a payload the parent's `isResponse` refuses, which used to be dropped in
  *     silence and then reported as though nothing had been sent
  *
- * A third mechanism was proposed in the issue and is NOT covered, because it
- * was measured and does not happen: `process.send` racing the child's reap so
- * that `exit` is dispatched before an already-queued `message`. With the parent
- * blocked so both were certainly pending, `message` won 60 times out of 60. The
- * live IPC channel keeps the child alive until the payload flushes, and the
- * driver has no `process.exit()` to cut that short. The last test here records
- * that, so the disproof is not lost with the transcript.
+ * A third mechanism, the one the issue first proposed, was ruled out early on
+ * a test that blocked the parent (`message` won 60 of 60) and turned out to be
+ * the real one: under concurrent load the parent can handle a child's `exit`
+ * before the `message` it had already written. A stress run of the real
+ * `evaluateConfigSandboxed` lost 3 of 800 that way. The parent now waits for
+ * the IPC channel to drain before it reads an exit, and the drivers await
+ * their `process.send` callback; both are pinned below.
  */
 function runChild(source: string): Promise<{ code: number | null; message: unknown; stderr: string }> {
   const dir = mkdtempSync(join(tmpdir(), "chant-fork-diag-"));
@@ -62,9 +65,9 @@ describe("why a sandboxed child ends without a result (chant#2461)", () => {
     expect(r.stderr.trim()).toBe("");
   });
 
-  test("a child that sends and falls off the end always gets its message through", async () => {
-    // The disproof, kept as a test. If this ever fails, the race the issue
-    // proposed is real after all and the diagnostic's wording needs revisiting.
+  test("a child that sends and falls off the end gets its message through", async () => {
+    // Usually true even on a bare `exit` handler; the drain wait is what makes
+    // it true every time. See the settleOnExitAfterChannelDrains tests below.
     const results = await Promise.all(
       Array.from({ length: 12 }, () => runChild("process.send({ ok: true });\n")),
     );
@@ -122,4 +125,124 @@ describe("why a sandboxed child ends without a result (chant#2461)", () => {
       rmSync(root, { recursive: true, force: true });
     }
   }, 120_000);
+});
+
+/** A stand-in for a ChildProcess: just the events and the `connected` flag the helper reads. */
+function fakeChild(connected: boolean): ChildProcess & EventEmitter {
+  const child = new EventEmitter() as ChildProcess & EventEmitter;
+  (child as { connected: boolean }).connected = connected;
+  return child;
+}
+
+describe("settleOnExitAfterChannelDrains (chant#2461)", () => {
+  test("an exit handled before the last message waits for the channel, so the message wins", () => {
+    // The observed ordering: exit first, the already-written message after,
+    // then the channel's EOF. Settling on exit alone dropped the message.
+    const child = fakeChild(true);
+    const order: string[] = [];
+    child.on("message", () => order.push("message"));
+    settleOnExitAfterChannelDrains(child, (code) => order.push(`exit:${code}`));
+
+    child.emit("exit", 0, null);
+    child.emit("message", { ok: true });
+    expect(order).toEqual(["message"]);
+
+    child.emit("disconnect");
+    expect(order).toEqual(["message", "exit:0"]);
+  });
+
+  test("a channel that has already closed settles on exit straight away", () => {
+    const child = fakeChild(false);
+    const onExit = vi.fn();
+    settleOnExitAfterChannelDrains(child, onExit);
+    child.emit("exit", 3, null);
+    expect(onExit).toHaveBeenCalledWith(3, null);
+  });
+
+  test("a channel that never reports closed is bounded by the grace period", () => {
+    vi.useFakeTimers();
+    try {
+      const child = fakeChild(true);
+      const onExit = vi.fn();
+      settleOnExitAfterChannelDrains(child, onExit, 50);
+      child.emit("exit", 0, null);
+      vi.advanceTimersByTime(49);
+      expect(onExit).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(onExit).toHaveBeenCalledTimes(1);
+      child.emit("disconnect");
+      expect(onExit).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("real sandboxed children that send and return all resolve, many at once", async () => {
+    // The shape of the stress harness, small enough for CI: a --permission
+    // child that sends and returns, through forkSandboxed's settle logic.
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "chant-2461-many-")));
+    try {
+      const file = join(dir, "child.mjs");
+      writeFileSync(file, 'process.send({ kind: "chant-config", ok: true, config: { pad: "x".repeat(65536) } });\n');
+      const isResponse = (v: unknown): v is { kind: string } =>
+        typeof v === "object" && v !== null && (v as { kind?: unknown }).kind === "chant-config";
+      const results = await Promise.all(
+        Array.from({ length: 32 }, () =>
+          forkSandboxed(
+            { bundlePath: file, bundleDir: dir, projectRealpath: dir, externalReadPaths: [], env: { PATH: process.env.PATH ?? "" }, timeoutMs: 60_000, label: "many", outputPrefix: "[t]" },
+            isResponse,
+          ),
+        ),
+      );
+      expect(results.every((r) => r.kind === "chant-config")).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+});
+
+describe("driver send awaits delivery and fails loudly (chant#2461)", () => {
+  const harness = (body: string): string =>
+    ['import { writeSync } from "node:fs";', ...sendFunctionSource(), body].join("\n");
+
+  test("a send that succeeds resolves, and the code after it runs", async () => {
+    const r = await runChild(harness('await send({ ok: 1 }); writeSync(2, "after\\n");'));
+    expect(r.code).toBe(0);
+    expect(r.message).toEqual({ ok: 1 });
+    expect(r.stderr).toBe("after\n");
+  });
+
+  test("a send on a closed channel exits non-zero with the reason on stderr", async () => {
+    const r = await runChild(harness('process.disconnect(); await send({ ok: 1 }); writeSync(2, "unreachable\\n");'));
+    expect(r.code).toBe(1);
+    expect(r.message).toBeUndefined();
+    expect(r.stderr).toContain("could not hand its result to the parent");
+    expect(r.stderr).toContain("chant#2461");
+    expect(r.stderr).not.toContain("unreachable");
+  });
+
+  test("a payload that cannot be serialized exits non-zero with the reason on stderr", async () => {
+    const r = await runChild(harness("await send({ big: 1n });"));
+    expect(r.code).toBe(1);
+    expect(r.message).toBeUndefined();
+    expect(r.stderr).toContain("could not hand its result to the parent");
+  });
+
+  test("every driver awaits or returns every send", () => {
+    // A bare `send(...)` statement would let main() return before the write
+    // completes. The only unawaited call allowed is main().catch's, whose
+    // promise is the last thing the module does.
+    const sources = {
+      config: generateConfigDriverSource("/tmp/project/chant.config.ts"),
+      run: generateDriverSource({ files: ["/tmp/project/a.ts"], buildRoot: "/tmp/project" }),
+      policy: generatePolicyDriverSource(["/tmp/project/policy.ts"]),
+    };
+    for (const [name, source] of Object.entries(sources)) {
+      const bare = source
+        .split("\n")
+        .filter((line) => /^\s*(send|fail)\(/.test(line))
+        .filter((line) => !/^\s*send\(\{[^\n]*fatal: true|^\s*send\(\{ kind: "chant-config", ok: false, error: classifyChildError\([^)]*, err\)\.toJSON\(\) \}\),$/.test(line));
+      expect({ name, bare }).toEqual({ name, bare: [] });
+    }
+  });
 });

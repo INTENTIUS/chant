@@ -18,6 +18,8 @@ export interface ParsedArgs {
   watch: boolean;
   verbose: boolean;
   help: boolean;
+  /** `--version` / `-V` (#2701): print the installed chant's version. */
+  version?: boolean;
   report?: boolean;
   /** `chant run` — force the local in-process executor (the default). */
   local?: boolean;
@@ -73,6 +75,8 @@ export interface ParsedArgs {
   migrateFrom?: string;
   /** `chant import --kustomize <dir>` — render the kustomization, then import (#1548) */
   kustomize?: string;
+  /** `chant import --parser-option key[=value]`, repeatable (#2994): options for the lexicon's template parser */
+  parserOption?: string[];
   /** `chant carve advise --state <path>` — opt-in .tfstate for accurate instance counts */
   statePath?: string;
   /** `chant carve emit --select <tf-address>` — the Terraform resource to carve */
@@ -131,6 +135,16 @@ export interface ParsedArgs {
   namespace?: string;
   /** `chant workspace upgrade --allow-code` (#2550) — run migrations whose body is the template's own code. */
   allowCode?: boolean;
+  /** `chant workspace upgrade --source <repo>[#<member>]` (#2551): move the scope to another template. */
+  source?: string;
+  /** `chant workspace adopt-lineage --tags <glob>` and `hash-index --tags` (#2551): the tags to compare. */
+  tags?: string;
+  /** `chant workspace adopt-lineage --index <file>` (#2551): a cached hash index. */
+  index?: string;
+  /** `chant workspace versions --available` (#2551): list each git template's version tags. */
+  available?: boolean;
+  /** `chant workspace import --remove` (#2552): remove the export member instead of writing it again. */
+  remove?: boolean;
   /** `chant lifecycle rollback --dry-run` — compute the rollback delta and print it; open no PR, push nothing, leave no branch. */
   dryRun?: boolean;
   /** `chant lifecycle teardown <env> --yes` — execute the planned deletion
@@ -283,8 +297,92 @@ export interface ParsedArgs {
   at?: string;
   /** `chant workspace records --kind <path>` (#2546): the record kind file to read records through. */
   kind?: string;
+  /** Every `--kind` given, in order: `chant workspace graph --intent` reads each (#2651). */
+  kinds?: string[];
+  /** Every `--by` given, in order: `chant workspace points answer` counts each person toward the quorum (#2739). */
+  bys?: string[];
+  /** `chant workspace points --open` (#2739): only the questions still open. */
+  open?: boolean;
+  /** `chant workspace points ask <point> --inputs <file|->` (#2739): the inputs, as a JSON object. */
+  inputs?: string;
+  /** `chant workspace points ask <point> --response <file>` (#2739): a POST /v1/systemone response the caller got from a backend. */
+  response?: string;
+  /** `chant workspace points ask <point> --subject <id>` (#2739): what the question is about. */
+  subject?: string;
+  /** `chant workspace points answer <id> --answer <value>` (#2739): the people's answer. */
+  answer?: string;
+  /** `chant workspace graph --no-cache` (#2876): read every member, bypassing the per-member cache. */
+  noCache?: boolean;
+  /** `chant workspace graph --composites` (#2662): print each composite instance with the components that can deploy it. */
+  composites?: boolean;
+  /** `chant workspace graph --intent <path[:start-end]>` (#2651): the region the intent graph is over. Empty with `--record`. */
+  intent?: string;
+  /** `chant workspace graph --intent --record <id>`: walk one decision record over every entry its constrains lists. */
+  record?: string;
+  /** `chant workspace patch <range> --path <p>`: only these paths, from the workspace root. Repeatable. */
+  paths?: string[];
+  /** `chant workspace patch <range> --max-bytes <n>`: the most hunk text printed for one file. */
+  maxBytes?: number;
+  /** `chant workspace patch [<commit>] --worktree`: the working tree against the commit (HEAD unless given). */
+  worktree?: boolean;
+  /** `chant workspace check --changes <base>..<head>` (#2773): the diff the forward coverage check maps to records. */
+  changes?: string;
+  /** `chant workspace check --changes ... --severity off|warn|fail` (#2773): in place of the declaration's `changes.severity`. */
+  severity?: string;
   /** `chant workspace records --current` (#2546): leave out records a closed record supersedes. */
   current?: boolean;
+  /** `chant workspace records amend <id> --set <file|->` (#2670): the JSON fields to set. */
+  set?: string;
+  /** `chant workspace records review <id> --verdict <v>` (#2670): agree, dissent or abstain. */
+  verdict?: string;
+  /**
+   * `chant workspace records review <id> --by <principal>` (#2670): the
+   * reviewer, as the caller names them. Also `chant workspace records new
+   * --by <name>` (#2756): the record's proposer, or its decider when it
+   * opens straight into a later state; see {@link ChannelOptions.by} in
+   * `records-write.ts`.
+   */
+  by?: string;
+  /**
+   * `chant workspace records review <id> --sign [<key file>]` (#2687): the key that seals the verdict, or true for git's user.signingkey.
+   * On `records new` and `records amend`, the key that seals the record's author (#2688).
+   */
+  sign?: string | true;
+  /** `chant workspace records review <id> --session <id>` (#2670): the review session the verdict was given in. */
+  session?: string;
+  /** `chant workspace records new <kind> --prefix <prefix>` (#2670): the id prefix to allocate under. */
+  prefix?: string;
+  /** `chant workspace records|verify --require attested` (#2547): the provenance level a gate requires. */
+  require?: string;
+  /** `chant workspace evidence sign --key` (a runner's Ed25519 PEM) and `signers sign --key` (an ssh private key) (#2553). */
+  key?: string;
+  /** `chant workspace evidence sign --check-id <id>` (#2553): the check the evidence is for. */
+  checkId?: string;
+  /** `chant workspace evidence sign --claim <file>` (#2553): hashed into the evidence. */
+  claim?: string;
+  /** `chant workspace evidence sign --environment <file>` (#2553): the runner environment, hashed into the evidence. */
+  environment?: string;
+  /** `chant workspace evidence verify --envelope <file>` (#2553). */
+  envelope?: string;
+  /** `chant workspace signers rotate --threshold <n>` (#2553). */
+  threshold?: string;
+  /**
+   * `chant build --root-only` and `chant lint --root-only` (#2537): run on the
+   * root project of a declared workspace, members left out, instead of
+   * refusing with `WSP000`.
+   */
+  rootOnly?: boolean;
+  /**
+   * `chant workspace check --generated` (#2641): run each declared generator
+   * and compare its output with the file in the tree. Off by default, since
+   * generators run member code.
+   */
+  generated?: boolean;
+  /**
+   * `chant workspace build|lint|audit|graph --member <name>` (#2537): run only
+   * the named members or example groups. Repeatable, and a comma list works too.
+   */
+  members?: string[];
   /**
    * `chant search "<q>" --ambient --live --env <name>` (#1278) — also report
    * resources of a kind this estate manages that exist in the account without
@@ -327,6 +425,10 @@ export interface ParsedArgs {
   component?: string;
   /** `chant components release record --digest <sha256:...>` (#568) — artifact digest to record, joining this release to the build archive/ledger. Also `chant components export --digest <manifestDigest>` (#929) — a build archive manifest digest to export directly, bypassing env/component resolution. */
   digest?: string;
+  /** `chant components release record --release-plan <file>` (ws-055, #2733) — path to a release plan JSON file, persisted content-addressed to `_plans/<digest>.json` on chant/lifecycle and read back through the read contract (`chant workspace status --json`). The plan's own `digest` field supplies `--digest` when it is omitted, and must match it when both are given. Distinct from `--plan` (#2300, below), the Op gate-approval plan digest. */
+  releasePlanFile?: string;
+  /** Every `--digest` value, in order (#2602). `chant components promote --digest <component>=<sha256:...>` is repeatable, one per component; the other commands read the single {@link digest}. */
+  digests?: string[];
   /** `chant components release record --git-sha <sha>` (#568) — git commit the deploy was built from. */
   gitSha?: string;
   /** `chant components release record --run-id <id>` (#568) — orchestrator/CI run identifier. */
@@ -343,6 +445,8 @@ export interface ParsedArgs {
   noReleaseRecord?: boolean;
   /** `chant run --components <name> --dump-outputs <file>` — after the run, write the accumulated cross-component/cross-stack outputs (JSON, keyed by component name) to `<file>`, for a downstream job to `--seed-outputs`. */
   dumpOutputs?: string;
+  /** `chant run --components <name> --digest-file <file>` (#2602) — after a successful run, write one `<component>=<digest>` line per release the run recorded to `<file>`, the form `chant components promote --digest` takes, so a generated promote job promotes exactly the release its pipeline run built. Written empty when nothing was recorded. */
+  digestFile?: string;
   /** `chant run --components <name> --seed-outputs <file>` (repeatable) — before the run, load each JSON outputs file (as written by `--dump-outputs`) and seed cross-component/cross-stack resolution with it, so a `stackOutput()`/`@<dep>.publish.*` reference to a component that ran in an earlier job resolves. */
   seedOutputs?: string[];
   /** `chant build --fold` (#1022/#1023, epic #1019) — opt-in: fold source modules statically instead of importing/running them; folds resource constructors and composite factory calls, falling back to run per-file for anything the folder can't represent (a cross-file-only reference, a re-export, `export default`, …). Also settable project-wide via `chant.config.ts`'s `build.fold: true`; the flag always wins when set. Default (flag omitted): the existing run path, unchanged. */
@@ -367,6 +471,23 @@ export interface ParsedArgs {
   interval?: string;
   /** `chant operator --lease-ttl <duration>` (#1485) — how long an acquired lease is valid before it's reclaimable by another operator. Default: 5m. */
   leaseTtl?: string;
+  /**
+   * `chant operator --steward [<name>]` (#2731) — run a declared steward's
+   * local form: its scheduled Ops on their crons, under the steward's own
+   * lease. `""` when the flag is given without a name, which picks the
+   * project's only steward.
+   */
+  steward?: string;
+  /** `chant workspace work claim|renew|release <id> --holder <name>` (#2732): who holds, or releases, the work lease. */
+  holder?: string;
+  /** `chant run <op> --work <id>` (#2748): the work item an Op with a work lease runs under. `chant workspace check --changes --work <id>` (#2773): the work item in hand. */
+  work?: string;
+  /** `chant workspace work claim|renew <id> --ttl <seconds|duration>` (#2732): how long the lease lasts unless renewed. */
+  ttl?: string;
+  /** `chant workspace work renew|release <id> --token <token>` (#2732): the fencing token the caller holds. */
+  token?: string;
+  /** `chant workspace work release <id> --outcome <text>` (#2732): how the work ended, such as done or not_done. */
+  outcome?: string;
   /** `chant operator --once` (#1485) — run a single round and exit, instead of looping until Ctrl-C. Also the offline test/cron-invoker story. */
   once?: boolean;
   /** `chant approve <op> <gate> --note <text>` (#1485) — optional free-text prose recorded on the gate-resolution fact. The PR link belongs in `--url` since #2028; this is for everything that isn't the link. */
@@ -387,7 +508,7 @@ export interface ParsedArgs {
   plan?: string;
   /** `chant operator log --op <name>` (#2029) — restrict the tick history to one ConvergeOp by name. Omitted, every discovered ConvergeOp's ticks are merged into one timeline. */
   op?: string;
-  /** `chant operator log --since <iso>` (#2029) — only entries at or after this ISO-8601 instant. */
+  /** `chant operator log --since <iso>` (#2029) — only entries at or after this ISO-8601 instant. `chant workspace records --since <rev>` (#2673) — the revision to compare the records with. */
   since?: string;
   /** `chant operator log --limit <n>` (#2029) — keep only the newest n entries (still printed oldest-first). */
   limit?: number;
@@ -403,6 +524,13 @@ export interface CommandDef {
   name: string;
   /** If true, load lexicon plugins before calling handler */
   requiresPlugins?: boolean;
+  /**
+   * chant#2591, chant#2589 — the command never evaluates the project's
+   * `chant.config.ts`, so `main` does not load it before dispatch either. Such
+   * a command reads what it needs from the config statically
+   * (../config-static.ts). A function decides per invocation.
+   */
+  runsNoConfig?: boolean | ((args: ParsedArgs) => boolean);
   /** Command handler — returns exit code */
   handler: (ctx: CommandContext) => Promise<number>;
 }

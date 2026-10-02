@@ -61,6 +61,36 @@ export type {
   ApplyCtx,
 } from "./fly-apply";
 
+// The release a Machine serves and the site steps over the Machines API
+// (#2736, ws-056): upload and start, exec (migrations), restart, stop, verify,
+// restore. `loadActivities(["fly"])` binds these by name; the `fly-release`
+// and `fly-rollback` capabilities compose them.
+export {
+  flyMachineRelease,
+  flyMachineExec,
+  flyMachineRestart,
+  flyMachineStop,
+  flyMachineVerify,
+  flyMachineRestore,
+} from "./machine-release";
+// The fly-release capability as an Op step (#2782): a release Op's ship phase.
+export { flyRelease } from "./fly-release-step";
+export type { FlyReleaseArgs, FlyReleaseResult } from "./fly-release-step";
+// The fly-rollback capability as an Op step (#2800): a rollback Op's restore.
+export { flyRollback } from "./fly-rollback-step";
+export type { FlyRollbackArgs, FlyRollbackResult } from "./fly-rollback-step";
+export type {
+  MachineRelease,
+  FlyMachineReleaseArgs,
+  FlyMachineReleaseResult,
+  MachineFile,
+  FlyMachineExecArgs,
+  FlyMachineExecResult,
+  FlyMachineStateArgs,
+  FlyMachineVerifyArgs,
+  FlyMachineRestoreArgs,
+} from "./machine-release";
+
 // mudflaps (Fly Machines API emulator) lifecycle — boots/tears down the local
 // flaps target flyApply is exercised against.
 export {
@@ -87,7 +117,10 @@ export {
   spriteRestore,
   listCheckpoints,
   spriteDestroy,
+  spriteDelete,
+  spriteUrl,
   resolveSpritesEndpoint,
+  resolveSpritesToken,
   defaultSpritesHttp,
   spriteCreateBody,
   parseCreateResponse,
@@ -110,7 +143,57 @@ export type {
   ListCheckpointsArgs,
   Checkpoint,
   SpriteDestroyArgs,
+  SpriteDeleteArgs,
+  SpriteUrlArgs,
+  SpriteUrlResult,
 } from "./sprites";
+
+// Sprite Services activities (#2711) — imperative create/get/list/start/stop/
+// delete/logs for one background service at a time, the single-service
+// primitives underneath `spriteApplyServices`'s batch reconcile.
+// `loadActivities(["fly"])` binds these; the step builders live in core.
+export {
+  spriteServiceCreate,
+  spriteServiceGet,
+  spriteServiceList,
+  spriteServiceStart,
+  spriteServiceStop,
+  spriteServiceDelete,
+  spriteServiceLogs,
+  spriteServiceCreateBody,
+  parseServiceLogNdjson,
+} from "./sprite-services";
+export type {
+  SpriteService,
+  SpriteServiceState,
+  SpriteServiceCreateArgs,
+  SpriteServiceGetArgs,
+  SpriteServiceListArgs,
+  SpriteServiceStartArgs,
+  SpriteServiceStopArgs,
+  SpriteServiceDeleteArgs,
+  SpriteServiceLogsArgs,
+  SpriteServiceLogsResult,
+} from "./sprite-services";
+
+// A sprite's services as resources a ConvergeOp observes and converges (#2778):
+// the observer step and the restart a converge rule dispatches.
+export {
+  spriteServicesObserve,
+  spriteServiceRestart,
+  declaredServices,
+  resolveDeclaredServices,
+  findSpriteEnv,
+  parseServicesList,
+  probeHealth,
+} from "./sprite-service-converge";
+export type {
+  DeclaredSpriteService,
+  SpriteServicesObserveArgs,
+  SpriteServicesObserveResult,
+  SpriteServiceRestartArgs,
+  SpriteServiceRestartResult,
+} from "./sprite-service-converge";
 
 // Sprite filesystem activities (#848) — imperative file I/O over the fs API.
 // `loadActivities(["fly"])` binds these; the step builders live in core.
@@ -143,7 +226,13 @@ export {
   networkRulesEqual,
   validateServices,
   serviceConfigEqual,
+  parseServiceDefinitions,
+  listedServiceDiffers,
+  spriteEnvCreateArgs,
 } from "./sprite-config";
+// A box's declared services (#2880), read from its box block with `box: true`.
+export { boxServices, expandServiceCommand, inStartOrder } from "./box-services";
+export type { BoxServiceDeclaration } from "./box-services";
 export type {
   NetworkRule,
   SpriteApplyNetworkPolicyArgs,
@@ -151,6 +240,8 @@ export type {
   ServiceSpec,
   SpriteApplyServicesArgs,
   SpriteApplyServicesResult,
+  ServiceApplyAction,
+  ListedService,
 } from "./sprite-config";
 
 // Sprite keep-alive Tasks activities (#847) — a hold that stops a Sprite pausing

@@ -25,13 +25,21 @@ import { resolveActivity, type ActivityFn, type ActivityProfile } from "./activi
 import type { ReceiptReadResult } from "./receipt-store";
 import { isStepOutputRef } from "./step-output-ref";
 import { parseDuration } from "./duration";
+import { stepTimeoutProblem } from "./activity-profiles";
 import { describeGateMismatch, evaluateGate, gitGateLedgerPort, type GateCheck, type GateLedgerPort } from "./gate";
 import { gateName } from "./gate-name";
 import type { ResolvedGateApproval } from "./gate-approval";
 import type { PendingGateRecord } from "../lifecycle/gate-ledger";
+import { isPointWait, type WaitingPoint } from "./steward-points";
+import { isGateWait } from "./gate-wait";
+import { currentStewardTurn, enterStewardTurn } from "./steward-turn";
 import { appendRunRecord, buildRunRecord } from "../lifecycle/run-ledger";
 import type { OpRunRecord } from "./runtime";
 import { randomUUID } from "node:crypto";
+import { RunWorkLease, LEASE_LOST, workLeaseProblems, workLeaseNeedsRunItem, type WorkLeaseRunResult } from "./work-lease-run";
+import { WORK_LEASE_STEP_ID } from "./types";
+import { LiveRun, currentLiveRun, withLiveRun } from "./run-live";
+import { runEnvOf } from "../lifecycle/run-ledger";
 
 export { parseDuration } from "./duration";
 
@@ -76,6 +84,18 @@ export interface StepRecord {
    * was applied.
    */
   refusal?: string;
+  /**
+   * Set on an activity step that asked a decision point still open (#2749):
+   * the question the run now waits on. The step's status is `skipped` and the
+   * run's is `waiting`: nothing broke, and a person answers the question.
+   */
+  point?: WaitingPoint;
+  /**
+   * Set on an activity step whose command stopped at a gate of its own
+   * (#2779): the op the gate is recorded under and its name, what `chant
+   * approve` takes. The step's status is `skipped` and the run's is `gated`.
+   */
+  gate?: { op: string; gate: string };
 }
 
 export interface OpRunResult {
@@ -89,11 +109,17 @@ export interface OpRunResult {
    *
    * Written to the run ledger as the record's own `status` (#2118).
    */
-  status: "ok" | "fail" | "gated";
+  status: "ok" | "fail" | "gated" | "waiting";
   /** ISO-8601 start of this run. */
   startedAt: string;
   /** Present when `status === "gated"`: the pending fact the run ended on. */
   gate?: PendingGateRecord;
+  /**
+   * Present when `status === "waiting"` (#2749): the open decision point the
+   * run stopped on. Like a gate, it is a fact and not a wait: a person answers
+   * the question, and the next run reads the answer.
+   */
+  point?: WaitingPoint;
   /**
    * Present when `status === "gated"` and this run's own append tried to push:
    * whether it reached the remote (#2310). Absent when the run stopped on a
@@ -110,6 +136,12 @@ export interface OpRunResult {
    * document.
    */
   record: OpRunRecord;
+  /**
+   * How the run's work lease went, for an Op that declares `workLease`
+   * (#2748): the item it claimed, or why it claimed none, whether the lease
+   * was released and with which outcome, or why it was lost.
+   */
+  workLease?: WorkLeaseRunResult;
 }
 
 // ── Errors ────────────────────────────────────────────────────────────────��─
@@ -162,6 +194,35 @@ class GateStop extends Error {
   ) {
     super(`gate "${pending.gate}" is pending approval`);
     this.name = "GateStop";
+  }
+}
+
+/** Internal: a step asked a decision point that is still open (#2749). Not a failure — no compensation follows it. */
+class PointStop extends Error {
+  constructor(
+    public readonly records: StepRecord[],
+    public readonly question: WaitingPoint,
+    public readonly phase: string,
+  ) {
+    super(`waiting on decision point ${question.id}`);
+    this.name = "PointStop";
+  }
+}
+
+/**
+ * Internal: a step boundary found the run can't go on under its work lease
+ * (#2748). `lost` false is a claim that found nothing to claim: not a
+ * failure, the run ends `ok` with the rest skipped. `lost` true is a lease
+ * that was lost: the run fails with `lease-lost`.
+ */
+class WorkStop extends Error {
+  constructor(
+    public readonly records: StepRecord[],
+    public readonly phase: string,
+    public readonly lost: boolean,
+  ) {
+    super(lost ? LEASE_LOST : "nothing to claim");
+    this.name = "WorkStop";
   }
 }
 
@@ -287,6 +348,8 @@ async function callWithTimeout(
 interface RanStep {
   record: StepRecord;
   result?: unknown;
+  /** The pending fact a step's command stopped at (#2779), when it threw {@link GateWait}. */
+  pending?: PendingGateRecord;
 }
 
 /**
@@ -316,9 +379,16 @@ async function runStep(
   }
 
   const profile = profiles[step.profile ?? DEFAULT_PROFILE] ?? {};
-  const timeoutMs = profile.timeout
-    ? parseDuration(profile.timeout)
-    : FALLBACK_TIMEOUT_MS;
+  // A step's own timeout (#2787) replaces the profile's and keeps its retries.
+  if (step.timeout !== undefined) {
+    const problem = stepTimeoutProblem(step.timeout);
+    if (problem) return { record: { ...base, status: "fail", durationMs: 0, error: problem } };
+  }
+  const timeoutMs = step.timeout !== undefined
+    ? parseDuration(step.timeout)
+    : profile.timeout
+      ? parseDuration(profile.timeout)
+      : FALLBACK_TIMEOUT_MS;
   const maxAttempts =
     profile.retry?.maximumAttempts && profile.retry.maximumAttempts > 0
       ? profile.retry.maximumAttempts
@@ -330,6 +400,15 @@ async function runStep(
     : Infinity;
   const nonRetryable = profile.retry?.nonRetryableErrorTypes ?? [];
 
+  // The in-flight record names the step while it runs.
+  const ended = currentLiveRun()?.stepStarted(step.fn, step.id);
+  try {
+    return await attempts();
+  } finally {
+    ended?.();
+  }
+
+  async function attempts(): Promise<RanStep> {
   let lastErr: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
@@ -343,6 +422,17 @@ async function runStep(
       }
       return { record, result };
     } catch (err) {
+      // An open decision point (#2749) is not a failure and not worth a retry:
+      // the answer comes from a person, on a later run.
+      if (isPointWait(err)) {
+        return { record: { ...base, status: "skipped", durationMs: Date.now() - start, point: err.question } };
+      }
+      // Nor is a command that stopped at a gate of its own (#2779): the run
+      // ends `gated` there, and the next run asks the command again.
+      if (isGateWait(err)) {
+        const gate = { op: err.pending.op, gate: err.pending.gate };
+        return { record: { ...base, status: "skipped", durationMs: Date.now() - start, gate }, pending: err.pending };
+      }
       lastErr = err;
       // Stop retrying on abort (Ctrl-C / timeout cascade) or a non-retryable error.
       const fatal =
@@ -356,6 +446,7 @@ async function runStep(
     }
   }
   return { record: { ...base, status: "fail", durationMs: Date.now() - start, error: errMessage(lastErr) } };
+  }
 }
 
 // ── Effect steps (#1834) ──────────────────────────────────────────────────────
@@ -391,6 +482,69 @@ interface GateContext {
   runId?: string;
   /** Called once per settled step, in production order (#2121) — what `--progress-json` streams from. */
   onRecord?: (record: StepRecord) => void;
+  /** The run's hold on its work item's lease (#2748). Absent in compensation phases, which run whatever the lease did. */
+  work?: RunWorkLease;
+}
+
+/**
+ * The work lease at a step boundary (#2748): claim it when it is due, and
+ * say whether the run can go on. The claim's record is pushed onto `sink`.
+ * Returns `undefined` to go on, `"unclaimed"` when nothing could be claimed,
+ * and `"lost"` when the lease was lost.
+ */
+async function workBoundary(
+  phaseName: string,
+  ctx: GateContext,
+  resultsById: Map<string, unknown>,
+  sink: StepRecord[],
+): Promise<"unclaimed" | "lost" | undefined> {
+  const work = ctx.work;
+  if (!work) return undefined;
+  if (work.due(resultsById)) {
+    const start = Date.now();
+    let claimed: Awaited<ReturnType<RunWorkLease["claim"]>>;
+    try {
+      claimed = await work.claim(resultsById);
+    } catch (err) {
+      pushRecord(sink, ctx, {
+        phase: phaseName,
+        fn: "workLease:claim",
+        args: {},
+        status: "fail",
+        durationMs: Date.now() - start,
+        error: errMessage(err),
+      });
+      throw new PhaseFailure(sink);
+    }
+    if (claimed.kind === "unclaimed") {
+      pushRecord(sink, ctx, {
+        phase: phaseName,
+        fn: "workLease:claim",
+        args: { items: claimed.tried },
+        status: "skipped",
+        durationMs: Date.now() - start,
+        refusal: claimed.refusal,
+        outcome: { name: "WorkItem", value: null },
+        outcomes: [{ name: "WorkItem", value: null }],
+      });
+      return "unclaimed";
+    }
+    resultsById.set(WORK_LEASE_STEP_ID, claimed.lease);
+    currentLiveRun()?.item(claimed.lease.item);
+    pushRecord(sink, ctx, {
+      phase: phaseName,
+      fn: "workLease:claim",
+      args: { items: claimed.tried },
+      status: "ok",
+      durationMs: Date.now() - start,
+      outcome: { name: "WorkItem", value: claimed.lease.item },
+      outcomes: [
+        { name: "WorkItem", value: claimed.lease.item },
+        { name: "WorkLeaseToken", value: claimed.lease.token },
+      ],
+    });
+  }
+  return work.lost !== undefined ? "lost" : undefined;
 }
 
 /** Collect records and hand each to the caller's progress sink in one move. */
@@ -553,6 +707,7 @@ async function runEffectStep(
   pending?: PendingGateRecord;
   pushed?: boolean;
   pushWarning?: string;
+  point?: WaitingPoint;
 }> {
   const records: StepRecord[] = [];
 
@@ -618,6 +773,18 @@ async function runEffectStep(
     }
     const ran = await runStep(nested, phaseName, activities, profiles, resultsById, signal);
     pushRecord(records, gates, ran.record);
+    if (ran.pending) {
+      // A command's own gate (#2779): the receipt is left untouched, as for a
+      // pending gate step.
+      skipRest(i + 1);
+      return { records, failed: false, pending: ran.pending };
+    }
+    if (ran.record.point) {
+      // Receipt left untouched, as for a pending gate: the next run re-proposes
+      // the effect and asks the point again, and finds the answer by then.
+      skipRest(i + 1);
+      return { records, failed: false, point: ran.record.point };
+    }
     if (ran.record.status === "fail") {
       // Receipt left untouched (stale) — the next run re-proposes the effect.
       skipRest(i + 1);
@@ -666,6 +833,13 @@ async function runPhase(
     // read of the ledger, not work, and starting activities that a pending
     // gate is about to strand would defeat the point of stopping at it.
     const gateRecords: StepRecord[] = [];
+    const stop = await workBoundary(phase.name, gates, resultsById, gateRecords);
+    if (stop) {
+      for (const skipped of phase.steps) {
+        pushRecord(gateRecords, gates, isGate(skipped) ? skippedRecord(phase.name, gateFn(skipped)) : skippedRecord(phase.name, (skipped as ActivityStep).fn, (skipped as ActivityStep).args));
+      }
+      throw new WorkStop(gateRecords, phase.name, stop === "lost");
+    }
     for (const step of phase.steps.filter(isGate)) {
       const { record, pending, pushed, pushWarning } = await runGateStep(step, phase.name, gates, resultsById);
       pushRecord(gateRecords, gates, record);
@@ -685,12 +859,19 @@ async function runPhase(
       }
     }
     const steps = phase.steps.filter(isActivity);
-    const ran = (
-      await Promise.all(steps.map((s) => runStep(s, phase.name, activities, profiles, resultsById, signal)))
-    ).map((r) => r.record);
+    const settled = await Promise.all(steps.map((s) => runStep(s, phase.name, activities, profiles, resultsById, signal)));
+    const ran = settled.map((r) => r.record);
     for (const r of ran) gates.onRecord?.(r);
     const records = gateRecords.concat(ran);
     if (records.some((r) => r.status === "fail")) throw new PhaseFailure(records);
+    // A step whose command stopped at its own gate (#2779) stops the run at
+    // this phase, as a gate step would, once its siblings have finished.
+    const gated = settled.find((r) => r.pending)?.pending;
+    if (gated) throw new GateStop(records, gated, phase.name);
+    // The fan-out has already run, so the siblings of an open decision point
+    // finished; the run still stops at this phase (#2749).
+    const waiting = ran.find((r) => r.point);
+    if (waiting?.point) throw new PointStop(records, waiting.point, phase.name);
     return records;
   }
 
@@ -711,6 +892,13 @@ async function runPhase(
 
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i];
+    // The work lease (#2748): claimed here when it is due, and checked before
+    // every step, so no step starts once the lease is lost.
+    const stop = await workBoundary(phase.name, gates, resultsById, records);
+    if (stop) {
+      skipRemaining(i);
+      throw new WorkStop(records, phase.name, stop === "lost");
+    }
     if (isGate(step)) {
       const { record, pending, pushed, pushWarning } = await runGateStep(step, phase.name, gates, resultsById);
       pushRecord(records, gates, record);
@@ -727,10 +915,14 @@ async function runPhase(
       continue;
     }
     if (isEffect(step)) {
-      const { records: effRecords, failed, pending, pushed, pushWarning } = await runEffectStep(
+      const { records: effRecords, failed, pending, pushed, pushWarning, point } = await runEffectStep(
         step, phase.name, activities, profiles, resultsById, gates, signal,
       );
       records.push(...effRecords); // already emitted by runEffectStep
+      if (point) {
+        skipRemaining(i + 1);
+        throw new PointStop(records, point, phase.name);
+      }
       if (pending) {
         skipRemaining(i + 1);
         throw new GateStop(records, pending, phase.name, pushed, pushWarning);
@@ -741,8 +933,19 @@ async function runPhase(
       }
       continue;
     }
-    const { record } = await runStep(step, phase.name, activities, profiles, resultsById, signal);
+    const { record, pending } = await runStep(step, phase.name, activities, profiles, resultsById, signal);
     pushRecord(records, gates, record);
+    if (pending) {
+      // The step's command stopped at its own gate (#2779): the run ends
+      // `gated` there, as at a pending gate step.
+      skipRemaining(i + 1);
+      throw new GateStop(records, pending, phase.name);
+    }
+    if (record.point) {
+      // An open decision point (#2749) ends the run as a pending gate does.
+      skipRemaining(i + 1);
+      throw new PointStop(records, record.point, phase.name);
+    }
     if (record.status === "fail") {
       // Mark the remaining steps in this phase as skipped, then abort.
       skipRemaining(i + 1);
@@ -789,6 +992,17 @@ export interface RunOpOptions {
    * never promoted into a run failure.
    */
   onLedgerError?: (err: unknown) => void;
+  /** The steward whose turn this run is (#2749), recorded on its ledger record. */
+  steward?: string;
+  /**
+   * For an Op that declares `workLease` (#2748): the item this run is for
+   * (`chant run <op> --work <id>`), which takes the place of the Op's own, and
+   * who holds the lease (a steward's turn passes `stewardWorkHolder`).
+   * Defaults: the Op's item, and this process's holder id.
+   */
+  work?: { item?: string; holder?: string };
+  /** Called when a work-lease renewal fails without losing the lease; the next beat retries it. */
+  onWorkLeaseWarning?: (message: string) => void;
 }
 
 /**
@@ -797,9 +1011,10 @@ export interface RunOpOptions {
  * Resolves with the run result when every phase succeeds (`status: "ok"`), and
  * also when the run stopped at an unapproved gate (`status: "gated"`, with the
  * pending fact on `result.gate`) — a gate is a fact, not an error, so it is not
- * thrown. Rejects with `OpRunFailure` (carrying the partial result) on terminal
- * failure, after running any `onFailure` phases in reverse order; a gated run
- * runs no `onFailure` phase, because nothing failed and nothing was left
+ * thrown. So does an activity's open decision point (`status: "waiting"`, with
+ * the question on `result.point`, #2749). Rejects with `OpRunFailure` (carrying the partial result) on terminal
+ * failure, after running any `onFailure` phases in reverse order; a gated or
+ * waiting run runs no `onFailure` phase, because nothing failed and nothing was left
  * half-applied to compensate for.
  *
  * Whichever of the three ways it settles, the run carries an
@@ -818,6 +1033,40 @@ export async function runOpLocally(
   // The run id is the gate ledger's and the run ledger's alike: a pending gate
   // fact and the record naming that gate carry the same string.
   const runId = options.runId ?? randomUUID();
+  // In a steward's turn (#2749: `chant operator --steward`, or `chant acp
+  // --steward` on Fountain) the run is the steward's: its record names the
+  // steward, and a decision point asked during it names this run.
+  const turn = currentStewardTurn();
+  const steward = options.steward ?? turn?.steward;
+  const restore = turn && turn.run !== runId ? enterStewardTurn({ ...turn, run: runId }) : undefined;
+  // A run that writes to the ledger also says what it is doing while it runs
+  // (./run-live.ts), and removes that once its record is written.
+  const live = options.ledger
+    ? await LiveRun.open({
+        cwd: options.ledger.cwd ?? options.cwd ?? process.cwd(),
+        env: runEnvOf(config),
+        op: config.name,
+        id: runId,
+        started: options.now ?? new Date().toISOString(),
+        ...(steward ? { steward } : {}),
+      })
+    : undefined;
+  try {
+    return await withLiveRun(live, () => runOpInTurn(config, activities, profiles, signal, { ...options, runId, ...(steward ? { steward } : {}) }));
+  } finally {
+    live?.close();
+    restore?.();
+  }
+}
+
+async function runOpInTurn(
+  config: OpConfig,
+  activities: Map<string, ActivityFn>,
+  profiles: Record<string, ActivityProfile>,
+  signal: AbortSignal | undefined,
+  options: RunOpOptions & { runId: string },
+): Promise<OpRunResult> {
+  const runId = options.runId;
 
   const gates: GateContext = {
     op: config.name,
@@ -839,8 +1088,84 @@ export async function runOpLocally(
     }
   }
 
+  // The work lease (#2748). An Op that changes the checkout without one, or
+  // whose lease names no item and whose run names none, is refused before
+  // anything runs.
+  const workProblems = workLeaseProblems(config);
+  if (workProblems.length > 0) throw new Error(workProblems.join("\n"));
+  if (workLeaseNeedsRunItem(config) && !options.work?.item) {
+    throw new Error(
+      `Op "${config.name}" runs under a work item's lease and names no item: pass one with \`chant run ${config.name} --work <id>\``,
+    );
+  }
+  const work = config.workLease
+    ? new RunWorkLease(config, {
+        cwd: options.ledger?.cwd ?? options.cwd ?? process.cwd(),
+        ...(options.work?.holder ? { holder: options.work.holder } : {}),
+        ...(options.work?.item ? { item: options.work.item } : {}),
+        ...(options.onWorkLeaseWarning ? { onRenewError: options.onWorkLeaseWarning } : {}),
+      })
+    : undefined;
+  if (work) gates.work = work;
+
+  // Steps run under a signal that also fires when the work lease is lost, so
+  // the step in flight stops (chud's dispatcher stopped its agent the same way).
+  let stepSignal = signal;
+  if (work) {
+    const both = new AbortController();
+    const forward = () => both.abort();
+    if (signal?.aborted) both.abort();
+    else signal?.addEventListener("abort", forward, { once: true });
+    work.lostSignal.addEventListener("abort", forward, { once: true });
+    stepSignal = both.signal;
+  }
+
+  /** Release (or not) the work lease once the run's outcome is settled. */
+  const finishWork = async (status: OpRunResult["status"]): Promise<{ workLease?: WorkLeaseRunResult }> =>
+    work ? { workLease: await work.finish(status, resultsById) } : {};
+
+  /** The record a lost lease leaves, naming why. */
+  const lostRecord = (): StepRecord => ({
+    phase: UNATTRIBUTED_PHASE,
+    fn: "workLease:lost",
+    args: {},
+    status: "fail",
+    durationMs: 0,
+    error: `${LEASE_LOST}: ${work?.lost ?? "the lease was lost"}. The run stopped and was not recorded as done.`,
+  });
+
+  const skipLaterPhases = (after: string) => {
+    const stoppedAt = config.phases.findIndex((p) => p.name === after);
+    if (stoppedAt < 0) return;
+    for (const phase of config.phases.slice(stoppedAt + 1)) {
+      for (const step of phase.steps) {
+        records.push(
+          isEffect(step)
+            ? skippedRecord(phase.name, `effect:${step.receipt.name}`)
+            : isGate(step)
+              ? skippedRecord(phase.name, gateFn(step))
+              : skippedRecord(phase.name, step.fn, step.args),
+        );
+      }
+    }
+  };
+
   const records: StepRecord[] = [];
   const start = Date.now();
+  // Each phase's wall-clock time, for the run record and the in-flight one.
+  const phaseDurations: Record<string, number> = {};
+  const timedPhase = async (phase: PhaseDefinition, ctx: GateContext, phaseSignal: AbortSignal | undefined): Promise<StepRecord[]> => {
+    const live = currentLiveRun();
+    const t0 = Date.now();
+    live?.phaseStarted(phase.name);
+    try {
+      const ran = await runPhase(phase, activities, profiles, resultsById, ctx, phaseSignal);
+      live?.phaseEnded(phase.name, phaseVerdict(ran), Date.now() - t0);
+      return ran;
+    } finally {
+      phaseDurations[phase.name] = (phaseDurations[phase.name] ?? 0) + (Date.now() - t0);
+    }
+  };
   const startedAt = options.now ?? new Date(start).toISOString();
 
   /**
@@ -851,13 +1176,19 @@ export async function runOpLocally(
     settled: StepRecord[],
     status: OpRunResult["status"],
     gate?: PendingGateRecord,
+    point?: WaitingPoint,
   ): Promise<OpRunRecord> => {
+    const ended = options.now ?? new Date().toISOString();
     const input = buildRunRecord(config, settled, {
       started: startedAt,
-      ended: options.now ?? new Date().toISOString(),
+      ended,
       status,
       id: runId,
-      ...(gate ? { gate: { name: gate.gate, since: gate.timestamp } } : {}),
+      // A gate recorded under another op (#2779: a command's own gate) names it.
+      ...(gate ? { gate: { name: gate.gate, since: gate.timestamp, ...(gate.op !== config.name ? { op: gate.op } : {}) } } : {}),
+      ...(point ? { point: { ...point, since: ended } } : {}),
+      ...(options.steward ? { steward: options.steward } : {}),
+      phaseDurations,
     });
     const record: OpRunRecord = { version: 1, ...input, id: runId };
     if (!options.ledger) return record;
@@ -877,25 +1208,53 @@ export async function runOpLocally(
   try {
     for (const phase of config.phases) {
       if (signal?.aborted) throw new PhaseFailure([]);
-      records.push(...(await runPhase(phase, activities, profiles, resultsById, gates, signal)));
+      records.push(...(await timedPhase(phase, gates, stepSignal)));
     }
+    // The last renewal before the run is recorded (#2748): a run whose lease
+    // was lost is never recorded as done.
+    if (work && !(await work.fence())) throw new WorkStop([], UNATTRIBUTED_PHASE, true);
   } catch (err) {
+    // Nothing to claim, or every candidate held (#2748): not a failure. The
+    // rest of the run is skipped and the claim's record says why.
+    if (err instanceof WorkStop && !err.lost) {
+      records.push(...err.records);
+      skipLaterPhases(err.phase);
+      const record = await settle(records, "ok");
+      return {
+        op: config.name,
+        records,
+        totalMs: Date.now() - start,
+        status: "ok",
+        startedAt,
+        record,
+        ...(await finishWork("ok")),
+      };
+    }
+
+    // An open decision point ends the run the way a pending gate does (#2749):
+    // no later phase and no compensation, and the run is `waiting`.
+    if (err instanceof PointStop) {
+      records.push(...err.records);
+      skipLaterPhases(err.phase);
+      const record = await settle(records, "waiting", undefined, err.question);
+      return {
+        op: config.name,
+        records,
+        totalMs: Date.now() - start,
+        status: "waiting",
+        startedAt,
+        point: err.question,
+        record,
+        ...(await finishWork("waiting")),
+      };
+    }
+
     // A pending gate ends the run where it stands: no later phase, and no
     // `onFailure` compensation — nothing failed, so there is nothing to undo.
     if (err instanceof GateStop) {
       records.push(...err.records);
-      const stoppedAt = config.phases.findIndex((p) => p.name === err.phase);
-      for (const phase of config.phases.slice(stoppedAt + 1)) {
-        for (const step of phase.steps) {
-          records.push(
-            isEffect(step)
-              ? skippedRecord(phase.name, `effect:${step.receipt.name}`)
-              : isGate(step)
-                ? skippedRecord(phase.name, gateFn(step))
-                : skippedRecord(phase.name, step.fn, step.args),
-          );
-        }
-      }
+      skipLaterPhases(err.phase);
+      const record = await settle(records, "gated", err.pending);
       return {
         op: config.name,
         records,
@@ -905,11 +1264,17 @@ export async function runOpLocally(
         gate: err.pending,
         ...(err.pushed !== undefined ? { gatePushed: err.pushed } : {}),
         ...(err.pushWarning ? { gatePushWarning: err.pushWarning } : {}),
-        record: await settle(records, "gated", err.pending),
+        record,
+        ...(await finishWork("gated")),
       };
     }
 
-    if (err instanceof PhaseFailure) {
+    if (err instanceof WorkStop) {
+      // The lease was lost (#2748): the rest is skipped, and the lost record
+      // below says why.
+      records.push(...err.records);
+      skipLaterPhases(err.phase);
+    } else if (err instanceof PhaseFailure) {
       records.push(...err.records);
     } else {
       // Everything else the phase loop can throw (#2301). `PhaseFailure` and
@@ -934,14 +1299,20 @@ export async function runOpLocally(
       });
     }
 
+    // A step that failed because the lease was lost mid-step, or a lease lost
+    // at any boundary: one record names it (#2748).
+    if (work?.lost !== undefined) records.push(lostRecord());
+
     // Compensation: run onFailure phases in reverse order (best-effort). Skipped
     // on abort (Ctrl-C) — the user asked to stop, so don't start new work.
+    // It runs whatever the work lease did, so it takes no work boundary.
+    const compensation: GateContext = { ...gates, work: undefined };
     if (!signal?.aborted) {
       for (const phase of [...(config.onFailure ?? [])].reverse()) {
         try {
-          records.push(...(await runPhase(phase, activities, profiles, resultsById, gates, signal)));
+          records.push(...(await timedPhase(phase, compensation, signal)));
         } catch (compErr) {
-          if (compErr instanceof PhaseFailure || compErr instanceof GateStop) {
+          if (compErr instanceof PhaseFailure || compErr instanceof GateStop || compErr instanceof PointStop) {
             records.push(...compErr.records);
           } else {
             // The same swallow, one level down (#2301): a compensation phase
@@ -959,6 +1330,7 @@ export async function runOpLocally(
       }
     }
 
+    const failed = await settle(records, "fail");
     throw new OpRunFailure(
       {
         op: config.name,
@@ -966,20 +1338,30 @@ export async function runOpLocally(
         totalMs: Date.now() - start,
         status: "fail",
         startedAt,
-        record: await settle(records, "fail"),
+        record: failed,
+        ...(await finishWork("fail")),
       },
       { cause: err },
     );
   }
 
+  const record = await settle(records, "ok");
   return {
     op: config.name,
     records,
     totalMs: Date.now() - start,
     status: "ok",
     startedAt,
-    record: await settle(records, "ok"),
+    record,
+    ...(await finishWork("ok")),
   };
+}
+
+/** A finished phase's verdict, as the run ledger folds it: `fail`, `skipped` when every step was, else `ok`. */
+function phaseVerdict(records: readonly StepRecord[]): "ok" | "fail" | "skipped" {
+  if (records.some((r) => r.status === "fail")) return "fail";
+  if (records.length > 0 && records.every((r) => r.status === "skipped")) return "skipped";
+  return "ok";
 }
 
 function errMessage(err: unknown): string {

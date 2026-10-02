@@ -106,6 +106,19 @@ export const terraformConfigSchema = z.strictObject({
    * nothing. See `hcl/descend.ts`.
    */
   callModuleType: z.enum(["local", "none", "all"]).optional(),
+  /**
+   * The directory a root's local module sources may resolve within (#2874),
+   * absolute or relative to the project root. Unset, it is the project root,
+   * or a root's own directory when its `dir` lies outside the project. A
+   * source that resolves outside it is refused with a warning, as before.
+   *
+   * `chant workspace graph` sets it to the workspace root when it reads a
+   * `terraform` or `choudoufu` member through a reader project of its own,
+   * so a member that calls `../modules/x` keeps its modules. A project
+   * rarely needs it: widening the boundary means reading modules the
+   * project does not own.
+   */
+  moduleRoot: z.string().optional(),
   /** Named root modules. The name is the entity-key prefix, so keep it stable. */
   roots: z.record(z.string(), terraformRootSchema),
 });

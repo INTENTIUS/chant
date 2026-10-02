@@ -51,7 +51,23 @@ Some parts of a package-backed lexicon sit at fixed subpaths of the package. Whe
 
 A lexicon loaded by path has no package version, so the build manifest records none for it. `chant update` and `chant doctor` skip it, since there are no package types to copy.
 
-Project files import a lexicon loaded by path by its path, for example `import { Page } from "../lexicon"`. Fold treats an import that resolves to the declared module the same way it treats an import of a lexicon package, with or without `--sandbox`. Other files in the lexicon's directory are project files to fold, since a module path has no package boundary around it.
+Project files import a lexicon loaded by path by its path, for example `import { Page } from "../lexicon"`. Fold treats an import that resolves to the declared module the same way it treats an import of a lexicon package, with or without `--sandbox`.
+
+A lexicon split across several files gets a trusted directory, which stands in for the package root. An import of another file under it, such as `../lexicon/resources`, is treated like an import of a package subpath: under `--sandbox` its constructors and composites run in chant's process, and fold does not fold the file as project source. As with a package subpath, its data exports are not read as values. The directory is the module's own directory, or the one `root` names:
+
+```typescript
+lexicons: [{ name: "site", module: "./lexicon/src/index.ts", root: "./lexicon" }],
+```
+
+The directory has these bounds:
+
+- inside the project, the directory holding `chant.config.ts`
+- not containing the project's source directory (`sourceDir`, the project root by default)
+- containing the module
+
+A build whose own source files sit under the directory does not trust it.
+
+A declared `root` outside these bounds is a config error. When the module's own directory is outside them, the lexicon gets no directory and only the module file is trusted. That is the case for a module at the project root, so a multi-file lexicon there should move into a directory of its own.
 
 ## Updating Versions
 

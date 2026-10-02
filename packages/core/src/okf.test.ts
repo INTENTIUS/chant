@@ -155,7 +155,12 @@ const exampleCases: Array<[string, string]> = [
 
 describe("buildOkfBundle over shipped examples", () => {
   for (const [name, rel] of exampleCases) {
-    test(`${name} emits a conformant, snapshot-stable bundle`, async () => {
+    // The test's own `expect` names the snapshot after this test. The global
+    // one names it after whichever test is current, so when a slow discover
+    // outlives its timeout and the next case starts, a late call records
+    // under the next case's name and the checkout gains a "... 2" snapshot
+    // (chant#2863).
+    test(`${name} emits a conformant, snapshot-stable bundle`, async ({ expect }) => {
       const projectPath = resolve(repoRoot, rel);
       const result = await discover(projectPath);
       expect(result.errors).toEqual([]);

@@ -1,0 +1,110 @@
+{
+  "$comment": "Corrections to the vendored table.jsonschema.json (foundation-sdk v0.0.20). Sources are Grafana's CUE at the tag in `grafana`. See src/spec/overlay.ts.",
+  "schema": "table",
+  "grafana": "v13.2.2",
+  "patches": [
+    {
+      "op": "replace",
+      "path": "/definitions/TableCellDisplayMode/enum",
+      "value": ["auto", "color-text", "color-background", "color-background-solid", "gradient-gauge", "lcd-gauge", "json-view", "basic", "image", "gauge", "sparkline", "data-links", "custom", "actions", "pill", "markdown", "geo"],
+      "source": "packages/grafana-schema/src/common/table.cue:7 (:7 at v12.4.0)",
+      "why": "The pill, markdown and geo cell types are in the CUE since 12.4; the vendored enum rejects them."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/TablePillCellOptions",
+      "value": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type"],
+        "properties": { "type": { "allOf": [{ "$ref": "#/definitions/TableCellDisplayMode" }], "default": "pill" } },
+        "description": "Pill cell options"
+      },
+      "source": "packages/grafana-schema/src/common/table.cue:75-77 (:75 at v12.4.0)",
+      "why": "Definition for the pill cell type."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/TableMarkdownCellOptions",
+      "value": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type"],
+        "properties": {
+          "type": { "allOf": [{ "$ref": "#/definitions/TableCellDisplayMode" }], "default": "markdown" },
+          "dynamicHeight": { "type": "boolean" }
+        },
+        "description": "Markdown cell options"
+      },
+      "source": "packages/grafana-schema/src/common/table.cue:79-86 (:79 at v12.4.0)",
+      "why": "Definition for the markdown cell type. The CUE declares it twice; the two unify to one struct with an optional dynamicHeight."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/TableGeoCellOptions",
+      "value": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type"],
+        "properties": { "type": { "allOf": [{ "$ref": "#/definitions/TableCellDisplayMode" }], "default": "geo" } },
+        "description": "Geo cell options"
+      },
+      "source": "packages/grafana-schema/src/common/table.cue:88-90 (:88 at v12.4.0)",
+      "why": "Definition for the geo cell type."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/TableCellOptions/oneOf/-",
+      "value": { "$ref": "#/definitions/TablePillCellOptions" },
+      "source": "packages/grafana-schema/src/common/table.cue:97 (:97 at v12.4.0)",
+      "why": "TableCellOptions is a disjunction that includes the pill variant."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/TableCellOptions/oneOf/-",
+      "value": { "$ref": "#/definitions/TableMarkdownCellOptions" },
+      "source": "packages/grafana-schema/src/common/table.cue:97 (:97 at v12.4.0)",
+      "why": "TableCellOptions is a disjunction that includes the markdown variant."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/TableCellOptions/oneOf/-",
+      "value": { "$ref": "#/definitions/TableGeoCellOptions" },
+      "source": "packages/grafana-schema/src/common/table.cue:97 (:97 at v12.4.0)",
+      "why": "TableCellOptions is a disjunction that includes the geo variant."
+    },
+    {
+      "op": "replace",
+      "path": "/definitions/LineStyle/properties/fill/enum",
+      "value": ["solid", "dash", "dot", "square", "accessible"],
+      "source": "packages/grafana-schema/src/common/mudball.cue:41 (not in v12.4.0)",
+      "why": "Grafana 13 adds the \"accessible\" line style; the vendored enum rejects it."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/TableFieldFooterOptions",
+      "value": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": { "reducers": { "type": "array", "items": { "type": "string" }, "description": "footer reducers to apply to this field" } },
+        "description": "The footer of one field (TableFooterOptions in the CUE; renamed here because the vendored schema already has a panel-level TableFooterOptions)"
+      },
+      "source": "packages/grafana-schema/src/common/table.cue:108-111 (:108 at v12.4.0)",
+      "why": "Grafana 12.4 moved the table footer onto each field; this is its shape."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/TableFieldOptions/properties/footer",
+      "value": { "$ref": "#/definitions/TableFieldFooterOptions", "description": "options for the footer for this field" },
+      "source": "packages/grafana-schema/src/common/table.cue:158-159 (:153-154 at v12.4.0)",
+      "why": "Grafana 12.4.11 writes fieldConfig.defaults.custom.footer ({ reducers: [] }) on the table panels it exports (test/fixtures/exports/grafana-12.4.11/queries.json)."
+    },
+    {"op": "add", "path": "/definitions/TableCellTooltipPlacement", "value": {"type": "string", "enum": ["top", "bottom", "left", "right", "auto"], "description": "Where the cell tooltip is placed"}, "source": "packages/grafana-schema/src/common/table.cue:99", "why": "Placement enum of the per-field tooltip; not in the vendored schema."},
+    {"op": "add", "path": "/definitions/TableCellTooltipOptions", "value": {"type": "object", "additionalProperties": false, "required": ["field"], "properties": {"field": {"type": "string", "description": "The name of the field to get the tooltip content from"}, "placement": {"$ref": "#/definitions/TableCellTooltipPlacement", "description": "placement of the tooltip"}}, "description": "Tooltip shown when a cell of this field is selected or hovered"}, "source": "packages/grafana-schema/src/common/table.cue:101-106", "why": "Shape of the per-field tooltip option."},
+    {"op": "add", "path": "/definitions/TableFieldOptions/properties/sortable", "value": {"type": "boolean", "description": "Controls whether the column can be sorted. Every column is sortable by default; set to false to disable sorting for this column."}, "source": "packages/grafana-schema/src/common/table.cue:151", "why": "Grafana 13.x TableFieldOptions. The vendored schema lacks the column sorting switch."},
+    {"op": "add", "path": "/definitions/TableFieldOptions/properties/wrapText", "value": {"type": "boolean", "description": "if true, wrap the text content of the cell"}, "source": "packages/grafana-schema/src/common/table.cue:155", "why": "Grafana 13.x TableFieldOptions. The vendored schema lacks the cell text wrapping (k8s-views-pods uses it)."},
+    {"op": "add", "path": "/definitions/TableFieldOptions/properties/wrapHeaderText", "value": {"type": "boolean", "description": "Enables text wrapping for column headers"}, "source": "packages/grafana-schema/src/common/table.cue:157", "why": "Grafana 13.x TableFieldOptions. The vendored schema lacks the header text wrapping."},
+    {"op": "add", "path": "/definitions/TableFieldOptions/properties/tooltip", "value": {"$ref": "#/definitions/TableCellTooltipOptions", "description": "Selecting or hovering this field will show a tooltip containing the content within the target field"}, "source": "packages/grafana-schema/src/common/table.cue:161", "why": "Grafana 13.x TableFieldOptions. The vendored schema lacks the per-field tooltip."},
+    {"op": "add", "path": "/definitions/TableFieldOptions/properties/styleField", "value": {"type": "string", "description": "The name of the field which contains styling overrides for this cell"}, "source": "packages/grafana-schema/src/common/table.cue:163", "why": "Grafana 13.x TableFieldOptions. The vendored schema lacks the style override field."}
+  ]
+}

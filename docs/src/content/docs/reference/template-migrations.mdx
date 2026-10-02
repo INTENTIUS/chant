@@ -42,7 +42,7 @@ Migrations live in the template, under `.chant/migrations/` in the directory a p
 |---|---|---|
 | `id` | yes | Unique within the template: letters, digits, `.`, `_` and `-`. The lock's `migrations` list records it once applied, and an applied migration never runs again. |
 | `description` | no | Prose for a reader. |
-| `from.template` | no | The template id the migration applies to, as the lock writes it. Omitted, it applies to the template it ships in, whatever id a project recorded for it. |
+| `from.template` | no | The template id the migration applies to, as the lock writes it. Omitted, it applies to the template it ships in, whatever id a project recorded for it. Naming another template makes it a [bridge](#bridge-migrations). |
 | `from.versions` | yes | The versions the migration can be applied to, as a range (see [Ranges](#ranges)). |
 | `to` | yes | The version the scope is at once the migration has run. |
 | `body` | yes | What the migration does (see [Bodies](#bodies)). |
@@ -103,6 +103,33 @@ The upgrade collects the target version's migrations that apply to the scope's t
 An upgrade with no pending migrations needs no versions, so a scope pinned to a branch can follow it.
 
 A migration that brings nothing into place for some versions can say so with its range. A template whose `1.x` releases need no change to reach `2.0.0`, but whose `3.0.0` does, ships the `3.0.0` migration with `from.versions` set to `>=1.0.0 <3.0.0`.
+
+## Bridge migrations
+
+A bridge brings a scope made from another template onto this one. Its `from.template` names that other template, such as a fork, and its `to` is a version of this template. It runs only when [`chant workspace upgrade --source`](/chant/cli/workspace-upgrade/#moving-to-another-template) moves such a scope here.
+
+`.chant/migrations/from-fork.json`, shipped in the upstream template's `v2.0.0`:
+
+```json
+{
+  "id": "from-fork",
+  "description": "the fork's layout onto upstream 2.0.0",
+  "from": { "template": "github.com/someone/starter-fork", "versions": ">=1.0.0 <2.0.0" },
+  "to": "2.0.0",
+  "body": {
+    "type": "declarative",
+    "steps": [
+      { "op": "move", "from": "src/app.ts", "to": "src/main.ts" },
+      { "op": "move", "from": "settings.json", "to": "config.json" }
+    ]
+  },
+  "post": [{ "check": "absent", "path": "settings.json" }]
+}
+```
+
+A planned move starts with the one bridge whose `from.versions` accepts the scope's version and whose `to` lands furthest without passing the target. The rest of the chain follows from that `to`, planned as above. The scope's version and the target belong to different templates, so a move is never refused as a downgrade. Without a bridge, a move is refused when this template ships steps of its own, since the scope's place in its history would be unknown. A move to a template that ships none is a plain per-file merge.
+
+A fork-born workspace often has no lineage at all. [`chant workspace adopt-lineage`](/chant/cli/workspace-adopt-lineage/) gives it one against the fork, and the bridge moves it on from there.
 
 ## In the lock
 

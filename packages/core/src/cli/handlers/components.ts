@@ -28,7 +28,8 @@
  */
 import { resolve, join, dirname } from "node:path";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { getHeadCommit, fetchLifecycle, pushLifecycle, StaleLifecycleBranchError } from "../../lifecycle/git";
+import { getHeadCommit, fetchLifecycle, pushLifecycle, readSnapshot, snapshotStorageKey, StaleLifecycleBranchError } from "../../lifecycle/git";
+import type { LifecycleSnapshot } from "../../lifecycle/types";
 import {
   appendReleaseRecord,
   readReleaseLedger,
@@ -37,7 +38,8 @@ import {
   resolveRunId,
   InvalidReleaseRecordError,
 } from "../../lifecycle/release-ledger";
-import { reconcileStatus, liveEvidenceFromChangeSet, compareAcrossEnvironments, mergeLiveEvidence, type LiveComponentEvidence } from "../../lifecycle/status";
+import { persistReleasePlan, InvalidReleasePlanError, type ReleasePlan } from "../../lifecycle/plan-ledger";
+import { reconcileStatus, liveEvidenceFromChangeSet, compareAcrossEnvironments, mergeLiveEvidence, type LiveComponentEvidence, type EntityLiveRead } from "../../lifecycle/status";
 import { commandBuildParams } from "../build-params-cli";
 import { buildChangeSet } from "../../lifecycle/change-set";
 import { buildLedgerEntries, componentBomSummary, type BuildLedgerEntry } from "../../lifecycle/build-ledger";
@@ -46,16 +48,17 @@ import type { ComponentBomSummary } from "../../lifecycle/build-ledger";
 import type { BuildArchiveManifest } from "../../components/verbs/build-archive";
 import { loadChantConfig } from "../../config";
 import { applyLiveEndpoint } from "../../live-endpoint";
-import { isResourceDeclarable } from "../../declarable";
+import { isObservableDeclarable } from "../../declarable";
 import { build } from "../../build";
 import { discoverComponents } from "../../components/discover";
 import { formatError, formatWarning, formatSuccess, formatBold } from "../format";
 import type { CommandContext } from "../registry";
-import type { LexiconPlugin } from "../../lexicon";
+import type { LexiconPlugin, ResourceMetadata } from "../../lexicon";
 import { normalizeObservation, mergeObservations, unobservedAll, type NormalizedObservation } from "../../observation";
 import type { Phase, Component } from "../../components/component";
 import { deployUnits } from "../../components/deploy-units";
 import { sortedJsonReplacer } from "../../utils";
+import { withoutReadFlags } from "../../lifecycle/legacy-digest";
 
 /**
  * chant components release <env> --component <name> --digest <sha256:...>
@@ -73,6 +76,14 @@ import { sortedJsonReplacer } from "../../utils";
  * never threaded in from elsewhere and never mocked in production code, per
  * #568: "the session cannot call Date.now() in some contexts; take the
  * timestamp from the environment/CLI at record time."
+ *
+ * `--release-plan <file>` (ws-055, #2733) takes `--digest`'s place: the file is a
+ * release plan JSON object naming its own `digest` field, persisted
+ * content-addressed to `_plans/<digest>.json` (../../lifecycle/plan-
+ * ledger.ts) before the release record is appended, so the record's digest
+ * always names a plan this checkout can resolve. Passing both requires them
+ * to agree — a plan is content-addressed by its own digest, so a caller
+ * naming a different one is a mistake, not an override.
  */
 export async function runComponentsReleaseRecord(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
@@ -85,11 +96,42 @@ export async function runComponentsReleaseRecord(ctx: CommandContext): Promise<n
   }
 
   const component = args.component;
-  const digest = args.digest;
+  let digest = args.digest;
+  let plan: ReleasePlan | undefined;
+  if (args.releasePlanFile) {
+    let raw: string;
+    try {
+      raw = await readFile(args.releasePlanFile, "utf-8");
+    } catch (err) {
+      console.error(formatError({ message: `Could not read --release-plan ${args.releasePlanFile}: ${err instanceof Error ? err.message : String(err)}` }));
+      return 1;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (err) {
+      console.error(formatError({ message: `--release-plan ${args.releasePlanFile} is not valid JSON: ${err instanceof Error ? err.message : String(err)}` }));
+      return 1;
+    }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      console.error(formatError({ message: `--release-plan ${args.releasePlanFile} must be a JSON object` }));
+      return 1;
+    }
+    plan = parsed as ReleasePlan;
+    if (typeof plan.digest !== "string" || plan.digest.length === 0) {
+      console.error(formatError({ message: `--release-plan ${args.releasePlanFile} is missing its own "digest" field — a release plan is content-addressed by its own digest` }));
+      return 1;
+    }
+    if (digest !== undefined && digest !== plan.digest) {
+      console.error(formatError({ message: `--digest ${digest} does not match --release-plan ${args.releasePlanFile}'s own digest ${plan.digest}` }));
+      return 1;
+    }
+    digest = plan.digest;
+  }
   if (!component || !digest) {
     console.error(formatError({
       message: "--component and --digest are required",
-      hint: "chant components release <env> --component <name> --digest <sha256:...> [--git-sha <sha>] [--run-id <id>] [--actor <name>] [--approver <name>]",
+      hint: "chant components release <env> --component <name> --digest <sha256:...> [--release-plan <file>] [--git-sha <sha>] [--run-id <id>] [--actor <name>] [--approver <name>]",
     }));
     return 1;
   }
@@ -119,6 +161,7 @@ export async function runComponentsReleaseRecord(ctx: CommandContext): Promise<n
   const timestamp = new Date().toISOString();
 
   try {
+    if (plan) await persistReleasePlan(plan);
     const { commit, record } = await appendReleaseRecord({
       component,
       env: environment,
@@ -140,7 +183,7 @@ export async function runComponentsReleaseRecord(ctx: CommandContext): Promise<n
     }
     return 0;
   } catch (err) {
-    if (err instanceof InvalidReleaseRecordError) {
+    if (err instanceof InvalidReleaseRecordError || err instanceof InvalidReleasePlanError) {
       console.error(formatError({ message: err.message }));
       return 1;
     }
@@ -276,7 +319,8 @@ export async function runComponentsExport(ctx: CommandContext): Promise<number> 
     }
   }
 
-  await writeFile(join(targetDir, "manifest.json"), JSON.stringify(manifest, sortedJsonReplacer, 2));
+  // The exported manifest is the recorded one; read-side flags (#2514) stay out of it.
+  await writeFile(join(targetDir, "manifest.json"), JSON.stringify(withoutReadFlags(manifest), sortedJsonReplacer, 2));
 
   const missing = results.filter((r) => r.status === "missing");
 
@@ -284,6 +328,7 @@ export async function runComponentsExport(ctx: CommandContext): Promise<number> 
     console.log(JSON.stringify({
       component: manifest.component,
       manifestDigest: manifest.manifestDigest,
+      ...(manifest.flags ? { flags: manifest.flags } : {}),
       outDir: targetDir,
       entries: results,
     }, null, 2));
@@ -318,6 +363,7 @@ interface StatusJsonRow {
     runId: string;
     timestamp: string;
     actor: string;
+    flags?: string[];
   } | null;
   build: {
     manifestDigest: string;
@@ -464,6 +510,42 @@ async function observeComponentStacks(
   return evidence;
 }
 
+/**
+ * The last lifecycle snapshot(s) for one lexicon, as `components status --live`
+ * reads them for its drift baseline (#2513). Reads the stack-keyed snapshot for
+ * each stack the status read targets and the unstacked one `lifecycle plan`
+ * reads, merging resources (a stack's own snapshot wins) and remembering, per
+ * entity, which snapshot's timestamp it came from. A missing or unreadable
+ * snapshot is no baseline, never an error: with none, nothing can have changed
+ * since, and the status falls back to identity and presence.
+ */
+async function readStatusBaseline(
+  environment: string,
+  lexicon: string,
+  stacks: Array<string | undefined>,
+): Promise<{ resources: Record<string, ResourceMetadata> | undefined; timestamps: Map<string, string> }> {
+  const keys = [...new Set([...stacks.filter((s): s is string => !!s).map((s) => snapshotStorageKey(lexicon, s)), snapshotStorageKey(lexicon)])];
+  let resources: Record<string, ResourceMetadata> | undefined;
+  const timestamps = new Map<string, string>();
+  for (const key of keys) {
+    let snap: LifecycleSnapshot | undefined;
+    try {
+      const content = await readSnapshot(environment, key);
+      snap = content ? (JSON.parse(content) as LifecycleSnapshot) : undefined;
+    } catch {
+      snap = undefined;
+    }
+    if (!snap?.resources) continue;
+    resources ??= {};
+    for (const [name, meta] of Object.entries(snap.resources)) {
+      if (Object.prototype.hasOwnProperty.call(resources, name)) continue;
+      resources[name] = meta;
+      if (snap.timestamp) timestamps.set(name, snap.timestamp);
+    }
+  }
+  return { resources, timestamps };
+}
+
 export async function runComponentsStatus(ctx: CommandContext): Promise<number> {
   const { args, plugins, serializers } = ctx;
   const requestedEnv = args.extraPositional;
@@ -554,13 +636,14 @@ export async function runComponentsStatus(ctx: CommandContext): Promise<number> 
         for (const stack of config.stacks ?? []) componentStackNames.add(stack.name);
         const readTargets: Array<string | undefined> = componentStackNames.size ? [...componentStackNames] : [undefined];
         const merged: { env: string; entries: import("../../lifecycle/change-set").ChangeSetEntry[] } = { env: environment, entries: [] };
+        const observations = new Map<string, EntityLiveRead>();
         for (const plugin of plugins) {
           if (!plugin.describeResources) continue;
           const declared = new Set<string>();
           const entities = new Map<string, { entityType: string; props: Record<string, unknown> }>();
           for (const [name, entity] of buildResult.entities) {
             // Resource declarables only (see lifecycle/observe.ts).
-            if (entity.lexicon === plugin.name && isResourceDeclarable(entity)) {
+            if (entity.lexicon === plugin.name && isObservableDeclarable(entity)) {
               declared.add(name);
               entities.set(name, {
                 entityType: entity.entityType,
@@ -593,15 +676,29 @@ export async function runComponentsStatus(ctx: CommandContext): Promise<number> 
             console.error(formatWarning({ message: `${plugin.name}: describeResources failed — ${message} (components in this lexicon report unknown, not stale)` }));
             observed = { resources: {}, unobserved: unobservedAll(declared, "read-failed", message, entities), queried: {}, sources: {}, notes: [] };
           }
+          // The last lifecycle snapshot is the prior observation drift is
+          // measured against (#2513) — the same one `lifecycle plan` reads, so
+          // `drifted` here means what `update` means there. Without it every
+          // live, declared entity classified `noop` and `drifted` could not be
+          // reached. Each entity remembers its snapshot's timestamp so the
+          // status join can ignore a change made before the release.
+          const baseline = await readStatusBaseline(environment, plugin.name, readTargets);
           const cs = buildChangeSet(environment, {
             declared,
             observedNow: observed.resources,
-            observedThen: undefined,
+            observedThen: baseline.resources,
             unobserved: observed.unobserved,
           }, { lexicon: plugin.name });
           merged.entries.push(...cs.entries);
+          for (const entry of cs.entries) {
+            observations.set(entry.name, {
+              now: observed.resources[entry.name],
+              then: baseline.resources?.[entry.name],
+              thenAt: baseline.timestamps.get(entry.name),
+            });
+          }
         }
-        liveEvidence = liveEvidenceFromChangeSet(merged, liveNameMapping);
+        liveEvidence = liveEvidenceFromChangeSet(merged, liveNameMapping, { observations });
 
         // Multi-stack component projects (each component owns its own stack) are
         // invisible to the entity-keyed, single-stack `describeResources` above —
@@ -652,6 +749,7 @@ export async function runComponentsStatus(ctx: CommandContext): Promise<number> 
               runId: row.recorded.runId,
               timestamp: row.recorded.timestamp,
               actor: row.recorded.actor,
+              ...(row.recorded.flags ? { flags: row.recorded.flags } : {}),
             }
           : null,
         build: row.build
@@ -729,14 +827,19 @@ export async function runComponentsStatus(ctx: CommandContext): Promise<number> 
       row.env.padEnd(12) +
       digestShort.padEnd(20) +
       row.reconciliation.padEnd(14) +
-      row.detail,
+      row.detail +
+      (row.recorded?.flags?.length ? ` [${row.recorded.flags.join(", ")}]` : ""),
     );
   }
 
   if (comparisons) {
     console.log(`\n${formatBold(`Cross-check: ${requestedEnv} vs ${args.compareTo}`)}`);
     for (const c of comparisons) {
-      const verdict = c.same ? "same build" : "DIFFERENT builds";
+      const verdict = c.same
+        ? "same build"
+        : c.mixedDigestForms
+          ? "different digests, one recorded before real SHA-256 (legacy-digest), so this cannot tell"
+          : "DIFFERENT builds";
       console.log(`  ${c.component}: ${c.digestA ?? "(none)"} vs ${c.digestB ?? "(none)"} — ${verdict}`);
     }
   }

@@ -72,7 +72,7 @@ export const { agent, teammate, schedules } = Steward({
 
 | Default | Effect |
 |---|---|
-| `runtime: acp`, `runtime_command: "chant acp"` | the sandbox launches chant's own ACP server, so a prompt is a chant command line |
+| `runtime: acp`, `runtime_command: "chant acp --steward <name>"` | the sandbox launches chant's own ACP server, so a prompt is a chant command line, and every turn is this steward's (see [Decision points](#decision-points)) |
 | `sandbox_mode: persistent` | one computer per steward: the checkout and the tool cache survive a turn ending |
 | `permission_policy: { default: "auto_allow" }` | nobody is at the keyboard to answer a permission card; chant's gates are where a human belongs |
 | no `model` | an acp agent's model is whatever the command on the other end of the protocol chooses |
@@ -96,11 +96,109 @@ A gate is a fact, not a wait. A run that reaches an unapproved gate ends its tur
 
 A teammate runs one turn at a time. That is fountain's rule, not chant's, and the steward is built to sit exactly on top of it: a schedule that fires while a turn is in flight is dropped with `teammate was busy` rather than queued, and a `chant run --on fountain` against a busy steward is refused with the conversation's address rather than retried.
 
-The composite refuses three things at construction, so the failure arrives while the author is looking at the declaration:
+The composite refuses these at construction, so the failure arrives while the author is looking at the declaration:
 
 - Two stewards on the same environment and vault. That is two processes on one checkout; fountain would accept both and their turns would interleave.
 - An op whose `schedule.overlap` is anything but `skip`. Any other policy would be a promise the server does not keep.
 - A webhook url FTN022 would reject: plaintext http, or a loopback, link-local or RFC1918 target.
+- An op listed twice, and a `form` that is `local` in every environment.
+
+## One steward whatever the preset
+
+A box on a preset with no Fountain behind it, such as a docker compose box or a Sprites box, still has one steward. It is the same declaration in its local form: `chant operator --steward` in the box runs the same Ops on the same crons, one at a time.
+
+The declaration says which form runs where. `form` is one form, or a default with per-environment exceptions:
+
+```typescript
+export const { agent, teammate, schedules, declaration } = Steward({
+  name: "box-steward",
+  environment: boxToolchain,
+  ops: [converge, dispatch, release, upgrade],
+  form: { default: "fountain", environments: { minimal: "local", spritzer: "local" } },
+});
+```
+
+Core reads the steward from the `*.op.ts` files it already reads Ops from, so export `declaration` from one:
+
+```typescript
+// ops/steward.op.ts
+export { declaration as steward } from "../src/steward";
+```
+
+A box that never runs on Fountain doesn't need this lexicon for its steward. `declareSteward` from `@intentius/chant/op` takes the same `name`, `ops` and `form`, with `local` as the default form.
+
+`chant operator --steward box-steward --env minimal` then:
+
+| Step | What it does |
+|---|---|
+| picks the steward | by name, or the project's only one when the flag has no name |
+| checks the form | refuses an environment where the form is `fountain`, because this Agent and Teammate are the steward there and a local operator would be a second writer |
+| takes the steward's lease | `refs/chant/lease/_stewards/box-steward`, renewed every round and after every run; a second operator for the same steward is refused while the lease is live |
+| runs the scheduled Ops | each on its own cron, each under its own operator lease, exactly as `chant operator` ticks a ConvergeOp; an Op with no schedule is left for someone to ask for, as it is on Fountain |
+| records each run | on the run ledger on `chant/lifecycle`, the record `chant run <op>` writes |
+
+`declareSteward` also takes `beside`: Ops the local form runs beside its turns, each in a `chant run <op>` process of its own under the Op's own lease, so a long build holds none of the other Ops up ([#2861](https://github.com/INTENTIUS/chant/issues/2861)). An entry is an Op, or `{ op, ready }` with a step that says when there is work:
+
+```typescript
+export const steward = declareSteward({
+  name: "box-steward",
+  ops: [converge, awake, release, upgrade],
+  beside: [{ op: dispatch, ready: shell("node ops/ready.mjs", { json: true }) }],
+});
+```
+
+The operator starts such an Op on its cron, when its ready step names new work, or to resume the steward's run of it once its question is answered or its gate approved, and keeps ticking the other Ops meanwhile. `chant run <op>` for it takes the Op's lease and not the steward's turn. [`operator --steward`](/chant/cli/operator/#operator---steward-name) has the details. This composite takes no `beside`, so on Fountain every Op is a turn.
+
+`--once` runs one round and exits. `--interval` and `--lease-ttl` work as they do for `chant operator`. On Ctrl-C or SIGTERM the steward releases its lease; one that dies without releasing it is reclaimed when the lease expires.
+
+The declaration refuses the same things in both forms: an Op listed twice, a schedule whose overlap isn't `skip`, a cron that doesn't parse. Discovery refuses one Op listed by two stewards, and two stewards with one name.
+
+## Credentials
+
+A box's steward holds no credential ([#2726](https://github.com/INTENTIUS/chant/issues/2726)). The box's member in the workspace declaration lists the capabilities the box reaches through a broker, such as `fountain` and `inference`, and the broker holds the keys. The steward names the capabilities its Ops use and takes no `vault`:
+
+```typescript
+export const { agent, teammate, schedules, declaration } = Steward({
+  name: "box-steward",
+  environment: boxToolchain,
+  ops: [converge, dispatch, release, upgrade],
+  capabilities: ["fountain", "inference"],
+});
+```
+
+`vault` together with `capabilities` is refused at construction. `vault` alone still works for a steward that isn't behind a broker. `chant workspace check` fails a box member whose files hold a literal secret (`box-credential-declared`), which covers a steward's vault declared there. `chant workspace status --json` lists each capability the steward names with the broker the box block gives it, and `declared: false` for one the block doesn't list.
+
+## The coding agent beside it
+
+A box also has a coding agent editing the app, in the same checkout as the steward. They share it by writing different things:
+
+| Writer | Writes | Never writes |
+|---|---|---|
+| the steward | run, converge and gate records on the `chant/lifecycle` branch, and lease refs under `refs/chant/lease/` | the app's files, the index, commits on the working branch |
+| the coding agent | the app's files, the index, commits on the working branch | chant's ledgers and leases, except through a chant command |
+
+Chant enforces the steward's half. Every ledger and lease write goes through git plumbing (`hash-object`, `mktree`, `commit-tree`, `update-ref`), which reads and writes neither the index nor the working tree. A steward run succeeds while the coding agent holds git's index lock, and leaves the agent's uncommitted edits as they were. A core test edits `app/` and takes the index lock in the middle of a steward run to check this.
+
+An Op a steward runs doesn't edit the app. When an Op has to change the checkout, as applying a build or `chant workspace upgrade` does, it declares `changesCheckout: true` and a `workLease`, and chant enforces the rest ([#2748](https://github.com/INTENTIUS/chant/issues/2748)). `declareSteward`, and so this composite, refuses such an Op without a work lease, and the executor refuses to run it. The run claims the work item's lease before its leased steps, which then work in a git worktree of their own on `chant/work/<item>`, under the repository's git directory. The coding agent's working tree, index and uncommitted edits stay as they were, and a core test checks that with the agent's edit and its index lock in place while a steward applies a build. The branch keeps what the steps committed, for the runner to deliver. [Running under a work lease](/chant/guide/ops/#running-under-a-work-lease) covers the declaration, and the dispatcher's lease semantics: a second dispatcher is refused, a lost lease stops the run, and the release records the outcome.
+
+## Decision points
+
+An Op the steward runs may ask a [decision point](/chant/guide/decision-points/), such as the factory's builder tier ([#2749](https://github.com/INTENTIUS/chant/issues/2749)). The activity asks it with `askPointInRun` from `@intentius/chant/op`. The steward runs unattended. On Fountain its thread is its own, and in the local form nobody is at the terminal. So a question it reaches follows the rules below, in both forms.
+
+| Rule | How |
+|---|---|
+| The model call goes through the broker | The caller supplies the call as a `BrokeredModelAsk`, which is handed the capability to reach the model through. In a steward's turn it is made only through a capability the steward names in `capabilities`, `inference` by default. A steward that names none, or holds a vault, makes no model call: the model decider is recorded as not reached, and the question goes to people. |
+| An open question ends the turn | An escalated or proposed question stops the run with status `waiting`, as a gate stops it with `gated`. The run ledger names the question as `point`, and the run names the steward as `steward`. No later step or `onFailure` phase runs. |
+| The question stays out of the checkout | The answer record is written on the `chant/lifecycle` branch, under `_answers/<kind name>/<id>.md`, not in the checkout's working tree, which is the coding agent's ([#2786](https://github.com/INTENTIUS/chant/issues/2786)). It outlives the turn and any leased worktree. `points` reads it as part of the answer kind and gives its place on the branch as `ledger`. |
+| People answer it, not the steward's thread | The question is a record in the workspace. `chant workspace points --open` and MCP's `workspace-points` list it with `askedBy`, the steward and the run that asked it. `workspace status --json` lists it in the steward's `waiting`, beside its Ops. hud reads those and asks a person, who answers through hud or `chant workspace points answer`. |
+| The steward never answers | `points answer` is refused with `answer-in-steward-turn` during the steward's turn and in any process the turn starts, and the quorum never counts the steward that asked. A steward can't clear a gate either. |
+| The next run reads the answer | The next run asks the same point with the same inputs, finds the answered record and goes on. The local form runs a waiting Op again on the first round after its question is answered, whatever its cron says, and prints `resumed="<id>"`. An Op beside the turns is started again the same way, in a process of its own. Until then each round prints `waiting=1(point:<id>:<state>)`. On Fountain the Op's next scheduled turn reads the answer. |
+
+The Agent's command is `chant acp --steward <name>`, which marks every turn in the session as the steward's. In the local form, `chant operator --steward` marks each run it starts. Both export `CHANT_STEWARD` to the processes a run starts.
+
+## Reading its state
+
+`chant workspace status <env> --json` lists each member's stewards: the name, the file that declares it, its form in `<env>` and its declared forms, the local lease (holder, expiry, and whether it is live), each Op with its schedule, its last run from the run ledger and the work lease its turn holds, and `waiting`, the open decision points the steward waits on. See [workspace status](/chant/cli/workspace-status/).
 
 ## What `chant build` emits
 

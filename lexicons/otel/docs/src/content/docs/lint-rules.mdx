@@ -8,26 +8,159 @@ diataxis: reference
     Edit lexicons/otel/docs/pages/lint-rules.mdx instead; changes here are overwritten. */}
 
 
-The otel lexicon's rules use the `OTEL` prefix. `OTEL0xx` rules read your TypeScript source during `chant lint`. `OTEL1xx` checks run after a build: OTEL101 to OTEL106 read the emitted collector YAML (and any other output document shaped like a collector config), OTEL107 to OTEL109 read the declared entities.
+The otel lexicon's rules use the `OTEL` prefix. `OTEL0xx` rules read your TypeScript source during `chant lint`. `OTEL1xx` checks run after a build: OTEL101 to OTEL106 and OTEL112 to OTEL117 read the emitted collector YAML (and any other output document shaped like a collector config), OTEL107 to OTEL109 read the declared entities. OTEL110 and OTEL111 are unused: the tail sampling placement checks they were reserved for read Kubernetes manifests, so they ship in the k8s lexicon as [WK8601 to WK8603](/chant/lexicons/k8s/otel-placement-checks/).
 
 | Id | Severity | Catches |
 |---|---|---|
 | OTEL001 | error | a pipeline id string that isn't `type` or `type/name`, or an instance `name` that is empty, has whitespace or starts with `/` |
 | OTEL002 | error | a literal credential (`authorization`, `api-key`, `api_key`, `token`, `password`, `secret`, `key_pem`) in a component's config |
-| OTEL101 | error | a pipeline using a receiver, processor or exporter nobody declared |
+| OTEL101 | error | a pipeline using a receiver, processor or exporter nobody declared, or a connector listed as an exporter but never as a receiver (or the reverse) |
 | OTEL102 | error | a pipeline with no receivers, or no exporters |
-| OTEL103 | warning | a declared component no pipeline uses, or an extension missing from `service.extensions` |
+| OTEL103 | warning | a declared component (connectors included) no pipeline uses, or an extension missing from `service.extensions` |
 | OTEL104 | error | `service.extensions` naming an undeclared extension |
 | OTEL105 | warning | `memory_limiter` somewhere other than first in a pipeline's processors |
 | OTEL106 | error | a pipeline id that isn't `traces`, `metrics` or `logs` (optionally `/name`), or a reference that isn't id syntax |
 | OTEL107 | error | a component's config breaking its definition's own rules, see [Components](../components/) |
 | OTEL108 | error | two components, or two pipelines, declaring the same id |
 | OTEL109 | error | a custom component without a usable schema pin |
+| OTEL112 | error | a connector joining a pipeline whose signal it can't pair with any pipeline on the other side, e.g. `spanmetrics` as the receiver of a traces pipeline |
+| OTEL113 | error | pipelines that feed each other in a cycle through connectors, see [OTEL113](#otel113-connector-cycles) |
+| OTEL114 | error | a connector id also declared as a receiver or exporter, see [OTEL114](#otel114-connector-id-collisions) |
+| OTEL115 | error | a `routing` connector route naming a pipeline that does not receive from it, see [OTEL115](#otel115-routing-targets) |
+| OTEL116 | warning | a connector splitting metrics by a GenAI id (`gen_ai.conversation.id`, `session.id` and others) or a content key, see [below](#otel116-high-cardinality-genai-attributes) |
+| OTEL117 | error | two components the collector starts listening on the same address, so it exits with "address already in use", see [below](#otel117-listen-address-collisions) |
+
+## Configs in Kubernetes ConfigMaps
+
+`OtelCollector`, `OtelCollectorGateway` and `GkeOtelCollector` put the rendered config in a ConfigMap in the k8s output, under `config.yaml`. `chant build` hands each lexicon's checks only that lexicon's output, so the otel lexicon's checks never see it. The k8s lexicon's [WK8604](/chant/lexicons/k8s/otel-placement-checks/#wk8604-the-otel-config-checks-on-configmap-configs) runs the same config checks there, over every ConfigMap value that parses as a collector config, and reports each finding under its OTEL id with the ConfigMap's namespace, name and key:
+
+```
+error: [otlp/tmepo] ConfigMap observability/otel-agent-config, key config.yaml: pipeline "logs" uses exporter "otlp/tmepo", which is not declared under exporters; the collector refuses to start (otel)
+```
+
+A project that declares collectors only through the k8s composites needs only `k8s` in its `lexicons`. Adding `otel` as well also emits the components you export as a collector config of their own, with no pipelines, which OTEL103 then reports as unused. OTEL107 to OTEL109 read declared entities, so they don't run for such a project.
 
 ## OTEL002 and credentials
 
-The collector expands `${env:NAME}` and `${file:/path}` when it loads its config, so a credential never needs to be in the declaration. Any value containing `${` is treated as such a reference, and keys ending in `_file` are paths, not secrets.
+The collector expands `${env:NAME}` and `${file:/path}` when it loads its config, so a credential never needs to be in the declaration. Any value containing `${` is treated as such a reference, and keys ending in `_file` are paths, not secrets. The check follows a setting lifted into a named `const` in the same file, the shape COR001 asks for and `chant import` writes, and looks inside lists, such as a Prometheus scrape job's `basic_auth`.
+
+## OTEL101, OTEL112 and connectors
+
+A connector is an exporter in one pipeline and a receiver in another, and the collector refuses a connector listed on only one side (OTEL101). Each connector also supports fixed signal pairs, as its factory registers them:
+
+| Connector | Pairs |
+|---|---|
+| `spanmetrics`, `servicegraph` | traces to metrics |
+| `count` | traces, metrics, logs or profiles to metrics |
+| `routing`, `forward` | traces to traces, metrics to metrics, logs to logs |
+
+OTEL112 applies the collector's rule: every pipeline feeding a connector must pair, through a supported pair, with some pipeline the connector feeds, and every pipeline it feeds must pair with some pipeline feeding it. The message names the connector's pairs. A custom connector is checked when its `defineComponent` call lists `connects`; without it, OTEL112 stays silent for that connector. Both rules read one collector config at a time, so pipelines split across build roots are not joined.
+
+## OTEL113: connector cycles
+
+A connector carries data from the pipeline that lists it in `exporters` to the pipeline that lists it in `receivers`. The collector builds one graph from those hops and refuses to start when the graph has a cycle. This config fails because `traces/a` feeds `traces/b` through `forward/ab`, and `traces/b` feeds `traces/a` back through `forward/ba`:
+
+```yaml
+service:
+  pipelines:
+    traces/a:
+      receivers: [otlp, forward/ba]
+      exporters: [forward/ab]
+    traces/b:
+      receivers: [forward/ab]
+      exporters: [forward/ba, debug]
+```
+
+The message names one cycle hop by hop, `traces/a -> forward/ab -> traces/b -> forward/ba -> traces/a`, and starts at the first pipeline in the config. A pipeline that lists the same `forward` connector as both receiver and exporter is a cycle of one. OTEL113 walks the `edges` that [`collectorTopology()`](../topology/) returns, so a hop counts only where the connector supports that signal pair: `metrics` back into `traces` through `spanmetrics` is no edge, and OTEL112 reports it instead. Several cycles through the same pipelines give one finding. Break the cycle by dropping a hop, or by sending that pipeline's data to an exporter rather than back upstream.
+
+## OTEL114: connector id collisions
+
+A pipeline names a connector the same way it names a receiver or an exporter, so a connector id must differ from every declared receiver and exporter id. The collector checks this before it looks at pipelines, so it refuses the config even when nothing uses the colliding receiver or exporter. Collisions need a type that exists both as a connector and as a receiver or exporter (`datadog` is one in collector-contrib) or a custom component, and the fix is a name: `datadog/connector` rather than `datadog`.
+
+```yaml
+receivers:
+  datadog: { endpoint: 127.0.0.1:8126 }
+connectors:
+  datadog: {}            # OTEL114: rename to datadog/connector
+```
+
+## OTEL115: routing targets
+
+The `routing` connector hands each item to the pipelines its matching route names, in `table[].pipelines`, or to `default_pipelines` when no route matches. It can only hand data to a pipeline it feeds, so each of those pipelines must list the connector in its `receivers`. The collector refuses to start when a route names any other pipeline, or one that `service.pipelines` does not declare.
+
+```yaml
+connectors:
+  routing:
+    default_pipelines: [traces/other]   # OTEL115: traces/other receives from otlp, not routing
+    table:
+      - statement: route() where attributes["tenant"] == "acme"
+        pipelines: [traces/acme]
+service:
+  pipelines:
+    traces/in:    { receivers: [otlp],    exporters: [routing] }
+    traces/acme:  { receivers: [routing], exporters: [debug] }
+    traces/other: { receivers: [otlp],    exporters: [debug] }
+```
+
+The message says where the target came from (`table[0].pipelines` or `default_pipelines`), and a pipeline named in several routes is reported once. Every connector of type `routing` is checked, named instances such as `routing/tenants` included.
+
+## OTEL116: high-cardinality GenAI attributes
+
+A metric gets one time series per distinct set of attribute values. Some GenAI attributes take a new value on every request or conversation, so a connector that splits a metric by one of them adds series as fast as traffic arrives, until the backend runs out of memory. The collector accepts such a config without a warning. OTEL116 reports these keys:
+
+| Key | Defined in | Varies per |
+|---|---|---|
+| `gen_ai.conversation.id` | semantic-conventions v1.41.1, `model/gen-ai/registry.yaml` | conversation |
+| `gen_ai.response.id` | v1.41.1, `model/gen-ai/registry.yaml` | response |
+| `gen_ai.tool.call.id` | v1.41.1, `model/gen-ai/registry.yaml` | tool call |
+| `gen_ai.request.previous_response.id` | semantic-conventions-genai, unreleased main | request |
+| `gen_ai.memory.record.id` | semantic-conventions-genai, unreleased main | memory record |
+| `session.id` | v1.41.1, `model/session/registry.yaml` | session |
+| `user.id` | v1.41.1, `model/user/registry.yaml` | user |
+| `enduser.id` | v1.41.1, `model/enduser/registry.yaml` | end user |
+
+v1.41.1 is the lexicon's `GENAI_SEMCONV_PIN`. None of these keys is an attribute of any GenAI metric the conventions define at that pin (`model/gen-ai/metrics.yaml`), which use the operation, provider, model, server address and port, error type and token type. The two keys from `semantic-conventions-genai` are listed because instrumentation already sets them, before that repository has a release to pin.
+
+OTEL116 also reports the content keys `genAiPipeline()` deletes, `GENAI_CONTENT_ATTRIBUTES` (`gen_ai.input.messages`, `gen_ai.output.messages`, `gen_ai.system_instructions`, the tool call arguments and result, the retrieval query and documents, and the deprecated `gen_ai.prompt` and `gen_ai.completion`), and indexed keys such as `gen_ai.prompt.0.content`. A content value is unbounded, and putting it in a metric label also copies prompts and completions into the metrics backend.
+
+The check reads these fields of each connector in a collector config:
+
+| Connector | Fields |
+|---|---|
+| `spanmetrics` | `dimensions`, `calls_dimensions`, `histogram.dimensions`, `events.dimensions` |
+| `servicegraph` | `dimensions` |
+| `count`, `sum` | each metric's `attributes` |
+| `signaltometrics` | each metric's `attributes` and `include_resource_attributes` |
+
+An empty or unset `include_resource_attributes` keeps every resource attribute. Which ones those are depends on the SDK, not the config, so OTEL116 says nothing about it; `spanmetrics` keeps the resource attributes the same way. The keys live in `GENAI_HIGH_CARDINALITY_ATTRIBUTES` and `GENAI_CONTENT_ATTRIBUTES`, and `genAiCardinalityRisk(key)` tells you whether a key is one of them.
+
+Keep these attributes on spans and logs, where a per-request value costs nothing extra, and split metrics by the bounded ones. If you have bounded one of these keys some other way, for example a `transform` processor that maps user ids to a few tiers before the connector, turn the rule off for the project with `lint.rules: { OTEL116: "off" }`. Post-synth checks have no per-key option. `genAiPipeline()`'s own output passes OTEL116 with every option.
+
+## OTEL117: listen address collisions
+
+Each receiver and exporter a pipeline lists, each extension in `service.extensions`, and the collector's own metrics endpoint bind an address when the collector starts. When two of them want the same one, the second bind fails with "address already in use" and the collector exits. `otelcol validate` builds the config without binding anything, so it passes. The usual case is a `prometheus` exporter on port 8888, which the collector already uses for its own metrics:
+
+```yaml
+exporters:
+  prometheus:
+    endpoint: 0.0.0.0:8888   # the collector's own metrics are on localhost:8888
+```
+
+Two addresses collide when the ports match and the hosts match, or either host is a wildcard (`0.0.0.0`, `::` or empty). A UDP listener (the jaeger receiver's `thrift_compact` and `thrift_binary`) only collides with another UDP listener. A host written as `${env:POD_IP}` is compared as written.
+
+OTEL117 knows these listeners and their defaults at the pinned collector release:
+
+| Component | Address | Default |
+|---|---|---|
+| `otlp` receiver | `protocols.grpc.endpoint`, `protocols.http.endpoint` | `localhost:4317`, `localhost:4318`, for a protocol that is listed |
+| `zipkin` receiver | `endpoint` | `localhost:9411` |
+| `jaeger` receiver | `protocols.grpc`, `thrift_http`, `thrift_binary`, `thrift_compact` endpoints | `localhost:14250`, `localhost:14268`, `localhost:6832` (UDP), `localhost:6831` (UDP), for a protocol that is listed |
+| `prometheus` exporter | `endpoint` | none |
+| `health_check`, `zpages`, `pprof` extensions | `endpoint` | `localhost:13133`, `localhost:55679`, `localhost:1777` |
+| the collector's own metrics | `service.telemetry.metrics.readers[].pull.exporter.prometheus` `host` and `port` | `localhost:8888`, none with `level: none` |
+
+Other components are not checked, since an `endpoint` can be a server the component connects to rather than one it serves (the `kubeletstats` receiver's is the kubelet). A component no pipeline lists, or an extension missing from `service.extensions`, never starts, so it can't collide.
 
 ## Using the checks outside a build
 
-The same logic is exported as plain functions. `validateCollectorConfig(config)` returns OTEL101 to OTEL106 findings for any parsed collector config, and `validateCollectorEntities(entities)` returns OTEL107 to OTEL109 for declared entities. The k8s lexicon's `GkeOtelCollector` tests use the first to check the config the composite renders.
+The same logic is exported as plain functions. `validateCollectorConfig(config)` returns OTEL101 to OTEL106 and OTEL112 to OTEL117 findings for any parsed collector config, and `validateCollectorEntities(entities)` returns OTEL107 to OTEL109 for declared entities. The k8s lexicon's `GkeOtelCollector` tests use the first to check the config the composite renders.

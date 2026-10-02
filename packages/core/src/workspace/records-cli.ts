@@ -1,21 +1,59 @@
 /**
- * `chant workspace records --kind <path> [--current] [--at <rev>] [--json]`,
- * the first-test slice of the records query (#2546, #2536).
+ * `chant workspace records --kind <path> [--current] [--at <rev>] [--base <rev>]
+ * [--require attested] [--json]`, the first-test slice of the records query
+ * (#2546, #2536), with each record's provenance level (#2547).
  *
  * It reads every record the kind file locates and prints them, with reason
  * codes for any that are invalid. An invalid record never fails the command:
  * the exit code is 0 whenever the read itself worked. Only a kind, schema or
  * revision that cannot be read exits 1.
  *
- * It needs no `chant.workspace.json`. The kind is passed explicitly, so
- * nothing is inferred (#2525 rule 1).
+ * It needs no `chant.workspace.json`. The kind is passed explicitly, or,
+ * without `--kind`, it is every record kind the declaration names (#2680), so
+ * nothing is inferred (#2525 rule 1). Several kinds print one document per
+ * kind, in the declaration's order, inside one set.
+ *
+ * With `--since <rev>` it prints what changed between two revisions instead,
+ * through `records-since.ts` (#2673).
  */
 
-import { relative } from "node:path";
+import { execFileSync } from "node:child_process";
+import { realpathSync } from "node:fs";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { formatError } from "../cli/format";
 import type { CommandContext } from "../cli/registry";
-import { gitRevisionSource, gitRoot, resolveRevision, workingTreeSource } from "./record-source";
-import { loadRecordKind, readRecords, RecordReadError, type ReadErrorCode, type RecordEntry } from "./records";
+import { findWorkspaceRoot } from "../project-root";
+import { fileDigest, isWorkspacePath } from "./record-assets";
+import { decidedCommits, type DecidedIn } from "./record-decided";
+import { gitRevisionSource, gitRoot, resolveRevision, workingTreeSource, type RecordSource } from "./record-source";
+import { declaredRecordKinds, readDeclaration, WorkspaceReadError, type RecordKindDeclaration } from "./declaration";
+import { declaredKindFile } from "./declared-kinds";
+import { locateWorkspace } from "./which-chant";
+import {
+  computeQuorum,
+  DEFAULT_QUORUM,
+  loadRecordKind,
+  normalisePrincipal,
+  readRecords,
+  RECORD_SEAL_FIELD,
+  RecordReadError,
+  type LoadedRecordKind,
+  type Quorum,
+  type QuorumOptions,
+  type ReadErrorCode,
+  type ReadRecordsResult,
+  type RecordEntry,
+  type RecordFormat,
+  type RecordHistory,
+  type SealInput,
+  type VerdictAttestation,
+} from "./records";
+import { gitTree, workingTree, type WorkspaceTree } from "./tree";
+import type { DecisionWork } from "./work";
+import { activeAttestors, type CommitAttestor, type ProvenanceLevel } from "./trust/attestor";
+import { policyAtBase, recordProvenance, resolveBase, type BaseSource, type RecordProvenance } from "./trust/provenance";
+import { returnedPolicy, type TrustPolicy } from "./trust/policy";
+import type { SealedRecord } from "./trust/seal";
 
 /** The version of the `records` output this chant writes. */
 export const RECORDS_CONTRACT_VERSION = 1;
@@ -23,14 +61,67 @@ export const RECORDS_CONTRACT_VERSION = 1;
 /** `$id` of the JSON Schema for the `--json` output, shipped beside this file. */
 export const RECORDS_OUTPUT_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/records/v1/records.schema.json";
 
-const USAGE = "chant workspace records --kind <kind file> [--current] [--at <rev>] [--json]";
+const USAGE =
+  "chant workspace records [--kind <kind file>] [--current] [--at <rev>] [--base <rev>] [--require attested] [--json] | chant workspace records [--kind <kind file>] --since <rev|session id> [--at <rev>] [--json] | chant workspace records pin <path> | chant workspace records new|amend|review|close (#2670, #2693)";
+
+/** Exit code when the read worked and a record falls below `--require`. */
+export const EXIT_BELOW_REQUIRED = 2;
 
 export interface RecordsQuery {
   kind: string;
   current?: boolean;
   at?: string;
+  /** The revision the trust policy is read at (#2547). Defaults to the target branch tip. */
+  base?: string;
   /** Where `kind` is resolved from and the repository is found. */
   cwd: string;
+  /**
+   * For a work kind: walk the region of each done item's `source` and raise
+   * `work-done-gap-open` when its finding still fires (#2686). On unless
+   * false; the intent graph passes false, since it raises the warning itself.
+   */
+  workGaps?: boolean;
+}
+
+/**
+ * A record as the output carries it: the entry plus its provenance (#2547),
+ * and, when the kind has a reviews list, its quorum (#2671) and what its
+ * author seal establishes (#2688).
+ */
+export type RecordView = RecordEntry & {
+  provenance: RecordProvenance;
+  quorum?: Quorum | null;
+  /** true when the record's seal verifies for its author against the signers at base; false when it fails, or is missing under an active policy; null when nothing here can say (#2688). */
+  attested?: boolean | null;
+  attestation?: VerdictAttestation;
+  /**
+   * For a work kind read in the working tree (#2732): the item's active work
+   * lease, or null when nobody holds one. Read from the local lease refs of
+   * the ledger owning the kind, without fetching. Absent under `--at`, since a
+   * lease is live state and not part of a revision.
+   */
+  lease?: { holder: string; token: string; acquiredAt: string; expiresAt: string } | null;
+  /**
+   * For a kind with approval ranks that is not a work kind, read in git: the
+   * commit that last moved the record into an approved state and kept it
+   * there, or null when the record is not approved in the history read
+   * (`record-decided.ts`). The intent graph's windows open at this commit.
+   */
+  decidedIn?: DecidedIn | null;
+};
+
+/** The role in the trust policy whose holders' verdicts the quorum does not count (#2671). */
+export const AGENT_ROLE = "agent";
+
+/** Where provenance was judged from (#2547). */
+export interface TrustView {
+  /** The full commit id the policy was read at, or null when there is no base. */
+  base: string | null;
+  baseFrom: BaseSource | null;
+  /** Whether a signers file exists at base. False means every record is `unattested`. */
+  active: boolean;
+  signersPath: string;
+  problems: string[];
 }
 
 /** The `records` output: a result, or a failure with one error code. */
@@ -38,28 +129,272 @@ export type RecordsDocument =
   | {
       $schema: string;
       contract: number;
-      kind: { name: string; schema: string; file: string };
+      kind: { name: string; schema: string; file: string; format: RecordFormat; spec: boolean };
       at: string | null;
+      /** The directory pinned paths resolve in, from the repository root: the workspace holding the kind file, or the repository root (#2549). */
+      workspaceRoot: string;
       current: boolean;
-      records: RecordEntry[];
+      trust: TrustView;
+      records: RecordView[];
       summary: { total: number; valid: number; invalid: number; superseded: number };
+      /** For a work kind (#2683): each decision its decision kind reads, with the work records implementing it. */
+      decisions?: DecisionWork[];
     }
   | { $schema: string; contract: number; error: { code: ReadErrorCode; message: string } };
 
+/** Where a document in a {@link RecordsSetDocument} comes from: the declaration's entry for its kind (#2680). */
+export interface DeclaredKindView {
+  /** The member that declares the kind, or null for the workspace's own. */
+  member: string | null;
+  /** The kind file from the workspace root. */
+  path: string;
+  /** The name the declaration gives the kind, or null. */
+  name: string | null;
+}
+
+/**
+ * The `records` output without `--kind` when the declaration names record
+ * kinds (#2680): one {@link RecordsDocument} per kind, in the declaration's
+ * order, each with the entry that declares it.
+ */
+export interface RecordsSetDocument {
+  $schema: string;
+  contract: number;
+  kinds: (RecordsDocument & { declared: DeclaredKindView })[];
+  /** With `--current`: the workspace's spec (#2524 D20, #2546), from the kinds marked `spec: true`. */
+  spec?: SpecView;
+}
+
+/**
+ * The spec (#2524 D20): the current records of every declared kind marked
+ * `spec: true`, each with the workspace files it pins. `records --current
+ * --json` prints it beside the kinds, so an agent resumes from the
+ * declaration and this one read.
+ */
+export interface SpecView {
+  /** The spec kinds, as the declaration names them, in its order. */
+  kinds: DeclaredKindView[];
+  records: SpecRecord[];
+}
+
+/** One current record of a spec kind. */
+export interface SpecRecord {
+  /** The kind's name, such as decision. */
+  kind: string;
+  id: string | null;
+  path: string;
+  state: string | null;
+  valid: boolean;
+  /** The digest a verdict names (#2672). */
+  digest: string;
+  /** Each workspace file the record pins: its path from the workspace root, the sha256 pinned, and how it compares with the tree read (#2549). */
+  assets: RecordEntry["assets"];
+}
+
+/** The spec of a set of declared kinds already read with `--current`. */
+export function specOf(kinds: RecordsSetDocument["kinds"]): SpecView {
+  const spec: SpecView = { kinds: [], records: [] };
+  for (const doc of kinds) {
+    if ("error" in doc || !doc.kind.spec) continue;
+    spec.kinds.push(doc.declared);
+    for (const r of doc.records) {
+      spec.records.push({ kind: doc.kind.name, id: r.id, path: r.path, state: r.state, valid: r.valid, digest: r.digest, assets: r.assets });
+    }
+  }
+  return spec;
+}
+
+/**
+ * The record kinds the declaration nearest above `cwd` names, in the tree
+ * `at` reads, with each kind file on disk. Empty when there is no declaration.
+ * Throws a {@link WorkspaceReadError} for one that can't be read.
+ */
+export function declaredKindFiles(cwd: string, at?: string): { declared: RecordKindDeclaration; file: string }[] {
+  let located;
+  try {
+    located = locateWorkspace(cwd, at);
+  } catch (err) {
+    if (err instanceof WorkspaceReadError && err.code === "declaration-missing") return [];
+    throw err;
+  }
+  return declaredRecordKinds(readDeclaration(located.tree)).map((declared) => ({ declared, file: declaredKindFile(declared, located.rootOnDisk) }));
+}
+
+/** Read every declared kind in `kinds`, as {@link queryRecords} reads one. */
+export async function queryDeclaredRecords(kinds: { declared: RecordKindDeclaration; file: string }[], query: Omit<RecordsQuery, "kind">): Promise<RecordsSetDocument> {
+  const out: RecordsSetDocument["kinds"] = [];
+  for (const k of kinds) {
+    const doc = await queryRecords({ ...query, kind: k.file });
+    out.push({ ...doc, declared: { member: k.declared.member, path: k.declared.path, name: k.declared.name } });
+  }
+  return { $schema: RECORDS_OUTPUT_SCHEMA_ID, contract: RECORDS_CONTRACT_VERSION, kinds: out, ...(query.current ? { spec: specOf(out) } : {}) };
+}
+
+/** A records read, before provenance. */
+export interface RecordsRead {
+  loaded: LoadedRecordKind;
+  /** The repository root, or the working directory outside git. Record paths are relative to it. */
+  root: string;
+  /** The git top, or undefined outside git. */
+  top: string | undefined;
+  at: string | null;
+  /** Where pinned paths resolve, relative to `root` ("." for the root itself). */
+  workspaceRoot: string;
+  /** The workspace root's tree, as read: the working tree, or the revision under `--at`. */
+  tree: WorkspaceTree;
+  result: ReadRecordsResult;
+}
+
+/**
+ * The quorum the workspace declares: the declaration at the workspace root
+ * of the tree read, or the default when there is none, or when it can't be
+ * read (#2671). Records need no declaration, so neither does this.
+ */
+function declaredQuorum(tree: WorkspaceTree): { need: number; needFrom: "declaration" | "default" } {
+  try {
+    const q = readDeclaration(tree).quorum;
+    if (q !== null) return { need: q, needFrom: "declaration" };
+  } catch {
+    // No declaration, or one this read can't use: the default applies.
+  }
+  return { need: DEFAULT_QUORUM, needFrom: "default" };
+}
+
+/**
+ * The options a kind's quorum is computed with, or undefined when the kind
+ * has no reviews list: the need from the declaration in the tree read, and
+ * the agents, whether verdicts need a seal, and the keys a seal verifies
+ * against, all from the policy at base (#2671, #2687). `records` and the
+ * ratified check of `records new` and `amend` (#2873) both use it.
+ */
+export async function quorumOptionsFor(loaded: LoadedRecordKind, tree: WorkspaceTree, policy: TrustPolicy): Promise<QuorumOptions | undefined> {
+  if (!loaded.kind.reviews) return undefined;
+  const { checkVerdictSeal } = await import("./trust/seal");
+  return {
+    ...declaredQuorum(tree),
+    agents: new Set((policy.roles[AGENT_ROLE] ?? []).map(normalisePrincipal)),
+    attestation: policy.active,
+    verifySeal: (v: SealInput) => checkVerdictSeal(policy, v),
+  };
+}
+
+/**
+ * Where a kind's pinned paths resolve: the workspace whose declaration sits
+ * nearest above the kind file, when it is inside the repository, or else the
+ * repository root. Relative to `root`, with / separators.
+ */
+export function pinRoot(kindFile: string, root: string): string {
+  const found = findWorkspaceRoot(dirname(kindFile));
+  if (!found) return ".";
+  const rel = relative(root, realpathOr(found.dir)).split(sep).join("/");
+  return rel === "" || rel.startsWith("..") ? "." : rel;
+}
+
+/**
+ * Commit times from the history of `rev` in the repository at `top`, asked
+ * only for a pin that might be stale. `prefix` is the workspace root from the
+ * repository root.
+ */
+function gitHistory(top: string, rev: string, prefix: string): RecordHistory {
+  const times = (args: string[]): number[] => {
+    try {
+      const out = execFileSync("git", args, { cwd: top, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] });
+      return out.split("\n").filter(Boolean).map(Number);
+    } catch {
+      // No commits yet, or a path git doesn't know.
+      return [];
+    }
+  };
+  return {
+    fileChanged: (path) => times(["log", "-1", "--format=%ct", rev, "--", prefix === "." ? path : `${prefix}/${path}`])[0] ?? null,
+    // The latest commit that added the file: a record deleted and written again counts from the second time.
+    recorded: (path) => times(["log", "--diff-filter=A", "--format=%ct", rev, "--", path])[0] ?? null,
+  };
+}
+
+/**
+ * Load the kind and read its records, in the working tree or at `query.at`,
+ * with each pin checked in the same tree. Throws a {@link RecordReadError}.
+ * `chant workspace graph` and `check` read records through this too.
+ */
+export async function readRecordsFor(
+  query: Omit<RecordsQuery, "base"> & {
+    /**
+     * Lay more records over a working-tree read, such as the answer records a
+     * steward keeps on the lifecycle ledger (#2786). Not called with `at`.
+     */
+    overlay?: (source: RecordSource, kind: { loaded: LoadedRecordKind; root: string }) => Promise<RecordSource>;
+  },
+): Promise<RecordsRead> {
+  // git reports its top through symlinks resolved (/var is /private/var on
+  // macOS), so the directory has to be too, or record paths leave the repository.
+  const cwd = realpathOr(query.cwd);
+  const top = gitRoot(cwd);
+  const root = top ?? cwd;
+  const loaded = await loadRecordKind(query.kind, cwd);
+  const workspaceRoot = pinRoot(loaded.file, root);
+  let at: string | null = null;
+  let source = workingTreeSource(root);
+  let assets = workingTree(workspaceRoot === "." ? root : join(root, ...workspaceRoot.split("/")));
+  if (query.at !== undefined) {
+    if (!top) throw new RecordReadError("not-a-git-repository", "--at reads git objects, and this directory is not in a git repository");
+    at = resolveRevision(top, query.at);
+    source = gitRevisionSource(top, at);
+    assets = gitTree(top, at, workspaceRoot === "." ? "" : workspaceRoot);
+  }
+  if (at === null && query.overlay) source = await query.overlay(source, { loaded, root });
+  const history = top ? gitHistory(top, at ?? "HEAD", workspaceRoot) : undefined;
+  // A session kind's verdicts name records of another kind, read from the same tree (#2673).
+  let subjects: { records: RecordEntry[]; reviews: string } | undefined;
+  if (loaded.kind.session) {
+    const subjectKind = await loadRecordKind(resolve(dirname(loaded.file), loaded.kind.session.subjects.kind), cwd);
+    subjects = { records: (await readRecords(subjectKind, { root, source })).records, reviews: subjectKind.kind.reviews?.field ?? "reviews" };
+  }
+  const result = await readRecords(loaded, { root, source, current: !!query.current, assets, workspaceRoot, ...(history ? { history } : {}), ...(subjects ? { subjects } : {}) });
+  return { loaded, root, top, at, workspaceRoot, tree: assets, result };
+}
+
 /** Run the query and build the document `--json` prints. Never throws a {@link RecordReadError}. */
 export async function queryRecords(query: RecordsQuery): Promise<RecordsDocument> {
-  const top = gitRoot(query.cwd);
-  const root = top ?? query.cwd;
   try {
-    const loaded = await loadRecordKind(query.kind, query.cwd);
-    let at: string | null = null;
-    let source = workingTreeSource(root);
-    if (query.at !== undefined) {
-      if (!top) throw new RecordReadError("not-a-git-repository", "--at reads git objects, and this directory is not in a git repository");
-      at = resolveRevision(top, query.at);
-      source = gitRevisionSource(top, at);
+    const { loaded, root, top, at, workspaceRoot, tree, result } = await readRecordsFor(query);
+    // Provenance, judged by the policy at base and never by the tree read (#2547).
+    const base = top ? resolveBase(top, query.base) : { commit: null, from: null };
+    const policy = top ? policyAtBase(top, base) : policyAtBase(root, base);
+    const attestors = policy.active ? await activeAttestors() : [];
+    const provenance = recordProvenance({
+      repo: top,
+      policy,
+      at,
+      paths: result.records.map((r) => r.path),
+      attestors,
+      ...(policy.active ? { revisit: await returnedRevisit(tree, workspaceRoot, policy, attestors) } : {}),
+    });
+    const seals = loaded.kind.reviews ? await import("./trust/seal") : undefined;
+    const quorumOptions = await quorumOptionsFor(loaded, tree, policy);
+    const records: RecordView[] = [];
+    for (const r of result.records) {
+      const p = provenance.get(r.path)!;
+      // Returned work (#2552): its seals verify against the signers admitted for its return too.
+      const recordPolicy = p.returned ? returnedPolicy(policy, p.returned.id) : policy;
+      const options = p.returned ? await quorumOptionsFor(loaded, tree, recordPolicy) : quorumOptions;
+      records.push({
+        ...r,
+        provenance: p,
+        ...(options ? { quorum: computeQuorum(loaded.kind, r, options) } : {}),
+        ...(seals ? authorSeal(loaded.kind, r, recordPolicy, seals.checkRecordSeal) : {}),
+      });
     }
-    const result = await readRecords(loaded, { root, source, current: !!query.current });
+    if (loaded.kind.approval && !loaded.kind.work && top) {
+      const decided = decidedCommits(top, at ?? "HEAD", records.map((r) => r.path), loaded.kind);
+      for (const r of records) r.decidedIn = decided.get(r.path) ?? null;
+    }
+    if (loaded.kind.work && query.workGaps !== false && top) await raiseWorkGaps(loaded, records, { root, workspaceRoot, at: query.at });
+    if (loaded.kind.work && at === null && top) {
+      const { activeWorkLeases } = await import("../lifecycle/work-lease");
+      const leases = await activeWorkLeases(loaded.file);
+      for (const r of records) if (r.id !== null) r.lease = leases.get(r.id) ?? null;
+    }
     return {
       $schema: RECORDS_OUTPUT_SCHEMA_ID,
       contract: RECORDS_CONTRACT_VERSION,
@@ -67,11 +402,16 @@ export async function queryRecords(query: RecordsQuery): Promise<RecordsDocument
         name: loaded.kind.name,
         schema: loaded.kind.schema.id,
         file: relative(root, loaded.file).split("\\").join("/"),
+        format: loaded.kind.format,
+        spec: loaded.kind.spec === true,
       },
       at,
+      workspaceRoot,
       current: !!query.current,
-      records: result.records,
+      trust: { base: base.commit, baseFrom: base.from, active: policy.active, signersPath: policy.signersPath, problems: policy.problems },
+      records,
       summary: result.summary,
+      ...(result.decisions ? { decisions: result.decisions } : {}),
     };
   } catch (err) {
     if (!(err instanceof RecordReadError)) throw err;
@@ -79,13 +419,167 @@ export async function queryRecords(query: RecordsQuery): Promise<RecordsDocument
   }
 }
 
+/**
+ * The second look recordProvenance takes at each record (#2552): a record
+ * whose bytes came back in a return is judged by the commit it was made in,
+ * which the return carries, rather than by the import here. `tree` is the
+ * workspace root's tree, as read; record paths are from the repository root.
+ */
+async function returnedRevisit(
+  tree: WorkspaceTree,
+  workspaceRoot: string,
+  policy: TrustPolicy,
+  attestors: readonly CommitAttestor[],
+): Promise<((path: string, host: RecordProvenance) => RecordProvenance | undefined) | undefined> {
+  const { readReturns, returnedProvenance } = await import("./returns");
+  const { returns } = readReturns(tree);
+  if (returns.length === 0) return undefined;
+  const prefix = workspaceRoot === "." ? "" : `${workspaceRoot}/`;
+  return (path, host) => {
+    if (!path.startsWith(prefix)) return undefined;
+    const rel = path.slice(prefix.length);
+    const holding = returns.filter((r) => r.paths[rel] !== undefined);
+    if (holding.length === 0 || tree.stat(rel) !== "file") return undefined;
+    const content = Buffer.from(tree.bytes ? tree.bytes(rel) : tree.read(rel));
+    for (const r of holding) {
+      const p = returnedProvenance(policy, attestors, r, rel, content, host);
+      if (p) return p;
+    }
+    return undefined;
+  };
+}
+
+/**
+ * A record's author seal checked against the policy at base (#2688), for a
+ * kind with a reviews list: its author is the kind's `reviews.decider` field.
+ * Under an active signers file, a record that names an author and is not
+ * attested gains the warning `record-unattested`, and is still read: sealing
+ * records is opt-in for now. A record that can't be parsed gets neither field.
+ */
+function authorSeal(
+  kind: LoadedRecordKind["kind"],
+  r: RecordEntry,
+  policy: TrustPolicy,
+  check: (policy: TrustPolicy, r: SealedRecord) => { attested: boolean | null } & VerdictAttestation,
+): { attested?: boolean | null; attestation?: VerdictAttestation } {
+  if (r.data === null) return {};
+  const field = kind.reviews!.decider;
+  const author = typeof r.data[field] === "string" && (r.data[field] as string).trim() !== "" ? (r.data[field] as string) : null;
+  const { attested, ...attestation } = check(policy, { record: r.id, digest: r.digest, author, authorField: field, state: r.state, seal: r.data[RECORD_SEAL_FIELD] });
+  if (policy.active && author !== null && attested !== true) {
+    r.warnings.push({ code: "record-unattested", message: `an attestation policy is active at base, and ${attestation.message}` });
+  }
+  return { attested, attestation };
+}
+
+/**
+ * `work-done-gap-open` on a records read (#2686): for each done work record
+ * whose `source` names a finding and a region, walk that region with the
+ * intent graph, at the same revision, and copy the warning the walk raises
+ * on the record. One walk per region, and only a region some done item names.
+ * The walk reads the record kinds the declaration names, and the work kind
+ * and its decision kind if it names neither. It needs git and a workspace
+ * declaration; when the walk can't be made, for one without them or a region
+ * that no longer exists, the record is left as it was.
+ */
+async function raiseWorkGaps(loaded: LoadedRecordKind, records: RecordView[], opts: { root: string; workspaceRoot: string; at: string | undefined }): Promise<void> {
+  const work = loaded.kind.work!;
+  const byRegion = new Map<string, RecordView[]>();
+  for (const r of records) {
+    if (r.id === null || r.state !== work.done) continue;
+    const src = r.data?.source;
+    if (src === null || typeof src !== "object" || Array.isArray(src)) continue;
+    const { finding, region } = src as Record<string, unknown>;
+    if (typeof finding !== "string" || typeof region !== "string") continue;
+    byRegion.set(region, [...(byRegion.get(region) ?? []), r]);
+  }
+  if (byRegion.size === 0) return;
+  const cwd = opts.workspaceRoot === "." ? opts.root : join(opts.root, ...opts.workspaceRoot.split("/"));
+  let declared: string[];
+  try {
+    declared = declaredKindFiles(cwd, opts.at).map((k) => k.file);
+  } catch (err) {
+    if (err instanceof WorkspaceReadError) return;
+    throw err;
+  }
+  const kinds: string[] = [];
+  const seen = new Set<string>();
+  for (const file of [...declared, resolve(dirname(loaded.file), work.decisions), loaded.file]) {
+    const real = realpathOr(file);
+    if (seen.has(real)) continue;
+    seen.add(real);
+    kinds.push(file);
+  }
+  const { intentGraph } = await import("./intent");
+  for (const [region, items] of byRegion) {
+    const { doc } = await intentGraph({ cwd, region, at: opts.at, kinds });
+    if ("error" in doc) continue;
+    for (const r of items) {
+      const node = doc.nodes.find((n) => n.kind === "work" && n.id === `record:${loaded.kind.name}/${r.id}`);
+      const warning = node?.kind === "work" ? node.warnings.find((w) => w.code === "work-done-gap-open") : undefined;
+      if (warning && !r.warnings.some((w) => w.code === warning.code)) r.warnings.push(warning);
+    }
+  }
+}
+
+/**
+ * `chant workspace records pin <path>`: the `{path, sha256}` a decision's
+ * evidence entry holds for a file, with the path from the workspace root
+ * (the nearest declaration above the file, or the repository root).
+ */
+export function pinFile(file: string, cwd: string): { path: string; sha256: string } | { error: string } {
+  const abs = realpathOr(resolve(cwd, file));
+  const top = gitRoot(dirname(abs));
+  const ws = findWorkspaceRoot(dirname(abs));
+  const base = ws ? realpathOr(ws.dir) : top ? realpathOr(top) : realpathOr(cwd);
+  const path = relative(base, abs).split(sep).join("/");
+  if (path.startsWith("..") || !isWorkspacePath(path)) return { error: `${file} is not a file path inside the workspace at ${base}` };
+  const sha256 = fileDigest(workingTree(base), path);
+  if (sha256 === undefined) return { error: `${file} is not a file` };
+  return { path, sha256 };
+}
+
 export async function runWorkspaceRecords(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
-  if (!args.kind) {
-    console.error(formatError({ message: "--kind <kind file> is required", hint: USAGE }));
+  if (args.extraPositional === "new" || args.extraPositional === "amend" || args.extraPositional === "review" || args.extraPositional === "close") {
+    return (await import("./records-write")).runRecordsWrite(ctx);
+  }
+  if (args.extraPositional === "pin") {
+    if (!args.extraPositional2) {
+      console.error(formatError({ message: "pin needs the path of a file", hint: USAGE }));
+      return 1;
+    }
+    const pin = pinFile(args.extraPositional2, process.cwd());
+    if ("error" in pin) {
+      console.error(formatError({ message: pin.error, hint: USAGE }));
+      return 1;
+    }
+    console.log(JSON.stringify(pin, null, 2));
+    return 0;
+  }
+  if (args.extraPositional) {
+    console.error(formatError({ message: `chant workspace records takes no argument but pin, new, amend, review or close (got ${args.extraPositional})`, hint: USAGE }));
     return 1;
   }
-  const doc = await queryRecords({ kind: args.kind, current: args.current, at: args.at, cwd: process.cwd() });
+  if (!args.kind) return runDeclaredRecords(args);
+  if (args.require !== undefined && args.require !== "attested") {
+    console.error(formatError({ message: `--require takes one level, attested, not ${JSON.stringify(args.require)}`, hint: USAGE }));
+    return 1;
+  }
+  if (args.since !== undefined) {
+    if (args.current || args.require !== undefined || args.base !== undefined) {
+      console.error(formatError({ message: "--since compares two revisions and takes no --current, --require or --base", hint: USAGE }));
+      return 1;
+    }
+    // Loaded here, so a plain records read never loads it (#2673).
+    const { formatSince, queryRecordsSince } = await import("./records-since");
+    const since = await queryRecordsSince({ kind: args.kind, since: args.since, at: args.at, cwd: process.cwd() });
+    if (args.json) console.log(JSON.stringify(since, null, 2));
+    else if ("error" in since) console.error(formatError({ message: `${since.error.code}: ${since.error.message}`, hint: USAGE }));
+    else console.log(formatSince(since));
+    return "error" in since ? 1 : 0;
+  }
+  const doc = await queryRecords({ kind: args.kind, current: args.current, at: args.at, base: args.base, cwd: process.cwd() });
   if (args.json) {
     console.log(JSON.stringify(doc, null, 2));
   } else if ("error" in doc) {
@@ -93,10 +587,137 @@ export async function runWorkspaceRecords(ctx: CommandContext): Promise<number> 
   } else {
     console.log(formatRecords(doc.records, doc.summary, doc.at));
   }
-  return "error" in doc ? 1 : 0;
+  if ("error" in doc) return 1;
+  if (args.require) {
+    const below = belowRequired(doc.records, args.require);
+    if (below.length > 0) {
+      console.error(
+        formatError({
+          message: `${below.length} of ${doc.records.length} records are not ${args.require}: ${below
+            .slice(0, 5)
+            .map((r) => `${r.path} (${r.provenance.level})`)
+            .join(", ")}${below.length > 5 ? ", ..." : ""}`,
+          hint: doc.trust.active ? "run with --json to see each record's reason" : `there is no signers file (${doc.trust.signersPath}) at base`,
+        }),
+      );
+      return EXIT_BELOW_REQUIRED;
+    }
+  }
+  return 0;
 }
 
-function formatRecords(records: RecordEntry[], summary: { total: number; valid: number; invalid: number; superseded: number }, at: string | null): string {
+/**
+ * `records` without `--kind` (#2680): every record kind the declaration
+ * names, or, when it names none or there is no declaration, the error it has
+ * always been. A kind whose read fails is listed with its error, the others
+ * are still read, and the exit code is 1.
+ *
+ * Locating the declaration itself can fail before any kind is known. For
+ * `not-a-git-repository` and `revision-unknown`, the codes a single kind's
+ * read can also fail with (#2860), `--json` prints the same
+ * `{ $schema, contract, error: { code, message } }` document that read
+ * failure would, so a reader of `--json` never sees a silent exit 1. A
+ * declaration-level code the schema doesn't carry (`declaration-invalid` and
+ * the rest of `WorkspaceErrorCode`) still prints text on stderr only.
+ */
+async function runDeclaredRecords(args: CommandContext["args"]): Promise<number> {
+  if (args.require !== undefined && args.require !== "attested") {
+    console.error(formatError({ message: `--require takes one level, attested, not ${JSON.stringify(args.require)}`, hint: USAGE }));
+    return 1;
+  }
+  let declared: { declared: RecordKindDeclaration; file: string }[];
+  try {
+    declared = declaredKindFiles(process.cwd(), args.at);
+  } catch (err) {
+    if (!(err instanceof WorkspaceReadError)) throw err;
+    const message = `${err.describe()}; without --kind, the declaration names the record kinds`;
+    if (args.json && (err.code === "not-a-git-repository" || err.code === "revision-unknown")) {
+      console.log(JSON.stringify({ $schema: RECORDS_OUTPUT_SCHEMA_ID, contract: RECORDS_CONTRACT_VERSION, error: { code: err.code, message } }, null, 2));
+    } else {
+      console.error(formatError({ message: `${err.code}: ${message}`, hint: USAGE }));
+    }
+    return 1;
+  }
+  if (declared.length === 0) {
+    console.error(formatError({ message: "--kind <kind file> is required", hint: USAGE }));
+    return 1;
+  }
+  if (args.since !== undefined) return runDeclaredSince(declared, args);
+  const set = await queryDeclaredRecords(declared, { current: args.current, at: args.at, base: args.base, cwd: process.cwd() });
+  if (args.json) console.log(JSON.stringify(set, null, 2));
+  for (const doc of args.json ? [] : set.kinds) {
+    if ("error" in doc) {
+      console.error(formatError({ message: `${doc.declared.path}: ${doc.error.code}: ${doc.error.message}`, hint: USAGE }));
+      continue;
+    }
+    console.log(`${doc.declared.name ?? doc.kind.name} (${doc.declared.path})`);
+    console.log(formatRecords(doc.records, doc.summary, doc.at));
+  }
+  if (set.kinds.some((d) => "error" in d)) return 1;
+  if (args.require) {
+    const results = set.kinds.filter((d): d is Extract<typeof d, { records: unknown }> => !("error" in d));
+    const all = results.flatMap((d) => d.records);
+    const below = belowRequired(all, args.require);
+    if (below.length > 0) {
+      const inactive = results.find((d) => !d.trust.active);
+      console.error(
+        formatError({
+          message: `${below.length} of ${all.length} records are not ${args.require}: ${below
+            .slice(0, 5)
+            .map((r) => `${r.path} (${r.provenance.level})`)
+            .join(", ")}${below.length > 5 ? ", ..." : ""}`,
+          hint: inactive ? `there is no signers file (${inactive.trust.signersPath}) at base` : "run with --json to see each record's reason",
+        }),
+      );
+      return EXIT_BELOW_REQUIRED;
+    }
+  }
+  return 0;
+}
+
+/**
+ * `records --since` without `--kind` (#2680): what changed in every declared
+ * kind, one `records-since` document per kind inside one set, in the
+ * declaration's order. A kind whose read fails is listed with its error, and
+ * the exit code is 1.
+ */
+async function runDeclaredSince(declared: { declared: RecordKindDeclaration; file: string }[], args: CommandContext["args"]): Promise<number> {
+  if (args.current || args.require !== undefined || args.base !== undefined) {
+    console.error(formatError({ message: "--since compares two revisions and takes no --current, --require or --base", hint: USAGE }));
+    return 1;
+  }
+  const { formatSince, queryRecordsSince, RECORDS_SINCE_OUTPUT_SCHEMA_ID } = await import("./records-since");
+  const kinds = [];
+  for (const k of declared) {
+    const doc = await queryRecordsSince({ kind: k.file, since: args.since!, at: args.at, cwd: process.cwd() });
+    kinds.push({ ...doc, declared: { member: k.declared.member, path: k.declared.path, name: k.declared.name } });
+  }
+  if (args.json) console.log(JSON.stringify({ $schema: RECORDS_SINCE_OUTPUT_SCHEMA_ID, contract: RECORDS_CONTRACT_VERSION, kinds }, null, 2));
+  for (const doc of args.json ? [] : kinds) {
+    if ("error" in doc) {
+      console.error(formatError({ message: `${doc.declared.path}: ${doc.error.code}: ${doc.error.message}`, hint: USAGE }));
+      continue;
+    }
+    console.log(`${doc.declared.name ?? doc.kind.name} (${doc.declared.path})`);
+    console.log(formatSince(doc));
+  }
+  return kinds.some((d) => "error" in d) ? 1 : 0;
+}
+
+export function realpathOr(dir: string): string {
+  try {
+    return realpathSync(dir);
+  } catch {
+    return dir;
+  }
+}
+
+/** Records whose provenance falls below `required`. Only `attested` can be required. */
+export function belowRequired(records: RecordView[], required: ProvenanceLevel): RecordView[] {
+  return records.filter((r) => r.provenance.level !== required);
+}
+
+function formatRecords(records: RecordView[], summary: { total: number; valid: number; invalid: number; superseded: number }, at: string | null): string {
   const lines: string[] = [];
   const idWidth = Math.max(2, ...records.map((r) => (r.id ?? "-").length));
   const stateWidth = Math.max(5, ...records.map((r) => (r.state ?? "-").length));
@@ -104,8 +725,25 @@ function formatRecords(records: RecordEntry[], summary: { total: number; valid: 
     const title = typeof r.data?.title === "string" ? r.data.title : r.path;
     const flag = r.valid ? "" : "  INVALID";
     const superseded = r.supersededBy ? `  superseded by ${r.supersededBy}` : "";
-    lines.push(`${(r.id ?? "-").padEnd(idWidth)}  ${(r.state ?? "-").padEnd(stateWidth)}  ${title}${superseded}${flag}`);
+    const remediated = r.remediatedBy.length > 0 ? `  remediated by ${r.remediatedBy.join(", ")}` : "";
+    const attested = r.provenance.level === "attested" ? `  attested by ${r.provenance.principal}` : "";
+    const sealed = r.attested === true ? `  sealed by ${(r.data?.[RECORD_SEAL_FIELD] as { signer: string }).signer}` : "";
+    lines.push(`${(r.id ?? "-").padEnd(idWidth)}  ${(r.state ?? "-").padEnd(stateWidth)}  ${title}${superseded}${remediated}${attested}${sealed}${flag}`);
+    if (r.ready !== undefined) {
+      const blocked = (r.blockedBy ?? []).map((b) => `${b.id} (${b.state ?? "unknown"})`).join(", ");
+      const implemented = (r.implements ?? []).map((d) => `${d.id} (${d.state ?? "unknown"})`).join(", ");
+      const held = r.lease ? `held by ${r.lease.holder} until ${r.lease.expiresAt}` : "";
+      const status = [r.ready ? "ready" : blocked ? `blocked by ${blocked}` : "", implemented ? `implements ${implemented}` : "", held].filter(Boolean).join("; ");
+      if (status) lines.push(`${" ".repeat(idWidth + 2)}${status}`);
+    }
     for (const reason of r.reasons) lines.push(`${" ".repeat(idWidth + 2)}${reason.code}: ${reason.message} (${r.path})`);
+    for (const warning of r.warnings) lines.push(`${" ".repeat(idWidth + 2)}warning ${warning.code}: ${warning.message} (${r.path})`);
+    const q = r.quorum;
+    if (q && q.counted.length + q.notCounted.length > 0) {
+      const verdict = q.metWithObjections ? "met with objections" : q.met ? "met" : "not met";
+      const concerns = q.openConcerns.length > 0 ? `, ${q.openConcerns.length} open ${q.openConcerns.length === 1 ? "concern" : "concerns"}` : "";
+      lines.push(`${" ".repeat(idWidth + 2)}quorum ${q.agreed} of ${q.need} agreed, ${verdict}; ${q.notCounted.length} not counted${concerns}`);
+    }
   }
   lines.push(
     `${summary.total} records${at ? ` at ${at.slice(0, 8)}` : ""}: ${summary.valid} valid, ${summary.invalid} invalid, ${summary.superseded} superseded`,
@@ -113,13 +751,13 @@ function formatRecords(records: RecordEntry[], summary: { total: number; valid: 
   return lines.join("\n");
 }
 
-/** `chant workspace <anything else>`: only `records`, `lineage`, `upgrade` and `check` exist so far. */
+/** `chant workspace <anything else>`. */
 export async function runWorkspaceUnknown(ctx: CommandContext): Promise<number> {
   const sub = ctx.args.path && ctx.args.path !== "." ? ctx.args.path : "";
   console.error(
     formatError({
       message: sub ? `Unknown workspace subcommand: ${sub}` : "chant workspace needs a subcommand",
-      hint: `Available: ${USAGE}, chant workspace lineage [--json], chant workspace lineage resolve <path>, chant workspace upgrade [<scope>] [--to <ref>], chant workspace check [--json]`,
+      hint: `Workspace subcommands: adopt-lineage, audit, build, check, evidence, graph, hash-index, init, lineage, lint, ls, pin, records, signers, status, upgrade, verify, versions, work. Run "chant --help" for their options.`,
     }),
   );
   return 1;

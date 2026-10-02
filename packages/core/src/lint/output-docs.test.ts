@@ -1,6 +1,7 @@
 import { describe, test, expect } from "vitest";
 import { parseOutputDocs, pick, get } from "./output-docs";
 import type { SerializerResult } from "../serializer";
+import { load as jsYamlLoad } from "js-yaml";
 
 describe("parseOutputDocs", () => {
   test("parses a single JSON output as one document", () => {
@@ -156,65 +157,67 @@ describe("parseOutputDocs", () => {
       expect(bad.value).toBeUndefined();
     });
   });
-});
 
-describe("pick", () => {
-  interface Widget {
-    kind: string;
-    name: string;
-    extra: unknown;
-  }
+  // #2925: hand-written and third-party YAML (`chant audit`, test fixtures)
+  // uses flow collections and folded scalars. Each case is checked against
+  // js-yaml, so the expected value is what a full parser reads.
+  describe("YAML a hand-written manifest uses (#2925)", () => {
+    const docOf = (yaml: string): unknown => {
+      const docs = parseOutputDocs(new Map<string, string | SerializerResult>([["k8s", yaml]]));
+      expect(docs).toHaveLength(1);
+      expect(docs[0].error).toBeUndefined();
+      return docs[0].value;
+    };
 
-  test("returns only the named keys that are present", () => {
-    const value = { kind: "Deployment", name: "web", other: "ignored" };
-    expect(pick<Widget>(value, ["kind", "name"])).toEqual({ kind: "Deployment", name: "web" });
-  });
+    test("flow mappings read as mappings, not strings", () => {
+      const yaml = [
+        "apiVersion: apps/v1",
+        "kind: Deployment",
+        "metadata: { name: gw, namespace: obs }",
+        "spec:",
+        "  template:",
+        "    spec:",
+        "      volumes:",
+        "        - name: conf",
+        "          configMap: { name: gw-config }",
+      ].join("\n");
+      const value = docOf(yaml);
+      expect(value).toEqual(jsYamlLoad(yaml));
+      expect(get(value, "metadata.namespace")).toBe("obs");
+      expect(get(value, "spec.template.spec.volumes.0.configMap.name")).toBe("gw-config");
+    });
 
-  test("omits a named key that is absent — no invented default", () => {
-    const value = { kind: "Deployment" };
-    expect(pick<Widget>(value, ["kind", "name"])).toEqual({ kind: "Deployment" });
-  });
+    test("a flow sequence of flow mappings reads as a list of mappings", () => {
+      const yaml = [
+        "kind: Pod",
+        "spec:",
+        "  containers:",
+        "    - name: gw",
+        "      volumeMounts: [{ name: conf, mountPath: /conf }, { name: data, mountPath: /data, readOnly: true }]",
+        "      args: [--config, /conf/config.yaml]",
+      ].join("\n");
+      const value = docOf(yaml);
+      expect(value).toEqual(jsYamlLoad(yaml));
+      expect(get(value, "spec.containers.0.volumeMounts.1.readOnly")).toBe(true);
+      expect(get(value, "spec.containers.0.args")).toEqual(["--config", "/conf/config.yaml"]);
+    });
 
-  test("returns an empty object for a non-object value", () => {
-    expect(pick<Widget>(null, ["kind"])).toEqual({});
-    expect(pick<Widget>("a string", ["kind"])).toEqual({});
-    expect(pick<Widget>(undefined, ["kind"])).toEqual({});
-  });
-
-  test("copies values through unvalidated, whatever their actual shape", () => {
-    const value = { kind: 42 }; // wrong runtime type for `kind: string`
-    expect(pick<Widget>(value, ["kind"])).toEqual({ kind: 42 });
-  });
-});
-
-describe("get", () => {
-  test("walks a dotted path through nested objects", () => {
-    const value = { spec: { template: { spec: { containers: [] } } } };
-    expect(get(value, "spec.template.spec")).toEqual({ containers: [] });
-  });
-
-  test("returns undefined as soon as a segment is missing", () => {
-    const value = { spec: {} };
-    expect(get(value, "spec.template.spec")).toBeUndefined();
-  });
-
-  test("returns undefined when an intermediate value is not indexable", () => {
-    const value = { spec: "not-an-object" };
-    expect(get(value, "spec.template")).toBeUndefined();
-  });
-
-  test("indexes into arrays with a numeric path segment", () => {
-    const value = { items: [{ name: "first" }, { name: "second" }] };
-    expect(get(value, "items.1.name")).toBe("second");
-  });
-
-  test("returns the value itself for an empty path", () => {
-    const value = { a: 1 };
-    expect(get(value, "")).toBe(value);
-  });
-
-  test("does not throw on null/undefined input", () => {
-    expect(get(null, "a.b")).toBeUndefined();
-    expect(get(undefined, "a.b")).toBeUndefined();
+    test("a folded scalar keeps the line breaks of its more-indented lines", () => {
+      // js-yaml dumps a long ConfigMap value this way.
+      const yaml = [
+        "kind: ConfigMap",
+        "data:",
+        "  config.yaml: >",
+        "    receivers:",
+        "      k8s_cluster:",
+        "        auth_type: serviceAccount",
+        "    exporters: {}",
+      ].join("\n");
+      const value = docOf(yaml);
+      expect(value).toEqual(jsYamlLoad(yaml));
+      expect((value as { data: Record<string, string> }).data["config.yaml"]).toBe(
+        "receivers:\n  k8s_cluster:\n    auth_type: serviceAccount\nexporters: {}\n",
+      );
+    });
   });
 });

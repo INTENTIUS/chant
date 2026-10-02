@@ -76,3 +76,51 @@ export function findProjectConfig(startDir: string): ProjectConfigSearch {
 export function findProjectRoot(startDir: string): string {
   return findProjectConfig(startDir).dir;
 }
+
+/** The two names a workspace declaration may have (#2524 D1). */
+export const WORKSPACE_DECLARATION_FILES = ["chant.workspace.json", "chant.workspace.jsonc"] as const;
+
+/** Where {@link findWorkspaceRoot} found a declaration. */
+export interface WorkspaceRootSearch {
+  /** The directory holding the declaration. */
+  dir: string;
+  /** Absolute path of the declaration file. When both names are present this is the `.json` one. */
+  file: string;
+  /**
+   * Absolute path of the `.jsonc` file when `.json` is also there. Having both
+   * is an error, which the reader reports; the walk itself never throws.
+   */
+  conflicting?: string;
+}
+
+/**
+ * Walk up from `startDir` (inclusive) to the nearest `chant.workspace.json` or
+ * `chant.workspace.jsonc` (#2524 D1). The walk stops at the git root, the first
+ * directory holding `.git`, after checking it. Outside a git repository only
+ * `startDir` itself is checked, so a stray declaration in an unrelated
+ * ancestor is never picked up.
+ *
+ * It only tests whether files exist and loads nothing else, so a level-0
+ * command can afford to call it. {@link findProjectConfig} is unchanged and
+ * never looks at a declaration.
+ */
+export function findWorkspaceRoot(startDir: string): WorkspaceRootSearch | undefined {
+  const start = resolve(startDir);
+  let top: string | undefined;
+  for (let dir = start; ; dir = dirname(dir)) {
+    if (existsSync(join(dir, ".git"))) {
+      top = dir;
+      break;
+    }
+    if (dirname(dir) === dir) break;
+  }
+  for (let dir = start; ; dir = dirname(dir)) {
+    const [json, jsonc] = WORKSPACE_DECLARATION_FILES.map((name) => join(dir, name));
+    const hasJson = existsSync(json);
+    const hasJsonc = existsSync(jsonc);
+    if (hasJson && hasJsonc) return { dir, file: json, conflicting: jsonc };
+    if (hasJson) return { dir, file: json };
+    if (hasJsonc) return { dir, file: jsonc };
+    if (top === undefined || dir === top || dirname(dir) === dir) return undefined;
+  }
+}

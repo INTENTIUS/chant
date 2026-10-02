@@ -6,9 +6,13 @@ import { SPRITES_CONTRACT, normalizeEndpoint, contractKeys } from "./sprites-con
 
 describe("SPRITES_CONTRACT", () => {
   test("covers every sprite activity that calls the Sprites API", () => {
-    const activities = new Set(SPRITES_CONTRACT.map((e) => e.activity));
-    // Every activity across the lifecycle, filesystem, config-reconcile, and
-    // keep-alive modules that makes an HTTP/WS call.
+    // A row's `activity` is comma-separated when more than one activity calls
+    // that physical endpoint (#2711) — split before comparing.
+    const activities = new Set(SPRITES_CONTRACT.flatMap((e) => e.activity.split(",").map((a) => a.trim())));
+    // Every activity across the lifecycle, filesystem, config-reconcile,
+    // single-service, and keep-alive modules that makes an HTTP/WS call.
+    // (spriteUrl, spriteServiceDelete and spriteServiceLogs are deliberately
+    // absent — see the module doc.)
     expect(activities).toEqual(
       new Set([
         // lifecycle (./sprites.ts)
@@ -18,6 +22,7 @@ describe("SPRITES_CONTRACT", () => {
         "listCheckpoints",
         "spriteRestore",
         "spriteDestroy",
+        "spriteDelete",
         // filesystem (./sprite-fs.ts)
         "spriteWriteFile",
         "spriteReadFile",
@@ -26,6 +31,12 @@ describe("SPRITES_CONTRACT", () => {
         // config reconcile (./sprite-config.ts)
         "spriteApplyNetworkPolicy",
         "spriteApplyServices",
+        // single-service (./sprite-services.ts, #2711)
+        "spriteServiceCreate",
+        "spriteServiceGet",
+        "spriteServiceList",
+        "spriteServiceStart",
+        "spriteServiceStop",
         // keep-alive tasks (./sprite-tasks.ts)
         "spriteTaskCreate",
         "spriteTaskRefresh",
@@ -63,7 +74,7 @@ describe("SPRITES_CONTRACT", () => {
     // contract must be updated in the same change. Scans every module that owns
     // contract endpoints, not just the lifecycle one.
     const dir = dirname(fileURLToPath(import.meta.url));
-    const src = ["sprites.ts", "sprite-fs.ts", "sprite-config.ts", "sprite-tasks.ts"]
+    const src = ["sprites.ts", "sprite-fs.ts", "sprite-config.ts", "sprite-services.ts", "sprite-tasks.ts"]
       .map((f) => readFileSync(join(dir, f), "utf-8"))
       .join("\n");
     const segments = new Set(
