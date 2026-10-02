@@ -17,6 +17,9 @@ import { parseCatalog } from "./spec/catalog";
 
 export type { ValidateCheck, ValidateResult } from "@intentius/chant/codegen/validate";
 
+/** The entity kinds the registry must carry. */
+const REQUIRED_ENTITIES = ["Database", "Table", "View", "MaterializedView"];
+
 /** Engines a ClickHouse schema declares most: the MergeTree family and the engines beside it. */
 const REQUIRED_ENGINES = [
   "MergeTree",
@@ -64,7 +67,7 @@ export async function validate(opts?: { basePath?: string }): Promise<ValidateRe
 
   const core = await validateLexiconArtifacts({
     lexiconJsonFilename: "lexicon-sql.json",
-    requiredNames: [],
+    requiredNames: REQUIRED_ENTITIES,
     basePath,
   });
   const checks: ValidateCheck[] = [...core.checks];

@@ -17,10 +17,14 @@ server, because databases differ in ways a schema tool has to respect:
 ClickHouse has no foreign keys and rebuilds a table to change its sort key,
 where Postgres changes most things in place inside a transaction.
 
-The lexicon is being built in slices (chant #3199). This release carries the
-ClickHouse type catalog and its pin; tables, views and materialized views
-declared as SQL-shaped tagged templates come next. See
-[Where the Types Come From](./clickhouse-catalog/) for the catalog.
+Tables, views, materialized views and databases are declared as their own
+DDL in tagged templates, parsed at build time into entities with references,
+dependency order and column lineage: see
+[Declaring Tables and Views](./clickhouse-ddl/). The types come from a pinned
+server's catalog: see [Where the Types Come From](./clickhouse-catalog/).
+
+The lexicon is being built in slices (chant #3199); import from a live
+server, observation and the change classifier come next.
 `;
 
 export async function generateDocs(opts?: { verbose?: boolean }): Promise<void> {

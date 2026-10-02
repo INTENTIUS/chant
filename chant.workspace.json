@@ -420,7 +420,18 @@
       "name": "lexicon-sql",
       "dir": "lexicons/sql",
       "kind": "other",
-      "because": "an npm workspace package with no chant project"
+      "because": "an npm workspace package with no chant project",
+      "generated": [
+        {
+          "path": "src/lint/post-synth/index.ts",
+          "generator": "npx tsx ../../scripts/generate-post-synth-barrels.ts",
+          "sources": [
+            "scripts/generate-post-synth-barrels.ts",
+            "packages/core/src/codegen/generate-post-synth-barrel.ts",
+            "lexicons/sql/src/lint/post-synth"
+          ]
+        }
+      ]
     },
     {
       "name": "lexicon-terraform",
