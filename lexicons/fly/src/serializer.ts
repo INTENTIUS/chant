@@ -276,12 +276,15 @@ export const flySerializer: Serializer = {
           continue;
         }
 
+        // A Certificate is an ACME certificate. flaps creates those at
+        // `.../certificates/acme` and answers a bare POST to `.../certificates`
+        // with 404 (#3114).
         const segment =
           entityType === VOLUME_ENTITY_TYPE
             ? "volumes"
             : entityType === IP_ENTITY_TYPE
               ? "ip_assignments"
-              : "certificates";
+              : "certificates/acme";
         const body: Record<string, unknown> = {};
         for (const [key, value] of Object.entries(props)) {
           if (key === "app" || value === undefined) continue;

@@ -54,7 +54,8 @@ export const MACHINES_CONTRACT: readonly MachinesEndpoint[] = [
   { method: "DELETE", path: "/v1/apps/{app}/ip_assignments/{ip}", op: "releaseIp" },
   // Certificates
   { method: "GET", path: "/v1/apps/{app}/certificates", op: "listCerts" },
-  { method: "POST", path: "/v1/apps/{app}/certificates", op: "addCert" },
+  // Created at /acme: flaps has no POST on the list path (#3114).
+  { method: "POST", path: "/v1/apps/{app}/certificates/acme", op: "addCert" },
   { method: "DELETE", path: "/v1/apps/{app}/certificates/{hostname}", op: "deleteCert" },
   // Secrets
   { method: "GET", path: "/v1/apps/{app}/secrets", op: "listSecrets" },
