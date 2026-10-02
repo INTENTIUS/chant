@@ -42,7 +42,7 @@ checks, plus TF023, which runs only in `chant audit` and is documented here
 beside the rest of the family. See [Lint Rules](/chant/lexicons/terraform/rules/)
 for the generated, always-current table of the checks that run in a build; this
 page is the reasoning, the fix and the credit behind each entry.
-The Terraform lexicon ships one source-level lint rule and twenty-four
+The Terraform lexicon ships one source-level lint rule and twenty-nine
 post-synth checks, plus TF023, which runs only in `chant audit` and is
 documented here beside the rest of the family. See [Lint
 Rules](/chant/lexicons/terraform/rules/) for the generated, always-current
@@ -184,7 +184,7 @@ A `terraform` block with no `required_version` attribute.
 **Why it matters.** Sits beside TF002 on the same block: without
 `required_version`, a root can be applied by whatever Terraform binary
 happens to be on the runner's `PATH`. A binary upgrade that changes behavior
-surfaces as a surprise plan diff instead of a version-check failure before
+surfaces as a surprise plan diff instead of a version-check failure up to
 anything runs.
 
 **The fix.** Add `required_version = ">= <lowest supported version>"` to the
@@ -935,11 +935,17 @@ over a parsed root module at all: it reads the file list `chant audit`
 discovers, so it lives in core beside the other lexicon-independent families
 (`packages/core/src/audit/terraform-state.ts`, catalogued in core's own
 `RULE_CATALOG`) and fires whether or not the terraform lexicon is installed. On
-a local path the root `.gitignore` is what separates "committed" from "merely
+a local path the `.gitignore` files are what separate "committed" from "merely
 on disk", since almost every Terraform working tree has an ignored
 `.terraform/` in it; a fetched repository's file list is already exactly its
 tracked files. Nothing reads the contents of either: the finding is that the
 path is there.
+
+Every `.gitignore` between the file and the scan root is read, the root one
+included, so `infra/terraform.tfstate` is not reported when `infra/.gitignore`
+ignores it, and auditing from the repository root and from `infra/` agree
+([#2528](https://github.com/INTENTIUS/chant/issues/2528); up to `v0.80.0` only
+the root `.gitignore` was read).
 
 **Why it matters.** A state file records every attribute of every managed
 resource in plaintext JSON, including the ones providers mark sensitive, so a
@@ -1381,3 +1387,166 @@ has no suppressing effect on that id, and is itself reported as a finding,
 matching tflint's own `ignorable = false` setting. Every rule is ignorable
 by default; TF008 (hardcoded provider credentials) is the kind of rule a
 project might want to lock this way.
+
+## TF029: live root names its estate twice
+
+A root that names its estate in both `terraform.roots.<name>.estate` and its
+own HCL, in a `live { }` block or an `estate.chdf.hcl` sidecar.
+
+**Why it matters.** The two are not equal in authority. A declaration is what
+choudoufu reads for itself; `terraform.roots.<name>.estate` is what this
+lexicon would otherwise hand it as `-estate`. choudoufu refuses that flag
+beside a declaration outright — "This configuration's live block is what names
+its estate, and `-estate=...` would name a second one for this run only" — so
+the lexicon does not pass it, and the config value is simply never used.
+
+A setting written down and silently ignored is worse than one that errors. An
+author who moves an environment by editing `roots.app.estate` gets a run
+against the old estate and nothing tells them the edit was disregarded. The
+diagnostic names both values even when they agree today, because two settings
+that happen to match still means one of them does nothing, and the next edit to
+the ignored one is the incident this rule exists to prevent.
+
+**The fix.** Pick one. A root whose directory is shared across environments
+declares no estate in HCL and names it per root in chant.config — that is the
+environment dimension, and it is why `terraform.roots.<name>.estate` exists. A
+root with its own `live` block already has an estate and needs nothing in
+chant.config.
+
+## TF032: an ECS container definition passes a credential as a plaintext environment value
+
+An `aws_ecs_task_definition` whose `container_definitions` gives a container an
+`environment` entry with a literal, secret-shaped `value`. The Terraform
+counterpart of the aws lexicon's WAW046.
+
+**Why it matters.** An environment value is stored verbatim in the task
+definition. Anyone allowed `ecs:DescribeTaskDefinition` can read it, the console
+shows it, and it sits in Terraform state and plan output beside the commit that
+introduced it. ECS has a field for exactly this case: `secrets`, whose
+`valueFrom` names a Secrets Manager secret or an SSM parameter that the agent
+resolves when the task starts.
+
+**The fix.** Move the entry from `environment` to `secrets` with a `valueFrom`,
+grant the task execution role read access to that secret or parameter, and
+rotate the value that was committed.
+
+```hcl
+secrets = [
+  { name = "DB_PASSWORD", valueFrom = aws_secretsmanager_secret.db_password.arn },
+]
+```
+
+**What it can read.** `container_definitions` is a JSON string, and hcl2json
+does not evaluate expressions, so `jsonencode([...])` reaches the rule as the
+call's source text. The rule reads that text with the shared literal reader
+(`src/hcl/jsonencode.ts`) and never evaluates anything. A reference or function
+call in one field (`image = var.image`, `value = var.db_password`) leaves that
+field unknown and the literal fields around it readable. A plain string with
+no interpolation is parsed as JSON, which covers a heredoc that contains none.
+
+**Which entries fire.** The judgment is `src/lint/secret-shape.ts`, the same
+module TF007, TF008, TF009 and TF022 use, so "secret-shaped" means one thing
+across the family. An entry fires when its `value` is a literal string of at
+least 8 characters that is not a placeholder (`changeme`, `example`,
+`your-api-key`, a run of one character), and either:
+
+- its `name`, lowercased with every non-alphanumeric run folded to `_`,
+  contains one of `password`, `passwd`, `secret`, `token`, `api_key`,
+  `private_key` or `access_key` as a whole `_`-separated word, and does not end
+  in `_file`, `_path`, `_arn`, `_id` or `_name`; or
+- the value has a credential's shape on its own, whatever the name: a vendor
+  key format core's secret scanner knows (AWS key ids, GitHub, Slack, Google,
+  Stripe), a connection string with real credentials in it, a JWT, a PEM
+  private key, or a long high-entropy token.
+
+The word boundary is what keeps `TOKENIZER` and `KEYSTORE_TYPE` quiet. The
+locator suffixes keep `DB_SECRET_ARN` and `API_KEY_PATH` quiet, since a value
+that points at a credential is the shape the fix asks for. `credential` is not
+on the list, unlike WAW046's pattern: in an environment the common name
+containing it is `GOOGLE_APPLICATION_CREDENTIALS`, which holds a file path. The
+8-character floor keeps `PASSWORD_MIN_LENGTH = "8"` and
+`TOKEN_TTL = "3600"` quiet. Below 8 characters a literal is not reported, so
+`"hunter2"` passes; the floor is shared with TF022 and not tuned per rule.
+A numeric or boolean value is never a finding.
+
+**What absence means.** A container with no `environment` is not insecure, and
+neither is one that passes every credential through `secrets`: the rule never
+reads `secrets` at all. A task definition without `container_definitions` is
+not reported either, since the attribute is required and that is a plan error.
+
+**What is not determined.** When the definitions cannot be read as literal
+structure, the rule says so in one `info` diagnostic starting
+`Not determined:`, never a warning or an error. That happens when
+`container_definitions` is a reference (`local.defs`,
+`data.template_file.app.rendered`), a `file()` or `templatefile()` call, a
+heredoc or string with interpolation, or `jsonencode` of something other than
+a literal list (`jsonencode(concat(...))`, `jsonencode(local.containers)`). It
+is reported per container when a container's `environment` is an expression
+(`environment = local.env_vars`, a `for` expression), or when an entry in it
+is. A credential in any of those places can be neither found nor ruled out
+without evaluating HCL, which this rule does not attempt. An entry whose
+`value` alone is a reference is skipped without an `info`. A reference is not
+a committed literal, and where the referenced value comes from is TF007's and
+TF022's question.
+
+**Where this does not reach.** A plaintext password on `aws_db_instance`,
+`aws_rds_cluster`, `aws_elasticache_replication_group` and similar resources is
+an ordinary attribute, and TF022 already reports it with the same heuristic.
+TF032 exists because a credential inside `container_definitions` is inside a
+JSON string, which TF022's attribute walk sees only as one string named
+`container_definitions`.
+
+**Prior art.** tfsec's
+[`aws-ecs-no-plaintext-secrets`](https://github.com/aquasecurity/tfsec/blob/master/docs/checks/aws/ecs/no-plaintext-secrets/index.md)
+and its successor in trivy-checks,
+[`aws-ecs-no-plaintext-secrets`](https://github.com/aquasecurity/trivy-checks/blob/main/checks/cloud/aws/ecs/no_plaintext_secrets.rego)
+(AVD-AWS-0036), both overlaps. They fire on a sensitive environment name or a
+value their secret scanner flags, after evaluating the definition, so they
+also see what TF032 reports as not determined, and their name list is their
+own. Checkov has no Terraform check for ECS environment values. Its ECS checks
+cover privilege, a read-only root filesystem, host processes, the task role
+and EFS encryption.
+
+The failing fixture, vendored from
+[edstem-tech/paylink-platform](https://github.com/edstem-tech/paylink-platform/blob/2bbcbcce09434286cf90d20f69df0bd3ffa4cd00/terraform/ecs.tf)
+(MIT), fires on `DB_PASSWORD` and `PAYMENT_API_KEY`:
+
+```hcl
+resource "aws_ecs_task_definition" "api" {
+  family                   = "paylink-api"
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+  cpu                      = "1024"
+  memory                   = "2048"
+  task_role_arn            = aws_iam_role.task.arn
+  execution_role_arn       = aws_iam_role.execution.arn
+
+  container_definitions = jsonencode([{
+    name  = "api"
+    image = "${var.ecr_repo}:latest"
+
+    portMappings = [{ containerPort = 8080 }]
+
+    environment = [
+      { name = "SPRING_PROFILES_ACTIVE", value = "prod" },
+      { name = "DB_PASSWORD", value = "Pl-Pr0d-Db-2025!" },
+      { name = "PAYMENT_API_KEY", value = "pk_live_4RtYuIoP2aSdF6gH8jK" }
+    ]
+
+    healthCheck = {
+      command  = ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health || exit 1"]
+      interval = 10
+      timeout  = 2
+      retries  = 3
+    }
+  }])
+}
+```
+
+The other fixtures under `fixtures/TF032/` cover the remaining cases. The
+passing ones are vapor/penny-bot (secrets through `valueFrom`), trivy-checks'
+own passing heredoc, and testdrivenio/django-ecs-terraform (reference values,
+a container with no environment, and a `data.template_file` definition reported
+as not determined). The failing ones are trivy-checks' failing heredoc and
+govuk-forms/forms-admin, where the Postgres sidecar's password fires while the
+two containers fed from `local.forms_admin_env_vars` are not determined.

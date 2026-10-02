@@ -401,4 +401,27 @@ export const terraformAuditLineage: Record<string, Lineage[]> = {
     },
     { tool: "kics", rule: "a88baa34-e2ad-44ea-ad6f-8cac87bc7c71", url: "https://docs.kics.io/latest/secrets/", relation: "overlaps" },
   ],
+  // tfsec's `aws-ecs-no-plaintext-secrets` and its successor in trivy-checks
+  // (`long_id` aws-ecs-no-plaintext-secrets, AVD-AWS-0036) fire on the same
+  // condition: an environment entry whose name is sensitive or whose value a
+  // secret scanner flags. `overlaps`, not `equivalent`, because both evaluate
+  // the definition first and so also read what TF032 reports as not
+  // determined, and their name list differs from secret-shape.ts's. Checkov
+  // has no Terraform check for ECS environment values (its ECS checks cover
+  // privilege, read-only root, host process, task role and EFS encryption,
+  // `checkov/terraform/checks/resource/aws/ECS*.py`), so it gets no credit.
+  TF032: [
+    {
+      tool: "tfsec",
+      rule: "aws-ecs-no-plaintext-secrets",
+      url: "https://github.com/aquasecurity/tfsec/blob/master/docs/checks/aws/ecs/no-plaintext-secrets/index.md",
+      relation: "overlaps",
+    },
+    {
+      tool: "trivy-checks",
+      rule: "aws-ecs-no-plaintext-secrets",
+      url: "https://github.com/aquasecurity/trivy-checks/blob/main/checks/cloud/aws/ecs/no_plaintext_secrets.rego",
+      relation: "overlaps",
+    },
+  ],
 };
