@@ -23,9 +23,10 @@ dependency order and column lineage: see
 server's catalog: see [Where the Types Come From](./clickhouse-catalog/).
 
 `chant import --from <env>` writes a live server's schema as declarations:
-see [Importing a Live Server](./importing/). The lexicon is being built in
-slices (chant #3199); planning against live and the change classifier come
-next.
+see [Importing a Live Server](./importing/). Every schema change is
+classified as metadata only, a background rewrite or a rebuild, each with the
+ClickHouse `ALTER` restriction behind it, and a rebuild is refused in place:
+see [Planning and the Change Classifier](./change-classifier/).
 
 
 ## At a Glance

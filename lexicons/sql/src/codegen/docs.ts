@@ -5,7 +5,9 @@
 
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
+import { writeFileSync } from "fs";
 import { docsPipeline, writeDocsSite, type DocsConfig } from "@intentius/chant/codegen/docs";
+import { renderClassifierPage } from "./classifier-page";
 
 const overview = `The sql lexicon declares database schema in TypeScript, one database dialect
 at a time. ClickHouse is the first dialect, at
@@ -24,13 +26,16 @@ dependency order and column lineage: see
 server's catalog: see [Where the Types Come From](./clickhouse-catalog/).
 
 \`chant import --from <env>\` writes a live server's schema as declarations:
-see [Importing a Live Server](./importing/). The lexicon is being built in
-slices (chant #3199); planning against live and the change classifier come
-next.
+see [Importing a Live Server](./importing/). Every schema change is
+classified as metadata only, a background rewrite or a rebuild, each with the
+ClickHouse \`ALTER\` restriction behind it, and a rebuild is refused in place:
+see [Planning and the Change Classifier](./change-classifier/).
 `;
 
 export async function generateDocs(opts?: { verbose?: boolean }): Promise<void> {
   const pkgDir = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
+
+  writeFileSync(join(pkgDir, "docs", "pages", "change-classifier.mdx"), renderClassifierPage());
 
   const config: DocsConfig = {
     name: "sql",

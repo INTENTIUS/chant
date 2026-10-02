@@ -43,6 +43,10 @@ export default defineConfig({
                         {
                               "label": "Serialization",
                               "slug": "serialization"
+                        },
+                        {
+                              "label": "Planning and the Change Classifier",
+                              "slug": "change-classifier"
                         }
                   ]
             },
