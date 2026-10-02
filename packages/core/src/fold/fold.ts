@@ -198,7 +198,7 @@ export interface AttrRefValue {
 /**
  * The result of folding a registered lexicon intrinsic tagged template
  * (e.g. `Sub\`${AWS.StackName}-x\``) to its node form: tag name, cooked
- * template string parts, and folded interpolated values (in order).
+ * and raw template string parts, and folded interpolated values (in order).
  * Mirrors the runtime call shape `Tag(strings, ...values)` so a later
  * build path can replay it into the real intrinsic object (#1022).
  */
@@ -208,6 +208,8 @@ export type FoldedIntrinsic = FoldedIntrinsicTag | FoldedIntrinsicCall;
 export interface FoldedIntrinsicTag {
   __intrinsic: string;
   strings: string[];
+  /** The raw parts (`TemplateStringsArray.raw`), so the revived call sees what a real tagged call sees. */
+  raw: string[];
   values: FoldedValue[];
 }
 
@@ -1118,6 +1120,51 @@ function foldIntrinsicValue(
 }
 
 /**
+ * A template part's raw text, as `TemplateStringsArray.raw` holds it. The
+ * parser sets `rawText` on every literal it reads; the fallback takes the
+ * source between the delimiters for a node without one. Line terminators are
+ * normalized the way the language does for `raw` (`\r\n` and `\r` become
+ * `\n`), which TypeScript's `rawText` does not do.
+ */
+function rawTemplateText(
+  part: ts.NoSubstitutionTemplateLiteral | ts.TemplateHead | ts.TemplateMiddle | ts.TemplateTail,
+): string {
+  let raw = part.rawText;
+  if (raw === undefined) {
+    const text = part.getText();
+    const close = ts.isTemplateHead(part) || ts.isTemplateMiddle(part) ? 2 : 1;
+    raw = text.slice(1, text.length - close);
+  }
+  return raw.replace(/\r\n?/g, "\n");
+}
+
+/**
+ * True when a raw template part holds an escape a tagged template allows but
+ * cannot cook (`\u{zz}`, `\xg`, `\1`, `\01`). Its cooked string is
+ * `undefined` at run time, while TypeScript's `text` carries a string, so
+ * folding it would hand the tag something running never does.
+ */
+function hasInvalidTemplateEscape(raw: string): boolean {
+  for (let i = 0; i < raw.length; i++) {
+    if (raw[i] !== "\\") continue;
+    const rest = raw.slice(i + 1);
+    const c = rest[0];
+    if (c === "x") {
+      if (!/^x[0-9a-fA-F]{2}/.test(rest)) return true;
+    } else if (c === "u") {
+      const m = /^u(?:[0-9a-fA-F]{4}|\{([0-9a-fA-F]+)\})/.exec(rest);
+      if (!m || (m[1] !== undefined && parseInt(m[1], 16) > 0x10ffff)) return true;
+    } else if (c !== undefined && c >= "1" && c <= "9") {
+      return true;
+    } else if (c === "0" && rest[1] !== undefined && rest[1] >= "0" && rest[1] <= "9") {
+      return true;
+    }
+    i += 1;
+  }
+  return false;
+}
+
+/**
  * Fold a `TaggedTemplateExpression` whose tag is a registered, foldable
  * lexicon intrinsic ({@link intrinsicTagFolds}, `../lexicon.ts`) to its node
  * form. An unregistered — or registered-but-not-foldable — tag throws a
@@ -1126,6 +1173,11 @@ function foldIntrinsicValue(
  * Checks the TAG-form predicate specifically (chant #1044): an intrinsic
  * whose lexicon opted its plain-call form in is not thereby usable as a
  * tagged template, and `` Ref`...` `` stays a rejection.
+ *
+ * The envelope carries both the cooked parts and the raw ones (#3196), so the
+ * revived call receives the `TemplateStringsArray` a real tagged call does. A
+ * tag that reads `strings.raw` (a SQL tag keeping `'\d+'` as written) would
+ * otherwise build different text folded than run.
  */
 function foldTaggedTemplate(
   node: ts.TaggedTemplateExpression,
@@ -1140,15 +1192,21 @@ function foldTaggedTemplate(
   }
 
   const template = node.template;
-  if (ts.isNoSubstitutionTemplateLiteral(template)) {
-    return { __intrinsic: tagName, strings: [template.text], values: [] };
+  const parts = ts.isNoSubstitutionTemplateLiteral(template)
+    ? [template]
+    : [template.head, ...template.templateSpans.map((span) => span.literal)];
+  const raw = parts.map(rawTemplateText);
+  if (raw.some(hasInvalidTemplateEscape)) {
+    throw foldError(
+      node,
+      `${briefNodeText(node.tag)}\`...\` holds an escape sequence with no cooked value — not foldable, falls back to run`,
+    );
   }
-
-  const strings = [template.head.text, ...template.templateSpans.map((span) => span.literal.text)];
-  const values = template.templateSpans.map((span) =>
-    foldIntrinsicValue(span.expression, consts, intrinsics, externals),
-  );
-  return { __intrinsic: tagName, strings, values };
+  const strings = parts.map((part) => part.text);
+  const values = ts.isNoSubstitutionTemplateLiteral(template)
+    ? []
+    : template.templateSpans.map((span) => foldIntrinsicValue(span.expression, consts, intrinsics, externals));
+  return { __intrinsic: tagName, strings, raw, values };
 }
 
 /**
@@ -1336,6 +1394,15 @@ export function fold(
     // property-access branch below consults `consts` first, so a sibling
     // attribute reference is still the symbolic `{__attrRef}` the serializer
     // resolves by NAME. Nothing about the existing envelope changes.
+    //
+    // chant #3196 — the same holds for a same-file `const x = tag\`...\``
+    // whose tag returns an entity (a SQL `table`): re-folding the initializer
+    // would call the tag again and build a second entity discovery never
+    // registers. The caller pre-resolves those too; without it the
+    // initializer re-folds as before.
+    if (ts.isTaggedTemplateExpression(initializer) && externals?.has(node.text)) {
+      return externals.get(node.text) as FoldedValue;
+    }
     if (ts.isNewExpression(initializer)) {
       if (externals?.has(node.text)) return externals.get(node.text) as FoldedValue;
       throw foldError(
