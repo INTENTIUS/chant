@@ -50,6 +50,19 @@ export interface FlapsRequest {
    * POSTs these and excludes them from any drift/diff.
    */
   applyOnly?: boolean;
+  /**
+   * A Secret declared without a value: set outside chant. `flyApply` never
+   * POSTs it; it checks the app has the secret and fails naming it if not.
+   */
+  mustExist?: boolean;
+}
+
+/**
+ * Progress lines go to stderr. An Op step's stdout is its output, so the
+ * applier keeps stdout free for machine-readable results.
+ */
+export function logProgress(line: string): void {
+  process.stderr.write(`${line}\n`);
 }
 
 /** The serializer's whole output: entity name → flaps create request. */
@@ -537,7 +550,7 @@ export async function pruneMachines(
     if (!isChantOwned(m.config?.metadata) || keep.has(m.name)) continue;
     if (m.state === "destroyed" || m.state === "destroying") continue;
     await destroyMachine(ctx, app, m.id, http, signal, opts);
-    console.log(`pruned: ${app}/${m.name} (${ctx.base})`);
+    logProgress(`pruned: ${app}/${m.name} (${ctx.base})`);
     pruned.push({ app, name: m.name, id: m.id });
   }
   return pruned;
@@ -698,6 +711,37 @@ export async function applyCert(
 }
 
 /**
+ * True when a plan entry is a Secret with no value, which apply must never
+ * POST. Plans built before `mustExist` existed mark it with an empty body.
+ * Pure.
+ */
+export function isValuelessSecret(req: FlapsRequest): boolean {
+  return isSecretRequest(req) && (req.mustExist === true || req.body.value === undefined);
+}
+
+/**
+ * Check a value-less secret (set outside chant) exists on the app. Never
+ * POSTs. Throws naming the secret when the app does not have it.
+ */
+export async function checkSecretExists(
+  ctx: ApplyCtx,
+  app: string,
+  name: string,
+  http: FlyHttp,
+  signal?: AbortSignal,
+): Promise<{ action: "exists"; name: string }> {
+  const live = await listSecrets(ctx, app, http, signal);
+  if (!live.some((s) => s.name === name)) {
+    throw new Error(
+      `secret ${app}/${name} is declared without a value, so it must already exist, ` +
+        `and app ${app} does not have it. Set it with \`fly secrets set ${name}=...\` ` +
+        `or give the Secret a value.`,
+    );
+  }
+  return { action: "exists", name };
+}
+
+/**
  * Set a secret (D7, apply-only): always POST, never read back for a diff. flaps
  * returns only a digest, so there is nothing to compare — every apply re-sets it.
  */
@@ -727,7 +771,7 @@ export async function pruneVolumes(
     if (keep.has(v.name)) continue;
     const res = await http("DELETE", volumeUrl(ctx.base, app, v.id), undefined, undefined, signal);
     if (res.status >= 300 && res.status !== 404) throw new Error(`volume ${app}/${v.name} delete failed (${res.status}): ${res.text}`);
-    console.log(`pruned: volume/${app}/${v.name} (${ctx.base})`);
+    logProgress(`pruned: volume/${app}/${v.name} (${ctx.base})`);
     pruned.push({ app, name: v.name, id: v.id });
   }
   return pruned;
@@ -746,7 +790,7 @@ export async function pruneIps(
     if (keep.has(ipType(ip.shared, ip.ip))) continue;
     const res = await http("DELETE", ipUrl(ctx.base, app, ip.ip), undefined, undefined, signal);
     if (res.status >= 300 && res.status !== 404) throw new Error(`ip ${app}/${ip.ip} delete failed (${res.status}): ${res.text}`);
-    console.log(`pruned: ip/${app}/${ip.ip} (${ctx.base})`);
+    logProgress(`pruned: ip/${app}/${ip.ip} (${ctx.base})`);
     pruned.push({ app, address: ip.ip });
   }
   return pruned;
@@ -765,7 +809,7 @@ export async function pruneCerts(
     if (keep.has(c.hostname)) continue;
     const res = await http("DELETE", certUrl(ctx.base, app, c.hostname), undefined, undefined, signal);
     if (res.status >= 300 && res.status !== 404) throw new Error(`certificate ${app}/${c.hostname} delete failed (${res.status}): ${res.text}`);
-    console.log(`pruned: certificate/${app}/${c.hostname} (${ctx.base})`);
+    logProgress(`pruned: certificate/${app}/${c.hostname} (${ctx.base})`);
     pruned.push({ app, hostname: c.hostname });
   }
   return pruned;
@@ -787,7 +831,7 @@ export async function pruneSecrets(
     if (keep.has(s.name)) continue;
     const res = await http("DELETE", secretUrl(ctx.base, app, s.name), undefined, undefined, signal);
     if (res.status >= 300 && res.status !== 404) throw new Error(`secret ${app}/${s.name} delete failed (${res.status}): ${res.text}`);
-    console.log(`pruned: secret/${app}/${s.name} (${ctx.base})`);
+    logProgress(`pruned: secret/${app}/${s.name} (${ctx.base})`);
     pruned.push({ app, name: s.name });
   }
   return pruned;
@@ -853,7 +897,7 @@ export function toApplyResult(result: {
   volumes: Array<{ app: string; name: string; action: "created" | "noop" }>;
   ips: Array<{ app: string; type: string; action: "created" | "noop" }>;
   certs: Array<{ app: string; hostname: string; action: "created" | "noop" }>;
-  secrets: Array<{ app: string; name: string }>;
+  secrets: Array<{ app: string; name: string; action?: "set" | "exists" }>;
   pruned: Array<{ app: string; name: string; id: string }>;
   prunedVolumes: Array<{ app: string; name: string; id: string }>;
   prunedIps: Array<{ app: string; address: string }>;
@@ -873,9 +917,14 @@ export function toApplyResult(result: {
     ...result.volumes.map((x) => ({ kind: "volume", name: x.name, action: act(x.action) })),
     ...result.ips.map((x) => ({ kind: "ip", name: x.type, action: act(x.action) })),
     ...result.certs.map((x) => ({ kind: "cert", name: x.hostname, action: act(x.action) })),
-    // Secrets are apply-only (D7) — POSTed every run, never read back, so there
-    // is no unchanged to report.
-    ...result.secrets.map((x) => ({ kind: "secret", name: x.name, action: "updated" as const })),
+    // Secrets are apply-only (D7) — POSTed every run, never read back, so a
+    // set secret reports updated. A value-less secret is only checked, so it
+    // reports unchanged.
+    ...result.secrets.map((x) => ({
+      kind: "secret",
+      name: x.name,
+      action: (x.action === "exists" ? "unchanged" : "updated") as AppliedResource["action"],
+    })),
   ];
   const pruned: PrunedResource[] = [
     ...result.pruned.map((x) => ({ kind: "machine", name: x.name, deleted: true })),
@@ -897,7 +946,7 @@ export async function flyApply(
   volumes: Array<{ app: string; name: string; action: "created" | "noop" }>;
   ips: Array<{ app: string; type: string; action: "created" | "noop" }>;
   certs: Array<{ app: string; hostname: string; action: "created" | "noop" }>;
-  secrets: Array<{ app: string; name: string }>;
+  secrets: Array<{ app: string; name: string; action?: "set" | "exists" }>;
   pruned: Array<{ app: string; name: string; id: string }>;
   prunedVolumes: Array<{ app: string; name: string; id: string }>;
   prunedIps: Array<{ app: string; address: string }>;
@@ -946,7 +995,7 @@ export async function flyApply(
   const apps: Array<{ app: string; created: boolean }> = [];
   for (const req of appReqs) {
     const result = await applyApp(ctx, req, http, signal);
-    console.log(`${result.created ? "created" : "unchanged"}: app/${result.app} (${ctx.base})`);
+    logProgress(`${result.created ? "created" : "unchanged"}: app/${result.app} (${ctx.base})`);
     apps.push(result);
   }
 
@@ -978,7 +1027,7 @@ export async function flyApply(
     const app = resolveApp(resourceAppSegment(req.endpoint), soleApp);
     const result = await applyVolume(ctx, app, entityName, req, http, signal);
     track(keepVolumes, app, result.name);
-    console.log(`${result.action}: volume/${app}/${result.name} (${ctx.base})`);
+    logProgress(`${result.action}: volume/${app}/${result.name} (${ctx.base})`);
     volumes.push({ app, name: result.name, action: result.action });
   }
 
@@ -988,7 +1037,7 @@ export async function flyApply(
     const name = typeof req.body.name === "string" && req.body.name ? req.body.name : entityName;
     track(keepMachines, app, name);
     const result = await applyMachine(ctx, app, entityName, req, http, signal, opts);
-    console.log(`${result.action}: machine/${app}/${result.name} (${ctx.base})`);
+    logProgress(`${result.action}: machine/${app}/${result.name} (${ctx.base})`);
     machines.push({ app, name: result.name, action: result.action });
   }
 
@@ -998,7 +1047,7 @@ export async function flyApply(
     const app = resolveApp(resourceAppSegment(req.endpoint), soleApp);
     const result = await applyIp(ctx, app, req, http, signal);
     track(keepIps, app, result.type);
-    console.log(`${result.action}: ip/${app}/${result.type} (${ctx.base})`);
+    logProgress(`${result.action}: ip/${app}/${result.type} (${ctx.base})`);
     ips.push({ app, type: result.type, action: result.action });
   }
 
@@ -1007,19 +1056,22 @@ export async function flyApply(
     const app = resolveApp(resourceAppSegment(req.endpoint), soleApp);
     const result = await applyCert(ctx, app, req, http, signal);
     track(keepCerts, app, result.hostname);
-    console.log(`${result.action}: certificate/${app}/${result.hostname} (${ctx.base})`);
+    logProgress(`${result.action}: certificate/${app}/${result.hostname} (${ctx.base})`);
     certs.push({ app, hostname: result.hostname, action: result.action });
   }
 
-  // Secrets are apply-only (D7): always set, never read back for a diff.
-  const secrets: Array<{ app: string; name: string }> = [];
+  // Secrets are apply-only (D7): a secret with a value is set every run and
+  // never read back for a diff. A value-less one is only checked for.
+  const secrets: Array<{ app: string; name: string; action: "set" | "exists" }> = [];
   for (const [, req] of secretReqs) {
     const app = resolveApp(resourceAppSegment(req.endpoint), soleApp);
     const name = secretNameSegment(req.endpoint);
     track(keepSecrets, app, name);
-    const result = await applySecret(ctx, app, name, req, http, signal);
-    console.log(`set: secret/${app}/${result.name} (${ctx.base})`);
-    secrets.push({ app, name: result.name });
+    const result = isValuelessSecret(req)
+      ? await checkSecretExists(ctx, app, name, http, signal)
+      : await applySecret(ctx, app, name, req, http, signal);
+    logProgress(`${result.action}: secret/${app}/${result.name} (${ctx.base})`);
+    secrets.push({ app, name: result.name, action: result.action });
   }
 
   const pruned: Array<{ app: string; name: string; id: string }> = [];
@@ -1083,7 +1135,7 @@ export async function flyDelete(
   const apps: Array<{ app: string; deleted: boolean }> = [];
   for (const req of appReqs) {
     const result = await deleteApp(ctx, appNameFromRequest(req), http, signal);
-    console.log(`${result.deleted ? "deleted" : "absent"}: app/${result.app} (${ctx.base})`);
+    logProgress(`${result.deleted ? "deleted" : "absent"}: app/${result.app} (${ctx.base})`);
     apps.push(result);
   }
 
