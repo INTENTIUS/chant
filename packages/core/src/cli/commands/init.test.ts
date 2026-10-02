@@ -87,7 +87,9 @@ describe("initCommand", () => {
 
       expect(pkg.dependencies["@intentius/chant"]).toBeDefined();
       expect(pkg.dependencies["@intentius/chant-lexicon-aws"]).toBeDefined();
-      expect(pkg.devDependencies["typescript"]).toBeDefined();
+      // #3089: the project's TypeScript admits 7, and @types/node backs `types: ["node"]`.
+      expect(pkg.devDependencies["typescript"]).toBe("^5.9.3 || ^7.0.0");
+      expect(pkg.devDependencies["@types/node"]).toBeDefined();
       expect(pkg.scripts.build).toBe("chant build src --lexicon aws");
       expect(pkg.scripts.dev).toBe("chant build src --lexicon aws --watch");
       expect(pkg.scripts.lint).toBe("chant lint src");
@@ -115,6 +117,11 @@ describe("initCommand", () => {
       expect(tsconfig.compilerOptions.rootDir).toBe("./src");
       expect(tsconfig.include).toContain("src");
       expect(tsconfig.compilerOptions.paths).toBeUndefined();
+      // #3089: bundler resolution accepts the extensionless `./config` imports
+      // the templates use; NodeNext rejects them (TS2835).
+      expect(tsconfig.compilerOptions.module).toBe("esnext");
+      expect(tsconfig.compilerOptions.moduleResolution).toBe("bundler");
+      expect(tsconfig.compilerOptions.types).toEqual(["node"]);
     });
   });
 

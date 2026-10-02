@@ -1,0 +1,68 @@
+---
+title: "Declaring Tables and Views"
+description: "ClickHouse databases, tables, views and materialized views as SQL-shaped tagged templates, with references, dependency order and column lineage"
+diataxis: how-to
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-sql` — DO NOT EDIT.
+    Edit lexicons/sql/docs/pages/clickhouse-ddl.mdx instead; changes here are overwritten. */}
+
+
+A ClickHouse object is declared as its own DDL, inside a `database`, `table` or `view` tagged template from `@intentius/chant-lexicon-sql/clickhouse`:
+
+```ts
+import { database, table, view } from "@intentius/chant-lexicon-sql/clickhouse";
+
+export const analytics = database`CREATE DATABASE analytics ENGINE = Atomic`;
+
+export const events = table`
+  CREATE TABLE ${analytics}.events (
+    user_id  UUID,
+    kind     LowCardinality(String),
+    ts       DateTime CODEC(Delta, ZSTD(3))
+  )
+  ENGINE = MergeTree
+  PARTITION BY toYYYYMM(ts)
+  ORDER BY (user_id, kind, ts)`;
+
+export const byKind = view`
+  CREATE VIEW ${analytics}.by_kind AS
+  SELECT ${events.columns.kind} AS kind, count() AS n
+  FROM ${events}
+  GROUP BY kind`;
+```
+
+`chant build` parses each template when it folds the file, without running it, into one entity. The export name (`events`) is the object's identity in chant; the name in the SQL (`analytics.events`) is its name in the database.
+
+## Interpolations
+
+What an interpolation means depends on its value:
+
+| Value | Means | Renders as |
+|---|---|---|
+| a `database`, `table` or `view` entity | a reference to that object | its name, database-qualified when the DDL qualifies it |
+| `entity.columns.<name>` | a reference to one column | the column's name |
+| a string | SQL text, spliced into the statement before it is parsed | itself |
+| a number, a bigint, a boolean, `null` | a literal | `42`, `true`, `NULL` |
+| `literal(value)` | a string literal | `'quoted and escaped'` |
+
+Columns are reached through `.columns`, and only there. A column called `kind` or `props` would otherwise collide with the entity's own fields: `${events.kind}` is the string `"resource"`, which SQLCH003 flags, and `${events.user_id}` is `undefined`, which the tag refuses, naming `.columns`.
+
+A plain string is SQL text so that a composite can supply a name, a type, an engine or an expression (`ENGINE = ${engine}`, `INTERVAL ${days} DAY`). When a string is a value, say so with `literal()`: `DEFAULT ${literal(plan)}` writes `DEFAULT 'free'`, where `DEFAULT ${plan}` writes `DEFAULT free`, a column named `free`.
+
+## What the build records
+
+References become dependency edges: a view is created after the tables it reads, a materialized view after its `TO` target, a table after its database. The build output lists objects in that order and writes every statement, in the same order, to `clickhouse.sql` beside the JSON document.
+
+A view's lineage is recorded per output column of its top-level select list, from the column references in it: above, `kind` reads `events.kind`. A column written by name inside the SQL is not a reference and is not lineage.
+
+## Checks
+
+| Id | When | What |
+|---|---|---|
+| SQLCH001 | lint, at the token | the DDL does not parse, or the tag holds a different statement |
+| SQLCH002 | lint, at the column | a `Nullable` column in the sort key or primary key, which ClickHouse refuses without `allow_nullable_key` |
+| SQLCH003 | lint, at the interpolation | `${events.kind}` where `${events.columns.kind}` was meant |
+| SQLCH101 | build | an engine the pinned ClickHouse server does not have |
+
+The parser reads statement structure (columns, engine, keys, TTL, settings, indexes, projections, constraints, view targets and refresh) and keeps every expression as written. `CREATE TABLE ... AS` and `CREATE TABLE ... AS SELECT` are not declared this way.

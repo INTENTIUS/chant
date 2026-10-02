@@ -91,6 +91,7 @@ An in-process guard says nothing about a child process, so the offline phases' s
 | `packages/core/src/op/activities/workflow-audit.ts` | `fetch` | `api.github.com`, or a declared GitHub host | The workflow-audit activity resolves an action reference to a commit so a pipeline can assert what it actually ran. |
 | `packages/core/src/op/activities/pipeline-audit.ts` | `fetch` | a GitLab instance's API | The pipeline-audit activity reads project and pipeline metadata for the same governance question on GitLab. |
 | `packages/core/src/behaviour-http.ts` | `fetch` | the behaviour engine an operator named in CHANT_BEHAVIOUR_ENGINE, where that address is an http or https URL | The first behaviour-engine adapter (#2359): `chant graph --live --overlay` POSTs the resource graph a lexicon rendered and reads back per-entity cost, headroom and resilience. Not a provider API and not a chant service — a third party the operator chose, and the only row here that dials one. Unset, nothing is dialled and the overlay refuses by name; the transport is injectable, so no test opens a socket. |
+| `lexicons/sql/src/clickhouse/http.ts` | `fetch` | a ClickHouse server's HTTP interface: the one `sql.profiles.<env>` (or `CLICKHOUSE_URL`) binds the environment to, and on a ClickHouse pin move the pinned `clickhouse/clickhouse-server` container generation starts on a loopback port | The sql lexicon's only client. `describeResources` reads `system.databases` and `system.tables`, and `chant import --from` adds `SHOW CREATE` per object; all reads. Generation reads the pinned server's `system.*` catalog only when the pin moves or `npm run generate -- --force` asks; every other generate, bundle, validate and build reads the committed snapshot and reaches nothing. |
 
 ### Local emulators
 
@@ -115,6 +116,10 @@ An in-process guard says nothing about a child process, so the offline phases' s
 | `lexicons/grafana/src/spec/fetch-cli.ts` | `fetch` | `raw.githubusercontent.com`, for the grafana-foundation-sdk JSON Schemas at the pinned commit | `just fetch-schemas` re-downloads the vendored Grafana schemas when bumping `GRAFANA_SCHEMA_PIN`; a maintainer command. Generate, bundle, validate, build and the tests read the committed files under `src/spec/schemas/` and reach nothing. |
 | `lexicons/grafana/src/spec/fetch-units-cli.ts` | `fetch` | `raw.githubusercontent.com`, for Grafana's `valueFormats/categories.ts` at the tag in `GRAFANA_UNITS_SOURCE` | `just fetch-units` re-extracts the unit ids GRAF115 accepts when moving to a newer Grafana; a maintainer command. Build, lint and the tests read the committed `src/spec/units.gen.ts` and reach nothing. |
 | `lexicons/azure/scripts/fetch-quickstart-templates.ts` | `fetch` | the Azure quickstart-templates repository | Builds the ARM fixture corpus the azure serializer is tested against; a maintainer script, not part of the lexicon's published surface. |
+
+| Command | Spawns | Module | Destination | Why |
+|---|---|---|---|---|
+| `npm run generate in lexicons/sql after a ClickHouse pin move, or with --force` | `docker run` | `lexicons/sql/src/clickhouse/container.ts` | the container registry, for `clickhouse/clickhouse-server` at the pinned tag and digest when the image is not already local | `docker run` starts the pinned server on a random loopback port so generation can read its catalog, and the container is removed afterwards. The pull is the only egress; the catalog read itself is loopback. |
 
 ### Starting a project from a template
 
@@ -154,7 +159,7 @@ Freshness checks that run in this repository's own CI, against `api.github.com`.
 | `scripts/dogwood-freshness.ts` | `fetch` | `api.github.com` commit and tree metadata | Compares the committed dogwood pin against upstream for `scripts/check-dogwood-freshness.ts`. The transport is injectable, which is why the comparison half is unit-tested without a network. |
 | `scripts/prior-art-sweep.ts` | `fetch` | the rule indexes of the tools the audit rules credit: `raw.githubusercontent.com`, `api.github.com` directory listings, and a few tools' own docs sites (checkov.io, PSRule for Azure, the Bicep linter page) | Diffs each credited tool's published rule list against `scripts/prior-art/snapshot.json` so a rule that appears or disappears upstream, or a credit whose upstream id no longer resolves, is reported. Run by the monthly `prior-art-sweep` workflow and by hand; never by a CLI command or a test. |
 
-**42 modules** across `packages/`, `lexicons/`, `scripts/`, `ops/` call a network primitive directly. Every other module that reaches the network does so through one of them, or through a child process listed on this page.
+**43 modules** across `packages/`, `lexicons/`, `scripts/`, `ops/` call a network primitive directly. Every other module that reaches the network does so through one of them, or through a child process listed on this page.
 
 {/* GENERATED:egress-catalogue:end */}
 

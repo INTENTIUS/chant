@@ -297,6 +297,15 @@ export const NETWORK_SHELL_OUTS: readonly NetworkShellOut[] = [
     why: "`git push --force <remote> <commit>:refs/heads/<branch>`, only for the proposal branch (default `chant/upgrade/<scope>`). The activity refuses the default branch, the base branch and the checked-out branch (#2550).",
   },
   {
+    binary: "docker",
+    subcommand: "run",
+    command: "npm run generate in lexicons/sql after a ClickHouse pin move, or with --force",
+    file: "lexicons/sql/src/clickhouse/container.ts",
+    phase: "codegen",
+    destination: "the container registry, for `clickhouse/clickhouse-server` at the pinned tag and digest when the image is not already local",
+    why: "`docker run` starts the pinned server on a random loopback port so generation can read its catalog, and the container is removed afterwards. The pull is the only egress; the catalog read itself is loopback.",
+  },
+  {
     binary: "gh",
     subcommand: "pr",
     command: "an Op step running the proposeWorkspaceUpgrade activity, in pull-request mode",
@@ -606,6 +615,13 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     phase: "codegen",
     destination: "`raw.githubusercontent.com`, for Grafana's `valueFormats/categories.ts` at the tag in `GRAFANA_UNITS_SOURCE`",
     why: "`just fetch-units` re-extracts the unit ids GRAF115 accepts when moving to a newer Grafana; a maintainer command. Build, lint and the tests read the committed `src/spec/units.gen.ts` and reach nothing.",
+  },
+  {
+    file: "lexicons/sql/src/clickhouse/http.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "a ClickHouse server's HTTP interface: the one `sql.profiles.<env>` (or `CLICKHOUSE_URL`) binds the environment to, and on a ClickHouse pin move the pinned `clickhouse/clickhouse-server` container generation starts on a loopback port",
+    why: "The sql lexicon's only client. `describeResources` reads `system.databases` and `system.tables`, and `chant import --from` adds `SHOW CREATE` per object; all reads. Generation reads the pinned server's `system.*` catalog only when the pin moves or `npm run generate -- --force` asks; every other generate, bundle, validate and build reads the committed snapshot and reaches nothing.",
   },
   {
     file: "lexicons/azure/scripts/fetch-quickstart-templates.ts",

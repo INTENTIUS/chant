@@ -4,6 +4,19 @@
  * the registry, the relation vocabulary, and why this is credit rather than
  * authority. Kept by hand; the prior-art sweep (scripts/prior-art-sweep.ts) reports
  * when a credited tool's index no longer lists a rule cited here.
+ *
+ * GHA069 (a job-level permissions block drops the workflow's `id-token:
+ * write`, #2273) has no entry here. Checked 2026-10-02: zizmor's 41 audits
+ * (docs.zizmor.sh/audits) cover over-broad scopes (`excessive-permissions`)
+ * and undocumented ones (`undocumented-permissions`), not a scope a job
+ * block silently loses. actionlint's `permissions` check
+ * (github.com/rhysd/actionlint/blob/main/docs/checks.md#permissions)
+ * validates scope names and levels only. poutine's rules (opa/rego/rules)
+ * have `default_permissions_on_risky_events`, the GHA013 condition, and
+ * nothing about a dropped grant. octoscan's `debug-oidc-action` flags OIDC
+ * action use as a debug finding and does not read the permission blocks.
+ * Scorecard's Token-Permissions rewards narrower blocks, the opposite
+ * concern. Ship with no lineage rather than invent a credit.
  */
 import type { Lineage } from "@intentius/chant/audit/catalog";
 

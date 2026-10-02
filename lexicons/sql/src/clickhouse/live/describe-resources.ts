@@ -1,0 +1,86 @@
+/**
+ * `describeResources()` for the ClickHouse dialect: which declared databases,
+ * tables and views exist on the environment's server.
+ *
+ * One read of `system.databases` and `system.tables` per run, then a lookup
+ * per declared entity, so N entities are two queries, not N. An object the
+ * catalog does not list is absent, and the `queried` address says which
+ * server and name were asked. A server that cannot be reached, or refuses the
+ * credentials, leaves every entity unobserved with that reason: never absent.
+ *
+ * Ownership is `unknown` on every row. chant stamps no marker on ClickHouse
+ * objects yet, so there is nothing to read, and `unknown` is never escalated
+ * to a delete.
+ */
+
+import {
+  observeEntities,
+  type DeclaredEntity,
+  type DescribeResourcesResult,
+  type EntityObservation,
+  type ObserverAdapter,
+} from "@intentius/chant/observation";
+import { bindClickHouse, classifyClickHouseFailure, type BindOptions, type ClickHouseTarget } from "./bind";
+import { readLiveSchema, type LiveObject } from "./catalog";
+import { CLICKHOUSE_ENTITY_TYPES } from "../entities";
+
+interface Bound {
+  target: ClickHouseTarget;
+  byKey: Map<string, LiveObject>;
+}
+
+const keyOf = (database: string | undefined, name: string) => `${database ?? ""}.${name}`;
+
+/** The database and name a declared entity is created as. */
+export function declaredAddress(entity: DeclaredEntity, defaultDatabase: string): { database?: string; name: string } {
+  const name = String(entity.props.name ?? "");
+  if (entity.type === CLICKHOUSE_ENTITY_TYPES.database) return { name };
+  return { database: typeof entity.props.database === "string" ? entity.props.database : defaultDatabase, name };
+}
+
+function adapter(options: BindOptions): ObserverAdapter<Bound> {
+  return {
+    async bind() {
+      const target = await bindClickHouse(options);
+      const byKey = new Map<string, LiveObject>();
+      for (const o of await readLiveSchema(target, { withStatements: false })) {
+        byKey.set(o.type === CLICKHOUSE_ENTITY_TYPES.database ? keyOf(undefined, o.name) : keyOf(o.database, o.name), o);
+      }
+      return { target, byKey };
+    },
+    classifyBindFailure: (err) => classifyClickHouseFailure(err),
+    async read({ target, byKey }, entity): Promise<EntityObservation> {
+      if (!entity.type.startsWith("ClickHouse::")) {
+        return { unobserved: { reason: "unsupported-kind", detail: entity.type } };
+      }
+      const { database, name } = declaredAddress(entity, target.defaultDatabase);
+      const queried = `${target.endpoint.url} ${database ? `${database}.` : ""}${name}`;
+      const live = byKey.get(keyOf(database, name));
+      if (!live) return { absent: true, queried };
+      return {
+        present: {
+          type: live.type,
+          physicalId: live.uuid ?? (database ? `${database}.${name}` : name),
+          status: live.engine,
+          attributes: { engine: live.engine, ...(live.uuid ? { uuid: live.uuid } : {}), ...(live.comment ? { comment: live.comment } : {}) },
+          ownership: "unknown",
+        },
+        queried,
+      };
+    },
+  };
+}
+
+export async function describeResources(
+  options: {
+    environment: string;
+    entityNames: string[];
+    entities: Map<string, { entityType: string; props: Record<string, unknown> }>;
+  } & Omit<BindOptions, "environment">,
+): Promise<DescribeResourcesResult> {
+  const declared: DeclaredEntity[] = options.entityNames.map((name) => {
+    const entity = options.entities.get(name);
+    return { name, type: entity?.entityType ?? "", props: entity?.props ?? {} };
+  });
+  return observeEntities(declared, adapter(options));
+}

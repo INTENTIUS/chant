@@ -35,6 +35,8 @@ export interface MachinesFake {
   http: FlyHttp;
   apps: Set<string>;
   machines: Map<string, FakeMachine[]>;
+  /** Each app's certificate hostnames, in creation order. */
+  certs: Map<string, string[]>;
   /** Every exec, in order: the app, the machine id and the command. */
   execs: Array<{ app: string; id: string; command: string[] }>;
   /** Every call, as `METHOD path` (no base, no query). */
@@ -55,10 +57,15 @@ const json = (status: number, body: unknown) => ({ status, text: body === undefi
 let seq = 0;
 const nextId = (prefix: string) => `${prefix}${(++seq).toString(16).padStart(10, "0")}`;
 
-/** A fresh in-memory flaps. */
+/**
+ * A fresh in-memory flaps. Like the real API, a bare DELETE on a machine that
+ * is not stopped, suspended, failed or created answers 412; `?force=true`
+ * destroys it in any state.
+ */
 export function createMachinesFake(options: MachinesFakeOptions = {}): MachinesFake {
   const apps = new Set<string>();
   const machines = new Map<string, FakeMachine[]>();
+  const certs = new Map<string, string[]>();
   const execs: MachinesFake["execs"] = [];
   const calls: string[] = [];
   const settle = options.settle ?? (() => "started");
@@ -88,6 +95,7 @@ export function createMachinesFake(options: MachinesFakeOptions = {}): MachinesF
       if (method === "DELETE") {
         apps.delete(app);
         machines.delete(app);
+        certs.delete(app);
         return json(202, undefined);
       }
     }
@@ -123,6 +131,13 @@ export function createMachinesFake(options: MachinesFakeOptions = {}): MachinesF
           return json(200, m);
         }
         if (method === "DELETE") {
+          // Real flaps destroys a running machine only with ?force=true and
+          // answers a bare DELETE with 412 (#3115). mudflaps does not (yet).
+          if (searchParams.get("force") !== "true" && !["stopped", "suspended", "failed", "created"].includes(m.state)) {
+            return json(412, {
+              error: "failed_precondition: unable to destroy machine, not currently stopped, suspended, failed or created",
+            });
+          }
           machines.set(app, list(app).filter((x) => x !== m));
           return json(200, { ok: true });
         }
@@ -151,15 +166,44 @@ export function createMachinesFake(options: MachinesFakeOptions = {}): MachinesF
       return json(404, { error: `no ${method} ${action}` });
     }
     if (kind === "ip_assignments") return method === "GET" ? json(200, { ips: [] }) : json(200, {});
-    if (kind === "certificates") return method === "GET" ? json(200, { certificates: [] }) : json(200, {});
+    if (kind === "certificates") return certificates(app, method, seg.slice(4), b);
     if (kind === "volumes" || kind === "secrets") return method === "GET" ? json(200, []) : json(200, {});
     return json(404, { error: "not found" });
   };
+
+  // Certificates, as the real API routes them (#3114): listed at
+  // `.../certificates`, created only at `.../certificates/acme`, read and
+  // deleted at `.../certificates/{hostname}`. A POST to the bare list path is
+  // the 404 flaps gives, so an applier that posts there fails here too.
+  function certificates(app: string, method: string, rest: string[], b: Record<string, unknown>) {
+    const hostnames = certs.get(app) ?? [];
+    const detail = (hostname: string) => ({ hostname, acme_requested: true, configured: false, status: "pending" });
+    if (rest.length === 0) {
+      if (method === "GET") return json(200, { certificates: hostnames.map(detail), total_count: hostnames.length });
+      return { status: 404, text: "404 page not found" };
+    }
+    if (rest.length === 1 && rest[0] === "acme" && method === "POST") {
+      const hostname = typeof b.hostname === "string" ? b.hostname : "";
+      if (!hostname) return json(422, { error: "hostname is required" });
+      if (hostnames.includes(hostname)) return json(422, { error: `certificate ${hostname} already exists` });
+      certs.set(app, [...hostnames, hostname]);
+      return json(201, detail(hostname));
+    }
+    if (rest.length === 1 && (method === "GET" || method === "DELETE")) {
+      const hostname = rest[0];
+      if (!hostnames.includes(hostname)) return json(404, { error: "certificate not found" });
+      if (method === "GET") return json(200, detail(hostname));
+      certs.set(app, hostnames.filter((h) => h !== hostname));
+      return json(204, undefined);
+    }
+    return { status: 404, text: "404 page not found" };
+  }
 
   return {
     http,
     apps,
     machines,
+    certs,
     execs,
     calls,
     machine: (app, name) => list(app).find((m) => m.name === name && !["destroyed", "destroying"].includes(m.state)),

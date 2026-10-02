@@ -16,6 +16,17 @@ const PORT = 4283;
 let available = false;
 let endpoint = "";
 
+/**
+ * Contract endpoints the pinned mudflaps is known not to serve, each with the
+ * upstream issue. The applier calls the real flaps path; the docker-gated
+ * apply test shims these. A gap the pin has since closed fails the last test
+ * below, so the entry and the shim get removed with the pin bump.
+ */
+const MUDFLAPS_KNOWN_GAPS = new Map<string, string>([
+  // ACME certificate create (#3114); mudflaps only serves POST .../certificates.
+  [normalizeEndpoint("POST", "/v1/apps/{app}/certificates/acme"), "INTENTIUS/mudflaps#69"],
+]);
+
 /** Parse a mudflaps health `implemented` entry ("METHOD path (note)") to a normalized key. */
 function normalizeImplemented(entry: string): string {
   const stripped = entry.replace(/\s*\(.*\)\s*$/, "").trim();
@@ -52,7 +63,7 @@ describe("Machines contract ⊆ mudflaps implemented paths", () => {
 
     const served = new Set((health.implemented ?? []).map(normalizeImplemented));
 
-    const missing = [...contractKeys()].filter((k) => !served.has(k));
+    const missing = [...contractKeys()].filter((k) => !served.has(k) && !MUDFLAPS_KNOWN_GAPS.has(k));
     // A non-empty list means flyApply calls something mudflaps can't serve — a
     // real fidelity gap between the applier and the pinned emulator.
     expect(missing, `mudflaps is missing contract endpoints: ${missing.join(", ")}`).toEqual([]);
@@ -77,5 +88,15 @@ describe("Machines contract ⊆ mudflaps implemented paths", () => {
     const served = new Set((health.implemented ?? []).map(normalizeImplemented));
     const missing = MACHINE_RELEASE_CONTRACT.map((e) => normalizeEndpoint(e.method, e.path)).filter((k) => !served.has(k));
     expect(missing, `mudflaps is missing release endpoints: ${missing.join(", ")}`).toEqual([]);
+  });
+
+  test("every known mudflaps gap is still a gap (drop the entry when the pin closes it)", async (ctx) => {
+    if (!available) ctx.skip();
+    const res = await fetch(`${endpoint}/_mudflaps/health`);
+    const health = (await res.json()) as { implemented?: string[] };
+    const served = new Set((health.implemented ?? []).map(normalizeImplemented));
+    for (const [key, issue] of MUDFLAPS_KNOWN_GAPS) {
+      expect(served.has(key), `${key} is served now (${issue}): remove it from MUDFLAPS_KNOWN_GAPS and the apply-test shim`).toBe(false);
+    }
   });
 });

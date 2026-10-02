@@ -146,14 +146,14 @@ describe("fly serializer", () => {
     });
   });
 
-  it("emits the Certificate create body (createCertificateRequest: hostname) under the app", () => {
+  it("emits the Certificate create body (createAcmeCertificateRequest: hostname) at /certificates/acme (#3114)", () => {
     const entities = stack(
       ["app", new App({ name: "my-app" })],
       ["cert", new Certificate({ hostname: "example.com" })],
     );
     const out = JSON.parse(flySerializer.serialize(entities) as string);
     expect(out.cert).toEqual({
-      endpoint: "/v1/apps/my-app/certificates",
+      endpoint: "/v1/apps/my-app/certificates/acme",
       method: "POST",
       body: { hostname: "example.com" },
     });

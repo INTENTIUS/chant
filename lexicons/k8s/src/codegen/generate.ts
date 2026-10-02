@@ -12,7 +12,13 @@ import {
   type GeneratePipelineConfig,
 } from "@intentius/chant/codegen/generate";
 import { fetchSchemas } from "../spec/fetch";
-import { parseK8sSwagger, specListMapKeyPairs, k8sShortName, type K8sParseResult } from "../spec/parse";
+import {
+  parseK8sSwaggerTypes,
+  specListMapKeyPairs,
+  k8sShortName,
+  type K8sParseResult,
+  type ParsedDefinitionType,
+} from "../spec/parse";
 import { loadMultipleCRDs } from "../crd/loader";
 import { CRD_SOURCES } from "../crd/crd-sources";
 import { NamingStrategy, propertyTypeName, extractDefName } from "./naming";
@@ -42,6 +48,8 @@ export async function generate(opts: K8sGenerateOptions = {}): Promise<GenerateR
   // chant #1441 — read off the raw document in `parseSchema`, since the
   // result set covers only the definitions chant emits types for.
   let specPairs: Array<[string, string[]]> = [];
+  // chant #3093 — the declaration-only interfaces, which only the `.d.ts` emits.
+  let definitionTypes: ParsedDefinitionType[] = [];
 
   const config: GeneratePipelineConfig<K8sParseResult> = {
     fetchSchemas: async (fetchOpts) => {
@@ -49,10 +57,11 @@ export async function generate(opts: K8sGenerateOptions = {}): Promise<GenerateR
     },
 
     parseSchema: (_typeName, data) => {
-      // The K8s schema is a single document — parseK8sSwagger returns multiple results.
+      // The K8s schema is a single document — parseK8sSwaggerTypes returns multiple results.
       // The pipeline calls this once per schema entry. We return the first result
       // and use augmentResults to inject the rest.
-      const results = parseK8sSwagger(data);
+      const { results, definitionTypes: defs } = parseK8sSwaggerTypes(data);
+      definitionTypes = defs;
       specPairs = specListMapKeyPairs(data);
       if (results.length === 0) return null;
       // Return the first result; stash the rest for augmentResults
@@ -98,7 +107,7 @@ export async function generate(opts: K8sGenerateOptions = {}): Promise<GenerateR
     },
 
     generateTypes: (results, naming) => {
-      return generateTypeScriptDeclarations(results, naming as NamingStrategy);
+      return generateTypeScriptDeclarations(results, naming as NamingStrategy, definitionTypes);
     },
 
     generateRuntimeIndex: (results, naming) => {

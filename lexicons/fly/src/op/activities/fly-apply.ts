@@ -124,9 +124,13 @@ export function isIpRequest(req: FlapsRequest): boolean {
   return /^\/v1\/apps\/[^/]+\/ip_assignments\/?$/.test(req.endpoint);
 }
 
-/** True when a request creates a Certificate (`.../certificates`). Pure. */
+/**
+ * True when a request creates a Certificate: `.../certificates/acme`, or the
+ * bare `.../certificates` that plans built before #3114 carry. Both apply the
+ * same way, through {@link applyCert}. Pure.
+ */
 export function isCertRequest(req: FlapsRequest): boolean {
-  return /^\/v1\/apps\/[^/]+\/certificates\/?$/.test(req.endpoint);
+  return /^\/v1\/apps\/[^/]+\/certificates(\/acme)?\/?$/.test(req.endpoint);
 }
 
 /** True when a request sets a Secret (`.../secrets/{name}`). Pure. */
@@ -248,6 +252,9 @@ const ipUrl = (base: string, app: string, ip: string): string => `${ipsUrl(base,
 const certsUrl = (base: string, app: string): string => `${appUrl(base, app)}/certificates`;
 const certUrl = (base: string, app: string, hostname: string): string =>
   `${certsUrl(base, app)}/${encodeURIComponent(hostname)}`;
+// Certificates are listed at `.../certificates` but created at `.../acme`:
+// flaps has no POST on the list path and answers one with 404 (#3114).
+const acmeCertUrl = (base: string, app: string): string => `${certsUrl(base, app)}/acme`;
 const secretsUrl = (base: string, app: string): string => `${appUrl(base, app)}/secrets`;
 const secretUrl = (base: string, app: string, secretName: string): string =>
   `${secretsUrl(base, app)}/${encodeURIComponent(secretName)}`;
@@ -500,22 +507,103 @@ export async function applyMachine(
   return { action: "updated", id: m.id, name };
 }
 
-/** Lease → destroy → wait for the machine to be reaped. */
+/** How {@link destroyMachine} treats a machine that is still running. */
+export interface DestroyOpts extends WaitOpts {
+  /**
+   * Destroy with `?force=true`, which kills a running machine at once, instead
+   * of stopping it first. Default false: stop, wait for `stopped`, then delete.
+   */
+  force?: boolean;
+  /** The machine's last listed state. It decides whether a stop is needed first; unknown means try the delete. */
+  state?: string;
+  /** The machine's name, for error messages. */
+  name?: string;
+}
+
+/**
+ * States flaps destroys without `force`. A started machine answers a bare
+ * DELETE with 412 failed_precondition (#3115).
+ */
+const DESTROYABLE_STATES = new Set(["stopped", "suspended", "failed", "created"]);
+
+/** True when a destroy response is flaps refusing a machine that is not stopped. Pure. */
+export function isNotStoppedRefusal(status: number, text: string): boolean {
+  return status === 412 || (status >= 400 && /failed_precondition/.test(text));
+}
+
+/**
+ * Stop a machine under a lease, then wait for `stopped` with no lease held (a
+ * slow stop can outlive the lease TTL). A machine already `stopping` is only
+ * waited on. A wait that runs out fails naming the machine.
+ */
+async function stopForDestroy(
+  ctx: ApplyCtx,
+  app: string,
+  id: string,
+  http: FlyHttp,
+  signal: AbortSignal | undefined,
+  opts: DestroyOpts,
+  state: string | undefined,
+): Promise<void> {
+  const label = opts.name ? `${app}/${opts.name} (${id})` : `${app}/${id}`;
+  if (state !== "stopping") {
+    const res = await withLease(ctx, app, id, http, signal, (nonce) =>
+      http("POST", `${machineUrl(ctx.base, app, id)}/stop`, undefined, { [LEASE_NONCE_HEADER]: nonce }, signal),
+    );
+    if (res.status === 404) return;
+    if (res.status >= 300) throw new Error(`machine ${label} stop before destroy failed (${res.status}): ${res.text}`);
+  }
+  const { timeoutSecs, intervalMs, deadlineMs } = opts;
+  try {
+    await waitForMachine(ctx, app, id, "", http, signal, { timeoutSecs, intervalMs, deadlineMs, state: "stopped" });
+  } catch (err) {
+    const why = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `machine ${label} did not stop, so it was not destroyed (${why}). ` +
+        `Check the machine, or destroy it with force: true to kill it without a stop.`,
+    );
+  }
+}
+
+/**
+ * Destroy a machine and wait for it to be reaped. flaps refuses a bare DELETE
+ * on a running machine (412, #3115), so by default a machine that is not
+ * stopped is stopped first (each mutation under a lease), and a 412 from the
+ * delete (a machine that started after it was listed) gets one stop and retry.
+ * With `force`, the delete carries `?force=true` and no stop is sent.
+ */
 export async function destroyMachine(
   ctx: ApplyCtx,
   app: string,
   id: string,
   http: FlyHttp,
   signal?: AbortSignal,
-  opts: WaitOpts = {},
+  opts: DestroyOpts = {},
 ): Promise<void> {
-  const res = await withLease(ctx, app, id, http, signal, (nonce) =>
-    http("DELETE", machineUrl(ctx.base, app, id), undefined, { [LEASE_NONCE_HEADER]: nonce }, signal),
-  );
-  if (res.status >= 300 && res.status !== 404) {
-    throw new Error(`machine ${app}/${id} destroy failed (${res.status}): ${res.text}`);
+  const { force, state } = opts;
+  const label = opts.name ? `${app}/${opts.name} (${id})` : `${app}/${id}`;
+  const waitOpts = { timeoutSecs: opts.timeoutSecs, intervalMs: opts.intervalMs, deadlineMs: opts.deadlineMs };
+  const gone = state === "destroyed" || state === "destroying";
+
+  if (!gone) {
+    if (!force && state !== undefined && !DESTROYABLE_STATES.has(state)) {
+      await stopForDestroy(ctx, app, id, http, signal, opts, state);
+    }
+    const url = force ? `${machineUrl(ctx.base, app, id)}?force=true` : machineUrl(ctx.base, app, id);
+    const del = () =>
+      withLease(ctx, app, id, http, signal, (nonce) =>
+        http("DELETE", url, undefined, { [LEASE_NONCE_HEADER]: nonce }, signal),
+      );
+    let res = await del();
+    if (!force && isNotStoppedRefusal(res.status, res.text)) {
+      await stopForDestroy(ctx, app, id, http, signal, opts, undefined);
+      res = await del();
+    }
+    if (res.status >= 300 && res.status !== 404) {
+      throw new Error(`machine ${label} destroy failed (${res.status}): ${res.text}`);
+    }
   }
-  await waitForMachine(ctx, app, id, "", http, signal, { ...opts, state: "destroyed" });
+  await waitForMachine(ctx, app, id, "", http, signal, { ...waitOpts, state: "destroyed" });
 }
 
 /** Delete an app (idempotent; a 404 means it is already gone). */
@@ -535,7 +623,8 @@ export async function deleteApp(
  * Owned-only prune (D2): for one app, destroy the chant-owned machines whose
  * name is not in `keep`. An unmarked machine (no `managed-by: chant`) is never
  * touched, so it survives an apply that would otherwise delete it. Machines
- * already tearing down are skipped.
+ * already tearing down are skipped. A running machine is stopped before it is
+ * destroyed unless `opts.force` is set (see {@link destroyMachine}).
  */
 export async function pruneMachines(
   ctx: ApplyCtx,
@@ -543,13 +632,13 @@ export async function pruneMachines(
   keep: Set<string>,
   http: FlyHttp,
   signal?: AbortSignal,
-  opts: WaitOpts = {},
+  opts: WaitOpts & { force?: boolean } = {},
 ): Promise<Array<{ app: string; name: string; id: string }>> {
   const pruned: Array<{ app: string; name: string; id: string }> = [];
   for (const m of await listMachines(ctx, app, http, signal)) {
     if (!isChantOwned(m.config?.metadata) || keep.has(m.name)) continue;
     if (m.state === "destroyed" || m.state === "destroying") continue;
-    await destroyMachine(ctx, app, m.id, http, signal, opts);
+    await destroyMachine(ctx, app, m.id, http, signal, { ...opts, state: m.state, name: m.name });
     logProgress(`pruned: ${app}/${m.name} (${ctx.base})`);
     pruned.push({ app, name: m.name, id: m.id });
   }
@@ -692,7 +781,11 @@ export async function applyIp(
   return { action: "created", type };
 }
 
-/** Create a certificate if absent (idempotent by hostname). */
+/**
+ * Create an ACME certificate if absent (idempotent by hostname). Always POSTs
+ * `{ hostname }` to `.../certificates/acme`, whatever endpoint the plan entry
+ * names, so a plan built before #3114 applies correctly too.
+ */
 export async function applyCert(
   ctx: ApplyCtx,
   app: string,
@@ -705,7 +798,7 @@ export async function applyCert(
   if ((await listCerts(ctx, app, http, signal)).some((c) => c.hostname === hostname)) {
     return { action: "noop", hostname };
   }
-  const res = await http("POST", certsUrl(ctx.base, app), req.body, undefined, signal);
+  const res = await http("POST", acmeCertUrl(ctx.base, app), { hostname }, undefined, signal);
   if (res.status >= 300) throw new Error(`certificate ${app}/${hostname} create failed (${res.status}): ${res.text}`);
   return { action: "created", hostname };
 }
@@ -861,6 +954,12 @@ export interface FlyApplyArgs {
    * default.
    */
   prune?: boolean;
+  /**
+   * Destroy machines (prune, `flyDelete`) with `?force=true`, killing a running
+   * machine at once. Default false: stop it, wait for `stopped`, then destroy,
+   * so it can shut down on its configured kill signal and timeout.
+   */
+  force?: boolean;
   /** Wait-loop tuning (mainly for tests). */
   wait?: WaitOpts;
 }
@@ -1081,7 +1180,7 @@ export async function flyApply(
   const prunedSecrets: Array<{ app: string; name: string }> = [];
   if (args.prune) {
     for (const [app, keep] of keepMachines) {
-      pruned.push(...(await pruneMachines(ctx, app, keep, http, signal, opts)));
+      pruned.push(...(await pruneMachines(ctx, app, keep, http, signal, { ...opts, force: args.force })));
     }
     for (const [app, keep] of keepVolumes) {
       prunedVolumes.push(...(await pruneVolumes(ctx, app, keep, http, signal)));
@@ -1102,7 +1201,8 @@ export async function flyApply(
 
 /**
  * The inverse of {@link flyApply}: destroy the machines the plan declares, then
- * delete the apps (dependents before their app). Idempotent — already-absent
+ * delete the apps (dependents before their app). A running machine is stopped
+ * first unless `args.force` is set. Idempotent — already-absent
  * resources are a no-op. `http` is injectable for tests.
  */
 export async function flyDelete(
@@ -1128,7 +1228,7 @@ export async function flyDelete(
     const name = typeof req.body.name === "string" && req.body.name ? req.body.name : entityName;
     const live = (await listMachines(ctx, app, http, signal)).find((m) => m.name === name);
     if (!live) continue;
-    await destroyMachine(ctx, app, live.id, http, signal, opts);
+    await destroyMachine(ctx, app, live.id, http, signal, { ...opts, force: args.force, state: live.state, name });
     machines.push({ app, name });
   }
 

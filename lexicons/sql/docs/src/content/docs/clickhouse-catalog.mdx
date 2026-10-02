@@ -1,0 +1,59 @@
+---
+title: "Where the Types Come From"
+description: "The pinned ClickHouse server the dialect's types are read from, the committed catalog snapshot, the overlays, and how to move the pin"
+diataxis: explanation
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-sql` — DO NOT EDIT.
+    Edit lexicons/sql/docs/pages/clickhouse-catalog.mdx instead; changes here are overwritten. */}
+
+
+ClickHouse publishes no schema for its DDL. What it does publish, inside every server, is a set of `system.*` tables describing what that server accepts. The ClickHouse dialect's types are generated from those tables at one pinned server release, so a type here is a name the pinned server knows, not one a document claims it should.
+
+## What is read
+
+Generation reads twelve tables, each with an explicit `ORDER BY` because system tables have no stable row order:
+
+| Table | Gives |
+|---|---|
+| `system.table_engines` | 84 engines, each with capability flags (settings, skip indexes, projections, sort order, TTL, replication) and a one-line usage |
+| `system.database_engines` | 17 database engines |
+| `system.data_type_families` | 141 column type names: 68 families and 73 aliases such as `BIGINT` for `Int64` |
+| `system.codecs` | 17 codecs with their compression, encryption and time-series flags |
+| `system.data_skipping_index_types` | 9 skip index types, each with a usage line |
+| `system.merge_tree_settings` | 363 table settings, with type, default, tier and the server's `readonly` flag |
+| `system.settings` | 1816 query settings |
+| `system.functions` | 1889 functions, aggregate or not, with aliases |
+| `system.formats`, `system.table_functions`, `system.aggregate_function_combinators`, `system.keywords` | names |
+
+The columns that reflect one server's configuration (`value`, `changed`) are never read, and a default written `auto(12)` because the machine had twelve cores is recorded as `auto`. Two reads at the same pin produce the same bytes.
+
+`npm run generate` turns the catalog into `src/generated/`: string-literal unions for every named thing (`TableEngineName`, `ColumnTypeName`, `CodecName`), the `MergeTreeSettings` and `QuerySettings` interfaces with each setting's type and default, and the tables lint and the editor read. They are exported from `@intentius/chant-lexicon-sql/clickhouse`.
+
+## The snapshot
+
+The catalog is committed as `src/spec/clickhouse-catalog.snapshot.json`, one entry per line, sorted by name. Ordinary generation, in a fresh clone, in CI and in `npm run prepack`, reads that file and needs neither Docker nor a network. A server is read only when the snapshot cannot serve the pin: when the pin has moved, when `npm run generate -- --force` asks for it, or when `CHANT_SQL_CLICKHOUSE_URL` names a running server to read.
+
+## The overlays
+
+The catalog names things; it does not give the grammar around them. `src/clickhouse/overlays/` holds that part by hand:
+
+- Engine arguments. The usage line says `ReplacingMergeTree([ver [, is_deleted]])`, from which generation reads each argument's name, position and optionality. The overlay says `ver` and `is_deleted` are columns. Every MergeTree engine and its `Replicated` twin is typed this way, and so are `Distributed`, `Buffer`, `Join`, `Merge` and the other engines a schema commonly declares beside them. Integration engines such as `S3` and `Kafka` keep untyped arguments: they are connection strings and credentials.
+- Column type parameters: `Decimal(P, S)`, `DateTime64(precision[, timezone])`, `Enum8('a' = 1)`, the wrappers `Nullable` and `LowCardinality`.
+- Codec parameters and chain roles: `ZSTD(level)` takes 1 to 22, `Delta` is a preprocessing step that a compression codec must follow. Four experimental codecs whose parameters are undocumented are marked as such and not checked.
+- Skip index parameters, TTL actions and projection forms.
+
+Each overlay is checked against the catalog when generation runs. An overlay entry the pinned server no longer has, or a codec the server has and the overlay does not, stops generation with the name of the entry, so a pin move that changes the grammar changes the overlay in the same commit.
+
+## The pin
+
+The pin is `clickhouse/clickhouse-server:26.8.15.10`, an exact patch of the 26.8 LTS line, with its image digest beside it in `src/spec/pin.ts`. Two patches of one line differ (26.8.5.13 and 26.8.15.10 differ by nine query settings), so a floating `26.8` tag would change the generated types with nothing in the repository recording why. The older 26.3 LTS line cannot be the pin: its `system.table_engines` has no usage lines and it has no `system.data_skipping_index_types`, which the argument types are built from.
+
+To move it:
+
+1. Change `CLICKHOUSE_VERSION` and `CLICKHOUSE_IMAGE_DIGEST` in `src/spec/pin.ts`.
+2. Run `npm run generate` with Docker available. The snapshot no longer matches the pin, so generation starts the pinned image in a throwaway container, checks that the server reports the pinned version, reads the catalog and rewrites the snapshot.
+3. Review the snapshot's diff. A `-` line is an engine, type, codec or setting the new release removed, which is what would break a declaration.
+4. Fix any overlay entry generation now refuses, and run the tests. `CHANT_SQL_LIVE=1 npx vitest run lexicons/sql/src/spec/catalog.e2e.test.ts` compares the committed snapshot with the pinned server byte for byte.
+
+`chant dev pinned-upgrade` reports newer LTS releases from ClickHouse's GitHub releases.

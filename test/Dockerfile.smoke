@@ -17,6 +17,23 @@ WORKDIR /app
 # Install system deps
 RUN apt-get update && apt-get install -y jq curl && rm -rf /var/lib/apt/lists/*
 
+# Helm 4, pinned to the version CI's render tests use (chant.yml). The root
+# example cockroachdb-multi-region-gke builds its external-secrets stack with
+# HelmRender, which runs `helm template` at synth time.
+RUN set -eu; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+      amd64) sum=5d4c7623283e6dfb1971957f4b755468ab64917066a8567dd50464af298f4031 ;; \
+      arm64) sum=02a5fb7742469d2d132e24cb7c3f52885894043576588c6788b6813297629edd ;; \
+      *) echo "no pinned helm checksum for $arch" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /tmp/helm.tgz "https://get.helm.sh/helm-v4.1.1-linux-${arch}.tar.gz"; \
+    echo "${sum}  /tmp/helm.tgz" | sha256sum -c -; \
+    tar -xzf /tmp/helm.tgz -C /tmp; \
+    install "/tmp/linux-${arch}/helm" /usr/local/bin/helm; \
+    rm -rf /tmp/helm.tgz "/tmp/linux-${arch}"; \
+    helm version --short
+
 # Install tsx globally — used by bin/chant
 RUN npm install -g tsx
 
@@ -28,7 +45,7 @@ RUN npm install
 
 # Validate that dist/ artifacts exist — codegen runs on the host before docker build.
 # Run: just prepack  (or npm run --prefix lexicons/<lex> prepack) before building this Dockerfile.
-RUN for lex in aws azure gcp gitlab k8s docker cedar k3s terraform github grafana prometheus; do \
+RUN for lex in aws azure gcp gitlab k8s docker cedar k3s terraform github grafana prometheus sql; do \
       if [ ! -f "lexicons/$lex/dist/manifest.json" ]; then \
         echo "ERROR: lexicons/$lex/dist/ not found. Run codegen first: npm run --prefix lexicons/$lex prepack" >&2; \
         exit 1; \

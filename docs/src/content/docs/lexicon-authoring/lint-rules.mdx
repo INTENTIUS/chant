@@ -64,8 +64,8 @@ const spec: RuleSpec = {
 Return these from your plugin's `declarativeRules()` method.
 
 :::caution[Untrodden]
-No shipped lexicon uses `declarativeRules()`. All nineteen write imperative
-rules and return them from `lintRules()`. The seam is live (`chant lint`
+No shipped lexicon uses `declarativeRules()`. Every one writes imperative
+rules and returns them from `lintRules()`. The seam is live (`chant lint`
 compiles whatever `declarativeRules()` returns through `rule()`, and it is
 covered by contract tests, chant #1349), but you would be the first real
 adopter. Prefer `lintRules()` unless the declarative form is a clear fit for
@@ -135,7 +135,7 @@ cedar declares `"CED"` plus `["DWD"]`. Core's own cross-cutting ids (`COR*`,
 The number is three digits. Most lexicons group families by the hundreds digit
 rather than by a letter: k3s uses `K3S001` for its source-level rule and
 `K3S101`-`K3S107` for its post-synth checks, gcp uses `WGC001`-`WGC003` then
-`WGC1xx` through `WGC5xx`, and github runs a flat `GHA001`-`GHA068`.
+`WGC1xx` through `WGC5xx`, and github runs a flat `GHA001`-`GHA069`.
 
 A category letter after the prefix is a local convention in two lexicons, not a
 rule the tooling enforces. cedar splits `CEDC` (correctness), `CEDE`
