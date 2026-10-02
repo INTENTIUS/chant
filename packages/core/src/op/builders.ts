@@ -1,9 +1,10 @@
 import { OpResource } from "./resource";
-import type { OpConfig, PhaseDefinition, StepDefinition, ActivityStep, GateStep, EffectStep } from "./types";
+import { workLeaseProblems } from "./work-lease-decl";
+import { WORK_LEASE_STEP_ID, type OpConfig, type PhaseDefinition, type StepDefinition, type ActivityStep, type GateStep, type EffectStep } from "./types";
 import { isEffectReceipt, type EffectReceiptDeclaration } from "../effect-receipt";
 import { receiptCheckInput } from "./receipt-store";
 import { gateApprovalProblems } from "./gate-approval";
-import { makeOutProxy, type StepOutputRef, type WithStepRefs } from "./step-output-ref";
+import { makeOutProxy, stepOutput, type StepOutputRef, type WithStepRefs } from "./step-output-ref";
 import type { ChantBuildArgs } from "./activities/build";
 import type { ShellCmdArgs } from "./activities/shell";
 import type { WaitForStackArgs } from "./activities/wait";
@@ -11,8 +12,12 @@ import type { LifecycleSnapshotArgs } from "./activities/lifecycle";
 import type { ChantTeardownArgs } from "./activities/teardown";
 import type { EnvTeardownArgs } from "./activities/env-teardown";
 import type { HttpCheckArgs } from "./activities/http-check";
+import type { SourceArchiveArgs, ReleasePlanArgs, ReleaseRecordArgs } from "./activities/source-release";
+import type { ReleaseRollbackPlanArgs, ReleaseRollbackRecordArgs } from "./activities/source-rollback";
 import type { PolicyGateArgs } from "./activities/policy";
 import type { GuardValidateArgs } from "./activities/guard-validate";
+import type { WorkEvidenceArgs } from "./activities/work-evidence";
+import type { DecideArgs } from "./activities/decide";
 import { isValidCronExpression, cronSyntaxMessage } from "./cron";
 
 /** An `activity()` result — the plain `ActivityStep` shape plus the `.out` reference sugar (#1290). */
@@ -51,6 +56,10 @@ export function Op(config: OpConfig): InstanceType<typeof OpResource> {
   if (config.schedule && !isValidCronExpression(config.schedule.cron)) {
     throw new Error(`Op "${config.name}": ${cronSyntaxMessage(config.schedule.cron)}`);
   }
+  // #2748: a work lease declared badly, or a change to the checkout with none,
+  // fails on `chant build` rather than on the first run.
+  const leaseProblems = workLeaseProblems(config);
+  if (leaseProblems.length > 0) throw new Error(leaseProblems.join("\n"));
   return new OpResource(config as unknown as Record<string, unknown>);
 }
 
@@ -77,16 +86,18 @@ export function phase(
 export function activity(
   fn: string,
   args?: Record<string, unknown>,
-  opts?: ActivityStep["profile"] | { profile?: ActivityStep["profile"]; id?: string },
+  opts?: ActivityStep["profile"] | { profile?: ActivityStep["profile"]; id?: string; timeout?: string },
 ): NamedActivityStep {
   const profile = typeof opts === "string" ? opts : opts?.profile;
   const id = typeof opts === "string" ? undefined : opts?.id;
+  const timeout = typeof opts === "string" ? undefined : opts?.timeout;
   const step = {
     kind: "activity",
     fn,
     ...(args && Object.keys(args).length > 0 ? { args } : {}),
     ...(profile ? { profile } : {}),
     ...(id ? { id } : {}),
+    ...(timeout !== undefined ? { timeout } : {}),
   } as NamedActivityStep;
   Object.defineProperty(step, "out", {
     enumerable: false,
@@ -332,6 +343,20 @@ export const lifecycleSnapshot = (env: string, opts?: { id?: string }): NamedAct
  * shell("./smoke.sh", { env: { HOST: host.out.stdout } });
  * ```
  *
+ * With `json: true`, stdout is parsed as JSON and published as `json`
+ * (#2787), so a list or an object reaches the next step or the Op's work
+ * lease as itself. A pick step that prints `["W-3","W-7"]` hands
+ * `workLease.item` its candidates:
+ *
+ * ```ts
+ * const pick = shell("node pick.mjs", { id: "pick", json: true });
+ * Op({ workLease: { item: pick.out.json }, ... });
+ * ```
+ *
+ * `timeout` sets how long the one attempt may run, in place of the profile's
+ * twenty minutes, and keeps the profile's retries: `shell("./build.sh", {
+ * timeout: "45m" })`. At most six hours (`MAX_STEP_TIMEOUT`).
+ *
  * `cmd` stays a plain `string` and takes no references. A value spliced into
  * a command line is a quoting decision chant would then be making on the
  * author's behalf, and `env` carries the same value into the same command
@@ -339,10 +364,88 @@ export const lifecycleSnapshot = (env: string, opts?: { id?: string }): NamedAct
  */
 export const shell = (
   cmd: string,
-  opts?: WithStepRefs<Omit<ShellCmdArgs, "cmd">> & StepOpts,
+  opts?: WithStepRefs<Omit<ShellCmdArgs, "cmd">> & StepOpts & { timeout?: string },
+): NamedActivityStep => {
+  const { timeout, ...rest } = (opts ?? {}) as Record<string, unknown> & { timeout?: string };
+  const { args, profile, id } = takeProfileAndId(rest);
+  return activity("shellCmd", { cmd, ...args }, { profile: profile ?? "atMostOnce", ...(id ? { id } : {}), ...(timeout !== undefined ? { timeout } : {}) });
+};
+
+/**
+ * Archive one directory of HEAD as a release artifact (#2782): a tar written by
+ * `git archive`, named by its sha256, the same bytes for the same commit.
+ * Defaults to the `fastIdempotent` profile.
+ *
+ * ```ts
+ * const archive = sourceArchive("../app", { id: "archive" });
+ * ```
+ */
+export const sourceArchive = (
+  path: string,
+  opts?: WithStepRefs<Omit<SourceArchiveArgs, "path">> & StepOpts,
 ): NamedActivityStep => {
   const { args, profile, id } = takeProfileAndId(opts as Record<string, unknown> | undefined);
-  return activity("shellCmd", { cmd, ...args }, { profile: profile ?? "atMostOnce", ...(id ? { id } : {}) });
+  return activity("sourceArchive", { path, ...args }, { profile: profile ?? "fastIdempotent", ...(id ? { id } : {}) });
+};
+
+/**
+ * Plan a release (#2782): a JSON object named by the sha256 of its canonical
+ * form, which the ship gate binds to (`gate("ship", { plan: plan.out.digest })`)
+ * and the release ledger records. Defaults to the `fastIdempotent` profile.
+ */
+export const releasePlan = (args: WithStepRefs<ReleasePlanArgs> & StepOpts): NamedActivityStep => {
+  const { args: rest, profile, id } = takeProfileAndId(args as Record<string, unknown>);
+  return activity("releasePlan", rest, { profile: profile ?? "fastIdempotent", ...(id ? { id } : {}) });
+};
+
+/**
+ * Record a release in the release ledger with its plan (#2782, ws-055), once:
+ * a retry whose release the ledger already names records nothing. Defaults to
+ * the `fastIdempotent` profile.
+ */
+export const releaseRecord = (args: WithStepRefs<ReleaseRecordArgs> & StepOpts): NamedActivityStep => {
+  const { args: rest, profile, id } = takeProfileAndId(args as Record<string, unknown>);
+  return activity("releaseRecord", rest, { profile: profile ?? "fastIdempotent", ...(id ? { id } : {}) });
+};
+
+/**
+ * Ask a decision point and record its answer (ws-058, #2740): the `decide`
+ * activity, core's since #2828. `opts` is the activity's own
+ * {@link DecideArgs}, minus the positional `point`, so the builder and the
+ * activity cannot drift. Defaults to the `fastIdempotent` profile: asking
+ * again with the same point, declaration and inputs returns the record
+ * already written. An open question stops the run `waiting`.
+ *
+ * ```ts
+ * decide("slice-tier", { read: { "work-item": "W-002" }, subject: "W-002" })
+ * ```
+ */
+export const decide = (point: string, opts?: WithStepRefs<Omit<DecideArgs, "point">> & StepOpts): NamedActivityStep => {
+  const { args, profile, id } = takeProfileAndId(opts as Record<string, unknown> | undefined);
+  return activity("decide", { point, ...args }, { profile: profile ?? "fastIdempotent", ...(id ? { id } : {}) });
+};
+
+/**
+ * Plan a rollback of a source release (#2800): the release the site served
+ * before the latest one (or `to`), its plan read back from the ledger, and its
+ * source tree archived again from its commit and refused unless it hashes to
+ * the digest that plan recorded. Writes a rollback plan named by its own
+ * sha256, which the rollback gate binds to (`gate("rollback", { plan:
+ * plan.out.digest })`). Defaults to the `fastIdempotent` profile.
+ */
+export const releaseRollbackPlan = (args: WithStepRefs<ReleaseRollbackPlanArgs> & StepOpts): NamedActivityStep => {
+  const { args: rest, profile, id } = takeProfileAndId(args as Record<string, unknown>);
+  return activity("releaseRollbackPlan", rest, { profile: profile ?? "fastIdempotent", ...(id ? { id } : {}) });
+};
+
+/**
+ * Record a rollback in the release ledger (#2800): the restored release's
+ * digest and commit, `restores` naming that release, the actor and the gate's
+ * approver, once. Defaults to the `fastIdempotent` profile.
+ */
+export const releaseRollbackRecord = (args: WithStepRefs<ReleaseRollbackRecordArgs> & StepOpts): NamedActivityStep => {
+  const { args: rest, profile, id } = takeProfileAndId(args as Record<string, unknown>);
+  return activity("releaseRollbackRecord", rest, { profile: profile ?? "fastIdempotent", ...(id ? { id } : {}) });
 };
 
 /**
@@ -813,10 +916,21 @@ export const spriteApplyNetworkPolicy = (args: {
   return activity("spriteApplyNetworkPolicy", rest, profile ?? "fastIdempotent");
 };
 
-/** Reconcile a sprite's background services (create-or-update, optionally start). Defaults to the `fastIdempotent` profile (override via `profile`). */
+/**
+ * Reconcile a sprite's background services (create-or-update, optionally
+ * start). With an `id`, through the Sprites API and its `services`; without
+ * one, inside the sprite through sprite-env, applying the box block's
+ * services (`box: true`, #2880): `only` names some of them, `start` starts
+ * the applied ones that are not running, `restart` restarts the converged
+ * ones. Defaults to the `fastIdempotent` profile (override via `profile`).
+ */
 export const spriteApplyServices = (args: {
-  id: string;
-  services: Array<{
+  id?: string;
+  box?: boolean;
+  only?: string[];
+  restart?: boolean;
+  spriteEnv?: string;
+  services?: Array<{
     name: string;
     cmd: string;
     args?: string[];
@@ -917,6 +1031,22 @@ export const policyGate = (opts?: WithStepRefs<PolicyGateArgs> & { id?: string }
     { path, ...(env !== undefined ? { env } : {}) },
     { profile: "policyCheck", ...(opts?.id ? { id: opts.id } : {}) },
   );
+};
+
+/**
+ * Attach evidence to an acceptance criterion of the work item the run holds
+ * the lease on (#2772), for an Op that declares `workLease`. The run's lease
+ * is passed for it, so the write happens only while the lease is still the
+ * run's. `opts` takes the `result` (pass or fail), a `title`, and a `url` or a
+ * workspace `path` to pin by hash. A `manual` criterion is refused: the run
+ * is the item's implementer. The `atMostOnce` profile: each attempt appends.
+ */
+export const workEvidence = (
+  criterion: string,
+  opts: WithStepRefs<Omit<WorkEvidenceArgs, "criterion" | "lease">> & { id?: string },
+): NamedActivityStep => {
+  const { id, ...rest } = opts as Omit<WorkEvidenceArgs, "criterion" | "lease"> & { id?: string };
+  return activity("workEvidence", { criterion, lease: stepOutput(WORK_LEASE_STEP_ID), ...rest }, { profile: "atMostOnce", ...(id ? { id } : {}) });
 };
 
 /**

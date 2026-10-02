@@ -160,7 +160,7 @@ describe("the steward template", () => {
       return { status: hit.status, json: hit.json ?? null };
     };
 
-    const summary = await fountainApply({ manifestContent }, http);
+    const summary = await fountainApply({ manifestContent }, undefined, http);
 
     expect(summary.created).toEqual([
       "Environment/prod-toolchain",

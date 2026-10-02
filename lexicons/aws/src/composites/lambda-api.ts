@@ -14,6 +14,7 @@ export type LambdaApiResult = LambdaFunctionResult & {
   permission: InstanceType<typeof Permission>;
 };
 
+/** A Lambda function with an execution role and the permission that lets API Gateway invoke it. */
 export const LambdaApi = Composite<LambdaApiProps, LambdaApiResult>((props) => {
   const { defaults } = props;
   const { role, func } = LambdaFunction(props);

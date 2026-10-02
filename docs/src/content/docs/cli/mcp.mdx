@@ -16,6 +16,12 @@ chant serve mcp [path]
 
 Typically you don't run this directly. `chant init` detects your IDE and writes the MCP config to the appropriate global config file — `~/.claude/mcp.json` for Claude Code, `~/.cursor/mcp.json` for Cursor, or `~/.config/mcp/mcp.json` otherwise. Your agent picks it up automatically. See [Agent Integration](/chant/guide/agent-integration/).
 
+### At a workspace root
+
+A project with no lexicon refuses to start with "No lexicon detected". The root of a declared workspace (`chant.workspace.json`) with no lexicon of its own is the exception, as in a repo made from chud's template, whose lexicons are all in `delivery/`. There the server starts and serves the core tools and resources below, with the lexicons of the workspace's members of kind `chant`, each read from that member's own `chant.config.ts`. A member whose config does not load, or a lexicon this chant cannot import, is left out and the rest are served, down to core alone.
+
+The `initialize` result then carries `instructions`. They say which lexicons loaded and which did not, and that the tools taking a `path` want a member's directory.
+
 ## Tools
 
 These are the core tools the server registers. Lexicon plugins contribute more.
@@ -81,7 +87,7 @@ Returns `{ lexicon, pattern, files }`, where `files` is `[{ filename, content }]
 
 ### `search`
 
-Search available resource types across loaded lexicons.
+Search the resource types and the composites of the loaded lexicons.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -89,7 +95,19 @@ Search available resource types across loaded lexicons.
 | `lexicon` | `string` | No | Filter to a specific lexicon |
 | `limit` | `number` | No | Maximum results (default: `20`) |
 
-The response is `{ query, total, results }`, with prefix matches ahead of substring matches and `total` counting the matches before `limit` was applied.
+The response is `{ query, total, results }`, with prefix matches ahead of substring matches and `total` counting the matches before `limit` was applied. A resource type matches on its type, class name or kind and comes back as `{ className, resourceType, kind, lexicon }`. A composite matches on its name, its description or a resource kind it bundles, and comes back as `{ kind: "composite", name, description, bundles, lexicon }`, so a query for `queue` returns the `Queue` resource and the `LambdaSqs` composite that bundles one. Among matches of equal rank, composites come before resource types. The `composites` tool has the composite's parameters.
+
+### `composites`
+
+List the composites the loaded lexicons export. "What composites do you have for aws?" is a call with `lexicon: "aws"`.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `lexicon` | `string` | No | Only composites from this lexicon |
+| `query` | `string` | No | Keyword matched against the name, description, bundled resource kinds and parameter names |
+| `limit` | `number` | No | Maximum composites (default: `50`) |
+
+Returns `{ lexicons, total, composites }`, plus the `lexicon` and `query` that were given. `lexicons` names every loaded lexicon, so an empty list for a lexicon it names means that lexicon exports no composites. Each composite is `{ name, lexicon, description, bundles, params }`. Its `bundles` are the resource kinds it creates, nested composites included, and each entry in `params` is `{ name, type, required, description }`. With a `query`, name matches come first. The data is the catalog each lexicon ships in its package. Reading it loads no composite and calls no provider.
 
 ### `lifecycle-snapshot`
 
@@ -184,6 +202,42 @@ Return a markdown report for an Op's latest run.
 
 Lexicon plugins can contribute additional tools. Plugin tools are namespaced as `{pluginName}:{toolName}` to avoid conflicts with core tools.
 
+## Workspace tools
+
+Started at or inside a declared workspace (`chant.workspace.json` in the directory or above it, up to the git root), the server also serves the workspace's read contract and its record writes ([#2707](https://github.com/INTENTIUS/chant/issues/2707)). A harness that speaks MCP but has no shell can then read decisions and propose them. The same test ties these sections to the tools a server inside a workspace registers.
+
+Each tool is a thin call into what the CLI runs. A read runs `chant workspace <command> ... --json` with the chant the server runs as, in the server's directory, and returns the document it printed, unchanged. The document follows that command's output schema in the [read contract](/chant/reference/workspace-read-contract/), reason codes included, and an error document is returned as a document. A read handed to the workspace root's pinned chant by the CLI is handed on the same way. The [reader conformance suite](/chant/reference/workspace-read-contract/#testing-a-reader) runs over MCP as well, and requires each tool's document to equal the command's.
+
+A write calls the function `chant workspace records new`, `amend`, `review` or `close` calls, and returns the same JSON result, refusals included. It keeps the CLI's rules. The kind's schema judges the record, and a closed record never changes. An approved record changes only in its state, evidence and reviews, and a dissent needs a note. Through MCP, two things are added. A new record opens in the kind's first state, `proposed` for a decision, and any other state is refused with `record-state-not-initial`. The record's [source block](/chant/cli/workspace-records/#where-a-proposal-came-from) gets `via: "mcp"` and `client`, the client's `clientInfo` from `initialize` or from the request's `_meta`. An amendment gets them only when its fields set the source block, since the block says where the proposal came from. Computed provenance, from git, is unchanged. `sign: true` seals with this host's configured key, git's `user.signingkey` with `gpg.format ssh`, and is refused with the CLI's remedy when none is set.
+
+`points-answer` calls what `chant workspace points answer` calls ([ws-058](/chant/guide/decision-points/)). It records people's answer to an open decision point question once the point's quorum is met. The quorum never counts anyone holding the agent role. No tool asks a point's deciders: chant calls no model, so an ask runs in the operations layer.
+
+Records are proposals until they are reviewed, and `by` must name the person or agent that actually proposed or decided it. Each write tool's description says so, for the model that reads it. The server listens on no port and authenticates nobody: it speaks over stdio, and `by` is recorded as given, as `--by` is.
+
+A server started with `CHANT_AGENT` set writes in that [agent session](/chant/reference/workspace-declaration/#write-scope-and-agent-sessions), bound to its one member ([#2548](https://github.com/INTENTIUS/chant/issues/2548)). Each write is judged against the session's write scope, read from the declaration at base, and refused with the CLI's `write-scope-member`, `write-scope-kind` or `agent-unknown`. A write whose `by` names a principal a session lists is judged as that session too.
+
+A value that starts with `-` is refused before any command runs, so no argument can be read as a flag.
+
+| Tool | Parameters | Returns |
+|---|---|---|
+| `workspace-ls` | `at` | the document of `chant workspace ls --json` (`ls.schema.json`) |
+| `workspace-status` | `env` (required), `compareTo` | the document of `chant workspace status <env> --json` (`status.schema.json`) |
+| `workspace-graph` | `kind` (a list), `intent`, `composites`, `at` | the document of `chant workspace graph --json` (`graph.schema.json`); with `intent`, the intent graph over that region (`intent.schema.json`); with `composites`, the composites joined to components (`composites.schema.json`) |
+| `workspace-changes` | `range` (required), `work`, `severity`, `kind` (a list) | the document of `chant workspace check --changes <range> --json` (`changes.schema.json`): each changed path with the records covering it, and the `change-uncovered` and `change-out-of-scope` findings ([#2773](https://github.com/INTENTIUS/chant/issues/2773)) |
+| `workspace-points` | `open`, `kind`, `at` | the document of `chant workspace points --json` (`points.schema.json`): the decision points and the questions asked of them, each open one with any model's answer and confidence ([ws-058](/chant/guide/decision-points/)) |
+| `workspace-agent` | `name` | the document of `chant workspace agent <name> --json` (`agent.schema.json`): the session's member, its write scope and the spec it reloads from; without `name`, this server's session ([#2548](https://github.com/INTENTIUS/chant/issues/2548)) |
+| `workspace-work-history` | `item` (required), `kind` | the document of `chant workspace work history <item> --json` (`work-history.schema.json`): the work item's claims, each with its token, holder and how it ended ([#2785](https://github.com/INTENTIUS/chant/issues/2785)) |
+| `workspace-records` | `kind`, `current`, `since`, `id`, `at` | the document of `chant workspace records --json` (`records.schema.json`), or with `since` the changes since a revision or session (`records-since.schema.json`); with `id`, only that record is kept in `records`, and `summary` stays the command's |
+| `records-new` | `record` (required), `kind`, `prefix`, `by`, `sign`, `dryRun` | the result of `chant workspace records new` (`records-new.schema.json`) |
+| `records-amend` | `id` and `fields` (required), `kind`, `by`, `sign`, `dryRun` | the result of `chant workspace records amend` (`records-amend.schema.json`) |
+| `records-review` | `id`, `verdict` and `by` (required), `kind`, `note`, `session`, `sign`, `dryRun` | the result of `chant workspace records review` (`records-review.schema.json`), whose verdict moves the record's quorum |
+| `records-close` | `id` (required), `kind`, `dryRun` | the result of `chant workspace records close` (`records-close.schema.json`) |
+| `points-answer` | `id`, `answer`, `by` (all required), `kind`, `dryRun` | the result of `chant workspace points answer` (`points-write.schema.json`): people's answer to an open question, refused with `quorum-not-met` until the point's quorum is met |
+
+Each parameter stands for the CLI flag of the same name, written in camel case, so `compareTo` is `--compare-to`. `kind` names a kind file from the server's directory or a kind the declaration names. Without `kind`, a write goes through the one kind the declaration names, as the CLI's does. `record` and `fields` are JSON objects, the text `--from` and `--set` would read. Without `state`, `records-new` gives the record the kind's first.
+
+`by` on `records-new` names a proposer when the kind declares `proposedBy` ([#2756](https://github.com/INTENTIUS/chant/issues/2756)): it fills that field, `proposed_by` for a decision, whenever the record opens in the kind's first state. A kind with no `proposedBy` skips that and fills the decider field, `decided_by` for a decision, the way it always has; so does a record whose own fields set its state past the first one. Signing needs a decider. `by` on `records-amend` always writes the decider field, unchanged from before.
+
 ## Resources
 
 The server provides resources that agents can read for context:
@@ -195,6 +249,7 @@ The server provides resources that agents can read for context:
 | `chant://ops` | `application/json` | Every Op discovered from `*.op.ts`, with overview, phase count, labels and dependencies |
 | `chant://ops/{name}/runs` | `application/json` | Run history for a named Op, newest first |
 | `chant://ops/{name}/runs/latest` | `application/json` | Latest run state for a named Op |
+| `chant://composites` | `application/json` | Every composite the loaded lexicons export, the same entries the `composites` tool returns, unfiltered |
 | `chant://knowledge` | `application/json` | The project's OKF knowledge bundle as `{ dir, index, concepts }`, empty when the project has authored none |
 | `chant://state/{environment}` | `application/json` | Every lexicon's snapshot for an environment, keyed by lexicon |
 | `chant://state/{environment}/{lexicon}` | `application/json` | One lexicon's snapshot for an environment |
@@ -242,20 +297,23 @@ The server communicates over stdin/stdout using JSON-RPC 2.0 with line-based fra
 
 ## Protocol Details
 
-The MCP server implements the [Model Context Protocol](https://modelcontextprotocol.io/). It negotiates a revision rather than assuming the client's, and understands two:
+The MCP server implements the [Model Context Protocol](https://modelcontextprotocol.io/). It negotiates a revision rather than assuming the client's, and understands these:
 
 | Version | Role |
 |---------|------|
 | `2026-07-28` | Preferred. Answered to a client that asks for it, and to one that names no version at all |
+| `2025-11-25` | Answered to a client that asks for it by name. Claude Code 2.1.274 asks for this one |
+| `2025-06-18` | Answered to a client that asks for it by name |
+| `2025-03-26` | Answered to a client that asks for it by name |
 | `2024-11-05` | Answered to a client that asks for it by name |
 
-On the 2026-07-28 revision the requested version and the client identity travel in a `_meta` envelope on every request, and the server falls back to the top-level `protocolVersion` and `clientInfo` fields a prior-revision client sends on `initialize`.
+On the 2026-07-28 revision the requested version and the client identity travel in a `_meta` envelope on every request, and the server falls back to the top-level `protocolVersion` and `clientInfo` fields a prior-revision client (2024-11-05 or any 2025 revision) sends on `initialize`.
 
 ### Supported Methods
 
 | Method | Description |
 |--------|-------------|
-| `initialize` | Handshake — returns the negotiated protocol version, capabilities, and server info |
+| `initialize` | Handshake — returns the negotiated protocol version, capabilities, and server info: `name` is `chant`, and `version` is the installed chant's version, the one `chant --version` prints. At a workspace root with no lexicon of its own it also returns `instructions` |
 | `server/discover` | The `initialize` result merged with the tool and resource listings, so a client can discover everything in one call |
 | `tools/list` | List all available tools (core + plugin-contributed) |
 | `tools/call` | Invoke a tool by name with parameters |

@@ -104,6 +104,19 @@ export const proxy = new Service({
 });
 ```
 
+A config can carry its content inline instead of pointing at a file, and a service can name it by the declared value. The value serializes as the config's Compose key.
+
+```typescript
+import { DockerConfig, Service } from "@intentius/chant-lexicon-docker";
+
+export const appConf = new DockerConfig({ content: "log_level: info\n" });
+
+export const app = new Service({
+  image: "my-app:1.4.2",
+  configs: [{ source: appConf, target: "/etc/app/config.yaml" }],
+});
+```
+
 ## Secret
 
 Maps to `secrets.<name>` in `docker-compose.yml`. For sensitive values.
@@ -126,3 +139,19 @@ export const api = new Service({
   secrets: ["dbPassword", "apiKey"],
 });
 ```
+
+## Telemetry attribution
+
+Inside a workspace, the docker lexicon adds two variables to every service's environment so that its spans name the declaration that produced them ([#2558](https://github.com/INTENTIUS/chant/issues/2558), [ws-060](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-060-telemetry-attribution.md)).
+
+```yaml
+services:
+  appService:
+    environment:
+      OTEL_SERVICE_NAME: appService
+      OTEL_RESOURCE_ATTRIBUTES: chant.workspace=reference,chant.member=delivery,chant.decl=appService
+```
+
+`OTEL_SERVICE_NAME` is the service's key. `OTEL_RESOURCE_ATTRIBUTES` lists `chant.workspace`, `chant.member`, `chant.decl` (the service's key, which is its node id in `chant workspace graph` without the member prefix) and, when the build has an environment from `--env` or `ownership.env`, `deployment.environment.name`. A service whose image is pinned by digest (`image@sha256:...`) also gets `service.version`. A value the service already sets is kept, and only the missing attributes are added. The git revision and a digest the build can't know are set by what deploys the release.
+
+A project with no `chant.workspace.json` is unchanged. It can opt in with `telemetry.attribution: true` in `chant.config.ts`, which stamps the attributes that need no workspace, and inside a workspace `telemetry.attribution: false` turns it off. [How a reader joins a span to a member](/chant/reference/workspace-read-contract/#joining-a-span-to-a-member) lists what each attribute joins to.

@@ -16,6 +16,7 @@ It is fountain-agnostic by construction. Nothing in it imports a fountain type, 
 chant acp                 # the bare form a client spawns
 chant acp serve           # the same thing, spelled out
 chant acp --durable-requests
+chant acp --steward box-steward   # what the Steward's Agent runs
 ```
 
 ## A prompt is a chant command line
@@ -73,6 +74,10 @@ The gate is a fact on chant's ledger, not a wait held open inside the sandbox. N
 With the flag, the same gate becomes a `session/request_permission` carrying `allow_once` and `reject_once`, and the turn ends `waiting`. The client answers on a later prompt whose `_meta.chant.permission` names the request id and the option chosen; allowing records the gate resolution the way `chant approve` does and re-runs the command line, which now walks through the gate.
 
 It is off by default because a request that outlives a turn needs [fountain#1635](https://github.com/managoat/fountain/issues/1635). fountain v0.21.0, the release the lexicon's types are generated from, carries it, and chant's fountain runtime does not answer through it yet (chant#2391). Until then the flag is useful against an editor or any other ACP client that can hold a request across turns.
+
+### `--steward <name>`
+
+The [Steward](/chant/lexicons/fountain/steward/)'s Agent runs `chant acp --steward <name>`, so every turn in the session is that steward's ([chant#2749](https://github.com/INTENTIUS/chant/issues/2749)). A decision point an Op asks during a turn names the steward, makes its model call only through a capability the steward names, and stays open in the workspace for a person. A run that stops on one prints the question and the `points answer` line, and the turn ends. `chant workspace points answer` from the session is refused with `answer-in-steward-turn`, as a gate's resolution from the session is refused.
 
 The `runtime: "acp"` and `runtime_command` pair the steward sets is in fountain's spec from v0.21.0. An older instance rejects the pair at apply. See the Agent section of [Resources](/chant/lexicons/fountain/resources/).
 

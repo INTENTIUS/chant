@@ -5,6 +5,7 @@
  * Helm-specific intrinsics, lint rules, and post-synth checks.
  */
 
+import { compositeCatalog } from "./composites/catalog";
 import type { LexiconPlugin, IntrinsicDef, InitTemplateSet } from "@intentius/chant/lexicon";
 import type { CommandGroup } from "@intentius/chant/cli/command-group";
 import { helmCommandGroup } from "./commands";
@@ -129,6 +130,10 @@ export const helmPlugin: LexiconPlugin = {
   },
 
   detectTemplate,
+
+  composites() {
+    return compositeCatalog;
+  },
 
   mcpTools() {
     return [createDiffTool(helmSerializer, "Compare current Helm chart build output against previous output", "helm")];

@@ -1,5 +1,12 @@
-import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { importCommand, type ImportOptions } from "./import";
+import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
+import {
+  detectTemplateLexicon,
+  importCommand,
+  parseTemplateDocuments,
+  printImportResult,
+  type ImportOptions,
+} from "./import";
+import { listInstalledLexicons } from "../plugins";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -375,5 +382,280 @@ describe("importCommand", () => {
     for (const file of result.generatedFiles) {
       expect(file.endsWith(".ts")).toBe(true);
     }
+  });
+});
+
+// #2935 — YAML templates reach detection and the plugin's parser instead of
+// failing JSON.parse, and `--lexicon` skips detection.
+describe("importCommand with YAML templates", () => {
+  let testDir: string;
+  let outputDir: string;
+
+  const configMap = `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  LOG_LEVEL: info
+`;
+
+  const deployment = `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: web
+          image: nginx:1.27
+`;
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `chant-import-yaml-test-${Date.now()}-${Math.random()}`);
+    outputDir = join(testDir, "output");
+    await mkdir(testDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  /** A project that declares the k8s lexicon, so detection can find it. */
+  async function k8sProject(): Promise<void> {
+    await writeFile(join(testDir, "chant.config.json"), JSON.stringify({ lexicons: ["k8s"] }));
+  }
+
+  function generated(files: string[]): string {
+    return files.map((f) => readFileSync(join(outputDir, f), "utf-8")).join("\n");
+  }
+
+  test("detects and imports a single-document k8s manifest", async () => {
+    await k8sProject();
+    const templatePath = join(testDir, "manifest.yaml");
+    await writeFile(templatePath, configMap);
+
+    const result = await importCommand({ templatePath, output: outputDir });
+
+    expect(result.error).toBeUndefined();
+    expect(result.success).toBe(true);
+    expect(result.lexicon).toBe("k8s");
+    expect(generated(result.generatedFiles)).toContain("ConfigMap");
+  }, 30000);
+
+  test("detects and imports a multi-document k8s manifest", async () => {
+    await k8sProject();
+    const templatePath = join(testDir, "manifests.yaml");
+    await writeFile(templatePath, `# app manifests\n---\n${configMap}---\n${deployment}`);
+
+    const result = await importCommand({ templatePath, output: outputDir });
+
+    expect(result.error).toBeUndefined();
+    expect(result.success).toBe(true);
+    expect(result.lexicon).toBe("k8s");
+    const code = generated(result.generatedFiles);
+    expect(code).toContain("ConfigMap");
+    expect(code).toContain("Deployment");
+  }, 30000);
+
+  test("--lexicon imports without detection", async () => {
+    const templatePath = join(testDir, "manifest.yaml");
+    await writeFile(templatePath, configMap);
+
+    const result = await importCommand({ templatePath, output: outputDir, lexicon: "k8s" });
+
+    expect(result.error).toBeUndefined();
+    expect(result.success).toBe(true);
+    expect(result.lexicon).toBe("k8s");
+    expect(result.detected).toBeFalsy();
+    expect(generated(result.generatedFiles)).toContain("ConfigMap");
+  }, 30000);
+
+  // #2965 — with no chant.config and no source imports, every installed
+  // lexicon is tried, not only aws.
+  test("detects a k8s manifest outside a project from the installed lexicons", async () => {
+    const templatePath = join(testDir, "manifest.yaml");
+    await writeFile(templatePath, `--- # config\n${configMap}...\n`);
+
+    const result = await importCommand({ templatePath, output: outputDir });
+
+    expect(result.error).toBeUndefined();
+    expect(result.success).toBe(true);
+    expect(result.lexicon).toBe("k8s");
+    expect(result.detected).toBe(true);
+    expect(generated(result.generatedFiles)).toContain("ConfigMap");
+  }, 60000);
+
+  test("--lexicon with an unknown lexicon fails", async () => {
+    const templatePath = join(testDir, "manifest.yaml");
+    await writeFile(templatePath, configMap);
+
+    const result = await importCommand({ templatePath, output: outputDir, lexicon: "no-such-lexicon" });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("no-such-lexicon");
+  });
+
+  // #2991 — a blank or whitespace-only line after `spec:` (Helm renders one
+  // for an empty conditional) no longer ends the pod template's spec.
+  test("a blank line after a key keeps its block nested", async () => {
+    const templatePath = join(testDir, "manifest.yaml");
+    await writeFile(templatePath, deployment.replace("    spec:\n", "    spec:\n      \n"));
+
+    const result = await importCommand({ templatePath, output: outputDir, lexicon: "k8s" });
+
+    expect(result.error).toBeUndefined();
+    // The containers stay under template.spec, not hoisted beside `replicas`.
+    expect(generated(result.generatedFiles)).toMatch(/template: \{[\s\S]*spec: \{\s*containers: \[/);
+  }, 30000);
+
+  // #2991 — a document the YAML reader cannot place fails the import with
+  // its line, where it used to import a different manifest.
+  test("a mis-indented document fails the import and names the line", async () => {
+    const templatePath = join(testDir, "manifests.yaml");
+    await writeFile(templatePath, `${configMap}---\n${deployment.replace("  replicas: 2\n", "  replicas: 2\n     paused: true\n")}`);
+
+    const result = await importCommand({ templatePath, output: outputDir });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("YAML line 7");
+  }, 30000);
+
+  test("content that is neither JSON nor YAML names both formats", async () => {
+    const templatePath = join(testDir, "notes.txt");
+    await writeFile(templatePath, "this is not a template\n{ nor is this");
+
+    const result = await importCommand({ templatePath, output: outputDir });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("JSON");
+    expect(result.error).toContain("YAML");
+  });
+});
+
+// #2965 — detection outside a project, and inside one when the project's
+// lexicons don't match.
+describe("detectTemplateLexicon", () => {
+  let testDir: string;
+
+  const collector = {
+    receivers: { otlp: { protocols: { grpc: {} } } },
+    exporters: { debug: {} },
+    service: { pipelines: { traces: { receivers: ["otlp"], exporters: ["debug"] } } },
+  };
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `chant-import-detect-test-${Date.now()}-${Math.random()}`);
+    await mkdir(testDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  test("an empty directory detects an otel collector config from the installed lexicons", async () => {
+    const detection = await detectTemplateLexicon([collector], testDir);
+    expect(detection?.plugin.name).toBe("otel");
+    expect(detection?.source).toBe("installed");
+  }, 60000);
+
+  test("a project lexicon that matches decides", async () => {
+    await writeFile(join(testDir, "chant.config.json"), JSON.stringify({ lexicons: ["aws"] }));
+    const detection = await detectTemplateLexicon([{ AWSTemplateFormatVersion: "2010-09-09", Resources: {} }], testDir);
+    expect(detection?.plugin.name).toBe("aws");
+    expect(detection?.source).toBe("project");
+  }, 60000);
+
+  test("inside a project, installed lexicons are tried when the project's don't match", async () => {
+    await writeFile(join(testDir, "chant.config.json"), JSON.stringify({ lexicons: ["aws"] }));
+    const detection = await detectTemplateLexicon([collector], testDir);
+    expect(detection?.plugin.name).toBe("otel");
+    expect(detection?.source).toBe("installed");
+  }, 60000);
+
+  test("names the other installed lexicons that also recognized the template", async () => {
+    // github and forgejo both read a GitHub-Actions-shaped workflow.
+    const workflow = { on: { push: {} }, jobs: { build: { "runs-on": "ubuntu-latest", steps: [] } } };
+    const detection = await detectTemplateLexicon([workflow], testDir);
+    expect(detection).toBeDefined();
+    // github has a template parser and forgejo does not, so github is chosen.
+    expect(detection!.plugin.name).toBe("github");
+    expect(detection!.alsoMatched).toContain("forgejo");
+  }, 60000);
+
+  test("returns undefined when no installed lexicon recognizes the template", async () => {
+    expect(await detectTemplateLexicon([{ version: "1.0", unknownField: {} }], testDir)).toBeUndefined();
+  }, 60000);
+});
+
+describe("listInstalledLexicons", () => {
+  test("lists the @intentius/chant-lexicon-* packages installed alongside chant", () => {
+    const names = listInstalledLexicons(tmpdir());
+    expect(names).toContain("aws");
+    expect(names).toContain("k8s");
+    expect(names).toContain("otel");
+    expect(names).toEqual([...names].sort());
+  });
+});
+
+describe("printImportResult", () => {
+  function printed(result: Parameters<typeof printImportResult>[0]): string {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      printImportResult(result);
+      return log.mock.calls.map((c) => c.join(" ")).join("\n");
+    } finally {
+      log.mockRestore();
+    }
+  }
+
+  test("says Detected lexicon when the lexicon was detected", () => {
+    expect(printed({ success: true, generatedFiles: [], warnings: [], lexicon: "k8s", detected: true })).toContain(
+      "Detected lexicon: k8s",
+    );
+  });
+
+  test("says Lexicon when the lexicon was named", () => {
+    const out = printed({ success: true, generatedFiles: [], warnings: [], lexicon: "k8s" });
+    expect(out).toContain("Lexicon: k8s");
+    expect(out).not.toContain("Detected");
+  });
+});
+
+describe("parseTemplateDocuments", () => {
+  test("JSON yields the parsed value as one document", () => {
+    expect(parseTemplateDocuments('{"a": 1}')).toEqual([{ a: 1 }]);
+    expect(parseTemplateDocuments("[1, 2]")).toEqual([[1, 2]]);
+  });
+
+  test("YAML splits on document separators and skips empty or comment-only documents", () => {
+    const docs = parseTemplateDocuments("---\n# only a comment\n---\na: 1\n---\nb: two\n---\n");
+    expect(docs).toEqual([{ a: 1 }, { b: "two" }]);
+  });
+
+  test("a top-level YAML list parses as a list (#2965)", () => {
+    expect(parseTemplateDocuments("- name: one\n  expr: up\n- name: two\n")).toEqual([
+      [{ name: "one", expr: "up" }, { name: "two" }],
+    ]);
+  });
+
+  test("commented separators and document ends split documents (#2965)", () => {
+    expect(parseTemplateDocuments("--- # first\na: 1\n...\n--- # second\nb: two\n...\n")).toEqual([
+      { a: 1 },
+      { b: "two" },
+    ]);
+  });
+
+  test("returns undefined for content that is neither", () => {
+    expect(parseTemplateDocuments("")).toBeUndefined();
+    expect(parseTemplateDocuments("just some words")).toBeUndefined();
+    expect(parseTemplateDocuments("{ broken json")).toBeUndefined();
   });
 });

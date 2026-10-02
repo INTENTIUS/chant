@@ -1,0 +1,349 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/work-history/v1/work-history.schema.json",
+  "title": "chant workspace work history output",
+  "description": "What `chant workspace work history <id> --json` prints (#2785): one work item's lease history, read from _leases/<id>.jsonl on chant/lifecycle in the ledger of the member that owns the work kind, folded into claims, one per fencing token, each with how it ended. A runner counts failed attempts from it. It reads the local branch and lease refs and never fetches. Version 1 of the read contract. Readers ignore fields they do not know; a field is only ever added within a version. The error codes are a closed list, each in the one closed list of `reason-codes.ts`.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/result"
+    },
+    {
+      "$ref": "#/$defs/failure"
+    }
+  ],
+  "$defs": {
+    "event": {
+      "type": "object",
+      "description": "One line of the history, as written by a claim, renew or release.",
+      "required": [
+        "version",
+        "event",
+        "item",
+        "holder",
+        "by",
+        "token",
+        "acquiredAt",
+        "expiresAt",
+        "timestamp"
+      ],
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "event": {
+          "enum": [
+            "claim",
+            "renew",
+            "release"
+          ]
+        },
+        "item": {
+          "type": "string"
+        },
+        "holder": {
+          "type": "string",
+          "description": "The lease's holder."
+        },
+        "by": {
+          "type": "string",
+          "description": "Who wrote the line: the holder, or, for the release of an expired lease, whoever closed it out."
+        },
+        "token": {
+          "type": "string",
+          "description": "The fencing token: new on every claim, kept by every renew."
+        },
+        "acquiredAt": {
+          "type": "string"
+        },
+        "expiresAt": {
+          "type": "string",
+          "description": "The lease's expiry after this event; a release keeps the expiry it had."
+        },
+        "timestamp": {
+          "type": "string",
+          "description": "When the event happened, ISO 8601."
+        },
+        "outcome": {
+          "type": "string",
+          "description": "How the work ended, on a release. Free text such as done, not_done, gated or waiting."
+        },
+        "note": {
+          "type": "string"
+        }
+      }
+    },
+    "claim": {
+      "type": "object",
+      "description": "One claim of the item: one fencing token, from its claim to how it ended.",
+      "required": [
+        "token",
+        "holder",
+        "acquiredAt",
+        "expiresAt",
+        "renewals",
+        "ended",
+        "release"
+      ],
+      "properties": {
+        "token": {
+          "type": "string"
+        },
+        "holder": {
+          "type": "string"
+        },
+        "acquiredAt": {
+          "type": "string"
+        },
+        "expiresAt": {
+          "type": "string",
+          "description": "The expiry its last claim or renew set."
+        },
+        "renewals": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ended": {
+          "enum": [
+            "released",
+            "held",
+            "expired",
+            "lost"
+          ],
+          "description": "released: given back, with release.outcome when one was given. held: it is the live lease now. expired: it ran out, and nobody released it or claimed the item since. lost: it ran out unreleased, and a later claim took the item."
+        },
+        "release": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "by",
+                "at",
+                "outcome",
+                "note"
+              ],
+              "properties": {
+                "by": {
+                  "type": "string"
+                },
+                "at": {
+                  "type": "string"
+                },
+                "outcome": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "note": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "description": "The history was read. Exit code 0. An item never claimed has no claims.",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "item",
+        "kind",
+        "ref",
+        "ledger",
+        "lease",
+        "claims",
+        "events",
+        "malformed",
+        "summary"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/work-history/v1/work-history.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "item": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "description": "The work kind file, from the repository root."
+        },
+        "ref": {
+          "type": "string",
+          "description": "The lease ref: refs/chant/lease/[_members/<member>/]work/<id>."
+        },
+        "ledger": {
+          "type": "object",
+          "required": [
+            "branch",
+            "path"
+          ],
+          "properties": {
+            "branch": {
+              "const": "chant/lifecycle"
+            },
+            "path": {
+              "type": "string",
+              "description": "The history file on the branch: [_members/<member>/]_leases/<id>.jsonl."
+            }
+          }
+        },
+        "lease": {
+          "description": "The lease ref's record now, live or expired, or null when there is none. Read from the local ref and the remote's as last fetched.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "holder",
+                "token",
+                "acquiredAt",
+                "expiresAt",
+                "state"
+              ],
+              "properties": {
+                "holder": {
+                  "type": "string"
+                },
+                "token": {
+                  "type": "string"
+                },
+                "acquiredAt": {
+                  "type": "string"
+                },
+                "expiresAt": {
+                  "type": "string"
+                },
+                "state": {
+                  "enum": [
+                    "active",
+                    "expired"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "claims": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/claim"
+          },
+          "description": "Each claim, oldest first."
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/event"
+          },
+          "description": "Every line of the history, oldest first."
+        },
+        "malformed": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Lines that are not lease events, left out."
+        },
+        "summary": {
+          "type": "object",
+          "required": [
+            "claims",
+            "released",
+            "held",
+            "expired",
+            "lost",
+            "outcomes"
+          ],
+          "properties": {
+            "claims": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "released": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "held": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "expired": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "lost": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "outcomes": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "description": "How many released claims gave each outcome."
+            }
+          }
+        }
+      }
+    },
+    "failure": {
+      "type": "object",
+      "description": "The history could not be read. Exit code 1.",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "error"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/work-history/v1/work-history.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "enum": [
+                "kind-unreadable",
+                "work-kind-missing",
+                "work-kind-ambiguous",
+                "work-item-unknown",
+                "not-a-git-repository"
+              ]
+            },
+            "message": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,7 @@
+# From github.com/prometheus/prometheus v3.15.0, docs/configuration/recording_rules.md,
+# "A simple example rules file" (https://github.com/prometheus/prometheus/blob/v3.15.0/docs/configuration/recording_rules.md). Apache-2.0.
+groups:
+  - name: example
+    rules:
+    - record: code:prometheus_http_requests_total:sum
+      expr: sum by (code) (prometheus_http_requests_total)

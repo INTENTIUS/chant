@@ -1,0 +1,210 @@
+# One datasource of each plugin chant types jsonData for (#2951), with the
+# settings a production setup commonly carries. Written for chant; see README.md.
+apiVersion: 1
+
+datasources:
+  - name: Mimir
+    type: prometheus
+    uid: mimir
+    url: http://mimir-query-frontend:8080/prometheus
+    basicAuth: true
+    basicAuthUser: $__env{MIMIR_USER}
+    isDefault: true
+    jsonData:
+      httpMethod: POST
+      prometheusType: Mimir
+      prometheusVersion: 2.9.1
+      timeInterval: 30s
+      queryTimeout: 2m
+      cacheLevel: Medium
+      incrementalQuerying: true
+      incrementalQueryOverlapWindow: 10m
+      manageAlerts: true
+      alertmanagerUid: alertmanager
+      httpHeaderName1: X-Scope-OrgID
+      exemplarTraceIdDestinations:
+        - name: trace_id
+          datasourceUid: tempo
+          urlDisplayLabel: View trace
+    secureJsonData:
+      basicAuthPassword: $__env{MIMIR_PASSWORD}
+      httpHeaderValue1: $__env{TENANT}
+
+  - name: Alertmanager
+    type: alertmanager
+    uid: alertmanager
+    url: http://alertmanager:9093
+    jsonData:
+      implementation: prometheus
+
+  - name: Loki
+    type: loki
+    uid: loki
+    url: http://loki-gateway
+    jsonData:
+      maxLines: "5000"
+      timeout: 120
+      derivedFields:
+        - name: TraceID
+          matcherType: label
+          matcherRegex: trace_id
+          datasourceUid: tempo
+          url: $${__value.raw}
+          urlDisplayLabel: View trace
+        - name: Ticket
+          matcherRegex: "ticket=(\\w+)"
+          url: https://tickets.example.com/$${__value.raw}
+          targetBlank: true
+
+  - name: Tempo
+    type: tempo
+    uid: tempo
+    url: http://tempo-query-frontend:3200
+    jsonData:
+      tracesToLogsV2:
+        datasourceUid: loki
+        spanStartTimeShift: -5m
+        spanEndTimeShift: 5m
+        filterByTraceID: true
+        filterBySpanID: false
+        customQuery: false
+        tags:
+          - key: service.name
+            value: service_name
+      tracesToMetrics:
+        datasourceUid: mimir
+        tags:
+          - key: service.name
+            value: service
+        queries:
+          - name: Request rate
+            query: sum(rate(traces_spanmetrics_calls_total{$$__tags}[5m]))
+      tracesToProfiles:
+        datasourceUid: pyroscope
+        profileTypeId: process_cpu:cpu:nanoseconds:cpu:nanoseconds
+        customQuery: false
+      serviceMap:
+        datasourceUid: mimir
+      nodeGraph:
+        enabled: true
+      search:
+        hide: false
+      traceQuery:
+        timeShiftEnabled: true
+        spanStartTimeShift: 1h
+        spanEndTimeShift: -1h
+      streamingEnabled:
+        search: true
+        metrics: true
+
+  - name: Pyroscope
+    type: grafana-pyroscope-datasource
+    uid: pyroscope
+    url: http://pyroscope:4040
+    jsonData:
+      minStep: 15s
+
+  - name: Elasticsearch
+    type: elasticsearch
+    uid: elasticsearch
+    url: https://elasticsearch:9200
+    jsonData:
+      index: logs-*
+      timeField: "@timestamp"
+      maxConcurrentShardRequests: 5
+      logMessageField: message
+      logLevelField: log.level
+      tlsAuthWithCACert: true
+      dataLinks:
+        - field: trace.id
+          datasourceUid: tempo
+          url: $${__value.raw}
+    secureJsonData:
+      tlsCACert: $__env{ES_CA_CERT}
+
+  - name: CloudWatch
+    type: cloudwatch
+    uid: cloudwatch
+    jsonData:
+      authType: default
+      defaultRegion: eu-west-1
+      assumeRoleArn: arn:aws:iam::123456789012:role/grafana-cloudwatch
+      customMetricsNamespaces: CWAgent,ECS/ContainerInsights
+      logsTimeout: 30m
+
+  - name: Azure Monitor
+    type: grafana-azure-monitor-datasource
+    uid: azure-monitor
+    jsonData:
+      azureCredentials:
+        authType: clientsecret
+        azureCloud: AzureCloud
+        tenantId: 00000000-0000-0000-0000-000000000001
+        clientId: 00000000-0000-0000-0000-000000000002
+      subscriptionId: 00000000-0000-0000-0000-000000000003
+    secureJsonData:
+      azureClientSecret: $__env{AZURE_CLIENT_SECRET}
+
+  - name: Cloud Monitoring
+    type: stackdriver
+    uid: cloud-monitoring
+    jsonData:
+      authenticationType: jwt
+      defaultProject: my-project
+      clientEmail: grafana@my-project.iam.gserviceaccount.com
+      tokenUri: https://oauth2.googleapis.com/token
+    secureJsonData:
+      privateKey: $__env{GCP_PRIVATE_KEY}
+
+  - name: BigQuery
+    type: grafana-bigquery-datasource
+    uid: bigquery
+    jsonData:
+      authenticationType: gce
+      defaultProject: my-project
+      processingLocation: EU
+
+  - name: PostgreSQL
+    type: grafana-postgresql-datasource
+    uid: postgres
+    url: postgres:5432
+    user: grafana
+    jsonData:
+      database: shop
+      sslmode: verify-full
+      tlsConfigurationMethod: file-path
+      sslRootCertFile: /etc/grafana/pg-ca.pem
+      postgresVersion: 1500
+      timescaledb: false
+      maxOpenConns: 10
+      maxIdleConns: 10
+      maxIdleConnsAuto: true
+      connMaxLifetime: 14400
+    secureJsonData:
+      password: $__env{PG_PASSWORD}
+
+  - name: MySQL
+    type: mysql
+    uid: mysql
+    url: mysql:3306
+    user: grafana
+    jsonData:
+      database: shop
+      timezone: UTC
+      tlsAuthWithCACert: true
+    secureJsonData:
+      password: $__env{MYSQL_PASSWORD}
+      tlsCACert: $__env{MYSQL_CA_CERT}
+
+  - name: SQL Server
+    type: mssql
+    uid: sqlserver
+    url: sqlserver:1433
+    user: grafana
+    jsonData:
+      database: shop
+      encrypt: "true"
+      serverName: sqlserver.internal
+      connectionTimeout: 30
+    secureJsonData:
+      password: $__env{MSSQL_PASSWORD}

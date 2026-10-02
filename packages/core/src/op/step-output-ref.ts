@@ -87,6 +87,7 @@
 
 import { z } from "zod";
 import type { ActivityStep, OpConfig, PhaseDefinition } from "./types";
+import { WORK_LEASE_STEP_ID } from "./types";
 import { pathExistsInSchema, schemaAtPath, primitiveKindOf, type ActivityContract, type ActivityContractIssue } from "./activity-contract";
 
 const STEP_OUTPUT_REF_BRAND = Symbol.for("chant.op.stepOutputRef");
@@ -308,7 +309,7 @@ function indexById(locations: StepLocation[]): { byId: Map<string, StepLocation>
  *    the same parallel phase).
  */
 export function validateStepOutputRefScope(
-  config: Pick<OpConfig, "name" | "phases" | "onFailure">,
+  config: Pick<OpConfig, "name" | "phases" | "onFailure"> & Partial<Pick<OpConfig, "workLease">>,
 ): ActivityContractIssue[] {
   const issues: ActivityContractIssue[] = [];
 
@@ -339,6 +340,9 @@ export function validateStepOutputRefScope(
   for (const consumer of locations) {
     const refs = collectStepOutputRefs(consumer.step.args);
     for (const ref of refs) {
+      // The run's work lease (#2748) is published under a reserved id once it
+      // is claimed; an Op that declares one may reference it from any step.
+      if (config.workLease && ref.step === WORK_LEASE_STEP_ID) continue;
       if (duplicateIds.has(ref.step)) {
         issues.push({
           opName: config.name,
@@ -395,7 +399,7 @@ export function validateStepOutputRefScope(
  *    schema (an empty `path` — the whole return value — is always valid).
  */
 export function validateStepOutputRefs(
-  config: Pick<OpConfig, "name" | "phases" | "onFailure">,
+  config: Pick<OpConfig, "name" | "phases" | "onFailure"> & Partial<Pick<OpConfig, "workLease">>,
   contracts: ReadonlyMap<string, ActivityContract>,
 ): ActivityContractIssue[] {
   const issues = validateStepOutputRefScope(config);

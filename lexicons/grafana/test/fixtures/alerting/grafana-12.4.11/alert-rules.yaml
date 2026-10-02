@@ -1,0 +1,245 @@
+apiVersion: 1
+groups:
+    - orgId: 1
+      name: checkout
+      folder: Checkout alerts
+      interval: 1m
+      rules:
+        - uid: chant-fx-checkout-errors
+          title: Checkout error ratio
+          condition: C
+          data:
+            - refId: A
+              relativeTimeRange:
+                from: 600
+                to: 0
+              datasourceUid: prom
+              model:
+                datasource:
+                    type: prometheus
+                    uid: prom
+                editorMode: code
+                expr: sum(rate(http_requests_total{job="checkout",code=~"5.."}[5m])) / sum(rate(http_requests_total{job="checkout"}[5m]))
+                instant: true
+                intervalMs: 1000
+                legendFormat: __auto
+                maxDataPoints: 43200
+                range: false
+                refId: A
+            - refId: B
+              datasourceUid: __expr__
+              model:
+                conditions:
+                    - evaluator:
+                        params: []
+                        type: gt
+                      operator:
+                        type: and
+                      query:
+                        params:
+                            - B
+                      reducer:
+                        params: []
+                        type: last
+                      type: query
+                datasource:
+                    type: __expr__
+                    uid: __expr__
+                expression: A
+                intervalMs: 1000
+                maxDataPoints: 43200
+                reducer: last
+                refId: B
+                settings:
+                    mode: dropNN
+                type: reduce
+            - refId: C
+              datasourceUid: __expr__
+              model:
+                conditions:
+                    - evaluator:
+                        params:
+                            - 0.05
+                        type: gt
+                      operator:
+                        type: and
+                      query:
+                        params:
+                            - C
+                      reducer:
+                        params: []
+                        type: last
+                      type: query
+                      unloadEvaluator:
+                        params:
+                            - 0.03
+                        type: lt
+                datasource:
+                    type: __expr__
+                    uid: __expr__
+                expression: B
+                intervalMs: 1000
+                maxDataPoints: 43200
+                refId: C
+                type: threshold
+          noDataState: NoData
+          execErrState: Error
+          for: 5m
+          keepFiringFor: 2m
+          annotations:
+            runbook_url: https://runbooks.example.com/checkout
+            summary: Checkout 5xx ratio is {{ humanizePercentage $values.B.Value }}
+          labels:
+            severity: page
+            team: checkout
+          isPaused: false
+        - uid: chant-fx-checkout-latency
+          title: Checkout p99 latency
+          condition: D
+          data:
+            - refId: A
+              relativeTimeRange:
+                from: 1800
+                to: 0
+              datasourceUid: prom
+              model:
+                datasource:
+                    type: prometheus
+                    uid: prom
+                expr: histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{job="checkout"}[5m])))
+                instant: false
+                intervalMs: 1000
+                maxDataPoints: 43200
+                range: true
+                refId: A
+            - refId: B
+              datasourceUid: __expr__
+              model:
+                datasource:
+                    type: __expr__
+                    uid: __expr__
+                downsampler: mean
+                expression: A
+                intervalMs: 1000
+                maxDataPoints: 43200
+                refId: B
+                type: resample
+                upsampler: fillna
+                window: 1m
+            - refId: C
+              datasourceUid: __expr__
+              model:
+                datasource:
+                    type: __expr__
+                    uid: __expr__
+                expression: B
+                intervalMs: 1000
+                maxDataPoints: 43200
+                reducer: max
+                refId: C
+                settings:
+                    mode: replaceNN
+                    replaceWithValue: 0
+                type: reduce
+            - refId: D
+              datasourceUid: __expr__
+              model:
+                datasource:
+                    type: __expr__
+                    uid: __expr__
+                expression: $C > 0.5 && $C < 100
+                intervalMs: 1000
+                maxDataPoints: 43200
+                refId: D
+                type: math
+          noDataState: OK
+          execErrState: KeepLast
+          for: 10m
+          annotations:
+            summary: p99 above 500ms
+          labels:
+            severity: ticket
+          isPaused: true
+          notification_settings:
+            receiver: tickets
+            group_by:
+                - alertname
+                - grafana_folder
+            group_wait: 1m
+            repeat_interval: 12h
+            mute_time_intervals:
+                - weekends
+        - uid: chant-fx-checkout-logs
+          title: Checkout panics
+          condition: B
+          data:
+            - refId: A
+              queryType: range
+              relativeTimeRange:
+                from: 300
+                to: 0
+              datasourceUid: loki
+              model:
+                datasource:
+                    type: loki
+                    uid: loki
+                editorMode: code
+                expr: sum(count_over_time({app="checkout"} |= "panic" [5m]))
+                intervalMs: 1000
+                maxDataPoints: 43200
+                queryType: range
+                refId: A
+            - refId: B
+              datasourceUid: __expr__
+              model:
+                conditions:
+                    - evaluator:
+                        params:
+                            - 0
+                        type: gt
+                      operator:
+                        type: and
+                      query:
+                        params:
+                            - A
+                      reducer:
+                        params: []
+                        type: sum
+                      type: query
+                datasource:
+                    type: __expr__
+                    uid: __expr__
+                intervalMs: 1000
+                maxDataPoints: 43200
+                refId: B
+                type: classic_conditions
+          noDataState: OK
+          execErrState: Error
+          annotations:
+            description: A panic was logged
+          labels:
+            severity: page
+          isPaused: false
+        - uid: chant-fx-checkout-rps
+          title: checkout rps
+          data:
+            - refId: A
+              relativeTimeRange:
+                from: 600
+                to: 0
+              datasourceUid: prom
+              model:
+                datasource:
+                    type: prometheus
+                    uid: prom
+                expr: sum(rate(http_requests_total{job="checkout"}[5m]))
+                instant: true
+                intervalMs: 1000
+                maxDataPoints: 43200
+                refId: A
+          labels:
+            team: checkout
+          isPaused: false
+          record:
+            metric: checkout:requests:rate5m
+            from: A

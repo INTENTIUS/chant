@@ -1,0 +1,591 @@
+/**
+ * Round trips through `chant import`.
+ *
+ * Dashboard JSON -> TypeScript -> `chant build` -> dashboard JSON must give
+ * back the same dashboard for every fixture: Grafana 12.4.11 and 13.2.2 UI
+ * exports (plain and "for sharing externally"), community dashboards from
+ * grafana.com, kube-prometheus's 33 dashboards, and what this lexicon's
+ * examples build. A v2 dashboard
+ * (#2947) round-trips through its classic form (./v2.ts). "The same" means
+ * equal after `normalizeDashboard` (Grafana's defaults and derived keys)
+ * once the importer's edits are applied to the source: every key it could
+ * not carry, and every value it wrote in another form. An edit that changes
+ * what Grafana does comes with an import warning, so the comparison is also
+ * the check that nothing was dropped silently.
+ *
+ * The generated source must lint clean (COR001, COR004 and COR009 among
+ * the rules), and the rebuilt dashboards must pass GRAF101-GRAF110 without
+ * errors. generated-types.e2e.test.ts type-checks the generated source.
+ */
+
+import { describe, expect, test } from "vitest";
+import { existsSync, readFileSync } from "fs";
+import { join } from "path";
+import { load } from "js-yaml";
+import { build } from "@intentius/chant/build";
+import type { SerializerResult } from "@intentius/chant/serializer";
+import type { Declarable } from "@intentius/chant/declarable";
+import { lintCommand } from "@intentius/chant/cli/commands/lint";
+import { importCommand, importFromContent } from "@intentius/chant/cli/commands/import";
+import { grafanaSerializer } from "../serializer";
+import { validateGrafanaOutput, type GrafanaIssue } from "../validate-output";
+import { buildGrafana, DATASOURCES_FILE, DASHBOARD_PROVIDERS_FILE } from "../build";
+import { GrafanaParser, type DashboardResourceMetadata } from "./parser";
+import { GrafanaGenerator } from "./generator";
+import { applyEdits } from "./edits";
+import { normalizeDashboard } from "./normalize";
+import {
+  COMMUNITY,
+  KUBE_PROMETHEUS,
+  LOSSY_V1_EXPORT,
+  PROVISIONING,
+  UI_EXPORTS,
+  V2_EXPORTS,
+  exampleOutputs,
+  projectDir,
+  read,
+  removeDir,
+  writeFiles,
+} from "./testdata/fixtures";
+
+type Json = Record<string, unknown>;
+
+interface Imported {
+  /** Every generated file, concatenated with its path, for `toContain`. */
+  source: string;
+  paths: string[];
+  warnings: string[];
+  /** The source dashboard with the importer's edits applied. */
+  expected?: Json;
+  /** The rebuilt dashboard JSON text. */
+  text?: string;
+  rebuilt?: Json;
+  files: Record<string, string>;
+  buildErrors: unknown[];
+  issues: GrafanaIssue[];
+  lint: { errorCount: number; warningCount: number; output: string };
+}
+
+/** GRAF101-GRAF110 over a build's grafana entities, as the post-synth checks run them: declared and external datasources included. */
+function checks(entities: Map<string, Declarable>): GrafanaIssue[] {
+  const built = buildGrafana(new Map([...entities].filter(([, e]) => e.lexicon === "grafana")));
+  return validateGrafanaOutput({
+    dashboards: built.dashboards.map((d) => ({ source: d.file, json: d.json as unknown as Json })),
+    datasources: built.datasources,
+    externalDatasources: built.externalDatasources,
+  });
+}
+
+/** Dashboard JSON (or a provisioning file) -> IR -> TypeScript -> `chant build`, and `chant lint` over the source. */
+async function importAndBuild(content: string): Promise<Imported> {
+  const ir = new GrafanaParser().parse(content);
+  const generated = new GrafanaGenerator().generate(ir);
+  const dir = projectDir();
+  try {
+    const srcDir = join(dir, "src");
+    writeFiles(srcDir, generated);
+    const result = await build(srcDir, [grafanaSerializer]);
+    const lint = await lintCommand({ path: srcDir, format: "stylish" });
+    const files = (result.outputs.get("grafana") as SerializerResult | undefined)?.files ?? {};
+    const dashboards = Object.entries(files).filter(([f]) => f.startsWith("dashboards/"));
+    const text = dashboards[0]?.[1];
+    const meta = ir.resources[0]?.metadata as unknown as DashboardResourceMetadata | undefined;
+    return {
+      source: generated.map((f) => `// ${f.path}\n${f.content}`).join("\n"),
+      paths: generated.map((f) => f.path),
+      warnings: ir.warnings ?? [],
+      expected: meta ? applyEdits(meta.source, meta.edits) : undefined,
+      text,
+      rebuilt: text === undefined ? undefined : (JSON.parse(text) as Json),
+      files,
+      buildErrors: result.errors,
+      issues: checks(result.entities),
+      lint: { errorCount: lint.errorCount, warningCount: lint.warningCount, output: lint.output },
+    };
+  } finally {
+    removeDir(dir);
+  }
+}
+
+/** A check error as `<code> <message>`, with the dashboard's name left out. */
+const errorText = (i: GrafanaIssue): string => `${i.code} ${i.message.replace(/^Dashboard "[^"]*" /, "")}`;
+
+/**
+ * Import, build, and expect the same dashboard back, lint-clean source and
+ * no check errors but `errors`: what a source dashboard has that the
+ * checks reject, carried as it is.
+ */
+async function expectRoundTrip(content: string, errors: readonly string[] = []): Promise<Imported> {
+  const out = await importAndBuild(content);
+  expect(out.buildErrors).toEqual([]);
+  expect(out.rebuilt).toBeDefined();
+  expect(normalizeDashboard(out.rebuilt!)).toEqual(normalizeDashboard(out.expected!));
+  expect(out.lint.errorCount + out.lint.warningCount, out.lint.output).toBe(0);
+  expect(out.issues.filter((i) => i.severity === "error").map(errorText)).toEqual(errors);
+  return out;
+}
+
+const NO_THRESHOLDS_MODE = (panel: number) => `GRAF107 /panels/${panel}/fieldConfig/defaults/thresholds: must have required property 'mode' (Grafana schema).`;
+const NODES_ERRORS = [NO_THRESHOLDS_MODE(5), "GRAF107 /panels/8/transformations/1: must have required property 'options' (Grafana schema).", NO_THRESHOLDS_MODE(8)];
+
+/**
+ * What kube-prometheus's dashboards have that Grafana's CUE schema rejects
+ * (GRAF107), by fixture. The round trip carries each value as it is, so the
+ * rebuilt dashboard has the same errors as the source.
+ */
+/**
+ * The import warnings for kube-prometheus's dashboards, by fixture; the rest
+ * import with none. The node dashboards' sortBy transformation has a
+ * `fields: {}` Grafana's sortBy transformer does not take (it reads only
+ * `sort`), so it is carried as it is through customTransformation().
+ */
+const SORT_BY_FIELDS = 'panel "Disk Space Usage" (id 9): transformation 6 is written with customTransformation(), untyped: the sortBy transformer takes no option "fields".';
+const KUBE_PROMETHEUS_WARNINGS: Readonly<Record<string, readonly string[]>> = {
+  "kube-prometheus/nodes.json": [SORT_BY_FIELDS],
+  "kube-prometheus/nodes-aix.json": [SORT_BY_FIELDS],
+  "kube-prometheus/nodes-darwin.json": [SORT_BY_FIELDS],
+};
+
+const KUBE_PROMETHEUS_ERRORS: Readonly<Record<string, readonly string[]>> = {
+  "kube-prometheus/grafana-overview.json": ["GRAF107 /panels/2/options/footer/fields: must be array (Grafana schema)."],
+  "kube-prometheus/k8s-resources-pod.json": [
+    'GRAF107 /panels/1/fieldConfig/defaults/custom/axisColorMode: must be equal to one of the allowed values: "text", "series" (Grafana schema).',
+  ],
+  "kube-prometheus/namespace-by-pod.json": [NO_THRESHOLDS_MODE(0), NO_THRESHOLDS_MODE(1)],
+  "kube-prometheus/pod-total.json": [NO_THRESHOLDS_MODE(0), NO_THRESHOLDS_MODE(1)],
+  "kube-prometheus/nodes.json": NODES_ERRORS,
+  "kube-prometheus/nodes-aix.json": NODES_ERRORS,
+  "kube-prometheus/nodes-darwin.json": NODES_ERRORS,
+};
+
+describe("dashboard JSON -> TypeScript -> dashboard JSON", () => {
+  test("a custom variable in Grafana's `text : value` syntax, with an escaped comma and no current (#2944)", async () => {
+    const dashboard = {
+      uid: "kv",
+      title: "KV",
+      schemaVersion: 42,
+      panels: [],
+      templating: { list: [{ type: "custom", name: "env", query: "Production : prod,Staging : stg,a\\,b" }] },
+    };
+    const out = await expectRoundTrip(JSON.stringify(dashboard));
+    const env = (out.rebuilt!.templating as { list: Json[] }).list[0];
+    expect(env.query).toBe("Production : prod,Staging : stg,a\\,b");
+    expect(env.current).toEqual({ text: "Production", value: "prod" });
+    expect(env.options).toEqual([
+      { selected: true, text: "Production", value: "prod" },
+      { selected: false, text: "Staging", value: "stg" },
+      { selected: false, text: "a,b", value: "a,b" },
+    ]);
+  });
+
+  for (const file of UI_EXPORTS) {
+    test(`Grafana UI export ${file}`, async () => {
+      const out = await expectRoundTrip(read(file));
+      // What Grafana exported passes every check once rebuilt, schema included. The one finding left is
+      // GRAF101 saying it cannot check a dashboard that names its datasources only through variables.
+      expect(out.issues.filter((i) => !(i.code === "GRAF101" && i.severity === "warning" && i.message.includes("cannot check")))).toEqual([]);
+      expect(out.paths.every((p) => p.startsWith("chant-fx-"))).toBe(true);
+      // The ad hoc filter and the deploy annotation are carried (#2952, #2953).
+      // One module, its panels, queries and variables inline (#2988). The queries dashboard names eleven datasources by uid:
+      // with the dashboard, more declarables than COR009 allows in a file, so its ExternalDatasources get files of their own.
+      const modules = out.paths.map((p) => p.replace(/^[^/]+\//, ""));
+      expect(modules).toEqual(/\/queries\.json$/.test(file) ? ["datasources-1.ts", "datasources-2.ts", "dashboard.ts"] : ["dashboard.ts"]);
+      if (file.includes("checkout")) {
+        expect(out.source).toContain("    new AdhocVariable({");
+        expect(out.warnings.join("\n")).not.toContain("Deploys");
+        expect(out.source).toContain('name: "Deploys"');
+        expect((out.rebuilt!.annotations as { list: Json[] }).list.map((a) => a.name)).toEqual(["Deploys"]);
+        expect(out.source).toContain("repeat: env,");
+        expect(out.source).toContain("collapsed: true,");
+      } else if (file.includes("queries")) {
+        // Every datasource with a query class is imported through it, typed; none needs a defineQuery.
+        for (const cls of [
+          "ElasticsearchQuery",
+          "CloudWatchQuery",
+          "AzureMonitorQuery",
+          "CloudMonitoringQuery",
+          "BigQueryQuery",
+          "PyroscopeQuery",
+          "PostgresQuery",
+          "MySQLQuery",
+          "MSSQLQuery",
+          "PromQuery",
+          "LokiQuery",
+        ]) {
+          expect(out.source).toContain(`new ${cls}(`);
+        }
+        expect(out.source).not.toContain("defineQuery");
+      } else if (file.includes("opensearch")) {
+        // Both the Lucene and the PPL queries are imported through OpenSearchQuery (#3017).
+        expect(out.source).toContain("new OpenSearchQuery(");
+        expect(out.source).not.toContain("defineQuery");
+        expect(out.source).toContain("queryType: \"PPL\"");
+      }
+      // Library panels (#3010): one an external export carries in __elements becomes a LibraryPanel, and the reference
+      // a LibraryPanelRef to it, with no warning; the rebuilt dashboard carries it in __elements again. A plain
+      // export's reference names the library panel by { uid, name }, with a warning that it must exist in Grafana.
+      const source = JSON.parse(read(file)) as Json;
+      const references = (source.panels as Json[]).filter((p) => p.libraryPanel !== undefined);
+      const elements = Object.keys((source.__elements as Json | undefined) ?? {});
+      const external = out.warnings.filter((w) => w.includes("which the dashboard does not carry"));
+      if (elements.length > 0) {
+        expect(out.source).toMatch(/= new LibraryPanel\(\{\n {2}name: "(Burn rate|Service owners)",\n {2}uid: "chant-fx-(burn|owners)",\n {2}panel: new \w+Panel\(\{/);
+        expect(out.source).toMatch(/new LibraryPanelRef\(\{\s*libraryPanel: (burnRate|serviceOwners),\s*id: \d,\s*gridPos: /);
+        expect(Object.keys(out.rebuilt!.__elements as Json)).toEqual(elements);
+        expect(external).toEqual([]);
+      } else {
+        expect(external.length).toBe(references.length);
+        if (references.length > 0) expect(out.source).toMatch(/libraryPanel: \{ uid: "chant-fx-(burn|owners)", name: "(Burn rate|Service owners)" \}/);
+      }
+      if (file.includes(".external.")) {
+        // The OpenSearch dashboard asks for its one datasource only.
+        const [input, name] = file.includes("opensearch") ? ["DS_OPENSEARCH \\(grafana-opensearch-datasource\\)", "dsOpensearch"] : ["DS_PROMETHEUS \\(prometheus\\)", "dsPrometheus"];
+        expect(out.warnings).toContainEqual(expect.stringMatching(new RegExp(`^__inputs: (.*, )?${input}`)));
+        expect(out.source).toContain(`const ${name} = new DatasourceVariable({`);
+      }
+    });
+  }
+
+  for (const file of V2_EXPORTS) {
+    test(`v2 dashboard ${file}, through its classic form`, async () => {
+      const out = await expectRoundTrip(read(file));
+      expect(out.paths.every((p) => /^chant-fx-(checkout|tabs)\//.test(p))).toBe(true);
+      expect(out.warnings[0]).toMatch(/^This is a v2 dashboard \(dashboard\.grafana\.app\/v2\)\./);
+      if (file.includes("tabs")) {
+        // Tabs become rows, and the auto grid's panels keep the positions Grafana gives them.
+        expect(out.warnings).toContainEqual(expect.stringMatching(/tabs "Overview" and "Details" become expanded rows/));
+        expect((out.rebuilt!.panels as Json[]).filter((p) => p.type === "row").map((p) => p.title)).toEqual(["Overview", "Details", "Latency ($env)", "Logs"]);
+        // Its switch and group by variables come through the classic variable mappings.
+        expect(out.source).toContain('    new SwitchVariable({ name: "detailed", label: "Detailed" }),');
+        expect(out.source).toContain("    new GroupByVariable({");
+        expect(out.warnings.filter((w) => /^variable "(detailed|groupBy)"/.test(w))).toEqual([]);
+      }
+    });
+  }
+
+  test("datasources the dashboard names by uid become ExternalDatasources, and every check passes", async () => {
+    for (const file of ["exports/grafana-12.4.11/checkout.json", "exports/grafana-12.4.11/slo.json", "exports/grafana-13.2.2/slo.json"]) {
+      const out = await expectRoundTrip(read(file));
+      expect(out.issues, file).toEqual([]);
+      expect(out.source).toContain('const prom = new ExternalDatasource({ type: "prometheus", uid: "prom" });');
+    }
+    // The 12.4.11 export's datasource variable has prom selected: that is where the Prometheus uid comes from.
+    expect((await importAndBuild(read("exports/grafana-12.4.11/checkout.json"))).source).toContain('const loki = new ExternalDatasource({ type: "loki", uid: "loki" });');
+  });
+
+  test("when a datasource variable's type is named by no uid, the uids stay plain refs and the warning says why", async () => {
+    const out = await expectRoundTrip(read("exports/grafana-13.2.2/checkout.json"));
+    expect(out.source).toContain('const loki: DatasourceRef<"loki"> = { type: "loki", uid: "loki" };');
+    expect(out.warnings).toContainEqual(expect.stringMatching(/^datasources: the dashboard names "loki" \(loki\) by uid, but no prometheus datasource, which \$datasource \(prometheus\) chooses among/));
+  });
+
+  test("an __inputs constant is filled in, and __inputs datasources become variables", async () => {
+    const out = await expectRoundTrip(read("exports/grafana-12.4.11/checkout.external.json"));
+    expect(out.warnings).toContain(
+      '__inputs: the constant VAR_SERVICE is written as its value "checkout", the value Grafana\'s import dialog fills in',
+    );
+    expect(out.source).toContain('    new ConstantVariable({ name: "service", skipUrlSync: true, value: "checkout" }),');
+    // Every ${DS_LOKI} still resolves: the rebuilt dashboard declares it.
+    const list = (out.rebuilt!.templating as { list: Json[] }).list;
+    expect(list.slice(0, 2).map((v) => [v.name, v.type, v.query])).toEqual([
+      ["DS_PROMETHEUS", "datasource", "prometheus"],
+      ["DS_LOKI", "datasource", "loki"],
+    ]);
+    expect(out.text).toContain('"uid": "${DS_LOKI}"');
+    expect(out.text).not.toContain("__inputs");
+  });
+
+  test("ad hoc, group by and switch variables, and object-form queries, import with no warnings", async () => {
+    const out = await expectRoundTrip(read("exports/grafana-13.2.2/drilldown.json"));
+    expect(out.warnings).toEqual([]);
+    for (const cls of ["AdhocVariable", "GroupByVariable", "SwitchVariable"]) expect(out.source).toContain(`new ${cls}({`);
+    expect(out.source).toContain("qryType: 4,");
+    expect(out.source).toContain('enabledValue: "0.99",');
+    // The rebuilt JSON keeps the object query, so Grafana's variable editor opens it in the form it was written in.
+    const namespace = (out.rebuilt!.templating as { list: Json[] }).list.find((v) => v.name === "namespace")!;
+    expect(namespace.query).toEqual({ qryType: 1, query: "label_values(kube_namespace_created, namespace)", refId: "PrometheusVariableQueryEditor-VariableQuery" });
+    // Repeated over a multi-value variable: no GRAF110.
+    expect(out.issues.filter((i) => i.code === "GRAF110")).toEqual([]);
+    for (const file of ["exports/grafana-12.4.11/drilldown.json", "exports/grafana-12.4.11/drilldown.external.json", "exports/grafana-13.2.2/drilldown.external.json"]) {
+      const warnings = (await expectRoundTrip(read(file))).warnings;
+      expect(warnings.filter((w) => !w.startsWith("__inputs:") && !w.startsWith("dashboard: __requires")), file).toEqual([]);
+    }
+  });
+
+  for (const file of COMMUNITY) {
+    test(`grafana.com dashboard ${file}`, async () => {
+      const out = await expectRoundTrip(read(file));
+      // Every datasource reference resolved to a variable or a ref.
+      expect(out.warnings.join("\n")).not.toMatch(/: datasource is not carried/);
+    });
+  }
+
+  for (const file of KUBE_PROMETHEUS) {
+    test(`kube-prometheus dashboard ${file}`, async () => {
+      const out = await expectRoundTrip(read(file), KUBE_PROMETHEUS_ERRORS[file]);
+      expect(out.warnings).toEqual(KUBE_PROMETHEUS_WARNINGS[file] ?? []);
+    });
+  }
+
+  test("kube-prometheus: a row keeps its line over an empty band, and over panels it overlaps (#2992)", async () => {
+    // Node Exporter / Nodes leaves lines 16 and 17 empty above its Disk row; Grafana closes the band when it draws the dashboard.
+    const nodes = await expectRoundTrip(read("kube-prometheus/nodes.json"), NODES_ERRORS);
+    expect(nodes.source).toContain('    new Row({\n      title: "Disk",\n      id: 7,\n      gridPos: { y: 18 },');
+    // Prometheus / Remote-Write puts its Shards row on the line of the panel after it: the build keeps the overlap, and Grafana resolves it.
+    const remoteWrite = await expectRoundTrip(read("kube-prometheus/prometheus-remote-write.json"));
+    const shards = (remoteWrite.rebuilt!.panels as Json[]).filter((p) => p.title === "Shards" || p.title === "Current Shards");
+    expect(shards.map((p) => (p.gridPos as Json).y)).toEqual([16, 16]);
+  });
+
+  test("kube-prometheus: a gridPos without x is written with x 0, and a text panel keeps its Mixed datasource (#2992)", async () => {
+    const pv = await expectRoundTrip(read("kube-prometheus/persistentvolumesusage.json"));
+    expect((pv.rebuilt!.panels as Json[]).map((p) => (p.gridPos as Json).x)).toEqual([0, 18, 0, 18]);
+    const apiserver = await expectRoundTrip(read("kube-prometheus/apiserver.json"));
+    expect((apiserver.rebuilt!.panels as Json[])[0].datasource).toEqual({ type: "datasource", uid: "-- Mixed --" });
+  });
+
+  test("Node Exporter Full keeps its 30-odd rows and every panel id", async () => {
+    const out = await expectRoundTrip(read("community/node-exporter-full.json"));
+    const source = JSON.parse(read("community/node-exporter-full.json")) as { panels: Json[] };
+    const ids = (panels: Json[]): unknown[] => panels.flatMap((p) => [p.id, ...ids((p.panels as Json[] | undefined) ?? [])]);
+    expect(ids(out.rebuilt!.panels as Json[])).toEqual(ids(source.panels));
+    // Too long for one module: each of its 16 rows is a module of its own, and the dashboard imports them (#2988).
+    expect(out.paths.filter((p) => p.includes("/row-")).length).toBe(source.panels.filter((p) => p.type === "row").length);
+    expect(out.source).toMatch(/import \{ cpuMemoryNetDiskRow \} from "\.\/row-cpu-memory-net-disk";/);
+  });
+
+  test("a panel type chant ships a class for is declared with it", async () => {
+    const out = await expectRoundTrip(read("community/traefik.json"));
+    expect(out.source).toMatch(/new PieChartPanel\(\{/);
+    expect(out.source).not.toContain("definePanel");
+  });
+
+  test("every built-in panel type in a UI export is declared with its class", async () => {
+    const out = await expectRoundTrip(read("exports/grafana-12.4.11/panels.json"));
+    for (const cls of ["BarChartPanel", "BarGaugePanel", "PieChartPanel", "StateTimelinePanel", "StatusHistoryPanel", "HistogramPanel", "NodeGraphPanel", "XYChartPanel", "TrendPanel", "CanvasPanel", "GeomapPanel", "FlameGraphPanel", "AlertListPanel", "TracesPanel"]) {
+      expect(out.source).toMatch(new RegExp(`new ${cls}\\(\\{`));
+    }
+    expect(out.source).not.toContain("definePanel");
+    expect(out.warnings).toEqual([]);
+  });
+
+  test("the candlestick, annotations list, dashboard list, news and data grid panels are declared with their classes (#2998)", async () => {
+    const classes = ["CandlestickPanel", "AnnotationsListPanel", "DashboardListPanel", "NewsPanel"];
+    const v12 = await expectRoundTrip(read("exports/grafana-12.4.11/lists.json"));
+    for (const cls of [...classes, "DataGridPanel"]) expect(v12.source).toMatch(new RegExp(`new ${cls}\\(\\{`));
+    expect(v12.source).not.toContain("definePanel");
+    expect(v12.warnings).toEqual([]);
+    // Grafana 13 removed the data grid panel, so its export has the other four.
+    const v13 = await expectRoundTrip(read("exports/grafana-13.2.2/lists.json"));
+    for (const cls of classes) expect(v13.source).toMatch(new RegExp(`new ${cls}\\(\\{`));
+    expect(v13.source).not.toContain("definePanel");
+    expect(v13.warnings).toEqual([]);
+  });
+
+  test("a panel type chant has no class for goes through definePanel", async () => {
+    // The Traefik dashboard with its pie chart swapped for a community plugin chant does not ship.
+    const out = await expectRoundTrip(read("community/traefik.json").split('"type": "piechart"').join('"type": "grafana-polystat-panel"'));
+    expect(out.source).toContain("const GrafanaPolystatPanelPanel = definePanel()({");
+    // Written beside the dashboard that uses it, ahead of the panel: a declarable COR001 does not exempt, so its nested values are lifted.
+    expect(out.paths.map((p) => p.replace(/^[^/]+\//, ""))).toEqual(["dashboard.ts"]);
+    expect(out.source).toMatch(/const \w+ = new GrafanaPolystatPanelPanel\(\{/);
+    expect(out.source).toMatch(/: PropsOf<typeof GrafanaPolystatPanelPanel>\["options"\] = /);
+  });
+
+  test("an AngularJS-era dashboard: schemaVersion carried, top-level panel settings named", async () => {
+    const out = await expectRoundTrip(read("community/prometheus-2-stats.json"));
+    expect(out.rebuilt!.schemaVersion).toBe(18);
+    expect(out.source).toContain("schemaVersion: 18,");
+    expect(out.warnings[1]).toMatch(/^13 panels are AngularJS panels \(graph, singlestat\) that keep their settings as top-level keys/);
+    expect(out.warnings).toContainEqual(expect.stringMatching(/^panel "WAL Corruptions" \(id 37\): colorBackground, .* are not carried \(no prop takes them\)$/));
+    // Its datasources are names ("${DS_PROMETHEUS}"), written as refs to the __inputs variable.
+    expect(out.text).toContain('"uid": "${DS_PROMETHEUS}"');
+  });
+
+  test("the same dashboard after Grafana 12.4.11 migrated it imports with no warnings", async () => {
+    const out = await expectRoundTrip(read("community/prometheus-2-stats.grafana-12.4.11.json"));
+    expect(out.warnings).toEqual([]);
+    expect(out.source).toContain('const prom = new ExternalDatasource({ type: "prometheus", uid: "prom" });');
+  });
+
+  test("what the examples build comes back as the same text", async () => {
+    const outputs = (await exampleOutputs()).filter(([f]) => /^[^/]+\/dashboards\/.*\.json$/.test(f));
+    expect(outputs.length).toBeGreaterThan(3);
+    for (const [name, text] of outputs) {
+      const out = await expectRoundTrip(text);
+      expect(out.warnings, name).toEqual([]);
+      expect(out.text, name).toBe(text);
+    }
+  }, 60_000);
+});
+
+describe("provisioning files", () => {
+  test("a datasource provisioning file becomes Datasources and builds back to the same file", async () => {
+    const [, yaml] = (await exampleOutputs()).find(([f]) => f === `getting-started/${DATASOURCES_FILE}`)!;
+    const out = await importAndBuild(yaml);
+    expect(out.warnings).toEqual([]);
+    expect(out.buildErrors).toEqual([]);
+    expect(out.source).toContain("const tempo = new Datasource({");
+    expect(load(out.files[DATASOURCES_FILE])).toEqual(load(yaml));
+    expect(out.lint.errorCount + out.lint.warningCount, out.lint.output).toBe(0);
+  });
+
+  for (const file of PROVISIONING) {
+    test(`${file}: typed Datasources, links as references, the same datasources back`, async () => {
+      const yaml = read(file);
+      const out = await importAndBuild(yaml);
+      expect(out.warnings).toEqual([]);
+      expect(out.buildErrors).toEqual([]);
+      // What the build adds: its defaults for access and editable, and a uid made from the name.
+      type Entry = Record<string, unknown> & { name: string };
+      const withDefaults = (d: Entry) => ({ access: "proxy", editable: false, ...d });
+      const sorted = (list: Entry[]) => [...list].sort((a, b) => a.name.localeCompare(b.name));
+      const source = sorted((load(yaml) as { datasources: Entry[] }).datasources.map(withDefaults));
+      expect(sorted((load(out.files[DATASOURCES_FILE]) as { datasources: Entry[] }).datasources)).toEqual(source);
+      // Settings consts are typed for their plugin, and a uid naming an earlier datasource of the file is a reference.
+      expect(out.source).toContain('PropsOf<typeof Datasource<"tempo">>["jsonData"]');
+      expect(out.source).toMatch(/serviceMap: \{ datasourceUid: (mimir|prometheus) \}/);
+      expect(out.lint.errorCount + out.lint.warningCount, out.lint.output).toBe(0);
+    });
+  }
+
+  test("a link that would close a cycle stays a uid, and one to a plugin type the field does not take is not linked", () => {
+    const ir = new GrafanaParser().parse(
+      [
+        "apiVersion: 1",
+        "datasources:",
+        "  - { name: Tempo, type: tempo, uid: tempo, jsonData: { tracesToLogsV2: { datasourceUid: loki }, serviceMap: { datasourceUid: splunk } } }",
+        "  - { name: Loki, type: loki, uid: loki, jsonData: { derivedFields: [{ name: t, matcherRegex: x, datasourceUid: tempo }] } }",
+        "  - { name: Splunk, type: grafana-splunk-datasource, uid: splunk }",
+      ].join("\n"),
+    );
+    const source = new GrafanaGenerator()
+      .generate(ir)
+      .map((f) => f.content)
+      .join("\n");
+    // Neither Tempo nor Loki can come first with both links; Tempo, first in the file, keeps its link as a uid.
+    expect(source).toContain('tracesToLogsV2: { datasourceUid: "loki" }');
+    expect(source).toContain("datasourceUid: tempo");
+    // The service map takes a Prometheus, so a Splunk uid stays a string.
+    expect(source).toContain('serviceMap: { datasourceUid: "splunk" }');
+  });
+
+  test("a dashboard provisioning file becomes DashboardProviders", async () => {
+    const yaml = [
+      "apiVersion: 1",
+      "providers:",
+      "  - name: platform",
+      "    orgId: 1",
+      "    folder: Platform",
+      "    type: file",
+      "    disableDeletion: true",
+      "    allowUiUpdates: false",
+      "    updateIntervalSeconds: 60",
+      "    options:",
+      "      path: /var/lib/grafana/dashboards/platform",
+      "      foldersFromFilesStructure: false",
+      "",
+    ].join("\n");
+    const out = await importAndBuild(yaml);
+    expect(out.warnings).toEqual([]);
+    expect(out.buildErrors).toEqual([]);
+    expect(out.source).toContain("new DashboardProvider({");
+    expect(load(out.files[DASHBOARD_PROVIDERS_FILE] ?? "")).toEqual(load(yaml));
+  });
+});
+
+// ── through core's import command ───────────────────────────────────
+
+describe("chant import dashboard.json", () => {
+  for (const lexicon of [undefined, "grafana"]) {
+    test(lexicon ? "with --lexicon grafana" : "detected as a Grafana dashboard in a project that lists grafana", async () => {
+      const dir = projectDir();
+      try {
+        const templatePath = join(dir, "checkout.json");
+        const content = read("exports/grafana-13.2.2/checkout.external.json");
+        writeFiles(dir, [{ path: "checkout.json", content }]);
+        const output = join(dir, "src");
+        const result = await importCommand({ templatePath, output, force: true, lexicon });
+        expect(result.error).toBeUndefined();
+        expect(result.success).toBe(true);
+        expect(result.lexicon).toBe("grafana");
+        // Nine variables, five panels and a row: one module, since COR009 counts none of them (#2988).
+        expect(result.generatedFiles).toEqual(["chant-fx-checkout/dashboard.ts"]);
+        expect(result.warnings.join("\n")).not.toContain("is not carried: chant has no");
+        const built = await build(output, [grafanaSerializer]);
+        expect(built.errors).toEqual([]);
+        const text = (built.outputs.get("grafana") as SerializerResult).files!["dashboards/chant-fx-checkout.json"];
+        const ir = new GrafanaParser().parse(content);
+        const meta = ir.resources[0].metadata as unknown as DashboardResourceMetadata;
+        expect(normalizeDashboard(JSON.parse(text))).toEqual(normalizeDashboard(applyEdits(meta.source, meta.edits)));
+      } finally {
+        removeDir(dir);
+      }
+    });
+  }
+
+  test("a v2 dashboard is imported, and builds back to its classic form", async () => {
+    const dir = projectDir();
+    try {
+      const output = join(dir, "src");
+      const content = read(V2_EXPORTS[1]);
+      const result = await importFromContent({ content, lexicon: "grafana", output });
+      expect(result.error).toBeUndefined();
+      expect(result.generatedFiles).toContain("chant-fx-tabs/dashboard.ts");
+      expect(result.warnings[0]).toMatch(/^This is a v2 dashboard \(dashboard\.grafana\.app\/v2\)\./);
+      const built = await build(output, [grafanaSerializer]);
+      expect(built.errors).toEqual([]);
+      const text = (built.outputs.get("grafana") as SerializerResult).files!["dashboards/chant-fx-tabs.json"];
+      const meta = new GrafanaParser().parse(content).resources[0].metadata as unknown as DashboardResourceMetadata;
+      expect(normalizeDashboard(JSON.parse(text))).toEqual(normalizeDashboard(applyEdits(meta.source, meta.edits)));
+    } finally {
+      removeDir(dir);
+    }
+  });
+
+  test("a v1 read of a dashboard Grafana stores as v2 is refused, and nothing is written", async () => {
+    const dir = projectDir();
+    try {
+      const output = join(dir, "src");
+      const result = await importFromContent({ content: read(LOSSY_V1_EXPORT), lexicon: "grafana", output });
+      expect(result.success).toBe(true);
+      expect(result.generatedFiles).toEqual([]);
+      expect(result.warnings).toEqual([expect.stringMatching(/^Not imported: Grafana stores this dashboard as v2 /)]);
+      expect(existsSync(join(output, "chant-fx-tabs"))).toBe(false);
+    } finally {
+      removeDir(dir);
+    }
+  });
+
+  test("detection picks the v2 dashboard up too", async () => {
+    const dir = projectDir();
+    try {
+      const templatePath = join(dir, "checkout.v2.json");
+      writeFiles(dir, [{ path: "checkout.v2.json", content: read(V2_EXPORTS[0]) }]);
+      const result = await importCommand({ templatePath, output: join(dir, "src"), force: true });
+      expect(result.lexicon).toBe("grafana");
+      expect(result.warnings.join("\n")).toContain("v2 dashboard");
+      expect(result.generatedFiles).toContain("chant-fx-checkout/dashboard.ts");
+    } finally {
+      removeDir(dir);
+    }
+  });
+
+  test("two dashboards imported into one project build together", async () => {
+    const dir = projectDir();
+    try {
+      const output = join(dir, "src");
+      for (const file of ["community/redis.json", "exports/grafana-13.2.2/slo.json"]) {
+        const result = await importFromContent({ content: read(file), lexicon: "grafana", output, force: true });
+        expect(result.success).toBe(true);
+      }
+      const built = await build(output, [grafanaSerializer]);
+      expect(built.errors).toEqual([]);
+      const files = Object.keys((built.outputs.get("grafana") as SerializerResult).files ?? {});
+      expect(files.filter((f) => f.startsWith("dashboards/")).sort()).toEqual(["dashboards/chant-fx-slo.json", "dashboards/e008bc3f-81a2-40f9-baf2-a33fd8dec7ec.json"]);
+      expect(readFileSync(join(output, "chant-fx-slo", "dashboard.ts"), "utf-8")).toContain('uid: "chant-fx-slo"');
+    } finally {
+      removeDir(dir);
+    }
+  });
+});

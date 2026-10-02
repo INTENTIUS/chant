@@ -21,6 +21,7 @@ import { toDot } from "../../graph-dot";
 import { getLayoutEngine, toLayoutInput, type NodeSize } from "../../graph-layout";
 import { lintCommand } from "../commands/lint";
 import { loadPlugins, resolveProjectLexicons, collectBuildRootContributors } from "../plugins";
+import { isNoLexiconDetected } from "../../detectLexicon";
 import { readFileSync } from "node:fs";
 import { formatError, formatWarning, formatBold } from "../format";
 import type { CommandContext, ParsedArgs } from "../registry";
@@ -31,6 +32,19 @@ import type { BuildParamProvenance } from "../../provenance";
 import { discoverComponents } from "../../components/discover";
 import { cfnDeployStacks } from "./components";
 
+/**
+ * The project's lexicons, or none for a project that declares none and imports
+ * none (an Ops-only member, `lexicons: []`): detection's NO_LEXICON_DETECTED
+ * sentinel means "no lexicon", as `chant lint` reads it, not a failed graph (#2841).
+ */
+async function projectLexiconsOrNone(projectPath: string): Promise<string[]> {
+  try {
+    return await resolveProjectLexicons(projectPath);
+  } catch (err) {
+    if (isNoLexiconDetected(err)) return [];
+    throw err;
+  }
+}
 
 /**
  * Resolve this invocation's declared build-time parameters, the same way
@@ -223,7 +237,7 @@ async function runGraphLive(
   // `graph` is not `requiresPlugins` (Op/source-graph modes must work without a
   // lexicon), so `ctx.plugins` is empty. The live path needs the project's
   // observation plugins — load them here, mirroring the lifecycle handlers.
-  const plugins = ctx.plugins.length > 0 ? ctx.plugins : await loadPlugins(await resolveProjectLexicons(projectPath));
+  const plugins = ctx.plugins.length > 0 ? ctx.plugins : await loadPlugins(await projectLexiconsOrNone(projectPath));
   const declaredEnvNames = environmentNames(config.environments);
   if (declaredEnvNames && !matchesDeclaredEnvironment(config.environments, environment)) {
     console.error(formatError({
@@ -619,6 +633,10 @@ async function runComponentGraphView(
         wave: waveOf.get(name) ?? null,
         liveNames: graph.liveNames?.[name] ?? [name],
         ...(graph.composites?.[name] ? { composites: graph.composites[name] } : {}),
+        // The archetype (#2662), declared or inferred, so a reader such as
+        // `chant workspace graph --composites` labels a component without
+        // importing its source.
+        ...(graph.archetypes?.[name] ? { archetype: graph.archetypes[name] } : {}),
       },
       // Deep-link the node to its `*.component.ts` (behold's inspect panel).
       ...(graph.files?.[name] ? { sourceLoc: { file: graph.files[name] } } : {}),
@@ -684,6 +702,27 @@ async function buildPipelineProjection(
  * Lint-gated: the IR represents valid infra, so we refuse to emit for source that
  * does not pass lint. Non-zero on discovery errors or a layout-engine failure.
  */
+/**
+ * Add what the lexicons' `graphMeta` hooks report to `ir.meta` (#2559). A
+ * lexicon with nothing to report leaves the IR as it was, so a project that
+ * declares none of their entities prints what it did before. Two lexicons
+ * that answer the same key keep the first and say so on stderr.
+ */
+function withGraphMeta(ir: GraphIR, plugins: LexiconPlugin[], entities: Map<string, import("../../declarable").Declarable>): GraphIR {
+  const added: Record<string, unknown> = {};
+  for (const p of plugins) {
+    if (!p.graphMeta) continue;
+    for (const [key, value] of Object.entries(p.graphMeta(entities) ?? {})) {
+      if (key in added || (ir.meta && key in ir.meta)) {
+        console.error(formatWarning({ message: `the ${p.name} lexicon reports graph meta "${key}", which another source already set; its value is dropped` }));
+        continue;
+      }
+      added[key] = value;
+    }
+  }
+  return Object.keys(added).length === 0 ? ir : { ...ir, meta: { ...(ir.meta ?? {}), ...added } };
+}
+
 /** Returned instead of a graph when the prediction cannot be attempted honestly. */
 const REFUSED = Symbol("behaviour-refused");
 
@@ -824,7 +863,7 @@ async function runGraphView(
   {
     const plugins = ctx.plugins.length > 0
       ? ctx.plugins
-      : await loadPlugins(await resolveProjectLexicons(projectPath));
+      : await loadPlugins(await projectLexiconsOrNone(projectPath));
     const predicted = await predictOntoIr(ir, plugins as LexiconPlugin[], ctx.args, {
       // No environment on the declared path: the file is not deployed anywhere
       // yet, and naming one would claim it was.
@@ -837,6 +876,7 @@ async function runGraphView(
     });
     if (predicted === REFUSED) return 1;
     ir = predicted;
+    ir = withGraphMeta(ir, plugins as LexiconPlugin[], result.entities);
   }
 
   if (ctx.args.lens) {

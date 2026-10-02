@@ -26,6 +26,7 @@ import { join } from "path";
 import { regenLexicon, type RegenResult } from "./lexicon-regen";
 import { fetchWithRetry } from "./fetch";
 import { isLexiconPlugin, type UpstreamPin } from "../lexicon";
+import { importLexiconPackage } from "../lexicon-module";
 
 // ── Public types ──────────────────────────────────────────────────────
 
@@ -200,7 +201,7 @@ export function revertVersionBump(filePath: string, original: string): void {
 export async function loadUpstreamPin(lexicon: LexiconId): Promise<UpstreamPin | null> {
   let mod: Record<string, unknown>;
   try {
-    mod = (await import(`@intentius/chant-lexicon-${lexicon}`)) as Record<string, unknown>;
+    mod = (await importLexiconPackage(`@intentius/chant-lexicon-${lexicon}`)) as Record<string, unknown>;
   } catch {
     return null;
   }

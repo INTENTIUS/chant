@@ -29,6 +29,14 @@ import type { OpConfig, PhaseDefinition, StepDefinition } from "./types";
  */
 export const FAN_OUT_GATE_OP = "fan-out";
 
+/**
+ * The op name a `chant workspace upgrade` gate is recorded under (#2550). The
+ * gate is the scope (`.` for a plain project), and it binds the digest of the
+ * upgrade's patch. Like a fan-out, the upgrade is a command with no `*.op.ts`
+ * behind it, so `chant approve` must not warn that it found none.
+ */
+export const WORKSPACE_UPGRADE_GATE_OP = "workspace-upgrade";
+
 /** Either spelling of a gate step's name. `gate` since #2202; `signalName` through 0.59.0. */
 export interface GateNamed {
   gate?: string;

@@ -46,6 +46,7 @@ export interface NlbServiceProps {
   };
 }
 
+/** A Network Load Balancer with a target group and listener. */
 export const NlbService = Composite((props: NlbServiceProps) => {
   if (props.protocol === "TLS" && !props.certificateArn) {
     throw new Error("NlbService requires certificateArn when protocol is TLS");

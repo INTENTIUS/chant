@@ -1,0 +1,32 @@
+---
+title: "How Prometheus Maps to Chant"
+description: "Why the types are hand-written, how PromQL is checked, what the two outputs are, and where the checks stop"
+diataxis: explanation
+order: 2
+---
+
+Prometheus reads alerting and recording rules from rule files, and Alertmanager reads its routing tree from `alertmanager.yml`. This lexicon types both and writes both, from one set of declarations.
+
+## Hand-written types, pinned
+
+Most chant lexicons generate their types from an upstream schema. Neither Prometheus nor Alertmanager publishes one: the rule format is a handful of Go structs in `prometheus/model/rulefmt`, and Alertmanager's config is the structs in `alertmanager/config`. The community JSON Schemas lag both projects and don't type the receivers in detail. The types here are written against one release of each, recorded in `PROMETHEUS_PIN`, and move when this package does.
+
+## PromQL is parsed, not pattern-matched
+
+Every `expr` goes through `@prometheus-io/lezer-promql`, the grammar the Prometheus project publishes from its own repository. It catches real mistakes (a bad range duration like `[5q]`, an unknown function, two selectors with no operator between them) and reports where. It is a syntax check, so type errors pass; `promtool` covers those, and runs in tests when installed rather than in every build, so a build's result doesn't depend on what is installed.
+
+## Two files from one build
+
+Rule groups and Alertmanager entities may sit in the same build root. The rule file is the primary output and `alertmanager.yml` is written beside it. Keeping them together is what lets PROM202 check that every alert severity has a route: post-synth checks see one build root at a time (chant #1939), so a split puts the check out of reach.
+
+## The same group, anywhere
+
+`ruleGroupConfig()` is the one conversion from a `RuleGroup` to the plain group Prometheus reads. The serializer uses it for the rule file, the k8s lexicon uses it for `PrometheusRule` and `MonitoredService`, and a ConfigMap can hold `ruleFileYaml()`. An SLO declaration or any other composite that produces `RuleGroup`s gets all three destinations for free.
+
+## Order
+
+Prometheus evaluates rules inside a group in order and Alertmanager tries child routes in order, so both are written exactly as declared. Groups, receivers and time intervals are looked up by name and their order means nothing, so they are sorted, and the files come out the same however the entities were collected.
+
+## Where the checks stop
+
+The checks read what is known at build time. PROM202 reads `severity` matchers only, since the other labels an alert carries come from the series it fires on. Template syntax inside annotations is left to `promtool`, and whether a receiver's endpoint answers is left to Alertmanager.

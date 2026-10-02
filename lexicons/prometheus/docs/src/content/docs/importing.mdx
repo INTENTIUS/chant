@@ -1,0 +1,137 @@
+---
+title: "Importing Rule Files and alertmanager.yml"
+description: "Turn an existing Prometheus rule file or alertmanager.yml into typed chant TypeScript that builds back to the same file"
+diataxis: how-to
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-prometheus` — DO NOT EDIT.
+    Edit lexicons/prometheus/docs/pages/importing.mdx instead; changes here are overwritten. */}
+
+
+`chant import` reads a Prometheus rule file or an `alertmanager.yml` and writes TypeScript that declares the same thing with this lexicon's classes. `chant build` on the result gives back the file you started from, with key order and quoting normalised and groups, receivers and time intervals sorted by name.
+
+## Import the files
+
+From a chant project whose `chant.config.ts` lists `prometheus`:
+
+```bash
+chant import rules.yml --output src
+chant import alertmanager.yml --output src
+```
+
+A file with `groups:` of named rule lists is a rule file; one with `route:` or `receivers:` at the top level is an Alertmanager config. Outside such a project, name the lexicon and detection is skipped:
+
+```bash
+chant import alertmanager.yml --lexicon prometheus --output src
+```
+
+The two imports write different modules, so the second adds its files beside the first (chant notes that the directory isn't empty, and skips any file that already exists unless you pass `--force`):
+
+| File | Holds |
+|---|---|
+| `rules.ts` | per group, its rules as a `Rule[]` const and a `RuleGroup` |
+| `slos.ts` | an `Slo(...)` call for each group an `Slo` built |
+| `receivers.ts` | one `Receiver` per entry under `receivers:` |
+| `time-intervals.ts` | one `TimeInterval` per entry under `time_intervals:` |
+| `routes.ts` | the root `Route`, with its children as `RouteProps` objects |
+| `inhibit-rules.ts` | one `InhibitRule` per entry under `inhibit_rules:` |
+| `settings.ts` | `AlertmanagerSettings` for `global:`, `templates:` and `tracing:` |
+
+A file with more than eight groups or receivers is split into `rules-1.ts`, `rules-2.ts` and so on, the limit COR009 sets. Then build both files back:
+
+```bash
+chant build src --lexicon prometheus -o dist/rules.yml   # also writes dist/alertmanager.yml
+```
+
+Rule groups inside Kubernetes manifests are imported the same way when you import the manifest with the k8s lexicon. A `PrometheusRule`'s `spec.groups` becomes the list of imported `RuleGroup`s, a rule file held in a ConfigMap becomes `ruleFileYaml([...])`, and an `alertmanager.yml` held in a ConfigMap becomes `alertmanagerYaml([...])` over the receivers, time intervals, route, inhibit rules and settings it declares. See the k8s lexicon's [Importing Existing YAML](/chant/lexicons/k8s/importing-yaml/).
+
+## What the generated source looks like
+
+Rules stay plain objects, the same shape `ruleGroupConfig` emits, so they can be moved into a function later the way the rules-from-data example does. A multi-line `expr: |` becomes a template literal:
+
+```ts title="rules.ts"
+import { type LabelSet, type Rule, RuleGroup } from "@intentius/chant-lexicon-prometheus";
+
+const nodeLabels: LabelSet = { team: "platform" };
+const nodeRules: Rule[] = [
+  {
+    record: "instance:node_cpu_utilisation:rate5m",
+    expr: `1 - avg without (cpu, mode) (
+  rate(node_cpu_seconds_total{mode="idle"}[5m])
+)
+`,
+  },
+  {
+    alert: "NodeHighCpu",
+    expr: "instance:node_cpu_utilisation:rate5m > 0.9",
+    for: "15m",
+    labels: { severity: "ticket" },
+    annotations: { summary: "{{ $labels.instance }} CPU above 90%" },
+  },
+];
+const node = new RuleGroup({ name: "node", interval: "1m", labels: nodeLabels, rules: nodeRules });
+
+export { node };
+```
+
+Routes name their receivers and time intervals by the declared variable, imported from the module that declares it, so TypeScript checks the reference. A name nothing in the file declares stays a string, and PROM201 or PROM204 reports it:
+
+```ts title="routes.ts"
+import { Route, type RouteProps } from "@intentius/chant-lexicon-prometheus";
+import { defaultReceiver, oncall, tickets } from "./receivers";
+import { outsideOfficeHours } from "./time-intervals";
+
+const rootChildren: RouteProps[] = [
+  { receiver: oncall, matchers: ['severity="page"'], repeat_interval: "1h" },
+  { receiver: tickets, matchers: ['severity="ticket"'], mute_time_intervals: [outsideOfficeHours] },
+];
+const root = new Route({ receiver: defaultReceiver, group_by: ["alertname"], routes: rootChildren });
+
+export { root };
+```
+
+A receiver or group whose name isn't an identifier, or is a reserved word, gets a suffix: `default` becomes `defaultReceiver`.
+
+## Credentials and templates
+
+Values are carried exactly as written. `*_file` fields (`routing_key_file`, `api_url_file`, `smtp_auth_password_file`) stay paths, and the Go templates in annotations, route labels and notifier fields stay strings, for Prometheus and Alertmanager to expand. A credential written inline is imported as found, and `chant lint` reports it under PROM001 with the `*_file` field to use instead.
+
+## SLOs
+
+A rule group that `Slo()` built comes back as the `Slo` call, not as its recording and alerting rules. The importer reads the objective, window, SLI and burn-rate pairs back out of the rules, and keeps the `Slo` only when calling it builds the same group, rule for rule. A group that was edited after it was built fails that check and is imported as a `RuleGroup`.
+
+## Deprecated spellings
+
+Alertmanager still reads a few older forms. The importer writes the current one and prints a warning naming each change:
+
+- a route's `match` and `match_re` maps become `matchers` entries (`severity="page"`, `service=~"api|web"`), and an inhibit rule's `source_match*` and `target_match*` become `source_matchers` and `target_matchers`;
+- the top-level `mute_time_intervals` list is declared as `TimeInterval`s, which the build writes under `time_intervals`.
+
+Alertmanager treats both forms the same way, so the rebuilt file routes and mutes the same alerts.
+
+## Fields Alertmanager doesn't define
+
+Every receiver integration and every `global:` field of Alertmanager v0.34.1 is typed, so an imported receiver's lists come back as typed consts (`OpsGenieConfig[]`, `MSTeamsV2Config[]`, ...). A key Alertmanager doesn't define, in a receiver or in `global:`, is carried as data in a const without a type, spread into the declaration, with a comment naming it, and `chant import` prints a warning:
+
+```ts title="receivers.ts"
+// Receiver "oncall": pigeon_configs is not a field Alertmanager v0.34.1 defines, so it is carried as
+// data, untyped.
+const oncallUntyped = { pigeon_configs: [{ loft: "roof" }] };
+const oncall = new Receiver({ name: "oncall", pagerduty_configs: oncallPagerduty, ...oncallUntyped });
+```
+
+That is usually an integration from a newer Alertmanager, or a typo, which `amtool check-config` would reject. A field inside an integration that its type doesn't list is kept in place instead. It still builds back to the same YAML, but `tsc` reports it at the const that holds it. Fix the spelling, or mark the line with `// @ts-expect-error` and a reason.
+
+## What the importer cannot carry
+
+A few things have no place in the lexicon, and `chant import` prints a warning for each:
+
+- a top-level `alertmanager.yml` section other than `global`, `templates`, `route`, `inhibit_rules`, `receivers`, `time_intervals`, `mute_time_intervals` and `tracing` (for example `event_recorder`);
+- a key in a rule group, rule, route or inhibit rule that Prometheus or Alertmanager doesn't define, which neither would load anyway;
+- comments, YAML anchors and merge keys (the merged values are imported, each copy written out).
+
+A Prometheus Operator `PrometheusRule` is a Kubernetes manifest, not a rule file, and imports through the k8s lexicon.
+
+## Checking the result
+
+The lexicon's round-trip tests (`src/import/roundtrip.test.ts`) hold every example's built files, `Slo()` output, and samples from the Prometheus documentation and Alertmanager's example configs to the same standard: imported, built, compared with the original, linted, and passed through `promtool check rules` and `amtool check-config` when those are installed. To check your own import the same way, see [Checking with promtool and amtool](../upstream-tools/).

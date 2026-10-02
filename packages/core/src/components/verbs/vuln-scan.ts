@@ -13,9 +13,17 @@
  * inline fake `VulnScanner` (an object literal with a canned `scan()`, see
  * ./vuln-gate.test.ts) and never invoke a real scanner, network, or vuln DB.
  * The scanner's vuln DB currency is the tool's job, not chant's.
+ *
+ * `createDatabaseVulnScanner` (ws-056, INTENTIUS/chant#2735) is the one
+ * hermetic exception: a `VulnScanner` matched against a local, offline
+ * advisory-database file instead of a real scanner binary — no `grype`/
+ * `trivy` required, deterministic, at the cost of covering only the
+ * advisories the database names. Ported from chud's `supply-chain.mjs`
+ * (`scanWithDatabase`/`sbomPackages`/`compareVersions`), which built its own
+ * copy of this because `scan-vulnerabilities` had no offline backend.
  */
 
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
@@ -172,6 +180,139 @@ export function parseTrivyOutput(stdout: string): VulnFinding[] {
     }
   }
   return out;
+}
+
+// ── offline advisory database ────────────────────────────────────────────────
+
+/** One package an SBOM names, by purl: the ecosystem, its name and its installed version. */
+export interface SbomPackage {
+  ecosystem: string;
+  name: string;
+  version: string;
+}
+
+/**
+ * The packages an SPDX or CycloneDX document lists, by purl (SPDX's
+ * `externalRefs` with `referenceType: "purl"`, CycloneDX's `components[].purl`),
+ * deduplicated by ecosystem/name/version. Parses `doc.bytes` (a string, as
+ * every `SbomDocument` carries it) rather than requiring a pre-parsed object,
+ * so a caller can pass a `scan-vulnerabilities` input's `sbom` straight
+ * through.
+ */
+export function sbomPackages(doc: Pick<SbomDocument, "bytes">): SbomPackage[] {
+  const parsed = JSON.parse(doc.bytes) as {
+    packages?: Array<{ externalRefs?: Array<{ referenceType?: string; referenceLocator?: string }> }>;
+    components?: Array<{ purl?: string }>;
+  };
+  const purls = [
+    ...(parsed.packages ?? []).flatMap((p) =>
+      (p.externalRefs ?? []).filter((r) => r.referenceType === "purl").map((r) => r.referenceLocator ?? ""),
+    ),
+    ...(parsed.components ?? []).map((c) => c.purl).filter((p): p is string => Boolean(p)),
+  ];
+  const seen = new Map<string, SbomPackage>();
+  for (const purl of purls) {
+    const m = /^pkg:([^/]+)\/(.+)@([^?#]+)/.exec(purl);
+    if (!m) continue;
+    const pkg: SbomPackage = { ecosystem: m[1], name: decodeURIComponent(m[2]), version: decodeURIComponent(m[3]) };
+    seen.set(`${pkg.ecosystem}:${pkg.name}@${pkg.version}`, pkg);
+  }
+  return [...seen.values()];
+}
+
+/**
+ * Compare two dotted version strings numerically, a pre-release sorting
+ * before its release (`1.2.0-rc.1` < `1.2.0`). Not full semver (no build
+ * metadata, no ordering between differing pre-release labels beyond "a
+ * pre-release exists") — just enough to place an installed version between
+ * an advisory's `introduced` and `fixed`.
+ */
+export function compareVersions(a: string, b: string): -1 | 0 | 1 {
+  const parse = (v: string) => {
+    const [core, pre] = String(v).replace(/^v/, "").split("-", 2);
+    return { nums: core.split(".").map((n) => Number.parseInt(n, 10) || 0), pre };
+  };
+  const x = parse(a);
+  const y = parse(b);
+  for (let i = 0; i < Math.max(x.nums.length, y.nums.length); i++) {
+    const d = (x.nums[i] ?? 0) - (y.nums[i] ?? 0);
+    if (d) return Math.sign(d) as -1 | 1;
+  }
+  if (x.pre && !y.pre) return -1;
+  if (!x.pre && y.pre) return 1;
+  if (x.pre === y.pre) return 0;
+  return x.pre! < y.pre! ? -1 : 1;
+}
+
+/** One advisory in a local, offline advisory database (`AdvisoryDatabase.advisories`). */
+export interface Advisory {
+  /** Advisory id, e.g. `"CVE-2024-12345"` or `"GHSA-…"`. */
+  id: string;
+  /** Ecosystem the advisory applies to (npm, pypi, …). Default: `"npm"`. */
+  ecosystem?: string;
+  /** Affected package name, matched against the SBOM's purl-derived package name. */
+  package: string;
+  severity?: string;
+  /** First affected version. Default: `"0"` (affects every version up to `fixed`). */
+  introduced?: string;
+  /** First version that fixes it. Omitted for a vulnerability with no fix yet. */
+  fixed?: string;
+  summary?: string;
+}
+
+/** A local, offline advisory database: `{ "advisories": [...] }` (or a bare array, for convenience). */
+export interface AdvisoryDatabase {
+  advisories: Advisory[];
+}
+
+/**
+ * Match an SBOM's packages against a local, offline advisory database —
+ * no scanner binary, no network, deterministic. A package is affected when
+ * `introduced <= installedVersion < fixed` (or unconditionally affected when
+ * the advisory names no `fixed`). Findings are `VulnFinding`-shaped, so they
+ * feed `vuln-gate` exactly like `grype`/`trivy` output does; every
+ * exploitability field (`epss`, `inKev`, …) an offline database can't supply
+ * is left `undefined`, never defaulted to a false negative.
+ */
+export function scanWithDatabase(doc: Pick<SbomDocument, "bytes">, db: AdvisoryDatabase | Advisory[]): VulnFinding[] {
+  const advisories = Array.isArray(db) ? db : (db.advisories ?? []);
+  const findings: VulnFinding[] = [];
+  for (const pkg of sbomPackages(doc)) {
+    for (const a of advisories) {
+      if ((a.ecosystem ?? "npm") !== pkg.ecosystem || a.package !== pkg.name) continue;
+      if (compareVersions(pkg.version, a.introduced ?? "0") < 0) continue;
+      if (a.fixed && compareVersions(pkg.version, a.fixed) >= 0) continue;
+      findings.push({
+        cveId: a.id,
+        severity: normalizeSeverity(a.severity),
+        package: pkg.name,
+        installedVersion: pkg.version,
+        ...(a.fixed ? { fixedVersion: a.fixed } : {}),
+        fixable: Boolean(a.fixed),
+      });
+    }
+  }
+  return findings;
+}
+
+/**
+ * A `VulnScanner` backed by a local, offline advisory database file (JSON:
+ * `{ "advisories": [...] }`, see `AdvisoryDatabase`) instead of a real
+ * scanner binary — the hermetic fallback `autoDetectVulnScanner`'s doc
+ * comment says a scan doesn't have ("there is no hermetic fallback, a scan
+ * needs a real vuln DB"): deterministic, offline, no `grype`/`trivy`
+ * install required, at the cost of covering only the advisories the
+ * database names. Reads the file once per call (a database pinned in the
+ * repo changes rarely; callers that scan repeatedly should cache the parsed
+ * `AdvisoryDatabase` and call `scanWithDatabase` directly instead).
+ */
+export function createDatabaseVulnScanner(dbFile: string): VulnScanner {
+  return {
+    async scan(input) {
+      const db = JSON.parse(readFileSync(dbFile, "utf8")) as AdvisoryDatabase | Advisory[];
+      return scanWithDatabase(input.sbom, db);
+    },
+  };
 }
 
 /**

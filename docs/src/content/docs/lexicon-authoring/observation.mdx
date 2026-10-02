@@ -47,6 +47,8 @@ describeResources?(options: {
 
 Every option after `entities` is optional on both sides. A lexicon whose substrate has no such concept ignores it; core omits it when the project declares none. The full contract with per-field commentary is `packages/core/src/lexicon.ts`.
 
+`entities` holds only the declared entities that have a live counterpart of their own. An output or a parameter carries no `props`, so core leaves it out. Core also leaves out property-kind declarables (`createProperty`, such as a Grafana panel). A property-kind declarable exists only inside the resource that holds it, so your reader sees it in that resource's `props` and never has to answer for it on its own; the deep diff compares it as part of the holder's tree. `observeResourcesDeep()` receives the same set.
+
 Return a map keyed by **chant entity name** (the export name on the `*.ts` file), value is the `ResourceMetadata` chant uses to display status and detect drift.
 
 If your implementation has any case where it *can't look* — an unmapped kind, a failed read, missing credentials — return the `ObservationResult` envelope instead and name those entities in `unobserved`. See [the observation tri-state](/chant/lexicon-authoring/observation-contract/#the-observation-tri-state-absent-is-not-the-same-as-unread); it is the difference between `chant lifecycle plan` proposing a `create` and admitting it doesn't know.
@@ -161,15 +163,23 @@ The status string is opaque to chant's diff logic (any change is "drift"), so yo
 
 Reference implementation: `lexicons/aws/src/deep-observe.ts`.
 
-**Six lexicons implement this seam** — aws, azure, gcp, k8s, helm and
-fountain — each shipping a `src/deep-observe.ts` plus
+**Seven lexicons implement this seam** — aws, azure, gcp, k8s, helm,
+fountain and grafana — each shipping a `src/deep-observe.ts` plus
 `deepNormalizationHooks`, both wired through its `plugin.ts`. That is the seam's
-conformance evidence: six readers over six very different transports (the
+conformance evidence: seven readers over very different transports (the
 Cloud Control API, an ARM GET, a direct GCP REST GET, a typed Kubernetes client,
-the helm CLI delegating to that same k8s client, a fountain REST list) against
-one unchanged interface, with **no per-lexicon branch anywhere in
-`lifecycle/deep-diff.ts` or `deep-observation.ts`**. A seventh is a reader and
-its hooks, not a core change.
+the helm CLI delegating to that same k8s client, a fountain REST list, a
+Grafana resource GET) against one unchanged interface, with **no per-lexicon
+branch anywhere in `lifecycle/deep-diff.ts` or `deep-observation.ts`**. An
+eighth is a reader and its hooks, not a core change.
+
+Where the live model is not in the vocabulary the declaration is written in,
+the reader translates it, not the hooks. grafana is the extreme case: a
+`Dashboard` declares `graphTooltip: "sharedCrosshair"` and rows holding their
+panels, while Grafana stores `graphTooltip: 1` and a flat panel list. Its
+reader runs the stored JSON through the lexicon's own importer, which already
+makes exactly that translation for `chant import`, and its hooks are left
+with the genuine noise.
 
 `describeResources()` answers whether a declared entity exists and carries a handful of scrubbed outputs. That catches a changed status, a replaced physical id, a changed stack output — and misses the drift people actually chase: a hand-edited security-group rule, an inline policy added in the console, a flipped bucket setting, a controller-mutated CRD field. Reading the full live model is what closes that gap.
 

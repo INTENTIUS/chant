@@ -16,6 +16,7 @@ export const OtlpExporter = defineBuiltin<OtlpExporterConfig, "exporter", "otlp"
   description: "Sends traces, metrics and logs over OTLP gRPC",
   validate: (c) => (c.endpoint ? [] : ["endpoint is empty"]),
   endpoints: (c) => (c.endpoint ? [c.endpoint] : []),
+  protocols: () => ["grpc"],
 });
 
 // ── otlphttp ─────────────────────────────────────────────────────────
@@ -39,6 +40,7 @@ export const OtlpHttpExporter = defineBuiltin<OtlpHttpExporterConfig, "exporter"
       : ["set endpoint, or at least one of traces_endpoint, metrics_endpoint and logs_endpoint"],
   endpoints: (c) =>
     [c.endpoint, c.traces_endpoint, c.metrics_endpoint, c.logs_endpoint].filter((e): e is string => typeof e === "string" && e !== ""),
+  protocols: (c) => [c.encoding === "json" ? "http/json" : "http/protobuf"],
 });
 
 // ── debug ────────────────────────────────────────────────────────────

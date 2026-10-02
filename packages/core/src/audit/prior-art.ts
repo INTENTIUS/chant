@@ -122,6 +122,14 @@ export const PRIOR_ART = {
   // this entry carries no SPDX id, and no semgrep rule text is ever copied into
   // this repository — a credit by name and link is the whole of it (#2107).
   "semgrep": { name: "Semgrep Registry rules", url: "https://github.com/semgrep/semgrep-rules", license: "Semgrep Rules License v1.0 (proprietary, not an SPDX id)", kind: "scanner" },
+  // Prometheus and Grafana observability family (#2916). promtool and amtool
+  // ship in the Prometheus and Alertmanager repositories and have no per-rule
+  // ids: credits to them name the check (`check rules`, `check-config`) in the
+  // lineage file's comments and omit `rule`.
+  "promtool": { name: "promtool check rules", url: "https://prometheus.io/docs/prometheus/latest/command-line/promtool/#promtool-check-rules", license: "Apache-2.0", kind: "vendor-validator" },
+  "amtool": { name: "amtool check-config", url: "https://github.com/prometheus/alertmanager/blob/main/cmd/amtool/check_config.go", license: "Apache-2.0", kind: "vendor-validator" },
+  "pint": { name: "pint (Cloudflare)", url: "https://github.com/cloudflare/pint", license: "Apache-2.0", kind: "scanner" },
+  "dashboard-linter": { name: "Grafana dashboard-linter", url: "https://github.com/grafana/dashboard-linter", license: "Apache-2.0", kind: "scanner" },
 } as const satisfies Record<string, PriorArtEntry>;
 
 export type PriorArtTool = keyof typeof PRIOR_ART;

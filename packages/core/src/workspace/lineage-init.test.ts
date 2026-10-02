@@ -113,6 +113,17 @@ describe("chant init --from", () => {
     expect(readFileSync(join(target, "svc/src/main.ts"), "utf-8")).toBe("export const a = 2;\n");
   });
 
+  test("the template's migrations are not copied (#2550)", async () => {
+    put(tpl, "svc/.chant/migrations/m.json", "{}");
+    git(tpl, ["add", "-A"]);
+    git(tpl, ["commit", "-q", "-m", "a migration"]);
+    const target = join(root, "proj");
+    const result = await initFromCommand({ from: `${tpl}@main#svc`, path: target });
+    expect(result.success).toBe(true);
+    expect(existsSync(join(target, ".chant/migrations"))).toBe(false);
+    expect(Object.keys(readLock(target)!.scopes["."].files).some((f) => f.startsWith(".chant/"))).toBe(false);
+  });
+
   test("refuses a non-empty directory, an unknown ref and a missing directory", async () => {
     const target = join(root, "proj");
     put(target, "keep.txt", "x");
@@ -129,6 +140,74 @@ describe("chant init --from", () => {
     expect(result.warnings).toContain("src/main.ts already exists, skipping");
     expect(readFileSync(join(target, "src/main.ts"), "utf-8")).toBe("mine\n");
     expect(readLock(target)!.scopes["."].files["src/main.ts"]).toBeUndefined();
+  });
+});
+
+describe("chant init --from with parameters (#2627)", () => {
+  function declare(manifest: unknown, files: Record<string, string>): void {
+    put(tpl, "svc/chant.template.json", JSON.stringify(manifest));
+    for (const [rel, content] of Object.entries(files)) put(tpl, `svc/${rel}`, content);
+    git(tpl, ["add", "-A"]);
+    git(tpl, ["commit", "-q", "-m", "parameters"]);
+  }
+  const MANIFEST = {
+    parameters: { name: { type: "string", default: "Starter", description: "The app's name" }, url: { type: "string", default: "http://localhost", hostBound: true } },
+    files: ["package.json", "src/main.ts"],
+  };
+
+  beforeEach(() => {
+    declare(MANIFEST, {
+      "package.json": '{ "name": "svc", "description": "{{chant:name}}" }\n',
+      "src/main.ts": 'export const title = "{{chant:name}}";\nexport const url = `${"{{chant:url}}"}/`;\n',
+      "notes.md": "{{chant:name}} stays: this file is not listed\n",
+    });
+  });
+
+  test("--param values land in every listed file and in the lock; defaults fill the rest", async () => {
+    const target = join(root, "proj");
+    const result = await initFromCommand({ from: `${tpl}@main#svc`, path: target, params: { name: "Untitled app" } });
+    expect(result.error).toBeUndefined();
+    expect(result.parameters).toEqual({ name: "Untitled app", url: "http://localhost" });
+    expect(readFileSync(join(target, "package.json"), "utf-8")).toBe('{ "name": "svc", "description": "Untitled app" }\n');
+    expect(readFileSync(join(target, "src/main.ts"), "utf-8")).toBe('export const title = "Untitled app";\nexport const url = `${"http://localhost"}/`;\n');
+    expect(readFileSync(join(target, "notes.md"), "utf-8")).toBe("{{chant:name}} stays: this file is not listed\n");
+    // The manifest is template metadata, like its migrations.
+    expect(existsSync(join(target, "chant.template.json"))).toBe(false);
+    expect(result.createdFiles).not.toContain("chant.template.json");
+
+    const scope = readLock(target)!.scopes["."];
+    expect(scope.parameters).toEqual({ name: "Untitled app", url: "http://localhost" });
+    expect(scope.files["chant.template.json"]).toBeUndefined();
+    // The merge base is the file as written, with the value in it.
+    expect(scope.files["src/main.ts"].sha256).toBe(fileHash(readFileSync(join(target, "src/main.ts"))));
+    // The host-bound parameter, with the listed files that carry it, for export and import (#2552).
+    expect(scope.hostBound).toEqual({ url: ["src/main.ts"] });
+  });
+
+  test("a template with no host-bound parameter records no hostBound (#2552)", async () => {
+    declare({ parameters: { name: MANIFEST.parameters.name }, files: ["package.json"] }, { "src/main.ts": "plain\n" });
+    const target = join(root, "proj");
+    expect((await initFromCommand({ from: `${tpl}@main#svc`, path: target })).error).toBeUndefined();
+    expect(readLock(target)!.scopes["."]).not.toHaveProperty("hostBound");
+  });
+
+  test("an undeclared --param is refused with the declared names listed, and nothing is written", async () => {
+    const target = join(root, "proj");
+    const result = await initFromCommand({ from: `${tpl}@main#svc`, path: target, params: { title: "x" } });
+    expect(result.success).toBe(false);
+    expect(result.error).toBe("unknown parameter title (declared: name, url)");
+    expect(existsSync(target)).toBe(false);
+  });
+
+  test("a template without a manifest refuses any --param", async () => {
+    const result = await initFromCommand({ from: `${tpl}@v1#svc`, path: join(root, "proj"), params: { name: "x" } });
+    expect(result.error).toBe("unknown parameter name (the template declares none)");
+  });
+
+  test("a placeholder with no declaration is an error in the template", async () => {
+    declare(MANIFEST, { "src/main.ts": "{{chant:owner}}\n" });
+    const result = await initFromCommand({ from: `${tpl}@main#svc`, path: join(root, "proj") });
+    expect(result.error).toMatch(/src\/main.ts has \{\{chant:owner\}\}, but chant.template.json declares no parameter owner/);
   });
 });
 

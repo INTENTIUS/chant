@@ -114,6 +114,49 @@ A non-zero exit still fails the step. `okExit` names the codes that do not, whic
 const changed = shell("git diff --quiet HEAD~1 -- migrations/", { okExit: [0, 1], id: "changed" });
 ```
 
+With `json: true`, stdout is parsed as JSON and published as `json` ([#2787](https://github.com/INTENTIUS/chant/issues/2787)). A list or an object then reaches the next step, or the Op's `workLease.item`, as itself rather than as a string. Stdout that is not JSON fails the step, and empty stdout is `null`. The parsed value's shape is the command's own, so OPS013 accepts a reference to the whole of it, `pick.out.json`, and not to a path inside it. A command that has more than one thing to say prints an object. A later command gets the same text through `env` from `pick.out.stdout`, since an environment value is a string.
+
+A shell step runs under `atMostOnce`: twenty minutes, one attempt. `timeout` gives the step a longer or shorter attempt, up to six hours, and keeps the one attempt. See [Retry profiles](/chant/guide/ops-reference/#retry-profiles).
+
+```typescript
+const pick = shell("node ops/pick.mjs", { id: "pick", json: true }); // prints ["W-3","W-7"]
+const build = shell("node ops/build.mjs", { id: "build", timeout: "45m" });
+```
+
+### A command that stops at its own gate
+
+Some commands decide a gate themselves. `chant workspace upgrade` stages its patch, records `workspace-upgrade` / `<scope>` pending on the gate ledger, and exits 3 until someone runs `chant approve workspace-upgrade <scope>`. Name that exit code in `gatedExit` and the step stops its run at the command's gate ([#2779](https://github.com/INTENTIUS/chant/issues/2779)). The run ends `gated` there as it would at a pending `gate` step. Nothing after the step runs and a work lease is released `gated`. The run ledger records the gate with the op it is recorded under.
+
+```typescript
+const upgrade = shell("chant workspace upgrade . --to ~/box/template --json", {
+  id: "upgrade",
+  cwd: workLeaseOutput("worktree"),
+  gatedExit: 3,
+});
+
+export default Op({
+  name: "upgrade",
+  overview: "Upgrade the workspace in a work-lease worktree once a person approves the patch.",
+  changesCheckout: true,
+  workLease: { item: "workspace-upgrade" },
+  phases: [phase("Upgrade", [upgrade])],
+});
+```
+
+The step reads the gate from the command's stdout when that is JSON with a `pending` fact, which `chant workspace upgrade --json` prints. A command that prints something else names its gate in `gate`, as `{ op: "workspace-upgrade", gate: "." }`, and the step stops at the newest pending fact for it on the gate ledger. With neither, the step fails, since a run can't wait at a gate nobody can approve. `gatedExit` is checked before `okExit`.
+
+After `chant approve workspace-upgrade .` the next run runs the command again. This time the command finds the approval and applies the patch, and the run ends `ok`. A local steward runs its own gated run again on its first round after the approval (see [`operator --steward`](/chant/cli/operator/#operator---steward-name)). `chant workspace status --json` shows the gate on the Op's `lastRun` while it waits.
+
+### Reporting progress from a shell step
+
+A run started by `chant run` or a steward keeps an in-flight record while it runs, which `chant workspace status --json` shows as the Op's `inFlight`. A shell step's command finds the record's activity file in `CHANT_RUN_ACTIVITY` and the run's id in `CHANT_RUN_ID`. Each line it appends is one activity line, either plain text or `{"at": "<ISO-8601>", "text": "..."}`:
+
+```sh
+echo "Bash npm test" >> "$CHANT_RUN_ACTIVITY"
+```
+
+Outside such a run the variable is unset. An in-process activity calls `reportRunActivity(text)` from `@intentius/chant/op` instead.
+
 ## Gate steps
 
 A gate is a fact on the gate ledger: a run that reaches one with no resolution records that it is waiting and ends there. Typical gate scenarios:
@@ -164,7 +207,7 @@ The run records that digest on the pending fact; `chant approve` copies it onto 
 
 The digest covers the change set: the addresses, the actions and the values that would be written. It deliberately excludes the moment the plan was taken, the run that took it and the plan file's bytes. Re-planning an unchanged root produces the same digest, so an approval does not expire on the clock.
 
-`chant approve` refuses when the gate has no pending fact to take a digest from, naming `chant run <op>` as the fix; `--plan <digest>` approves one explicitly. Resolutions recorded before `#2300` carry no digest and do not satisfy a plan-bound gate: they prove somebody approved something and nothing about what. A gate standing open across that upgrade needs one more approval after its next run.
+`chant approve` refuses when the gate has no pending fact to take a digest from, naming `chant run <op>` as the fix; `--plan <digest>` approves one explicitly, and takes either spelling of a digest: `jcs1-sha256:` and the hex, or the bare `sha256:` an older run recorded ([#2547](https://github.com/INTENTIUS/chant/issues/2547)). Resolutions recorded before `#2300` carry no digest and do not satisfy a plan-bound gate: they prove somebody approved something and nothing about what. A gate standing open across that upgrade needs one more approval after its next run.
 
 ### Quorum, roles and an approval policy
 
@@ -217,9 +260,59 @@ The typed `Policy` scopes accept only entity types and actions from the project'
 
 `--agent` records an approval as an agent's. An approval sent over MCP or ACP is always recorded as an agent's. An agent never counts toward the quorum.
 
-`mode` decides what a decision does. The default mode is `log-only`, where the decision is recorded and only the quorum can pass the gate. That lets you check a new rule against real gate traffic before it binds. In `enforce`, a permit passes the gate by itself, which is how an agent passes a low-risk plan. A permit counts only while the gate still declares the policy version it was evaluated under, so editing the policy needs fresh approvals. A deny never cancels a human's approval, so a deny-by-default policy such as `DenyByDefaultSet` leaves the gate working as it did before: humans only.
+`mode` decides what a decision does. The default mode is `log-only`, where the decision is recorded and only the quorum can pass the gate. That lets you check a new rule against real gate traffic before it binds. In `enforce`, a permit passes the gate by itself, which is how an agent passes a low-risk plan. A permit counts only while the gate still declares the policy version it was evaluated under, so editing the policy needs fresh approvals. A permit recorded while the gate was in `log-only` never passes it, even after the gate switches to `enforce`, so the agent has to approve again ([#2512](https://github.com/INTENTIUS/chant/issues/2512)). A human's approval recorded under `log-only` still counts toward the quorum after the switch. A deny never cancels a human's approval, so a deny-by-default policy such as `DenyByDefaultSet` leaves the gate working as it did before: humans only.
 
 OPS015 rejects an `approval` block at build when it is malformed, for example a policy that is not a gate policy set or `enforce` with no policy.
+
+## Running under a work lease
+
+An Op that works on one work item at a time, such as a dispatcher that builds the next ready item, declares `workLease` ([#2748](https://github.com/INTENTIUS/chant/issues/2748)). The executor claims the item's [work lease](/chant/cli/workspace-work/) before the steps it covers and gives it back when the run ends, so two dispatchers never build the same item.
+
+```typescript
+import { Op, phase, activity, workLeaseOutput } from "@intentius/chant/op";
+
+// The runner's activities (the studio kit's, say): pick ready items, build, apply, record.
+const pick = activity("readyItems", { kind: "work/items.ts" }, { id: "pick" });
+const record = activity("recordItem", { item: workLeaseOutput("item") }, { id: "record" });
+
+export default Op({
+  name: "dispatch",
+  overview: "Build the next ready work item",
+  schedule: { cron: "*/5 * * * *" },
+  workLease: { item: pick.out.ids, kind: "work/items.ts", ttl: "10m", outcome: record.out.outcome },
+  changesCheckout: true,
+  phases: [
+    phase("Pick", [pick]),
+    phase("Build", [
+      activity("runBuilder", { item: workLeaseOutput("item"), token: workLeaseOutput("token") }),
+      activity("applyBuild", { worktree: workLeaseOutput("worktree") }),
+    ]),
+    phase("Record", [record]),
+  ],
+});
+```
+
+`item` is a work item id, a list of candidate ids, or a reference to an earlier step's output that resolves to either. A `shell` step hands over a list by printing it as JSON with `json: true`, and `item: pick.out.json` then reads it. A literal item is claimed before the first step, and a referenced one right after the step that produces it. From a list, the first candidate nobody holds is claimed. Omit `item` and the run names it with `chant run <op> --work <id>`. When the reference resolves to nothing or every candidate is held, the run claims nothing. It ends `ok` with the rest of its steps skipped, and the claim's record says who holds what.
+
+While the steps run, the lease is renewed every third of its `ttl` (default `10m`), keeping its fencing token. Steps read the lease through `workLeaseOutput`: its `item`, `holder`, `token` and `expiresAt`, and for an Op that changes the checkout its `worktree` and `branch`. An activity that writes somewhere a token can fence passes `token` along. If a renewal is refused because the lease ran out and another worker took the item, the lease is lost: the step in flight gets its abort signal, no later step starts, and the run fails with `lease-lost`. The lease is renewed once more before the run's record is written, so a run whose lease was lost is never recorded as done. `onFailure` phases still run.
+
+When the run ends the lease is released with an outcome. A completed run records `done`, or the string returned by the step that `outcome` references. A failed run records `not_done`, a run stopped at a gate records `gated`, and a run stopped on an open decision point records `waiting`. The outcome lands on `_leases/<id>.jsonl`. `kind` names the work kind file whose member owns the lease; without it the lease is in the project's own ledger.
+
+The `workEvidence` step attaches evidence to one of the item's [acceptance criteria](/chant/guide/work-items/#acceptance-criteria) under the run's lease ([#2772](https://github.com/INTENTIUS/chant/issues/2772)). It writes only while the lease is still the run's, and it refuses a `manual` criterion, because the run is the item's implementer. Name the work kind in `kind` so the step and the lease read the same ledger.
+
+### An Op that changes the checkout
+
+`changesCheckout: true` says the Op changes the checkout, as applying a build or `chant workspace upgrade` does. Such an Op must declare `workLease`: the executor refuses to run it otherwise, and `declareSteward` refuses to list it. Its leased steps get a git worktree of their own on the branch `chant/work/<item>` (`chant/work/<member>/<item>` in a workspace member). The worktree sits under the repository's git directory and starts from HEAD, or from the branch where an earlier run left it. The steps write and commit there. When the run ends the worktree is removed and the branch keeps the commits, for the runner to deliver. The working tree a coding agent is editing, its index and its uncommitted files, stay as they were.
+
+### Checking the change against the records
+
+Before the branch is delivered, a step can check what the Op changed against the workspace's records with the `changeCoverage` activity ([#2773](https://github.com/INTENTIUS/chant/issues/2773)). It runs [`chant workspace check --changes`](/chant/cli/workspace-check/#the-forward-coverage-check) in the worktree. With no `range`, it checks the commits the work branch holds beyond the main worktree's HEAD, with the branch's item as the work item in hand. A change the item or its decisions put out of scope is `change-out-of-scope`, and a path no current record covers is `change-uncovered`.
+
+```typescript
+activity("changeCoverage", { cwd: workLeaseOutput("worktree") }, { id: "coverage" }),
+```
+
+The step fails when the workspace's `changes.severity` is `fail` and there is a finding, or when the check can't run. Otherwise it returns `ok`, the `range` and `work` it checked, `summary`, and each finding with its `triage`: the `{ finding, region }` a work item seeded from it carries as its `source`. `range`, `work` and `severity` given as arguments replace what the branch and the declaration say.
 
 ## Compensation on failure
 
@@ -272,11 +365,11 @@ Run `chant run prod-reconcile` for a one-shot reconcile here; give it a `schedul
 
 The `ApplyOp` composite is the other direction: compute the plan, then apply it. Authority stays with the platform; chant hosts no state file.
 
-`target` picks the mechanism, and every one of them is native — no cloud CLI in the path: `kubectl` and `kustomize` are a server-side apply through the k8s lexicon's typed client, `arm` is the azure lexicon's per-resource `azApply`, `cloudformation` is the aws lexicon's `awsApply`, which speaks the CloudFormation API directly, `gcp` is the gcp lexicon's per-resource `gcpApply`, which maps each CNRM kind to its GCP REST API, and `fly` is the fly lexicon's `flyApply`, which speaks the Fly Machines API (flaps) directly. Each is loaded from its lexicon at apply time, so a project using a target lists that lexicon in `chant.config.ts`.
+`target` picks the mechanism, and every one of them is native — no cloud CLI in the path: `kubectl` and `kustomize` are a server-side apply through the k8s lexicon's typed client, `arm` is the azure lexicon's per-resource `azApply`, `cloudformation` is the aws lexicon's `awsApply`, which speaks the CloudFormation API directly, `gcp` is the gcp lexicon's per-resource `gcpApply`, which maps each CNRM kind to its GCP REST API, `fly` is the fly lexicon's `flyApply`, which speaks the Fly Machines API (flaps) directly, and `grafana` is the grafana lexicon's `grafanaApply`, which writes folders, library panels and dashboards over Grafana's HTTP API. Each is loaded from its lexicon at apply time, so a project using a target lists that lexicon in `chant.config.ts`.
 
 Whatever the target, the apply reports one result shape: the count projection of core's apply contract ([#1446](https://github.com/INTENTIUS/chant/issues/1446)) — `applied`, `pruned`, and `notAttempted` (declared resources no provider call was made for, including kinds an owned-only prune could not consider). An Op gates on those counts regardless of target; the target-specific detail — the field manager on `kubectl`, the stack status on `cloudformation` — stays on the step record.
 
-chant also ships four **native per-resource appliers** that speak each provider's own API directly, with no CLI in the path and an endpoint override so the same step targets a real account or an emulator: `awsApply`, `azApply` and `gcpApply` (typed step builders, like the ones in [Ops Reference](/chant/guide/ops-reference/#step-builders)), and `flyApply` (an activity the fly lexicon contributes, reached by name). Each of the four is exactly what `ApplyOp` runs for the `cloudformation`, `arm`, `gcp` and `fly` targets ([#1449](https://github.com/INTENTIUS/chant/issues/1449)); the step forms remain for hand-written Ops that need per-step control.
+chant also ships four **native per-resource appliers** that speak each provider's own API directly, with no CLI in the path and an endpoint override so the same step targets a real account or an emulator: `awsApply`, `azApply` and `gcpApply` (typed step builders, like the ones in [Ops Reference](/chant/guide/ops-reference/#step-builders)), and `flyApply` (an activity the fly lexicon contributes, reached by name). Each of the four is exactly what `ApplyOp` runs for the `cloudformation`, `arm`, `gcp` and `fly` targets ([#1449](https://github.com/INTENTIUS/chant/issues/1449)), and the grafana lexicon's [`grafanaApply`](/chant/lexicons/grafana/applying/) is what it runs for `grafana` ([#3011](https://github.com/INTENTIUS/chant/issues/3011)); the step forms remain for hand-written Ops that need per-step control.
 
 ```typescript
 import { ApplyOp } from "@intentius/chant/op";

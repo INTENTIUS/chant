@@ -2,9 +2,93 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://intentius.io/chant/schemas/workspace/records/v1/records.schema.json",
   "title": "chant workspace records output",
-  "description": "What `chant workspace records --json` prints, version 1 of the read contract for records (#2536). This is the first-test slice (#2546): records are unsealed and there is no workspace declaration yet. Readers ignore fields they do not know; a field is only ever added within a version. The reason and error codes are closed lists: a new code is a new contract version.",
-  "oneOf": [{ "$ref": "#/$defs/result" }, { "$ref": "#/$defs/failure" }],
+  "description": "What `chant workspace records --json` prints, version 1 of the read contract for records (#2536). A closed record of a kind that declares seal carries a whole-file seal, checked on every read (#2546). Readers ignore fields they do not know; a field is only ever added within a version. The reason and error codes are closed lists: a new code is a new contract version. Contract version 1 is written by chant 0.81.0 and newer; a reader that needs it refuses output whose `contract` it doesn't know. Every code is in the one closed list of `reason-codes.ts`.",
+  "oneOf": [{ "$ref": "#/$defs/result" }, { "$ref": "#/$defs/failure" }, { "$ref": "#/$defs/set" }],
   "$defs": {
+    "decidedIn": {
+      "description": "The commit that last moved the record into an approved state and kept it there: a state the kind's approval ranks above 0, or one of its closedStates when it has no approval. Read from the history of the record's file reachable from the revision read, or HEAD in the working tree. A record added approved was decided by the commit that added it. Null when the record is not approved in that history.",
+      "type": ["object", "null"],
+      "required": ["sha", "date", "subject"],
+      "additionalProperties": false,
+      "properties": {
+        "sha": { "type": "string", "pattern": "^[0-9a-f]{40,64}$" },
+        "date": { "type": "string", "description": "The author date, ISO 8601." },
+        "subject": { "type": "string" }
+      }
+    },
+    "set": {
+      "description": "Added in contract 1 by #2680. What records prints without --kind when the workspace declaration names record kinds: one result or failure per declared kind, in the declaration's order (the workspace's own kinds, then each member's in member order). Exit code 1 when any kind's read failed; the others are still read and listed.",
+      "type": "object",
+      "required": ["$schema", "contract", "kinds"],
+      "properties": {
+        "$schema": { "const": "https://intentius.io/chant/schemas/workspace/records/v1/records.schema.json" },
+        "contract": { "const": 1 },
+        "kinds": {
+          "type": "array",
+          "items": {
+            "allOf": [
+              { "oneOf": [{ "$ref": "#/$defs/result" }, { "$ref": "#/$defs/failure" }] },
+              {
+                "type": "object",
+                "required": ["declared"],
+                "properties": {
+                  "declared": {
+                    "description": "The declaration's entry for the kind.",
+                    "type": "object",
+                    "required": ["member", "path", "name"],
+                    "properties": {
+                      "member": { "type": ["string", "null"], "description": "The member that declares the kind, or null for the workspace's own." },
+                      "path": { "type": "string", "description": "The kind file from the workspace root, with / separators." },
+                      "name": { "type": ["string", "null"], "description": "The name the declaration gives the kind, or null; kind.name is the kind file's own." }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "spec": {
+          "description": "Added in contract 1 by #2546 (#2524 D20). With --current only: the workspace's spec, the current records of each declared kind marked spec: true, each with the workspace files it pins. A kind whose read failed is left out, and is listed under kinds with its error.",
+          "type": "object",
+          "required": ["kinds", "records"],
+          "properties": {
+            "kinds": {
+              "type": "array",
+              "description": "The spec kinds, as the declaration names them, in its order.",
+              "items": {
+                "type": "object",
+                "required": ["member", "path", "name"],
+                "properties": {
+                  "member": { "type": ["string", "null"] },
+                  "path": { "type": "string" },
+                  "name": { "type": ["string", "null"] }
+                }
+              }
+            },
+            "records": {
+              "type": "array",
+              "description": "Every current record of the spec kinds, in the order of kinds and then path. Invalid records are listed with valid false, as under kinds.",
+              "items": {
+                "type": "object",
+                "required": ["kind", "id", "path", "state", "valid", "digest", "assets"],
+                "properties": {
+                  "kind": { "type": "string", "description": "The kind's name, such as decision." },
+                  "id": { "type": ["string", "null"] },
+                  "path": { "type": "string" },
+                  "state": { "type": ["string", "null"] },
+                  "valid": { "type": "boolean" },
+                  "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+                  "assets": { "type": "array", "items": { "$ref": "#/$defs/asset" } }
+                }
+              }
+            }
+          }
+        },
+        "kind": false,
+        "records": false,
+        "error": false
+      }
+    },
     "result": {
       "description": "The read worked. Exit code 0, even when some records are invalid.",
       "type": "object",
@@ -18,7 +102,15 @@
           "properties": {
             "name": { "type": "string", "description": "The kind's name, such as \"decision\"." },
             "schema": { "type": "string", "description": "The `$id` of the schema each record was validated against." },
-            "file": { "type": "string", "description": "The kind file, relative to the repository root, with / separators." }
+            "file": { "type": "string", "description": "The kind file, relative to the repository root, with / separators." },
+            "format": {
+              "enum": ["markdown-front-matter", "json"],
+              "description": "Added in contract 1 by #2664 (ws-053). How each record file holds its structured core: the YAML front matter of a Markdown file, or the whole file as one JSON object, read as I-JSON (no repeated member name)."
+            },
+            "spec": {
+              "type": "boolean",
+              "description": "Added in contract 1 by #2546. true when the kind file marks the kind spec: true, so its current records and the files they pin are part of the workspace's spec (#2524 D20)."
+            }
           }
         },
         "at": {
@@ -26,8 +118,13 @@
           "type": ["string", "null"],
           "pattern": "^[0-9a-f]{40,64}$"
         },
+        "workspaceRoot": {
+          "type": "string",
+          "description": "Added in contract 1 by #2549. The directory a record's pinned paths resolve in, from the repository root with / separators: the workspace whose declaration sits nearest above the kind file, or \".\" for the repository root."
+        },
         "error": false,
         "current": { "type": "boolean", "description": "Whether superseded records were left out (--current)." },
+        "trust": { "$ref": "#/$defs/trust" },
         "records": {
           "description": "One entry per file the kind locates, sorted by path.",
           "type": "array",
@@ -42,25 +139,113 @@
             "invalid": { "type": "integer", "minimum": 0 },
             "superseded": { "type": "integer", "minimum": 0, "description": "Records a closed record supersedes, counted before --current leaves them out." }
           }
+        },
+        "decisions": {
+          "description": "Added in contract 1 by #2683, for a work kind only. Every decision the kind file named in the work kind's work.decisions reads at the same revision, whether or not a work record names it, each with the work records implementing it. A decision with an empty implementedBy has no work item yet.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/decisionWork" }
         }
+      }
+    },
+    "workLink": {
+      "type": "object",
+      "required": ["id", "state"],
+      "properties": {
+        "id": { "type": "string" },
+        "state": { "type": ["string", "null"], "description": "The linked record's state as it writes it, or null when no record has the id." }
+      }
+    },
+    "decisionWork": {
+      "type": "object",
+      "required": ["id", "path", "state", "supersededBy", "implementedBy"],
+      "properties": {
+        "id": { "type": "string" },
+        "path": { "type": "string", "description": "From the repository root, with / separators." },
+        "state": { "type": ["string", "null"] },
+        "supersededBy": { "type": ["string", "null"] },
+        "implementedBy": { "type": "array", "items": { "$ref": "#/$defs/workLink" }, "description": "The work records whose implements list names the decision, in path order." }
       }
     },
     "record": {
       "type": "object",
-      "required": ["id", "path", "state", "valid", "reasons", "supersededBy", "data"],
+      "required": ["id", "path", "state", "valid", "reasons", "supersededBy", "remediatedBy", "data"],
       "properties": {
-        "id": { "type": ["string", "null"], "description": "Null when the front matter could not be parsed or has no string id." },
+        "id": { "type": ["string", "null"], "description": "Null when the record could not be parsed or has no string id. For a content-addressed kind (idFrom sha256, added by #2664), the lowercase hex SHA-256 of the file's bytes, the same string a pin of the file carries." },
         "path": { "type": "string", "description": "From the repository root, with / separators." },
-        "state": { "type": ["string", "null"], "description": "The state as the record writes it. Supersession is reported in supersededBy, not here." },
+        "state": { "type": ["string", "null"], "description": "The state as the record writes it. Supersession is reported in supersededBy, not here. Null for every record of a kind without states (#2664)." },
         "valid": { "type": "boolean", "description": "True exactly when reasons is empty." },
         "reasons": { "type": "array", "items": { "$ref": "#/$defs/reason" } },
         "supersededBy": {
           "type": ["string", "null"],
           "description": "The id of the closed record whose supersedes link replaces this one. Derived from that record's link, never from this record's own fields."
         },
+        "remediatedBy": {
+          "description": "Added in contract 1 by #2774. The ids of records whose remediates link names this one, in path order. Unlike supersededBy, several records may remediate the same one, and a remediation never changes this record's state or supersededBy: it stays exactly as current as it was.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "decidedIn": {
+          "description": "Added in contract 1. Present for a kind with approval ranks that is not a work kind, read in a git repository.",
+          "$ref": "#/$defs/decidedIn"
+        },
         "data": {
           "type": ["object", "null"],
-          "description": "The front matter as JSON, following the kind's schema when valid is true. Null when it could not be parsed."
+          "description": "The record's structured core as JSON: the front matter, or for a kind of format json the whole file (#2664). It follows the kind's schema when valid is true. Null when it could not be parsed."
+        },
+        "provenance": { "$ref": "#/$defs/provenance" },
+        "assets": {
+          "description": "Added in contract 1 by #2549. Each workspace file the record pins by hash, checked against the tree read: the working tree, or the revision under --at. Empty for a kind that pins nothing. A record of a content-addressed kind (#2664) whose file name claims a hash other than its bytes' lists itself here as drifted, with sha256 the hash the name claims and actual its id.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/asset" }
+        },
+        "warnings": {
+          "description": "Added in contract 1 by #2549. Findings that leave the record valid: a pinned file that changed, went missing or did not follow a superseding decision, a supersedes link that has no effect yet, (added by #2654) an evidence list that is empty, (added by #2672) a verdict that names no digest, or (added by #2683) a work record's links and dates, or (added by #2688) a record whose author seal is not attested under a signers file at base, or (added by #2772) a work record's acceptance criteria unmet when it is done, or met by a manual verdict from its implementer. A work record never carries record-no-evidence; a done one with no evidence carries work-done-unpinned. valid and --current do not look at them.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/warning" }
+        },
+        "digest": {
+          "description": "Added in contract 1 by #2672. The lowercase hex SHA-256 of the record file's text, with LF line endings and without the kind's reviews block and its top-level seal block (#2688) in the front matter, or for a kind of format json without the top-level reviews and seal members, each with one comma beside it (#2664). A record with no seal hashes as it did before #2688. A review verdict names it in its digest field, and stops counting once the record's digest moves on; a record's author seal signs it. A kind that declares seal (#2546) also leaves out the field holding the whole-file seal, and a kind with reviews.ratified its state line (#2873). For a kind with no reviews list, the digest of the whole text. It is not the record's seal: the seal covers the whole file (#2546, ws-063).",
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "quorum": {
+          "description": "Added in contract 1 by #2671, on every record of a kind with a reviews list. Null when the front matter could not be parsed.",
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/quorum" }]
+        },
+        "attested": {
+          "description": "Added in contract 1 by #2688, on every parsed record of a kind with a reviews list. true when the record's author seal (its top-level seal field) verifies, against the signers file at base, for the author the kind's reviews.decider field names (decided_by for decisions). false when a signers file is active at base and the record names an author and carries no seal, or when a seal fails. null when nothing here can say: no seal and no signers file, a seal checked with no signers file, no ssh-keygen, or a record that names no author and carries no seal. Independent of provenance, which judges the commit that last changed the file.",
+          "type": ["boolean", "null"]
+        },
+        "attestation": {
+          "description": "Added in contract 1 by #2688, beside attested. What the record's author seal establishes, and why when it is not attested. Under an active signers file, a record that names an author and is not attested also carries the warning record-unattested; it is still read and still valid.",
+          "$ref": "#/$defs/attestation"
+        },
+        "citedBy": {
+          "description": "Added in contract 1 by #2673, on every record of a session kind and on no other. The review entries of the records the session kind names as its subjects (decisions, for the reference session kind) whose session field names this record's id, in path order and then list order.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/citation" }
+        },
+        "ready": {
+          "description": "Added in contract 1 by #2683, on every parsed record of a work kind. True when the record is valid, not superseded, in the kind's open state, not in a needs cycle, and every work id its needs list names is done.",
+          "type": "boolean"
+        },
+        "blockedBy": {
+          "description": "Added in contract 1 by #2683, on every parsed record of a work kind. Each need that is not done, with its state now; null for an id no record has.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/workLink" }
+        },
+        "implements": {
+          "description": "Added in contract 1 by #2683, on every parsed record of a work kind. Each decision the record implements, with its state now; null for an id no decision has.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/workLink" }
+        },
+        "acceptance": {
+          "description": "Added in contract 1 by #2772, on every parsed record of a work kind whose work block names acceptance criteria. How many of the record's criteria passing evidence meets: evidence naming the criterion, with result pass and the criterion's verification, and for a manual criterion a by other than the implementer. Null when the record lists no criteria, so a record without them reads as before.",
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/workAcceptance" }]
+        },
+        "lease": {
+          "description": "Added in contract 1 by #2732, on every record of a work kind with an id, read in the working tree (absent under --at). The item's active work lease (chant workspace work claim), or null when nobody holds one live. Read from the local lease refs, refs/chant/lease/[_members/<member>/]work/<id> and the remote's as last fetched, of the ledger owning the work kind file; records never fetches.",
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/workLease" }]
         }
       },
       "allOf": [
@@ -70,6 +255,209 @@
           "else": { "properties": { "reasons": { "type": "array", "minItems": 1 } } }
         }
       ]
+    },
+    "workAcceptance": {
+      "type": "object",
+      "required": ["met", "total", "criteria"],
+      "properties": {
+        "met": { "type": "integer", "minimum": 0, "description": "How many criteria passing evidence meets." },
+        "total": { "type": "integer", "minimum": 0, "description": "How many criteria the record lists." },
+        "criteria": {
+          "type": "array",
+          "description": "Each criterion, in the record's order.",
+          "items": {
+            "type": "object",
+            "required": ["id", "verification", "met"],
+            "properties": {
+              "id": { "type": "string" },
+              "verification": { "enum": ["unit", "integration", "e2e", "runtime", "manual"], "description": "The verification the criterion expects." },
+              "met": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    },
+    "workLease": {
+      "type": "object",
+      "required": ["holder", "token", "acquiredAt", "expiresAt"],
+      "properties": {
+        "holder": { "type": "string", "description": "Who holds the lease, as --holder gave it." },
+        "token": { "type": "string", "description": "The fencing token: new on every claim, kept by every renew." },
+        "acquiredAt": { "type": "string", "description": "When the lease was claimed, ISO 8601." },
+        "expiresAt": { "type": "string", "description": "When the lease expires unless renewed, ISO 8601." }
+      }
+    },
+    "asset": {
+      "type": "object",
+      "required": ["path", "sha256", "actual", "state"],
+      "properties": {
+        "path": { "type": "string", "description": "From the workspace root (workspaceRoot), with / separators." },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "The hash the record pins." },
+        "actual": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$", "description": "The hash of the file's bytes in the tree read, or null when the file is missing." },
+        "state": { "enum": ["pinned", "drifted", "missing", "stale"], "description": "pinned when the hashes match; drifted when they differ (a warning asset-drift); missing when the file is not there (a warning asset-missing); stale when the hashes match and a record this one supersedes pinned the same hash, with the file unchanged since this record was recorded (a warning asset-stale)." }
+      }
+    },
+    "warning": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "enum": [
+            "asset-drift",
+            "asset-missing",
+            "asset-stale",
+            "record-supersedes-pending",
+            "record-no-evidence",
+            "review-undigested",
+            "source-transcript-drift",
+            "work-needs-unknown",
+            "work-implements-unknown",
+            "work-needs-cycle",
+            "work-implements-undecided",
+            "work-done-unpinned",
+            "work-closed-without-date",
+            "work-done-gap-open",
+            "work-acceptance-unmet",
+            "work-acceptance-self-verified",
+            "answer-points-unreadable",
+            "answer-point-unknown",
+            "answer-point-changed",
+            "record-unattested"
+          ]
+        },
+        "message": { "type": "string" }
+      }
+    },
+    "quorum": {
+      "description": "Added in contract 1 by #2671. The record's review verdicts counted against the quorum the workspace declares. A met quorum with an open concern is met with objections, never consensus: a reader shows consensus only when met is true and metWithObjections is false.",
+      "type": "object",
+      "required": ["need", "needFrom", "agreed", "counted", "notCounted", "openConcerns", "met", "metWithObjections"],
+      "properties": {
+        "need": { "type": "integer", "minimum": 0, "description": "How many counted agree verdicts, besides the decider's, the record needs: the declaration's quorum, or 2." },
+        "needFrom": { "enum": ["declaration", "default"], "description": "declaration when the workspace declaration in the tree read sets quorum; default otherwise, including when there is no declaration or it can't be read." },
+        "agreed": { "type": "integer", "minimum": 0, "description": "Counted verdicts whose verdict is agree." },
+        "counted": {
+          "description": "The verdicts that count: at most one per principal, the latest, in the order of the reviews list.",
+          "type": "array",
+          "items": { "allOf": [{ "$ref": "#/$defs/verdict" }, { "type": "object", "properties": { "reason": false } }] }
+        },
+        "notCounted": {
+          "description": "The verdicts that don't count, each with a reason.",
+          "type": "array",
+          "items": { "allOf": [{ "$ref": "#/$defs/verdict" }, { "type": "object", "required": ["reason"] }] }
+        },
+        "openConcerns": {
+          "description": "Every dissent with neither addressed_by nor withdrawn_on, counted or not.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/concern" }
+        },
+        "met": { "type": "boolean", "description": "agreed is at least need." },
+        "metWithObjections": { "type": "boolean", "description": "met, and openConcerns is not empty." }
+      }
+    },
+    "verdict": {
+      "type": "object",
+      "required": ["index", "principal", "reviewer", "verdict", "digest"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0, "description": "The entry's position in the record's reviews list, from 0." },
+        "principal": { "type": "string", "description": "The reviewer after NFKC normalisation, trimming and lower-casing, so alice and \"Alice \" are one principal." },
+        "reviewer": { "type": "string", "description": "The reviewer as the record writes it." },
+        "verdict": { "enum": ["agree", "dissent", "abstain"] },
+        "digest": { "type": ["string", "null"], "description": "The digest the verdict names, or null when it names none (a warning review-undigested on the record)." },
+        "attested": {
+          "type": ["boolean", "null"],
+          "description": "Added in contract 1 by #2687. true when the verdict's seal verifies for its reviewer against the signers file at base. false when a signers file is active at base and the verdict has no seal, or when a seal fails, with or without one. null when nothing here can say: no seal and no signers file, a seal checked with no signers file (its signature is intact, and nothing says whose key it is), or no ssh-keygen. Under an active signers file only true counts."
+        },
+        "attestation": {
+          "description": "Added in contract 1 by #2687. What the verdict's seal establishes, and why when it is not attested.",
+          "type": "object",
+          "required": ["message"],
+          "properties": {
+            "code": { "enum": ["seal-missing", "seal-signer-unlisted", "seal-signature-invalid", "seal-unverifiable"], "description": "Absent exactly when attested is true." },
+            "message": { "type": "string" },
+            "key": { "type": "string", "description": "The fingerprint of the key that made the signature, when the signature was checked." }
+          }
+        },
+        "reason": {
+          "description": "Why the verdict does not count. Present exactly on the entries in notCounted.",
+          "type": "object",
+          "required": ["code", "message"],
+          "properties": {
+            "code": { "enum": ["review-decider", "review-agent", "review-duplicate", "review-older-digest", "review-unattested"] },
+            "message": { "type": "string" }
+          }
+        }
+      }
+    },
+    "attestation": {
+      "description": "Added in contract 1 by #2688. What a record's author seal establishes, and why when it is not attested: the same shape as a verdict's attestation (#2687), which is kept inline in verdict.",
+      "type": "object",
+      "required": ["message"],
+      "properties": {
+        "code": { "enum": ["seal-missing", "seal-signer-unlisted", "seal-signature-invalid", "seal-unverifiable"], "description": "Absent exactly when attested is true." },
+        "message": { "type": "string" },
+        "key": { "type": "string", "description": "The fingerprint of the key that made the signature, when the signature was checked." }
+      }
+    },
+    "concern": {
+      "type": "object",
+      "required": ["index", "principal", "reviewer", "note"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "principal": { "type": "string" },
+        "reviewer": { "type": "string" },
+        "note": { "type": ["string", "null"], "description": "The dissent's reason." },
+        "proposes": { "type": "string", "description": "The proposed decision the dissent opened, when it names one." }
+      }
+    },
+    "citation": {
+      "type": "object",
+      "required": ["id", "path", "index", "reviewer", "verdict"],
+      "properties": {
+        "id": { "type": "string", "description": "The subject record's id." },
+        "path": { "type": "string", "description": "The subject record's path from the repository root, with / separators." },
+        "index": { "type": "integer", "minimum": 0, "description": "The entry's position in the subject's reviews list, from 0." },
+        "reviewer": { "type": ["string", "null"], "description": "The reviewer as the entry writes it, or null when it names none." },
+        "verdict": { "type": ["string", "null"], "description": "The verdict as the entry writes it, or null when it names none." }
+      }
+    },
+    "trust": {
+      "description": "Added in contract 1 by #2547. Where provenance was judged from: the policy read at the base revision, never the tree read.",
+      "type": "object",
+      "required": ["base", "baseFrom", "active", "signersPath", "problems"],
+      "properties": {
+        "base": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40,64}$", "description": "The full commit id the policy was read at, or null when there is no base." },
+        "baseFrom": { "enum": ["flag", "origin/HEAD", "main", "master", null], "description": "flag when --base was given; otherwise the target branch that was found." },
+        "active": { "type": "boolean", "description": "Whether a signers file exists at base. False means attestation is off and every record is unattested." },
+        "signersPath": { "type": "string", "description": "The signers file, relative to the repository root." },
+        "problems": { "type": "array", "items": { "type": "string" }, "description": "Why the policy could not be read. Nothing is attested when this is not empty." }
+      }
+    },
+    "provenance": {
+      "description": "Added in contract 1 by #2547. How far the record's authorship is established, judged by the signers at base.",
+      "type": "object",
+      "required": ["level", "commit", "reason"],
+      "properties": {
+        "level": {
+          "enum": ["attested", "attested-unverifiable-here", "adopted", "unattested"],
+          "description": "attested: the last commit to change the file is signed by a signer the policy at base lists. attested-unverifiable-here: it carries a signature nothing here can check. adopted: it lies in a commit range the policy adopts. unattested: none of these, including uncommitted content."
+        },
+        "commit": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40,64}$", "description": "The commit the record's content comes from, or null for uncommitted content." },
+        "attestor": { "type": "string", "description": "The attestor that answered, such as ssh-commit." },
+        "principal": { "type": "string", "description": "The signer, when attested." },
+        "key": { "type": "string", "description": "The signing key's fingerprint, when known." },
+        "reason": { "type": "string" },
+        "returned": {
+          "description": "Added in contract 1 by #2552. Set when the record's bytes came back in a return that carries the commit they were made in: level, principal and key then judge that commit, with the signers at base plus those admitted for the return, and commit is the commit here that holds the bytes. A signer neither lists reads as attested-unverifiable-here until an admin admits it.",
+          "type": "object",
+          "required": ["id", "importedIn"],
+          "properties": {
+            "id": { "type": "string", "pattern": "^ret-[0-9a-f]{12}$", "description": "The return, .chant/returns/<id>.json at the workspace root." },
+            "commit": { "type": "string", "pattern": "^[0-9a-f]{40,64}$", "description": "The commit in the returned copy that last changed the file." },
+            "importedIn": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40,64}$", "description": "The commit here that holds the returned bytes." }
+          }
+        }
+      }
     },
     "reason": {
       "type": "object",
@@ -81,7 +469,12 @@
             "record-schema-invalid",
             "record-id-duplicate",
             "record-supersedes-unknown",
-            "record-supersedes-conflict"
+            "record-supersedes-conflict",
+            "record-remediates-unknown",
+            "record-remediates-not-closed",
+            "record-seal-mismatch",
+            "session-seal-mismatch",
+            "session-verdict-unknown-record"
           ]
         },
         "message": { "type": "string" }

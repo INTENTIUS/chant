@@ -65,6 +65,17 @@ Tool calls on the stream become phases, so `--progress-json` and the human rende
 
 `chant run approve <op> <gate> --on fountain` writes the resolution to the gate ledger as always. It then posts `chant run <op>` to the steward, with `--approver` and `--url` on it. The sandbox re-runs the op and walks through the gate, reading the resolution back off the ledger. `--durable-requests` is reserved for answering fountain's own pending request instead; the endpoint it needs has not shipped, and the flag currently refuses by naming the upstream issue rather than reporting a resolution it did not make.
 
+### An Op a declared steward lists
+
+`chant run <op>` for an Op a [declared steward](/chant/lexicons/fountain/steward/) lists is one of that steward's turns, not a run beside one ([#2750](https://github.com/INTENTIUS/chant/issues/2750)). Which rule applies depends on the steward's form in the run's environment (`--env`, default `local`):
+
+- **`fountain`**: the run belongs on the steward's thread. Without `--on fountain`, it is refused outright, naming the command that posts it there instead of running it here, unaware of the steward's own turns.
+- **`local`**: the run takes the steward's turn lease, the same one a `chant operator --steward` round holds for the length of its own scheduled tick (`refs/chant/lease/_turns/<name>`). Held already, `chant run <op>` waits briefly for it to clear (long enough to ride out a race with a turn that is just ending, never long enough to sit through a whole one), then refuses, naming the steward and, where known, who holds the turn. It never queues past that wait. A round's own leases skip and report rather than wait, and fountain's busy teammate above is refused rather than retried; this follows the same rule. Wait for the turn to finish and re-run the command, or check `chant operator status --steward <name>`. If it looks stuck, stopping the operator process holding it (Ctrl-C, or killing it) frees the lease immediately, and its own TTL frees it either way.
+
+An Op the steward runs `beside` its turns ([#2861](https://github.com/INTENTIUS/chant/issues/2861)) is the exception in the local form. `chant run <op>` for it takes the Op's own lease, `refs/chant/lease/<op>`, as `--holder` or this process, and never the steward's turn, so it holds none of the steward's other Ops up. The lease is renewed while the run lasts and released when it ends. The operator starts no run of the Op while the lease is held, and a hand run while one is in flight is refused at once, naming the holder. See [`operator --steward`](/chant/cli/operator/#operator---steward-name).
+
+An Op no steward lists is untouched by any of this.
+
 ## Subcommands
 
 ### `run <name>`
@@ -79,7 +90,23 @@ chant run alb-deploy --on fountain
 
 A `gate` in the Op stops the run pending a resolution on the gate ledger. The run prints the gate's description and the `chant approve` line, and exits **3** — deliberately not 1, so a CI job can report "waiting on approval" rather than a failure. No phase after the gate runs, and no `onFailure` phase runs either: nothing failed, so there is nothing to compensate for. See [Gate-as-fact](/chant/guide/operator/#gate-as-fact).
 
+An activity that asks a [decision point](/chant/guide/decision-points/) whose question is still open, escalated to people or proposed by a model, stops the run the same way, with status `waiting` ([#2749](https://github.com/INTENTIUS/chant/issues/2749)). The run prints the question's id and the `chant workspace points answer` line, records the question on its ledger record as `point`, and exits **3**, which `--gated-exit` remaps too. No later step and no `onFailure` phase runs. Once a person has answered, the next run asks the same point with the same inputs and reads the answer.
+
+A step whose command stops at a gate of its own ends the run `gated` at that gate too, when the step names the command's gated exit code in `gatedExit` ([#2779](https://github.com/INTENTIUS/chant/issues/2779)). The run prints the `chant approve` line for the command's gate, for example `chant approve workspace-upgrade .`, and its ledger record names the gate with the op it is recorded under. See [Ops](/chant/guide/ops/#a-command-that-stops-at-its-own-gate).
+
 Recording the pending fact is two steps: an append to the local `chant/lifecycle` branch, then a push. The append always lands; that is a correct local answer on its own, and the run is right to gate on it even offline. The push can still fail (no remote configured, or the branch moved under it since the run started), and when it does the run stays gated rather than failing: nothing about the local fact was wrong. What changes is the report. The run prints a line naming the push failure and its reason, so the operator running it knows their `chant approve` from another checkout will not see anything to resolve until the fact actually reaches the remote. `--json` carries the same information as `pushed: false` and `pushWarning` alongside the record.
+
+#### Under a work item's lease: `--work`
+
+An Op that declares `workLease` runs its steps under one work item's [work lease](/chant/cli/workspace-work/) ([#2748](https://github.com/INTENTIUS/chant/issues/2748)). The run claims the lease before the steps it covers and renews it every third of its time to live while they run. One more renewal comes before the run is recorded. When the run ends the lease is released with its outcome: `done` after a completed run, `not_done` after a failed one and `gated` after a gate stopped it. A lease the heartbeat finds lost (it ran out and another worker claimed the item) stops the step in flight, and the run fails with a `workLease:lost` record that starts `lease-lost`. The run never releases a lease it lost. [Running under a work lease](/chant/guide/ops/#running-under-a-work-lease) covers the declaration.
+
+```bash
+chant run dispatch                    # the item the Op picks, or names
+chant run apply-build --work W-017    # an Op whose lease leaves the item to the run
+chant run apply-build --work W-017 --holder box-steward/apply-build@host
+```
+
+`--work <id>` takes the place of the Op's own item. An Op that leaves the item to the run is refused without it, and `--work` on an Op with no work lease is refused too. `--holder` names who holds the lease. Without it, an Op a steward lists is held as `<steward>/<op>@<process>`, the name `chant workspace status --json` uses to show the lease a steward's turn holds. Any other Op is held as this process. A run that finds the item held claims nothing, runs none of the leased steps, and exits 0 with the refusal on the claim's record, naming the holder. Both flags work on the local runtime only: a hosted run takes its lease where it executes.
 
 #### A gated run in CI: `--gated-exit`
 
@@ -158,7 +185,7 @@ chant run --components search-service --env staging
 chant run --components all --env production
 ```
 
-A `gate` anywhere in a component's composition stops that component pending `chant approve <component> <gate>`, exit 3, with no saga unwind and no `rollback` phase. The steps that ran before the gate are the steps the author meant to run before the approval.
+A `gate` anywhere in a component's composition stops that component pending `chant approve <component> <gate> --env <env>`, exit 3, with no saga unwind and no `rollback` phase. The steps that ran before the gate are the steps the author meant to run before the approval. The approval counts only for that environment and that plan, as [Gate approvals and environments](/chant/components/orchestration/#gate-approvals-and-environments) explains.
 
 `--param name=value` and `--params-file <path>` bind declared build-time parameters for the component build, with the same precedence as [`chant build`](/chant/cli/build/#build-time-parameters). `--sandbox` runs any project source the driver has to execute in one isolated child process; an Op with a `policyGate` step is refused under `--sandbox`, since that gate builds the project in the chant process.
 
@@ -169,6 +196,15 @@ A single-component run in one CI job can reference a component that ran in an ea
 ```bash
 chant run --components shared-alb --env staging --dump-outputs out/shared-alb.json
 chant run --components search-service --env staging --seed-outputs out/shared-alb.json
+```
+
+#### The recorded digest: `--digest-file`
+
+`--digest-file <file>` writes one `<component>=<digest>` line for each release the run recorded (see [Auto-recorded releases](#auto-recorded-releases)), after a successful run. The file is empty when the run recorded nothing, for example under `--no-release-record` or for a component with no publish step. The line is the form [`chant components promote --digest`](/chant/cli/components/#components-promote) takes, so a later job can promote the exact release this job built rather than whatever is latest in the environment. A pipeline from [`chant build --components --generate <lexicon> --promote-to <env>`](/chant/cli/build/#promote-job) uses it that way.
+
+```bash
+chant run --components search-service --env staging --digest-file search-service.digest
+chant components promote --from staging --to prod --digest "$(cat search-service.digest)"
 ```
 
 #### Streaming progress: `--progress-json`
@@ -204,7 +240,15 @@ Each file is written exactly as `generateOpsPipeline` returns it, with one line 
 # Generated by chant — do not edit directly. Regenerate with: chant run --generate github
 ```
 
-That line is the generated-file marker chant uses elsewhere, and it names the command, `--spec` included, that rewrites the file. Run the command from the repository root. GitHub files go to `.github/workflows/`, each with a `name:` that is its Op's name, so the Actions tab lists workflows by Op. Forgejo files to `.forgejo/workflows/`, and GitLab's single `ops.gitlab-ci.yml` (one job per Op) to the root, where the project's `.gitlab-ci.yml` includes it. `--output <dir>` writes somewhere else. `--format json` prints `{ files: [{ name, path, content }], jobs }` and writes nothing. An unknown Op name, a provider with no Op generator, or no scheduled Op and no `--spec` exits 1.
+That line is the generated-file marker chant uses elsewhere, and it names the command, `--spec` included, that rewrites the file. Run the command from the repository root. GitHub files go to `.github/workflows/` and Forgejo files to `.forgejo/workflows/`, each with a `name:` that is its Op's name, so the Actions tab lists workflows by Op. GitLab's single `ops.gitlab-ci.yml` (one job per Op) to the root, where the project's `.gitlab-ci.yml` includes it. `--output <dir>` writes somewhere else. `--format json` prints `{ files: [{ name, path, content }], jobs }` and writes nothing. An unknown Op name, a provider with no Op generator, or no scheduled Op and no `--spec` exits 1.
+
+#### Inside a workspace member
+
+When the command runs in a member of a [workspace](/chant/cli/workspace-init/), the files it writes are that member's. They go to the forge's directory at the repository root, not the member's. A GitHub or Forgejo file is named `<member>-<op>.yml`, and GitLab's is `.gitlab/ci/<member>-ops.gitlab-ci.yml`. The workflow's `name:` is `<member>/<op>`, and GitHub concurrency groups and GitLab job names start with the member's name.
+
+Each Op keeps the trigger its spec gives it, and no trigger is added. A `push` or `pull_request` trigger gets a path filter listing the member's directory and the file itself. On GitLab the filter is a `changes:` rule. A cron trigger has no paths to filter. The Op's job runs in the member's directory. GitHub and Forgejo get there through `defaults.run.working-directory`, and GitLab through a leading `cd`.
+
+The marker line names the command to run from the member's directory, and the member records each file in `.chant/generated.json` there, until [#2541](https://github.com/INTENTIUS/chant/issues/2541) moves that list into `chant.workspace.json`. `--format json` adds `member` and gives each file's path relative to the repository root.
 
 ## Auto-recorded releases
 
@@ -239,10 +283,13 @@ The `--no-release-record` flag always wins over config for that one invocation. 
 | `--env <name>` | Target [environment](/chant/configuration/config-file/#environments), threaded into every capability's context (`run --components`); defaults to `local` |
 | `--json` | Emit the run's ledger record as JSON on stdout (`run <name>`); the structured run result for `run --components` |
 | `--gated-exit <code>` | Exit code for a run that stopped at an unapproved gate, instead of the default 3. Only that outcome is remapped; a failure is still 1 |
+| `--work <id>` | The work item an Op with a `workLease` runs under, in place of the Op's own (`run <name>`, local runtime) |
+| `--holder <name>` | Who holds the run's work lease; `<steward>/<op>@<process>` for an Op a steward lists, this process's id otherwise (`run <name>`, local runtime) |
 | `--force` | Required for `run cancel` |
 | `--progress-json` | Stream one NDJSON progress record per line to stdout while the run executes |
 | `--dump-outputs <file>` | After the run, write the accumulated cross-component outputs as JSON to `file` (`run --components`) |
 | `--seed-outputs <file>` | Before the run, load outputs written by `--dump-outputs`; repeatable (`run --components`) |
+| `--digest-file <file>` | After a successful run, write one `<component>=<digest>` line per release the run recorded (`run --components`) |
 | `--param <name=value>` | Bind a declared build-time parameter for the component build; repeatable (`run --components`) |
 | `--params-file <path>` | JSON file of build-time parameter values (`run --components`) |
 | `--sandbox` | Execute project source in one isolated child process. Refuses an Op with a `policyGate` step |

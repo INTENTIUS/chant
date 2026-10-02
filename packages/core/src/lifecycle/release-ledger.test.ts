@@ -297,5 +297,25 @@ describe("release-ledger", () => {
         expect(records[0].runOrigin).toEqual(input.runOrigin);
       });
     });
+
+    test("a redeploy record round-trips and stays the current release (#2604)", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        const first = makeInput({ runId: "run-1", timestamp: "2026-01-01T00:00:00.000Z" });
+        const redeploy = makeInput({
+          runId: "run-2",
+          timestamp: "2026-01-02T00:00:00.000Z",
+          redeploys: { env: first.env, runId: "run-1", timestamp: "2026-01-01T00:00:00.000Z" },
+        });
+        await appendReleaseRecord(first, { cwd: dir });
+        await appendReleaseRecord(redeploy, { cwd: dir });
+        const { records, malformed } = await readReleaseLedger(first.env, { cwd: dir });
+        expect(malformed).toBe(0);
+        expect(records[1].redeploys).toEqual(redeploy.redeploys);
+        const current = latestPerComponent(records).get(first.component)!;
+        expect(current.runId).toBe("run-2");
+        expect(current.digest).toBe(first.digest);
+      });
+    });
   });
 });

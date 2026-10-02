@@ -55,6 +55,8 @@
 
 import type { ArtifactReproducibility, ProvenanceLink } from "./reproducibility";
 import { defaultReproducibility } from "./reproducibility";
+import { contentDigest } from "../../content-digest";
+import { canonicalJson } from "../../effect-receipt";
 
 export type BuildArchiveEntryKind = "image" | "template" | "asset" | "sbom";
 
@@ -129,6 +131,12 @@ export interface BuildArchiveManifest {
    * changed contents, not merely a re-run.
    */
   manifestDigest: string;
+  /**
+   * Set on read, never written: `["legacy-digest"]` when a manifest
+   * persisted on `chant/lifecycle` holds digests from the 32-bit hash chant
+   * used before real SHA-256 (#2514). See ../../lifecycle/legacy-digest.ts.
+   */
+  flags?: Array<"legacy-digest">;
 }
 
 /**
@@ -147,30 +155,28 @@ const DEFAULT_MEDIA_TYPES: Record<BuildArchiveEntryKind, string> = {
 };
 
 /**
- * Deterministic content digest over arbitrary string content. Same shape as
- * the FNV-ish fake digest `MockCloudExecutor` uses, so tests can assert on it
- * without a real `sha256` implementation. Exported so callers that need to
- * digest content that never goes through the `CloudExecutor` (e.g. a
- * synthesized template's serialized bytes, see ./build.ts's
- * `addArchiveTemplate`) share this one algorithm rather than each defining
- * their own. Production `image`/`asset` entries instead carry the real
- * digest their producing capability already computed (e.g. `docker-build`'s
- * `executor.docker.build` digest).
+ * The content digest every entry chant computes itself carries: real
+ * SHA-256 over the UTF-8 bytes of its input (../../content-digest.ts,
+ * chant #2514). Callers that digest content that never goes through the
+ * `CloudExecutor` (a synthesized template's serialized bytes, see ./build.ts's
+ * `addArchiveTemplate`, or an SBOM) use it. Production `image`/`asset`
+ * entries instead carry the digest their producing capability already
+ * computed (e.g. `docker-build`'s `executor.docker.build` digest).
  */
-export function contentDigest(input: string): string {
-  let hash = 0;
-  for (let i = 0; i < input.length; i++) {
-    hash = (Math.imul(hash, 31) + input.charCodeAt(i)) | 0;
-  }
-  const hex = Math.abs(hash).toString(16).padStart(8, "0");
-  return `sha256:${hex.repeat(8).slice(0, 64)}`;
-}
+export { contentDigest };
 
-/** Compute the aggregate `manifestDigest` over a set of entries — sorted by path so entry order never changes the digest, only content does. */
+/**
+ * Compute the aggregate `manifestDigest` over a set of entries. Each entry
+ * contributes its `kind`, `path` and `digest`; entries are sorted by path
+ * (UTF-16 code units, the order `canonicalJson` sorts keys in) so entry order
+ * never changes the digest, only content does. The list is hashed as
+ * `canonicalJson`, so no path or digest can be read as a field separator.
+ */
 export function computeManifestDigest(contents: BuildArchiveEntry[]): string {
-  const sorted = [...contents].sort((a, b) => a.path.localeCompare(b.path));
-  const canonical = sorted.map((e) => `${e.kind}:${e.path}:${e.digest}`).join("\n");
-  return contentDigest(canonical);
+  const sorted = contents
+    .map((e) => ({ kind: e.kind, path: e.path, digest: e.digest }))
+    .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  return contentDigest(canonicalJson(sorted));
 }
 
 /** Start a new, empty manifest for `component`. Entries are added with `addArchiveEntry`. */

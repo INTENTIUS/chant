@@ -183,6 +183,7 @@ export const terraformPlugin: LexiconPlugin = {
       roots,
       binary: namespace?.binary,
       callModuleType: namespace?.callModuleType,
+      moduleRoot: namespace?.moduleRoot,
     });
   },
 

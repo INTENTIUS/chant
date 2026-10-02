@@ -107,6 +107,23 @@ describe("gate approval — quorum (#2508)", () => {
     expect(port.appended).toHaveLength(0);
   });
 
+  // #2547: a gate still pending, and an approval given, under the bare sha256: prefix
+  // keep working once the run computes the same plan's digest as jcs1-sha256:.
+  test("a pending gate and an approval recorded under the bare prefix match the jcs1 digest of the same plan", async () => {
+    const jcs = `jcs1-${PLAN_A}`;
+    const block: ResolvedGateApproval = { quorum: { count: 1 }, mode: "log-only" };
+    const run = async (resolutions: GateResolutionRecord[]) => {
+      const port = memoryGateLedgerPort({ resolutions, pending: [{ ...PENDING, approval: block }] });
+      return { port, check: await evaluateGate(port, { op: "release", gate: "ship", planDigest: jcs, approval: block, now: NOW }) };
+    };
+    const approved = await run([approval({ resolvedBy: "alex", timestamp: "2026-09-01T01:00:00.000Z" })]);
+    expect(approved.check.satisfied).toBe(true);
+    // A standing fact is not rewritten just because the prefix moved.
+    const waiting = await run([]);
+    expect(waiting.check.satisfied).toBe(false);
+    expect(waiting.port.appended).toHaveLength(0);
+  });
+
   test("an approval older than the standing pending fact does not count", async () => {
     const { check } = await decide(
       [approval({ resolvedBy: "alex", timestamp: "2026-08-31T00:00:00.000Z" })],
@@ -168,6 +185,80 @@ describe("gate approval — policy decisions (#2508)", () => {
       [approval({
         resolvedBy: "release-bot", timestamp: "2026-09-01T01:00:00.000Z", approver: { kind: "agent" },
         policyDecision: { ...allow()!, version: gatePolicyVersion("permit (principal, action, resource);\n") },
+      })],
+      block,
+    );
+    expect(check.satisfied).toBe(false);
+  });
+
+  test("log-only then enforce: a permit recorded under log-only does not pass the enforced gate (#2512)", async () => {
+    const logOnly: ResolvedGateApproval = { policy: POLICY, mode: "log-only", context: { risk: "low" } };
+    const enforce: ResolvedGateApproval = { ...logOnly, mode: "enforce" };
+    // The pending fact was recorded while the gate was log-only, and the agent's allow was recorded against it.
+    const port = memoryGateLedgerPort({
+      resolutions: [approval({ resolvedBy: "release-bot", timestamp: "2026-09-01T01:00:00.000Z", approver: { kind: "agent" }, policyDecision: allow("log-only") })],
+      pending: [{ ...PENDING, approval: logOnly }],
+    });
+    const check = await evaluateGate(port, { op: "release", gate: "ship", planDigest: PLAN_A, approval: enforce, now: NOW });
+    expect(check.satisfied).toBe(false);
+
+    const tally = tallyGateApprovals(
+      [approval({ resolvedBy: "release-bot", timestamp: "2026-09-01T01:00:00.000Z", approver: { kind: "agent" }, policyDecision: allow("log-only") })],
+      "ship", PENDING.timestamp, PLAN_A, enforce,
+    );
+    expect(tally.permit).toBeUndefined();
+  });
+
+  test("log-only then enforce: a human's approval recorded under log-only still counts toward the quorum (#2512)", async () => {
+    const logOnly: ResolvedGateApproval = { quorum: { count: 1 }, policy: POLICY, mode: "log-only" };
+    const enforce: ResolvedGateApproval = { ...logOnly, mode: "enforce" };
+    const port = memoryGateLedgerPort({
+      resolutions: [approval({ resolvedBy: "alex", timestamp: "2026-09-01T01:00:00.000Z", policyDecision: allow("log-only") })],
+      pending: [{ ...PENDING, approval: logOnly }],
+    });
+    const check = await evaluateGate(port, { op: "release", gate: "ship", planDigest: PLAN_A, approval: enforce, now: NOW });
+    expect(check.satisfied).toBe(true);
+    if (!check.satisfied) return;
+    expect(check.via).toBe("quorum");
+    expect(check.resolution.resolvedBy).toBe("alex");
+  });
+
+  test("log-only then enforce: the gated run re-records the pending fact under enforce, and only a fresh permit passes (#2512)", async () => {
+    const logOnly: ResolvedGateApproval = { policy: POLICY, mode: "log-only", context: { risk: "low" } };
+    const enforce: ResolvedGateApproval = { ...logOnly, mode: "enforce" };
+    const stale = approval({ resolvedBy: "release-bot", timestamp: "2026-09-01T01:00:00.000Z", approver: { kind: "agent" }, policyDecision: allow("log-only") });
+    const port = memoryGateLedgerPort({ resolutions: [stale], pending: [{ ...PENDING, approval: logOnly }] });
+
+    const first = await evaluateGate(port, { op: "release", gate: "ship", planDigest: PLAN_A, approval: enforce, now: NOW });
+    expect(first.satisfied).toBe(false);
+    if (first.satisfied) return;
+    // The standing fact described the log-only gate, so a fresh one carries
+    // enforce, and `chant approve` evaluates the next agent approval under it.
+    expect(first.recorded).toBe(true);
+    expect(first.pending.approval?.mode).toBe("enforce");
+
+    // Re-running without a new approval still waits: the stale permit predates the new pending fact as well.
+    const again = await evaluateGate(port, { op: "release", gate: "ship", planDigest: PLAN_A, approval: enforce, now: "2026-09-01T12:30:00.000Z" });
+    expect(again.satisfied).toBe(false);
+
+    const fresh = approval({ resolvedBy: "release-bot", timestamp: "2026-09-01T13:00:00.000Z", approver: { kind: "agent" }, policyDecision: allow("enforce") });
+    const after = await evaluateGate(
+      memoryGateLedgerPort({ resolutions: [stale, fresh], pending: [first.pending] }),
+      { op: "release", gate: "ship", planDigest: PLAN_A, approval: enforce, now: "2026-09-01T14:00:00.000Z" },
+    );
+    expect(after.satisfied).toBe(true);
+    if (!after.satisfied) return;
+    expect(after.via).toBe("policy");
+    expect(after.resolution.timestamp).toBe(fresh.timestamp);
+  });
+
+  test("enforce: a recorded decision with no mode does not pass the gate (#2512)", async () => {
+    const block: ResolvedGateApproval = { policy: POLICY, mode: "enforce" };
+    const { mode: _mode, ...noMode } = allow()!;
+    const { check } = await decide(
+      [approval({
+        resolvedBy: "release-bot", timestamp: "2026-09-01T01:00:00.000Z", approver: { kind: "agent" },
+        policyDecision: noMode as GateResolutionRecord["policyDecision"],
       })],
       block,
     );

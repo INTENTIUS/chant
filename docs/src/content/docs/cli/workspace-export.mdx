@@ -1,0 +1,149 @@
+---
+title: "chant workspace export"
+description: Export members of a workspace with their lineage and records, bring a copy back, and admit the signers of a return
+diataxis: reference
+---
+
+## Synopsis
+
+```
+chant workspace export [<member>[,<member>...]] [--to <export member>] [--param name=value] [--dry-run] [--json]
+chant workspace import [<dir>] [--remove] [--dry-run] [--json]
+chant workspace admit <return id> [--note <text>] [--dry-run] [--json]
+```
+
+## Description
+
+`chant workspace export` writes members of the workspace into its export member, as a workspace of their own that can be copied anywhere. `chant workspace import` brings such a copy back, merging per file. `chant workspace admit` lets the trust policy verify work that was signed while the copy was away. The three need a `chant.workspace.json` and run from the workspace root or below it. The design is D10 of [#2524](https://github.com/INTENTIUS/chant/issues/2524), with decisions [ws-004](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-004-hosted-return.md) and [ws-073](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-073-export-import-return.md), tracked in [#2552](https://github.com/INTENTIUS/chant/issues/2552).
+
+## The export member
+
+An export goes into a member of its own, a member of kind `workspace` with the role `export`, declared like this.
+
+```json
+{ "name": "out", "dir": "out", "kind": "workspace", "roles": ["export"] }
+```
+
+When several members have the role, `--to <member>` names one. The export member is a nested workspace. The outer workspace reads it only through its own commands, and `export` is the only command that writes there.
+
+The export refuses a layout where the export member sits inside another member, or another member sits inside it. It writes into an empty directory, or over an earlier export, which it recognises by its `.chant/export.json`. A directory holding anything else is refused.
+
+## What goes
+
+Only members whose declaration entry sets `"travel": true` go ([`travel`](/chant/reference/workspace-declaration/#members)). Naming a member that does not set it is refused.
+
+| Command | What goes |
+|---|---|
+| `chant workspace export` | every member that travels, plus the workspace's own [record kinds](/chant/reference/workspace-declaration/#record-kinds), with the directories that hold each kind file and its records |
+| `chant workspace export app,design` | those members, each with the record kinds it declares |
+
+The export keeps the workspace's layout, so a member at `app/` is at `out/app/`. The table lists what it holds.
+
+| File | Content |
+|---|---|
+| each member's files | the files git tracks or would track, copied byte for byte. A member nested inside one that goes is left out unless it goes too |
+| records | copied byte for byte, so every seal on them stays as it was |
+| `chant.workspace.json` | the host's declaration with the members that went, each entry as written. Links, agent sessions and path pins that name members that stayed are left out, and so are the workspace's diagrams and, for named members, its own record kinds |
+| lineage locks | each scope's lineage, filtered to the files that went. A member's own lock goes with the member, and the root lock goes at the export's root |
+| `.chant/export.json` | the manifest: the workspace's name and the revision it was exported at, the members and directories that went, each file's SHA-256 here and in the export, each lineage scope's digest on both sides, the host values switched, and what the declaration left out |
+
+```
+$ chant workspace export --param domain=copy.example.test
+exp-3f0c9a1d2b7e  workspace app -> out (out)
+  14 file(s), 1 lock(s), record directories decisions
+  host values switched in: app/config.txt
+  left out of the export's declaration: link app -> ops
+✓ wrote the export into out. It is a workspace of its own; copy it where it goes, and bring it back with chant workspace import.
+```
+
+A warning says when exported paths have uncommitted changes, since the manifest records HEAD.
+
+## Host values
+
+A template parameter marked [`hostBound`](/chant/cli/init/#template-manifest) holds a value that differs per host, such as the domain a hosted service serves the app on. `chant init --from` records, in the lock's [`hostBound`](/chant/reference/lineage-lock/#a-lineage), the files whose template text carries it. `--param name=value` gives the parameter its value in the export. The listed files get the new value in place of the recorded one, the export's lock records it, and a file that still had its recorded hash gets the hash of its new content. `--param` for a name no exported lineage marks host-bound is refused. So is a switch in a file a decision record pins by hash, since the pin and the record's seal would break.
+
+The manifest keeps both values, and `import` switches them back.
+
+## Import
+
+`chant workspace import` reads `.chant/export.json` from `<dir>`, or from the export member when no directory is given. The export must come from this workspace, by name, and every member that went must still be declared.
+
+For each file it compares three hashes: the file's hash in the manifest (on both sides), its hash in the copy, and its hash here.
+
+| The copy | Here | Import |
+|---|---|---|
+| unchanged | anything | leaves it |
+| changed, added or removed | unchanged since the export | writes or removes it |
+| changed | changed the same way | leaves it |
+| changed | changed differently | conflict |
+
+Before comparing, host values go back into the files the lineage lists. Each lineage scope merges the same way, with its digest. A scope only part of which went takes the copy's file entries, and a copy that upgraded such a scope is a conflict: upgrade it here instead.
+
+Any conflict refuses the whole import, and nothing is written. So does a file in the copy outside the members and directories that went, because import never writes into another member. `--dry-run` prints the plan and writes nothing.
+
+```
+$ chant workspace import ../acme-copy
+exp-3f0c9a1d2b7e from /home/me/acme-copy
+  write   app/server.txt
+  write   decisions/acme-004-cache.md
+  return  ret-91b0c4e2a7d3: 2 file(s) carry the commit they were made in, signed by bob@example.com (SHA256:Vq...)
+  member  out regenerated: exp-7c21e0d94b5a, 15 file(s)
+✓ imported, and recorded the return in .chant/returns/ret-91b0c4e2a7d3.json. Review and commit it. ...
+```
+
+Afterwards the export member is written again from the workspace as it now stands. With `--remove` it is removed instead, along with its entry in `chant.workspace.json`. A `.jsonc` declaration keeps its comments, so import leaves that entry for you to remove.
+
+## Hosted return
+
+Every import that changes something writes a return record, `.chant/returns/<id>.json` at the workspace root. It names the export the copy started from and the copy's HEAD, and lists every path written or removed with the hash of its bytes.
+
+When `<dir>` is a git repository of its own, each written file whose bytes are the copy's also carries its origin: the raw commit object that last changed it there, and the raw tree objects that lead from that commit's root tree to the file. The commit id is the hash of the object that holds the signature, and each tree id the hash of the tree that names the next, so anyone can check offline that the commit, with the signature its author made, holds exactly these bytes. Nothing is signed again. A file whose host values were switched back holds other bytes than the copy's, so it carries no origin and counts as the importer's.
+
+[`chant workspace records`](/chant/cli/workspace-records/#provenance) judges a record with an origin by that commit, using the [attestors](/chant/cli/workspace-verify/) and the policy at base.
+
+| The origin commit is signed by | Provenance |
+|---|---|
+| a signer the signers file lists, or one admitted for this return | `attested`, with that principal |
+| an ssh key neither lists | `attested-unverifiable-here` |
+| nothing, or a signature that does not check | `unattested` |
+
+`provenance.returned` names the return, the origin commit and the commit here that holds the record. A record's seals are kept byte for byte, and a seal by a signer neither lists reads as `seal-unverifiable`.
+
+### Admitting the signers
+
+The return record lists the ssh keys that signed its origin commits, each with its fingerprint and the committer's email as a suggested principal. An admin admits them with `chant workspace admit`.
+
+```
+$ chant workspace admit ret-91b0c4e2a7d3 --note "returned from the studio"
+  admit bob@example.com  ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI...
+✓ added 1 signer(s) for ret-91b0c4e2a7d3 to .chant/trust.json. Check each principal, then commit it signed: ...
+```
+
+The admission is an entry under `admitted` in `.chant/trust.json` at the repository root, naming the return and its keys. That file is policy, read at base, and changing it is a [protected write](/chant/cli/workspace-verify/#what-it-checks). The admin's signed commit is therefore the signed admission, and it counts once merged to the base branch. Edit a principal before committing when the committer's email is not the name the policy should use. An admitted key verifies only the commits and seals of its return, never a commit made in the repository itself.
+
+## Options
+
+| Flag | Command | Meaning |
+|---|---|---|
+| `<member>[,<member>...]` | export | The members to export. Without it, every member that travels and the workspace's own records. |
+| `--to <member>` | export | The export member, when more than one has the role `export`. |
+| `--param name=value` | export | A host-bound parameter's value in the export. Repeatable. |
+| `<dir>` | import | The returned copy. Defaults to the export member. |
+| `--remove` | import | Remove the export member and its declaration entry instead of writing it again. |
+| `<return id>` | admit | The return, `ret-<12 hex>`, whose signers to admit. |
+| `--note <text>` | admit | A note on the admission entry. |
+| `--dry-run` | all | Print what would happen and write nothing. |
+| `--json` | all | Print the result as JSON. |
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | Done, or nothing to do. |
+| 1 | Refused: no export member, a member that does not travel, a conflict, a file outside the members that went, or an unreadable declaration, manifest or lock. |
+
+## See also
+
+- [chant workspace adopt-lineage](/chant/cli/workspace-adopt-lineage/), for a copy made by hand
+- [chant workspace verify](/chant/cli/workspace-verify/), for the trust policy
+- [Lineage Lock](/chant/reference/lineage-lock/)

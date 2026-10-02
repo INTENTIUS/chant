@@ -58,7 +58,13 @@ export function parseComposeSpec(_data: Buffer): ComposeParseResult[] {
         { name: "healthcheck", type: "object", description: "Health check configuration" },
         { name: "deploy", type: "object", description: "Swarm deployment configuration" },
         { name: "secrets", type: "string[]", description: "Secrets to expose" },
-        { name: "configs", type: "string[]", description: "Configs to expose" },
+        {
+          name: "configs",
+          // Short form names a top-level config; long form also sets where it
+          // is mounted. `source` may be the DockerConfig entity itself.
+          type: "Array<string | { source: string | Declarable; target?: string; uid?: string; gid?: string; mode?: number }>",
+          description: "Configs to expose (short form, or long form with a mount target)",
+        },
       ],
     },
     {
@@ -95,6 +101,7 @@ export function parseComposeSpec(_data: Buffer): ComposeParseResult[] {
       isResource: true,
       properties: [
         { name: "file", type: "string", description: "Path to the config file" },
+        { name: "content", type: "string", description: "Inline config content" },
         { name: "external", type: "boolean", description: "Whether the config is external" },
         { name: "labels", type: "Record<string, string>", description: "Config labels" },
         { name: "name", type: "string", description: "Custom config name" },

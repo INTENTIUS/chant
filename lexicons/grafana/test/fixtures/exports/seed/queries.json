@@ -1,0 +1,694 @@
+{
+  "uid": "chant-fx-queries",
+  "title": "Query types",
+  "tags": [
+    "chant-fixture"
+  ],
+  "schemaVersion": 39,
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "templating": {
+    "list": []
+  },
+  "panels": [
+    {
+      "type": "timeseries",
+      "id": 1,
+      "title": "Elasticsearch: errors over time",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "elasticsearch",
+        "uid": "es"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "es"
+          },
+          "query": "level:error AND service:checkout",
+          "alias": "",
+          "timeField": "@timestamp",
+          "metrics": [
+            {
+              "id": "1",
+              "type": "count"
+            },
+            {
+              "id": "3",
+              "type": "avg",
+              "field": "duration_ms"
+            }
+          ],
+          "bucketAggs": [
+            {
+              "id": "2",
+              "type": "date_histogram",
+              "field": "@timestamp",
+              "settings": {
+                "interval": "auto",
+                "min_doc_count": "0",
+                "trimEdges": "0"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "id": 2,
+      "title": "Elasticsearch: slow requests",
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "elasticsearch",
+        "uid": "es"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "es"
+          },
+          "query": "duration_ms:>1000",
+          "timeField": "@timestamp",
+          "metrics": [
+            {
+              "id": "1",
+              "type": "raw_data",
+              "settings": {
+                "size": "500"
+              }
+            }
+          ],
+          "bucketAggs": []
+        }
+      ]
+    },
+    {
+      "type": "logs",
+      "id": 3,
+      "title": "Elasticsearch: logs",
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "elasticsearch",
+        "uid": "es"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "es"
+          },
+          "query": "service:checkout",
+          "timeField": "@timestamp",
+          "metrics": [
+            {
+              "id": "1",
+              "type": "logs"
+            }
+          ],
+          "bucketAggs": []
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 4,
+      "title": "CloudWatch: Lambda errors",
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "cloudwatch"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "cloudwatch"
+          },
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "namespace": "AWS/Lambda",
+          "metricName": "Errors",
+          "dimensions": {
+            "FunctionName": "checkout"
+          },
+          "statistic": "Sum",
+          "period": "",
+          "region": "default",
+          "id": "",
+          "expression": "",
+          "matchExact": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "cloudwatch"
+          },
+          "queryMode": "Metrics",
+          "metricQueryType": 1,
+          "metricEditorMode": 1,
+          "region": "us-east-1",
+          "id": "",
+          "sqlExpression": "SELECT AVG(CPUUtilization) FROM SCHEMA(\"AWS/EC2\", InstanceId) GROUP BY InstanceId",
+          "namespace": "",
+          "statistic": "Average",
+          "period": "",
+          "expression": "",
+          "matchExact": true
+        }
+      ]
+    },
+    {
+      "type": "logs",
+      "id": 5,
+      "title": "CloudWatch: Logs Insights",
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "cloudwatch"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "cloudwatch"
+          },
+          "queryMode": "Logs",
+          "region": "default",
+          "id": "",
+          "queryLanguage": "CWLI",
+          "expression": "fields @timestamp, @message | filter @message like /ERROR/ | sort @timestamp desc | limit 20",
+          "logGroups": [
+            {
+              "arn": "arn:aws:logs:us-east-1:123456789012:log-group:/aws/lambda/checkout",
+              "name": "/aws/lambda/checkout"
+            }
+          ],
+          "statsGroups": []
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 6,
+      "title": "Azure Monitor: VM CPU",
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "grafana-azure-monitor-datasource",
+        "uid": "azure"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "azure"
+          },
+          "queryType": "Azure Monitor",
+          "subscription": "00000000-0000-0000-0000-000000000000",
+          "azureMonitor": {
+            "resources": [
+              {
+                "subscription": "00000000-0000-0000-0000-000000000000",
+                "resourceGroup": "rg-checkout",
+                "resourceName": "vm-checkout-1",
+                "metricNamespace": "microsoft.compute/virtualmachines",
+                "region": "eastus"
+              }
+            ],
+            "metricNamespace": "microsoft.compute/virtualmachines",
+            "metricName": "Percentage CPU",
+            "aggregation": "Average",
+            "timeGrain": "auto",
+            "allowedTimeGrainsMs": [],
+            "dimensionFilters": [],
+            "top": "10"
+          }
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "id": 7,
+      "title": "Azure Monitor: Log Analytics",
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "grafana-azure-monitor-datasource",
+        "uid": "azure"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "azure"
+          },
+          "queryType": "Azure Log Analytics",
+          "azureLogAnalytics": {
+            "query": "AppRequests\n| where $__timeFilter(TimeGenerated)\n| summarize count() by bin(TimeGenerated, 5m), ResultCode",
+            "resources": [
+              "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-checkout/providers/Microsoft.OperationalInsights/workspaces/ws-checkout"
+            ],
+            "resultFormat": "table",
+            "dashboardTime": true,
+            "timeColumn": "TimeGenerated"
+          }
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "id": 8,
+      "title": "Azure Resource Graph: VMs",
+      "gridPos": {
+        "x": 12,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "grafana-azure-monitor-datasource",
+        "uid": "azure"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-azure-monitor-datasource",
+            "uid": "azure"
+          },
+          "queryType": "Azure Resource Graph",
+          "subscriptions": [
+            "00000000-0000-0000-0000-000000000000"
+          ],
+          "azureResourceGraph": {
+            "query": "Resources | where type =~ 'microsoft.compute/virtualmachines' | project name, location",
+            "resultFormat": "table"
+          }
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 9,
+      "title": "Cloud Monitoring: CPU",
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "stackdriver",
+        "uid": "gcm"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "stackdriver",
+            "uid": "gcm"
+          },
+          "queryType": "timeSeriesList",
+          "timeSeriesList": {
+            "projectName": "my-project",
+            "filters": [
+              "metric.type",
+              "=",
+              "compute.googleapis.com/instance/cpu/utilization"
+            ],
+            "crossSeriesReducer": "REDUCE_MEAN",
+            "perSeriesAligner": "ALIGN_MEAN",
+            "alignmentPeriod": "cloud-monitoring-auto",
+            "groupBys": [
+              "resource.label.zone"
+            ],
+            "view": "FULL"
+          },
+          "aliasBy": "{{resource.label.zone}}"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "stackdriver",
+            "uid": "gcm"
+          },
+          "queryType": "promQL",
+          "promQLQuery": {
+            "projectName": "my-project",
+            "expr": "sum(rate(kubernetes_io:container_cpu_core_usage_time[5m]))",
+            "step": "10s"
+          }
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "id": 10,
+      "title": "Cloud Monitoring: SLO",
+      "gridPos": {
+        "x": 12,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "stackdriver",
+        "uid": "gcm"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "stackdriver",
+            "uid": "gcm"
+          },
+          "queryType": "slo",
+          "sloQuery": {
+            "projectName": "my-project",
+            "selectorName": "select_slo_health",
+            "serviceId": "checkout",
+            "serviceName": "checkout",
+            "sloId": "availability",
+            "sloName": "Availability",
+            "alignmentPeriod": "cloud-monitoring-auto",
+            "perSeriesAligner": "ALIGN_MEAN",
+            "lookbackPeriod": ""
+          }
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 11,
+      "title": "BigQuery: orders per hour",
+      "gridPos": {
+        "x": 0,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "grafana-bigquery-datasource",
+        "uid": "bigquery"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-bigquery-datasource",
+            "uid": "bigquery"
+          },
+          "format": 1,
+          "rawQuery": true,
+          "editorMode": "code",
+          "location": "US",
+          "project": "my-project",
+          "dataset": "shop",
+          "table": "orders",
+          "rawSql": "SELECT TIMESTAMP_TRUNC(created_at, HOUR) AS time, COUNT(*) AS orders FROM `my-project.shop.orders` WHERE $__timeFilter(created_at) GROUP BY time ORDER BY time"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 12,
+      "title": "Pyroscope: CPU by service",
+      "gridPos": {
+        "x": 12,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "grafana-pyroscope-datasource",
+        "uid": "pyroscope"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-pyroscope-datasource",
+            "uid": "pyroscope"
+          },
+          "queryType": "metrics",
+          "profileTypeId": "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+          "labelSelector": "{service_name=\"checkout\"}",
+          "groupBy": [
+            "service_name"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 13,
+      "title": "PostgreSQL: orders",
+      "gridPos": {
+        "x": 0,
+        "y": 48,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "postgres"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "postgres"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT $__timeGroupAlias(created_at, '5m'), count(*) AS orders FROM orders WHERE $__timeFilter(created_at) GROUP BY 1 ORDER BY 1"
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "id": 14,
+      "title": "PostgreSQL: top customers",
+      "gridPos": {
+        "x": 12,
+        "y": 48,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "postgres"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "postgres"
+          },
+          "editorMode": "builder",
+          "format": "table",
+          "rawQuery": true,
+          "dataset": "shop",
+          "table": "orders",
+          "rawSql": "SELECT customer_id, SUM(total) FROM orders GROUP BY customer_id ORDER BY SUM(total) DESC LIMIT 10 ",
+          "sql": {
+            "columns": [
+              {
+                "type": "function",
+                "parameters": [
+                  {
+                    "type": "functionParameter",
+                    "name": "customer_id"
+                  }
+                ]
+              },
+              {
+                "type": "function",
+                "name": "SUM",
+                "parameters": [
+                  {
+                    "type": "functionParameter",
+                    "name": "total"
+                  }
+                ]
+              }
+            ],
+            "groupBy": [
+              {
+                "type": "groupBy",
+                "property": {
+                  "type": "string",
+                  "name": "customer_id"
+                }
+              }
+            ],
+            "orderBy": {
+              "type": "property",
+              "property": {
+                "type": "string",
+                "name": "SUM(total)"
+              }
+            },
+            "orderByDirection": "DESC",
+            "limit": 10
+          }
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 15,
+      "title": "MySQL: signups",
+      "gridPos": {
+        "x": 0,
+        "y": 56,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "mysql",
+        "uid": "mysql"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "mysql",
+            "uid": "mysql"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT $__timeGroupAlias(created_at, 1h), COUNT(*) AS signups FROM users WHERE $__timeFilter(created_at) GROUP BY 1 ORDER BY 1"
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "id": 16,
+      "title": "SQL Server: deadlocks",
+      "gridPos": {
+        "x": 12,
+        "y": 56,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "mssql",
+        "uid": "sqlserver"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "mssql",
+            "uid": "sqlserver"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT TOP 20 event_time, database_name, deadlock_graph FROM dbo.deadlocks WHERE $__timeFilter(event_time) ORDER BY event_time DESC"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 17,
+      "title": "Mixed: latency with exemplars, GCM PromQL and log rate",
+      "gridPos": {
+        "x": 0,
+        "y": 64,
+        "w": 24,
+        "h": 8
+      },
+      "datasource": {
+        "type": "datasource",
+        "uid": "-- Mixed --"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom"
+          },
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{service=\"checkout\"}[$__rate_interval])))",
+          "exemplar": true,
+          "legendFormat": "p99"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "stackdriver",
+            "uid": "gcm"
+          },
+          "queryType": "promQL",
+          "promQLQuery": {
+            "projectName": "my-project",
+            "expr": "histogram_quantile(0.99, sum by (le) (rate(loadbalancing_googleapis_com:https_total_latencies_bucket[5m])))",
+            "step": "10s"
+          }
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "sum(rate({service=\"checkout\"} |= \"error\" [$__auto]))",
+          "queryType": "range"
+        }
+      ]
+    }
+  ]
+}

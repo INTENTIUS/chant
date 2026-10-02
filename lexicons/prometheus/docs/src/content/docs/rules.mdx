@@ -1,0 +1,41 @@
+---
+title: "All Rules"
+description: "Every lint rule and post-synth check provided by the Prometheus lexicon"
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-prometheus` — DO NOT EDIT.
+    Edit lexicons/prometheus/src/codegen/docs.ts instead; changes here are overwritten. */}
+
+The Prometheus lexicon provides **20** rules: 3 lint rules and 17 post-synth checks.
+
+## Lint Rules
+
+| ID | Severity | Category | Description |
+|----|----------|----------|-------------|
+| `PROM001` | error | security | a credential written as a literal in a `Receiver` or |
+| `PROM002` | error | correctness | a rule's `expr`, written as a string literal inside a |
+| `PROM003` | error | correctness | an `Slo` whose literal objective, window or SLI expression can |
+
+## Post-Synth Checks
+
+Post-synth checks validate the serialized output after the build pipeline completes.
+
+| ID | Description |
+|----|-------------|
+| `PROM101` | Two rule groups in one rule file share a name |
+| `PROM102` | Two rules share a name and label set |
+| `PROM103` | A rule or group duration is not a Prometheus duration |
+| `PROM104` | A rule expression is not valid PromQL |
+| `PROM105` | A rule or group is malformed |
+| `PROM106` | An alerting rule has no severity label |
+| `PROM107` | An alerting rule has no summary or description annotation |
+| `PROM201` | A route sends to a receiver that is not declared |
+| `PROM202` | An alert severity is not routed by any route |
+| `PROM203` | Two receivers or two time intervals share a name |
+| `PROM204` | A route names a time interval that is not declared |
+| `PROM205` | The root route is missing, has no receiver, or has matchers |
+| `PROM206` | A route or inhibit rule matcher does not parse |
+| `PROM207` | A receiver is declared but no route sends to it |
+| `PROM208` | An Alertmanager duration is not a duration |
+| `PROM209` | A receiver integration is missing its destination or credential |
+| `PROM210` | A receiver integration or global setting is one Alertmanager rejects |

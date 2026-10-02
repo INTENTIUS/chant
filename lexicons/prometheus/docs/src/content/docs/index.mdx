@@ -1,0 +1,69 @@
+---
+title: "Prometheus"
+description: "Typed Prometheus rule groups and Alertmanager routing"
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-prometheus` — DO NOT EDIT.
+    Edit lexicons/prometheus/src/codegen/docs.ts instead; changes here are overwritten. */}
+
+The prometheus lexicon types [Prometheus](https://prometheus.io/) recording and
+alerting rules and [Alertmanager](https://prometheus.io/docs/alerting/latest/alertmanager/)
+routing. `chant build` emits the rule file Prometheus loads through
+`rule_files:`, and the `alertmanager.yml` Alertmanager reads.
+
+```ts
+import { RuleGroup, Route, Receiver } from "@intentius/chant-lexicon-prometheus";
+
+export const api = new RuleGroup({
+  name: "api",
+  rules: [
+    { record: "job:http_errors:ratio5m", expr: 'sum by (job) (rate(http_requests_total{code=~"5.."}[5m])) / sum by (job) (rate(http_requests_total[5m]))' },
+    { alert: "ApiErrors", expr: "job:http_errors:ratio5m > 0.05", for: "10m", labels: { severity: "page" }, annotations: { summary: "5xx ratio above 5%" } },
+  ],
+});
+
+export const oncall = new Receiver({ name: "oncall", pagerduty_configs: [{ routing_key_file: "/etc/alertmanager/secrets/pd-key" }] });
+export const fallback = new Receiver({ name: "fallback", webhook_configs: [{ url: "http://alert-sink:8080/" }] });
+export const root = new Route({ receiver: fallback, group_by: ["alertname", "job"], routes: [{ matchers: ['severity="page"'], receiver: oncall }] });
+```
+
+The same `RuleGroup` renders into a Prometheus Operator `PrometheusRule`
+through the k8s lexicon, so rules are declared once whichever way Prometheus
+loads them.
+
+The `Slo` composite builds a service level objective to a `RuleGroup`:
+error ratios per window, the error budget left, and the SRE Workbook's
+multiwindow multi-burn-rate alerts. See [SLOs](./slos/).
+
+The `GenAiRules` composite builds recording rules, opt-in alerts and spend
+from a declared price table for the otel lexicon's GenAI collector preset,
+reading every metric name from its `GenAiMetrics`. See
+[GenAI Rules](./genai-rules/).
+
+Checks run at build time: PromQL syntax in every `expr` (PROM104), unique
+group names (PROM101), valid durations (PROM103), routes that name
+declared receivers (PROM201), and every alert severity routed by some route
+(PROM202). `promtool check rules` and `amtool check-config` are wrapped as
+helpers for tests and CI, and run when installed.
+
+`chant import` turns an existing rule file or `alertmanager.yml` into this
+TypeScript, and `chant build` on the result gives the file back (see
+Importing Rule Files and alertmanager.yml).
+
+
+## At a Glance
+
+| Metric | Count |
+|--------|-------|
+| Resources | 6 |
+| Property types | 0 |
+| Services | 2 |
+| Intrinsic functions | 0 |
+| Pseudo-parameters | 0 |
+| Lint rules | 20 |
+
+**Lexicon version:** 0.101.0  
+**Namespace:** `Prometheus`
+
+- [All Rules](./rules) — 20 rules
+- [Serialization](./serialization) — output format details

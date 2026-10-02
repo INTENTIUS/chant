@@ -41,7 +41,7 @@
 import { z } from "zod";
 import { outcomeAttributesOf } from "./types";
 import type { OpConfig, PhaseDefinition, ActivityStep, StepDefinition } from "./types";
-import { ACTIVITY_PROFILE_NAMES } from "./activity-profiles";
+import { ACTIVITY_PROFILE_NAMES, stepTimeoutProblem } from "./activity-profiles";
 
 /**
  * Every literal value {@link ActivityStep.profile} may hold, read off
@@ -237,6 +237,7 @@ export function primitiveKindOf(schema: z.ZodTypeAny): PrimitiveSchemaKind | und
  *
  * Catches the four failure classes chant #1288 names:
  *  - an unrecognized `profile` (checked against {@link KNOWN_ACTIVITY_PROFILES}, independent of whether `fn` has a contract),
+ *  - a step's own `timeout` that is not a duration, or is longer than `MAX_STEP_TIMEOUT` (#2787),
  *  - an args key the declared schema doesn't recognize,
  *  - an args value of the wrong type (including a required key that's missing),
  *  - an `outcomeAttribute.from` path that can't exist on the declared return type.
@@ -257,6 +258,10 @@ export function validateActivitySteps(
           fn: step.fn,
           message: `unknown profile "${step.profile}" (known: ${KNOWN_ACTIVITY_PROFILES.join(", ")})`,
         });
+      }
+      if (step.timeout !== undefined) {
+        const problem = stepTimeoutProblem(step.timeout);
+        if (problem) issues.push({ opName: config.name, phase: phase.name, fn: step.fn, message: problem });
       }
 
       const contract = contracts.get(step.fn);

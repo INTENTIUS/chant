@@ -34,12 +34,15 @@
  *     normalized to a JSON string here.
  */
 
-import { readdirSync, readFileSync, statSync } from "fs";
+import { readFileSync, statSync } from "fs";
 import { basename, join, relative, resolve } from "path";
 import { parseYAML } from "../yaml";
 import type { LexiconPlugin } from "../lexicon";
 import type { AuditInput, AuditLexicon } from "./core";
 import { isNginxConfigPath } from "./nginx";
+import { walkDiscovery } from "../discovery/walk";
+import { findProjectConfig } from "../project-root";
+import type { DiscoveryGlobs } from "../config";
 import { gitignoreCoversTerraformState, isTerraformStatePath, nestedGitignoreCovering } from "./terraform-state";
 
 /** Lexicons the auditor knows how to detect and run checks for. */
@@ -69,11 +72,8 @@ export async function loadAuditPlugins(names: readonly string[] = AUDIT_LEXICONS
   return plugins;
 }
 
-const WALK_SKIP = new Set(["node_modules", ".git", "dist"]);
 /** Terraform's local working directory: recorded by the walk, never entered (TF023). */
 const TERRAFORM_WORK_DIR = ".terraform";
-/** Dot-directories the walk descends into anyway (CI lives here). */
-const WALK_DOT_DIRS = new Set([".github", ".forgejo"]);
 /**
  * How many files the local walk takes before it stops. Every file it reaches
  * counts, candidate or not, so a tree with a large `docs/` or `assets/` can hit
@@ -83,53 +83,54 @@ export const DEFAULT_MAX_WALK_FILES = 1000;
 /** Skip absurdly large files before parsing — mirrors the fetch layer's caps. */
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 
-/** The walk's limit, and whether it left anything behind because of it. */
-interface WalkState {
-  limit: number;
-  truncated: boolean;
+/**
+ * The project's `exclude`/`include` globs for the audit walk, read from a
+ * `chant.config.json` only. The audit reads repositories it has no reason to
+ * trust, so it never runs a `chant.config.ts` to find them.
+ */
+function auditGlobs(root: string): DiscoveryGlobs | undefined {
+  const { dir, configPath } = findProjectConfig(root);
+  if (!configPath?.endsWith(".json")) return undefined;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(configPath, "utf-8"));
+  } catch {
+    return undefined;
+  }
+  const list = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x !== "") : []);
+  const exclude = list((raw as Record<string, unknown>)?.exclude);
+  const include = list((raw as Record<string, unknown>)?.include);
+  return exclude.length === 0 && include.length === 0 ? undefined : { root: dir, exclude, include };
 }
 
 /**
- * Recursively collect file paths under a root, skipping noise dirs.
+ * Collect file paths under a root through the one discovery walk
+ * (`../discovery/walk.ts`, #2527), sorted per directory.
  *
- * Stops at `state.limit` paths. Once full it keeps looking only until it meets
+ * The audit's own departures from the other walkers: `.github` and `.forgejo`
+ * are entered, since they hold the CI files it audits; `.terraform/` is
+ * recorded but never entered, since it is machine-generated, routinely
+ * hundreds of megabytes of provider binaries, and its presence is itself the
+ * finding (TF023); and Terraform state paths are left to TF023's own
+ * `.gitignore` reading rather than dropped for being git-ignored.
+ *
+ * Stops at `state.max` paths. Once full it keeps looking only until it meets
  * one more path it would have taken, which is what sets `truncated`: a tree of
- * exactly `limit` files, or one whose remaining entries are all skipped
- * directories, was not truncated. The paths it returns are the same first
- * `limit` either way.
+ * exactly `max` files, or one whose remaining entries are all skipped
+ * directories, was not truncated.
  */
-function walkFiles(dir: string, out: string[], state: WalkState): void {
-  if (state.truncated) return;
-  let entries;
-  try {
-    entries = readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return;
-  }
-  const take = (path: string): boolean => {
-    if (out.length >= state.limit) {
-      state.truncated = true;
-      return false;
-    }
-    out.push(path);
-    return true;
-  };
-  for (const e of entries.sort((a, b) => (a.name < b.name ? -1 : 1))) {
-    if (state.truncated) return;
-    if (e.name.startsWith(".") && e.isDirectory() && !WALK_DOT_DIRS.has(e.name)) {
-      // `.terraform/` is never descended into: it is machine-generated,
-      // routinely hundreds of megabytes of provider binaries, and nothing in
-      // it is worth reading. Its presence is itself the finding (TF023), so
-      // the directory path alone is recorded and `collectCandidates` hands it
-      // on with no content.
-      if (e.name === TERRAFORM_WORK_DIR && !take(join(dir, e.name))) return;
-      continue;
-    }
-    if (WALK_SKIP.has(e.name)) continue;
-    const full = join(dir, e.name);
-    if (e.isDirectory()) walkFiles(full, out, state);
-    else if (!take(full)) return;
-  }
+function walkFiles(root: string, state: { max: number; truncated: boolean }, excludeDirs?: readonly string[]): string[] {
+  return walkDiscovery({
+    walker: "audit",
+    root,
+    excludeDirs,
+    globs: auditGlobs(root),
+    sorted: true,
+    limit: state,
+    takeSkippedDir: (name) => name === TERRAFORM_WORK_DIR,
+    keepIgnored: (full) => isTerraformStatePath(relative(root, full)),
+    accept: () => true,
+  });
 }
 
 function readSafe(full: string): string | undefined {
@@ -625,18 +626,12 @@ export function discoverByDetection(root: string, plugins: DetectPlugin[]): Audi
 export interface CandidateWalkOptions {
   /** Files the walk takes before it stops, counting every file. Defaults to {@link DEFAULT_MAX_WALK_FILES}. */
   maxFiles?: number;
-}
-
-/**
- * A TF023 path the root `.gitignore` does not cover but a `.gitignore` in a
- * directory between it and the scan root does (#2528). TF023 reports it today;
- * from the next release, which reads every such `.gitignore`, it will not.
- */
-export interface NestedGitignoreChange {
-  /** The TF023 path, relative to the scan root. */
-  path: string;
-  /** The nested `.gitignore` that ignores it, relative to the scan root. */
-  gitignore: string;
+  /**
+   * Directories the walk leaves out, absolute: the workspace members and
+   * example-group matches below the root, from `workspaceMemberDirs`. The
+   * caller resolves them, since that is async and this walk is not.
+   */
+  excludeDirs?: readonly string[];
 }
 
 /** What the local walk read, plus what it knows about its own limits. */
@@ -646,8 +641,6 @@ export interface CandidateWalk {
   maxFiles: number;
   /** True when the walk stopped at `maxFiles` with files left unread. */
   truncated: boolean;
-  /** TF023 paths whose finding changes once nested `.gitignore` files are read. */
-  nestedGitignore: NestedGitignoreChange[];
 }
 
 /** The walk half of `discoverByDetection`: candidate files read into memory, paths relative to the root. */
@@ -656,39 +649,34 @@ export function collectCandidates(root: string): RepoFile[] {
 }
 
 /**
- * `collectCandidates` with the facts the audit CLI warns about: whether the
- * walk was truncated, and which TF023 paths a nested `.gitignore` would drop.
- * Neither changes `files`; the CLI prints them on stderr (#2528).
+ * `collectCandidates` plus whether the walk stopped at its limit with files
+ * left unread, which the audit report states (#2528).
  */
 export function walkCandidates(root: string, opts: CandidateWalkOptions = {}): CandidateWalk {
-  const all: string[] = [];
-  const state: WalkState = { limit: opts.maxFiles ?? DEFAULT_MAX_WALK_FILES, truncated: false };
-  walkFiles(root, all, state);
+  const state = { max: opts.maxFiles ?? DEFAULT_MAX_WALK_FILES, truncated: false };
+  const all = walkFiles(root, state, opts.excludeDirs);
   // TF023 reads paths, not content: a `.tfstate` can be tens of megabytes of
   // machine-generated JSON, and the finding is that it is in the repository at
-  // all. The root `.gitignore` is what separates "committed" from "merely on
-  // disk" here — a Terraform working tree almost always has an ignored
+  // all. The `.gitignore` files are what separate "committed" from "merely on
+  // disk" here. A Terraform working tree almost always has an ignored
   // `.terraform/` in it, and reporting that would make TF023 fire on every
-  // local audit. A fetched repository has no such ambiguity (its file list is
-  // the tracked files) and is not filtered.
+  // local audit. Every `.gitignore` from the scan root down to the file's own
+  // directory is read (#2528), so auditing from the root and from a
+  // subdirectory agree. A fetched repository has no such ambiguity (its file
+  // list is the tracked files) and is not filtered.
   const gitignore = readSafe(join(root, ".gitignore")) ?? "";
-  // Only the root one decides, for now. The nested ones are read to say which
-  // findings the next release, which honours them, will stop reporting.
   const nestedBodies = new Map<string, string | undefined>();
   const nestedGitignoreAt = (dir: string): string | undefined => {
     if (!nestedBodies.has(dir)) nestedBodies.set(dir, readSafe(join(root, dir, ".gitignore")));
     return nestedBodies.get(dir);
   };
   const files: RepoFile[] = [];
-  const nestedGitignore: NestedGitignoreChange[] = [];
   for (const full of all) {
     const path = relative(root, full);
     if (isTerraformStatePath(path)) {
-      if (!gitignoreCoversTerraformState(gitignore, path)) {
-        files.push({ path, content: "" });
-        const dir = nestedGitignoreCovering(path, nestedGitignoreAt);
-        if (dir !== undefined) nestedGitignore.push({ path, gitignore: `${dir}/.gitignore` });
-      }
+      const ignored =
+        gitignoreCoversTerraformState(gitignore, path) || nestedGitignoreCovering(path, nestedGitignoreAt) !== undefined;
+      if (!ignored) files.push({ path, content: "" });
       continue;
     }
     // `.tf` is read locally so `classifyTerraform` can bundle real content.
@@ -702,5 +690,5 @@ export function walkCandidates(root: string, opts: CandidateWalkOptions = {}): C
     const content = readSafe(full);
     if (content !== undefined) files.push({ path, content });
   }
-  return { files, maxFiles: state.limit, truncated: state.truncated, nestedGitignore };
+  return { files, maxFiles: state.max, truncated: state.truncated };
 }

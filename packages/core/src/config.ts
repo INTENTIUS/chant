@@ -10,7 +10,8 @@ import type { BuildParamsConfig } from "./build-params";
 import type { BuildParamProvenance } from "./provenance";
 import { findProjectConfig } from "./project-root";
 import { evaluateProjectConfig } from "./config-sandbox";
-import { lexiconNames, registerLexiconDeclarations, type LexiconDeclaration } from "./lexicon-module";
+import { lexiconNames, pathLexiconRoot, registerLexiconDeclarations, type LexiconDeclaration } from "./lexicon-module";
+import { decideConfigSchema, type DecideConfig } from "./op/decide-config";
 
 /**
  * One project-declared environment (chant #1166). Historically always a bare
@@ -131,6 +132,7 @@ const LexiconEntrySchema = z.union([
   z.object({
     name: z.string().min(1),
     module: z.string().min(1),
+    root: z.string().min(1).optional(),
   }).strict(),
 ]);
 
@@ -196,8 +198,10 @@ export const ChantConfigSchema = z.object({
   knowledge: z.object({
     dir: z.string().min(1).optional(),
   }).optional(),
+  decide: decideConfigSchema.optional(),
   exclude: z.array(z.string().min(1)).optional(),
   include: z.array(z.string().min(1)).optional(),
+  rootOnly: z.boolean().optional(),
 }).passthrough();
 
 /**
@@ -210,7 +214,8 @@ export interface ChantConfig {
    * Lexicons to load. A bare name (`"aws"`) loads the package
    * `@intentius/chant-lexicon-aws`. `{ name, module }` (#2520) loads a
    * project-local lexicon from a module path, resolved against the directory
-   * holding this config; see `./lexicon-module.ts`.
+   * holding this config; see `./lexicon-module.ts`. An optional `root`
+   * (chant#2590) names the directory holding the lexicon's other files.
    *
    * Once loaded, this holds names only: the loader replaces each
    * `{ name, module }` entry with its name and records the path in
@@ -280,6 +285,18 @@ export interface ChantConfig {
 
   /** Lint configuration (rules, extends, overrides, plugins) */
   lint?: LintConfig;
+
+  /**
+   * Telemetry attribution (#2558, D22): lexicons that declare workloads stamp
+   * resource attributes (`chant.workspace`, `chant.member`, `chant.decl`,
+   * `service.name`, `deployment.environment.name`) as `OTEL_*` environment
+   * variables. Inside a workspace this is on; `attribution: false` turns it
+   * off. Outside a workspace it is off, and `attribution: true` turns it on
+   * with the attributes that need no workspace. See `./telemetry-attribution.ts`.
+   */
+  telemetry?: {
+    attribution?: boolean;
+  };
 
   /**
    * Opt-in cloud-side ownership marking. When `stack` is set (and `enabled`
@@ -460,25 +477,48 @@ export interface ChantConfig {
   };
 
   /**
+   * The backends the `decide` Op activity calls (#2828): backend name, as a
+   * decision point's model decider names it, to `{ url, key?, timeoutMs? }`.
+   * A key is `{ env }` or a brokered capability, never a literal (SYS001). A
+   * `decide` step's own `backends` take the place of these. See
+   * `./op/decide-config.ts`.
+   */
+  decide?: DecideConfig;
+
+  /**
    * Globs, relative to the directory holding this config, naming files that
    * source discovery must skip (#2519): `build`, `lint`, `list`, `explain`
    * and every other command that walks the project for declarations never
    * import or lint a matching file. A pattern matches a file when it matches
    * the file's path or the path of any directory above it, so `"ops"` and
    * `"ops/**"` both skip everything under `ops/`. Matched with picomatch,
-   * dot files included. See `./discovery/files.ts`'s `compileDiscoveryFilter`.
+   * dot files included. Op discovery and component discovery honour it too
+   * (#2527). See `./discovery/walk.ts`.
    */
   exclude?: string[];
 
   /**
-   * Globs that re-admit files {@link exclude} would skip. `include` always
-   * wins over `exclude`, and it never narrows discovery on its own: a file
-   * no `exclude` pattern matches is discovered whether or not it matches an
-   * `include`. It does not re-admit what discovery skips unconditionally
-   * (`node_modules`, test files, child projects, the generated and skip
-   * markers).
+   * Globs that re-admit files {@link exclude} would skip, and, since #2527,
+   * files the discovery walk skips by default: dot-directories, `dist`,
+   * git-ignored paths and child projects. `include` always wins over
+   * `exclude`, and it never narrows discovery on its own: a file nothing
+   * skips is discovered whether or not it matches an `include`. It never
+   * re-admits `node_modules`, `.git`, test files, workspace members, or
+   * files carrying the generated or skip marker.
    */
   include?: string[];
+
+  /**
+   * Lets `chant build` and `chant lint` run on this project when it is the
+   * root of a declared workspace (#2537, #2524 D0). Without it, or the
+   * `--root-only` flag, both commands refuse there with `WSP000` and point to
+   * `chant workspace build` and `lint`. With it they act on the root project
+   * alone. Member directories and example-group matches are left out of
+   * discovery either way, as they are for every walk under a declaration
+   * (#2527, `workspaceMemberDirs` in `./discovery/walk.ts`). It means nothing
+   * in a project with no `chant.workspace.json`.
+   */
+  rootOnly?: boolean;
 }
 
 /**
@@ -574,7 +614,7 @@ export async function loadChantConfigUpward(startDir: string): Promise<ResolvedC
 }
 
 /** The walk {@link loadChantConfigUpward} makes, lint-only fragments skipped, without its warning. */
-function findProjectConfigPastFragments(startDir: string): { dir: string; configPath?: string } {
+export function findProjectConfigPastFragments(startDir: string): { dir: string; configPath?: string } {
   let { dir, configPath } = findProjectConfig(startDir);
   while (configPath && isLintOnlyFragment(configPath)) {
     const parent = dirname(dir);
@@ -595,8 +635,9 @@ export interface DiscoveryGlobs {
 /**
  * The `exclude`/`include` globs of the project `startDir` belongs to, found by
  * the same upward walk as {@link loadChantConfigUpward}. `undefined` when the
- * project declares no `exclude`, which leaves discovery exactly as it was
- * before the keys existed: `include` only ever re-admits what `exclude` skips.
+ * project declares neither. `include` re-admits what `exclude` skips, and
+ * also what the discovery walk skips by default (#2527), so it means
+ * something on its own.
  *
  * A config that fails to load is left to the command's own config load to
  * report, so discovery keeps working where it did before, unless the failure
@@ -613,8 +654,10 @@ export async function resolveDiscoveryGlobs(startDir: string): Promise<Discovery
     if (err instanceof InvalidChantConfigError && (err.key === "exclude" || err.key === "include")) throw err;
     return undefined;
   }
-  if (!config.exclude || config.exclude.length === 0) return undefined;
-  return { root: dir, exclude: config.exclude, include: config.include ?? [] };
+  const exclude = config.exclude ?? [];
+  const include = config.include ?? [];
+  if (exclude.length === 0 && include.length === 0) return undefined;
+  return { root: dir, exclude, include };
 }
 
 /**
@@ -954,7 +997,20 @@ function normalizeConfig(raw: Record<string, unknown>, source?: string): LoadedC
   // the loaders and the entry becomes its name, so every reader of `lexicons`
   // keeps seeing names. A config of plain names is returned untouched.
   const lexicons = (raw as ChantConfig).lexicons;
-  const recorded = registerLexiconDeclarations(lexicons, source !== undefined ? dirname(source) : process.cwd());
+  const baseDir = source !== undefined ? dirname(source) : process.cwd();
+  const sourceDir = (raw as ChantConfig).sourceDir;
+  // chant#2590 — a declared `root` must stay inside the project and must not
+  // contain its source directory. Refused here rather than narrowed, since
+  // the project asked for it by name.
+  for (const [i, entry] of (lexicons ?? []).entries()) {
+    if (typeof entry === "string" || entry.root === undefined) continue;
+    const { problem } = pathLexiconRoot(entry, baseDir, sourceDir);
+    if (problem !== undefined) {
+      const loc = source ? ` in ${source}` : "";
+      throw new InvalidChantConfigError(`Invalid chant config${loc}: lexicons.${i}.root: ${problem}`, "lexicons");
+    }
+  }
+  const recorded = registerLexiconDeclarations(lexicons, baseDir, sourceDir);
   if (Object.keys(recorded).length > 0) {
     return { ...(raw as ChantConfig), lexicons: lexiconNames(lexicons), lexiconModules: recorded };
   }

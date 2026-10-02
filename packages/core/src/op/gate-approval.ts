@@ -32,7 +32,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { lexiconModulePath } from "../lexicon-module";
+import { lexiconModulePath, importLexiconPackage } from "../lexicon-module";
 import { isStepOutputRef, type StepOutputRef } from "./step-output-ref";
 
 /** What a policy's decision does to the gate. */
@@ -119,7 +119,11 @@ export interface GatePolicyAnswer {
 export interface GatePolicyDecision extends GatePolicyAnswer {
   policy: string;
   version: string;
-  /** The gate's mode when the decision was recorded. A run reads the gate's current mode, not this. */
+  /**
+   * The gate's mode when the decision was recorded. A permit passes a gate
+   * only when both this and the gate's current mode are `enforce` (#2512), so
+   * an allow recorded under `log-only` never binds after a switch.
+   */
   mode: GateApprovalMode;
 }
 
@@ -226,7 +230,7 @@ export async function loadGatePolicyEvaluator(lexicon: string): Promise<GatePoli
   const spec = lexiconModulePath(lexicon) ?? `@intentius/chant-lexicon-${lexicon}/gate-policy`;
   let mod: Partial<GatePolicyEvaluator>;
   try {
-    mod = (await import(spec)) as Partial<GatePolicyEvaluator>;
+    mod = (await importLexiconPackage(spec)) as Partial<GatePolicyEvaluator>;
   } catch (err) {
     throw new Error(
       `the gate's policy is evaluated by ${spec}, which could not be loaded: ` +

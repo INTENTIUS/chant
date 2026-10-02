@@ -1,10 +1,14 @@
 import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from "fs";
 import { join, resolve, basename, dirname } from "path";
 import { formatSuccess, formatWarning, formatError } from "../format";
-import type { TemplateIR, ResourceIR, ParameterIR, TemplateParser } from "../../import/parser";
+import type { TemplateIR, ResourceIR, ParameterIR, ParseContext } from "../../import/parser";
 import type { GeneratedFile, TypeScriptGenerator } from "../../import/generator";
-import { loadPlugins, resolveProjectLexicons } from "../plugins";
-import type { LexiconPlugin, ResourceSelector } from "../../lexicon";
+import { listInstalledLexicons, loadPlugin, loadPlugins, resolveProjectLexicons } from "../plugins";
+import type { ExportedTemplate, LexiconPlugin, ResourceSelector } from "../../lexicon";
+import { parseYAMLDocument, splitYAMLDocuments } from "../../yaml";
+import { importLexiconPackage } from "../../lexicon-module";
+import { resolveParserOptions } from "../../import/parser-options";
+import { EmbeddedImports, type EmbeddedContent, type RegisteredEmbeddedImporter } from "../../import/embedded";
 
 /**
  * Import command options
@@ -16,6 +20,17 @@ export interface ImportOptions {
   output?: string;
   /** Force overwrite existing files */
   force?: boolean;
+  /**
+   * Lexicon whose parser handles the file (#2935). Skips detection and the
+   * JSON/YAML check: the raw content goes straight to that plugin's parser.
+   */
+  lexicon?: string;
+  /**
+   * `--parser-option` entries (`key` or `key=value`) for the lexicon's parser
+   * (#2994). Checked against the lexicon's `parserOptions()`; an unknown name
+   * fails the import before anything is parsed.
+   */
+  parserOptions?: string[];
 }
 
 /**
@@ -30,8 +45,13 @@ export interface ImportResult {
   warnings: string[];
   /** Error message if failed */
   error?: string;
-  /** Detected lexicon */
+  /** The lexicon that handled the template */
   lexicon?: string;
+  /**
+   * True when `lexicon` was found by template detection, false or absent when
+   * it was named (`--lexicon`, `--kustomize`) (#2965).
+   */
+  detected?: boolean;
 }
 
 /**
@@ -40,18 +60,118 @@ export interface ImportResult {
 type ResourceCategory = "storage" | "compute" | "network" | "other";
 
 /**
- * Detect which plugin handles a template by asking each plugin.
- * @param data - Parsed JSON object
- * @param plugins - Loaded lexicon plugins
- * @returns The matching plugin, or undefined if none match
+ * Parse template content for detection (#2935): JSON first, then YAML. A YAML
+ * file is split into documents with core's `splitYAMLDocuments` (the k8s
+ * parser splits the same way), and each document is parsed on its own, so
+ * detection sees the same per-document objects the plugin's parser will. A
+ * document whose top level is a list parses as that list (#2965). JSON yields
+ * one document, the parsed value, exactly as before. Returns undefined when
+ * the content is neither. A document core's YAML reader cannot parse is
+ * skipped here, since detection only needs one it can read; the plugin's
+ * parser meets the same document and reports it (#2991). A file with no
+ * non-empty document is rejected.
  */
-function detectPlugin(data: unknown, plugins: LexiconPlugin[]): LexiconPlugin | undefined {
-  for (const plugin of plugins) {
-    if (plugin.detectTemplate?.(data)) {
-      return plugin;
+export function parseTemplateDocuments(content: string): unknown[] | undefined {
+  try {
+    return [JSON.parse(content)];
+  } catch {
+    // Not JSON: try YAML.
+  }
+  const documents: unknown[] = [];
+  for (const chunk of splitYAMLDocuments(content)) {
+    let doc: unknown;
+    try {
+      doc = parseYAMLDocument(chunk);
+    } catch {
+      continue;
+    }
+    if (typeof doc === "object" && doc !== null && Object.keys(doc).length > 0) {
+      documents.push(doc);
     }
   }
-  return undefined;
+  return documents.length > 0 ? documents : undefined;
+}
+
+/** The outcome of template detection (#2965). */
+export interface TemplateDetection {
+  /** The plugin that handles the template. */
+  plugin: LexiconPlugin;
+  /**
+   * Where it came from: one of the project's lexicons, or an installed
+   * lexicon package tried because none of the project's matched.
+   */
+  source: "project" | "installed";
+  /** Other installed lexicons that also recognized the deciding document. */
+  alsoMatched: string[];
+}
+
+/**
+ * Find the plugins that recognize a template. Documents are tried in file
+ * order and the first one some plugin recognizes decides; every plugin that
+ * recognizes that document is returned, in the order given. For a JSON
+ * template there is exactly one document, so this is the old behaviour.
+ */
+function matchingPlugins(documents: unknown[], plugins: LexiconPlugin[]): LexiconPlugin[] {
+  for (const data of documents) {
+    const matches = plugins.filter((plugin) => {
+      try {
+        return plugin.detectTemplate?.(data) === true;
+      } catch {
+        return false;
+      }
+    });
+    if (matches.length > 0) return matches;
+  }
+  return [];
+}
+
+/**
+ * Detect which lexicon handles a template (#2965). The project's lexicons
+ * (from chant.config, or the lexicons its source imports) are asked first, so
+ * inside a project nothing changes when one of them matches. When none does,
+ * or there is no project, every installed `@intentius/chant-lexicon-*`
+ * package that is not already a project lexicon is asked, in name order,
+ * and one with a `templateParser` is preferred over one without.
+ * Installed lexicons are loaded one at a time and without `init()`; one that
+ * fails to load is skipped. The chosen plugin is initialized before it is
+ * returned.
+ */
+export async function detectTemplateLexicon(
+  documents: unknown[],
+  projectDir: string,
+): Promise<TemplateDetection | undefined> {
+  let projectNames: string[] = [];
+  let projectPlugins: LexiconPlugin[] = [];
+  try {
+    projectNames = await resolveProjectLexicons(projectDir);
+    projectPlugins = await loadPlugins(projectNames);
+  } catch {
+    projectPlugins = [];
+  }
+
+  const [fromProject] = matchingPlugins(documents, projectPlugins);
+  if (fromProject) return { plugin: fromProject, source: "project", alsoMatched: [] };
+
+  const installed: LexiconPlugin[] = [];
+  for (const name of listInstalledLexicons(projectDir)) {
+    if (projectNames.includes(name)) continue;
+    try {
+      installed.push(await loadPlugin(name));
+    } catch {
+      // Not loadable from here: it cannot handle the template either.
+    }
+  }
+
+  // A lexicon that can import the template goes ahead of one that only
+  // recognizes it (github and forgejo both read an Actions workflow).
+  const matches = matchingPlugins(documents, installed);
+  const [plugin, ...others] = [
+    ...matches.filter((p) => p.templateParser),
+    ...matches.filter((p) => !p.templateParser),
+  ];
+  if (!plugin) return undefined;
+  await plugin.init?.();
+  return { plugin, source: "installed", alsoMatched: others.map((p) => p.name) };
 }
 
 /**
@@ -94,21 +214,55 @@ function organizeByCategory(ir: TemplateIR): Map<ResourceCategory, ResourceIR[]>
   return categories;
 }
 
+/** The files an import writes, and anything core could not keep. */
+export interface OrganizedFiles {
+  files: GeneratedFile[];
+  warnings: string[];
+}
+
 /**
- * Generate organized files with separate modules
+ * The first file of one per-category `generate()` call, which core writes as
+ * `<name>.ts`. Any further files that call returned are named in a warning
+ * rather than dropped silently; a call that returned nothing is skipped with
+ * a warning rather than failing on `generated[0]`.
  */
-function generateOrganizedFiles(
+function firstFileOf(generated: GeneratedFile[], fileName: string, warnings: string[]): string | undefined {
+  if (generated.length === 0) {
+    warnings.push(`The generator returned no file for ${fileName}; it was not written.`);
+    return undefined;
+  }
+  if (generated.length > 1) {
+    const dropped = generated.slice(1).map((f) => f.path).join(", ");
+    warnings.push(
+      `The generator returned ${generated.length} files for ${fileName}; only the first was kept, ` +
+        `and ${dropped} ${generated.length === 2 ? "was" : "were"} not written. ` +
+        "A generator that places its own files sets ownsLayout (#2964).",
+    );
+  }
+  return generated[0].content;
+}
+
+/**
+ * Decide the files an import writes. A generator with `ownsLayout` is called
+ * once with the whole IR and its files are written exactly as returned
+ * (#2964). Otherwise an IR of up to three resources is generated in one call,
+ * and a larger one is split into one file per resource category plus an
+ * `index.ts` barrel.
+ */
+export function generateOrganizedFiles(
   ir: TemplateIR,
   generator: TypeScriptGenerator,
-): GeneratedFile[] {
+): OrganizedFiles {
+  const warnings: string[] = [];
+
+  // The generator places its own files, or everything fits in one call.
+  if (generator.ownsLayout === true || ir.resources.length <= 3) {
+    return { files: generator.generate(ir), warnings };
+  }
+
   const files: GeneratedFile[] = [];
   const categories = organizeByCategory(ir);
   const exports: string[] = [];
-
-  // If all resources fit in one file, just generate main.ts
-  if (ir.resources.length <= 3) {
-    return generator.generate(ir);
-  }
 
   // Generate files for each category
   for (const [category, resources] of categories) {
@@ -119,13 +273,10 @@ function generateOrganizedFiles(
       resources,
     };
 
-    const generated = generator.generate(categoryIr);
     const fileName = `${category}.ts`;
-
-    files.push({
-      path: fileName,
-      content: generated[0].content,
-    });
+    const content = firstFileOf(generator.generate(categoryIr), fileName, warnings);
+    if (content === undefined) continue;
+    files.push({ path: fileName, content });
 
     // Track exports
     for (const resource of resources) {
@@ -140,15 +291,13 @@ function generateOrganizedFiles(
       parameters: ir.parameters,
       resources: [],
     };
-    const generated = generator.generate(paramsIr);
-    files.push({
-      path: "parameters.ts",
-      content: generated[0].content,
-    });
-
-    for (const param of ir.parameters) {
-      const varName = param.name.charAt(0).toLowerCase() + param.name.slice(1);
-      exports.push(`export { ${varName} } from "./parameters";`);
+    const content = firstFileOf(generator.generate(paramsIr), "parameters.ts", warnings);
+    if (content !== undefined) {
+      files.push({ path: "parameters.ts", content });
+      for (const param of ir.parameters) {
+        const varName = param.name.charAt(0).toLowerCase() + param.name.slice(1);
+        exports.push(`export { ${varName} } from "./parameters";`);
+      }
     }
   }
 
@@ -160,7 +309,7 @@ function generateOrganizedFiles(
     });
   }
 
-  return files;
+  return { files, warnings };
 }
 
 /**
@@ -195,61 +344,64 @@ export async function importCommand(options: ImportOptions): Promise<ImportResul
     };
   }
 
-  // Load plugins and detect lexicon
-  let data: unknown;
-  try {
-    data = JSON.parse(content);
-  } catch {
+  // `--lexicon <name>` names the plugin, so there is nothing to detect and no
+  // format to check: the plugin's parser decides what it accepts (#2935).
+  if (options.lexicon) {
+    return importFromContent({
+      content,
+      lexicon: options.lexicon,
+      output: options.output,
+      force: options.force,
+      parserOptions: options.parserOptions,
+    });
+  }
+
+  // Parse for detection: JSON, falling back to YAML.
+  const documents = parseTemplateDocuments(content);
+  if (!documents) {
     return {
       success: false,
       generatedFiles: [],
       warnings: [],
-      error: "Template is not valid JSON.",
+      error: "Template is neither valid JSON nor YAML.",
     };
   }
 
-  // Load plugins — resolve from the output directory (or CWD) so that
-  // project config is found relative to where the user is working, not
-  // an arbitrary monorepo root.
+  // Detect from the output directory (or CWD) so that project config is
+  // found relative to where the user is working, not an arbitrary monorepo
+  // root.
   const projectDir = resolve(options.output ? dirname(options.output) : ".");
-  let plugins: LexiconPlugin[];
-  try {
-    const lexiconNames = await resolveProjectLexicons(projectDir);
-    plugins = await loadPlugins(lexiconNames);
-  } catch {
-    plugins = [];
-  }
-
-  // If no plugins resolved (no config, no source files), try common lexicons
-  if (plugins.length === 0) {
-    try {
-      plugins = await loadPlugins(["aws"]);
-    } catch {
-      // No lexicons available at all
-    }
-  }
-
-  const plugin = detectPlugin(data, plugins);
-  if (!plugin) {
+  const detection = await detectTemplateLexicon(documents, projectDir);
+  if (!detection) {
     return {
       success: false,
       generatedFiles: [],
       warnings: [],
-      error: "Could not detect template lexicon. No installed lexicon recognizes this template.",
+      error:
+        "Could not detect template lexicon. No installed lexicon recognizes this template. " +
+        "Pass --lexicon <name> to import it with a specific lexicon.",
     };
   }
 
-  const lexicon = plugin.name;
+  const { plugin } = detection;
+  if (detection.alsoMatched.length > 0) {
+    warnings.push(
+      `The template is also recognized by ${detection.alsoMatched.join(", ")}. ` +
+        `Importing with ${plugin.name}; pass --lexicon <name> to choose another.`,
+    );
+  }
 
-  return parseAndWrite(plugin, content, outputDir, options.force, warnings, generatedFiles, lexicon);
+  const result = await parseAndWrite(plugin, content, outputDir, options.force, warnings, generatedFiles, plugin.name, projectDir, options.parserOptions);
+  return { ...result, detected: true };
 }
 
 /**
  * Import from an in-memory template string through a KNOWN plugin — no
  * detection, no JSON assumption (#1548). This is the seam
  * `chant import --kustomize <dir>` drives with `kustomize build` output
- * through the k8s plugin's YAML parser; `importCommand` above is the same
- * pipeline behind file reading + JSON detection.
+ * through the k8s plugin's YAML parser, and `chant import <file> --lexicon
+ * <name>` drives with the file's content (#2935); `importCommand` above is
+ * the same pipeline behind file reading + JSON/YAML detection.
  */
 export interface ContentImportOptions {
   /** The raw template content (YAML or JSON — the plugin's parser decides). */
@@ -258,6 +410,8 @@ export interface ContentImportOptions {
   lexicon: string;
   output?: string;
   force?: boolean;
+  /** `--parser-option` entries for the lexicon's parser (#2994); see {@link ImportOptions.parserOptions}. */
+  parserOptions?: string[];
 }
 
 export async function importFromContent(options: ContentImportOptions): Promise<ImportResult> {
@@ -277,20 +431,97 @@ export async function importFromContent(options: ContentImportOptions): Promise<
   if (!plugin) {
     return { success: false, generatedFiles: [], warnings: [], error: `Lexicon "${options.lexicon}" not available.` };
   }
-  if (!plugin.templateParser || !plugin.templateGenerator) {
-    return {
-      success: false,
-      generatedFiles: [],
-      warnings: [],
-      error: `Lexicon "${plugin.name}" does not support template import.`,
-      lexicon: plugin.name,
-    };
+  const projectDir = resolve(options.output ? dirname(options.output) : ".");
+  return parseAndWrite(plugin, options.content, outputDir, options.force, [], [], plugin.name, projectDir, options.parserOptions);
+}
+
+/**
+ * The importers for the content a host's parser offered (#2962): those of the
+ * plugins already loaded, of the project's lexicons, and of each installed
+ * lexicon whose `detectTemplate` recognizes one of the offered documents
+ * (#2995 adds the loaded ones). The recognizing is done with the
+ * lexicon's light `/detect` module, so a lexicon is loaded in full only when
+ * it may own something; one that fails to load is skipped.
+ */
+async function embeddedImportersFor(
+  offered: readonly EmbeddedContent[],
+  loaded: readonly LexiconPlugin[],
+  projectDir: string,
+): Promise<RegisteredEmbeddedImporter[]> {
+  const documents = offered.map((c) => c.document).filter((d) => typeof d === "object" && d !== null);
+  if (documents.length === 0) return [];
+
+  let projectNames: string[] = [];
+  try {
+    projectNames = await resolveProjectLexicons(projectDir);
+  } catch {
+    projectNames = [];
   }
-  return parseAndWrite(plugin, options.content, outputDir, options.force, [], [], plugin.name);
+  // Plugins already loaded (the host, or live import's exporters) are asked too.
+  const candidates: string[] = [...new Set([...loaded.map((p) => p.name), ...projectNames])];
+  for (const name of listInstalledLexicons(projectDir)) {
+    if (candidates.includes(name)) continue;
+    try {
+      const detect = await importLexiconPackage(`@intentius/chant-lexicon-${name}/detect`, projectDir);
+      const detectTemplate = detect.detectTemplate;
+      if (typeof detectTemplate !== "function") continue;
+      if (documents.some((d) => {
+        try {
+          return detectTemplate(d) === true;
+        } catch {
+          return false;
+        }
+      })) {
+        candidates.push(name);
+      }
+    } catch {
+      // No /detect module, or it failed to load: not a candidate.
+    }
+  }
+
+  const registered: RegisteredEmbeddedImporter[] = [];
+  for (const name of candidates) {
+    let plugin: LexiconPlugin;
+    try {
+      plugin = loaded.find((p) => p.name === name) ?? (await loadPlugin(name));
+    } catch {
+      continue;
+    }
+    let importers;
+    try {
+      importers = plugin.embeddedImporters?.() ?? [];
+    } catch {
+      continue;
+    }
+    for (const importer of importers) registered.push({ lexicon: plugin.name, importer });
+  }
+  return registered;
+}
+
+/**
+ * Parse, resolving embedded content (#2962). A first parse with a probe
+ * collects what the parsers offer; when they offer anything, the owners'
+ * importers are loaded and each is parsed again with them, through one
+ * resolver so their directories stay distinct. A parse is a template
+ * parser over a file's content, or an export's `reparse` (#2995). Parsers
+ * that offer nothing are parsed once, and nothing is loaded. `loaded` are
+ * plugins already loaded, reused when one of them owns content.
+ */
+async function parseWithEmbedded(
+  parses: ReadonlyArray<(context: ParseContext) => TemplateIR>,
+  loaded: readonly LexiconPlugin[],
+  projectDir: string,
+): Promise<{ irs: TemplateIR[]; embedded?: EmbeddedImports }> {
+  const probe = new EmbeddedImports([], { quiet: true });
+  const irs = parses.map((parse) => parse({ embedded: probe }));
+  if (probe.offered.length === 0) return { irs };
+  const importers = await embeddedImportersFor(probe.offered, loaded, projectDir);
+  const embedded = new EmbeddedImports(importers);
+  return { irs: parses.map((parse) => parse({ embedded })), embedded };
 }
 
 /** The shared tail of every template import: parse → generate → write. */
-function parseAndWrite(
+async function parseAndWrite(
   plugin: LexiconPlugin,
   content: string,
   outputDir: string,
@@ -298,12 +529,35 @@ function parseAndWrite(
   warnings: string[],
   generatedFiles: string[],
   lexicon: string,
-): ImportResult {
+  projectDir: string,
+  parserOptionEntries?: readonly string[],
+): Promise<ImportResult> {
+  // A lexicon can recognize a template (detectTemplate) without being able to
+  // import it (grafana had no parser until #2945). Every path funnels through here, so
+  // this one check covers detection, --lexicon and content import (#2940).
+  if (!plugin.templateParser || !plugin.templateGenerator) {
+    return {
+      success: false,
+      generatedFiles: [],
+      warnings: [],
+      error: `lexicon "${plugin.name}" does not support template import`,
+      lexicon: plugin.name,
+    };
+  }
+
+  const resolved = resolveParserOptions(plugin, parserOptionEntries);
+  if ("error" in resolved) {
+    return { success: false, generatedFiles: [], warnings: [], error: resolved.error, lexicon: plugin.name };
+  }
+
   // Parse template
   let ir: TemplateIR;
+  let embedded: EmbeddedImports | undefined;
   try {
-    const parser = plugin.templateParser!();
-    ir = parser.parse(content);
+    const parser = plugin.templateParser(resolved.options);
+    let irs: TemplateIR[];
+    ({ irs, embedded } = await parseWithEmbedded([(context) => parser.parse(content, context)], [plugin], projectDir));
+    ir = irs[0];
   } catch (err) {
     return {
       success: false,
@@ -318,8 +572,10 @@ function parseAndWrite(
   if (ir.warnings) {
     warnings.push(...ir.warnings);
   }
+  // Embedded content the owner could not carry, or that no installed lexicon imports.
+  if (embedded) warnings.push(...embedded.warnings);
 
-  const generator = plugin.templateGenerator!();
+  const generator = plugin.templateGenerator();
 
   // Check output directory
   if (existsSync(outputDir) && !force) {
@@ -335,7 +591,10 @@ function parseAndWrite(
   }
 
   // Generate files
-  const files = generateOrganizedFiles(ir, generator);
+  const { files: hostFiles, warnings: layoutWarnings } = generateOrganizedFiles(ir, generator);
+  warnings.push(...layoutWarnings);
+  // The owners' modules for embedded content, each in a directory of its own.
+  const files = [...hostFiles, ...(embedded?.files ?? [])];
 
   // Write files
   for (const file of files) {
@@ -409,7 +668,7 @@ function mergeIR(parts: TemplateIR[]): TemplateIR {
  * for full-fidelity IR, then generate chant TypeScript from it.
  *
  * Unlike file import, the live config may contain secrets — the caller prints a
- * warning. Reuses the same by-category output organization as file import.
+ * warning. Uses the same file layout as file import (`generateOrganizedFiles`).
  */
 export async function importFromLive(options: LiveImportOptions): Promise<ImportResult> {
   const projectDir = resolve(options.output ? dirname(options.output) : ".");
@@ -464,6 +723,7 @@ export async function liveImportFromPlugins(
   options: LiveImportOptions,
 ): Promise<ImportResult> {
   const outputDir = resolve(options.output ?? "./infra/");
+  const projectDir = resolve(options.output ? dirname(options.output) : ".");
   const warnings: string[] = [];
 
   let exporters = plugins.filter((p) => p.exportResources && p.templateGenerator);
@@ -483,10 +743,10 @@ export async function liveImportFromPlugins(
   }
 
   // Collect IR from every exporter, tagging which lexicon produced output.
-  const irParts: TemplateIR[] = [];
+  let irParts: ExportedTemplate[] = [];
   let generatorLexicon: LexiconPlugin | undefined;
   for (const plugin of exporters) {
-    let ir: TemplateIR;
+    let ir: ExportedTemplate;
     try {
       ir = await plugin.exportResources!({
         environment: options.environment,
@@ -517,6 +777,23 @@ export async function liveImportFromPlugins(
     warnings.push("Multiple lexicons exported resources; generated with the first. Use --lexicon to target one.");
   }
 
+  // Content embedded in exported resources goes to the lexicon that owns it,
+  // as in file import (#2995). An export without `reparse` keeps it as read.
+  let embedded: EmbeddedImports | undefined;
+  if (irParts.some((part) => part.reparse)) {
+    try {
+      const parses = irParts.map((part) => part.reparse ?? (() => part));
+      let irs: TemplateIR[];
+      ({ irs, embedded } = await parseWithEmbedded(parses, plugins, projectDir));
+      irParts = irs;
+    } catch (err) {
+      warnings.push(
+        `Embedded content is kept as written, because resolving it failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    if (embedded) warnings.push(...embedded.warnings);
+  }
+
   const ir = mergeIR(irParts);
   const generator = generatorLexicon.templateGenerator!();
 
@@ -524,7 +801,10 @@ export async function liveImportFromPlugins(
     mkdirSync(outputDir, { recursive: true });
   }
 
-  const files = generateOrganizedFiles(ir, generator);
+  const { files: hostFiles, warnings: layoutWarnings } = generateOrganizedFiles(ir, generator);
+  warnings.push(...layoutWarnings);
+  // The owners' modules for embedded content, each in a directory of its own.
+  const files = [...hostFiles, ...(embedded?.files ?? [])];
   const generatedFiles: string[] = [];
   for (const file of files) {
     const filePath = join(outputDir, file.path);
@@ -545,6 +825,7 @@ export async function liveImportFromPlugins(
     generatedFiles,
     warnings,
     lexicon: generatorLexicon.name,
+    detected: !options.lexicon,
   };
 }
 
@@ -562,7 +843,7 @@ export function printImportResult(result: ImportResult): void {
   }
 
   if (result.lexicon) {
-    console.log(`Detected lexicon: ${result.lexicon}`);
+    console.log(`${result.detected ? "Detected lexicon" : "Lexicon"}: ${result.lexicon}`);
   }
 
   if (result.generatedFiles.length > 0) {

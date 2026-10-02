@@ -50,7 +50,7 @@ What it proves:
 
 Assertion 4 is on the transport deliberately. An applier that returns a tidy result while issuing a delete against a stranger's resource passes every other check, which is precisely what the ARM target did when `owned-only` ran `az deployment --mode Complete`.
 
-Three appliers run the suite today. `lexicons/gcp/src/op/activities/gcp-apply.test.ts` is the fullest, with all three scenario lists; `lexicons/azure/src/op/activities/az-apply.test.ts` and `lexicons/fly/src/op/activities/fly-apply.test.ts` are the others.
+Four appliers run the suite today. `lexicons/gcp/src/op/activities/gcp-apply.test.ts` and `lexicons/grafana/src/op/activities/grafana-apply.test.ts` use all three scenario lists; `lexicons/azure/src/op/activities/az-apply.test.ts` and `lexicons/fly/src/op/activities/fly-apply.test.ts` are the others.
 
 ## See also
 

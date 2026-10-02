@@ -11,16 +11,8 @@ import { homedir } from "os";
 import type { ResourceSelector } from "../../lexicon";
 import { formatError, formatSuccess, formatWarning, formatBold } from "../format";
 import type { CommandContext } from "../registry";
-import { createRequire } from "module";
 import { listComponents, describeComponent } from "../../components/cli-support";
-
-const CHANT_VERSION: string = (() => {
-  try {
-    return createRequire(import.meta.url)("../../../package.json").version ?? "0.0.0";
-  } catch {
-    return "0.0.0";
-  }
-})();
+import { CHANT_VERSION } from "../version";
 
 const AUDIT_FORMATS: AuditFormat[] = ["stylish", "json", "sarif", "markdown", "html"];
 const AUDIT_TIERS: AuditTier[] = ["merge-worthy", "all"];
@@ -332,6 +324,7 @@ export async function runImport(ctx: CommandContext): Promise<number> {
       lexicon: "k8s",
       output: args.output,
       force: args.force,
+      parserOptions: args.parserOption,
     });
     printImportResult(result);
     return result.success ? 0 : 1;
@@ -382,10 +375,14 @@ export async function runImport(ctx: CommandContext): Promise<number> {
     return result.success ? 0 : 1;
   }
 
+  // A template file: JSON or YAML, detected, unless `--lexicon` names the
+  // plugin (#2935).
   const result = await importCommand({
     templatePath: ctx.args.path,
     output: ctx.args.output,
     force: ctx.args.force,
+    lexicon: ctx.args.lexicon,
+    parserOptions: ctx.args.parserOption,
   });
 
   printImportResult(result);

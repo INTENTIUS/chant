@@ -1,0 +1,218 @@
+---
+title: "chant workspace upgrade"
+description: Bring a lineage scope to a newer version of its template, staged in a worktree and gated on the digest of the patch
+diataxis: reference
+---
+
+## Synopsis
+
+```
+chant workspace upgrade [<scope>] [--to <ref|dir>] [--source <repo>[#<member>]] [--allow-code] [--dry-run] [--output <patch file>] [--json]
+```
+
+## Description
+
+`chant workspace upgrade` brings one scope of the [lineage lock](/chant/reference/lineage-lock/) to a newer version of its template. `<scope>` is a key of the lock's `scopes`: `.` (the default) for a project made by `chant init --from`, or a vendor scope's directory such as `vendor/web-app`. A plain project with a lock upgrades the same way, with no `chant.workspace.json`. In a workspace, `<scope>` may also name a [member](#member-scopes). The design is D9 of [#2524](https://github.com/INTENTIUS/chant/issues/2524), with decisions ws-005 (merge per file) and ws-032 (a core command plus a propose-only activity).
+
+The upgrade is a core command. A template never ships its own upgrader, so an upgrade cannot change the rules that decide whether it is accepted. Each run takes these steps:
+
+| Step | What happens |
+|---|---|
+| 1. Fetch | For a git scope, one `git fetch` of the `--to` ref, and one of the commit the scope was made from. For a vendor scope, the source is read again. For a scope made from a directory, the `--to` directory is read from disk. This is the command's only network step (see [Network Egress](/chant/reference/network-egress/)). |
+| 2. Merge base | Rebuilt offline. Each recorded file's content at the old commit is kept when it has the hash the lock recorded. A file the project never edited serves as its own base. |
+| 3. Migrate | A git worktree is checked out at HEAD under `.chant/upgrade/`. The template's [migrations](/chant/reference/template-migrations/) run there, in version order. A gap in the chain refuses the upgrade. Then each [migration chant ships](#migrations-chant-ships) that finds something to move runs there too. |
+| 4. Merge | Each file follows the [update rules](/chant/reference/lineage-lock/#update-rules). An edited file that the template also changed takes the change only when every hunk merges cleanly. Otherwise it stays as it was, and the lock records one manual step for it. |
+| 5. Check | In the worktree: `chant build` and `chant lint` when the project has a `chant.config`, and the lineage checks of [`chant workspace check`](/chant/cli/workspace-check/). A failure stops the upgrade before its gate. |
+| 6. Gate | The gate `workspace-upgrade` / `<scope>` (or `<member>` for a member scope) on the gate ledger binds the digest of the patch the steps produced. |
+
+The project's tree is untouched until the gate is approved. Before that, everything happens in the worktree, which is removed when the command ends.
+
+### The gate
+
+The first run records a pending gate and exits 3, the code `chant run` gives a gated run. It prints the patch digest and the command that approves it:
+
+```
+$ chant workspace upgrade . --to v2.0.0
+.  github.com/acme/starter#service  v1.4.0 -> v2.0.0
+  migration: rename-handler
+  updated: README.md
+  merged: src/main.ts
+  manual step: src/config.ts (changed-locally)
+  build: passed
+  lint: passed
+  workspace check: passed
+  patch: 5 file(s), sha256:3c1f…
+ℹ Gated: the patch jcs1-sha256:3c1f… waits for approval. Review it (--output <file> writes it), then run `chant approve workspace-upgrade .` and repeat this command to apply it.
+
+$ chant approve workspace-upgrade .
+$ chant workspace upgrade . --to v2.0.0
+✓ applied the approved upgrade of "." (jcs1-sha256:3c1f…), approved by alex. Review and commit it.
+```
+
+The second run stages the upgrade again. The approval counts only when the new patch has the approved digest, which is the rule `chant approve` applies to plans since [#2300](https://github.com/INTENTIUS/chant/issues/2300). If anything changed in between, whether in the template, the project or a migration, the digest differs. The command then asks for a new approval. The patch is applied to the working tree and left uncommitted.
+
+### Governance changes
+
+A patch that changes a governance file needs human approval. The governance files are `*.op.ts` Op files, `chant.config.*`, `chant.workspace.json`, CI workflows (`.github/workflows/`, `.forgejo/workflows/`, `.gitea/workflows/`, `.gitlab-ci.yml`) and `CODEOWNERS`. Approvals by an agent do not count. The number of approvals needed is read at HEAD: the highest quorum of any gate in the Op files the patch changes, and at least one. Op files the upgrade would write never decide their own gate.
+
+### Manual steps
+
+A file that did not merge is left whole, and the lock gains a manual step for it. Open manual steps fail `chant workspace check` until the file is merged by hand and closed with [`chant workspace lineage resolve <path>`](/chant/cli/workspace-lineage/). A scope with open steps cannot be upgraded again until they are closed.
+
+### File classes
+
+An upgrade updates or merges `owned` files only. It never touches a `seed` file again, and it leaves each `generated` file for its command to rebuild, naming that command in its output.
+
+### Scopes made from a directory
+
+A scope made by `chant init --from <dir>` has no git history, so the merge base can come only from the directory it was made from. `--to <dir>[#<member>]` names the directory that holds the new version, and the member defaults to the recorded one. chant reads the recorded directory again, substitutes the recorded parameters, and uses it as the merge base only when its digest still equals `address.digest`. The upgrade then moves the lock's `source` to the new directory.
+
+```bash
+chant workspace upgrade . --to /opt/studio/tool-v2#template
+```
+
+Without `--to`, or when the recorded directory is gone or holds different files, the upgrade is refused. A host that replaces the directory on each release, such as a studio box image, moves the scope onto the git repository the directory was copied from with [`chant workspace adopt-lineage --from <repo>[#<member>]`](/chant/cli/workspace-adopt-lineage/#a-directory-lineage). From then on `--to` names a ref of that repository. A directory has no version, so a template whose migrations have not all been applied cannot be upgraded from one.
+
+### Moving to another template
+
+`--source <repo>[#<member>]` moves the scope to another template while it upgrades, at the version `--to` names. This brings a fork-born workspace forward: adopt its lineage against the fork with [`chant workspace adopt-lineage`](/chant/cli/workspace-adopt-lineage/), then move it onto the template the fork came from.
+
+```
+$ chant workspace upgrade . --source acme/starter --to v2.0.0
+.  github.com/someone/starter-fork  v1.1.0 -> v2.0.0
+  template: github.com/someone/starter-fork -> github.com/acme/starter
+  migration: from-fork
+  updated: README.md
+  merged: src/main.ts
+  ...
+```
+
+The chain starts with a [bridge migration](/chant/reference/template-migrations/#bridge-migrations) that the new template ships for the old one. Its `from.template` names the scope's current template, and its `from.versions` accepts the scope's version. The new template's own migrations then run from the version the bridge lands on. The merge base still comes from the scope's recorded source, so edits the workspace made since then merge as in any other upgrade. Once the upgrade applies, the lock names the new template and its source, pinned at the new ref.
+
+When no bridge accepts the scope's version and the new template has migrations of its own, the move is refused, because the scope's place in the new template's history is unknown. A new template with no migrations needs no bridge. Only a git scope can move, and the move needs `--to`.
+
+### Nested workspaces
+
+A member of kind `workspace` upgrades itself with its own `chant workspace upgrade`, run in its directory. Naming it from the outer root is refused. So is an upgrade of the outer workspace whose patch would change a file inside a nested workspace, and the message names the files ([#2551](https://github.com/INTENTIUS/chant/issues/2551)).
+
+### Member scopes
+
+A member of a workspace can be made from a template of its own: `chant init --from <template> <member dir>` writes the lock inside the member's directory. From the workspace root, `chant workspace upgrade <member>` takes the member by name or directory from `chant.workspace.json`, and runs the whole upgrade from that directory, as if it were a project. An upgrade whose patch touches a path outside the member's directory and its lock is refused. The gate is `workspace-upgrade` / `<member>` and the proposal branch is `chant/upgrade/<member>`, so two members never share a gate. A member with no lock of its own is refused, and the message says it was not made from a template.
+
+A scope the root's lock holds is used as it is, even when its key is a member's directory, so a lock at the root that records a member's subtree as a scope works too. Scopes made by `chant init --template` stay refused (see below).
+
+### Migrations chant ships
+
+A template's migrations move a scope between two versions of that template. Some moves belong to chant instead, when a package a template used goes away and chant knows where each part of it went. These migrations plan from what the scope holds rather than from a version range. So they run whatever ref the scope is pinned at, and an upgrade to the same ref or directory runs them too.
+
+Each one lists every file it writes or deletes and why, what it does not move and where that went, and any conflict. `--dry-run` prints the whole plan. A plan with a conflict is not applied at all. The upgrade's `migration` check then fails, and the tree stays as it was. An applied migration's id is added to the lineage's `migrations` in the lock, so a later upgrade does not plan it again. The files it rewrites keep the template's hash in the lock, so a later template version merges into them like any other edit.
+
+| Id | What it moves |
+|---|---|
+| `chud-lexicon-exit` | A repo made from chud's template, or the studio kit's copy of it, off `@intentius/chant-lexicon-chud` and `@intentius/chud-runtime` ([#2737](https://github.com/INTENTIUS/chant/issues/2737), [ws-056](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-056-chud-lexicon-home.md)) |
+| `chud-lexicon-exit-rollback` | Adds the rollback Op to a repo `chud-lexicon-exit` migrated, so the Fly site can go back to its previous source release ([#2800](https://github.com/INTENTIUS/chant/issues/2800)) |
+| `chud-lexicon-exit-ship-inputs` | Has the release Op that `chud-lexicon-exit` wrote ask `ship-skip` with the inputs the point declares ([#2811](https://github.com/INTENTIUS/chant/issues/2811)) |
+| `chud-lexicon-exit-ship-policy` | Lets a person pass the ship gate: the Cedar policy `chud-lexicon-exit` kept permitted no person ([#2810](https://github.com/INTENTIUS/chant/issues/2810)) |
+| `chud-lexicon-exit-fly-site` | Declares the Fly site with the fly lexicon's [`FlySite`](/chant/lexicons/fly/fly-site/) composite, the instance the app component deploys ([#2809](https://github.com/INTENTIUS/chant/issues/2809)) |
+
+The migrations run in the order of this table, and each one plans from the tree the ones before it left, so a repo migrated now gets all of them in one upgrade. A repo migrated before `chud-lexicon-exit-rollback` existed already has `chud-lexicon-exit` in its lock, and its next upgrade plans only the rollback migration, which the dry run lists.
+
+The `chud-lexicon-exit` family is the retirement tool, not a remaining chud dependency: chant itself carries no chud lexicon or chud-derived code ([#2830](https://github.com/INTENTIUS/chant/issues/2830)). These migrations stay until no known repo still depends on chud, and are removed only in a major version.
+
+`chud-lexicon-exit` finds the `chant` member whose `package.json` depends on either package, usually `delivery/`, and makes these changes:
+
+- Both packages leave `package.json`. Every `@intentius/chant` and `@intentius/chant-lexicon-*` range below the running chant is raised to `^<that version>`. No package is added: `decide` is chant's own. Scripts run chant alone: `--on chud` goes, and `upgrade` becomes `chant workspace upgrade`.
+- It moves `delivery/decisions/points.yaml` to [`decisions/points.json`](/chant/guide/decision-points/), with each input named for its read-contract output. `slice-tier` inputs read `work-item.*`, `ship-skip` inputs read `release.*`, and `contracts_changed` becomes `release.work_changed`. It also adds the answer kind in `answers/` and declares it in `chant.workspace.json`.
+- The release Op runs the app's tests and archives the app member as committed on HEAD (`sourceArchive`, the same commit always giving the same bytes). Then `ship-skip` is asked through chant's [`decide` activity](/chant/guide/decision-points/#the-decide-activity), and a release plan (`releasePlan`) holds the archive's digest and commit with that answer, named by its own sha256. The `ship` gate approves that digest (`chant approve release ship --plan <digest>`). Its approver count is the point's quorum. The Cedar policy now reads the answer and the decider that gave it.
+- After the gate, the Op ships to the `fly` environment with the fly lexicon's `flyRelease` step. The archive is read only if it still hashes to the planned digest. Its files go onto the declared Machine under `/srv/app`, with `appStart` as the command. Each migration in the app's migrations folder runs once per environment inside the Machine, under a receipt in chant's lifecycle receipt store. The Machine must then be started with this release, and a failure after it changed puts back what it served. `releaseRecord` appends the release to the `fly` release ledger with its plan and the gate's approver. A retry of the same commit plans the same digest and leaves the Machine as it is. Nothing is recorded twice. `package.json` gains `build:fly`, which writes the Fly app's requests to `dist/fly.json` for that step.
+- The app component runs chant's supply chain on the app member: `generate-sbom`, `scan-vulnerabilities` and `vuln-gate`. It publishes nothing, so it records no release.
+- `deploy/fly.ts` keeps its Fly resources on the fly lexicon, without chud's `FlySite`. `chant.config.ts` drops `chud` from `lexicons` and loses the chud lint rules. CI stops fetching the private runtime, and `.github/workflows/ci.yml` stays what `ci/ci.ts` builds.
+
+The runtime half of chud's template is the studio kit's ([arugula-salad/studio](https://github.com/arugula-salad/studio), `template/`). The migration deletes it and names the kit as its home in the plan.
+
+| chud's file or script | Its home |
+|---|---|
+| `ops/dispatch.op.ts` | the kit's runner and dispatch Op ([arugula-salad/studio#47](https://github.com/arugula-salad/studio/issues/47)) |
+| `deploy/site.ts` | the box's service |
+| `.chant/policies/write-scope.ts` | the kit's design app |
+| `.chant/rules/contract-sizing.ts` | the kit, which sizes work items for `slice-tier` |
+| `chud dev`, `chud design` | hud on the box |
+
+One of chud's release steps has no chant home yet, and the plan lists it as not moved: signing the archive and checking the signature before the Machine runs it ([#2515](https://github.com/INTENTIUS/chant/issues/2515)). chud's rollback Op is deleted too, and `chud-lexicon-exit-rollback` writes chant's in its place.
+
+`chud-lexicon-exit-rollback` writes `ops/rollback.op.ts` beside the release Op and adds a `rollback` script (`chant run rollback`). The release Op's comment is changed to point at the new Op. The migration plans only where the release Op is the one `chud-lexicon-exit` wrote, and a different file already at `ops/rollback.op.ts` is a conflict. The rollback Op runs in four phases:
+
+- In the Plan phase, the Op looks through the `fly` ledger for whatever the site served before the release Op's most recent release. Records a rollback wrote are skipped in that search, so a second run lands on the same target. The chosen release's plan is read back from `chant/lifecycle`. Its commit's app member is then archived again, and the run stops unless the archive hashes to the digest that plan recorded. Both releases and the archive go into a rollback plan whose digest the gate will bind to. This phase also builds `dist/fly.json`.
+- An approval of the rollback plan's digest opens the `rollback` gate (`chant approve rollback rollback --plan <digest>`). Approvals count toward the same quorum as the ship gate's, and each is put to the same Cedar policy in `log-only` mode. A rollback has no ship-skip answer, so only people pass it.
+- Roll back runs the fly lexicon's `flyRollback` step. It reads the archive again before any call to Fly and refuses bytes that no longer hash to the planned digest. The Machine config that `flyRelease` recorded for that release must carry exactly the archive's files under `/srv/app`. That config then goes back on the Machine with its files and start command, and the Machine must come up started with that release. A release with no recorded config is refused by name. Migrations are not undone.
+- Record appends the restored release to the `fly` ledger. Its `restores` field names that release, and the record carries the actor who ran the rollback and the approver.
+
+The rollback lives in an Op rather than in `chant components rollback` because the release is an Op too. The app component publishes nothing, and moving the rollback into the component would split publish and rollback between two homes, which [Execution Backends](/chant/components/backends-reference/) warns against.
+
+`chud-lexicon-exit-ship-inputs` changes the release Op `chud-lexicon-exit` wrote, which asked `ship-skip` with no inputs, so only the table's default row could answer. The Op now computes the point's `release.*` inputs when it loads. It diffs the commit the `fly` site serves (the last release in its ledger) against HEAD: `first_release`, `new_migrations`, `files_changed`, `app_changed`, `work_changed` (a file where a declared work kind keeps its items) and `units` (work items added or changed). A first release counts every file on HEAD. Only the inputs the point declares are passed, and each answer record carries them. The release plan keeps the answer and its decider, not the inputs, so a retry of a shipped commit plans the same digest. A release Op whose `decide` step the project changed is left as it is.
+
+`chud-lexicon-exit-ship-policy` edits `decisions/ship-skip.cedar.ts`, the policy chud's template had. That policy permitted an agent when the ship-skip table said yes and permitted no person. Cedar denies what nothing permits, so a person's approval was denied too, and only `log-only` let a person through. The migration adds a permit for `Chant::Human` (`a-person-approves`) under the same floor, which still forbids an agent unless the table said yes. At `enforce`, Cedar then decides `allow` for a person and `deny` for an agent. The release Op keeps running the policy `log-only`. The migration plans only where the policy is the one `chud-lexicon-exit` left. A policy whose anchors the project changed is a conflict.
+
+`chud-lexicon-exit` deletes chud's `ChudLocalSite` composite (`deploy/site.ts`) and its `FlySite` marker, so the repo it leaves declares no composite instance. `chud-lexicon-exit-fly-site` declares the Fly site again with the fly lexicon's `FlySite` composite. It needs `deploy/fly.ts` and `deploy/fly-machine.ts` to hold the template's resources. It then writes the same values as one `FlySite` instance named `flySite` in `deploy/fly.ts` and deletes `deploy/fly-machine.ts`. The build still has one Machine, which the release Op's `flyRelease` finds. The app component names `FlySite` in its `composites`, and `chant workspace graph --composites` lists `delivery/flySite` with `delivery/app`. A project that changed those two files keeps its resources as they are, and the composite is listed as not moved.
+
+A file the migration replaces or deletes is replaced or deleted even when the project edited it, since it cannot build without the chud packages. The plan marks it edited, and the edit stays in git history. A file it only edits, such as `chant.config.ts`, keeps the project's edits. It is a conflict when the text the migration edits is gone. So is any other file that imports the chud packages, and a point in `points.yaml` whose inputs have no known read-contract output.
+
+### Scheduled upgrades
+
+An Op schedules upgrades with the `proposeWorkspaceUpgrade` activity rather than by running this command. The activity stages the same upgrade and proposes it as a branch or a pull request. It never writes the default branch. See [Scheduling upgrades from an Op](#scheduling-upgrades-from-an-op).
+
+## Options
+
+| Option | Effect |
+|---|---|
+| `--to <ref>`, `--to <dir>` | The template version to upgrade to: a git ref, usually a tag. Defaults to the scope's current ref, which follows a moving ref such as a branch. For a vendor scope it only relabels `ref`. For a scope made from a directory it is required, and names the directory that holds the new version (see [Scopes made from a directory](#scopes-made-from-a-directory)). |
+| `--source <repo>[#<member>]` | Move the scope to this template, through its bridge migration. Needs `--to`. See [Moving to another template](#moving-to-another-template). |
+| `--allow-code` | Run migrations whose body is code. Without it, a chain holding a code migration is refused. |
+| `--dry-run` | Stage and check, then stop. No gate is recorded. |
+| `--output <file>` | Write the patch to a file for review. |
+| `--json` | Print the outcome, the staged changes, the checks and the digest as JSON. |
+
+## What it needs
+
+- The project is in a git repository with at least one commit, and the scope and the lock have no uncommitted changes.
+- The scope has no open manual steps.
+- A scope made by `chant init --template <name>` is refused, with that reason. It has no versioned source to fetch, and its merge base is the render of the chant version that wrote it, which chant cannot rebuild offline. Anything made by `chant init --from`, and every vendor scope, is not affected.
+
+## Scheduling upgrades from an Op
+
+```ts
+import { Op, activity, phase } from "@intentius/chant";
+
+export default Op({
+  name: "template-upgrade",
+  overview: "Propose the next template version as a pull request",
+  schedule: { cron: "0 6 * * 1", overlap: "skip" },
+  phases: [
+    phase("Propose", [
+      activity("proposeWorkspaceUpgrade", { scope: ".", to: "v2.0.0", mode: "pull-request" }),
+    ]),
+  ],
+});
+```
+
+| Argument | Meaning |
+|---|---|
+| `scope` | The lineage scope, default `.` |
+| `to` | The target ref, default the scope's current ref |
+| `mode` | `report` (default) stages and checks only. `branch` commits the patch on the proposal branch and pushes it when the remote exists. `pull-request` also opens a pull request, or edits the open one. |
+| `branch` | Default `chant/upgrade/<scope>`, with `root` for `.`. The activity refuses the remote's default branch, the base branch and the checked-out branch. |
+| `base` | The pull request's base, default the remote's default branch |
+| `remote` | Default `origin` |
+| `allowCode` | Run code migrations, default false |
+| `source` | Move the scope to this template, as `--source` does. Needs `to`. |
+| `cwd` | The directory holding the lock, default the working directory |
+
+It returns `scope`, `mode`, `changed`, `proposed`, `checksOk`, `from`, `to`, `digest`, `manualSteps` (a count), `governance`, and, when written, `branch`, `commit`, `pushed` and `prUrl`. A failed check leaves `proposed` false. The pull request body names the patch digest, the same value the command's gate binds.
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | Applied, already up to date, or `--dry-run` |
+| 1 | Refused (no lock, no such scope, uncommitted changes, open manual steps, a gap in the migration chain, a move with no bridge, a patch that reaches into a nested workspace, a failed post-condition, a code migration without `--allow-code`), or a check failed in the worktree, including a migration chant ships that has a conflict |
+| 3 | Gated: the patch waits for `chant approve workspace-upgrade <scope>` |
