@@ -3005,6 +3005,17 @@ Set live: true on the TerraformWatchOp that names this root, so the Plan phase r
 
 Pick one. A root whose directory is shared across environments declares no estate in HCL and names it per root with terraform.roots.\<name>.estate; a root with its own live block already has an estate and needs nothing in chant.config. The declaration wins today, so the config value is written down and never used.
 
+### TF031
+
+**IAM policy allows a wildcard Action or Resource** — merge-worthy · guidance
+
+Name the actions the workload calls and the ARNs it touches. For the few actions that accept only Resource "*" (`ecr:GetAuthorizationToken`, `sts:GetCallerIdentity`), keep that statement on its own and suppress it with `# chant-ignore-block: TF031`. A policy TF031 reports as not determined is built from an expression; it is not a finding.
+
+| | |
+|---|---|
+| Authority | [AWS IAM security best practices (Apply least-privilege permissions)](https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html#grant-least-privilege) |
+| Prior art | [tfsec `aws-iam-no-policy-wildcards`](https://github.com/aquasecurity/tfsec/blob/master/docs/checks/aws/iam/no-policy-wildcards/index.md) (overlaps) · [Checkov `CKV_AWS_63`](https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/resource/aws/IAMStarActionPolicyDocument.py) (overlaps) · [Checkov `CKV_AWS_49`](https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/data/aws/StarActionPolicyDocument.py) (extends) · [Checkov `CKV_AWS_355`](https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/resource/aws/IAMStarResourcePolicyDocument.py) (overlaps) · [Checkov `CKV_AWS_356`](https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/data/aws/ResourcePolicyDocument.py) (overlaps) |
+
 ## Secrets & credentials (SEC)
 
 Lexicon-independent — scans the raw text of every scanned file for likely credentials, regardless of which audit lexicons are installed. Matched values are always redacted; see [suppressing false positives](/chant/cli/audit/#suppressing-a-secrets-finding).
@@ -3334,7 +3345,7 @@ This is credit rather than authority, and it never changes a rule's tier or cate
 
 | Tool | Kind | Licence | Credits |
 |---|---|---|---|
-| [Checkov](https://www.checkov.io/) | scanner | Apache-2.0 | 66 |
+| [Checkov](https://www.checkov.io/) | scanner | Apache-2.0 | 70 |
 | [KICS](https://docs.kics.io/) | scanner | Apache-2.0 | 50 |
 | [zizmor](https://docs.zizmor.sh/) | scanner | MIT | 38 |
 | [cfn_nag](https://github.com/stelligent/cfn_nag) | scanner | MIT | 20 |
@@ -3360,11 +3371,11 @@ This is credit rather than authority, and it never changes a rule's tier or cate
 | [Datree](https://hub.datree.io/built-in-rules) | scanner | Apache-2.0 | 4 |
 | [HashiCorp Terraform style guide](https://developer.hashicorp.com/terraform/language/style) | specification | n/a | 4 |
 | [helm lint](https://helm.sh/docs/helm/helm_lint/) | vendor-validator | Apache-2.0 | 4 |
+| [tfsec](https://github.com/aquasecurity/tfsec) | scanner | MIT | 4 |
 | [choudoufu](https://github.com/INTENTIUS/choudoufu) | scanner | MPL-2.0 | 3 |
 | [Flux Kustomization API reference](https://fluxcd.io/flux/components/kustomize/kustomizations/) | specification | n/a | 3 |
 | [hadolint](https://github.com/hadolint/hadolint) | scanner | GPL-3.0 | 3 |
 | [HashiCorp reference Sentinel policies](https://github.com/hashicorp/terraform-sentinel-policies) | specification | MPL-2.0 | 3 |
-| [tfsec](https://github.com/aquasecurity/tfsec) | scanner | MIT | 3 |
 | [agent-audit](https://github.com/piiiico/agent-audit) | scanner | MIT | 2 |
 | [ARM Template Toolkit (arm-ttk)](https://github.com/Azure/arm-ttk) | scanner | MIT | 2 |
 | [AWS prescriptive guidance for Terraform](https://docs.aws.amazon.com/prescriptive-guidance/latest/terraform-aws-provider-best-practices/) | specification | n/a | 2 |
