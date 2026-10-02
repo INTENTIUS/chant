@@ -71,6 +71,8 @@ export const app = new Deployment({
 });
 ```
 
+Those property types are classes. Every other object a resource holds, such as `DeploymentSpec`, `ServiceSpec` or `JobSpec`, is an interface in the generated declarations, and you write it as an object literal. In `@intentius/chant-lexicon-k8s/types`, both check the keys and value types you pass, so `spec: { replicas: "three" }` is a type error there.
+
 ## Specless types
 
 Some K8s resources (ConfigMap, Secret, Namespace, ServiceAccount) don't have a `spec` field. Their data goes directly on the manifest:
