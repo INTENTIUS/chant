@@ -577,6 +577,10 @@ export async function runOperatorRound(opts: OperatorRoundOptions): Promise<Oper
     try {
       const result = await runOpLocally(config, opts.activities, opts.profiles, opts.signal, {
         runId,
+        // #2522: the environment the operator was started for (`--env`, or a
+        // steward's environment) reaches the activities through the run
+        // context, as `chant run --env` does.
+        ...(opts.env ?? opts.stewardEnv ? { env: opts.env ?? opts.stewardEnv } : {}),
         ...(steward ? { steward: steward.name } : {}),
         ledger: { cwd: opts.cwd },
         // A steward's turn claims work leases as `<steward>/<op>@<holder>`
