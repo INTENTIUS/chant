@@ -61,6 +61,11 @@ const lexiconsDir = join(repoRoot, "lexicons");
  * Every entry here MUST reference a filed, open issue.
  */
 const KNOWN_FAILURES: Record<string, Record<string, string>> = {
+  sql: {
+    "lintRules() returns at least 1 rule": "#3197 — every rule, check and example reads a parsed ClickHouse table or view; they land with the entity model in the next #3197 PR",
+    "postSynthChecks() returns at least 1 check": "#3197 — every rule, check and example reads a parsed ClickHouse table or view; they land with the entity model in the next #3197 PR",
+    "At least 1 example in examples/": "#3197 — every rule, check and example reads a parsed ClickHouse table or view; they land with the entity model in the next #3197 PR",
+  },
 };
 
 /**

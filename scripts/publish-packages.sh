@@ -353,6 +353,10 @@ summary
 echo
 echo "published: ${#published[@]}  already published: ${#skipped[@]}  failed: ${#failed[@]}"
 
+# What this run put on npm, for publish.yml's `untag` job (#3191): a release
+# with any package on npm keeps its tag.
+[ -n "${GITHUB_OUTPUT:-}" ] && echo "published=${published[*]:-}" >> "$GITHUB_OUTPUT"
+
 if [ ${#failed[@]} -gt 0 ]; then
   echo "::error::${#failed[@]} package(s) failed to publish: ${failed[*]}"
   exit 1

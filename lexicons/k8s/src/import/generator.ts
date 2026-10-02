@@ -108,6 +108,23 @@ const SERVICE_PORT_TYPES = new Set([
 ]);
 
 /**
+ * A Role's and a ClusterRole's top-level `rules` are PolicyRules, not the
+ * IngressRules {@link PROPERTY_CONSTRUCTORS} maps `rules` to. Since the
+ * property classes carry their members (chant #3093), an IngressRule built
+ * from `apiGroups`/`verbs` no longer type-checks.
+ */
+const POLICY_RULE_TYPES = new Set([
+  "K8s::Rbac::Role",
+  "K8s::Rbac::ClusterRole",
+]);
+
+/** The constructor for `key` on a resource of `parentType`. */
+function constructorFor(key: string, parentType: string): string | undefined {
+  if (key === "rules" && POLICY_RULE_TYPES.has(parentType)) return "PolicyRule";
+  return PROPERTY_CONSTRUCTORS[key];
+}
+
+/**
  * Generate TypeScript source code from a Kubernetes IR.
  */
 export class K8sGenerator implements TypeScriptGenerator {
@@ -132,6 +149,7 @@ export class K8sGenerator implements TypeScriptGenerator {
       ...usedConstructors,
       ...Object.values(PROPERTY_CONSTRUCTORS),
       "ServicePort",
+      "PolicyRule",
       ...ir.resources.map((r) => r.logicalId),
     ]);
 
@@ -197,7 +215,7 @@ export class K8sGenerator implements TypeScriptGenerator {
         continue;
       }
 
-      const constructor = PROPERTY_CONSTRUCTORS[key];
+      const constructor = constructorFor(key, parentType);
       if (!constructor) continue;
 
       if (Array.isArray(value)) {
@@ -243,7 +261,7 @@ export class K8sGenerator implements TypeScriptGenerator {
     }
 
     // Check if this key maps to a property constructor
-    const constructor = PROPERTY_CONSTRUCTORS[key];
+    const constructor = constructorFor(key, parentType);
     if (constructor) {
       // Array of constructors (containers, volumes, ports, env, etc.)
       if (Array.isArray(value)) {

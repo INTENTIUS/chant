@@ -16,8 +16,8 @@ depth, it links out. Do the steps in order: later ones assume earlier ones.
 <Aside type="danger" title="The step that is not automatable">
 Step 6 creates an npm trusted-publisher record by hand on npmjs.com. No
 command in this repo can do it, and skipping it produces a lexicon that
-builds, tests, and merges cleanly, then fails at release time with an error
-that looks like missing credentials. Two packages have already shipped this
+builds, tests, and merges cleanly, then stops the release at the publish
+workflow's `audit` job. Two packages have already shipped this
 way. If you do nothing else on this page, do step 6.
 </Aside>
 
@@ -179,14 +179,21 @@ is versioned in lockstep with core.
 
 ## When the publish run goes red
 
-`scripts/publish-packages.sh` never stops at the first failure. Every package
-gets its attempt, the summary table names the ones that failed, and the run
-exits non-zero at the end. Re-running is safe: a package already at its
-version is skipped, so a partial release is recovered by dispatching the
-workflow again.
+The `audit` job checks every package's trusted-publisher record first, and
+nothing publishes while one is missing. Its summary names the packages. Fix
+them (step 6), then push the release tag again at the same commit.
+
+Past the audit, `scripts/publish-packages.sh` never stops at the first
+failure. Every package gets its attempt, the summary table names the ones that
+failed, and the run exits non-zero at the end. Once any package of the release
+is on npm the tag is kept. Re-running is safe: a package already at its
+version is skipped, so a partial release is recovered with
+`gh run rerun <publish-run-id> --failed` or by dispatching the workflow again.
 
 | Symptom | Cause | Fix |
 |---|---|---|
+| `audit` fails with `MISSING` for your package, nothing published | No trusted-publisher record, or the package is not on npm yet | Step 6, then push the tag again |
+| `audit` fails with `UNKNOWN` | The registry did not answer the check | Re-run the failed jobs |
 | `ENEEDAUTH` on your package while others publish | No trusted-publisher record | Step 6 |
 | `registry REFUSED the OIDC exchange: HTTP 404` | The registry saying the same thing outright | Step 6 |
 | `registry ACCEPTED the OIDC exchange` but publish still fails | The record is fine | Read the npm error; the auth path is not the problem |

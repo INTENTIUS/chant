@@ -46,6 +46,7 @@ import {
   type FlapsRequest,
   type ApplyCtx,
 } from "./fly-apply";
+import { createMachinesFake } from "./machines-fake";
 
 const CTX: ApplyCtx = { base: "http://localhost:4280" };
 const NO_WAIT = { intervalMs: 0, deadlineMs: 5_000 };
@@ -362,7 +363,10 @@ describe("app-scoped resource classification + segments", () => {
     const at = (endpoint: string): FlapsRequest => ({ endpoint, method: "POST", body: {} });
     expect(isVolumeRequest(at("/v1/apps/demo/volumes"))).toBe(true);
     expect(isIpRequest(at("/v1/apps/demo/ip_assignments"))).toBe(true);
+    expect(isCertRequest(at("/v1/apps/demo/certificates/acme"))).toBe(true);
+    // A plan built before #3114 names the list path; it still classifies.
     expect(isCertRequest(at("/v1/apps/demo/certificates"))).toBe(true);
+    expect(isCertRequest(at("/v1/apps/demo/certificates/custom"))).toBe(false);
     expect(isSecretRequest(at("/v1/apps/demo/secrets/db"))).toBe(true);
     // Cross-checks: a secret endpoint is not a machine/volume request.
     expect(isMachineRequest(at("/v1/apps/demo/secrets/db"))).toBe(false);
@@ -413,10 +417,74 @@ describe("applyVolume / applyIp / applyCert idempotency (drift handling)", () =>
   });
 
   test("cert absent → create; present (by hostname) → no-op", async () => {
-    const req: FlapsRequest = { endpoint: "/v1/apps/demo/certificates", method: "POST", body: { hostname: "example.com" } };
+    const req: FlapsRequest = { endpoint: "/v1/apps/demo/certificates/acme", method: "POST", body: { hostname: "example.com" } };
+    const posts: Array<{ url: string; body: unknown }> = [];
+    const empty: FlyHttp = async (method, url, body) =>
+      method === "GET"
+        ? { status: 200, text: JSON.stringify({ certificates: [] }) }
+        : (posts.push({ url, body }), { status: 201, text: JSON.stringify({ hostname: "example.com" }) });
+    expect(await applyCert(CTX, "demo", req, empty)).toEqual({ action: "created", hostname: "example.com" });
+    expect(posts).toEqual([{ url: "http://localhost:4280/v1/apps/demo/certificates/acme", body: { hostname: "example.com" } }]);
+
     const present: FlyHttp = async (method) =>
       method === "GET" ? { status: 200, text: JSON.stringify({ certificates: [{ hostname: "example.com" }] }) } : { status: 500, text: "" };
     expect(await applyCert(CTX, "demo", req, present)).toEqual({ action: "noop", hostname: "example.com" });
+  });
+});
+
+/**
+ * #3114: flaps has no POST on `.../certificates` and answers one with 404; ACME
+ * certificates are created at `.../certificates/acme`. The in-memory flaps
+ * routes certificates the same way, so a wrong path fails here.
+ */
+describe("flyApply creates certificates at /certificates/acme (#3114)", () => {
+  const app = { endpoint: "/v1/apps", method: "POST", body: { app_name: "demo" } };
+  const planWith = (entries: Record<string, unknown>): string => {
+    const dir = mkdtempSync(join(tmpdir(), "fly-3114-"));
+    const planPath = join(dir, "plan.json");
+    writeFileSync(planPath, JSON.stringify(entries));
+    return planPath;
+  };
+  const run = (fake: ReturnType<typeof createMachinesFake>, entries: Record<string, unknown>, prune = false) =>
+    flyApply({ planPath: planWith(entries), endpoint: CTX.base, wait: NO_WAIT, prune }, undefined, fake.http);
+
+  test("the in-memory flaps answers a POST to the bare list path with 404, as Fly does", async () => {
+    const fake = createMachinesFake();
+    fake.apps.add("demo");
+    const res = await fake.http("POST", `${CTX.base}/v1/apps/demo/certificates`, { hostname: "example.com" });
+    expect(res.status).toBe(404);
+    expect(fake.certs.get("demo") ?? []).toEqual([]);
+  });
+
+  test("a certificate is created once, and a re-apply is a no-op", async () => {
+    const fake = createMachinesFake();
+    const cert = { endpoint: "/v1/apps/demo/certificates/acme", method: "POST", body: { hostname: "example.com" } };
+    const first = await run(fake, { app, cert });
+    expect(first.certs).toEqual([{ app: "demo", hostname: "example.com", action: "created" }]);
+    expect(fake.certs.get("demo")).toEqual(["example.com"]);
+    expect(fake.calls).toContain("POST /v1/apps/demo/certificates/acme");
+    expect(fake.calls).not.toContain("POST /v1/apps/demo/certificates");
+
+    const second = await run(fake, { app, cert });
+    expect(second.certs).toEqual([{ app: "demo", hostname: "example.com", action: "noop" }]);
+    expect(fake.calls.filter((c) => c === "POST /v1/apps/demo/certificates/acme")).toHaveLength(1);
+  });
+
+  test("a plan built before #3114, naming /certificates, still creates the certificate at /acme", async () => {
+    const fake = createMachinesFake();
+    const legacy = { endpoint: "/v1/apps/demo/certificates", method: "POST", body: { hostname: "example.com" } };
+    const out = await run(fake, { app, cert: legacy });
+    expect(out.certs).toEqual([{ app: "demo", hostname: "example.com", action: "created" }]);
+    expect(fake.certs.get("demo")).toEqual(["example.com"]);
+  });
+
+  test("prune deletes a certificate the plan no longer declares", async () => {
+    const fake = createMachinesFake();
+    const cert = (hostname: string) => ({ endpoint: "/v1/apps/demo/certificates/acme", method: "POST", body: { hostname } });
+    await run(fake, { app, keep: cert("keep.com"), drop: cert("drop.com") });
+    const out = await run(fake, { app, keep: cert("keep.com") }, true);
+    expect(out.prunedCerts).toEqual([{ app: "demo", hostname: "drop.com" }]);
+    expect(fake.certs.get("demo")).toEqual(["keep.com"]);
   });
 });
 

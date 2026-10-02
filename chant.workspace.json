@@ -417,6 +417,12 @@
       ]
     },
     {
+      "name": "lexicon-sql",
+      "dir": "lexicons/sql",
+      "kind": "other",
+      "because": "an npm workspace package with no chant project"
+    },
+    {
       "name": "lexicon-terraform",
       "dir": "lexicons/terraform",
       "kind": "other",

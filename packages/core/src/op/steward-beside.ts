@@ -118,6 +118,8 @@ export function inProcessBesideLauncher(
       try {
         const result = await runOpLocally(start.op, activities, profiles, controller.signal, {
           steward: start.steward,
+          // #2522: the same `--env` the spawned launcher passes on the command line.
+          ...(start.env ? { env: start.env } : {}),
           ledger: { cwd: start.cwd },
           work: { holder: start.holder },
         });

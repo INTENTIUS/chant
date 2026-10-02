@@ -158,6 +158,12 @@
       ],
       "@intentius/chant-lexicon-prometheus/*": [
         "./lexicons/prometheus/src/*"
+      ],
+      "@intentius/chant-lexicon-sql": [
+        "./lexicons/sql/src/index.ts"
+      ],
+      "@intentius/chant-lexicon-sql/*": [
+        "./lexicons/sql/src/*"
       ]
     }
   },

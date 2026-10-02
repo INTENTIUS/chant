@@ -27,6 +27,13 @@ const APP = "chant-it";
 const CONTAINER = "chant-mudflaps-it";
 const PORT = 4281;
 const http = defaultFlyHttp();
+
+// mudflaps (0.4.1, and 0.5.0) creates certificates at POST .../certificates and
+// answers 405 at .../certificates/acme, the path real flaps uses (#3114,
+// INTENTIUS/mudflaps#69). Until the pin moves past that, route the applier's
+// ACME create to the path mudflaps serves. Remove this once it does.
+const mudflapsHttp: typeof http = (method, url, body, headers, signal) =>
+  http(method, method === "POST" ? url.replace(/\/certificates\/acme$/, "/certificates") : url, body, headers, signal);
 const WAIT = { intervalMs: 50, timeoutSecs: 5, deadlineMs: 30_000 };
 
 let endpoint = "";
@@ -59,7 +66,7 @@ const mountingMachineReq = {
   body: { name: "web", region: "iad", config: { image: "nginx:1", mounts: [{ volume: "data", path: "/data" }], metadata: { "managed-by": "chant" } } },
 };
 const ipReq = { endpoint: `/v1/apps/${APP}/ip_assignments`, method: "POST", body: { type: "shared_v4", region: "global", org_slug: "personal" } };
-const certReq = { endpoint: `/v1/apps/${APP}/certificates`, method: "POST", body: { hostname: "example.com" } };
+const certReq = { endpoint: `/v1/apps/${APP}/certificates/acme`, method: "POST", body: { hostname: "example.com" } };
 const secretReq = { endpoint: `/v1/apps/${APP}/secrets/db-password`, method: "POST", body: { value: "s3cret" }, applyOnly: true };
 
 beforeAll(async () => {
@@ -180,7 +187,7 @@ describe("flyApply against live mudflaps (#739)", () => {
     const recording: typeof http = async (method, url, body, headers, signal) => {
       if (method === "POST" && url.endsWith("/volumes")) createOrder.push("volume");
       if (method === "POST" && url.endsWith("/machines")) createOrder.push("machine");
-      return http(method, url, body, headers, signal);
+      return mudflapsHttp(method, url, body, headers, signal);
     };
     const applied = await flyApply({
       planPath: planFile("b1", { app: appReq, web: mountingMachineReq, data: volumeReq, ip: ipReq, cert: certReq, "db-password": secretReq }),
@@ -205,7 +212,7 @@ describe("flyApply against live mudflaps (#739)", () => {
     expect((await listCerts(cctx, APP, http)).map((c) => c.hostname)).toContain("example.com");
 
     // Secret set. flaps returns only a digest, never the value → apply-only (D7).
-    expect(applied.secrets).toEqual([{ app: APP, name: "db-password" }]);
+    expect(applied.secrets).toEqual([{ app: APP, name: "db-password", action: "set" }]);
     const liveSecret = (await listSecrets(cctx, APP, http)).find((s) => s.name === "db-password");
     expect(liveSecret).toBeDefined();
     expect((liveSecret as { value?: unknown } | undefined)?.value ?? null).toBeNull(); // never read back
@@ -216,11 +223,11 @@ describe("flyApply against live mudflaps (#739)", () => {
       planPath: planFile("b1b", { app: appReq, web: mountingMachineReq, data: volumeReq, ip: ipReq, cert: certReq, "db-password": secretReq }),
       endpoint,
       wait: WAIT,
-    });
+    }, undefined, mudflapsHttp);
     expect(reapply.volumes).toEqual([{ app: APP, name: "data", action: "noop" }]);
     expect(reapply.ips).toEqual([{ app: APP, type: "shared_v4", action: "noop" }]);
     expect(reapply.certs).toEqual([{ app: APP, hostname: "example.com", action: "noop" }]);
-    expect(reapply.secrets).toEqual([{ app: APP, name: "db-password" }]); // set again, no diff
+    expect(reapply.secrets).toEqual([{ app: APP, name: "db-password", action: "set" }]); // set again, no diff
 
     // 3. Drop the ip + cert + secret from the plan and prune. App-scoped (D2):
     //    the metadata-less types are owned wholesale, so undeclared ones go.

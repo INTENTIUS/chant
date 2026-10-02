@@ -164,6 +164,11 @@ export const ChantConfigSchema = z.object({
   release: z.object({
     autoRecord: z.boolean().optional(),
   }).optional(),
+  // Strict: a misspelt key here would leave Ops on the local runtime with
+  // nothing said (#2523).
+  run: z.object({
+    on: z.string().min(1).optional(),
+  }).strict().optional(),
   sbom: z.object({
     format: z.enum(["spdx", "cyclonedx"]).optional(),
     enabled: z.boolean().optional(),
@@ -368,6 +373,16 @@ export interface ChantConfig {
   release?: {
     /** Set false to disable auto-emitting a release record after a successful component deploy project-wide. The `--no-release-record` CLI flag overrides this per-invocation. */
     autoRecord?: boolean;
+  };
+
+  /** Defaults for `chant run` and its subcommands (#2523). */
+  run?: {
+    /**
+     * The runtime that hosts this project's Op runs when `--on` is not
+     * given: a configured lexicon that declares an `opRuntime`, or `"local"`.
+     * `--on` overrides it, and `--on local` selects the built-in runtime.
+     */
+    on?: string;
   };
 
   /**

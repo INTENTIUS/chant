@@ -29,6 +29,13 @@ import {
 import { isChantOwnedSpecifier, isFoldableHelperName } from "../fold/foldable-helpers";
 import { lexiconModulePath, lexiconModuleRoot } from "../lexicon-module";
 import {
+  isFile,
+  packageExportsTarget,
+  probeModuleFile,
+  splitBareSpecifier,
+  tsconfigPathsMatch,
+} from "./specifier-resolve";
+import {
   briefNodeText,
   callExpressionMessage,
   computedPropertyNameMessage,
@@ -47,7 +54,7 @@ import {
   type CompositeParamScope,
 } from "./param-deps";
 import { setPathProvenance } from "../provenance";
-import { intrinsicCallFoldsEagerly, type IntrinsicDef } from "../lexicon";
+import { intrinsicCallFoldsEagerly, intrinsicTagFolds, type IntrinsicDef } from "../lexicon";
 import type { BuildParamValue } from "../build-params";
 
 /**
@@ -454,14 +461,24 @@ function resolveModulePathMemoized(
   resolvePathCache: Map<string, string>,
 ): string {
   const isBare = !specifier.startsWith(".") && !isAbsolute(specifier);
+  // chant#3090 — a tsconfig `paths` answer depends on the importing file's
+  // directory and can name a project file that comes and goes between
+  // builds, so it is memoized per session and directory, like a relative one.
+  const key = `${dirname(fromFile)}\0${specifier}`;
   if (isBare) {
+    const sessionCached = resolvePathCache.get(key);
+    if (sessionCached !== undefined) return sessionCached;
+    const mapped = pathsMappedTarget(specifier, fromFile);
+    if (mapped !== undefined) {
+      resolvePathCache.set(key, mapped);
+      return mapped;
+    }
     const cached = bareSpecifierPathCache.get(specifier);
     if (cached !== undefined) return cached;
     const resolved = resolveModulePath(specifier, fromFile);
     bareSpecifierPathCache.set(specifier, resolved);
     return resolved;
   }
-  const key = `${dirname(fromFile)}\0${specifier}`;
   const cached = resolvePathCache.get(key);
   if (cached !== undefined) return cached;
   const resolved = resolveModulePath(specifier, fromFile);
@@ -543,10 +560,10 @@ export interface FoldExecutionCounts {
   factoryInvocations: number;
   /**
    * Of {@link factoryInvocations}, the ones whose callee came from a PROJECT
-   * FILE (a relative/absolute specifier) rather than a lexicon package or
-   * chant's own — i.e. the ones that execute project-authored code here. Text
-   * only ({@link isProjectFileSpecifier}); no resolution is performed to
-   * classify.
+   * FILE (a relative/absolute specifier, or one a tsconfig `paths` entry
+   * maps) rather than a lexicon package or chant's own — i.e. the ones that
+   * execute project-authored code here ({@link isProjectImport}); no package
+   * resolution is performed to classify.
    */
   projectFactoryInvocations: number;
   /**
@@ -927,16 +944,21 @@ function collectImports(sourceFile: ts.SourceFile): CollectedImports {
 /**
  * chant #1020 hang fix — best-effort fast path for resolving a BARE
  * specifier by walking `node_modules` directly with the same primitives
- * (`existsSync`/`readFileSync`) the relative-specifier branch below already
+ * (`statSync`/`readFileSync`) the relative-specifier branch below already
  * uses, reading `package.json`'s "exports"/"main" field by hand instead of
  * calling `createRequire(fromFile).resolve(specifier)`. Returns `undefined`
- * — never throws — for anything beyond the simple, single-target shape
- * (a string `"exports"`, or an object whose `"."` entry is a string or a
- * flat, string-valued condition map): the caller falls back to the slow,
- * authoritative `createRequire().resolve()` path whenever this returns
- * `undefined`, so a genuinely complex `package.json` (a conditions array, a
- * self-reference, a `"."` entry the fast path doesn't recognize) is still
- * resolved correctly, just not quickly.
+ * — never throws — when the package is not found, its `exports` map does not
+ * export the subpath under the `import`/`node`/`default` conditions, or a
+ * subpath of a package without `exports` has no `package.json` of its own:
+ * the caller then falls back to the slow, authoritative
+ * `createRequire().resolve()` path, so such a specifier is still resolved
+ * correctly, just not quickly.
+ *
+ * chant#3090 — subpaths (`pkg/sub/x`) and `exports` pattern keys
+ * (`"./sub/*"`) resolve here too, with condition objects read in key order
+ * as an ESM import reads them ({@link packageExportsTarget}). Before, a
+ * subpath always reached the `createRequire` fallback, whose CommonJS
+ * conditions miss an `import`-only target.
  *
  * Why this exists at all: profiling traced the hang to
  * `createRequire(fromFile).resolve(specifier)` ITSELF taking upwards of a
@@ -946,22 +968,22 @@ function collectImports(sourceFile: ts.SourceFile): CollectedImports {
  * process (session-level and even process-wide-by-specifier caching, see
  * {@link bareSpecifierPathCache}, only avoid paying that cost a SECOND
  * time). The relative-specifier branch just below, using these exact same
- * `existsSync`/`statSync` primitives, never showed this slowdown anywhere
+ * file-system primitives, never showed this slowdown anywhere
  * in the same profiling — the cost is specific to Node's own
  * `Module._resolveFilename` machinery, not to file-system access in
- * general, so replacing just that one call with plain `existsSync`/
+ * general, so replacing just that one call with plain `statSync`/
  * `readFileSync` sidesteps it entirely for the common case every
  * `@intentius/chant*` package (and most well-formed npm packages) ships.
  */
 function fastResolveBareSpecifier(specifier: string, fromFile: string): string | undefined {
+  const parts = splitBareSpecifier(specifier);
+  if (parts === undefined) return undefined;
   let dir = dirname(fromFile);
   for (;;) {
-    const packageDir = join(dir, "node_modules", specifier);
+    const packageDir = join(dir, "node_modules", parts.name);
     if (existsSync(packageDir)) {
-      const entry = fastResolvePackageEntry(packageDir);
-      if (entry === undefined) return undefined;
-      const resolved = resolvePath(packageDir, entry);
-      if (!existsSync(resolved) || !statSync(resolved).isFile()) return undefined;
+      const resolved = fastResolvePackageEntry(packageDir, parts.subpath);
+      if (resolved === undefined || !isFile(resolved)) return undefined;
       try {
         return realpathSync(resolved);
       } catch {
@@ -974,8 +996,14 @@ function fastResolveBareSpecifier(specifier: string, fromFile: string): string |
   }
 }
 
-/** Read `<packageDir>/package.json`'s "." export target — see {@link fastResolveBareSpecifier}'s doc for exactly which shapes this recognizes; anything else returns `undefined`. */
-function fastResolvePackageEntry(packageDir: string): string | undefined {
+/**
+ * The absolute file `<packageDir>/package.json` names for `subpath` (`"."` or
+ * `"./x"`), or `undefined` — see {@link fastResolveBareSpecifier}'s doc for
+ * which shapes this recognizes. With an `exports` field, that map decides.
+ * Without one, the root is `main` (or `index.js`), and a subpath is read as a
+ * nested package directory with its own `package.json`.
+ */
+function fastResolvePackageEntry(packageDir: string, subpath: string): string | undefined {
   const pkgJsonPath = join(packageDir, "package.json");
   if (!existsSync(pkgJsonPath)) return undefined;
   let pkg: unknown;
@@ -988,68 +1016,63 @@ function fastResolvePackageEntry(packageDir: string): string | undefined {
   const exportsField = (pkg as Record<string, unknown>).exports;
 
   if (exportsField !== undefined) {
-    if (typeof exportsField === "string") return exportsField;
-    if (typeof exportsField !== "object" || exportsField === null || Array.isArray(exportsField)) {
-      return undefined;
-    }
-    const exportsObj = exportsField as Record<string, unknown>;
-    // No "." key at all means the WHOLE object IS the "." export's own
-    // condition map (the shorthand form) — only when none of its OWN keys
-    // look like a subpath/condition-name ambiguity risk (a key starting
-    // with "." that isn't literally "." itself signals real subpath
-    // exports present, so bail rather than misparse).
-    const hasSubpathKeys = Object.keys(exportsObj).some((k) => k.startsWith(".") && k !== ".");
-    const target = "." in exportsObj ? exportsObj["."] : hasSubpathKeys ? undefined : exportsObj;
-    if (target === undefined) return undefined;
-    if (typeof target === "string") return target;
-    if (typeof target !== "object" || target === null || Array.isArray(target)) return undefined;
-    const conditions = target as Record<string, unknown>;
-    // Prefer "default" (present on every chant/lexicon package and the
-    // overwhelming majority of well-formed dual-mode npm packages); "node"/
-    // "import" as narrower fallbacks. Every chant package's own "default"
-    // and "development" conditions point at the identical source file, so
-    // which one Node's own algorithm would have picked never matters here.
-    for (const key of ["default", "node", "import"]) {
-      const val = conditions[key];
-      if (typeof val === "string") return val;
-    }
-    return undefined;
+    const target = packageExportsTarget(exportsField, subpath);
+    return target === undefined ? undefined : resolvePath(packageDir, target);
   }
 
+  if (subpath !== ".") return fastResolvePackageEntry(join(packageDir, subpath), ".");
   const main = (pkg as Record<string, unknown>).main;
-  if (main !== undefined) return typeof main === "string" ? main : undefined;
-  return "index.js";
+  if (main !== undefined) return typeof main === "string" ? resolvePath(packageDir, main) : undefined;
+  return resolvePath(packageDir, "index.js");
+}
+
+/**
+ * chant#3090 — the file a tsconfig `paths` entry maps a bare `specifier` to,
+ * from the nearest `tsconfig.json` above `fromFile` ({@link tsconfigPathsTarget}),
+ * or `undefined`.
+ *
+ * chant's own package specifiers ({@link isChantOwnedSpecifier}) are never
+ * mapped. They resolve through `node_modules` to the modules the CLI has
+ * already loaded, which is what {@link isTrustedExecutableBinding} relies on,
+ * and a project's `paths` cannot point them at its own files. This repository's
+ * root tsconfig maps every chant package to its source, and those entries
+ * name the same files `node_modules` does.
+ *
+ * A specifier this maps is a project import ({@link isProjectImport}): it is
+ * folded as a project file and its trust is decided on the resolved path,
+ * even when its text names an active lexicon package.
+ */
+function pathsMappedTarget(specifier: string, fromFile: string): string | undefined {
+  return pathsMatch(specifier, fromFile)?.target;
+}
+
+/** The tsconfig `paths` match behind {@link pathsMappedTarget}, including a match whose targets name no file. */
+function pathsMatch(specifier: string, fromFile: string): { key: string; target: string | undefined } | undefined {
+  if (specifier.startsWith(".") || isAbsolute(specifier) || isChantOwnedSpecifier(specifier)) return undefined;
+  return tsconfigPathsMatch(specifier, fromFile);
 }
 
 /**
  * Resolve an import specifier to an absolute module path, the way the
  * declaring file's own `import` would — without depending on a TS-aware
  * loader being active. Relative/absolute specifiers are probed against real
- * TS/JS candidate files on disk; bare package specifiers try
- * {@link fastResolveBareSpecifier} first, falling back to Node's own CJS
- * algorithm from the declaring file's location (lexicon packages ship built
- * JS, so this needs no `.ts` awareness) whenever that returns `undefined`.
+ * TS/JS candidate files on disk ({@link probeModuleFile}, which maps `./x.js`
+ * to `./x.ts` as `tsc` does); a bare specifier a tsconfig `paths` entry maps
+ * resolves to that file ({@link pathsMappedTarget}); other bare package
+ * specifiers try {@link fastResolveBareSpecifier} first, falling back to
+ * Node's own CJS algorithm from the declaring file's location whenever that
+ * returns `undefined`.
  */
 function resolveModulePath(specifier: string, fromFile: string): string {
   if (specifier.startsWith(".") || isAbsolute(specifier)) {
     const base = specifier.startsWith(".") ? resolvePath(dirname(fromFile), specifier) : specifier;
-    const candidates = [
-      base,
-      `${base}.ts`,
-      `${base}.tsx`,
-      `${base}.js`,
-      `${base}.mjs`,
-      join(base, "index.ts"),
-      join(base, "index.js"),
-    ];
-    for (const candidate of candidates) {
-      if (existsSync(candidate) && statSync(candidate).isFile()) return candidate;
-    }
     // Nothing found on disk under any probed extension — hand back the bare
     // base and let `import()` fail with its own, more specific error.
-    return base;
+    return probeModuleFile(base) ?? base;
   }
 
+  const mapped = pathsMappedTarget(specifier, fromFile);
+  if (mapped !== undefined) return mapped;
   const fast = fastResolveBareSpecifier(specifier, fromFile);
   if (fast !== undefined) return fast;
   return createRequire(fromFile).resolve(specifier);
@@ -1151,6 +1174,22 @@ function activeLexiconPackage(specifier: string, lexiconPackages: ReadonlySet<st
 }
 
 /**
+ * chant#3090 — {@link activeLexiconPackage} for a specifier imported by
+ * `fromFile`: `undefined` as well when a tsconfig `paths` entry maps the
+ * specifier ({@link pathsMappedTarget}), because the import then names a
+ * project file, not the package the build loaded. Only a specifier whose text
+ * already matches pays the tsconfig lookup.
+ */
+function activeLexiconPackageImport(
+  specifier: string,
+  fromFile: string,
+  lexiconPackages: ReadonlySet<string>,
+): string | undefined {
+  if (activeLexiconPackage(specifier, lexiconPackages) === undefined) return undefined;
+  return pathsMappedTarget(specifier, fromFile) === undefined ? specifier : undefined;
+}
+
+/**
  * chant#2577 — the path-declared counterpart of {@link activeLexiconPackage}:
  * the resolved module path when a relative or absolute `specifier` reaches
  * one of this build's {@link FoldSession.lexiconModules}, `undefined`
@@ -1163,7 +1202,7 @@ function activeLexiconModule(
   lexiconModules: ReadonlySet<string>,
   resolvePathCache: Map<string, string>,
 ): string | undefined {
-  if (lexiconModules.size === 0 || !isProjectFileSpecifier(specifier)) return undefined;
+  if (lexiconModules.size === 0 || !isProjectImport(specifier, fromFile)) return undefined;
   let modulePath: string;
   try {
     modulePath = resolveModulePathMemoized(specifier, fromFile, resolvePathCache);
@@ -1248,7 +1287,7 @@ async function resolveActiveLexiconExport(
   session: FoldSession,
 ): Promise<{ value: unknown } | undefined> {
   let modulePath: string | undefined;
-  if (activeLexiconPackage(binding.specifier, session.lexiconPackages)) {
+  if (activeLexiconPackageImport(binding.specifier, fromFile, session.lexiconPackages)) {
     try {
       modulePath = resolveModulePathMemoized(binding.specifier, fromFile, session.resolvePathCache);
     } catch {
@@ -1686,7 +1725,7 @@ async function invokeResolvedCallee(
   // means: an active lexicon package or chant-core's own tree is a package's
   // code, and everything else reached by a relative or absolute specifier is
   // the project's.
-  if (!ctx.executing && isProjectFileSpecifier(binding.specifier) && !isTrustedExecutableBinding(binding, ctx)) {
+  if (!ctx.executing && isProjectImport(binding.specifier, ctx.file) && !isTrustedExecutableBinding(binding, ctx)) {
     throw cheapError(
       `"${calleeName}" is imported from "${binding.specifier}", which is a project file; ` +
         "the default mode does not invoke project-owned code (`executing` would run it and fold what it returns)",
@@ -1730,7 +1769,7 @@ async function invokeResolvedCallee(
   }
 
   executionCounts.factoryInvocations += 1;
-  if (isProjectFileSpecifier(binding.specifier)) executionCounts.projectFactoryInvocations += 1;
+  if (isProjectImport(binding.specifier, ctx.file)) executionCounts.projectFactoryInvocations += 1;
 
   return (Fn as (...fnArgs: unknown[]) => unknown)(...args);
 }
@@ -2141,7 +2180,7 @@ function findCompositeDefinition(
       // lexicon exports a `Composite`, so nothing about a chant project moves.
       const chantOwned = isChantOwnedHelperBinding(compositeBinding, { ...ctx, file: scope.file });
       const hostOwned =
-        activeLexiconPackage(compositeBinding.specifier, ctx.lexiconPackages) !== undefined ||
+        activeLexiconPackageImport(compositeBinding.specifier, scope.file, ctx.lexiconPackages) !== undefined ||
         activeLexiconModule(compositeBinding.specifier, scope.file, ctx.lexiconModules, ctx.resolvePathCache) !==
           undefined;
       if (!chantOwned && !hostOwned) return undefined;
@@ -2169,7 +2208,7 @@ async function resolveInterpretableFactory(
 ): Promise<InterpretableFactory | undefined> {
   // Rule 1 — project files only. A text check; no resolution performed for a
   // bare specifier, so this costs nothing for the (common) lexicon case.
-  if (!isProjectFileSpecifier(binding.specifier)) return undefined;
+  if (!isProjectImport(binding.specifier, ctx.file)) return undefined;
   // Not `undefined`: that answer means "not interpretable" and would invoke
   // the factory while still reporting the file folded. Giving up is a
   // different fact and falls the file back to run, naming the bound (#2370).
@@ -2863,6 +2902,16 @@ async function resolveSymbolicValue(text: string, ctx: ResolveCtx): Promise<unkn
 }
 
 /**
+ * True when {@link reviveFoldedValue} hands `value` back unchanged: a
+ * primitive, or one of the live object kinds its passthrough keeps (an
+ * `AttrRef`, a Declarable, a composite instance, an `Intrinsic`).
+ */
+function revivesAsItself(value: unknown): boolean {
+  if (value === null || typeof value !== "object") return true;
+  return isAttrRefLike(value) || isDeclarable(value) || isCompositeInstance(value) || isIntrinsic(value);
+}
+
+/**
  * Revive a folded value tree: replace any
  * `{__intrinsic}`/`{__helper}`/`{__symbol}` envelope with the real value it
  * represents.
@@ -2904,9 +2953,7 @@ async function reviveFoldedValue(value: FoldedValue, ctx: ResolveCtx, requireLiv
   // `Symbol.for("chant.intrinsic")` (../intrinsic.ts), a GLOBAL symbol, so it
   // holds across separately-loaded copies of chant-core the way a bare
   // `instanceof` would not.
-  if (isAttrRefLike(value) || isDeclarable(value) || isCompositeInstance(value) || isIntrinsic(value)) {
-    return value;
-  }
+  if (revivesAsItself(value)) return value;
 
   if (Array.isArray(value)) {
     const revived: unknown[] = [];
@@ -2939,7 +2986,14 @@ async function reviveFoldedValue(value: FoldedValue, ctx: ResolveCtx, requireLiv
       return (Fn as (...fnArgs: unknown[]) => unknown)(...revived);
     }
     for (const v of intrinsic.values) revived.push(await reviveFoldedValue(v, ctx, true));
-    return (Fn as (...fnArgs: unknown[]) => unknown)(intrinsic.strings, ...revived);
+    // chant #3196 — hand the tag what a real tagged call hands it: a frozen
+    // strings array carrying a frozen, non-enumerable `raw`. A tag that reads
+    // `strings.raw` (a SQL tag keeps backslashes as written) would otherwise
+    // build different text folded than run.
+    const strings = Object.freeze(
+      Object.defineProperty([...intrinsic.strings], "raw", { value: Object.freeze([...intrinsic.raw]) }),
+    );
+    return (Fn as (...fnArgs: unknown[]) => unknown)(strings, ...revived);
   }
 
   if ("__helper" in value) {
@@ -3067,7 +3121,7 @@ async function reviveHelperCall(call: FoldedHelperCall, ctx: ResolveCtx): Promis
  */
 function isChantOwnedHelperBinding(binding: ImportBinding, ctx: ResolveCtx): boolean {
   if (isChantOwnedSpecifier(binding.specifier)) return true;
-  if (!isProjectFileSpecifier(binding.specifier)) return false;
+  if (!isProjectImport(binding.specifier, ctx.file)) return false;
   let targetPath: string;
   try {
     targetPath = resolveModulePathMemoized(binding.specifier, ctx.file, ctx.resolvePathCache);
@@ -3123,17 +3177,25 @@ function isChantOwnedHelperBinding(binding: ImportBinding, ctx: ResolveCtx): boo
  * {@link FoldSession.lexiconPackages} takes for #1063.
  */
 function isTrustedExecutableBinding(binding: ImportBinding, ctx: ResolveCtx): boolean {
-  if (activeLexiconPackage(binding.specifier, ctx.lexiconPackages) !== undefined) return true;
+  // chant#3090 — a specifier a tsconfig `paths` entry maps names a project
+  // file whatever its text says, so neither text arm applies to it: it is
+  // resolved and decided on the path below, like a relative specifier.
+  const pathsMapped = pathsMappedTarget(binding.specifier, ctx.file) !== undefined;
+  if (!pathsMapped && activeLexiconPackage(binding.specifier, ctx.lexiconPackages) !== undefined) return true;
   // chant #1995 — arm 1's subpath case: same allowlist, matched against the
   // specifier's package ROOT (text only, see bareSpecifierPackageRoot) rather
   // than the specifier itself, so `<activeLexiconPkg>/generated/index` is
   // trusted exactly like the bare package import already is.
   const subpathRoot = bareSpecifierPackageRoot(binding.specifier);
-  if (subpathRoot !== undefined && activeLexiconPackage(subpathRoot, ctx.lexiconPackages) !== undefined) return true;
+  if (!pathsMapped && subpathRoot !== undefined && activeLexiconPackage(subpathRoot, ctx.lexiconPackages) !== undefined) {
+    return true;
+  }
   // Only a chant-shaped or project-relative specifier is worth resolving; any
   // other bare specifier is untrusted by definition, and resolving it to find
   // that out would cost the pathological cold `require.resolve` (chant#1020).
-  if (!isProjectFileSpecifier(binding.specifier) && !isChantOwnedSpecifier(binding.specifier)) return false;
+  if (!pathsMapped && !isProjectFileSpecifier(binding.specifier) && !isChantOwnedSpecifier(binding.specifier)) {
+    return false;
+  }
   let targetPath: string;
   try {
     targetPath = resolveModulePathMemoized(binding.specifier, ctx.file, ctx.resolvePathCache);
@@ -3415,6 +3477,28 @@ function stampParamDependencies(entity: unknown, node: ts.NewExpression, ctx: Re
 async function preresolveResourceConsts(ctx: ResolveCtx): Promise<Map<ts.Expression, unknown>> {
   const built = new Map<ts.Expression, unknown>();
   for (const [name, initializer] of ctx.consts) {
+    // chant #3196 — a same-file `const x = tag\`...\`` for a registered tag
+    // is built once here too, so the export and every reference to `x` share
+    // the one value running the module gives them. That matters when the tag
+    // returns an entity (a SQL `table\`...\``): a second call would build a
+    // second entity discovery never registers.
+    if (
+      ts.isTaggedTemplateExpression(initializer) &&
+      ts.isIdentifier(initializer.tag) &&
+      ctx.intrinsics.some((i) => i.name === (initializer.tag as ts.Identifier).text && intrinsicTagFolds(i))
+    ) {
+      try {
+        const value = await reviveFoldedValue(fold(initializer, ctx.consts, ctx.intrinsics, ctx.externals), ctx, false);
+        built.set(initializer, value);
+        // Only a value `reviveFoldedValue` passes through unchanged is safe to
+        // hand a reference. Any other object would be walked into a plain
+        // copy, so a reference to one keeps re-folding the initializer.
+        if (revivesAsItself(value)) ctx.externals.set(name, value);
+      } catch (err) {
+        ctx.prebuildFailures?.set(name, describeFoldFailure(err, ctx));
+      }
+      continue;
+    }
     if (!ts.isNewExpression(initializer) || !ts.isIdentifier(initializer.expression)) continue;
     try {
       const spec = foldResource(initializer, ctx.consts, ctx.intrinsics, ctx.externals);
@@ -3594,6 +3678,15 @@ function isProjectFileSpecifier(specifier: string): boolean {
 }
 
 /**
+ * chant#3090 — {@link isProjectFileSpecifier} for an import in `fromFile`,
+ * counting a bare specifier that a tsconfig `paths` entry maps to a file
+ * ({@link pathsMappedTarget}) as the project file it names.
+ */
+function isProjectImport(specifier: string, fromFile: string): boolean {
+  return isProjectFileSpecifier(specifier) || pathsMappedTarget(specifier, fromFile) !== undefined;
+}
+
+/**
  * Eagerly resolve every project-file import binding of `file`'s to its real
  * cross-file value (see this section's own doc above). A binding that isn't
  * a project-file specifier, doesn't resolve to a file on disk, or whose
@@ -3652,7 +3745,7 @@ async function buildExternals(
         externals.set(localName, session.buildParams);
         continue;
       }
-      if (isProjectFileSpecifier(binding.specifier)) {
+      if (isProjectImport(binding.specifier, file)) {
         try {
           const targetPath = resolveModulePathMemoized(binding.specifier, file, session.resolvePathCache);
           if (targetPath === paramsModulePath()) {
@@ -3666,7 +3759,7 @@ async function buildExternals(
       }
     }
 
-    if (!isProjectFileSpecifier(binding.specifier)) {
+    if (!isProjectImport(binding.specifier, file)) {
       // chant #1063 — a bare specifier naming one of THIS BUILD's active
       // lexicon packages resolves to that package's real export, so a plain
       // data export a lexicon publishes (`Azure`/`GCP`'s pseudo-parameter
@@ -3697,6 +3790,20 @@ async function buildExternals(
       // it resolves lazily, through the pre-existing `importModule`
       // mechanism, only once a constructor/composite-factory/intrinsic tag
       // actually consumes it.
+      //
+      // chant#3090 — except that a tsconfig `paths` entry which matches the
+      // specifier but names no file is recorded, so the reason says which
+      // import failed and why.
+      const unmatched = pathsMatch(binding.specifier, file);
+      if (unmatched) {
+        failures.set(
+          localName,
+          locatedMessage(
+            binding.specifierNode,
+            `tsconfig paths entry "${unmatched.key}" matches "${binding.specifier}" but names no file`,
+          ),
+        );
+      }
       continue;
     }
     let targetPath: string;
@@ -3737,7 +3844,7 @@ async function buildExternals(
   }
 
   for (const [localName, binding] of namespaceImports) {
-    if (!isProjectFileSpecifier(binding.specifier)) continue;
+    if (!isProjectImport(binding.specifier, file)) continue;
     let targetPath: string;
     try {
       targetPath = resolveModulePathMemoized(binding.specifier, file, session.resolvePathCache);
@@ -3913,6 +4020,11 @@ async function tryFoldFileCore(file: string, session: FoldSession): Promise<Fold
         const marker = localFunctions.get(decl.name) ?? (isFoldableFunction(aliased) ? aliased : undefined);
         if (marker) {
           applyResolvedValue(decl.name, marker, entities, exportedValues);
+          continue;
+        }
+        // chant #3196 — a registered tagged template the pre-pass built.
+        if (prebuiltResources.has(decl.node)) {
+          applyResolvedValue(decl.name, prebuiltResources.get(decl.node), entities, exportedValues);
           continue;
         }
         let value: unknown;
@@ -4137,7 +4249,7 @@ export async function buildProjectImportEdges(files: readonly string[]): Promise
   for (const file of files) {
     const targets = new Set<string>();
     const addTarget = (specifier: string): void => {
-      if (!isProjectFileSpecifier(specifier)) return; // package import, not a sibling source file
+      if (!isProjectImport(specifier, file)) return; // package import, not a sibling source file
       let resolved: string;
       try {
         resolved = resolveModulePath(specifier, file);
