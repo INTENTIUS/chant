@@ -22,7 +22,8 @@ export const byKind = view`
   SELECT ${events.columns.kind} AS kind, count() AS n FROM ${events} GROUP BY kind`;
 ```
 
-Import from a live server, observation and the offline change classifier follow in #3197.
+- `chant import --from <env>` writes a live server's schema (`SHOW CREATE`) as declarations; `describeResources` and `observeResourcesDeep` read the server `sql.profiles.<env>` binds.
+- Every schema change classified as metadata only, a background rewrite or a rebuild, each citing the ClickHouse `ALTER` restriction behind it: `chant sql diff <base.json> <head.json>` offline, `chant sql plan <env> <build.json>` against a server. A rebuild is refused in place.
 
 ## Generating
 

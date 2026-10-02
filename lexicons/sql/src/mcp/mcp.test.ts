@@ -6,7 +6,7 @@ const tool = (name: string) => sqlMcpTools().find((t) => t.name === name)!;
 
 describe("sql MCP tools", () => {
   test("the plugin registers them", () => {
-    expect(sqlPlugin.mcpTools?.().map((t) => t.name).sort()).toEqual(["diff", "lookup", "parse-ddl", "search"].map((n) => (n === "diff" ? "sql:diff" : n)).sort());
+    expect(sqlPlugin.mcpTools?.().map((t) => t.name).sort()).toEqual(["lookup", "parse-ddl", "search", "classify-change", "sql:diff"].sort());
     expect(sqlPlugin.mcpResources?.().length).toBeGreaterThan(0);
   });
 
@@ -52,6 +52,26 @@ describe("sql MCP tools", () => {
       column: number;
     };
     expect(r).toMatchObject({ ok: false, rule: "SQLCH001", line: 2, column: 11 });
+  });
+});
+
+describe("sql classify-change", () => {
+  const build = (ddl: string) => JSON.stringify({ dialect: "clickhouse", objects: [{ export: "events", ddl }] });
+  const base = "CREATE TABLE events (id UInt64, kind String) ENGINE = MergeTree ORDER BY id";
+
+  test("classifies a changed engine as a rebuild with its restriction", async () => {
+    const r = (await tool("classify-change").handler({
+      before: build(base),
+      after: build(base.replace("MergeTree", "ReplacingMergeTree")),
+    })) as { summary: Record<string, number>; rebuilds: unknown[]; changes: Array<{ class: string; cite: string }> };
+    expect(r.summary.rebuild).toBeGreaterThan(0);
+    expect(r.rebuilds.length).toBeGreaterThan(0);
+    expect(r.changes[0]!.cite).toMatch(/^https:/);
+  });
+
+  test("identical builds have no changes", async () => {
+    const r = (await tool("classify-change").handler({ before: build(base), after: build(base) })) as { changes: unknown[] };
+    expect(r.changes).toEqual([]);
   });
 });
 

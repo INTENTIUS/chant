@@ -17,6 +17,10 @@ import { completions } from "./lsp/completions";
 import { hover } from "./lsp/hover";
 import { sqlMcpResources, sqlMcpTools } from "./mcp";
 import { sqlConfigSchema } from "./config";
+import { ClickHouseSqlParser } from "./clickhouse/import/parser";
+import { ClickHouseGenerator } from "./clickhouse/import/generator";
+import { sqlCommands } from "./clickhouse/plan/commands";
+import { sqlDeepNormalizationHooks } from "./clickhouse/plan/deep";
 import { versionFromReleaseTag } from "./spec/pin";
 
 export const sqlPlugin: LexiconPlugin = {
@@ -99,6 +103,46 @@ export const sqlPlugin: LexiconPlugin = {
 
   mcpResources() {
     return sqlMcpResources();
+  },
+
+  /** `chant import schema.sql`: a file of ClickHouse CREATE statements. */
+  templateParser() {
+    return new ClickHouseSqlParser();
+  },
+
+  templateGenerator() {
+    return new ClickHouseGenerator();
+  },
+
+  /** Which declared objects exist on the environment's server (`sql.profiles.<env>`, else `CLICKHOUSE_URL`). */
+  async describeResources(options) {
+    const { describeResources } = await import("./clickhouse/live/describe-resources");
+    return describeResources(options);
+  },
+
+  /** `chant import --from <env>`: the server's schema, from `SHOW CREATE`, as declarations. */
+  async exportResources(options) {
+    const { exportResources } = await import("./clickhouse/import/live-export");
+    return exportResources(options);
+  },
+
+  /** Each declared object's live definition, in the declaration's own shape. */
+  async observeResourcesDeep(options) {
+    const { observeResourcesDeep } = await import("./clickhouse/plan/deep");
+    return observeResourcesDeep(options);
+  },
+
+  deepNormalizationHooks: sqlDeepNormalizationHooks,
+
+  /** What an update costs: metadata in-place, a background rewrite rolling, a rebuild replace. */
+  async classifyDisruption(options) {
+    const { classifyDisruption } = await import("./clickhouse/plan/disruption");
+    return classifyDisruption(options);
+  },
+
+  /** `chant sql diff` and `chant sql plan`: schema changes, classified. */
+  commands() {
+    return sqlCommands;
   },
 
   async docs(options?: { verbose?: boolean }): Promise<void> {

@@ -12,6 +12,11 @@ import { sqlSerializer } from "../serializer";
 import { catalogIndex } from "../lsp/catalog";
 import { database, table, view } from "../clickhouse/entities";
 import { SqlSyntaxError } from "../clickhouse/tokens";
+import { existsSync } from "fs";
+import { diffSchemas } from "../clickhouse/plan/diff";
+import { renderDiff } from "../clickhouse/plan/report";
+import { CLASSIFIER_RULES } from "../clickhouse/plan/rules";
+import { schemaFromBuildFile, schemaFromBuildOutput } from "../clickhouse/plan/schema";
 import { CLICKHOUSE_IMAGE_DIGEST, CLICKHOUSE_VERSION, clickhouseImage } from "../spec/pin";
 
 const KINDS = ["engine", "database-engine", "type", "codec", "index-type", "setting", "function", "format"] as const;
@@ -124,6 +129,36 @@ const parseTool: McpToolContribution = {
   },
 };
 
+const classifyTool: McpToolContribution = {
+  name: "classify-change",
+  description:
+    "Classify the schema change between two revisions of a sql lexicon build, offline. Each side is a `chant build` output (a path to the file, or its JSON text). Returns every change with its class (create, drop, metadata, rewrite, rebuild), the SQLCH2xx rule and the ClickHouse restriction behind it with its documentation link, the rebuilds a plan must refuse in place, rename hints, and a rendered report.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      before: { type: "string", description: "The earlier build output: a file path or the JSON text" },
+      after: { type: "string", description: "The later build output: a file path or the JSON text" },
+    },
+    required: ["before", "after"],
+  },
+  async handler(params) {
+    const side = (v: unknown) => {
+      const text = String(v ?? "");
+      return !text.trimStart().startsWith("{") && existsSync(text) ? schemaFromBuildFile(text) : schemaFromBuildOutput(text);
+    };
+    const diff = diffSchemas(side(params.before), side(params.after));
+    const classes: Record<string, number> = {};
+    for (const c of diff.changes) classes[c.class] = (classes[c.class] ?? 0) + 1;
+    return {
+      summary: classes,
+      changes: diff.changes.map((c) => ({ ...c, restriction: CLASSIFIER_RULES[c.rule].restriction, cite: CLASSIFIER_RULES[c.rule].cite })),
+      rebuilds: diff.rebuilds,
+      hints: diff.hints,
+      report: renderDiff(diff),
+    };
+  },
+};
+
 function position(text: string, offset: number): { line: number; column: number } {
   const before = text.slice(0, offset).split("\n");
   return { line: before.length, column: before[before.length - 1]!.length + 1 };
@@ -135,6 +170,7 @@ export function sqlMcpTools(): McpToolContribution[] {
     lookupTool,
     searchTool,
     parseTool,
+    classifyTool,
     createDiffTool(sqlSerializer, "Compare current sql build output against the previous build", "sql"),
   ];
 }
