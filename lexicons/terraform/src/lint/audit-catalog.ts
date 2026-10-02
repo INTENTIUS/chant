@@ -17,6 +17,11 @@ const HASHICORP_STYLE_VARIABLES: Authority = {
   url: "https://developer.hashicorp.com/terraform/language/style#variables",
 };
 
+const AWS_IAM_LEAST_PRIVILEGE: Authority = {
+  name: "AWS IAM security best practices (Apply least-privilege permissions)",
+  url: "https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html#grant-least-privilege",
+};
+
 // The vendor guides behind TF014, TF015 and TF021 are credited as lineage in
 // ./audit-lineage.ts, not as `authority` here. `authority` is reserved for
 // security rules that fail a merge (packages/core/src/audit/catalog.test.ts
@@ -319,6 +324,20 @@ export const terraformAuditCatalog: Record<string, RuleMeta> = {
     remediation:
       "Replace the constant with a lookup, either an input the caller supplies or a data source " +
       "pointed at whatever vault owns the credential, and rotate what was committed.",
+    yamlBased: false,
+  },
+  TF031: {
+    id: "TF031",
+    tier: "merge-worthy",
+    fixKind: "guidance",
+    category: "security",
+    title: "IAM policy allows a wildcard Action or Resource",
+    remediation:
+      "Name the actions the workload calls and the ARNs it touches. For the few actions that accept only " +
+      'Resource "*" (`ecr:GetAuthorizationToken`, `sts:GetCallerIdentity`), keep that statement on its own and ' +
+      "suppress it with `# chant-ignore-block: TF031`. A policy TF031 reports as not determined is built from " +
+      "an expression; it is not a finding.",
+    authority: [AWS_IAM_LEAST_PRIVILEGE],
     yamlBased: false,
   },
 };
