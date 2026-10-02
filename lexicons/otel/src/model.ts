@@ -12,22 +12,44 @@
 export const SIGNALS = ["traces", "metrics", "logs"] as const;
 export type Signal = (typeof SIGNALS)[number];
 
-/** The component kinds this lexicon types. Connectors are not modeled yet. */
-export const COMPONENT_KINDS = ["receiver", "processor", "exporter", "extension"] as const;
+/**
+ * The component kinds this lexicon types. A connector is an exporter in one
+ * pipeline and a receiver in another, which is how one pipeline feeds another
+ * (traces into span metrics, say).
+ */
+export const COMPONENT_KINDS = ["receiver", "processor", "exporter", "connector", "extension"] as const;
 export type ComponentKind = (typeof COMPONENT_KINDS)[number];
 
+/** A top-level config section that holds components. */
+export type ComponentSection = "receivers" | "processors" | "exporters" | "connectors" | "extensions";
+
 /** The top-level config section each component kind lives under. */
-export const SECTION_OF: Record<ComponentKind, "receivers" | "processors" | "exporters" | "extensions"> = {
+export const SECTION_OF: Record<ComponentKind, ComponentSection> = {
   receiver: "receivers",
   processor: "processors",
   exporter: "exporters",
+  connector: "connectors",
   extension: "extensions",
 };
+
+/**
+ * One signal pair a connector supports: it is an exporter in a `from`
+ * pipeline and a receiver in a `to` pipeline. `spanmetrics` has one,
+ * traces to metrics; `forward` has one per signal. `profiles` is the
+ * collector's experimental fourth signal, which `count` reads.
+ */
+export interface ConnectorSignalPair {
+  from: Signal | "profiles";
+  to: Signal | "profiles";
+}
 
 /** A component id, `type` or `type/name`, exactly as the collector spells it. */
 export type ComponentId = string;
 
-/** One pipeline under `service.pipelines`. */
+/**
+ * One pipeline under `service.pipelines`. `receivers` and `exporters` may name
+ * connectors as well as receivers and exporters.
+ */
 export interface PipelineConfig {
   receivers?: ComponentId[];
   processors?: ComponentId[];

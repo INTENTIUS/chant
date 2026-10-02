@@ -1,3 +1,4 @@
+import { compositeCatalog } from "./composites/catalog";
 import { createRequire } from "module";
 import { awsBehaviourKinds } from "./behaviour-kinds";
 import { detectTemplate } from "./detect";
@@ -969,6 +970,10 @@ aws cloudformation wait stack-update-complete --stack-name my-app-prod`,
       }
     }
     return merged;
+  },
+
+  composites() {
+    return compositeCatalog;
   },
 
   mcpTools() {

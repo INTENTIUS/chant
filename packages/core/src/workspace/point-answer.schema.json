@@ -1,0 +1,95 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:intentius:chant:point-answer:1",
+  "title": "Decision point answer front matter",
+  "description": "The front matter of one answer to a decision point (ws-058, #2739), as `chant workspace points ask` and `points answer` write it into the records directory of a record kind with an `answers` block. One record per point, declaration and inputs: its id is the point's name and the first 12 hex digits of the inputs hash, so the same question is answered once. A table's answer is `answered`; a model's answer at or above its threshold is `proposed` until a person confirms it; a question no decider before the quorum answered is `escalated`, open for people. A workspace copies this file next to its answer kind, as reference-workspace/answers/ does. Values stay within what YAML and JSON share. Fields other than these must start with x-.",
+  "type": "object",
+  "additionalProperties": false,
+  "patternProperties": { "^x-": {} },
+  "required": ["id", "title", "point", "point_version", "question_type", "candidates", "inputs", "inputs_hash", "state", "decider", "asked_on"],
+  "properties": {
+    "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]*-[0-9a-f]{12}$", "description": "The point's name, a hyphen, and the first 12 hex digits of inputs_hash." },
+    "title": { "type": "string", "minLength": 1 },
+    "point": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$", "description": "The point in the points file this answers." },
+    "point_version": { "$ref": "#/definitions/sha256", "description": "sha256 of the point's declaration when it was asked. Editing the question or any decider changes it." },
+    "question_type": { "enum": ["noul", "choice", "score"] },
+    "candidates": { "type": "array", "minItems": 2, "items": { "type": ["string", "boolean"] }, "description": "The answers the question allowed: true and false, a choice's options, or a score's levels." },
+    "inputs": { "type": "object", "description": "The state the deciders saw, input name to value." },
+    "inputs_hash": { "$ref": "#/definitions/sha256", "description": "sha256 of the point, its version and its inputs. The same hash is answered once." },
+    "constrains": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "What the question is about, such as a work item's id." },
+    "state": { "enum": ["escalated", "proposed", "answered"] },
+    "answer": { "type": ["string", "boolean"] },
+    "decider": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["table", "model", "quorum"] },
+        "row": { "type": "integer", "minimum": 0, "description": "table: the row that matched." },
+        "backend": { "type": "string", "minLength": 1 },
+        "model": { "type": "string", "minLength": 1, "description": "model: the model id that answered, as the backend reported it." },
+        "count": { "type": "integer", "minimum": 1 },
+        "roles": { "type": "array", "items": { "type": "string" } },
+        "by": { "type": "array", "items": { "type": "string" }, "description": "quorum: who answered." }
+      },
+      "additionalProperties": false
+    },
+    "probabilities": { "$ref": "#/definitions/probabilities" },
+    "confidence": { "$ref": "#/definitions/unit" },
+    "threshold": { "$ref": "#/definitions/unit" },
+    "escalations": {
+      "type": "array",
+      "description": "The deciders asked before the one that answered, or before the quorum, and why each did not answer.",
+      "items": { "$ref": "#/definitions/escalation" }
+    },
+    "answered_by": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 }, "description": "The people who answered or confirmed it." },
+    "asked_on": { "$ref": "#/definitions/date" },
+    "answered_on": { "$ref": "#/definitions/date" },
+    "source": {
+      "type": "object",
+      "description": "Where the answer came from (#2708): via, client and model, the model id that answered when a model decider did."
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "state": { "const": "proposed" } }, "required": ["state"] },
+      "then": { "required": ["answer"], "properties": { "decider": { "properties": { "kind": { "const": "model" } } } } }
+    },
+    {
+      "if": { "properties": { "state": { "const": "answered" } }, "required": ["state"] },
+      "then": { "required": ["answer", "answered_on"] }
+    },
+    {
+      "if": { "properties": { "state": { "const": "escalated" } }, "required": ["state"] },
+      "then": { "not": { "required": ["answer"] }, "properties": { "decider": { "properties": { "kind": { "const": "quorum" } } } } }
+    },
+    {
+      "if": { "properties": { "decider": { "properties": { "kind": { "const": "model" } }, "required": ["kind"] } }, "required": ["decider"] },
+      "then": { "required": ["probabilities", "confidence", "threshold"], "properties": { "decider": { "required": ["backend", "model"] } } }
+    },
+    {
+      "if": { "properties": { "state": { "const": "answered" }, "decider": { "properties": { "kind": { "const": "quorum" } }, "required": ["kind"] } }, "required": ["state", "decider"] },
+      "then": { "required": ["answered_by"], "properties": { "decider": { "required": ["by"] } } }
+    }
+  ],
+  "definitions": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "unit": { "type": "number", "minimum": 0, "maximum": 1 },
+    "date": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+    "probabilities": { "type": "object", "additionalProperties": { "$ref": "#/definitions/unit" } },
+    "escalation": {
+      "type": "object",
+      "required": ["kind", "reason"],
+      "properties": {
+        "kind": { "enum": ["table", "model"] },
+        "reason": { "type": "string", "minLength": 1 },
+        "backend": { "type": "string" },
+        "model": { "type": "string" },
+        "answer": { "type": ["string", "boolean", "null"] },
+        "probabilities": { "$ref": "#/definitions/probabilities" },
+        "confidence": { "$ref": "#/definitions/unit" },
+        "threshold": { "$ref": "#/definitions/unit" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

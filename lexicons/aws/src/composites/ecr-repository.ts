@@ -89,6 +89,7 @@ function toLifecyclePolicyText(rules: EcrLifecycleRule[]): string {
   return JSON.stringify({ rules: rules.map(toJsonRule) });
 }
 
+/** An ECR repository with image scanning, encryption and lifecycle rules. */
 export const EcrRepository = Composite((props: EcrRepositoryProps) => {
   const { defaults } = props;
   const scanOnPush = props.scanOnPush ?? true;

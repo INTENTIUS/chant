@@ -63,6 +63,17 @@ const lexiconsDir = join(repoRoot, "lexicons");
 const KNOWN_FAILURES: Record<string, Record<string, string>> = {
 };
 
+/**
+ * chant #2817 — CHECK_LEXICONS_SKIP_BUILD=1 skips the per-lexicon tsc build
+ * below. CI's check job sets it because scripts/ci-lexicon-artifacts.sh has
+ * already run every lexicon's prepack, whose last step is this same
+ * `npm run build`, in the same job: a failing build fails that step first,
+ * and running it again here doubled the job's longest step. Anywhere the
+ * prepack did not just run, leave it unset.
+ */
+const skipBuild = process.env.CHECK_LEXICONS_SKIP_BUILD === "1";
+if (skipBuild) console.log("CHECK_LEXICONS_SKIP_BUILD=1: each lexicon's tsc build ran in this job's prepack, so it is not repeated here.");
+
 let untrackedFailures = 0;
 let trackedFailures = 0;
 let staleTrackedEntries = 0;
@@ -76,7 +87,7 @@ const lexiconNames = readdirSync(lexiconsDir, { withFileTypes: true })
 for (const name of lexiconNames) {
   const dir = join(lexiconsDir, name);
 
-  if (existsSync(join(dir, "tsconfig.build.json"))) {
+  if (!skipBuild && existsSync(join(dir, "tsconfig.build.json"))) {
     try {
       execFileSync("npm", ["run", "build", "-w", `@intentius/chant-lexicon-${name}`], {
         cwd: repoRoot,

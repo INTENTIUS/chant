@@ -67,4 +67,20 @@ describe("OTEL002 literal credential", () => {
     );
     expect(diags).toEqual([]);
   });
+
+  test("follows config lifted into named consts, and looks inside lists", () => {
+    const diags = literalCredentialRule.check(
+      ctx(`
+        const headers: OtlpExporterConfig["headers"] = { authorization: "Bearer abc123" };
+        const safe = { authorization: "Bearer \${env:TOKEN}" };
+        const token = "literal";
+        const config = { scrape_configs: [{ job_name: "x", basic_auth: { username: "u", password: "p" } }] };
+        new OtlpExporter({ endpoint: "x:4317", headers });
+        new OtlpExporter({ name: "b", endpoint: "x:4317", headers: safe });
+        new SplunkHecExporter({ token, endpoint: "https://hec" });
+        new PrometheusReceiver({ config });
+      `),
+    );
+    expect(diags.map((d) => d.message.split("`")[1])).toEqual(["authorization", "token", "password"]);
+  });
 });

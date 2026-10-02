@@ -12,6 +12,8 @@ describe("loadActivityContracts", () => {
     expect(contracts.get("predictBehaviour")?.name).toBe("predictBehaviour");
     expect(contracts.get("behaviourFinding")?.returns).toBeDefined();
     expect(contracts.get("lifecycleDiff")?.name).toBe("lifecycleDiff");
+    // The forward coverage check over an Op's own diff (#2773).
+    expect(contracts.get("changeCoverage")?.returns).toBeDefined();
   });
 
   test("a lexicon's contracts are resolved by the same subpath convention loadActivities uses", async () => {

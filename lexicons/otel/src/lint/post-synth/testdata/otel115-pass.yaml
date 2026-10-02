@@ -1,0 +1,29 @@
+# OTEL115 passing fixture: both routes lead to pipelines that receive from the
+# routing connector.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 127.0.0.1:4317
+
+exporters:
+  debug: {}
+
+connectors:
+  routing:
+    default_pipelines: [traces/other]
+    table:
+      - statement: route() where attributes["tenant"] == "acme"
+        pipelines: [traces/acme]
+
+service:
+  pipelines:
+    traces/in:
+      receivers: [otlp]
+      exporters: [routing]
+    traces/acme:
+      receivers: [routing]
+      exporters: [debug]
+    traces/other:
+      receivers: [routing]
+      exporters: [debug]

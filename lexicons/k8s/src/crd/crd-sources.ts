@@ -477,6 +477,26 @@ const ACK_IAM_CRD_BASE = `https://raw.githubusercontent.com/aws-controllers-k8s/
 const ACK_EKS_VERSION = "v1.20.0";
 const ACK_EKS_CRD_BASE = `https://raw.githubusercontent.com/aws-controllers-k8s/eks-controller/${ACK_EKS_VERSION}/config/crd/bases`;
 
+/**
+ * Grafana Operator CRDs — grafana.integreatly.org/v1beta1
+ *
+ * The delivery path for a Grafana the Grafana Operator runs, used by
+ * `GrafanaOperatorResources` in `@intentius/chant-lexicon-grafana/k8s`
+ * (#3015). Produces (the `grafana.integreatly.org` group maps to the
+ * `Grafana` namespace via the first-segment rule):
+ *   K8s::Grafana::GrafanaDashboard   → grafana.integreatly.org/v1beta1, kind: GrafanaDashboard
+ *   K8s::Grafana::GrafanaDatasource  → grafana.integreatly.org/v1beta1, kind: GrafanaDatasource
+ *   K8s::Grafana::GrafanaFolder      → grafana.integreatly.org/v1beta1, kind: GrafanaFolder
+ *
+ * The operator's other kinds (Grafana itself, alerting, library panels,
+ * service accounts, manifests) are left out until something uses them.
+ *
+ * Operator install: kubectl apply --server-side -f
+ *   https://github.com/grafana/grafana-operator/releases/download/v5.25.0/kustomize-cluster_scoped.yaml
+ */
+const GRAFANA_OPERATOR_VERSION = "v5.25.0";
+const GRAFANA_OPERATOR_CRD_BASE = `https://raw.githubusercontent.com/grafana/grafana-operator/${GRAFANA_OPERATOR_VERSION}/config/crd/bases`;
+
 export const CRD_SOURCES: CRDSource[] = [
   { type: "url", url: `${KUBERAY_CRD_BASE}/ray.io_rayclusters.yaml` },
   { type: "url", url: `${KUBERAY_CRD_BASE}/ray.io_rayjobs.yaml` },
@@ -561,4 +581,7 @@ export const CRD_SOURCES: CRDSource[] = [
   { type: "url", url: `${ACK_IAM_CRD_BASE}/iam.services.k8s.aws_users.yaml` },
   { type: "url", url: `${ACK_IAM_CRD_BASE}/iam.services.k8s.aws_policies.yaml` },
   { type: "url", url: `${ACK_EKS_CRD_BASE}/eks.services.k8s.aws_podidentityassociations.yaml` },
+  { type: "url", url: `${GRAFANA_OPERATOR_CRD_BASE}/grafana.integreatly.org_grafanadashboards.yaml` },
+  { type: "url", url: `${GRAFANA_OPERATOR_CRD_BASE}/grafana.integreatly.org_grafanadatasources.yaml` },
+  { type: "url", url: `${GRAFANA_OPERATOR_CRD_BASE}/grafana.integreatly.org_grafanafolders.yaml` },
 ];

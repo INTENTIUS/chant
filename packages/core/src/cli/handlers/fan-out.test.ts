@@ -204,8 +204,8 @@ describe("proof: a plan-only invocation prints the derivation and dispatches not
     expect(out).toContain("wave 1: cluster-a");
     expect(out).toContain("seeded from an earlier run: net");
     expect(out).toMatch(/billing +unaffected/);
-    expect(out).toMatch(/plan: sha256:[0-9a-f]{64}/);
-    expect(out).toMatch(/approve: chant approve fan-out release --plan sha256:[0-9a-f]{64}/);
+    expect(out).toMatch(/plan: jcs1-sha256:[0-9a-f]{64}/);
+    expect(out).toMatch(/approve: chant approve fan-out release --plan jcs1-sha256:[0-9a-f]{64}/);
   });
 
   test("--dry-run with --resume shows what is left, at the digest that approves it", async () => {
@@ -214,7 +214,7 @@ describe("proof: a plan-only invocation prints the derivation and dispatches not
       const resume = join(dir, "attempt.json");
       failing = ["cluster-a"];
       await runComponentsFanOut(ctx({ base: "main", env: "test", resume }));
-      const digest = /plan: (sha256:[0-9a-f]{64})/.exec(stderr())?.[1];
+      const digest = /plan: (jcs1-sha256:[0-9a-f]{64})/.exec(stderr())?.[1];
 
       ran = [];
       stderrLines = [];
@@ -236,7 +236,7 @@ describe("proof: a plan-only invocation prints the derivation and dispatches not
     expect(exit).toBe(0);
     const parsed = JSON.parse(stdout());
     expect(parsed.order).toEqual(["net", "cluster-a", "cluster-b", "app-one", "app-three", "app-two"]);
-    expect(parsed.digest).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(parsed.digest).toMatch(/^jcs1-sha256:[0-9a-f]{64}$/);
   });
 });
 
@@ -334,10 +334,10 @@ describe("proof: one approval covers the set, and the printed digest is what app
     expect(ran).toEqual([]);
     const out = stderr();
     expect(out).toContain("gated: nothing ran.");
-    expect(out).toMatch(/approve : chant approve fan-out release --plan sha256:[0-9a-f]{64}/);
+    expect(out).toMatch(/approve : chant approve fan-out release --plan jcs1-sha256:[0-9a-f]{64}/);
     // One pending fact for the whole set, not one per component.
     expect(gateLedger.appended).toHaveLength(1);
-    expect(gateLedger.appended[0].planDigest).toBe(/plan: (sha256:[0-9a-f]{64})/.exec(out)?.[1]);
+    expect(gateLedger.appended[0].planDigest).toBe(/plan: (jcs1-sha256:[0-9a-f]{64})/.exec(out)?.[1]);
   });
 
   test("the resolution for that digest lets the whole set through", async () => {

@@ -4,6 +4,7 @@ import {
   type Declarable,
   isDeclarable,
   isPropertyDeclarable,
+  isObservableDeclarable,
 } from "./declarable";
 
 describe("DECLARABLE_MARKER", () => {
@@ -120,6 +121,26 @@ describe("isPropertyDeclarable", () => {
     };
 
     expect(isPropertyDeclarable(obj)).toBe(false);
+  });
+});
+
+describe("isObservableDeclarable (#3001)", () => {
+  const base = { lexicon: "test", [DECLARABLE_MARKER]: true as const };
+
+  test("is true for a resource-kind declarable with props", () => {
+    expect(isObservableDeclarable({ ...base, entityType: "R", kind: "resource", props: {} } as Declarable)).toBe(true);
+  });
+
+  test("is true for a declarable with props and no kind", () => {
+    expect(isObservableDeclarable({ ...base, entityType: "R", props: {} } as Declarable)).toBe(true);
+  });
+
+  test("is false for a property-kind declarable, though it carries props", () => {
+    expect(isObservableDeclarable({ ...base, entityType: "P", kind: "property", props: {} } as Declarable)).toBe(false);
+  });
+
+  test("is false for a declarable without props (an output, a directive)", () => {
+    expect(isObservableDeclarable({ ...base, entityType: "O", kind: "output" })).toBe(false);
   });
 });
 

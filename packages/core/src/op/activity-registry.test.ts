@@ -26,7 +26,7 @@ describe("loadActivities", () => {
       "shellCmd", "chantBuild", "waitForStack", "lifecycleSnapshot", "lifecycleDiff",
       "httpCheck", "chantTeardown", "envTeardown", "convergeTick", "reconcilePr",
       "guardValidate", "policyGate", "workflowSupplyChainAudit", "pipelineSupplyChainAudit",
-      "lexiconUpgrade", "nativeApply",
+      "lexiconUpgrade", "nativeApply", "changeCoverage",
     ]) {
       expect(typeof a.get(fn), `${fn} should resolve from the base library`).toBe("function");
     }

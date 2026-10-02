@@ -1,0 +1,314 @@
+---
+title: "chant workspace check"
+description: Fail when the lineage lock cannot be read, a manual step is open, or a workspace check fails
+diataxis: reference
+---
+
+## Synopsis
+
+```
+chant workspace check [--at <rev>] [--json] [--format stylish|json|sarif] [--generated] [--kind <kind file>] [--live --env <env>]
+chant workspace check --changes <base>..<head> [--work <id>] [--severity off|warn|fail] [--kind <kind file>...] [--json]
+```
+
+## Description
+
+`chant workspace check` runs two sets of checks.
+
+The lineage checks read [`.chant/workspace.lock.json`](/chant/reference/lineage-lock/) in the current directory and fail when the lock cannot be read or any scope has an open manual step. D9 of [#2524](https://github.com/INTENTIUS/chant/issues/2524) says open manual steps fail `check`. A file that did not merge during an update stays a failure until someone merges it by hand and runs [`chant workspace lineage resolve <path>`](/chant/cli/workspace-lineage/). A directory with no lock has nothing to check here and passes.
+
+The [declaration checks](#declaration-checks) run when a [`chant.workspace.json`](/chant/reference/workspace-declaration/) sits in the current directory or above it, up to the git root ([#2535](https://github.com/INTENTIUS/chant/issues/2535)). Their findings carry `WSP` ids and print through the same reporters as `chant lint`, so `--format sarif` works as it does there. Without a declaration the command checks the lock alone and needs no workspace file.
+
+The same report holds the member checks. [Member ledgers](/chant/reference/workspace-declaration/#ledgers) come from [#2538](https://github.com/INTENTIUS/chant/issues/2538) and recorded pipelines from [#2542](https://github.com/INTENTIUS/chant/issues/2542). [Generated files](#generated-files) come from [#2541](https://github.com/INTENTIUS/chant/issues/2541). Before any check runs, the command gathers what these need from the checkout without running member code. A `chant` member's `ownership` and `environments` are read from its config statically, the way [`chant audit`](/chant/cli/audit/) reads lexicons, and the config never runs. A stack taken from `process.env` is one value that can't be read this way. The member then gets a `WSP073` with the reason, and `WSP071` and `WSP072` skip it. Each member's `.chant/generated.json` is read as a file, and a `chant` member's skills are rendered from the lexicons its config names. Declared generators run only with `--generated`, and they are the only member code the command runs.
+
+[`chant workspace upgrade`](/chant/cli/workspace-upgrade/) runs the lineage checks in its staging worktree before it records its gate. There, a finding already present at HEAD does not stop the upgrade, and neither do the manual steps the upgrade itself records, since those are part of what the gate approves.
+
+```
+$ chant workspace check
+  src/config.ts: manual step open (changed-locally): merge by hand, then `chant workspace lineage resolve src/config.ts`
+✗ 1 check(s) failed
+```
+
+```
+$ chant workspace check
+
+chant.workspace.json
+    5:5    warning  member docs (docs) is kind other, which chant does not read: an npm package with no chant project  WSP009
+   17:15   error    member infra has kind terraform, which no built-in kind or pinned package supplies; known kinds: chant, design, other, workspace  WSP003
+
+✖ 1 error, 1 warning
+```
+
+## Declaration checks
+
+| Id | Name | Default | Settable | Fails when |
+|---|---|---|---|---|
+| `WSP001` | declaration-unreadable | error | no | The declaration can't be read. The message starts with the [error code](/chant/reference/workspace-declaration/#errors) |
+| `WSP002` | kinds-unreadable | error | no | A pinned package isn't installed, is installed at another version, publishes kind data that doesn't validate, or is a path pin whose directory doesn't hash to its `integrity` ([pins](/chant/reference/workspace-declaration/#integrity-of-a-plugin-pinned-by-path), [kinds](/chant/reference/workspace-kinds/#which-packages-are-read)) |
+| `WSP003` | kind-unknown | error | no | A member's kind is neither built in nor supplied by a pinned package. The message lists the known kinds |
+| `WSP004` | member-dir-missing | error | yes | A member's directory does not exist |
+| `WSP005` | kind-probe-failed | error | yes | A member's directory is not what its kind reads, such as a `chant` member with no chant config |
+| `WSP006` | kind-probe-tie | error | no | Two kinds with the same highest precedence both claim a member's directory |
+| `WSP007` | kind-outranked | error | yes | A kind of higher precedence than the declared one claims the member's directory |
+| `WSP008` | other-claimed | error | no | A registered kind's probe claims the directory of an `other` member |
+| `WSP009` | other-member | warning | yes | A member is kind `other`. `chant doctor` shows it too |
+| `WSP010` | group-empty | warning | yes | An example group matches no chant project |
+| `WSP011` | check-settings-invalid | error | no | `checks` or a `suppress` entry names an unknown id or one that can't be set |
+| `WSP071` | ownership-stack-shared | error | no | Two `chant` members set the same `ownership.stack` ([ledgers](/chant/reference/workspace-declaration/#ledgers)) |
+| `WSP072` | flat-ledger-environment-shared | error | no | Two members that write the top of the ledger branch share an environment name ([ledgers](/chant/reference/workspace-declaration/#ledgers)) |
+| `WSP073` | ledger-settings-unread | info | yes | A `chant` member's `ownership` or `environments` can't be read from its config without running it, so `WSP071` and `WSP072` skip the member |
+| `WSP081` | generated-declared-twice | error | yes | Two members record the same generated file in `.chant/generated.json`, so each would overwrite the other's |
+| `WSP082` | generated-outside-member | error | yes | A member records a generated file outside its directory, and the file is not a forge CI file like those in `.github/workflows/` |
+| `WSP083` | linked-environments-disjoint | warning | yes | Two members joined by a declared [member link](#member-links) share no environment name |
+| `WSP091` | link-target-unknown | error | no | A [member link](#member-links) names no member, an example group, or the member that states it |
+| `WSP092` | link-kind-unknown | error | no | A member link's `kind` is not one chant knows. They are `output` and `telemetry` |
+| `WSP093` | link-output-missing | error | yes | The producer exposes no output with the linked name, as when it was renamed. The message names outputs that differ only in case or punctuation |
+| `WSP094` | link-unresolved | info | yes | The producer's outputs can't all be read in source, and the linked name wasn't found, or the link is a [telemetry link](/chant/reference/workspace-declaration/#telemetry-links), which `chant workspace graph` resolves. The link is kept |
+| `WSP095` | join-ambiguous | warning | yes | An inferred join is ambiguous: a parameter matches outputs of two producers, or two outputs of one |
+| `WSP096` | link-duplicate | error | yes | A member states the same link twice |
+| `WSP097` | outputs-not-listable | error | yes | An entry lists `outputs` for a kind that doesn't take them from the entry, such as `chant` |
+| `WSP098` | link-protocol-misplaced | error | yes | A link states a `protocol` and its kind is not `telemetry` |
+| `WSP101` | generated-drift | error | yes | A [generated file](#generated-files) differs from what its generator writes |
+| `WSP102` | generated-missing | error | yes | A declared generated file does not exist |
+| `WSP103` | generator-failed | error | yes | A generator can't be run, exits non-zero, or writes nothing |
+| `WSP104` | generated-hand-written | info | yes | An entry is kept by hand. The finding carries the entry's reason, and the generator is not run |
+| `WSP105` | generated-not-compared | info | yes | An entry was not compared with its generator's output, and the message says why |
+| `WSP106` | generated-source-missing | error | yes | An entry names a source that does not exist |
+| `WSP111` | record-asset-drift | warning | yes | A current [record](#record-checks) pins a file whose bytes no longer hash to the pinned `sha256` |
+| `WSP112` | record-asset-missing | warning | yes | A current record pins a file that does not exist |
+| `WSP113` | record-asset-stale | warning | yes | A current record pins a file at the hash a record it supersedes pinned, and the file has not changed since: the artifact did not follow the decision |
+| `WSP114` | records-unreadable | error | no | The records of the kind named with `--kind` can't be read |
+| `WSP115` | record-kind-unloadable | error | no | A [record kind the declaration names](/chant/reference/workspace-declaration/#record-kinds) is missing, or doesn't export a valid `recordKind` with the schema it names. The finding gives the reason code. Under `--at`, only whether the file exists at the revision is checked |
+| `WSP116` | decision-points-invalid | error | no | An [answer kind](/chant/guide/decision-points/) the declaration names has a decision points file that is missing or not valid: an input naming no read-contract output, a table row testing an undeclared input or answering outside the candidates, an alias model id, or a chain that does not end in its one quorum. Not checked under `--at` |
+| `WSP117` | work-acceptance-unmet | error | yes | A done work item has an [acceptance criterion](/chant/guide/work-items/#acceptance-criteria) that no passing evidence of its verification meets, or only a manual verdict by its implementer does. Read for every declared work kind with criteria and for `--kind`. The finding carries the code `work-acceptance-unmet` and sits on the record. Not checked under `--at` |
+| `WSP121` | box-credential-declared | error | no | A file in a [box](#boxes) member's directory carries a literal secret. The finding carries the code `box-credential-declared` and sits on the file and line |
+| `WSP122` | box-capability-unbrokered | error | yes | A capability in a member's [box block](/chant/reference/workspace-declaration/#boxes) names no broker. The finding carries the code `box-capability-unbrokered` |
+| `WSP123` | box-isolation-collision | error | no | Two [boxes](#box-isolation) on one host resolve to the same port, state path or cookie name, or two ports in one box share an offset. The finding carries the code `box-isolation-collision` |
+| `WSP124` | box-isolation-literal | error | no | A host's `stateRoot` or a box's state entry is a literal machine path. The finding carries the code `box-isolation-literal` |
+| `WSP125` | box-fountain-callback-undeclared | error | yes | A [box](#boxes) member builds the fountain lexicon's `Box`, and its box block doesn't declare the callback token fountain gives the box's sandbox: `fountain-callback`, brokered by `fountain`, with scope `owner`. The finding carries the code `box-fountain-callback-undeclared` and sits on the `Box` call |
+| `WSP126` | box-intent-unknown | error | yes | A [box block](/chant/reference/workspace-declaration/#intent) names an `intent`, and no record of a declared kind named `decision` has that id. The finding carries the code `box-intent-unknown`. Not checked under `--at` |
+| `WSP127` | box-intent-unconstrained | warning | yes | The decision record a box names as its intent constrains no member or path of this workspace: no `member:` entry for a declared member and no `path:` entry at, above or inside one's directory. The finding carries the code `box-intent-unconstrained`. Not checked under `--at` |
+| `WSP131` | diagram-source-missing | error | yes | A [diagram](/chant/reference/workspace-declaration/#diagrams) names a source, and it does not exist in the tree checked |
+| `WSP132` | diagram-render-missing | error | yes | A diagram names a render, and it does not exist in the tree checked |
+| `WSP133` | diagram-render-drift | error | yes | A diagram records a `sourceHash`, and the source's bytes now hash to something else. Runs no renderer: it compares the recorded hash against the source in the tree checked |
+
+A finding's location is the entry it is about, the link for `WSP091` to `WSP094` and `WSP096`, or the pin for `WSP002`. A finding about two or more members sits at the first of them in the declaration, and that member's entry is where a `suppress` for it goes.
+
+### Member links
+
+`WSP091` to `WSP098` resolve every [member link](/chant/reference/workspace-declaration/#member-links) in source ([#2539](https://github.com/INTENTIUS/chant/issues/2539)). A `chant` producer's outputs are read from its TypeScript without running it, and other kinds expose what the kind and the entry list. Only files are read. No process starts and no network is reached, and a test runs the command under the [no-egress guard](/chant/reference/network-egress/). [`--live`](#live-links) resolves the same links against a live estate.
+
+```
+$ chant workspace check
+
+chant.workspace.json
+   17:21   error    web's link to shared output ClusterArn does not resolve: shared has no output ClusterArn; its outputs: EcsClusterArn, ListenerArn  WSP093
+
+✖ 1 error
+```
+
+The same pass infers the joins nobody declared and reports an ambiguous one as `WSP095`. `--json` lists every link in `declaration.links`, declared and inferred.
+
+| Field | Value |
+|---|---|
+| `consumer` | The member that reads the output |
+| `producer`, `output` | The member and output it reads. An ambiguous row has `candidates` instead, each with `producer`, `output` and `label` |
+| `kind` | The link kind, `output` |
+| `origin` | `declared`, or `inferred:joinKey` for a join matched by name |
+| `label` | `exact`, or `folded` when an inferred join's names differ only in case or punctuation. A declared link is always `exact` |
+| `input` | The consumer's parameter an inferred join feeds, or `null` for a declared link |
+| `resolves` | `source`, where the row was resolved |
+| `status` | `resolved`, `missing`, `unresolved`, `invalid` or `ambiguous` |
+| `reason` | Why the row isn't `resolved`, or `null` |
+| `pointer` | Where a declared link sits in the declaration, as a JSON Pointer |
+
+### Live links
+
+`chant workspace check --live --env <env>` resolves each declared link against what its producer's estate publishes now, and is catalogued [egress](/chant/reference/network-egress/) ([#2549](https://github.com/INTENTIUS/chant/issues/2549), [ws-062](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-062-live-links-and-design-kind.md)). Each `chant` member runs `chant graph --live --env <env>` under its own toolchain, as [`chant workspace graph --live`](/chant/cli/workspace-graph/#the-live-read) does, and the outputs of that live graph, the stack outputs its lexicon's live read reports, are the names a link may match. The match is exact, as in source. The command reaches the account with the credentials the member's own `chant graph --live` uses, and nothing else. Without `--live` nothing here runs.
+
+Only declared links of kind `output` are resolved live. A `telemetry` link names a collector target that the graph reports from source, so it stays a source-checked link.
+
+| Id | Name | Default | Settable | Fails when |
+|---|---|---|---|---|
+| `WSP141` | link-live-missing | warning | yes | A `chant` producer was read live and published outputs, and none has the link's name. A declared output that is not deployed yet is a normal state before a release, so this is a warning |
+| `WSP142` | link-live-unresolved | info | yes | The link could not be resolved live: the producer's kind has no live reader (`other`, `design` or a kind from a package), its read failed, or its read returned no outputs at all |
+
+An empty live read is never reported as missing. `chant graph --live` reports an account it could not reach as warnings on stderr and exits 0, and a lexicon whose live read has no stack outputs looks the same, so a producer that returned no outputs leaves its links unresolved.
+
+`--json` and `--format json` add `declaration.live`, `{ env, links }`, where each link is a row of the table above with `resolves` set to `live`. The source rows stay in `declaration.links`. `--live` needs `--env` and takes no `--at`, since a live read is of the account now, and it needs a declaration.
+
+### Severity and suppression
+
+The declaration sets the severity of a settable check in its top-level `checks` field. The value is `error`, `warning`, `info` or `off`.
+
+```json
+{
+  "name": "acme",
+  "schema": 1,
+  "checks": { "WSP010": "off", "WSP009": "info" },
+  "members": [
+    {
+      "name": "docs",
+      "dir": "docs",
+      "kind": "other",
+      "because": "a static site",
+      "suppress": [{ "check": "WSP009", "because": "the site moves to its own repository in Q3" }]
+    }
+  ]
+}
+```
+
+An entry's `suppress` turns one check off for that member or group, with a reason. A suppressed finding never fails the command, but it is still reported. The stylish output lists it under "Suppressed" and `--json` puts it in `suppressed`. In SARIF it is a result with an `external` suppression whose justification is the reason.
+
+The checks marked "no" in the table always report at their default severity. D3 of [#2524](https://github.com/INTENTIUS/chant/issues/2524) says unknown kinds fail closed, ties fail, and a probe that claims an `other` directory fails, so the declaration can't turn those down. A member that ignores `WSP071` or `WSP072` would write its records into another member's files or mark its resources as another member's, so those are fixed too. Trying to set a fixed check is a `WSP011` error.
+
+## Generated files
+
+A member lists the files a command writes in its [`generated`](/chant/reference/workspace-declaration/#generated-files) entries, each with the command that writes it (D14 of [#2524](https://github.com/INTENTIUS/chant/issues/2524)). Core adds the files `chant update` rewrites, `skills/*/SKILL.md`, as implicit entries of every `chant` member. The checks are `WSP101` to `WSP106` in the [table above](#declaration-checks). Until [#2641](https://github.com/INTENTIUS/chant/issues/2641) they were numbered `WSP081` to `WSP086`, which the pipeline checks also used.
+
+By default the check runs no member code. It checks that each declared file and its sources exist. It also renders each implicit `SKILL.md` from the lexicons the member's config names, read statically as `chant audit` reads them, and compares it with the file in the tree. A skill the tree doesn't have is not drift, since projects often ignore `skills/` in git. When the config's lexicons can't be read without running it, or a lexicon is declared by module path, the skills get a `WSP105` instead.
+
+Declared generators run member code and take seconds each, so they run only with `--generated`. Without it each declared entry that exists gets a `WSP105`. On the chant repository all of them together take about six minutes. Each generator runs in the member's directory with no shell, with the member's own `node_modules/.bin` first on `PATH`, so `chant` in a generator is the member's own chant. When the command passes `-o` or `--output` with the entry's path, that flag gets a temporary path and the tree is never written. Any other generator writes in place. The check then puts the git working tree back as it was: files that were clean are checked out again, new untracked files are removed, and files that already had changes get their earlier bytes back. Outside a git checkout an in-place generator is not run, and that is a `WSP103`. A command with pipes, redirections or shell expansions is refused, not run.
+
+```
+error  WSP101  docs/src/content/docs/lint-rules/audit-rules.mdx differs from what `npx tsx ../scripts/generate-audit-rules-doc.ts` writes; run `npx tsx ../scripts/generate-audit-rules-doc.ts` in docs and commit the result, or mark the entry handWritten with a reason
+info   WSP104  services/api/skills/chant-aws/SKILL.md is kept by hand, so `chant update` is not run for it: we trim the skill for this service
+```
+## Record checks
+
+With `--kind <kind file>`, the command reads the records that kind locates, as [`chant workspace records`](/chant/cli/workspace-records/#asset-pins) does, in the tree it checks. A current record that pins a file that has changed gets a `WSP111`, one that pins a missing file gets a `WSP112`, and one whose pin is [stale](/chant/cli/workspace-records/#asset-pins) gets a `WSP113` ([#2549](https://github.com/INTENTIUS/chant/issues/2549)). The finding sits on the record's file, not on the declaration. All three are warnings, since the decision stays valid until someone revisits it. A workspace that wants drift to fail CI sets `"checks": { "WSP111": "error" }` in its declaration. Without `--kind` no record is read.
+
+```
+warning  WSP111  ref-002: design/screens/home.json changed since it was pinned: sha256 074e55f52470 is pinned, the file hashes to 9874903227b3
+```
+
+## Boxes
+
+A member with a [`box` block](/chant/reference/workspace-declaration/#boxes) is a box, or holds a box's declarations, and a box holds no credential ([#2726](https://github.com/INTENTIUS/chant/issues/2726)). `WSP121` reads every file in the member's directory from the tree it checks, including under `--at`. It skips `node_modules` and dot-directories, and runs nothing. It reports a literal secret, which is one of these:
+
+- A value with a well-known credential shape, wherever it is. The shapes are the ones the fountain lexicon's `FTN001` knows, with Anthropic keys added.
+- A literal string where a credential goes: under a key named like one (`API_KEY`, `GITHUB_TOKEN`, `apiKey`, `token`, `credential`, `password`), or as the `value` of a `{ key, value }` vault secret. TypeScript, JavaScript and JSON are read as syntax. Any other file is read line by line, and prose files (`.md`, `.txt`, `.html`) only for credential shapes.
+
+A reference is not a secret: `${VAR}`, `$VAR`, a secret-manager reference (`op://`, `bws://`, `infisical://`), a `{{...}}` template placeholder, and any expression that isn't a string literal, such as `process.env.TOKEN`. A key that names where a secret is kept, such as `secretKey` or `TOKEN_FILE`, isn't a credential key. The message names what was found and never prints the value. `WSP121` is fixed, since a credential in a box's files is in git.
+
+`WSP122` fails on a capability that names no broker. It can be turned down while a box moves to a broker.
+
+`WSP125` covers the one credential a fountain box gets without asking for it ([#2780](https://github.com/INTENTIUS/chant/issues/2780)). The pinned fountain spec puts a callback token scoped to the owner, `FOUNTAIN_TOKEN`, into the environment of every exec in a persistent sandbox, including the setup script. A fountain `Box` is always persistent, and fountain refuses its opt-out (`sandbox_api_access: none`) for a persistent sandbox ([managoat/fountain#2497](https://github.com/managoat/fountain/issues/2497)). So a box member whose TypeScript or JavaScript imports `Box` from `@intentius/chant-lexicon-fountain` and calls it must declare `{ "name": "fountain-callback", "broker": "fountain", "scope": ["owner"] }`. The check reads the files as syntax, as `WSP121` does, and it can be turned down.
+
+```text
+error  WSP121  box-credential-declared: spec/box.ts holds a literal value for ANTHROPIC_API_KEY, and member spec is a box, which holds no credential; replace it with a ${VAR} or secret-manager reference, or declare the capability as brokered in the member's box block
+error  WSP122  box-capability-unbrokered: member spec's box needs inference and names no broker for it, so the box would hold its credential; set broker to the runtime that holds it, such as the lobby
+error  WSP125  box-fountain-callback-undeclared: member spec builds a fountain Box (spec/box.ts), and fountain v0.21.0 gives a persistent box's sandbox a callback token scoped to its owner (FOUNTAIN_TOKEN); the member's box block does not declare it. Declare { "name": "fountain-callback", "broker": "fountain", "scope": ["owner"] } in the box block (managoat/fountain#2497 tracks running without it)
+```
+
+`WSP126` and `WSP127` read the decision record a box block names as its [intent](/chant/reference/workspace-declaration/#intent) ([#2850](https://github.com/INTENTIUS/chant/issues/2850)). They look for it among the records of every declared kind named `decision`, read from the working tree, so neither runs under `--at`. `WSP126` fails when no such record has the id, which includes a workspace that declares no decision kind. `WSP127` warns when the record's `constrains` names no member or path of this workspace at all ([#2857](https://github.com/INTENTIUS/chant/issues/2857)): an intent can constrain a member other than the one whose box names it, such as the app a box runs rather than the member its box block sits on, and that passes. A proposed record passes both checks, so a box can be planted before anyone answers its question.
+
+```text
+error    WSP126  box-intent-unknown: member fern's box names the intent box-009, and no record of decisions/decision.kind.mjs has that id; propose the decision with chant workspace records new, or fix the id
+warning  WSP127  box-intent-unconstrained: member fern's box names the intent box-001 (decisions/box-001-what-fern-is-for.md), whose constrains names path:vendor, and none of it is a member or path of this workspace; add member:<name> for the member the intent is about, or a path: entry at, above or inside a member's directory
+```
+
+A box block's [services](/chant/reference/workspace-declaration/#services) are checked when the declaration is read ([#2880](https://github.com/INTENTIUS/chant/issues/2880)). A `needs` entry that names no service of the block, `needs` that form a cycle, a service name given twice and a second `httpPort` each make the declaration unreadable, so `check` reports one `WSP001` finding with the code `declaration-invalid`, and every other command refuses the file too:
+
+```text
+error  WSP001  declaration-invalid: member box's box service hud needs "api", which the block does not declare; declared services: app, hud
+```
+
+## Diagrams
+
+A [declared diagram](/chant/reference/workspace-declaration/#diagrams) names a source and a render, pinned to the renderer that made the render ([#2764](https://github.com/INTENTIUS/chant/issues/2764)). `WSP131` and `WSP132` read the declaration and the tree checked, and fail when a named source or render doesn't exist there, including under `--at`. `WSP133` fails only for an entry that records a `sourceHash`, by hashing the source in the tree checked and comparing it against that recorded value. chant runs no renderer for this, on `check` or anywhere else. So `WSP133` catches a source that changed without a fresh render committed, but not a render that drifted from its source some other way.
+
+A `mermaid` or `excalidraw` diagram may name no render, since hud draws it from the source. `WSP132` then has nothing to check. When the entry records a `sourceHash`, `WSP133` compares it against the source the same way, and the message asks for an updated `sourceHash` rather than a fresh render.
+
+```text
+error  WSP131  diagram-source-missing: the workspace's own diagram architecture names the source docs/diagrams/architecture.d2, which does not exist
+error  WSP132  diagram-render-missing: the workspace's own diagram architecture names the render docs/diagrams/architecture.svg, which does not exist
+error  WSP133  diagram-render-drift: the workspace's own diagram architecture's source docs/diagrams/architecture.d2 changed since docs/diagrams/architecture.svg was rendered from it: recorded sourceHash e3b0c44298fc does not match the source's current hash 9f86d081884c; rerun the renderer and commit the result, or update sourceHash
+```
+
+A workspace that doesn't yet record `sourceHash` for every diagram can turn `WSP133` down to `warning` while it catches up; all three checks are configurable.
+
+## Box isolation
+
+A box block with a `host` and a `slot` states the box's [isolation](/chant/reference/workspace-declaration/#isolation), and chant derives the box's ports, state paths and cookie names from its identity ([#2727](https://github.com/INTENTIUS/chant/issues/2727)). The check resolves every box and compares the values of the boxes on each host. Boxes on different hosts are never compared. The message starts with the finding's code, so a runtime's smoke test can look for it in the text or the JSON.
+
+```
+error  WSP123  box-isolation-collision: fern.app and moss.app on host local resolve to the same port 7140; give each box on a host its own slot
+error  WSP124  box-isolation-literal: member chaff's box gives state HUD_IDENTITY_PATH the path "${HOME}/.local/state/hud/box-chaff/identity.json", which starts with an environment reference; state paths are relative to the box's state directory, which chant derives from the host's stateRoot and the member's name
+```
+
+Two boxes with one slot get one finding for each port they share. Only the declaration is read, so both checks run under `--at` too.
+
+## The forward coverage check
+
+`--changes <base>..<head>` runs a different check ([#2773](https://github.com/INTENTIUS/chant/issues/2773)). Each path the diff changes is mapped to the current records whose `constrains` cover it, the join [`graph --intent`](/chant/cli/workspace-graph/#the-intent-graph) reads the other way. The records that count are decided decisions nothing supersedes and work items still open. One covers a path through a `path:` entry naming it or a directory above it. A `member:` entry covers every path in that member. Two gaps are findings:
+
+- `change-uncovered`: no current record covers the path.
+- `change-out-of-scope`: a record in hand for the change lists the path in its `out_of_scope`. With `--work <id>`, the records in hand are that work item and the decisions it implements. Without it, they are every current record that covers some path in the diff.
+
+A change to a record file of a kind read is the records themselves, and needs no record. The declaration's `changes` block sets the rest:
+
+```json
+{
+  "changes": {
+    "severity": "warn",
+    "ignore": ["**/package-lock.json", "app/dist/**"]
+  }
+}
+```
+
+`severity` is `off` (no findings), `warn` (the default: findings are reported and the command passes) or `fail` (a finding fails the command). `--severity` replaces it for one run. `ignore` lists globs over file paths from the workspace root, such as lockfiles and generated output. A matching path is listed as `ignored` and never reported. The declaration and the records are read at `<head>`, so a change that adds its own work item is covered by it. `<base>...<head>` diffs from the merge base, and `<base>` alone diffs to `HEAD`.
+
+```
+$ chant workspace check --changes main..HEAD
+changes   3f2a91c0..8b04d2e1 (main..HEAD), severity warn
+covered      modified app/src/server.mjs; by decision/dec-001 (path:app/src)
+out-of-scope modified app/src/vendor/lib.mjs; by decision/dec-001 (app/src/vendor)
+uncovered    modified docs/readme.md
+ignored      modified app/package-lock.json; by **/package-lock.json
+record       added    work/W-003-next.md
+warning   change-out-of-scope: app/src/vendor/lib.mjs is modified, and decision/dec-001 (app/src/vendor) puts it out of scope
+warning   change-uncovered: docs/readme.md, in member docs, is modified, and no current decided record or open work item covers it by path or member
+5 changed paths: 1 covered, 1 uncovered, 1 out of scope, 1 ignored, 1 records; 2 findings
+```
+
+`--json` prints the [read contract](/chant/reference/workspace-read-contract/#the-forward-coverage-check) document, which follows `https://intentius.io/chant/schemas/workspace/changes/v1/changes.schema.json`. `chant serve mcp` serves it as the `workspace-changes` tool. Each finding's `triage` is the gap source a work item seeded from it takes, for the finding-triage decision point ([#2741](https://github.com/INTENTIUS/chant/issues/2741)). When a work kind is read, `addressed` says whether a work item already came from that gap, and each path's `member` and `generated` fill the rest of the point's inputs ([#2794](https://github.com/INTENTIUS/chant/issues/2794)). See [From a change finding](/chant/guide/decision-points/#from-a-change-finding). An Op that changes the checkout runs the check on its own branch with the [`changeCoverage` activity](/chant/guide/ops/#checking-the-change-against-the-records). The lines the diff changes come from [`chant workspace patch`](/chant/cli/workspace-patch/), which reads a range the same way.
+
+### Write scope
+
+When the declaration at `<base>` has a [`writeScope` block or `agents`](/chant/reference/workspace-declaration/#write-scope-and-agent-sessions), `--changes` also judges every commit in the range against them ([#2548](https://github.com/INTENTIUS/chant/issues/2548)). The declaration, its record kinds and the trust policy are read at `<base>`, so a change can't widen its own scope. Merges are left out, and the commits they bring are judged instead.
+
+A commit with a `Chant-Agent: <name>` trailer is judged as that agent session, bound to its member. Otherwise its principal is the signer that attests it under the policy at base, or its author's email when nothing attests it, and a principal a session lists is judged as that session. Any other principal's class comes from the role grants at base. Each path a restricted writer wrote outside its scope is a finding: `write-scope-member` for a file or record kind of a member outside it, `write-scope-kind` for a record kind or verb its records rule leaves out, and `agent-unknown` for a trailer naming no declared session. A record file the commit adds is written with `new`. A changed one is a `review` when only its reviews changed, and a `close` when a session entered a closed state. Any other change to it is `amend`. A scope finding fails the check whatever the severity.
+
+```
+$ chant workspace check --changes main..HEAD
+...
+scope     3 commits judged against the declaration at 3f2a91c0; restricted: agent
+error     write-scope-member: 8b04d2e1 changes design/spec.md: agent session app, bound to member app, may not write design/spec.md, which is in member design: an agent session writes only its own member
+```
+
+On a developer machine the trailer and the author are what the commit claims, so this detects. In CI with an attestation policy at base, the principal is the signer the policy trusts.
+
+## Options
+
+| Option | Effect |
+|---|---|
+| `--at <rev>` | Check the declaration and the lineage lock as they were at a commit, read from the local git object store. No checkout or network is needed. The declaration, kind and member link checks read the revision's tree. The ledger, pipeline and generated-file checks (`WSP071` to `WSP083`, `WSP101` to `WSP106`) read the checkout, so they find nothing at a revision, and `--generated` does nothing there. |
+| `--json` | Print `{ lock, ok, findings }`, plus `declaration` when there is one. Each lock finding has `code`, `scope`, `path` and `message`, and `code` is one of `lock-invalid` and `manual-step-open`. `lock` is `null` when there is no lock. `declaration` holds `file`, `ok`, `diagnostics`, `suppressed` and `links`. The entries of `diagnostics` and `suppressed` have the shape `chant lint --format json` prints, plus `entity` naming the entry and `reason` for a suppressed one. `ok` covers both |
+| `--format stylish` | The default. Lock findings print as above, and declaration findings print as `chant lint` prints its own |
+| `--format json` | Print the [read contract](/chant/reference/workspace-read-contract/) document, which follows `https://intentius.io/chant/schemas/workspace/check/v1/check.schema.json`. It holds what `--json` prints, with `$schema`, `contract`, `chant`, `at` and `workspace` (the declaration's `name` and `root`, or `null` without one) added. A `WSP001` finding also has `code`, the reason code the declaration couldn't be read with. `--at` outside a git repository or at an unknown revision prints `{ "$schema", "contract", "chant", "error" }` instead |
+| `--format sarif` | Print SARIF 2.1.0 through lint's SARIF reporter, with the suppressed findings as suppressed results |
+| `--generated` | Run each declared generator and compare its output with the file in the tree, as described under [generated files](#generated-files). Off by default, since generators run member code |
+| `--kind <kind file>` | Read the records of this record kind and run the [record checks](#record-checks). The path is resolved against the current directory. With `--at`, the records and the files they pin are read at the revision. With `--changes` it repeats, and the kinds given replace the declared ones |
+| `--live` | Resolve each declared `output` link against the live graph of the environment named with `--env`, and run `WSP141` and `WSP142`. Reaches the account through each `chant` member's own `chant graph --live`. See [live links](#live-links) |
+| `--env <env>` | With `--live`: the environment each member's `chant graph --live` reads |
+| `--changes <range>` | Run the [forward coverage check](#the-forward-coverage-check) over `<base>..<head>`, `<base>...<head>` or `<base>`, in place of the checks above. Takes no `--at` |
+| `--work <id>` | With `--changes`: the work item in hand, whose `out_of_scope` and whose decisions' `out_of_scope` apply. An id no work record has is `work-item-unknown` |
+| `--severity off\|warn\|fail` | With `--changes`: in place of the declaration's `changes.severity` |
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | No lock finding and no declaration finding of error severity |
+| 1 | The lock cannot be read, a manual step is open, or a declaration check reports an error. With `--changes`: the range, the declaration, a kind or the `--work` item can't be read, severity is `fail` and there is a finding, or a commit writes outside its writer's [scope](#write-scope) |

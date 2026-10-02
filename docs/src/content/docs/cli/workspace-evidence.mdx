@@ -1,0 +1,103 @@
+---
+title: "chant workspace evidence"
+description: Sign runner evidence over record hashes in a DSSE envelope, and verify it offline
+diataxis: reference
+---
+
+## Synopsis
+
+```
+chant workspace evidence sign --kind <kind file> --key <runner key.pem> --check-id <id>
+    [--claim <file>] [--environment <file>] [--at <rev>] [--base <rev>] [--output <file>] [--json]
+chant workspace evidence verify --envelope <file> [--at <rev>] [--base <rev>] [--json]
+```
+
+## Description
+
+Runner evidence is a statement by a CI job or a service that a check ran over a set of records at a given commit. chant writes it as an [in-toto Statement v1](https://github.com/in-toto/attestation/blob/main/spec/v1/statement.md), with the predicate type `https://intentius.io/chant/runner-evidence/v1`, and wraps it in a [DSSE](https://github.com/secure-systems-lab/dsse) envelope signed with the runner's Ed25519 key.
+
+| Part | Holds |
+|---|---|
+| `subject` | Each record the kind locates at the commit: its path, and the SHA-256 of its text with line endings normalised |
+| `predicate.runner` | The runner's principal, which must be the principal of the key that signed |
+| `predicate.commit`, `predicate.tree` | The commit the check ran at, and its tree |
+| `predicate.check` | `--check-id` |
+| `predicate.claim`, `predicate.environment` | SHA-256 of `--claim` and `--environment`, when given |
+
+Verifying needs the envelope, the repository's objects and the runner keys in the policy at base, and nothing else. It works offline. A signature counts when its `keyid` is the ssh SHA256 fingerprint of a listed runner key and it verifies over the DSSE pre-authentication encoding of the payload type and payload. The payload must be canonical base64 and an in-toto statement with exactly the fields in the table above, and subject paths must stay inside the repository.
+
+Evidence is never reused on trust. `verify` hashes each record again at `--at` (default `HEAD`). If every record still matches, the evidence is `current`. If any record changed or is gone, it's `stale`, and the command exits 1.
+
+## Runner keys
+
+Runner keys belong to a service or a CI identity, never to a person. They're listed in `.chant/trust.json` at base:
+
+```json
+{
+  "schema": 1,
+  "runners": [{ "principal": "ci@github-actions", "class": "runner", "key": "ssh-ed25519 AAAA..." }]
+}
+```
+
+These entries are the only trust roots for evidence. chant reads them from `.chant/trust.json` at the base revision, in the same policy as the signers file, and has no built-in key, certificate authority or keyless signing. `class` is `runner` for a CI job and `service` for a hosted service. A runner entry that uses a key or a principal listed in the signers file is refused, and so is a key the change adds. Two entries with the same key or the same principal are both refused, since either would leave it unclear who signed. When the signer history at base is broken, no runner key is trusted. `sign` refuses a signer's key and any key the policy at base doesn't list, and it prints the public half of the key so you can add it. Adding or removing a runner key changes `.chant/trust.json`, which is a protected write.
+
+A runner key is an Ed25519 private key in PEM. Keep it in the CI system's secret store:
+
+```bash
+openssl genpkey -algorithm ed25519 -out runner.pem
+```
+
+## Options
+
+| Option | Effect |
+|---|---|
+| `--kind <kind file>` | The record kind whose records the evidence covers. |
+| `--key <file>` | The runner's private key. |
+| `--check-id <id>` | The check the evidence is for. |
+| `--claim <file>` | A file whose hash is bound into the evidence, such as the check's report. |
+| `--environment <file>` | A description of the runner's environment, hashed into the evidence. |
+| `--at <rev>` | With `sign`, the commit the records are read at. With `verify`, the commit they're compared against. Defaults to `HEAD`. |
+| `--base <rev>` | Where the runner keys are read. Defaults to `origin/HEAD`, then `main`, then `master`. |
+| `--output <file>` | Write the envelope to a file instead of standard output. |
+| `--envelope <file>` | The envelope to verify. |
+| `--json` | With `verify`, print the result as JSON. With `sign`, print a refusal as JSON; the envelope is printed either way. |
+
+## Output
+
+`verify --json` prints a document that `evidence.schema.json` describes (`https://intentius.io/chant/schemas/workspace/evidence/v1/evidence.schema.json`).
+
+| Field | Holds |
+|---|---|
+| `status` | `current` or `stale` |
+| `runner`, `class`, `keyid` | Who signed, as `.chant/trust.json` lists them, and the fingerprint of the key |
+| `statement` | The statement that was signed |
+| `subjects` | Each record's signed hash beside its hash at `at` |
+| `error` | Only in a failure, with a `code` and a `message` |
+
+## Reason codes
+
+| Code | Meaning |
+|---|---|
+| `trust-policy-unreadable` | The policy at base can't be read, or its signer history is broken. |
+| `envelope-unreadable` | `--envelope` can't be read, or isn't JSON. |
+| `envelope-invalid` | The file isn't a DSSE envelope, or its payload isn't canonical base64. |
+| `envelope-untrusted` | No signature verifies against a runner key the policy at base lists. |
+| `evidence-payload-type` | The payload type isn't `application/vnd.in-toto+json`. |
+| `evidence-statement-invalid` | The payload isn't a runner-evidence statement, or has a field it doesn't define. |
+| `evidence-runner-mismatch` | The statement names a runner other than the one whose key signed. |
+| `runner-key-invalid` | `sign` was given something other than an Ed25519 private key in PEM. |
+| `runner-key-is-signer` | `sign` was given a key the signers file lists. |
+| `runner-key-unlisted` | `sign` was given a key the policy at base doesn't list as a runner. |
+
+Both subcommands can also fail with `not-a-git-repository` or `revision-unknown`, and `sign` with the records read's own codes when the kind can't be read. All of them are in the [read contract's closed list](/chant/reference/workspace-read-contract/#reason-codes).
+
+## In the chant repository
+
+The chant repository lists no runner keys and its CI signs no evidence. A runner key would have to be made for the repository's CI and kept in its secret store, and none exists yet, so the repository has no `.chant/trust.json`.
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | `sign` wrote the envelope, or `verify` found it valid and current. |
+| 1 | The key was refused, the envelope doesn't verify against a runner key at base, or the evidence is stale. |

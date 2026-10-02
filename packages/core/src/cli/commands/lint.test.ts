@@ -6,7 +6,6 @@ import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { params, setBuildParams } from "../../params";
-import { resetDiscoveryWarnings } from "../../discovery/convergence";
 
 describe("lintCommand", () => {
   let testDir: string;
@@ -281,6 +280,43 @@ export const b = new Bucket({ config: { y: 2 } });
     // COR001 fires on inline objects — strict preset sets it to "error"
     expect(result.diagnostics.some(d => d.ruleId === "COR001")).toBe(true);
     expect(result.diagnostics.filter(d => d.ruleId === "COR001")).toHaveLength(2);
+  });
+
+  // #2511: a project-local rule that throws is an error, never a clean pass.
+  test("a project-local rule that throws fails the lint and names the rule, file and message", async () => {
+    await mkdir(join(testDir, ".chant", "rules"), { recursive: true });
+    await writeFile(
+      join(testDir, ".chant", "rules", "local.ts"),
+      `
+export const boom = {
+  id: "LOCAL_BOOM",
+  severity: "warning",
+  category: "correctness",
+  check() { throw new Error("cannot read sibling file"); },
+};
+export const fine = {
+  id: "LOCAL_FINE",
+  severity: "warning",
+  category: "correctness",
+  check(ctx) {
+    return [{ file: ctx.filePath, line: 1, column: 1, ruleId: "LOCAL_FINE", severity: "warning", message: "fine ran" }];
+  },
+};
+      `,
+    );
+    const file = join(testDir, "clean.ts");
+    await writeFile(file, `// chant-disable\nexport const config = { a: 1 };\n`);
+
+    const result = await lintCommand({ path: testDir, format: "stylish" });
+
+    expect(result.success).toBe(false);
+    const threw = result.diagnostics.filter((d) => d.ruleId === "LOCAL_BOOM");
+    expect(threw).toHaveLength(1);
+    expect(threw[0].severity).toBe("error");
+    expect(threw[0].file).toBe(file);
+    expect(threw[0].message).toContain("LOCAL_BOOM");
+    expect(threw[0].message).toContain(file);
+    expect(threw[0].message).toContain("cannot read sibling file");
   });
 });
 
@@ -643,58 +679,53 @@ describe("lintCommand — git-ignored files are not linted", () => {
 });
 
 /**
- * chant#2527's warning release for lint: a child project is linted today and
- * stops the converged walk next release; a scan root that is itself ignored
- * lints nothing today and is linted next release. Both still lint exactly
- * what they did, with a warning naming the files and the glob.
+ * chant#2527: lint walks through the one discovery walk. A child project
+ * inside a project is a boundary, `include` re-admits it, and a scan root
+ * that is itself git-ignored is linted.
  */
-describe("lintCommand — files the converged walker reads differently (#2527)", () => {
+describe("lintCommand — the converged discovery walk (#2527)", () => {
   let testDir: string;
-  let stderr: string[];
   const EVL003 = `const t = { a: 1 };\nexport function g(k: string) { return t[k]; }\n`;
 
   beforeEach(async () => {
     testDir = join(tmpdir(), `chant-lint-2527-${Date.now()}-${Math.random()}`);
     await mkdir(testDir, { recursive: true });
     process.env.NO_COLOR = "1";
-    resetDiscoveryWarnings();
-    stderr = [];
-    vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => void stderr.push(args.join(" ")));
   });
 
   afterEach(async () => {
-    vi.restoreAllMocks();
     await rm(testDir, { recursive: true, force: true });
     delete process.env.NO_COLOR;
   });
 
-  test("a nested child project is still linted, and named with its include glob", async () => {
-    await writeFile(join(testDir, "chant.config.json"), JSON.stringify({ knowledge: { dir: "knowledge" } }));
+  async function childProject(config: Record<string, unknown>): Promise<void> {
+    await writeFile(join(testDir, "chant.config.json"), JSON.stringify({ knowledge: { dir: "knowledge" }, ...config }));
     await writeFile(join(testDir, "index.ts"), `export const x = 1;\n`);
     await mkdir(join(testDir, "stacks", "east"), { recursive: true });
     await writeFile(join(testDir, "stacks", "east", "chant.config.ts"), `export default {};\n`);
     await writeFile(join(testDir, "stacks", "east", "east.ts"), EVL003);
+  }
 
+  test("a nested child project is not linted from the parent", async () => {
+    await childProject({});
     const result = await lintCommand({ path: testDir, format: "stylish" });
-    expect(result.diagnostics.some((d) => d.file.includes("east.ts") && d.ruleId === "EVL003")).toBe(true);
-    const warning = stderr.find((l) => l.startsWith("warning: chant lint under"));
-    expect(warning).toContain("  stacks/east/chant.config.ts, stacks/east/east.ts: stacks/east/ is a child project");
-    expect(warning).toContain('To keep reading them after the change, add "stacks/east" to include in');
+    expect(result.diagnostics.some((d) => d.file.includes("east.ts"))).toBe(false);
   });
 
-  test("an ignored scan root lints nothing today, and says it will be linted", async () => {
+  test("include re-admits the child project", async () => {
+    await childProject({ include: ["stacks/east"] });
+    const result = await lintCommand({ path: testDir, format: "stylish" });
+    expect(result.diagnostics.some((d) => d.file.includes("east.ts") && d.ruleId === "EVL003")).toBe(true);
+  });
+
+  test("an ignored scan root is linted: ignore rules apply below the root only", async () => {
     execFileSync("git", ["init", "-q"], { cwd: testDir });
     await writeFile(join(testDir, ".gitignore"), "/carveout/\n");
     await mkdir(join(testDir, "carveout", "src"), { recursive: true });
     await writeFile(join(testDir, "carveout", "src", "main.ts"), EVL003);
 
     const result = await lintCommand({ path: join(testDir, "carveout", "src"), format: "stylish" });
-    expect(result.diagnostics.filter((d) => d.file.includes("main.ts"))).toHaveLength(0);
-    const warning = stderr.find((l) => l.startsWith("warning: chant lint under"));
-    expect(warning).toContain("  main.ts: ");
-    expect(warning).toContain("is itself git-ignored, so today nothing under it is linted. ");
-    expect(warning).toContain("so the files under it are linted.");
-    expect(warning).toContain('To keep skipping it, add "**" to exclude in');
+    expect(result.diagnostics.some((d) => d.file.includes("main.ts") && d.ruleId === "EVL003")).toBe(true);
   });
 });
 

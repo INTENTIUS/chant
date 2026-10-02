@@ -3015,6 +3015,123 @@ service:
   });
 });
 
+// ── OtelCollector ────────────────────────────────────────────────────
+
+describe("OtelCollector", () => {
+  const { OtelCollector } = require("./otel-collector");
+
+  async function renderedConfig(result: any): Promise<any> {
+    const { load } = await import("js-yaml");
+    return load((p(result.configMap).data as any)["config.yaml"]);
+  }
+
+  test("returns the agent resources and a Service", () => {
+    const result = OtelCollector({});
+    for (const key of ["daemonSet", "service", "serviceAccount", "clusterRole", "clusterRoleBinding", "configMap"]) {
+      expect(result[key], key).toBeDefined();
+    }
+  });
+
+  test("defaults to otel-collector in observability, on the pinned contrib image", async () => {
+    const { COLLECTOR_IMAGE } = await import("@intentius/chant-lexicon-otel");
+    const result = OtelCollector({});
+    const meta = p(result.daemonSet).metadata as any;
+    expect(meta.name).toBe("otel-collector");
+    expect(meta.namespace).toBe("observability");
+    const container = (p(result.daemonSet) as any).spec.template.spec.containers[0];
+    expect(container.image).toBe(COLLECTOR_IMAGE);
+    expect(container.image).toMatch(/^otel\/opentelemetry-collector-contrib:\d+\.\d+\.\d+$/);
+  });
+
+  test("the default config is OTLP in, debug out, and passes the otel lexicon's checks", async () => {
+    const { validateCollectorConfig } = await import("@intentius/chant-lexicon-otel");
+    const config = await renderedConfig(OtelCollector({}));
+    expect(validateCollectorConfig(config)).toEqual([]);
+    expect(Object.keys(config.exporters)).toEqual(["debug"]);
+    expect(Object.keys(config.service.pipelines).sort()).toEqual(["logs", "metrics", "traces"]);
+    expect(config.service.extensions).toEqual(["health_check"]);
+  });
+
+  test("container and Service ports follow the config's receivers", () => {
+    const result = OtelCollector({});
+    const container = (p(result.daemonSet) as any).spec.template.spec.containers[0];
+    expect(container.ports).toEqual([
+      { containerPort: 4317, name: "otlp-grpc" },
+      { containerPort: 4318, name: "otlp-http" },
+      { containerPort: 13133, name: "health" },
+    ]);
+    const spec = p(result.service).spec as any;
+    expect(spec.internalTrafficPolicy).toBe("Local");
+    expect(spec.ports).toEqual([
+      { name: "otlp-grpc", port: 4317, targetPort: "otlp-grpc", protocol: "TCP" },
+      { name: "otlp-http", port: 4318, targetPort: "otlp-http", protocol: "TCP" },
+    ]);
+  });
+
+  test("probes hit the health_check extension", () => {
+    const container = (p(OtelCollector({}).daemonSet) as any).spec.template.spec.containers[0];
+    expect(container.livenessProbe).toEqual({ httpGet: { path: "/", port: "health" } });
+    expect(container.readinessProbe).toEqual(container.livenessProbe);
+  });
+
+  test("the config file is mounted at the path the command reads", async () => {
+    const { COLLECTOR_CONFIG_PATH } = await import("@intentius/chant-lexicon-otel");
+    const pod = (p(OtelCollector({}).daemonSet) as any).spec.template.spec;
+    const container = pod.containers[0];
+    expect(container.args ?? container.command).toContain(`--config=${COLLECTOR_CONFIG_PATH}`);
+    const dir = COLLECTOR_CONFIG_PATH.slice(0, COLLECTOR_CONFIG_PATH.lastIndexOf("/"));
+    expect(container.volumeMounts.map((m: any) => m.mountPath)).toContain(dir);
+  });
+
+  test("exporters and signals shape the default config", async () => {
+    const { OtlpExporter } = await import("@intentius/chant-lexicon-otel");
+    const tempo = new OtlpExporter({ name: "tempo", endpoint: "tempo:4317", tls: { insecure: true } });
+    const config = await renderedConfig(OtelCollector({ exporters: [tempo], signals: ["traces"] }));
+    expect(config.exporters).toEqual({ "otlp/tempo": { endpoint: "tempo:4317", tls: { insecure: true } } });
+    expect(Object.keys(config.service.pipelines)).toEqual(["traces"]);
+    expect(config.service.pipelines.traces.exporters).toEqual(["otlp/tempo"]);
+  });
+
+  test("a full config replaces the default, and ports and probes follow it", async () => {
+    const { OtlpReceiver, DebugExporter, Pipeline } = await import("@intentius/chant-lexicon-otel");
+    const otlp = new OtlpReceiver({ protocols: { grpc: { endpoint: "0.0.0.0:14317" } } });
+    const result = OtelCollector({
+      config: [new Pipeline({ signal: "logs", receivers: [otlp], exporters: [new DebugExporter({})] })],
+    });
+    const config = await renderedConfig(result);
+    expect(Object.keys(config.receivers)).toEqual(["otlp"]);
+    expect(config.service.extensions).toBeUndefined();
+    const container = (p(result.daemonSet) as any).spec.template.spec.containers[0];
+    expect(container.ports).toEqual([{ containerPort: 14317, name: "otlp-grpc" }]);
+    expect(container.livenessProbe).toBeUndefined();
+    expect((p(result.service).spec as any).ports.map((x: any) => x.port)).toEqual([14317]);
+  });
+
+  test("name, namespace and labels reach every resource", () => {
+    const result = OtelCollector({ name: "agent", namespace: "telemetry", labels: { team: "obs" } });
+    for (const key of ["daemonSet", "service", "serviceAccount", "configMap"]) {
+      const meta = p(result[key]).metadata as any;
+      expect(meta.name, key).toMatch(/^agent(-|$)/);
+      expect(meta.namespace, key).toBe("telemetry");
+      expect(meta.labels.team, key).toBe("obs");
+      expect(meta.labels["app.kubernetes.io/managed-by"], key).toBe("chant");
+    }
+    expect((p(result.service).spec as any).selector).toEqual({ "app.kubernetes.io/name": "agent" });
+  });
+
+  test("defaults override a member", () => {
+    const result = OtelCollector({ defaults: { service: { spec: { internalTrafficPolicy: "Cluster" } } } });
+    expect((p(result.service).spec as any).internalTrafficPolicy).toBe("Cluster");
+  });
+
+  test("container runs as non-root with a read-only root filesystem", () => {
+    const container = (p(OtelCollector({}).daemonSet) as any).spec.template.spec.containers[0];
+    expect(container.securityContext.runAsNonRoot).toBe(true);
+    expect(container.securityContext.readOnlyRootFilesystem).toBe(true);
+    expect(container.securityContext.capabilities).toEqual({ drop: ["ALL"] });
+  });
+});
+
 // ── GkeExternalDnsAgent ──────────────────────────────────────────────
 
 describe("GkeExternalDnsAgent", () => {

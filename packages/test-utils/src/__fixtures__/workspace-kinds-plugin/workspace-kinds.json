@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "kinds": [
+    {
+      "name": "terraform",
+      "description": "a Terraform root module, with a main.tf in its directory",
+      "precedence": 400,
+      "probe": { "anyFile": ["main.tf", "versions.tf"] }
+    },
+    {
+      "name": "helm-chart",
+      "description": "a Helm chart, with a Chart.yaml in its directory",
+      "precedence": 300,
+      "probe": { "anyFile": ["Chart.yaml"] }
+    }
+  ]
+}

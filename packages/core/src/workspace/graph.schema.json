@@ -1,0 +1,1024 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/graph/v1/graph.schema.json",
+  "title": "chant workspace graph output",
+  "description": "What `chant workspace graph` prints, version 1 of the read contract for the composed workspace graph (#2524 D8, D15, #2536, #2537). Each member's `chant graph --format ir`, read under the member's own toolchain, with every node id prefixed by its member. Readers ignore fields they do not know; a field is only ever added within a version, and a member's node carries every field its own IR has. The reason and error codes are closed lists: a new code is a new contract version. Contract version 1 is written by chant 0.81.0 and newer; a reader that needs it refuses output whose `contract` it doesn't know. Every code is in the one closed list of `reason-codes.ts`.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/result"
+    },
+    {
+      "$ref": "#/$defs/failure"
+    }
+  ],
+  "$defs": {
+    "result": {
+      "description": "The declaration was read. Exit code 0 when every chant member was composed, 1 when one failed or couldn't be read; the document is printed either way.",
+      "type": "object",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "at",
+        "version",
+        "workspace",
+        "members",
+        "nodes",
+        "edges",
+        "groups",
+        "exports",
+        "imports",
+        "links",
+        "collectors",
+        "records"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/graph/v1/graph.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string",
+          "description": "The version of the chant that read the declaration and composed the graph. Each member's own chant is on its entry."
+        },
+        "at": {
+          "description": "The full commit id the workspace was read at (--at), or null for the working tree.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{40,64}$"
+        },
+        "error": false,
+        "version": {
+          "const": 1,
+          "description": "The version of the composed graph format. It moves only for a change a reader could not ignore."
+        },
+        "workspace": {
+          "type": "object",
+          "required": [
+            "name",
+            "root"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "The declared name. With `at`, it identifies the workspace."
+            },
+            "root": {
+              "type": "string",
+              "description": "The workspace root relative to the git root, with / separators, \".\" for the git root itself. An absolute path outside a git repository."
+            }
+          }
+        },
+        "members": {
+          "description": "Every member the run covered, in declaration order: composed, skipped or failed.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/member"
+          }
+        },
+        "nodes": {
+          "description": "Every composed member's nodes, sorted by id.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/node"
+          }
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/edge"
+          }
+        },
+        "groups": {
+          "type": "object",
+          "required": [
+            "byMember"
+          ],
+          "properties": {
+            "byMember": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "description": "Each composed member's node ids."
+            },
+            "byLexicon": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "description": "Keys kept, ids merged across members."
+            },
+            "byComposite": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "description": "Keys kept, ids merged across members."
+            },
+            "byStack": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "description": "Keys prefixed with the member."
+            },
+            "byContainer": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "description": "Keys prefixed with the member."
+            },
+            "byWave": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "description": "Keys prefixed with the member."
+            }
+          }
+        },
+        "exports": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "member"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "node": {
+                "type": "string"
+              },
+              "attr": {
+                "type": "string"
+              },
+              "member": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "imports": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "node",
+              "member"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "node": {
+                "type": "string"
+              },
+              "member": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "derivedAttrs": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "description": "Attributes derived per resource kind, merged across members."
+        },
+        "links": {
+          "type": "array",
+          "description": "Member links (#2524 D6, #2539): the ones declared on a consumer and the ones inferred from join keys, resolved against the composed graph. A reader draws a row from its `from` node to its `to` node when both are set. With --kind, the links of the records read follow (#2549): an `asset` row for each file a record pins by hash, and a `constrains` row for each member or path it governs. These rows have `record` and `target` instead of `consumer` and `producer`.",
+          "items": {
+            "$ref": "#/$defs/link"
+          }
+        },
+        "collectors": {
+          "type": "array",
+          "description": "The collector pipelines and exporters of each member that declares a collector, in declaration order (#2559). A member reports them from its own IR (`meta.collector`), which the lexicon that types the collector config writes, so chant itself reads no collector config. Empty when no member declares one. A reader joins a telemetry endpoint to the pipeline or exporter it names through `exporters[].endpoints` and `pipelines[].id`.",
+          "items": {
+            "$ref": "#/$defs/collector"
+          }
+        },
+        "records": {
+          "type": "array",
+          "description": "The records read with --kind (#2524 D4, #2549), sorted by path; empty without it. A record link in `links` names its record by id.",
+          "items": {
+            "$ref": "#/$defs/record"
+          }
+        }
+      }
+    },
+    "member": {
+      "type": "object",
+      "required": [
+        "name",
+        "dir",
+        "kind",
+        "status",
+        "reason",
+        "chant",
+        "irVersion"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "dir": {
+          "type": "string",
+          "description": "Relative to the workspace root, with / separators; \".\" is the root member."
+        },
+        "kind": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "composed",
+            "skipped",
+            "failed"
+          ]
+        },
+        "reason": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "code",
+                "message"
+              ],
+              "properties": {
+                "code": {
+                  "enum": [
+                    "kind-not-run",
+                    "dir-missing",
+                    "unknown-kind",
+                    "kind-probe-failed",
+                    "command-failed",
+                    "output-unreadable",
+                    "ir-version-unsupported"
+                  ]
+                },
+                "message": {
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        },
+        "chant": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The chant version the member's toolchain reported, or null when a chant older than member-run read it."
+        },
+        "irVersion": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "The IR version the member printed, or null when it printed none and was read as version 1."
+        },
+        "live": {
+          "type": "boolean",
+          "description": "Whether the member was read with --live (#2875): its graph is the account as it stands, and its nodes carry whatever _drift, _overlay and _behaviour attributes its chant wrote. false for a source read and for a member that did not run. A document from a chant before #2875 has no live field, and a reader may take that as false."
+        },
+        "readAt": {
+          "type": "string",
+          "description": "For a live read, as an ISO 8601 time: when the member's read finished. A live member of a toolchain whose member-run names no time gets the time its toolchain's process ended."
+        },
+        "cached": {
+          "type": "boolean",
+          "description": "Whether chant's per-member cache answered this read (#2876). Present on composed members. A cached read is the output the member's own chant printed for the same stamp, toolchain, command line and environment."
+        },
+        "stamp": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "What the per-member cache keys this read on (#2876): sha256 over the member's files and install state, or over the commit id with --at. Present on composed members; null for a live read or when no stamp could be taken. Two reads of a member with equal stamps read the same source."
+        },
+        "meta": {
+          "type": "object",
+          "description": "The member IR's whole-read facts."
+        },
+        "pipeline": {
+          "description": "The member IR's pipeline projection, when it has one."
+        },
+        "nested": {
+          "type": "object",
+          "description": "For a member of kind workspace (#2551): the nested workspace, read read-only through its own chant workspace graph. Its nodes, edges, exports and imports are in the outer sections with `<member>/<nested member>/<id>` ids, and each node names its nested member in `nested`. The outer workspace never writes inside it.",
+          "required": [
+            "name",
+            "contract",
+            "members",
+            "links"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "The nested declaration's name."
+            },
+            "contract": {
+              "type": "integer",
+              "description": "The contract version of the nested read's document."
+            },
+            "members": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/member"
+              },
+              "description": "The nested workspace's members as its own graph lists them, with their own names and directories (relative to the nested root)."
+            },
+            "links": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/link"
+              },
+              "description": "The nested workspace's links, naming its members as the nested side does."
+            }
+          }
+        }
+      },
+      "if": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "const": "composed"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "null"
+          }
+        }
+      },
+      "else": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "node": {
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "lexicon",
+        "attrs",
+        "member"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "`<member>/<id>`: the member's own id with the member's name in front."
+        },
+        "kind": {
+          "type": "string"
+        },
+        "lexicon": {
+          "type": "string"
+        },
+        "attrs": {
+          "type": "object",
+          "description": "The member's attributes, with every `$ref` prefixed like the ids."
+        },
+        "member": {
+          "type": "string"
+        },
+        "compositeParent": {
+          "type": "string"
+        },
+        "compositeInstance": {
+          "type": "string"
+        },
+        "runtimeOwner": {
+          "type": "string"
+        },
+        "nested": {
+          "type": "string",
+          "description": "For a node read through a nested workspace (#2551): the nested workspace's member it belongs to. `member` is then the outer member, and the id is `<member>/<nested>/<id>`."
+        },
+        "sourceLoc": {
+          "type": "object",
+          "required": [
+            "file"
+          ],
+          "properties": {
+            "file": {
+              "type": "string",
+              "description": "Relative to the member's directory."
+            },
+            "line": {
+              "type": "integer"
+            }
+          }
+        }
+      }
+    },
+    "edge": {
+      "type": "object",
+      "required": [
+        "from",
+        "to",
+        "kind",
+        "member"
+      ],
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "viaAttr": {
+          "type": "string"
+        },
+        "toAttr": {
+          "type": "string"
+        },
+        "member": {
+          "type": "string"
+        }
+      }
+    },
+    "failure": {
+      "description": "The declaration could not be read, and nothing was composed. Exit code 1.",
+      "type": "object",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "error"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/graph/v1/graph.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message",
+            "location"
+          ],
+          "properties": {
+            "code": {
+              "enum": [
+                "declaration-missing",
+                "declaration-ambiguous",
+                "declaration-unparseable",
+                "declaration-invalid",
+                "placement-invalid",
+                "reader-too-old",
+                "root-chant-required",
+                "not-a-git-repository",
+                "revision-unknown",
+                "live-at-revision"
+              ]
+            },
+            "message": {
+              "type": "string"
+            },
+            "location": {
+              "description": "Where in the declaration the problem is, or null when it is not in the file.",
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "file",
+                    "line",
+                    "column"
+                  ],
+                  "properties": {
+                    "file": {
+                      "type": "string"
+                    },
+                    "line": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "column": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "members": false,
+        "nodes": false
+      }
+    },
+    "link": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "consumer",
+            "kind",
+            "origin",
+            "resolves",
+            "reason",
+            "status",
+            "producer",
+            "output",
+            "label",
+            "input"
+          ],
+          "properties": {
+            "consumer": {
+              "type": "string",
+              "description": "The member that consumes."
+            },
+            "kind": {
+              "type": "string",
+              "description": "What the link joins: `output`, or `telemetry` (#2558), where the consumer sends its telemetry to a pipeline or exporter of the producer's collector and `output` names it."
+            },
+            "origin": {
+              "enum": [
+                "declared",
+                "inferred:joinKey"
+              ]
+            },
+            "resolves": {
+              "const": "source"
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Why the row is not resolved, or null."
+            },
+            "from": {
+              "type": "string",
+              "description": "The consumer's parameter node, when known."
+            },
+            "input": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "status": {
+              "enum": [
+                "resolved",
+                "missing",
+                "unresolved",
+                "invalid"
+              ]
+            },
+            "producer": {
+              "type": "string"
+            },
+            "output": {
+              "type": "string"
+            },
+            "label": {
+              "enum": [
+                "exact",
+                "folded"
+              ]
+            },
+            "to": {
+              "type": "string",
+              "description": "The producer's output node, when known."
+            },
+            "pointer": {
+              "type": "string",
+              "description": "The declared link's JSON Pointer in the declaration; left out of the graph for a declared link."
+            },
+            "protocol": {
+              "enum": [
+                "grpc",
+                "http/protobuf",
+                "http/json"
+              ],
+              "description": "A telemetry link: the OTLP protocol it states."
+            },
+            "target": {
+              "enum": [
+                "pipeline",
+                "exporter"
+              ],
+              "description": "A telemetry link that found its target: whether `output` named a pipeline or an exporter in the producer's `collectors` entry."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "consumer",
+            "kind",
+            "origin",
+            "resolves",
+            "reason",
+            "status",
+            "input",
+            "candidates"
+          ],
+          "properties": {
+            "consumer": {
+              "type": "string",
+              "description": "The member that consumes."
+            },
+            "kind": {
+              "type": "string",
+              "description": "What the link joins, such as output."
+            },
+            "origin": {
+              "enum": [
+                "declared",
+                "inferred:joinKey"
+              ]
+            },
+            "resolves": {
+              "const": "source"
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Why the row is not resolved, or null."
+            },
+            "from": {
+              "type": "string",
+              "description": "The consumer's parameter node, when known."
+            },
+            "input": {
+              "type": "string"
+            },
+            "status": {
+              "const": "ambiguous"
+            },
+            "candidates": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "producer",
+                  "output",
+                  "label"
+                ],
+                "properties": {
+                  "producer": {
+                    "type": "string"
+                  },
+                  "output": {
+                    "type": "string"
+                  },
+                  "label": {
+                    "enum": [
+                      "exact",
+                      "folded"
+                    ]
+                  },
+                  "to": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "description": "A record link (#2549): from a current record to a file it pins (kind asset) or to a member or path it constrains (kind constrains). Superseded records have none. A reader finds the artifacts behind a file by taking the decisions whose constrains cover it and then their asset rows.",
+          "required": [
+            "kind",
+            "origin",
+            "resolves",
+            "recordKind",
+            "record",
+            "recordPath",
+            "target",
+            "member",
+            "status",
+            "reason"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "asset",
+                "constrains"
+              ]
+            },
+            "origin": {
+              "const": "declared"
+            },
+            "resolves": {
+              "const": "source"
+            },
+            "recordKind": {
+              "type": "string",
+              "description": "The record's kind, such as decision."
+            },
+            "record": {
+              "type": "string",
+              "description": "The record's id."
+            },
+            "recordPath": {
+              "type": "string",
+              "description": "The record file, from the repository root."
+            },
+            "target": {
+              "type": "string",
+              "description": "For asset, the pinned path from the workspace root. For constrains, the entry as written: member:<name> or path:<path>."
+            },
+            "member": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "The member the target names or sits in; null when no member does."
+            },
+            "status": {
+              "enum": [
+                "pinned",
+                "drifted",
+                "missing",
+                "stale",
+                "resolved"
+              ],
+              "description": "For asset: pinned, drifted, missing or stale, as records reports the pin. For constrains: resolved, or missing when the member is not declared or the path does not exist."
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Why the row is not pinned or resolved, or null."
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "description": "For asset: the pinned hash."
+            },
+            "actual": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^[0-9a-f]{64}$",
+              "description": "For asset: the hash of the file in the tree read, or null when it is missing."
+            }
+          }
+        }
+      ]
+    },
+    "collector": {
+      "type": "object",
+      "required": [
+        "member",
+        "pipelines",
+        "components",
+        "exporters"
+      ],
+      "properties": {
+        "member": {
+          "type": "string",
+          "description": "The member whose source declares the collector."
+        },
+        "pipelines": {
+          "type": "array",
+          "description": "Each pipeline under `service.pipelines`.",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "signal",
+              "receivers",
+              "processors",
+              "exporters"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "The pipeline id, such as `traces` or `traces/backend`."
+              },
+              "signal": {
+                "type": "string",
+                "description": "`traces`, `metrics` or `logs`."
+              },
+              "receivers": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "processors": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "exporters": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "components": {
+          "type": "array",
+          "description": "Every receiver, processor, exporter, connector and extension, with the addresses its config states.",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "kind",
+              "type",
+              "endpoints",
+              "protocols",
+              "pipelines"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "The collector id, `type` or `type/name`."
+              },
+              "kind": {
+                "type": "string",
+                "description": "`receiver`, `processor`, `exporter`, `connector` or `extension`."
+              },
+              "type": {
+                "type": "string"
+              },
+              "endpoints": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "protocols": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The wire protocols the component speaks, as OTLP SDKs name them: `grpc`, `http/protobuf` or `http/json`. Empty when its definition states none, which a telemetry link's protocol check reads as unknown."
+              },
+              "pipelines": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "exporters": {
+          "type": "array",
+          "description": "The exporters again, with the signals that reach each: where the member's telemetry is sent.",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "type",
+              "endpoints",
+              "pipelines",
+              "signals"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "endpoints": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "pipelines": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "signals": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "record": {
+      "type": "object",
+      "required": [
+        "kind",
+        "id",
+        "path",
+        "state",
+        "valid",
+        "supersededBy",
+        "remediatedBy"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "description": "The record kind's name, such as decision."
+        },
+        "id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "description": "The record file, from the repository root, with / separators."
+        },
+        "state": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "valid": {
+          "type": "boolean",
+          "description": "As chant workspace records reports it."
+        },
+        "supersededBy": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "remediatedBy": {
+          "description": "Added in contract 1 by #2774. The ids of records whose remediates link names this one.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,53 @@
+---
+title: "Fly site"
+description: "FlySite declares a Fly app that serves one app's releases: the App, its Machine, and the Volume, IP and Secrets it needs"
+diataxis: reference
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-fly` — DO NOT EDIT.
+    Edit lexicons/fly/docs/pages/fly-site.mdx instead; changes here are overwritten. */}
+
+
+`FlySite` declares a Fly app that serves one app's releases. It returns the App and the Machine that serves, and a Volume mounted into the Machine, a public IP and Secrets when they are asked for. Fly's proxy sends ports 443 (TLS) and 80 to the Machine's `port`.
+
+```typescript
+import { Fly, FlySite } from "@intentius/chant-lexicon-fly";
+
+export const flySite = FlySite({
+  app: "notes",
+  org: Fly.OrgSlug,
+  region: "iad",
+  image: "node:22-slim",
+  env: { PORT: "8080", APP_DATA: "/data" },
+  volume: { name: "data", sizeGb: 1, path: "/data" },
+  ip: "shared_v4",
+  secrets: { APP_SECRET: process.env.APP_SECRET || undefined },
+});
+```
+
+`chant build --lexicon fly` serializes the site into a plan with exactly one Machine, so the `fly-release` steps find the Machine a release ships to without being told its name. `image` is what the Machine runs until a release puts its own image, or its files and start command, on it.
+
+A component that names `FlySite` in its `composites` deploys the site. `chant workspace graph --composites` then lists the instance (`flySite` above) with that component.
+
+`chant workspace upgrade`'s `chud-lexicon-exit-fly-site` migration declares a chud template's Fly site this way, in place of chud's `FlySite` marker and `ChudLocalSite` composite.
+
+## Props
+
+| Prop | Default | Meaning |
+|------|---------|---------|
+| `app` | required | The App's name. Fly app names are global |
+| `org` | `Fly.OrgSlug` | The owning org, resolved from `FLY_ORG` at build time |
+| `region` | `Fly.Region` | Region of the Machine and the Volume, resolved from `FLY_REGION` |
+| `machine` | `web` | The Machine's name |
+| `image` | required | The image the Machine runs until a release replaces it |
+| `port` | 8080 | The port the app listens on inside the Machine |
+| `env` | none | The Machine's env |
+| `cpuKind`, `cpus`, `memoryMb` | `shared`, 1, 256 | Guest size |
+| `volume` | none | `{ name, sizeGb, path }`: a Volume for the app's data, mounted at `path` |
+| `ip` | none | A public IP of this type, such as `shared_v4` |
+| `secrets` | none | Secrets by name. An undefined value declares the Secret without one |
+| `defaults` | none | Overrides for the `app`, `machine` and `volume` members |
+
+## Members
+
+The members are `app`, `machine`, and `volume`, `ip` and one per Secret when declared. A Secret's member is its name in camel case (`APP_SECRET` is `appSecret`).

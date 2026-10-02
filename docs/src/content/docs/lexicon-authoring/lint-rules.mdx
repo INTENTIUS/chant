@@ -30,6 +30,8 @@ export const myRule: LintRule = {
 
 `LintContext` (`packages/core/src/lint/rule.ts`) carries `sourceFile`, `entities`, `filePath`, and the optional `lexicon`, `intrinsics` and `projectConfig`. Each `LintDiagnostic` you return needs `file`, `line`, `column`, `ruleId`, `severity` and `message`, plus an optional `fix`.
 
+If `check` throws, the lint engine reports an error-severity diagnostic for that file under the rule's id, naming the rule, the file and the thrown message, and `chant lint` exits non-zero. The other rules still run on the file, and a `chant-disable` comment does not hide the failure. Return an empty array for input your rule does not handle instead of throwing.
+
 Wire imperative and declarative rules by importing them into the `lintRules()` array in your `plugin.ts`. They are not auto-discovered, unlike post-synth checks (see [Post-Synth Checks](/chant/lexicon-authoring/post-synth-checks/#wiring-checks-into-plugin)).
 
 ```typescript
@@ -62,7 +64,7 @@ const spec: RuleSpec = {
 Return these from your plugin's `declarativeRules()` method.
 
 :::caution[Untrodden]
-No shipped lexicon uses `declarativeRules()`. All eighteen write imperative
+No shipped lexicon uses `declarativeRules()`. All nineteen write imperative
 rules and return them from `lintRules()`. The seam is live (`chant lint`
 compiles whatever `declarativeRules()` returns through `rule()`, and it is
 covered by contract tests, chant #1349), but you would be the first real

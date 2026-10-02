@@ -1,7 +1,7 @@
 import { describe, test, expect } from "vitest";
 import { applyResult } from "../../apply";
 import { defaultOutput, nativeApply, compensateApply, hasNativeRollback } from "./apply";
-import type { K8sApplier, AzureApplier, GcpApplier, FlyApplier, AwsApplier, AwsRollback } from "./apply";
+import type { K8sApplier, AzureApplier, GcpApplier, FlyApplier, GrafanaApplier, AwsApplier, AwsRollback } from "./apply";
 
 /**
  * The kubectl branch moved to the k8s lexicon in chant #1075, the arm branch to
@@ -415,6 +415,83 @@ describe("nativeApply: fly dispatches to the fly lexicon (chant #1449)", () => {
   });
 });
 
+describe("nativeApply: grafana dispatches to the grafana lexicon (chant #3011)", () => {
+  /** Records what the applier was handed, and reports an empty envelope. */
+  const spy = (): { calls: Array<Parameters<GrafanaApplier>[0]>; applier: GrafanaApplier } => {
+    const calls: Array<Parameters<GrafanaApplier>[0]> = [];
+    const applier: GrafanaApplier = async (args) => {
+      calls.push(args);
+      return applyResult([]);
+    };
+    return { calls, applier };
+  };
+  /** nativeApply with only the grafana applier injected. */
+  const applyGrafana = (args: Parameters<typeof nativeApply>[0], applier: GrafanaApplier) =>
+    nativeApply(args, undefined, undefined, undefined, undefined, undefined, undefined, undefined, applier);
+
+  test("output maps to the index path and env to the environment, and nothing else is passed", async () => {
+    const { calls, applier } = spy();
+    await applyGrafana({ target: "grafana", env: "prod", output: "dist/grafana.json" }, applier);
+    // env selects grafana.profiles.<env>; the ownership marker is read from
+    // chant.config.ts inside grafanaApply, so neither stack nor
+    // ownershipEnv crosses this seam.
+    expect(calls).toEqual([{ indexPath: "dist/grafana.json", environment: "prod", prune: false }]);
+  });
+
+  test("owned-only and gated ask the grafana applier to prune", async () => {
+    for (const deleteMode of ["owned-only", "gated"] as const) {
+      const { calls, applier } = spy();
+      await applyGrafana({ target: "grafana", env: "prod", deleteMode }, applier);
+      expect(calls[0].prune).toBe(true);
+    }
+  });
+
+  test("never (and the default) do not prune", async () => {
+    const explicit = spy();
+    await applyGrafana({ target: "grafana", env: "prod", deleteMode: "never" }, explicit.applier);
+    expect(explicit.calls[0].prune).toBe(false);
+
+    const defaulted = spy();
+    await applyGrafana({ target: "grafana", env: "prod" }, defaulted.applier);
+    expect(defaulted.calls[0].prune).toBe(false);
+  });
+
+  test("defaults the index path to dist/grafana.json", async () => {
+    const { calls, applier } = spy();
+    await applyGrafana({ target: "grafana", env: "prod" }, applier);
+    expect(calls[0].indexPath).toBe("dist/grafana.json");
+    expect(defaultOutput("grafana")).toBe("dist/grafana.json");
+  });
+
+  test("counts are preserved from the applier's envelope, not-prunable kinds included", async () => {
+    const applier: GrafanaApplier = async () =>
+      applyResult(
+        [
+          { kind: "Folder", name: "team-a", action: "created" },
+          { kind: "Dashboard", name: "api", action: "updated" },
+          { kind: "Dashboard", name: "db", action: "unchanged" },
+        ],
+        [{ kind: "Dashboard", name: "old", deleted: true }],
+        [{ kind: "LibraryPanel", name: "*", reason: "not-prunable", detail: "library panels carry no labels" }],
+      );
+    const result = await applyGrafana({ target: "grafana", env: "prod" }, applier);
+    expect(result).toEqual({ applied: 3, pruned: 1, notAttempted: 1 });
+  });
+
+  test("with nothing injected it resolves the real grafana lexicon's grafanaApply", async () => {
+    // An index path that does not exist fails inside grafanaApply's own read,
+    // reachable only if the dynamic import found the lexicon, and before any
+    // binding or HTTP call.
+    const err = await nativeApply({
+      target: "grafana",
+      env: "prod",
+      output: "/nonexistent/chant-3011-grafana.json",
+    }).catch((e: unknown) => e);
+    expect(String(err)).toMatch(/ENOENT|no such file/);
+    expect(String(err)).not.toMatch(/could not be loaded/);
+  });
+});
+
 describe("nativeApply: cloudformation dispatches to the aws lexicon (chant #1449)", () => {
   /** Records what the applier was handed, and reports a settled create. */
   const spy = (): { calls: Array<Parameters<AwsApplier>[0]>; applier: AwsApplier } => {
@@ -515,11 +592,11 @@ describe("compensateApply: cloudformation rolls back through the aws lexicon (ch
     expect(result).toEqual({ command: "echo custom-rollback" });
   });
 
-  test("kubectl / kustomize / arm / gcp / fly without a command throw — the defensive branch (#1449)", async () => {
+  test("kubectl / kustomize / arm / gcp / fly / grafana without a command throw — the defensive branch (#1449)", async () => {
     // Unreachable from a built ApplyOp, which refuses this combination at
     // build time. A hand-assembled op that reaches it fails loudly rather than
     // returning a result that could read as a revert.
-    for (const target of ["kubectl", "kustomize", "arm", "gcp", "fly"] as const) {
+    for (const target of ["kubectl", "kustomize", "arm", "gcp", "fly", "grafana"] as const) {
       const err = await compensateApply({ target, env: "prod" }).catch((e: unknown) => e);
       expect(String(err)).toMatch(`no automatic rollback for target "${target}"`);
       expect(String(err)).toMatch(/NOT\s+reverted/);
@@ -529,7 +606,7 @@ describe("compensateApply: cloudformation rolls back through the aws lexicon (ch
 
   test("hasNativeRollback: cloudformation only", () => {
     expect(hasNativeRollback("cloudformation")).toBe(true);
-    for (const target of ["kubectl", "kustomize", "arm", "gcp", "fly"] as const) {
+    for (const target of ["kubectl", "kustomize", "arm", "gcp", "fly", "grafana"] as const) {
       expect(hasNativeRollback(target)).toBe(false);
     }
   });
@@ -557,11 +634,12 @@ describe("compensateApply: cloudformation rolls back through the aws lexicon (ch
 });
 
 describe('defaultOutput (target-aware apply output)', () => {
-  test('kubectl → dist (dir); cloudformation/arm → template.json (file); gcp → dist/gcp.yaml; fly → dist/fly.json', () => {
+  test('kubectl → dist (dir); cloudformation/arm → template.json (file); gcp → dist/gcp.yaml; fly → dist/fly.json; grafana → dist/grafana.json', () => {
     expect(defaultOutput('kubectl')).toBe('dist');
     expect(defaultOutput('cloudformation')).toBe('template.json');
     expect(defaultOutput('arm')).toBe('template.json');
     expect(defaultOutput('gcp')).toBe('dist/gcp.yaml');
     expect(defaultOutput('fly')).toBe('dist/fly.json');
+    expect(defaultOutput('grafana')).toBe('dist/grafana.json');
   });
 });

@@ -1,0 +1,279 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/evidence/v1/evidence.schema.json",
+  "title": "chant workspace evidence output",
+  "description": "What `chant workspace evidence verify --json` prints (#2553), and what a refused `chant workspace evidence sign --json` prints: runner evidence, an in-toto statement over record hashes in a DSSE envelope, checked offline against the runner keys `.chant/trust.json` lists at the base revision. Version 1 of the read contract. Readers ignore fields they do not know; a field is only ever added within a version. The error codes are a closed list, each in the one closed list of `reason-codes.ts`.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/result"
+    },
+    {
+      "$ref": "#/$defs/failure"
+    }
+  ],
+  "$defs": {
+    "result": {
+      "type": "object",
+      "description": "A runner key the policy at base lists signed the envelope. `status` says whether the records still hash as signed; it exits 1 when they don't.",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "at",
+        "ok",
+        "status",
+        "runner",
+        "class",
+        "keyid",
+        "statement",
+        "subjects"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/evidence/v1/evidence.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string",
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+          "description": "The commit the subjects were compared at."
+        },
+        "ok": {
+          "const": true
+        },
+        "status": {
+          "enum": [
+            "current",
+            "stale"
+          ],
+          "description": "current when every subject hashes the same at `at`; stale otherwise. Stale evidence is never reused."
+        },
+        "runner": {
+          "type": "string",
+          "description": "The runner principal whose key signed."
+        },
+        "class": {
+          "enum": [
+            "runner",
+            "service"
+          ],
+          "description": "A CI runner or a service, as `.chant/trust.json` lists it."
+        },
+        "keyid": {
+          "type": "string",
+          "description": "The ssh SHA256 fingerprint of the key that signed."
+        },
+        "statement": {
+          "$ref": "#/$defs/statement"
+        },
+        "subjects": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/subject"
+          }
+        }
+      }
+    },
+    "statement": {
+      "type": "object",
+      "description": "The in-toto Statement v1 the runner signed.",
+      "required": [
+        "_type",
+        "subject",
+        "predicateType",
+        "predicate"
+      ],
+      "properties": {
+        "_type": {
+          "const": "https://in-toto.io/Statement/v1"
+        },
+        "subject": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "digest"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "digest": {
+                "type": "object",
+                "required": [
+                  "sha256"
+                ],
+                "properties": {
+                  "sha256": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "predicateType": {
+          "const": "https://intentius.io/chant/runner-evidence/v1"
+        },
+        "predicate": {
+          "type": "object",
+          "required": [
+            "runner",
+            "commit",
+            "tree",
+            "check"
+          ],
+          "properties": {
+            "runner": {
+              "type": "string"
+            },
+            "commit": {
+              "type": "string",
+              "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+            },
+            "tree": {
+              "type": "string",
+              "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+            },
+            "check": {
+              "type": "string",
+              "description": "The check's id, as given to --check-id."
+            },
+            "claim": {
+              "type": "object",
+              "required": [
+                "sha256"
+              ],
+              "properties": {
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              }
+            },
+            "environment": {
+              "type": "object",
+              "required": [
+                "sha256"
+              ],
+              "properties": {
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "subject": {
+      "type": "object",
+      "required": [
+        "name",
+        "signed",
+        "now",
+        "matches"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The record's path from the repository root."
+        },
+        "signed": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "now": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          ],
+          "description": "The record's hash at `at`, or null when it is not there."
+        },
+        "matches": {
+          "type": "boolean"
+        }
+      }
+    },
+    "failure": {
+      "type": "object",
+      "description": "The evidence was refused, or could not be checked. Exits 1.",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "at",
+        "error"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/evidence/v1/evidence.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "at": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+            }
+          ]
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "enum": [
+                "not-a-git-repository",
+                "revision-unknown",
+                "trust-policy-unreadable",
+                "envelope-unreadable",
+                "envelope-invalid",
+                "envelope-untrusted",
+                "evidence-payload-type",
+                "evidence-statement-invalid",
+                "evidence-runner-mismatch",
+                "runner-key-invalid",
+                "runner-key-is-signer",
+                "runner-key-unlisted",
+                "kind-unreadable",
+                "kind-invalid",
+                "schema-unreadable",
+                "schema-id-mismatch",
+                "schema-invalid",
+                "location-missing"
+              ]
+            },
+            "message": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

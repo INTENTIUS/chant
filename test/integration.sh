@@ -224,7 +224,7 @@ test_init() {
 
   if $CHANT init --lexicon "$name" "$init_dir" > /dev/null 2>&1; then
     # Check scaffolded source files
-    if [ -f "$init_dir/src/infra.ts" ] || [ -f "$init_dir/src/_.ts" ] || [ -f "$init_dir/src/config.ts" ] || [ -f "$init_dir/src/main.ts" ] || [ -f "$init_dir/src/compose.ts" ] || [ -f "$init_dir/src/cluster.ts" ]; then
+    if [ -f "$init_dir/src/infra.ts" ] || [ -f "$init_dir/src/_.ts" ] || [ -f "$init_dir/src/config.ts" ] || [ -f "$init_dir/src/main.ts" ] || [ -f "$init_dir/src/compose.ts" ] || [ -f "$init_dir/src/cluster.ts" ] || [ -f "$init_dir/src/rules.ts" ]; then
       pass "$name init creates source files"
     else
       fail "$name init missing source files"
@@ -462,6 +462,100 @@ TESTDIR="/app/_smoke_test_docker"
 mkdir -p "$TESTDIR/src" && cp /app/test/fixtures/docker.ts "$TESTDIR/src/"
 test_init "docker" "$TESTDIR"
 rm -rf "$TESTDIR"
+
+# Prometheus
+# The rule file is the primary output; alertmanager.yml is written beside it
+# under --output and echoed to stderr otherwise.
+test_lexicon "prometheus" "/app/test/fixtures/prometheus.ts" 'grep -q "groups:"' 'grep -q "record:"'
+TESTDIR="/app/_smoke_test_prometheus"
+mkdir -p "$TESTDIR/src" && cp /app/test/fixtures/prometheus.ts "$TESTDIR/src/"
+test_init "prometheus" "$TESTDIR"
+rm -rf "$TESTDIR"
+# Grafana
+# The primary output is a JSON index of what was built; the dashboard JSON
+# and provisioning files are written beside it with --output. The init
+# templates are covered by test_init_grafana below.
+test_lexicon "grafana" "/app/test/fixtures/grafana.ts" 'jq -e ".dashboards[0].uid == \"smoke-overview\""' 'grep -q "dashboards:"'
+GRAFANA_SRC="/app/_smoke_test_grafana_files/src"
+GRAFANA_OUT="/app/_smoke_test_grafana_files/dist/index.json"
+rm -rf /app/_smoke_test_grafana_files
+mkdir -p "$GRAFANA_SRC" && cp /app/test/fixtures/grafana.ts "$GRAFANA_SRC/"
+log "test_build_files_grafana"
+if $CHANT build "$GRAFANA_SRC" --output "$GRAFANA_OUT" 2>/dev/null \
+  && jq -e '.uid == "smoke-overview" and (.panels | length) == 2' "$(dirname "$GRAFANA_OUT")/dashboards/smoke-overview.json" >/dev/null 2>&1 \
+  && grep -q "type: prometheus" "$(dirname "$GRAFANA_OUT")/provisioning/datasources/chant.yaml"; then
+  pass "grafana build --output writes dashboard JSON and provisioning files"
+else
+  fail "grafana build --output did not write dashboard JSON and provisioning files"
+fi
+rm -rf /app/_smoke_test_grafana_files
+
+# test_init_grafana <template> <dashboard uid> [other lexicon's output marker]
+#   Every grafana init template (#2959) scaffolds, builds and lints. The
+#   shared test_init looks for one source file name per lexicon and lets a
+#   failed build check pass, so the templates get their own step. k8s-pods
+#   and slo ship a chant.config.ts and build with a second lexicon (k8s,
+#   prometheus), so their check also looks for that lexicon's output. A clean
+#   scaffold has no grafana diagnostic: GRAF101-GRAF117 run in the build, and
+#   anything they report ends "(grafana)".
+test_init_grafana() {
+  local template="$1"
+  local dashboard_uid="$2"
+  local extra_check="${3:-}"
+  local name="grafana${template:+ --template $template}"
+  local root="/app/_smoke_test_grafana_init"
+  local init_dir="$root/${template:-default}"
+  local stderr_log="$root/${template:-default}-build-stderr.log"
+
+  log "test_init_grafana ${template:-default}"
+  rm -rf "$init_dir"
+  mkdir -p "$init_dir"
+  # stdin from /dev/null: init asks whether to install dependencies.
+  if ! $CHANT init --lexicon grafana ${template:+--template "$template"} "$init_dir" < /dev/null > /dev/null 2>&1; then
+    fail "init --lexicon $name failed"
+    return
+  fi
+  if [ -f "$init_dir/src/datasources.ts" ] && [ -f "$init_dir/skills/chant-grafana/SKILL.md" ]; then
+    pass "$name init creates source files and installs the chant-grafana skill"
+  else
+    fail "$name init missing src/datasources.ts or skills/chant-grafana/SKILL.md"
+  fi
+
+  ln -s /app/node_modules "$init_dir/node_modules"
+  local build_out
+  if build_out=$($CHANT build "$init_dir/src" 2>"$stderr_log"); then
+    if echo "$build_out" | grep -qF "\"uid\": \"$dashboard_uid\"" \
+      && { [ -z "$extra_check" ] || echo "$build_out" | grep -qF "$extra_check"; }; then
+      pass "$name init project builds dashboard $dashboard_uid${extra_check:+ and $extra_check}"
+    else
+      echo "  output: $(echo "$build_out" | head -40)"
+      fail "$name init project output is missing dashboard $dashboard_uid${extra_check:+ or $extra_check}"
+    fi
+    if grep -qF "(grafana)" "$stderr_log"; then
+      grep -F "(grafana)" "$stderr_log" | sed 's/^/  /'
+      fail "$name init project has GRAF101-GRAF117 diagnostics"
+    else
+      pass "$name init project passes GRAF101-GRAF117"
+    fi
+  else
+    echo "  stderr: $(cat "$stderr_log")"
+    fail "$name init project build failed"
+  fi
+
+  local lint_out
+  if lint_out=$($CHANT lint "$init_dir/src" 2>&1); then
+    pass "$name init project passes lint"
+  else
+    echo "  lint: $lint_out"
+    fail "$name init project lint failed"
+  fi
+  rm -rf "$init_dir" "$stderr_log"
+}
+test_init_grafana "" "overview"
+test_init_grafana "red" "services-red"
+test_init_grafana "k8s-pods" "k8s-pods" "grafana_dashboard: '1'"
+test_init_grafana "slo" "slo-checkout" "record: slo:sli_error"
+rm -rf /app/_smoke_test_grafana_init
 
 # Cedar
 # The artifact is policy text, not a document tree: `chant build` emits the

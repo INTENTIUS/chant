@@ -1,10 +1,10 @@
 /**
  * Built-in processors: batch, memory_limiter, resource, attributes,
- * k8sattributes, resourcedetection.
+ * k8sattributes, resourcedetection, deltatocumulative.
  */
 
 import { defineBuiltin } from "../define";
-import type { AttributeAction, Duration } from "./common";
+import { goDurationMs, type AttributeAction, type Duration } from "./common";
 
 // ── batch ────────────────────────────────────────────────────────────
 
@@ -73,12 +73,16 @@ export const ResourceProcessor = defineBuiltin<ResourceProcessorConfig, "process
 
 // ── attributes ───────────────────────────────────────────────────────
 
+/** An include/exclude block of the attributes processor and the filter processor's legacy `spans` (`filterconfig.MatchProperties`). */
 export interface AttributesMatch {
   match_type: "strict" | "regexp";
+  regexp?: { cacheenabled?: boolean; cachemaxnumentries?: number };
   services?: string[];
   span_names?: string[];
+  span_kinds?: string[];
   log_bodies?: string[];
   log_severity_texts?: string[];
+  log_severity_number?: { min: number | string; match_undefined?: boolean };
   metric_names?: string[];
   attributes?: Array<{ key: string; value?: unknown }>;
   resources?: Array<{ key: string; value?: unknown }>;
@@ -205,4 +209,43 @@ export const ResourceDetectionProcessor = defineBuiltin<
   type: "resourcedetection",
   description: "Detects cloud, container and host resource attributes",
   validate: (c) => (c.detectors?.length ? [] : ["detectors is empty, so nothing is detected"]),
+});
+
+// ── deltatocumulative ────────────────────────────────────────────────
+//
+// Typed against processor/deltatocumulativeprocessor at COLLECTOR_PIN
+// (collector-contrib v0.130.0): config.go, factory.go and README.md at that tag,
+// https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/v0.130.0/processor/deltatocumulativeprocessor
+// Upstream marks it alpha for metrics. It ships in the otelcol-contrib and
+// otelcol-k8s distributions at v0.130.0, and keeps every stream's running
+// total in memory, so one collector instance must see all of a stream's
+// deltas for its totals to be right.
+
+export interface DeltaToCumulativeProcessorConfig {
+  /** How long a stream that receives no samples is kept before it is dropped. Positive. Default `5m`. */
+  max_stale?: Duration;
+  /** The most streams tracked at once; samples of new streams past it are dropped. Not negative. Default unlimited. */
+  max_streams?: number;
+}
+
+/**
+ * Turns delta metrics into cumulative ones by keeping a running total per
+ * stream. Exporters that read only cumulative data, such as
+ * `prometheusremotewrite`, need it after connectors that emit deltas (`sum`,
+ * `count`, `signaltometrics`). Cumulative metrics pass through unchanged.
+ */
+export const DeltaToCumulativeProcessor = defineBuiltin<DeltaToCumulativeProcessorConfig, "processor", "deltatocumulative">({
+  kind: "processor",
+  type: "deltatocumulative",
+  description: "Converts delta metrics to cumulative by keeping a running total per stream",
+  validate: (c) => {
+    // config.go Validate.
+    const problems: string[] = [];
+    const stale = goDurationMs(c.max_stale, 5 * 60_000);
+    if (stale !== undefined && stale <= 0) problems.push(`max_stale must be a positive duration (got ${JSON.stringify(c.max_stale)})`);
+    if (c.max_streams !== undefined && (!Number.isInteger(c.max_streams) || c.max_streams < 0)) {
+      problems.push(`max_streams must be a whole number, 0 or more (got ${c.max_streams})`);
+    }
+    return problems;
+  },
 });

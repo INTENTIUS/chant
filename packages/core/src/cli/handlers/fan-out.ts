@@ -38,12 +38,14 @@
 import { resolve, dirname } from "node:path";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { loadChantConfig, resolveAutoReleaseDisabled, type ChantConfig } from "../../config";
+import { samePlanDigest } from "../../lifecycle/plan-digest";
 import { affectedStacks } from "../../lifecycle/affected";
 import { deriveFanOut, fanOutRegistry } from "../../components/fan-out-support";
 import { runFanOut } from "../../components/fan-out-run";
 import { renderFanOutHuman, renderFanOutJson, renderFanOutPlan } from "../../components/fan-out-output";
 import { ndjsonProgressSink } from "../../components/run-progress";
-import { writeGatedRunSummary } from "../../op/gate-summary";
+import { summaryLedgerPrefix, writeGatedRunSummary } from "../../op/gate-summary";
+import { approveCommand } from "../../op/gate";
 import { remainingFanOut, type ChangedUnits, type FanOutProgress } from "../../components/fan-out";
 import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
 import { formatError, formatInfo, formatWarning } from "../format";
@@ -241,7 +243,7 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
       console.error(formatError({ message: `--resume: could not read "${args.resume}": ${err instanceof Error ? err.message : String(err)}` }));
       return 1;
     }
-    if (attempt && attempt.digest !== derived.plan.digest) {
+    if (attempt && !samePlanDigest(attempt.digest, derived.plan.digest)) {
       console.error(formatWarning({
         message: `--resume: "${args.resume}" records a different fan-out (${attempt.digest || "no digest"}), so its progress does not apply here`,
         hint: "The derivation changed, which makes this a different change. Everything selected will run.",
@@ -320,7 +322,11 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
 
   if (result.status === "gated" && result.gate) {
     const pending = result.gate;
-    console.error(formatInfo(`approve : chant approve ${pending.op} ${pending.gate} --plan ${result.plan.digest}`));
+    // The pending fact's own plan: the fan-out's digest for the gate over the
+    // set, or a component's plan and environment for a gate inside one (#2574).
+    console.error(formatInfo(
+      `approve : ${approveCommand(pending.op, pending.gate, pending.environment)} --plan ${pending.planDigest ?? result.plan.digest}`,
+    ));
     writeGatedRunSummary({
       op: pending.op,
       gate: pending.gate,
@@ -328,6 +334,8 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
       expiresAt: pending.expiresAt,
       ...(pending.url ? { url: pending.url } : {}),
       ...(pending.planDigest ? { planDigest: pending.planDigest } : {}),
+      ...(await summaryLedgerPrefix()),
+      ...(pending.environment ? { environment: pending.environment } : {}),
     });
     return GATED_EXIT_CODE;
   }

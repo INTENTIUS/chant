@@ -1,0 +1,70 @@
+---
+title: Decision Record Kind
+description: The decision record kind stated against the core record contract, and what a plugin or workspace that carries it must keep.
+diataxis: reference
+---
+
+The decision kind is the record a workspace keeps for a design choice and its review ([#2555](https://github.com/INTENTIUS/chant/issues/2555)). Core ships no decision kind. The kind is two data files in the chant repo, [`docs/design/decisions/decision.kind.mjs`](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/decision.kind.mjs) and its [`decision.schema.json`](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/decision.schema.json), and this page is their specification. A development-model plugin, the reference workspace or any other workspace carries the kind by copying them ([ws-064](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-064-decision-kind-spec.md)).
+
+Everything below is read and written through the core record contract of [#2546](https://github.com/INTENTIUS/chant/issues/2546): [`chant workspace records`](/chant/cli/workspace-records/) and its `new`, `amend` and `review` verbs, with the output in the [read contract](/chant/reference/workspace-read-contract/). Core reads a decision file only through the kind. The one place core uses the kind's name is a [box intent](/chant/reference/workspace-declaration/#intent), which chant looks up among the declared kinds named `decision`.
+
+## States
+
+| State | Meaning | Closed | Approval rank |
+|---|---|---|---|
+| `proposed` | options and a recommendation, no choice yet | no | 0 |
+| `decided` | chosen by one person; provisional | no | 1 |
+| `ratified` | agreed by a quorum of distinct reviewers besides the decider | yes | 2 |
+| `superseded` | replaced by a later decision, set by `records amend` while the record is still open | yes | 2 |
+| `withdrawn` | dropped before a choice | no | 0 |
+
+A closed record never changes again: every write to it fails with `record-closed`. A ratified decision that a later one replaces keeps its file, its state and its seal, and readers see the replacement in `supersededBy`, which chant derives from the later record's `supersedes` link. The link takes effect from a record ranked at least as high as the one it names, so a `decided` record replaces a `decided` or `proposed` one and only a `ratified` one replaces a `ratified` one. Only a ratified decision constrains other work. Work may build on a `decided` one, and a reader shows that dependency as provisional.
+
+## Fields
+
+`decision.schema.json` (`$id` `urn:intentius:chant:decision:1`) holds the full field list, and the [decisions README](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/README.md#fields) describes each field. The front matter is the record, the file is named `<id>-<slug>.md`, and unknown fields are refused unless they start with `x-`.
+
+## Kind keys and the record contract
+
+| Key | Value | What the contract does with it |
+|---|---|---|
+| `name` | `decision` | names the kind in every output; box intents are looked up under this name |
+| `location`, `format` | `.`, `<id>-<slug>.md`, Markdown front matter | finds the files and parses the front matter as the JSON subset of YAML |
+| `schema` | `urn:intentius:chant:decision:1` | validates each record on every read |
+| `idField`, `stateField`, `states`, `closedStates` | `id`, `state`, the five states, `ratified` and `superseded` | gives each record its id and state, and refuses writes to a closed one |
+| `seal` | `{ field: "closed_digest" }` | writes the record seal when a write closes the record, and checks it on read |
+| `spec` | `true` | lists current decisions and their pins under `spec` in `records --current --json` |
+| `approval` | the ranks above | decides when a `supersedes` link takes effect |
+| `supersedes`, `remediates` | lists of `{ decision: <id> }` | derives `supersededBy` and `remediatedBy` |
+| `pins` | `evidence` | checks each evidence entry with a `path` against the file's hash |
+| `constrains`, `outOfScope` | `constrains`, `out_of_scope` | links the record to members and paths in `graph`, and drives the coverage check of `check --changes` |
+| `reviews` | `{ field: "reviews", decider: "decided_by", ratified: "ratified" }` | computes the review digest and the quorum, and refuses `ratified` below the quorum |
+| `proposedBy`, `source` | `proposed_by`, `source` | records who proposed a decision and where it came from |
+
+Each key is defined under [Record kinds](/chant/cli/workspace-records/#record-kinds) on the `records` page. A chant older than 0.101.0 refuses a kind file with `seal` or `spec`, so the kind needs 0.101.0 or newer.
+
+## Two hashes
+
+A decision carries two hashes, which [ws-063](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-063-seal-and-review-digest.md) keeps apart so that a verdict names the text it judged while the seal covers the whole closed record.
+
+| Hash | Covers | Leaves out | Written |
+|---|---|---|---|
+| review digest (`digest` in `records --json`) | the file's text with LF line endings | the `reviews` block, the top-level `seal` block, the `state` line and the `closed_digest` line | never; computed on read, and named by each verdict |
+| record seal (`closed_digest`) | the RFC 8785 (JCS) form of the front matter and the body | `closed_digest` only | once, when the record enters `ratified` or `superseded` |
+
+Adding a verdict, ratifying and sealing all leave the digest where it was, so the verdicts that met the quorum still count on the ratified, sealed record. Any other edit to an open record moves the digest, and earlier verdicts stop counting with `review-older-digest`. A sealed record that changes afterwards is invalid with `record-seal-mismatch`. Without an attestor a seal detects accidental edits only, since anyone can recompute it.
+
+## Quorum
+
+The quorum is the workspace's `quorum`, 2 by default. It counts `agree` verdicts by distinct principals, names compared trimmed and lower-cased, and never counts the decider, an agent, a verdict on an older digest or, under an active signers file, a verdict without a seal that verifies. [The quorum](/chant/cli/workspace-records/#the-quorum) gives the order of the rules and the codes.
+
+## Carrying the kind
+
+A plugin or workspace that carries the decision kind:
+
+1. Copies `decision.kind.mjs` and `decision.schema.json` into one directory. Only the comments in the kind file may differ.
+2. Declares the copy in its `chant.workspace.json`, as `{ "kind": "<path>/decision.kind.mjs" }` under `records` or a member's `records`.
+3. Keeps the name `decision` and the schema id `urn:intentius:chant:decision:1`. A kind that changes the schema takes a new id and a new name, since readers key on both.
+4. Tests that its `recordKind` equals chant's and its schema file equals chant's, so a change in chant shows up as a failing test. The reference workspace does this in [`test/reference-workspace.test.ts`](https://github.com/INTENTIUS/chant/blob/main/test/reference-workspace.test.ts).
+
+chant reads the copy the same way it reads its own: `chant workspace records --json` at the workspace root lists the decisions with their digest, quorum and seal state.

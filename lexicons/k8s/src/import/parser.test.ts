@@ -43,6 +43,24 @@ metadata:
     expect(ir.resources.length).toBe(2);
   });
 
+  test("multi-doc YAML splits on commented separators and document ends (#2965)", () => {
+    const yaml = `--- # the app
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app
+...
+--- # its service
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc
+...
+`;
+    const ir = parser.parse(yaml);
+    expect(ir.resources.map((r) => r.type)).toEqual(["K8s::Apps::Deployment", "K8s::Core::Service"]);
+  });
+
   test("apiVersion: apps/v1, kind: Deployment → K8s::Apps::Deployment", () => {
     const yaml = `
 apiVersion: apps/v1

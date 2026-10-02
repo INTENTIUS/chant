@@ -1,9 +1,9 @@
 export { Op, phase, activity, gate, effect, build, kubectlApply, helmInstall, helmInstallPinned, waitForStack, waitForReady,
-         gitlabPipeline, lifecycleSnapshot, shell, ensureSecret, teardown, envTeardown, k3dUp, k3dDown,
+         gitlabPipeline, lifecycleSnapshot, shell, sourceArchive, releasePlan, releaseRecord, releaseRollbackPlan, releaseRollbackRecord, decide, ensureSecret, teardown, envTeardown, k3dUp, k3dDown,
          k3sInstall, k3sUninstall, flociUp, flociDown,
          flociAzUp, flociAzDown, flociGcpUp, flociGcpDown, httpCheck,
          azGroupEnsure, azGroupDelete, azApply, azDelete, awsApply, awsDelete, gcpApply, gcpDelete, policyGate,
-         guardValidate,
+         guardValidate, workEvidence,
          spriteCreate, spriteExec, spriteCheckpoint, spriteRestore, listCheckpoints, spriteDestroy,
          spriteWriteFile, spriteReadFile, spriteListDir, spriteRemove,
          spriteApplyNetworkPolicy, spriteApplyServices,
@@ -15,8 +15,12 @@ export { emulatorLifecycle, emulatorsOf, endpointEnvVars } from "./emulator-life
 export type { EmulatorSpec, EmulatorCapability, EmulatorDeclaration, EmulatorUpArgs, EmulatorLifecycle } from "./emulator-lifecycle";
 export { checkFreshness, compare, formatResult, latestRelease, parseVersion, unpinned } from "./emulator-freshness";
 export type { FreshnessResult } from "./emulator-freshness";
-export type { OpConfig, OpSchedule, PhaseDefinition, StepDefinition, ActivityStep, GateStep, EffectStep, OutcomeAttribute } from "./types";
-export { outcomeAttributesOf } from "./types";
+export type { OpConfig, OpSchedule, OpWorkLease, PhaseDefinition, StepDefinition, ActivityStep, GateStep, EffectStep, OutcomeAttribute } from "./types";
+export { outcomeAttributesOf, WORK_LEASE_STEP_ID } from "./types";
+export {
+  RunWorkLease, workLeaseOutput, stewardWorkHolder, workLeaseProblems, workLeaseNeedsRunItem, LEASE_LOST, WORK_BRANCH_PREFIX,
+} from "./work-lease-run";
+export type { WorkLeaseOutput, WorkLeaseRunResult, WorkClaimOutcome, RunWorkLeaseOptions } from "./work-lease-run";
 export { isValidCronExpression, cronSyntaxMessage, cronMatches, cronDueBetween } from "./cron";
 export {
   WatchOp, ReconcileOp, ApplyOp, ConvergeOp,
@@ -33,6 +37,10 @@ export type {
   LexiconUpgradeOpConfig, LexiconUpgradeOpResources,
   BehaviourOpConfig, BehaviourOpResources,
 } from "./composites";
+export type {
+  ConvergeSymptom, ResourceSymptom, ResourceObservation, ObservedResource, ResourceStatus,
+} from "../lifecycle/symptoms";
+export { parseResourceObservation, CONVERGE_RESOURCE_ENV } from "../lifecycle/symptoms";
 export { receiptActivities, receiptCheckInput } from "./receipt-store";
 export type {
   ReceiptStore, EffectReceiptRef, ReceiptCheckInput, ReceiptActivities, ReceiptActivityOptions,
@@ -47,7 +55,7 @@ export { loadActivities, loadProfiles, resolveActivity } from "./activity-regist
 export type { ActivityFn } from "./activity-registry";
 export { loadActivityContracts, mergeActivityContracts } from "./activity-contract-registry";
 export type { LexiconActivityContractContributor } from "./activity-contract-registry";
-export { ACTIVITY_PROFILES, ACTIVITY_PROFILE_NAMES } from "./activity-profiles";
+export { ACTIVITY_PROFILES, ACTIVITY_PROFILE_NAMES, MAX_STEP_TIMEOUT } from "./activity-profiles";
 export type { ActivityProfile, ActivityProfileName } from "./activity-profiles";
 export { NonRetryableActivityError, nonRetryableFailure } from "./activity-failure";
 export { runOpLocally, parseDuration, OpRunFailure } from "./local-executor";
@@ -63,7 +71,7 @@ export type {
   GatePolicyEvaluator, GatePolicyRef, GatePolicyRequest, GateQuorum, ResolvedGateApproval,
 } from "./gate-approval";
 export {
-  computePlanDigest, isPlanDigest, describePlanDigest, PLAN_DIGEST_ALGORITHM,
+  computePlanDigest, isPlanDigest, describePlanDigest, samePlanDigest, PLAN_DIGEST_ALGORITHM, PLAN_DIGEST_PREFIX,
 } from "../lifecycle/plan-digest";
 export { gateName, usesDeprecatedGateKey, DEPRECATED_GATE_KEY_WARNING } from "./gate-name";
 export type { GateNamed } from "./gate-name";
@@ -100,8 +108,36 @@ export type {
 } from "./converge-rule";
 export {
   discoverConvergeOps, runOperatorRound, runOperatorForever, formatRoundLine,
-  formatSignalLine, DEFAULT_OPERATOR_INTERVAL_MS,
+  formatSignalLine, DEFAULT_OPERATOR_INTERVAL_MS, acquireStewardLease,
+  acquireStewardTurn, STEWARD_TURN_WAIT_MS, createBesideState, waitForBesideRuns, stopBesideRuns,
 } from "./operator";
+export type { BesideState } from "./operator";
+export {
+  spawnBesideRun, inProcessBesideLauncher, holdBesideLease, askReady, DEFAULT_READY_TIMEOUT_MS,
+} from "./steward-beside";
+export type { BesideStart, BesideExit, BesideHandle, BesideLauncher, BesideWhy, HeldBesideLease, ReadyAnswer } from "./steward-beside";
+export {
+  declareSteward, isStewardDeclaration, stewardFormFor, stewardOpConfig, normaliseStewardForm, stewardLeaseName,
+  stewardTurnLeaseName, stewardBesideOf, stewardBesideFor, stewardTurnOps, readinessKeys,
+  STEWARD_KIND, STEWARD_FORMS, STEWARD_NAME_PATTERN, DEFAULT_STEWARD_ENV,
+} from "./steward";
+export type {
+  StewardDeclaration, StewardDeclarationConfig, StewardForm, StewardFormSpec, StewardOpInput,
+  StewardBeside, StewardBesideInput,
+} from "./steward";
+export { discoverStewards } from "./discover";
+export {
+  askPointInRun, brokeredModelAsk, isPointWait, PointWait, DEFAULT_INFERENCE_CAPABILITY,
+} from "./steward-points";
+export type { AskPointInRunOptions, BrokeredModelAsk, WaitingPoint } from "./steward-points";
+export { GateWait, isGateWait } from "./gate-wait";
+export {
+  currentStewardTurn, enterStewardTurn, setStewardTurn, resetStewardTurn, STEWARD_ENV,
+} from "./steward-turn";
+export type { StewardTurn } from "./steward-turn";
+export { reportRunActivity, readInFlightRun, RUN_ACTIVITY_ENV, RUN_ID_ENV } from "./run-live";
+export type { InFlightRun, InFlightRecord, InFlightPhase, InFlightActivityLine } from "./run-live";
+export type { DiscoveredSteward, StewardDiscoveryResult } from "./discover";
 export type {
   OperatorTickEvent, OperatorRoundOptions, OperatorLoopOptions,
   ChangeSubscriber, OperatorSignalEvent,

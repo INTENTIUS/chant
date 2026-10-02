@@ -12,7 +12,7 @@
  *
  *   node scripts/depcheck.mjs
  */
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { builtinModules } from "node:module";
 
@@ -64,6 +64,8 @@ for (const dir of pkgDirs.sort()) {
     ...Object.keys(pkg.optionalDependencies || {}),
   ]);
   const missing = new Map();
+  // A kinds-only package (#2545) ships data and has no src/ to import from.
+  if (!existsSync(join(dir, "src"))) continue;
   for (const f of walk(join(dir, "src"))) {
     // Strip template-literal bodies first: scaffolding/docs code (e.g. a plugin's
     // init templates) embeds `import …` statements as strings, not real imports.

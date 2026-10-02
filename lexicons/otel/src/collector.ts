@@ -12,10 +12,14 @@ import { definitionFor, isOTelComponent, type OTelComponent } from "./define";
 import { SECTION_OF, type CollectorConfig, type PipelineConfig } from "./model";
 import { isPipelineEntity, isServiceEntity, type ComponentRef, type PipelineEntity, type ServiceEntity } from "./pipeline";
 import { emitCollectorYaml } from "./yaml";
+import { semconvUsage } from "./semconv";
 
 export interface BuiltCollector {
   config: CollectorConfig;
-  /** One line per custom component naming its schema pin. Becomes the YAML's `# chant:` header. */
+  /**
+   * One line per custom component naming its schema pin, and one per semconv
+   * vocabulary the config uses. Becomes the YAML's `# chant:` header.
+   */
   header: string[];
   /** Non-fatal problems, e.g. two components declaring the same id. */
   warnings: string[];
@@ -135,6 +139,10 @@ export function buildCollectorConfig(entities: Iterable<Declarable> | Map<string
     const pin = def.pin;
     const digest = pin?.digest ? ` ${pin.digest}` : "";
     header.push(`chant: ${c.componentKind} ${c.componentId} schema ${pin?.source ?? "(unpinned)"}@${pin?.version ?? "(unpinned)"}${digest}`);
+  }
+  for (const use of semconvUsage(config)) {
+    const digest = use.digest ? ` ${use.digest}` : "";
+    header.push(`chant: semconv ${use.namespace} ${use.source}@${use.version}${digest} (${use.components.join(", ")})`);
   }
 
   return { config, header, warnings, components, pipelines, service };

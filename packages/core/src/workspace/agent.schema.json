@@ -1,0 +1,356 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/agent/v1/agent.schema.json",
+  "title": "chant workspace agent output",
+  "description": "What `chant workspace agent <name> --json` prints (#2524 D20, #2548, ws-067): an agent session, the one member it is bound to, its write scope and the spec, read from the repository alone, so a session that resumes rebuilds its context from this and nothing else. The session and its scope are read from the declaration at base, as the write paths and check --changes read them; the spec from the working tree. Readers ignore fields they do not know; a field is only ever added within a version. The error codes are a closed list, and every one is in the one closed list of `reason-codes.ts`. Contract version 1; this document was added to it by #2548.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/result"
+    },
+    {
+      "$ref": "#/$defs/failure"
+    }
+  ],
+  "$defs": {
+    "result": {
+      "description": "The session was found. Exit code 0.",
+      "type": "object",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "workspace",
+        "agent",
+        "scope",
+        "spec",
+        "reload"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/agent/v1/agent.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string",
+          "description": "The chant that wrote the document."
+        },
+        "workspace": {
+          "type": "object",
+          "required": [
+            "name",
+            "root",
+            "scopeFrom"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "root": {
+              "type": "string",
+              "description": "The workspace root relative to the git root, \".\" for the git root."
+            },
+            "scopeFrom": {
+              "enum": [
+                "base",
+                "working-tree"
+              ],
+              "description": "Where the declaration was read: the base revision (origin/HEAD, main or master), or the working tree when there is no base or no declaration at it."
+            }
+          }
+        },
+        "agent": {
+          "type": "object",
+          "required": [
+            "name",
+            "member",
+            "principals"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "member": {
+              "type": "object",
+              "required": [
+                "name",
+                "dir",
+                "kind"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "dir": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string"
+                }
+              }
+            },
+            "principals": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Principals that write only as this session."
+            }
+          }
+        },
+        "scope": {
+          "type": "object",
+          "required": [
+            "members",
+            "records"
+          ],
+          "properties": {
+            "members": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "The one member whose files the session writes."
+            },
+            "records": {
+              "type": "array",
+              "description": "Every declared record kind in the session's reach: the workspace's own kinds, then the member's.",
+              "items": {
+                "type": "object",
+                "required": [
+                  "path",
+                  "kind",
+                  "name",
+                  "member",
+                  "verbs"
+                ],
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "description": "The kind file from the workspace root."
+                  },
+                  "kind": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "The kind file's recordKind.name, or null when it can't be loaded."
+                  },
+                  "name": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "The name the declaration gives the kind, or null."
+                  },
+                  "member": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "The member that declares the kind, or null for the workspace's own."
+                  },
+                  "verbs": {
+                    "type": "array",
+                    "items": {
+                      "enum": [
+                        "new",
+                        "amend",
+                        "review",
+                        "close"
+                      ]
+                    },
+                    "description": "How the session may write the kind's records; empty when writeScope.agent.records leaves the kind out."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "spec": {
+          "description": "The spec exactly as chant workspace records --current --json prints it under spec (#2546): the current records of each declared kind marked spec: true, read in the working tree, each with the workspace files it pins.",
+          "type": "object",
+          "required": [
+            "kinds",
+            "records"
+          ],
+          "properties": {
+            "kinds": {
+              "type": "array",
+              "description": "The spec kinds, as the declaration names them, in its order.",
+              "items": {
+                "type": "object",
+                "required": [
+                  "member",
+                  "path",
+                  "name"
+                ],
+                "properties": {
+                  "member": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "path": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                }
+              }
+            },
+            "records": {
+              "type": "array",
+              "description": "Every current record of the spec kinds, in the order of kinds and then path. Invalid records are listed with valid false, as under kinds.",
+              "items": {
+                "type": "object",
+                "required": [
+                  "kind",
+                  "id",
+                  "path",
+                  "state",
+                  "valid",
+                  "digest",
+                  "assets"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "description": "The kind's name, such as decision."
+                  },
+                  "id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "path": {
+                    "type": "string"
+                  },
+                  "state": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "valid": {
+                    "type": "boolean"
+                  },
+                  "digest": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  },
+                  "assets": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/asset"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "reload": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The reads that rebuild the session's context."
+        }
+      }
+    },
+    "failure": {
+      "description": "The declaration could not be read, or names no such session. Exit code 1.",
+      "type": "object",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "error"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/agent/v1/agent.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "enum": [
+                "declaration-missing",
+                "declaration-ambiguous",
+                "declaration-unparseable",
+                "declaration-invalid",
+                "placement-invalid",
+                "reader-too-old",
+                "root-chant-required",
+                "not-a-git-repository",
+                "revision-unknown",
+                "agent-unknown"
+              ]
+            },
+            "message": {
+              "type": "string"
+            }
+          }
+        },
+        "agent": false,
+        "scope": false
+      }
+    },
+    "asset": {
+      "type": "object",
+      "required": [
+        "path",
+        "sha256",
+        "actual",
+        "state"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "From the workspace root (workspaceRoot), with / separators."
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "The hash the record pins."
+        },
+        "actual": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "The hash of the file's bytes in the tree read, or null when the file is missing."
+        },
+        "state": {
+          "enum": [
+            "pinned",
+            "drifted",
+            "missing",
+            "stale"
+          ],
+          "description": "pinned when the hashes match; drifted when they differ (a warning asset-drift); missing when the file is not there (a warning asset-missing); stale when the hashes match and a record this one supersedes pinned the same hash, with the file unchanged since this record was recorded (a warning asset-stale)."
+        }
+      }
+    }
+  }
+}

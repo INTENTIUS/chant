@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/kinds/v1/workspace-kinds.schema.json",
+  "title": "workspace-kinds.json",
+  "description": "Member kinds a plugin supplies (#2524 D3, #2535, ws-031). A package publishes this file as data at its ./workspace-kinds subpath. chant reads it with the file system and never imports the package, so reading kinds never loads a lexicon.",
+  "type": "object",
+  "required": [
+    "schema",
+    "kinds"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "An editor hint. chant ignores it."
+    },
+    "$comment": {
+      "type": "string",
+      "description": "A note for people. chant ignores it."
+    },
+    "schema": {
+      "const": 1,
+      "description": "The kinds format version."
+    },
+    "kinds": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/kind"
+      }
+    }
+  },
+  "patternProperties": {
+    "^x-": true
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "kind": {
+      "type": "object",
+      "required": [
+        "name",
+        "description",
+        "precedence",
+        "probe"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,39}$",
+          "description": "The kind's name, as a member's kind field names it. chant, workspace, other and examples are built in and can't be supplied."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "One line saying what the member's directory holds, for listings and error messages."
+        },
+        "precedence": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 999,
+          "description": "When the probes of several kinds claim one directory, the highest precedence decides. Two claiming kinds with the same highest precedence are a tie, and a tie fails. The built-in chant kind has 500 and workspace has 1000."
+        },
+        "probe": {
+          "$ref": "#/$defs/probe"
+        },
+        "outputs": {
+          "type": "array",
+          "uniqueItems": true,
+          "description": "The outputs every member of this kind exposes as link targets (#2524 D6, #2539). A member entry of the kind may list more in its own outputs field. Without this field the kind exposes only what each entry lists.",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255,
+            "pattern": "^[^\\u0000-\\u001f]+$"
+          }
+        },
+        "graph": {
+          "$ref": "#/$defs/graph"
+        }
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false
+    },
+    "probe": {
+      "type": "object",
+      "description": "What the probe checks in a member's directory. It runs no code. It passes when any of its clauses does, and it needs at least one.",
+      "minProperties": 1,
+      "properties": {
+        "anyFile": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "The directory passes when a file matching one of these names sits directly in it. A * in a name matches any run of characters, so *.tf matches every Terraform file.",
+          "items": {
+            "$ref": "#/$defs/fileName"
+          }
+        },
+        "anyBlock": {
+          "type": "object",
+          "description": "The directory passes when a file directly in it, whose name matches one of in, has a line opening an unlabelled block named in blocks: leading space, the name, optional space, then {. No file is parsed.",
+          "required": [
+            "in",
+            "blocks"
+          ],
+          "properties": {
+            "in": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/fileName"
+              }
+            },
+            "blocks": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z_][A-Za-z0-9_-]{0,63}$"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "fileName": {
+      "type": "string",
+      "description": "A file name, with no directory part. A * matches any run of characters.",
+      "pattern": "^(?!\\.\\.?$)[^/\\\\]+$"
+    },
+    "graph": {
+      "type": "object",
+      "description": "How chant workspace graph reads a member of this kind (#2874). chant writes a reader project of its own outside the workspace, with a chant.config.json that declares lexicon and puts config under that lexicon's key, and runs the member's chant graph there. In every string key and value of config, {member} becomes the member's name, {dir} its absolute directory and {workspace} the absolute workspace root. Without this field a member of the kind is listed with kind-not-run.",
+      "required": [
+        "lexicon",
+        "config"
+      ],
+      "properties": {
+        "lexicon": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,39}$",
+          "description": "The lexicon that reads the member, by name. The package that supplies the kind must be @intentius/chant-lexicon-<lexicon>, so the lexicon chant loads is the one the declaration pins."
+        },
+        "config": {
+          "type": "object",
+          "description": "The lexicon's config namespace for the reader project, such as terraform's roots. Placeholders are substituted; nothing else is interpreted."
+        }
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false
+    }
+  }
+}

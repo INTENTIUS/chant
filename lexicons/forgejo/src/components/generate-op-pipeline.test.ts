@@ -298,9 +298,14 @@ describe("generateForgejoOpPipeline: a dropped deployment environment (#2257)", 
   const APPLY: ScheduledOpSpec = { name: "app-apply", trigger: { kind: "push", branches: ["main"] } };
   const GATED: ScheduledOpSpec = { ...APPLY, environment: { name: "production" } };
 
-  /** The document a spec with no `environment` emitted before the option existed. */
+  /**
+   * The document a spec with no `environment` emitted before the option
+   * existed. The `name:` line came later, from #2601, for every spec alike.
+   */
   const AUDIT_YAML_BEFORE_2257 =
     [
+      "name: actions-audit",
+      "",
       "on:",
       "  schedule:",
       "    - cron: '0 6 * * *'",
@@ -353,7 +358,16 @@ describe("generateForgejoOpPipeline: a dropped deployment environment (#2257)", 
     ]).files;
     expect(files[0].yaml).toContain("# chant dropped `environment: production`");
     expect(files[1].yaml).not.toContain("# chant dropped");
-    expect(files[1].yaml.startsWith("on:")).toBe(true);
+    expect(files[1].yaml.startsWith("name: app-watch\n\non:")).toBe(true);
+  });
+
+  test("the dropped-environment header comes first, then the workflow's name (#2601)", () => {
+    const yaml = generateForgejoOpPipeline([GATED]).files[0].yaml;
+    const lines = yaml.split("\n");
+    const nameAt = lines.indexOf("name: app-apply");
+    expect(nameAt).toBeGreaterThan(0);
+    expect(lines.slice(0, nameAt - 1).every((line) => line.startsWith("# "))).toBe(true);
+    expect(lines[nameAt + 2]).toBe("on:");
   });
 
   test("refuses the same malformed environment github refuses, through the shared builder", () => {

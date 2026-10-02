@@ -1,0 +1,78 @@
+---
+diataxis: reference
+description: Lint every chant member and example project of a workspace with its own chant, with one SARIF run per member
+title: "chant workspace lint"
+---
+
+## Synopsis
+
+```
+chant workspace lint [dir] [--format stylish|json|sarif] [-o <file>] [--member <name>] [--fix] [--dry-run [--json]]
+```
+
+## Description
+
+`chant workspace lint` runs `chant lint .` inside every member of kind `chant` and every project an example group matches, each under the member's own chant ([#2537](https://github.com/INTENTIUS/chant/issues/2537), [ws-026](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-026-lint.md)). Each member is linted with the rules and lexicon versions it would use on its own. The members to run, the toolchain each one gets and the one process per toolchain work as described for [`chant workspace build`](/chant/cli/workspace-build/#which-chant-runs-a-member).
+
+The root member `.` is linted without the other members' directories and the group matches, as [`chant lint --root-only`](/chant/cli/lint/#at-a-workspace-root) lints it.
+
+## Output
+
+With the default `stylish` format, each project's own lint output is printed under a heading, and a summary line goes to stderr.
+
+With `--format sarif`, the output is one SARIF 2.1.0 log with one run per member. Each run is what the member's `chant lint --format sarif` printed, with three changes:
+
+- `automationDetails.id` is `<member>/`, or `<group>:<dir>/` for an example project, which is how SARIF tells runs of one tool apart. GitHub code scanning shows it as the category.
+- `properties` gains `member` and `dir`.
+- Artifact URIs are made relative to the workspace root.
+
+A member whose lint printed no SARIF gets a run with no results and a failed invocation carrying its exit code and the end of its stderr.
+
+```json
+{
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": { "driver": { "name": "chant", "rules": [] } },
+      "automationDetails": { "id": "api/" },
+      "properties": { "member": "api", "dir": "services/api" },
+      "results": [
+        {
+          "ruleId": "COR004",
+          "locations": [{ "physicalLocation": { "artifactLocation": { "uri": "services/api/src/infra.ts" } } }]
+        }
+      ]
+    }
+  ]
+}
+```
+
+With `--format json`, the output is `{ "workspace", "members", "skipped" }`. Each entry in `members` names the member and its directory, and holds the member's exit code and the `diagnostics` array its own `chant lint --format json` printed.
+
+## Options
+
+| Option | Effect |
+|---|---|
+| `dir` | Where the walk up to the declaration starts. |
+| `--format stylish\|json\|sarif` | The output format, and the format each member is asked for. |
+| `-o, --output <file>` | Write the `json` or `sarif` document to a file. |
+| `--member <name>` | Run only these members or example groups. Repeatable, and a comma list works too. |
+| `--fix`, `--param <name=value>`, `--params-file <path>` | Passed to each member's lint. |
+| `--dry-run` | Print the plan and lint nothing. |
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | No project's lint found errors. |
+| 1 | A project's lint found errors or failed, a `chant` member couldn't be read, or the declaration couldn't be read. |
+
+## Examples
+
+```bash
+# Lint every member and example project
+chant workspace lint
+
+# One SARIF log for code scanning, one run per member
+chant workspace lint --format sarif -o results.sarif
+```

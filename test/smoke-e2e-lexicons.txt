@@ -1,0 +1,8 @@
+aws
+azure
+gcp
+gitlab
+k8s
+prometheus
+otel
+github

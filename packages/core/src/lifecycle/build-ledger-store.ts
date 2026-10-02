@@ -55,7 +55,7 @@
  */
 
 import { sortedJsonReplacer } from "../utils";
-import { warnOnLegacyDigests } from "./legacy-digest";
+import { flagLegacyDigest, warnOnLegacyDigests, withoutReadFlags } from "./legacy-digest";
 import { writeBlobToPath, readBlobFromPath, listFilesInDir } from "./git";
 import type { BuildArchiveManifest } from "../components/verbs/build-archive";
 
@@ -87,7 +87,8 @@ export async function persistBuildManifest(
   manifest: BuildArchiveManifest,
   opts?: { cwd?: string },
 ): Promise<{ commit: string }> {
-  const json = JSON.stringify(manifest, sortedJsonReplacer);
+  // `flags` are read-side only (#2514); a manifest read back and persisted again never keeps them.
+  const json = JSON.stringify(withoutReadFlags(manifest), sortedJsonReplacer);
   const commit = await writeBlobToPath(BUILDS_DIR, manifestFilename(manifest.manifestDigest), json, "Build manifest", opts);
   return { commit };
 }
@@ -111,14 +112,14 @@ export async function readBuildManifest(
   } catch {
     return null;
   }
-  // chant #2514 — a release ahead of real SHA-256 digests, say once that
-  // the persisted manifests hold values in the old form.
-  warnOnLegacyDigests(
-    [manifest.manifestDigest, ...(Array.isArray(manifest.contents) ? manifest.contents.map((e) => e?.digest) : [])],
-    "build manifests",
-    opts?.cwd,
-  );
-  return manifest;
+  // chant #2514 — a manifest whose digests predate real SHA-256 is flagged
+  // legacy-digest, never re-keyed, and the project is warned once.
+  const digests = [
+    manifest.manifestDigest,
+    ...(Array.isArray(manifest.contents) ? manifest.contents.map((e) => e?.digest) : []),
+  ];
+  warnOnLegacyDigests(digests, "build manifests", opts?.cwd);
+  return flagLegacyDigest(manifest, digests);
 }
 
 /** List the `manifestDigest` of every build manifest persisted on the orphan branch. */

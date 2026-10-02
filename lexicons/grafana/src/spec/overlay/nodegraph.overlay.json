@@ -1,0 +1,31 @@
+{
+  "$comment": "Corrections to the vendored nodegraph.jsonschema.json (foundation-sdk v0.0.20). Sources are Grafana's CUE at the tag in `grafana`. See src/spec/overlay.ts.",
+  "schema": "nodegraph",
+  "grafana": "v13.2.2",
+  "patches": [
+    {
+      "op": "add",
+      "path": "/definitions/LayoutAlgorithm",
+      "value": {
+        "enum": [
+          "layered",
+          "force",
+          "grid"
+        ],
+        "type": "string"
+      },
+      "source": "public/app/plugins/panel/nodeGraph/panelcfg.cue:47",
+      "why": "Definition for layoutAlgorithm, below."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/Options/properties/layoutAlgorithm",
+      "value": {
+        "$ref": "#/definitions/LayoutAlgorithm",
+        "description": "How to layout the nodes in the node graph"
+      },
+      "source": "public/app/plugins/panel/nodeGraph/panelcfg.cue:53-54",
+      "why": "In the CUE's Options; Grafana writes it into every node graph it loads."
+    }
+  ]
+}

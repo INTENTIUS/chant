@@ -1,0 +1,90 @@
+{
+  "name": "@intentius/chant-lexicon-grafana",
+  "version": "0.101.0",
+  "description": "Grafana lexicon for chant \u2014 typed dashboards, panels, queries and datasources, serialized to dashboard JSON and Grafana provisioning files",
+  "license": "Apache-2.0",
+  "homepage": "https://intentius.io/chant",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/INTENTIUS/chant.git",
+    "directory": "lexicons/grafana"
+  },
+  "bugs": {
+    "url": "https://github.com/INTENTIUS/chant/issues"
+  },
+  "keywords": [
+    "infrastructure-as-code",
+    "iac",
+    "typescript",
+    "grafana",
+    "dashboards",
+    "observability",
+    "prometheus",
+    "tempo",
+    "loki",
+    "chant"
+  ],
+  "type": "module",
+  "files": [
+    "src/",
+    "dist/"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./src/index.ts"
+    },
+    "./*": {
+      "development": "./src/*.ts",
+      "types": "./dist/*.d.ts",
+      "default": "./src/*.ts"
+    },
+    "./op/activities": {
+      "development": "./src/op/activities/index.ts",
+      "types": "./dist/op/activities/index.d.ts",
+      "default": "./src/op/activities/index.ts"
+    },
+    "./lint/post-synth": {
+      "development": "./src/lint/post-synth/index.ts",
+      "types": "./dist/lint/post-synth/index.d.ts",
+      "default": "./src/lint/post-synth/index.ts"
+    },
+    "./manifest": "./dist/manifest.json",
+    "./meta": "./dist/meta.json",
+    "./types": "./dist/types/index.d.ts"
+  },
+  "scripts": {
+    "generate": "tsx src/codegen/generate-cli.ts",
+    "bundle": "tsx src/package-cli.ts",
+    "validate": "tsx src/validate-cli.ts",
+    "docs": "tsx src/codegen/docs-cli.ts",
+    "prepack": "npm run generate && npm run bundle && npm run validate && npm run build",
+    "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete"
+  },
+  "dependencies": {
+    "@grafana/lezer-logql": "0.4.2",
+    "@grafana/lezer-traceql": "1.0.3",
+    "@intentius/chant-lexicon-k8s": "*",
+    "@intentius/chant-lexicon-otel": "*",
+    "@intentius/chant-lexicon-prometheus": "*",
+    "@lezer/lr": "^1.4.10",
+    "ajv": "^8.20.0",
+    "js-yaml": "^4.3.1"
+  },
+  "devDependencies": {
+    "@intentius/chant": "*",
+    "@types/js-yaml": "^4.0.9",
+    "tsc-alias": "^1.8.17",
+    "typescript": "^5.9.3",
+    "zod": "^4.3.6"
+  },
+  "peerDependencies": {
+    "@intentius/chant": "^0.101.0",
+    "typescript": "^5.9.3",
+    "zod": "^4.3.6"
+  }
+}

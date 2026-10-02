@@ -2,9 +2,9 @@
  * `defineComponent()`, the one way a collector component type enters this
  * lexicon.
  *
- * The built-in receivers, processors, exporters and extensions are defined
- * through it, and so is a component a team or plugin adds for something chant
- * doesn't ship (a vendor exporter, an in-house processor). Both produce the
+ * The built-in receivers, processors, exporters, connectors and extensions are
+ * defined through it, and so is a component a team or plugin adds for something
+ * chant doesn't ship (a vendor exporter, an in-house processor). Both produce the
  * same kind of class, register in the same table, serialize through the same
  * code and are checked by the same post-synth checks, so there is no second
  * path for a custom component to fall off.
@@ -24,11 +24,17 @@
  *   the top of the emitted YAML, so the file says which schema each
  *   non-built-in component was checked against. The collector ignores it.
  * - OTEL109 fails a build whose custom component has no usable pin.
+ *
+ * Semantic-convention pins (`GENAI_SEMCONV_PIN`) record which version of an
+ * attribute vocabulary a preset's keys follow. They are not tied to a
+ * component type, so `collectorTopology()` reports them under `semconv` for
+ * each component whose config uses that vocabulary, and the serializer writes
+ * one `# chant: semconv` line for them.
  */
 
 import { createResource } from "@intentius/chant/runtime";
 import type { Declarable } from "@intentius/chant/declarable";
-import { componentId, type ComponentKind } from "./model";
+import { componentId, type ComponentKind, type ConnectorSignalPair } from "./model";
 
 /** Where a component's config schema comes from, and which version of it the type follows. */
 export interface SchemaPin {
@@ -47,6 +53,24 @@ export interface SchemaPin {
 export const COLLECTOR_PIN: SchemaPin = Object.freeze({
   source: "github.com/open-telemetry/opentelemetry-collector-contrib",
   version: "v0.130.0",
+});
+
+/**
+ * The OpenTelemetry GenAI semantic conventions the GenAI preset
+ * (`genAiPipeline()`) follows: which attributes carry prompt and completion
+ * content, and which name the operation, model, tool and token usage.
+ *
+ * v1.41.1 is the last semantic-conventions release that defines `gen_ai.*`
+ * itself. From v1.42.0 the GenAI conventions live in
+ * github.com/open-telemetry/semantic-conventions-genai, which had published no
+ * release when this pin was set; move the pin there once it does. Like
+ * `COLLECTOR_PIN`, it moves only when this package does, and
+ * `collectorTopology()` reports it for every component whose config names a
+ * `gen_ai.` attribute.
+ */
+export const GENAI_SEMCONV_PIN: SchemaPin = Object.freeze({
+  source: "github.com/open-telemetry/semantic-conventions",
+  version: "v1.41.1",
 });
 
 /** A zod-compatible schema: anything with `safeParse`. Keeps zod optional. */
@@ -74,6 +98,22 @@ export interface ComponentDefinition<K extends ComponentKind = ComponentKind, T 
   validate?: ConfigValidator<C>;
   /** Where this component sends or listens, for `collectorTopology()`. */
   endpoints?: (config: C) => string[];
+  /**
+   * The wire protocols this component speaks, as OTLP SDKs name them
+   * (`grpc`, `http/protobuf`, `http/json`), for `collectorTopology()`. A
+   * telemetry endpoint link states the protocol its service sends, and the
+   * workspace graph checks it against a pipeline's receivers (#2558). A
+   * component that omits it is reported with none, and a link's protocol is
+   * then left unconfirmed rather than failed.
+   */
+  protocols?: (config: C) => string[];
+  /**
+   * Connectors only: the signal pairs the connector supports, as its factory
+   * registers them. OTEL112 checks each pipeline a connector joins against
+   * these, and `collectorTopology()` reports an edge only for a supported
+   * pair. A connector without them is not checked.
+   */
+  connects?: ReadonlyArray<ConnectorSignalPair>;
 }
 
 /** What a custom component supplies. `builtin` is always false for these. */
@@ -110,6 +150,7 @@ const KIND_SEGMENT: Record<ComponentKind, string> = {
   receiver: "Receiver",
   processor: "Processor",
   exporter: "Exporter",
+  connector: "Connector",
   extension: "Extension",
 };
 

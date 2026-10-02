@@ -32,7 +32,8 @@ It reaches no network. Every schema it needs is generated into the lexicon packa
 | `--params-file <path>` | `string` | — | JSON file of `{ "name": value }` build-time parameter values; second precedence, after `--param` |
 | `--env <name>` | `string` | — | Active environment. Sets `CHANT_ENV` so env-aware source re-evaluates for that environment, and selects the organizational policy that applies. Must be declared under `environments` in `chant.config.ts` when that list exists |
 | `--components --generate <lexicon>` | `string` | — | Generate mode. Synthesize a CI pipeline from the discovered `*.component.ts` declarations instead of running a lexicon build. See [Generate mode](#generate-mode-ci-pipelines-from-components) |
-| `--promote-to <env>` | `string` | — | Generate mode only. Add a job that promotes the deployed releases to `<env>` after every component job succeeds. See [Promote job](#promote-job) |
+| `--promote-to <env>` | `string` | — | Generate mode only. Add a job that promotes the deployed releases to `<env>` after every component job succeeds. Without `--components --generate <lexicon>` the command fails rather than ignoring the flag. See [Promote job](#promote-job) |
+| `--root-only` | `bool` | `false` | At the root of a declared workspace, build the root project alone instead of refusing. See [At a workspace root](#at-a-workspace-root) |
 | `--fold-rank [path]` | `bool` or `string` | off | After a folded build, print the run-fallback blockers ranked by how many files each one keeps from folding. With a path, also write the ranking in collapsed-stack format to that file for a flame-graph viewer. No-op with `--no-fold` |
 
 ## Usage
@@ -128,16 +129,50 @@ A components-only project need not declare a lexicon plugin at all. Lexicons are
 
 ### Promote job
 
-`--promote-to <env>` adds one job to the pipeline that runs [`chant components promote --from <env> --to <promote-to>`](/chant/cli/components/#components-promote) once every component job has succeeded. A promote publishes from the build archive on disk, and the promote job runs on its own runner, so the archive travels with the pipeline:
+`--promote-to <env>` adds one job to the pipeline that runs [`chant components promote --from <env> --to <promote-to>`](/chant/cli/components/#components-promote) once every component job has succeeded. The promote job promotes the releases this pipeline run recorded in `<env>`, not the latest ones there, which another pipeline may have recorded while this one ran.
+
+Each component job whose deploy has a publish step runs with `--digest-file <component>.digest`, which writes the digest of the release the run recorded. Components with no publish step record no release and are not promoted. On GitHub and Forgejo a `Record <component> digest` step writes that digest to the job output `digest`, and the promote job passes `--digest "<component>=${{ needs.<job>.outputs.digest }}"` for each such component. On GitLab the digest file joins the job's `artifacts:` and the promote job passes `--digest "<component>=$(cut -d= -f2- <component>.digest)"`.
+
+When a component job records no release (under `--no-release-record`, say) its digest is empty, and the promote refuses it instead of promoting something else. Generation fails when no component has a publish step, since there would be nothing to promote.
+
+A promote publishes from the build archive on disk, and the promote job runs on its own runner, so the archive travels with the pipeline too:
 
 - Each component job uploads the files its `docker-build`, `zip-package` and `jvm-build` steps wrote to `into`. On GitHub and Forgejo that is an `actions/upload-artifact` step named `<component>-archive`, and the promote job downloads each one back to the same path. On GitLab the files join the job's `artifacts:`, and the promote job, in a `promote` stage, receives them through `needs:`.
-- The `beforeScript` and `extraScript` options apply to the promote job as they do to the component jobs, and `promoteCommand` replaces its command.
+- The `beforeScript` and `extraScript` options apply to the promote job as they do to the component jobs, and `promoteCommand` replaces its command. The `--digest` pins are appended to `promoteCommand` as well.
 - An `into` the generator cannot read as a plain path, such as a wiring reference or an `$env.` value, fails generation and names the component, because the file it names is only known at run time.
 
-Without `--promote-to` the generated pipeline has no promote job and no archive uploads.
+Without `--promote-to` the generated pipeline has no promote job. It uploads no archives and writes no digest files either.
+
+`--promote-to` is refused anywhere else, including a plain `chant build --promote-to prod`, with an error naming the flags it needs.
 
 ```bash
 chant build --components --generate github --env staging --promote-to prod --output .github/workflows/components.yml
+```
+
+### Inside a workspace member
+
+When the project sits in a member of a [workspace](/chant/cli/workspace-init/), the pipeline belongs to that member. chant finds the member from the `chant.workspace.json` above the project. The pipeline keeps the triggers it has outside a workspace, and a deploy pipeline never gains a `push` or `pull_request` trigger. What changes is where its jobs run and what they are called:
+
+- On GitHub and Forgejo, `run:` steps start in the member's directory through `defaults.run.working-directory`. Artifact upload and download paths move under that directory to match. The only trigger is `workflow_dispatch`, which takes no `paths:` filter.
+- On GitLab each job name starts with the member's name, and each script starts with `cd <member dir>`. Each job also gets a `rules: changes:` entry for the member's directory and the pipeline file, so a pipeline that the forge starts for a change in another member skips it. GitLab's `changes` has no exclusions, so a member at the workspace root (`.`) gets no `changes` rule.
+- The workflow's name is `chant-components-<member>-<env>`.
+
+Without `--output` the pipeline is written to the forge's directory at the repository root, in a file named after the member and the environment, so two members never write the same file:
+
+| Lexicon | File |
+|---|---|
+| `github` | `.github/workflows/chant-<member>-<env>.yml` |
+| `forgejo` | `.forgejo/workflows/chant-<member>-<env>.yml` |
+| `gitlab` | `.gitlab/ci/chant-<member>-<env>.gitlab-ci.yml`, which the root `.gitlab-ci.yml` includes with `include: local: .gitlab/ci/*.gitlab-ci.yml` |
+
+Its first line is chant's generated-file marker. The marker names the command that rewrites the file, which runs in the member's directory. The member lists the file in `.chant/generated.json` in its own directory, and each entry holds that command and the environment. This list is interim, and moves into the member's `generated` list in `chant.workspace.json` with [#2541](https://github.com/INTENTIUS/chant/issues/2541). Forge files at the repository root are the one kind of generated file a member may own outside its own directory, and only one member may own each of them.
+
+With `--format json` the result also carries `member` and `file`, and nothing is written. A project in an example group, or in a directory no member holds, gets the plain pipeline. So does every project outside a workspace, whose output is unchanged.
+
+```bash
+cd services/api
+chant build --components --generate github --env staging
+# wrote .github/workflows/chant-api-staging.yml for member api
 ```
 
 Scheduled Ops have their own generator command, [`chant run --generate <provider>`](/chant/cli/run/#run---generate-provider). It writes one pipeline file per Op, and each file carries the generated-file marker and the command that regenerates it:
@@ -151,9 +186,19 @@ chant run --generate github
 
 `--param name=value` (repeatable) and `--params-file <path>` bind declared build-time parameters — `chant.config.ts`'s `buildParams` — so source can read `params.<name>` (`import { params } from "@intentius/chant/params"`) instead of `process.env`. Unlike the AWS lexicon's deploy-time `Parameter()`, a build-time parameter resolves before synthesis, so its value can change which resources are produced at all. An unknown name, a missing required value, or a value outside a declared `enum` is reported as a build error naming the parameter — never a thrown error from inside project source. The resolution is summarized on one line (`23 build parameters resolved (4 from env, 19 default)`), listed one per line as `[param] name = value (source)` under `--verbose`, and recorded on the build result for provenance. See [Build-Time Parameters](/chant/concepts/build-time-parameters/) for the full picture, including precedence and why it folds to a literal.
 
+## At a workspace root
+
+When the project `chant build` acts on is the root of a [declared workspace](/chant/reference/workspace-declaration/), the build refuses with the code `WSP000` and exits 1 ([#2537](https://github.com/INTENTIUS/chant/issues/2537), [ws-023](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-023-root-shrink.md)). The declaration moves its members out of the root project, so a root build would quietly cover less than it did before the file existed. The message says how many members and example projects left, and points to [`chant workspace build`](/chant/cli/workspace-build/), which builds each member with its own chant.
+
+```
+error: WSP000: this is the root of workspace acme (chant.workspace.json), which moves 3 members and 1 example project out of the root project. Run chant workspace build to build each member with its own toolchain, or pass --root-only (or set rootOnly: true in chant.config) to build the root project alone.
+```
+
+`--root-only`, or `rootOnly: true` in the root's `chant.config.ts`, builds the root project on its own. Member directories and example-group matches are left out of discovery, on top of the project's own `exclude` globs. A build inside a member's directory or an example project is never refused, and a project with no `chant.workspace.json` is unaffected.
+
 ## Exit Codes
 
 | Code | Meaning |
 |------|---------|
 | 0 | Success |
-| 1 | Errors found |
+| 1 | Errors found, or `WSP000` at a workspace root |

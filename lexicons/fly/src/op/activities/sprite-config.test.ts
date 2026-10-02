@@ -107,6 +107,25 @@ describe("spriteApplyNetworkPolicy reconcile", () => {
       spriteApplyNetworkPolicy({ id: "np-1", rules: [{ domain: "", action: "allow" }], endpoint: fake.url }),
     ).rejects.toThrow(/missing domain/);
   });
+
+  // #2719: the real Sprites API and every official SDK (Go, JS, Python,
+  // Elixir) answer the policy update with 204 and no body; a 200 with the
+  // rules echoed back fails an SDK-backed client. Pin the fake's raw wire
+  // reply directly (spriteApplyNetworkPolicy itself tolerates any <300, so it
+  // wouldn't catch a regression here). GET is unchanged: 200 with the rules.
+  test("POST /policy/network answers 204 with no body; GET stays 200 with the rules", async () => {
+    await createImpl({ name: "np-wire", endpoint: fake.url });
+    const url = `${fake.url}/v1/sprites/np-wire/policy/network`;
+    const rules = [{ domain: "github.com", action: "allow" }];
+
+    const post = await fetch(url, { method: "POST", body: JSON.stringify({ rules }) });
+    expect(post.status).toBe(204);
+    expect(await post.text()).toBe("");
+
+    const get = await fetch(url);
+    expect(get.status).toBe(200);
+    expect(await get.json()).toEqual({ rules });
+  });
 });
 
 describe("spriteApplyServices reconcile", () => {

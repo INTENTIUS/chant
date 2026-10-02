@@ -1,0 +1,90 @@
+---
+diataxis: reference
+description: Build every chant member and example project of a workspace, each with its own chant, one process per toolchain
+title: "chant workspace build"
+---
+
+## Synopsis
+
+```
+chant workspace build [dir] [--member <name>] [-o <dir>] [--format json|yaml] [--env <name>] [--param <name=value>] [--dry-run [--json]]
+```
+
+## Description
+
+`chant workspace build` finds the [workspace declaration](/chant/reference/workspace-declaration/) by walking up from `dir` (default: the current directory) to the git root. It then runs `chant build .` inside every member of kind `chant` and every project an example group matches, and prints each project's result under a heading of its own ([#2537](https://github.com/INTENTIUS/chant/issues/2537), [ws-023](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-023-root-shrink.md)).
+
+The root member `.` is the root project minus every other member, so its build leaves the member directories and group matches out of discovery. That is the build [`chant build --root-only`](/chant/cli/build/#at-a-workspace-root) runs at the root.
+
+Members of kind `other` are never read. A nested `workspace` member runs its own workspace commands. Both are listed as skipped with the reason code `kind-not-run`. A `chant` member that can't be read, such as one whose directory is missing, fails the run with its [reason code](/chant/cli/workspace-ls/#reason-codes).
+
+Without `-o`, the templates are not printed, because several projects' output can't share one stdout. The run then checks that every project builds. With `-o <dir>`, each member's output goes to `<dir>/<member>.json` (or `.yaml` with `--format yaml`), and each group match's to `<dir>/<group>/<match dir>.json`.
+
+```
+── platform  .  (chant 0.80.0, exit 0)
+── api  services/api  (chant 0.80.0, exit 0)
+── examples:examples/demo  examples/demo  (chant 0.80.0, exit 0)
+chant workspace build: 3 projects, 3 passed, 0 failed; 1 skipped; 1 toolchain
+```
+
+The command loads only when it runs. A project without a declaration never loads any of its code.
+
+## Which chant runs a member
+
+Each member is built by its own chant ([#2524](https://github.com/INTENTIUS/chant/issues/2524) D3, [ws-021](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-021-which-chant.md)). To find it, the command walks up from the member's directory to the workspace root and takes the first `node_modules/.bin/chant` on the way, followed to its real path. The walk reaches the root's own bin before it gives up, so a member without one uses the root's. If the root has none either, the chant running the command builds it.
+
+Members are grouped by that real path, and each group gets one process. The group's chant is started once as `chant workspace member-run`, with every member's command line on stdin. It runs them one after another from inside each member's directory, so each member is built as `chant build .` would build it there. That internal command is not listed in `chant --help`.
+
+A chant older than `member-run` doesn't answer it. For such a toolchain the command falls back to one `chant build .` process per member, started in the member's directory.
+
+`--dry-run` prints the plan without building anything: each toolchain, the projects it runs, and what is skipped.
+
+```
+chant workspace build in chant (/work/chant)
+
+/work/chant/packages/core/bin/chant  (root, 133 projects, one process)
+  examples:examples/adopt-alb-services
+  examples:examples/alert-triage
+  ...
+
+skipped:
+  docs  kind-not-run: chant workspace build runs members of kind chant, and this one is kind other
+```
+
+## Large workspaces
+
+Example groups are built along with the members ([ws-051](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-051-example-projects.md)), and in a repository full of examples they are most of the run. The chant repository declares no `chant` members at all, since its packages and lexicons are npm packages of kind `other`. Its three example groups hold 133 projects, all under one toolchain. `--member <name>` narrows a run to the named members and groups, for example `--member fixtures` for the two test fixtures.
+
+## Options
+
+| Option | Effect |
+|---|---|
+| `dir` | Where the walk up to the declaration starts. |
+| `--member <name>` | Run only these members or example groups. Repeatable, and a comma list works too. An unknown name is an error. |
+| `-o, --output <dir>` | Write each project's output under this directory, as described above. |
+| `-f, --format json\|yaml` | Passed to each member's build. Without it each member keeps its own default. |
+| `--env <name>`, `--param <name=value>`, `--params-file <path>`, `-d, --lexicon <name>` | Passed to each member's build, as for [`chant build`](/chant/cli/build/). |
+| `--dry-run` | Print the plan and build nothing. With `--json`, print it as JSON. |
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | Every project built. |
+| 1 | A project failed to build, a `chant` member couldn't be read, or the declaration couldn't be read. |
+
+## Examples
+
+```bash
+# Build every member and example project
+chant workspace build
+
+# Keep the output, one file per member
+chant workspace build -o dist/workspace
+
+# Only the api member and the examples group
+chant workspace build --member api,examples
+
+# Which chant would build what
+chant workspace build --dry-run
+```

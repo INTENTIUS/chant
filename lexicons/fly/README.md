@@ -15,6 +15,33 @@ cd examples/local-fly
 chant run fly        # boots mudflaps, applies an App + Machine, waits for started, tears down
 ```
 
+## Run what a release ships, locally
+
+mudflaps and the lexicon's in-memory Machines API (`op/activities/machines-fake.ts`, the default for unit tests) store a Machine's config and run nothing. A release that puts a source tree on a Machine, as `flyRelease` does with `config.files` under `/srv/app` and a start command, can't be checked over HTTP against them. The running mode can: the same in-memory API, with each started Machine run as a process on this host.
+
+```ts
+import { serveLocalMachines } from "@intentius/chant-lexicon-fly/op/activities/machines-local";
+
+const fly = await serveLocalMachines({ port: 4280, root: "/tmp/fly" });
+process.env.FLY_FLAPS_BASE_URL = fly.url;
+// ... run the release Op ...
+await fetch(`${fly.machines.endpoint("my-app", "web")}/health`);
+await fly.close(); // stops every Machine's process
+```
+
+Or as a command, for a smoke that runs the release in another process:
+
+```bash
+tsx node_modules/@intentius/chant-lexicon-fly/src/op/activities/machines-local-cli.ts \
+  --listen 4280 --root /tmp/fly --publish web=8080
+```
+
+For each started Machine it writes `config.files` at their guest paths, keeps `config.mounts` as directories that outlive instances, runs `init.exec` (or `init.entrypoint` then `init.cmd`) with `config.env`, and runs an `exec` (a migration) with the same env. A create, an update (a new instance) or a `restart` starts the process again; a `stop` or a delete stops it; a process that exits on its own leaves its Machine `stopped`. When the Machine's env sets `PORT` to a service's `internal_port`, the process gets a host port instead: the one `publish` names for it (one port, a port per Machine name, or a function), or a free port kept for that Machine. `endpoint(app, name)` returns it.
+
+`root` places guest paths under a host directory, and rewrites the guest paths that the command, an exec and the env name. It can't rewrite a path written into the app's own source, so the app should find its files relative to itself and its data through its env. Without `root`, guest paths are host paths, for a container or box made for the app. No image is pulled: the command runs on this host's binaries.
+
+Each process runs in its own process group. `close()` stops them (SIGTERM, then SIGKILL after `stopTimeoutMs`), and they are killed when the host process exits or gets SIGINT, SIGTERM or SIGHUP. A SIGKILL of the host process is the one case that leaves them running.
+
 ## What it does
 
 chant is a type system for operations: you describe infrastructure as typed TypeScript, and each lexicon turns those declarations into real provider API calls. This one covers Fly.

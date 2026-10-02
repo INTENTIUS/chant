@@ -1,5 +1,6 @@
 /**
- * Core lint rules for chant projects (COR + EVL).
+ * Core lint rules for chant projects (COR + EVL, and SYS001 for the `decide`
+ * activity's backends, #2828).
  */
 
 import type { LintRule } from "../rule";
@@ -29,6 +30,7 @@ export { cor018CompositePreferLexiconTypeRule } from "./cor018-composite-prefer-
 export { cor021EnvLiteralNameRule } from "./cor021-env-literal-name";
 export { cor022ReceiptLeafRule, collectReceiptVariables, receiptFactoryCall } from "./cor022-receipt-leaf";
 export { cor024ReceiptSecretPointerRule } from "./cor024-receipt-secret-pointer";
+export { noLiteralKeyRule } from "./sys001-no-literal-key";
 export { isInsideCompositeFactory } from "./composite-scope";
 
 import { flatDeclarationsRule } from "./flat-declarations";
@@ -56,9 +58,10 @@ import { cor018CompositePreferLexiconTypeRule } from "./cor018-composite-prefer-
 import { cor021EnvLiteralNameRule } from "./cor021-env-literal-name";
 import { cor022ReceiptLeafRule } from "./cor022-receipt-leaf";
 import { cor024ReceiptSecretPointerRule } from "./cor024-receipt-secret-pointer";
+import { noLiteralKeyRule } from "./sys001-no-literal-key";
 
 /**
- * Load all 24 core lint rules (COR + EVL).
+ * Load all core lint rules (COR + EVL + SYS001).
  */
 export function loadCoreRules(): LintRule[] {
   return [
@@ -87,5 +90,6 @@ export function loadCoreRules(): LintRule[] {
     cor021EnvLiteralNameRule,
     cor022ReceiptLeafRule,
     cor024ReceiptSecretPointerRule,
+    noLiteralKeyRule,
   ];
 }

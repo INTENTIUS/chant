@@ -2,6 +2,8 @@ import { describe, test, expect } from "vitest";
 import { describeAllExamples } from "@intentius/chant-test-utils/example-harness";
 import { buildCommand } from "@intentius/chant/cli/commands/build";
 import { k8sSerializer, k8sPlugin } from "@intentius/chant-lexicon-k8s";
+import { validateCollectorConfig, type CollectorConfig } from "@intentius/chant-lexicon-otel";
+import { loadAll, load } from "js-yaml";
 import { resolve, join } from "path";
 import { tmpdir } from "os";
 
@@ -30,6 +32,91 @@ describeAllExamples(
         expect(output).toContain("acme.io/tier: critical");
         // Only prod/staging declare an ingress host (dev inherits no ingress).
         expect(output).toContain("acme.example");
+      },
+    },
+    "otel-collector": {
+      checks: (output) => {
+        const docs = loadAll(output) as Array<{ kind: string; metadata: { name: string }; [k: string]: any }>;
+        const byKind = new Map(docs.map((d) => [d.kind, d]));
+        for (const kind of ["DaemonSet", "Service", "ServiceAccount", "ClusterRole", "ClusterRoleBinding", "ConfigMap"]) {
+          expect(byKind.has(kind), kind).toBe(true);
+        }
+
+        const container = byKind.get("DaemonSet")!.spec.template.spec.containers[0];
+        expect(container.ports.map((p: { containerPort: number }) => p.containerPort)).toEqual([4317, 4318, 13133]);
+        expect(container.livenessProbe).toEqual({ httpGet: { path: "/", port: "health" } });
+        expect(byKind.get("Service")!.spec.internalTrafficPolicy).toBe("Local");
+
+        // The ConfigMap carries exactly the components the example declares.
+        const config = load(byKind.get("ConfigMap")!.data["config.yaml"]) as CollectorConfig;
+        expect(validateCollectorConfig(config)).toEqual([]);
+        expect(Object.keys(config.exporters ?? {}).sort()).toEqual(["debug", "otlp/tempo"]);
+        expect(config.service?.pipelines?.logs?.exporters).toEqual(["debug"]);
+        expect(config.service?.pipelines?.traces?.exporters).toEqual(["otlp/tempo"]);
+      },
+    },
+    "otel-node-agent": {
+      checks: (output) => {
+        const docs = loadAll(output) as Array<{ kind: string; metadata: { name: string }; [k: string]: any }>;
+        const byKind = new Map(docs.map((d) => [d.kind, d]));
+        const pod = byKind.get("DaemonSet")!.spec.template.spec;
+        const container = pod.containers[0];
+
+        // What NodeAgent's config reads from the node, added by OtelCollector (#3103).
+        expect(container.env).toEqual([{ name: "K8S_NODE_NAME", valueFrom: { fieldRef: { fieldPath: "spec.nodeName" } } }]);
+        expect(container.volumeMounts).toEqual([
+          { name: "config", mountPath: "/etc/otel", readOnly: true },
+          { name: "hostfs", mountPath: "/hostfs", readOnly: true, mountPropagation: "HostToContainer" },
+          { name: "host-var-log-pods", mountPath: "/var/log/pods", readOnly: true },
+        ]);
+        expect(pod.volumes.slice(1)).toEqual([
+          { name: "hostfs", hostPath: { path: "/" } },
+          { name: "host-var-log-pods", hostPath: { path: "/var/log/pods" } },
+        ]);
+        expect(pod.securityContext).toEqual({ supplementalGroups: [0] });
+        expect(container.securityContext).toMatchObject({ runAsNonRoot: true, runAsUser: 10001 });
+        expect(byKind.get("ClusterRole")!.rules).toContainEqual({ apiGroups: [""], resources: ["nodes/stats"], verbs: ["get"] });
+
+        const config = load(byKind.get("ConfigMap")!.data["config.yaml"]) as CollectorConfig;
+        expect(validateCollectorConfig(config)).toEqual([]);
+        expect(Object.keys(config.receivers ?? {}).sort()).toEqual(["filelog", "hostmetrics", "kubeletstats", "otlp"]);
+      },
+    },
+    "otel-gateway": {
+      checks: (output) => {
+        const docs = loadAll(output) as Array<{ kind: string; metadata: { name: string; namespace?: string; annotations?: Record<string, string> }; [k: string]: any }>;
+        const doc = (kind: string, name: string) => docs.find((d) => d.kind === kind && d.metadata.name === name)!;
+        const configOf = (name: string) => load(doc("ConfigMap", name).data["config.yaml"]) as CollectorConfig;
+
+        // The gateway: replicas behind a ClusterIP and a headless Service.
+        expect(doc("Deployment", "otel-gateway").spec.replicas).toBe(2);
+        expect(doc("Service", "otel-gateway").spec.type).toBe("ClusterIP");
+        expect(doc("Service", "otel-gateway-headless").spec.clusterIP).toBe("None");
+        expect(doc("PodDisruptionBudget", "otel-gateway").spec.maxUnavailable).toBe(1);
+        const gatewayConfig = configOf("otel-gateway-config");
+        expect(validateCollectorConfig(gatewayConfig)).toEqual([]);
+        expect(gatewayConfig.service?.pipelines?.traces?.processors).toContain("tail_sampling");
+
+        // The agent reaches the gateway through endpoints built from its declaration.
+        const agentConfig = configOf("otel-agent-config");
+        expect(validateCollectorConfig(agentConfig)).toEqual([]);
+        expect(agentConfig.exporters?.["loadbalancing/gateway"]).toMatchObject({
+          routing_key: "traceID",
+          resolver: { k8s: { service: "otel-gateway-headless.observability", ports: [4317] } },
+        });
+        expect(agentConfig.exporters?.["otlp/gateway"]).toMatchObject({ endpoint: "otel-gateway.observability.svc:4317" });
+        expect(doc("Role", "otel-agent-endpoints").metadata.namespace).toBe("observability");
+
+        // The deployment shape post-synth checks read.
+        expect(doc("ConfigMap", "otel-agent-config").metadata.annotations).toMatchObject({
+          "otel.chant.dev/role": "agent",
+          "otel.chant.dev/workload": "DaemonSet/otel-agent",
+          "otel.chant.dev/gateways": "observability/otel-gateway=loadbalancing,observability/otel-gateway=service",
+        });
+        expect(doc("ConfigMap", "otel-gateway-config").metadata.annotations).toMatchObject({
+          "otel.chant.dev/role": "gateway",
+          "otel.chant.dev/workload": "Deployment/otel-gateway",
+        });
       },
     },
     "statefulset": {

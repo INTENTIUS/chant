@@ -1,0 +1,16 @@
+{
+  "$comment": "Corrections to the vendored xychart.jsonschema.json (foundation-sdk v0.0.20). Sources are Grafana's CUE at the tag in `grafana`. See src/spec/overlay.ts.",
+  "schema": "xychart",
+  "grafana": "v13.2.2",
+  "patches": [
+    {
+      "op": "replace",
+      "path": "/definitions/MatcherConfig/properties/options",
+      "value": {
+        "description": "The matcher options. This is specific to the matcher implementation: a field name for byName, a frame index for byIndex."
+      },
+      "source": "public/app/plugins/panel/xychart/panelcfg.cue:39",
+      "why": "The CUE says `options?: _`; the byName field matcher takes a string and the byIndex frame matcher a number, which is what Grafana writes for every manually mapped series."
+    }
+  ]
+}

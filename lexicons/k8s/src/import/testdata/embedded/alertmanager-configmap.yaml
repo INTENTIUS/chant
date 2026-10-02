@@ -1,0 +1,91 @@
+# Source: alertmanager/templates/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager
+  labels:
+    helm.sh/chart: alertmanager-2.0.1
+    app.kubernetes.io/name: alertmanager
+    app.kubernetes.io/instance: alertmanager
+    app.kubernetes.io/version: "v0.34.1"
+    app.kubernetes.io/managed-by: Helm
+  namespace: monitoring
+data:
+  alertmanager.yml: |
+    global:
+      smtp_auth_password: password
+      smtp_auth_username: alertmanager
+      smtp_from: alertmanager@example.org
+      smtp_smarthost: localhost:25
+    inhibit_rules:
+    - equal:
+      - alertname
+      - cluster
+      - service
+      source_matchers:
+      - severity="critical"
+      target_matchers:
+      - severity="warning"
+    receivers:
+    - email_configs:
+      - to: team-X+alerts@example.org
+      name: team-X-mails
+    - email_configs:
+      - to: team-X+alerts-critical@example.org
+      name: team-X-pager
+      pagerduty_configs:
+      - service_key: <team-X-key>
+    - email_configs:
+      - to: team-Y+alerts@example.org
+      name: team-Y-mails
+    - name: team-Y-pager
+      pagerduty_configs:
+      - service_key: <team-Y-key>
+    - name: team-DB-pager
+      pagerduty_configs:
+      - service_key: <team-DB-key>
+    route:
+      group_by:
+      - alertname
+      - cluster
+      - service
+      group_interval: 5m
+      group_wait: 30s
+      receiver: team-X-mails
+      repeat_interval: 3h
+      routes:
+      - matchers:
+        - service=~"foo1|foo2|baz"
+        receiver: team-X-mails
+        routes:
+        - matchers:
+          - severity="critical"
+          receiver: team-X-pager
+      - matchers:
+        - service="files"
+        receiver: team-Y-mails
+        routes:
+        - matchers:
+          - severity="critical"
+          receiver: team-Y-pager
+      - group_by:
+        - alertname
+        - cluster
+        - database
+        matchers:
+        - service="database"
+        receiver: team-DB-pager
+        routes:
+        - continue: true
+          matchers:
+          - owner="team-X"
+          receiver: team-X-pager
+        - matchers:
+          - owner="team-Y"
+          receiver: team-Y-pager
+    templates:
+    - /etc/alertmanager/template/*.tmpl
+    tracing:
+      endpoint: localhost:4317
+      insecure: true
+      sampling_fraction: 1

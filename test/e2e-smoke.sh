@@ -94,7 +94,9 @@ trap 'cleanup_all' EXIT
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 setup_example() {
-  # $1 = example name, remaining args = tarball paths
+  # $1 = example name, remaining args = tarball paths. A lexicon that depends
+  # on another workspace lexicon needs that one's tarball too (k8s needs
+  # prometheus), or npm resolves it from the registry instead.
   local name="$1"; shift
   local dir="/tmp/e2e-$name"
   rm -rf "$dir"
@@ -274,11 +276,11 @@ run_aws_group() {
 
   # Build always runs; pipeline deploy only when GITLAB_TOKEN is set
   test_gitlab_example "gitlab-aws-alb-infra" "chant-e2e-shared-alb" "shared-alb" \
-    /tarballs/lexicon-aws.tgz /tarballs/lexicon-gitlab.tgz
+    /tarballs/lexicon-aws.tgz /tarballs/lexicon-gitlab.tgz /tarballs/lexicon-github.tgz
 
   # One project, both Fargate services, one stack (#2254)
   test_gitlab_example "gitlab-aws-alb-services" "chant-e2e-shared-alb-services" "shared-alb-services" \
-    /tarballs/lexicon-aws.tgz /tarballs/lexicon-gitlab.tgz
+    /tarballs/lexicon-aws.tgz /tarballs/lexicon-gitlab.tgz /tarballs/lexicon-github.tgz
 }
 
 # ── EKS group ────────────────────────────────────────────────────────────────
@@ -288,7 +290,7 @@ test_k8s_eks_microservice() {
   echo ""
   echo "=== E2E: $name ==="
 
-  setup_example "$name" /tarballs/lexicon-aws.tgz /tarballs/lexicon-k8s.tgz
+  setup_example "$name" /tarballs/lexicon-aws.tgz /tarballs/lexicon-k8s.tgz /tarballs/lexicon-prometheus.tgz /tarballs/lexicon-otel.tgz
 
   # Export env vars the example's scripts expect
   export DOMAIN="${EKS_DOMAIN}"
@@ -350,7 +352,7 @@ test_k8s_gke_microservice() {
   echo ""
   echo "=== E2E: $name ==="
 
-  setup_example "$name" /tarballs/lexicon-gcp.tgz /tarballs/lexicon-k8s.tgz
+  setup_example "$name" /tarballs/lexicon-gcp.tgz /tarballs/lexicon-k8s.tgz /tarballs/lexicon-prometheus.tgz /tarballs/lexicon-otel.tgz
 
   # Export env vars the example's scripts expect
   export GCP_PROJECT_ID="${GCP_PROJECT_ID}"
@@ -397,7 +399,7 @@ test_ray_kuberay_gke() {
   echo ""
   echo "=== E2E: $name ==="
 
-  setup_example "$name" /tarballs/lexicon-gcp.tgz /tarballs/lexicon-k8s.tgz
+  setup_example "$name" /tarballs/lexicon-gcp.tgz /tarballs/lexicon-k8s.tgz /tarballs/lexicon-prometheus.tgz /tarballs/lexicon-otel.tgz
 
   export GCP_PROJECT_ID="${GCP_PROJECT_ID}"
 
@@ -477,7 +479,7 @@ test_k8s_aks_microservice() {
   echo ""
   echo "=== E2E: $name ==="
 
-  setup_example "$name" /tarballs/lexicon-azure.tgz /tarballs/lexicon-k8s.tgz
+  setup_example "$name" /tarballs/lexicon-azure.tgz /tarballs/lexicon-k8s.tgz /tarballs/lexicon-prometheus.tgz /tarballs/lexicon-otel.tgz
 
   # Export env vars the example's scripts expect
   export AZURE_RESOURCE_GROUP="${AZURE_RESOURCE_GROUP}"
