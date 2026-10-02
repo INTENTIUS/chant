@@ -5,6 +5,7 @@ import { resolveClickHouseTarget, isUnresolvedTarget } from "./bind";
 import { describeResources } from "./describe-resources";
 import { fakeClickHouse, type FakeServer } from "../testing/fake-server";
 import { database, table, view } from "../entities";
+import { SQL_OWNERSHIP_CHANNEL } from "../ownership";
 
 const analytics = database`CREATE DATABASE analytics ENGINE = Atomic`;
 const events = table`CREATE TABLE ${analytics}.events (id UInt64) ENGINE = MergeTree ORDER BY id`;
@@ -14,7 +15,13 @@ const byId = view`CREATE VIEW analytics.by_id AS SELECT id FROM ${events}`;
 
 const LIVE = [
   { name: "analytics", engine: "Atomic", statement: "CREATE DATABASE analytics\nENGINE = Atomic" },
-  { database: "analytics", name: "events", engine: "MergeTree", statement: "CREATE TABLE analytics.events\n(\n    `id` UInt64\n)\nENGINE = MergeTree\nORDER BY id\nSETTINGS index_granularity = 8192" },
+  {
+    database: "analytics",
+    name: "events",
+    engine: "MergeTree",
+    comment: "Raw events [chant managed-by=chant stack=shop env=prod]",
+    statement: "CREATE TABLE analytics.events\n(\n    `id` UInt64\n)\nENGINE = MergeTree\nORDER BY id\nSETTINGS index_granularity = 8192\nCOMMENT 'Raw events [chant managed-by=chant stack=shop env=prod]'",
+  },
   { database: "analytics", name: "by_id", engine: "View", statement: "CREATE VIEW analytics.by_id\n(\n    `id` UInt64\n)\nAS SELECT id\nFROM analytics.events" },
   { database: "default", name: "plain", engine: "Log", statement: "CREATE TABLE default.plain\n(\n    `id` UInt64\n)\nENGINE = Log" },
 ];
@@ -35,8 +42,8 @@ afterAll(async () => {
   await refused.close();
 });
 
-const run = (url: string | undefined) =>
-  describeResources({ environment: "test", entityNames, entities, config: {}, env: url ? { CLICKHOUSE_URL: url } : {} });
+const run = (url: string | undefined, owned?: boolean) =>
+  describeResources({ environment: "test", entityNames, entities, config: {}, env: url ? { CLICKHOUSE_URL: url } : {}, ...(owned ? { owned } : {}) });
 
 describe("binding an environment to a server", () => {
   test("a profile is the server, its credentials read from the variables it names", () => {
@@ -68,11 +75,28 @@ describe("describeResources", () => {
   test("reports present objects with their engine, an undeclared-on-server one absent, and where it asked", async () => {
     const r = normalizeObservation(await run(ok.url));
     expect(Object.keys(r.resources).sort()).toEqual(["analytics", "byId", "events", "inDefault"]);
-    expect(r.resources.events).toMatchObject({ type: "ClickHouse::Table", status: "MergeTree", ownership: "unknown" });
-    expect(r.resources.byId).toMatchObject({ type: "ClickHouse::View", status: "View" });
+    expect(r.resources.events).toMatchObject({ type: "ClickHouse::Table", status: "MergeTree", ownership: "owned" });
+    expect(r.resources.byId).toMatchObject({ type: "ClickHouse::View", status: "View", ownership: "foreign" });
     expect(r.unobserved).toEqual({});
     expect(r.queried?.missing).toBe(`${ok.url} analytics.missing`);
     expect(r.queried?.inDefault).toBe(`${ok.url} default.plain`);
+  });
+
+  test("an owned object carries the marker's stack and env, and its comment without the trailer (#3208)", async () => {
+    const r = normalizeObservation(await run(ok.url));
+    expect(r.resources.events!.marker).toEqual({ stack: "shop", env: "prod" });
+    expect(r.resources.events!.attributes).toMatchObject({ comment: "Raw events" });
+    expect(r.resources.byId!.marker).toBeUndefined();
+  });
+
+  test("owned withholds a foreign object as filtered, never as absent (#3208)", async () => {
+    const r = normalizeObservation(await run(ok.url, true));
+    expect(Object.keys(r.resources)).toEqual(["events"]);
+    expect(Object.fromEntries(Object.entries(r.unobserved).map(([k, v]) => [k, v.reason]))).toEqual({
+      analytics: "filtered",
+      inDefault: "filtered",
+      byId: "filtered",
+    });
   });
 
   test("reads the catalog in two queries, whatever the number of entities", async () => {
@@ -84,7 +108,18 @@ describe("describeResources", () => {
 
 describeObservationConformance({
   lexicon: "sql",
+  ownershipChannel: SQL_OWNERSHIP_CHANNEL,
   scenarios: [
+    {
+      name: "owned: only what carries chant's marker",
+      declared: entityNames,
+      owned: true,
+      run: () => run(ok.url, true),
+      expectPresent: ["events"],
+      expectAbsent: ["missing"],
+      expectUnobserved: ["analytics", "inDefault", "byId"],
+      expectMarker: { events: { stack: "shop", env: "prod" } },
+    },
     {
       name: "a server holding some of the declared schema",
       declared: entityNames,

@@ -111,7 +111,9 @@ describe("live export", () => {
         database: "analytics",
         name: "events",
         engine: "MergeTree",
-        statement: "CREATE TABLE analytics.events\n(\n    `id` UInt64\n)\nENGINE = MergeTree\nORDER BY id\nSETTINGS index_granularity = 8192",
+        statement:
+          "CREATE TABLE analytics.events\n(\n    `id` UInt64\n)\nENGINE = MergeTree\nORDER BY id\nSETTINGS index_granularity = 8192\nCOMMENT 'Raw events [chant managed-by=chant stack=shop]'",
+        comment: "Raw events [chant managed-by=chant stack=shop]",
       },
     ]);
   });
@@ -136,10 +138,15 @@ describe("live export", () => {
     expect((await run({ selector: { type: "ClickHouse::Database" } })).resources.map((r) => r.logicalId)).toEqual(["analyticsDb"]);
   });
 
-  test("owned exports nothing and says why", async () => {
+  test("owned keeps the objects carrying chant's marker (#3208)", async () => {
     const ir = await run({ owned: true });
-    expect(ir.resources).toEqual([]);
-    expect(ir.warnings?.[0]).toMatch(/ownership marker/);
+    expect(ir.resources.map((r) => r.logicalId)).toEqual(["events"]);
+  });
+
+  test("the ownership marker is never written into a declaration (#3208)", async () => {
+    const ddl = String((await run()).resources[1]!.properties.ddl);
+    expect(ddl).toContain("COMMENT 'Raw events'");
+    expect(ddl).not.toContain("[chant");
   });
 
   test("the IR builds back through the generator", async () => {

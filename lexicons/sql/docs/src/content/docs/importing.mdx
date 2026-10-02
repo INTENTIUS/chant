@@ -49,7 +49,7 @@ Each object is read with `SHOW CREATE`, so the declaration is the server's canon
 
 A materialized view's inner table belongs to its view and is not imported, and the `default` database, which every server has, is not declared. A column a view's SELECT names directly stays text, so an imported view records the tables it reads but not its column lineage; write its column references as `${table.columns.name}` to get it.
 
-`--owned` imports nothing for now: chant stamps no ownership marker on ClickHouse objects yet, so there is none to read back. `--type ClickHouse::Table` and `--name analytics.events` narrow the import.
+`--owned` imports the objects whose comment carries chant's ownership marker, the trailer the applier appends after the declared comment (see [Applying to a Server](../applying/)). The trailer is never written into an imported declaration. `--type ClickHouse::Table` and `--name analytics.events` narrow the import.
 
 ## A file of statements
 
