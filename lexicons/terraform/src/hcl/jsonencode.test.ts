@@ -93,6 +93,7 @@ describe("readJsonencode with unknownLeaves: expressions become opaque leaves", 
     expect(isUnknown(stmt.Resource)).toBe(true);
     expect((stmt.Resource as { reason: string }).reason).toMatch(/reference/);
     expect((stmt.Resource as Record<symbol, unknown>)[UNKNOWN]).toBe(true);
+    expect((stmt.Resource as { source: string }).source).toBe("aws_s3_bucket.x.arn");
   });
 
   test("container definitions keep their literal environment beside image = var.image", () => {
@@ -104,6 +105,7 @@ describe("readJsonencode with unknownLeaves: expressions become opaque leaves", 
     const def = (read.value as Record<string, unknown>[])[0];
     expect(def.name).toBe("app");
     expect(isUnknown(def.image)).toBe(true);
+    expect((def.image as { source: string }).source).toBe('"${var.repo}:${var.tag}"');
     expect(isUnknown(def.cpu)).toBe(true);
     expect(def.environment).toEqual([{ name: "DB_PASSWORD", value: "hunter2" }]);
   });

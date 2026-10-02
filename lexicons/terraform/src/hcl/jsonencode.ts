@@ -76,6 +76,13 @@ export const UNKNOWN: unique symbol = Symbol("jsonencode.unknown");
 export interface UnknownLeaf {
   readonly [UNKNOWN]: true;
   readonly reason: string;
+  /**
+   * The skipped expression's own source text, trimmed (`aws_s3_bucket.x.arn`,
+   * `"arn:aws:s3:::${var.bucket}/*"` with its quotes). A rule may read it to
+   * rule a value OUT (a quoted template whose literal text already differs
+   * from the value it looks for), never to evaluate it.
+   */
+  readonly source: string;
 }
 
 /**
@@ -188,7 +195,7 @@ class Reader {
       if (!(err instanceof NotLiteral) || err instanceof Structural) throw err;
       this.pos = start;
       this.skipExpression();
-      return { [UNKNOWN]: true, reason: err.message } satisfies UnknownLeaf;
+      return { [UNKNOWN]: true, reason: err.message, source: this.src.slice(start, this.pos).trim() } satisfies UnknownLeaf;
     }
   }
 
