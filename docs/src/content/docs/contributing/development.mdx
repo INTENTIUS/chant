@@ -26,7 +26,7 @@ The project uses `just` for common tasks. Run `just` with no arguments to see al
 ```bash
 just              # list all commands
 just install      # install all dependencies (including docs)
-just build        # type-check the project (npx tsc --noEmit)
+just build        # type-check packages/core on TypeScript 7
 just test         # run all tests
 just lint         # run eslint on packages/
 just check        # run build + lint + test
@@ -120,8 +120,20 @@ describeAllExamples({
 ## Type Checking
 
 ```bash
-npx tsc --noEmit -p packages/core/tsconfig.json
+scripts/tsc7.sh --noEmit --declaration false --declarationMap false -p packages/core/tsconfig.json
+npx tsx scripts/typecheck.ts   # tests, scripts and examples, against a baseline
 ```
+
+Two TypeScript versions are installed:
+
+| What | Version | How it is called |
+|---|---|---|
+| Typechecks, and every package and lexicon `.d.ts` build | 7.0 | `scripts/tsc7.sh`, which runs the root alias `typescript-native` by path |
+| Code that imports `typescript`: core (fold, lint, codegen), lexicon lint rules, eslint's parser | 5.9 | `import ts from "typescript"` |
+
+TypeScript 7's `typescript` package has no JS compiler API, so `typescript` stays on 5.9. Both packages ship a `tsc` bin. `node_modules/.bin/tsc` is 5.9, so a plain `npx tsc` still runs 5.9. `scripts/tsc7.test.ts` fails if any of these changes.
+
+On TypeScript 7, a `--noEmit` check with `declaration: true` is slower than on 5.9, because it still computes declaration diagnostics. Pass `--declaration false --declarationMap false` to noEmit checks. Declaration errors are still caught by each package's build.
 
 ## Project Layout
 
