@@ -1,0 +1,121 @@
+diff --git a/packages/core/src/discovery/fold-import.ts b/packages/core/src/discovery/fold-import.ts
+index 1478e1e68..f894f4bc7 100644
+--- a/packages/core/src/discovery/fold-import.ts
++++ b/packages/core/src/discovery/fold-import.ts
+@@ -2939,7 +2939,14 @@ async function reviveFoldedValue(value: FoldedValue, ctx: ResolveCtx, requireLiv
+       return (Fn as (...fnArgs: unknown[]) => unknown)(...revived);
+     }
+     for (const v of intrinsic.values) revived.push(await reviveFoldedValue(v, ctx, true));
+-    return (Fn as (...fnArgs: unknown[]) => unknown)(intrinsic.strings, ...revived);
++    // Hand the tag what a real tagged call hands it: a frozen strings array
++    // carrying a frozen `raw`. A tag that reads `strings.raw` (a SQL tag keeps
++    // backslashes as written) would otherwise see a different text when
++    // folded than when run.
++    const strings = Object.freeze(
++      Object.defineProperty([...intrinsic.strings], "raw", { value: Object.freeze([...(intrinsic.raw ?? intrinsic.strings)]) }),
++    );
++    return (Fn as (...fnArgs: unknown[]) => unknown)(strings, ...revived);
+   }
+ 
+   if ("__helper" in value) {
+@@ -3415,6 +3422,23 @@ function stampParamDependencies(entity: unknown, node: ts.NewExpression, ctx: Re
+ async function preresolveResourceConsts(ctx: ResolveCtx): Promise<Map<ts.Expression, unknown>> {
+   const built = new Map<ts.Expression, unknown>();
+   for (const [name, initializer] of ctx.consts) {
++    // A registered tagged template whose value is an entity (`table\`...\``)
++    // is built once here too, so a same-file reference shares the instance
++    // discovery registers.
++    if (
++      ts.isTaggedTemplateExpression(initializer) &&
++      ts.isIdentifier(initializer.tag) &&
++      ctx.intrinsics.some((i) => i.name === (initializer.tag as ts.Identifier).text && i.isTag === true)
++    ) {
++      try {
++        const value = await reviveFoldedValue(fold(initializer, ctx.consts, ctx.intrinsics, ctx.externals), ctx, false);
++        built.set(initializer, value);
++        ctx.externals.set(name, value);
++      } catch (err) {
++        ctx.prebuildFailures?.set(name, describeFoldFailure(err, ctx));
++      }
++      continue;
++    }
+     if (!ts.isNewExpression(initializer) || !ts.isIdentifier(initializer.expression)) continue;
+     try {
+       const spec = foldResource(initializer, ctx.consts, ctx.intrinsics, ctx.externals);
+@@ -3915,6 +3939,10 @@ async function tryFoldFileCore(file: string, session: FoldSession): Promise<Fold
+           applyResolvedValue(decl.name, marker, entities, exportedValues);
+           continue;
+         }
++        if (prebuiltResources.has(decl.node)) {
++          applyResolvedValue(decl.name, prebuiltResources.get(decl.node), entities, exportedValues);
++          continue;
++        }
+         let value: unknown;
+         try {
+           value = (await resolveDeclaratorValue(decl.node, ctx)).value;
+diff --git a/packages/core/src/fold/fold.ts b/packages/core/src/fold/fold.ts
+index 28a0a2d6b..1fdd294ce 100644
+--- a/packages/core/src/fold/fold.ts
++++ b/packages/core/src/fold/fold.ts
+@@ -208,6 +208,8 @@ export type FoldedIntrinsic = FoldedIntrinsicTag | FoldedIntrinsicCall;
+ export interface FoldedIntrinsicTag {
+   __intrinsic: string;
+   strings: string[];
++  /** The raw parts (`TemplateStringsArray.raw`), so the revived call sees what a real tagged call sees. */
++  raw: string[];
+   values: FoldedValue[];
+ }
+ 
+@@ -1127,6 +1129,21 @@ function foldIntrinsicValue(
+  * whose lexicon opted its plain-call form in is not thereby usable as a
+  * tagged template, and `` Ref`...` `` stays a rejection.
+  */
++/**
++ * A template part's raw text, as `TemplateStringsArray.raw` holds it. The
++ * scanner sets `rawText` on every parsed literal; the fallback reads it off the
++ * source between the delimiters for a node that lacks it.
++ */
++function rawTemplateText(
++  part: ts.NoSubstitutionTemplateLiteral | ts.TemplateHead | ts.TemplateMiddle | ts.TemplateTail,
++): string {
++  if (part.rawText !== undefined) return part.rawText;
++  const text = part.getText();
++  const open = 1;
++  const close = ts.isTemplateHead(part) || ts.isTemplateMiddle(part) ? 2 : 1;
++  return text.slice(open, text.length - close);
++}
++
+ function foldTaggedTemplate(
+   node: ts.TaggedTemplateExpression,
+   consts: Map<string, ts.Expression>,
+@@ -1141,14 +1158,15 @@ function foldTaggedTemplate(
+ 
+   const template = node.template;
+   if (ts.isNoSubstitutionTemplateLiteral(template)) {
+-    return { __intrinsic: tagName, strings: [template.text], values: [] };
++    return { __intrinsic: tagName, strings: [template.text], raw: [rawTemplateText(template)], values: [] };
+   }
+ 
+   const strings = [template.head.text, ...template.templateSpans.map((span) => span.literal.text)];
++  const raw = [rawTemplateText(template.head), ...template.templateSpans.map((span) => rawTemplateText(span.literal))];
+   const values = template.templateSpans.map((span) =>
+     foldIntrinsicValue(span.expression, consts, intrinsics, externals),
+   );
+-  return { __intrinsic: tagName, strings, values };
++  return { __intrinsic: tagName, strings, raw, values };
+ }
+ 
+ /**
+@@ -1336,6 +1354,12 @@ export function fold(
+     // property-access branch below consults `consts` first, so a sibling
+     // attribute reference is still the symbolic `{__attrRef}` the serializer
+     // resolves by NAME. Nothing about the existing envelope changes.
++    // A same-file `const x = tag\`...\`` the caller pre-resolved to its one
++    // live value, for the same reason as the `new` case below: a second fold
++    // would build a second entity nothing registers.
++    if (ts.isTaggedTemplateExpression(initializer) && externals?.has(node.text)) {
++      return externals.get(node.text) as FoldedValue;
++    }
+     if (ts.isNewExpression(initializer)) {
+       if (externals?.has(node.text)) return externals.get(node.text) as FoldedValue;
+       throw foldError(
