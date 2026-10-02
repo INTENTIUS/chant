@@ -119,7 +119,11 @@ export interface GatePolicyAnswer {
 export interface GatePolicyDecision extends GatePolicyAnswer {
   policy: string;
   version: string;
-  /** The gate's mode when the decision was recorded. A run reads the gate's current mode, not this. */
+  /**
+   * The gate's mode when the decision was recorded. A permit passes a gate
+   * only when both this and the gate's current mode are `enforce` (#2512), so
+   * an allow recorded under `log-only` never binds after a switch.
+   */
   mode: GateApprovalMode;
 }
 
