@@ -39,6 +39,9 @@ export const MACHINES_CONTRACT: readonly MachinesEndpoint[] = [
   { method: "GET", path: "/v1/apps/{app}/machines", op: "listMachines" },
   { method: "POST", path: "/v1/apps/{app}/machines", op: "createMachine" },
   { method: "POST", path: "/v1/apps/{app}/machines/{id}", op: "updateMachine" },
+  // A running machine is stopped before the destroy (#3115); `?force=true` is a
+  // query, so it stays out of the path template.
+  { method: "POST", path: "/v1/apps/{app}/machines/{id}/stop", op: "stopForDestroy" },
   { method: "DELETE", path: "/v1/apps/{app}/machines/{id}", op: "destroyMachine" },
   { method: "GET", path: "/v1/apps/{app}/machines/{id}/wait", op: "waitForMachine" },
   // Leases

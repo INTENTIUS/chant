@@ -571,11 +571,12 @@ rm -rf /app/_smoke_test_grafana_init
 test_lexicon "cedar" "/app/test/fixtures/cedar.ts" 'grep -q "permit ("' 'grep -q "forbid ("'
 
 # cedar init
-# `chant init --lexicon cedar` scaffolds the project shell but no policy source:
-# cedar registers neither initTemplates nor skills yet (#1654). test_init asserts
-# both, so it would fail here for reasons that have nothing to do with the CI
-# wiring this section exists to cover. Assert what init produces today, then
-# build and lint a real policy set inside the scaffold.
+# `chant init --lexicon cedar` scaffolds src/policies.ts, which imports the
+# entity classes from ./generated/cedar. Those do not exist until
+# `chant cedar generate` reads the scaffold's schema.cedarschema (#1696), so the
+# project's documented flow is generate, then build. test_init has no generate
+# step, so cedar keeps its own block: assert what init produces, generate, then
+# build and lint the scaffold plus the shared cedar fixture.
 log "test_init_cedar"
 CEDAR_INIT_DIR="/app/_smoke_test_cedar_init"
 rm -rf "$CEDAR_INIT_DIR"
@@ -595,15 +596,23 @@ if $CHANT init --lexicon cedar "$CEDAR_INIT_DIR" > /dev/null 2>&1; then
     fail "cedar init package.json is missing the cedar lexicon dependency"
   fi
 
-  if [ -f "$CEDAR_INIT_DIR/skills/chant-cedar/SKILL.md" ]; then
-    pass "cedar init installs the chant-cedar skill"
+  if ls "$CEDAR_INIT_DIR"/skills/chant-cedar*/SKILL.md > /dev/null 2>&1; then
+    pass "cedar init installs the chant-cedar skills"
   else
-    echo "  note: cedar ships no skills yet (#1654) — skill install not asserted"
+    fail "cedar init did not install the chant-cedar skills"
   fi
 
   mkdir -p "$CEDAR_INIT_DIR/src"
   cp /app/test/fixtures/cedar.ts "$CEDAR_INIT_DIR/src/"
   ln -s /app/node_modules "$CEDAR_INIT_DIR/node_modules"
+
+  if (cd "$CEDAR_INIT_DIR" && $CHANT cedar generate > "$CEDAR_INIT_DIR/generate.log" 2>&1) \
+     && [ -f "$CEDAR_INIT_DIR/src/generated/cedar/index.ts" ]; then
+    pass "cedar generate writes the scaffold's entity classes"
+  else
+    echo "  output: $(cat "$CEDAR_INIT_DIR/generate.log")"
+    fail "cedar generate failed on the init scaffold"
+  fi
 
   if BUILD_CEDAR_INIT=$($CHANT build "$CEDAR_INIT_DIR/src" 2>"$CEDAR_INIT_DIR/build-stderr.log"); then
     if echo "$BUILD_CEDAR_INIT" | grep -q "permit ("; then
@@ -691,6 +700,10 @@ for example_dir in /app/examples/*/; do
   name=$(basename "$example_dir")
   src_dir="$example_dir/src"
   [ -d "$src_dir" ] || continue
+  # A directory with no package.json has no build script to run: it is a test
+  # fixture, not an example (fold-adversarial is the fold/run differential's
+  # deliberately broken corpus entry, and one of its files throws).
+  [ -f "$example_dir/package.json" ] || continue
 
   rm -rf "$example_dir/node_modules"
   ln -sfn /app/node_modules "$example_dir/node_modules"
@@ -938,8 +951,8 @@ if [ -d "$CARVE_TF" ]; then
     fi
     rm -rf "$K8S_OUT"
 
-    # A typed provider resource ranks but does not emit, and bridge refuses a
-    # manifest — both are honest refusals, not silent half-carves.
+    # A typed provider resource ranks but does not emit: an honest refusal,
+    # not a silent half-carve.
     TYPED_ERR=$($CHANT carve emit --from "$CARVE_K8S" --select kubernetes_config_map.legacy \
       --state "$CARVE_K8S/terraform.tfstate" 2>&1 >/dev/null || true)
     if echo "$TYPED_ERR" | grep -q 'kubernetes_config_map cannot be emitted yet'; then
@@ -948,13 +961,19 @@ if [ -d "$CARVE_TF" ]; then
       echo "  stderr: $TYPED_ERR"
       fail "a typed kubernetes resource was not refused by emit"
     fi
-    K8S_BRIDGE_ERR=$($CHANT carve bridge --from "$CARVE_K8S" --select kubernetes_manifest.app_config 2>&1 >/dev/null || true)
-    if echo "$K8S_BRIDGE_ERR" | grep -q 'cannot be bridged'; then
-      pass "carve bridge still refuses a carved manifest"
+    # Bridge carries a carved manifest (#2034): the patch excises the
+    # kubernetes_manifest block from the survivor estate.
+    K8S_BRIDGE_OUT=$(mktemp -d)
+    if K8S_BRIDGE=$($CHANT carve bridge --from "$CARVE_K8S" --select kubernetes_manifest.app_config \
+        --output "$K8S_BRIDGE_OUT" 2>&1) \
+       && grep -q '^-resource "kubernetes_manifest" "app_config"' \
+            "$K8S_BRIDGE_OUT"/kubernetes_manifest-app_config-bridge.patch 2>/dev/null; then
+      pass "carve bridge excises a carved manifest from the survivor estate"
     else
-      echo "  stderr: $K8S_BRIDGE_ERR"
-      fail "carve bridge did not refuse a carved manifest"
+      echo "  output: $K8S_BRIDGE"
+      fail "carve bridge did not bridge a carved manifest"
     fi
+    rm -rf "$K8S_BRIDGE_OUT"
   else
     fail "kubernetes carve fixture missing at $CARVE_K8S"
   fi

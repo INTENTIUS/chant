@@ -557,6 +557,12 @@ Add a concurrency group with cancel-in-progress: true.
 |---|---|
 | Prior art | [zizmor `concurrency-limits`](https://docs.zizmor.sh/audits/#concurrency-limits) (overlaps) |
 
+### GHA069
+
+**Job permissions block drops the workflow's id-token: write** — merge-worthy · guidance
+
+Add `id-token: write` to the job's `permissions:` block; keep the job block rather than removing it.
+
 ## GitLab CI (WGL)
 
 ### WGL010
