@@ -1,0 +1,39 @@
+---
+title: "SQL"
+description: "Database schema as typed declarations, one dialect at a time; ClickHouse first"
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-sql` — DO NOT EDIT.
+    Edit lexicons/sql/src/codegen/docs.ts instead; changes here are overwritten. */}
+
+The sql lexicon declares database schema in TypeScript, one database dialect
+at a time. ClickHouse is the first dialect, at
+`@intentius/chant-lexicon-sql/clickhouse`.
+
+chant is spec-true per dialect, not database-agnostic. Each dialect's engines,
+column types, codecs and settings are that database's own, read from a pinned
+server, because databases differ in ways a schema tool has to respect:
+ClickHouse has no foreign keys and rebuilds a table to change its sort key,
+where Postgres changes most things in place inside a transaction.
+
+The lexicon is being built in slices (chant #3199). This release carries the
+ClickHouse type catalog and its pin; tables, views and materialized views
+declared as SQL-shaped tagged templates come next. See
+[Where the Types Come From](./clickhouse-catalog/) for the catalog.
+
+
+## At a Glance
+
+| Metric | Count |
+|--------|-------|
+| Resources | 0 |
+| Property types | 0 |
+| Services | 0 |
+| Intrinsic functions | 0 |
+| Pseudo-parameters | 0 |
+| Lint rules | 0 |
+
+**Lexicon version:** 0.101.0  
+**Namespace:** `SQL`
+
+- [Serialization](./serialization) — output format details
