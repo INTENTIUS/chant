@@ -1,7 +1,7 @@
 import { lexiconNames } from "../../lexicon-module";
-import { resolve, dirname } from "node:path";
+import { resolve, dirname, basename } from "node:path";
 import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
-import { loadChantConfig, resolveAutoReleaseDisabled, type ChantConfig } from "../../config";
+import { loadChantConfig, resolveAutoReleaseDisabled, InvalidChantConfigError, type ChantConfig } from "../../config";
 import { discoverOps, discoverStewards } from "../../op/discover";
 import { stewardWorkHolder } from "../../op/work-lease-run";
 import type { OpConfig } from "../../op/types";
@@ -108,10 +108,12 @@ function refuseDurableComponentSubcommand(what: string, hint: string): number {
 /**
  * Resolve the one runtime this invocation talks to.
  *
- * `--on <name>` picks the named lexicon's `opRuntime` (`../../lexicon.ts`);
- * without it, core's built-in `local` provider runs the Op in this process.
- * Every `chant run` subcommand goes through whichever comes back, so there is
- * one dispatch path rather than a branch per runtime.
+ * `--on <name>` picks the named lexicon's `opRuntime` (`../../lexicon.ts`).
+ * Without it, `run.on` in `chant.config.ts` does (#2523), and without either,
+ * core's built-in `local` provider runs the Op in this process. `local`, from
+ * either place, names the built-in provider. Every `chant run` subcommand goes
+ * through whichever comes back, so there is one dispatch path rather than a
+ * branch per runtime.
  *
  * A lexicon already loaded into the command context wins the lookup — that is
  * how a test hands in a stub, and how a command that loaded plugins for its
@@ -121,22 +123,20 @@ function refuseDurableComponentSubcommand(what: string, hint: string): number {
  *
  * Returns `undefined` after printing an actionable error — an unconfigured
  * name is answered with the configured list, a configured lexicon that hosts
- * nothing is named outright.
+ * nothing is named outright. A `run.on` default gets the same messages as
+ * `--on`, labelled `run.on` and the config file instead of `--on`.
  */
 async function resolveOpRuntime(ctx: CommandContext): Promise<OpRuntimeProvider | undefined> {
-  const on = ctx.args.on;
+  const choice = await chooseOpRuntime(ctx);
+  if (!choice) return undefined;
+  const { on, source, configured } = choice;
   if (!on || on === "local") return createLocalOpRuntime({ projectPath: resolve(".") });
 
-  // Read the configured list straight from `chant.config.ts` rather than
-  // through `resolveProjectLexicons`: `--on` names a *configured* lexicon, and
-  // that helper's fallback is a source scan of the whole project, which is a
-  // long wait to be told a name is wrong.
-  let configured: string[] = [];
-  try {
-    configured = lexiconNames((await loadChantConfig(resolve("."))).config.lexicons ?? []);
-  } catch {
-    // No/unreadable chant.config.ts — the error below says so by listing nothing.
-  }
+  // How the error names the choice, and how to get the built-in runtime back.
+  const label = source === "flag" ? `--on ${on}` : `run.on "${on}" in ${choice.configFile}`;
+  const fallback = source === "flag"
+    ? "Omit --on to run on the built-in local runtime."
+    : `Fix \`run.on\` in ${choice.configFile}, or pass --on local to run on the built-in local runtime.`;
 
   let plugin = ctx.plugins.find((p) => p.name === on);
   if (!plugin && configured.includes(on)) {
@@ -146,23 +146,81 @@ async function resolveOpRuntime(ctx: CommandContext): Promise<OpRuntimeProvider 
   if (!plugin) {
     const known = [...new Set([...ctx.plugins.map((p) => p.name), ...configured])];
     console.error(formatError({
-      message: `--on ${on}: "${on}" is not a configured lexicon`,
+      message: `${label}: "${on}" is not a configured lexicon`,
       hint: known.length > 0
-        ? `Configured lexicons: ${known.join(", ")}. Omit --on to run on the built-in local runtime.`
-        : "chant.config.ts configures no lexicons. Omit --on to run on the built-in local runtime.",
+        ? `Configured lexicons: ${known.join(", ")}. ${fallback}`
+        : `chant.config.ts configures no lexicons. ${fallback}`,
     }));
     return undefined;
   }
 
   if (!plugin.opRuntime) {
     console.error(formatError({
-      message: `--on ${on}: lexicon "${on}" does not host Op runs`,
-      hint: "It declares no opRuntime. Omit --on to run on the built-in local runtime.",
+      message: `${label}: lexicon "${on}" does not host Op runs`,
+      hint: `It declares no opRuntime. ${fallback}`,
     }));
     return undefined;
   }
 
   return plugin.opRuntime;
+}
+
+/** Which runtime name an invocation asked for, and where the name came from. */
+interface OpRuntimeChoice {
+  /** The runtime name; `undefined` or `"local"` is the built-in runtime. */
+  on: string | undefined;
+  /** `flag` for `--on`, `config` for `run.on`, `default` when neither named one. */
+  source: "flag" | "config" | "default";
+  /** The lexicons `chant.config.ts` configures. */
+  configured: string[];
+  /** The config file's name, for messages about `run.on`. */
+  configFile: string;
+}
+
+/**
+ * The runtime name `--on`, then `run.on` in `chant.config.ts` (#2523), then
+ * the built-in default pick, without loading any lexicon.
+ *
+ * Reads the configured list straight from `chant.config.ts` rather than
+ * through `resolveProjectLexicons`: `--on` names a *configured* lexicon, and
+ * that helper's fallback is a source scan of the whole project, which is a
+ * long wait to be told a name is wrong.
+ *
+ * A config that fails to load leaves the flag's choice alone, as before. With
+ * no flag, a config whose `run` block is invalid is refused (printed, then
+ * `undefined`): running the Op locally would hide that the project asked for
+ * another runtime. Any other load failure falls back to the built-in runtime,
+ * which is what a project with no `run.on` got before. `quiet` skips printing
+ * that refusal, for a caller that only peeks at the choice and leaves the
+ * reporting to {@link resolveOpRuntime}.
+ */
+async function chooseOpRuntime(ctx: CommandContext, quiet = false): Promise<OpRuntimeChoice | undefined> {
+  const flag = ctx.args.on;
+  if (flag === "local") return { on: "local", source: "flag", configured: [], configFile: "chant.config.ts" };
+
+  let configured: string[] = [];
+  let configuredOn: string | undefined;
+  let configFile = "chant.config.ts";
+  try {
+    const { config, configPath } = await loadChantConfig(resolve("."));
+    configured = lexiconNames(config.lexicons ?? []);
+    configuredOn = config.run?.on;
+    if (configPath) configFile = basename(configPath);
+  } catch (err) {
+    if (!flag && err instanceof InvalidChantConfigError && err.key === "run") {
+      if (quiet) return undefined;
+      console.error(formatError({
+        message: err.message,
+        hint: "`run.on` names the runtime that hosts this project's Op runs: a configured lexicon with an opRuntime, or \"local\". Fix it, or pass --on to pick the runtime for this run.",
+      }));
+      return undefined;
+    }
+    // No/unreadable chant.config.ts: an `--on` error says so by listing nothing.
+  }
+
+  if (flag) return { on: flag, source: "flag", configured, configFile };
+  if (configuredOn) return { on: configuredOn, source: "config", configured, configFile };
+  return { on: undefined, source: "default", configured, configFile };
 }
 
 /** An ISO-8601 instant trimmed to what a table cell has room for. */
@@ -582,7 +640,9 @@ async function stewardTurnGate(opName: string, ctx: CommandContext): Promise<Ste
   const form = stewardFormFor(owner, env);
 
   if (form === "fountain") {
-    if (ctx.args.on === "fountain") return { ok: true };
+    // `run.on: "fountain"` asks for the steward's thread as much as the flag
+    // does (#2523).
+    if ((await chooseOpRuntime(ctx, true))?.on === "fountain") return { ok: true };
     return {
       ok: false,
       message: `Op "${opName}" is one of steward "${owner.name}"'s Ops, which runs on fountain in environment "${env}"`,
