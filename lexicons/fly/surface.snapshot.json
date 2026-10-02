@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-07-12T07:17:37.002Z",
+  "generatedAt": "2026-10-02T19:53:27.007Z",
   "entries": {
     "App": {
       "kind": "resource",
@@ -172,6 +172,7 @@
       "kind": "resource",
       "resourceType": "Fly::Machines::Secret",
       "props": [
+        "name:false",
         "value:false"
       ]
     },

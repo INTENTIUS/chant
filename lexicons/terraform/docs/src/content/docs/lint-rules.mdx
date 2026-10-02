@@ -42,7 +42,7 @@ checks, plus TF023, which runs only in `chant audit` and is documented here
 beside the rest of the family. See [Lint Rules](/chant/lexicons/terraform/rules/)
 for the generated, always-current table of the checks that run in a build; this
 page is the reasoning, the fix and the credit behind each entry.
-The Terraform lexicon ships one source-level lint rule and twenty-nine
+The Terraform lexicon ships one source-level lint rule and thirty
 post-synth checks, plus TF023, which runs only in `chant audit` and is
 documented here beside the rest of the family. See [Lint
 Rules](/chant/lexicons/terraform/rules/) for the generated, always-current
@@ -1412,6 +1412,120 @@ declares no estate in HCL and names it per root in chant.config — that is the
 environment dimension, and it is why `terraform.roots.<name>.estate` exists. A
 root with its own `live` block already has an estate and needs nothing in
 chant.config.
+
+## TF031: an IAM policy allows a wildcard Action or Resource
+
+An `Allow` statement whose `Action` or `Resource` is the literal `"*"`, or a
+list that holds it. The rule reads `aws_iam_policy`, `aws_iam_role_policy`,
+`aws_iam_user_policy` and `aws_iam_group_policy` (`policy`), `aws_iam_role`
+(`assume_role_policy` and every `inline_policy` block), and the
+`aws_iam_policy_document` data source (its `statement` blocks). Like the aws
+lexicon's WAW020, it reads the trust policy too. A trust policy has no
+`Resource`, so in practice only `Action = "*"` fires there.
+
+**Why it matters.** `Action = "*"` grants every AWS action, including the IAM
+ones that let the holder grant itself anything else. `Resource = "*"` beside a
+scoped action still reaches every bucket, table or key in the account,
+including the ones created after the policy was written. Both are easy to
+write while debugging and are rarely taken out again.
+
+**The fix.** Name the actions the workload calls and the ARNs it touches. A few
+actions accept only `Resource = "*"` (`ecr:GetAuthorizationToken`,
+`sts:GetCallerIdentity`, most `Describe*` and `List*` calls). Put those in a
+statement of their own and keep it with a `# chant-ignore-block: TF031` above
+the block, so the exception is written down where a reviewer sees it.
+
+**What the rule can read.** A policy argument is a string, and the HCL parse
+does not evaluate it, so TF031 reads three shapes:
+
+- `jsonencode({ ... })`. The parse keeps the call as one string with HCL object
+  syntax inside, and TF031 reads the literal parts of that argument as
+  structure. An expression inside it (a reference, a function call, a
+  conditional, a template string) is skipped as one unknown value, so a literal
+  `Action = "*"` beside `Resource = aws_s3_bucket.logs.arn` still fires.
+- A heredoc or quoted string with no interpolation. The parse hands this over
+  as the JSON text itself, and TF031 reads it with a JSON parser. This is more
+  than #2286 expected: a plain heredoc turned out to be readable.
+- The `aws_iam_policy_document` data source, whose `statement` blocks are plain
+  HCL. `effect` defaults to `"Allow"` in the provider, so a statement without
+  one is an allow. A policy argument that is exactly
+  `data.aws_iam_policy_document.<name>.json` naming a document in the same
+  module is not reported a second time; the finding is on the document.
+
+A `Deny` statement never fires. `Deny` with `Action = "*"` is the usual guard
+rail, for example denying everything from outside an address range.
+
+**What absence means.** A resource with no policy argument, a role with no
+`inline_policy` blocks, and a data source with no `statement` are
+unconfigured, not insecure. TF031 reports nothing for them.
+
+**What is not determined.** TF031 does not evaluate expressions. When the value
+it needs cannot be read from the source, it reports one `info` diagnostic
+starting `Not determined:` that names the attribute and the reason, never a
+warning. That happens for:
+
+- a policy that is a reference (`var.policy`, a module output, a document
+  declared in another module) or a `file()` or `templatefile()` call;
+- a heredoc or string with `${...}` interpolation, or one that does not parse
+  as JSON;
+- a `jsonencode()` whose whole argument is an expression
+  (`jsonencode(local.policy)`), or whose `Statement` is built by `concat()` or a
+  for-expression;
+- an `Action`, `Resource` or `Effect` that is an expression which could be `"*"`
+  (a variable, a local, a function call);
+- a `dynamic "statement"` block.
+
+Some expressions can never be `"*"`, and TF031 reads them as scoped rather than
+not determined: an attribute of a managed resource or data source
+(`aws_s3_bucket.logs.arn`) is an ARN or an id, and a template whose literal
+text already holds something other than `*` (`"arn:aws:s3:::${var.bucket}/*"`)
+cannot equal `*`.
+
+Out of scope: `NotAction` and `NotResource`, service wildcards such as `s3:*`,
+`Condition` blocks (a wildcard under a condition still fires), the documents
+an `aws_iam_policy_document` merges in through `source_policy_documents` or
+`override_policy_documents`, and resource-based policies (S3 bucket, SQS, KMS,
+VPC endpoint), where `Resource = "*"` usually means the resource itself and
+the risk is in `Principal`.
+
+**Prior art.** tfsec's
+[`aws-iam-no-policy-wildcards`](https://github.com/aquasecurity/tfsec/blob/master/docs/checks/aws/iam/no-policy-wildcards/index.md)
+(overlaps: it also flags service wildcards such as `s3:*`). checkov's
+[`CKV_AWS_63`](https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/resource/aws/IAMStarActionPolicyDocument.py)
+(overlaps: `Action "*"` on the policy resources, plus the SSO permission-set
+inline policy TF031 does not read) and
+[`CKV_AWS_49`](https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/data/aws/StarActionPolicyDocument.py)
+(extends: the same on the data source, where TF031 also checks `resources`),
+and [`CKV_AWS_355`](https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/resource/aws/IAMStarResourcePolicyDocument.py)
+and [`CKV_AWS_356`](https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/data/aws/ResourcePolicyDocument.py)
+(overlaps: `Resource "*"` only for actions that can be restricted). trivy-checks
+is not credited: its `aws-iam-no-policy-wildcards` is a deprecated stub with no
+rule body.
+
+```hcl
+resource "aws_iam_policy" "privesc-AssumeRole-high-priv-policy" {
+  name        = "privesc-AssumeRole-high-priv-policy"
+  path        = "/"
+  description = "Allows privesc via targeted sts:AssumeRole"
+
+  # Terraform's "jsonencode" function converts a
+  # Terraform expression result to valid JSON syntax.
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action = "*"
+        Resource = "*"
+      },
+    ]
+  })
+}
+```
+
+From `fixtures/TF031/positive-jsonencode.tf`, vendored from
+[BishopFox/iam-vulnerable](https://github.com/BishopFox/iam-vulnerable/blob/0f298666f9b7cfa01488b86912afdb211773188a/modules/free-resources/privesc-paths/privesc-AssumeRole.tf)
+(MIT).
 
 ## TF032: an ECS container definition passes a credential as a plaintext environment value
 
