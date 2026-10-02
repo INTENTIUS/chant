@@ -223,6 +223,35 @@ describe("gate approval — policy decisions (#2508)", () => {
     expect(check.resolution.resolvedBy).toBe("alex");
   });
 
+  test("log-only then enforce: the gated run re-records the pending fact under enforce, and only a fresh permit passes (#2512)", async () => {
+    const logOnly: ResolvedGateApproval = { policy: POLICY, mode: "log-only", context: { risk: "low" } };
+    const enforce: ResolvedGateApproval = { ...logOnly, mode: "enforce" };
+    const stale = approval({ resolvedBy: "release-bot", timestamp: "2026-09-01T01:00:00.000Z", approver: { kind: "agent" }, policyDecision: allow("log-only") });
+    const port = memoryGateLedgerPort({ resolutions: [stale], pending: [{ ...PENDING, approval: logOnly }] });
+
+    const first = await evaluateGate(port, { op: "release", gate: "ship", planDigest: PLAN_A, approval: enforce, now: NOW });
+    expect(first.satisfied).toBe(false);
+    if (first.satisfied) return;
+    // The standing fact described the log-only gate, so a fresh one carries
+    // enforce, and `chant approve` evaluates the next agent approval under it.
+    expect(first.recorded).toBe(true);
+    expect(first.pending.approval?.mode).toBe("enforce");
+
+    // Re-running without a new approval still waits: the stale permit predates the new pending fact as well.
+    const again = await evaluateGate(port, { op: "release", gate: "ship", planDigest: PLAN_A, approval: enforce, now: "2026-09-01T12:30:00.000Z" });
+    expect(again.satisfied).toBe(false);
+
+    const fresh = approval({ resolvedBy: "release-bot", timestamp: "2026-09-01T13:00:00.000Z", approver: { kind: "agent" }, policyDecision: allow("enforce") });
+    const after = await evaluateGate(
+      memoryGateLedgerPort({ resolutions: [stale, fresh], pending: [first.pending] }),
+      { op: "release", gate: "ship", planDigest: PLAN_A, approval: enforce, now: "2026-09-01T14:00:00.000Z" },
+    );
+    expect(after.satisfied).toBe(true);
+    if (!after.satisfied) return;
+    expect(after.via).toBe("policy");
+    expect(after.resolution.timestamp).toBe(fresh.timestamp);
+  });
+
   test("enforce: a recorded decision with no mode does not pass the gate (#2512)", async () => {
     const block: ResolvedGateApproval = { policy: POLICY, mode: "enforce" };
     const { mode: _mode, ...noMode } = allow()!;
