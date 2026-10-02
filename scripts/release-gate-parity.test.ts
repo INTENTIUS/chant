@@ -70,12 +70,23 @@ describe("release gate parity (#1481)", () => {
   it("a failed tag release deletes its tag", () => {
     const untag = publish.jobs.untag;
     expect(untag).toBeDefined();
-    expect(untag.needs).toEqual(expect.arrayContaining(["test", "publish"]));
+    expect(untag.needs).toEqual(expect.arrayContaining(["test", "audit", "publish"]));
     expect(untag.if).toMatch(/always\(\)/);
     expect(untag.if).toMatch(/needs\.publish\.result/);
     expect(untag.if).toMatch(/needs\.test\.result/);
-    const del = stepsRunning(untag, /git push origin ":refs\/tags\//);
-    expect(del).toHaveLength(1);
+    expect(untag.if).toMatch(/needs\.audit\.result/);
+    // #3191: the deletion goes through release-untag.sh, which keeps the tag
+    // once any package of the release is on npm.
+    expect(stepsRunning(untag, /scripts\/release-untag\.sh/)).toHaveLength(1);
+    expect(readFileSync(join(root, "scripts", "release-untag.sh"), "utf8")).toMatch(/git push origin ":refs\/tags\//);
+  });
+
+  // #3191: a package with no trusted-publisher record stops the release
+  // before anything ships.
+  it("publish waits on the trusted-publisher audit", () => {
+    expect(stepsRunning(publish.jobs.audit, /scripts\/audit-trusted-publishers\.sh/)).toHaveLength(1);
+    expect(publish.jobs.publish.needs).toEqual(expect.arrayContaining(["test", "audit"]));
+    expect(publish.jobs.publish.if).toMatch(/needs\.audit\.result == 'success'/);
   });
 
   // #3027: the gate waits for the chant run; a gate that ran out of time

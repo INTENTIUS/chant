@@ -22,14 +22,18 @@ on:
 
 jobs:
   # Which packages can actually publish over OIDC, answered in seconds. No
-  # `needs:`, so it does not wait on the test gate — dispatch this workflow and
-  # the coverage table is in the run summary before the suite finishes.
+  # `needs:`, so it runs beside the test gate — dispatch this workflow and
+  # the coverage table is in the run summary before the gate finishes.
   #
   # It lives here rather than in its own workflow because npm matches a
   # trusted-publisher record against the workflow FILENAME: probing from
   # anywhere else reports every package as missing and proves nothing.
   #
-  # Informational, never gating. The publish job is what fails a bad release.
+  # #3191: a gate. `publish` needs it, so a package with no working record
+  # stops the release before anything ships. chant-v0.81.0 (#2646) published
+  # 19 packages before the two with no record failed. When GitHub issues no
+  # id-token (a fork, a job without the permission) the script can check
+  # nothing; it warns and passes.
   audit:
     runs-on: ubuntu-latest
     permissions:
@@ -76,11 +80,16 @@ jobs:
         run: bash scripts/publish-verify-ci.sh
 
   publish:
-    needs: [test]
-    # Run when the CI gate passed (tag / dispatch) or was skipped (merge path).
-    # Never runs if test actually failed.
-    if: ${{ always() && (needs.test.result == 'success' || needs.test.result == 'skipped') }}
+    needs: [test, audit]
+    # Run when the CI gate passed (tag / dispatch) or was skipped (merge path),
+    # and every package has a trusted-publisher record (#3191). Never runs if
+    # either actually failed.
+    if: ${{ always() && needs.audit.result == 'success' && (needs.test.result == 'success' || needs.test.result == 'skipped') }}
     runs-on: ubuntu-latest
+    outputs:
+      # What this run put on npm, name@version, space-separated. `untag`
+      # reads it alongside the registry.
+      published: ${{ steps.publish.outputs.published }}
     permissions:
       contents: read
       id-token: write
@@ -111,11 +120,13 @@ jobs:
       # idempotent, so a partial release is recovered by re-running or
       # dispatching this workflow.
       - name: Publish workspace packages
+        id: publish
         env:
           # Fallback only. Packages with an npm trusted-publisher record
-          # publish over OIDC and never touch this; a package that has no
-          # record yet (a newly added one) uses it instead of failing the
-          # release. See scripts/publish-packages.sh.
+          # publish over OIDC and never touch this. Since #3191 `audit` stops
+          # the release when a package has no record, so this is used only
+          # when the exchange worked there and then failed here. See
+          # scripts/publish-packages.sh.
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           # chant #1473 — arm the release-time surface gate. `prepack`
           # regenerates from upstream, so the artifact about to be published is
@@ -129,16 +140,22 @@ jobs:
 
   # #1481 — a failed release must not leave its tag behind. `just release`
   # pushes the bump commit and the tag before this workflow runs, so when the
-  # gate or the publish fails, main is left claiming a version the registry
-  # never got (chant-v0.40.1 was exactly that: tagged, bumped, nothing on npm).
-  # Deleting the tag makes the tag list the truth again: a tag exists only for
-  # a release whose every package published.
+  # gate, the audit or the publish fails, main is left claiming a version the
+  # registry never got (chant-v0.40.1 was exactly that: tagged, bumped,
+  # nothing on npm). Deleting the tag makes the tag list the truth again.
   #
   # The bump commit stays — rewriting main from a workflow is worse than a
   # stale version field, and `just release` floors the next bump on it anyway.
-  # A partial publish is recovered by fixing the cause and running this
-  # workflow via workflow_dispatch on main (the skip-if-unchanged guard
-  # publishes only what is still missing), or by cutting the next release.
+  #
+  # #3191: once any package of the release is on npm, the tag stays.
+  # Deleting it then leaves npm ahead of git with no tag, which is what
+  # chant-v0.81.0 (#2646) did. scripts/release-untag.sh asks the registry about
+  # each package the tagged commit bumped (and takes the publish job's own
+  # list), keeps the tag and fails with the list of what did and did not
+  # publish, or deletes the tag when nothing did. Recover a partial release
+  # by fixing the cause and `gh run rerun <id> --failed`: the publish skips
+  # what is already on npm. An audit failure publishes nothing, so its tag
+  # goes; add the record and push the tag again at the same commit.
   #
   # One exception (#3027): when the gate failed only because the `chant` run
   # was still going after 45 minutes (needs.test.outputs.gate == 'timeout'),
@@ -146,14 +163,20 @@ jobs:
   # published. Once that run is green, `gh run rerun <id> --failed` re-runs
   # the gate and publishes. A cancelled gate (no output) still untags.
   untag:
-    needs: [test, publish]
-    if: ${{ always() && startsWith(github.ref, 'refs/tags/') && needs.test.outputs.gate != 'timeout' && (contains(fromJSON('["failure","cancelled"]'), needs.test.result) || contains(fromJSON('["failure","cancelled"]'), needs.publish.result)) }}
+    needs: [test, audit, publish]
+    if: ${{ always() && startsWith(github.ref, 'refs/tags/') && needs.test.outputs.gate != 'timeout' && (contains(fromJSON('["failure","cancelled"]'), needs.test.result) || contains(fromJSON('["failure","cancelled"]'), needs.audit.result) || contains(fromJSON('["failure","cancelled"]'), needs.publish.result)) }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v6
-      - name: Delete the tag of the failed release
+        with:
+          # The tagged bump commit and its parent: the packages it moved are
+          # the release's.
+          fetch-depth: 2
+      - name: Delete the tag of the failed release, unless part of it is on npm
+        env:
+          PUBLISHED_IN_RUN: ${{ needs.publish.outputs.published }}
         run: |
-          echo "::error::release ${GITHUB_REF_NAME} failed (test: ${{ needs.test.result }}, publish: ${{ needs.publish.result }}) — deleting its tag"
-          git push origin ":refs/tags/${GITHUB_REF_NAME}"
+          echo "::error::release ${GITHUB_REF_NAME} failed (test: ${{ needs.test.result }}, audit: ${{ needs.audit.result }}, publish: ${{ needs.publish.result }})"
+          bash scripts/release-untag.sh

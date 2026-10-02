@@ -115,9 +115,10 @@ The command is idempotent. A second run changes nothing and reports each file as
 
 <Aside type="danger" title="Do this before the first release, or the release breaks">
 A new package needs an npm **trusted publisher** record, and nothing in the
-repo can create one for you. Without it the publish workflow authenticates
-over OIDC, the registry has no record to match, and `npm publish` reports a
-bare `ENEEDAUTH` — indistinguishable from having no credentials at all.
+repo can create one for you. Without it the publish workflow's `audit` job
+fails and nothing in the release is published. Before that job gated the
+release, the package's `npm publish` reported a bare `ENEEDAUTH` after every
+other package had shipped.
 
 On [npmjs.com](https://www.npmjs.com), open the package, then Settings ->
 Trusted Publisher, and add:
@@ -156,14 +157,32 @@ the green commit the recipe picked; any other commit needs a green run of its
 own. Because the push that lands the tag is also what starts that run, the gate
 polls until the run finishes rather than failing on a queued one. A successful
 run lets the release through. The gate fails when every run has completed
-without success, or when no run has appeared after 5 minutes, and then the
-`untag` job deletes the tag. A failed publish deletes it too, so a tag exists
-only for a release that reached npm.
+without success, or when no run has appeared after 5 minutes.
 
-The tag survives one case. When the run is still going after 45 minutes the
-gate ends with outcome `timeout` and nothing is published. Wait for that run
-to go green, then re-run the gate and the publish with
-`gh run rerun <publish-run-id> --failed`.
+Beside the gate, the `audit` job runs `scripts/audit-trusted-publishers.sh`,
+which asks npm for an OIDC token for every publishable package. It fails when
+any package has no working trusted-publisher record, including a package that
+is not on npm yet, and `publish` waits for it, so a missing record stops the
+release before any package ships. The run summary lists the packages to fix.
+When the job gets no id-token from GitHub, as on a fork, the audit can check
+nothing; it prints a warning and passes.
+
+When the gate, the audit or the publish fails, the `untag` job runs
+`scripts/release-untag.sh`. If none of the packages the release bumped is on
+npm, it deletes the tag, so a tag exists only for a release that reached npm.
+After an audit failure that is always the case: add the missing records, then
+push the tag again at the same commit.
+
+The tag survives two cases:
+
+- Part of the release reached npm. Deleting the tag then would leave npm ahead
+  of git with no tag, so `untag` keeps it, fails, and its summary lists which
+  packages published and which did not. Fix the cause and run
+  `gh run rerun <publish-run-id> --failed`; packages already on npm are
+  skipped.
+- The `chant` run is still going after 45 minutes. The gate ends with outcome
+  `timeout` and nothing is published. Wait for that run to go green, then
+  re-run the gate and the publish with `gh run rerun <publish-run-id> --failed`.
 
 To move a single lexicon without a full release:
 
