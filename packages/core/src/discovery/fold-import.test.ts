@@ -1007,6 +1007,135 @@ describe("tryFoldFile — registered intrinsic tagged templates (#1039)", () => 
   });
 });
 
+// chant #3196 — a registered tag that returns an entity (the shape the sql
+// lexicon's `table`/`view` tags take): it reads `strings.raw`, renders an
+// interpolated entity by its name, and records it as a dependency. Fold has to
+// hand it the TemplateStringsArray a real tagged call does, and a same-file
+// reference to one has to read the one entity discovery registers.
+describe("tryFoldFile — tags that read raw strings and return entities (#3196)", () => {
+  let testDir: string;
+
+  beforeEach(async () => {
+    testDir = join(tmpdir(), `chant-fold-import-tag-entity-test-${Date.now()}-${Math.random()}`);
+    await mkdir(testDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  const TABLE: IntrinsicDef = { name: "table", isTag: true };
+  const SUB: IntrinsicDef = { name: "Sub", isTag: true };
+
+  async function writeTagDefs(): Promise<void> {
+    await writeFile(
+      join(testDir, "tags.ts"),
+      `
+        import { createResource } from ${JSON.stringify(runtimePath)};
+        import { INTRINSIC_MARKER } from ${JSON.stringify(intrinsicPath)};
+        const Table = createResource("Test::Table", "test", {});
+
+        export function table(strings, ...values) {
+          if (!Object.isFrozen(strings) || !Object.isFrozen(strings.raw)) throw new Error("not a TemplateStringsArray");
+          let ddl = strings.raw[0];
+          const dependsOn = [];
+          values.forEach((v, i) => {
+            if (v && typeof v === "object" && v.props) {
+              dependsOn.push(v);
+              ddl += v.props.name;
+            } else {
+              ddl += String(v);
+            }
+            ddl += strings.raw[i + 1];
+          });
+          const name = /CREATE (?:TABLE|VIEW) (\\w+)/.exec(ddl)?.[1];
+          return new Table({ name, ddl, cooked: strings.join("|"), dependsOn });
+        }
+
+        export function Sub(strings, ...values) {
+          return { [INTRINSIC_MARKER]: true, strings: [...strings], values, toJSON() { return { "Test::Sub": strings.join("") }; } };
+        }
+      `,
+    );
+  }
+
+  type Props = { name: string; ddl: string; cooked: string; dependsOn: unknown[] };
+  const propsOf = (entity: unknown): Props => (entity as { props: Props }).props;
+
+  test("a backslash in the template folds to the same text running gives", async () => {
+    await writeTagDefs();
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      "import { table } from \"./tags\";\n" +
+        "export const users = table`CREATE TABLE users (re String DEFAULT '\\d+\\t', nl String DEFAULT '\\n')`;\n",
+    );
+
+    const result = await tryFoldFile(file, [TABLE]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const folded = propsOf(result.exportedValues.get("users"));
+    const ran = propsOf((await import(file)).users);
+
+    expect(folded.ddl).toBe("CREATE TABLE users (re String DEFAULT '\\d+\\t', nl String DEFAULT '\\n')");
+    expect(folded.ddl).toBe(ran.ddl);
+    expect(folded.cooked).toBe(ran.cooked);
+  });
+
+  test("a tag referencing a same-file tag const folds, and reads the one entity discovery registers", async () => {
+    await writeTagDefs();
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { table } from "./tags";
+        throw new Error("must never execute — the file folds");
+        export const events = table\`CREATE TABLE events (user_id UUID)\`;
+        export const active = table\`CREATE VIEW active AS SELECT user_id FROM \${events} -- \${events.props.name}\`;
+      `,
+    );
+
+    const result = await tryFoldFile(file, [TABLE]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.entities.map(([name]) => name)).toEqual(["events", "active"]);
+    const events = result.entities[0][1];
+    const active = propsOf(result.entities[1][1]);
+    expect(active.ddl).toBe("CREATE VIEW active AS SELECT user_id FROM events -- events");
+    expect(active.dependsOn).toHaveLength(1);
+    expect(active.dependsOn[0]).toBe(events);
+  });
+
+  test("a resource holding a same-file tag const shares the instance running gives it", async () => {
+    await writeTagDefs();
+    await writeFile(
+      join(testDir, "resources.ts"),
+      `
+        import { createResource } from ${JSON.stringify(runtimePath)};
+        export const Bucket = createResource("Test::Bucket", "test", {});
+      `,
+    );
+    const file = join(testDir, "main.ts");
+    await writeFile(
+      file,
+      `
+        import { Bucket } from "./resources";
+        import { Sub } from "./tags";
+        export const name = Sub\`data-\\\\d\`;
+        export const bucket = new Bucket({ name });
+      `,
+    );
+
+    const result = await tryFoldFile(file, [SUB]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const name = result.exportedValues.get("name");
+    expect(isIntrinsic(name)).toBe(true);
+    expect((result.exportedValues.get("bucket") as { props: { name: unknown } }).props.name).toBe(name);
+    expect(JSON.stringify(name)).toBe(JSON.stringify((await import(file)).name));
+  });
+});
+
 describe("tryFoldFile — build-time parameters (chant #1064)", () => {
   let testDir: string;
 
