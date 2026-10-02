@@ -306,6 +306,51 @@ export const logsBucket = new Bucket({
   PublicAccessBlockConfiguration: publicAccessBlock,
 });
 `,
+      "bucket-policies.ts": `/**
+ * Bucket policies — deny every request that arrives over plaintext (WAW042)
+ *
+ * CloudFormation models a bucket policy as its own resource, so each bucket
+ * gets one here.
+ */
+
+import { S3BucketPolicy, Ref, Sub } from "@intentius/chant-lexicon-aws";
+import { dataBucket } from "./data-bucket";
+import { logsBucket } from "./logs-bucket";
+
+export const dataBucketTlsOnly = {
+  Version: "2012-10-17",
+  Statement: [{
+    Sid: "DenyInsecureTransport",
+    Effect: "Deny",
+    Principal: "*",
+    Action: "s3:*",
+    Resource: [dataBucket.Arn, Sub\`\${dataBucket.Arn}/*\`],
+    Condition: { Bool: { "aws:SecureTransport": "false" } },
+  }],
+};
+
+export const dataBucketPolicy = new S3BucketPolicy({
+  Bucket: Ref(dataBucket),
+  PolicyDocument: dataBucketTlsOnly,
+});
+
+export const logsBucketTlsOnly = {
+  Version: "2012-10-17",
+  Statement: [{
+    Sid: "DenyInsecureTransport",
+    Effect: "Deny",
+    Principal: "*",
+    Action: "s3:*",
+    Resource: [logsBucket.Arn, Sub\`\${logsBucket.Arn}/*\`],
+    Condition: { Bool: { "aws:SecureTransport": "false" } },
+  }],
+};
+
+export const logsBucketPolicy = new S3BucketPolicy({
+  Bucket: Ref(logsBucket),
+  PolicyDocument: logsBucketTlsOnly,
+});
+`,
     } };
   },
 
