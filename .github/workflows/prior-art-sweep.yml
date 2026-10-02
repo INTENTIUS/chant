@@ -47,7 +47,9 @@ jobs:
           delta=$(node -e 'const r=require("./sweep.json"); console.log(r.reports.reduce((n,t)=>n+t.newUpstream.length+t.goneUpstream.length+t.staleCredits.length+t.errors.length,0))')
           if [ "$delta" = "0" ]; then echo "no delta"; exit 0; fi
           title="prior-art sweep: $delta change(s) across the credited tools"
-          existing=$(gh issue list --label prior-art --state open --json number --jq '.[0].number // empty')
+          # Match the sweep's own issue by title: research issues carry the prior-art label too,
+          # and editing the first labeled issue overwrote #3047.
+          existing=$(gh issue list --label prior-art --state open --limit 200 --json number,title --jq '[.[] | select(.title | startswith("prior-art sweep:"))][0].number // empty')
           if [ -n "$existing" ]; then
             gh issue edit "$existing" --title "$title" --body-file sweep.md
           else
