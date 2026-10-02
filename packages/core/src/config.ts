@@ -164,9 +164,11 @@ export const ChantConfigSchema = z.object({
   release: z.object({
     autoRecord: z.boolean().optional(),
   }).optional(),
+  // Strict: a misspelt key here would leave Ops on the local runtime with
+  // nothing said (#2523).
   run: z.object({
     on: z.string().min(1).optional(),
-  }).optional(),
+  }).strict().optional(),
   sbom: z.object({
     format: z.enum(["spdx", "cyclonedx"]).optional(),
     enabled: z.boolean().optional(),

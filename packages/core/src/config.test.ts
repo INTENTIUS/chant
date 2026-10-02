@@ -1,6 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   loadChantConfig,
+  InvalidChantConfigError,
   loadChantConfigUpward,
   DEFAULT_CHANT_CONFIG,
   resolveAutoReleaseDisabled,
@@ -127,6 +128,26 @@ describe("loadChantConfig", () => {
 
     const result = await loadChantConfig(TEST_DIR);
     expect(result.config.release?.autoRecord).toBe(false);
+  });
+
+  // #2523: run.on is the project's default Op runtime for `chant run`.
+  test("loads chant.config.json with run.on", async () => {
+    writeFileSync(join(TEST_DIR, "chant.config.json"), JSON.stringify({ run: { on: "mylexicon" } }));
+    const result = await loadChantConfig(TEST_DIR);
+    expect(result.config.run?.on).toBe("mylexicon");
+  });
+
+  test.each([
+    ["a non-string run.on", { run: { on: 5 } }, /run\.on/],
+    ["an empty run.on", { run: { on: "" } }, /run\.on/],
+    ["a misspelt key in run", { run: { onn: "mylexicon" } }, /run.*onn/],
+  ])("rejects %s, naming the config file and the key", async (_, raw, key) => {
+    writeFileSync(join(TEST_DIR, "chant.config.json"), JSON.stringify(raw));
+    const err = await loadChantConfig(TEST_DIR).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(InvalidChantConfigError);
+    expect((err as InvalidChantConfigError).key).toBe("run");
+    expect((err as Error).message).toContain("chant.config.json");
+    expect((err as Error).message).toMatch(key);
   });
 
   // #606: sbom.format sets the project-wide default SBOM format for every

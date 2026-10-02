@@ -424,6 +424,30 @@ describe("runOp: a steward's turn (#2750)", () => {
     expect(acquireStewardTurnMock).not.toHaveBeenCalled();
   });
 
+  test("fountain form with run.on: fountain and no flag: runs on fountain like --on fountain (#2523)", async () => {
+    const runtime = {
+      name: "fountain",
+      start: vi.fn(async (op: { name: string }) => ({
+        op: op.name,
+        runId: "f-1",
+        result: async () => ({ op: op.name, runId: "f-1", state: "completed" as const, startedAt: "t", endedAt: "t" }),
+      })),
+      status: vi.fn(), log: vi.fn(), list: vi.fn(), cancel: vi.fn(),
+    };
+    discoverOpsMock.mockResolvedValue({ ops: new Map([localOp("release", [])]), errors: [] });
+    discoverStewardsMock.mockResolvedValueOnce(stewardOwning("release", "box-steward", "fountain"));
+    loadChantConfigMock.mockResolvedValue({ config: { lexicons: ["fountain"], run: { on: "fountain" } } });
+    makeStdoutSpy();
+    const exit = await runOp({
+      args: makeArgs({ path: "release" }),
+      plugins: [{ name: "fountain", opRuntime: runtime } as never], serializers: [],
+    });
+
+    expect(exit).toBe(0);
+    expect(runtime.start).toHaveBeenCalledTimes(1);
+    expect(acquireStewardTurnMock).not.toHaveBeenCalled();
+  });
+
   test("local form, the turn lease's own acquire throws (a stale .lock): refused as a lease error, not an uncaught exception, and nothing runs", async () => {
     discoverOpsMock.mockResolvedValue({
       ops: new Map([localOp("release", [{ kind: "activity", fn: "shellCmd", args: { cmd: "true" } }])]),
@@ -927,23 +951,63 @@ describe("run subcommands on the resolved runtime", () => {
     expect(runtime.list).not.toHaveBeenCalled();
   });
 
-  test("run.on naming an unconfigured lexicon is refused with the --on message (#2523)", async () => {
+  test("run.on naming an unconfigured lexicon gets --on's refusal, naming run.on (#2523)", async () => {
     discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("hello")]), errors: [] });
     loadChantConfigMock.mockResolvedValue({ config: { lexicons: ["aws"], run: { on: "nope" } } });
     const stderr = makeStderrSpy();
     const exit = await runOp({ args: makeArgs({ path: "hello" }), plugins: [], serializers: [] });
     expect(exit).toBe(1);
-    expect(stderr.join("\n")).toContain('--on nope: "nope" is not a configured lexicon');
-    expect(stderr.join("\n")).toContain("run.on");
+    expect(stderr.join("\n")).toContain('run.on "nope" in chant.config.ts: "nope" is not a configured lexicon');
+    expect(stderr.join("\n")).toContain("Configured lexicons: aws");
+    expect(stderr.join("\n")).toContain("--on local");
   });
 
-  test("run.on naming a lexicon with no opRuntime is refused with the --on message (#2523)", async () => {
+  test("an explicit --on wins over run.on (#2523)", async () => {
+    const chosen = makeStubRuntime();
+    const other = makeStubRuntime();
+    discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("hello")]), errors: [] });
+    loadChantConfigMock.mockResolvedValue({ config: { lexicons: ["stub", "other"], run: { on: "other" } } });
+    makeStdoutSpy();
+    makeStderrSpy();
+    const plugins = [stubPlugin(chosen), { name: "other", opRuntime: other } as never];
+    expect(await runOpList({ args: makeArgs({ on: "stub" }), plugins, serializers: [] })).toBe(0);
+    expect(chosen.list).toHaveBeenCalledTimes(1);
+    expect(other.list).not.toHaveBeenCalled();
+  });
+
+  test("run.on: local selects the built-in runtime (#2523)", async () => {
+    const runtime = makeStubRuntime();
+    discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("hello")]), errors: [] });
+    loadChantConfigMock.mockResolvedValue({ config: { lexicons: ["stub"], run: { on: "local" } } });
+    makeStdoutSpy();
+    makeStderrSpy();
+    await runOpList({ args: makeArgs({}), plugins: [stubPlugin(runtime)], serializers: [] });
+    expect(runtime.list).not.toHaveBeenCalled();
+  });
+
+  test("an invalid run block is refused, not run locally (#2523)", async () => {
+    const { InvalidChantConfigError } = await vi.importActual<typeof import("../../config")>("../../config");
+    const runtime = makeStubRuntime();
+    discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("hello")]), errors: [] });
+    loadChantConfigMock.mockRejectedValue(
+      new InvalidChantConfigError("Invalid chant config in /p/chant.config.ts: run.on: Expected string, received number", "run"),
+    );
+    const stderr = makeStderrSpy();
+    makeStdoutSpy();
+    expect(await runOpList({ args: makeArgs({}), plugins: [stubPlugin(runtime)], serializers: [] })).toBe(1);
+    expect(stderr.join("\n")).toContain("Invalid chant config in /p/chant.config.ts: run.on");
+    expect(runtime.list).not.toHaveBeenCalled();
+    // --on local still runs: the flag needs nothing from the config.
+    expect(await runOpList({ args: makeArgs({ on: "local" }), plugins: [stubPlugin(runtime)], serializers: [] })).toBe(0);
+  });
+
+  test("run.on naming a lexicon with no opRuntime gets --on's refusal, naming run.on (#2523)", async () => {
     discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("hello")]), errors: [] });
     loadChantConfigMock.mockResolvedValue({ config: { lexicons: ["plain"], run: { on: "plain" } } });
     const stderr = makeStderrSpy();
     const exit = await runOp({ args: makeArgs({ path: "hello" }), plugins: [{ name: "plain" } as never], serializers: [] });
     expect(exit).toBe(1);
-    expect(stderr.join("\n")).toContain('--on plain: lexicon "plain" does not host Op runs');
+    expect(stderr.join("\n")).toContain('run.on "plain" in chant.config.ts: lexicon "plain" does not host Op runs');
   });
 
   test("--components on a runtime that cannot host them → one line, exit 1", async () => {
