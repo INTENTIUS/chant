@@ -6,10 +6,23 @@ chant is spec-true per dialect, not database-agnostic. A dialect's engines, colu
 
 This package is being built in slices under [#3199](https://github.com/INTENTIUS/chant/issues/3199) and is not published yet. What it holds today:
 
-- The ClickHouse type catalog: engine, type family, codec, skip index, format and function names and both settings surfaces, generated from the `system.*` tables of `clickhouse/clickhouse-server:26.8.15.10` and committed as `src/spec/clickhouse-catalog.snapshot.json`.
-- Hand-written overlays for the grammar the catalog does not carry: engine argument kinds, column type parameters, codec parameters, skip index parameters, TTL actions and projection forms (`src/clickhouse/overlays/`).
+- `database`, `table` and `view` tagged templates (`@intentius/chant-lexicon-sql/clickhouse`) that parse ClickHouse DDL at build time into entities, with references, dependency order and column-level lineage for views. `chant build` writes a JSON schema document and the statements, in creation order, to `clickhouse.sql`.
+- Lint at the token: SQLCH001 (the DDL does not parse), SQLCH002 (a `Nullable` column in a key), SQLCH003 (a column interpolated without `.columns`); and SQLCH101 after the build (an engine the pinned server does not have).
+- The ClickHouse type catalog: engine, type family, codec, skip index, format and function names and both settings surfaces, generated from the `system.*` tables of `clickhouse/clickhouse-server:26.8.15.10` and committed as `src/spec/clickhouse-catalog.snapshot.json`, with hand-written overlays for the grammar the catalog does not carry (`src/clickhouse/overlays/`).
 
-Tables, views and materialized views declared as SQL-shaped tagged templates, import from a live server and the offline change classifier follow in #3197.
+```ts
+import { table, view } from "@intentius/chant-lexicon-sql/clickhouse";
+
+export const events = table`
+  CREATE TABLE events (user_id UUID, kind LowCardinality(String), ts DateTime)
+  ENGINE = MergeTree ORDER BY (user_id, ts)`;
+
+export const byKind = view`
+  CREATE VIEW by_kind AS
+  SELECT ${events.columns.kind} AS kind, count() AS n FROM ${events} GROUP BY kind`;
+```
+
+Import from a live server, observation and the offline change classifier follow in #3197.
 
 ## Generating
 

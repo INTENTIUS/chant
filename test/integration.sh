@@ -471,6 +471,11 @@ TESTDIR="/app/_smoke_test_prometheus"
 mkdir -p "$TESTDIR/src" && cp /app/test/fixtures/prometheus.ts "$TESTDIR/src/"
 test_init "prometheus" "$TESTDIR"
 rm -rf "$TESTDIR"
+# SQL (ClickHouse dialect)
+# The primary output is the JSON schema document; clickhouse.sql is written
+# beside it under --output. No init templates yet (#3211), so no test_init.
+test_lexicon "sql" "/app/test/fixtures/sql.ts" 'jq -e ".applyOrder == [\"events\", \"byKind\"]"' 'grep -q "applyOrder"'
+
 # Grafana
 # The primary output is a JSON index of what was built; the dashboard JSON
 # and provisioning files are written beside it with --output. The init

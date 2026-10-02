@@ -197,6 +197,13 @@ test_manual_project "prometheus" "/tarballs/lexicon-prometheus.tgz /tarballs/lex
 const rules: Rule[] = [{ alert: "TargetDown", expr: "up == 0", for: "5m", labels: { severity: "page" }, annotations: { summary: "down" } }];
 export const smoke = new RuleGroup({ name: "smoke", rules });'
 
+# SQL manual project. Unpublished until #3199 finishes, so tarball mode only.
+if [ "$INSTALL_MODE" != "registry" ]; then
+  test_manual_project "sql" "/tarballs/lexicon-sql.tgz" \
+    'import { table } from "@intentius/chant-lexicon-sql/clickhouse";
+export const events = table`CREATE TABLE events (id UInt64, ts DateTime) ENGINE = MergeTree ORDER BY (id, ts)`;'
+fi
+
 # Grafana manual project (#2919). grafana depends on the k8s, prometheus and
 # otel lexicons, so their tarballs go in too. Beyond build and lint, it checks
 # that the published package works at run time:

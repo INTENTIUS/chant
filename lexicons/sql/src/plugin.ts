@@ -7,10 +7,12 @@
  * plugin is the shared machinery every dialect plugs into.
  */
 
-import type { LexiconPlugin } from "@intentius/chant/lexicon";
+import type { IntrinsicDef, LexiconPlugin } from "@intentius/chant/lexicon";
 import type { CompletionContext, HoverContext } from "@intentius/chant/lsp/types";
 import { sqlSerializer } from "./serializer";
 import { rules } from "./lint/rules";
+import { postSynthChecks as postSynthCheckList } from "./lint/post-synth";
+import { sqlAuditCatalog } from "./lint/audit-catalog";
 import { completions } from "./lsp/completions";
 import { hover } from "./lsp/hover";
 import { sqlConfigSchema } from "./config";
@@ -52,7 +54,34 @@ export const sqlPlugin: LexiconPlugin = {
   },
 
   postSynthChecks() {
-    return [];
+    return postSynthCheckList;
+  },
+
+  auditCatalog() {
+    return sqlAuditCatalog;
+  },
+
+  /**
+   * The ClickHouse tags fold: `chant build` reduces a `table`, `view` or
+   * `database` template to the entity the tag builds, without running the
+   * file. `literal(...)` folds as a call so it can sit inside a tag.
+   */
+  intrinsics(): IntrinsicDef[] {
+    return [
+      { name: "database", isTag: true, description: "A ClickHouse CREATE DATABASE, parsed into a database entity" },
+      { name: "table", isTag: true, description: "A ClickHouse CREATE TABLE, parsed into a table entity" },
+      {
+        name: "view",
+        isTag: true,
+        description: "A ClickHouse CREATE VIEW or CREATE MATERIALIZED VIEW, parsed into a view entity with its lineage",
+      },
+      {
+        name: "literal",
+        isTag: false,
+        foldsAsCall: true,
+        description: "A quoted, escaped SQL string literal, for a string interpolated as a value rather than as SQL text",
+      },
+    ];
   },
 
   completionProvider(ctx: CompletionContext) {

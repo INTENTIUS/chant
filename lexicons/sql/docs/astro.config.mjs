@@ -21,8 +21,21 @@ export default defineConfig({
                   "slug": "index"
             },
             {
+                  "label": "How-to guides",
+                  "items": [
+                        {
+                              "label": "Declaring Tables and Views",
+                              "slug": "clickhouse-ddl"
+                        }
+                  ]
+            },
+            {
                   "label": "Reference",
                   "items": [
+                        {
+                              "label": "All Rules",
+                              "slug": "rules"
+                        },
                         {
                               "label": "Serialization",
                               "slug": "serialization"
