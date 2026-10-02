@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { isUnknown, readJsonencode, UNKNOWN } from "./jsonencode";
+import { hasUnknownKeys, isUnknown, readJsonencode, UNKNOWN, UNKNOWN_KEYS } from "./jsonencode";
 
 /** What hcl2json hands back for `attr = jsonencode(<arg>)`: the source text, wrapped as one interpolation. */
 const call = (arg: string): string => `\${jsonencode(${arg})}`;
@@ -137,8 +137,6 @@ describe("readJsonencode with unknownLeaves: expressions become opaque leaves", 
   test.each([
     ["a for-expression producing the collection", "{ Statement = [for s in var.s : s] }", /for-expression/],
     ["an object for-expression", "{ for k, v in var.m : k => v }", /for-expression/],
-    ["a computed key", '{ (var.k) = "v" }', /computed object key/],
-    ["an interpolated key", '{ "${var.k}" = "v" }', /object key/],
     ["an expression as the whole argument", "local.policy", /reference/],
     ["a splat as the whole argument", "var.x[*]", /reference/],
   ])("still not-determined: %s", (_name, arg, reason) => {
@@ -149,5 +147,40 @@ describe("readJsonencode with unknownLeaves: expressions become opaque leaves", 
 
   test("the default mode is unchanged: one expression makes the whole read not-determined", () => {
     expect(readJsonencode(call('{ Action = "*", Resource = var.arn }')).kind).toBe("not-determined");
+  });
+});
+
+describe("readJsonencode with unknownLeaves: members with an expression key", () => {
+  test("a traefik label keyed by an interpolation is dropped and recorded (govuk-forms/forms-admin shape)", () => {
+    const raw = call(
+      '[{\n  name = "forms-admin"\n  dockerLabels = {\n    "traefik.enable" : "true"\n' +
+        '    "traefik.http.routers.forms-admin-pr-${var.pull_request_number}.rule" : "Host(`pr-${var.pull_request_number}.example`)"\n' +
+        '    "traefik.port" : "3000"\n  }\n}]',
+    );
+    const read = readJsonencode(raw, { unknownLeaves: true });
+    expect(read.kind).toBe("literal");
+    if (read.kind !== "literal") return;
+    const labels = (read.value as Record<string, unknown>[])[0].dockerLabels as Record<string | symbol, unknown>;
+    expect(Object.keys(labels)).toEqual(["traefik.enable", "traefik.port"]);
+    expect(hasUnknownKeys(labels)).toBe(true);
+    expect(labels[UNKNOWN_KEYS]).toEqual([expect.stringMatching(/object key holding .*interpolation/)]);
+    expect(hasUnknownKeys((read.value as Record<string, unknown>[])[0])).toBe(false);
+  });
+
+  test("a parenthesised computed key is dropped with its multi-line value", () => {
+    const read = readJsonencode(call('{\n  (var.k) = {\n    x = 1\n  }\n  b = "after"\n}'), { unknownLeaves: true });
+    expect(read.kind).toBe("literal");
+    if (read.kind !== "literal") return;
+    expect(Object.keys(read.value as object)).toEqual(["b"]);
+    expect((read.value as Record<symbol, unknown>)[UNKNOWN_KEYS]).toEqual(["a computed object key"]);
+  });
+
+  test.each([
+    ["a computed key", '{ (var.k) = "v" }', /computed object key/],
+    ["an interpolated key", '{ "${var.k}" = "v" }', /object key/],
+  ])("default mode: %s makes the whole read not-determined", (_name, arg, reason) => {
+    const read = readJsonencode(call(arg));
+    expect(read.kind).toBe("not-determined");
+    if (read.kind === "not-determined") expect(read.reason).toMatch(reason);
   });
 });

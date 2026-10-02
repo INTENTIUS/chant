@@ -59,9 +59,11 @@ export interface ReadJsonencodeOptions {
    *
    * The skip is narrow. It consumes one value expression, balancing `()[]{}`
    * and quoted strings, up to the next `,`, newline or closing bracket at its
-   * own depth. Damage to the STRUCTURE is still `not-determined`: a
-   * for-expression producing a collection, a computed or interpolated object
-   * key, or an expression as the whole argument (`jsonencode(local.policy)`,
+   * own depth. A member whose KEY is an expression (an interpolated quoted
+   * key or a parenthesised computed key) is dropped from its object and listed
+   * under {@link UNKNOWN_KEYS} on that object. Damage to the STRUCTURE is
+   * still `not-determined`: a for-expression producing a collection, or an
+   * expression as the whole argument (`jsonencode(local.policy)`,
    * `jsonencode(var.x[*])`), since then no key or element is known.
    */
   unknownLeaves?: boolean;
@@ -74,6 +76,24 @@ export const UNKNOWN: unique symbol = Symbol("jsonencode.unknown");
 export interface UnknownLeaf {
   readonly [UNKNOWN]: true;
   readonly reason: string;
+}
+
+/**
+ * Marks an object, read with `unknownLeaves`, that had members whose KEY is an
+ * expression (`"router-${var.n}.rule" = ...`, `(var.k) = ...`). Those members
+ * are dropped from the object and their reasons listed here, so a reader can
+ * tell "this key is absent" from "some key here could not be read".
+ */
+export const UNKNOWN_KEYS: unique symbol = Symbol("jsonencode.unknownKeys");
+
+/** Whether `obj` is an object that dropped one or more members with an expression key. */
+export function hasUnknownKeys(obj: unknown): obj is Record<string, unknown> & { [UNKNOWN_KEYS]: string[] } {
+  return (
+    typeof obj === "object" &&
+    obj !== null &&
+    Array.isArray((obj as Record<symbol, unknown>)[UNKNOWN_KEYS]) &&
+    ((obj as Record<symbol, unknown>)[UNKNOWN_KEYS] as unknown[]).length > 0
+  );
 }
 
 /** Whether `v` is a value position the reader skipped. */
@@ -110,6 +130,9 @@ class NotLiteral extends Error {}
 
 /** Damage to the shape itself: never recovered by skipping a leaf. */
 class Structural extends NotLiteral {}
+
+/** An object key that is an expression; recoverable by dropping the member under `unknownLeaves`. */
+class KeyNotLiteral extends Structural {}
 
 const IDENT = /[A-Za-z_][A-Za-z0-9_-]*/y;
 const NUMBER = /-?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?/y;
@@ -209,7 +232,22 @@ class Reader {
         return out;
       }
       const quoted = this.peek() === '"';
-      const key = this.key();
+      const memberStart = this.pos;
+      let key: string;
+      try {
+        key = this.key();
+      } catch (err) {
+        if (!(err instanceof KeyNotLiteral) || !this.unknownLeaves) throw err;
+        // Drop the whole member: the skip runs from the key through its value
+        // to the separator, balancing brackets and quotes on the way.
+        this.pos = memberStart;
+        this.skipExpression();
+        const bag = out as Record<symbol, string[]>;
+        (bag[UNKNOWN_KEYS] ??= []).push(err.message);
+        this.skipSpace(false);
+        if (this.peek() === ",") this.pos++;
+        continue;
+      }
       this.skipSpace(false);
       const sep = this.peek();
       if (sep !== "=" && sep !== ":") {
@@ -229,11 +267,11 @@ class Reader {
       try {
         return this.string();
       } catch (err) {
-        if (err instanceof NotLiteral) throw new Structural(`an object key holding ${err.message.replace(/^a string with /, "")}`);
+        if (err instanceof NotLiteral) throw new KeyNotLiteral(`an object key holding ${err.message.replace(/^a string with /, "")}`);
         throw err;
       }
     }
-    if (c === "(") throw new Structural("a computed object key");
+    if (c === "(") throw new KeyNotLiteral("a computed object key");
     IDENT.lastIndex = this.pos;
     const m = IDENT.exec(this.src);
     if (!m) throw new Structural(`an unexpected "${c}" where an object key belongs`);
