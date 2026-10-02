@@ -97,6 +97,17 @@ telemetry: { attribution: true },
 
 Inside a [workspace](/chant/reference/workspace-declaration/) attribution is on, and `attribution: false` turns it off. Outside one it is off, and `attribution: true` turns it on with the attributes that need no workspace. A project with neither a workspace declaration nor this key builds the same bytes as before. See [how a reader joins a span](/chant/reference/workspace-read-contract/#joining-a-span-to-a-member).
 
+### `run`
+
+Defaults for [`chant run`](/chant/cli/run/) and its subcommands ([#2523](https://github.com/INTENTIUS/chant/issues/2523)). `run.on` names the runtime that hosts the project's Op runs when `--on` is not given: a configured lexicon that declares an `opRuntime`, or `"local"` for the built-in runtime.
+
+```typescript
+lexicons: ["aws", "mylexicon"],
+run: { on: "mylexicon" },
+```
+
+An explicit `--on` takes precedence over `run.on`, and `--on local` selects the built-in runtime for one invocation. When `run.on` names a lexicon that is not configured or has no `opRuntime`, `chant run` refuses with the message `--on` would give. The `run` block accepts only `on`, and a block that fails validation is refused rather than ignored.
+
 ### `environments`
 
 An optional array of environment names the project deploys to. An environment is just a named identity chant threads through the operational layer — there is no per-environment config block to maintain.

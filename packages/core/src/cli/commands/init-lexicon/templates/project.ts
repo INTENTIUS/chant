@@ -37,7 +37,7 @@ export function generatePackageJson(name: string, names: { packageName: string }
       // (the `workspace:` protocol is rejected outside a workspace).
       "@intentius/chant": "*",
       "tsc-alias": "^1.8.17",
-      typescript: "^5.9.3",
+      typescript: "^5.9.3 || ^7.0.0",
     },
   };
 
