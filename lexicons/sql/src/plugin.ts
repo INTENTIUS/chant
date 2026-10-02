@@ -22,6 +22,9 @@ import { ClickHouseGenerator } from "./clickhouse/import/generator";
 import { sqlCommands } from "./clickhouse/plan/commands";
 import { sqlDeepNormalizationHooks } from "./clickhouse/plan/deep";
 import { versionFromReleaseTag } from "./spec/pin";
+import { sqlSkills } from "./skill-defs";
+import { detectTemplate } from "./detect";
+import { CDC_TEMPLATE, DEFAULT_TEMPLATE, EVENTS_TEMPLATE } from "./init-templates";
 
 export const sqlPlugin: LexiconPlugin = {
   name: "sql",
@@ -87,6 +90,19 @@ export const sqlPlugin: LexiconPlugin = {
         description: "A quoted, escaped SQL string literal, for a string interpolated as a value rather than as SQL text",
       },
     ];
+  },
+
+  skills: sqlSkills,
+
+  // `chant init --lexicon sql [--template events|cdc]`; see ./init-templates.ts.
+  initTemplates(template?: string) {
+    if (template === "events") return EVENTS_TEMPLATE;
+    if (template === "cdc") return CDC_TEMPLATE;
+    return DEFAULT_TEMPLATE;
+  },
+
+  detectTemplate(data: unknown) {
+    return detectTemplate(data);
   },
 
   completionProvider(ctx: CompletionContext) {

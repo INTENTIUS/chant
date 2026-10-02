@@ -22,6 +22,13 @@ const AWS_IAM_LEAST_PRIVILEGE: Authority = {
   url: "https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html#grant-least-privilege",
 };
 
+// TF032's authority: the ECS developer guide's own instruction for credentials,
+// which is the remediation the rule's message gives.
+const ECS_SENSITIVE_DATA: Authority = {
+  name: "Amazon ECS Developer Guide: Pass sensitive data to an Amazon ECS container",
+  url: "https://docs.aws.amazon.com/AmazonECS/latest/developerguide/specifying-sensitive-data.html",
+};
+
 // The vendor guides behind TF014, TF015 and TF021 are credited as lineage in
 // ./audit-lineage.ts, not as `authority` here. `authority` is reserved for
 // security rules that fail a merge (packages/core/src/audit/catalog.test.ts
@@ -359,6 +366,18 @@ export const terraformAuditCatalog: Record<string, RuleMeta> = {
       "suppress it with `# chant-ignore-block: TF031`. A policy TF031 reports as not determined is built from " +
       "an expression; it is not a finding.",
     authority: [AWS_IAM_LEAST_PRIVILEGE],
+    yamlBased: false,
+  },
+  TF032: {
+    id: "TF032",
+    tier: "merge-worthy",
+    fixKind: "guidance",
+    category: "security",
+    title: "ECS container definition passes a credential as a plaintext environment value",
+    remediation:
+      "Move the value from the container's `environment` to its `secrets`, with a `valueFrom` naming a " +
+      "Secrets Manager secret or SSM parameter, and rotate the committed value.",
+    authority: [ECS_SENSITIVE_DATA],
     yamlBased: false,
   },
 };
