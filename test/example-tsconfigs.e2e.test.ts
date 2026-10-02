@@ -37,13 +37,12 @@ const run = promisify(execFile);
 const repoRoot = realpathSync(dirname(dirname(fileURLToPath(import.meta.url))));
 
 /**
- * The TypeScript versions every project must pass under. TypeScript 7 is the
- * root `typescript-native` alias (#3088); until it is installed, only 5.9 runs.
+ * The TypeScript versions every project must pass under: 5.9, the root
+ * `typescript` package, and 7 through scripts/tsc7.sh (#3088).
  */
-const TS7 = join(repoRoot, "node_modules", "typescript-native", "bin", "tsc");
 const COMPILERS = [
-  { name: "5.9", tsc: join(repoRoot, "node_modules", "typescript", "bin", "tsc") },
-  ...(existsSync(TS7) ? [{ name: "7", tsc: TS7 }] : []),
+  { name: "5.9", command: [process.execPath, join(repoRoot, "node_modules", "typescript", "bin", "tsc")] },
+  { name: "7", command: ["sh", join(repoRoot, "scripts", "tsc7.sh")] },
 ];
 
 /**
@@ -144,7 +143,7 @@ describe("example and scaffold tsconfigs (#3089)", () => {
           const compilerOptions = { ...group.options, noEmit: true, typeRoots: [join(repoRoot, "node_modules", "@types")] };
           writeFileSync(config, JSON.stringify({ compilerOptions, files: group.files }, null, 2));
           try {
-            await run(process.execPath, [compiler.tsc, "-p", config, "--pretty", "false"], { cwd: repoRoot, maxBuffer: 64 * 1024 * 1024 });
+            await run(compiler.command[0], [...compiler.command.slice(1), "-p", config, "--pretty", "false"], { cwd: repoRoot, maxBuffer: 64 * 1024 * 1024 });
             return [];
           } catch (error) {
             const e = error as { stdout?: string; stderr?: string; message: string };
