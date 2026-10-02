@@ -27,9 +27,29 @@ On a successful deploy, `chant run --components` auto-emits a [release-ledger](/
 
 ### Gate approvals and environments
 
-A component gate approval is recorded under the component and the gate name, and nothing else. An approval given for a deploy to staging can therefore pass the same gate on a later deploy to prod, and so can a promote or a rollback ([#2574](https://github.com/INTENTIUS/chant/issues/2574)). The next release binds each approval to the environment and the plan digest it was given for, the way an [Op gate binds its plan](/chant/whats-new/#a-gate-approves-a-plan-not-the-next-run). An approval recorded before then will be refused, and the refusal names the `chant approve` command that records a new one.
+A component's gate ledger is keyed by the component, so it holds the facts for every environment. Each approval is bound to the environment and the plan digest it was given for ([#2574](https://github.com/INTENTIUS/chant/issues/2574)), the way an [Op gate binds its plan](/chant/whats-new/#a-gate-approves-a-plan-not-the-next-run). A run that reaches a gate records a pending fact with both, and `chant approve <component> <gate> --env <env>` copies them onto the resolution. Without `--env`, the newest pending fact is approved.
 
-This release warns about it. When a component gate passes on an approval that records no plan, `chant run --components`, `chant components promote` and `chant components rollback` print one warning per component and gate. The gate still passes.
+A component has no Plan phase, so its plan digest is taken over what the run will execute in that environment:
+
+| Covered | Left out |
+|---|---|
+| the environment | outputs of earlier phases in the run, such as a fresh build's digest |
+| the `deploy` and `rollback` phases, with every step's authored input | outputs of upstream components |
+| the recorded digest a promote, rollback or redeploy deploys | the run id and the time |
+| environment config passed as `vars` | |
+
+A release recorded before real SHA-256 digests ([#2514](https://github.com/INTENTIUS/chant/issues/2514)) keeps its `legacy-digest` value, and the plan takes that value as recorded. The plan digest itself is always real SHA-256, written as `jcs1-sha256:` and the hex of the SHA-256 of the RFC 8785 canonical JSON of the plan ([#2547](https://github.com/INTENTIUS/chant/issues/2547)). Before that it was `sha256:` and the same hex. A pending gate or an approval recorded under the bare prefix still matches the plan with the same hex, and nothing in the ledger is rewritten.
+
+A deploy to prod does not accept an approval given for staging. A promote does not accept one given for a plain deploy or for another digest, and an edited composition does not accept one given before the edit. `chant run --components`, `chant components promote`, `chant components rollback`, `chant components redeploy` and the components inside `chant components fan-out` all decide gates this way.
+
+An approval recorded before this change records neither an environment nor a plan, and is refused. The run stops at the gate, names the old approval, and prints the command that replaces it:
+
+```
+Gate "release" is approved, but not for this plan. approved: (none — recorded before plan-bound gates) (by alex at 2026-09-20T10:00:00.000Z); planned: jcs1-sha256:4c1e0b...
+That approval predates environment- and plan-bound component gates (#2574) and records neither, so it cannot answer for this one. Approving again binds it: chant approve search-service release --env prod
+```
+
+`v0.80.0` warned about it. It printed one warning per component and gate when a gate passed on an approval that recorded no plan.
 
 ## Generate mode
 
@@ -37,13 +57,15 @@ The same declarations synthesize plain CI YAML through the [GitHub](/chant/lexic
 
 The two compose: interpret mode behind a thin generated CI trigger.
 
+In a workspace, each member gets its own pipeline per environment. It keeps the same triggers and runs in the member's directory, as [`chant build --components --generate`](/chant/cli/build/#inside-a-workspace-member) describes.
+
 Generate mode has an Op counterpart too, see [Scheduling an Op](/chant/guide/ops/#scheduling-an-op). A scheduled Op's CI trigger is not limited to cron: `pull_request` and `push` triggers are generic beyond the cron case, for an Op whose natural trigger is a PR or a push to a branch rather than a clock.
 
 See [Execution Backends](/chant/components/backends-reference/) for the backend interface and the general-consumption default profile.
 
 ## Rollback comes free
 
-Because each capability declares its own compensation, the orchestrator gets saga rollback without a hand-written rollback pipeline: on failure it unwinds executed steps in reverse and calls each `rollback`. Native rollbacks are reused where the platform provides them — `cfn-deploy` triggers CloudFormation's own `rollback-stack`, `code-deploy` triggers CodeDeploy's own automatic rollback to the last known-good revision. Where a capability has no native rollback (`ecs-update-service`, `lambda-deploy`), it declares a best-effort compensation instead (re-apply the prior state); where a component needs a truer restore than that best-effort re-apply gives, it supplies its own component-level `rollback` phase, such as `rollback-previous` with the `taskDefinition` to return to. Non-auto, non-compensable cases opt out with a stated reason (`noRollback: "<reason>"` on the step) rather than failing silently — the [COMP003 lint rule](/chant/lint-rules/composition/) requires the reason at author time, and the driver reports the same fact at run time: a step whose capability has no rollback gets its own `rollback-opted-out` record in the run result, carrying that reason, rather than being passed over without a trace.
+Because each capability declares its own compensation, the orchestrator gets saga rollback without a hand-written rollback pipeline: on failure it unwinds executed steps in reverse and calls each `rollback`. Native rollbacks are reused where the platform provides them — `cfn-deploy` triggers CloudFormation's own `rollback-stack`, `code-deploy` triggers CodeDeploy's own automatic rollback to the last known-good revision. Where a capability has no native rollback (`ecs-update-service`, `lambda-deploy`), it records the prior state before it changes anything and its compensation puts that state back. `ecs-update-service` reads the service with `describe-services` before `update-service` and keeps the task definition the service was running in its step output; its rollback sends that task definition, never the step's own `imageRef`, which is the revision the step just rolled out. When that read got no task definition back, the rollback fails with an error that names the service. A component that needs a different restore supplies its own component-level `rollback` phase, such as `rollback-previous` with the `taskDefinition` to return to. Non-auto, non-compensable cases opt out with a stated reason (`noRollback: "<reason>"` on the step) rather than failing silently — the [COMP003 lint rule](/chant/lint-rules/composition/) requires the reason at author time, and the driver reports the same fact at run time: a step whose capability has no rollback gets its own `rollback-opted-out` record in the run result, carrying that reason, rather than being passed over without a trace.
 
 <Aside type="caution" title="The unwind itself is not durable">
 The saga mechanism — reverse-order unwind, calling each executed step's `rollback` — is capability-agnostic and runs the same wherever the run is hosted. What it does not do is survive a crash *during* the unwind. Rollback state lives in the driver's in-memory call stack: if the process dies mid-unwind, nothing resumes it, and whichever steps had not yet been rolled back stay in whatever partial state they were left in. The same boundary already applies to forward `onFailure` compensation on a plain Op. Running on a [fountain steward](/chant/concepts/durable-workflows/) does not change that; what it changes is that the machine is not your laptop and the thread records how far the unwind got, so the next run starts from something you can read rather than something you have to reconstruct. A capability whose rollback cannot be re-run safely is the real problem, and the apply contract is what fixes it.
@@ -56,6 +78,12 @@ The unwind above belongs to one run: when that run fails, the steps it executed 
 [`chant components rollback <env> --component <name>`](/chant/cli/components/#components-rollback) covers that case. It reads the environment's release ledger, picks an earlier release (the one before the current digest, or the one `--digest` names), and deploys that release's recorded digest through the component's own composition as a new, forward run. Build steps do not run, and the publish step is replaced by the recorded digest, since the environment received that artifact when the release was first deployed. Gates in the composition apply to the rollback as they do to any deploy. A successful rollback appends a release record whose `restores` field names the release it brought back, so the ledger shows it as a rollback rather than as an unexplained return to an old digest.
 
 The two also differ in what survives. A rollback is an ordinary run with its record on the ledger, so a crash partway through leaves the ledger saying what was last recorded, and running the command again starts it over. If the rollback run itself fails, its own unwind runs as usual.
+
+### Recovering from a failed deploy
+
+A deploy writes its release record only once it succeeds. When one fails partway, whether it came from `chant run --components` or from a promote or rollback, the ledger still names the last good release as current. The environment may meanwhile be running part of the failed one, if the unwind's compensations were best-effort or the process died during it. Here `chant components rollback` is no help, since it always moves to a release other than the current one.
+
+[`chant components redeploy <env> --component <name>`](/chant/cli/components/#components-redeploy-env) deploys the release the ledger records as current, by the same forward run a rollback uses and with the same gates. Its record carries a `redeploys` field naming that release.
 
 ## Fanning a change out
 

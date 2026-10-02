@@ -1,0 +1,153 @@
+---
+title: "Provisioning"
+description: "Load the built dashboards and datasources into Grafana with Docker or Kubernetes"
+diataxis: how-to
+order: 4
+---
+
+`chant build src --lexicon grafana -o dist/grafana/index.json` writes Grafana's provisioning files next to the index:
+
+| Path | Mount at |
+|---|---|
+| `provisioning/datasources/chant.yaml` | `/etc/grafana/provisioning/datasources/` |
+| `provisioning/dashboards/chant.yaml` | `/etc/grafana/provisioning/dashboards/` |
+| `provisioning/alerting/chant.yaml` | `/etc/grafana/provisioning/alerting/`, when the build declares alerting (see [Alerting](../alerting/)) |
+| `dashboards/` | the provider's path, `/var/lib/grafana/dashboards` by default |
+
+## Docker
+
+```bash
+docker run --rm -p 3000:3000 \
+  -v "$PWD/dist/grafana/provisioning:/etc/grafana/provisioning:ro" \
+  -v "$PWD/dist/grafana/dashboards:/var/lib/grafana/dashboards:ro" \
+  grafana/grafana:12.4.11
+```
+
+## Kubernetes
+
+`GrafanaConfigMaps`, from `@intentius/chant-lexicon-grafana/k8s`, turns the same declarations into k8s ConfigMaps in a k8s build root. It is a composite: export it, and the k8s build writes its members.
+
+```ts
+import { GrafanaConfigMaps, grafanaVolumes } from "@intentius/chant-lexicon-grafana/k8s";
+
+const delivered = { entities: [prometheus, tempo, services.dashboard, agentSlo.dashboard] };
+export const grafanaConfigMaps = GrafanaConfigMaps({ ...delivered, namespace: "observability" });
+```
+
+It writes three kinds of ConfigMap:
+
+| ConfigMap | Holds | Label and annotation |
+|---|---|---|
+| `grafana-dashboard-<uid>`, one per dashboard | `<uid>.json`, the text of `dashboardJson(dashboard)` | `grafana_dashboard: "1"`; the folder in `k8s-sidecar-target-directory` |
+| `grafana-datasources` | the datasource provisioning file | `grafana_datasource: "1"` |
+| `grafana-dashboard-providers` | the dashboard provider file | none |
+
+The labels and the annotation are the defaults of the sidecar that the Grafana Helm chart and kube-prometheus-stack run (kiwigrid/k8s-sidecar), so a Grafana installed that way picks the dashboards and datasources up with no mounts. Set `sidecar.dashboards.provider.foldersFromFilesStructure: true` in the chart for the folders. `name` changes the `grafana` prefix, `labels` adds labels to every ConfigMap, and `dashboardLabel`, `datasourceLabel` and `folderAnnotation` take another key and value, or `false` for none. The provider ConfigMap is only for the case below; the sidecar has its own provider.
+
+A dashboard ConfigMap is what `chant import` of a k8s manifest reads back into a grafana `Dashboard` with `dashboardJson(dashboard)` as its value, so delivery and import are symmetric.
+
+For a Grafana without the sidecar, such as a plain Deployment, `grafanaVolumes()` returns the pod `volumes` and container `volumeMounts` that mount the same ConfigMaps where Grafana reads them. Pass it the same `entities` and `name`:
+
+```ts
+const { volumes, volumeMounts } = grafanaVolumes(delivered);
+// containers: [{ ..., volumeMounts: [...yours, ...volumeMounts] }], volumes: [...yours, ...volumes]
+```
+
+The provisioning files go under `/etc/grafana/provisioning`. Each dashboard folder is a projected volume of its own under `/var/lib/grafana/dashboards` (or `dashboardsPath`), because inside a ConfigMap volume a subdirectory is a symlink, and Grafana's dashboard provider does not follow symlinked directories. `examples/agent-observability` runs Grafana this way.
+
+### Grafana Operator
+
+A Grafana run by the [Grafana Operator](https://grafana.github.io/grafana-operator/) reads custom resources instead of files. `GrafanaOperatorResources`, from the same subpath, writes them from the same declarations, as the k8s lexicon types them from the operator's v5.25.0 CRDs (`grafana.integreatly.org/v1beta1`):
+
+```ts
+import { GrafanaOperatorResources } from "@intentius/chant-lexicon-grafana/k8s";
+
+export const grafanaResources = GrafanaOperatorResources({
+  ...delivered,
+  namespace: "observability",
+  instanceSelector: { matchLabels: { dashboards: "grafana" } },
+});
+```
+
+| Resource | Spec |
+|---|---|
+| `grafana-folder-<uid>`, a `GrafanaFolder` per folder | the folder's `uid` and `title`, and `parentFolderRef` naming its parent's resource |
+| `grafana-dashboard-<uid>`, a `GrafanaDashboard` per dashboard | `json`, the text of `dashboardJson(dashboard)`, and `folderRef` naming its folder's resource |
+| `grafana-datasource-<uid>`, a `GrafanaDatasource` per datasource | `uid`, and the provisioning entry as `datasource` |
+
+`instanceSelector` picks the `Grafana` resources that take these, usually by the labels on your `Grafana`. The operator requires one and a selector that matches nothing delivers nothing, so it has no default. `name`, `labels`, `allowCrossNamespaceImport` and `resyncPeriod` go on every resource.
+
+Pick the delivery by what runs your Grafana: export `GrafanaConfigMaps` for the Helm chart's sidecar or a plain Deployment, and `GrafanaOperatorResources` for the operator. To export both, set `dashboardSource: "configMap"` and use the same `name`: each `GrafanaDashboard` then reads its JSON from the dashboard ConfigMap through `configMapRef`, so it is stored once.
+
+Library panels are not written as resources yet (#3186): a `GrafanaDashboard`'s `json` carries them in `__elements`, which does not create them, so apply them over the API.
+
+Folders are always `GrafanaFolder` resources with the uids the build gives them, so a nested `folder` or a `Folder` with `parent` keeps its place and its uid. Dashboard providers are not written; the operator does not use them.
+
+The operator has no environment to expand, so a datasource field written as `${NAME}` or `$__env{NAME}` (in `url`, `user`, `basicAuthUser`, `database` or `secureJsonData`) reads key `NAME` of the Secret named by `secretName`, through `spec.valuesFrom`. Without `secretName` such a field is an error, and so is `$__file{...}`. `withCredentials`, `version` and `orgId` are not in the operator's datasource and are left out.
+
+`chant import` of a `GrafanaDashboard` reads `spec.json` back into a grafana `Dashboard`, as it does a dashboard ConfigMap.
+
+`grafanaFiles(entities)` still returns every file keyed by path, for any other layout.
+
+## Folders
+
+The default provider sets `foldersFromFilesStructure: true`, so each subdirectory of `dashboards/` becomes a Grafana folder, named after the dashboard's `folder`. Dashboards without one land in General.
+
+A `folder` with a `/` nests: `folder: "Platform/Kubernetes"` is written to `dashboards/Platform/Kubernetes/`, which Grafana 13.1 and later load as a Kubernetes folder inside Platform. Grafana 12.4 and 13.0 use only the last directory, so the dashboard lands in a top-level Kubernetes folder; GRAF109 warns.
+
+To give a folder a stable uid, declare it as a `Folder` and nest with `parent`:
+
+```ts
+import { Dashboard, Folder } from "@intentius/chant-lexicon-grafana";
+
+export const platform = new Folder({ title: "Platform", uid: "platform" });
+export const kubernetes = new Folder({ title: "Kubernetes", parent: platform });
+export const pods = new Dashboard({ title: "Pods", folder: kubernetes });
+```
+
+A `Folder` is written to the same directory as its path (`dashboards/Platform/Kubernetes/`), so a dashboard with `folder: kubernetes` and one with `folder: "Platform/Kubernetes"` land in the same folder. Every folder gets a uid: its `Folder`'s, else its path as a uid (`platform-kubernetes`). The build's index lists every folder with its uid and parent, and each dashboard's `folderUid`.
+
+How the uid reaches Grafana depends on how the dashboards are delivered:
+
+- The API applier (`grafanaApply`) creates every folder with its uid and parent, parents first. See [Apply over the API](../applying/).
+- File provisioning has no field for a nested folder's uid. Grafana looks each level up by title under its parent and creates it with a uid of its own when it is missing, so a folder the applier created first keeps its uid, and one Grafana creates does not.
+- A `DashboardProvider` whose `folder` is a root-level `Folder` writes its title and uid as `folder` and `folderUid`. Grafana creates a provider's folder at the root, so a nested `Folder` there is refused.
+
+Two paths that make the same uid (`Team A` and `team-a`) are a GRAF104 error, and the uid `general`, which a `folder: "General"` would get, is a GRAF106 error: Grafana keeps it for the General folder. Folder permissions are not modelled.
+
+## Datasource pruning
+
+The datasource provisioning file sets `prune: true`. Grafana marks each datasource the file provisions as prunable, and when a later provisioning run finds a prunable datasource that no provisioning file lists, it deletes it. Removing a `Datasource` from the build therefore removes it from Grafana the next time Grafana provisions (on restart, or `POST /api/admin/provisioning/datasources/reload`). A datasource created in the UI or the API, or provisioned by a file without `prune`, is never pruned.
+
+`DatasourceProvisioning` sets the file's own settings. Turn pruning off, or list datasources for Grafana to delete by name before it provisions the rest:
+
+```ts
+import { DatasourceProvisioning } from "@intentius/chant-lexicon-grafana";
+
+export const datasourceFile = new DatasourceProvisioning({
+  prune: false,
+  deleteDatasources: [{ name: "Old Prometheus", orgId: 1 }],
+});
+```
+
+Naming a datasource the file also provisions makes Grafana delete it and create it again from the file on every run. Declare at most one `DatasourceProvisioning`. A dashboard that uses an `ExternalDatasource` the file deletes is a GRAF101 error.
+
+## A different provider
+
+Declare a `DashboardProvider` to replace the default:
+
+```ts
+const team = new DashboardProvider({ name: "team", path: "/dashboards", allowUiUpdates: true, updateIntervalSeconds: 10 });
+```
+
+Setting `folder` or `folderUid` on the provider turns `foldersFromFilesStructure` off unless you set it, and then every dashboard goes in that folder whatever its own `folder` says; GRAF109 warns when a dashboard declares one. Grafana refuses a provider with `folder`, `folderUid` and `foldersFromFilesStructure` all set. Two providers on the same path, or one inside the other, load every dashboard twice: GRAF109 reports it as an error.
+
+## Import by hand
+
+Each `dashboards/*.json` file is also what Dashboards → New → Import accepts, and what `POST /api/dashboards/db` takes as `dashboard`. The import creates the library panels a file carries in `__elements`; `POST /api/dashboards/db` does not.
+
+## Without mounting files
+
+When the files cannot be mounted into Grafana, `grafanaApply` writes the dashboards, their folders and any library panels over Grafana's HTTP API instead. See [Apply over the API](../applying/). Datasources still come from the provisioning file.
+
+File provisioning does not create library panels. A dashboard file carries the library panels it places in `__elements`, but Grafana stores them with the dashboard and draws each reference only once a library panel with that uid exists, so a project that declares `LibraryPanel`s applies them over the API (see [Library panels](../dashboards-and-panels/#library-panels)).

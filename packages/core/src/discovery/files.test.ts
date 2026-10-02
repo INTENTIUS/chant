@@ -189,11 +189,11 @@ describe("findInfraFiles — project exclude/include globs (#2519)", () => {
     ".stage/copy.ts": "export const copy = {};",
   };
 
-  test("with neither key configured, discovery returns exactly what it did before", async () => {
+  test("with neither key configured, every file but the dot directory's is discovered", async () => {
     await withTestDir(async (testDir) => {
       await project(testDir, { lexicons: ["aws"] }, LAYOUT);
       expect(rel(testDir, await findInfraFiles(testDir))).toEqual([
-        ".stage/copy.ts", "ops/keep.ts", "ops/run.ts", "src/app.ts", "src/lib/util.ts",
+        "ops/keep.ts", "ops/run.ts", "src/app.ts", "src/lib/util.ts",
       ]);
     });
   });
@@ -201,14 +201,14 @@ describe("findInfraFiles — project exclude/include globs (#2519)", () => {
   test.each([["ops"], ["ops/**"], ["ops/*.ts"]])("exclude %s skips everything under ops/", async (pattern) => {
     await withTestDir(async (testDir) => {
       await project(testDir, { exclude: [pattern] }, LAYOUT);
-      expect(rel(testDir, await findInfraFiles(testDir))).toEqual([".stage/copy.ts", "src/app.ts", "src/lib/util.ts"]);
+      expect(rel(testDir, await findInfraFiles(testDir))).toEqual(["src/app.ts", "src/lib/util.ts"]);
     });
   });
 
-  test("patterns match dot directories", async () => {
+  test("include re-admits a dot directory the walk skips by default (#2527)", async () => {
     await withTestDir(async (testDir) => {
-      await project(testDir, { exclude: [".stage"] }, LAYOUT);
-      expect(rel(testDir, await findInfraFiles(testDir))).not.toContain(".stage/copy.ts");
+      await project(testDir, { include: [".stage"] }, LAYOUT);
+      expect(rel(testDir, await findInfraFiles(testDir))).toContain(".stage/copy.ts");
     });
   });
 
@@ -216,7 +216,7 @@ describe("findInfraFiles — project exclude/include globs (#2519)", () => {
     await withTestDir(async (testDir) => {
       await project(testDir, { exclude: ["ops"], include: ["ops/keep.ts"] }, LAYOUT);
       expect(rel(testDir, await findInfraFiles(testDir))).toEqual([
-        ".stage/copy.ts", "ops/keep.ts", "src/app.ts", "src/lib/util.ts",
+        "ops/keep.ts", "src/app.ts", "src/lib/util.ts",
       ]);
     });
   });
@@ -231,7 +231,7 @@ describe("findInfraFiles — project exclude/include globs (#2519)", () => {
   test("include alone changes nothing", async () => {
     await withTestDir(async (testDir) => {
       await project(testDir, { include: ["src"] }, LAYOUT);
-      expect(await findInfraFiles(testDir)).toHaveLength(5);
+      expect(await findInfraFiles(testDir)).toHaveLength(4);
     });
   });
 
@@ -252,9 +252,9 @@ describe("findInfraFiles — project exclude/include globs (#2519)", () => {
   test("explicit globs override the config; null applies none", async () => {
     await withTestDir(async (testDir) => {
       await project(testDir, { exclude: ["ops"] }, LAYOUT);
-      expect(await findInfraFiles(testDir, { globs: null })).toHaveLength(5);
+      expect(await findInfraFiles(testDir, { globs: null })).toHaveLength(4);
       const only = await findInfraFiles(testDir, { globs: { root: testDir, exclude: ["src"], include: [] } });
-      expect(rel(testDir, only)).toEqual([".stage/copy.ts", "ops/keep.ts", "ops/run.ts"]);
+      expect(rel(testDir, only)).toEqual(["ops/keep.ts", "ops/run.ts"]);
     });
   });
 });

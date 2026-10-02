@@ -1,0 +1,142 @@
+{
+  "$comment": "Corrections to the vendored canvas.jsonschema.json (foundation-sdk v0.0.20). Sources are Grafana's CUE at the tag in `grafana`. See src/spec/overlay.ts.",
+  "schema": "canvas",
+  "grafana": "v13.2.2",
+  "patches": [
+    {
+      "op": "add",
+      "path": "/definitions/TooltipDisplayMode",
+      "value": {
+        "enum": [
+          "single",
+          "multi",
+          "none"
+        ],
+        "type": "string"
+      },
+      "source": "packages/grafana-schema/src/common/mudball.cue:237",
+      "why": "Definition for CanvasTooltip.mode, below."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/CanvasTooltip",
+      "value": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "mode"
+        ],
+        "properties": {
+          "mode": {
+            "$ref": "#/definitions/TooltipDisplayMode"
+          },
+          "disableForOneClick": {
+            "type": "boolean"
+          }
+        }
+      },
+      "source": "public/app/plugins/panel/canvas/panelcfg.cue:92-95",
+      "why": "Definition for Options.tooltip, below."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/Options/properties/tooltip",
+      "value": {
+        "$ref": "#/definitions/CanvasTooltip",
+        "description": "Controls tooltip options"
+      },
+      "source": "public/app/plugins/panel/canvas/panelcfg.cue:116-117",
+      "why": "In the CUE's Options; Grafana writes it into every canvas it loads."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/Options/properties/zoomToContent",
+      "value": {
+        "type": "boolean",
+        "default": true,
+        "description": "Zoom to content"
+      },
+      "source": "public/app/plugins/panel/canvas/panelcfg.cue:104-105",
+      "why": "In the CUE's Options; Grafana writes it into every canvas it loads."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/DirectionDimensionConfig",
+      "value": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "mode"
+        ],
+        "properties": {
+          "field": {
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "fixed",
+              "field"
+            ],
+            "type": "string"
+          },
+          "fixed": {
+            "enum": [
+              "forward",
+              "reverse",
+              "both",
+              "none"
+            ],
+            "type": "string"
+          }
+        }
+      },
+      "source": "packages/grafana-schema/src/common/dimensions.cue:51-59",
+      "why": "Definition for CanvasConnection.direction, below."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/CanvasConnection/properties/direction",
+      "value": {
+        "$ref": "#/definitions/DirectionDimensionConfig"
+      },
+      "source": "public/app/plugins/panel/canvas/panelcfg.cue:76",
+      "why": "In the CUE's CanvasConnection; Grafana writes it for a connection drawn with an arrow direction."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/Options/properties/root/properties/constraint",
+      "value": {
+        "$ref": "#/definitions/Constraint"
+      },
+      "source": "public/app/plugins/panel/canvas/panelcfg.cue:108-115",
+      "why": "The CUE lists only name, type and elements on the root, but the root is a frame element (CanvasFrameOptions extends CanvasElementOptions, public/app/features/canvas/frame.ts:3 at v13.2.2) and Grafana writes the element's constraint on it, as panelcfg.cue:86-89 types it for every other element."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/Options/properties/root/properties/placement",
+      "value": {
+        "$ref": "#/definitions/Placement"
+      },
+      "source": "public/app/plugins/panel/canvas/panelcfg.cue:108-115",
+      "why": "The CUE lists only name, type and elements on the root, but the root is a frame element (CanvasFrameOptions extends CanvasElementOptions, public/app/features/canvas/frame.ts:3 at v13.2.2) and Grafana writes the element's placement on it, as panelcfg.cue:86-89 types it for every other element."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/Options/properties/root/properties/background",
+      "value": {
+        "$ref": "#/definitions/BackgroundConfig"
+      },
+      "source": "public/app/plugins/panel/canvas/panelcfg.cue:108-115",
+      "why": "The CUE lists only name, type and elements on the root, but the root is a frame element (CanvasFrameOptions extends CanvasElementOptions, public/app/features/canvas/frame.ts:3 at v13.2.2) and Grafana writes the element's background on it, as panelcfg.cue:86-89 types it for every other element."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/Options/properties/root/properties/border",
+      "value": {
+        "$ref": "#/definitions/LineConfig"
+      },
+      "source": "public/app/plugins/panel/canvas/panelcfg.cue:108-115",
+      "why": "The CUE lists only name, type and elements on the root, but the root is a frame element (CanvasFrameOptions extends CanvasElementOptions, public/app/features/canvas/frame.ts:3 at v13.2.2) and Grafana writes the element's border on it, as panelcfg.cue:86-89 types it for every other element."
+    }
+  ]
+}

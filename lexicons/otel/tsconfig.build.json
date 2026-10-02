@@ -19,7 +19,8 @@
     "**/*.test.ts",
     "node_modules",
     "dist",
-    "docs"
+    "docs",
+    "src/import/testdata"
   ],
   "tsc-alias": {
     "resolveFullPaths": true

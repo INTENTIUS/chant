@@ -6,6 +6,9 @@ import { formatSuccess, formatError } from "./format";
 import { loadPlugins, resolveProjectLexicons } from "./plugins";
 import { resolveCommand, type CommandDef, type ParsedArgs } from "./registry";
 import { loadChantConfigUpward } from "../config";
+import { findProjectRoot, findWorkspaceRoot } from "../project-root";
+import { isNoLexiconDetected } from "../detectLexicon";
+import { CHANT_VERSION } from "./version";
 import { validateLexiconConfig, formatLexiconConfigProblems } from "../lexicon-config";
 import { armSandboxConfigEvaluation } from "../config-sandbox";
 import { armSandboxPolicyExecution } from "../lint/policy-import";
@@ -27,7 +30,7 @@ import { runCarveStatus } from "./handlers/carve-status";
 import { runLifecycleSnapshot, runLifecycleShow, runLifecycleDiff, runLifecycleRollback, runLifecyclePlan, runLifecycleAffected, runLifecycleLog, runLifecycleTeardown, runLifecycleWhoami, runLifecycleUnknown } from "./handlers/lifecycle";
 import { runComponentsStatus, runComponentsReleaseRecord, runComponentsExport, runComponentsUnknown } from "./handlers/components";
 import { runComponentsFanOut } from "./handlers/fan-out";
-import { runComponentsPromote, runComponentsRollback } from "./handlers/promote";
+import { runComponentsPromote, runComponentsRollback, runComponentsRedeploy } from "./handlers/promote";
 import { runScenarioCheck, runScenarioUnknown } from "./handlers/scenario";
 import { runGraph } from "./handlers/graph";
 import { runExplain } from "./handlers/explain";
@@ -51,6 +54,8 @@ import type { LexiconPlugin } from "../lexicon";
  */
 const BOOLEAN_FLAGS = new Set([
   "--help",
+  "--open",
+  "--version",
   "--agents",
   "--agent",
   "--all-projects",
@@ -68,6 +73,7 @@ const BOOLEAN_FLAGS = new Set([
   "--strict",
   "--validate",
   "--use-composites",
+  "--composites",
   "--stacks",
   "--components",
   "--up",
@@ -84,6 +90,7 @@ const BOOLEAN_FLAGS = new Set([
   "--no-release-record",
   "--fold",
   "--no-fold",
+  "--no-cache",
   "--sandbox",
   "--yes",
   "--confirm-prod",
@@ -95,6 +102,9 @@ const BOOLEAN_FLAGS = new Set([
   "--durable-requests",
   "--skip-mcp",
   "--current",
+  "--allow-code",
+  "--root-only",
+  "--generated",
 ]);
 
 /**
@@ -162,6 +172,8 @@ export function parseArgs(args: string[]): ParsedArgs {
 
     if (arg === "--help" || arg === "-h") {
       result.help = true;
+    } else if (arg === "--version" || arg === "-V") {
+      result.version = true;
     } else if (arg === "--output" || arg === "-o") {
       result.output = args[++i];
     } else if (arg === "--format" || arg === "-f") {
@@ -215,6 +227,12 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant import --kustomize <dir>` (#1548): render the overlay, import
       // the output through the k8s template parser.
       result.kustomize = args[++i];
+    } else if (arg === "--parser-option") {
+      // `chant import --parser-option key[=value]` (#2994), repeatable: checked
+      // against the lexicon's parserOptions() by the import command.
+      const v = args[++i];
+      if (!v || v.startsWith("-")) throw new Error("--parser-option needs key or key=value: --parser-option acceptLossyV1");
+      (result.parserOption ??= []).push(v);
     } else if (arg === "--type") {
       result.selectType = args[++i];
     } else if (arg === "--name") {
@@ -298,6 +316,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.opsSpec = args[++i];
     } else if (arg === "--dump-outputs") {
       result.dumpOutputs = args[++i];
+    } else if (arg === "--digest-file") {
+      result.digestFile = args[++i];
     } else if (arg === "--seed-outputs") {
       (result.seedOutputs ??= []).push(args[++i]);
     } else if (arg === "--detail") {
@@ -354,11 +374,104 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--at") {
       result.at = args[++i];
     } else if (arg === "--kind") {
-      // `chant workspace records --kind <kind file>` (#2546)
+      // `chant workspace records|graph|check --kind <kind file>` (#2546, #2549)
       result.kind = args[++i];
       if (!result.kind || result.kind.startsWith("-")) throw new Error("--kind needs a kind file: --kind <path>");
+      // Repeatable for `workspace graph --intent` (#2651); the others read the last one.
+      (result.kinds ??= []).push(result.kind);
+    } else if (arg === "--composites") {
+      // `chant workspace graph --composites` (#2662)
+      result.composites = true;
+    } else if (arg === "--intent") {
+      // `chant workspace graph --intent <path[:start-end]>` (#2651), or `--intent --record <id>` with no region.
+      const value = args[i + 1];
+      if (value !== undefined && !value.startsWith("-")) result.intent = args[++i];
+      else if (args.includes("--record")) result.intent = "";
+      else throw new Error("--intent needs a region: --intent <path[:start-end]>, or --intent --record <id>");
+    } else if (arg === "--record") {
+      // `chant workspace graph --intent --record <id>`
+      result.record = args[++i];
+      if (!result.record || result.record.startsWith("-")) throw new Error("--record needs a record id: --record <id>");
+    } else if (arg === "--path") {
+      // `chant workspace patch <range> --path <p>`, repeatable
+      const value = args[++i];
+      if (!value || value.startsWith("-")) throw new Error("--path needs a path: --path <path>");
+      (result.paths ??= []).push(value);
+    } else if (arg === "--worktree") {
+      // `chant workspace patch [<commit>] --worktree`
+      result.worktree = true;
+    } else if (arg === "--max-bytes") {
+      // `chant workspace patch <range> --max-bytes <n>`
+      const value = Number(args[++i]);
+      if (!Number.isInteger(value) || value < 1) throw new Error("--max-bytes needs a whole number of bytes above 0");
+      result.maxBytes = value;
+    } else if (arg === "--changes") {
+      // `chant workspace check --changes <base>..<head>` (#2773)
+      result.changes = args[++i];
+      if (!result.changes || result.changes.startsWith("-")) throw new Error("--changes needs a range: --changes <base>..<head>");
+    } else if (arg === "--severity") {
+      // `chant workspace check --changes <range> --severity off|warn|fail` (#2773)
+      result.severity = args[++i];
+      if (!result.severity || result.severity.startsWith("-")) throw new Error("--severity needs off, warn or fail");
     } else if (arg === "--current") {
       result.current = true;
+    } else if (arg === "--set") {
+      // `chant workspace records amend <id> --set <file|->` (#2670)
+      result.set = args[++i];
+      if (!result.set || (result.set.startsWith("-") && result.set !== "-")) throw new Error("--set needs a JSON file, or - for standard input: --set <file|->");
+    } else if (arg === "--verdict") {
+      // `chant workspace records review <id> --verdict agree|dissent|abstain` (#2670)
+      result.verdict = args[++i];
+      if (!result.verdict || result.verdict.startsWith("-")) throw new Error("--verdict needs agree, dissent or abstain");
+    } else if (arg === "--by") {
+      // `chant workspace records review <id> --by <principal>` (#2670): whoever the caller says.
+      result.by = args[++i];
+      if (!result.by || result.by.startsWith("-")) throw new Error("--by needs the reviewer: --by <principal>");
+      // Repeatable for `workspace points answer` (#2739): each person who answered.
+      (result.bys ??= []).push(result.by);
+    } else if (arg === "--open") {
+      // `chant workspace points --open` (#2739): only the questions still open.
+      result.open = true;
+    } else if (arg === "--inputs") {
+      // `chant workspace points ask <point> --inputs <file|->` (#2739)
+      result.inputs = args[++i];
+      if (!result.inputs || (result.inputs.startsWith("-") && result.inputs !== "-")) throw new Error("--inputs needs a JSON file, or - for standard input: --inputs <file|->");
+    } else if (arg === "--response") {
+      // `chant workspace points ask <point> --response <file>` (#2739): a POST /v1/systemone response the caller got.
+      result.response = args[++i];
+      if (!result.response || result.response.startsWith("-")) throw new Error("--response needs a JSON file: --response <file>");
+    } else if (arg === "--subject") {
+      // `chant workspace points ask <point> --subject <id>` (#2739): what the question is about.
+      result.subject = args[++i];
+      if (!result.subject || result.subject.startsWith("-")) throw new Error("--subject needs what the question is about, such as a work item id: --subject <id>");
+    } else if (arg === "--answer") {
+      // `chant workspace points answer <id> --answer <value>` (#2739)
+      result.answer = args[++i];
+      if (result.answer === undefined || result.answer === "") throw new Error("--answer needs one of the question's candidates: --answer <value>");
+    } else if (arg === "--sign") {
+      // `chant workspace records review <id> --sign [<key file>]` (#2687): seal the verdict.
+      // `records new` and `records amend` take it too, to seal the record's author (#2688).
+      // With no key file, git's user.signingkey, as `git commit -S` reads it.
+      const next = args[i + 1];
+      result.sign = next !== undefined && !next.startsWith("-") ? args[++i] : true;
+    } else if (arg === "--session") {
+      // `chant workspace records review <id> --session <id>` (#2670)
+      result.session = args[++i];
+      if (!result.session || result.session.startsWith("-")) throw new Error("--session needs a session id: --session <id>");
+    } else if (arg === "--prefix") {
+      // `chant workspace records new <kind> --prefix <prefix>` (#2670): the id prefix to allocate under.
+      result.prefix = args[++i];
+      if (!result.prefix || result.prefix.startsWith("-")) throw new Error("--prefix needs an id prefix: --prefix <prefix>");
+    } else if (arg === "--key" || arg === "--check-id" || arg === "--claim" || arg === "--environment" || arg === "--envelope" || arg === "--threshold") {
+      // `chant workspace evidence sign|verify` and `chant workspace signers` (#2553)
+      const value = args[++i];
+      if (value === undefined || value.startsWith("-")) throw new Error(`${arg} needs a value`);
+      const field = ({ "--key": "key", "--check-id": "checkId", "--claim": "claim", "--environment": "environment", "--envelope": "envelope", "--threshold": "threshold" } as const)[arg];
+      result[field] = value;
+    } else if (arg === "--require") {
+      // `chant workspace records|verify --require attested` (#2547)
+      result.require = args[++i];
+      if (!result.require || result.require.startsWith("-")) throw new Error("--require needs a provenance level: --require attested");
     } else if (arg === "--ambient") {
       result.ambient = true;
     } else if (arg === "--check-live") {
@@ -379,6 +492,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.component = args[++i];
     } else if (arg === "--digest") {
       result.digest = args[++i];
+      if (result.digest !== undefined) (result.digests ??= []).push(result.digest);
+    } else if (arg === "--release-plan") {
+      result.releasePlanFile = args[++i];
     } else if (arg === "--git-sha") {
       result.gitSha = args[++i];
     } else if (arg === "--run-id") {
@@ -397,6 +513,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.noReleaseRecord = true;
     } else if (arg === "--fold") {
       result.fold = true;
+    } else if (arg === "--no-cache") {
+      // `chant workspace graph --no-cache` (#2876): read every member.
+      result.noCache = true;
     } else if (arg === "--no-fold") {
       // chant #1134 — fold is the default build path; this is the explicit
       // opt-out, and like --fold it beats chant.config.ts's build.fold.
@@ -431,8 +550,28 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.interval = args[++i];
     } else if (arg === "--lease-ttl") {
       result.leaseTtl = args[++i];
+    } else if (arg === "--steward") {
+      // #2731 — the name is optional: a project with one steward runs it
+      // with a bare `--steward`.
+      const next = args[i + 1];
+      if (next !== undefined && !next.startsWith("-")) {
+        result.steward = next;
+        i++;
+      } else {
+        result.steward = "";
+      }
     } else if (arg === "--once") {
       result.once = true;
+    } else if (arg === "--work") {
+      // `chant run <op> --work <id>` (#2748)
+      const value = args[++i];
+      if (!value || value.startsWith("-")) throw new Error("--work needs a work item id: --work <id>");
+      result.work = value;
+    } else if (arg === "--holder" || arg === "--ttl" || arg === "--token" || arg === "--outcome") {
+      // `chant workspace work claim|renew|release <id>` (#2732)
+      const value = args[++i];
+      if (!value || value.startsWith("-")) throw new Error(`${arg} needs a value: ${arg} <${arg.slice(2)}>`);
+      result[arg.slice(2) as "holder" | "ttl" | "token" | "outcome"] = value;
     } else if (arg === "--note") {
       result.note = args[++i];
     } else if (arg === "--expire") {
@@ -445,6 +584,42 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--agent") {
       // #2508 — record the approval as an agent's rather than a person's.
       result.agent = true;
+    } else if (arg === "--allow-code") {
+      // #2550 — `chant workspace upgrade` runs a template's code migrations
+      // only when asked to.
+      result.allowCode = true;
+    } else if (arg === "--source") {
+      // #2551 — `chant workspace upgrade --source <repo>[#<member>]`.
+      result.source = args[++i];
+      if (!result.source || result.source.startsWith("-")) throw new Error("--source needs a template: --source <repo>[#<member>]");
+    } else if (arg === "--tags") {
+      // #2551 — `chant workspace adopt-lineage --tags <glob>`, also hash-index and versions.
+      result.tags = args[++i];
+      if (!result.tags || result.tags.startsWith("-")) throw new Error("--tags needs a tag glob: --tags 'v*'");
+    } else if (arg === "--index") {
+      // #2551 — `chant workspace adopt-lineage --index <file>`.
+      result.index = args[++i];
+      if (!result.index || result.index.startsWith("-")) throw new Error("--index needs a hash index file: --index <file>");
+    } else if (arg === "--remove") {
+      // #2552 — `chant workspace import --remove` removes the export member instead of writing it again.
+      result.remove = true;
+    } else if (arg === "--available") {
+      // #2551 — `chant workspace versions --available` lists the template's version tags.
+      result.available = true;
+    } else if (arg === "--root-only") {
+      // #2537 — `chant build` and `chant lint` at a declared workspace root
+      // run on the root project alone instead of refusing with WSP000.
+      result.rootOnly = true;
+    } else if (arg === "--generated") {
+      // #2641 — `chant workspace check --generated` runs each declared
+      // generator and compares its output with the file in the tree.
+      result.generated = true;
+    } else if (arg === "--member") {
+      // #2537 — `chant workspace build|lint|audit|graph --member <name>`.
+      // Repeatable, and a comma list works too.
+      const value = args[++i];
+      if (!value || value.startsWith("-")) throw new Error("--member needs a member or group name: --member <name>");
+      result.members = [...(result.members ?? []), ...value.split(",").map((m) => m.trim()).filter(Boolean)];
     } else if (arg === "--allow-same-origin") {
       // chant#2384 — record a resolution the same-origin rule would refuse,
       // deliberately. Flagged on the record, not just accepted quietly.
@@ -488,6 +663,19 @@ export function parseArgs(args: string[]): ParsedArgs {
     i++;
   }
 
+  // #2603 — `--promote-to` (#2575) adds a job to the pipeline that generate
+  // mode synthesizes; no other command or mode reads it. Checked here, once
+  // the whole command line is known, rather than in the build handler, so
+  // `chant build --promote-to prod` and `chant run --promote-to prod` both
+  // fail instead of running as if the flag were absent. A lexicon-mounted
+  // command that takes its own `--promote-to` still gets it: `main` tries the
+  // plugin commands before rethrowing a parse error.
+  if (result.promoteTo && !(result.command === "build" && result.components && result.generate)) {
+    throw new Error(
+      "--promote-to needs build --components --generate <lexicon>: it adds a promote job to the generated CI pipeline, and only generate mode emits one.",
+    );
+  }
+
   return result;
 }
 
@@ -507,7 +695,11 @@ Usage:
 Commands:
   init                  Initialize a new chant project
                         (--from <repo>@<ref>[#<member>] copies a template
-                        repository and records its lineage)
+                        repository and records its lineage, and --from
+                        <dir>[#<member>] copies a template directory on
+                        disk; --param
+                        <name>=<value> sets a parameter the template's
+                        chant.template.json declares, repeatable)
   init lexicon <name>   Scaffold a new lexicon plugin project
   build                 Build infrastructure from specification files
                         (--components --generate github|gitlab|forgejo:
@@ -515,7 +707,10 @@ Commands:
                          pipeline that triggers each discovered component's
                          own deploy in wave order, instead of a normal
                          lexicon build)
+                        At a declared workspace root it refuses with WSP000;
+                        --root-only builds the root project alone
   lint                  Check specifications for issues
+                        (at a declared workspace root: WSP000 unless --root-only)
   list                  List discovered entities
   describe              Show the effective config for one component
   explain               Summarize discovered entities (--format markdown|json|okf;
@@ -574,6 +769,8 @@ Commands:
 
 Ops:
   run <name>            Run an Op on the resolved runtime (--on; local by default)
+                        [--work <id>] [--holder <name>]: the work item an Op
+                        with a work lease runs under, and who holds it
   run list              List all Ops with the runtime's state for each
   run status <name>     Show the runtime's state for one Op's latest run
   run approve <op> <gate>  Record a gate's resolution and wake the runtime
@@ -601,7 +798,12 @@ Ops:
                         environment; --interval <dur> (default 60s) and
                         --lease-ttl <dur> (default 5m) tune cadence; --once
                         runs a single round and exits (cron/systemd-timer/
-                        CronJob invokers use this instead of the daemon)
+                        CronJob invokers use this instead of the daemon).
+                        --steward [<name>] runs a declared steward's local
+                        form instead (#2731): its scheduled Ops on their
+                        crons, under the steward's own lease, and its
+                        beside Ops as chant run processes of their own
+                        (#2861)
   operator status        Last tick, outcomes, and pending gates per
                         ConvergeOp, read from the chant/lifecycle orphan
                         branch alone — no daemon needs to be running
@@ -643,18 +845,232 @@ Ops:
                         predicts the account. The level reaches the engine
                         verbatim; without the flag nothing is asked (#2377)
 
-Workspace (first-test slice, #2546):
-  workspace records --kind <kind file> [--current] [--at <rev>] [--json]
-                        Read the records a record kind locates, validated
+Workspace (level 1, #2524):
+  workspace init [dir]  Propose a chant.workspace.json from the projects and
+                        packages already in the repository, print it with the
+                        directories that would leave the root project, and
+                        write it only on confirmation (--yes writes without
+                        asking; --name <name> names the workspace; --verbose
+                        lists every file leaving the root project)
+  workspace ls [dir]    List the declaration's members and example groups.
+                        A member that can't be read is listed with a reason
+                        code and still exits 0. --at <rev> reads a commit's
+                        git objects; --json prints the read-contract document
+  workspace status <env> [dir] [--compare-to <env>] [--json]
+                        Each member's latest release in <env>, as digest and
+                        git SHA, read from its ledger on the local
+                        chant/lifecycle branch (_members/<member>/ or the flat
+                        layout). --compare-to <env> shows a second environment
+                        beside it and marks the members whose digests differ.
+                        Read only; never fetches. --json prints the
+                        read-contract document
+  workspace records [--kind <kind file>] [--current] [--at <rev>] [--base <rev>] [--require attested] [--json]
+                        Without --kind, every record kind the declaration
+                        names. Read the records a record kind locates, validated
                         against its schema, with reason codes for invalid
                         ones. --current leaves out superseded records; --at
-                        reads a commit's git objects. Needs no workspace file
+                        reads a commit's git objects. Needs no workspace file.
+                        Each record reports its provenance level, judged by
+                        the signers at --base (default: the target branch);
+                        --require attested exits 2 if any record is not
+                        attested. A pinned file that changed is a warning,
+                        asset-drift or asset-missing
+  workspace records [--kind <kind file>] --since <rev|session id> [--at <rev>] [--json]
+                        What changed in the records between <rev> and --at
+                        (default: the working tree): new and removed records,
+                        state transitions, new verdicts, new supersessions
+                        and changed pins. A session id compares the commits
+                        the session opened and closed at
+  workspace records pin <path>
+                        Print the path from the workspace root and the
+                        sha256 of a file, for a decision's evidence pin
+  workspace records new [<kind file>] --from <file|-> [--prefix <prefix>] [--sign [<key file>]] [--dry-run]
+                        Write one new record in the kind's directory from
+                        the JSON fields given, after validating them as
+                        records would read them. Without a kind file, the one
+                        kind the declaration names. Allocates the next id when
+                        the fields hold none. --sign seals the record's author
+                        (decided_by for decisions) with an ssh key. Prints
+                        {path, id} as JSON and never commits
+  workspace records amend <id> [--kind <kind file>] --set <file|-> [--sign [<key file>]] [--dry-run]
+                        Set top-level fields of one record. A closed record
+                        never changes, and an approved one changes only its
+                        state (upward), pins and reviews; anything else is
+                        refused with amend-supersede-instead. Moving a
+                        record to its kind's ratified state (ratified for
+                        decisions) is refused with ratify-quorum-not-met
+                        until its quorum is met. --sign seals the author
+                        again; without it an amendment removes the author
+                        seal and says so. Prints {path, id, changed}
+  workspace records review <id> [--kind <kind file>] --verdict agree|dissent|abstain --by <principal> [--note <text>] [--session <id>] [--sign [<key file>]] [--dry-run]
+                        Append a review to one record, dated and bound to
+                        the digest of the record text. A dissent needs
+                        --note. --sign seals it with an ssh key (git's
+                        user.signingkey without a file); under a signers
+                        file at base only a sealed verdict counts. With
+                        --session, the session must be open, and the verdict
+                        is appended to its verdicts too. Prints
+                        {path, id, review}
+  workspace records close <session id> [--kind <session kind file>] [--dry-run]
+                        Close an open review session: its state, close time,
+                        closing commit and seal, in one write. Without
+                        --kind, the one session kind the declaration names.
+                        Prints {path, id, changed, seal, closedRev}
+  workspace work claim|renew|release <id> --holder <name> [--kind <kind file>] [--ttl <seconds|duration>] [--token <token>] [--outcome <text>] [--note <text>] [--json]
+                        Take, heartbeat or give back the lease on a work item:
+                        refs/chant/lease/work/<id>, a compare-and-set ref with a
+                        fencing token and an expiry, pushed to the remote so
+                        separate clones coordinate. A claim is refused, exit 2,
+                        while anyone holds it live. Each change appends to
+                        _leases/<id>.jsonl on chant/lifecycle
+  workspace work history <id> [--kind <kind file>] [--json]
+                        A work item's lease history: each claim with its token
+                        and holder, and how it ended, released with an outcome
+                        or never released (expired or lost). Read-only
+  workspace points [--open] [--kind <kind file>] [--at <rev>] [--json]
+                        List the decision points the declared answer kinds'
+                        points files declare, and the questions asked of them;
+                        --open keeps the escalated and proposed ones (ws-058)
+  workspace points ask <point> --inputs <file|-> [--response <file>] [--subject <id>] [--kind <kind file>] [--dry-run]
+                        Ask a point's table, model and quorum deciders and
+                        record the answer: proposed from a model, escalated to
+                        people below its threshold. --response is a POST
+                        /v1/systemone response the caller got; chant calls no model
+  workspace points answer <id> --answer <value> --by <name>... [--kind <kind file>] [--dry-run]
+                        Record people's answer to an open question, or confirm
+                        a model's proposal, once the point's quorum is met
+  workspace pin <path> [--json]
+                        Print the integrity value that pins the plugin at
+                        <path>, to put in a path pin of chant.workspace.json.
+                        chant checks it before it reads the plugin
+  workspace agent [<name>] [--json]
+                        Print an agent session from the declaration: the one
+                        member it is bound to, the record kinds and verbs its
+                        write scope allows, and the spec records --current
+                        prints. Without a name, the session CHANT_AGENT names
+  workspace verify [--base <rev>] [--head <rev>] [--require attested]
+                        Check the commits in base..head against the signers
+                        and roles read from base. A change to the signers file
+                        or .chant/trust.json needs a signature by a signer
+                        trusted at base, and a new signer set needs a
+                        threshold of the old one. Does nothing without a
+                        signers file
+  workspace signers [--json] [rotate [--threshold <n>] | sign --key <file>]
+                        Show the signer history at base, or propose the next
+                        signer set and sign it with a current signer's key
+  workspace evidence sign --kind <kind file> --key <runner.pem> --check-id <id>
+                        Sign runner evidence over the records' hashes in a
+                        DSSE envelope, with a runner key .chant/trust.json
+                        lists. For CI and services, never a person's key
+  workspace evidence verify --envelope <file> [--at <rev>] [--json]
+                        Verify runner evidence offline, and whether the
+                        records it covers are unchanged
   workspace lineage [--json]
                         Show each scope in .chant/workspace.lock.json: its
                         template and pin, locally edited files and open
                         manual steps. Needs no workspace file
   workspace lineage resolve <path>
                         Close a manual step once the file is merged by hand
+  workspace upgrade [<scope>] [--to <ref|dir>] [--source <repo>[#<member>]] [--allow-code] [--dry-run] [--output <file>]
+                        Bring a lineage scope to a newer template version: fetch
+                        it, migrate and merge per file in a worktree, run build,
+                        lint and workspace check there, then gate on the digest
+                        of the patch (chant approve workspace-upgrade <scope>).
+                        A second run with the approval applies the patch.
+                        --source <repo>[#<member>] moves the scope to another
+                        template through that template's bridge migration
+  workspace adopt-lineage [<scope>] --from <repo>[@<ref>][#<member>] [--tags <glob>]
+                        [--index <file>] [--param name=value] [--dry-run] [--json]
+                        Give a scope a git lineage: match a scope with none
+                        against the template's versions and record the best
+                        one, with the adopted commit range in .chant/trust.json,
+                        or move a directory lineage onto the version that
+                        reproduces its recorded files
+  workspace hash-index --from <repo>[#<member>] [--tags <glob>] [--output <file>]
+                        Compute the per-version file hashes adopt-lineage
+                        matches against, for a template's CI to publish
+  workspace versions [<dir>] [--template <id>] [--available [--tags <glob>]] [--json]
+                        Report the template, chant and lexicon versions of
+                        every lineage lock under <dir>, grouped into families
+                        by template; --available also lists each git
+                        template's version tags and where each lock sits
+  workspace export [<member>[,<member>...]] [--to <member>] [--param name=value] [--dry-run] [--json]
+                        Write members that set travel, with their lineage and
+                        records, into the export member (role export) as a
+                        workspace of their own; with no member named, every
+                        member that travels and the workspace's own records.
+                        --param gives a host-bound parameter its value there
+  workspace import [<dir>] [--remove] [--dry-run] [--json]
+                        Bring an export back: merge per file against the
+                        export's hashes, switch host values back, record the
+                        return in .chant/returns/<id>.json with the commits the
+                        files were made in, then write the export member again
+                        or, with --remove, remove it
+  workspace admit <return id> [--note <text>] [--dry-run] [--json]
+                        Admit the signers of a return in .chant/trust.json, so
+                        its signed work reads as attested once merged
+  workspace check [--at <rev>] [--json] [--format stylish|json|sarif] [--generated] [--kind <kind file>] [--live --env <env>]
+                        Fail on an unreadable lineage lock or an open manual
+                        step, and, in a declared workspace, on a WSP check of
+                        the declaration, member ledgers, pipelines or
+                        generated files. --generated runs declared generators
+                        and compares their output. --kind warns on records
+                        whose pinned files changed. Needs no workspace file.
+                        --at reads a commit's git objects; --format json
+                        prints the read-contract document. --live --env
+                        resolves each declared member link against the live
+                        graph of <env> (each chant member runs chant graph
+                        --live, which reaches the account) and reports
+                        WSP141 and WSP142
+  workspace check --changes <base>..<head> [--work <id>] [--severity off|warn|fail] [--kind <kind file>...] [--json]
+                        Map each path the diff changes to the current records
+                        whose constrains cover it: change-uncovered when none
+                        does, change-out-of-scope when a record in hand (the
+                        --work item and its decisions) lists it in
+                        out_of_scope. The declaration's changes block sets
+                        the severity (warn by default) and ignore globs. When
+                        the declaration at base has writeScope or agents, each
+                        commit that writes outside its writer's scope fails
+                        the check (write-scope-member, write-scope-kind)
+  workspace patch <base>..<head>|<base>...<head>|<commit> [--path <p>...] [--max-bytes <n>] [--json]
+  workspace patch [<commit>] --worktree [--path <p>...] [--max-bytes <n>] [--json]
+                        The hunks of a diff, file by file: a range, a work
+                        branch, or one commit against its first parent. Each
+                        file's hunk text stops at --max-bytes (64 KiB) and
+                        says it was truncated
+  workspace build [dir] [--member <name>] [-o <dir>] [--dry-run]
+                        Build every chant member and example project, each with
+                        its own chant, one process per toolchain. -o <dir>
+                        writes <dir>/<member>.json; --member narrows the run;
+                        --dry-run prints which chant runs which project
+  workspace lint [dir] [--format stylish|json|sarif] [--member <name>]
+                        Lint every chant member and example project with its
+                        own chant; sarif writes one run per member
+  workspace audit [dir] [--json] [--member <name>]
+                        Audit each chant member with its own .chant-audit.json;
+                        every finding carries a member field
+  workspace graph [dir] [--at <rev>] [--member <name>] [--kind <kind file>] [-o <file>]
+                        Compose each chant member's chant graph into one IR,
+                        with <member>/<id> ids and groups.byMember: the
+                        read-contract document. --at <rev> runs each member's
+                        source as it was at that commit; --kind adds the
+                        records' asset and constrains links. A member whose
+                        source and toolchain are unchanged is served from
+                        the cache in $CHANT_CACHE_DIR or ~/.cache/chant;
+                        --no-cache reads every member
+  workspace graph --composites [--at <rev>] [--member <name>] [-o <file>]
+                        Each composite instance the members declare, with the
+                        components whose contract can deploy it; an instance
+                        with none lists an empty set
+  workspace graph --intent <path[:start-end]> [--at <rev>] [--kind <kind file>...] [--json]
+                        The intent graph over one region: the commits that
+                        touched it, the decisions whose constrains cover it,
+                        the artifacts they pin, and findings with closed codes.
+                        Without --kind, every record kind the declaration names
+  workspace graph --intent --record <id> [--at <rev>] [--kind <kind file>...] [--json]
+                        One decision's intent walk over every path: and member:
+                        entry it constrains: the commits in its window, each
+                        own, worked, within-other or unexplained, with counts
 
 Lifecycle (alias: lc):
   lifecycle snapshot <env>  Query API, save metadata to orphan branch
@@ -705,7 +1121,11 @@ Component release ledger + status:
                              <file> finishes an attempt that stopped)
   components release <env> Append one immutable release record
                             (--component <name> --digest <sha256:...>
-                             [--git-sha <sha>] [--run-id <id>] [--actor <name>])
+                             [--git-sha <sha>] [--run-id <id>] [--actor <name>]);
+                            --release-plan <file> takes --digest's place,
+                            persisting the release plan the file holds to
+                            _plans/<digest>.json (ws-055) and recording its
+                            own digest
   components export <env>  Materialize a persisted build archive manifest to
                             a portable directory (--component <name>
                             [--digest <manifestDigest>] -o <dir> [--json]);
@@ -720,6 +1140,10 @@ Component release ledger + status:
                             from its recorded digest (--component <name>
                             [--digest <sha256:...>]; defaults to the release
                             before the current one; --dry-run prints the plan)
+  components redeploy <env> Redeploy the release an environment's ledger
+                            records as current, after a deploy that failed
+                            partway (--component <name> [--digest <sha256:...>];
+                            --dry-run prints the plan; gates still apply)
 
 Lexicon development:
   dev generate          Generate lexicon artifacts (+ validate + coverage)
@@ -757,7 +1181,8 @@ Options:
                         - build: json (default) or yaml
                         - list: text (default) or json
                         - lint: stylish (default), json, or sarif
-  -d, --lexicon <name>  Build only the specified lexicon (e.g. aws, gitlab)
+  -d, --lexicon <name>  Build only the specified lexicon (e.g. aws, gitlab);
+                        import: use this lexicon instead of detecting one
       --env <name>      Active environment: sets CHANT_ENV so env-aware source
                         re-evaluates for that environment (build + graph), and
                         drives organizational policy. Must be in chant.config
@@ -773,9 +1198,11 @@ Options:
                         resolved build parameter and per-file fold decision
                         instead of the one-line summaries
   -h, --help            Show this help message
+  -V, --version         Print the installed chant's version
   --on <lexicon>        Which runtime hosts the run: a configured lexicon with
-                        an opRuntime, or the built-in local runtime when
-                        omitted (every run subcommand; #2121)
+                        an opRuntime, or local. Omitted, run.on in
+                        chant.config.ts decides, then the built-in local
+                        runtime (every run subcommand; #2121, #2523)
   --local               Run an Op with the local in-process executor (default)
   -p, --profile <name>  Named connection profile the hosting runtime targets
                         (fountain.profiles in chant.config.ts); each runtime's
@@ -835,18 +1262,23 @@ Options:
                         docs). Default: off (also settable via
                         chant.config.ts's build.sandbox: true; #1045)
   --param <name=value>  (build, graph, run --components, components fan-out,
-                        components promote, components rollback) Bind a
+                        components promote, components rollback,
+                        components redeploy) Bind a
                         declared build-time parameter (chant.config.ts's buildParams)
                         to a value, for source to read as params.<name>
                         (#1064) instead of process.env — repeatable.
                         Distinct from the AWS lexicon's deploy-time
                         Parameter(): this resolves before synthesis, so it
                         can change which resources are produced at all.
-                        Highest precedence.
+                        Highest precedence. With init --from, it sets a
+                        template parameter that the template's
+                        chant.template.json declares instead (#2627).
   --params-file <path>  (build, graph, run --components, components fan-out,
-                        components promote, components rollback) JSON file
+                        components promote, components rollback,
+                        components redeploy) JSON file
                         of { "name": value } build-time parameter values
                         (#1064). Second precedence, after --param.
+                        init --from refuses it: pass --param instead.
 
 Examples:
   chant build ./infra/
@@ -861,6 +1293,8 @@ Examples:
   chant run --components all --env production
   chant components export prod --component search-service -o ./dist/search-service
   chant import template.json --output ./infra/
+  chant import manifest.yaml --lexicon k8s --output ./infra/
+  chant import dash.json --lexicon grafana --parser-option acceptLossyV1
   chant import --from prod --name my-bucket --output src/
   chant lint ./infra/
   chant lint ./infra/ --format sarif
@@ -980,6 +1414,70 @@ async function loadPluginsOrExit(path: string): Promise<import("../lexicon").Lex
   return plugins;
 }
 
+/**
+ * #2700 — whether `path` is the root of a declared workspace and holds no
+ * lexicon of its own: no `lexicons` in a root config, and no lexicon import in
+ * the root's source, which leaves the members' directories out (#2527). A
+ * generated app repo can be this shape: its lexicons are all under a
+ * delivery directory, not the root. `chant serve mcp` starts there instead of
+ * refusing with "No lexicon detected", and serves core with the chant
+ * members' lexicons.
+ *
+ * A directory with no workspace declaration costs only `findWorkspaceRoot`'s
+ * existence checks, so a level-0 project reaches `loadPluginsOrExit` as before.
+ */
+async function isLexiconlessWorkspaceRoot(path: string): Promise<boolean> {
+  const target = resolve(path);
+  if (findWorkspaceRoot(target)?.dir !== target) return false;
+  try {
+    await resolveProjectLexicons(target);
+    return false;
+  } catch (error) {
+    return isNoLexiconDetected(error);
+  }
+}
+
+/** Whether `def` must run without evaluating the project's `chant.config.ts` (chant#2591). */
+function commandRunsNoConfig(def: CommandDef, args: ParsedArgs): boolean {
+  return typeof def.runsNoConfig === "function" ? def.runsNoConfig(args) : def.runsNoConfig === true;
+}
+
+/**
+ * Run one level-0 command line in this process and return its exit code
+ * (#2537). `chant workspace member-run` calls it once per member, from inside
+ * the member's directory, so each member is built, linted, audited or graphed
+ * as `chant <verb> .` would do it there, while members that share a toolchain
+ * share one process. It is main()'s dispatch without the help, the root
+ * refusal and the lexicon command groups: the config is loaded, `--env` is
+ * checked, plugins are loaded when the command needs them, and the handler
+ * runs. A `process.exit` inside (loadPluginsOrExit's, say) is the caller's to
+ * catch.
+ */
+export async function runCommandInProcess(argv: string[]): Promise<number> {
+  const args = parseArgs(argv);
+  const match = resolveCommand(args, commandRegistry);
+  if (!match) {
+    console.error(formatError({ message: `Unknown command: ${args.command}` }));
+    return 1;
+  }
+  if (args.env) process.env[ENV_VAR] = args.env;
+  let loadedConfig;
+  try {
+    // chant#2618 — `workspace audit` reaches `audit` through here, once per
+    // member. A `runsNoConfig` command skips the load, as it does in main().
+    if (!commandRunsNoConfig(match.def, args)) loadedConfig = await loadChantConfigUpward(resolve(args.path));
+  } catch {
+    // A project with no config is the handler's to report, as in main().
+  }
+  const envErr = unknownEnvError(args.env, loadedConfig?.config.environments);
+  if (envErr) {
+    console.error(formatError({ message: envErr, hint: "Declare it in chant.config `environments`, or omit --env." }));
+    return 1;
+  }
+  const plugins = match.def.requiresPlugins ? await loadPluginsOrExit(match.compound ? "." : args.path) : [];
+  return match.def.handler({ args, plugins, serializers: plugins.map((p) => p.serializer) });
+}
+
 // ── Command registry ──────────────────────────────────────────────
 
 /**
@@ -1000,8 +1498,10 @@ export const commandRegistry: CommandDef[] = [
   { name: "describe", handler: runDescribe },
   { name: "explain", handler: runExplain },
   { name: "search", handler: runSearch },
-  { name: "import", handler: runImport },
-  { name: "audit", handler: runAudit },
+  // chant#2591 — `import --agents` and `audit` read chant.config statically
+  // and never evaluate it (chant#2589 for audit, which audits code it must not run).
+  { name: "import", handler: runImport, runsNoConfig: (args) => args.agents === true },
+  { name: "audit", handler: runAudit, runsNoConfig: true },
   { name: "migrate", handler: runMigrate },
   // Read-only Terraform peelability advisor (#214). Compound so "advise" lands
   // in args.path; the estate dir comes from --from. No plugins, no project.
@@ -1020,7 +1520,7 @@ export const commandRegistry: CommandDef[] = [
   // Status read over a tree of carve manifests (#2038): the contract a
   // renderer replaces its own walk-and-guess discovery with. Read-only.
   { name: "carve status", handler: runCarveStatus },
-  { name: "init", handler: runInit },
+  { name: "init", handler: runInit, runsNoConfig: true },
   { name: "init lexicon", handler: runInitLexicon },
 { name: "update", handler: runUpdate },
   { name: "doctor", handler: runDoctor },
@@ -1028,7 +1528,7 @@ export const commandRegistry: CommandDef[] = [
   // Dev subcommands
   { name: "dev generate", requiresPlugins: true, handler: runDevGenerate },
   { name: "dev publish", requiresPlugins: true, handler: runDevPublish },
-  { name: "dev onboard", handler: runDevOnboard },
+  { name: "dev onboard", handler: runDevOnboard, runsNoConfig: true },
   { name: "dev check-lexicon", handler: runDevCheckLexicon },
   { name: "dev surface-diff", handler: runDevSurfaceDiff },
   { name: "dev pinned-upgrade", handler: runDevPinnedUpgrade },
@@ -1054,7 +1554,42 @@ export const commandRegistry: CommandDef[] = [
   // Workspace reads (#2524). Imported on first use, so a level-0 command never
   // loads anything under workspace/ (#2525 rule 5, pinned by #2526's goldens).
   { name: "workspace records", handler: async (ctx) => (await import("../workspace/records-cli")).runWorkspaceRecords(ctx) },
+  // ws-058 (#2739) — decision points and the questions asked of them; never calls a model.
+  { name: "workspace points", handler: async (ctx) => (await import("../workspace/points-cli")).runWorkspacePoints(ctx) },
+  { name: "workspace init", handler: async (ctx) => (await import("../workspace/init")).runWorkspaceInit(ctx) },
+  { name: "workspace ls", handler: async (ctx) => (await import("../workspace/ls")).runWorkspaceLs(ctx) },
+  // #2732 — the work lease: claim, renew and release a work item.
+  { name: "workspace work", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/work-cli")).runWorkspaceWork(ctx) },
+  { name: "workspace status", handler: async (ctx) => (await import("../workspace/status")).runWorkspaceStatus(ctx) },
   { name: "workspace lineage", handler: async (ctx) => (await import("../workspace/lineage-cli")).runWorkspaceLineage(ctx) },
+  { name: "workspace upgrade", handler: async (ctx) => (await import("../workspace/lineage-upgrade-cli")).runWorkspaceUpgrade(ctx) },
+  // #2551 — adopt a lineage, the hash index it matches against, and the versions of a family of workspaces.
+  { name: "workspace adopt-lineage", handler: async (ctx) => (await import("../workspace/lineage-adopt-cli")).runWorkspaceAdoptLineage(ctx) },
+  { name: "workspace hash-index", handler: async (ctx) => (await import("../workspace/lineage-adopt-cli")).runWorkspaceHashIndex(ctx) },
+  // #2552 — export a workspace or members, bring an export back, and admit a return's signers.
+  { name: "workspace export", handler: async (ctx) => (await import("../workspace/export-cli")).runWorkspaceExport(ctx) },
+  { name: "workspace import", handler: async (ctx) => (await import("../workspace/export-cli")).runWorkspaceImport(ctx) },
+  { name: "workspace admit", handler: async (ctx) => (await import("../workspace/export-cli")).runWorkspaceAdmit(ctx) },
+  { name: "workspace versions", handler: async (ctx) => (await import("../workspace/lineage-versions")).runWorkspaceVersions(ctx) },
+  // #2641 — workspace check reads member configs statically and never runs one.
+  { name: "workspace check", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/lineage-check")).runWorkspaceCheck(ctx) },
+  // The hunks of a diff, for a reader that runs no git of its own.
+  { name: "workspace patch", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/patch")).runWorkspacePatch(ctx) },
+  // #2537 — per-member commands. Each member runs under its own chant, one
+  // process per toolchain identity; `member-run` is that process's entry.
+  { name: "workspace build", handler: async (ctx) => (await import("../workspace/member-commands")).runWorkspaceMembers(ctx, "build") },
+  { name: "workspace lint", handler: async (ctx) => (await import("../workspace/member-commands")).runWorkspaceMembers(ctx, "lint") },
+  // chant#2618 — audit runs no project code, at the workspace level too.
+  { name: "workspace audit", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/member-commands")).runWorkspaceMembers(ctx, "audit") },
+  { name: "workspace graph", handler: async (ctx) => (await import("../workspace/member-commands")).runWorkspaceMembers(ctx, "graph") },
+  // Each unit decides for itself whether its config is loaded (runCommandInProcess).
+  { name: "workspace member-run", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/member-run")).runWorkspaceMemberRun(ctx, runCommandInProcess) },
+  { name: "workspace pin", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/pin-cli")).runWorkspacePin(ctx) },
+  // #2548 — an agent session's member, write scope and spec, for a session that resumes.
+  { name: "workspace agent", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/agent-cli")).runWorkspaceAgent(ctx) },
+  { name: "workspace verify", handler: async (ctx) => (await import("../workspace/trust/verify-cli")).runWorkspaceVerify(ctx) },
+  { name: "workspace signers", handler: async (ctx) => (await import("../workspace/trust/signers-cli")).runWorkspaceSigners(ctx) },
+  { name: "workspace evidence", handler: async (ctx) => (await import("../workspace/trust/evidence-cli")).runWorkspaceEvidence(ctx) },
 
   // State subcommands
   { name: "lifecycle snapshot", requiresPlugins: true, handler: runLifecycleSnapshot },
@@ -1079,6 +1614,7 @@ export const commandRegistry: CommandDef[] = [
   { name: "components export", handler: runComponentsExport },
   { name: "components promote", handler: runComponentsPromote },
   { name: "components rollback", handler: runComponentsRollback },
+  { name: "components redeploy", handler: runComponentsRedeploy },
 
   // Local emulators of configured lexicons (#920). Compound so the action word
   // lands in args.path (not consumed as a project dir) and projectPath is forced ".".
@@ -1125,6 +1661,15 @@ async function main(): Promise<void> {
     throw err;
   }
 
+  // #2701 — `chant --version` / `-V` prints the installed chant's version, the
+  // one the MCP server reports (./version.ts). With a command word it answers
+  // only for one of core's own commands; a lexicon-mounted verb keeps the flag.
+  if (args.version && (!args.command || resolveCommand(args, commandRegistry))) {
+    console.log(CHANT_VERSION);
+    await flushAndExit(0);
+    return;
+  }
+
   if (args.help || !args.command) {
     const groups = await loadPluginsBestEffort().then(collectCommandGroups).catch(() => []);
     printHelp(groups);
@@ -1159,10 +1704,16 @@ async function main(): Promise<void> {
   // subdirectory build/command (`chant build src/<stack> --env prod`) the
   // declared `environments` almost always live in the root `chant.config.ts`,
   // not `args.path` itself.
+  //
+  // chant#2591 — a command marked `runsNoConfig` skips this load: it must not
+  // run the project's `chant.config.ts` (see `CommandDef.runsNoConfig`). Such a
+  // command gets no `--env` check against the declared environments either.
+  const earlyMatch = resolveCommand(args, commandRegistry);
+  const runsNoConfig = earlyMatch != null && commandRunsNoConfig(earlyMatch.def, args);
   const projectPath0 = resolve(args.path === "." ? "." : args.path);
   let loadedConfig;
   try {
-    loadedConfig = await loadChantConfigUpward(projectPath0);
+    if (!runsNoConfig) loadedConfig = await loadChantConfigUpward(projectPath0);
     initRuntime();
   } catch {
     // Config may not exist yet (e.g. `chant init`)
@@ -1176,7 +1727,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const match = resolveCommand(args, commandRegistry);
+  const match = earlyMatch;
   if (!match) {
     // chant #1078 — not one of core's own commands; check whether a lexicon
     // mounted a command group under this name before giving up. This is the
@@ -1192,6 +1743,28 @@ async function main(): Promise<void> {
       hint: 'Run "chant --help" to see available commands',
     }));
     process.exit(1);
+  }
+
+  // #2537 (#2524 D0) — at the root of a declared workspace, `build` and
+  // `lint` refuse with WSP000 unless `--root-only` or `rootOnly: true` says
+  // to run on the root project alone. Both lookups only test whether files
+  // exist; the workspace code loads only when this project is a declared root.
+  if (match.def.name === "build" || match.def.name === "lint") {
+    const target = resolve(args.path);
+    const workspace = findWorkspaceRoot(target);
+    if (workspace && findProjectRoot(target) === workspace.dir) {
+      const { guardRootCommand } = await import("../workspace/root-refusal");
+      const refused = guardRootCommand({
+        verb: match.def.name,
+        target,
+        workspaceDir: workspace.dir,
+        rootOnly: args.rootOnly === true || loadedConfig?.config.rootOnly === true,
+      });
+      if (refused !== undefined) {
+        await flushAndExit(refused);
+        return;
+      }
+    }
   }
 
   // For compound commands (e.g. "run list", "lifecycle plan <env>"), the first
@@ -1224,7 +1797,9 @@ async function main(): Promise<void> {
   const plugins = match.def.requiresPlugins
     ? isGenerateComponents || isComponentsStatus || isEmulator || isFanOutFromFile
       ? await loadPlugins(await resolveProjectLexicons(resolve(projectPath)).catch(() => [])).catch(() => [])
-      : await loadPluginsOrExit(projectPath)
+      : match.def.name === "serve mcp" && (await isLexiconlessWorkspaceRoot(projectPath))
+        ? [] // #2700 — runServeMcp loads the chant members' lexicons itself.
+        : await loadPluginsOrExit(projectPath)
     : [];
   const serializers = plugins.map((p) => p.serializer);
   const ctx = { args, plugins, serializers };

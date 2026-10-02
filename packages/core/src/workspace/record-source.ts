@@ -16,6 +16,8 @@ export interface RecordSource {
   list(dir: string): string[] | undefined;
   /** The text of a file listed by `list`. */
   read(path: string): string;
+  /** The bytes of a file listed by `list`, for a content-addressed id (ws-053). */
+  bytes(path: string): Uint8Array;
 }
 
 /** Records in the working tree under `root`. */
@@ -33,6 +35,9 @@ export function workingTreeSource(root: string): RecordSource {
     },
     read(path) {
       return readFileSync(join(root, path), "utf-8");
+    },
+    bytes(path) {
+      return readFileSync(join(root, path));
     },
   };
 }
@@ -68,7 +73,12 @@ export function resolveRevision(root: string, rev: string): string {
 
 /** Records as they were at `commit`, read from the object store of the repository at `root`. */
 export function gitRevisionSource(root: string, commit: string): RecordSource {
-  const blobs = new Map<string, string>();
+  const blobs = new Map<string, Buffer>();
+  const blob = (path: string): Buffer => {
+    const bytes = blobs.get(path);
+    if (bytes === undefined) throw new Error(`${path} was not listed at ${commit}`);
+    return bytes;
+  };
   return {
     label: ` at ${commit.slice(0, 8)}`,
     list(dir) {
@@ -102,16 +112,15 @@ export function gitRevisionSource(root: string, commit: string): RecordSource {
           const nl = out.indexOf(0x0a, at);
           const size = Number(out.subarray(at, nl).toString("utf-8").split(" ")[2]);
           const start = nl + 1;
-          blobs.set(dir === "." ? e.name : `${dir}/${e.name}`, out.subarray(start, start + size).toString("utf-8"));
+          blobs.set(dir === "." ? e.name : `${dir}/${e.name}`, out.subarray(start, start + size));
           at = start + size + 1;
         }
       }
       return entries.map((e) => e.name);
     },
     read(path) {
-      const text = blobs.get(path);
-      if (text === undefined) throw new Error(`${path} was not listed at ${commit}`);
-      return text;
+      return blob(path).toString("utf-8");
     },
+    bytes: blob,
   };
 }

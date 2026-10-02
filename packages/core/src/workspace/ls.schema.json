@@ -1,0 +1,288 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/ls/v1/ls.schema.json",
+  "title": "chant workspace ls output",
+  "description": "What `chant workspace ls --json` prints, version 1 of the read contract for listing a workspace (#2524 D15, #2534). Readers ignore fields they do not know; a field is only ever added within a version. The reason and error codes are closed lists: a new code is a new contract version. Contract version 1 is written by chant 0.81.0 and newer; a reader that needs it refuses output whose `contract` it doesn't know. Every code is in the one closed list of `reason-codes.ts`.",
+  "oneOf": [{ "$ref": "#/$defs/result" }, { "$ref": "#/$defs/failure" }],
+  "$defs": {
+    "result": {
+      "description": "The declaration was read. Exit code 0, even when some members can't be read.",
+      "type": "object",
+      "required": ["$schema", "contract", "chant", "at", "workspace", "members", "groups", "diagrams", "summary"],
+      "properties": {
+        "$schema": { "const": "https://intentius.io/chant/schemas/workspace/ls/v1/ls.schema.json" },
+        "contract": { "const": 1 },
+        "chant": { "type": "string", "description": "The version of the chant that read the workspace." },
+        "at": {
+          "description": "The full commit id the workspace was read at (--at), or null for the working tree.",
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{40,64}$"
+        },
+        "error": false,
+        "workspace": {
+          "type": "object",
+          "required": ["name", "root", "file", "schema", "minReader", "pins"],
+          "properties": {
+            "name": { "type": "string", "description": "The declared name. With the revision, it identifies the workspace." },
+            "root": {
+              "type": "string",
+              "description": "The workspace root relative to the git root, with / separators, \".\" for the git root itself. An absolute path outside a git repository."
+            },
+            "file": { "enum": ["chant.workspace.json", "chant.workspace.jsonc"] },
+            "schema": { "const": 1 },
+            "minReader": { "type": ["string", "null"] },
+            "pins": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["package", "version", "path", "integrity"],
+                "properties": {
+                  "package": { "type": ["string", "null"] },
+                  "version": { "type": ["string", "null"] },
+                  "path": { "type": ["string", "null"] },
+                  "integrity": { "type": ["string", "null"] }
+                }
+              }
+            },
+            "records": {
+              "description": "Added in contract 1 by #2680. The workspace's own record kinds, from the declaration's top-level records, in file order.",
+              "type": "array",
+              "items": { "$ref": "#/$defs/recordKind" }
+            }
+          }
+        },
+        "members": {
+          "description": "Every member, in declaration order, readable or not.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/member" }
+        },
+        "groups": {
+          "description": "Every example group (ws-051), in declaration order. Their matches are not members.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/group" }
+        },
+        "diagrams": {
+          "description": "Added in contract 1 by #2764. Every declared diagram artifact, flattened across the workspace and its members: the workspace's own first, then each member's, in file order.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/diagram" }
+        },
+        "summary": {
+          "type": "object",
+          "required": ["members", "unreadable", "groups", "matches"],
+          "properties": {
+            "members": { "type": "integer", "minimum": 0 },
+            "unreadable": { "type": "integer", "minimum": 0, "description": "Members with a reason." },
+            "groups": { "type": "integer", "minimum": 0 },
+            "matches": { "type": "integer", "minimum": 0, "description": "Projects across all groups." }
+          }
+        }
+      }
+    },
+    "member": {
+      "type": "object",
+      "required": ["name", "dir", "kind", "roles", "upstream", "because", "readable", "reason"],
+      "properties": {
+        "name": { "type": "string" },
+        "dir": { "type": "string", "description": "Relative to the workspace root, with / separators; \".\" is the root member." },
+        "kind": { "type": "string" },
+        "roles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "path"],
+            "properties": {
+              "name": { "type": "string" },
+              "path": { "type": ["string", "null"], "description": "Relative to the member's directory, or null for the whole member." }
+            }
+          }
+        },
+        "upstream": { "type": ["string", "null"] },
+        "because": { "type": ["string", "null"] },
+        "readable": { "type": "boolean", "description": "True exactly when reason is null." },
+        "records": {
+          "description": "Added in contract 1 by #2680. The record kinds the member declares, in file order. A kind that can't be loaded does not make the member unreadable.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/recordKind" }
+        },
+        "generated": {
+          "description": "Added in contract 1 by #3050. The files the member generates, from its declared generated entries and from the record `chant build --components --generate` and `chant run --generate` write, sorted by path. A hand-written entry is not listed.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/generatedFile" }
+        },
+        "reason": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["code", "message"],
+              "properties": {
+                "code": { "enum": ["dir-missing", "unknown-kind", "kind-probe-failed"] },
+                "message": { "type": "string" }
+              }
+            }
+          ]
+        }
+      },
+      "if": { "type": "object", "properties": { "readable": { "const": true } }, "required": ["readable"] },
+      "then": { "type": "object", "properties": { "reason": { "type": "null" } } },
+      "else": { "type": "object", "properties": { "reason": { "type": "object" } } }
+    },
+    "recordKind": {
+      "description": "A record kind the declaration names (#2680). chant workspace records and graph --intent read every one of them when --kind is not given.",
+      "type": "object",
+      "required": ["name", "path", "kind", "reason"],
+      "properties": {
+        "name": { "type": ["string", "null"], "description": "The name the declaration gives the kind, else the kind file's own recordKind.name, else null when the file can't be loaded." },
+        "path": { "type": "string", "description": "The kind file, relative to the workspace root, with / separators." },
+        "kind": { "type": ["string", "null"], "description": "The kind file's recordKind.name, or null when it can't be loaded." },
+        "reason": {
+          "description": "Why the kind file can't be loaded, or null. The file is looked for in the tree read, the revision under --at, and loaded from the working tree.",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["code", "message"],
+              "properties": {
+                "code": { "enum": ["kind-unreadable", "kind-invalid", "schema-unreadable", "schema-id-mismatch"] },
+                "message": { "type": "string" }
+              }
+            }
+          ]
+        },
+        "acceptance": {
+          "description": "Added in contract 1 by #2772. For a work kind whose work block names acceptance criteria: each current work item that lists some, in path order, with how many of its criteria passing evidence meets, read in the tree read. Null for any other kind, and when the kind or its records can't be read.",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["item", "state", "met", "total"],
+                "properties": {
+                  "item": { "type": "string", "description": "The work item's id." },
+                  "state": { "type": ["string", "null"], "description": "The item's state." },
+                  "met": { "type": "integer", "minimum": 0, "description": "Criteria met by evidence naming them, with result pass and the criterion's verification; a manual verdict counts only from someone other than the implementer." },
+                  "total": { "type": "integer", "minimum": 0, "description": "Criteria the item lists." }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "generatedFile": {
+      "type": "object",
+      "required": ["path", "command", "env", "jobs"],
+      "properties": {
+        "path": { "type": "string", "description": "From the repository root, with / separators, which is how a forge reads a CI file. For a workspace below the git root, that includes the workspace root." },
+        "command": { "type": "string", "description": "The command that regenerates the file, run in the member's directory. Empty when a record names none." },
+        "env": { "type": ["string", "null"], "description": "The environment a component pipeline deploys, or null." },
+        "jobs": {
+          "description": "The check names a forge CI file declares: for GitHub, Forgejo and Gitea the job's name, else its id; for GitLab the job's key. Null for any other file, and for a CI file that is missing from the tree read or can't be parsed.",
+          "type": ["array", "null"],
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "diagram": {
+      "description": "A diagram artifact the declaration names (#2764), pinned to the renderer its render was made with. chant runs no renderer; everything here comes straight from the declaration.",
+      "type": "object",
+      "required": ["name", "title", "source", "render", "renderer", "member"],
+      "properties": {
+        "name": { "type": "string" },
+        "title": { "type": "string" },
+        "source": { "type": ["string", "null"], "description": "From the workspace root, with / separators. Null for an SVG with no source." },
+        "render": { "type": ["string", "null"], "description": "From the workspace root, with / separators. Null for a mermaid or excalidraw diagram with no committed render: a reader draws it from its source." },
+        "renderer": {
+          "type": "object",
+          "required": ["tool", "version", "args"],
+          "properties": {
+            "tool": { "enum": ["d2", "mermaid", "graphviz", "excalidraw"] },
+            "version": { "type": "string", "description": "The exact release the render was made with, such as 0.9.0. For mermaid or excalidraw, the release of the library a reader draws the source with." },
+            "args": { "type": "array", "items": { "type": "string" }, "description": "Passed before the input and output paths, in order." }
+          }
+        },
+        "member": { "type": ["string", "null"], "description": "The member that declares it, or null for the workspace's own." }
+      }
+    },
+    "group": {
+      "type": "object",
+      "required": ["name", "kind", "glob", "matches", "skipped", "reason"],
+      "properties": {
+        "name": { "type": "string" },
+        "kind": { "const": "examples" },
+        "glob": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "matches": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Directories the globs match that hold a chant project, relative to the workspace root, sorted. They are built and linted, and nothing else."
+        },
+        "skipped": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Directories the globs match that hold no chant project. They are left alone."
+        },
+        "reason": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["code", "message"],
+              "properties": {
+                "code": { "enum": ["no-matches"] },
+                "message": { "type": "string" }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "failure": {
+      "description": "The declaration could not be read, and nothing is listed. Exit code 1.",
+      "type": "object",
+      "required": ["$schema", "contract", "chant", "error"],
+      "properties": {
+        "$schema": { "const": "https://intentius.io/chant/schemas/workspace/ls/v1/ls.schema.json" },
+        "contract": { "const": 1 },
+        "chant": { "type": "string" },
+        "error": {
+          "type": "object",
+          "required": ["code", "message", "location"],
+          "properties": {
+            "code": {
+              "enum": [
+                "declaration-missing",
+                "declaration-ambiguous",
+                "declaration-unparseable",
+                "declaration-invalid",
+                "placement-invalid",
+                "reader-too-old",
+                "root-chant-required",
+                "not-a-git-repository",
+                "revision-unknown"
+              ]
+            },
+            "message": { "type": "string" },
+            "location": {
+              "description": "Where in the declaration the problem is, or null when it is not in the file.",
+              "oneOf": [
+                { "type": "null" },
+                {
+                  "type": "object",
+                  "required": ["file", "line", "column"],
+                  "properties": {
+                    "file": { "type": "string" },
+                    "line": { "type": "integer", "minimum": 1 },
+                    "column": { "type": "integer", "minimum": 1 }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "members": false,
+        "workspace": false
+      }
+    }
+  }
+}

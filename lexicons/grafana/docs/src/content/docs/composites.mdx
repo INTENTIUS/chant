@@ -1,0 +1,151 @@
+---
+title: "Dashboards from Declarations"
+description: "RedDashboard, SloDashboard and AgentDashboard: dashboards built from a spanmetrics connector, an Slo and the GenAI preset"
+diataxis: reference
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-grafana` — DO NOT EDIT.
+    Edit lexicons/grafana/docs/pages/composites.mdx instead; changes here are overwritten. */}
+
+
+Three composites build a whole dashboard from a declaration in another lexicon. Each reads the metric names, labels and numbers from that declaration when the build evaluates it, so renaming a metric at its source moves it in every panel query, and the dashboard can't drift from the collector or the rules it reads.
+
+| Composite | Reads | Shows |
+|---|---|---|
+| `RedDashboard` | an otel `SpanMetricsConnector` | rate, error ratio and duration quantiles per service |
+| `SloDashboard` | a prometheus `Slo` | SLI over the window, error budget left, alerts firing, burn rate per alert window |
+| `AgentDashboard` | the otel GenAI preset (`genAiMetrics()` or `genAiComponents()`), or a prometheus `GenAiRules` | calls, errors and latency per model and per tool, errors by type, tokens per model; from the rules also per provider, with cost per currency and the rules' alerts |
+
+Each returns `{ dashboard }`, a `Dashboard` entity. Export the composite's result and the build writes the dashboard like any other.
+
+A fourth, `SloAlertRules`, reads the same `Slo` and returns `{ rules }`, an `AlertRuleGroup` of Grafana-managed burn-rate alerts; see [Alerting](../alerting/#slo-burn-rate-alerts).
+
+```ts
+import { SpanMetricsConnector, genAiComponents } from "@intentius/chant-lexicon-otel";
+import { Slo } from "@intentius/chant-lexicon-prometheus";
+import { Datasource, RedDashboard, SloDashboard, AgentDashboard } from "@intentius/chant-lexicon-grafana";
+
+const spans = new SpanMetricsConnector({ namespace: "shop" });
+const genai = genAiComponents({ namespace: "agents" });
+const checkout = Slo({ name: "checkout", objective: 0.999, window: "30d", sli: { /* ... */ } });
+const prometheus = new Datasource({ name: "Prometheus", type: "prometheus", url: "http://prometheus:9090" });
+
+export const services = RedDashboard({ spanMetrics: spans, datasource: prometheus });
+export const checkoutSlo = SloDashboard({ slo: checkout, datasource: prometheus });
+export const agents = AgentDashboard({ genAi: genai, datasource: prometheus });
+```
+
+## Common props
+
+Every composite takes these, with defaults derived from what it reads:
+
+| Prop | Default |
+|---|---|
+| `datasource` | required: a Prometheus `Datasource`, or `{ type: "prometheus", uid }` for one declared in another build root |
+| `title`, `uid`, `description`, `tags` | from the source (the uid is `red-<namespace>`, `slo-<name>` or `<namespace>-agents`) |
+| `folder`, `links`, `refresh`, `time` | no folder, no links, `1m`, the last 6 hours (7 days for an SLO) |
+
+A datasource of any other type is an error at declaration time. Queries use `$__rate_interval`, so the rate window follows Grafana's scrape interval setting.
+
+## RedDashboard
+
+```ts
+RedDashboard({ spanMetrics, exporter?, quantiles?, spanKinds?, datasource, ... })
+```
+
+- `spanMetrics`: the `spanmetrics` connector, or what `spanMetricsNames(connector)` returned.
+- `exporter`: the `prometheus` exporter serving the metrics, when its `namespace` or `add_metric_suffixes: false` changes the names Prometheus sees.
+- `quantiles`: duration quantiles, one panel each. Default `[0.5, 0.95, 0.99]`.
+- `spanKinds`: the span kinds counted. Default `["SPAN_KIND_SERVER", "SPAN_KIND_CONSUMER"]` (`RED_DEFAULT_SPAN_KINDS`), the spans that handle a request or a message; `[]` counts every kind.
+
+Names come from the otel lexicon's `spanMetricsNames()`: the connector's `namespace` (default `traces.span.metrics`), its histogram unit (`ms` gives `_milliseconds`, `s` gives `_seconds`), and which default dimensions `exclude_dimensions` leaves in. The dashboard has a multi-value `service` variable and two rows: rate and errors, then one panel per duration quantile. With `histogram.disable` there is no duration row. A connector that excludes `service.name` or `status.code` can't be broken down by service or split into errors, so the composite refuses it.
+
+The spanmetrics connector counts every span, so a service's outgoing calls (client and producer spans) and its internal spans sit in the same series as the requests it serves. Counting them all would inflate the rate, which the panel labels as requests per second, and let a failing downstream call count as the service's own error. The queries and the `service` variable filter on `span_kind` instead. A connector that excludes `span.kind` gets no filter by default, and naming `spanKinds` for it is an error.
+
+The error ratio's numerator falls back to the denominator times zero, so a service with traffic and no errors shows 0 rather than "No data".
+
+The PromQL, for a connector with `namespace: "shop"`:
+
+```promql
+sum by (service_name) (rate(shop_calls_total{service_name=~"$service", span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[$__rate_interval]))
+
+(
+sum by (service_name) (rate(shop_calls_total{service_name=~"$service", span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER", status_code="STATUS_CODE_ERROR"}[$__rate_interval]))
+or
+sum by (service_name) (rate(shop_calls_total{service_name=~"$service", span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[$__rate_interval])) * 0
+)
+/
+sum by (service_name) (rate(shop_calls_total{service_name=~"$service", span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[$__rate_interval]))
+
+histogram_quantile(0.95, sum by (le, service_name) (rate(shop_duration_milliseconds_bucket{service_name=~"$service", span_kind=~"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER"}[$__rate_interval])))
+```
+
+## SloDashboard
+
+```ts
+SloDashboard({ slo, datasource, ... })
+```
+
+- `slo`: the `Slo(...)` result, its rule group, or `sloMetrics(slo)`.
+
+Everything comes from the prometheus lexicon's `sloMetrics()`: the recorded series, the `slo` label, the objective, the error budget, the window and the burn-rate pairs. The first row has the SLI over the SLO window against the objective, the error budget remaining, the objective, and how many of the SLO's burn-rate alerts are firing (from `ALERTS`), then the SLI and the budget over time with the objective and zero drawn as dashed lines.
+
+The second row has one panel per burn-rate pair. Each plots the long and the short window's burn rate (the recorded error ratio over the error budget, so 1 spends the budget exactly over the SLO window) with the pair's factor drawn as a dashed threshold line: the alert fires while both lines are above it. For the default pairs on a 30-day window those lines sit at 14.4, 6, 3 and 1. An SLO with `alerting` turned off has no second row.
+
+## AgentDashboard
+
+```ts
+AgentDashboard({ genAi, quantile?, datasource, ... })
+AgentDashboard({ rules, quantile?, datasource, ... })
+```
+
+- `genAi`: `genAiMetrics(options)` with the options the collector was built with, or the `genAiComponents(options)` result itself.
+- `rules`: a prometheus `GenAiRules(...)` result, its rule group, or `genAiRuleMetrics(...)` of it. Give `genAi` or `rules`, not both.
+- `quantile`: the latency quantile per model and per tool. Default 0.95. With `rules`, one the rules record: 0.5, 0.95 or 0.99.
+
+Metric names come from the preset's metrics, and label names from its GenAI attribute keys (`gen_ai.request.model` is `gen_ai_request_model`). Variables pick services and models. Rows: calls, error ratio and latency per model; the same per tool (operations with a `gen_ai.tool.name`); failed operations by `error.type`; and input and output tokens per model, as rates and as totals over the dashboard's range. The totals are instant queries, one `increase(...[$__range])` evaluated at the end of the range. Token sums carry only the model label, so the service variable doesn't filter them. The error ratios pad their numerator to zero the same way `RedDashboard`'s does.
+
+### From GenAiRules
+
+Given `rules`, the dashboard reads the series the prometheus lexicon's [`GenAiRules`](/chant/lexicons/prometheus/genai-rules/) records, with every series and label name from `genAiRuleMetrics()`. The rules follow the collector: built from `genAiMetrics({ clientMetrics })` they read the conventions' `gen_ai.client.operation.duration` and `gen_ai.client.token.usage`, otherwise the preset's `genai.*` span metrics. A dashboard given only `genAi` is built exactly as before; this mode is opt-in.
+
+```ts
+import { genAiMetrics } from "@intentius/chant-lexicon-otel";
+import { GenAiRules } from "@intentius/chant-lexicon-prometheus";
+import { AgentDashboard } from "@intentius/chant-lexicon-grafana";
+
+export const genai = GenAiRules({
+  genAi: genAiMetrics({ clientMetrics: "derive" }),
+  groupBy: ["service_name"],
+  prices: [{ provider: "anthropic", model: "claude-x", inputPerMTok: 3, outputPerMTok: 15, currency: "USD", source: "https://example.com/pricing", asOf: "2026-09-29" }],
+  alerts: { errorRatio: true },
+});
+export const agentCost = AgentDashboard({ rules: genai, datasource: prometheus });
+```
+
+Rows, each left out when the rules record nothing for it:
+
+- Models: requests, error ratio and latency per provider, model and operation. Latency is the recorded quantile, one line per series the rules record, since quantiles can't be summed.
+- Providers: requests, error ratio and, when the token series carry a provider, tokens per provider. Present only when the rules have a provider label; span metrics have one only with `providerDimensions: true`.
+- Tools: calls, error ratio and p95 latency per tool, from the span metrics' `gen_ai.tool.name`.
+- Errors: failed requests per second by `error.type`, and how many of the rules' alerts are firing (from `ALERTS`) when any alert is turned on.
+- Tokens: input and output tokens per second per model, and each total over the dashboard's range, `avg_over_time` of the recorded rate times `$__range_s`, as an instant query.
+- Cost: for each currency in the price table, spend per hour per provider and model, and spend over the range. The stat's title carries the prices' `asOf` date. Amounts in different currencies are never added, and a model the table doesn't price is not counted, so the totals cover priced models only.
+
+Variables: model always; provider when the rules have a provider label. A service picker needs a service label on every recorded series, so build the rules with `groupBy: ["service_name"]` or `groupBy: ["job"]`; without either, the dashboard has no `$service` variable and says so in its description. The provider picker filters the token panels only when the token series carry a provider (the conventions' client metrics do; the span token sums don't). Cost series always carry the price's provider.
+
+The uid defaults to `<rule group>-agents`, `genai-agents` for the default group name, the same as the span-metrics mode's default, so switching an existing dashboard to `rules` replaces it in place.
+
+The agent run, agent tool-call duration (`gen_ai.execute_tool.duration`), calls per run, time to first token, cache hit ratio and reasoning-token panels wait on the agent and cache metrics of #3044.
+
+## The queries without a dashboard
+
+`redQueries(names, quantiles?, serviceFilter?, spanKinds?)`, `sloQueries(sloMetrics(slo))`, `agentQueries(genAiMetrics())` and `agentRuleQueries(genAiRuleMetrics(rules))` return the PromQL each composite runs, for panels of your own.
+
+## Tested against data
+
+`src/composites/queries.e2e.test.ts` backfills a Prometheus with series named the way the example's connector, `Slo` and GenAI preset name them, provisions the example's dashboards into Grafana 12.4.11 and 13.2.2, and runs every panel's query through Grafana's `/api/ds/query` with each variable at "All". The series grow at constant rates, so each expected value is exact: a service with calls and no errors reads an error ratio of 0; a service that only makes client calls is absent from every panel and from the service picker; client errors don't count toward a service's error ratio; each token total comes back as one instant value; and a service or model with no traffic in the window reads 0/0 = NaN, which is the correct answer for it. The `GenAiRules` series are seeded the same way, so the rules-mode dashboard is checked per provider, per tool and per currency, with each currency's spend coming back on its own. The test needs Docker and skips without it.
+
+## Build roots
+
+GRAF101 and GRAF102 check each panel's datasource against the datasources declared in the same build root (chant #1939). Keep the `Datasource` next to the dashboards, as the [example](../examples/#dashboards-from-declarations) does. For a Prometheus that another build root provisions, or that already exists in Grafana, declare it with `ExternalDatasource({ type: "prometheus", uid })` and pass that as the composite's `datasource`: the checks then resolve the reference instead of reporting it as undeclared, and nothing is provisioned for it. The composites read their sources at declaration time, so the connector, the `Slo` and the preset can live anywhere the dashboard file can import them from.

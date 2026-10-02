@@ -1,6 +1,6 @@
 ---
 title: "Components"
-description: "The built-in receivers, processors, exporters and extensions, with the config rules each checks"
+description: "The built-in receivers, processors, exporters, connectors and extensions, with the config rules each checks"
 diataxis: reference
 ---
 
@@ -18,6 +18,10 @@ Every built-in follows the config of the collector-contrib release in `COLLECTOR
 | `PrometheusReceiver` | `prometheus` | scrape job names are unique; some scrape config or a target allocator | static scrape targets |
 | `HostMetricsReceiver` | `hostmetrics` | at least one scraper | none |
 | `FileLogReceiver` | `filelog` | `include` is not empty | the `include` globs |
+| `K8sClusterReceiver` | `k8s_cluster` | `distribution` is `kubernetes` or `openshift` | none |
+| `KubeletStatsReceiver` | `kubeletstats` | `cert_file` and `key_file` when `auth_type` is `tls` (the default); `metric_groups` is not empty | `endpoint` |
+
+`k8s_cluster` reads the whole cluster from the Kubernetes API, so run one instance per cluster: a single-replica Deployment, or several replicas that share a `K8sLeaderElectorExtension` (`k8s_leader_elector`, see Extensions below). In a per-node DaemonSet every node reports every object. `kubeletstats` reads the kubelet on its own node, so it belongs in the per-node agent, usually with `auth_type: "serviceAccount"` and `endpoint: "https://${env:K8S_NODE_NAME}:10250"`. The otel lexicon sees the collector config but not how it is deployed, so it does not flag `k8s_cluster` in a DaemonSet; the k8s lexicon's [WK8603](/chant/lexicons/k8s/otel-placement-checks/#wk8603-k8s_cluster-in-every-collector-copy) does, reading the config together with the workload that runs it.
 
 ## Processors
 
@@ -29,8 +33,62 @@ Every built-in follows the config of the collector-contrib release in `COLLECTOR
 | `AttributesProcessor` | `attributes` | as `resource`, for `actions` |
 | `K8sAttributesProcessor` | `k8sattributes` | none beyond the type |
 | `ResourceDetectionProcessor` | `resourcedetection` | at least one detector |
+| `FilterProcessor` | `filter` | at least one condition or `include`/`exclude` block; no empty condition; no signal mixing the two |
+| `TransformProcessor` | `transform` | at least one statement; each group's `context` fits its signal and the group has statements |
+| `RedactionProcessor` | `redaction` | `allow_all_keys` or `allowed_keys` is set; `allowed_keys` is not set alongside `allow_all_keys: true`; no empty pattern; `hash_function` has something blocked to hash |
+| `TailSamplingProcessor` | `tail_sampling` | `decision_wait` is set; `policies` is not empty; policy names are present and unique; each policy has the block its `type` names and what that block needs; `and`, `drop` and `composite` have sub-policies, and `policy_order` and `rate_allocation` name existing ones |
+| `ProbabilisticSamplerProcessor` | `probabilistic_sampler` | `sampling_percentage` is set and within 0 to 100; `sampling_precision` within 1 to 14; `attribute_source: record` has a `from_attribute`; `hash_seed` only in `hash_seed` mode |
+| `DeltaToCumulativeProcessor` | `deltatocumulative` | `max_stale` is a positive duration; `max_streams` is a whole number, 0 or more |
 
 Put `memory_limiter` first in every pipeline; OTEL105 warns otherwise.
+
+`filter` and `transform` take [OTTL](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/v0.130.0/pkg/ottl). The structure is typed (which signal, which context, which list) and each condition or statement stays a string that the collector parses when it loads the config, so a mistake in the OTTL itself shows up in `otelcol validate`, not in the build. `filter` also types the older `include`/`exclude` match blocks under `metrics`, `logs` and `spans`, so that imported configs using them type-check; a signal takes one form or the other, never both.
+
+```ts
+export const dropHealth = new FilterProcessor({
+  error_mode: "ignore",
+  traces: { span: ['attributes["http.route"] == "/healthz"'] },
+  logs: { log_record: ["severity_number < SEVERITY_NUMBER_INFO"] },
+});
+
+export const tidy = new TransformProcessor({
+  trace_statements: [
+    { context: "span", conditions: ["kind == SPAN_KIND_SERVER"], statements: ['set(attributes["tier"], "edge")'] },
+    'delete_key(span.attributes, "http.request.header.cookie")',
+  ],
+});
+```
+
+A `transform` entry is either a group with an optional `context`, `conditions`, `statements` and `error_mode`, or a bare statement whose context the collector infers from its paths.
+
+`redaction` works on span, span event, log and data point attributes, not resource attributes. With `allow_all_keys` unset or false, every key outside `allowed_keys` and `ignored_keys` is deleted, which is why OTEL107 asks for one of the two. Values that match `blocked_values`, and every value of a key that matches `blocked_key_patterns`, are masked as `****`, or hashed when `hash_function` is set; `allowed_values` exempts a value. Patterns are Go regular expressions.
+
+```ts
+export const scrub = new RedactionProcessor({
+  allow_all_keys: true,
+  blocked_key_patterns: ["^gen_ai\\.(prompt|completion)"],
+  blocked_values: ["[0-9]{13,16}"],
+  hash_function: "sha3",
+  summary: "silent",
+});
+```
+
+`tail_sampling` policies are a discriminated union on `type` (`TailSamplingPolicy`): the leaf types `always_sample`, `latency`, `numeric_attribute`, `probabilistic`, `status_code`, `string_attribute`, `rate_limiting`, `span_count`, `trace_state`, `boolean_attribute` and `ottl_condition`, plus `and`, `drop` and `composite`, whose sub-policies are leaf policies (and, for `composite`, `and` policies too). Each policy's settings sit under the key its `type` names, as in the collector's own config:
+
+```ts
+new TailSamplingProcessor({
+  decision_wait: "10s",
+  policies: [
+    { name: "errors", type: "status_code", status_code: { status_codes: ["ERROR"] } },
+    { name: "slow", type: "latency", latency: { threshold_ms: 2000 } },
+    { name: "rest", type: "probabilistic", probabilistic: { sampling_percentage: 10 } },
+  ],
+});
+```
+
+Tail sampling needs every span of a trace in one collector. Run it on a gateway, and when the gateway has more than one replica put a `loadbalancing` exporter on the agents in front of it.
+
+`deltatocumulative` turns delta metrics into cumulative ones by keeping a running total per stream, and passes cumulative metrics through. Put it in a metrics pipeline fed by a connector that emits deltas (`sum`, `count`, `signaltometrics`) when an exporter reads only cumulative data, such as `prometheusremotewrite`, which drops the rest. `max_stale` (default `5m`) is how long a stream with no new samples is kept, and `max_streams` (default unlimited) caps how many are tracked; samples of streams past the cap are dropped. Because the totals live in one collector's memory, every delta of a stream has to reach the same replica. The type follows `config.go`, `factory.go` and the README of `processor/deltatocumulativeprocessor` at collector-contrib v0.130.0, where it is alpha for metrics and ships in the `otelcol-contrib` and `otelcol-k8s` distributions. `genAiPipeline({ deltaToCumulative })` inserts one for you; see [GenAI pipeline](../genai-pipeline/).
 
 ## Exporters
 
@@ -41,6 +99,63 @@ Put `memory_limiter` first in every pipeline; OTEL105 warns otherwise.
 | `DebugExporter` | `debug` | none | `console` |
 | `PrometheusExporter` | `prometheus` | `endpoint` is set | `endpoint` (the address Prometheus scrapes) |
 | `GoogleCloudExporter` | `googlecloud` | none | `googlecloud://projects/<project>`, plus any endpoint overrides |
+| `LoadBalancingExporter` | `loadbalancing` | exactly one resolver; the chosen resolver has its hostnames, hostname or service; `routing_key: attributes` goes with `routing_attributes`; no `protocol.otlp.endpoint` | static `hostnames`; `dns` as `hostname:port`; `k8s` as `service:port` per port (default 4317); `aws-cloud-map://namespace/service_name` |
+
+The `loadbalancing` resolver (`LoadBalancingResolver`) is one of `static` (`hostnames`), `dns` (`hostname`, `port`), `k8s` (`service` as `name` or `name.namespace`, `ports`, `return_hostnames`) or `aws_cloud_map`; the type allows exactly one. `protocol.otlp` takes the `otlp` exporter's settings without `endpoint`, which each backend fills in. `loadBalancingEndpoints(resolver)` returns the same backends `collectorTopology()` reports.
+
+## Connectors
+
+A connector is an exporter in one pipeline and a receiver in another. List the same entity in `exporters` of the pipeline that feeds it and in `receivers` of the pipeline it feeds. "Pairs" is the signal it reads and the signal it writes; OTEL112 checks pipelines against them.
+
+| Class | Type | Pairs | Checks |
+|---|---|---|---|
+| `SpanMetricsConnector` | `spanmetrics` | traces to metrics | not both `histogram.explicit` and `histogram.exponential`; `events.enabled` needs dimensions; no dimension repeats a default one (`service.name`, `span.name`, `span.kind`, `status.code`) |
+| `ServiceGraphConnector` | `servicegraph` | traces to metrics | none beyond the type |
+| `RoutingConnector` | `routing` | same signal in and out | `table` is not empty; each route has a `condition` or a `statement` (not both) and at least one pipeline; the `request` context needs a condition |
+| `ForwardConnector` | `forward` | same signal in and out | none |
+| `CountConnector` | `count` | traces, metrics, logs or profiles to metrics | metric names are not empty; counts of `metrics` take no attributes |
+| `SumConnector` | `sum` | traces, metrics or logs to metrics | at least one metric; each has a `source_attribute`; sums of `metrics` take no attributes; at most one attribute, since the pinned release adds each value once per attribute |
+| `SignalToMetricsConnector` | `signaltometrics` | traces, metrics, logs or profiles to metrics | at least one metric; each has a `name` and exactly one of `sum`, `gauge`, `histogram` or `exponential_histogram`, with a `value`; histogram `buckets` increase; `exponential_histogram.max_size` is 2 to 16384; an attribute key is set, listed once, and has `default_value` or `optional`, not both; a gauge using `ExtractGrokPatterns` selects one key |
+
+```ts
+import { OtlpReceiver, OtlpExporter, PrometheusExporter, SpanMetricsConnector, Pipeline } from "@intentius/chant-lexicon-otel";
+
+export const otlp = new OtlpReceiver({ protocols: { grpc: { endpoint: "0.0.0.0:4317" } } });
+export const tempo = new OtlpExporter({ name: "tempo", endpoint: "tempo:4317" });
+export const prom = new PrometheusExporter({ endpoint: "0.0.0.0:8889" });
+export const spanmetrics = new SpanMetricsConnector({ dimensions: [{ name: "http.route" }] });
+
+export const traces = new Pipeline({ signal: "traces", receivers: [otlp], exporters: [tempo, spanmetrics] });
+export const red = new Pipeline({ signal: "metrics", name: "red", receivers: [spanmetrics], exporters: [prom] });
+```
+
+`signaltometrics` builds metrics you name from spans, data points, logs or profiles. Each section (`spans`, `datapoints`, `logs`, `profiles`) is a list of metrics; each metric has a `name`, optional `description` and `unit`, `attributes` to split by, `include_resource_attributes` to keep, OTTL `conditions` (ORed), and exactly one metric type whose `value` is an OTTL value expression. A histogram takes optional `buckets` (plain numbers in the unit `value` returns, default `SIGNAL_TO_METRICS_DEFAULT_BUCKETS`) and an optional `count` expression. The TypeScript type allows one metric type per entry; OTEL107 catches the rest, such as an imported config with two. The type follows `config/config.go` and the README of `connector/signaltometricsconnector` at collector-contrib v0.130.0, where it is alpha for every signal and has no span event section. It emits delta temporality and aggregates only within each batch it receives, so an exporter that needs cumulative input wants `deltatocumulative` in front of it. `signalToMetricsEntries(config)` lists every entry with its signal and the metric types it names.
+
+```ts
+import { OtlpReceiver, PrometheusExporter, SignalToMetricsConnector, Pipeline } from "@intentius/chant-lexicon-otel";
+
+export const otlp = new OtlpReceiver({ protocols: { grpc: { endpoint: "0.0.0.0:4317" } } });
+export const prom = new PrometheusExporter({ endpoint: "0.0.0.0:8889" });
+export const genai = new SignalToMetricsConnector({
+  name: "genai",
+  spans: [
+    {
+      name: "gen_ai.client.operation.duration",
+      unit: "s",
+      conditions: ['attributes["gen_ai.operation.name"] != nil'],
+      attributes: [{ key: "gen_ai.operation.name" }, { key: "gen_ai.request.model", default_value: "unknown" }],
+      histogram: { buckets: [0.01, 0.1, 1, 10], value: "Double(Microseconds(end_time - start_time)) / 1000000.0" },
+    },
+  ],
+});
+
+export const traces = new Pipeline({ signal: "traces", receivers: [otlp], exporters: [genai] });
+export const metrics = new Pipeline({ signal: "metrics", name: "genai", receivers: [genai], exporters: [prom] });
+```
+
+`spanMetricsNames(connector, exporter?)` returns the names Prometheus serves a `spanmetrics` connector's metrics under, read from its `namespace`, dimensions and histogram unit, and from the `prometheus` exporter's `namespace` and `add_metric_suffixes` when you pass it. The connector above gives `traces_span_metrics_calls_total` and `traces_span_metrics_duration_milliseconds`, with labels `service_name`, `span_name`, `span_kind` and `status_code`. A query, an SLO or a dashboard built from those names follows a renamed namespace; the grafana lexicon's `RedDashboard` reads them this way.
+
+`routing` names its target pipelines by id string (`pipelines: ["traces/tenant-a"]`), since those pipelines also list the connector and a const can't refer to one declared after it.
 
 ## Extensions
 
@@ -49,6 +164,19 @@ Put `memory_limiter` first in every pipeline; OTEL105 warns otherwise.
 | `HealthCheckExtension` | `health_check` | `endpoint` + `path`, default `localhost:13133/` |
 | `PprofExtension` | `pprof` | `endpoint`, default `localhost:1777` |
 | `ZPagesExtension` | `zpages` | `endpoint`, default `localhost:55679` |
+| `K8sLeaderElectorExtension` | `k8s_leader_elector` | none |
+
+`k8s_leader_elector` elects one leader among collector replicas through a Kubernetes Lease, so a `k8s_cluster` receiver that names it (`k8s_leader_elector: elector.componentId`) collects only in the replica holding the lease. `lease_name` and `lease_namespace` are required; `auth_type` defaults to `serviceAccount`, and `lease_duration`, `renew_deadline` and `retry_period` to `15s`, `10s` and `2s`. OTEL107 checks that both lease fields are set, as the extension's `Validate` does, and that `lease_duration` is greater than `renew_deadline` and `renew_deadline` greater than 1.2 times `retry_period`, which client-go's leader elector otherwise rejects only when the collector starts. The type follows `config.go`, `factory.go` and the README of `extension/k8sleaderelector` at collector-contrib v0.130.0, where it is alpha and ships in the `otelcol-contrib` and `otelcol-k8s` distributions. The collector's ServiceAccount needs access to `leases` in `coordination.k8s.io` in `lease_namespace`; the k8s lexicon's `OtelCollectorGateway` adds that Role when its config enables the extension.
+
+```ts
+import { K8sClusterReceiver, K8sLeaderElectorExtension, OtlpExporter, Pipeline, Service } from "@intentius/chant-lexicon-otel";
+
+export const elector = new K8sLeaderElectorExtension({ lease_name: "otel-k8s-cluster", lease_namespace: "observability" });
+export const cluster = new K8sClusterReceiver({ auth_type: "serviceAccount", k8s_leader_elector: elector.componentId });
+export const backend = new OtlpExporter({ endpoint: "backend.observability.svc:4317" });
+export const metrics = new Pipeline({ signal: "metrics", receivers: [cluster], exporters: [backend] });
+export const service = new Service({ extensions: [elector] });
+```
 
 ## Pipeline and Service
 
@@ -59,4 +187,4 @@ Put `memory_limiter` first in every pipeline; OTEL105 warns otherwise.
 
 ## Shared config types
 
-The settings many components share are exported as types: `TLSClientSettings`, `TLSServerSettings`, `GRPCServerSettings`, `HTTPServerSettings`, `GRPCClientSettings`, `HTTPClientSettings`, `RetrySettings`, `QueueSettings`, `ExporterHelperSettings` and `AttributeAction`. Use them to type a nested block you declare as its own const.
+The settings many components share are exported as types: `TLSClientSettings`, `TLSServerSettings`, `GRPCServerSettings`, `HTTPServerSettings`, `GRPCClientSettings`, `HTTPClientSettings`, `RetrySettings`, `QueueSettings`, `ExporterHelperSettings`, `AttributeAction`, and for the processors and receivers above `OttlErrorMode`, `TransformStatementGroup`, `K8sAuthType` and `MetricToggle`. Use them to type a nested block you declare as its own const.

@@ -15,6 +15,8 @@ export interface SolrFargateServiceProps extends FargateServiceProps {
 }
 
 /**
+ * A FargateService preset for Apache Solr, with JVM heap and GC settings.
+ *
  * A pass-through composite: it returns another composite's instance rather than
  * building a members record. `CompositeFactoryMembers` admits that explicitly
  * (#1366) — it works at runtime because a composite instance keeps `members`

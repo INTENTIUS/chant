@@ -1,0 +1,645 @@
+---
+title: Workspace Read Contract
+description: The versioned contract that behold, hud and agents use to read a workspace, and the chant that reads its declaration.
+diataxis: reference
+---
+
+Tools that show a workspace read it through one contract ([#2536](https://github.com/INTENTIUS/chant/issues/2536), D15 of [#2524](https://github.com/INTENTIUS/chant/issues/2524)). behold, hud and agents all read the same JSON documents from the same commands, and an MCP tool wraps those documents rather than defining its own. The contract is made of the [declaration format](/chant/reference/workspace-declaration/) and a JSON Schema for each command's output. One closed list of reason codes and a chant floor for each contract version complete it.
+
+## Versions
+
+| Contract | chant floor | Declaration | Output schemas |
+|---|---|---|---|
+| 1 | 0.81.0 | schema 1 | `ls`, `graph`, `check`, `status`, `records`, `records-since`, `intent`, `intent-record`, `composites`, `points`, `changes`, `patch`, `work-history` and `agent`, each at `v1` |
+
+Every document carries `contract`, the version it follows, and `$schema`, its schema's `$id`. Most also carry `chant`, the version of the chant that wrote it. A reader that knows contract 1 refuses a document with any other `contract` value. Given a chant older than the floor, the reader can say so and name the version to install, since that chant doesn't write the contract at all.
+
+Within a version, fields are only added, and readers ignore fields they don't know. A new reason code, a removed field or a changed meaning is a new contract version. Codes can still be added to version 1 until 0.81.0 is released.
+
+## Output schemas
+
+Each schema ships in `@intentius/chant` at `src/workspace/<command>.schema.json`, and the package exports it as `@intentius/chant/workspace/<command>.schema.json`.
+
+| Command | Prints the document with | Schema `$id` |
+|---|---|---|
+| [`chant workspace ls`](/chant/cli/workspace-ls/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/ls/v1/ls.schema.json` |
+| [`chant workspace graph`](/chant/cli/workspace-graph/#output) | always | `https://intentius.io/chant/schemas/workspace/graph/v1/graph.schema.json` |
+| [`chant workspace check`](/chant/cli/workspace-check/#options) | `--format json` | `https://intentius.io/chant/schemas/workspace/check/v1/check.schema.json` |
+| [`chant workspace status`](/chant/cli/workspace-status/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/status/v1/status.schema.json` |
+| [`chant workspace records`](/chant/cli/workspace-records/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/records/v1/records.schema.json` |
+| [`chant workspace records --since`](/chant/cli/workspace-records/#what-changed-between-two-revisions) | `--json` | `https://intentius.io/chant/schemas/workspace/records-since/v1/records-since.schema.json` |
+| [`chant workspace graph --intent`](/chant/cli/workspace-graph/#the-intent-graph) | `--json` | `https://intentius.io/chant/schemas/workspace/intent/v1/intent.schema.json` |
+| [`chant workspace graph --intent --record`](/chant/cli/workspace-graph/#one-records-walk) | `--json` | `https://intentius.io/chant/schemas/workspace/intent-record/v1/intent-record.schema.json` |
+| [`chant workspace graph --composites`](/chant/cli/workspace-graph/#composites-and-components) | always | `https://intentius.io/chant/schemas/workspace/composites/v1/composites.schema.json` |
+| [`chant workspace check --changes`](/chant/cli/workspace-check/#the-forward-coverage-check) | `--json` | `https://intentius.io/chant/schemas/workspace/changes/v1/changes.schema.json` |
+| [`chant workspace patch`](/chant/cli/workspace-patch/) | `--json` | `https://intentius.io/chant/schemas/workspace/patch/v1/patch.schema.json` |
+| [`chant workspace points`](/chant/cli/workspace-points/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/points/v1/points.schema.json` |
+| the [`workEvidence`](/chant/guide/work-items/#acceptance-criteria) Op activity | its result, or the refusal it fails with | `https://intentius.io/chant/schemas/workspace/work-evidence/v1/work-evidence.schema.json` |
+| [`chant workspace work history`](/chant/cli/workspace-work/#reading-leases) | `--json` | `https://intentius.io/chant/schemas/workspace/work-history/v1/work-history.schema.json` |
+| [`chant workspace agent`](/chant/cli/workspace-agent/) | `--json` | `https://intentius.io/chant/schemas/workspace/agent/v1/agent.schema.json` |
+| [`chant workspace signers`](/chant/cli/workspace-signers/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/signers/v1/signers.schema.json` |
+| [`chant workspace evidence verify`](/chant/cli/workspace-evidence/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/evidence/v1/evidence.schema.json` |
+
+Each schema is a `oneOf` of a result and a failure. The `records` schema has a third branch for the set it prints without `--kind` ([#2680](https://github.com/INTENTIUS/chant/issues/2680)). The set holds a result or a failure for each record kind the declaration names. A failure has `error: { code, message }`, plus `location` for the commands that read the declaration, and exits 1. A result may still hold entries that couldn't be read, each with a `reason: { code, message }`. Only `check` fails on those ([ws-020](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-020-unreadable.md)). In `check`, a declaration that can't be read is the finding `WSP001` with the same `code`, not a failure.
+
+## Identity and revisions
+
+A workspace is identified by its declared `name` and a git revision ([ws-016](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-016-identity.md)). Every result names both. The name is `workspace.name`, and `at` is the full commit id, or `null` for the working tree. `workspace.root` is the workspace root relative to the git root, so a nested workspace is told apart from the outer one.
+
+`ls`, `graph`, `check` and `records` take `--at <rev>` and read from the local git object store. They need no checkout, no clean working tree and no network.
+
+| Command | What `--at` reads |
+|---|---|
+| `ls` | the declaration, and the member and group directories, at the revision |
+| `check` | the declaration and the lineage lock at the revision, and runs the declaration and kind checks (`WSP001` to `WSP011`) on that tree. The ledger, pipeline and generated-file checks read the checkout, so they are left out |
+| `records` | the records at the revision, and the files their pins name, as committed at the revision. For a session kind, its subject records at the revision too |
+| `records --since` | the records at `--since` and at `--at`, or in the working tree without `--at`, compared by id |
+| `graph` | the declaration at the revision, and each member's graph from its source at the revision. With `--kind`, the records and the files they pin or constrain at the revision too |
+| `graph --intent` | the declaration, the region, the records and the files they pin at the revision, and the history reachable from it |
+| `graph --intent --record` | the declaration and the records at the revision, and the history of each path and member the record constrains, reachable from it |
+
+A member's graph comes from running its chant config, so `graph --at` exports the workspace root's tree at the revision to a temporary directory with `git archive`, links the `node_modules` directories installed in the working tree into it, runs each member there and removes the directory. When no member runs, nothing is exported.
+
+Some of what `--at` reads still comes from the working tree, which is how it stays offline:
+
+- Pinned packages, and the kinds they supply, are the ones installed now.
+- The chant each member runs under is the toolchain installed now, not the one the revision pinned. A member whose config needs a package the revision used and the working tree no longer has fails with `command-failed`.
+- The `records` kind file and its schema come from the working tree.
+- The exported tree is not a git repository, so a member's chant can't read git history there.
+- Remote revisions and URLs are not read. Fetch first.
+- `status` has no `--at`. It reads the local `chant/lifecycle` branch and names the tip it read.
+
+## Member stamps
+
+A composed member in the `graph` document carries a `stamp`, `sha256:` and 64 hex digits, which is what `chant workspace graph` keys its [member cache](/chant/cli/workspace-graph/#the-member-cache) on ([ws-059](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-059-graph-cache.md)). Two reads of a member with the same stamp read the same source, so a reader can compare stamps between documents to tell which members changed, without taking stamps of its own. The rule is stated here so that every reader means the same thing by it.
+
+| Read | What the stamp covers |
+|---|---|
+| working tree | every regular file under the member's directory, by path relative to it, mtime in milliseconds and size, sorted by path. Directories named `node_modules`, `dist` or `.git` are left out, as is every directory whose name starts with `.` and, for member `.`, the other members' directories |
+| `--at <rev>` | the commit id and the member's directory, which stand in for the files since a commit's tree never changes |
+| both | the install around the member: `node_modules/.package-lock.json` and the lockfiles (`package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock`, `pnpm-lock.yaml`, `bun.lock`, `bun.lockb`) by absolute path, mtime and size, in each directory from the member's up to the file-system root |
+
+`stamp` is `null` when no stamp could be taken, such as for a read that observes an account. A stamp is a fact about the source only. The toolchain, the command line and the environment are also part of the cache key, so an equal stamp does not by itself mean a cached read was served. `cached` says that.
+
+## Which chant reads the declaration
+
+The root's chant reads the declaration ([ws-021](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-021-which-chant.md)). A root names its chant by pinning `@intentius/chant` in [`pins`](/chant/reference/workspace-declaration/#pins).
+
+| The declaration | Who reads it |
+|---|---|
+| pins `@intentius/chant` at this chant's version | this chant |
+| pins another version, installed at the workspace root | that chant: `ls`, `graph`, `check` and `status` hand the whole command line to it and exit with its exit code |
+| pins another version, not installed at the root | nobody: the read fails with `root-chant-required` (a `WSP001` finding for `check`) |
+| pins no chant, and `minReader` is this chant or older | this chant, the reader's own |
+| pins no chant, and `minReader` is newer | nobody: `reader-too-old` |
+
+The pin is checked before `minReader` and before the schema, since the pinned chant may know fields this one doesn't. The pin is read from the tree being read, so `--at` follows the pin at the revision. Members are never read by the root's chant. Each runs under its own toolchain, as [`chant workspace build`](/chant/cli/workspace-build/#which-chant-runs-a-member) describes.
+
+A reader without chant may parse the declaration itself against its [schema](/chant/reference/workspace-declaration/), which is how a Terraform-only estate stays viewable. It should apply the same two rules: defer to the pinned chant, and refuse a `minReader` newer than the format it knows.
+
+## Reason codes
+
+One closed list covers every command. It lives in `packages/core/src/workspace/reason-codes.ts`, each command's own list is a subset of it, and a test fails when a schema or the source names a code outside it.
+
+| Code | Where | Meaning |
+|---|---|---|
+| `declaration-missing` | error | No `chant.workspace.json` or `.jsonc` between the directory and the git root. |
+| `declaration-ambiguous` | error | Both `chant.workspace.json` and `chant.workspace.jsonc` exist. |
+| `declaration-unparseable` | error | The declaration is not valid JSON, or not valid JSONC for `.jsonc`. |
+| `declaration-invalid` | error | The declaration doesn't match its schema, repeats a name, or `--member` names no entry. |
+| `placement-invalid` | error | A member or group match breaks a [placement rule](/chant/reference/workspace-declaration/#placement). |
+| `reader-too-old` | error | The declaration's `minReader` is newer than the chant reading it. |
+| `root-chant-required` | error | The declaration pins another chant, and it is not installed at the workspace root. |
+| `not-a-git-repository` | error | `--at`, `status` or `work` needs a git repository and there is none. |
+| `revision-unknown` | error | `--at` names no commit. |
+| `live-at-revision` | error, `graph` | `--live` was given with `--at`. A live read is of the account now, not of a revision. |
+| `environment-invalid` | error, `status` | The environment name can't name a ledger directory. |
+| `dir-missing` | member, `ls` and `graph` | The member's directory does not exist. |
+| `unknown-kind` | member, `ls` and `graph` | No built-in kind or pinned package supplies the member's kind. |
+| `kind-probe-failed` | member, `ls` and `graph` | The member's directory is not what its kind reads. |
+| `no-matches` | group, `ls` | The example group matches no chant project. |
+| `kind-not-run` | member, `graph` | The member's kind is one the per-member commands don't run, such as `other`. |
+| `command-failed` | member, `graph` | The member's own `chant graph` exited with a failure, or the lexicon that reads a member through its kind's `graph` block isn't installed where the workspace resolves its pin. |
+| `output-unreadable` | member, `graph` | The member's chant printed something that isn't a graph IR. |
+| `ir-version-unsupported` | member, `graph` | The member's IR has a version this chant can't read. |
+| `ledger-unreadable` | ledger, `status` | Reading the ledger failed, so nothing from it is listed. |
+| `ledger-malformed` | ledger, `status` | Some ledger lines aren't release records, and the rest are listed. |
+| `gates-no-ledger` | gate ledger, `status` | The checkout has no `chant/lifecycle` branch, so there is no gate ledger to read. |
+| `gates-no-gate-ledger` | gate ledger, `status` | The branch has no gate ledger for the member, because no run of it has reached a gate. |
+| `gates-ledger-unreadable` | gate ledger, `status` | Reading the member's gate ledger failed, so no gate is listed. |
+| `stewards-unreadable` | stewards, `status` | An `*.op.ts` file could not be imported, so a steward it declares may be missing. |
+| `stewards-conflict` | stewards, `status` | A steward was dropped: its name, or an Op it lists, belongs to another steward. |
+| `steward-runs-unreadable` | stewards, `status` | Reading an Op's run ledger, or a ConvergeOp's converge ledger, failed, so its last run or last tick is null. |
+| `record-unparseable` | record, `records` | No front matter, a YAML error or a value outside the JSON subset of YAML, or for a JSON kind a file that is not one object or repeats a member name. |
+| `record-schema-invalid` | record, `records` | The record's front matter, or its JSON object, doesn't match the kind's schema. |
+| `record-id-duplicate` | record, `records` | An earlier record in path order has the same id. |
+| `record-supersedes-unknown` | record, `records` | A `supersedes` link names an id no record has. |
+| `record-supersedes-conflict` | record, `records` | A second closed record supersedes one another record already superseded. |
+| `record-remediates-unknown` | record, `records` | A `remediates` link names an id no record has. |
+| `record-remediates-not-closed` | record, `records` | A `remediates` link names a record that isn't closed; a record still open is amended instead. |
+| `record-seal-mismatch` | record, `records` | A closed record's seal is not the whole-file seal of its text now: the record changed after it closed. |
+| `session-seal-mismatch` | record, `records` | A closed session's seal is not the whole-file seal of its text now: the session changed after it closed, or was sealed by the rule before #2546. |
+| `session-verdict-unknown-record` | record, `records` | A session's verdict names a record that none of the session kind's subject records has. |
+| `asset-drift` | warning, `records` | A file the record pins by hash has changed: its bytes no longer hash to the pinned `sha256`. The record stays valid. |
+| `asset-missing` | warning, `records` | A file the record pins by hash does not exist in the tree read. The record stays valid. |
+| `asset-stale` | warning, `records` | A file the record pins is unchanged at the hash a record it supersedes pinned: the decision changed and the artifact did not follow. The record stays valid. |
+| `record-supersedes-pending` | warning, `records` | A `supersedes` link from a record whose state is weaker than the record it names, so the link has no effect yet. The record stays valid. |
+| `record-no-evidence` | warning, `records` | The record's evidence list is empty: it cites nothing and pins no file, as a decision made in a product's own design flow may. Information for a reviewer. The record stays valid and `--current` lists it. |
+| `review-undigested` | warning, `records` | A verdict in the record's reviews names no `digest` of the text it judged. It still counts, and an amendment won't stop it counting. The record stays valid. |
+| `source-transcript-drift` | warning, `records` | The record's source block pins a transcript by hash, the file it names can be read here, and its bytes hash to something else, so it isn't the transcript the record means ([#2708](https://github.com/INTENTIUS/chant/issues/2708)). A transcript that can't be read gives no warning. The record stays valid. |
+| `work-needs-unknown` | warning, `records` and `graph --intent` | A work record's `needs` names a work id no record has, so the item stays blocked. The record stays valid. |
+| `work-implements-unknown` | warning, `records` and `graph --intent` | A work record's `implements` names a decision id no decision has. The record stays valid. |
+| `work-needs-cycle` | warning, `records` and `graph --intent` | A work record needs itself through its `needs` links, so it can never be ready. The record stays valid. |
+| `work-implements-undecided` | warning, `records` and `graph --intent` | A work record implements a decision whose state is not approved, such as `proposed`. The record stays valid. |
+| `work-done-unpinned` | warning, `records` and `graph --intent` | A work record is done and its evidence list is empty, so nothing shows the work was done. A work record never carries `record-no-evidence`. |
+| `work-closed-without-date` | warning, `records` and `graph --intent` | A work record is done or dropped and has no `closed_on`. |
+| `work-done-gap-open` | warning, `records` and `graph --intent` | A work record is done, and the finding its `source` names still fires on its region. `records` walks that region with `graph --intent` to raise it, when the repository is in git and has a workspace declaration. |
+| `work-acceptance-unmet` | warning, `records` and `graph --intent`; finding, `check` | A work record is done, and one of its acceptance criteria has no passing evidence of the verification it expects ([#2772](https://github.com/INTENTIUS/chant/issues/2772)). `check` fails on it as `WSP117`. |
+| `work-acceptance-self-verified` | warning, `records` and `graph --intent`; error, `workEvidence` | A passing `manual` verdict names the record's implementer, so it does not count. `workEvidence` refuses every `manual` criterion, since the run holding the lease is the implementer. |
+| `answer-points-unreadable` | warning, `records` and `points` | The points file the answer kind names can't be read, or is not valid ([ws-058](https://github.com/INTENTIUS/chant/issues/2739)). |
+| `answer-point-unknown` | warning, `records` and `points` | The answer's point is not declared in the points file the answer kind names. |
+| `answer-point-changed` | warning, `records` and `points` | The point's declaration changed since the question was asked, so the answer is to an older version of the question. |
+| `review-decider` | verdict, `records` | The verdict is the decider's own, and the quorum counts verdicts besides the decider's. |
+| `review-agent` | verdict, `records` | The reviewer holds the `agent` role in `.chant/trust.json` at base. |
+| `review-duplicate` | verdict, `records` | A later verdict by the same principal replaces this one. Names are compared after NFKC, trimming and lower-casing. |
+| `review-older-digest` | verdict, `records` | The verdict's `digest` is not the record's digest now, so the record changed after the verdict. |
+| `review-unattested` | verdict, `records` | An attestation policy is active at base, and the verdict carries no seal that verifies for its reviewer. The verdict's `attestation` says which of the seal codes below applies. |
+| `seal-missing` | seal, `records` | The verdict, or the record, carries no seal. |
+| `seal-signer-unlisted` | seal, `records` | The reviewer, or the record's author, has no key in the signers file at base, so the seal can't count. |
+| `seal-signature-invalid` | seal, `records` | The seal is malformed, names a signer other than the reviewer or author, or its signature doesn't verify over the verdict or record. |
+| `seal-unverifiable` | seal, `records` | Nothing here can say whose seal it is: there is no signers file at base, or `ssh-keygen` isn't installed. |
+| `record-unattested` | warning, `records` | A signers file is active at base, and the record names an author whose seal doesn't verify. The record's `attestation` says which seal code applies. The record stays valid. |
+| `kind-unreadable` | error, `records` and `work`; reason, `ls` | The record kind file is missing or could not be imported. |
+| `kind-invalid` | error, `records`; reason, `ls` | The record kind file exports no `recordKind`, or its shape is wrong. |
+| `schema-unreadable` | error, `records`; reason, `ls` | The schema file the kind names is missing or isn't JSON. |
+| `schema-id-mismatch` | error, `records`; reason, `ls` | The schema's `$id` differs from the id the kind names. |
+| `schema-invalid` | error, `records` | The record schema doesn't compile. |
+| `location-missing` | error, `records` | The records directory does not exist, in the tree or at the revision. With `--since`, a directory missing at the `--since` revision is read as empty. |
+| `write-usage-invalid` | error, `records new`, `amend`, `review` and `work` | The command line lacks a value the write needs, or gives one it does not take. |
+| `write-input-invalid` | error, `records new` and `amend` | The fields given with `--from` or `--set` can't be read, aren't JSON, or aren't a JSON object. |
+| `record-not-found` | error, `records amend` and `review` | No record of the kind has the id given. |
+| `record-id-taken` | error, `records new` | The id given for a new record is already used, by a record or a file name. |
+| `record-id-unallocatable` | error, `records new` | No id was given and none can be allocated: the records share no single prefix and `--prefix` names none. |
+| `record-path-unmatched` | error, `records new` | The file name made from the id and title doesn't match the kind's `location.match`. |
+| `record-closed` | error, `records amend` and `review` | The record is in a closed state, so nothing in it changes. A new record supersedes it instead. |
+| `amend-id-immutable` | error, `records amend` | The amendment changes the record's id, and ids are never renumbered. |
+| `amend-supersede-instead` | error, `records amend` | The record is approved, and the amendment changes a field the approval rule doesn't let change in place. A new record supersedes it instead. |
+| `review-unsupported` | error, `records review` | The kind's schema has no `reviews` field, so its records take no review. |
+| `review-note-required` | error, `records review` | A dissent was given with no note. |
+| `review-sign-failed` | error, `records review` | `--sign` was given and no seal could be made: the key can't be read or used, git names no ssh signing key, or `ssh-keygen` isn't installed. |
+| `ratify-quorum-not-met` | error, `records new` and `amend` | The write puts a record in its kind's ratified state (`reviews.ratified`), and the record's quorum isn't met: too few agreeing verdicts count. |
+| `record-sign-failed` | error, `records new` and `amend` | `--sign` was given and no author seal could be made: the record names no author, the key can't be read or used, git names no ssh signing key, or `ssh-keygen` isn't installed. |
+| `source-harvest-not-proposed` | error, `records new` | The fields' source block says `via: "harvest"` and the state isn't the kind's first, such as `proposed`: a harvest proposes, and a person decides ([#2708](https://github.com/INTENTIUS/chant/issues/2708)). |
+| `record-state-not-initial` | error, `records new` through `chant serve mcp` | The fields give a state other than the kind's first: a record written through MCP opens `proposed`, and a person moves it on ([#2707](https://github.com/INTENTIUS/chant/issues/2707)). |
+| `write-scope-member` | error, `records new`, `amend`, `review` and `close`; finding, `check --changes` | The write is to a file, or a record kind, of a member outside the writer's [write scope](/chant/reference/workspace-declaration/#write-scope-and-agent-sessions): an agent session writes only its own member, and `writeScope.<class>.members` leaves the member out ([#2548](https://github.com/INTENTIUS/chant/issues/2548)). |
+| `write-scope-kind` | error, `records new`, `amend`, `review` and `close`; finding, `check --changes` | The write is to a record kind `writeScope.<class>.records` doesn't list, with a verb it doesn't list for the kind, or deletes a record. |
+| `agent-unknown` | error, `records new`, `amend`, `review`, `close` and `agent`; finding, `check --changes` | `CHANT_AGENT`, or a commit's `Chant-Agent` trailer, names an agent session the declaration at base doesn't declare. |
+| `session-unknown` | error, `records review` | `--session` names no session of a session kind whose subjects are the record's kind ([#2693](https://github.com/INTENTIUS/chant/issues/2693)). |
+| `session-not-open` | error, `records review` | `--session` names a closed session, which takes no more verdicts. |
+| `points-undeclared` | error, `points ask` and `points answer` | No record kind with an `answers` block is declared, or given with `--kind`, so there is no points file to ask. |
+| `points-invalid` | source, `points`; error, `points ask` and `points answer` | The points file an answer kind names can't be read, or does not match `decision-points.schema.json` and the rules checked in code. |
+| `point-unknown` | error, `points ask` and `points answer` | No points file declares the point asked, or the point an answer names. |
+| `point-inputs-invalid` | error, `points ask` | The inputs are not a JSON object of the point's declared inputs. |
+| `point-decider-failed` | error, `points ask` | A model decider that fails closed (`unreachable: "fail"`) could not answer, so nothing was written. |
+| `answer-not-candidate` | error, `points answer` | The answer is not one of the question's candidates. |
+| `quorum-not-met` | error, `points answer` | Too few of the people named count toward the point's quorum: distinct, not holding the agent role, not the steward that asked, and holding one of its roles when it names any. |
+| `answer-in-steward-turn` | error, `points answer` | The answer was given during a steward's turn, or by a process it started. A steward never answers a decision point ([#2749](https://github.com/INTENTIUS/chant/issues/2749)). |
+| `since-rev-unknown` | error, `records --since` | `--since` names no commit, or names a session with no opening revision whose file no commit added. |
+| `since-session-unknown` | error, `records --since` | `--since` has a session id's shape and names no commit, and no session has that id ([#2693](https://github.com/INTENTIUS/chant/issues/2693)). |
+| `since-session-open` | reason, `records --since` | `--since` names a session that is still open, so the comparison runs to the working tree. |
+| `intent-region-invalid` | error, `graph --intent` | The region's path, or its line range, does not exist in the tree read. |
+| `intent-record-unknown` | error, `graph --intent --record` | No record of a decision kind read has the id. |
+| `patch-path-invalid` | error, `patch` | A `--path` is not a relative path inside the workspace. |
+| `intent-history-shallow` | reason, `graph --intent` | The repository is a shallow clone, so the region's history stops at the clone's boundary. |
+| `intent-plugin-failed` | reason, `graph --intent` | A kind file's `commitJoins` failed for a commit. |
+| `intent-commit-undecided` | finding, `graph --intent` | A commit changed the region when no decision constrained it at path granularity. |
+| `intent-commit-bare` | finding, `graph --intent` | A commit names no unit, no pull request and no decision covering the region at its time. |
+| `intent-pin-drifted` | finding, `graph --intent` | A decision's pinned artifact no longer hashes to the pin. |
+| `intent-pin-missing` | finding, `graph --intent` | A decision's pinned artifact does not exist in the tree read. |
+| `intent-pin-stale` | finding, `graph --intent` | A current decision constraining the region pins an artifact at the hash a record it supersedes pinned, and the artifact has not changed since. |
+| `intent-artifact-unpinned` | finding, `graph --intent` | Decisions in the graph pinned the artifact, and no current decision pins it. |
+| `intent-decision-superseded-live` | finding, `graph --intent` | Every decision constraining the region is superseded. |
+| `intent-decision-provisional` | finding, `graph --intent` | The current decisions constraining the region are all in states their kind does not close, such as `decided`. |
+| `intent-decision-contested` | finding, `graph --intent` | A current decision constraining the region has an open concern: a dissent neither addressed nor withdrawn. The finding's `openConcerns` gives the count and the principals. |
+| `intent-constraint-coarse` | finding, `graph --intent` | The region is constrained only through its member, not by path. |
+| `intent-constraint-lost` | finding, `graph --intent` | A decision's `path:` constraint names a path that does not exist in the tree read. |
+| `intent-evidence-unpinned` | finding, `graph --intent` | A decision's evidence has no hash: a URL, or a path with no `sha256`. |
+| `intent-trailer-unverified` | finding, `graph --intent` | A commit carries a trailer a plugin says claims authorship, and the commit is not `attested`. |
+| `intent-region-unconstrained` | finding, `graph --intent` | No decision constrains the region at any granularity. |
+| `intent-decision-unimplemented` | finding, `graph --intent` | A decided decision constrains the region, no work item that is not dropped implements it, and no commit falls in its window. Only with a work kind read. |
+| `intent-work-blocked` | finding, `graph --intent` | A work item constraining the region has commits in its window while a work item it needs is not done. |
+| `intent-work-open-decided-code` | finding, `graph --intent` | Commits in the region are a decision's own work while the work item implementing that decision is still open. |
+| `change-uncovered` | finding, `check --changes` | A path the diff changes is covered by no current decided record and no open work item, by path or by its member. |
+| `change-out-of-scope` | finding, `check --changes` | A record in hand for the change, such as the work item it is for or a decision that item implements, lists a path the diff changes in its `out_of_scope`. |
+| `composites-no-chant-member` | reason, `graph --composites` | No member of kind `chant` was read, so nothing declares a composite instance or a component. |
+| `composites-none-declared` | reason, `graph --composites` | The members read declare no composite instance. |
+| `composites-no-component` | reason, `graph --composites` | The members read declare no component, so no composite instance has one. |
+| `runtimes-config-unreadable` | member, `graph --composites` | The member's `chant.config.ts` couldn't be read, so its components list only the built-in `local` runtime, and no environment from the config. |
+| `runtimes-lexicon-unreadable` | member, `graph --composites` | A lexicon the member's config lists couldn't be loaded, so it isn't listed as a runtime. |
+| `environments-none-declared` | member, `graph --composites` | The member's `chant.config.ts` declares no environments, so only `local` and the environments in its ledger are listed. |
+| `environments-ledger-undeclared` | member, `graph --composites` | The member's ledger has releases in an environment its config doesn't cover, so `chant run --env` would refuse it and it isn't listed. |
+| `environments-ledger-unreadable` | member, `graph --composites` | The `chant/lifecycle` branch exists and the member's ledger environments couldn't be listed. |
+| `box-credential-declared` | finding, `check` | `WSP121`: a file in a box member's directory carries a literal secret, a credential's shape or a literal where a credential goes. A `${VAR}`, `$VAR` or secret-manager reference isn't one. |
+| `box-capability-unbrokered` | finding, `check` | `WSP122`: a capability in a member's box block names no broker, so the box would hold its credential. |
+| `box-isolation-collision` | finding, `check` | `WSP123`: two boxes on one host resolve to the same port, state path or cookie name, or two ports in one box share an offset. |
+| `box-isolation-literal` | finding, `check` | `WSP124`: a host's `stateRoot` or a box's state entry is a literal machine path instead of one derived from an environment reference and the box's name. |
+| `diagram-source-missing` | finding, `check` | `WSP131`: a [diagram](/chant/reference/workspace-declaration/#diagrams) names a source, and it doesn't exist in the tree read. |
+| `diagram-render-missing` | finding, `check` | `WSP132`: a diagram names a render, and it doesn't exist in the tree read. A `mermaid` or `excalidraw` diagram may name none. |
+| `diagram-render-drift` | finding, `check` | `WSP133`: a diagram records a `sourceHash`, and the source's bytes now hash to something else. `check` never runs the renderer to find this; it compares the recorded hash against the source in the tree read. |
+| `box-fountain-callback-undeclared` | finding, `check` | `WSP125`: a box member builds a fountain `Box`, whose persistent sandbox fountain gives a callback token scoped to its owner, and its box block doesn't declare `fountain-callback` brokered by `fountain` with scope `owner`. |
+| `box-intent-unknown` | finding, `check` | `WSP126`: a box block names an intent, and no record of a declared kind named `decision` has that id. |
+| `box-intent-unconstrained` | finding, `check` | `WSP127`: the decision record a box names as its intent constrains no member or path of this workspace at all. |
+| `signers-file-missing` | error, `signers` | There is no signers file at the base revision, so there is no signer history to read. |
+| `signers-removed` | broken history, `signers` and `verify` | The signers file was removed. Commits merged before the removal keep the set they were judged by; nothing after it verifies. |
+| `rotation-unparseable` | broken history, `signers`; rotation, `verify` | The rotation file beside the signers file is not JSON. |
+| `rotation-invalid` | broken history, `signers`; rotation, `verify` | The rotation file does not match its shape: schema 1, a version, the previous set's digest, a threshold and signatures. |
+| `rotation-first-version` | broken history, `signers`; rotation, `verify` | The first signer set's rotation file names a version other than 1, or a previous digest. |
+| `rotation-missing` | broken history, `signers`; rotation, `verify` | The signer set or its threshold changed with no rotation file signed by the set before it. |
+| `rotation-version-skew` | broken history, `signers`; rotation, `verify` | The rotation names a version other than the one after the set it replaces, as a replayed or skipped rotation does. |
+| `rotation-previous-mismatch` | broken history, `signers`; rotation, `verify` | The rotation names a previous digest other than the set it replaces, as a rollback does. |
+| `rotation-threshold-unsatisfiable` | broken history, `signers`; rotation, `verify` | The new threshold is more than the new set's distinct signers, so no later rotation could meet it. |
+| `rotation-threshold-not-met` | broken history, `signers`; rotation, `verify` | Fewer distinct signers of the set before signed the rotation, in the `chant-signers` namespace, than its threshold. |
+| `trust-policy-unreadable` | error, `evidence` | The trust policy at base can't be read, or its signer history is broken, so no runner key is trusted. |
+| `envelope-unreadable` | error, `evidence verify` | The `--envelope` file can't be read, or is not JSON. |
+| `envelope-invalid` | error, `evidence verify` | The file is not a DSSE envelope: `payloadType`, `payload` in canonical base64, and signatures with `keyid` and `sig`. |
+| `envelope-untrusted` | error, `evidence verify` | No signature in the envelope verifies against a runner key the policy at base lists. |
+| `evidence-payload-type` | error, `evidence verify` | The envelope's payload type is not `application/vnd.in-toto+json`. |
+| `evidence-statement-invalid` | error, `evidence verify` | The payload is not an in-toto Statement v1 with chant's runner-evidence predicate, or has a field the predicate does not define. |
+| `evidence-runner-mismatch` | error, `evidence verify` | The statement names a runner other than the one whose key signed it. |
+| `runner-key-invalid` | error, `evidence sign` | The key is not an Ed25519 private key in PEM. |
+| `runner-key-is-signer` | error, `evidence sign` | The key is a person's key in the signers file. Evidence is signed by a service or CI identity. |
+| `runner-key-unlisted` | error, `evidence sign` | The policy at base lists no runner with the key. |
+| `lock-invalid` | finding, `check` | The lineage lock can't be read. |
+| `manual-step-open` | finding, `check` | A scope in the lineage lock has an open manual step. |
+| `work-kind-missing` | error, `work` | No work kind to find the item in: `--kind` names a kind with no work block, or the declaration names no work kind. |
+| `work-kind-ambiguous` | error, `work` | More than one declared work kind has a record with the id, so `--kind` must name one. |
+| `work-item-unknown` | error, `work` and `check --changes` | No work record has the id, so there is nothing to lease, or no work item in hand for `--changes --work`. |
+| `work-item-closed` | error, `work claim` and `workEvidence` | A claim on a work item in a closed state, such as done or dropped: there is no work left to claim. `workEvidence` adds nothing to a closed item either. |
+| `work-criterion-unknown` | error, `workEvidence` | The work record lists no acceptance criterion with the id the evidence names, or its kind has no acceptance criteria. |
+| `lease-held` | refusal, `work`; error, `workEvidence` | Someone holds a live lease on the work item: another worker, or, for a claim, the same one. |
+| `lease-not-held` | refusal, `work`; error, `workEvidence` | Nobody holds a live lease on the work item: it expired, was released or was never claimed. |
+| `lease-token-mismatch` | refusal, `work`; error, `workEvidence` | The live lease on the work item carries another fencing token than the one given. |
+| `lease-race` | refusal, `work` | Another writer changed the lease between this command's read and its write. |
+| `lease-push-rejected` | refusal, `work` | The remote refused the lease push: another clone claimed the item first, or the remote could not be reached. |
+
+`graph --intent` may also carry findings a plugin contributes through its [`commitJoins`](/chant/cli/workspace-graph/#commit-joins) ([#2656](https://github.com/INTENTIUS/chant/issues/2656)). Their codes are outside the list. Each is `plugin:<name>:<code>`, where `<name>` is the kind's name in the document's `kinds` (the kind file's `commitJoinsName` when it has one) and `<code>` is lower case words joined by dashes. The plugin owns its namespace, and chant only carries the finding. A reader that switches on codes can tell the two apart by the `plugin:` prefix.
+
+`check` also reports `WSP` ids, the [declaration check catalog](/chant/cli/workspace-check/#declaration-checks). That catalog is closed too, and it is versioned with the check contract.
+
+## Record formats
+
+A record kind says how its files hold their records, and `records --json` names it in `kind.format` ([#2664](https://github.com/INTENTIUS/chant/issues/2664), [ws-053](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-053-record-formats.md)). For `markdown-front-matter`, a record's `data` is its front matter. For `json`, the whole file is one object, and `data` is that object. The rest of the entry has the same shape either way, so a reader that knows decisions needs nothing new to read a JSON kind. Two other kind options change what a reader sees in a record. A kind without states gives every record `state: null`. A content-addressed kind (`idFrom: "sha256"`) gives each record the SHA-256 of its file's bytes as its `id`, a 64-character hex string equal to the `sha256` of any pin of that file. When the file's name claims a different hash, the record lists itself in `assets` as `drifted` and carries `asset-drift`. None of this adds a code, so contract 1 holds. The kind file options are on the [`records` page](/chant/cli/workspace-records/#record-kinds).
+
+## Review verdicts and the quorum
+
+A record kind with a reviews list gives each record in `records --json` a `digest` and a `quorum` ([#2671](https://github.com/INTENTIUS/chant/issues/2671), [#2672](https://github.com/INTENTIUS/chant/issues/2672)). The digest is the SHA-256 of the record's text with its reviews block taken out, and a verdict names it in its own `digest`, so an amendment leaves earlier verdicts on an older digest. The quorum lists every verdict in `counted` or in `notCounted`, and each one in `notCounted` has a `review-` reason code. `need` comes from the declaration's `quorum`, or is 2. `met` says the counted agree verdicts reach `need`. When `met` is true and a dissent is still open, `metWithObjections` is true too, and a reader shows that as met with objections, not as consensus. The rule for the digest and the order the reasons are checked in are on the [`records` page](/chant/cli/workspace-records/#reviews-and-quorum). A reader never computes a digest itself: it reads `digest` from `records --json`. A kind can name a ratified state in `reviews.ratified`, as the decision kind does. `records new` and `records amend` then refuse to write a record in that state below its quorum, and the digest leaves the state out, so a ratified record's quorum stays met ([#2873](https://github.com/INTENTIUS/chant/issues/2873)). chant never ratifies a record by itself: a person sets the state with `records amend` (see [Ratifying](/chant/cli/workspace-records/#ratifying)).
+
+Each verdict in `counted` and `notCounted` also carries `attested` and `attestation` ([#2687](https://github.com/INTENTIUS/chant/issues/2687)). `attested` is `true` when the verdict's seal verifies for its reviewer against the signers file at base. A seal that fails gives `false`, and so does a missing seal while a signers file is active. When nothing here can say, the value is `null`. `attestation` holds a `message`, the key's fingerprint when a signature was checked, and a `seal-` code whenever `attested` isn't `true`. Once a signers file is active at base, only verdicts with `attested: true` count, and the rest are `review-unattested`. Without a signers file the seal doesn't gate counting. A reader shows a verdict as signed only when `attested` is `true`, and never checks a signature itself. These fields, the four `seal-` codes and `review-sign-failed` were added within contract 1 in the release after 0.86.0, the same way 0.86.0 added its fields and codes. A reader that finds no `attested` is reading an older chant, and treats every verdict as unsigned.
+
+A record of such a kind can carry its author's seal in a top-level `seal` field, and each parsed record then carries `attested` and `attestation` of its own, with the same meanings and codes ([#2688](https://github.com/INTENTIUS/chant/issues/2688)). The author is the field the kind's `reviews.decider` names, `decided_by` for decisions. The digest leaves `seal` out as it leaves the reviews block out, so a record with no seal has the digest it always had. Under an active signers file a record that names an author and isn't attested carries the warning `record-unattested`, and is read like any other. Sealing records is opt-in per workspace, and nothing requires it yet. hud calls a record author-signed only if that record's `attested` is `true`. Whether the commit that last changed the file was signed is `provenance`, a separate question. The release that brought verdict seals brought these too, still within contract 1.
+
+## Record links and artifacts
+
+Artifact relationships are derived from decisions ([#2549](https://github.com/INTENTIUS/chant/issues/2549), D18 of [#2524](https://github.com/INTENTIUS/chant/issues/2524)). No artifact links to code or to another artifact directly. A decision record says both halves of the relationship:
+
+- Its `evidence` pins the artifacts it rests on. Each pin names a file from the workspace root in `path` and holds the SHA-256 of the file's bytes in `sha256`.
+- Its `constrains` names what it governs: a member as `member:<name>`, or a file or directory as `path:<path>`.
+
+`chant workspace records` checks every pin against the tree it reads. A pin whose file still hashes to `sha256` is `pinned`. One whose file changed is `drifted` and carries the warning `asset-drift`. One whose file is gone is `missing` and carries `asset-missing`. A matching pin is `stale` and carries `asset-stale` when a record this one supersedes pinned the same hash and the file's last commit is older than the commit that added this record. The decision changed and the artifact did not follow. Each record carries its pins in `assets` and those warnings in `warnings`. A warning never makes the record invalid, and `--current` still lists it: the decision is still what was decided, and the drift asks for it to be looked at again. The paths resolve in `workspaceRoot`, the workspace whose declaration sits nearest above the kind file.
+
+`chant workspace graph --kind <kind file>` fills `records` with the records it reads and adds their links to `links`, after the member links. A superseded record has no link rows. Each record also carries `remediatedBy` (#2774), the ids of records whose `remediates` link names it. A remediates link never changes the target's state or `supersededBy`, so a remediated record keeps its link rows and stays current.
+
+| Field | `asset` row | `constrains` row |
+|---|---|---|
+| `kind` | `asset` | `constrains` |
+| `origin`, `resolves` | `declared`, `source` | `declared`, `source` |
+| `recordKind`, `record`, `recordPath` | the record's kind, id and file | the same |
+| `target` | the pinned path | the entry as written, `member:<name>` or `path:<path>` |
+| `member` | the member that holds the path, or `null` | the member named, or the one that holds the path, or `null` |
+| `status` | `pinned`, `drifted`, `missing` or `stale` | `resolved`, or `missing` when no member has the name or the path does not exist |
+| `reason` | why the pin is not `pinned`, or `null` | why the row is `missing`, or `null` |
+| `sha256`, `actual` | the pinned hash, and the file's hash in the tree read or `null` | not present |
+
+To find the artifacts behind a file, a reader walks through the decisions. It takes the `constrains` rows whose target covers the file: `path:<p>` covers `p` and everything below it, and `member:<name>` covers the member's directory. From each of those records it takes the `asset` rows. A drifted asset row means the artifact changed after the decision that governs the file was made, and a stale one means the decision was replaced while the artifact stayed as it was. The walk the other way, from an artifact to what it shapes, starts from the `asset` rows whose `target` is the artifact.
+
+## Work items
+
+A record kind with a `work` block is a work kind ([#2683](https://github.com/INTENTIUS/chant/issues/2683)). The reference workspace's is `work/work.kind.mjs`, and [Work items](/chant/guide/work-items/) describes its records. `records --json` on a work kind adds these fields, all within contract 1:
+
+| Field | On | Meaning |
+|---|---|---|
+| `ready` | each parsed record | The record is valid, not superseded, in the kind's open state, not in a `needs` cycle, and every work id its `needs` names is done. |
+| `blockedBy` | each parsed record | Each need that is not done, as `{ id, state }`, with `state: null` for an id no record has. |
+| `implements` | each parsed record | Each decision the record names, as `{ id, state }`, with the decision's state now. |
+| `decisions` | the document | Every decision the work kind's decision kind reads, as `{ id, path, state, supersededBy, implementedBy }`. `implementedBy` lists the work records naming it as `{ id, state }`. An empty one means the decision has no work item yet. |
+| `lease` | each record with an id, in the working tree | The item's active work lease as `{ holder, token, acquiredAt, expiresAt }`, or `null` ([#2732](https://github.com/INTENTIUS/chant/issues/2732)). Absent under `--at`. |
+| `acceptance` | each parsed record, when the kind's `work` block names acceptance criteria | `{ met, total, criteria }`, where each criterion is `{ id, verification, met }` ([#2772](https://github.com/INTENTIUS/chant/issues/2772)). `null` when the record lists no criteria. |
+
+The decision kind is the file the work kind's `work.decisions` names, read at the same revision as the work records. A work record's `warnings` hold the `work-` codes above in place of `record-no-evidence`.
+
+A criterion is met by evidence that names it in `criterion`, has `result: pass`, and has the criterion's `verification`. A `manual` verdict also names its giver in `by`, and it counts only when that is not the record's implementer. For a declared work kind with criteria, `ls --json` gives each kind an `acceptance` list of `{ item, state, met, total }`, and `status --json` gives the workspace one of `{ member, kind, item, state, met, total }`. Both list only the current items that state criteria. `check` reads the same records and fails a done item with a criterion unmet as `WSP117`.
+
+A work lease is written by [`chant workspace work claim|renew|release`](/chant/cli/workspace-work/) to `refs/chant/lease/[_members/<member>/]work/<id>`, with a history in `_leases/<id>.jsonl` on `chant/lifecycle`. `status --json` lists every lease in `leases`, active and expired, each with its `item`, the `member` whose ledger holds it (`null` for the flat ledger), `ref`, `holder`, `token`, `acquiredAt`, `expiresAt` and `state`. Neither read fetches. A reader that needs the remote's leases fetches `refs/chant/lease/*` first, or runs a claim, which does.
+
+`chant workspace work history <id> --json` reads one item's history back from the ledger of the member that owns its work kind ([#2785](https://github.com/INTENTIUS/chant/issues/2785)). The document follows `work-history.schema.json`. The history file's place on the branch is `ledger`, and the lease ref's record now is `lease`. `events` holds every line, and `claims` folds the lines into one entry per fencing token. Each claim says how it `ended`: `released` with its `release` (`by`, `at`, `outcome`, `note`), `held`, `expired`, or `lost` to a later claim. A runner counts failed builds from `claims`, as the studio kit's queue does, instead of reading `_leases/<id>.jsonl` with git. It never fetches either. `chant serve mcp` serves it as `workspace-work-history`.
+
+## Decision points
+
+A record kind with an `answers` block is an answer kind ([ws-058](https://github.com/INTENTIUS/chant/issues/2739)). Its `answers.points` names a JSON points file, validated against `decision-points.schema.json`, which `@intentius/chant` exports as `@intentius/chant/workspace/decision-points.schema.json`. Each input a point reads is named for one of this contract's outputs, optionally followed by dotted field names.
+
+| Input output | Read from |
+|---|---|
+| `record`, `decision`, `work-item` | a record in `records` |
+| `finding`, `region`, `commit` | `graph --intent` |
+| `member` | `ls` |
+| `gate`, `release`, `environment` | `status` |
+| `component` | `graph --composites` |
+
+[Decision Points](/chant/guide/decision-points/) describes the declaration and the answers.
+
+`chant workspace points --json` lists every point, and every answer record as a question. Each point carries its `candidates` and their `criteria`, what each one means, as the points file declares it: an object of strings for `noul` and `choice`, an array of ordered level descriptions for `score`. A question carries its state and any model's answer with its confidence. It also lists why each decider before the quorum did not answer. A question is `open` while it is `escalated` to people or `proposed` by a model and not yet confirmed, and `--open` lists only those. `chant serve mcp` serves the same document as the `workspace-points` tool. The answer records are ordinary records of the kind, so `records --json` reads them too, with the `answer-` warnings above. In a steward's turn, the answer record is held on the `chant/lifecycle` branch instead of the working tree ([#2786](https://github.com/INTENTIUS/chant/issues/2786)). `points` lists it with `ledger` set to its place on the branch (`chant/lifecycle:<path>`), and `path` where it would sit in the kind's directory. `records` does not read the ledger. `ledger` is null for a record in the tree. They follow `point-answer.schema.json`, which the package exports beside it.
+
+## The intent graph
+
+`chant workspace graph --intent <region> --json` prints the intent graph over one region ([#2651](https://github.com/INTENTIUS/chant/issues/2651)). It encodes the walk from a piece of code back to the decisions, artifacts and commits behind it, as [#2650](https://github.com/INTENTIUS/chant/issues/2650) section B describes it. chant emits the graph and a reader such as hud draws it (D8 and D15 of [#2524](https://github.com/INTENTIUS/chant/issues/2524)).
+
+A result has `$schema`, `contract`, `chant`, `at` and `workspace` like the other documents. `region` is the id of the region node. `history` names the commit the history was read from (`rev`), how the region was followed (`line-range`, `file` or `directory`) and whether the clone is `shallow`. `kinds` lists each kind file with its `name`, the record kind it reads and the form of its `commitJoins`. The files are the `--kind` files, or without `--kind`, every kind the declaration names, in its order ([#2680](https://github.com/INTENTIUS/chant/issues/2680)). The name is the record kind's name, or for a file with no record kind, the file's name without `.kind.mjs`. `nodes` and `edges` hold the graph, and `reasons` holds parts of the walk that could not be read. A failure has `error: { code, message }` with a declaration code, a record kind code or `intent-region-invalid`.
+
+The walk runs in this order, and the nodes are listed in it:
+
+1. The region, the files under a directory region, and the region's member.
+2. The commits that touched the region, newest first. A line range is followed with `git log -L`, a file with `git log --follow`, and a directory with `git log`. For the working tree the history is read from `HEAD`. Each commit may be joined to a unit, a contract and evidence by a kind file's [`commitJoins`](/chant/cli/workspace-graph/#commit-joins).
+3. The decisions whose `constrains` cover the region, and the decisions in their supersession chains.
+4. The artifacts those decisions pin, and the URL evidence they cite.
+5. With a work kind passed as `--kind`, the work items whose `constrains` cover the region, matched as a decision's are.
+6. The member links of the region's member, declared in the declaration and resolved in source as `check` resolves them.
+7. The findings.
+
+| Node kind | Id | Fields |
+|---|---|---|
+| `region` | `region:<path>` or `region:<path>:<start>-<end>` | `path` from the workspace root, `lines` or `null`, `member`, `at`, `type` (`file` or `dir`), `generated` for a file, and `node` when the region was given as a graph node id |
+| `file` | `file:<path>` | `path`, `member`, `generated` |
+| `member` | `member:<name>` | `name`, `dir`, `memberKind` |
+| `commit` | `commit:<sha>` | `sha`, `subject`, `author`, `date`, `trailers`, `pullRequest`, `signature` (the provenance level, judged by the signers at base as `records` judges a record), `lines`, the ranges it changed in a line-range region, and `state`: `decided`, `decided-by-window`, `undecided`, or `null` when no record kind was read |
+| `unit`, `contract`, `evidence` | `<kind>:<id>` | `ref`, the plugin's own id, `plugin`, the kind file that supplied it, and `data`, its other fields. A decision's URL evidence is an `evidence` node with `plugin: null` and `data` holding `title`, `url`, `as_of` and `sha256` |
+| `work` | `record:<kind>/<id>` | `recordKind`, `record`, `path`, `title`, `state`, `closed`, `valid`, `reasons`, `provenance`, `owner`, `ready`, `blockedBy`, `implements`, `needs`, `source` (the gap it came from as `{ finding, region, decision?, artifact? }`, or `null`), `supersededBy`, `constrains` and `warnings`, the `work-` warnings. Read only with a work kind passed as `--kind` |
+| `decision` | `record:<kind>/<id>` | `recordKind`, `record`, `path`, `title`, `state`, `closed`, `valid`, `reasons`, `provenance`, `decided_by`, `decided_on`, `decidedIn` (the commit that decided the record, as `{ sha, date, subject }`, or `null`), `reviews` (agree, dissent, abstain and open concerns, the dissents with neither `addressed_by` nor `withdrawn_on`), `supersededBy`, `supersedes`, and `constrains`, the entries that cover the region with their granularity |
+| `artifact` | `artifact:<path>` | `path`, `anchor`, `pinnedSha256`, `currentSha256` and `pinState`: the state of a current decision's pin, or `unpinned` when only superseded decisions pin it |
+| `link` | `link:<n>` | `row`, the member link row |
+| `finding` | `finding:<code>:<n>` | `code`, `message`, and `concerns`, the ids of the nodes it is about. A plugin's finding also has `plugin`, the kind file that returned it, and `refs`, as the plugin gave them. With a work kind read, every finding has `addressed` and `addressedBy`, the work items addressing it as `{ id, state }` |
+
+| Edge kind | From, to | Fields |
+|---|---|---|
+| `constrains` | decision or work item to region, file or contract | `granularity` (`path`, `member`, `contract` or `issue`) and `entry`, as written |
+| `pins` | decision to artifact | `pinnedSha256` and `pinState` for that decision's pin |
+| `touched-by` | region to commit | `lines` |
+| `produced-by` | commit to unit | |
+| `serves` | unit to contract | |
+| `supersedes` | the newer decision to the one it replaces, derived as `records` derives it | |
+| `cites-evidence` | unit, contract or decision to evidence | |
+| `links` | consumer member to producer member | |
+| `within` | commit to a decision whose path window it falls in, or to a work item whose path window it falls in | `state`: `decided` when the decision's own unit made the commit, `decided-by-window` otherwise, and `worked` for a work item |
+| `implements` | work item to the decision it carries out | |
+| `needs` | work item to a work item it waits on | |
+| `addressed-by` | finding to a work item that addresses it | |
+
+A decision covers a commit from the commit that decided it until the window of the record superseding it opens. The commit that decided a record is the one that last moved it into an approved state and kept it there: a state its kind's `approval` ranks above 0, or one of its `closedStates` for a kind with no `approval`. For the decision kind that is `decided`, `ratified` or `superseded`. A record added in an approved state was decided by the commit that added it. A record not approved in the history read has none, and its window opens at the commit that added it. `records --json` gives the same commit as `decidedIn` on each record of a kind with `approval` ranks that is not a work kind. A commit outside every path-granularity window is `intent-commit-undecided`, and its `state` is `undecided`.
+
+A commit inside a window can still depart from the decision, and chant can't tell whether it does ([#2656](https://github.com/INTENTIUS/chant/issues/2656)). So each commit inside a path-granularity window has a `within` edge to the decision, and the edge says whether the commit is the decision's own work. It is when a plugin's `commitJoins` joins the commit to a unit and one of these holds: the unit or its contract lists the decision in `decisions`, by record id or as `<kind>/<id>`, or the decision constrains the contract the unit served. The commit's `state` is `decided` when it is the own work of at least one decision whose window holds it, and `decided-by-window` when it only falls in windows. A `decided-by-window` commit is something for the person to judge. The text walk lists it under its decision and asks whether it is drift, a superseding decision nobody wrote down, or the decision being wrong.
+
+A work item's window runs from the commit that added its record to the commit that moved it into a closed state, `done` or `dropped`, that commit included. While the item is open, the window runs to the revision read. A commit inside the window of a work item that constrains the region by path has a `within` edge to the item with `state: "worked"`. The commit's own `state` still comes from the decisions. A work item addresses a finding when its `source.finding` is the finding's code and its `source.region` contains the region or lies inside it, with overlapping lines when both name the same file. It also addresses an `intent-pin-drifted`, `intent-pin-missing` or plugin finding that concerns a decision the item implements. The walk brings in a work item that addresses a finding, and the decisions and work items that a work item in the graph implements or needs, one link deep.
+
+A plugin's finding is about the commit it was returned for, so that commit's id comes first in `concerns`. Each of its `refs` that names a node in the graph follows as that node's id. chant first tries a ref as a node id, and then behind each node kind's prefix, such as `commit:` or `artifact:`. After that it tries the ref as a decision's record id or the start of a commit sha. A ref that names nothing in the graph stays in `refs` only. Plugin findings come after chant's own, in commit order. A decision that constrains a path below a directory region has a `constrains` edge to each file under that path, and it does not count as constraining the whole region.
+
+The document joins the others by the member name (`member` on region and file nodes, and `member:<name>` nodes), by the record id (`record` on a decision node, `records[].id` in `graph --kind` and `records`), and by the commit id (`at` and `provenance.commit`).
+
+### One record's walk
+
+`chant workspace graph --intent --record <id> --json` prints a different document, `intent-record`: the walk for one decision over every `path:` and `member:` entry its `constrains` lists. A `path:` entry's history is read as a region's is. A `member:` entry's history is its directory's, less the directories of the members inside it. Each commit appears once, and only the commits inside the record's window are listed. The head fields, `at`, `workspace`, `kinds` and `reasons` are as in `graph --intent`.
+
+| Field | Holds |
+|---|---|
+| `record` | `id` (`record:<kind>/<id>`, the id of the same record's decision node), `recordKind`, `record`, `path`, `title`, `state`, `supersededBy`, `decidedIn` and `constrains` |
+| `record.constrains[]` | every entry as written, with its `granularity`, its `path` (for a member, the member's directory), whether it `exists` and whether it was `walked` |
+| `history` | `rev`, the commit the history was read from, and `shallow` |
+| `window` | `from`, the commit the window opens at, and `until`, the commit that closes it, or `null` |
+| `commits[]` | the commits in the window, newest first by commit date |
+| `counts` | `commits`, a count for each bucket (`own`, `worked`, `withinOther`, `unexplained`), and `outsideWindow`, the commits that changed the region outside the window |
+
+A commit has `sha`, `subject`, `author`, `date`, `trailers` and `pullRequest` as a commit node has them. `unit` is the unit a commit join gave it, or `null`. `entries` names the constrains entries whose history lists it, and `files` the files it changed in the record's region, from the workspace root. For a merge, `files` is read against its first parent. The bucket is the first of these that holds:
+
+| `bucket` | The commit |
+|---|---|
+| `own` | is the record's own work, judged as for a `within` edge with `state: "decided"` |
+| `worked` | is in the window of a work item in `workedBy`: one that is not dropped and that implements the record or covers one of the commit's files by a `path:` entry |
+| `within-other` | is in the window of a decision in `alsoWithin`: another decision whose `path:` entries cover one of the commit's files |
+| `unexplained` | matches none of these |
+
+`workedBy` and `alsoWithin` list every match as `{ recordKind, record, state }`, whatever the bucket. If the record can't be walked, the result is a failure whose `error.code` is the declaration's code, the record kind's, or `intent-record-unknown`.
+
+## The patch read
+
+`chant workspace patch <range> --json` prints the hunks of a diff for a reader that runs no git. `<base>..<head>` compares two trees. `<base>...<head>` starts from the merge base, as a work branch needs. A single commit is read against its first parent, or against the empty tree for a root commit.
+
+| Field | Holds |
+|---|---|
+| `range` | `spec` as given, `form` (`range`, `merge-base`, `commit` or `worktree`), and the `base` and `head` commits; `head` is `null` for `worktree` |
+| `paths` | the `--path` filters, from the workspace root |
+| `limits` | `fileBytes`, 65536 unless `--max-bytes` sets it, and `totalBytes`, sixteen times that |
+| `files[]` | each changed file under the workspace root, in git's order |
+| `summary` | the counts of `files`, `additions` and `deletions`, and whether any file is `truncated` |
+
+| File field | Holds |
+|---|---|
+| `path`, `from` | the path, and for a rename or a copy the path it came from |
+| `change` | `added`, `modified`, `deleted`, `renamed` or `copied` |
+| `binary` | whether git reads the file as binary |
+| `additions`, `deletions` | git's line counts, or `null` for a binary file |
+| `hunkCount`, `bytes` | how many hunks git wrote for the file, and their text in bytes, headers included |
+| `hunks[]` | each hunk's `header` (the `@@` line), `oldStart`, `oldLines`, `newStart`, `newLines`, and `lines`, each with its leading space, `+`, `-` or backslash |
+| `truncated` | whether `hunks` holds less than git wrote, because the file passed `fileBytes` or the document passed `totalBytes`; its last hunk may end early |
+
+A revision that names no commit fails the read with `revision-unknown`, and a `--path` outside the workspace with `patch-path-invalid`.
+
+## The forward coverage check
+
+`chant workspace check --changes <base>..<head> --json` reads the join between records and code forwards ([#2773](https://github.com/INTENTIUS/chant/issues/2773)), where `graph --intent` reads it backwards. It maps each path the diff changes to the current records whose `constrains` cover it. A decision is current when nothing supersedes it and its state is decided, `decided` or `ratified` for the decision kind. A work item is current while it is not in a closed state. A `path:` entry covers the path it names and everything under it, and a `member:` entry covers every path in the member's directory. `<base>...<head>` diffs from the merge base, and `<base>` alone diffs to `HEAD`. The declaration and the records are read at `<head>`, so a change that adds the work item for itself is covered.
+
+A record kind may name an `outOfScope` field ([`out_of_scope`](/chant/cli/workspace-records/#record-kinds) on the decision and work kinds): workspace paths, files or directories, that a change carried out under the record must not touch. The records in hand for the change are the work item `--work <id>` names and the decisions it implements. Without `--work`, they are every current record that covers some path the diff changes. A path any of them lists is `out-of-scope`, and a record never covers a path its own `out_of_scope` lists.
+
+Beside the head every document carries, `range` gives the range as it was given (`spec`) and the `base` and `head` commits. `severity` and `ignore` come from the declaration's [`changes` block](/chant/reference/workspace-declaration/), and `--severity` replaces the severity. `work` is the work item in hand, or `null`. `kinds` lists each kind read with its `role`: `decision`, `work`, or `other` for a kind that covers nothing. Each entry in `paths` has the path from the workspace root, its `change` (`added`, `modified`, `deleted` or `renamed`, with the old path in `from`), its `member`, whether it is `generated` (as `graph --intent` reads a region's `generated`), its `status`, the records in `coveredBy` and `outOfScopeBy` with the entry that ties each to the path, and the glob in `ignoredBy`.
+
+| `status` | Meaning | Finding |
+|---|---|---|
+| `covered` | a current record covers the path | none |
+| `uncovered` | no current record covers it | `change-uncovered` |
+| `out-of-scope` | a record in hand lists it in `out_of_scope` | `change-out-of-scope` |
+| `ignored` | a `changes.ignore` glob matches it | none |
+| `record` | it is a record file of a kind read: the change is to the records themselves | none |
+
+A finding's `id` is `finding:<code>:<path>`, one per path. Its `severity` is `warn` or `fail`. `records` lists the records an out-of-scope finding concerns. `triage` is `{ finding, region }`, the gap source a work item takes. The finding-triage decision point ([#2741](https://github.com/INTENTIUS/chant/issues/2741)) reads it to seed a work item or a decision. The work kind's `source.finding` accepts both codes. When a work kind is read, `addressed` and `addressedBy` say which work items came from the gap: an item addresses the finding when its `source.finding` is the finding's code and its `source.region` is the path or a directory above it, in any state, as `graph --intent` reads a gap source. The point's inputs are the finding's `code`, `message` and `addressed`, and the path's `path`, `member` and `generated` ([#2794](https://github.com/INTENTIUS/chant/issues/2794)). With severity `off` there are no findings, and `ok` is `false` only when severity is `fail` and there is a finding, which also exits 1. When the check can't run, the document holds only `error`. Its code is `revision-unknown` for a range that names no commit and `work-item-unknown` for a `--work` id no record has; otherwise it is the declaration's or the record kind's code.
+
+`scope` holds the write scope check ([#2548](https://github.com/INTENTIUS/chant/issues/2548)). It is `null` unless the declaration at `<base>` has a `writeScope` block or `agents`. The declaration, its record kinds and the trust policy are all read at `<base>`, so a change can't widen its own scope. `scope.commits` lists each commit in the range except merges. An entry names the commit's `principal` and `class`, says whether the principal is `attested`, and gives the `agent` session it was judged as. A commit with a `Chant-Agent: <name>` trailer is judged as that session, and one by a principal a session lists is too. Otherwise the commit's principal is its attested signer when the policy at base attests it, or else its author's email, and its class comes from the role grants at base. Each path a restricted writer wrote outside its scope is a finding in `scope.findings`. For a record file the finding also names the `verb`. An added file is `new` and a removed one `delete`. A changed file is `review` when only its reviews (or a session's verdicts) changed, and `close` when a session entered a closed state. Any other change is `amend`. A scope finding fails the check whatever the severity, so `ok` is `false` and the command exits 1.
+
+`chant serve mcp` serves the document as the `workspace-changes` tool, and an Op that changes the checkout runs the same check on its own branch with the [`changeCoverage` activity](/chant/guide/ops/#checking-the-change-against-the-records).
+
+## Composites and components
+
+`chant workspace graph --composites` lists each composite instance the members declare, joined to the components that can deploy it ([#2662](https://github.com/INTENTIUS/chant/issues/2662)). It is the data a deployment menu is built from. chant lists every match and says how each was made. Under the chant and hud boundary of [#2657](https://github.com/INTENTIUS/chant/issues/2657), the reader chooses what to offer.
+
+An instance's `id` is the composed graph's `compositeInstance`, `<member>/<instance>`, and its `nodes` are the composed node ids. A component's `id` is `<member>/<name>`. Each entry in an instance's `components` names a component by that id and says how it matched:
+
+| Field | Value |
+|---|---|
+| `by` | `composites` when the component's contract lists one of the instance's `kinds`. `name` when the contract lists no `composites` and the component's `name` joins a kind or the instance's name with the core `joinKey()` |
+| `against`, `value` | `kind` or `instance`, and the name that matched |
+| `label` | `exact`, or `folded` when only case or punctuation differ |
+| `via` | `member` when the component and the instance are in the same member, `link` when the component's member reads the instance's member through a resolved [member link](/chant/reference/workspace-declaration/#member-links), and `unlinked` otherwise |
+
+An instance no component matches has an empty `components`. When the whole list is empty, or no instance has a component, `reasons` holds a code from the closed list that says why.
+
+Each component also lists the runtimes that can host its deploy in `runtimes` ([#2674](https://github.com/INTENTIUS/chant/issues/2674)). The list starts with the built-in `local` runtime and adds each lexicon in the member's `chant.config.ts` whose `opRuntime` hosts component runs, which is the list `chant run --components <name> --on <runtime>` accepts in that member. Each entry has `name`, `lexicon` (`null` for `local`), `default` and `command`, the exact command line to run in the member's directory. A reader offers only these runtimes and never guesses one. When the member's config or one of its lexicons can't be read, the member's `runtimeReasons` says so.
+
+Each component also lists the environments it may be deployed to in `environments` ([#2695](https://github.com/INTENTIUS/chant/issues/2695)). This is a contract version 1 addition, like `runtimes`: a reader that doesn't know the field ignores it. The list starts with `local`, the default, which `chant run --components` deploys to without `--env`. It goes on with the names the member's `chant.config.ts` declares in `environments`, then the environments with a release ledger for the member on `chant/lifecycle`. An entry's `source` says where its name came from: `config`, `ledger`, or `builtin` for `local` when neither names it. Its `command` deploys the component there and carries `--env` unless the environment is the default. The component contract declares no environments, so the list is the member's. A ledger environment the config doesn't cover is left out, because `chant run --env` would refuse it. The member's `environmentReasons` says so, and says when the config declares none or can't be read.
+
+## Gates
+
+`chant workspace status --json` lists each member's gates in `gates`, read from the member's gate ledger on `chant/lifecycle` ([#2674](https://github.com/INTENTIUS/chant/issues/2674)). That is the ledger `chant approve` writes to. A reader shows who has approved what, and how many approvals are still needed, without running `git show` on the branch. Each gate has its `component`, `name`, `env` and `planDigest`, a `state`, the `approvals` that count with `principal`, `channel` and `at`, the number `needed`, and `approve`, the exact `chant approve` line to run in the member's directory. The state is read the way a run reads the ledger, and nothing is written.
+
+| `state` | Meaning |
+|---|---|
+| `approved` | The approvals recorded since the gate was reached, for its plan, pass it. |
+| `pending` | The gate is waiting for approvals. |
+| `expired` | The gate isn't approved and its pending fact has expired, so the next run records a fresh one. |
+| `superseded` | The gate isn't approved, and an approval recorded since it was reached names a different plan, so that approval doesn't count. |
+
+`gateLedger` names the directory the gates were read from. Its `reason` holds a code from the closed list when there is no ledger branch, no gate ledger for the member, or a gate ledger that can't be read.
+
+## Boxes
+
+`chant workspace status --json` lists each member's `box`, the capabilities its [box block](/chant/reference/workspace-declaration/#boxes) declares, each with `name`, `broker` and `scope` ([#2726](https://github.com/INTENTIUS/chant/issues/2726)). It is `null` for a member with no block. A broker reads the scope it enforces for a box here. `chant workspace check` reports a box that holds a literal secret with `box-credential-declared` and a capability with no broker with `box-capability-unbrokered`, each carried as `code` on its `WSP` finding.
+
+A box block with a host also carries `isolation`: the ports, state paths and cookie names chant derives from the box's identity ([#2727](https://github.com/INTENTIUS/chant/issues/2727)), or `null` without a host. A runtime that plants or starts a box sets these values instead of choosing its own. `check` reports two boxes on a host sharing one with `box-isolation-collision`, and a hard-coded machine path with `box-isolation-literal`. The derivation is on the [declaration page](/chant/reference/workspace-declaration/#isolation). chant never expands the environment reference in a state path and never opens a port.
+
+Each `box` also has `services`, what the block declares for the box's supervisor ([#2880](https://github.com/INTENTIUS/chant/issues/2880)). The list keeps the declaration's order and is `[]` for a block with none. A reader has the declared services before a converge tick reports them in `lastTick`. `status` prints each `cmd` as declared and never expands its `${VAR}` references. The [declaration page](/chant/reference/workspace-declaration/#services) describes the fields.
+
+## Stewards
+
+`chant workspace status --json` also lists each member's stewards in `stewards` ([#2731](https://github.com/INTENTIUS/chant/issues/2731)), a contract version 1 addition that readers who don't know it ignore. A steward is the one writer that runs a member's operational Ops: the fountain lexicon's Agent and Teammate, or `chant operator --steward` in the box. An entry names the steward and the file that declares it. `form` is where it runs in the environment asked for, and `forms` is the declared default with its per-environment exceptions. `capabilities` lists the box capabilities the steward reaches through a broker, joined with the member's box block (`broker`, and `declared: false` when the block doesn't list one), and `vault` names the vault a steward holds when it isn't behind a broker. `lease` is the lease a local steward holds while it runs, or `null`. Each entry in `ops` has the Op's `schedule`, the `env` its runs are recorded under and its `lastRun` from the run ledger; the schedule is `null` for an Op run only on request, and `lastRun` is `null` before the first run. Only members of kind `chant` with a config of their own are read, and only their `*.op.ts` files are imported. `stewardReasons` says when a steward or a last run could not be read. An Op also has `changesCheckout` and `workLease` ([#2748](https://github.com/INTENTIUS/chant/issues/2748)): `workLease` is `null` for an Op that runs under no work lease, and otherwise names the work kind whose ledger holds the lease and lists in `held` the leases the steward's turns of that Op hold, by holder `<steward>/<op>@<process>`. A ConvergeOp also has `lastTick`, its newest tick on the converge ledger with the rules that fired and the resources its observer step reported, and `null` for any other Op ([#2778](https://github.com/INTENTIUS/chant/issues/2778)). An Op the steward runs beside its turns has `beside`, with `ready` and the Op's own `lease`, and every other Op has `beside: null` ([#2861](https://github.com/INTENTIUS/chant/issues/2861)). `lastRun.phases` gives each phase's `status` and `durationMs`. `inFlight` is the run in flight now, or `null`: its current `phase` and `step`, the `phases` it has finished and the newest `activity` lines its steps reported through the file in `CHANT_RUN_ACTIVITY`. The run keeps it under the checkout's git directory, not on `chant/lifecycle`, and removes it once its ledger record is written. hud and the studio read this to show which steward owns a box, what it last did and which work item its current turn holds.
+
+A run that stops on an open decision point has `status: "waiting"`, and its `lastRun.point` names the question: its answer record's `id`, the `point`, its `state`, `path`, `subject` and `since` ([#2749](https://github.com/INTENTIUS/chant/issues/2749)). The `state` is the question's now, read as `points` reads it, so it is `answered` once a person has answered. When the questions can't be read, or the answer record is gone, it is the state the run ledger recorded. The steward's `waiting` lists the questions still open, one for each Op whose newest run is the steward's own and stopped on one, with the Op and the run. It leaves out a question answered since, and one whose Op has a newer run in flight that has not written its record yet: the Op's lease or one of its work leases was taken after the waiting run ended and is still held. In `points --open` the question carries `askedBy`, which names the steward and the run that asked it. hud joins the two by `id` to ask a person. The steward never answers a question itself, and runs the Op again on the first round after a person does.
+
+## Joining the documents
+
+A reader such as behold or hud builds one view from several commands. The join keys are the same in every document.
+
+| Key | `ls` | `graph` | `check` | `status` |
+|---|---|---|---|---|
+| the workspace | `workspace.name`, `at` | `workspace.name`, `at` | `workspace.name`, `at` | `workspace.name` and `lifecycle.commit` |
+| a member | `members[].name` | `members[].name`, and `member` on every node and edge | `entity` on a declaration finding | `members[].name` |
+| a member's directory | `members[].dir` | `members[].dir` | none | `members[].dir` |
+| a collector | none | `collectors[].member`, then `pipelines[].id` and `exporters[].id` | none | none |
+| a record | none | `records[].id`, and `record` on a record link | the record's file on a `WSP111`, `WSP112` or `WSP113` finding | none |
+
+A reader starts with `ls`, which lists every member whether it can be read or not. It then reads `graph` for the nodes in `groups.byMember`, and matches each graph entry to the `ls` member of the same name. `check` findings attach to a member through `entity`, and `status` releases and gates attach through the member name. A gate's `component`, or a `status` release's, matches a `graph --composites` component's `name` in the same member. Node ids in `graph` are `<member>/<id>`, so a node never collides with another member's.
+
+A live review session view (H5 of [#2650](https://github.com/INTENTIUS/chant/issues/2650)) reads three documents. `records` on the session kind gives the agenda, the attendance and the verdicts. `records` on the decision kind gives each agenda decision, and `citedBy` on the session links the two through the decisions' review entries. What the session changed comes from `records --since <session id>` on each kind, from the commit it opened at to the commit that carried its close, or to the working tree while it is open ([#2693](https://github.com/INTENTIUS/chant/issues/2693)). chant reads both commits from the session record and from git, so the reader passes only the id. A session written before chant 0.88.0 has no revision fields, and chant falls back to the commits that added its file and last changed it.
+
+Documents read at the same `at` belong together. Mixing a working-tree `ls` with a `graph --at` of an older commit can list members the graph doesn't have, and each document names its own `at` so a reader can tell.
+
+hud reads exactly as behold does, and caches per member. At a commit, a member's entry and nodes don't change once read. A cache keyed on the workspace name, `at` and the member name stays valid while the member's toolchain (`chant` on its `graph` entry) stays the same. A working-tree read has `at: null` and is read again.
+
+## Joining a span to a member
+
+A span names the declaration and the release that produced it, so a reader can walk from a trace to the workspace's graph, ledger and records ([#2558](https://github.com/INTENTIUS/chant/issues/2558), D22 of [#2524](https://github.com/INTENTIUS/chant/issues/2524), [ws-060](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-060-telemetry-attribution.md)). The attributes are on the span's resource. They use OpenTelemetry conventions where these exist and a `chant.*` namespace otherwise.
+
+| Attribute | Joins to |
+|---|---|
+| `chant.workspace` | `workspace.name` in every document, and `at` pins the revision |
+| `chant.member` | `members[].name` in `ls`, `graph`, `check` and `status` |
+| `chant.decl` | the node `<chant.member>/<chant.decl>` in `graph`, whose `groups.byMember` lists it |
+| `service.name` | the service, which is the declaration's name |
+| `deployment.environment.name` | `members[].environments[].env` in `status` |
+| `service.version` | `releases[].digest` of that member and environment in `status` |
+| `vcs.ref.head.revision` | `releases[].gitSha` in `status`, or `at` in a `graph` read at that commit |
+
+A reader joins in this order. It takes `chant.workspace` and `chant.member` to the `graph` document of the workspace and finds the member's entry. `chant.decl` prefixed with the member is the node id, so the span lands on one node. The records that constrain that node are the `constrains` rows of `links` whose `target` is `member:<chant.member>`, read with `graph --kind`. `status` lists the member's releases for `deployment.environment.name`, and the one whose `digest` equals `service.version` is the release that produced the span. Its `gitSha` is `vcs.ref.head.revision`, and `graph --at <that commit>` reads the workspace as it was then.
+
+The docker lexicon stamps `service.name`, `chant.workspace`, `chant.member`, `chant.decl` and `deployment.environment.name` as `OTEL_SERVICE_NAME` and `OTEL_RESOURCE_ATTRIBUTES` in each Compose service's environment, when it builds inside a workspace. A build knows the environment only from `--env` or `ownership.env`, so a build with neither leaves that attribute out. It stamps `service.version` when the service's image is pinned by digest. `vcs.ref.head.revision` and a `service.version` the build can't know are set by whatever deploys the release, which knows the digest and the commit: the build's output does not change with each commit. A project with no `chant.workspace.json` is unchanged. It opts in with `telemetry.attribution: true` in `chant.config.ts` and gets the attributes that need no workspace, and inside a workspace `telemetry.attribution: false` turns stamping off. A value a service already sets in `OTEL_SERVICE_NAME` or `OTEL_RESOURCE_ATTRIBUTES` is kept, and only the missing attributes are added.
+
+Where the service's telemetry goes is a [telemetry link](/chant/reference/workspace-declaration/#telemetry-links): the service's member links to a pipeline or exporter in the `collectors` section of `graph`. A link row says `resolved`, or why it isn't.
+
+## Writing records
+
+A reader writes only through chant commands ([ws-052](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-052-chant-hud-boundary.md)). For records those are [`records new`, `amend`, `review` and `close`](/chant/cli/workspace-records/#writing-records) ([#2670](https://github.com/INTENTIUS/chant/issues/2670), [#2693](https://github.com/INTENTIUS/chant/issues/2693)). Each validates the record it would write the way `records` reads it and then writes one file or none, leaving the commit to the caller. `review --session` is the one exception, and it writes the decision and the session together. The document each prints follows its own schema:
+
+| Command | Schema `$id` | Result |
+|---|---|---|
+| `chant workspace records new` | `https://intentius.io/chant/schemas/workspace/records-new/v1/records-new.schema.json` | `path`, `id`, and `seal` with `--sign` |
+| `chant workspace records amend` | `https://intentius.io/chant/schemas/workspace/records-amend/v1/records-amend.schema.json` | `path`, `id`, `changed`, and `seal` with `--sign` or `sealDropped` when a change removed the seal |
+| `chant workspace records review` | `https://intentius.io/chant/schemas/workspace/records-review/v1/records-review.schema.json` | `path`, `id`, `review`, and `session` with `--session` |
+| `chant workspace records close` | `https://intentius.io/chant/schemas/workspace/records-close/v1/records-close.schema.json` | `path`, `id`, `changed`, `seal`, `closedRev` |
+
+[`chant workspace work`](/chant/cli/workspace-work/) writes a work lease rather than a record, and prints a document following `https://intentius.io/chant/schemas/workspace/work-lease/v1/work-lease.schema.json` ([#2732](https://github.com/INTENTIUS/chant/issues/2732)). Its result carries `item`, `event`, `kind`, `ref`, `lease` and `history`, and a refusal carries `refused` with a `lease-` code and exits 2.
+
+The schemas ship beside the read schemas and follow their shape: a `oneOf` of a result and a failure, `contract: 1`, and a closed list of error codes from the same list as every read. A result also carries `kind`, `dryRun`, the written record's `warnings`, and `text` under `--dry-run`. A failure exits 1 and writes nothing. chant 0.86.0 is the first release to print these documents.
+
+A write never makes the caller compute anything about the record. `new` allocates the id, and for a session it records the commit the session opened at. `amend` applies the approval rule and checks the quorum before a record is ratified, and `review` computes the digest the verdict is bound to. `close` computes a session's seal ([#2693](https://github.com/INTENTIUS/chant/issues/2693)). `review --session` writes the verdict to the decision and to the session in one command, so the two lists never differ. The principal a review names is recorded as the caller gives it. `review --sign` seals the verdict with an ssh key, and `records` then reports whether the seal verifies for that principal against the signers at base ([#2687](https://github.com/INTENTIUS/chant/issues/2687)). `new --sign` and `amend --sign` seal the record's author the same way ([#2688](https://github.com/INTENTIUS/chant/issues/2688)). The provenance of the commit that carries the file is reported apart from that ([#2547](https://github.com/INTENTIUS/chant/issues/2547)).
+
+Each write is judged against the writer's [write scope](/chant/reference/workspace-declaration/#write-scope-and-agent-sessions), read from the declaration at base ([#2548](https://github.com/INTENTIUS/chant/issues/2548)). The writer is the agent session `CHANT_AGENT` names, or the session that lists the principal the write names (`--by`, or `by` through MCP), or else the class that principal's role grants give. A write outside its scope is refused with `write-scope-member` or `write-scope-kind`, and a session the declaration doesn't name with `agent-unknown`.
+
+## Agent sessions
+
+`chant workspace agent <name> --json` prints what an agent session reloads from ([#2548](https://github.com/INTENTIUS/chant/issues/2548)). The document follows `agent.schema.json`. `agent` is the session with its `member` and `principals`, and `scope` holds the one member it writes and each declared record kind in its reach with the `verbs` it may write the kind with. `spec` is the `spec` block `records --current --json` prints, and `reload` lists the two reads that rebuild the session's context. The session and its scope come from the declaration at base (`workspace.scopeFrom` is `base`), or from the working tree when there is no base or no declaration at it. The spec is read in the working tree. `chant serve mcp` serves it as `workspace-agent`.
+
+## Testing a reader
+
+A reader such as hud reads only through this contract and writes only through chant commands ([ws-052](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-052-chant-hud-boundary.md), the [chant and hud boundary](/chant/reference/boundary/)). `@intentius/chant` ships a conformance suite for that, so a reader can show it in its own CI with nothing else installed ([#2679](https://github.com/INTENTIUS/chant/issues/2679)).
+
+| Import | For |
+|---|---|
+| `@intentius/chant/workspace/conformance` | any test runner: `runWorkspaceReaderConformance` returns the problems, and `checkReaderRead` checks one read. It imports no runner and loads under plain `node` |
+| `@intentius/chant/workspace/conformance/vitest` | vitest: `describeWorkspaceReaderConformance` adds one test per command. Only this entry imports vitest |
+
+The suite builds the reader from a function you pass, giving it a transport that runs chant in the workspace. The reader's `read(command, args)` runs one contract command through the transport and returns the parsed document. `commands` lists the commands the reader reads. The suite reads only those, and the report names the others in `skipped` as not applicable.
+
+A reader of `ls`, `status` and `graph --composites`, tested with `node:test` after `npm i -D @intentius/chant`:
+
+```js
+// reader-conformance.test.mjs, run with: node --test
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { runWorkspaceReaderConformance } from "@intentius/chant/workspace/conformance";
+
+const JSON_FLAG = { ls: ["--json"], status: ["--json"], "graph --composites": ["--json"] };
+
+/** The reader: one contract command through the transport, and the document chant printed. */
+const myReader = (chant) => ({
+  async read(command, args) {
+    const run = await chant.run(["workspace", ...command.split(" "), ...args, ...JSON_FLAG[command]]);
+    return JSON.parse(run.stdout);
+  },
+});
+
+test("my reader reads only through the read contract", { timeout: 300_000 }, async () => {
+  const report = await runWorkspaceReaderConformance(myReader, { commands: ["ls", "status", "graph --composites"] });
+  assert.deepEqual(report.problems, []);
+});
+```
+
+With vitest, `describeWorkspaceReaderConformance({ name, reader, commands })` from the `vitest` entry takes the same reader.
+
+For each command it reads, the suite fails when any of these is false:
+
+| Check | How |
+|---|---|
+| the document validates against the command's output schema and carries this contract's version | the schemas `@intentius/chant` ships, with its own ajv |
+| the read made exactly one chant call, the contract command with the suite's arguments and its JSON flag | the transport records every call |
+| the reader returned the document chant printed, unchanged | compared with the recorded output |
+| no file in the workspace changed | every file is hashed before the first read and after the last |
+
+The reader never gets the workspace's path, so the transport is its only route to the workspace, and the transport records everything that goes through it.
+
+With `over: "mcp"`, the same reader's calls are answered by `chant serve mcp` ([#2707](https://github.com/INTENTIUS/chant/issues/2707)). The transport starts one server session in the workspace and turns each call into the workspace tool that answers it, such as `workspace-records` for `workspace records --kind <kind> --json`. It also runs the command itself, and the suite fails when the tool's document differs from the command's. `check` has no tool, so over MCP it is not applicable.
+
+Outside the chant repository the suite writes a workspace to a temporary directory and removes it afterwards. The workspace is copied from the fixture in `src/workspace/conformance/__fixture__/` of `@intentius/chant`. Its chant member declares one composite and the component that deploys it, and its `decisions/` directory holds one decision. `chant workspace init --yes` declares it, and git commits it. Inside the chant repository the suite reads `reference-workspace/`. Both have the files the suite's arguments name, such as `decisions/decision.kind.mjs` and `app/src/server.mjs:19`. `workspaceDir` names another workspace with those files. `chantCommand` names the chant to run. By default that is the first `node_modules/.bin/chant` above the current directory, then the chant the suite came with.

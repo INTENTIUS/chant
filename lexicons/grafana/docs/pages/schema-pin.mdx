@@ -1,0 +1,57 @@
+---
+title: "Where the Types Come From"
+description: "The Grafana schemas this lexicon vendors, the Grafana versions they track, the correction overlay, and why it does not depend on the foundation SDK"
+diataxis: explanation
+order: 7
+---
+
+Grafana defines dashboards, each panel's options and each datasource's query model as CUE kinds. `grafana/grafana-foundation-sdk` runs those kinds through [cog](https://github.com/grafana/cog) to generate builder libraries in several languages, and next to them publishes one JSON Schema per kind.
+
+This lexicon vendors 34 of those JSON Schema files into `src/spec/schemas/` for its types: `dashboard`; the panels `timeseries`, `stat`, `gauge`, `table`, `logs`, `heatmap`, `text`, `barchart`, `bargauge`, `piechart`, `statetimeline`, `statushistory`, `histogram`, `nodegraph`, `xychart`, `trend`, `canvas`, `geomap`, `candlestick`, `annotationslist`, `dashboardlist`, `news` and `datagrid`; and the queries `prometheus`, `tempo`, `loki`, `elasticsearch`, `cloudwatch`, `azuremonitor`, `googlecloudmonitoring`, `bigquery` and `grafanapyroscope`; and `expr`, the server-side expressions of alert rules. The traces, alert list and flame graph panels have no options schema upstream: the alert list and flame graph options are typed by hand in `src/panel-options.ts` from Grafana's TypeScript, and traces options stay untyped. The PostgreSQL, MySQL and MSSQL query model has no schema either and is typed by hand in `src/query-models.ts`, and datasource settings (`jsonData`) have none for any plugin, so `src/datasource-settings.ts` types them from each plugin's source. A 35th, `dashboardv2`, comes from the same commit for the importer, which reads v2 dashboards ([Importing Dashboards](../importing/#v2-dashboards)); no types are generated from it, GRAF107 does not use it, and a test checks that the importer carries or reports every key it defines. `GRAFANA_SCHEMA_PIN` records the tag, the commit and a sha256 per file, and a test fails if a file stops matching.
+
+The types track Grafana 12.4 and 13.x. The pin is foundation-sdk `v0.0.20`, whose schemas are labelled with the `v11.6.x` kind registry but largely carry the dashboard kind as Grafana 12.4 and 13.x define it; the correction overlay below fills in what they still get wrong or miss. The lexicon's tests validate real dashboards exported from the UIs of Grafana 12.4.11 and 13.2.2 (vendored under `test/fixtures/exports/`, with their provenance), and the container tests run against both releases: `src/import.e2e.test.ts` provisions each example into Grafana 12.4.11 and 13.2.2 and compares every stored dashboard model with the built JSON, leaving out only the `id` and `version` Grafana adds (listed with their reasons in `test/e2e/stored-model.ts`).
+
+`npm run generate` applies the overlay to the vendored files and turns the result into `src/schema/*.gen.ts`, one module per schema, and into `src/spec/schemas.gen.ts`, which holds each patched schema as JSON text for validation. Those modules are committed; `npm run validate` and a test fail when they drift from what generate writes. The panel classes type `options` and `fieldConfig.defaults.custom` from them, and the query classes type their fields from them.
+
+The same schemas, overlay applied, back GRAF107. It reads them from `src/spec/schemas.gen.ts`, not from the files, so validation needs no filesystem access and works bundled, and it loads ajv the first time a build has a dashboard to check, so a command that does not check dashboards does not pay for it. Every build checks each dashboard against the dashboard schema, and each panel's options and queries against their plugin's schema with required fields relaxed. The library panels an external export embeds in `__elements` are checked the same way as panels on the grid. A value a schema does not allow is an error; a key it does not know is a warning, since each Grafana release adds keys before the pin catches up. That is the offline half of "Grafana imports it without edits". The other half boots a pinned Grafana container, provisions the example and reads each dashboard back; it runs when Docker is available and skips otherwise.
+
+## The correction overlay
+
+The foundation-sdk schemas are stricter than Grafana's own CUE, and lag it. They close every object with `additionalProperties: false`, type `MatcherConfig.options` as an object where the CUE says `_` (a `byName` matcher takes a string), require every `DashboardLink` field where the CUE gives most of them defaults, and lack fields newer Grafana writes (`MatcherConfig.scope`, the export's `__inputs`, `__requires` and `__elements`). Unpatched, dashboards Grafana itself exports fail GRAF107, and correct declarations fail to typecheck.
+
+`src/spec/overlay/<schema>.overlay.json` holds the corrections for one schema, applied in order when a schema is loaded, before type generation and validation. The vendored files stay byte-for-byte what the pin names. Each file names the Grafana tag its citations refer to, and each patch is a JSON-patch operation with its source line:
+
+```json
+{
+  "op": "replace",
+  "path": "/definitions/MatcherConfig/properties/options",
+  "value": { "description": "The matcher options. ..." },
+  "source": "kinds/dashboard/dashboard_kind.cue:753",
+  "why": "The CUE says `options?: _`; byName, byRegexp, byType and byFrameRefID take a string."
+}
+```
+
+`op` is `add`, `replace` or `remove`, and `path` is a JSON pointer into the vendored schema. Applying is strict: `add` fails when the key is already there, `replace` and `remove` fail when it is not. A pin bump that picks up a fix therefore stops `npm run generate` until the patch that duplicates it is deleted, and the overlay shrinks as the pin catches up.
+
+The overlay currently patches `dashboard` (export metadata, matcher and override values, dashboard, panel and field links, thresholds, library panel references, variable `query` and `current`, ad hoc and group-by variable fields, the viridis, magma, plasma, inferno and cividis color schemes, 13.x additions), `timeseries` (`showValues`, the `accessible` line style), `table` (the pill, markdown and geo cell types, the `accessible` line style, the per-field `footer`, `sortable`, `wrapText`, `wrapHeaderText`, `tooltip` and `styleField`), `logs` (`unwrappedColumns`), `piechart` (`sort`), `nodegraph` (`layoutAlgorithm`), `xychart` (matcher options), `trend` (`showValues`), `canvas` (`tooltip`, `zoomToContent`, connection `direction`, and the element fields Grafana writes on the root frame) `geomap` (`noRepeat` and the dashboard-variable view fields) and `candlestick` (`options.annotations`, `showValues`, the `accessible` line style). The `datagrid` schema exists only up to Grafana 12.4: 13.0 removed the panel, so its class types 12.4 dashboards and Grafana 13 drops it on load. An enum value newer than the pin stays an error until the overlay lists it, because a misspelled enum value and a new one look the same to the schema; add it with a patch citing the CUE.
+
+To add a correction:
+
+1. Reproduce it: a dashboard Grafana exports, or a declaration that should typecheck, that GRAF107 or `tsc` rejects. Add the export under `test/fixtures/exports/` when it is one.
+2. Find the field in Grafana's CUE at the newest supported tag: `kinds/dashboard/dashboard_kind.cue` for the dashboard, `public/app/plugins/panel/<id>/panelcfg.cue` and `packages/grafana-schema/src/common/*.cue` for panels. Where the CUE is silent (it leaves `VariableModel` open) or disagrees with what the UI writes, cite the TypeScript that writes it.
+3. Add the smallest patch that makes the schema agree, with `source` and `why`, to the schema's overlay file (create `<schema>.overlay.json` with `schema` and `grafana` if there is none).
+4. Run `npm run generate`, review the diff of `src/schema/`, and run the tests.
+
+If the overlay keeps growing, the fallback is generating from Grafana's CUE directly.
+
+## Bumping the pin
+
+1. Change `ref` and `commit` in `src/pin.ts`.
+2. `just fetch-schemas` downloads the files at that commit and prints each digest.
+3. Paste the digests into the pin and run `npm run generate`.
+4. Delete the overlay patches `npm run generate` now refuses as already present, and run it again.
+5. Review the diff of `src/schema/`. It is the list of what Grafana changed.
+
+## Why not the SDK package
+
+The SDK's TypeScript builders are method chains (`new PanelBuilder().title(…).withTarget(…)`), and chant declarations are static `new X({ … })` data that the build evaluates and lint reads. The SDK's generated interfaces don't work as plain props either: each query type declares a method, enums are runtime TypeScript `enum`s, and option types mark every field required. The package is also versioned `0.0.x`, with a prerelease line per Grafana minor. Pinning its schema output keeps the fidelity without the dependency.

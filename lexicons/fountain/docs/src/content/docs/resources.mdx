@@ -53,9 +53,10 @@ conversation and one persistent computer per agent identity.
 
 `runtime: "acp"` launches `runtime_command` inside the sandbox and speaks the
 Agent Client Protocol to it. Both are in fountain's spec from v0.21.0, which
-also made `model` optional. FTN023 keeps the two together, and FTN016 rejects a
-`model` on an acp agent, because the model is whatever the command on the other
-end of the protocol chooses.
+made `model` optional for that runtime alone. FTN023 keeps the two together.
+FTN016 rejects a `model` on an acp agent, because the model is whatever the
+command on the other end of the protocol chooses, and rejects an agent on any
+other runtime that has no `model`, which fountain refuses at apply.
 
 `inference_credential_id` and `allowed_inference_credential_ids` name
 inference credential sets by uuid. The lexicon does not model the sets

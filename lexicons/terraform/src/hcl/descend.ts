@@ -98,6 +98,13 @@ export interface DescendOptions {
   root: string;
   /** Boundary: a source resolving outside this directory is refused. */
   projectRoot: string;
+  /**
+   * `terraform.moduleRoot`, absolute: when set, the boundary in place of
+   * {@link projectRoot} (#2874). A workspace reads a member's root from a
+   * reader project outside the workspace, and names the workspace root here,
+   * so `../modules/x` stays readable.
+   */
+  moduleRoot?: string;
   /** Resolved mode. `"none"` returns immediately with nothing. */
   callModuleType?: "local" | "none";
   /** Injectable parser (tests); defaults to core's lazy-loaded `@cdktn/hcl2json`. */
@@ -190,8 +197,14 @@ export async function descendModules(
   // The project root is the boundary, except for a root module configured
   // with a `dir` outside the project entirely (an absolute path to an estate
   // kept elsewhere): there the root's own directory is the boundary, since
-  // the project root would refuse every module the root has.
-  const boundary = isInside(opts.projectRoot, opts.dir) ? resolve(opts.projectRoot) : resolve(opts.dir);
+  // the project root would refuse every module the root has. A declared
+  // `moduleRoot` (#2874) replaces both.
+  const boundary =
+    opts.moduleRoot !== undefined
+      ? resolve(opts.moduleRoot)
+      : isInside(opts.projectRoot, opts.dir)
+        ? resolve(opts.projectRoot)
+        : resolve(opts.dir);
 
   /** One scope's calls, with the chain that reached it and the paths already on that chain. */
   const walk = async (

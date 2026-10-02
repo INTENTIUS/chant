@@ -6,9 +6,11 @@
  * convention.
  */
 
-import type { TemplateParser, TemplateIR, ResourceIR } from "@intentius/chant/import/parser";
-import { parseYAML } from "@intentius/chant/yaml";
+import type { TemplateParser, TemplateIR, ResourceIR, ParseContext } from "@intentius/chant/import/parser";
+import type { EmbeddedContentResolver } from "@intentius/chant/import/embedded";
+import { parseYAML, splitYAMLDocuments } from "@intentius/chant/yaml";
 import { namespaceSegmentForGroup } from "../group-namespace";
+import { delegateEmbedded } from "./embedded";
 
 // ── GVK to type name mapping ───────────────────────────────────────
 
@@ -130,25 +132,29 @@ function toLogicalId(kind: string, name: string | undefined): string {
 /**
  * Kubernetes YAML parser implementation.
  *
- * Supports multi-document YAML (split on `---`). Each document is expected
+ * Supports multi-document YAML (split on `---`, see `splitYAMLDocuments`). Each document is expected
  * to be a standard Kubernetes object with apiVersion, kind, and metadata.
  */
 export class K8sParser implements TemplateParser {
-  parse(content: string): TemplateIR {
+  /**
+   * With `context.embedded` (`chant import`), content another lexicon owns
+   * is offered to it: every ConfigMap `data` value and a PrometheusRule's
+   * `spec.groups` (see ./embedded.ts). Without it, everything is kept as
+   * written.
+   */
+  parse(content: string, context?: ParseContext): TemplateIR {
     const resources: ResourceIR[] = [];
     const namespaces = new Set<string>();
 
-    // Split on YAML document separator, filter blanks
-    const documents = content
-      .split(/^---\s*$/m)
-      .map((d) => d.trim())
-      .filter((d) => d.length > 0 && !/^[\s#]*$/.test(d.replace(/#[^\n]*/g, "")));
+    // Split into documents on `---` / `...` markers (a trailing `# comment`
+    // allowed); empty and comment-only documents are dropped (#2965).
+    const documents = splitYAMLDocuments(content);
 
     for (const docStr of documents) {
       const doc = parseYAML(docStr);
       if (!doc || typeof doc !== "object") continue;
 
-      const resource = this.parseDocument(doc as Record<string, unknown>);
+      const resource = this.parseDocument(doc as Record<string, unknown>, context?.embedded);
       if (resource) {
         resources.push(resource);
 
@@ -172,7 +178,7 @@ export class K8sParser implements TemplateParser {
     };
   }
 
-  private parseDocument(doc: Record<string, unknown>): ResourceIR | null {
+  private parseDocument(doc: Record<string, unknown>, embedded?: EmbeddedContentResolver): ResourceIR | null {
     const apiVersion = doc.apiVersion as string | undefined;
     const kind = doc.kind as string | undefined;
 
@@ -189,6 +195,8 @@ export class K8sParser implements TemplateParser {
       if (key === "apiVersion" || key === "kind") continue;
       properties[key] = value;
     }
+
+    if (embedded) delegateEmbedded(type, kind, properties, embedded);
 
     return {
       logicalId,

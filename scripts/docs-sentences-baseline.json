@@ -146,7 +146,6 @@
   "anaphora/repeated-opening": 1
  },
  "docs/src/content/docs/cli/init.mdx": {
-  "formatting/em-dash-density": 2,
   "claude/colon-reveal": 2,
   "tricolon/comma-series": 1
  },
@@ -230,13 +229,80 @@
   "tricolon/density": 1,
   "anaphora/repeated-opening": 1
  },
+ "docs/src/content/docs/cli/workspace-adopt-lineage.mdx": {
+  "claude/colon-reveal": 2
+ },
+ "docs/src/content/docs/cli/workspace-agent.mdx": {
+  "formatting/em-dash-density": 2,
+  "claude/colon-reveal": 2
+ },
+ "docs/src/content/docs/cli/workspace-audit.mdx": {
+  "formatting/em-dash-density": 2
+ },
+ "docs/src/content/docs/cli/workspace-build.mdx": {
+  "formatting/em-dash-density": 2
+ },
+ "docs/src/content/docs/cli/workspace-check.mdx": {
+  "claude/colon-reveal": 2
+ },
+ "docs/src/content/docs/cli/workspace-evidence.mdx": {
+  "formatting/em-dash-density": 2,
+  "claude/colon-reveal": 2
+ },
+ "docs/src/content/docs/cli/workspace-export.mdx": {
+  "claude/colon-reveal": 2
+ },
+ "docs/src/content/docs/cli/workspace-init.mdx": {
+  "formatting/em-dash-density": 2,
+  "claude/colon-reveal": 2
+ },
  "docs/src/content/docs/cli/workspace-lineage.mdx": {
   "formatting/em-dash-density": 2,
   "claude/colon-reveal": 2
  },
- "docs/src/content/docs/cli/workspace-records.mdx": {
+ "docs/src/content/docs/cli/workspace-lint.mdx": {
+  "formatting/em-dash-density": 2
+ },
+ "docs/src/content/docs/cli/workspace-ls.mdx": {
   "formatting/em-dash-density": 2,
   "claude/colon-reveal": 2
+ },
+ "docs/src/content/docs/cli/workspace-patch.mdx": {
+  "formatting/em-dash-density": 2,
+  "claude/colon-reveal": 2
+ },
+ "docs/src/content/docs/cli/workspace-pin.mdx": {
+  "formatting/em-dash-density": 2,
+  "claude/colon-reveal": 2
+ },
+ "docs/src/content/docs/cli/workspace-points.mdx": {
+  "claude/colon-reveal": 2,
+  "dead-metaphor/rare-lemma": 1
+ },
+ "docs/src/content/docs/cli/workspace-records.mdx": {
+  "claude/colon-reveal": 2
+ },
+ "docs/src/content/docs/cli/workspace-signers.mdx": {
+  "claude/colon-reveal": 2,
+  "dead-metaphor/rare-lemma": 2
+ },
+ "docs/src/content/docs/cli/workspace-status.mdx": {
+  "claude/colon-reveal": 2
+ },
+ "docs/src/content/docs/cli/workspace-upgrade.mdx": {
+  "claude/colon-reveal": 2
+ },
+ "docs/src/content/docs/cli/workspace-verify.mdx": {
+  "formatting/em-dash-density": 2,
+  "claude/colon-reveal": 2
+ },
+ "docs/src/content/docs/cli/workspace-versions.mdx": {
+  "formatting/em-dash-density": 2,
+  "claude/colon-reveal": 2
+ },
+ "docs/src/content/docs/cli/workspace-work.mdx": {
+  "claude/colon-reveal": 2,
+  "dead-metaphor/rare-lemma": 1
  },
  "docs/src/content/docs/components/attestation-reference.mdx": {
   "formatting/em-dash-density": 37,
@@ -565,6 +631,11 @@
   "anaphora/repeated-opening": 2,
   "repetition/near-duplicate": 2
  },
+ "docs/src/content/docs/guide/decision-points.mdx": {
+  "discourse/punchy-fragments": 1,
+  "claude/colon-reveal": 3,
+  "dead-metaphor/rare-lemma": 1
+ },
  "docs/src/content/docs/guide/importing-templates.mdx": {
   "formatting/em-dash-density": 2,
   "claude/colon-reveal": 2,
@@ -644,6 +715,9 @@
   "claude/colon-reveal": 4,
   "tricolon/comma-series": 1
  },
+ "docs/src/content/docs/guide/recording-decisions-by-hand.mdx": {
+  "claude/colon-reveal": 2
+ },
  "docs/src/content/docs/guide/resource-naming.mdx": {
   "formatting/em-dash-density": 13,
   "claude/colon-reveal": 3,
@@ -651,11 +725,18 @@
   "discourse/punchy-fragments": 2,
   "repetition/near-duplicate": 1
  },
+ "docs/src/content/docs/guide/tracing-intent.mdx": {
+  "formatting/em-dash-density": 3,
+  "claude/colon-reveal": 2
+ },
  "docs/src/content/docs/guide/watching-lifecycle.mdx": {
   "formatting/em-dash-density": 19,
   "claude/colon-reveal": 5,
   "anaphora/repeated-opening": 2,
   "formatting/bold-first-bullet": 1
+ },
+ "docs/src/content/docs/guide/work-items.mdx": {
+  "claude/colon-reveal": 3
  },
  "docs/src/content/docs/guide/writing-resources.mdx": {
   "formatting/em-dash-density": 7,
@@ -814,7 +895,7 @@
   "formatting/bold-first-bullet": 1
  },
  "docs/src/content/docs/lint-rules/audit-rules.mdx": {
-  "formatting/em-dash-density": 381,
+  "formatting/em-dash-density": 388,
   "claude/sounds-like-claude": 1,
   "claude/colon-reveal": 6,
   "tricolon/comma-series": 1,
@@ -929,13 +1010,28 @@
   "discourse/punchy-fragments": 1,
   "claude/colon-reveal": 5
  },
+ "docs/src/content/docs/reference/boundary.mdx": {
+  "formatting/em-dash-density": 2,
+  "claude/colon-reveal": 2
+ },
+ "docs/src/content/docs/reference/decision-kind.mdx": {
+  "formatting/em-dash-density": 2,
+  "discourse/punchy-fragments": 2,
+  "claude/colon-reveal": 3,
+  "dead-metaphor/rare-lemma": 1
+ },
+ "docs/src/content/docs/reference/decision-review-views.mdx": {
+  "formatting/em-dash-density": 2,
+  "discourse/punchy-fragments": 1,
+  "claude/colon-reveal": 3,
+  "anaphora/repeated-opening": 2
+ },
  "docs/src/content/docs/reference/level-0-exceptions.mdx": {
   "formatting/em-dash-density": 2,
   "discourse/punchy-fragments": 1,
   "claude/colon-reveal": 3
  },
  "docs/src/content/docs/reference/lineage-lock.mdx": {
-  "formatting/em-dash-density": 2,
   "discourse/punchy-fragments": 1,
   "claude/colon-reveal": 3
  },
@@ -945,6 +1041,22 @@
   "tricolon/comma-series": 2,
   "anaphora/repeated-opening": 2,
   "formatting/bold-first-bullet": 1
+ },
+ "docs/src/content/docs/reference/template-migrations.mdx": {
+  "discourse/punchy-fragments": 1,
+  "claude/colon-reveal": 3
+ },
+ "docs/src/content/docs/reference/workspace-declaration.mdx": {
+  "discourse/punchy-fragments": 1,
+  "claude/colon-reveal": 2,
+  "anaphora/repeated-opening": 1
+ },
+ "docs/src/content/docs/reference/workspace-kinds.mdx": {
+  "discourse/punchy-fragments": 1,
+  "claude/colon-reveal": 3
+ },
+ "docs/src/content/docs/reference/workspace-read-contract.mdx": {
+  "claude/colon-reveal": 3
  },
  "docs/src/content/docs/serialization/multi-stack.mdx": {
   "formatting/em-dash-density": 13,
@@ -972,6 +1084,10 @@
   "anaphora/repeated-opening": 1
  },
  "docs/src/content/docs/troubleshooting/type-errors.mdx": {
+  "formatting/em-dash-density": 2,
+  "claude/colon-reveal": 2
+ },
+ "docs/src/content/docs/tutorials/agent-observability.mdx": {
   "formatting/em-dash-density": 2,
   "claude/colon-reveal": 2
  },

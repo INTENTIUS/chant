@@ -92,7 +92,22 @@ Every serialized machine carries the \`managed-by: chant\` ownership marker in \
 
 ## Applying
 
-The output is applied against flaps directly (or the mudflaps emulator offline). Endpoint and auth come from \`FLY_FLAPS_BASE_URL\` and \`FLY_API_TOKEN\`.`;
+The output is applied against flaps directly (or the mudflaps emulator offline). Endpoint and auth come from \`FLY_FLAPS_BASE_URL\` and \`FLY_API_TOKEN\`.
+
+A \`Secret\` with a \`value\` is set on every apply. A \`Secret\` with no value is one you set outside chant, for example with \`fly secrets set\`. Apply never sends it. It checks that the app has the secret, and fails with the secret's name if the app does not. The \`name\` prop sets the secret's name on the app and defaults to the export name.
+
+The applier writes its progress lines to stderr, so an Op step's stdout carries only its output.
+
+## Reading live state
+
+The helpers the applier reads live state with are exported from \`@intentius/chant-lexicon-fly/op/activities\`. \`listMachines\`, \`listVolumes\`, \`listIps\`, \`listCerts\` and \`listSecrets\` each take an \`ApplyCtx\`, an app name and a \`FlyHttp\`, and return what flaps lists for that app. \`listSecrets\` returns names only, never values. Build the context with \`resolveEndpoint\` and the client with \`defaultFlyHttp\`, as apply does:
+
+\`\`\`typescript
+import { defaultFlyHttp, listSecrets, resolveEndpoint } from "@intentius/chant-lexicon-fly/op/activities";
+
+const ctx = { base: resolveEndpoint({}) };
+const secrets = await listSecrets(ctx, "my-app", defaultFlyHttp());
+\`\`\``;
 
 /**
  * Generate documentation for the fly Machines lexicon.

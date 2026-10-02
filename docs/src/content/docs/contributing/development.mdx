@@ -26,7 +26,7 @@ The project uses `just` for common tasks. Run `just` with no arguments to see al
 ```bash
 just              # list all commands
 just install      # install all dependencies (including docs)
-just build        # type-check the project (npx tsc --noEmit)
+just build        # type-check packages/core on TypeScript 7
 just test         # run all tests
 just lint         # run eslint on packages/
 just check        # run build + lint + test
@@ -44,6 +44,15 @@ npx vitest run packages/core      # core package only
 npx vitest run lexicons/aws       # AWS lexicon only
 npx vitest run lexicons/k8s       # K8s lexicon only
 ```
+
+The suite is two vitest projects. `unit` is every test file except `*.e2e.test.ts`, and each of its tests has a 15 second budget: a test that runs longer fails with a message naming the budget. `e2e` is every `*.e2e.test.ts`, the tests that spawn the CLI, boot containers or release whole projects, all on the machine running the suite. They are not the cloud deployments on the [E2E Testing](/chant/contributing/e2e-testing/) page. CI runs the unit tests in four shards and the e2e tests in their own job, in parallel.
+
+```bash
+npx vitest run --project unit     # unit tests only
+npx vitest run --project e2e      # end-to-end tests only
+```
+
+A unit test over the budget either gets faster or moves into a `*.e2e.test.ts` file. `CHANT_UNIT_TEST_BUDGET_MS` sets a different budget for a local run, and `0` turns it off.
 
 ### Lexicon artifacts on a fresh clone
 
@@ -111,8 +120,20 @@ describeAllExamples({
 ## Type Checking
 
 ```bash
-npx tsc --noEmit -p packages/core/tsconfig.json
+scripts/tsc7.sh --noEmit --declaration false --declarationMap false -p packages/core/tsconfig.json
+npx tsx scripts/typecheck.ts   # tests, scripts and examples, against a baseline
 ```
+
+Two TypeScript versions are installed:
+
+| What | Version | How it is called |
+|---|---|---|
+| Typechecks, and every package and lexicon `.d.ts` build | 7.0 | `scripts/tsc7.sh`, which runs the root alias `typescript-native` by path |
+| Code that imports `typescript`: core (fold, lint, codegen), lexicon lint rules, eslint's parser | 5.9 | `import ts from "typescript"` |
+
+TypeScript 7's `typescript` package has no JS compiler API, so `typescript` stays on 5.9. Both packages ship a `tsc` bin. `node_modules/.bin/tsc` is 5.9, so a plain `npx tsc` still runs 5.9. `scripts/tsc7.test.ts` fails if any of these changes.
+
+On TypeScript 7, a `--noEmit` check with `declaration: true` is slower than on 5.9, because it still computes declaration diagnostics. Pass `--declaration false --declarationMap false` to noEmit checks. Declaration errors are still caught by each package's build.
 
 ## Project Layout
 

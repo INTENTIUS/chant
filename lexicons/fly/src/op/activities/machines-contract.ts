@@ -71,3 +71,20 @@ export function normalizeEndpoint(method: string, path: string): string {
 export function contractKeys(): Set<string> {
   return new Set(MACHINES_CONTRACT.map((e) => normalizeEndpoint(e.method, e.path)));
 }
+
+/**
+ * The flaps endpoints the release activities (./machine-release.ts, #2736)
+ * add beyond the applier's: getting one Machine back, exec (a migration),
+ * restart and stop. The applier's own contract above stays exec-free; these
+ * are the site steps', and the docker-gated coverage test holds the pinned
+ * mudflaps to them the same way.
+ */
+export const MACHINE_RELEASE_CONTRACT: readonly MachinesEndpoint[] = [
+  { method: "GET", path: "/v1/apps/{app}/machines", op: "findMachine" },
+  { method: "POST", path: "/v1/apps/{app}/machines/{id}", op: "flyMachineRestore" },
+  { method: "POST", path: "/v1/apps/{app}/machines/{id}/exec", op: "flyMachineExec" },
+  { method: "POST", path: "/v1/apps/{app}/machines/{id}/restart", op: "flyMachineRestart" },
+  { method: "POST", path: "/v1/apps/{app}/machines/{id}/stop", op: "flyMachineStop" },
+  { method: "POST", path: "/v1/apps/{app}/machines/{id}/lease", op: "withLease" },
+  { method: "GET", path: "/v1/apps/{app}/machines/{id}/wait", op: "waitForMachine" },
+] as const;

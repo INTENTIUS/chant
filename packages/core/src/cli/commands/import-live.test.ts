@@ -6,7 +6,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { LexiconPlugin, ExportedTemplate, ResourceSelector } from "../../lexicon";
 import type { TypeScriptGenerator } from "../../import/generator";
-import type { TemplateIR } from "../../import/parser";
+import type { TemplateIR, ParseContext } from "../../import/parser";
+import type { EmbeddedContentImporter } from "../../import/embedded";
 
 const generator: TypeScriptGenerator = {
   generate(ir: TemplateIR) {
@@ -150,5 +151,72 @@ describe("liveImportFromPlugins (#114)", () => {
     });
     expect(result.success).toBe(true);
     expect(seenStack).toBe("loom-backend");
+  });
+
+  // #2995: an export with `reparse` goes through the same embedded-content
+  // delegation as file import.
+  describe("embedded content (#2995)", () => {
+    const configText = "service:\n  pipelines: {}\n";
+
+    function hostExporter(): LexiconPlugin {
+      const parse = (context?: ParseContext): TemplateIR => {
+        const ref = context?.embedded?.resolve({
+          host: "fake",
+          hostType: "Fake::ConfigMap",
+          location: "ConfigMap cfg data[\"config.yaml\"]",
+          directory: "cfg",
+          text: configText,
+          expectedOwner: { lexicon: "owner", what: "an owner config" },
+        });
+        return {
+          resources: [{ logicalId: "cfg", type: "Fake::ConfigMap", properties: { data: ref ?? configText } }],
+          parameters: [],
+        };
+      };
+      return {
+        ...fakeExporter("fake", { resources: [], parameters: [] }),
+        async exportResources(): Promise<ExportedTemplate> {
+          return { ...parse(), reparse: (context) => parse(context) };
+        },
+      };
+    }
+
+    const importer: EmbeddedContentImporter = {
+      what: "an owner config",
+      matches: (c) => typeof c.document === "object" && c.document !== null && "service" in c.document,
+      import: () => ({
+        files: [{ path: "config.ts", content: "export const config = {};\n" }],
+        value: { bindings: [{ from: "config.ts", name: "config" }], shape: "single" },
+      }),
+    };
+    const owner: LexiconPlugin = {
+      name: "owner",
+      serializer: {} as never,
+      generate: async () => {},
+      validate: async () => {},
+      coverage: async () => {},
+      package: async () => {},
+      embeddedImporters: () => [importer],
+    };
+
+    test("a loaded owner imports the content and its modules are written beside the host's", async () => {
+      const result = await liveImportFromPlugins([hostExporter(), owner], { environment: "prod", output: outputDir, force: true });
+      expect(result.success).toBe(true);
+      expect(result.warnings).toEqual([]);
+      expect(result.generatedFiles).toEqual(["main.ts", "cfg/config.ts"]);
+      const main = await readFile(join(outputDir, "main.ts"), "utf-8");
+      expect(main).toContain('"$embedded"');
+      expect(main).toContain('"from":"cfg/config.ts"');
+      expect(await readFile(join(outputDir, "cfg/config.ts"), "utf-8")).toContain("export const config");
+    });
+
+    test("with no owner the content is kept as read, with a warning", async () => {
+      const result = await liveImportFromPlugins([hostExporter()], { environment: "prod", output: outputDir, force: true });
+      expect(result.success).toBe(true);
+      expect(result.generatedFiles).toEqual(["main.ts"]);
+      expect(result.warnings.join("\n")).toContain("no installed lexicon imports it");
+      const main = await readFile(join(outputDir, "main.ts"), "utf-8");
+      expect(main).toContain(JSON.stringify(configText));
+    });
   });
 });

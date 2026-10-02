@@ -1,0 +1,14 @@
+otel
+prometheus
+github
+aws
+azure
+gcp
+gitlab
+k8s
+docker
+fly
+fountain
+k3s
+terraform
+grafana

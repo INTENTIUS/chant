@@ -3,8 +3,9 @@ import type { Declarable } from "./declarable";
 import type { LintRule } from "./lint/rule";
 import type { RuleSpec } from "./lint/declarative";
 import type { PostSynthCheck } from "./lint/post-synth";
-import type { TemplateParser, TemplateIR } from "./import/parser";
+import type { TemplateParser, TemplateIR, ParseContext, ParserOptions, ParserOptionSpec } from "./import/parser";
 import type { TypeScriptGenerator } from "./import/generator";
+import type { EmbeddedContentImporter } from "./import/embedded";
 import type { AgentConfigImporter } from "./agents/importer";
 import type { ArtifactIntegrity } from "./lexicon-integrity";
 import type { OkfFile } from "./okf";
@@ -28,6 +29,7 @@ import type { BehaviourKinds } from "./behaviour-kinds";
 import type { DisruptionQuery, DisruptionVerdict } from "./lifecycle/disruption";
 import type { OwnerChainVerdict } from "./owner-chain";
 import type { CommandGroup } from "./cli/command-group";
+import type { Archetype } from "./components/component";
 
 // Re-exported so a lexicon that hosts Op runs (#2121) can type its
 // `opRuntime` from the same entry it imports the plugin contract from.
@@ -501,6 +503,78 @@ export interface ComponentPipelineOptions {
    * `["chant", "components", "promote", "--from", <env>, "--to", <promoteTo>]`.
    */
   promoteCommand?: string[];
+  /**
+   * The workspace member this pipeline belongs to (#2542, #2524 D19). Core
+   * sets it when the project sits in a member of a `chant.workspace.json`;
+   * a caller never needs to. Unset, every generator's output is unchanged.
+   * Set, the pipeline keeps the triggers it has without a member, and the
+   * ones that can take a path filter (an Op's `push` and `pull_request`, and
+   * GitLab's job rules) are limited to the member's files and the pipeline
+   * file. Its jobs run in the member's directory, and its names carry the
+   * member's name so two members' pipelines never collide.
+   */
+  member?: PipelineMember;
+}
+
+/** Where a workspace member sits, for a generated pipeline (#2542). */
+export interface PipelineMember {
+  /** The member's name in the declaration. */
+  name: string;
+  /**
+   * The member's directory relative to the repository root, with `/`
+   * separators, or `"."` for a member at the root.
+   */
+  dir: string;
+  /**
+   * Directories (repository-relative) that belong to other members or to
+   * example groups. Only a member at `"."` uses them: its path filter is the
+   * whole repository minus these.
+   */
+  exclude?: string[];
+  /** The generated component pipeline's path, repository-relative. Added to the path filter. */
+  file?: string;
+  /**
+   * The directory (repository-relative) the generated Op pipeline files land
+   * in. Each file's own path is added to its path filter.
+   */
+  fileDir?: string;
+}
+
+/** `path` (relative to the member's directory) made relative to the repository root. Absolute paths pass through. */
+export function memberRepoPath(member: PipelineMember, path: string): string {
+  if (path.startsWith("/") || member.dir === "." || member.dir === "") return path;
+  const rest = path.replace(/^\.\/+/, "").replace(/\/+$/, "");
+  return rest === "" || rest === "." ? member.dir : `${member.dir}/${rest}`;
+}
+
+/**
+ * The path filter for a member's `push` or `pull_request` trigger in GitHub
+ * Actions syntax (also Forgejo's): the member's directory and the pipeline
+ * file. A member at
+ * `"."` gets every path, minus the other members' directories.
+ */
+export function memberPathFilter(member: PipelineMember, file: string | undefined = member.file): string[] {
+  const paths =
+    member.dir === "." || member.dir === ""
+      ? ["**", ...(member.exclude ?? []).map((d) => `!${d}/**`)]
+      : [`${member.dir}/**`];
+  if (file && !paths.includes(file)) paths.push(file);
+  return paths;
+}
+
+/**
+ * The `rules: changes:` list for a member's GitLab jobs, or undefined for a
+ * member at `"."`: GitLab's `changes` has no exclusions, so the root member's
+ * jobs run on every change.
+ */
+export function memberGitlabChanges(member: PipelineMember, file: string | undefined = member.file): string[] | undefined {
+  if (member.dir === "." || member.dir === "") return undefined;
+  return [`${member.dir}/**/*`, ...(file ? [file] : [])];
+}
+
+/** A shell word for `cd` into the member's directory. */
+export function memberShellDir(member: PipelineMember): string {
+  return /^[A-Za-z0-9._\/-]+$/.test(member.dir) ? member.dir : `'${member.dir.replace(/'/g, `'\\''`)}'`;
 }
 
 /** The synthesized CI pipeline for a component graph (generate mode). */
@@ -857,6 +931,45 @@ export interface AuditEntitiesInput {
   baseDir?: string;
 }
 
+/**
+ * One parameter of a composite, read from the composite's declared props type
+ * (#2662).
+ */
+export interface CompositeParam {
+  /** The prop name as a caller writes it. */
+  name: string;
+  /** The declared TypeScript type, as source text (long inline types are shortened). */
+  type: string;
+  /** False when the prop is optional. */
+  required: boolean;
+  /** The prop's JSDoc summary, when it has one. */
+  description?: string;
+}
+
+/**
+ * A composite this lexicon exports, as static catalog data (#2662).
+ *
+ * The catalog is what `chant serve mcp` answers "what composites do you have
+ * for aws?" from: the `composites` tool, the `chant://composites` resource and
+ * `search` results of kind `composite` all read it, and none of them calls a
+ * provider. A lexicon writes it once, from source, and a test in the lexicon
+ * holds it to the composites the package actually exports.
+ */
+export interface CompositeEntry {
+  /** The exported name a caller imports (an alias gets its own entry). */
+  name: string;
+  /** The lexicon that exports it. */
+  lexicon: string;
+  /** One line saying what it builds. */
+  description: string;
+  /** Resource kinds (the lexicon's class names) its members are, nested composites flattened. */
+  bundles: string[];
+  /** Its props, from the declared props type. */
+  params: CompositeParam[];
+  /** The component archetype that ships it, when that is known. */
+  archetype?: Archetype;
+}
+
 export interface LexiconPlugin {
   // ── Required ──────────────────────────────────────────────
   /** Human-readable name (e.g. "aws", "gcp") */
@@ -934,6 +1047,15 @@ export interface LexiconPlugin {
 
   /** Return declarative rule specs for compilation via rule() */
   declarativeRules?(): RuleSpec[];
+
+  /**
+   * Class names this lexicon exports whose instances are property-kind
+   * declarables (`createProperty`), such as Grafana's panels and queries.
+   * The core COR001, COR004 and COR009 heuristics leave them out, since a
+   * property-kind declarable lives inside the resource that holds it
+   * (chant #2957). A lexicon that leaves this out gets the rules unchanged.
+   */
+  propertyClassNames?(): string[];
 
   /** Return post-synthesis checks for build validation */
   postSynthChecks?(): PostSynthCheck[];
@@ -1038,11 +1160,33 @@ export interface LexiconPlugin {
    */
   detectTemplate?(data: unknown): boolean;
 
-  /** Return a parser for importing external templates into IR */
-  templateParser?(): TemplateParser;
+  /**
+   * Return a parser for importing external templates into IR. `options` holds
+   * the `chant import --parser-option` values, already checked against
+   * `parserOptions()` and converted to their declared types; it is empty when
+   * none were given.
+   */
+  templateParser?(options?: ParserOptions): TemplateParser;
+
+  /**
+   * The options `templateParser` accepts. `chant import --parser-option` refuses
+   * any name not listed here, so a lexicon with no options leaves this out.
+   */
+  parserOptions?(): ParserOptionSpec[];
 
   /** Return a generator for converting IR to TypeScript */
   templateGenerator?(): TypeScriptGenerator;
+
+  /**
+   * Importers for this lexicon's content when it is embedded in another
+   * lexicon's resources (#2962): a collector config in a k8s ConfigMap, rule
+   * groups in a `PrometheusRule`, dashboard JSON in a ConfigMap. The host's
+   * parser offers the content through `ParseContext.embedded`, and core finds
+   * the owner at run time among the project's lexicons and the installed
+   * ones whose `detectTemplate` recognizes the content, so the host does not
+   * depend on the owner. See `packages/core/src/import/embedded.ts`.
+   */
+  embeddedImporters?(): EmbeddedContentImporter[];
 
   /**
    * Re-express local agent configuration (skills, MCP servers, instruction
@@ -1126,6 +1270,22 @@ export interface LexiconPlugin {
    */
   buildRoots?(ctx: BuildRootContext): Promise<BuildRootContribution>;
 
+  /**
+   * Facts about the whole read that this lexicon's entities imply, for the
+   * graph IR's `meta` bag (#2559). The otel lexicon answers
+   * `{ collector: <topology> }`, which `chant workspace graph` lifts into its
+   * `collectors` section, so core carries the shape of the answer and never
+   * imports the lexicon that computes it.
+   *
+   * Called by `chant graph --format ir` with the discovered entities of the
+   * project, after the plugins are loaded. Return `undefined` or an empty
+   * object when the project declares nothing this lexicon reports; the IR is
+   * then unchanged. Keys must be unique to the lexicon (two lexicons writing
+   * one key is a conflict the graph refuses). Omit for lexicons with nothing
+   * to report.
+   */
+  graphMeta?(entities: ReadonlyMap<string, Declarable>): Record<string, unknown> | undefined;
+
   // LSP
   /** Provide completions for LSP */
   completionProvider?(ctx: CompletionContext): CompletionItem[];
@@ -1139,6 +1299,13 @@ export interface LexiconPlugin {
   // Docs
   /** Generate documentation pages */
   docs?(options?: { verbose?: boolean }): Promise<void>;
+
+  /**
+   * The composites this lexicon exports, as static data (#2662). Read by the
+   * MCP `composites` tool, the `chant://composites` resource and `search`.
+   * Omit for a lexicon that exports no composites.
+   */
+  composites?(): CompositeEntry[];
 
   // MCP
   /** Return MCP tool contributions */
@@ -1849,6 +2016,14 @@ export interface ResourceSelector {
 export type ExportedTemplate = TemplateIR & {
   /** Phantom marker — never present at runtime. */
   readonly __fidelity?: "full-config";
+  /**
+   * The same export parsed again with a {@link ParseContext}, from the
+   * objects already read: no second read of the live target. An exporter
+   * that maps through its import parser offers this so `chant import --from`
+   * can hand embedded content to the lexicon that owns it, as file import
+   * does (#2995). Without it, embedded content is kept as written.
+   */
+  readonly reparse?: (context: ParseContext) => TemplateIR;
 };
 
 /**
@@ -1938,7 +2113,13 @@ export interface ResourceMetadata {
   status: string;
   /** ISO timestamp of last update */
   lastUpdated?: string;
-  /** Cloud-assigned output properties */
+  /**
+   * Cloud-assigned output properties. Two keys are read by `components status
+   * --live` (#2513): `digest` (the artifact digest serving now) and `gitSha`
+   * (the commit it was built from). Set them when the live read knows them; a
+   * value that differs from the recorded release reports the component
+   * `drifted`. See `LIVE_IDENTITY_ATTRIBUTES` in lifecycle/status.ts.
+   */
   attributes?: Record<string, unknown>;
   /**
    * Live ownership verdict from the resource's marker (#119/#120). `owned` =

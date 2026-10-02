@@ -6,6 +6,7 @@ import type { CommandContext } from "../registry";
 import { generateComponentsPipeline } from "../../components/cli-support";
 import { loadChantConfigUpward, type ChantConfig } from "../../config";
 import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
+import { findWorkspaceRoot } from "../../project-root";
 
 /**
  * `chant build --components --generate <lexicon>` — generate mode (#563,
@@ -44,6 +45,33 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
     return 1;
   }
 
+  // A project inside a workspace member gets that member's pipeline (#2542):
+  // path-filtered, run in the member's directory, written to a file named
+  // after the member and recorded as the member's generated file. The
+  // workspace module loads only when a declaration was found, so a project
+  // outside any workspace generates exactly what it did before.
+  const found = findWorkspaceRoot(resolve(args.path));
+  let plan: import("../../workspace/member-pipeline").MemberComponentPlan | undefined;
+  let memberPipeline: typeof import("../../workspace/member-pipeline") | undefined;
+  if (found) {
+    memberPipeline = await import("../../workspace/member-pipeline");
+    try {
+      plan = memberPipeline.planMemberComponentPipeline({
+        projectDir: resolve(args.path),
+        found,
+        lexicon,
+        env: args.env,
+        promoteTo: args.promoteTo,
+        output: args.output,
+        params: args.param,
+        paramsFile: args.paramsFile,
+      });
+    } catch (err) {
+      console.error(formatError({ message: memberPipeline.describeError(err) }));
+      return 1;
+    }
+  }
+
   // Which lexicons support generate mode is a property of the loaded lexicon
   // plugins (those implementing `generateComponentPipeline`, #688), not a
   // hard-coded core list — `generateComponentsPipeline` returns a descriptive
@@ -51,7 +79,7 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
   const result = await generateComponentsPipeline(
     args.path,
     lexicon,
-    { env: args.env, ...(args.promoteTo ? { promoteTo: args.promoteTo } : {}) },
+    { env: args.env, ...(args.promoteTo ? { promoteTo: args.promoteTo } : {}), ...(plan ? { member: plan.member } : {}) },
     args.sandbox,
     paramsResolution.provenance,
   );
@@ -73,11 +101,17 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
           // generator's own resolution, forwarded rather than left for a
           // consumer to re-derive by parsing the YAML back (#2060).
           ...(result.env ? { env: result.env } : {}),
+          // A workspace member's pipeline (#2542): the member and the file
+          // the pipeline belongs in, relative to the repository root.
+          ...(plan ? { member: plan.member.name, file: plan.file } : {}),
         },
         null,
         2,
       ),
     );
+  } else if (plan && memberPipeline) {
+    memberPipeline.writeMemberComponentPipeline(plan, yaml);
+    console.error(formatSuccess(`wrote ${formatBold(plan.file)} for member ${formatBold(plan.member.name)}`));
   } else if (args.output) {
     const outputPath = resolve(args.output);
     mkdirSync(dirname(outputPath), { recursive: true });

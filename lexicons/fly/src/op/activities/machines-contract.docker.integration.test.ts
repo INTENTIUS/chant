@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeAll, afterAll } from "vitest";
 import { flapsUp, flapsDown } from "./flaps";
-import { MACHINES_CONTRACT, normalizeEndpoint, contractKeys } from "./machines-contract";
+import { MACHINES_CONTRACT, MACHINE_RELEASE_CONTRACT, normalizeEndpoint, contractKeys } from "./machines-contract";
 
 // Fidelity check: every flaps endpoint the flyApply applier depends on
 // (MACHINES_CONTRACT) must be served by the pinned mudflaps image — the twin of
@@ -68,5 +68,14 @@ describe("Machines contract ⊆ mudflaps implemented paths", () => {
       const key = normalizeEndpoint(e.method, e.path);
       expect(roadmap.has(key), `${e.op} → ${e.method} ${e.path} is a mudflaps roadmap endpoint`).toBe(false);
     }
+  });
+
+  test("the pinned mudflaps serves every endpoint the release activities depend on (#2736)", async (ctx) => {
+    if (!available) ctx.skip();
+    const res = await fetch(`${endpoint}/_mudflaps/health`);
+    const health = (await res.json()) as { implemented?: string[] };
+    const served = new Set((health.implemented ?? []).map(normalizeImplemented));
+    const missing = MACHINE_RELEASE_CONTRACT.map((e) => normalizeEndpoint(e.method, e.path)).filter((k) => !served.has(k));
+    expect(missing, `mudflaps is missing release endpoints: ${missing.join(", ")}`).toEqual([]);
   });
 });

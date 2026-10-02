@@ -28,6 +28,7 @@ import { dirname, join, resolve } from "node:path";
 import { discoverOps } from "../../op/discover";
 import { generateOpsPipeline } from "../../op/generate-pipeline";
 import { GENERATED_MARKER } from "../../discovery/files";
+import { findWorkspaceRoot } from "../../project-root";
 import type { ComponentPipelineOptions, ScheduledOpSpec } from "../../lexicon";
 import { formatBold, formatError, formatSuccess } from "../format";
 import type { CommandContext } from "../registry";
@@ -104,10 +105,44 @@ export async function runOpGenerate(ctx: CommandContext): Promise<number> {
     }
   }
 
-  const result = await generateOpsPipeline(ops, provider, options);
+  // Inside a workspace member (#2542), the files are the member's: filtered
+  // to its paths, run in its directory, named after it at the repository
+  // root's forge directory, and recorded as its generated files. The
+  // workspace module loads only when a declaration was found.
+  const found = findWorkspaceRoot(process.cwd());
+  let plan: import("../../workspace/member-pipeline").MemberOpPlan | undefined;
+  let memberPipeline: typeof import("../../workspace/member-pipeline") | undefined;
+  if (found) {
+    memberPipeline = await import("../../workspace/member-pipeline");
+    try {
+      plan = memberPipeline.planMemberOpPipelines({ projectDir: process.cwd(), found, provider, output: args.output, specFile: specPath });
+    } catch (err) {
+      console.error(formatError({ message: memberPipeline.describeError(err) }));
+      return 1;
+    }
+  }
+
+  const result = await generateOpsPipeline(ops, provider, plan ? { ...options, member: plan.member } : options);
   if (!result.success) {
     console.error(formatError({ message: result.error ?? "Failed to generate Op pipelines" }));
     return 1;
+  }
+
+  if (plan && memberPipeline) {
+    const header = memberPipeline.generatedHeader(plan.command);
+    if (args.format === "json") {
+      const files = (result.files ?? []).map((f) => ({
+        name: f.name,
+        path: memberPipeline.repoRelative(plan.ctx, join(plan.outDir, f.name)),
+        content: header + f.yaml,
+      }));
+      console.log(JSON.stringify({ member: plan.member.name, files, jobs: result.jobs ?? [] }, null, 2));
+      return 0;
+    }
+    for (const path of memberPipeline.writeMemberOpPipelines(plan, result.files ?? [])) {
+      console.error(formatSuccess(`wrote ${formatBold(path)} for member ${formatBold(plan.member.name)}`));
+    }
+    return 0;
   }
 
   const header = opPipelineHeader(provider, specPath);

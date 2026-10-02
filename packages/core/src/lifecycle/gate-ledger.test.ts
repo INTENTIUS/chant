@@ -253,6 +253,26 @@ describe("lifecycle/gate-ledger — pending facts (#2119)", () => {
       expect(resolutions).toEqual([]);
     });
   });
+
+  // #2574: an environment that is present but not a string would read as an
+  // approval bound to no environment, which a component gate treats differently.
+  test("a line whose environment is not a string is malformed", async () => {
+    await withTestDir(async (dir) => {
+      await initRepo(dir);
+      await writeBlobToPath(
+        "_gates", "search-service.jsonl",
+        [
+          JSON.stringify({ version: 1, op: "search-service", gate: "g", resolvedBy: "alex", timestamp: "2026-01-01T00:00:00.000Z", environment: 7 }),
+          JSON.stringify({ version: 1, op: "search-service", gate: "g", resolvedBy: "alex", timestamp: "2026-01-01T00:00:00.000Z", environment: "prod" }),
+        ].join("\n"),
+        "hand-written",
+        { cwd: dir },
+      );
+      const { resolutions, malformed } = await readGateLedger("search-service", { cwd: dir });
+      expect(malformed).toBe(1);
+      expect(resolutions.map((r) => r.environment)).toEqual(["prod"]);
+    });
+  });
 });
 
 /**
@@ -276,6 +296,20 @@ describe("latestResolutionForPlan (#2300)", () => {
     const found = latestResolutionForPlan([resolution({ planDigest: PLAN_A })], "approve-live-apply", EPOCH, PLAN_A);
     expect(found.resolution?.resolvedBy).toBe("alex");
     expect(found.mismatched).toBeUndefined();
+  });
+
+  // #2547: plan digests carry a version prefix now. An approval written under
+  // the bare prefix is still an approval of the same plan.
+  test("a resolution recorded under the bare sha256: prefix answers the same plan's jcs1 digest", () => {
+    const found = latestResolutionForPlan([resolution({ planDigest: PLAN_A })], "approve-live-apply", EPOCH, `jcs1-${PLAN_A}`);
+    expect(found.resolution?.resolvedBy).toBe("alex");
+    expect(found.mismatched).toBeUndefined();
+  });
+
+  test("the prefix never makes a different plan match", () => {
+    const found = latestResolutionForPlan([resolution({ planDigest: PLAN_B })], "approve-live-apply", EPOCH, `jcs1-${PLAN_A}`);
+    expect(found.resolution).toBeUndefined();
+    expect(found.mismatched?.planDigest).toBe(PLAN_B);
   });
 
   test("a resolution for another plan does not, and comes back named", () => {

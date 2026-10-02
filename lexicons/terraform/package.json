@@ -1,10 +1,11 @@
 {
   "name": "@intentius/chant-lexicon-terraform",
-  "version": "0.80.0",
+  "version": "0.101.0",
   "type": "module",
   "files": [
     "src/",
-    "dist/"
+    "dist/",
+    "workspace-kinds.json"
   ],
   "exports": {
     ".": {
@@ -12,6 +13,7 @@
       "types": "./dist/index.d.ts",
       "default": "./src/index.ts"
     },
+    "./workspace-kinds": "./workspace-kinds.json",
     "./*": {
       "development": "./src/*.ts",
       "types": "./dist/*.d.ts",
@@ -40,7 +42,7 @@
     "generate": "npx tsx src/codegen/generate-cli.ts",
     "validate": "npx tsx src/validate-cli.ts",
     "docs": "npx tsx src/codegen/docs-cli.ts",
-    "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete",
+    "build": "../../scripts/tsc7.sh -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete",
     "prepack": "npm run generate && npm run bundle && npm run validate && npm run build",
     "bundle": "tsx src/package-cli.ts"
   },
@@ -55,7 +57,7 @@
     "access": "public"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.80.0",
+    "@intentius/chant": "^0.101.0",
     "typescript": "^5.9.3",
     "zod": "^4.3.6"
   },

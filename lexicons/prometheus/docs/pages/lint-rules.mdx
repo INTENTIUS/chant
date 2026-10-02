@@ -1,0 +1,105 @@
+---
+title: "Lint Rules"
+description: "What each PROM rule catches and how to fix it"
+diataxis: reference
+order: 5
+---
+
+The prometheus lexicon's rules use the `PROM` prefix. `PROM0xx` rules read your TypeScript source during `chant lint`. `PROM1xx` checks run after a build over every rule file in the output, `PROM2xx` over every `alertmanager.yml`. Documents are recognized by shape, so a rule file or Alertmanager config that reaches the output another way is checked too.
+
+| Id | Severity | Catches |
+|---|---|---|
+| PROM001 | error | a literal credential in a `Receiver` or `AlertmanagerSettings` |
+| PROM002 | error | a literal `expr` in a `RuleGroup` that is not valid PromQL |
+| PROM003 | error | an `Slo` whose literal `objective` is not strictly between 0 and 1, whose `window` is not a positive duration, or whose SLI expression lacks `{{window}}` or is not PromQL |
+| PROM101 | error | two groups in one rule file with the same name |
+| PROM102 | warning | two rules with the same name and label set |
+| PROM103 | error | a `for`, `keep_firing_for`, `interval` or `query_offset` that is not a Prometheus duration |
+| PROM104 | error | an `expr` that is not valid PromQL |
+| PROM105 | error | a rule with both or neither of `record` and `alert`, an empty name, a recording rule with alert-only fields, or a group with no name |
+| PROM106 | warning | an alerting rule with no `severity` label on it or its group |
+| PROM107 | warning | an alerting rule with no `summary` or `description` annotation |
+| PROM201 | error | a route naming a receiver that is not declared |
+| PROM202 | warning | an alert severity no route below the root matches |
+| PROM203 | error | two receivers, or two time intervals, with the same name |
+| PROM204 | error | a route naming a time interval that is not declared |
+| PROM205 | error | no root route, a root route without a receiver, or a root route with matchers |
+| PROM206 | error | a route or inhibit-rule matcher that does not parse |
+| PROM207 | warning | a receiver no route sends to |
+| PROM208 | error | an Alertmanager duration that does not parse: `group_wait`, `group_interval`, `repeat_interval`, `resolve_timeout` and Jira `reopen_duration` as Prometheus durations, and the webhook, Slack, PagerDuty and incident.io `timeout` and Pushover `retry`, `expire` and `ttl` as Go durations |
+| PROM209 | error | a receiver integration missing a destination, credential or required field that Alertmanager asks for, after its `global` default |
+| PROM210 | error | an integration or `global` setting Alertmanager rejects: a value and its `*_file` both set, settings that exclude each other, or a value outside the allowed set |
+
+## PROM001: literal credential
+
+Alertmanager does not expand `${ENV}` in its config, so the only way to keep a secret out of the file is its `*_file` field, pointing at a mounted secret. Replace `routing_key: "..."` with `routing_key_file: "/etc/alertmanager/secrets/pagerduty-key"`.
+
+## PROM002 and PROM104: PromQL syntax
+
+Both parse with `@prometheus-io/lezer-promql`, the grammar the Prometheus project publishes and its web UI uses, pinned as `PROMQL_GRAMMAR`. PROM002 reports literals in the editor; PROM104 reports every rule in the built file, including expressions assembled at runtime. The message gives the offset of the first error. The grammar checks syntax, not types: `rate(up)` parses. `promtool check rules` catches the rest, see [Checking with promtool and amtool](../upstream-tools/).
+
+## PROM003: an Slo that cannot build
+
+`Slo()` throws on these when the build runs it; PROM003 reports them in the editor, at the literal. Write the objective as a fraction (`0.995`, not `99.5`), the window as a Prometheus duration (`28d`, not `4 weeks`), and each SLI expression with `{{window}}` where the range goes, e.g. `sum(rate(requests_total[{{window}}]))`. See [SLOs](../slos/).
+
+## PROM102: duplicate rules
+
+Follows `promtool`'s duplicate-rules lint. The key is the rule's kind, name and full label set (group labels merged under the rule's), across the whole file. An alert at `severity: "page"` and the same alert at `severity: "ticket"` is not a duplicate.
+
+## PROM202: every severity routed
+
+For each `severity` value an alert in the build's rule files carries, some route below the root must match it. Only matchers on `severity` are read, since other labels come from the series and aren't known at build time; a route counts when it or a route above it matches on `severity` and every severity matcher on its path accepts the value. An unmatched severity falls through to the root's default receiver, which is usually not where a page should go.
+
+**One build root only.** PROM202 joins the rule files with the Alertmanager config in the same `chant build` output (chant #1939). When the rules and the Alertmanager config are built in different build roots, it has nothing to join and says nothing, which is indistinguishable from "all routed". Declare them in the same build root, as the `alerting` example does.
+
+## PROM205: the root route
+
+Alertmanager requires exactly one root route with a receiver and no matchers. In chant, the root is the `Route` entity no other route nests; nest every other route under it.
+
+## PROM208: two duration grammars
+
+Alertmanager reads its durations two ways. The route timers, `global.resolve_timeout` and Jira's `reopen_duration` are Prometheus durations: `30s`, `4h`, `1d`, no fractions. The `timeout` of webhook, Slack, PagerDuty and incident.io, and Pushover's `retry`, `expire` and `ttl`, are Go durations (`time.ParseDuration`): `1.5s` and `500ms` are fine, `1d` is not. Write `24h` where you would write `1d`.
+
+## PROM209 and PROM210: receiver integrations
+
+Both follow the checks Alertmanager v0.34.1 makes when it loads the file, so `amtool check-config` rejects the same configs; the checks catch them at build time and name the receiver and entry. Alertmanager stops at the first error, these report every one. The sources are each integration's `UnmarshalYAML` in `config/notifiers.go` and `notify/<name>/config.go`, and `Config.UnmarshalYAML` in `config/config.go` for the `global` fallbacks.
+
+PROM209, something missing:
+
+| Integration | Needs | Falls back to |
+|---|---|---|
+| `discord_configs`, `msteams_configs`, `msteamsv2_configs` | `webhook_url` or `webhook_url_file` | |
+| `email_configs` | `to`, `smarthost`, `from` | `global.smtp_smarthost`, `global.smtp_from` |
+| `incidentio_configs` | `url` or `url_file`; when `http_config` is set, `alert_source_token(_file)` or `http_config.authorization` | |
+| `jira_configs` | `project`, `issue_type`, `api_url` | `global.jira_api_url` (no default) |
+| `mattermost_configs` | `webhook_url` or `webhook_url_file` | `global.mattermost_webhook_url(_file)` |
+| `opsgenie_configs` | `api_key` or `api_key_file`; each responder an `id`, `username` or `name`, and a `type` | `global.opsgenie_api_key(_file)` |
+| `pagerduty_configs` | `routing_key(_file)` or `service_key(_file)` | |
+| `pushover_configs` | `user_key(_file)` and `token(_file)` | |
+| `rocketchat_configs` | `token_id(_file)` and `token(_file)` | `global.rocketchat_token_id(_file)`, `global.rocketchat_token(_file)` |
+| `slack_configs` | `api_url(_file)` or `app_token(_file)` | `global.slack_api_url(_file)`, or `global.slack_app_token(_file)` when the entry has no `http_config.authorization` |
+| `sns_configs` | one of `topic_arn`, `phone_number`, `target_arn` | |
+| `telegram_configs` | `chat_id` or `chat_id_file`, and `bot_token(_file)` | `global.telegram_bot_token(_file)` |
+| `victorops_configs` | `routing_key`, and `api_key(_file)` | `global.victorops_api_key(_file)` |
+| `webex_configs` | `room_id`, and `http_config.authorization` (or `bearer_token(_file)`) on the entry itself | |
+| `webhook_configs` | `url` or `url_file` | |
+| `wechat_configs` | `api_secret(_file)` and `corp_id` | `global.wechat_api_secret(_file)`, `global.wechat_api_corp_id` |
+
+Webex is checked before the `global.http_config` is applied, so a global authorization does not count. incident.io asks for a credential only when the entry has an `http_config`.
+
+PROM210, a setting Alertmanager rejects:
+
+- A value and its `*_file` sibling both set, on any integration (`webhook_url`, `url`, `api_key`, `routing_key`, `service_key`, `user_key`, `token`, `token_id`, `bot_token`, `chat_id`, `api_secret`, `alert_source_token`, `api_url`, `app_token`) or in `global` (`slack_api_url`, `slack_app_token`, `opsgenie_api_key`, `victorops_api_key`, `telegram_bot_token`, `smtp_auth_password`, `smtp_auth_secret`, `rocketchat_token`, `rocketchat_token_id`, `wechat_api_secret`, `mattermost_webhook_url`).
+- Slack: `api_url(_file)` with `app_token(_file)`; `app_token(_file)` with `http_config.authorization`; `update_message` without `api_url: https://slack.com/api/chat.postMessage` (the bot token then goes in `http_config.authorization`); a field without `title` and `value`; an action without `type`, `text`, and `url` or `name`; a confirmation without `text`. In `global`, `slack_app_token(_file)` with a `slack_api_url` other than the `slack_app_url`.
+- incident.io: `alert_source_token(_file)` with `http_config.authorization`.
+- Pushover: `html` and `monospace` together.
+- SNS: two of `topic_arn`, `phone_number`, `target_arn`. Alertmanager's check is a chained XOR, so all three pass it; PROM210 does the same.
+- Email: a `smarthost` (or `global.smtp_smarthost`) that is not `host:port`; the same header twice in different case; with `threading.enabled`, a `References` or `In-Reply-To` header, or a `thread_by_date` other than `none` or `daily`.
+- Values outside the allowed set: WeChat `message_type` (`text`, `markdown`), Telegram `parse_mode` (`Markdown`, `MarkdownV2`, `HTML`), Jira `api_type` (`auto`, `cloud`, `datacenter`), an Opsgenie responder `type` (`team`, `teams`, `user`, `escalation`, `schedule`, or a template), a VictorOps `custom_fields` key the integration reserves (`routing_key`, `message_type`, `state_message`, `entity_display_name`, `monitoring_tool`, `entity_id`, `entity_state`).
+- Mattermost: a field, on the message or an attachment, without `title` and `value`.
+
+The `http_config` block's own rules (one of `basic_auth`, `oauth2` and `authorization`, and so on) come from prometheus/common and are not checked here; `amtool check-config` catches them.
+
+## Using the checks outside a build
+
+`validateRuleFile(file)`, `validateAlertmanagerConfig(config)` and `validateSeverityRouting(ruleFiles, config)` return the same findings for any parsed file. The k8s lexicon's tests use them on the groups a `PrometheusRule` renders.

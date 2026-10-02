@@ -17,11 +17,25 @@ const HASHICORP_STYLE_VARIABLES: Authority = {
   url: "https://developer.hashicorp.com/terraform/language/style#variables",
 };
 
+const AWS_IAM_LEAST_PRIVILEGE: Authority = {
+  name: "AWS IAM security best practices (Apply least-privilege permissions)",
+  url: "https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html#grant-least-privilege",
+};
+
 // The vendor guides behind TF014, TF015 and TF021 are credited as lineage in
 // ./audit-lineage.ts, not as `authority` here. `authority` is reserved for
 // security rules that fail a merge (packages/core/src/audit/catalog.test.ts
 // holds both halves of that invariant), and these three are correctness and
 // best-practice rules (#2112).
+
+/**
+ * The document WAW019 cites for the same finding in the aws lexicon, named
+ * without the em-dash its entry there carries (the docs prose lint counts them).
+ */
+const AWS_SECURITY_PILLAR: Authority = {
+  name: "AWS Well-Architected Framework, Security Pillar",
+  url: "https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html",
+};
 
 export const terraformAuditCatalog: Record<string, RuleMeta> = {
   TF001: {
@@ -319,6 +333,32 @@ export const terraformAuditCatalog: Record<string, RuleMeta> = {
     remediation:
       "Replace the constant with a lookup, either an input the caller supplies or a data source " +
       "pointed at whatever vault owns the credential, and rotate what was committed.",
+    yamlBased: false,
+  },
+  TF030: {
+    id: "TF030",
+    tier: "merge-worthy",
+    fixKind: "guidance",
+    category: "security",
+    title: "Security group rule allows unrestricted ingress on a sensitive port",
+    remediation:
+      "Restrict the CIDR on SSH, RDP, MySQL and PostgreSQL ports to the sources that need them, or reach " +
+      "the host through a bastion, a VPN or SSM Session Manager.",
+    authority: [AWS_SECURITY_PILLAR],
+    yamlBased: false,
+  },
+  TF031: {
+    id: "TF031",
+    tier: "merge-worthy",
+    fixKind: "guidance",
+    category: "security",
+    title: "IAM policy allows a wildcard Action or Resource",
+    remediation:
+      "Name the actions the workload calls and the ARNs it touches. For the few actions that accept only " +
+      'Resource "*" (`ecr:GetAuthorizationToken`, `sts:GetCallerIdentity`), keep that statement on its own and ' +
+      "suppress it with `# chant-ignore-block: TF031`. A policy TF031 reports as not determined is built from " +
+      "an expression; it is not a finding.",
+    authority: [AWS_IAM_LEAST_PRIVILEGE],
     yamlBased: false,
   },
 };

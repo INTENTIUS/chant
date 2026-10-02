@@ -1,0 +1,153 @@
+# A two-tier trace gateway in one file. The front tier spreads spans across
+# the sampling tier by trace id with the loadbalancing exporter; the sampling
+# tier keeps whole traces with tail_sampling and derives RED metrics from
+# every span with spanmetrics before sampling drops any.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+  otlp/sampling:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:14317
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 75
+    spike_limit_percentage: 15
+  batch:
+    timeout: 5s
+    send_batch_size: 8192
+  tail_sampling:
+    decision_wait: 10s
+    num_traces: 100000
+    expected_new_traces_per_sec: 2000
+    decision_cache:
+      sampled_cache_size: 100000
+    policies:
+      - name: errors
+        type: status_code
+        status_code:
+          status_codes: [ERROR]
+      - name: slow
+        type: latency
+        latency:
+          threshold_ms: 1500
+      - name: checkout
+        type: string_attribute
+        string_attribute:
+          key: service.name
+          values: [checkout, payments]
+      - name: noisy-health
+        type: drop
+        drop:
+          drop_sub_policy:
+            - name: health-route
+              type: string_attribute
+              string_attribute:
+                key: http.route
+                values: [/healthz, /readyz]
+      - name: budget
+        type: composite
+        composite:
+          max_total_spans_per_second: 1000
+          policy_order: [errors-first, rest]
+          composite_sub_policy:
+            - name: errors-first
+              type: status_code
+              status_code:
+                status_codes: [ERROR]
+            - name: rest
+              type: always_sample
+          rate_allocation:
+            - policy: errors-first
+              percent: 60
+            - policy: rest
+              percent: 40
+
+exporters:
+  loadbalancing:
+    routing_key: traceID
+    protocol:
+      otlp:
+        timeout: 2s
+        tls:
+          insecure: true
+    resolver:
+      dns:
+        hostname: otel-sampling-headless.observability.svc.cluster.local
+        port: "14317"
+  otlp/tempo:
+    endpoint: tempo.observability:4317
+    headers:
+      authorization: "Bearer ${env:TEMPO_TOKEN}"
+    tls:
+      insecure: false
+      ca_file: /etc/tls/ca.pem
+    sending_queue:
+      enabled: true
+      queue_size: 10000
+    retry_on_failure:
+      enabled: true
+      max_elapsed_time: 5m
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+    namespace: gateway
+    resource_to_telemetry_conversion:
+      enabled: true
+
+connectors:
+  spanmetrics:
+    namespace: traces.span.metrics
+    dimensions:
+      - name: http.route
+      - name: deployment.environment
+        default: "${env:DEPLOY_ENV}"
+    histogram:
+      explicit:
+        buckets: [10ms, 50ms, 100ms, 250ms, 1s, 5s]
+    exemplars:
+      enabled: true
+    metrics_flush_interval: 15s
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+  pprof:
+    endpoint: localhost:1777
+  zpages: {}
+
+service:
+  extensions: [zpages, health_check]
+  telemetry:
+    logs:
+      level: info
+      encoding: json
+    metrics:
+      level: detailed
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888
+    resource:
+      service.name: otel-gateway
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter]
+      exporters: [loadbalancing]
+    traces/sampling:
+      receivers: [otlp/sampling]
+      processors: [memory_limiter, tail_sampling, batch]
+      exporters: [otlp/tempo, spanmetrics]
+    metrics/red:
+      receivers: [spanmetrics]
+      processors: [batch]
+      exporters: [prometheus]

@@ -97,6 +97,24 @@ describe("observeResources", () => {
     expect(names).toEqual(["web-vpc"]);
   });
 
+  it("keeps property-kind declarables out of the observation universe (#3001)", async () => {
+    // A property-kind declarable (a grafana panel, an aws SecurityGroup_Ingress
+    // const) carries props but lives only inside the resource holding it.
+    // Asked about on its own, a reader can only say "absent" or "not observed".
+    const buildResult = {
+      outputs: new Map<string, string>([["aws", "{}"]]),
+      entities: new Map<string, unknown>([
+        ["web-sg", { lexicon: "aws", entityType: "AWS::EC2::SecurityGroup", kind: "resource", props: {} }],
+        ["ingress", { lexicon: "aws", entityType: "AWS::EC2::SecurityGroup.Ingress", kind: "property", props: { FromPort: 443 } }],
+      ]),
+      errors: [],
+    } as unknown as BuildResult;
+    let names: string[] = [];
+    const plugins = [awsPlugin(({ entityNames }) => { names = entityNames; return {}; })];
+    await observeResources("prod", plugins, buildResult);
+    expect(names).toEqual(["web-sg"]);
+  });
+
   it("collects a throwing plugin into errors instead of failing the whole graph, and reports its entities unobserved (#1089)", async () => {
     const plugins = [
       awsPlugin(() => { throw new Error("access denied"); }),

@@ -1,0 +1,206 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/signers/v1/signers.schema.json",
+  "title": "chant workspace signers output",
+  "description": "What `chant workspace signers --json` prints (#2553): the signer set's versions along the base revision's first-parent line, oldest first, each signed by a threshold of the one before, and where the chain breaks when it does. A commit is judged by the version in effect where it entered that line. Version 1 of the read contract. Readers ignore fields they do not know; a field is only ever added within a version. The codes are a closed list, each in the one closed list of `reason-codes.ts`.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/result"
+    },
+    {
+      "$ref": "#/$defs/failure"
+    }
+  ],
+  "$defs": {
+    "result": {
+      "type": "object",
+      "description": "The history was read. It exits 1 when `broken` is not null.",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "base",
+        "signersPath",
+        "versions",
+        "broken"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/signers/v1/signers.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string",
+          "description": "The chant version that printed the document."
+        },
+        "base": {
+          "type": "string",
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+          "description": "The full commit id of the base revision the history is read along."
+        },
+        "signersPath": {
+          "type": "string",
+          "description": "The signers file, from the repository root. Its rotation file is `<signersPath>.rotation.json`."
+        },
+        "versions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/version"
+          }
+        },
+        "broken": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/broken"
+            }
+          ]
+        }
+      }
+    },
+    "version": {
+      "type": "object",
+      "description": "One version of the signer set, made by one first-parent commit.",
+      "required": [
+        "version",
+        "commit",
+        "digest",
+        "threshold",
+        "principals",
+        "signedBy"
+      ],
+      "properties": {
+        "version": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "1 and up. 0 marks the commit that removed the signers file; nothing is in effect after it."
+        },
+        "commit": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+            }
+          ],
+          "description": "The first-parent commit that made this version."
+        },
+        "digest": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          ],
+          "description": "sha256 of the signers file, line endings normalised. Null for version 0."
+        },
+        "threshold": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many distinct signers of this version must sign the next one."
+        },
+        "principals": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The principals the version lists, sorted."
+        },
+        "signedBy": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The principals of the version before whose signatures counted. Empty for the first version."
+        }
+      }
+    },
+    "broken": {
+      "type": "object",
+      "description": "The version that is not a valid rotation of the one before. Nothing verifies against this base.",
+      "required": [
+        "commit",
+        "code",
+        "message"
+      ],
+      "properties": {
+        "commit": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+            }
+          ]
+        },
+        "code": {
+          "enum": [
+            "signers-removed",
+            "rotation-unparseable",
+            "rotation-invalid",
+            "rotation-first-version",
+            "rotation-missing",
+            "rotation-version-skew",
+            "rotation-previous-mismatch",
+            "rotation-threshold-unsatisfiable",
+            "rotation-threshold-not-met"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    },
+    "failure": {
+      "type": "object",
+      "description": "No history could be read. Exits 1.",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "error"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/signers/v1/signers.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "enum": [
+                "not-a-git-repository",
+                "revision-unknown",
+                "signers-file-missing"
+              ]
+            },
+            "message": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -88,9 +88,22 @@ export const store = new StorageType({
 });
 ```
 
+The evaluator resolves these specifier forms the way `tsc` does with `bundler` resolution:
+
+| Specifier | Resolves to |
+|---|---|
+| `./shared` | The first of `./shared.ts`, `.tsx`, `.js`, `.mjs`, `./shared/index.ts` and `./shared/index.js` that exists |
+| `./shared.js` | `./shared.ts` if it exists, else `./shared.js`; `.mjs` maps to `.mts` and `.cjs` to `.cts` |
+| `pkg`, `pkg/sub/x` | The package's `exports` target under the `import`, `node` or `default` condition, `*` patterns included, or `main` without `exports` |
+| `@app/config` | The target of a matching `paths` entry in the nearest `tsconfig.json` or a config it extends |
+
+A `paths` target resolves against `baseUrl` if the config sets one, and against the directory of the config that declares `paths` otherwise. chant's own package names are never mapped.
+
+A file with an import the evaluator cannot resolve falls back to run, and its `[fold:run]` line gives the reason.
+
 ### Cross-file resource references
 
-Import a resource from another file and access its attributes. The evaluator resolves the attribute through the lexicon's attribute registry.
+Import a resource from another file and access its attributes. The evaluator resolves the attribute through the lexicon's attribute registry. The import can use any specifier form listed under [Import and re-export](#import-and-re-export). A specifier that `paths` maps names a project file, so it is folded like a relative import, even when its text is a package name.
 
 ```typescript
 import { ServiceType } from "@intentius/chant-lexicon-<name>";
@@ -385,7 +398,7 @@ What you get is what running the factory produced. The resources are built by th
 ### Fold coverage today
 
 {/* GENERATED:fold-coverage:start */}
-As of this measurement, **96 of 109** example projects in the corpus fold completely — every file in them reduces to a value with zero module execution. The remaining **13** have at least one file that falls back to running.
+As of this measurement, **99 of 115** example projects in the corpus fold completely — every file in them reduces to a value with zero module execution. The remaining **16** have at least one file that falls back to running.
 {/* GENERATED:fold-coverage:end */}
 
 This is measured over the same corpus [`just fold-differential`](#byte-identical-output) builds both ways: every tutorial under `examples/*/src`, plus each lexicon's own build fixtures under `lexicons/*/examples/*/src`. It's a count of chant's own example suite, not a sample of real-world source — read it as "how much of chant's examples fold today," not as an estimate for any other codebase.

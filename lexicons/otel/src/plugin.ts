@@ -9,9 +9,15 @@ import { otelAuditCatalog } from "./lint/audit-catalog";
 import { completions } from "./lsp/completions";
 import { hover } from "./lsp/hover";
 import { detectTemplate } from "./detect";
+import { OtelCollectorParser } from "./import/parser";
+import { OtelCollectorGenerator } from "./import/generator";
+import { collectorConfigImporter } from "./import/embedded";
 import { otelSkills } from "./skill-defs";
 import { BUILTIN_CATALOG } from "./catalog";
+import { compositeCatalog } from "./composites/catalog";
+import { DEFAULT_TEMPLATE, GENAI_TEMPLATE, K8S_AGENT_TEMPLATE } from "./init-templates";
 import { COLLECTOR_PIN } from "./define";
+import { collectorTopologyOf } from "./topology";
 
 const catalogResource: McpResourceContribution = {
   uri: "otel:resource-catalog",
@@ -26,7 +32,7 @@ const catalogResource: McpResourceContribution = {
 /**
  * OpenTelemetry Collector lexicon plugin.
  *
- * Typed receivers, processors, exporters and extensions, pipelines and the
+ * Typed receivers, processors, exporters, connectors and extensions, pipelines and the
  * service block, serialized to one collector config file. A component chant
  * doesn't ship comes in through `defineComponent`, and is serialized and
  * checked the same way as the built-ins.
@@ -74,6 +80,14 @@ export const otelPlugin: LexiconPlugin = {
     return rules;
   },
 
+  // Where this project's telemetry goes, for `chant workspace graph` (#2559).
+  // A project with no collector pipeline and no component reports nothing.
+  graphMeta(entities) {
+    const topology = collectorTopologyOf(entities.values());
+    if (topology.pipelines.length === 0 && topology.components.length === 0) return undefined;
+    return { collector: topology };
+  },
+
   postSynthChecks() {
     return postSynthChecks;
   },
@@ -84,6 +98,10 @@ export const otelPlugin: LexiconPlugin = {
 
   skills: otelSkills,
 
+  composites() {
+    return compositeCatalog;
+  },
+
   mcpTools() {
     return [createDiffTool(otelSerializer, "Compare current collector config output against the previous build", "otel")];
   },
@@ -92,8 +110,27 @@ export const otelPlugin: LexiconPlugin = {
     return [catalogResource];
   },
 
+  // `chant init --lexicon otel [--template k8s-agent|genai]`; see ./init-templates.ts.
+  initTemplates(template?: string) {
+    if (template === "k8s-agent") return K8S_AGENT_TEMPLATE;
+    if (template === "genai") return GENAI_TEMPLATE;
+    return DEFAULT_TEMPLATE;
+  },
+
   detectTemplate(data: unknown) {
     return detectTemplate(data);
+  },
+
+  templateParser() {
+    return new OtelCollectorParser();
+  },
+
+  templateGenerator() {
+    return new OtelCollectorGenerator();
+  },
+
+  embeddedImporters() {
+    return [collectorConfigImporter];
   },
 
   completionProvider(ctx: CompletionContext) {
