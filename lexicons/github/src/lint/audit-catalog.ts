@@ -66,6 +66,7 @@ export const githubAuditCatalog: Record<string, RuleMeta> = {
   GHA066: auditRule("GHA066", "report-only", "guidance", "Unbounded artifact retention", "Set a retention-days sized to how long the artifact is actually needed.", { category: "efficiency" }),
   GHA067: auditRule("GHA067", "report-only", "guidance", "Unconditional heavy step with no path filter", "Scope the trigger's paths, or add an if: guard to the step.", { category: "efficiency" }),
   GHA068: auditRule("GHA068", "report-only", "guidance", "Pull-request workflow missing a concurrency group", "Add a concurrency group with cancel-in-progress: true.", { category: "efficiency" }),
+  GHA069: auditRule("GHA069", "merge-worthy", "guidance", "Job permissions block drops the workflow's id-token: write", "Add `id-token: write` to the job's `permissions:` block; keep the job block rather than removing it.", { category: "correctness" }),
 };
 
 // Prior art credits live beside the rules in ./audit-lineage.ts (see core audit/prior-art.ts).

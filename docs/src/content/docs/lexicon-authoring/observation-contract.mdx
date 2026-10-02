@@ -196,7 +196,7 @@ The scenario fields are these.
 | `expectMarker` | Per entity, the exact `ResourceMetadata.marker` (stack + env) the read must surface. |
 | `expectNoMarker` | Names whose live model carries no marker channel, so the field must stay absent. |
 
-Eleven lexicons run it today (aws, azure, cedar, fly, fountain, gcp, grafana, helm, k3d, k3s, k8s). `lexicons/fly/src/describe-resources.test.ts` and `lexicons/aws/src/lifecycle-integration.test.ts` are the other two worth reading, for a REST transport and for a stack-granularity marker.
+Twelve lexicons run it today (aws, azure, cedar, fly, fountain, gcp, grafana, helm, k3d, k3s, k8s, sql). `lexicons/fly/src/describe-resources.test.ts` and `lexicons/aws/src/lifecycle-integration.test.ts` are the other two worth reading, for a REST transport and for a stack-granularity marker.
 
 ## observeResourcesDeep() — property-level drift
 
@@ -475,10 +475,10 @@ author adding a reader has one row to update. Today's counts.
 
 | Hook | Lexicons |
 |---|---|
-| `describeResources()` | 13: aws, azure, cedar, cpln, fly, fountain, gcp, grafana, helm, k3d, k3s, k8s, render |
-| `observeResourcesDeep()` | 7: aws, azure, fountain, gcp, grafana, helm, k8s |
+| `describeResources()` | 14: aws, azure, cedar, cpln, fly, fountain, gcp, grafana, helm, k3d, k3s, k8s, render, sql |
+| `observeResourcesDeep()` | 8: aws, azure, fountain, gcp, grafana, helm, k8s, sql |
 | `listArtifacts()` | 2: docker, helm |
-| `exportResources()` | 8: aws, azure, cedar, fly, fountain, gcp, grafana, k8s |
+| `exportResources()` | 9: aws, azure, cedar, fly, fountain, gcp, grafana, k8s, sql |
 
 github, gitlab and forgejo implement none by design: workflow definitions are
 git-tracked, so drift is `git diff`. See the [github](/lexicons/github/) and

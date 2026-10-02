@@ -71,6 +71,8 @@ export interface FlyApplyStepOpts {
   token?: string;
   /** Prune declared-then-removed resources (D2). Destructive — off by default. */
   prune?: boolean;
+  /** Prune machines with `?force=true` instead of stopping them first (#3115). */
+  force?: boolean;
   /** Wait-loop tuning (mainly for tests). */
   wait?: Record<string, unknown>;
   /** Activity profile override. */

@@ -401,6 +401,45 @@ Flags a Dependabot `updates:` entry with `insecure-external-code-execution: allo
 
 Flags a Dependabot `updates:` entry with no cooldown — a version published moments ago (including a compromised one) is adopted immediately. Configure a `cooldown:` window. The `Dependabot` composite ships a 7-day default.
 
+### GHA069 — Job permissions block drops the workflow's id-token: write
+
+**Severity:** warning | **Category:** correctness
+
+Fires when the workflow-level `permissions:` block grants `id-token: write` (directly or through `write-all`), a job declares its own block that does not, and that job has a step using an OIDC credential action: `aws-actions/configure-aws-credentials`, `azure/login` or `google-github-actions/auth`. The action is matched on its `owner/repo` path, ignoring case and the ref, so a tag, a major version and a full SHA pin all count. A job block of `permissions: {}` or `permissions: read-all` drops the scope as well; `permissions: write-all` keeps it. A step handed a static credential instead (`aws-access-key-id` or `web-identity-token-file`, `creds`, `credentials_json`) does not request a token and is not counted.
+
+**Why it matters.** A job-level `permissions:` block replaces the workflow-level one. GitHub does not merge them. The job runs without an OIDC token, and the credential action fails with an error about cloud credentials that mentions neither `id-token` nor the job block, so the cause takes a long time to find. GHA034 makes it worse: it points at the workflow-level grant, and deleting the job block to "fix" the failure hands the job every other workflow-level scope as well.
+
+**The fix.** Add `id-token: write` to the job's own block and keep the block. If no other job needs the scope, drop it from the workflow-level block too, which also clears GHA034 when it was the only workflow-wide write.
+
+**Prior art.** No tool checked covers this; `audit-lineage.ts`'s header comment records where the search went. zizmor's `excessive-permissions` and Scorecard's Token-Permissions look for scopes that are too broad, the opposite failure. actionlint's `permissions` check validates scope names and levels only. octoscan's `debug-oidc-action` flags OIDC actions without reading the permission blocks.
+
+Only `id-token` is checked. Narrowing a scope is the point of a job block (GHA013 asks for one), and a job missing `contents` or `pull-requests` gets a 403 that names the failing API call. The reasoning is recorded on [#2273](https://github.com/INTENTIUS/chant/issues/2273).
+
+The fixture that triggers it:
+
+```yml title="positive.yml"
+name: Deploy
+on:
+  push:
+    branches: [main]
+permissions:
+  id-token: write
+  contents: read
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::123456789012:role/deploy
+          aws-region: us-east-1
+      - run: aws s3 sync ./dist s3://example-bucket
+```
+
 ## Running lint
 
 ```bash

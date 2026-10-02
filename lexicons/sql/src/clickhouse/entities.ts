@@ -476,8 +476,23 @@ const strip = <T extends object>(o: T): T =>
 
 type Expect = "database" | "table" | "view";
 
+/**
+ * A template's parts as the SQL reads them: the raw text, so a backslash in a
+ * regex or an escape stays as written, with the two escapes a template
+ * literal forces undone. `` \` `` is a backquote and `\${` is `${`; neither
+ * can be written in a template any other way.
+ */
+export function templateParts(strings: TemplateStringsArray | readonly string[]): string[] {
+  const raw = (strings as TemplateStringsArray).raw ?? strings;
+  return raw.map(unescapeTemplateDelimiters);
+}
+
+export function unescapeTemplateDelimiters(part: string): string {
+  return part.replace(/\\(`|\$\{)/g, "$1");
+}
+
 function build(tag: Expect, strings: TemplateStringsArray | readonly string[], values: readonly unknown[]): ClickHouseObject {
-  const parts = [...((strings as TemplateStringsArray).raw ?? strings)];
+  const parts = templateParts(strings);
   const tokens = splice(tag, parts, values);
   let node: CreateNode;
   try {

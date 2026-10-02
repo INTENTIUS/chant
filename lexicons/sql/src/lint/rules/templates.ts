@@ -7,6 +7,7 @@
 
 import * as ts from "typescript";
 import { tokenize, type Token } from "../../clickhouse/tokens";
+import { unescapeTemplateDelimiters } from "../../clickhouse/entities";
 
 export type SqlTag = "database" | "table" | "view";
 
@@ -47,9 +48,12 @@ export function findTemplates(source: ts.SourceFile): FoundTemplate[] {
   const visit = (node: ts.Node) => {
     if (ts.isTaggedTemplateExpression(node) && ts.isIdentifier(node.tag) && bindings.has(node.tag.text)) {
       const t = node.template;
-      const parts = ts.isNoSubstitutionTemplateLiteral(t)
-        ? [t.rawText ?? t.text]
-        : [t.head.rawText ?? t.head.text, ...t.templateSpans.map((s) => s.literal.rawText ?? s.literal.text)];
+      // As the tag reads them: raw, with `\`` and `\${` undone. An offset after one of those is off by one.
+      const parts = (
+        ts.isNoSubstitutionTemplateLiteral(t)
+          ? [t.rawText ?? t.text]
+          : [t.head.rawText ?? t.head.text, ...t.templateSpans.map((s) => s.literal.rawText ?? s.literal.text)]
+      ).map(unescapeTemplateDelimiters);
       // A part's text begins one character after its opening delimiter (` or }).
       const starts = ts.isNoSubstitutionTemplateLiteral(t)
         ? [t.getStart(source) + 1]
