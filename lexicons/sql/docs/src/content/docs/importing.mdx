@@ -1,0 +1,56 @@
+---
+title: "Importing a Live Server"
+description: "chant import --from <env> writes a ClickHouse server's schema as database, table and view declarations, from SHOW CREATE"
+diataxis: how-to
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-sql` — DO NOT EDIT.
+    Edit lexicons/sql/docs/pages/importing.mdx instead; changes here are overwritten. */}
+
+
+`chant import --from <env>` reads the schema of the server an environment is bound to and writes it as declarations: one `schema.ts` holding a `database`, `table` or `view` for each object, in dependency order.
+
+## Bind the environment
+
+Name the server per environment in `chant.config.ts`. Credentials are named by their environment variable, never written in the config:
+
+```ts
+import type { ChantConfig } from "@intentius/chant/config";
+import "@intentius/chant-lexicon-sql";
+
+export default {
+  lexicons: ["sql"],
+  sql: {
+    profiles: {
+      prod: {
+        url: "https://clickhouse.example.com:8443",
+        user: { env: "CH_USER" },
+        password: { env: "CH_PROD_PASSWORD" },
+        databases: ["analytics"],
+      },
+    },
+  },
+} satisfies ChantConfig;
+```
+
+`databases` limits the read; without it every database is read except the server's own (`system`, `information_schema`). An environment with no profile falls back to `CLICKHOUSE_URL`, `CLICKHOUSE_USER` and `CLICKHOUSE_PASSWORD`. The same binding is what `chant lifecycle diff <env> --live` reads.
+
+## Import
+
+```bash
+chant import --from prod --output src/
+```
+
+Each object is read with `SHOW CREATE`, so the declaration is the server's canonical form: quoted names, `toIntervalDay(180)` for `INTERVAL 180 DAY`, codec levels filled in. Three changes are made to it:
+
+- A qualified name of another imported object becomes a reference to its export, and the database part of an object's own name a reference to the database's export (`CREATE TABLE ${analyticsDb}.events`, `FROM ${events}`), so the build orders them.
+- Backquotes go: a name that needs none is written bare, one that does is double-quoted.
+- What the server adds on its own is left out: settings at the pinned server's default (`index_granularity = 8192`) and a view's inferred column list. `--verbatim` keeps the statement as printed.
+
+A materialized view's inner table belongs to its view and is not imported, and the `default` database, which every server has, is not declared. A column a view's SELECT names directly stays text, so an imported view records the tables it reads but not its column lineage; write its column references as `${table.columns.name}` to get it.
+
+`--owned` imports nothing for now: chant stamps no ownership marker on ClickHouse objects yet, so there is none to read back. `--type ClickHouse::Table` and `--name analytics.events` narrow the import.
+
+## A file of statements
+
+`chant import schema.sql` reads a file of CREATE statements the same way, keeping each as written. A statement that does not parse, or is not a CREATE, is left out with a warning.

@@ -71,6 +71,8 @@ export interface StorageNode {
   sampleBy?: Span;
   ttl?: Span;
   settings?: Array<{ key: string; value: Span }>;
+  /** The whole `SETTINGS ...` clause, keyword included. */
+  settingsClause?: Span;
 }
 
 export interface DatabaseNode {
@@ -107,6 +109,8 @@ export interface ViewNode extends StorageNode {
   append: boolean;
   to?: Span;
   columns: ColumnNode[];
+  /** The parenthesised column list, parentheses included, when there is one. */
+  columnsSpan?: Span;
   populate: boolean;
   empty: boolean;
   /** `DEFINER = ...` and `SQL SECURITY ...`, as written. */
@@ -452,8 +456,12 @@ class Parser {
         this.p += 2;
         into.sampleBy = this.expr(STOP, false);
       } else if (this.accept("TTL")) into.ttl = this.expr(STOP, false);
-      else if (this.accept("SETTINGS")) into.settings = this.settingsList(STOP);
-      else return;
+      else if (kw(this.peek(), "SETTINGS")) {
+        const from = this.idx();
+        this.p++;
+        into.settings = this.settingsList(STOP);
+        into.settingsClause = this.span(from, into.settings.flatMap((s) => s.value.refs));
+      } else return;
     }
   }
 
@@ -552,8 +560,10 @@ class Parser {
     if (this.accept("APPEND")) node.append = true;
     if (this.accept("TO")) node.to = this.qualifiedName();
     if (this.isPunct("(")) {
+      const from = this.idx();
       const holder = { columns: node.columns, indexes: [], projections: [], constraints: [] };
       this.tableElements(holder, false);
+      node.columnsSpan = this.span(from, []);
     }
     this.storage(node, ["AS", "POPULATE", "EMPTY", "DEFINER", "SQL"]);
     if (this.accept("POPULATE")) node.populate = true;

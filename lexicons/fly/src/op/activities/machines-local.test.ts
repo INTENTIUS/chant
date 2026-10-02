@@ -109,11 +109,12 @@ describe("the running mode of the local Machines API (#2831)", () => {
     expect(existsSync(join(root, "srv/app/page.txt"))).toBe(false);
     expect(readFileSync(join(root, "data/state"), "utf8")).toBe("migrated\n");
 
-    // Start, then delete: running again, then gone.
+    // Start, then a forced delete: running again, then gone. A bare delete of a
+    // started Machine is refused, as Fly refuses it (#3115).
     await call("POST", `/v1/apps/shop/machines/${id}/start`);
     const [fourth] = machines.processes();
     expect(await get(url!)).toBe("B migrated");
-    await call("DELETE", `/v1/apps/shop/machines/${id}`);
+    await call("DELETE", `/v1/apps/shop/machines/${id}?force=true`);
     expect(machines.processes()).toEqual([]);
     expect(alive(fourth.pid!)).toBe(false);
   });
