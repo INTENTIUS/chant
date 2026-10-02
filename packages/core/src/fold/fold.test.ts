@@ -492,6 +492,7 @@ describe("fold — intrinsic tagged templates", () => {
     expect(fold(expr, consts, [SUB])).toEqual({
       __intrinsic: "Sub",
       strings: ["", "-data"],
+      raw: ["", "-data"],
       values: ["prefix"],
     });
   });
@@ -504,6 +505,7 @@ describe("fold — intrinsic tagged templates", () => {
     expect(fold(expr, consts, [INTRINSIC])).toEqual({
       __intrinsic: "Intrinsic",
       strings: ["", "-data"],
+      raw: ["", "-data"],
       values: [{ __symbol: "Params.StackName" }],
     });
   });
@@ -519,6 +521,7 @@ describe("fold — intrinsic tagged templates", () => {
     expect(fold(expr, consts, [SUB])).toEqual({
       __intrinsic: "Sub",
       strings: ["", "/*"],
+      raw: ["", "/*"],
       values: [{ __attrRef: { entity: "bucket", attribute: "arn" } }],
     });
   });
@@ -527,7 +530,41 @@ describe("fold — intrinsic tagged templates", () => {
     const consts = parseConsts("const x = Sub`plain-value`;");
     const expr = consts.get("x");
     if (!expr) throw new Error("fixture error");
-    expect(fold(expr, consts, [SUB])).toEqual({ __intrinsic: "Sub", strings: ["plain-value"], values: [] });
+    expect(fold(expr, consts, [SUB])).toEqual({
+      __intrinsic: "Sub",
+      strings: ["plain-value"],
+      raw: ["plain-value"],
+      values: [],
+    });
+  });
+
+  // chant #3196 — the envelope carries the raw parts beside the cooked ones,
+  // exactly as the TemplateStringsArray running the tag would.
+  test("a backslash-bearing template carries both its cooked and raw parts", () => {
+    const consts = parseConsts("const x = Sub`DEFAULT '\\d+\\t' ${1} \\`q\\``;");
+    const expr = consts.get("x");
+    if (!expr) throw new Error("fixture error");
+    const run = ((s: TemplateStringsArray, ..._values: unknown[]) => ({ strings: [...s], raw: [...s.raw] }))`DEFAULT '\d+\t' ${1} \`q\``;
+    expect(fold(expr, consts, [SUB])).toEqual({ __intrinsic: "Sub", ...run, values: [1] });
+  });
+
+  test("raw parts normalize CRLF line endings the way the language does", () => {
+    const consts = parseConsts("const x = Sub`a\r\nb\rc${1}d`;");
+    const expr = consts.get("x");
+    if (!expr) throw new Error("fixture error");
+    expect(fold(expr, consts, [SUB])).toMatchObject({ strings: ["a\nb\nc", "d"], raw: ["a\nb\nc", "d"] });
+  });
+
+  test("a template whose escape has no cooked value is refused, not folded to a different string", () => {
+    for (const body of ["\\u{zz}", "\\xg1", "\\1", "\\01"]) {
+      const consts = parseConsts(`const x = Sub\`a\${1}${body}\`;`);
+      const expr = consts.get("x");
+      if (!expr) throw new Error("fixture error");
+      expect(() => fold(expr, consts, [SUB])).toThrow(/no cooked value/);
+    }
+    const ok = parseConsts("const x = Sub`\\0 \\x41 \\u0041 \\u{1F600} \\\\1`;").get("x");
+    if (!ok) throw new Error("fixture error");
+    expect(fold(ok, new Map(), [SUB])).toMatchObject({ strings: ["\0 A A \u{1F600} \\1"] });
   });
 
   test("an unregistered tagged template is rejected with a located FoldError", () => {
@@ -588,6 +625,7 @@ describe("fold — registered call-form intrinsics (#1044)", () => {
     expect(fold(expr, consts, [SUB, REF])).toEqual({
       __intrinsic: "Sub",
       strings: ["", "-fn"],
+      raw: ["", "-fn"],
       values: [{ __intrinsic: "Ref", args: ["prod"] }],
     });
   });

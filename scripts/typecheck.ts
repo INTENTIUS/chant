@@ -45,7 +45,7 @@ interface Baseline {
 function failingFiles(): { files: Set<string>; raw: string } {
   let raw = "";
   try {
-    execFileSync("npx", ["tsc", "--noEmit", "-p", CONFIG], {
+    execFileSync(join(repoRoot, "scripts", "tsc7.sh"), ["--noEmit", "--declaration", "false", "--declarationMap", "false", "-p", CONFIG], {
       cwd: repoRoot,
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "pipe"],

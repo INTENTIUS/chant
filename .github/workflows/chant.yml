@@ -63,8 +63,18 @@ jobs:
       - name: Generate lexicon artifacts
         run: scripts/ci-lexicon-artifacts.sh
 
+      # #3088 — typechecks and every package and lexicon build run on
+      # TypeScript 7 through scripts/tsc7.sh. `typescript` itself stays on 5.9
+      # for the code that imports its JS API. Both packages ship a `tsc` bin,
+      # so print what each name resolves to; a bin swap shows up here.
+      - name: TypeScript versions
+        run: |
+          echo "node_modules/.bin/tsc: $(npx tsc -v)"
+          echo "scripts/tsc7.sh: $(scripts/tsc7.sh -v)"
+          node -e 'console.log("import(\"typescript\"): " + require("typescript").version)'
+
       - name: Typecheck
-        run: npx tsc --noEmit -p packages/core/tsconfig.json
+        run: scripts/tsc7.sh --noEmit --declaration false --declarationMap false -p packages/core/tsconfig.json
 
       # The whole repo, not just core (#1366). The root tsconfig includes
       # `lexicons/**/*` — every lexicon, example and helper script — so all of
@@ -74,13 +84,13 @@ jobs:
       # rejected the intrinsics the docs tell you to pass. Enforced here so the
       # number cannot grow back.
       - name: Typecheck the whole repo (#1366)
-        run: npx tsc --noEmit
+        run: scripts/tsc7.sh --noEmit --declaration false --declarationMap false
 
       # The k8s API client (#1074) is its own package, so `just build`'s
       # core-only typecheck does not cover it. It is not a lexicon either, so
       # check-lexicons below does not reach it.
       - name: Typecheck the Kubernetes API client (#1074)
-        run: npx tsc --noEmit -p packages/k8s-client/tsconfig.build.json
+        run: scripts/tsc7.sh --noEmit --declaration false --declarationMap false -p packages/k8s-client/tsconfig.build.json
 
       - name: Lexicon completeness contract (#1067)
         # The prepack above ends with each lexicon's `npm run build`, the same
