@@ -37,10 +37,14 @@ const run = promisify(execFile);
 const repoRoot = realpathSync(dirname(dirname(fileURLToPath(import.meta.url))));
 
 /**
- * The TypeScript versions every project must pass under. #3088 adds
- * TypeScript 7 as a root alias; its `tsc` goes here as a second entry.
+ * The TypeScript versions every project must pass under. TypeScript 7 is the
+ * root `typescript-native` alias (#3088); until it is installed, only 5.9 runs.
  */
-const COMPILERS = [{ name: "5.9", tsc: join(repoRoot, "node_modules", "typescript", "bin", "tsc") }];
+const TS7 = join(repoRoot, "node_modules", "typescript-native", "bin", "tsc");
+const COMPILERS = [
+  { name: "5.9", tsc: join(repoRoot, "node_modules", "typescript", "bin", "tsc") },
+  ...(existsSync(TS7) ? [{ name: "7", tsc: TS7 }] : []),
+];
 
 /**
  * Steps a lexicon's scaffold README says to run before the project compiles.
