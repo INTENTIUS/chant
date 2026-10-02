@@ -33,16 +33,7 @@ is named `-op.ts` rather than `.op.ts` on disk) so the page cannot drift from
 what the tests actually run.
 */}
 
-The Terraform lexicon ships one source-level lint rule and eight post-synth
-checks. See [Lint Rules](/chant/lexicons/terraform/rules/) for the generated,
-always-current table; this page is the reasoning, the fix and the credit
-behind each entry.
-The Terraform lexicon ships one source-level lint rule and fourteen post-synth
-checks, plus TF023, which runs only in `chant audit` and is documented here
-beside the rest of the family. See [Lint Rules](/chant/lexicons/terraform/rules/)
-for the generated, always-current table of the checks that run in a build; this
-page is the reasoning, the fix and the credit behind each entry.
-The Terraform lexicon ships one source-level lint rule and twenty-four
+The Terraform lexicon ships one source-level lint rule and twenty-nine
 post-synth checks, plus TF023, which runs only in `chant audit` and is
 documented here beside the rest of the family. See [Lint
 Rules](/chant/lexicons/terraform/rules/) for the generated, always-current
@@ -184,7 +175,7 @@ A `terraform` block with no `required_version` attribute.
 **Why it matters.** Sits beside TF002 on the same block: without
 `required_version`, a root can be applied by whatever Terraform binary
 happens to be on the runner's `PATH`. A binary upgrade that changes behavior
-surfaces as a surprise plan diff instead of a version-check failure before
+surfaces as a surprise plan diff instead of a version-check failure up to
 anything runs.
 
 **The fix.** Add `required_version = ">= <lowest supported version>"` to the
@@ -935,11 +926,17 @@ over a parsed root module at all: it reads the file list `chant audit`
 discovers, so it lives in core beside the other lexicon-independent families
 (`packages/core/src/audit/terraform-state.ts`, catalogued in core's own
 `RULE_CATALOG`) and fires whether or not the terraform lexicon is installed. On
-a local path the root `.gitignore` is what separates "committed" from "merely
+a local path the `.gitignore` files are what separate "committed" from "merely
 on disk", since almost every Terraform working tree has an ignored
 `.terraform/` in it; a fetched repository's file list is already exactly its
 tracked files. Nothing reads the contents of either: the finding is that the
 path is there.
+
+Every `.gitignore` between the file and the scan root is read, the root one
+included, so `infra/terraform.tfstate` is not reported when `infra/.gitignore`
+ignores it, and auditing from the repository root and from `infra/` agree
+([#2528](https://github.com/INTENTIUS/chant/issues/2528); up to `v0.80.0` only
+the root `.gitignore` was read).
 
 **Why it matters.** A state file records every attribute of every managed
 resource in plaintext JSON, including the ones providers mark sensitive, so a
@@ -1381,3 +1378,140 @@ has no suppressing effect on that id, and is itself reported as a finding,
 matching tflint's own `ignorable = false` setting. Every rule is ignorable
 by default; TF008 (hardcoded provider credentials) is the kind of rule a
 project might want to lock this way.
+
+## TF029: live root names its estate twice
+
+A root that names its estate in both `terraform.roots.<name>.estate` and its
+own HCL, in a `live { }` block or an `estate.chdf.hcl` sidecar.
+
+**Why it matters.** The two are not equal in authority. A declaration is what
+choudoufu reads for itself; `terraform.roots.<name>.estate` is what this
+lexicon would otherwise hand it as `-estate`. choudoufu refuses that flag
+beside a declaration outright — "This configuration's live block is what names
+its estate, and `-estate=...` would name a second one for this run only" — so
+the lexicon does not pass it, and the config value is simply never used.
+
+A setting written down and silently ignored is worse than one that errors. An
+author who moves an environment by editing `roots.app.estate` gets a run
+against the old estate and nothing tells them the edit was disregarded. The
+diagnostic names both values even when they agree today, because two settings
+that happen to match still means one of them does nothing, and the next edit to
+the ignored one is the incident this rule exists to prevent.
+
+**The fix.** Pick one. A root whose directory is shared across environments
+declares no estate in HCL and names it per root in chant.config — that is the
+environment dimension, and it is why `terraform.roots.<name>.estate` exists. A
+root with its own `live` block already has an estate and needs nothing in
+chant.config.
+
+## TF030: a security group rule opens a sensitive port to the internet
+
+An ingress rule that admits `0.0.0.0/0` or `::/0` on SSH (22), RDP (3389),
+MySQL (3306) or PostgreSQL (5432), the same four ports the aws lexicon's
+WAW019 checks. TF030 reads all three shapes Terraform has for a rule:
+
+- `ingress` on `aws_security_group`, written as nested blocks or as an
+  attribute list (the provider types it as `set(object(...))`, and the parse
+  reads both spellings the same way), with `cidr_blocks` and
+  `ipv6_cidr_blocks`;
+- a standalone `aws_security_group_rule` whose `type` is `"ingress"`;
+- an `aws_vpc_security_group_ingress_rule`, with `cidr_ipv4` and `cidr_ipv6`.
+
+Ports are a range. Protocol `tcp` or `udp` (or `6`, `17`) reaches every port
+from `from_port` to `to_port`, so `0`-`65535` reaches all four; protocol `-1`
+(or `"all"`) reaches every port whatever the range says. ICMP and other
+port-less protocols are never reported, and `tcp` with `0`-`0` is port 0, not
+every port. Egress rules are never reported.
+
+**Why it matters.** These are the ports automated scanners try first. A
+database or a remote shell reachable from every address on the internet is one
+leaked or guessed credential away from being someone else's, and the security
+group is the layer that should have stopped the connection before any password
+was asked for.
+
+**The fix.** Narrow the CIDR to the sources that need the port: an office
+range, a VPN, the VPC's own CIDR. Better still, take the port off the internet
+altogether and reach the host through a bastion, a VPN or SSM Session Manager,
+or let the database accept connections only from its clients' security group
+(`source_security_group_id`, `referenced_security_group_id`), which TF030 does
+not report.
+
+**What absence means.** An `aws_security_group` with no `ingress` admits
+nothing: the provider's default is no rules, and any rules the group does have
+live in standalone resources, which TF030 reads in their own right. So a
+missing `ingress` is closed, not unknown, and nothing is reported for it.
+
+**What is not determined.** TF030 evaluates no expressions. It reports a
+finding only when literals prove all three facts: the rule is ingress, a CIDR
+is open, and the ports reach a sensitive one. When the answer depends on a value
+the parse hands back as an expression, such as `cidr_blocks =
+var.allowed_ssh_cidrs`, `from_port = var.ssh_port`, `type = var.direction`,
+`ingress = local.rules`, a `for_each` over `each.value`, or a
+`dynamic "ingress"` block, it emits one `info` finding that starts
+`Not determined:` and names each attribute it could not read. It never turns
+an unread value into a warning or an error. One known fact still settles a
+rule by itself: `cidr_blocks = var.allowed` on port 443 is silent, because no
+CIDR makes 443 one of the four ports, and so is a private CIDR literal on
+`from_port = var.port`.
+
+**Prior art.** Every credit overlaps; none checks quite the same condition.
+Checkov's [`CKV_AWS_24`](https://www.checkov.io/5.Policy%20Index/terraform.html)
+and [`CKV_AWS_25`](https://www.checkov.io/5.Policy%20Index/terraform.html) check
+22 and 3389, one port per id, read the same three shapes, and read `tcp`
+`0`-`0` as every port. tfsec's
+[`aws-vpc-no-public-ingress-sgr`](https://github.com/aquasecurity/tfsec/blob/master/docs/checks/aws/vpc/no-public-ingress-sgr/index.md)
+flags a `/0` on any port. trivy-checks'
+[`aws-ec2-no-public-ingress-sgr`](https://github.com/aquasecurity/trivy-checks/blob/main/checks/cloud/aws/ec2/no_public_ingress_sgr.rego)
+checks SSH and RDP. KICS's
+[`381c3f2a-ef6f-4eff-99f7-b169cda3422c`](https://docs.kics.io/latest/queries/terraform-queries/aws/381c3f2a-ef6f-4eff-99f7-b169cda3422c/)
+checks a longer port list. HashiCorp's reference Sentinel policies
+[`restrict-ingress-sg-rule-ssh`](https://github.com/hashicorp/terraform-sentinel-policies/blob/main/aws/restrict-ingress-sg-rule-ssh.sentinel)
+and
+[`restrict-ingress-sg-rule-rdp`](https://github.com/hashicorp/terraform-sentinel-policies/blob/main/aws/restrict-ingress-sg-rule-rdp.sentinel)
+read only `aws_security_group_rule`, and run against a plan rather than the
+source.
+
+The fixtures under `fixtures/TF030/` are vendored from public repositories
+under MIT-0 and Apache-2.0, each with its source, path, commit and licence in a
+comment header. The one below is
+`aws-samples/terraform-ec2-image-builder-container-hardening-pipeline`'s
+`sec-groups.tf`. TF030 reports its second ingress rule, whose `1025`-`65535`
+range takes in MySQL, RDP and PostgreSQL, and not the first, which opens 443:
+
+```hcl
+resource "aws_security_group" "image_builder_sg" {
+  depends_on = [
+    aws_vpc.hardening_pipeline
+  ]
+  name        = "${var.image_name}-sg"
+  description = "Security group for EC2 Image Builder"
+  vpc_id      = aws_vpc.hardening_pipeline.id
+
+  ingress {
+    description = "TLS"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "Ephemeral"
+    from_port   = 1025
+    to_port     = 65535
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    description      = "Allow all eggress"
+    from_port        = 0
+    to_port          = 0
+    protocol         = "-1"
+    cidr_blocks      = ["0.0.0.0/0"]
+    ipv6_cidr_blocks = ["::/0"]
+  }
+
+  tags = local.core_tags
+}
+```

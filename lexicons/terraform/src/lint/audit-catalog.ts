@@ -23,6 +23,15 @@ const HASHICORP_STYLE_VARIABLES: Authority = {
 // holds both halves of that invariant), and these three are correctness and
 // best-practice rules (#2112).
 
+/**
+ * The document WAW019 cites for the same finding in the aws lexicon, named
+ * without the em-dash its entry there carries (the docs prose lint counts them).
+ */
+const AWS_SECURITY_PILLAR: Authority = {
+  name: "AWS Well-Architected Framework, Security Pillar",
+  url: "https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html",
+};
+
 export const terraformAuditCatalog: Record<string, RuleMeta> = {
   TF001: {
     id: "TF001",
@@ -319,6 +328,18 @@ export const terraformAuditCatalog: Record<string, RuleMeta> = {
     remediation:
       "Replace the constant with a lookup, either an input the caller supplies or a data source " +
       "pointed at whatever vault owns the credential, and rotate what was committed.",
+    yamlBased: false,
+  },
+  TF030: {
+    id: "TF030",
+    tier: "merge-worthy",
+    fixKind: "guidance",
+    category: "security",
+    title: "Security group rule allows unrestricted ingress on a sensitive port",
+    remediation:
+      "Restrict the CIDR on SSH, RDP, MySQL and PostgreSQL ports to the sources that need them, or reach " +
+      "the host through a bastion, a VPN or SSM Session Manager.",
+    authority: [AWS_SECURITY_PILLAR],
     yamlBased: false,
   },
 };

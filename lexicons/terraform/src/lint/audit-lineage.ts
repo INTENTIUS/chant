@@ -56,7 +56,7 @@
  * | `tflint-ruleset-redeploy` | tflint-ruleset-redeploy | https://github.com/RedeployAB/tflint-ruleset-redeploy | 0BSD | scanner | Community ruleset; richest source of language-level rules outside the official set. Sweep: indexed from `docs/rules/README.md`, same table shape (33 rules). |
  * | `tflint-ruleset-avm` | tflint-ruleset-avm | https://github.com/Azure/tflint-ruleset-avm | MIT | scanner | Azure Verified Modules conformance; two of its 33 rules are provider-agnostic. Sweep: indexed from the repository-root `RULES.md`, since `docs/` holds pages for only two rules (33 rules). |
  * | `tfsec` | tfsec | https://github.com/aquasecurity/tfsec | MIT | scanner | Historical: not archived but effectively frozen (no release since 2025-05); its docs site 404s above v0.61.x, so cite pinned repository paths (`github.com/aquasecurity/tfsec/blob/master/docs/checks/...`), not the docs site. Sweep: indexed from the root `rules.md` on `master`, a flat table of all 152 check ids, because `docs/checks` nests a directory per provider, service and check. |
- * | `trivy-checks` | trivy-checks | https://github.com/aquasecurity/trivy-checks | MIT (not the trivy scanner's own Apache-2.0; cite the checks repo's licence, not the engine's) | scanner | Where tfsec's rules live today (tfsec -> defsec -> trivy + trivy-checks). Cite rules by `long_id` (stable, human-readable); `AVD-*` ids are aliases now. Sweep: not registered in `PRIOR_ART` (no rule cites it yet) and its `long_id`s live in Rego metadata under `checks/<kind>/<provider>/<service>/`, with no flat index. |
+ * | `trivy-checks` | trivy-checks | https://github.com/aquasecurity/trivy-checks | MIT (not the trivy scanner's own Apache-2.0; cite the checks repo's licence, not the engine's) | scanner | Where tfsec's rules live today (tfsec -> defsec -> trivy + trivy-checks). Cite rules by `long_id` (stable, human-readable); `AVD-*` ids are aliases now. Sweep: registered in `PRIOR_ART` since TF030 (#2285) cited it, but not swept: its `long_id`s live in Rego metadata under `checks/<kind>/<provider>/<service>/`, with no flat index. |
  * | `terraform-sentinel-policies` | HashiCorp reference Sentinel policies | https://github.com/hashicorp/terraform-sentinel-policies | MPL-2.0 | specification | HashiCorp's own example policy set; ships zero rules baked into HCP Terraform itself, so treat a cited policy as a documented pattern (`specification`) unless a future entry runs it as a real check (`scanner`); the `kind` union allows either. Sweep: indexed by listing the five per-cloud directories, whose `.sentinel` filenames are the policy ids credits cite (73 policies); the repository publishes no index page. |
  * | `choudoufu` | choudoufu | https://github.com/INTENTIUS/choudoufu | MPL-2.0 | scanner | Its `internal/live/lint` package; experimental, AWS-only. Sweep: unsweepable, its rule ids are Go constants in `internal/live/lint/issue.go` and it publishes no rule index. |
  * | `hashicorp-style-guide` | HashiCorp Terraform style guide | https://developer.hashicorp.com/terraform/language/style | n/a | specification | Sweep: unsweepable, one prose page of recommendations with no rule ids; a credit quotes the sentence and links its fragment. |
@@ -400,5 +400,49 @@ export const terraformAuditLineage: Record<string, Lineage[]> = {
       relation: "overlaps",
     },
     { tool: "kics", rule: "a88baa34-e2ad-44ea-ad6f-8cac87bc7c71", url: "https://docs.kics.io/latest/secrets/", relation: "overlaps" },
+  ],
+  TF030: [
+    // Every credit overlaps; none is equivalent. TF030 is WAW019's port list
+    // (22, 3389, 3306, 5432) on 0.0.0.0/0 or ::/0, read across the three
+    // Terraform shapes. Checkov checks one port per id and, unlike TF030,
+    // reads tcp 0-0 as every port and passes any rule with `self = true`.
+    // tfsec flags a /0 on any port; trivy-checks only SSH and RDP; KICS a
+    // longer port list; the Sentinel policies only `aws_security_group_rule`
+    // with an exact `to_port`. Each upstream id was read from its source on
+    // 2026-10-02 (checkov `AbsSecurityGroupUnrestrictedIngress.py`, trivy-checks
+    // `no_public_ingress_sgr.rego` metadata, KICS `metadata.json`, tfsec
+    // `rules.md`).
+    { tool: "checkov", rule: "CKV_AWS_24", url: "https://www.checkov.io/5.Policy%20Index/terraform.html", relation: "overlaps" },
+    { tool: "checkov", rule: "CKV_AWS_25", url: "https://www.checkov.io/5.Policy%20Index/terraform.html", relation: "overlaps" },
+    {
+      tool: "tfsec",
+      rule: "aws-vpc-no-public-ingress-sgr",
+      url: "https://github.com/aquasecurity/tfsec/blob/master/docs/checks/aws/vpc/no-public-ingress-sgr/index.md",
+      relation: "overlaps",
+    },
+    {
+      tool: "trivy-checks",
+      rule: "aws-ec2-no-public-ingress-sgr",
+      url: "https://github.com/aquasecurity/trivy-checks/blob/main/checks/cloud/aws/ec2/no_public_ingress_sgr.rego",
+      relation: "overlaps",
+    },
+    {
+      tool: "kics",
+      rule: "381c3f2a-ef6f-4eff-99f7-b169cda3422c",
+      url: "https://docs.kics.io/latest/queries/terraform-queries/aws/381c3f2a-ef6f-4eff-99f7-b169cda3422c/",
+      relation: "overlaps",
+    },
+    {
+      tool: "terraform-sentinel-policies",
+      rule: "restrict-ingress-sg-rule-ssh",
+      url: "https://github.com/hashicorp/terraform-sentinel-policies/blob/main/aws/restrict-ingress-sg-rule-ssh.sentinel",
+      relation: "overlaps",
+    },
+    {
+      tool: "terraform-sentinel-policies",
+      rule: "restrict-ingress-sg-rule-rdp",
+      url: "https://github.com/hashicorp/terraform-sentinel-policies/blob/main/aws/restrict-ingress-sg-rule-rdp.sentinel",
+      relation: "overlaps",
+    },
   ],
 };

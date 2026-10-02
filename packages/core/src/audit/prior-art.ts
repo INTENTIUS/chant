@@ -117,6 +117,7 @@ export const PRIOR_ART = {
   // docs site. The three `general/secrets` checks chant credits live only here:
   // trivy dropped them when it absorbed tfsec.
   "tfsec": { name: "tfsec", url: "https://github.com/aquasecurity/tfsec", license: "MIT", kind: "scanner" },
+  "trivy-checks": { name: "trivy-checks", url: "https://github.com/aquasecurity/trivy-checks", license: "MIT", kind: "scanner" },
   // Semgrep's engine is LGPL-2.1 but its rules are not: they ship under the
   // proprietary Semgrep Rules License v1.0, which forbids redistribution. So
   // this entry carries no SPDX id, and no semgrep rule text is ever copied into
