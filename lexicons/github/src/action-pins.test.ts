@@ -1,4 +1,6 @@
 import { describe, test, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { PostSynthContext } from "@intentius/chant/lint/post-synth";
 import { Workflow, Job } from "./generated/index";
 import { Checkout } from "./composites/checkout";
@@ -46,8 +48,8 @@ describe("action pins (#2510)", () => {
   });
 
   test("Checkout and SetupNode default to the current major, not v4", () => {
-    expect(Checkout({}).step.props.uses).toBe("actions/checkout@v7");
-    expect(SetupNode({}).step.props.uses).toBe("actions/setup-node@v7");
+    expect((Checkout({}).step.props as { uses?: string }).uses).toBe("actions/checkout@v7");
+    expect((SetupNode({}).step.props as { uses?: string }).uses).toBe("actions/setup-node@v7");
   });
 
   test("pin: \"sha\" writes the SHA as the ref and the version as a YAML comment", () => {
@@ -74,5 +76,12 @@ describe("action pins (#2510)", () => {
     const yaml = "jobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: acme/deploy@v1\n";
     const [finding] = gha029.check(ctx(yaml));
     expect(finding.message).toMatch(/security\.$/);
+  });
+
+  test("the github-pr-preview example's literal pins match the table", () => {
+    // The example writes its pins as literals so the project still folds.
+    const source = readFileSync(join(__dirname, "../../../examples/github-pr-preview/src/ci/setup.ts"), "utf8");
+    expect(source).toContain(`"${actionRef("actions/checkout", "sha")}"`);
+    expect(source).toContain(`"${actionRef("actions/setup-node", "sha")}"`);
   });
 });

@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     container: node:22-slim
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: chant run --components shared-alb --env staging --dump-outputs shared-alb.outputs.json
       - name: Upload shared-alb outputs
         uses: actions/upload-artifact@v4
@@ -27,7 +27,7 @@ jobs:
       - shared-alb
     container: node:22-slim
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Download shared-alb outputs
         uses: actions/download-artifact@v4
         with:
