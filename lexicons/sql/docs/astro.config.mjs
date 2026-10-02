@@ -26,6 +26,10 @@ export default defineConfig({
                         {
                               "label": "Declaring Tables and Views",
                               "slug": "clickhouse-ddl"
+                        },
+                        {
+                              "label": "Importing a Live Server",
+                              "slug": "importing"
                         }
                   ]
             },
