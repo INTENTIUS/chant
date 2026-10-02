@@ -138,8 +138,8 @@ export const myPlugin: LexiconPlugin = {
 ```
 
 The `file` field is the filename inside `src/skills/`; every other field of
-`SkillFileSpec` is a `SkillDefinition` field minus `content`. Seventeen of the
-nineteen lexicons wire skills this way. `lexicons/fly/src/plugin.ts:79` is a
+`SkillFileSpec` is a `SkillDefinition` field minus `content`. Most lexicons
+wire skills this way. `lexicons/fly/src/plugin.ts:79` is a
 short worked example; k3s keeps a hand-rolled loop for the same effect.
 
 ## Installation
@@ -181,8 +181,9 @@ const skills = collectSkills(myPlugin.skills!());
 
 ## Reference
 
-Eighteen of the nineteen lexicons ship skills. Only k3d ships none
-(`lexicons/k3d/src/plugin.ts` returns `[]`).
+Every lexicon ships skills except two. k3d ships none
+(`lexicons/k3d/src/plugin.ts` returns `[]`), and sql's are not written yet
+([#3211](https://github.com/INTENTIUS/chant/issues/3211)).
 
 | Lexicon | Skills | Count |
 |---------|--------|-------|
