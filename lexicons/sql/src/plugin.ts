@@ -15,6 +15,7 @@ import { postSynthChecks as postSynthCheckList } from "./lint/post-synth";
 import { sqlAuditCatalog } from "./lint/audit-catalog";
 import { completions } from "./lsp/completions";
 import { hover } from "./lsp/hover";
+import { sqlMcpResources, sqlMcpTools } from "./mcp";
 import { sqlConfigSchema } from "./config";
 import { ClickHouseSqlParser } from "./clickhouse/import/parser";
 import { ClickHouseGenerator } from "./clickhouse/import/generator";
@@ -110,6 +111,14 @@ export const sqlPlugin: LexiconPlugin = {
 
   hoverProvider(ctx: HoverContext) {
     return hover(ctx);
+  },
+
+  mcpTools() {
+    return sqlMcpTools();
+  },
+
+  mcpResources() {
+    return sqlMcpResources();
   },
 
   /** `chant import schema.sql`: a file of ClickHouse CREATE statements. */
