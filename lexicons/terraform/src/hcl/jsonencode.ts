@@ -62,8 +62,8 @@ export interface ReadJsonencodeOptions {
    * own depth. A member whose KEY is an expression (an interpolated quoted
    * key or a parenthesised computed key) is dropped from its object and listed
    * under {@link UNKNOWN_KEYS} on that object. Damage to the STRUCTURE is
-   * still `not-determined`: a for-expression producing a collection, or an
-   * expression as the whole argument (`jsonencode(local.policy)`,
+   * still `not-determined`: an expression as the whole argument, including
+   * a for-expression or a splat (`jsonencode(local.policy)`,
    * `jsonencode(var.x[*])`), since then no key or element is known.
    */
   unknownLeaves?: boolean;
@@ -251,7 +251,9 @@ class Reader {
       this.skipSpace(false);
       const sep = this.peek();
       if (sep !== "=" && sep !== ":") {
-        if (!quoted && key === "for") throw new Structural("a for-expression");
+        // A for-expression is a VALUE: under unknownLeaves the enclosing
+        // value() skips it as a leaf; as the whole argument it is not determined.
+        if (!quoted && key === "for") throw new NotLiteral("a for-expression");
         throw new Structural(`an expression where "${key}" needs = or :`);
       }
       this.pos++;
@@ -282,7 +284,7 @@ class Reader {
   private tuple(depth: number): unknown[] {
     this.expect("[", "");
     this.skipSpace();
-    if (/^for\s/.test(this.src.slice(this.pos, this.pos + 4))) throw new Structural("a for-expression");
+    if (/^for\s/.test(this.src.slice(this.pos, this.pos + 4))) throw new NotLiteral("a for-expression");
     const out: unknown[] = [];
     for (;;) {
       this.skipSpace();

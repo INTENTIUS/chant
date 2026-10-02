@@ -135,8 +135,8 @@ describe("readJsonencode with unknownLeaves: expressions become opaque leaves", 
   });
 
   test.each([
-    ["a for-expression producing the collection", "{ Statement = [for s in var.s : s] }", /for-expression/],
-    ["an object for-expression", "{ for k, v in var.m : k => v }", /for-expression/],
+    ["a tuple for-expression as the whole argument", "[for s in var.s : s]", /for-expression/],
+    ["an object for-expression as the whole argument", "{ for k, v in var.m : k => v }", /for-expression/],
     ["an expression as the whole argument", "local.policy", /reference/],
     ["a splat as the whole argument", "var.x[*]", /reference/],
   ])("still not-determined: %s", (_name, arg, reason) => {
@@ -182,5 +182,43 @@ describe("readJsonencode with unknownLeaves: members with an expression key", ()
     const read = readJsonencode(call(arg));
     expect(read.kind).toBe("not-determined");
     if (read.kind === "not-determined") expect(read.reason).toMatch(reason);
+  });
+});
+
+describe("readJsonencode with unknownLeaves: a for-expression below the argument is a leaf", () => {
+  test("a tuple for-expression as a member value (sonodar/dify-aws-terraform shape)", () => {
+    const raw = call(
+      '[{\n  name = "api"\n  environment = [for name, value in {\n    MODE = "api"\n    LOG_LEVEL = "INFO"\n  } : { name = name, value = tostring(value) }]\n  essential = true\n}]',
+    );
+    const read = readJsonencode(raw, { unknownLeaves: true });
+    expect(read.kind).toBe("literal");
+    if (read.kind !== "literal") return;
+    const def = (read.value as Record<string, unknown>[])[0];
+    expect(def.name).toBe("api");
+    expect(isUnknown(def.environment)).toBe(true);
+    expect((def.environment as { reason: string }).reason).toMatch(/for-expression/);
+    expect(def.essential).toBe(true);
+  });
+
+  test("an object for-expression as a member value", () => {
+    const read = readJsonencode(call('{\n  labels = { for k, v in var.m : k => v }\n  b = 1\n}'), { unknownLeaves: true });
+    expect(read.kind).toBe("literal");
+    if (read.kind !== "literal") return;
+    const v = read.value as Record<string, unknown>;
+    expect(isUnknown(v.labels)).toBe(true);
+    expect(v.b).toBe(1);
+  });
+
+  test("a for-expression producing a policy's Statement list is one unknown leaf", () => {
+    const read = readJsonencode(call('{\n  Version = "2012-10-17"\n  Statement = [for s in var.statements : s]\n}'), { unknownLeaves: true });
+    expect(read.kind).toBe("literal");
+    if (read.kind !== "literal") return;
+    expect(isUnknown((read.value as Record<string, unknown>).Statement)).toBe(true);
+  });
+
+  test("a for-expression as a tuple item", () => {
+    const read = readJsonencode(call('["a", [for x in var.y : x]]'), { unknownLeaves: true });
+    expect(read.kind).toBe("literal");
+    if (read.kind === "literal") expect(isUnknown((read.value as unknown[])[1])).toBe(true);
   });
 });
