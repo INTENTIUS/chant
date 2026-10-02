@@ -362,6 +362,7 @@ export default defineConfig({
 								{ label: 'OpenTelemetry Collector', link: '/lexicons/otel/' },
 								{ label: 'Grafana', link: '/lexicons/grafana/' },
 								{ label: 'Prometheus', link: '/lexicons/prometheus/' },
+								{ label: 'SQL (ClickHouse)', link: '/lexicons/sql/' },
 								{ label: 'Render', link: '/lexicons/render/' },
 								{ label: 'Terraform', link: '/lexicons/terraform/' },
 								{ label: 'augur (behaviour)', link: '/lexicons/augur/' },

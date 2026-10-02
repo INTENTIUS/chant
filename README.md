@@ -56,4 +56,5 @@ It separates PR-worthy security findings (with ready-to-apply fix diffs) from hy
 | [@intentius/chant-lexicon-k8s](lexicons/k8s) | Kubernetes lexicon — Deployments, Services, ConfigMaps + YAML import |
 | [@intentius/chant-lexicon-otel](lexicons/otel) | OpenTelemetry Collector lexicon — typed receivers, processors, exporters, connectors and pipelines, emitted as collector YAML |
 | [@intentius/chant-lexicon-prometheus](lexicons/prometheus) | Prometheus lexicon — typed recording and alerting rule groups and Alertmanager routing, emitted as a rule file and alertmanager.yml |
+| [@intentius/chant-lexicon-sql](lexicons/sql) | SQL lexicon — database schema as typed declarations, one dialect at a time; ClickHouse first, with types from a pinned server's catalog (in progress, unpublished) |
 | [@intentius/chant-lexicon-render](lexicons/render) | Render lexicon — services, datastores, env groups, projects; applied straight to the Public API |
