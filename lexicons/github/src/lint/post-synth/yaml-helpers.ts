@@ -497,6 +497,21 @@ export function extractUsesComment(rawUses: string): string | undefined {
   return comment ? comment : undefined;
 }
 
+/**
+ * Every `uses:` line in the workflow text, in document order, with its
+ * trailing comment. The parsed document has no comments (core's parseYAML
+ * drops them, #3006), so a check that reads the pin label (GHA059) takes it
+ * from here.
+ */
+export function usesLineComments(yaml: string): Array<{ ref: string; comment: string | undefined }> {
+  const out: Array<{ ref: string; comment: string | undefined }> = [];
+  for (const line of yaml.split(/\r?\n/)) {
+    const m = line.match(/^\s*(?:-\s+)?uses:\s*(["']?)([^\s"'#]+)\1(\s+#.*)?\s*$/);
+    if (m) out.push({ ref: m[2], comment: m[3] ? extractUsesComment(m[3]) : undefined });
+  }
+  return out;
+}
+
 export function parseActionUses(rawUses: string): { owner: string; repo: string; slug: string; gitRef: string } | undefined {
   const uses = stripUsesComment(rawUses);
   if (uses.startsWith("./") || uses.startsWith("../") || uses.startsWith("docker://")) return undefined;

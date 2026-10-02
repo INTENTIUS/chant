@@ -1,8 +1,10 @@
 /**
- * `chant components promote --from <env> --to <env>` (#2530) and `chant
- * components rollback <env>` (#2531): deploy digests a release ledger already
- * records, without a build. A promote takes them from another environment's
- * ledger; a rollback takes an earlier release from the environment's own. The
+ * `chant components promote --from <env> --to <env>` (#2530), `chant
+ * components rollback <env>` (#2531) and `chant components redeploy <env>`
+ * (#2604): deploy digests a release ledger already records, without a build.
+ * A promote takes them from another environment's ledger; a rollback takes an
+ * earlier release from the environment's own, and a redeploy the release it
+ * records as current. The
  * mechanism lives in ../../components/promote.ts; these handlers read the
  * ledger, print the plan, run it, and append the release records.
  *
@@ -29,34 +31,39 @@ import { fanOutRegistry } from "../../components/fan-out-support";
 import { renderDriverHuman } from "../../components/driver-output";
 import { ndjsonProgressSink } from "../../components/run-progress";
 import {
+  parseDigestPins,
   planPromotion,
   planRollback,
+  planRedeploy,
   withoutBuildSteps,
   runPromotion,
   promotionRecord,
   rollbackRecord,
+  redeployRecord,
   gateApprover,
   type DeployRunInfo,
   type PromotionItem,
   type PromotionPlan,
 } from "../../components/promote";
 import type { DriverComponent } from "../../components/driver";
-import { writeGatedRunSummary } from "../../op/gate-summary";
-import { approveCommand } from "../../op/gate";
+import { summaryLedgerPrefix, writeGatedRunSummary } from "../../op/gate-summary";
+import { approveCommand, describeGateMismatch } from "../../op/gate";
 import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
 import { GATED_EXIT_CODE } from "./run";
 import type { CommandContext } from "../registry";
 
 const PROMOTE_USAGE =
-  "chant components promote --from <env> --to <env> [--component <name> [--digest <sha256:...>]] [--dry-run] [--json]";
+  "chant components promote --from <env> --to <env> [--component <name> [--digest <sha256:...>] | --digest <component>=<sha256:...> ...] [--dry-run] [--json]";
 const ROLLBACK_USAGE =
   "chant components rollback <env> --component <name> [--digest <sha256:...>] [--dry-run] [--json]";
+const REDEPLOY_USAGE =
+  "chant components redeploy <env> --component <name> [--digest <sha256:...>] [--dry-run] [--json]";
 
-type Verb = "promote" | "rollback";
+type Verb = "promote" | "rollback" | "redeploy";
 
 function renderPlan(verb: Verb, plan: PromotionPlan, removed: Map<string, string[]>): void {
-  console.error(formatBold(verb === "promote" ? `promote ${plan.from} -> ${plan.to}` : `rollback ${plan.to}`));
+  console.error(formatBold(verb === "promote" ? `promote ${plan.from} -> ${plan.to}` : `${verb} ${plan.to}`));
   for (const item of plan.items) {
     console.error(`  ${item.component}  ${item.digest}`);
     console.error(`    released to ${plan.from} at ${item.source.timestamp} (run ${item.source.runId}, git ${item.source.gitSha.slice(0, 12)})`);
@@ -117,9 +124,9 @@ async function readLedger(env: string): Promise<ReleaseRecord[]> {
 }
 
 /**
- * Prepare, run and record a plan. Shared by promote and rollback, which differ
- * only in how the plan was chosen, whether the publish step runs, and which
- * field names the earlier release on the new record.
+ * Prepare, run and record a plan. Shared by promote, rollback and redeploy,
+ * which differ only in how the plan was chosen, whether the publish step runs,
+ * and which field names the earlier release on the new record.
  */
 async function deployPlan(
   ctx: CommandContext,
@@ -135,7 +142,12 @@ async function deployPlan(
   const removed = new Map<string, string[]>();
   const refusals: string[] = [];
   for (const item of plan.items) {
-    const result = withoutBuildSteps(byName.get(item.component)!, verb === "rollback" ? { pinDigest: item.digest } : {});
+    // A rollback and a redeploy deploy a release this environment already
+    // received, so neither runs the publish step.
+    const result = withoutBuildSteps(
+      byName.get(item.component)!,
+      verb === "promote" ? {} : { pinDigest: item.digest, verb: `a ${verb}` },
+    );
     if ("error" in result) refusals.push(result.error);
     else {
       prepared.push(result.component);
@@ -217,7 +229,9 @@ async function deployPlan(
       console.error(formatSuccess(
         verb === "promote"
           ? `Promoted ${formatBold(r.component)} ${plan.from} -> ${plan.to}: ${r.digest}`
-          : `Rolled back ${formatBold(r.component)} in ${plan.to} to ${r.digest}`,
+          : verb === "rollback"
+            ? `Rolled back ${formatBold(r.component)} in ${plan.to} to ${r.digest}`
+            : `Redeployed ${formatBold(r.component)} in ${plan.to} at ${r.digest}`,
       ));
     }
   }
@@ -233,7 +247,11 @@ async function deployPlan(
   if (run.status === "gated" && run.gate) {
     const pending = run.gate;
     console.error(formatWarning({ message: `component "${run.gatedComponent}" is gated on "${pending.gate}" — pending approval` }));
-    console.error(formatInfo(`approve : ${approveCommand(pending.op, pending.gate)}`));
+    // #2574: an approval stands, but for another environment, plan or none.
+    if (run.gateMismatch) {
+      console.error(formatWarning({ message: describeGateMismatch(pending.op, pending.gate, run.gateMismatch) }));
+    }
+    console.error(formatInfo(`approve : ${approveCommand(pending.op, pending.gate, pending.environment)}`));
     console.error(formatInfo(`then run the same ${verb} again`));
     writeGatedRunSummary({
       op: pending.op,
@@ -242,6 +260,8 @@ async function deployPlan(
       expiresAt: pending.expiresAt,
       ...(pending.url ? { url: pending.url } : {}),
       ...(pending.planDigest ? { planDigest: pending.planDigest } : {}),
+      ...(await summaryLedgerPrefix()),
+      ...(pending.environment ? { environment: pending.environment } : {}),
     });
     return GATED_EXIT_CODE;
   }
@@ -280,6 +300,23 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
   const project = await loadProject(ctx, args.component ?? "all");
   if (typeof project === "number") return project;
 
+  // Without --component, each --digest is <component>=<digest> (#2602): a
+  // generated promote job pins every component to the release its own
+  // pipeline run recorded, rather than whatever is latest in --from.
+  const digests = args.digests ?? (args.digest ? [args.digest] : []);
+  let pins: Record<string, string> | undefined;
+  if (!args.component && digests.length > 0) {
+    const parsed = parseDigestPins(digests);
+    if ("error" in parsed) {
+      console.error(formatError({ message: parsed.error, hint: PROMOTE_USAGE }));
+      return 1;
+    }
+    pins = parsed.pins;
+  } else if (args.component && digests.length > 1) {
+    console.error(formatError({ message: "--component takes one --digest", hint: PROMOTE_USAGE }));
+    return 1;
+  }
+
   await fetchLifecycle().catch(() => false);
   const plan = planPromotion({
     from,
@@ -287,7 +324,8 @@ export async function runComponentsPromote(ctx: CommandContext): Promise<number>
     sourceRecords: await readLedger(from),
     declared: project.targets.map((c) => c.name),
     ...(args.component ? { component: args.component } : {}),
-    ...(args.digest ? { digest: args.digest } : {}),
+    ...(args.component && args.digest ? { digest: args.digest } : {}),
+    ...(pins ? { pins } : {}),
   });
   if ("error" in plan) {
     console.error(formatError({ message: plan.error, hint: PROMOTE_USAGE }));
@@ -322,4 +360,32 @@ export async function runComponentsRollback(ctx: CommandContext): Promise<number
     return 1;
   }
   return deployPlan(ctx, "rollback", plan, project, who.actor, rollbackRecord);
+}
+
+export async function runComponentsRedeploy(ctx: CommandContext): Promise<number> {
+  const { args } = ctx;
+  const env = args.extraPositional;
+  if (!env || !args.component) {
+    console.error(formatError({ message: "an environment and --component <name> are required", hint: REDEPLOY_USAGE }));
+    return 1;
+  }
+  const who = actorOrRefuse(ctx);
+  if (typeof who === "number") return who;
+
+  const project = await loadProject(ctx, args.component);
+  if (typeof project === "number") return project;
+
+  await fetchLifecycle().catch(() => false);
+  const plan = planRedeploy({
+    env,
+    records: await readLedger(env),
+    declared: project.targets.map((c) => c.name),
+    component: args.component,
+    ...(args.digest ? { digest: args.digest } : {}),
+  });
+  if ("error" in plan) {
+    console.error(formatError({ message: plan.error, hint: REDEPLOY_USAGE }));
+    return 1;
+  }
+  return deployPlan(ctx, "redeploy", plan, project, who.actor, redeployRecord);
 }

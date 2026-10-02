@@ -20,9 +20,21 @@
  * S3: endpoint override via `SPRITES_BASE_URL` (an explicit `endpoint` arg wins,
  * then the env, then the real Sprites base), so the same Op targets real Sprites
  * or the in-process fake with no code change.
+ *
+ * #2711: the studio and wisp's own docs call these `SPRITES_API_URL` and
+ * `SPRITE_TOKEN` rather than `SPRITES_BASE_URL`/`SPRITES_API_TOKEN`. Both
+ * pairs are accepted — `resolveSpritesEndpoint`/`resolveSpritesToken` read the
+ * alias when the original name is unset, with the original always winning
+ * when both are present, so an existing deployment is never surprised by the
+ * alias taking over.
  */
 
-import WebSocket from "ws";
+// `ws` is loaded inside spriteExec, not at the top. It is a CommonJS package
+// that requires "events", and a sandboxed build bundles the fly lexicon into
+// ESM, where that require throws. The top-level import put it on the path of
+// every project that imports the lexicon and needs the run fallback (#2613).
+
+import { sleep } from "@intentius/chant/op";
 
 export const DEFAULT_SPRITES_BASE_URL = "https://api.sprites.dev";
 
@@ -38,15 +50,27 @@ export function resolveSpritesEndpoint(
   args: { endpoint?: string } = {},
   env: NodeJS.ProcessEnv = process.env,
 ): string {
-  const base = args.endpoint || env.SPRITES_BASE_URL || DEFAULT_SPRITES_BASE_URL;
+  const base = args.endpoint || env.SPRITES_BASE_URL || env.SPRITES_API_URL || DEFAULT_SPRITES_BASE_URL;
   return base.replace(/\/$/, "");
 }
 
+/**
+ * Resolve the bearer token (#2711): an explicit `token` arg wins, then
+ * `SPRITES_API_TOKEN`, then its alias `SPRITE_TOKEN`. Pure — mirrors
+ * `resolveSpritesEndpoint`.
+ */
+export function resolveSpritesToken(
+  token: string | undefined = undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  return token ?? env.SPRITES_API_TOKEN ?? env.SPRITE_TOKEN;
+}
+
 const spritesUrl = (base: string): string => `${base}/v1/sprites`;
-const spriteUrl = (base: string, id: string): string => `${spritesUrl(base)}/${encodeURIComponent(id)}`;
+const spriteResourceUrl = (base: string, id: string): string => `${spritesUrl(base)}/${encodeURIComponent(id)}`;
 // Create uses REST JSON; exec is the control WebSocket below; checkpoints are NDJSON.
-const spriteCheckpointUrl = (base: string, id: string): string => `${spriteUrl(base, id)}/checkpoint`;
-const spriteCheckpointsUrl = (base: string, id: string): string => `${spriteUrl(base, id)}/checkpoints`;
+const spriteCheckpointUrl = (base: string, id: string): string => `${spriteResourceUrl(base, id)}/checkpoint`;
+const spriteCheckpointsUrl = (base: string, id: string): string => `${spriteResourceUrl(base, id)}/checkpoints`;
 const spriteCheckpointRestoreUrl = (base: string, id: string, cp: string): string =>
   `${spriteCheckpointsUrl(base, id)}/${encodeURIComponent(cp)}/restore`;
 
@@ -155,10 +179,19 @@ export function splitCommand(cmd: string): string[] {
 }
 
 /**
- * Build the `wss://.../exec?cmd=...&path=...&stdin=false&cc=true` URL for a
- * command (http→ws, https→wss). Pure.
+ * Build the `wss://.../exec?cmd=...&path=...&stdin=false&cc=true[&dir=...][&env=K=V]*`
+ * URL for a command (http→ws, https→wss). `dir` and `env` (#2765) are sent the
+ * way wisp's and spritzer's real exec API take them: `dir` is a single query
+ * param, and each `env` entry is its own repeated `env=KEY=VALUE` param — see
+ * wisp's `optsFromValues` (`Dir: q.Get("dir")`, `Env: q["env"]`) and spritzer's
+ * container-mode wrapping (`--dir`/`--env` per `real.go`). Pure.
  */
-export function spriteExecWsUrl(base: string, id: string, cmd: string): string {
+export function spriteExecWsUrl(
+  base: string,
+  id: string,
+  cmd: string,
+  opts: { env?: Record<string, string>; dir?: string } = {},
+): string {
   const wsBase = base.replace(/^http(s?):\/\//i, (_m, s: string) => `ws${s}://`);
   const argv = splitCommand(cmd);
   const params = new URLSearchParams();
@@ -166,6 +199,10 @@ export function spriteExecWsUrl(base: string, id: string, cmd: string): string {
   params.set("path", argv[0] ?? "");
   params.set("stdin", "false");
   params.set("cc", "true");
+  if (opts.dir) params.set("dir", opts.dir);
+  if (opts.env) {
+    for (const [k, v] of Object.entries(opts.env)) params.append("env", `${k}=${v}`);
+  }
   return `${wsBase}/v1/sprites/${encodeURIComponent(id)}/exec?${params.toString()}`;
 }
 
@@ -257,8 +294,16 @@ export interface SpriteExecArgs {
   id: string;
   /** Command to run inside the sprite (tokenized into argv, quotes respected). */
   cmd: string;
-  /** Per-exec timeout in ms. */
+  /**
+   * Per-exec timeout in ms (#2765). When it elapses before the command exits,
+   * the exec WebSocket is aborted and the activity throws a timeout error —
+   * previously declared and never enforced.
+   */
   timeoutMs?: number;
+  /** Extra environment variables for the command, on top of the sprite's own (#2765). */
+  env?: Record<string, string>;
+  /** Working directory to run the command in (#2765). */
+  dir?: string;
   endpoint?: string;
   token?: string;
 }
@@ -351,7 +396,7 @@ export function defaultSpritesHttp(token?: string, fetchImpl: typeof fetch = fet
   return async (method, url, body, headers, signal) => {
     const h: Record<string, string> = { ...headers };
     if (body !== undefined) h["content-type"] = "application/json";
-    const tok = token ?? process.env.SPRITES_API_TOKEN;
+    const tok = resolveSpritesToken(token);
     if (tok) h["authorization"] = `Bearer ${tok}`;
     const res = await fetchImpl(url, {
       method,
@@ -381,27 +426,35 @@ export async function spriteCreate(
 
 /**
  * Run a command in the sprite over the control WebSocket (non-PTY stream
- * framing, per superfly/sprites-go). Connects to `wss://.../exec`, sends a
- * single `[4]` (stdin EOF), accumulates stdout/stderr frames, and reads the
- * exit code from the `[3]` frame. A non-zero exit is a failed activity (it
- * throws) so a risky step fails its phase and triggers `onFailure`
- * compensation (S5).
+ * framing, per superfly/sprites-go). Connects to `wss://.../exec` (`dir`/`env`
+ * riding on the URL — #2765), sends a single `[4]` (stdin EOF), accumulates
+ * stdout/stderr frames, and reads the exit code from the `[3]` frame. A
+ * non-zero exit is a failed activity (it throws) so a risky step fails its
+ * phase and triggers `onFailure` compensation (S5).
+ *
+ * `timeoutMs` (#2765) bounds the whole exec: a timer set at connect time
+ * terminates the WebSocket and rejects with a timeout error once it elapses
+ * without the command finishing. Previously declared on `SpriteExecArgs` and
+ * never read.
  */
 export async function spriteExec(args: SpriteExecArgs, signal?: AbortSignal): Promise<SpriteExecResult> {
   const base = resolveSpritesEndpoint(args);
-  const url = spriteExecWsUrl(base, args.id, args.cmd);
-  const token = args.token ?? process.env.SPRITES_API_TOKEN;
+  const url = spriteExecWsUrl(base, args.id, args.cmd, { env: args.env, dir: args.dir });
+  const token = resolveSpritesToken(args.token);
   const headers: Record<string, string> = {};
   if (token) headers.Authorization = `Bearer ${token}`;
+  const { default: WebSocket } = await import("ws");
 
   const result = await new Promise<SpriteExecResult>((resolve, reject) => {
     const frames: Uint8Array[] = [];
     const ws = new WebSocket(url, { headers });
     let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const finish = (fn: () => void): void => {
       if (settled) return;
       settled = true;
       if (signal) signal.removeEventListener("abort", onAbort);
+      if (timer !== undefined) clearTimeout(timer);
       fn();
     };
     const onAbort = (): void => {
@@ -415,6 +468,18 @@ export async function spriteExec(args: SpriteExecArgs, signal?: AbortSignal): Pr
     if (signal) {
       if (signal.aborted) return onAbort();
       signal.addEventListener("abort", onAbort);
+    }
+    if (args.timeoutMs !== undefined) {
+      timer = setTimeout(() => {
+        try {
+          ws.terminate();
+        } catch {
+          /* already closed */
+        }
+        finish(() =>
+          reject(new Error(`sprite ${args.id} exec "${args.cmd}" timed out after ${args.timeoutMs}ms`)),
+        );
+      }, args.timeoutMs);
     }
     ws.on("open", () => {
       // No stdin: signal EOF immediately (belt and braces with stdin=false).
@@ -518,10 +583,90 @@ export async function spriteDestroy(
   http: SpritesHttp = defaultSpritesHttp(args.token),
 ): Promise<Record<string, never>> {
   const base = resolveSpritesEndpoint(args);
-  const res = await http("DELETE", spriteUrl(base, args.id), undefined, undefined, signal);
+  const res = await http("DELETE", spriteResourceUrl(base, args.id), undefined, undefined, signal);
   if (res.status >= 300 && res.status !== 404) {
     throw new Error(`sprite ${args.id} destroy failed (${res.status}): ${res.text}`);
   }
   console.log(`destroyed: sprite/${args.id} (${base})`);
   return {};
+}
+
+/**
+ * Delete the sprite (#2711) — the same idempotent `DELETE /v1/sprites/{id}` as
+ * `spriteDestroy`, under the name spritzer, wisp and the other lexicons'
+ * delete activities (`awsDelete`, `gcpDelete`, `azDelete`) use. A literal
+ * alias, not a reimplementation, so the two names can never drift: an Op
+ * authored against either resolves to the same call. `spriteDestroy` stays —
+ * it is the name every existing Op, example and the `op-verb-class` registry
+ * already depend on.
+ */
+export const spriteDelete = spriteDestroy;
+export type SpriteDeleteArgs = SpriteDestroyArgs;
+
+export interface SpriteUrlArgs {
+  /** Target sprite id. */
+  id: string;
+  /**
+   * Wait until this path on the sprite's URL answers, instead of returning
+   * the URL immediately. Unset (default): no wait, just resolve the URL.
+   */
+  path?: string;
+  /** Expected status while waiting. Default: any 2xx. */
+  status?: number;
+  /** Max time to wait for `path` to answer, ms. Default: `10000`. */
+  timeoutMs?: number;
+  /** Delay between polls, ms. Default: `500`. */
+  intervalMs?: number;
+  endpoint?: string;
+  token?: string;
+}
+
+export interface SpriteUrlResult {
+  url: string;
+}
+
+/**
+ * Resolve the sprite's URL (#2711) — `spriteCreate` returns it too, but
+ * nothing until now exposed it on its own (for a later phase that only has
+ * the sprite `id`) or waited on it. `GET /v1/sprites/{id}` for the URL; with
+ * `path` set, polls `GET {url}{path}` until `status` (default any 2xx) or
+ * `timeoutMs` runs out — the box's door/hud services take a moment to
+ * bind their `http_port` after `spriteServiceStart`.
+ */
+export async function spriteUrl(
+  args: SpriteUrlArgs,
+  signal?: AbortSignal,
+  http: SpritesHttp = defaultSpritesHttp(args.token),
+): Promise<SpriteUrlResult> {
+  const base = resolveSpritesEndpoint(args);
+  const res = await http("GET", spriteResourceUrl(base, args.id), undefined, undefined, signal);
+  if (res.status >= 300) throw new Error(`sprite ${args.id} url lookup failed (${res.status}): ${res.text}`);
+  const url = (safeJson(res.text) as { url?: string } | undefined)?.url;
+  if (!url) throw new Error(`sprite ${args.id} has no url`);
+
+  if (args.path !== undefined) {
+    const timeoutMs = args.timeoutMs ?? 10_000;
+    const intervalMs = args.intervalMs ?? 500;
+    const target = `${url}${args.path}`;
+    const deadline = Date.now() + timeoutMs;
+    let lastErr = "";
+    for (;;) {
+      if (signal?.aborted) throw new Error(`sprite ${args.id} url wait aborted`);
+      try {
+        const check = await http("GET", target, undefined, undefined, signal);
+        const ok = args.status !== undefined ? check.status === args.status : check.status >= 200 && check.status < 300;
+        if (ok) {
+          console.log(`url: sprite/${args.id} answers on ${target} (${check.status})`);
+          return { url };
+        }
+        lastErr = `status ${check.status} (want ${args.status ?? "2xx"})`;
+      } catch (e) {
+        lastErr = e instanceof Error ? e.message : String(e);
+      }
+      if (Date.now() >= deadline) throw new Error(`sprite ${args.id} url ${target} did not answer: ${lastErr}`);
+      await sleep(intervalMs, signal);
+    }
+  }
+
+  return { url };
 }

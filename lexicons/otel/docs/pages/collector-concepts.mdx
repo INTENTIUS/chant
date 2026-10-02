@@ -5,7 +5,7 @@ diataxis: explanation
 order: 2
 ---
 
-A collector config file has four component sections (receivers, processors, exporters, extensions) and a `service` block whose `pipelines` wire components together per signal. The otel lexicon gives each of those parts an entity.
+A collector config file has five component sections (receivers, processors, exporters, connectors, extensions) and a `service` block whose `pipelines` wire components together per signal. The otel lexicon gives each of those parts an entity.
 
 ## Components are entities, ids come from the config
 
@@ -15,13 +15,17 @@ A component entity is `new <Class>(config)`. Its collector id is its type, or `t
 
 `Pipeline` takes a `signal` (`traces`, `metrics` or `logs`), an optional `name`, and lists of receivers, processors and exporters. Each entry is either the entity itself, which TypeScript checks for kind, or an id string for a component declared somewhere chant can't see. A component that a pipeline references by entity is emitted even if you never exported it, because the entity carries its config. A string that matches no declared component is OTEL101.
 
+## Connectors join pipelines
+
+A connector is an exporter in one pipeline and a receiver in another, and it is how a collector turns traces into metrics (`spanmetrics`, `servicegraph`), splits traffic (`routing`) or chains pipelines (`forward`, `count`). In chant a connector is one entity listed in both pipelines: in `exporters` of the one that feeds it and in `receivers` of the one it feeds. Each connector reads and writes fixed signals, so a pipeline's `signal` decides which side it can be on; OTEL101 and OTEL112 check both.
+
 ## Extensions and the service block
 
 Declared extensions are enabled in declaration order. Declare a `Service` to choose the order, enable a subset, or set `service.telemetry`.
 
 ## Order in the output
 
-Sections always come out as receivers, processors, exporters, extensions, service. Within a section, components follow the order the build hands them over, and each component's keys keep the order you wrote them in. Processor order inside a pipeline is significant to the collector and is emitted exactly as declared.
+Sections always come out as receivers, processors, exporters, connectors, extensions, service. Within a section, components follow the order the build hands them over, and each component's keys keep the order you wrote them in. Processor order inside a pipeline is significant to the collector and is emitted exactly as declared.
 
 ## Why the built-in types are hand-written
 
@@ -29,4 +33,4 @@ Most chant lexicons generate their types from an upstream schema. The collector 
 
 ## What chant does not do here
 
-The lexicon writes the config file. It does not run a collector, and it does not model connectors yet (a connector id in a parsed config is accepted where the collector accepts one). Running the collector is a platform concern, handled by composites in the platform lexicons, see [Composites](../composites/).
+The lexicon writes the config file. It does not run a collector. Running the collector is a platform concern, handled by composites in the platform lexicons, see [Composites](../composites/).

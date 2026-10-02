@@ -85,6 +85,10 @@ export function buildRunRecord(
     status: OpRunRecord["status"];
     id?: string;
     gate?: OpRunRecord["gate"];
+    point?: OpRunRecord["point"];
+    steward?: string;
+    /** Each phase's wall-clock time, by name, as the executor measured it. */
+    phaseDurations?: Record<string, number>;
   },
 ): OpRunRecordInput {
   const phases: OpRunPhaseRecord[] = [];
@@ -106,10 +110,16 @@ export function buildRunRecord(
       ...(record.approval ? { approval: record.approval } : {}),
       ...(record.error !== undefined ? { error: record.error } : {}),
       ...(record.refusal !== undefined ? { refusal: record.refusal } : {}),
+      ...(record.point ? { point: record.point } : {}),
+      ...(record.gate ? { gate: record.gate } : {}),
     });
     if (record.outcome) outcomes[record.outcome.name] = record.outcome.value;
   }
-  for (const phase of phases) phase.status = phaseStatus(phase.steps);
+  for (const phase of phases) {
+    phase.status = phaseStatus(phase.steps);
+    const ms = times.phaseDurations?.[phase.name];
+    if (ms !== undefined) phase.durationMs = ms;
+  }
 
   return {
     ...(times.id !== undefined ? { id: times.id } : {}),
@@ -122,6 +132,8 @@ export function buildRunRecord(
     outcomes,
     phases,
     ...(times.gate ? { gate: times.gate } : {}),
+    ...(times.point ? { point: times.point } : {}),
+    ...(times.steward ? { steward: times.steward } : {}),
   };
 }
 

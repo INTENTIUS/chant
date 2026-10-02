@@ -219,6 +219,9 @@ export function generateForgejoOpPipeline(
       const environment = ops[index].environment;
       const forgejoDoc: GithubOpPipelineDoc = {
         ...(environment ? { header: droppedEnvironmentHeader(environment.name) } : {}),
+        // Forgejo Actions reads `name:` as GitHub does (#2601), so the Op's
+        // name carries over and the Actions list shows it instead of the path.
+        ...(doc.name ? { name: doc.name } : {}),
         on: forgejoize(doc.on, dialectOptions),
         ...(doc.env ? { env: forgejoize(doc.env, dialectOptions) } : {}),
         concurrency: forgejoize(doc.concurrency, dialectOptions),

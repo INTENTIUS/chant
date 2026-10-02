@@ -42,7 +42,7 @@ import { unknownEnvError, isProdLikeEnvironment } from "../../env";
 import { planTeardown, executeTeardown, type TeardownPlan, type TeardownReport } from "../../lifecycle/teardown";
 import { collectBuildRootContributors } from "../plugins";
 import { applyLiveEndpoint } from "../../live-endpoint";
-import { isResourceDeclarable } from "../../declarable";
+import { isObservableDeclarable } from "../../declarable";
 import { formatError, formatWarning, formatSuccess, formatBold } from "../format";
 import type { CommandContext } from "../registry";
 import type { LifecycleSnapshot } from "../../lifecycle/types";
@@ -812,13 +812,14 @@ async function runLifecycleDiffLive(args: LiveDiffArgs): Promise<LiveDiffOutcome
     }
 
     // Build per-lexicon entity index. Resource declarables only — outputs,
-    // parameters and serializer directives have no live counterpart, and a
+    // parameters, serializer directives and property-kind declarables (read
+    // inside their parent, #3001) have no live counterpart of their own, and a
     // declared name the reader can never resolve reads as missing (see
     // lifecycle/observe.ts).
     const declared = new Set<string>();
     const entities: DeclaredEntities = new Map();
     for (const [name, entity] of args.buildResult.entities) {
-      if (entity.lexicon === lexiconName && isResourceDeclarable(entity)) {
+      if (entity.lexicon === lexiconName && isObservableDeclarable(entity)) {
         declared.add(name);
         // Path origins are carried across explicitly (#1443): this map is plain
         // objects, and the symbol-keyed provenance channel does not survive it.
@@ -1289,11 +1290,11 @@ export async function runLifecyclePlan(ctx: CommandContext): Promise<number> {
         // A receipt has no `props` payload of its own but is declared, diffed,
         // and observed like any resource (#1832) — it joins the declared axis
         // so its lexicon's observation can confirm presence or absence.
-        if (entity.lexicon === lexiconName && (isResourceDeclarable(entity) || isEffectReceipt(entity))) {
+        if (entity.lexicon === lexiconName && (isObservableDeclarable(entity) || isEffectReceipt(entity))) {
           declared.add(name);
           entities.set(name, {
             entityType: entity.entityType,
-            props: (isResourceDeclarable(entity) && entity.props != null ? entity.props : {}) as Record<string, unknown>,
+            props: (isObservableDeclarable(entity) && entity.props != null ? entity.props : {}) as Record<string, unknown>,
           });
         }
       }

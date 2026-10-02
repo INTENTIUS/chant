@@ -109,6 +109,7 @@ export interface FargateServiceProps {
   };
 }
 
+/** A Fargate service routed by a listener rule on an existing ALB listener, with its task definition, target group, logs, roles and optional autoscaling. */
 export const FargateService = Composite((props: FargateServiceProps) => {
   if (!props.pathPatterns && !props.hostHeaders) {
     throw new Error("FargateService requires at least one of pathPatterns or hostHeaders");

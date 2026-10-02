@@ -5,6 +5,7 @@
  * and code generation for Docker Compose and Dockerfile resources.
  */
 
+import { compositeCatalog } from "./composites/catalog";
 import type { LexiconPlugin, IntrinsicDef, InitTemplateSet } from "@intentius/chant/lexicon";
 import { detectTemplate } from "./detect";
 import type { LintRule } from "@intentius/chant/lint/rule";
@@ -159,6 +160,10 @@ export const api = new Service({
     writeBundleSpec(spec, distDir);
 
     console.error(`Packaged ${stats.resources} entities, ${stats.ruleCount} rules, ${stats.skillCount} skills`);
+  },
+
+  composites() {
+    return compositeCatalog;
   },
 
   mcpTools() {

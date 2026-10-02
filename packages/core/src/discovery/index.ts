@@ -291,6 +291,7 @@ export async function discover(path: string, options?: DiscoveryOptions): Promis
         options.sandbox === true,
         [],
         options.executing === true,
+        files,
       )
     : undefined;
   if (options?.fold) {

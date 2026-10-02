@@ -1,0 +1,112 @@
+---
+title: "Importing a Collector Config"
+description: "Turn an existing OpenTelemetry Collector YAML file into typed chant TypeScript that builds back to the same config"
+diataxis: how-to
+order: 10
+---
+
+`chant import` reads a collector config file and writes TypeScript that declares the same collector with this lexicon's classes. `chant build` on the result gives back the config you started from, with key order and quoting normalised.
+
+## Import the file
+
+From a chant project whose `chant.config.ts` lists `otel`:
+
+```bash
+chant import otel-collector-config.yaml --output src
+```
+
+A file with `service.pipelines` and a `receivers` or `exporters` section is detected as a collector config. The importer writes one module per section and one for the pipelines:
+
+| File | Holds |
+|---|---|
+| `receivers.ts`, `processors.ts`, `exporters.ts`, `connectors.ts`, `extensions.ts` | one constant per component, typed by its built-in class |
+| `pipelines.ts` | one `Pipeline` per entry under `service.pipelines`, referencing those constants |
+| `service.ts` | a `Service`, only when `service.extensions` or `service.telemetry` needs one |
+| `custom-components.ts` | a `defineComponent` per component type chant does not ship |
+
+A section with more than eight components is split into `processors-1.ts`, `processors-2.ts` and so on, the limit COR009 sets. Then build it:
+
+```bash
+chant build src --lexicon otel -o collector.yaml
+```
+
+A collector config inside a Kubernetes ConfigMap is imported the same way when you import the manifest with the k8s lexicon. The ConfigMap's value becomes `collectorYaml([...])` over the imported components and pipelines. See the k8s lexicon's [Importing Existing YAML](/chant/lexicons/k8s/importing-yaml/).
+
+## What the generated source looks like
+
+A component id becomes a constant named after it (`otlp/tempo` becomes `otlpTempo`), and the part after `/` becomes the `name` prop. When a receiver and an exporter share an id, both constants get a kind suffix (`otlpReceiver`, `otlpExporter`). Nested settings are lifted into named consts typed by the component's config type, which is how COR001 wants a declaration written:
+
+```ts title="exporters.ts"
+import { OtlpExporter, type OtlpExporterConfig } from "@intentius/chant-lexicon-otel";
+
+const otlpTempoHeaders: OtlpExporterConfig["headers"] = {
+  authorization: "Bearer ${env:TEMPO_TOKEN}",
+};
+const otlpTempoTls: OtlpExporterConfig["tls"] = { insecure: false, ca_file: "/etc/tls/ca.pem" };
+const otlpTempo = new OtlpExporter({
+  name: "tempo",
+  endpoint: "tempo.observability:4317",
+  headers: otlpTempoHeaders,
+  tls: otlpTempoTls,
+});
+
+export { otlpTempo };
+```
+
+A connector is one constant. `pipelines.ts` lists it in the exporters of the pipeline that feeds it and the receivers of the pipeline it feeds:
+
+```ts title="pipelines.ts"
+const tracesSampling = new Pipeline({
+  signal: "traces",
+  name: "sampling",
+  receivers: [otlpSampling],
+  processors: [memoryLimiter, tailSampling, batch],
+  exporters: [otlpTempo, spanmetrics],
+});
+
+const metricsRed = new Pipeline({
+  signal: "metrics",
+  name: "red",
+  receivers: [spanmetrics],
+  processors: [batch],
+  exporters: [prometheus],
+});
+```
+
+`${env:VAR}` and `${file:/path}` references stay strings, so the collector still resolves them at start-up. A literal credential is imported as written, and `chant lint` reports it under OTEL002 like any other.
+
+## Components chant does not ship
+
+A component type with no built-in class is declared with `defineComponent` in `custom-components.ts`. Its config is carried as data, typed `Record<string, unknown>`, with a comment above the definition saying so:
+
+```ts title="custom-components.ts"
+// extension "file_storage" is not a component chant ships, so its config is carried as data
+// and is not type-checked. Replace Record<string, unknown> with its config type to check it.
+// The imported config named no schema pin for it, so it is pinned to COLLECTOR_PIN.
+const FileStorageExtension = defineComponent<Record<string, unknown>>()({
+  kind: "extension",
+  type: "file_storage",
+  pin: COLLECTOR_PIN,
+});
+```
+
+When the file was built by chant, its `# chant:` header names each custom component's schema pin, and the importer uses that pin instead of `COLLECTOR_PIN`. To get type checking back, give the definition a config interface, as [Custom Components](../custom-components/) describes.
+
+## Service block
+
+Without a `Service`, chant enables every declared extension in declaration order. The importer writes a `Service` only when the config differs from that: a different order, an extension declared but not enabled, or a `telemetry` block, which is carried as written.
+
+## What the importer cannot carry
+
+The config is carried as parsed, so nothing inside a component's settings is dropped. A few things outside them have no place in the lexicon, and `chant import` prints a warning for each:
+
+- a top-level key other than the five component sections and `service`;
+- a key under `service` other than `extensions`, `telemetry` and `pipelines`, and a pipeline key other than `receivers`, `processors` and `exporters`;
+- a component config key called `name`, since `name` is the instance name in chant;
+- comments, apart from the `# chant:` header.
+
+A pipeline for a signal `Pipeline` does not type (`profiles`) is imported with a `@ts-expect-error` comment giving the reason.
+
+## Settings outside the typed config
+
+The built-in config types follow what collector-contrib v0.130.0 accepts, including a Prometheus scrape job's auth blocks (`basic_auth`, `authorization`, `oauth2`, `tls_config`), the `filter` processor's older `include`/`exclude` match syntax, and durations written as bare integers, which the collector reads as nanoseconds. Every vendored import fixture's generated source type-checks, and `generated-types.e2e.test.ts` holds that. A key a type does not list still imports and still builds back to the same YAML, but `tsc` reports it at the const that holds it. Either add the setting to the type, or keep the value and mark the line with `// @ts-expect-error` and a reason.

@@ -1,0 +1,171 @@
+---
+title: "GenAI Rules"
+description: "The GenAiRules composite: recording rules, opt-in alerts and spend from a declared price table for the otel lexicon's GenAI collector preset"
+diataxis: reference
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-prometheus` — DO NOT EDIT.
+    Edit lexicons/prometheus/docs/pages/genai-rules.mdx instead; changes here are overwritten. */}
+
+
+`GenAiRules` builds one `RuleGroup` for workloads that send OpenTelemetry GenAI spans through the otel lexicon's [GenAI preset](/chant/lexicons/otel/genai-pipeline/): request rate, error ratio and latency per provider, model and operation, token rates, spend from a price table you declare, and per-tool rates and errors. It reads every metric and label name from the `GenAiMetrics` the collector was built with, so a collector with another namespace, or with the conventions' client metrics switched on, moves the expressions with it.
+
+```ts
+import { genAiMetrics } from "@intentius/chant-lexicon-otel";
+import { GenAiRules } from "@intentius/chant-lexicon-prometheus";
+
+// The same options the collector's genAiPipeline() was built with.
+const metrics = genAiMetrics({ clientMetrics: "derive" });
+
+export const genai = GenAiRules({
+  genAi: metrics,
+  prices: [
+    { provider: "anthropic", model: "claude-x", inputPerMTok: 3, outputPerMTok: 15, currency: "USD", source: "https://example.com/pricing", asOf: "2026-09-29" },
+  ],
+  alerts: { errorRatio: true, budgets: [{ amount: 50, currency: "USD", per: "day" }] },
+});
+```
+
+`GenAiRules` is a composite, called without `new`. It returns `{ rules }`, a `RuleGroup` named `genai` unless `name` says otherwise. Pass `genai.rules` to a k8s `PrometheusRule` to render the same rules as a CRD.
+
+## Props
+
+| Field | Type | Meaning |
+|---|---|---|
+| `genAi` | `GenAiMetrics` or `{ metrics }` | `genAiMetrics(options)` with the collector's options, or `genAiComponents(options)`. |
+| `source` | `"client"` or `"spans"` | Which metrics the model rules read. Default `client` when the metrics include the conventions' client metrics, otherwise `spans`. |
+| `prices` | `GenAiPrice[]` | Prices per provider and model. A model missing here gets no cost series. |
+| `alerts` | `GenAiAlerting` | Opt-in alerts. None is built unless it is named here. |
+| `name` | `string` | The rule group's name. Default `genai`. |
+| `prefix` | `string` | The first part of every recorded series name. Default `gen_ai`. Two `GenAiRules` in one Prometheus need different prefixes. |
+| `rateWindow` | duration | The range every `rate()` reads. Default `5m`. |
+| `groupBy` | `string[]` | More Prometheus labels every rule keeps, such as `job` or `service_name`. |
+| `labels` | `Record<string, string>` | Added to every rule as group labels. |
+| `interval` | duration | The group's evaluation interval. |
+
+## Sources
+
+The model rules read one of two sets of metrics.
+
+With `source: "client"`, they read the conventions' `gen_ai.client.operation.duration` and `gen_ai.client.token.usage`, which the collector derives from spans with `clientMetrics: "derive"` or passes through from the SDK with `"passthrough"`. Requests are the duration histogram's `_count`, errors are requests with an `error.type`, and token rates are the token histogram's `_sum` with `gen_ai.token.type` `input` or `output`. These carry the provider, so every model series is split by provider, model and operation.
+
+With `source: "spans"`, they read the preset's own `genai.calls`, `genai.duration`, `genai.tokens.input` and `genai.tokens.output`. Errors are spans with `status.code` `STATUS_CODE_ERROR`. These metrics carry the provider only when the collector sets `providerDimensions: true`, and the token sums never do, so the cost rules put the provider from the price table on their series. For the same reason a span-metric build refuses a price table that prices one model under two providers.
+
+The tool rules read `genai.calls` and `genai.duration` whichever source the model rules use, because the conventions' client metrics carry no tool name.
+
+Spans without a request model (tool calls, in-process agent steps) are left out of the model series.
+
+## What it builds
+
+With the defaults (`prefix` `gen_ai`, `rateWindow` `5m`):
+
+| Series | Labels | Value |
+|---|---|---|
+| `gen_ai:requests:rate5m` | provider, model, operation | requests per second |
+| `gen_ai:errors:rate5m` | the same and `error_type` | failed requests per second |
+| `gen_ai:error_ratio:rate5m` | provider, model, operation | failed over all requests, 0 when none failed |
+| `gen_ai:error_ratio_by_type:rate5m` | the same and `error_type` | failures of each type over all requests |
+| `gen_ai:operation_duration_seconds:quantile_rate5m` | the same and `quantile` (`0.5`, `0.95`, `0.99`) | operation latency in seconds |
+| `gen_ai:tokens:rate5m` | provider, model and `gen_ai_token_type` | tokens per second |
+| `gen_ai:cost:rate5m` | provider, model, `gen_ai_token_type` and `currency` | spend per second in the price's currency |
+| `gen_ai:tool_calls:rate5m` | `gen_ai_tool_name` | tool calls per second |
+| `gen_ai:tool_errors:rate5m` | `gen_ai_tool_name` | failed tool calls per second |
+| `gen_ai:tool_error_ratio:rate5m` | `gen_ai_tool_name` | failed over all tool calls |
+| `gen_ai:tool_duration_seconds:quantile_rate5m` | `gen_ai_tool_name`, `quantile="0.95"` | tool call latency in seconds |
+
+Provider is absent from the request, error and latency series of a span-metric build without `providerDimensions`. The labels are the attribute keys as the `prometheus` exporter writes them: `gen_ai_provider_name`, `gen_ai_request_model`, `gen_ai_operation_name`, `error_type`.
+
+Recording rules come first in the group and the alerts after, so each evaluation's alerts and ratios read the rates it has just recorded.
+
+## Cost
+
+The semantic conventions define no cost metric, and the lexicon ships no prices, since providers change them without notice. Each entry in `prices` becomes one recording rule that multiplies the model's recorded token rates by its prices:
+
+```yaml
+- record: gen_ai:cost:rate5m
+  expr: |-
+    gen_ai:tokens:rate5m{gen_ai_provider_name="anthropic", gen_ai_request_model="claude-x", gen_ai_token_type="input"} * 3 / 1000000
+    or
+    gen_ai:tokens:rate5m{gen_ai_provider_name="anthropic", gen_ai_request_model="claude-x", gen_ai_token_type="output"} * 15 / 1000000
+  labels:
+    gen_ai_provider_name: anthropic
+    gen_ai_request_model: claude-x
+    currency: USD
+```
+
+| Price field | Meaning |
+|---|---|
+| `provider` | The `gen_ai.provider.name` value. |
+| `model` | The `gen_ai.request.model` value, exactly as spans report it. A provider that answers with a dated model name still matches on the name that was requested. |
+| `inputPerMTok`, `outputPerMTok` | Price per million input and output tokens, at or above 0. |
+| `currency` | Required. chant converts no currency, and every cost series carries it as a label. |
+| `source` | Required. Where the prices come from, such as the provider's pricing page. |
+| `asOf` | The date the prices were read, `YYYY-MM-DD`. |
+
+`currency` and `source` are the same two fields a workspace run's cost record carries ([#3033](https://github.com/INTENTIUS/chant/issues/3033)), so spend measured here and spend recorded for a run can be compared.
+
+A model the table does not price gets no cost series at all, never a cost of zero, so a sum of `gen_ai:cost:rate5m` covers the priced models only. At the conventions' pin, input tokens include cached input tokens, so a model with prompt caching is costed as if every input token were billed at the full input price. A cache-read price waits on the cache token metrics of [#3044](https://github.com/INTENTIUS/chant/issues/3044).
+
+## Alerts
+
+No alert is built unless `alerts` names it. Each takes `true` for its defaults, or an object that may set `for` (default `10m`), `severity` (default `warning`), `labels` and `annotations` besides its threshold.
+
+| Field | Alert | Fires when | Default threshold |
+|---|---|---|---|
+| `errorRatio` | `GenAiErrorRatioHigh` | `gen_ai:error_ratio:rate5m` is over `threshold` | 0.05 |
+| `latency` | `GenAiLatencyHigh` | p95 operation latency is over `thresholdSeconds` | 30 |
+| `toolErrorRatio` | `GenAiToolErrorRatioHigh` | a tool's error ratio is over `threshold` | 0.1 |
+| `budgets` | `GenAiSpendOverBudget` | spend over the last hour or day, in one currency, is over `amount` | none; each budget sets `amount`, `currency` and `per` |
+
+Spend over a window is the average of `gen_ai:cost:rate5m` over the window, times its length in seconds:
+
+```yaml
+- alert: GenAiSpendOverBudget
+  expr: sum by (currency) (avg_over_time(gen_ai:cost:rate5m{currency="USD"}[1d])) * 86400 > 50
+  labels:
+    budget: day
+    currency: USD
+    severity: warning
+```
+
+A budget fires as soon as it is over, without a `for`, unless it sets one. Its `currency` must be the currency of some price, and there can be one budget per window and currency.
+
+## Validation
+
+`GenAiRules()` throws when `genAi` is not the otel lexicon's GenAI metrics, when `source` is `client` and the metrics have no client metrics, when a metric lacks an attribute a rule is split by, when a price is missing `currency` or `source` or has a negative price, when a model is priced twice in a way the token series can't tell apart, when a ratio threshold is not between 0 and 1, or when a duration, prefix or label name is not valid.
+
+## Tests
+
+The lexicon's tests build the rules from both `genAiMetrics()` and `genAiMetrics({ clientMetrics: "derive" })` and evaluate them over fixed series with the evaluator in `src/rule-eval.ts`: request rates, error ratios, latency quantiles, token rates and cost per token type, a model without a price getting no cost series, and each alert firing above its threshold and not below it. With `promtool` on the path, `promtool check rules` checks the built file as well.
+
+## `genAiRuleMetrics()`
+
+`genAiRuleMetrics(rules)` returns what the rules record, so a dashboard reads series names from the declaration instead of repeating them. It takes the `GenAiRules(...)` result, its `rules` group, or the props. The grafana lexicon's [`AgentDashboard`](/chant/lexicons/grafana/composites/#from-genairules) builds a dashboard from it with `AgentDashboard({ rules, datasource })`; build the rules with `groupBy: ["service_name"]` or `["job"]` if the dashboard should have a service picker.
+
+```ts
+import { genAiRuleMetrics } from "@intentius/chant-lexicon-prometheus";
+
+const m = genAiRuleMetrics(genai);
+m.requests;           // "gen_ai:requests:rate5m"
+m.latency;            // { record: "gen_ai:operation_duration_seconds:quantile_rate5m", quantiles: ["0.5", "0.95", "0.99"] }
+m.cost;               // "gen_ai:cost:rate5m"
+m.labels.model;       // "gen_ai_request_model"
+m.currencies;         // ["USD"]
+```
+
+| Field | Meaning |
+|---|---|
+| `group`, `source`, `rateWindow` | The group name, the source the model rules read, and the rate window. |
+| `labels` | Label names: `provider` (absent when the source has none), `model`, `operation`, `errorType`, `tokenType`, `tool` (absent without a tool dimension), `currency`, `quantile`. |
+| `modelLabels`, `tokenLabels` | The labels the model series and the token and cost series are split by, `groupBy` last. |
+| `requests`, `errors`, `errorRatio`, `errorRatioByType`, `tokens` | Series names. |
+| `latency` | `{ record, quantiles }`. |
+| `cost` | The cost series name. Absent without prices. |
+| `tool` | `{ calls, errors, errorRatio, latency }`. Absent when the span metrics carry no tool name. |
+| `prices` | The price table without the prices: `provider`, `model`, `currency`, `source`, `asOf`. |
+| `currencies` | Every currency in the price table. |
+| `alerts` | Each alert built: `alert`, `kind`, `severity`, `threshold`, and `currency` and `per` for a budget. |
+
+## Not yet built
+
+Agent rules (run rate, error ratio and run duration per agent), the average number of tool and model calls per agent run, and the cache hit ratio need the agent and cache metrics of [#3044](https://github.com/INTENTIUS/chant/issues/3044), and are left to it.

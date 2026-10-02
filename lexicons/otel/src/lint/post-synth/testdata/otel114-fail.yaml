@@ -1,0 +1,25 @@
+# OTEL114 failing fixture: the id "datadog" is declared both as a receiver and
+# as a connector. collector-contrib ships a receiver and a connector of that
+# type, so the real collector gets as far as comparing the ids.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 127.0.0.1:4317
+  datadog:
+    endpoint: 127.0.0.1:8126
+
+exporters:
+  debug: {}
+
+connectors:
+  datadog: {}
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [datadog]
+    metrics:
+      receivers: [datadog]
+      exporters: [debug]

@@ -1,0 +1,55 @@
+---
+title: "Checking with promtool and amtool"
+description: "Run promtool check rules and amtool check-config over what the lexicon builds, in tests and CI"
+diataxis: how-to
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-prometheus` — DO NOT EDIT.
+    Edit lexicons/prometheus/docs/pages/upstream-tools.mdx instead; changes here are overwritten. */}
+
+
+The lexicon's own checks cover structure, references and PromQL syntax. `promtool` and `amtool` know the rest: PromQL types, the Go templates in annotations, every receiver field. chant doesn't bundle them and `chant build` doesn't run them, so a build gives the same answer on every machine. Run them in tests and CI instead.
+
+## From TypeScript
+
+```ts
+import { alertmanagerYaml, amtoolCheckConfig, promtoolCheckRules, ruleFileYaml } from "@intentius/chant-lexicon-prometheus";
+
+const rules = promtoolCheckRules(ruleFileYaml([api]));
+if (rules.ran && !rules.ok) throw new Error(rules.output);
+
+const am = amtoolCheckConfig(alertmanagerYaml([root, oncall, fallback]));
+if (am.ran && !am.ok) throw new Error(am.output);
+```
+
+Each helper writes the text to a temporary file and runs the tool on it. `ran` is `false` when the binary isn't found, so a test can skip rather than fail:
+
+```ts
+import { hasTool } from "@intentius/chant-lexicon-prometheus";
+
+test.skipIf(!hasTool("promtool"))("promtool accepts the rules", () => {
+  expect(promtoolCheckRules(ruleFileYaml([api])).ok).toBe(true);
+});
+```
+
+The binaries are found on `PATH`, or at `$PROMTOOL` and `$AMTOOL`, or at the path passed as the second argument.
+
+## From the shell
+
+```bash
+chant build src --lexicon prometheus -o dist/rules.yml
+promtool check rules dist/rules.yml
+amtool check-config dist/alertmanager.yml
+```
+
+## Getting the binaries
+
+Both ship in the release archives on GitHub (`prometheus/prometheus` for `promtool`, `prometheus/alertmanager` for `amtool`). Use the versions in `PROMETHEUS_PIN`: the lexicon's types follow them.
+
+## On a cluster
+
+`lexicons/prometheus/examples/k3d-stack.e2e.test.ts` builds the k3d-stack example, brings up a k3d cluster, applies it, and checks through the Prometheus and Alertmanager APIs that the rule group loaded and an alert reached Alertmanager through the declared route. It runs when Docker, k3d and kubectl are all present and skips otherwise:
+
+```bash
+npx vitest run --project e2e lexicons/prometheus
+```

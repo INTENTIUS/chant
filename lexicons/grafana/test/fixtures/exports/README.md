@@ -1,0 +1,193 @@
+# Grafana dashboard exports
+
+Real dashboard JSON written by Grafana's own UI, used by
+`src/schema-overlay.test.ts` to check that the pinned schemas (with the
+correction overlay in `src/spec/overlay/`) accept what Grafana produces:
+every classic export here must pass GRAF107 with no errors and no warnings.
+Later work (dashboard import, #2945; v2 read, #2947) can reuse them.
+
+## Provenance
+
+Captured on 2026-09-28 from the official images `grafana/grafana:12.4.11`
+(commit 96836a94) and `grafana/grafana:13.2.2` (commit 1bea008f), each run
+locally with defaults plus anonymous Admin access.
+
+1. Two datasources were created through `POST /api/datasources`: Prometheus
+   (uid `prom`) and Loki (uid `loki`). Nothing was listening behind them;
+   export does not query.
+2. The library panel `seed/burn-rate.library-panel.json` was created through
+   `POST /api/library-elements`, and the dashboards `seed/checkout.json` and
+   `seed/slo.json` through `POST /api/dashboards/db`. Between them they have
+   field overrides with string, object and `scope` matchers, dashboard, panel
+   and field links, value mappings, transformations, a repeated panel, a
+   repeated collapsed row, a library panel, a Prometheus annotation, and
+   datasource, query (object-form `query`), custom, ad hoc, interval,
+   constant and textbox variables.
+3. Each dashboard was opened in the UI (headless Chrome) and exported from
+   Export > Export as JSON with the Classic model, once as it is
+   (`<name>.json`) and once with "Export for sharing externally" / "Share
+   dashboard with another instance" turned on (`<name>.external.json`, which
+   adds `__inputs`, `__requires` and `__elements`). The JSON is the text of
+   the export drawer's editor, reformatted with `jq .`.
+4. `grafana-13.2.2/checkout.v2-resource.json` is the same dashboard exported
+   with the "V2 Resource" model, Grafana 13's default. It is not a classic
+   dashboard and is not validated against the v1 schema; the importer reads
+   it as v2 (#2947).
+
+The seed files are what was posted, before Grafana migrated them to
+`schemaVersion` 42; the exports are what came back.
+
+### Newer enum values (chant #2971)
+
+`grafana-13.2.2/cells.json` and `cells.external.json` were captured the same
+way on 2026-09-28 from `grafana/grafana:13.2.2` (commit 1bea008f), from
+`seed/cells.json` and the library panel `seed/owners.library-panel.json`.
+They use enum values the pinned schemas lack and the overlay adds: the pill,
+markdown (with `dynamicHeight`) and geo table cell types, the viridis, magma,
+plasma, inferno and cividis color schemes, and the `accessible` line style.
+The library panel is a markdown table, so the external export's `__elements`
+carries a model with newer values too. The Classic model was picked under
+Advanced options in the export drawer, since 13.2 defaults to V2 Resource.
+There is no 12.4.11 capture because the `accessible` line style is new in
+13.x.
+
+### Ad hoc, group by and switch variables (chant #2952)
+
+`drilldown.json` and `drilldown.external.json` in both version directories
+were captured on 2026-09-28 from `seed/drilldown.json`, the same way, with
+two differences: each Grafana ran with `GF_FEATURE_TOGGLES_ENABLE=groupByVariable`
+(group by variables are experimental in 12.4 and 13.x, and without the
+toggle Grafana drops them on load), and the Prometheus datasource pointed
+at a running, empty `prom/prometheus:v3.15.0`, so the variables' key and
+value lookups answered. The seed has query variables in object form
+(`{ qryType, query, refId }`, a label-values and a series query), an ad hoc
+variable with filters, base filters and static keys, a group by variable
+with static options and a default, two switch variables (one with its own
+enabled and disabled values), and a panel repeated over a multi-value
+variable.
+
+Two Grafana behaviours show in them:
+
+- Grafana 12.4.11 cannot export a dashboard that has a group by variable:
+  the export drawer stays empty, and `makeExportableExternally` throws
+  `"groupby" not found in: query,custom,textbox,constant,datasource,interval,adhoc,system,switch`.
+  The 12.4.11 captures are of the seed with the group by variable removed.
+- Grafana 13.2.2 leaves the group by variable out of the "for sharing
+  externally" export; the plain export keeps it.
+
+One edit was made after capture: the CPU panel's unit, captured as `cores`,
+was changed to `suffix: cores` in the seed and in all four exports, once
+GRAF115 (#3003) began warning about units Grafana does not register.
+Grafana writes `fieldConfig.defaults.unit` back unchanged, so the exports
+are what it would have written for the corrected seed.
+
+### Every other built-in panel type (chant #2950)
+
+`grafana-12.4.11/panels.json`, `grafana-13.2.2/panels.json` and their
+`.external.json` exports were captured on 2026-09-28 from the same two
+images, from `seed/panels.json`: one panel each of bar chart, bar gauge, pie
+chart, state timeline, status history, histogram, node graph, XY chart,
+trend, canvas, geomap, flame graph, alert list and traces. Besides the
+Prometheus and Loki datasources above, a Tempo (uid `tempo`) and a Grafana
+Pyroscope (uid `pyroscope`) datasource were created, again with nothing
+behind them. The seed's XY chart carries `pluginVersion: "11.1.0"` so that
+Grafana keeps its manual series mapping as written instead of migrating it
+from the pre-11.1 format.
+
+The dashboard was opened in headless Chromium at 1600x3000 and scrolled to
+the end, so every panel plugin loaded, then exported from the toolbar's
+Export > Export as JSON in the same page (a fresh load of
+`?shareView=export` exports before the panels load). In 12.4.11 the export
+therefore carries each plugin's defaults and a `pluginVersion`, which is
+where the overlay patches for `piechart`, `nodegraph`, `trend`, `canvas` and
+`geomap` come from. The 13.2.2 Classic export is converted from the stored
+V2 model and carries the panels as they were saved.
+
+### Candlestick, annotations list, dashboard list, news and data grid (chant #2998)
+
+`lists.json` and `lists.external.json` in both version directories were
+captured on 2026-10-01 from the same two images, from `seed/lists.json`
+(a Prometheus datasource named Prometheus, uid `prom`, nothing behind it),
+the same way as `panels.json`: opened in headless Chromium, then exported
+from Export > Export as code, with "Export for sharing externally" for the
+external file and the Classic model under Advanced options on 13.2.2. The
+JSON is the clipboard text of the drawer, reformatted with `jq .`. The data
+grid panel was removed in Grafana 13, so the 13.2.2 files are captured from
+the seed without it. The candlestick overlay patches (`options.annotations`,
+`showValues`, the `accessible` line style) come from its CUE, not from these
+exports, which only use options the vendored schema already had.
+
+### Every datasource with a query class (chant #2951)
+
+`grafana-12.4.11/queries.json`, `grafana-13.2.2/queries.json` and their
+`.external.json` exports were captured on 2026-09-28 from the same two
+images, from `seed/queries.json`: panels querying Elasticsearch (metrics,
+raw data and logs), CloudWatch (a metric search, a Metrics Insights query
+and a Logs Insights query), Azure Monitor (metrics, Log Analytics and
+Resource Graph), Google Cloud Monitoring (a time series list, PromQL and an
+SLO), BigQuery, Grafana Pyroscope, PostgreSQL (code and builder mode),
+MySQL and SQL Server, plus a `-- Mixed --` panel with a Prometheus query
+(with exemplars), a Cloud Monitoring PromQL query and a Loki query. The
+datasources were created through `POST /api/datasources` with the uids the
+seed uses (`es`, `cloudwatch`, `azure`, `gcm`, `bigquery`, `pyroscope`,
+`postgres`, `mysql`, `sqlserver`, `prom`, `loki`), nothing behind them.
+BigQuery is not bundled with either image; it was installed at start-up
+with `GF_PLUGINS_PREINSTALL_SYNC=grafana-bigquery-datasource@3.4.2`.
+
+The dashboard was opened in headless Chromium and exported from the toolbar
+as for the panel exports above. In 13.2.2 the "Export for sharing
+externally" view sometimes shows `{"error": {"message": "Datasource: <uid>
+was not found"}}` instead of the dashboard, naming a different datasource
+from run to run; the export here is from a run where it did not. 12.4.11
+writes `fieldConfig.defaults.custom.footer` on each table panel, which the
+`table` overlay now allows.
+
+### OpenSearch queries (chant #3017)
+
+`grafana-13.2.2/opensearch.json` and `opensearch.external.json` were
+captured on 2026-10-01 from `grafana/grafana:13.2.2` (commit 1bea008f), from
+`seed/opensearch.json`: six panels querying an OpenSearch datasource, with a
+Lucene metrics query (count and avg over a date histogram), a Lucene logs
+query, a Lucene raw data query, and PPL queries in the table, time series
+and logs formats. The plugin is not bundled, so it was installed at start-up
+with `GF_PLUGINS_PREINSTALL_SYNC=grafana-opensearch-datasource@2.34.4`, and
+the datasource (uid `opensearch`, nothing behind it) was created through
+`POST /api/datasources`. The dashboard was opened in headless Chrome and
+exported from Export > Export as code with the Classic model under Advanced
+options, with "Share dashboard with another instance" for the external file;
+the JSON is the clipboard text of the drawer's Copy to clipboard, reformatted
+with `jq .`. There is no 12.4.11 capture.
+
+### A dashboard stored as v2 (chant #2947)
+
+`grafana-13.2.2/tabs.v2-resource.json` and `tabs.v1-resource.json` were
+captured on 2026-09-29 from `grafana/grafana:13.2.2` (commit 1bea008f), run
+the same way, with the same two datasources. `seed/tabs.v2.json` was created
+through `POST /apis/dashboard.grafana.app/v2/namespaces/default/dashboards`,
+so Grafana stores it as v2. It has what the classic model cannot hold: tabs,
+an auto grid, rows nested in a tab, conditional rendering on a panel and a
+row, a row with `fillScreen`, a variable shown in the controls menu, and
+switch and group by variables. The two files are the API's reads of it,
+reformatted with `jq .`, not UI exports:
+
+- `tabs.v2-resource.json`: `GET .../v2/namespaces/default/dashboards/chant-fx-tabs`.
+  Its spec is the seed's, unchanged.
+- `tabs.v1-resource.json`: `GET .../v1/namespaces/default/dashboards/chant-fx-tabs`,
+  Grafana's down-conversion, with `status.conversion.storedVersion: v2`. The
+  importer refuses it by default, and `src/import/v2.test.ts` checks that
+  reading the v2 file gives this spec. `v0alpha1`, `v1beta1` and `v2beta1`
+  reads carry the same marker; `GET /api/dashboards/uid/chant-fx-tabs` does
+  not (its `meta.apiVersion` is `v0alpha1` for v1- and v2-stored dashboards
+  alike).
+
+These are not classic exports: the schema, GRAF108 and round-trip tests that
+read every export skip files named `*-resource.json`.
+
+## Adding a fixture
+
+Run the same steps against another Grafana version (a new directory named
+after the image tag) or another dashboard (a new seed). Export from the UI
+rather than `GET /api/dashboards/uid/...`: the API returns what was saved,
+and the UI export is what users hand to chant. If a new export fails GRAF107,
+check Grafana's CUE for the dashboard kind at that version before adding an
+overlay patch (see the "Where the Types Come From" docs page).

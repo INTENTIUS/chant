@@ -6,15 +6,15 @@
  */
 
 import { existsSync, readFileSync, statSync, writeFileSync } from "fs";
-import { join, resolve } from "path";
+import { dirname, join, resolve } from "path";
 import { auditFiles, type AuditInput, type AuditFinding, type ChecksProvider, type SuppressionStats } from "../../audit/core";
 import { AUDIT_LEXICONS, classifyFiles, loadAuditPlugins, unclaimedFiles, walkCandidates, type CandidateWalk, type DetectPlugin, type RepoFile, type UnclaimedFile } from "../../audit/discover";
 import { RULE_CATALOG, resolveAuditCatalog, type RuleMeta } from "../../audit/catalog";
 import { scanForSecrets, parseSecretsConfig, type SecretsScanOptions } from "../../audit/secrets";
 import { auditWranglerConfigs } from "../../audit/wrangler";
 import { auditNginxConfigs } from "../../audit/nginx";
-import { auditTerraformState, isTerraformStatePath } from "../../audit/terraform-state";
-import { warnDiscoveryChanges } from "../../discovery/convergence";
+import { auditTerraformState } from "../../audit/terraform-state";
+import { workspaceMemberDirs } from "../../discovery/walk";
 import { renderMarkdown } from "../../audit/report";
 import { renderHtml, type ReportTheme } from "../../audit/report-html";
 import { buildReportJson, REPORT_SCHEMA_VERSION, type AuditSnapshot } from "../../audit/report-model";
@@ -23,7 +23,8 @@ import { extractUnpinnedActions, extractUnpinnedImages } from "../../audit/proof
 import type { ProveOptions } from "../../audit/proof";
 import type { Severity } from "../../lint/rule";
 import { formatWarning } from "../format";
-import { lexiconModulePath, lexiconPackagesToInstall, lexiconSourceLabel } from "../../lexicon-module";
+import { lexiconPackagesToInstall, lexiconSourceLabel, pathLexiconMap, recordedLexiconModules } from "../../lexicon-module";
+import { readLexiconDeclarationsStatically, unknownPathLexiconsNotice } from "../../config-static";
 
 export type AuditFormat = "stylish" | "json" | "sarif" | "markdown" | "html";
 export type AuditTier = "merge-worthy" | "all";
@@ -116,7 +117,7 @@ export interface AuditCommandResult {
    * summary line.
    */
   suppressedCount?: number;
-  /** Run diagnostics for stderr (#2528). */
+  /** Run diagnostics for stderr: a truncated scan in a format that cannot carry it (#2528). */
   warnings?: AuditWarning[];
 }
 
@@ -129,14 +130,32 @@ export const NO_LEXICONS_EXIT_CODE = 2;
  * `chant.config.ts` names by path (#2520), which has no package to install
  * (chant#2578).
  */
-function missingLexiconRemedy(names: readonly string[]): string {
+function missingLexiconRemedy(names: readonly string[], paths: ReadonlyMap<string, string>): string {
   const parts: string[] = [];
-  const pkgs = lexiconPackagesToInstall(names);
+  const pkgs = lexiconPackagesToInstall(names, paths);
   if (pkgs.length > 0) parts.push(`npm i ${pkgs.join(" ")}`);
   for (const name of names) {
-    if (lexiconModulePath(name) !== undefined) parts.push(`${name} is declared by path: ${lexiconSourceLabel(name)}`);
+    if (paths.has(name)) parts.push(`${name} is declared by path: ${lexiconSourceLabel(name, process.cwd(), paths)}`);
   }
   return parts.join("; ");
+}
+
+/**
+ * chant#2589 — the lexicons a local target's chant.config declares by path,
+ * with any recorded earlier in this process. The config is read statically
+ * (../../config-static.ts) and never evaluated, and the paths are not
+ * recorded for the loaders: audit names them in its messages, but never
+ * imports a project's lexicon module. `notice` is set when the config's
+ * `lexicons` could not be read that way.
+ */
+export function auditPathLexicons(target: string, isUrl: boolean): { paths: Map<string, string>; notice?: string } {
+  const paths = recordedLexiconModules();
+  if (isUrl) return { paths };
+  const read = readLexiconDeclarationsStatically(resolve(target));
+  if (read.status === "read") {
+    for (const [name, path] of pathLexiconMap(read.entries, dirname(read.configPath))) paths.set(name, path);
+  }
+  return { paths, notice: unknownPathLexiconsNotice(read) };
 }
 
 /** Missing audit lexicons the unclaimed files pointed at, in first-seen order. */
@@ -149,26 +168,31 @@ function wantedLexicons(unclaimed: UnclaimedFile[]): string[] {
  * lexicons it needs. Every wanted lexicon is a `-p` package so npx puts all of
  * them on the same resolution path.
  */
-export function installLine(lexicons: string[], target: string): string {
+export function installLine(
+  lexicons: string[],
+  target: string,
+  paths: ReadonlyMap<string, string> = recordedLexiconModules(),
+): string {
   // chant#2578 — a lexicon declared by path has no package for npx to fetch.
-  const pkgs = ["@intentius/chant", ...lexiconPackagesToInstall(lexicons)];
+  const pkgs = ["@intentius/chant", ...lexiconPackagesToInstall(lexicons, paths)];
   return `npx ${pkgs.map((p) => `-p ${p}`).join(" ")} chant audit ${target}`;
 }
 
 /** One-line coverage hint for the partial case: some lexicons loaded, others wanted by files on disk. */
-function missingLexiconHint(unclaimed: UnclaimedFile[]): string | undefined {
+function missingLexiconHint(unclaimed: UnclaimedFile[], paths: ReadonlyMap<string, string>): string | undefined {
   const wanted = wantedLexicons(unclaimed);
   if (wanted.length === 0) return undefined;
   const n = unclaimed.length;
   return `${n} file${n === 1 ? " looks" : "s look"} like ${wanted.join("/")} but ${wanted.length === 1 ? "that lexicon is" : "those lexicons are"} not installed, so ${n === 1 ? "it was" : "they were"} skipped` +
-    ` (${missingLexiconRemedy(wanted)}).`;
+    ` (${missingLexiconRemedy(wanted, paths)}).`;
 }
 
 /** Human-readable diagnostic for the zero-lexicon case. */
-function renderNoLexicons(target: string, unclaimed: UnclaimedFile[]): string {
+function renderNoLexicons(target: string, unclaimed: UnclaimedFile[], paths: ReadonlyMap<string, string>, truncated?: AuditTruncation): string {
   const lines: string[] = [];
   lines.push(`chant audit had nothing to look with: no audit lexicon is installed, so nothing under ${target} was inspected.`);
   lines.push("This is not a clean result. Detection and checks live in the lexicon packages.");
+  if (truncated) lines.push("", `Note: ${truncationNote(truncated, target)}`);
   const wanted = wantedLexicons(unclaimed);
   if (unclaimed.length > 0) {
     lines.push("", "Files that wanted a lexicon:");
@@ -179,12 +203,17 @@ function renderNoLexicons(target: string, unclaimed: UnclaimedFile[]): string {
     lines.push("", "No file under the target looked like CI, Kubernetes, Helm, Docker, CloudFormation, ARM, Config Connector, fountain, or Terraform either.");
   }
   lines.push("", "Run it with the lexicons those files need:");
-  lines.push(`  ${installLine(wanted.length > 0 ? wanted : [...AUDIT_LEXICONS], target)}`);
+  const lexicons = wanted.length > 0 ? wanted : [...AUDIT_LEXICONS];
+  lines.push(`  ${installLine(lexicons, target, paths)}`);
+  // chant#2589 — a lexicon declared by path is left out of the line above.
+  for (const name of lexicons) {
+    if (paths.has(name)) lines.push(`  (${name} is declared by path: ${lexiconSourceLabel(name, process.cwd(), paths)})`);
+  }
   return lines.join("\n");
 }
 
 /** Machine-readable form of the zero-lexicon diagnostic (`status: "no-lexicons"`). */
-function renderNoLexiconsJson(target: string, unclaimed: UnclaimedFile[]): string {
+function renderNoLexiconsJson(target: string, unclaimed: UnclaimedFile[], paths: ReadonlyMap<string, string>, truncated?: AuditTruncation): string {
   const wanted = wantedLexicons(unclaimed);
   return JSON.stringify(
     {
@@ -196,7 +225,8 @@ function renderNoLexiconsJson(target: string, unclaimed: UnclaimedFile[]): strin
       findings: [],
       unclaimed,
       missingLexicons: wanted,
-      install: installLine(wanted.length > 0 ? wanted : [...AUDIT_LEXICONS], target),
+      install: installLine(wanted.length > 0 ? wanted : [...AUDIT_LEXICONS], target, paths),
+      truncated,
     },
     null,
     2,
@@ -406,32 +436,26 @@ async function buildSnapshot(options: AuditCommandOptions, files: string[], isUr
   };
 }
 
-/**
- * Warnings for the two level-0 changes #2528 makes in the next release, one
- * release ahead of it (#2525). Neither changes today's report: a truncated walk
- * is still reported as if it were whole, and TF023 still reads only the root
- * `.gitignore`.
- */
-export function walkWarnings(walk: CandidateWalk, target: string): AuditWarning[] {
-  const warnings: AuditWarning[] = [];
-  if (walk.truncated) {
-    warnings.push({
-      message:
-        `the scan of ${target} stopped at ${walk.maxFiles} files, so part of the tree was not audited. ` +
-        "The limit counts every file the walk reaches, not only the ones it audits.",
-      hint:
-        "Raise it with --max-files <n>. From the next release, text and JSON output will also report a truncated scan.",
-    });
-  }
-  for (const change of walk.nestedGitignore) {
-    warnings.push({
-      file: change.path,
-      message: `TF023 reports this path because chant audit reads only the root .gitignore, but ${change.gitignore} ignores it.`,
-      hint:
-        "From the next release chant audit reads every .gitignore between a file and the scan root, and TF023 will no longer report this path.",
-    });
-  }
-  return warnings;
+/** The flag that raises the local walk's file limit, named wherever a truncated scan is reported. */
+export const MAX_FILES_FLAG = "--max-files";
+
+/** How a report states that the local walk stopped at its limit (#2528). JSON carries it as `truncated`. */
+export interface AuditTruncation {
+  limit: number;
+  flag: typeof MAX_FILES_FLAG;
+}
+
+/** The truncation a walk reports, or undefined for a whole scan. */
+export function walkTruncation(walk: CandidateWalk): AuditTruncation | undefined {
+  return walk.truncated ? { limit: walk.maxFiles, flag: MAX_FILES_FLAG } : undefined;
+}
+
+/** The text-report note for a truncated scan. */
+export function truncationNote(t: AuditTruncation, target: string): string {
+  return (
+    `The scan of ${target} stopped at ${t.limit} files, so part of the tree was not audited. ` +
+    `The limit counts every file the walk reaches, not only the ones it audits. Raise it with ${t.flag} <n>.`
+  );
 }
 
 /** Run the audit and produce a rendered result. */
@@ -441,6 +465,8 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
   const failOn = options.failOn ?? "none";
 
   const isUrl = /^https?:\/\//.test(options.path);
+  // chant#2589 — path lexicons the target declares, read without running its config.
+  const pathLexicons = auditPathLexicons(options.path, isUrl);
 
   // Detection lives in the lexicon plugins (each one's `detectTemplate`), so a
   // lexicon that isn't installed can't claim its files. Every branch below
@@ -449,7 +475,7 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
   // render the same way (#1623).
   const plugins = options.plugins ?? (await loadAuditPlugins());
   let candidates: RepoFile[];
-  let warnings: AuditWarning[] = [];
+  let truncated: AuditTruncation | undefined;
   if (isUrl) {
     try {
       // Fetch the whole repo's candidate files (all lexicons, not just CI) and
@@ -469,20 +495,18 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
     // One walk, plugin-delegated detection. CI (path), Dockerfiles (name), and
     // Helm charts (bundle) are special-cased by the classifier since content
     // shape alone can't disambiguate them.
-    const walk = walkCandidates(options.path, { maxFiles: options.maxFiles });
+    // Workspace members leave the root's audit only when a declaration exists
+    // (#2525 rule 3); without one this is a few existsSync calls (#2527).
+    const excludeDirs = await workspaceMemberDirs(options.path);
+    const walk = walkCandidates(options.path, { maxFiles: options.maxFiles, excludeDirs });
     candidates = walk.files;
-    warnings = walkWarnings(walk, options.path);
-    // #2527's warning release: the converged walk skips git-ignored files and,
-    // inside a project, child projects. Terraform state paths are TF023's own
-    // question and stay out of it. `candidates` is unchanged.
-    await warnDiscoveryChanges({
-      walker: "audit",
-      root: options.path,
-      files: candidates.filter((f) => !isTerraformStatePath(f.path)).map((f) => resolve(options.path, f.path)),
-    });
+    truncated = walkTruncation(walk);
   }
-  // Only a non-empty list rides on the result, so a run with nothing to warn
-  // about returns exactly the object it did before #2528.
+  // Every format but SARIF states a truncated scan in the report itself
+  // (#2528). SARIF has no slot chant fills for it, so there it goes to stderr.
+  const warnings: AuditWarning[] =
+    truncated && format === "sarif" ? [{ message: truncationNote(truncated, options.path) }] : [];
+  if (pathLexicons.notice !== undefined) warnings.push({ message: pathLexicons.notice });
   const withWarnings = warnings.length > 0 ? { warnings } : {};
   // A local target hands its directory to the classifier, so an input whose
   // path names a directory carries the directory itself (#2217): terraform's
@@ -514,14 +538,18 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
   const terraformStateFindings = auditTerraformState(candidates);
 
   if (plugins.length === 0) {
-    const output = format === "json" ? renderNoLexiconsJson(options.path, unclaimed) : renderNoLexicons(options.path, unclaimed);
+    const output =
+      format === "json"
+        ? renderNoLexiconsJson(options.path, unclaimed, pathLexicons.paths, truncated)
+        : renderNoLexicons(options.path, unclaimed, pathLexicons.paths, truncated);
     return { success: true, status: "no-lexicons", output, findings: [...secretsFindings, ...wranglerFindings, ...nginxFindings, ...terraformStateFindings], scanned: [], unclaimed, exitCode: NO_LEXICONS_EXIT_CODE, stream: format === "json" ? "stdout" : "stderr", ...withWarnings };
   }
 
-  const missingLexiconNote = missingLexiconHint(unclaimed);
+  const missingLexiconNote = missingLexiconHint(unclaimed, pathLexicons.paths);
 
   if (inputs.length === 0 && secretsFindings.length === 0 && wranglerFindings.length === 0 && nginxFindings.length === 0 && terraformStateFindings.length === 0) {
-    const output = `No auditable files found under ${options.path}.${missingLexiconNote ? ` ${missingLexiconNote}` : ""}`;
+    let output = `No auditable files found under ${options.path}.${missingLexiconNote ? ` ${missingLexiconNote}` : ""}`;
+    if (truncated) output += `\n\nNote: ${truncationNote(truncated, options.path)}`;
     return { success: true, status: "ok", output, findings: [], scanned: [], unclaimed, exitCode: 0, ...withWarnings };
   }
 
@@ -548,6 +576,7 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
 
   if (tier === "merge-worthy") findings = findings.filter((f) => isMergeWorthy(f, catalog));
   const notes = coverageNotes(inputs);
+  if (truncated) notes.unshift(truncationNote(truncated, options.path));
   if (missingLexiconNote) notes.push(missingLexiconNote);
   if (suppressionStats.count > 0) {
     notes.push(
@@ -596,7 +625,7 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
   switch (format) {
     case "json": {
       const snapshot = await buildSnapshot(options, scanned, isUrl);
-      output = JSON.stringify(buildReportJson(findings, { snapshot, toolVersion: options.toolVersion, catalog, unclaimed }), null, 2);
+      output = JSON.stringify(buildReportJson(findings, { snapshot, toolVersion: options.toolVersion, catalog, unclaimed, truncated }), null, 2);
       break;
     }
     case "sarif":
@@ -607,7 +636,7 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
       break;
     case "html": {
       const snapshot = await buildSnapshot(options, scanned, isUrl);
-      output = renderHtml(findings, { files, resolveSha, resolveDigest, notes, snapshot, theme: options.theme, template: options.template, catalog });
+      output = renderHtml(findings, { files, resolveSha, resolveDigest, notes, snapshot, theme: options.theme, template: options.template, catalog, truncated });
       break;
     }
     default:

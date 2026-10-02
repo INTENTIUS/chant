@@ -1,0 +1,131 @@
+---
+title: "chant workspace adopt-lineage"
+description: Give a scope a git lineage, either by matching a scope with no lineage lock against the template's versions, or by moving a directory lineage onto the repository the directory was copied from
+diataxis: reference
+---
+
+## Synopsis
+
+```
+chant workspace adopt-lineage [<scope>] --from <repo>[@<ref>][#<member>] [--tags <glob>] [--index <file>] [--param name=value] [--dry-run] [--json]
+chant workspace hash-index --from <repo>[#<member>] [--tags <glob>] [--output <file>]
+```
+
+## Description
+
+`chant workspace adopt-lineage` gives a scope a git lineage, so that [`chant workspace upgrade`](/chant/cli/workspace-upgrade/) can bring it forward from the template's history. `<scope>` is the scope's directory relative to the current directory, `.` by default. The command needs no `chant.workspace.json`. The design is D5 and D9 of [#2524](https://github.com/INTENTIUS/chant/issues/2524), with decisions ws-006 (the hash index is computed from tags) and [ws-070](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-070-adoption.md), and requirement P7 (adoption).
+
+What it does depends on what the [lineage lock](/chant/reference/lineage-lock/) already holds for the scope:
+
+| The lock holds | adopt-lineage |
+|---|---|
+| no lineage for the scope | matches the scope's files against the template's versions, records the best one, and records the adopted commit range for the trust policy ([A scope with no lineage](#a-scope-with-no-lineage)) |
+| a directory lineage, from `chant init --from <dir>` | moves it onto the git repository the directory was copied from, at the version that reproduces every file the lock recorded ([A directory lineage](#a-directory-lineage)) |
+| any other lineage | refuses |
+
+Both need the scope in a git repository with at least one commit, with no uncommitted changes in the scope or the lock.
+
+## A scope with no lineage
+
+Two kinds of project need this: one made before `chant init --from` wrote a lock, and one copied by hand from a template or from a fork of one. The command works in these steps:
+
+| Step | What happens |
+|---|---|
+| 1. Index | chant lists the template's tags and computes a hash index from them: for each tag that reads as a version, the SHA-256 of every file the template has there. `--index` supplies a cached copy (see [The hash index](#the-hash-index)). |
+| 2. Match | Each version is scored by how many of its files the scope holds byte for byte. The most such files wins. A tie goes to the version whose files the scope accounts for best, then to the oldest (see [Versions that match equally](#versions-that-match-equally)). |
+| 3. Re-check | When a cached index chose the version, its files are read from the template and hashed again. If they disagree with the cache, chant drops it and computes every tag. |
+| 4. Record the lineage | The lineage pins the chosen version. Every file the template has there is recorded with its hash as the merge base, after the template's parameters are substituted with the `--param` values or their defaults. A file the scope edited then shows as edited, and an upgrade merges it. Files only the scope has are its own and are not recorded. |
+| 5. Record the adoption | The lineage gets an [`adoption`](/chant/reference/lineage-lock/#adoption) naming HEAD, and the range ending at HEAD is added to `.chant/trust.json` under `adopted`. |
+
+```
+$ chant workspace adopt-lineage --from someone/starter-fork
+.  github.com/someone/starter-fork@v1.1.0 (9e1d04c2b7aa)
+  matched 3 of 5 template file(s); 1 edited, 1 not in the scope; 3 version(s) compared
+  next: v1.0.0, 2 of 3 identical, 1 edited, 0 missing
+  next: v1.2.0, 2 of 5 identical, 2 edited, 1 missing
+  edited: src/app.ts
+  not in the scope: docs.md
+  index: computed from the template
+  adopted range: up to e07ab4c1d9f3, added to .chant/trust.json; it counts once that change is merged to the base branch
+✓ recorded the lineage of "." in .chant/workspace.lock.json and the adopted range in .chant/trust.json. Review and commit both; the range counts once an admin merges it.
+```
+
+A ref in `--from` (`--from acme/starter@v1.4.0`) restricts the comparison to that version. The ref may be a tag, a branch or a commit. Review the result before committing the lock. The chosen version is where the next upgrade starts, and a wrong one shows up as many edited files.
+
+### Versions that match equally
+
+A template directory that stays the same across several releases gives the same score at each of them, and the scope fits any of them. chant adopts the oldest and names the others. An upgrade from the oldest replays every migration since. One that no longer applies then refuses the upgrade, where adopting a later version would skip it silently. When you know the version the scope was made from, name it with `--from <repo>@<ref>`.
+
+### Adoption and the trust policy
+
+D5 has an adoption cover an exact commit range, admitted by an admin at the base revision. chant records HEAD as `adoption.commits.to`, and adds `{ "to": <HEAD>, "note": "adopt-lineage <scope> <template>@<ref>" }` to the `adopted` list of `.chant/trust.json`. That file is policy, which chant always reads at the base revision, and editing it is a protected write (see [chant workspace verify](/chant/cli/workspace-verify/)). The range therefore counts only once an admin has merged the change. Until then [`chant workspace lineage`](/chant/cli/workspace-lineage/) shows the scope as `unattested`, and afterwards as `adopted`. Because the adoption names an exact commit, the scope must have no uncommitted changes.
+
+### Fork-born workspaces
+
+A workspace copied from a fork of a template adopts its lineage against the fork, the template it actually came from. [`chant workspace upgrade --source`](/chant/cli/workspace-upgrade/#moving-to-another-template) then moves it onto the original template through that template's [bridge migration](/chant/reference/template-migrations/#bridge-migrations).
+
+## A directory lineage
+
+`chant init --from <dir>` records the directory it copied as the scope's source (#2647). A directory has no history, so `chant workspace upgrade --to <dir>` can rebuild the merge base only while the recorded directory still holds the files the scope was made from. A host that replaces the directory on each release loses that base, and the upgrade is refused. A studio box image does this on each kit release.
+
+`adopt-lineage --from <repo>[#<member>]` moves such a scope onto the repository the directory was copied from. chant renders every candidate version with the parameter values the lock recorded, and only a version whose files have every hash the lock recorded qualifies. Generated files are left out, since they are rebuilt and never merged. When several versions qualify, one whose whole file set matches the recorded digest goes first, then the oldest. The lineage keeps its recorded files and merge base, along with its parameters and migrations. Only where the files come from changes. Its `adoption` has `by: "lineage"` and keeps the directory source in `previous`. No history is vouched for, so nothing is added to `.chant/trust.json`.
+
+```
+$ chant workspace adopt-lineage --from arugula-salad/studio#template --tags 'kit-v*'
+.  github.com/arugula-salad/studio#template@kit-v1.0.0 (51c3f0e9a2d4)
+  moved from dir:/home/box/box/template: every one of the 41 recorded file(s) has the same content at kit-v1.0.0; 6 version(s) compared
+✓ moved the lineage of "." onto github.com/arugula-salad/studio#template@kit-v1.0.0 in .chant/workspace.lock.json. Review and commit it; chant workspace upgrade --to <ref> now reads that repository.
+```
+
+After that, `chant workspace upgrade --to kit-v2.0.0` fetches the new version and the old one from the repository, and merges per file as for any git lineage. When the directory was copied from a commit that no tag names, pass it as `--from <repo>@<commit>#<member>`. When no version reproduces the recorded files, the command names the nearest one and the files that differ.
+
+## The hash index
+
+For each version tag, the index records the tag's commit and the tree of the template directory. It also records the SHA-256 of each file in that directory. It leaves out what a project never receives from a template: the template's own `.chant/workspace.lock.json`, `chant.template.json` and `.chant/migrations/`. Blobs shared between tags are hashed once. Files are hashed as the tag holds them, so a file a parameter changes reads as edited while versions are scored; the chosen version's files are recorded after substitution.
+
+`chant workspace hash-index` computes the index and prints it, or writes it to `--output`. A template's CI can publish that file with each release, and an adopter can pass it to `adopt-lineage --index` to skip computing most tags:
+
+```
+$ chant workspace hash-index --from acme/starter --tags 'v*' --output hash-index.json
+✓ wrote the hash index of github.com/acme/starter (12 version(s)) to hash-index.json
+```
+
+The copy is a cache. chant reuses an entry only while its tag still names the commit the entry records, computes the rest from the template, and re-checks the version it adopts. The lock records `index: "cache"` when the cache chose the version.
+
+```json
+{
+  "indexVersion": 1,
+  "template": "github.com/acme/starter",
+  "tags": [
+    {
+      "tag": "v1.0.0",
+      "commit": "4624a0b6ca83bf3a2776b2d29d269e989d8b560f",
+      "tree": "89aa2215293af8364e8832176cc75b9b846889d1",
+      "files": { "README.md": "sha256:1b2c…", "src/main.ts": "sha256:037e…" }
+    }
+  ]
+}
+```
+
+## Options
+
+| Option | Effect |
+|---|---|
+| `--from <repo>[@<ref>][#<member>]` | The template repository, in any form [`chant init --from`](/chant/cli/init/#from-a-template-repository) takes, with `#<member>` for a directory inside it. A ref restricts adoption to that version. Required. |
+| `--tags <glob>` | Compare only tags matching the glob (`*` and `?`), such as `kit-v*` in a repository that tags several things. Without it, every tag that reads as a version is a candidate. |
+| `--index <file>` | A cached hash index, as `chant workspace hash-index` writes it. It must be for the same template id. Used only for a scope with no lineage. |
+| `--param name=value` | A value for a parameter the template's `chant.template.json` declares, used for a scope with no lineage. Repeatable. A parameter with no default needs one. |
+| `--dry-run` | Print the result and write nothing. |
+| `--json` | Print the result as JSON. `lineage` is what the lock records, and `chosen` is the version it pins. |
+| `--output <file>` | `hash-index` only: write the index there instead of to stdout. |
+
+## Network
+
+`adopt-lineage` and `hash-index` run `git ls-remote --tags` against the template. They then fetch the tags they compare one commit deep, or only the ref that `--from` names. A local repository reaches nothing. Both are listed in [Network Egress](/chant/reference/network-egress/).
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | Recorded, or printed with `--dry-run`; or the index was written |
+| 1 | Refused: no `--from`, a scope whose lineage is not a directory lineage, uncommitted changes, open manual steps, no version that shares a file with the scope, no version that reproduces a directory lineage's files, a cache for another template, or a template that could not be read |

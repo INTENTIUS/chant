@@ -56,6 +56,12 @@ export interface RenderTerraformRootsOptions {
    * `../` is parsed as a child scope of the root that calls it.
    */
   callModuleType?: CallModuleType;
+  /**
+   * `terraform.moduleRoot` (#2874): the directory module sources may resolve
+   * within, absolute or relative to {@link projectRoot}. Unset, the project
+   * root is the boundary, as it always was.
+   */
+  moduleRoot?: string;
   /** Injectable parser (tests); defaults to core's lazy-loaded `@cdktn/hcl2json`. */
   hcl2json?: Hcl2Json;
 }
@@ -97,6 +103,7 @@ export async function renderTerraformRoots(
         dir,
         root: name,
         projectRoot: opts.projectRoot,
+        ...(opts.moduleRoot !== undefined ? { moduleRoot: isAbsolute(opts.moduleRoot) ? opts.moduleRoot : resolve(opts.projectRoot, opts.moduleRoot) } : {}),
         callModuleType: callModuleType.effective,
         hcl2json: opts.hcl2json,
         modeOptions,

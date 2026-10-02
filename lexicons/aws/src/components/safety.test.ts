@@ -41,20 +41,27 @@ describe("rollback-previous (#557)", () => {
     ]);
   });
 
-  it("rolls an ECS service back via the executor for the {service, cluster} shape (#990)", async () => {
-    // The ecs-fargate preset / ALB-ECS pilot compose rollback-previous with an
-    // ECS service, NOT a snapshot id. This used to reach the snapshot path and
-    // throw "Cannot read properties of undefined (reading 'includes')" on the
-    // absent snapshotId.
+  it("rolls an ECS service back to the named taskDefinition for the {service, cluster} shape (#990)", async () => {
+    // An ECS-shaped input used to reach the snapshot path and throw "Cannot
+    // read properties of undefined (reading 'includes')" on the absent snapshotId.
     const mock = createMockCloudExecutor();
     const out = await createRollbackPreviousCapability(mock.executor).run(ctx, {
       service: "loom-frontend-svc",
       cluster: "arn:aws:ecs:us-east-1:1:cluster/loom",
+      taskDefinition: "loom-frontend:41",
     });
     expect(out).toEqual({ restored: true });
     expect(mock.calls).toEqual([
-      { client: "ecs", method: "rollbackService", args: { cluster: "arn:aws:ecs:us-east-1:1:cluster/loom", service: "loom-frontend-svc", taskDefinition: undefined, desiredCount: undefined } },
+      { client: "ecs", method: "rollbackService", args: { cluster: "arn:aws:ecs:us-east-1:1:cluster/loom", service: "loom-frontend-svc", taskDefinition: "loom-frontend:41", desiredCount: undefined } },
     ]);
+  });
+
+  it("fails for an ECS service without a taskDefinition instead of reporting restored (#2605)", async () => {
+    const mock = createMockCloudExecutor();
+    await expect(
+      createRollbackPreviousCapability(mock.executor).run(ctx, { service: "loom-frontend-svc", cluster: "loom" }),
+    ).rejects.toThrow(/needs a taskDefinition to roll back to/);
+    expect(mock.calls).toEqual([]);
   });
 
   it("fails with a clear message (not a cryptic undefined access) for an unrecognized shape", async () => {

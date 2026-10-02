@@ -293,6 +293,10 @@ const EXPECTED_MIXED_DIVERGENT: ReadonlyMap<string, string> = new Map<string, st
  */
 const EXPECTED_RUN_FALLBACK: ReadonlyMap<string, string> = new Map<string, string>([
   [
+    "examples/agent-observability",
+    "`gatewayExporter(...)`, `ruleFileYaml(...)`, `GrafanaConfigMaps(...)` and `grafanaVolumes(...)` as values: the workloads carry configs rendered from other declarations at run time; the taint fixpoint then takes the files they import",
+  ],
+  [
     "examples/cc-aws-canonical",
     "a same-file resource reference passed to a folded intrinsic or authoring helper, and `kubectlApply(...)` as a value",
   ],
@@ -324,6 +328,14 @@ const EXPECTED_RUN_FALLBACK: ReadonlyMap<string, string> = new Map<string, strin
   [
     "lexicons/aws/examples/lambda-api",
     "`export default`; the capture edge then takes the files that read its exports",
+  ],
+  [
+    "lexicons/k8s/examples/otel-node-agent",
+    "`Object.values(agent.members)` as a value: it reads the NodeAgent composite's members at run time",
+  ],
+  [
+    "lexicons/k8s/examples/otel-gateway",
+    "`gatewayExporter(...)` as a value: it reads the gateway composite's Services at run time; the taint fixpoint then takes the files it imports",
   ],
   [
     "lexicons/cpln/examples/secret-access",
@@ -395,7 +407,9 @@ const EXPECTED_FOLD: readonly string[] = [
   "lexicons/cpln/examples/basic-service",
   "lexicons/cpln/examples/stateful-postgres",
   "lexicons/docker/examples/basic-app",
+  "lexicons/docker/examples/otel-collector",
   "lexicons/fly/examples/getting-started",
+  "lexicons/fly/examples/otel-collector",
   "lexicons/forgejo/examples/ci-workflow",
   "lexicons/gcp/examples/basic-bucket",
   "lexicons/gcp/examples/cloud-function",
@@ -435,6 +449,7 @@ const EXPECTED_FOLD: readonly string[] = [
   "lexicons/k8s/examples/namespace-rbac",
   "lexicons/k8s/examples/operator-stack",
   "lexicons/k8s/examples/org-policy",
+  "lexicons/k8s/examples/otel-collector",
   "lexicons/k8s/examples/statefulset",
   "lexicons/k8s/examples/web-platform",
 ];

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createAppServer } from "../src/server.mjs";
+import { APP_NAME, createAppServer } from "../src/server.mjs";
 
 async function withServer(fn) {
   const server = createAppServer();
@@ -17,7 +17,9 @@ test("serves the home page and the health check", async () => {
   await withServer(async (base) => {
     const home = await fetch(`${base}/`);
     assert.equal(home.status, 200);
-    assert.match(await home.text(), /<h1>Reference app<\/h1>/);
+    const page = await home.text();
+    assert.ok(page.includes(`<title>${APP_NAME}</title>`), page);
+    assert.ok(page.includes(`<h1>${APP_NAME}</h1>`), page);
 
     const health = await fetch(`${base}/healthz`);
     assert.equal(health.status, 200);

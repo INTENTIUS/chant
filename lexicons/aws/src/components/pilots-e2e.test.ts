@@ -447,19 +447,19 @@ describe("Every mutating #557 capability declares a rollback, or the pilot suppl
   });
 
   it("the ALB/ECS pilot declares no rollback-previous phase (#2576): with no taskDefinition it restored nothing", async () => {
-    // The phase it used to declare passed only `service` and `cluster`. The
-    // real capability turns that into `rollbackService` with no task
-    // definition, which the real executor sends as an `aws ecs update-service`
-    // that changes nothing. An earlier release is `chant components rollback`.
+    // The phase it used to declare passed only `service` and `cluster`. That
+    // input used to reach the real executor as an `aws ecs update-service` that
+    // changed nothing; it now fails (#2605). An earlier release is
+    // `chant components rollback`.
     expect(searchService.rollback).toBeUndefined();
     const mock = createMockCloudExecutor();
-    await createRollbackPreviousCapability(mock.executor).run(
-      { env: "dev", component: "search-service" },
-      { service: "search", cluster: "prod" },
-    );
-    expect(mock.calls).toEqual([
-      { client: "ecs", method: "rollbackService", args: { cluster: "prod", service: "search", taskDefinition: undefined, desiredCount: undefined } },
-    ]);
+    await expect(
+      createRollbackPreviousCapability(mock.executor).run(
+        { env: "dev", component: "search-service" },
+        { service: "search", cluster: "prod" },
+      ),
+    ).rejects.toThrow(/needs a taskDefinition/);
+    expect(mock.calls).toEqual([]);
   });
 
   it("the DynamoDB pilot declares no component-level rollback — a blocked replacement is a stop, not something to compensate (documented opt-out)", () => {

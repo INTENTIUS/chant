@@ -1,0 +1,29 @@
+# OTEL115 failing fixture: the routing connector's default_pipelines names
+# traces/other, which receives from otlp rather than from the connector.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 127.0.0.1:4317
+
+exporters:
+  debug: {}
+
+connectors:
+  routing:
+    default_pipelines: [traces/other]
+    table:
+      - statement: route() where attributes["tenant"] == "acme"
+        pipelines: [traces/acme]
+
+service:
+  pipelines:
+    traces/in:
+      receivers: [otlp]
+      exporters: [routing]
+    traces/acme:
+      receivers: [routing]
+      exporters: [debug]
+    traces/other:
+      receivers: [otlp]
+      exporters: [debug]

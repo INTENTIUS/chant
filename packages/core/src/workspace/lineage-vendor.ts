@@ -22,7 +22,7 @@ import {
   resolveVendorSource,
   type VendorEntry,
 } from "../cli/commands/vendor";
-import { LOCK_FILE, LockError, emptyLock, fileEntries, readLock, scopeKey, scopeStatus, writeLock, type Lineage, type LineageLock, type ManualStep } from "./lineage-lock";
+import { LOCK_FILE, LockError, declaredFilesAt, emptyLock, fileEntries, readLock, scopeKey, scopeStatus, writeLock, type Lineage, type LineageLock, type ManualStep } from "./lineage-lock";
 import { applyUpstream } from "./lineage-update";
 
 /** The template id a vendor source is known by. */
@@ -177,7 +177,7 @@ export async function migrateVendorManifest(root: string): Promise<MigrateResult
       const targetAbs = resolve(root, entry.target);
       const local = readTarget(targetAbs);
       if (local.size > 0 && contentHash(local) === entry.checksum) {
-        files = fileEntries(local);
+        files = fileEntries(local, declaredFilesAt(targetAbs));
       } else {
         const source = await resolveVendorSource(entry.source, root);
         if (contentHash(source) !== entry.checksum) {
@@ -185,7 +185,7 @@ export async function migrateVendorManifest(root: string): Promise<MigrateResult
             `vendor entry "${entry.name}": ${entry.target} has been edited and its source no longer matches the recorded checksum, so the pinned files cannot be recovered. Run \`chant vendor pull ${entry.name}\` first (it overwrites ${entry.target}), or restore the pinned content.`,
           );
         }
-        files = fileEntries(source);
+        files = fileEntries(source, declaredFilesAt(targetAbs));
       }
     }
 

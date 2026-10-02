@@ -396,3 +396,33 @@ describe("package-type-module (#1421)", () => {
     });
   });
 });
+
+describe("doctorCommand in a declared workspace (#2535)", () => {
+  test("shows a member of kind other as a warning, and adds nothing outside a workspace", async () => {
+    await withTestDir(async (testDir) => {
+      mkdirSync(join(testDir, ".git"));
+      mkdirSync(join(testDir, "app"));
+      mkdirSync(join(testDir, "docs"));
+      writeFileSync(join(testDir, "app", "chant.config.json"), "{}");
+      const before = await doctorCommand(join(testDir, "app"));
+      expect(before.checks.filter((c) => c.name.startsWith("workspace-"))).toEqual([]);
+
+      writeFileSync(
+        join(testDir, "chant.workspace.json"),
+        JSON.stringify({
+          name: "acme",
+          schema: 1,
+          members: [
+            { name: "app", dir: "app", kind: "chant" },
+            { name: "docs", dir: "docs", kind: "other", because: "a static site" },
+          ],
+        }),
+      );
+      const report = await doctorCommand(join(testDir, "app"));
+      const workspace = report.checks.filter((c) => c.name.startsWith("workspace-"));
+      expect(workspace).toEqual([
+        { name: "workspace-WSP009", status: "warn", message: expect.stringMatching(/^member docs \(docs\) is kind other, which chant does not read: a static site \(.*chant\.workspace\.json:1\)$/) },
+      ]);
+    });
+  });
+});

@@ -113,6 +113,11 @@ describe("Fly lint rules", () => {
       expect(noSecretLiteralsRule.check(ctx)).toHaveLength(0);
     });
 
+    test("does not flag a collector ${env:...} substitution", () => {
+      const ctx = createContext('new OtlpHttpExporter({ headers: { "x-api-key": "${env:OTLP_API_KEY}" } });');
+      expect(noSecretLiteralsRule.check(ctx)).toHaveLength(0);
+    });
+
     test("does not flag non-credential keys", () => {
       const ctx = createContext(`new MachineConfig({ env: { LOG_LEVEL: "info" } });`);
       expect(noSecretLiteralsRule.check(ctx)).toHaveLength(0);

@@ -280,76 +280,46 @@ describe("discoverComponents", () => {
     expect(result.errors.some((e) => e.type === "import")).toBe(true);
   });
 
-  test("the first chant.config.ts encountered becomes the source root and is still scanned", async () => {
-    // Matches findInfraFiles's own rule: the *first* config directory found
-    // becomes `sourceRoot` and is descended into, same as any other
-    // directory — the skip only applies to a *second* nested config found
-    // after that (see the next test).
-    const childDir = join(testDir, "child-project");
-    await mkdir(childDir, { recursive: true });
-    await writeFile(join(childDir, "chant.config.ts"), `export default {};`);
-    await writeFile(
-      join(childDir, "child.component.ts"),
-      `
-        export const childSvc = {
-          name: "child-svc",
+  const svc = (exportName: string, name: string) => `
+        export const ${exportName} = {
+          name: "${name}",
           dependsOn: [],
           deploy: [{ phase: "Apply", steps: [{ kind: "shell" }] }],
         };
-      `,
-    );
-    await writeFile(
-      join(testDir, "root.component.ts"),
-      `
-        export const rootSvc = {
-          name: "root-svc",
-          dependsOn: [],
-          deploy: [{ phase: "Apply", steps: [{ kind: "shell" }] }],
-        };
-      `,
-    );
+      `;
 
-    const result = await discoverComponents(testDir);
-
-    expect(result.components.has("root-svc")).toBe(true);
-    expect(result.components.has("child-svc")).toBe(true);
-  });
-
-  test("a second nested chant.config.ts (a true child project) is not descended into", async () => {
+  test("from outside every project, every child project is read (#2527)", async () => {
+    // The source-root quirk is gone: no child config is special for being
+    // found first. The scan root has no config at or above it, so every
+    // child project's components are discovered, nested ones included.
     const firstConfigDir = join(testDir, "first-config");
     const nestedChildProject = join(firstConfigDir, "nested-child-project");
     await mkdir(nestedChildProject, { recursive: true });
     await writeFile(join(firstConfigDir, "chant.config.ts"), `export default {};`);
     await writeFile(join(nestedChildProject, "chant.config.ts"), `export default {};`);
-    await writeFile(
-      join(firstConfigDir, "first.component.ts"),
-      `
-        export const firstSvc = {
-          name: "first-svc",
-          dependsOn: [],
-          deploy: [{ phase: "Apply", steps: [{ kind: "shell" }] }],
-        };
-      `,
-    );
-    await writeFile(
-      join(nestedChildProject, "nested.component.ts"),
-      `
-        export const nestedSvc = {
-          name: "nested-svc",
-          dependsOn: [],
-          deploy: [{ phase: "Apply", steps: [{ kind: "shell" }] }],
-        };
-      `,
-    );
+    await writeFile(join(testDir, "root.component.ts"), svc("rootSvc", "root-svc"));
+    await writeFile(join(firstConfigDir, "first.component.ts"), svc("firstSvc", "first-svc"));
+    await writeFile(join(nestedChildProject, "nested.component.ts"), svc("nestedSvc", "nested-svc"));
 
     const result = await discoverComponents(testDir);
 
-    // first-config/ has no config above it, so it becomes the source root
-    // and is scanned; nested-child-project/'s own chant.config.ts is the
-    // *second* config encountered, so it is treated as a separate project
-    // scope and not descended into.
+    expect(result.components.has("root-svc")).toBe(true);
     expect(result.components.has("first-svc")).toBe(true);
-    expect(result.components.has("nested-svc")).toBe(false);
+    expect(result.components.has("nested-svc")).toBe(true);
+  });
+
+  test("from inside a project, a child project is a boundary (#2527)", async () => {
+    const childDir = join(testDir, "child-project");
+    await mkdir(childDir, { recursive: true });
+    await writeFile(join(testDir, "chant.config.ts"), `export default {};`);
+    await writeFile(join(childDir, "chant.config.ts"), `export default {};`);
+    await writeFile(join(testDir, "root.component.ts"), svc("rootSvc", "root-svc"));
+    await writeFile(join(childDir, "child.component.ts"), svc("childSvc", "child-svc"));
+
+    const result = await discoverComponents(testDir);
+
+    expect(result.components.has("root-svc")).toBe(true);
+    expect(result.components.has("child-svc")).toBe(false);
   });
 
   // ── chant #1108 — build-time parameters populated before import ────────────

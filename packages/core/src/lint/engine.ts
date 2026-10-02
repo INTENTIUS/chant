@@ -224,6 +224,11 @@ export function ruleThrewDiagnostic(ruleId: string, filePath: string, error: unk
  *   config-aware rules (COR021 reads `environments` + `ownership`), put on
  *   every file's `LintContext.projectConfig`. Optional; without it those
  *   rules stay silent.
+ * @param propertyClasses - chant #2957 — the class names the active
+ *   lexicons declare property-kind (`LexiconPlugin.propertyClassNames()`),
+ *   put on every file's `LintContext.propertyClasses` so COR001, COR004 and
+ *   COR009 leave those declarables out. Optional; without it every
+ *   declarable counts.
  * @returns LintRunResult with diagnostics and suppressed items
  */
 export async function runLint(
@@ -232,6 +237,7 @@ export async function runLint(
   ruleOptions?: Map<string, Record<string, unknown>>,
   intrinsics?: readonly IntrinsicDef[],
   projectConfig?: LintProjectConfig,
+  propertyClasses?: ReadonlySet<string>,
 ): Promise<LintRunResult> {
   const allDiagnostics: LintDiagnostic[] = [];
   const allSuppressed: Array<LintDiagnostic & { reason?: string }> = [];
@@ -254,6 +260,7 @@ export async function runLint(
         lexicon: undefined,
         intrinsics,
         projectConfig,
+        propertyClasses,
       };
 
       // Execute each rule. A rule that throws is reported as an error for

@@ -11,6 +11,9 @@ import { join } from "path";
 import { fetchWithCache, extractFromTar, clearCacheFile } from "@intentius/chant/codegen/fetch";
 import { latestVersionPerProvider } from "./api-versions";
 
+/** Per-attempt download timeout for a multi-megabyte archive. */
+const ARCHIVE_ATTEMPT_TIMEOUT_MS = 120_000;
+
 /**
  * Top-level ARM JSON Schema for a provider file.
  *
@@ -226,7 +229,7 @@ export function explodeProviderSchema(
  */
 export async function fetchArmSchemas(force = false): Promise<Map<string, Buffer>> {
   const tarGz = await fetchWithCache(
-    { url: TARBALL_URL, cacheFile: CACHE_FILE },
+    { url: TARBALL_URL, cacheFile: CACHE_FILE, attemptTimeoutMs: ARCHIVE_ATTEMPT_TIMEOUT_MS },
     force,
   );
 

@@ -1,0 +1,135 @@
+---
+title: "SLOs"
+description: "The Slo composite: SLI recording rules, error budget and multiwindow multi-burn-rate alerts from one declaration"
+diataxis: reference
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-prometheus` — DO NOT EDIT.
+    Edit lexicons/prometheus/docs/pages/slos.mdx instead; changes here are overwritten. */}
+
+
+`Slo` declares a service level objective and builds it to one `RuleGroup`: the SLI's error ratio over each window the alerts need, the error budget left, and burn-rate alerts that pair a long window with a short one, as in the Google SRE Workbook's chapter [Alerting on SLOs](https://sre.google/workbook/alerting-on-slos/). [OpenSLO](https://github.com/OpenSLO/OpenSLO) is the reference for the field names; the lexicon neither reads nor writes OpenSLO YAML.
+
+```ts
+import { Slo } from "@intentius/chant-lexicon-prometheus";
+
+export const orderAck = Slo({
+  name: "order-acknowledged",
+  objective: 0.995,
+  window: "28d",
+  sli: {
+    good: 'sum(rate(traces_span_metrics_calls_total{span_name="order.ack",status_code!="STATUS_CODE_ERROR"}[{{window}}]))',
+    total: 'sum(rate(traces_span_metrics_calls_total{span_name="order.ack"}[{{window}}]))',
+  },
+  alerting: { page: { burnRates: "default" }, ticket: { burnRates: "default" } },
+});
+```
+
+`Slo` is a composite, called without `new`. It returns `{ rules }`, a `RuleGroup` named `slo-<name>`. Exported as `orderAck`, the build names the group entity `orderAckRules`. Pass `orderAck.rules` to a k8s `PrometheusRule` or `MonitoredService` to render the same rules as a CRD.
+
+## Props
+
+| Field | Type | Meaning |
+|---|---|---|
+| `name` | `string` | The value of the `slo` label on every series and alert, and part of the group name. Letters, digits, `.`, `_` and `-`. |
+| `objective` | `number` | The target share of good events, strictly between 0 and 1. |
+| `window` | duration | The rolling window the objective holds over, e.g. `28d` or `30d`. |
+| `sli` | `{ good, total }` or `{ errors, total }` | PromQL for the rate of good (or bad) events and of all events, each with `{{window}}` where the range goes. |
+| `description` | `string` | Prepended to every alert's `description` annotation. |
+| `alerting` | `SloAlerting` | Burn-rate alerts. Both tiers are on with the Workbook's windows when this is left out. |
+| `labels` | `Record<string, string>` | Added to every rule as group labels, e.g. `team`. |
+| `interval` | duration | The group's evaluation interval. |
+
+The SLI stays two PromQL strings with a placeholder so it can say anything PromQL can: any aggregation, any label filter, a histogram bucket for a latency SLI (`le="0.5"` as good, `le="+Inf"` as total). Each expression is parsed with the lexicon's PromQL grammar after `{{window}}` is filled in.
+
+`alerting` takes `page` and `ticket`, each an `SloAlertTier` or `false`, and `alertName` (default `ErrorBudgetBurn`):
+
+| Tier field | Meaning |
+|---|---|
+| `burnRates` | `"default"`, or a list of `{ long, short, budgetConsumed }` or `{ long, short, factor }` pairs. |
+| `severity` | The `severity` label. Defaults to `page` or `ticket`. |
+| `for` | How long a pair must hold before its alert fires. Default none. |
+| `labels`, `annotations` | Added to the tier's alerts, e.g. `runbook_url`. |
+
+## Validation
+
+`Slo()` throws when the objective is not strictly between 0 and 1, when the window is not a positive Prometheus duration, when an SLI expression lacks `{{window}}` or is not PromQL, when a pair's short window is not shorter than its long window, when a long window is longer than the SLO window, or when a pair's threshold is an error ratio of 1 or more (it could never fire). The lint rule [PROM003](../lint-rules/) reports the first three in the editor when they are literals.
+
+## What it builds
+
+For `orderAck` above:
+
+| Series | Expression |
+|---|---|
+| `slo:sli_error:ratio_rate5m` ... `slo:sli_error:ratio_rate3d` | `1 - (good / total)` with the window filled in, one per window the alerts read: `5m`, `30m`, `1h`, `2h`, `6h`, `1d`, `3d` |
+| `slo:sli_error:ratio_rate28d` | `avg_over_time` of the shortest window's ratio over the SLO window |
+| `slo:objective:ratio` | `vector(0.995)` |
+| `slo:error_budget:remaining` | `1 - (ratio_rate28d / 0.005)`: 1 is untouched, 0 is spent, below 0 is overspent |
+
+Every series carries `slo="order-acknowledged"`. The SLO window's ratio averages the shortest recorded ratio rather than taking a rate over 28 days of raw counters on every evaluation, as Sloth does; it weighs each evaluation equally, so it drifts from the exact ratio when traffic swings widely across the window. With alerting off there is no shorter ratio, and the window's ratio is read from the SLI directly.
+
+Then one alert per window pair, all named `ErrorBudgetBurn` and told apart by labels:
+
+```yaml
+- alert: ErrorBudgetBurn
+  expr: |-
+    (
+      slo:sli_error:ratio_rate1h{slo="order-acknowledged"} > (13.44 * 0.005)
+    )
+    and
+    (
+      slo:sli_error:ratio_rate5m{slo="order-acknowledged"} > (13.44 * 0.005)
+    )
+  labels:
+    slo: order-acknowledged
+    severity: page
+    long_window: 1h
+    short_window: 5m
+```
+
+The recording rules come first in the group and the alerts after, so each evaluation's alerts read the ratios it just recorded.
+
+## Burn rates and the SLO window
+
+A burn rate is how fast the budget is spent relative to spending exactly all of it over the SLO window: at 1 the budget lasts the window, at 14.4 it lasts a 14.4th of it. The Workbook's pairs are stated for a 30-day window as a share of the budget each may spend over its long window:
+
+| Tier | Long | Short | Budget spent | Factor at 30d | Factor at 28d |
+|---|---|---|---|---|---|
+| page | 1h | 5m | 2% | 14.4 | 13.44 |
+| page | 6h | 30m | 5% | 6 | 5.6 |
+| ticket | 1d | 2h | 10% | 3 | 2.8 |
+| ticket | 3d | 6h | 10% | 1 | 0.933333 |
+
+The factor is `budget spent × SLO window / long window`: `0.02 × 720h / 1h = 14.4`. For another window the lexicon keeps the Workbook's windows and budget shares and recomputes the factor, so a 28-day SLO pages when it spends 2% of its budget in an hour, as a 30-day one does. Scaling the windows instead would move alerts to windows like 56 minutes that no dashboard shows. A pair written with `factor` is used as written for any window; one written with `budgetConsumed` is scaled.
+
+A pair fires when both windows' error ratios exceed `factor × (1 − objective)`. The long window keeps a brief spike from paging; the short window stops the alert soon after the burn stops, where the long window alone would keep it firing for most of an hour. The lexicon's tests hold this: over synthetic series, each pair fires when the burn is 1.25 times its factor, close to when the long window's ratio crosses the threshold, stops within its short window once the burn ends, and never fires at 0.9 times its factor. With `promtool` on the path, `promtool test rules` checks the same scenarios.
+
+## Routing
+
+The alerts carry `severity="page"` or `severity="ticket"` (or the tier's `severity`), which [PROM202](../lint-rules/) checks some Alertmanager route matches when the SLO and the routes are in one build root. An inhibit rule with `equal: ["slo"]` lets a page mute the same SLO's tickets; see the `slo` example.
+
+## `sloMetrics()`
+
+`sloMetrics(slo)` returns what the rules record, so a dashboard or another rule reads names from the declaration instead of repeating them. It takes the `Slo(...)` result, its `rules` group, or the props.
+
+```ts
+import { sloMetrics } from "@intentius/chant-lexicon-prometheus";
+
+const m = sloMetrics(orderAck);
+m.errorRatio["1h"];        // "slo:sli_error:ratio_rate1h"
+m.windowErrorRatio;        // "slo:sli_error:ratio_rate28d"
+m.errorBudgetRemaining;    // "slo:error_budget:remaining"
+m.selector;                // '{slo="order-acknowledged"}'
+m.burnRates[0];            // { tier: "page", severity: "page", long: "1h", short: "5m", factor: 13.44, threshold: 0.0672, ... }
+```
+
+| Field | Meaning |
+|---|---|
+| `name`, `objective`, `window` | As declared. |
+| `errorBudget` | `1 − objective`. |
+| `labels`, `selector` | `{ slo: name }`, and the same as a PromQL matcher to append to a series name. |
+| `windows` | Every window with an error-ratio series, shortest first, the SLO window last. |
+| `errorRatio` | Error-ratio series name by window. |
+| `windowErrorRatio`, `errorBudgetRemaining`, `objectiveRatio` | The SLO-window series. |
+| `burnRates` | Per pair: `tier`, `severity`, `long`, `short`, `factor`, `threshold` (the error ratio it fires above), `longRecord`, `shortRecord`, `alert`, `labels` and `exhaustsIn` (how long the budget lasts at that rate). |
+| `alertName`, `group` | The alert name and the rule group name. |

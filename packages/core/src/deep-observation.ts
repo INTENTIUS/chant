@@ -363,6 +363,15 @@ export function deepPathSet(tree: Record<string, unknown>): Set<string> {
     // gives it, so this path set agrees with what the normalized tree
     // actually looks like a path down.
     if (isHeldElsewhere(value)) return;
+    // A property-kind declarable is walked as its props, exactly as
+    // `normalizeDeepProperties` inlines it (#1314). Stopping at it left every
+    // path under a typed nested property out of the set, so the other tree's
+    // nodes there read `counterpart: "absent"` and default subtraction fired
+    // on properties the author did declare.
+    if (isPropertyDeclarableValue(value)) {
+      walk((value as { props?: unknown }).props ?? {}, path, pattern);
+      return;
+    }
     if (Array.isArray(value)) {
       value.forEach((el, i) => walk(el, joinIndex(path, i), joinPattern(pattern)));
       return;

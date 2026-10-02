@@ -18,10 +18,14 @@ chant components fan-out (--base <ref> [--head <ref>] [--include-dependents]
                                 [--resume <file>] [--seed-outputs <file>]
                                 [--dump-outputs <file>] [--progress-json]
 chant components promote --from <env> --to <env>
-                                [--component <name> [--digest <sha256:...>]]
+                                [--component <name> [--digest <sha256:...>]
+                                 | --digest <component>=<sha256:...> ...]
                                 [--dry-run] [--json] [--seed-outputs <file>]
                                 [--run-id <id>] [--actor <name>]
 chant components rollback <env> --component <name> [--digest <sha256:...>]
+                                [--dry-run] [--json] [--seed-outputs <file>]
+                                [--run-id <id>] [--actor <name>]
+chant components redeploy <env> --component <name> [--digest <sha256:...>]
                                 [--dry-run] [--json] [--seed-outputs <file>]
                                 [--run-id <id>] [--actor <name>]
 ```
@@ -81,8 +85,16 @@ Without `--live`, every recorded component reports `unknown` reconciliation — 
 | `reconciled` | Recorded, and live evidence confirms the component is present and chant-owned. |
 | `unrecorded` | Live and owned, but no release record exists — deployed outside the recorded path. |
 | `stale` | Recorded, but nothing observed live now. |
-| `drifted` | Recorded, but live configuration has drifted since (mirrors `lifecycle plan`'s `update`). |
-| `unknown` | No live evidence requested. |
+| `drifted` | Recorded and live, but what was observed contradicts the release (see below). |
+| `unknown` | No live evidence requested, or live state could not be read. |
+
+A component is `drifted` when a resource it owns was read live and any of these hold:
+
+- the resource reports `attributes.digest` and it matches neither the recorded `digest` nor its `inputDigest`, or it reports `attributes.gitSha` and it differs from the recorded `gitSha` (an abbreviated sha of 7+ characters matches by prefix);
+- its configuration changed against the last [lifecycle snapshot](/chant/cli/lifecycle/), the same `update` verdict `lifecycle plan` gives, and that snapshot was taken at or after the release (a snapshot older than the release would count the release's own changes);
+- since that snapshot, chant's ownership marker disappeared (`owned` to `foreign`) or now names a different stack or environment.
+
+A resource that could not be read reports `unknown`, never `drifted`. A resource that reports no identity attribute, or `unknown` ownership, is no evidence either way. Lexicons opt in to the identity check by setting those two attributes.
 
 `--compare-to <env>` answers "which build is in `<env>`, and is it the one tested in `<compare-to>`" as a single query, per component:
 
@@ -147,7 +159,7 @@ Run a change out across the components downstream of it, in an order chant deriv
 ```bash
 chant components fan-out --base origin/main --env prod --dry-run
 chant components fan-out --base origin/main --env prod --gate release --resume .chant/fan-out.json
-chant approve fan-out release --plan sha256:9fae3d7c...
+chant approve fan-out release --plan jcs1-sha256:9fae3d7c...
 chant components fan-out --base origin/main --env prod --gate release --resume .chant/fan-out.json
 ```
 
@@ -175,8 +187,8 @@ fan-out: 3 selected, 4 unaffected, 0 indeterminate
     billing    unaffected
     cluster-b  unaffected
     net        unaffected
-  plan: sha256:9fae3d7c...
-  approve: chant approve fan-out release --plan sha256:9fae3d7c...
+  plan: jcs1-sha256:9fae3d7c...
+  approve: chant approve fan-out release --plan jcs1-sha256:9fae3d7c...
 ```
 
 Each line answers a question an operator would otherwise have to ask.
@@ -198,7 +210,7 @@ Nothing runs while it stands open. The run prints the pending fact and exits 3.
 
 ```
 gated: nothing ran. Waiting on "release" on "fan-out".
-approve : chant approve fan-out release --plan sha256:9fae3d7c...
+approve : chant approve fan-out release --plan jcs1-sha256:9fae3d7c...
 ```
 
 The digest identifies the derivation. It covers the ordered selection and the waves, plus the seeds and the edges each component came from. It does not cover what each component would apply, so editing a template without changing the graph leaves the digest, and a standing approval, where they were. `planFanOut` takes per-component input digests when a caller has them, and this command does not supply any yet. A resolution recorded against a different digest does not let this fan-out through, since a fan-out that derives differently is a different change. Each component's own authored gates still decide per component. This adds a gate over the set without removing the ones inside it.
@@ -256,14 +268,15 @@ Deploy the artifact digests one environment's release ledger records to another 
 chant components promote --from staging --to prod --dry-run
 chant components promote --from staging --to prod
 chant components promote --from staging --to prod --component search-service --digest sha256:9fae3d7c...
+chant components promote --from staging --to prod --digest search-service=sha256:9fae3d7c... --digest web=sha256:41c0...
 ```
 
-Without `--component`, every component this checkout declares that has a release in the `--from` ledger is promoted, each at its latest recorded digest. A recorded component the checkout no longer declares is listed as not promoted and left alone. `--component <name>` promotes that one component, and `--digest` picks an earlier release of it. A digest the `--from` ledger never recorded for the component fails before anything runs, and the error lists the digests it did record.
+Without `--component`, every component this checkout declares that has a release in the `--from` ledger is promoted, each at its latest recorded digest. A recorded component the checkout no longer declares is listed as not promoted and left alone. `--component <name>` promotes that one component, and `--digest` picks an earlier release of it. Without `--component`, `--digest <component>=<digest>` can be repeated. It promotes exactly the components it names in one run, in dependency order, each at the release that recorded that digest. That is how a generated promote job promotes the releases its own pipeline run built, since the latest release in `--from` may belong to another run. A digest the `--from` ledger never recorded for the component fails before anything runs, and the error lists the digests it did record. So does `<component>=` with no digest, which is what a pipeline passes when the job that deployed the component recorded no release.
 
 A promote runs the component's `deploy` composition against the `--to` environment with its build-time steps taken out: `docker-build`, `zip-package`, `jvm-build`, `generate-sbom` and `extract-config-bom`. Everything else runs the way `chant run --components <name> --env <to>` would run it:
 
 - The publish step still runs. It moves the archived bytes to the target environment, which is how the [build archive](/chant/components/build-archive/) promotes by digest. Its output is checked against the recorded digest, and a publish that yields any other digest fails the component before the steps after it run. That happens when the archive on disk is not the one the source release was built from, so run a promote where that archive is present: the job that built it, or one that restored it. A pipeline from [`chant build --components --generate <lexicon> --promote-to <env>`](/chant/cli/build/#promote-job) restores it for you: each component job uploads its archive, and a separate promote job downloads it before it runs the promote. This works for github, gitlab and forgejo.
-- Gates run. A gate in the composition stops the promote with exit 3 and the `chant approve` line, the same as any deploy to that environment, and running the same promote again after the approval continues past it.
+- Gates run. A gate in the composition stops the promote with exit 3 and the `chant approve` line, the same as any deploy to that environment, and running the same promote again after the approval continues past it. The approval is bound to the `--to` environment and to this promote's plan, which includes the digest being promoted. An approval for a plain deploy, or for a promote of another digest, does not pass the gate.
 - The remaining steps run against the target environment as they are written in this checkout. The artifact comes from the source release but the deploy steps come from here, so the promote warns when this checkout is not the commit the artifact was built from.
 
 Some compositions cannot be pinned to one recorded digest, and a promote refuses them before anything runs: a component with no publish step (nothing in its deploy carries the digest), one with more than one publish step (a release record carries one digest), and one whose remaining steps read an output of a removed build step, such as `@Build.archivePath`.
@@ -288,12 +301,15 @@ The promote appends one record to the `--to` ledger for every component it deplo
 
 A component that did not finish gets no record. The components that did deploy keep theirs. A ledger write that fails after a deploy exits 1 and says the deploy happened.
 
+When a promote fails partway, the component's in-run unwind undoes the steps it ran, and the `--to` ledger still records the release that was there before. If the unwind could not put everything back, [`chant components redeploy <to> --component <name>`](#components-redeploy-env) deploys that recorded release again. Once the cause is fixed, running the same promote again is the other way forward.
+
 | Flag | Meaning |
 |---|---|
 | `--from <env>` | Required. The environment whose release ledger holds the digests. |
 | `--to <env>` | Required. The environment to deploy them to. Must differ from `--from`. |
 | `--component <name>` | Promote only this component. |
 | `--digest <sha256:...>` | With `--component`, promote this recorded digest rather than the latest one. |
+| `--digest <component>=<sha256:...>` | Without `--component`, promote only the named components, each at this recorded digest. Repeatable. [`chant run --components --digest-file`](/chant/cli/run/#the-recorded-digest---digest-file) writes the value. |
 | `--dry-run` | Print the plan (each component, its digest, the source release and the steps that will not run) and deploy nothing. |
 | `--json` | Emit the plan, the run result and the records written as one JSON document on stdout. |
 | `--seed-outputs <file>` | Load outputs from dependencies outside the promotion. Repeatable. |
@@ -314,7 +330,7 @@ By default the rollback restores the newest release in `<env>`'s ledger with a d
 
 The rollback runs the component's composition against `<env>` with its build steps taken out, as a promote does, and it also replaces the publish step with a `recorded-digest` step that returns the recorded digest. The environment received that artifact when the release was first deployed, and the build archive it came from is usually gone by now. The recorded digest has to still be where that release put it, so a registry that has expired the image will fail the apply. Only the digest is known, so a composition whose steps read another publish output, such as `@Publish.uri`, is refused. The other refusals are the ones `promote` makes: no publish step, more than one, or a step reading a removed build step's output.
 
-Gates in the composition apply to a rollback exactly as they do to a deploy, including exit 3 and the `chant approve` line.
+Gates in the composition apply to a rollback exactly as they do to a deploy, including exit 3 and the `chant approve` line. The approval is bound to `<env>` and to the release being restored, so one given for a deploy or for another rollback does not pass the gate.
 
 When the rollback succeeds, `<env>`'s ledger gains a record with the restored release's artifact identities and a `restores` field naming that release. Run id, actor and approver are filled in as a promote fills them:
 
@@ -329,6 +345,8 @@ When the rollback succeeds, `<env>`'s ledger gains a record with the restored re
 
 This is a different mechanism from the saga unwind inside a single run, which undoes that run's own steps when it fails. See [Rolling back to an earlier release](/chant/components/orchestration/#rolling-back-to-an-earlier-release) for how the two relate.
 
+A rollback always moves to a release other than the current one, so it cannot recover from a deploy that failed partway. A failed deploy records nothing, and the ledger still names the last good release as current while the environment may be running part of the failed one. [`components redeploy`](#components-redeploy-env) puts the current release back. The same applies when a rollback itself fails: the ledger still names the release that was current before it.
+
 | Flag | Meaning |
 |---|---|
 | `--component <name>` | Required. The component to roll back. |
@@ -339,13 +357,50 @@ This is a different mechanism from the saga unwind inside a single run, which un
 | `--run-id <id>` | Run id for the new record. Defaults as `components release` does. |
 | `--actor <name>` | Who ran the rollback. Defaults as `components release` does, and must resolve before anything deploys. |
 
+### `components redeploy <env>`
+
+Redeploy the release of one component that `<env>`'s ledger records as current. Use it after a deploy that failed partway, from `chant run --components`, `components promote` or `components rollback`.
+
+```bash
+chant components redeploy prod --component search-service --dry-run
+chant components redeploy prod --component search-service
+chant components redeploy prod --component search-service --digest sha256:9fae3d7c...
+```
+
+A deploy writes its release record only after it succeeds, so a failed one leaves the ledger on the last good release. The run's own unwind undoes the steps it ran, but a best-effort compensation, or a crash during the unwind, can leave the environment running something else. `components rollback` cannot help here, because it refuses the release that is already current.
+
+The redeploy picks the newest record for the component in `<env>` and runs it the way a rollback runs an earlier release. Build steps are taken out and the publish step is replaced by a `recorded-digest` step, so a composition a rollback refuses is refused here too. A gate in the composition stops a redeploy the same way it stops a rollback, with exit 3 and the `chant approve` command to run before trying again. Its approval counts only for `<env>` and the current release. An approval given for a plain deploy is refused, and so is one given while another release was current. Since the composition it runs is exactly what a rollback to that release runs, approving either one covers both. With `--digest`, the redeploy checks that the digest is the current one and refuses anything else before it runs, which catches a deploy recorded since you last read the ledger. An earlier digest is a job for `components rollback --digest`, and the error says so.
+
+A successful redeploy appends a record to `<env>`'s ledger that carries the current release's artifact identities, plus a `redeploys` field pointing at that release. The current digest stays the same, and the record shows who put the release back and when:
+
+```json
+{
+  "component": "search-service",
+  "env": "prod",
+  "digest": "sha256:9fae3d7c...",
+  "redeploys": { "env": "prod", "runId": "4821", "timestamp": "2026-07-02T18:04:11.000Z" }
+}
+```
+
+A redeploy that fails records nothing, like any other deploy, and can be run again.
+
+| Flag | Meaning |
+|---|---|
+| `--component <name>` | Required. The component to redeploy. |
+| `--digest <sha256:...>` | The digest you expect to be current. Anything else is refused. |
+| `--dry-run` | Print the release that would be redeployed and the steps that will not run, and deploy nothing. |
+| `--json` | Emit the plan, the run result and the record written as one JSON document on stdout. |
+| `--seed-outputs <file>` | Load outputs from dependencies. Repeatable. |
+| `--run-id <id>` | Run id for the new record. Defaults as `components release` does. |
+| `--actor <name>` | Who ran the redeploy. Defaults as `components release` does, and must resolve before anything deploys. |
+
 ## Exit Codes
 
 | Code | Meaning |
 |------|---------|
 | 0 | Success (for `fan-out`, every selected component applied) |
-| 1 | Error (missing required flags, unresolvable actor, concurrent ledger write, no manifest found, an export entry missing on disk; for `fan-out`, a component failed, or the change signal was unusable; for `promote` and `rollback`, a digest missing from the ledger, a composition that cannot be pinned, or a failed deploy) |
-| 3 | `fan-out`, `promote` and `rollback`: stopped at a gate nobody has approved. For `fan-out` nothing ran; for the other two the steps before the gate ran, and only components that finished were recorded. |
+| 1 | Error (missing required flags, unresolvable actor, concurrent ledger write, no manifest found, an export entry missing on disk; for `fan-out`, a component failed, or the change signal was unusable; for `promote`, `rollback` and `redeploy`, a digest missing from the ledger or not current, a composition that cannot be pinned, or a failed deploy) |
+| 3 | `fan-out`, `promote`, `rollback` and `redeploy`: stopped at a gate nobody has approved. For `fan-out` nothing ran; for the others the steps before the gate ran, and only components that finished were recorded. |
 
 ## See Also
 

@@ -1,0 +1,42 @@
+# Every rule file field, multi-line expressions (block scalars), a PromQL
+# raw string in backticks, Go templates in annotations and a label value
+# written as a number.
+groups:
+  - name: node
+    interval: 1m
+    query_offset: 30s
+    limit: 100
+    labels:
+      team: platform
+      tier: 1
+    rules:
+      - record: instance:node_cpu_utilisation:rate5m
+        expr: |
+          1 - avg without (cpu, mode) (
+            rate(node_cpu_seconds_total{mode="idle"}[5m])
+          )
+      - record: instance:node_host:label
+        expr: label_replace(up{job="node"}, "host", "$1", "instance", `(.*):.*`)
+        labels:
+          source: node-exporter
+      - alert: NodeHighCpu
+        expr: instance:node_cpu_utilisation:rate5m > 0.9
+        for: 15m
+        keep_firing_for: 5m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "{{ $labels.instance }} CPU above 90%"
+          description: >-
+            CPU on {{ $labels.instance }} has been above 90% for 15 minutes
+            (currently {{ $value | humanizePercentage }}).
+  - name: blackbox
+    rules:
+      - alert: ProbeFailing
+        expr: probe_success == 0
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: "{{ $labels.instance }} is not answering"
+          runbook_url: https://runbooks.example.com/probe

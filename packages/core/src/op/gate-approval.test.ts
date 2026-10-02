@@ -107,6 +107,23 @@ describe("gate approval — quorum (#2508)", () => {
     expect(port.appended).toHaveLength(0);
   });
 
+  // #2547: a gate still pending, and an approval given, under the bare sha256: prefix
+  // keep working once the run computes the same plan's digest as jcs1-sha256:.
+  test("a pending gate and an approval recorded under the bare prefix match the jcs1 digest of the same plan", async () => {
+    const jcs = `jcs1-${PLAN_A}`;
+    const block: ResolvedGateApproval = { quorum: { count: 1 }, mode: "log-only" };
+    const run = async (resolutions: GateResolutionRecord[]) => {
+      const port = memoryGateLedgerPort({ resolutions, pending: [{ ...PENDING, approval: block }] });
+      return { port, check: await evaluateGate(port, { op: "release", gate: "ship", planDigest: jcs, approval: block, now: NOW }) };
+    };
+    const approved = await run([approval({ resolvedBy: "alex", timestamp: "2026-09-01T01:00:00.000Z" })]);
+    expect(approved.check.satisfied).toBe(true);
+    // A standing fact is not rewritten just because the prefix moved.
+    const waiting = await run([]);
+    expect(waiting.check.satisfied).toBe(false);
+    expect(waiting.port.appended).toHaveLength(0);
+  });
+
   test("an approval older than the standing pending fact does not count", async () => {
     const { check } = await decide(
       [approval({ resolvedBy: "alex", timestamp: "2026-08-31T00:00:00.000Z" })],

@@ -1,0 +1,20 @@
+{
+  "name": "k8s-otel-collector-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "chant build src --lexicon k8s -o k8s.yaml",
+    "lint": "chant lint src",
+    "apply": "kubectl apply -f k8s.yaml",
+    "teardown": "kubectl delete -f k8s.yaml"
+  },
+  "dependencies": {
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-k8s": "*",
+    "@intentius/chant-lexicon-otel": "*"
+  },
+  "devDependencies": {
+    "typescript": "*"
+  }
+}

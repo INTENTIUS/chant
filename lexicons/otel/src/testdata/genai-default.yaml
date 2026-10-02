@@ -1,0 +1,92 @@
+# chant: semconv gen_ai github.com/open-telemetry/semantic-conventions@v1.41.1 (transform/genai_content, redaction/genai_content, filter/genai_spans, spanmetrics/genai, sum/genai_tokens)
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 20
+  transform/genai_content:
+    error_mode: ignore
+    trace_statements:
+      - context: span
+        statements: ["delete_key(span.attributes, \"gen_ai.system_instructions\")", "delete_key(span.attributes, \"gen_ai.input.messages\")", "delete_key(span.attributes, \"gen_ai.output.messages\")", "delete_key(span.attributes, \"gen_ai.tool.call.arguments\")", "delete_key(span.attributes, \"gen_ai.tool.call.result\")", "delete_key(span.attributes, \"gen_ai.retrieval.query.text\")", "delete_key(span.attributes, \"gen_ai.retrieval.documents\")", "delete_key(span.attributes, \"gen_ai.prompt\")", "delete_key(span.attributes, \"gen_ai.completion\")", "delete_matching_keys(span.attributes, \"^gen_ai\\\\.(prompt|completion)\\\\.[0-9]+\\\\..+$\")"]
+      - context: spanevent
+        statements: ["delete_key(spanevent.attributes, \"gen_ai.system_instructions\")", "delete_key(spanevent.attributes, \"gen_ai.input.messages\")", "delete_key(spanevent.attributes, \"gen_ai.output.messages\")", "delete_key(spanevent.attributes, \"gen_ai.tool.call.arguments\")", "delete_key(spanevent.attributes, \"gen_ai.tool.call.result\")", "delete_key(spanevent.attributes, \"gen_ai.retrieval.query.text\")", "delete_key(spanevent.attributes, \"gen_ai.retrieval.documents\")", "delete_key(spanevent.attributes, \"gen_ai.prompt\")", "delete_key(spanevent.attributes, \"gen_ai.completion\")", "delete_matching_keys(spanevent.attributes, \"^gen_ai\\\\.(prompt|completion)\\\\.[0-9]+\\\\..+$\")"]
+    log_statements:
+      - context: log
+        statements: ["delete_key(log.attributes, \"gen_ai.system_instructions\")", "delete_key(log.attributes, \"gen_ai.input.messages\")", "delete_key(log.attributes, \"gen_ai.output.messages\")", "delete_key(log.attributes, \"gen_ai.tool.call.arguments\")", "delete_key(log.attributes, \"gen_ai.tool.call.result\")", "delete_key(log.attributes, \"gen_ai.retrieval.query.text\")", "delete_key(log.attributes, \"gen_ai.retrieval.documents\")", "delete_key(log.attributes, \"gen_ai.prompt\")", "delete_key(log.attributes, \"gen_ai.completion\")", "delete_matching_keys(log.attributes, \"^gen_ai\\\\.(prompt|completion)\\\\.[0-9]+\\\\..+$\")", "delete_matching_keys(log.body, \"^(content|message|tool_calls)$\") where IsMap(log.body) and (IsMatch(log.event_name, \"^(gen_ai\\\\.system\\\\.message|gen_ai\\\\.user\\\\.message|gen_ai\\\\.assistant\\\\.message|gen_ai\\\\.tool\\\\.message|gen_ai\\\\.choice)$\") or IsMatch(log.attributes[\"event.name\"], \"^(gen_ai\\\\.system\\\\.message|gen_ai\\\\.user\\\\.message|gen_ai\\\\.assistant\\\\.message|gen_ai\\\\.tool\\\\.message|gen_ai\\\\.choice)$\"))", "set(log.body, \"\") where IsString(log.body) and (IsMatch(log.event_name, \"^(gen_ai\\\\.system\\\\.message|gen_ai\\\\.user\\\\.message|gen_ai\\\\.assistant\\\\.message|gen_ai\\\\.tool\\\\.message|gen_ai\\\\.choice)$\") or IsMatch(log.attributes[\"event.name\"], \"^(gen_ai\\\\.system\\\\.message|gen_ai\\\\.user\\\\.message|gen_ai\\\\.assistant\\\\.message|gen_ai\\\\.tool\\\\.message|gen_ai\\\\.choice)$\"))"]
+  redaction/genai_content:
+    allow_all_keys: true
+    blocked_key_patterns: [^(gen_ai\.system_instructions|gen_ai\.input\.messages|gen_ai\.output\.messages|gen_ai\.tool\.call\.arguments|gen_ai\.tool\.call\.result|gen_ai\.retrieval\.query\.text|gen_ai\.retrieval\.documents|gen_ai\.prompt|gen_ai\.completion)$, "^gen_ai\\.(prompt|completion)\\.[0-9]+\\..+$"]
+  batch: {}
+  filter/genai_spans:
+    error_mode: ignore
+    traces:
+      span: ["attributes[\"gen_ai.operation.name\"] == nil"]
+
+exporters:
+  debug:
+    verbosity: basic
+
+connectors:
+  forward/genai: {}
+  spanmetrics/genai:
+    namespace: genai
+    dimensions:
+      - name: gen_ai.operation.name
+      - name: gen_ai.request.model
+      - name: gen_ai.tool.name
+      - name: error.type
+    histogram:
+      unit: s
+      explicit:
+        buckets: [100ms, 250ms, 500ms, 1s, 2s, 5s, 10s, 20s, 40s, 80s]
+    metrics_flush_interval: 15s
+  sum/genai_tokens:
+    spans:
+      genai.tokens.input:
+        source_attribute: gen_ai.usage.input_tokens
+        description: Input tokens used by GenAI operations
+        conditions: ["attributes[\"gen_ai.usage.input_tokens\"] != nil and not (kind == SPAN_KIND_INTERNAL and (attributes[\"gen_ai.operation.name\"] == \"invoke_agent\" or attributes[\"gen_ai.operation.name\"] == \"invoke_workflow\"))"]
+        attributes:
+          - key: gen_ai.request.model
+            default_value: unknown
+      genai.tokens.output:
+        source_attribute: gen_ai.usage.output_tokens
+        description: Output tokens used by GenAI operations
+        conditions: ["attributes[\"gen_ai.usage.output_tokens\"] != nil and not (kind == SPAN_KIND_INTERNAL and (attributes[\"gen_ai.operation.name\"] == \"invoke_agent\" or attributes[\"gen_ai.operation.name\"] == \"invoke_workflow\"))"]
+        attributes:
+          - key: gen_ai.request.model
+            default_value: unknown
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, transform/genai_content, redaction/genai_content, batch]
+      exporters: [debug, forward/genai]
+    traces/genai:
+      receivers: [forward/genai]
+      processors: [filter/genai_spans]
+      exporters: [spanmetrics/genai, sum/genai_tokens]
+    metrics/genai:
+      receivers: [spanmetrics/genai, sum/genai_tokens]
+      processors: [batch]
+      exporters: [debug]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, transform/genai_content, redaction/genai_content, batch]
+      exporters: [debug]

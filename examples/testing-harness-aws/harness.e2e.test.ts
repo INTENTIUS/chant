@@ -170,7 +170,9 @@ describe.skipIf(!wanted || !docker)("live-stack test harness against Floci (#122
       {
         cwd: repoRoot,
         encoding: "utf-8",
-        env: { ...process.env, HARNESS_FIXTURE_ENV: env, HARNESS_FIXTURE_SENTINEL: sentinel },
+        // The fixture is in the unit project; its deploy is not a unit test, so the
+        // per-test budget (#2817) is off for it.
+        env: { ...process.env, HARNESS_FIXTURE_ENV: env, HARNESS_FIXTURE_SENTINEL: sentinel, CHANT_UNIT_TEST_BUDGET_MS: "0" },
         timeout: 240_000,
       },
     );

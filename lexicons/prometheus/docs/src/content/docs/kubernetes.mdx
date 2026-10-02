@@ -1,0 +1,78 @@
+---
+title: "On Kubernetes"
+description: "Render the same RuleGroups into a PrometheusRule, through MonitoredService, or into ConfigMaps for a plain Prometheus and Alertmanager"
+diataxis: how-to
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-prometheus` — DO NOT EDIT.
+    Edit lexicons/prometheus/docs/pages/kubernetes.mdx instead; changes here are overwritten. */}
+
+
+A `RuleGroup` renders the same way into every destination, so the rules are declared once however Prometheus loads them.
+
+## Into a Prometheus Operator `PrometheusRule`
+
+Put the groups in `spec.groups`. The k8s serializer writes each one as the group the rule file would hold.
+
+```ts
+import { PrometheusRule } from "@intentius/chant-lexicon-k8s";
+import { RuleGroup, type Rule } from "@intentius/chant-lexicon-prometheus";
+
+const rules: Rule[] = [
+  { alert: "ApiDown", expr: 'up{job="api"} == 0', for: "5m", labels: { severity: "page" }, annotations: { summary: "api is down" } },
+];
+const api = new RuleGroup({ name: "api", rules });
+
+export const apiRules = new PrometheusRule({
+  metadata: { name: "api-rules", labels: { release: "kube-prometheus-stack" } },
+  spec: { groups: [api] },
+});
+```
+
+Leave the group unexported (as above) when it should appear only inside the CRD. Export it too, and the build also writes it to the rule file.
+
+## Through `MonitoredService`
+
+```ts
+import { MonitoredService } from "@intentius/chant-lexicon-k8s";
+
+export const svc = MonitoredService({ name: "api", image: "api:1.0", ruleGroups: [api] });
+```
+
+`ruleGroups` takes `RuleGroup`s or plain group objects. The older `alertRules` prop still works and renders as before; when both are set, the `alertRules` group comes first.
+
+## Without the operator
+
+For Prometheus and Alertmanager run as plain Deployments, put the files in ConfigMaps. `ruleFileYaml` and `alertmanagerYaml` return exactly what the serializer writes:
+
+```ts
+import { ConfiguredApp } from "@intentius/chant-lexicon-k8s";
+import { alertmanagerYaml, ruleFileYaml } from "@intentius/chant-lexicon-prometheus";
+import { stack } from "./rules";
+import { root } from "./alertmanager";
+
+const prometheus = ConfiguredApp({
+  name: "prometheus",
+  image: "prom/prometheus:v3.15.0",
+  port: 9090,
+  configData: { "prometheus.yml": prometheusYml, "rules.yml": ruleFileYaml([stack]) },
+  configMountPath: "/etc/prometheus",
+});
+
+const alertmanager = ConfiguredApp({
+  name: "alertmanager",
+  image: "prom/alertmanager:v0.34.1",
+  port: 9093,
+  configData: { "alertmanager.yml": alertmanagerYaml([root]) },
+  configMountPath: "/etc/alertmanager",
+});
+```
+
+The [k3d-stack example](../examples/#k3d-stack) is this, with an e2e run that brings it up on k3d.
+
+Build the two outputs separately so the k8s file is appliable on its own:
+
+```bash
+chant build src --lexicon k8s -o dist/k8s.yaml
+chant build src --lexicon prometheus -o dist/rules.yml
+```

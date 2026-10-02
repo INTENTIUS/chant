@@ -1,0 +1,50 @@
+---
+title: "OpenTelemetry Collector"
+description: "FlyOtelCollector runs a collector on a Fly Machine, its config declared with the otel lexicon"
+diataxis: reference
+---
+
+`FlyOtelCollector` runs an OpenTelemetry Collector on a Fly Machine. The collector config is declared with the [otel lexicon](/chant/lexicons/otel/) and rendered with `collectorYaml()`. The composite writes the rendered YAML into the machine as a file at `/etc/otel/config.yaml` (the Machines API `files[].raw_value`, base64) and starts the collector with `--config` pointing at it.
+
+```typescript
+import { App, Fly, FlyOtelCollector } from "@intentius/chant-lexicon-fly";
+import { OtlpHttpExporter } from "@intentius/chant-lexicon-otel";
+
+const app = new App({ name: "otel-collector", org_slug: Fly.OrgSlug });
+
+const headers: Record<string, string> = { "x-api-key": "${env:OTLP_API_KEY}" };
+
+const collector = FlyOtelCollector({
+  exporters: [new OtlpHttpExporter({ endpoint: "https://otlp.example.com", headers })],
+});
+
+export { app, collector };
+```
+
+The composite returns one member, `machine`. Like any machine, it belongs to the stack's only `App` unless `app` names another. Machines in the same organization send OTLP over the private network to `<app>.internal:4317` (gRPC) or `:4318` (HTTP).
+
+`${env:OTLP_API_KEY}` is the collector's own environment substitution. Set the key as a Fly secret on the app and it reaches the collector's environment without appearing in the config. FLY004 treats this form as a reference, not an inline secret.
+
+## Props
+
+| Prop | Default | Meaning |
+|------|---------|---------|
+| `name` | `otel-collector` | Machine name |
+| `app` | the stack's only `App` | The app the machine belongs to |
+| `region` | `Fly.Region` | Region, resolved from `FLY_REGION` at build time |
+| `exporters` | one `debug` exporter | Where the default config sends telemetry |
+| `signals` | traces, metrics and logs | Which signals get a pipeline in the default config |
+| `config` | none | A full config as otel entities; replaces the default, and `exporters` and `signals` are ignored |
+| `image` | the contrib image at the otel lexicon's pinned version | Collector image |
+| `cpuKind`, `cpus`, `memoryMb` | `shared`, 1, 512 | Guest size |
+| `defaults` | none | Overrides for the `machine` member |
+
+## The default config
+
+Without `config`, the composite uses `otlpCollector()` from the otel lexicon. It has an `otlp` receiver on 4317 and 4318, `memory_limiter` then `batch`, the given exporters, and a `health_check` extension on 13133, with one pipeline per signal.
+
+## Health check
+
+When the config enables a `health_check` extension that listens on an address other than localhost, the machine gets an HTTP check named `health` on that port and path, every 15 seconds with a 10 second grace period. A config without one gets no check. The machine restarts with policy `always`.
+
+The example project is `lexicons/fly/examples/otel-collector`.

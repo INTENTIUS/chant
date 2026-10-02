@@ -41,12 +41,16 @@
  * (absent on the resolution lines written before #2119, which is why
  * `"resolution"` is the default reading).
  */
+import { samePlanDigest } from "./plan-digest";
 import { sortedJsonReplacer } from "../utils";
 import { currentGateOrigin, type GateOrigin } from "./gate-origin";
 import type { GateApprover, GatePolicyDecision, ResolvedGateApproval } from "../op/gate-approval";
 import { readBlobFromPath, readPathSha, readBlobBySha, writeBlobToPath, RefCASConflictError } from "./git";
 
 const DIR = "_gates";
+
+/** The directory on the `chant/lifecycle` branch that holds gate ledgers, under a member's prefix when it has one. */
+export const GATES_DIR = DIR;
 const APPEND_RETRY_ATTEMPTS = 5;
 
 /**
@@ -141,6 +145,13 @@ export interface GateResolutionRecord {
    */
   planDigest?: string;
   /**
+   * The environment this approval is for (#2574), copied off the pending fact
+   * it answers. Set for a component gate, whose ledger is keyed by component
+   * rather than by environment. A component gate counts only a resolution
+   * recorded for its own environment and plan.
+   */
+  environment?: string;
+  /**
    * The channel this resolution was authored on (chant#2384) — set by the
    * writer, never by the caller. `chant approve` records `"cli"`, the
    * `op-approve` MCP tool records `"mcp"`, an ACP-driven approve records
@@ -217,10 +228,18 @@ export interface PendingGateRecord {
    * resolution by default, so approving the standing fact approves the plan
    * the approver was shown rather than the next run's.
    *
-   * Absent when the gate binds no plan (a component gate, an authored `gate`
-   * step with no `plan`), which is the shape every gate had before #2300.
+   * Absent when the gate binds no plan (an authored Op `gate` step with no
+   * `plan`), which is the shape every gate had before #2300. A component gate
+   * binds one since #2574.
    */
   planDigest?: string;
+  /**
+   * The environment the run reached this gate in (#2574). Set by the
+   * component driver, whose gate ledger is keyed by component, so pending
+   * facts for staging and prod stand side by side and `chant approve --env`
+   * can pick one.
+   */
+  environment?: string;
   /**
    * The channel the run that reached this gate was driven from (chant#2384).
    *
@@ -260,8 +279,8 @@ function filename(op: string): string {
  * fact was appended to (#2243) rather than describing it in prose that drifts
  * from `DIR`.
  */
-export function gateLedgerPath(op: string): string {
-  return `${DIR}/${filename(op)}`;
+export function gateLedgerPath(op: string, memberPrefix = ""): string {
+  return `${memberPrefix}${DIR}/${filename(op)}`;
 }
 
 /** Append one immutable gate-resolution record. Does not push to the remote — call `pushLifecycle` (./git.ts) afterward, same two-step shape every other ledger write here uses. Retries on `RefCASConflictError` the same way `appendConvergeRecord` does (./converge-ledger.ts) — a concurrent writer to a different op's/env's file on the same orphan branch is the ordinary case, not an edge case. The baseline read must be `readPathSha` + `readBlobBySha` rather than `readBlobFromPath`, so the exact sha `existing` came from can be passed as `expectPriorPathSha` — see `writeBlobToPath` (./git.ts) for the race that closes. */
@@ -335,7 +354,18 @@ export async function readGateLedger(
 ): Promise<{ resolutions: GateResolutionRecord[]; pending: PendingGateRecord[]; malformed: number }> {
   const content = await readBlobFromPath(DIR, filename(op), opts);
   if (!content) return { resolutions: [], pending: [], malformed: 0 };
+  return parseGateLedger(content);
+}
 
+/**
+ * Split the text of one gate ledger file into its two kinds of line, oldest
+ * first, the way {@link readGateLedger} reads it. Exported for a reader that
+ * fetches the file itself, such as `chant workspace status` (#2674), which
+ * reads every member's ledger by its full path from the workspace root.
+ */
+export function parseGateLedger(
+  content: string,
+): { resolutions: GateResolutionRecord[]; pending: PendingGateRecord[]; malformed: number } {
   const lines = content.split("\n").map((l) => l.trim()).filter(Boolean);
   const resolutions: GateResolutionRecord[] = [];
   const pending: PendingGateRecord[] = [];
@@ -358,6 +388,13 @@ export async function readGateLedger(
       // must not read as an approval of anything at all.
       const rawDigest: unknown = (parsed as { planDigest?: unknown }).planDigest;
       if (rawDigest !== undefined && typeof rawDigest !== "string") {
+        malformed++;
+        continue;
+      }
+      // #2574: the same reasoning for the environment a component gate
+      // approval is bound to.
+      const rawEnv: unknown = (parsed as { environment?: unknown }).environment;
+      if (rawEnv !== undefined && typeof rawEnv !== "string") {
         malformed++;
         continue;
       }
@@ -442,8 +479,8 @@ export interface PlanBoundResolution {
  * which a run answers yes to no matter what has changed since, and this asks
  * "is there an approval of *this*".
  *
- * - `planDigest` `undefined` — the gate binds no plan (a component gate, a
- *   `gate` step authored with no `plan`). Falls straight through to
+ * - `planDigest` `undefined` — the gate binds no plan (an Op `gate` step
+ *   authored with no `plan`). Falls straight through to
  *   {@link latestResolutionSince}: gates that never claimed to bind a plan
  *   behave exactly as they did before #2300.
  * - A resolution whose `planDigest` equals `planDigest` answers the gate.
@@ -477,7 +514,7 @@ export function latestResolutionForPlan(
     if (new Date(r.timestamp).getTime() < since) continue;
     const newest = (best: GateResolutionRecord | undefined) =>
       !best || new Date(r.timestamp).getTime() >= new Date(best.timestamp).getTime();
-    if (r.planDigest === planDigest) {
+    if (samePlanDigest(r.planDigest, planDigest)) {
       if (newest(matched)) matched = r;
     } else if (newest(mismatched)) {
       mismatched = r;

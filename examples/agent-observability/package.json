@@ -1,0 +1,23 @@
+{
+  "name": "agent-observability-example",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "chant build src --lexicon k3d -o dist/k3d.yaml && chant build src --lexicon k8s -o dist/k8s.yaml && chant build src --lexicon prometheus -o dist/prometheus/rules.yml && chant build src --lexicon grafana -o dist/grafana/index.json",
+    "lint": "chant lint src",
+    "image": "docker build -t agent-observability-demo:0.1.0 app",
+    "test": "npx vitest run examples/agent-observability"
+  },
+  "dependencies": {
+    "@intentius/chant": "*",
+    "@intentius/chant-lexicon-grafana": "*",
+    "@intentius/chant-lexicon-k3d": "*",
+    "@intentius/chant-lexicon-k8s": "*",
+    "@intentius/chant-lexicon-otel": "*",
+    "@intentius/chant-lexicon-prometheus": "*"
+  },
+  "devDependencies": {
+    "typescript": "*"
+  }
+}

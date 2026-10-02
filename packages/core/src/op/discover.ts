@@ -1,9 +1,11 @@
 import { getRuntime } from "../runtime-adapter";
-import { readdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { OpConfig } from "./types";
-import { warnDiscoveryChanges } from "../discovery/convergence";
+import { walkDiscovery, workspaceMemberDirs } from "../discovery/walk";
+import { hasDiscoveryMarkerSync } from "../discovery/files";
+import { resolveDiscoveryGlobs } from "../config";
+import { isStewardDeclaration, type StewardDeclaration } from "./steward";
 
 export interface DiscoveredOp {
   config: OpConfig;
@@ -53,28 +55,22 @@ async function findDiscoveryRoot(cwd?: string): Promise<string> {
   return gitRoot;
 }
 
-async function collectOpFiles(dir: string): Promise<string[]> {
-  const files: string[] = [];
-  let entries;
-  try {
-    entries = await readdir(dir, { withFileTypes: true });
-  } catch {
-    return files;
-  }
-  for (const entry of entries) {
-    const fullPath = join(dir, entry.name);
-    if (entry.isDirectory() && !entry.name.startsWith(".") && entry.name !== "node_modules" && entry.name !== "dist") {
-      files.push(...await collectOpFiles(fullPath));
-    } else if (
-      entry.isFile() &&
-      entry.name.endsWith(".op.ts") &&
-      !entry.name.endsWith(".test.ts") &&
-      !entry.name.endsWith(".spec.ts")
-    ) {
-      files.push(fullPath);
-    }
-  }
-  return files;
+/**
+ * Every `*.op.ts` file below the Op root, through the one discovery walk
+ * (`../discovery/walk.ts`, #2527). The walk down stops at child projects
+ * whatever the root is, so a configless layout whose Op root is the git root
+ * no longer collects its sibling projects' Ops. The project's
+ * `exclude`/`include` globs and the skip marker apply.
+ */
+async function collectOpFiles(root: string): Promise<string[]> {
+  return walkDiscovery({
+    walker: "ops",
+    root,
+    globs: await resolveDiscoveryGlobs(root),
+    excludeDirs: await workspaceMemberDirs(root),
+    accept: (name, full) =>
+      name.endsWith(".op.ts") && !name.endsWith(".test.ts") && !name.endsWith(".spec.ts") && !hasDiscoveryMarkerSync(full),
+  });
 }
 
 /** The `OpConfig` behind an exported value, or `undefined` when the value is not an Op. An Op entity carries its config on `.props` (`./resource.ts`); `name` and `phases` are what every consumer of a discovered Op reads. */
@@ -149,9 +145,6 @@ export async function discoverOps(opts?: { cwd?: string }): Promise<OpDiscoveryR
 
   const root = await findDiscoveryRoot(opts?.cwd);
   const files = await collectOpFiles(root);
-  // #2527's warning release: Op discovery stops at child projects below the
-  // root next release, and skips git-ignored files. `files` is unchanged.
-  await warnDiscoveryChanges({ walker: "ops", root, files });
 
   const nameToFile = new Map<string, string>();
 
@@ -160,6 +153,9 @@ export async function discoverOps(opts?: { cwd?: string }): Promise<OpDiscoveryR
       const mod = (await import(filePath)) as Record<string, unknown>;
       const exported = opsExportedBy(mod);
 
+      // A file may hold a steward and no Op (#2731): the steward sits beside
+      // the Ops it runs, and `discoverStewards` reads it from here.
+      if (exported.length === 0 && Object.values(mod).some(isStewardDeclaration)) continue;
       if (exported.length === 0) {
         errors.push(
           `${filePath}: exports no Op. Expected \`export default Op({...})\` or a named export such as \`export const deploy = Op({...})\``,
@@ -187,4 +183,71 @@ export async function discoverOps(opts?: { cwd?: string }): Promise<OpDiscoveryR
   }
 
   return { ops, errors };
+}
+
+export interface DiscoveredSteward {
+  declaration: StewardDeclaration;
+  filePath: string;
+  exportName: string;
+}
+
+export interface StewardDiscoveryResult {
+  stewards: Map<string, DiscoveredSteward>;
+  /** Files that could not be imported. */
+  errors: string[];
+  /** Stewards dropped because they would be a second writer: a name or an Op another steward already has. */
+  conflicts: string[];
+}
+
+/**
+ * Every steward declared in the project's `*.op.ts` files (#2731), found the
+ * way {@link discoverOps} finds Ops, keyed by the steward's name.
+ *
+ * Refuses, as errors, the two ways a project could end up with two writers:
+ * two stewards of one name, and one Op listed by two stewards. The steward
+ * declared first (in file walk order) keeps its entry; the other is dropped
+ * and reported in `conflicts`.
+ */
+export async function discoverStewards(opts?: { cwd?: string }): Promise<StewardDiscoveryResult> {
+  const errors: string[] = [];
+  const conflicts: string[] = [];
+  const stewards = new Map<string, DiscoveredSteward>();
+  const opOwner = new Map<string, string>();
+
+  const root = await findDiscoveryRoot(opts?.cwd);
+  const files = await collectOpFiles(root);
+
+  for (const filePath of files) {
+    let mod: Record<string, unknown>;
+    try {
+      mod = (await import(filePath)) as Record<string, unknown>;
+    } catch (err) {
+      errors.push(`${filePath}: ${err instanceof Error ? err.message : String(err)}`);
+      continue;
+    }
+    const seen = new Set<unknown>();
+    const exportNames = ["default", ...Object.keys(mod).filter((k) => k !== "default")];
+    for (const exportName of exportNames) {
+      const value = mod[exportName];
+      if (!isStewardDeclaration(value) || seen.has(value)) continue;
+      seen.add(value);
+      const prior = stewards.get(value.name);
+      if (prior) {
+        conflicts.push(`Duplicate steward "${value.name}" in ${filePath} and ${prior.filePath}`);
+        continue;
+      }
+      const claimed = value.ops.find((op) => opOwner.has(op.name));
+      if (claimed) {
+        conflicts.push(
+          `${filePath}: steward "${value.name}" lists op "${claimed.name}", which steward "${opOwner.get(claimed.name)}" already runs. ` +
+            `Two stewards running one Op are two writers; list it on one of them.`,
+        );
+        continue;
+      }
+      for (const op of value.ops) opOwner.set(op.name, value.name);
+      stewards.set(value.name, { declaration: value, filePath, exportName });
+    }
+  }
+
+  return { stewards, errors, conflicts };
 }

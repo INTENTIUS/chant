@@ -252,8 +252,10 @@ export function createMockCloudExecutor(options: MockCloudExecutorOptions = {}):
     async updateService(args: EcsUpdateServiceArgs) {
       record("ecs", "updateService", args);
       const key = `${args.cluster}/${args.service}`;
-      const desired = args.desiredCount ?? ecsServices.get(key)?.desiredCount ?? 1;
-      ecsServices.set(key, { runningCount: desired, desiredCount: desired, stable: true });
+      const current = ecsServices.get(key);
+      const desired = args.desiredCount ?? current?.desiredCount ?? 1;
+      const taskDefinition = args.taskDefinition ?? current?.taskDefinition;
+      ecsServices.set(key, { runningCount: desired, desiredCount: desired, stable: true, ...(taskDefinition ? { taskDefinition } : {}) });
       return { deploymentId: `mock-deployment-${key}` };
     },
     async describeService(cluster: string, service: string) {
@@ -264,7 +266,9 @@ export function createMockCloudExecutor(options: MockCloudExecutorOptions = {}):
       record("ecs", "rollbackService", args);
       const key = `${args.cluster}/${args.service}`;
       const current = ecsServices.get(key);
-      ecsServices.set(key, { runningCount: current?.desiredCount ?? 1, desiredCount: current?.desiredCount ?? 1, stable: true });
+      const desired = args.desiredCount ?? current?.desiredCount ?? 1;
+      const taskDefinition = args.taskDefinition ?? current?.taskDefinition;
+      ecsServices.set(key, { runningCount: desired, desiredCount: desired, stable: true, ...(taskDefinition ? { taskDefinition } : {}) });
     },
     async runTask(args: EcsRunTaskArgs) {
       record("ecs", "runTask", args);

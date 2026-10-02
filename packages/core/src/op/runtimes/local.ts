@@ -52,7 +52,8 @@ function statusFrom(
     endedAt: new Date().toISOString(),
     records: result.records,
     result,
-    ...(result.gate ? { gate: { name: result.gate.gate, since: result.gate.timestamp } } : {}),
+    ...(result.gate ? { gate: { name: result.gate.gate, since: result.gate.timestamp, ...(result.gate.op !== op ? { op: result.gate.op } : {}) } } : {}),
+    ...(result.record.point ? { point: result.record.point } : {}),
   };
 }
 
@@ -70,6 +71,7 @@ function statusFromRecord(record: OpRunRecord): OpRunStatus {
     startedAt: record.started,
     endedAt: record.ended,
     ...(record.gate ? { gate: record.gate } : {}),
+    ...(record.point ? { point: record.point } : {}),
   };
 }
 
@@ -166,6 +168,9 @@ export function createLocalOpRuntime(opts: { projectPath?: string } = {}): OpRun
                     `appended to the run ledger: ${err instanceof Error ? err.message : String(err)}\n`,
                 ),
               ...(startOpts.progress ? { onRecord: startOpts.progress } : {}),
+              ...(startOpts.work ? { work: startOpts.work } : {}),
+              onWorkLeaseWarning: (message) =>
+                process.stderr.write(`warning: "${op.name}" could not renew its work lease, retrying at the next beat: ${message}\n`),
             },
           );
           const status = statusFrom(op.name, runId, startedAt, result);

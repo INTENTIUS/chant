@@ -32,7 +32,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { lexiconModulePath } from "../lexicon-module";
+import { lexiconModulePath, importLexiconPackage } from "../lexicon-module";
 import { isStepOutputRef, type StepOutputRef } from "./step-output-ref";
 
 /** What a policy's decision does to the gate. */
@@ -226,7 +226,7 @@ export async function loadGatePolicyEvaluator(lexicon: string): Promise<GatePoli
   const spec = lexiconModulePath(lexicon) ?? `@intentius/chant-lexicon-${lexicon}/gate-policy`;
   let mod: Partial<GatePolicyEvaluator>;
   try {
-    mod = (await import(spec)) as Partial<GatePolicyEvaluator>;
+    mod = (await importLexiconPackage(spec)) as Partial<GatePolicyEvaluator>;
   } catch (err) {
     throw new Error(
       `the gate's policy is evaluated by ${spec}, which could not be loaded: ` +

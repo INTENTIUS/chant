@@ -1,7 +1,7 @@
 import { describe, test, expect } from "vitest";
 import { withTestDir } from "@intentius/chant-test-utils";
 import { spawnSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -127,6 +127,18 @@ describe("lifecycle/git", () => {
 
         const out = await readBlobFromPath("_builds", "sha256_abc.json", { cwd: dir });
         expect(JSON.parse(out!)).toEqual({ a: 1 });
+      });
+    });
+
+    test("a write from a subdirectory of the repository keeps the rest of the branch (#2550)", async () => {
+      await withTestDir(async (dir) => {
+        await initRepo(dir);
+        await writeBlobToPath("_builds", "a.json", "{}", "m", { cwd: dir });
+        const sub = join(dir, "project");
+        mkdirSync(sub);
+        await writeBlobToPath("_gates", "op.jsonl", "{}", "m", { cwd: sub });
+        expect(await listFilesInDir("_builds", { cwd: sub })).toEqual(["a.json"]);
+        expect(await readBlobFromPath("_gates", "op.jsonl", { cwd: dir })).toBe("{}");
       });
     });
 

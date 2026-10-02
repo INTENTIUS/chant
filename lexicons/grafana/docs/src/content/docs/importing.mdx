@@ -1,0 +1,144 @@
+---
+title: "Importing Dashboards"
+description: "Turn dashboard JSON exported from Grafana, or a provisioning file, into typed chant TypeScript that builds back to the same dashboard"
+diataxis: how-to
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-grafana` — DO NOT EDIT.
+    Edit lexicons/grafana/docs/pages/importing.mdx instead; changes here are overwritten. */}
+
+
+`chant import` reads dashboard JSON and writes TypeScript that declares the same dashboard with this lexicon's classes. It reads datasource, dashboard and alerting provisioning files too; for alerting see [Alerting](../alerting/#import-an-alerting-file). `chant build` on the result gives back the dashboard you started from. Anything the lexicon cannot express yet is printed as a warning, never dropped silently.
+
+## Import a dashboard
+
+Export the dashboard from Grafana (Export > Export as JSON; the Classic and V2 Resource models both work), then, from a chant project whose `chant.config.ts` lists `grafana`:
+
+```bash
+chant import checkout.json --output src
+```
+
+Outside a project, name the lexicon: `chant import checkout.json --lexicon grafana --output src`. Either export works, with or without "Export for sharing externally". The importer also reads a dashboard as `GET /api/dashboards/uid/<uid>` returns it, a `dashboard.grafana.app` v1 or v2 resource, and Grafana's datasource and dashboard provisioning files. A datasource file that does not set `prune: true`, or that lists `deleteDatasources`, gets a `DatasourceProvisioning` saying so, since chant's file prunes by default (see [Provisioning](../provisioning/#datasource-pruning)). See [v2 dashboards](#v2-dashboards) for what happens to a v2 one.
+
+Each dashboard is written to a directory of its own, named after its uid, so a second import into the same `src` does not collide with the first. Most dashboards become a single `dashboard.ts`: the datasources it names, its variables, and the `Dashboard` with its panels, rows and queries written inline. Two things split it up:
+
+| When | What moves out of `dashboard.ts` |
+|---|---|
+| the module would be longer than 1,500 lines (Node Exporter Full, for one) | each row, to `row-<title>.ts`, with the panels under it; and what the rows use, such as a datasource variable, to `variables.ts` or `datasources.ts`, so the rows don't import from the dashboard that imports them |
+| it would hold more than eight declarables COR009 counts (`ExternalDatasource`s, panels of a `definePanel` class) | the groups holding them, to `datasources.ts` and the like, split into `datasources-1.ts`, `datasources-2.ts` when one file still has too many |
+
+Panels, rows, queries and variables are property-kind, so COR009 doesn't count them and they never force a split. Then build it:
+
+```bash
+chant build src --lexicon grafana -o dist/grafana/index.json
+```
+
+A dashboard held in a Kubernetes ConfigMap, such as one labelled `grafana_dashboard` for the Grafana sidecar, is imported the same way when you import the manifest with the k8s lexicon. The ConfigMap's value becomes `dashboardJson(dashboard)`. That dashboard keeps the older flat shape, a const per panel and query with nested settings lifted and at most eight to a module, because the k8s project need not list grafana, and without it `chant lint` doesn't know panels are property-kind. A v2 dashboard in a ConfigMap is the exception: it stays a string, with a warning, because the lexicon builds v1 JSON and the ConfigMap would change from v2 to v1 on the next build. See the k8s lexicon's [Importing Existing YAML](/chant/lexicons/k8s/importing-yaml/).
+
+## What the generated source looks like
+
+The dashboard reads the way you would write it by hand. Panels, rows and queries sit inline in the `Dashboard`, with their `gridPos`, `options` and `fieldConfig` inline too, since COR001 leaves property-kind declarables alone. A variable used once, in the dashboard's variable list, is inline as well; one that panels also refer to (a datasource variable, or one a panel repeats over) is a constant named after it. The dashboard's own nested settings, such as `links` and `annotations`, are lifted into named consts typed by its props, which is how COR001 wants a resource written:
+
+```ts title="chant-fx-checkout/dashboard.ts"
+const datasource = new DatasourceVariable({ name: "datasource", label: "Data source", pluginType: "prometheus" });
+
+const checkoutServiceAnnotations: PropsOf<typeof Dashboard>["annotations"] = [
+  { datasource: datasource, enable: true, expr: "changes(kube_deployment_status_observed_generation[5m]) > 0", iconColor: "red", name: "Deploys" },
+];
+const checkoutService = new Dashboard({
+  title: "Checkout service",
+  uid: "chant-fx-checkout",
+  variables: [datasource, new IntervalVariable({ name: "window", values: ["1m", "5m", "15m"] })],
+  panels: [
+    new TimeSeriesPanel({
+      id: 1,
+      title: "Request rate ($env)",
+      gridPos: { h: 8, w: 12, x: 0, y: 0 },
+      options: {
+        legend: { calcs: ["mean", "max"], displayMode: "table", placement: "bottom", showLegend: true },
+        tooltip: { mode: "multi", sort: "desc" },
+      },
+      datasource,
+      targets: [
+        new PromQuery({
+          expr: 'sum by (route) (rate(http_requests_total{job=~"$job", env=~"$env"}[$window]))',
+          legendFormat: "{{route}}",
+          refId: "A",
+        }),
+      ],
+    }),
+  ],
+  annotations: checkoutServiceAnnotations,
+});
+
+export { checkoutService };
+```
+
+A transformation written with `customTransformation(...)` (see [Transformations](#transformations)) is the one panel setting lifted into a const, because EVL001 does not take a function call inside a constructor.
+
+Every variable type Grafana saves has a class, so the variable list comes over whole. A query variable in object form (`{ qryType, query, refId }`, as Prometheus's variable editor writes it) keeps its object, an ad hoc variable its filters, base filters and static keys, a group by variable its options and default, and a switch its enabled and disabled values and whether it starts on.
+
+Panel ids, positions and query refIds are carried as they are, so the rebuilt dashboard keeps its layout and any links to `viewPanel=<id>`. A panel `gridPos` missing `x` or `y` is written with 0, which is what Grafana reads; one missing `h` or `w` is written with the dashboard schema's default (9 and 12) and a warning. A row keeps its line as `gridPos: { y }`, so it stays where the source has it even above an empty band or on a line a panel also takes, where the build would otherwise place it lower. A panel's `repeat` names the variable constant, and a panel or query that uses a datasource variable holds that variable. A key left at the value Grafana assumes when it is missing (`transparent: false`, an empty `options`) is not written.
+
+A query is declared with its datasource's class (`PromQuery`, `ElasticsearchQuery`, `CloudWatchQuery`, `PostgresQuery` and the rest listed in [Queries and Datasources](../queries-and-datasources/#queries)), so its fields are type-checked; a Postgres query under the plugin's old id, `postgres`, is a `PostgresQuery` too. A panel type chant has no class for (a community plugin such as `grafana-clock-panel`) is declared with `definePanel`, and a query to a datasource type chant has no class for with `defineQuery`, ahead of the dashboard that uses them. Their options are carried as data, typed `Record<string, unknown>`; see [Other Panel and Datasource Plugins](../custom-plugins/) to type them. A class made this way is not property-kind, so its panels are constants with their nested settings lifted, and COR009 counts them.
+
+## Datasources
+
+A reference by uid (`{ "type": "prometheus", "uid": "prom" }`) becomes an `ExternalDatasource`, a constant at the top of `dashboard.ts`: the datasource as it exists in your Grafana, which the build does not provision but GRAF101 and GRAF102 check references against. To provision it from chant as well, replace it with a `Datasource` of the same uid. Grafana's own pseudo-datasources (`-- Grafana --`, `-- Dashboard --`) stay plain `{ type, uid }` refs. A datasource variable whose selected value is a uid adds an `ExternalDatasource` for it too. Importing a second dashboard that names the same datasource declares it again in that dashboard's directory; GRAF104 counts declarations with the same uid, type and name once, and still reports a uid shared with another type or name, or with a provisioned `Datasource`.
+
+GRAF101 fails a build in which a datasource variable's type has no declared datasource. So when the dashboard names some datasources by uid but none of a datasource variable's type, the importer writes those uids as plain refs instead, so the build passes, and its warning lists what to declare. A dashboard that names its datasources only through variables (a shared export) gets a GRAF101 warning after a build that it cannot check them, until you declare them.
+
+A datasource provisioning file becomes one `Datasource` per entry, with its `jsonData` in a const typed for its plugin (`PropsOf<typeof Datasource<"tempo">>["jsonData"]`). A uid in the settings that names another entry of the same file (a Tempo's `tracesToLogsV2.datasourceUid`, a Prometheus exemplar's, a Loki derived field's) becomes a reference to that entry's `Datasource` when the entry is of a type the field takes, so the link is checked. A link that would close a cycle, such as Tempo to Loki and Loki back to Tempo, stays a uid string on the entry written first. A setting the plugin at the pin no longer reads (Tempo's `lokiSearch`) still imports and builds back as it was, and `tsc` points at it.
+
+An export made for sharing names its datasources through `__inputs` and `${DS_PROMETHEUS}`, which Grafana's import dialog fills in. The importer turns each such input into a `DatasourceVariable` of the same name, so every `${DS_PROMETHEUS}` in the dashboard still resolves, now to whatever the variable selects. A constant input (`${VAR_SERVICE}`) is replaced by its value, as the import dialog would. Both are reported.
+
+The same export carries the library panels it uses in `__elements`. Each becomes a `LibraryPanel` with the uid and name it has in Grafana and its model as a panel, and each panel that places it a `LibraryPanelRef` with the reference's `id`, `gridPos` and `title`; the build writes them back the same way (see [Library panels](../dashboards-and-panels/#library-panels)). A plain export has only the references, so the importer writes each as `libraryPanel: { uid, name }`, a library panel that must already exist in Grafana, and says so in a warning; import the export for sharing externally to get the library panel too. An element no panel places, and a library variable, are reported and left out, and so are the panel keys Grafana 8 and 9 saved on a reference beside `libraryPanel`, which Grafana does not read.
+
+## What is not carried
+
+`chant import` prints a warning for each of these, and leaves it out:
+
+- a top-level dashboard or panel key no prop takes, such as `gnetId`, and the `__requires` plugin list;
+- a textbox variable's current value when it differs from its default;
+- `-- Mixed --` anywhere but on a panel (a row, a query or a variable). A panel's Mixed datasource is carried as a `DatasourceRef` const.
+
+The stored copy's `id`, `version` and `iteration` are Grafana's bookkeeping, not part of the dashboard, and are dropped without a warning.
+
+## Older dashboards
+
+The dashboard's `schemaVersion` is carried, so Grafana still runs its migrations when it loads the rebuilt JSON. What the importer cannot carry is a panel from the AngularJS era (`graph`, `singlestat`), which keeps its settings as top-level panel keys: the panel is imported, its settings are reported and left out. To keep them, load the dashboard in Grafana 11 or later, which converts those panels, export it again and import that export. A dashboard saved before Grafana 5.0, with its panels inside a top-level `rows` list, is reported and not imported at all; the same re-export fixes it.
+
+## v2 dashboards
+
+Grafana 13 stores a dashboard built in its UI as v2 (`dashboard.grafana.app/v2`), and "V2 Resource" is its default export. chant builds classic (v1) dashboard JSON, so the importer reads a v2 dashboard (a `v2` or `v2beta1` resource, or a bare v2 spec) into the classic model the same way Grafana does when it serves that dashboard at v1, then imports the result like any classic dashboard. The rebuilt dashboard is what Grafana's own v1 read gives, and the first warning says the dashboard was v2.
+
+Grafana's v1 read drops what the classic model cannot hold without saying so. The importer names each of these in a warning:
+
+| v2 | Becomes |
+|---|---|
+| tabs | one expanded row per tab, in order, so every tab's panels show on one page |
+| an auto grid | fixed positions, as many to a row as its column count, heights from its row height mode; the panels no longer resize with the screen |
+| rows or tabs inside a row or tab | rows of their own after it, since classic rows do not nest |
+| a hidden row header after the first row | nothing: its panels join the row before them |
+| conditional rendering on a row, tab or panel | nothing: it always shows |
+| section variables, a row's `fillScreen`, dashboard `preferences` | nothing |
+| a variable shown in the controls menu | a variable in the variable bar |
+| a link or variable provided by a datasource (`origin`) | the dashboard's own |
+| an annotation placed in the controls menu | a toggle in the usual place |
+| a key the pinned `dashboardv2` schema does not have | nothing |
+
+A library panel element becomes a reference to the library panel, as in Grafana's v1 read; a v2 export does not carry the library panel's model, so the reference names it by `{ uid, name }`, with the warning a plain classic export gets. Ad hoc, group by and switch variables are imported as they are from a classic dashboard. `dashboard.grafana.app/v2alpha1` is not read: read the dashboard at v2 instead.
+
+A v0 or v1 read of a dashboard Grafana stores as v2 is refused. Grafana marks it with `status.conversion.storedVersion: v2`, and it has already lost what v2 has and v1 does not, with nothing in the spec to show it; building it and writing it back would overwrite the tabs. The warning says to read the dashboard at `dashboard.grafana.app/v2` (or export it with the V2 Resource model) and import that. To accept such a read anyway, run `chant import dashboard.json --lexicon grafana --parser-option acceptLossyV1` (a `--parser-option` is a boolean here, so `=true` is optional), or call the parser directly with `new GrafanaParser({ acceptLossyV1: true })`. Either imports it with a warning. `acceptLossyV1` is the only parser option grafana declares; any other name is refused. `GET /api/dashboards/uid/<uid>` carries no such marker, so a v2 dashboard read through it cannot be told from a classic one: prefer the v2 export.
+
+## Keys outside the typed options
+
+The panel and query types follow the schemas at the pin (see [Where the Types Come From](../schema-pin/)). A community dashboard can carry keys they do not list, such as the old `step` and `metric` fields on a Prometheus query. Such a key still imports and still builds back to the same JSON, but `tsc` reports it at the constructor or const that holds it, and GRAF107 warns about it after a build. Delete the key if Grafana no longer reads it, or keep it and mark the line with `// @ts-expect-error` and a reason.
+
+## Transformations
+
+A panel's transformations are imported typed: each is written as the `{ id, options }` object that `transformations` checks by id. When the types can't hold one, it is written with `customTransformation(id, options)` and the same JSON, and the import warns, naming the reason. That happens for a transformer Grafana v13.2.2 doesn't register (a plugin's), a key beside `id`, `options`, `disabled`, `filter` and `topic`, or an option its transformer doesn't take. The Kubernetes Pods community dashboard has a `sortBy` with a stale `fields: {}`, for example. Nothing is dropped, except a transformation with no id, which Grafana skips.
+
+## How the round trip is checked
+
+`src/import/roundtrip.test.ts` imports every dashboard in the lexicon's corpus, builds it, and compares the result with the source: Grafana 12.4.11 and 13.2.2 UI exports, two v2 dashboards from 13.2.2 (compared through their classic form), Node Exporter Full and other community dashboards from grafana.com (their sources and licenses are in `test/fixtures/community/README.md`), the 33 dashboards kube-prometheus v0.19.0 ships (`test/fixtures/kube-prometheus/README.md`), and what the lexicon's own examples build. The comparison applies the importer's edits to the source (each key left out, each value written in another form) and then puts both sides through `normalizeDashboard`, which removes the keys Grafana fills in or derives. A dashboard chant built comes back as the same text. `src/import/v2.test.ts` checks the v2 reading against Grafana 13.2.2's own v1 read of the same dashboard, and checks that every key the pinned `dashboardv2` schema defines is either carried or reported.

@@ -53,15 +53,14 @@ export interface RollbackPreviousSnapshotInput {
   resource: string;
 }
 
-/** Roll an ECS service back to its previously recorded task definition — the
- * shape the `ecs-fargate` preset and the ALB/ECS pilot compose for an
- * ALB-fronted frontend service. */
+/** Roll an ECS service back to a named task definition. */
 export interface RollbackPreviousEcsInput {
   /** ECS service name. */
   service: string;
   /** ECS cluster (name or ARN). */
   cluster: string;
-  /** Explicit task definition to roll to; omitted → the executor's recorded previous. */
+  /** Task definition to roll back to (family:revision or ARN). Required: nothing
+   * records a service's previous task definition, so the step fails without it. */
   taskDefinition?: string;
   desiredCount?: number;
 }
@@ -78,8 +77,8 @@ export interface RollbackPreviousOutput {
 /**
  * Roll a resource back to its prior state — an explicit, caller-composed
  * compensation (not the auto-triggered per-capability `rollback`). Dispatches by
- * the input shape: an ECS service (`{service, cluster}`) rolls to its previous
- * task definition; a snapshot (`{snapshotId, resource}`) restores that capture.
+ * the input shape: an ECS service (`{service, cluster, taskDefinition}`) rolls to
+ * that task definition, and fails without one (#2605); a snapshot (`{snapshotId, resource}`) restores that capture.
  * An unrecognized shape fails with a clear message rather than a cryptic
  * `undefined` access (chant #990 — an ECS-shaped input used to reach the
  * snapshot path and throw "reading 'includes'" on the absent snapshotId).
@@ -89,6 +88,12 @@ export function createRollbackPreviousCapability(executor: CloudExecutor = defau
     kind: "rollback-previous",
     async run(_ctx, input) {
       if ("service" in input && input.service) {
+        if (!input.taskDefinition) {
+          throw new Error(
+            `rollback-previous: ECS service "${input.service}" needs a taskDefinition to roll back to; ` +
+              `nothing records the previous one. For an earlier release use \`chant components rollback\``,
+          );
+        }
         await executor.ecs.rollbackService({
           cluster: input.cluster,
           service: input.service,

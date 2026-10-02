@@ -1,6 +1,6 @@
 import { lexiconModulePath, lexiconNames } from "../../lexicon-module";
 import { existsSync, mkdirSync, writeFileSync, cpSync, readdirSync, statSync, readFileSync } from "fs";
-import { join, resolve } from "path";
+import { dirname, join, resolve } from "path";
 import { createRequire } from "module";
 import { formatSuccess, formatWarning, formatError } from "../format";
 import { loadChantConfig } from "../../config";
@@ -27,6 +27,15 @@ export interface UpdateResult {
   warnings: string[];
   /** Error message if failed */
   error?: string;
+}
+
+/**
+ * Where `chant update` writes a lexicon skill, relative to the project. The
+ * workspace drift check (#2541) compares these files with what the skills
+ * render to, so both read the path from here.
+ */
+export function skillFilePath(skillName: string): string {
+  return `skills/${skillName}/SKILL.md`;
 }
 
 /**
@@ -170,9 +179,9 @@ export async function updateCommand(options: UpdateOptions): Promise<UpdateResul
         const skills = plugin.skills();
         if (skills.length > 0) {
           for (const skill of skills) {
-            const skillDir = join(projectDir, "skills", skill.name);
-            mkdirSync(skillDir, { recursive: true });
-            writeFileSync(join(skillDir, "SKILL.md"), skill.content);
+            const file = join(projectDir, skillFilePath(skill.name));
+            mkdirSync(dirname(file), { recursive: true });
+            writeFileSync(file, skill.content);
           }
           synced.push(`${plugin.name} skills (${skills.length})`);
         }

@@ -44,7 +44,7 @@ import {
   type PendingGateInput,
   type PendingGateRecord,
 } from "../lifecycle/gate-ledger";
-import { describePlanDigest } from "../lifecycle/plan-digest";
+import { describePlanDigest, samePlanDigest } from "../lifecycle/plan-digest";
 import { isModelAuthored } from "../lifecycle/gate-origin";
 import { sortedJsonReplacer } from "../utils";
 import type { GateApprover, ResolvedGateApproval } from "./gate-approval";
@@ -171,6 +171,14 @@ export interface GateCheckInput {
    */
   planDigest?: string;
   /**
+   * The environment this run deploys to (#2574). The component driver sets it,
+   * because a component's gate ledger is keyed by component and holds every
+   * environment's facts. Set, the gate reads only this environment's pending
+   * facts and resolutions (plus resolutions that record no environment, which
+   * come back as a mismatch), and the pending fact it records carries it.
+   */
+  environment?: string;
+  /**
    * The gate's quorum and policy (#2508), context already resolved. Absent,
    * one approval passes the gate, which is the rule every gate had before.
    * Present, {@link tallyGateApprovals} decides, and the pending fact carries
@@ -194,6 +202,8 @@ export interface GateDigestMismatch {
   resolvedBy: string;
   /** When they recorded it. */
   timestamp: string;
+  /** The environment this run deploys to, on a component gate (#2574). The approve command a refusal prints names it. */
+  environment?: string;
 }
 
 /**
@@ -210,15 +220,18 @@ export interface GateDigestMismatch {
 export function describeGateMismatch(op: string, gate: string, mismatch: GateDigestMismatch): string {
   const why =
     mismatch.approved === undefined
-      ? "That resolution predates plan-bound gates (#2300) and records no plan at all, so it cannot " +
-        "answer for this one. Approving again binds it:"
+      ? mismatch.environment !== undefined
+        ? "That approval predates environment- and plan-bound component gates (#2574) and records neither, " +
+          "so it cannot answer for this one. Approving again binds it:"
+        : "That resolution predates plan-bound gates (#2300) and records no plan at all, so it cannot " +
+          "answer for this one. Approving again binds it:"
       : "The configuration or the live system changed between that approval and this plan, so it needs " +
         "a fresh one:";
   return (
     `Gate "${gate}" is approved, but not for this plan. ` +
     `approved: ${describePlanDigest(mismatch.approved)} (by ${mismatch.resolvedBy} at ${mismatch.timestamp}); ` +
     `planned: ${mismatch.planned}. ` +
-    `${why} ${approveCommand(op, gate)}`
+    `${why} ${approveCommand(op, gate, mismatch.environment)}`
   );
 }
 
@@ -312,7 +325,7 @@ export function tallyGateApprovals(
   let mismatched: GateResolutionRecord | undefined;
   for (const r of records) {
     if (r.gate !== gate || at(r) < since) continue;
-    if (planDigest !== undefined && r.planDigest !== planDigest) {
+    if (planDigest !== undefined && !samePlanDigest(r.planDigest, planDigest)) {
       if (!mismatched || at(r) >= at(mismatched)) mismatched = r;
       continue;
     }
@@ -374,7 +387,17 @@ const EPOCH = new Date(0).toISOString();
  */
 export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput): Promise<GateCheck> {
   const now = input.now ?? new Date().toISOString();
-  const { resolutions, pending } = await port.read(input.op);
+  const ledger = await port.read(input.op);
+  // #2574: a component's ledger holds every environment's facts. This run
+  // answers only to its own environment's pending facts and approvals. An
+  // approval that records no environment at all is kept, so it comes back as
+  // a mismatch with a message instead of silently not counting.
+  const env = input.environment;
+  const pending = env === undefined ? ledger.pending : ledger.pending.filter((p) => p.environment === env);
+  const resolutions =
+    env === undefined
+      ? ledger.resolutions
+      : ledger.resolutions.filter((r) => r.environment === undefined || r.environment === env);
 
   const standing = latestPendingGate(pending, input.gate);
   const since = standing?.timestamp ?? EPOCH;
@@ -410,6 +433,7 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
         planned: input.planDigest!,
         resolvedBy: mismatched.resolvedBy,
         timestamp: mismatched.timestamp,
+        ...(env !== undefined ? { environment: env } : {}),
       }
     : undefined;
   const asMismatch = { ...(mismatch ? { mismatch } : {}), ...(quorum ? { quorum } : {}) };
@@ -423,7 +447,7 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
   // under another policy version or another context would have `chant
   // approve` evaluate the policy against something this run no longer has.
   if (
-    standing && !isPendingGateExpired(standing, now) && standing.planDigest === input.planDigest &&
+    standing && !isPendingGateExpired(standing, now) && samePlanDigest(standing.planDigest, input.planDigest) &&
     sameApproval(standing.approval, input.approval)
   ) {
     return { satisfied: false, pending: standing, recorded: false, ...asMismatch };
@@ -441,6 +465,7 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
     ...(input.runId ? { runId: input.runId } : {}),
     ...(url ? { url } : {}),
     ...(input.planDigest !== undefined ? { planDigest: input.planDigest } : {}),
+    ...(env !== undefined ? { environment: env } : {}),
     ...(input.approval ? { approval: input.approval } : {}),
   });
   return {
@@ -453,7 +478,16 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
   };
 }
 
-/** The line every renderer prints to say how a pending gate is cleared. */
-export function approveCommand(op: string, gate: string): string {
-  return `chant approve ${op} ${gate}`;
+/**
+ * The line every renderer prints to say how a pending gate is cleared. A
+ * component gate names its environment (#2574), so the approval picks that
+ * environment's pending fact when others stand beside it. A gate bound to a
+ * plan (#2300) gets `--plan <digest>` too (#2832), so the line approves the
+ * plan the reader was shown and not whatever is pending by the time they run
+ * it.
+ */
+export function approveCommand(op: string, gate: string, environment?: string, planDigest?: string): string {
+  return `chant approve ${op} ${gate}` +
+    (environment === undefined ? "" : ` --env ${environment}`) +
+    (planDigest === undefined ? "" : ` --plan ${planDigest}`);
 }
