@@ -39,12 +39,18 @@ const EXPECTED: Record<string, string> = {
   TF037: "aws_ecr_repository.api",
 };
 
-const shipped = new Set(postSynthChecks.map((c) => c.id));
+/** Rules whose PR has not merged yet (#3207); their lines skip until it does. */
+const PENDING = new Set(["TF032"]);
 const FAMILY = /^TF03[0-7]$/;
 
 describe("epic #2284 acceptance: chant audit over the estate roots", () => {
+  test("every rule TF030 to TF037 not pending is in the barrel", () => {
+    const shipped = new Set(postSynthChecks.map((c) => c.id));
+    expect(Object.keys(EXPECTED).filter((id) => !PENDING.has(id) && !shipped.has(id))).toEqual([]);
+  });
+
   for (const [id, address] of Object.entries(EXPECTED)) {
-    test.skipIf(!shipped.has(id))(`the violating root reports ${id} on ${address}`, async () => {
+    test.skipIf(PENDING.has(id))(`the violating root reports ${id} on ${address}`, async () => {
       const findings = (await audit("violating")).filter((f) => f.checkId === id);
       expect(findings.map((f) => f.entity)).toEqual([`audit-root/${address}`]);
       expect(["error", "warning"]).toContain(findings[0]!.severity);
@@ -54,7 +60,7 @@ describe("epic #2284 acceptance: chant audit over the estate roots", () => {
   test("the violating root reports nothing TF030 to TF037 cannot prove", async () => {
     const family = (await audit("violating")).filter((f) => FAMILY.test(f.checkId));
     expect(family.filter((f) => f.severity === "info")).toEqual([]);
-    expect(family.map((f) => f.checkId).sort()).toEqual(Object.keys(EXPECTED).filter((id) => shipped.has(id)));
+    expect(family.map((f) => f.checkId).sort()).toEqual(Object.keys(EXPECTED).filter((id) => !PENDING.has(id)));
   });
 
   test("the clean root, provider-default cases included, reports nothing from TF030 to TF037", async () => {

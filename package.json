@@ -54,6 +54,7 @@
     "sentences": "0.1.1",
     "tsc-alias": "^1.8.17",
     "typescript": "^5.9.3",
+    "typescript-native": "npm:typescript@~7.0.2",
     "vite-tsconfig-paths": "^5.0.0",
     "vitest": "^4.1.11"
   },

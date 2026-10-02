@@ -47,7 +47,7 @@ import {
   type CompositeParamScope,
 } from "./param-deps";
 import { setPathProvenance } from "../provenance";
-import { intrinsicCallFoldsEagerly, type IntrinsicDef } from "../lexicon";
+import { intrinsicCallFoldsEagerly, intrinsicTagFolds, type IntrinsicDef } from "../lexicon";
 import type { BuildParamValue } from "../build-params";
 
 /**
@@ -2863,6 +2863,16 @@ async function resolveSymbolicValue(text: string, ctx: ResolveCtx): Promise<unkn
 }
 
 /**
+ * True when {@link reviveFoldedValue} hands `value` back unchanged: a
+ * primitive, or one of the live object kinds its passthrough keeps (an
+ * `AttrRef`, a Declarable, a composite instance, an `Intrinsic`).
+ */
+function revivesAsItself(value: unknown): boolean {
+  if (value === null || typeof value !== "object") return true;
+  return isAttrRefLike(value) || isDeclarable(value) || isCompositeInstance(value) || isIntrinsic(value);
+}
+
+/**
  * Revive a folded value tree: replace any
  * `{__intrinsic}`/`{__helper}`/`{__symbol}` envelope with the real value it
  * represents.
@@ -2904,9 +2914,7 @@ async function reviveFoldedValue(value: FoldedValue, ctx: ResolveCtx, requireLiv
   // `Symbol.for("chant.intrinsic")` (../intrinsic.ts), a GLOBAL symbol, so it
   // holds across separately-loaded copies of chant-core the way a bare
   // `instanceof` would not.
-  if (isAttrRefLike(value) || isDeclarable(value) || isCompositeInstance(value) || isIntrinsic(value)) {
-    return value;
-  }
+  if (revivesAsItself(value)) return value;
 
   if (Array.isArray(value)) {
     const revived: unknown[] = [];
@@ -2939,7 +2947,14 @@ async function reviveFoldedValue(value: FoldedValue, ctx: ResolveCtx, requireLiv
       return (Fn as (...fnArgs: unknown[]) => unknown)(...revived);
     }
     for (const v of intrinsic.values) revived.push(await reviveFoldedValue(v, ctx, true));
-    return (Fn as (...fnArgs: unknown[]) => unknown)(intrinsic.strings, ...revived);
+    // chant #3196 — hand the tag what a real tagged call hands it: a frozen
+    // strings array carrying a frozen, non-enumerable `raw`. A tag that reads
+    // `strings.raw` (a SQL tag keeps backslashes as written) would otherwise
+    // build different text folded than run.
+    const strings = Object.freeze(
+      Object.defineProperty([...intrinsic.strings], "raw", { value: Object.freeze([...intrinsic.raw]) }),
+    );
+    return (Fn as (...fnArgs: unknown[]) => unknown)(strings, ...revived);
   }
 
   if ("__helper" in value) {
@@ -3415,6 +3430,28 @@ function stampParamDependencies(entity: unknown, node: ts.NewExpression, ctx: Re
 async function preresolveResourceConsts(ctx: ResolveCtx): Promise<Map<ts.Expression, unknown>> {
   const built = new Map<ts.Expression, unknown>();
   for (const [name, initializer] of ctx.consts) {
+    // chant #3196 — a same-file `const x = tag\`...\`` for a registered tag
+    // is built once here too, so the export and every reference to `x` share
+    // the one value running the module gives them. That matters when the tag
+    // returns an entity (a SQL `table\`...\``): a second call would build a
+    // second entity discovery never registers.
+    if (
+      ts.isTaggedTemplateExpression(initializer) &&
+      ts.isIdentifier(initializer.tag) &&
+      ctx.intrinsics.some((i) => i.name === (initializer.tag as ts.Identifier).text && intrinsicTagFolds(i))
+    ) {
+      try {
+        const value = await reviveFoldedValue(fold(initializer, ctx.consts, ctx.intrinsics, ctx.externals), ctx, false);
+        built.set(initializer, value);
+        // Only a value `reviveFoldedValue` passes through unchanged is safe to
+        // hand a reference. Any other object would be walked into a plain
+        // copy, so a reference to one keeps re-folding the initializer.
+        if (revivesAsItself(value)) ctx.externals.set(name, value);
+      } catch (err) {
+        ctx.prebuildFailures?.set(name, describeFoldFailure(err, ctx));
+      }
+      continue;
+    }
     if (!ts.isNewExpression(initializer) || !ts.isIdentifier(initializer.expression)) continue;
     try {
       const spec = foldResource(initializer, ctx.consts, ctx.intrinsics, ctx.externals);
@@ -3913,6 +3950,11 @@ async function tryFoldFileCore(file: string, session: FoldSession): Promise<Fold
         const marker = localFunctions.get(decl.name) ?? (isFoldableFunction(aliased) ? aliased : undefined);
         if (marker) {
           applyResolvedValue(decl.name, marker, entities, exportedValues);
+          continue;
+        }
+        // chant #3196 — a registered tagged template the pre-pass built.
+        if (prebuiltResources.has(decl.node)) {
+          applyResolvedValue(decl.name, prebuiltResources.get(decl.node), entities, exportedValues);
           continue;
         }
         let value: unknown;
