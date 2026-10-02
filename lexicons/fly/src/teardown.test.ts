@@ -48,6 +48,8 @@ const OTHER_STACK = { "managed-by": "chant", "chant-stack": "blog", "chant-env":
  * A stateful scripted flaps: `apps` maps app name to its machines; deletes
  * mutate the state, so the app-boundary re-check after a destroy sees what a
  * real flaps would. An app mapped to the string "boom" fails its machine list.
+ * Like flaps, a bare DELETE on a machine that is not stopped answers 412
+ * (#3115), and a stop moves it to `stopped`.
  */
 function scriptedFlaps(apps: Record<string, FakeMachine[] | "boom">): { http: FlyHttp; log: string[] } {
   const log: string[] = [];
@@ -62,10 +64,22 @@ function scriptedFlaps(apps: Record<string, FakeMachine[] | "boom">): { http: Fl
     if (method === "GET" && /\/machines\/[^/]+\/wait\?/.test(url)) {
       return { status: 200, text: JSON.stringify({ ok: true }) };
     }
-    let m = url.match(/\/v1\/apps\/([^/?]+)\/machines\/([^/?]+)$/);
+    let m = url.match(/\/v1\/apps\/([^/?]+)\/machines\/([^/?]+)\/stop$/);
+    if (m && method === "POST") {
+      const held = apps[m[1]];
+      if (Array.isArray(held)) for (const mm of held) if (mm.id === m[2]) mm.state = "stopped";
+      return { status: 200, text: "{}" };
+    }
+    m = url.match(/\/v1\/apps\/([^/?]+)\/machines\/([^/?]+)(\?force=true)?$/);
     if (m && method === "DELETE") {
       const held = apps[m[1]];
-      if (Array.isArray(held)) apps[m[1]] = held.filter((mm) => mm.id !== m![2]);
+      if (Array.isArray(held)) {
+        const target = held.find((mm) => mm.id === m![2]);
+        if (target && target.state !== "stopped" && !m[3]) {
+          return { status: 412, text: JSON.stringify({ error: "failed_precondition: unable to destroy machine, not currently stopped" }) };
+        }
+        apps[m[1]] = held.filter((mm) => mm.id !== m![2]);
+      }
       return { status: 200, text: "{}" };
     }
     m = url.match(/\/v1\/apps\/([^/?]+)\/machines$/);
@@ -147,7 +161,7 @@ describe("teardownOwned — marker machines + the app boundary (#743)", () => {
 });
 
 describe("executeTeardown — machines first, apps last", () => {
-  test("destroys the machines (lease → destroy → wait), then deletes the app", async () => {
+  test("destroys the machines (stop → destroy → wait, each under a lease), then deletes the app", async () => {
     const state: Record<string, FakeMachine[] | "boom"> = {
       mine: [machine("web", MINE), machine("worker", MINE)],
     };
@@ -175,6 +189,11 @@ describe("executeTeardown — machines first, apps last", () => {
       `DELETE ${ENDPOINT}/v1/apps/mine/machines/m-web`,
       `DELETE ${ENDPOINT}/v1/apps/mine/machines/m-worker`,
       `DELETE ${ENDPOINT}/v1/apps/mine`,
+    ]);
+    // Started machines are stopped before the destroy: flaps refuses a bare DELETE otherwise (#3115).
+    expect(log.filter((l) => l.endsWith("/stop"))).toEqual([
+      `POST ${ENDPOINT}/v1/apps/mine/machines/m-web/stop`,
+      `POST ${ENDPOINT}/v1/apps/mine/machines/m-worker/stop`,
     ]);
     expect(state.mine).toBeUndefined();
   });

@@ -315,6 +315,7 @@ describe("owned-only prune", () => {
         };
       }
       if (method === "POST" && url.endsWith("/lease")) return { status: 200, text: JSON.stringify({ status: "success", data: { nonce: "N" } }) };
+      if (method === "POST" && url.endsWith("/stop")) return { status: 200, text: "{}" };
       if (method === "DELETE" && /\/machines\/[^/]+$/.test(url)) {
         destroyed.push(url.split("/").pop() ?? "");
         return { status: 200, text: "{}" };
@@ -326,6 +327,169 @@ describe("owned-only prune", () => {
     const pruned = await pruneMachines(CTX, "demo", new Set(["web"]), http, undefined, NO_WAIT);
     expect(pruned).toEqual([{ app: "demo", name: "orphan", id: "m-orphan" }]);
     expect(destroyed).toEqual(["m-orphan"]); // legacy (unmarked) never destroyed
+  });
+});
+
+/**
+ * #3115: flaps destroys a machine only when it is stopped (or suspended,
+ * failed, created) unless the DELETE carries ?force=true; a bare DELETE on a
+ * started machine is a 412 failed_precondition. The in-memory flaps answers the
+ * same way, so a bare delete of a running machine fails here.
+ */
+describe("destroying a running machine (#3115)", () => {
+  const app = { endpoint: "/v1/apps", method: "POST", body: { app_name: "demo" } };
+  const machine = (name: string) => ({
+    endpoint: "/v1/apps/demo/machines",
+    method: "POST",
+    body: { name, config: { image: "nginx", metadata: { ...OWNED_META } } },
+  });
+  const planWith = (entries: Record<string, unknown>): string => {
+    const dir = mkdtempSync(join(tmpdir(), "fly-3115-"));
+    const planPath = join(dir, "plan.json");
+    writeFileSync(planPath, JSON.stringify(entries));
+    return planPath;
+  };
+
+  /** A scripted flaps that records each call and answers like Fly for one machine `m1` in `state`. */
+  function scripted(state: string, overrides: (method: string, url: string) => { status: number; text: string } | undefined = () => undefined) {
+    const calls: string[] = [];
+    const http: FlyHttp = async (method, url) => {
+      const path = url.replace(CTX.base, "");
+      calls.push(`${method} ${path}`);
+      const o = overrides(method, path);
+      if (o) return o;
+      if (method === "POST" && path.endsWith("/lease")) return { status: 200, text: JSON.stringify({ data: { nonce: "N" } }) };
+      if (method === "DELETE" && path.endsWith("/lease")) return { status: 200, text: "{}" };
+      if (method === "POST" && path.endsWith("/stop")) { state = "stopped"; return { status: 200, text: "{}" }; }
+      if (method === "GET" && path.includes("/wait")) {
+        const want = new URL(url).searchParams.get("state");
+        return { status: 200, text: JSON.stringify({ ok: want === "destroyed" || want === state }) };
+      }
+      if (method === "DELETE" && /\/machines\/m1(\?force=true)?$/.test(path)) {
+        if (!path.endsWith("?force=true") && !["stopped", "suspended", "failed", "created"].includes(state)) {
+          return { status: 412, text: JSON.stringify({ error: "failed_precondition: unable to destroy machine, not currently stopped" }) };
+        }
+        return { status: 200, text: "{}" };
+      }
+      return { status: 500, text: `unscripted: ${method} ${path}` };
+    };
+    return { http, calls };
+  }
+  const mutations = (calls: string[]) => calls.filter((c) => !c.startsWith("GET"));
+
+  test("a started machine is stopped under a lease, waited to stopped, then destroyed under a lease", async () => {
+    const { http, calls } = scripted("started");
+    await destroyMachine(CTX, "demo", "m1", http, undefined, { ...NO_WAIT, state: "started" });
+    expect(calls).toEqual([
+      "POST /v1/apps/demo/machines/m1/lease",
+      "POST /v1/apps/demo/machines/m1/stop",
+      "DELETE /v1/apps/demo/machines/m1/lease",
+      "GET /v1/apps/demo/machines/m1/wait?state=stopped&timeout=60",
+      "POST /v1/apps/demo/machines/m1/lease",
+      "DELETE /v1/apps/demo/machines/m1",
+      "DELETE /v1/apps/demo/machines/m1/lease",
+      "GET /v1/apps/demo/machines/m1/wait?state=destroyed&timeout=60",
+    ]);
+  });
+
+  test.each(["stopped", "suspended", "failed"])("a %s machine is destroyed without a stop", async (state) => {
+    const { http, calls } = scripted(state);
+    await destroyMachine(CTX, "demo", "m1", http, undefined, { ...NO_WAIT, state });
+    expect(mutations(calls)).toEqual([
+      "POST /v1/apps/demo/machines/m1/lease",
+      "DELETE /v1/apps/demo/machines/m1",
+      "DELETE /v1/apps/demo/machines/m1/lease",
+    ]);
+  });
+
+  test("a stopping machine is waited on, not stopped again", async () => {
+    const { http, calls } = scripted("stopped");
+    await destroyMachine(CTX, "demo", "m1", http, undefined, { ...NO_WAIT, state: "stopping" });
+    expect(calls).not.toContain("POST /v1/apps/demo/machines/m1/stop");
+    expect(calls).toContain("GET /v1/apps/demo/machines/m1/wait?state=stopped&timeout=60");
+  });
+
+  test("force sends DELETE ?force=true and no stop", async () => {
+    const { http, calls } = scripted("started");
+    await destroyMachine(CTX, "demo", "m1", http, undefined, { ...NO_WAIT, state: "started", force: true });
+    expect(mutations(calls)).toEqual([
+      "POST /v1/apps/demo/machines/m1/lease",
+      "DELETE /v1/apps/demo/machines/m1?force=true",
+      "DELETE /v1/apps/demo/machines/m1/lease",
+    ]);
+  });
+
+  test("a 412 from the delete (state unknown, or started since the list) gets one stop and a retry", async () => {
+    const { http, calls } = scripted("started");
+    await destroyMachine(CTX, "demo", "m1", http, undefined, NO_WAIT);
+    expect(mutations(calls).filter((c) => !c.endsWith("/lease"))).toEqual([
+      "DELETE /v1/apps/demo/machines/m1",
+      "POST /v1/apps/demo/machines/m1/stop",
+      "DELETE /v1/apps/demo/machines/m1",
+    ]);
+  });
+
+  test("a stop that never reaches stopped fails naming the machine, and no delete is sent", async () => {
+    const { http, calls } = scripted("started", (method, path) =>
+      method === "POST" && path.endsWith("/stop") ? { status: 200, text: "{}" } : undefined,
+    );
+    await expect(
+      destroyMachine(CTX, "demo", "m1", http, undefined, { intervalMs: 0, deadlineMs: 20, state: "started", name: "web" }),
+    ).rejects.toThrow(/machine demo\/web \(m1\) did not stop, so it was not destroyed.*force: true/);
+    expect(calls).not.toContain("DELETE /v1/apps/demo/machines/m1");
+  });
+
+  test("a failed stop fails naming the machine", async () => {
+    const { http } = scripted("started", (method, path) =>
+      method === "POST" && path.endsWith("/stop") ? { status: 500, text: "boom" } : undefined,
+    );
+    await expect(
+      destroyMachine(CTX, "demo", "m1", http, undefined, { ...NO_WAIT, state: "started", name: "web" }),
+    ).rejects.toThrow("machine demo/web (m1) stop before destroy failed (500): boom");
+  });
+
+  test("the in-memory flaps refuses a bare DELETE on a started machine and honours force", async () => {
+    const fake = createMachinesFake();
+    await flyApply({ planPath: planWith({ app, web: machine("web") }), endpoint: CTX.base, wait: NO_WAIT }, undefined, fake.http);
+    const id = fake.machine("demo", "web")!.id;
+    expect((await fake.http("DELETE", `${CTX.base}/v1/apps/demo/machines/${id}`)).status).toBe(412);
+    expect((await fake.http("DELETE", `${CTX.base}/v1/apps/demo/machines/${id}?force=true`)).status).toBe(200);
+    expect(fake.machine("demo", "web")).toBeUndefined();
+  });
+
+  test("prune removes a running machine: stop, then delete", async () => {
+    const fake = createMachinesFake();
+    await flyApply({ planPath: planWith({ app, web: machine("web"), worker: machine("worker") }), endpoint: CTX.base, wait: NO_WAIT }, undefined, fake.http);
+    const id = fake.machine("demo", "worker")!.id;
+    expect(fake.machine("demo", "worker")!.state).toBe("started");
+
+    const out = await flyApply({ planPath: planWith({ app, web: machine("web") }), endpoint: CTX.base, wait: NO_WAIT, prune: true }, undefined, fake.http);
+    expect(out.pruned).toEqual([{ app: "demo", name: "worker", id }]);
+    expect(fake.machine("demo", "worker")).toBeUndefined();
+    expect(fake.machine("demo", "web")!.state).toBe("started");
+    expect(fake.calls).toContain(`POST /v1/apps/demo/machines/${id}/stop`);
+  });
+
+  test("prune with force removes a running machine without a stop", async () => {
+    const fake = createMachinesFake();
+    await flyApply({ planPath: planWith({ app, web: machine("web"), worker: machine("worker") }), endpoint: CTX.base, wait: NO_WAIT }, undefined, fake.http);
+    const id = fake.machine("demo", "worker")!.id;
+    await flyApply({ planPath: planWith({ app, web: machine("web") }), endpoint: CTX.base, wait: NO_WAIT, prune: true, force: true }, undefined, fake.http);
+    expect(fake.machine("demo", "worker")).toBeUndefined();
+    expect(fake.calls).not.toContain(`POST /v1/apps/demo/machines/${id}/stop`);
+  });
+
+  test("flyDelete tears down an app whose machines are running", async () => {
+    const fake = createMachinesFake();
+    const planPath = planWith({ app, web: machine("web"), worker: machine("worker") });
+    await flyApply({ planPath, endpoint: CTX.base, wait: NO_WAIT }, undefined, fake.http);
+    const out = await flyDelete({ planPath, endpoint: CTX.base, wait: NO_WAIT }, undefined, fake.http);
+    expect(out.machines).toEqual([
+      { app: "demo", name: "web" },
+      { app: "demo", name: "worker" },
+    ]);
+    expect(out.apps).toEqual([{ app: "demo", deleted: true }]);
+    expect(fake.calls.filter((c) => c.endsWith("/stop"))).toHaveLength(2);
   });
 });
 
@@ -806,6 +970,52 @@ describeApplyConformance({
         }
       },
       expectApplied: ["app/solo", "machine/web"],
+    },
+  ],
+  pruneScenarios: [
+    {
+      // The orphan is running, so it is stopped before the delete (#3115). The
+      // stop is a POST and lease releases are not resource deletes, so neither
+      // is captured: the one delete is the machine's own.
+      name: "a running owned orphan and a foreign machine in one app",
+      run: async () => {
+        const dir = mkdtempSync(join(tmpdir(), "fly-3115-prune-"));
+        const write = (entries: Record<string, unknown>) => {
+          const planPath = join(dir, `plan-${Object.keys(entries).length}.json`);
+          writeFileSync(planPath, JSON.stringify(entries));
+          return planPath;
+        };
+        const app = { endpoint: "/v1/apps", method: "POST", body: { app_name: "solo" } };
+        const machine = (name: string) => ({
+          endpoint: "/v1/apps/solo/machines",
+          method: "POST",
+          body: { name, config: { image: "nginx" } },
+        });
+        try {
+          const fake = createMachinesFake();
+          const wait = { intervalMs: 0, deadlineMs: 5_000 };
+          await flyApply({ planPath: write({ app, web: machine("web"), orphan: machine("orphan") }), endpoint: CTX.base, wait }, undefined, fake.http);
+          // A machine chant did not create: no ownership marker, running.
+          fake.machines.get("solo")!.push({ id: "m-foreign", name: "foreign", state: "started", instance_id: "I-foreign", config: { image: "redis" } });
+          // The serializer stamps the marker; this plan is hand-written, so stamp it on the fake.
+          for (const m of fake.machines.get("solo")!) if (m.name !== "foreign") m.config.metadata = { ...OWNED_META };
+          const orphanId = fake.machine("solo", "orphan")!.id;
+
+          const deletes: string[] = [];
+          const http: FlyHttp = async (method, url, body, headers, signal) => {
+            if (method === "DELETE" && !url.endsWith("/lease")) deletes.push(url.replace(orphanId, "orphan"));
+            return fake.http(method, url, body, headers, signal);
+          };
+          const result = toApplyResult(
+            await flyApply({ planPath: write({ app, web: machine("web") }), endpoint: CTX.base, wait, prune: true }, undefined, http),
+          );
+          return { result, deletes };
+        } finally {
+          rmSync(dir, { recursive: true, force: true });
+        }
+      },
+      ownedOrphan: "/machines/orphan",
+      foreign: "m-foreign",
     },
   ],
 });

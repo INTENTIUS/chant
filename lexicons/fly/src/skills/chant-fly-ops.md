@@ -46,6 +46,14 @@ Prune is off by default and destructive. It removes resources the plan no longer
 
 Each prune logs the resource and endpoint it removed, so a prune run is auditable from the Op output.
 
+## Destroying a running machine
+
+Fly refuses to destroy a machine that is still running: a plain `DELETE` answers 412 `failed_precondition` unless it carries `?force=true`. So prune and `flyDelete` stop a running machine first (under a lease), wait for `state=stopped`, and then destroy it. The stop sends the machine's configured kill signal and honours its kill timeout, so the process can drain. A machine that is already stopped, suspended or failed is destroyed without a stop.
+
+If the stop does not reach `stopped` before the wait deadline, the destroy fails with an error naming the app, machine and id, and the machine is left in place. Pass `force: true` to `flyApply` or `flyDelete` to skip the stop and destroy with `?force=true`, which kills the machine at once.
+
+The mudflaps emulator does not enforce the 412 yet (INTENTIUS/mudflaps#70), so only the in-memory flaps and a real org exercise this path.
+
 ## Teardown
 
 `flyDelete` is the inverse of `flyApply`: destroy the machines the plan declares (dependents first), then delete the apps. It is idempotent, so an already-absent machine or app is a no-op. The deploy Op's teardown phase uses this to tear the emulator's app down at the end of an offline loop.
