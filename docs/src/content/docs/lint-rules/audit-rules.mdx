@@ -3016,6 +3016,17 @@ Restrict the CIDR on SSH, RDP, MySQL and PostgreSQL ports to the sources that ne
 | Authority | [AWS Well-Architected Framework, Security Pillar](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html) |
 | Prior art | [Checkov `CKV_AWS_24`](https://www.checkov.io/5.Policy%20Index/terraform.html) (overlaps) · [Checkov `CKV_AWS_25`](https://www.checkov.io/5.Policy%20Index/terraform.html) (overlaps) · [tfsec `aws-vpc-no-public-ingress-sgr`](https://github.com/aquasecurity/tfsec/blob/master/docs/checks/aws/vpc/no-public-ingress-sgr/index.md) (overlaps) · [trivy-checks `aws-ec2-no-public-ingress-sgr`](https://github.com/aquasecurity/trivy-checks/blob/main/checks/cloud/aws/ec2/no_public_ingress_sgr.rego) (overlaps) · [KICS `381c3f2a-ef6f-4eff-99f7-b169cda3422c`](https://docs.kics.io/latest/queries/terraform-queries/aws/381c3f2a-ef6f-4eff-99f7-b169cda3422c/) (overlaps) · [HashiCorp reference Sentinel policies `restrict-ingress-sg-rule-ssh`](https://github.com/hashicorp/terraform-sentinel-policies/blob/main/aws/restrict-ingress-sg-rule-ssh.sentinel) (overlaps) · [HashiCorp reference Sentinel policies `restrict-ingress-sg-rule-rdp`](https://github.com/hashicorp/terraform-sentinel-policies/blob/main/aws/restrict-ingress-sg-rule-rdp.sentinel) (overlaps) |
 
+### TF031
+
+**IAM policy allows a wildcard Action or Resource** — merge-worthy · guidance
+
+Name the actions the workload calls and the ARNs it touches. For the few actions that accept only Resource "*" (`ecr:GetAuthorizationToken`, `sts:GetCallerIdentity`), keep that statement on its own and suppress it with `# chant-ignore-block: TF031`. A policy TF031 reports as not determined is built from an expression; it is not a finding.
+
+| | |
+|---|---|
+| Authority | [AWS IAM security best practices (Apply least-privilege permissions)](https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html#grant-least-privilege) |
+| Prior art | [tfsec `aws-iam-no-policy-wildcards`](https://github.com/aquasecurity/tfsec/blob/master/docs/checks/aws/iam/no-policy-wildcards/index.md) (overlaps) · [Checkov `CKV_AWS_63`](https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/resource/aws/IAMStarActionPolicyDocument.py) (overlaps) · [Checkov `CKV_AWS_49`](https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/data/aws/StarActionPolicyDocument.py) (extends) · [Checkov `CKV_AWS_355`](https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/resource/aws/IAMStarResourcePolicyDocument.py) (overlaps) · [Checkov `CKV_AWS_356`](https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/data/aws/ResourcePolicyDocument.py) (overlaps) |
+
 ## Secrets & credentials (SEC)
 
 Lexicon-independent — scans the raw text of every scanned file for likely credentials, regardless of which audit lexicons are installed. Matched values are always redacted; see [suppressing false positives](/chant/cli/audit/#suppressing-a-secrets-finding).
@@ -3345,7 +3356,7 @@ This is credit rather than authority, and it never changes a rule's tier or cate
 
 | Tool | Kind | Licence | Credits |
 |---|---|---|---|
-| [Checkov](https://www.checkov.io/) | scanner | Apache-2.0 | 68 |
+| [Checkov](https://www.checkov.io/) | scanner | Apache-2.0 | 72 |
 | [KICS](https://docs.kics.io/) | scanner | Apache-2.0 | 51 |
 | [zizmor](https://docs.zizmor.sh/) | scanner | MIT | 38 |
 | [cfn_nag](https://github.com/stelligent/cfn_nag) | scanner | MIT | 20 |
@@ -3369,10 +3380,10 @@ This is credit rather than authority, and it never changes a rule's tier or cate
 | [kubesec](https://kubesec.io/) | scanner | Apache-2.0 | 5 |
 | [HashiCorp reference Sentinel policies](https://github.com/hashicorp/terraform-sentinel-policies) | specification | MPL-2.0 | 5 |
 | [tflint-ruleset-redeploy](https://github.com/RedeployAB/tflint-ruleset-redeploy) | scanner | 0BSD | 5 |
+| [tfsec](https://github.com/aquasecurity/tfsec) | scanner | MIT | 5 |
 | [Datree](https://hub.datree.io/built-in-rules) | scanner | Apache-2.0 | 4 |
 | [HashiCorp Terraform style guide](https://developer.hashicorp.com/terraform/language/style) | specification | n/a | 4 |
 | [helm lint](https://helm.sh/docs/helm/helm_lint/) | vendor-validator | Apache-2.0 | 4 |
-| [tfsec](https://github.com/aquasecurity/tfsec) | scanner | MIT | 4 |
 | [choudoufu](https://github.com/INTENTIUS/choudoufu) | scanner | MPL-2.0 | 3 |
 | [Flux Kustomization API reference](https://fluxcd.io/flux/components/kustomize/kustomizations/) | specification | n/a | 3 |
 | [hadolint](https://github.com/hadolint/hadolint) | scanner | GPL-3.0 | 3 |

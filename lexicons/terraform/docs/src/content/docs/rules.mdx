@@ -6,7 +6,7 @@ description: "Every lint rule and post-synth check provided by the Terraform lex
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-terraform` — DO NOT EDIT.
     Edit lexicons/terraform/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-The Terraform lexicon provides **30** rules: 1 lint rule and 29 post-synth checks.
+The Terraform lexicon provides **31** rules: 1 lint rule and 30 post-synth checks.
 
 ## Lint Rules
 
@@ -49,3 +49,4 @@ Post-synth checks validate the serialized output after the build pipeline comple
 | `TF028` | A live root is watched by a TerraformWatchOp built without live: true |
 | `TF029` | Live root names its estate both in chant.config and in its own HCL |
 | `TF030` | Security group rule allows unrestricted ingress on a sensitive port |
+| `TF031` | IAM policy allows a wildcard Action or Resource |

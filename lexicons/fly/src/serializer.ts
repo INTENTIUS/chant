@@ -56,6 +56,11 @@ interface FlapsRequest {
    * honors this flag by skipping the drift/diff read and always POSTing.
    */
   applyOnly?: boolean;
+  /**
+   * A Secret declared without a value. Its value is set outside chant, so the
+   * applier never posts it and only checks that the app has it.
+   */
+  mustExist?: boolean;
 }
 
 /**
@@ -260,13 +265,14 @@ export const flySerializer: Serializer = {
         if (entityType === SECRET_ENTITY_TYPE) {
           // Apply-only (D7): name is the URL segment; `value` is the only body
           // field. mudflaps returns just a digest, so this never enters a diff.
+          // A Secret with no value is set out of band. It is marked
+          // `mustExist`, and the applier checks for it instead of posting.
           const secretName = typeof props.name === "string" ? props.name : name;
-          requests[name] = {
-            endpoint: `/v1/apps/${app}/secrets/${encodeURIComponent(secretName)}`,
-            method: "POST",
-            body: props.value !== undefined ? { value: props.value } : {},
-            applyOnly: true,
-          };
+          const endpoint = `/v1/apps/${app}/secrets/${encodeURIComponent(secretName)}`;
+          requests[name] =
+            props.value !== undefined
+              ? { endpoint, method: "POST", body: { value: props.value }, applyOnly: true }
+              : { endpoint, method: "POST", body: {}, applyOnly: true, mustExist: true };
           continue;
         }
 
