@@ -41,7 +41,7 @@
     "docs": "tsx src/codegen/docs-cli.ts",
     "snapshot": "tsx src/spec/snapshot-cli.ts",
     "prepack": "npm run generate && npm run bundle && npm run validate && npm run build",
-    "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete"
+    "build": "../../scripts/tsc7.sh -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete"
   },
   "devDependencies": {
     "@intentius/chant": "*",
