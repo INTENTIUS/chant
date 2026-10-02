@@ -88,8 +88,11 @@ function generatePackageJson(
       ...extraScripts,
     },
     dependencies,
+    // The project's TypeScript is for its editor and `tsc` only; chant parses
+    // with its own copy, so any 5.9+ or 7 release works (#3089).
     devDependencies: {
-      typescript: "^5.0.0",
+      "@types/node": "^24.0.0",
+      typescript: "^5.9.3 || ^7.0.0",
     },
   };
 
@@ -97,14 +100,21 @@ function generatePackageJson(
 }
 
 /**
- * Generate tsconfig.json content with path mappings for .chant/ types
+ * Generate tsconfig.json content.
+ *
+ * `bundler` resolution, because chant resolves a project's imports the way tsx
+ * and fold do: `./config` with no extension. NodeNext rejects that form
+ * (TS2835), and its suggested `./config.js` makes fold fall back to running the
+ * file (#3089). `types` names node because TypeScript 6 and later no longer load
+ * every `@types` package by default.
  */
-function generateTsConfig(lexicon: string): string {
+function generateTsConfig(): string {
   const config = {
     compilerOptions: {
       target: "ES2022",
-      module: "NodeNext",
-      moduleResolution: "NodeNext",
+      module: "esnext",
+      moduleResolution: "bundler",
+      types: ["node"],
       strict: true,
       esModuleInterop: true,
       skipLibCheck: true,
@@ -307,7 +317,7 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
   // Generate tsconfig.json
   writeIfNotExists(
     join(targetDir, "tsconfig.json"),
-    generateTsConfig(options.lexicon),
+    generateTsConfig(),
     "tsconfig.json",
     createdFiles,
     warnings,
