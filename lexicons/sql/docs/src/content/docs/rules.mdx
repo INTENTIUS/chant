@@ -6,7 +6,7 @@ description: "Every lint rule and post-synth check provided by the SQL lexicon"
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-sql` — DO NOT EDIT.
     Edit lexicons/sql/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-The SQL lexicon provides **4** rules: 3 lint rules and 1 post-synth check.
+The SQL lexicon provides **23** rules: 3 lint rules and 20 post-synth checks.
 
 ## Lint Rules
 
@@ -23,3 +23,22 @@ Post-synth checks validate the serialized output after the build pipeline comple
 | ID | Description |
 |----|-------------|
 | `SQLCH101` | A ClickHouse object names an engine the pinned server does not have |
+| `SQLCH102` | A PRIMARY KEY is not a prefix of ORDER BY |
+| `SQLCH103` | An engine's version, sign or is_deleted column has an unsupported type |
+| `SQLCH104` | A MergeTree engine argument names a column the table does not declare |
+| `SQLCH105` | A table key clause names a column the table does not declare |
+| `SQLCH106` | A skip index expression names a column the table does not declare |
+| `SQLCH107` | A TTL expression is built on a column that is not a Date or DateTime |
+| `SQLCH108` | CREATE OR REPLACE TABLE in a database that is not Atomic |
+| `SQLCH109` | A materialized view selects * |
+| `SQLCH110` | A materialized view writes a column its TO target does not declare |
+| `SQLCH111` | A String column limited to a few values is not LowCardinality |
+| `SQLCH112` | A PARTITION BY expression is finer than a day |
+| `SQLCH113` | A MergeTree table declares no sort key |
+| `SQLCH114` | A column codec is not one the pinned server has |
+| `SQLCH115` | A secret- or PII-named column carries no comment, TTL or encryption |
+| `SQLCH116` | A view is SQL SECURITY DEFINER with no DEFINER |
+| `SQLCH117` | A MergeTree setting is obsolete at the pinned server |
+| `SQLCH118` | A MergeTree setting is not one the pinned server has |
+| `SQLCH119` | An object uses a deprecated or experimental engine |
+| `SQLCH120` | A MergeTree engine uses the deprecated positional arguments |

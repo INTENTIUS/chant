@@ -181,9 +181,8 @@ const skills = collectSkills(myPlugin.skills!());
 
 ## Reference
 
-Every lexicon ships skills except two. k3d ships none
-(`lexicons/k3d/src/plugin.ts` returns `[]`), and sql's are not written yet
-([#3211](https://github.com/INTENTIUS/chant/issues/3211)).
+Every lexicon ships skills except k3d, which ships none
+(`lexicons/k3d/src/plugin.ts` returns `[]`).
 
 | Lexicon | Skills | Count |
 |---------|--------|-------|
@@ -205,6 +204,7 @@ Every lexicon ships skills except two. k3d ships none
 | OTel | `chant-otel`, `chant-otel-custom-components`, `chant-otel-platforms` | 3 |
 | Prometheus | `chant-prometheus`, `chant-prometheus-alertmanager`, `chant-prometheus-kubernetes` | 3 |
 | Render | `chant-render`, `chant-render-patterns` | 2 |
+| SQL | `chant-sql`, `chant-sql-plan`, `chant-sql-rebuild` | 3 |
 
 ## Next Steps
 

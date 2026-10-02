@@ -56,7 +56,7 @@
  * | `tflint-ruleset-redeploy` | tflint-ruleset-redeploy | https://github.com/RedeployAB/tflint-ruleset-redeploy | 0BSD | scanner | Community ruleset; richest source of language-level rules outside the official set. Sweep: indexed from `docs/rules/README.md`, same table shape (33 rules). |
  * | `tflint-ruleset-avm` | tflint-ruleset-avm | https://github.com/Azure/tflint-ruleset-avm | MIT | scanner | Azure Verified Modules conformance; two of its 33 rules are provider-agnostic. Sweep: indexed from the repository-root `RULES.md`, since `docs/` holds pages for only two rules (33 rules). |
  * | `tfsec` | tfsec | https://github.com/aquasecurity/tfsec | MIT | scanner | Historical: not archived but effectively frozen (no release since 2025-05); its docs site 404s above v0.61.x, so cite pinned repository paths (`github.com/aquasecurity/tfsec/blob/master/docs/checks/...`), not the docs site. Sweep: indexed from the root `rules.md` on `master`, a flat table of all 152 check ids, because `docs/checks` nests a directory per provider, service and check. |
- * | `trivy-checks` | trivy-checks | https://github.com/aquasecurity/trivy-checks | MIT (not the trivy scanner's own Apache-2.0; cite the checks repo's licence, not the engine's) | scanner | Where tfsec's rules live today (tfsec -> defsec -> trivy + trivy-checks). Cite rules by `long_id` (stable, human-readable); `AVD-*` ids are aliases now. Sweep: registered in `PRIOR_ART` since TF030 (#2285) cited `aws-ec2-no-public-ingress-sgr`, but not swept: its `long_id`s live in Rego metadata under `checks/<kind>/<provider>/<service>/`, with no flat index. Check a cited id is live: TF031's counterpart, `aws-iam-no-policy-wildcards`, is a `deprecated: true` stub with no rule body, so TF031 does not cite it. |
+ * | `trivy-checks` | trivy-checks | https://github.com/aquasecurity/trivy-checks | MIT (not the trivy scanner's own Apache-2.0; cite the checks repo's licence, not the engine's) | scanner | Where tfsec's rules live today (tfsec -> defsec -> trivy + trivy-checks). Cite rules by `long_id` (stable, human-readable); `AVD-*` ids are aliases now. Sweep: registered in `PRIOR_ART` since TF030 (#2285) cited `aws-ec2-no-public-ingress-sgr` (TF032 also cites `aws-ecs-no-plaintext-secrets`, AWS-0036), but not swept: its `long_id`s live in Rego metadata under `checks/<kind>/<provider>/<service>/`, with no flat index. Check a cited id is live: TF031's counterpart, `aws-iam-no-policy-wildcards`, is a `deprecated: true` stub with no rule body, so TF031 does not cite it. |
  * | `terraform-sentinel-policies` | HashiCorp reference Sentinel policies | https://github.com/hashicorp/terraform-sentinel-policies | MPL-2.0 | specification | HashiCorp's own example policy set; ships zero rules baked into HCP Terraform itself, so treat a cited policy as a documented pattern (`specification`) unless a future entry runs it as a real check (`scanner`); the `kind` union allows either. Sweep: indexed by listing the five per-cloud directories, whose `.sentinel` filenames are the policy ids credits cite (73 policies); the repository publishes no index page. |
  * | `choudoufu` | choudoufu | https://github.com/INTENTIUS/choudoufu | MPL-2.0 | scanner | Its `internal/live/lint` package; experimental, AWS-only. Sweep: unsweepable, its rule ids are Go constants in `internal/live/lint/issue.go` and it publishes no rule index. |
  * | `hashicorp-style-guide` | HashiCorp Terraform style guide | https://developer.hashicorp.com/terraform/language/style | n/a | specification | Sweep: unsweepable, one prose page of recommendations with no rule ids; a credit quotes the sentence and links its fragment. |
@@ -485,6 +485,29 @@ export const terraformAuditLineage: Record<string, Lineage[]> = {
       tool: "checkov",
       rule: "CKV_AWS_356",
       url: "https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/data/aws/ResourcePolicyDocument.py",
+      relation: "overlaps",
+    },
+  ],
+  // tfsec's `aws-ecs-no-plaintext-secrets` and its successor in trivy-checks
+  // (`long_id` aws-ecs-no-plaintext-secrets, AVD-AWS-0036) fire on the same
+  // condition: an environment entry whose name is sensitive or whose value a
+  // secret scanner flags. `overlaps`, not `equivalent`, because both evaluate
+  // the definition first and so also read what TF032 reports as not
+  // determined, and their name list differs from secret-shape.ts's. Checkov
+  // has no Terraform check for ECS environment values (its ECS checks cover
+  // privilege, read-only root, host process, task role and EFS encryption,
+  // `checkov/terraform/checks/resource/aws/ECS*.py`), so it gets no credit.
+  TF032: [
+    {
+      tool: "tfsec",
+      rule: "aws-ecs-no-plaintext-secrets",
+      url: "https://github.com/aquasecurity/tfsec/blob/master/docs/checks/aws/ecs/no-plaintext-secrets/index.md",
+      relation: "overlaps",
+    },
+    {
+      tool: "trivy-checks",
+      rule: "aws-ecs-no-plaintext-secrets",
+      url: "https://github.com/aquasecurity/trivy-checks/blob/main/checks/cloud/aws/ecs/no_plaintext_secrets.rego",
       relation: "overlaps",
     },
   ],

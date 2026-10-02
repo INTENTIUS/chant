@@ -22,8 +22,11 @@ dependency order and column lineage: see
 [Declaring Tables and Views](./clickhouse-ddl/). The types come from a pinned
 server's catalog: see [Where the Types Come From](./clickhouse-catalog/).
 
-The lexicon is being built in slices (chant #3199); import from a live
-server, observation and the change classifier come next.
+`chant import --from <env>` writes a live server's schema as declarations:
+see [Importing a Live Server](./importing/). Every schema change is
+classified as metadata only, a background rewrite or a rebuild, each with the
+ClickHouse `ALTER` restriction behind it, and a rebuild is refused in place:
+see [Planning and the Change Classifier](./change-classifier/).
 
 
 ## At a Glance
@@ -35,10 +38,10 @@ server, observation and the change classifier come next.
 | Services | 1 |
 | Intrinsic functions | 0 |
 | Pseudo-parameters | 0 |
-| Lint rules | 4 |
+| Lint rules | 23 |
 
 **Lexicon version:** 0.101.0  
 **Namespace:** `SQL`
 
-- [All Rules](./rules) — 4 rules
+- [All Rules](./rules) — 23 rules
 - [Serialization](./serialization) — output format details

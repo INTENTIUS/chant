@@ -3033,6 +3033,17 @@ Name the actions the workload calls and the ARNs it touches. For the few actions
 | Authority | [AWS IAM security best practices (Apply least-privilege permissions)](https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html#grant-least-privilege) |
 | Prior art | [tfsec `aws-iam-no-policy-wildcards`](https://github.com/aquasecurity/tfsec/blob/master/docs/checks/aws/iam/no-policy-wildcards/index.md) (overlaps) · [Checkov `CKV_AWS_63`](https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/resource/aws/IAMStarActionPolicyDocument.py) (overlaps) · [Checkov `CKV_AWS_49`](https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/data/aws/StarActionPolicyDocument.py) (extends) · [Checkov `CKV_AWS_355`](https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/resource/aws/IAMStarResourcePolicyDocument.py) (overlaps) · [Checkov `CKV_AWS_356`](https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/data/aws/ResourcePolicyDocument.py) (overlaps) |
 
+### TF032
+
+**ECS container definition passes a credential as a plaintext environment value** — merge-worthy · guidance
+
+Move the value from the container's `environment` to its `secrets`, with a `valueFrom` naming a Secrets Manager secret or SSM parameter, and rotate the committed value.
+
+| | |
+|---|---|
+| Authority | [Amazon ECS Developer Guide: Pass sensitive data to an Amazon ECS container](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/specifying-sensitive-data.html) |
+| Prior art | [tfsec `aws-ecs-no-plaintext-secrets`](https://github.com/aquasecurity/tfsec/blob/master/docs/checks/aws/ecs/no-plaintext-secrets/index.md) (overlaps) · [trivy-checks `aws-ecs-no-plaintext-secrets`](https://github.com/aquasecurity/trivy-checks/blob/main/checks/cloud/aws/ecs/no_plaintext_secrets.rego) (overlaps) |
+
 ## Secrets & credentials (SEC)
 
 Lexicon-independent — scans the raw text of every scanned file for likely credentials, regardless of which audit lexicons are installed. Matched values are always redacted; see [suppressing false positives](/chant/cli/audit/#suppressing-a-secrets-finding).
@@ -3382,11 +3393,11 @@ This is credit rather than authority, and it never changes a rule's tier or cate
 | [tflint-ruleset-terraform](https://github.com/terraform-linters/tflint-ruleset-terraform) | scanner | MPL-2.0 | 9 |
 | [actionlint](https://github.com/rhysd/actionlint) | scanner | MIT | 8 |
 | [TruffleHog](https://github.com/trufflesecurity/trufflehog) | scanner | AGPL-3.0 | 8 |
+| [tfsec](https://github.com/aquasecurity/tfsec) | scanner | MIT | 6 |
 | [gixy-ng (maintained Gixy fork)](https://github.com/dvershinin/gixy) | scanner | MPL-2.0 | 5 |
 | [kubesec](https://kubesec.io/) | scanner | Apache-2.0 | 5 |
 | [HashiCorp reference Sentinel policies](https://github.com/hashicorp/terraform-sentinel-policies) | specification | MPL-2.0 | 5 |
 | [tflint-ruleset-redeploy](https://github.com/RedeployAB/tflint-ruleset-redeploy) | scanner | 0BSD | 5 |
-| [tfsec](https://github.com/aquasecurity/tfsec) | scanner | MIT | 5 |
 | [Datree](https://hub.datree.io/built-in-rules) | scanner | Apache-2.0 | 4 |
 | [HashiCorp Terraform style guide](https://developer.hashicorp.com/terraform/language/style) | specification | n/a | 4 |
 | [helm lint](https://helm.sh/docs/helm/helm_lint/) | vendor-validator | Apache-2.0 | 4 |
@@ -3401,10 +3412,10 @@ This is credit rather than authority, and it never changes a rule's tier or cate
 | [Google Cloud Terraform best-practices series](https://docs.cloud.google.com/docs/terraform/best-practices/general-style-structure) | specification | n/a | 2 |
 | [mcp-audit (APIsec)](https://github.com/apisec-inc/mcp-audit) | scanner | MIT | 2 |
 | [tflint-ruleset-avm (Azure Verified Modules)](https://github.com/Azure/tflint-ruleset-avm) | scanner | MIT | 2 |
+| [trivy-checks](https://github.com/aquasecurity/trivy-checks) | scanner | MIT | 2 |
 | [Snyk Agent Scan (formerly mcp-scan)](https://github.com/invariantlabs-ai/mcp-scan) | scanner | Apache-2.0 | 1 |
 | [chart-testing (ct)](https://github.com/helm/chart-testing) | vendor-validator | Apache-2.0 | 1 |
 | [Gixy](https://github.com/yandex/gixy) | scanner | MPL-2.0 | 1 |
 | [Pluto](https://github.com/FairwindsOps/pluto) | scanner | Apache-2.0 | 1 |
 | [Semgrep Registry rules](https://github.com/semgrep/semgrep-rules) | scanner | Semgrep Rules License v1.0 (proprietary, not an SPDX id) | 1 |
-| [trivy-checks](https://github.com/aquasecurity/trivy-checks) | scanner | MIT | 1 |
 
