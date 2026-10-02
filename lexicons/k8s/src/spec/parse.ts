@@ -39,6 +39,29 @@ export interface ParsedPropertyType {
   properties: ParsedProperty[];
 }
 
+/**
+ * A named OpenAPI object definition emitted as a declaration-only interface
+ * in the `.d.ts` (chant #3093): `DeploymentSpec`, `ServiceSpec`, `JobSpec`
+ * and every other object definition a resource reaches. Unlike the
+ * {@link PROPERTY_TYPE_DEFS} property types it has no runtime constructor and
+ * no registry entry; authors write it as an object literal.
+ */
+export interface ParsedDefinitionType {
+  /** TypeScript name, e.g. `DeploymentSpec` or `FlowcontrolSubject`. */
+  name: string;
+  /** The definition key, e.g. `io.k8s.api.apps.v1.DeploymentSpec`. */
+  defKey: string;
+  description?: string;
+  properties: ParsedProperty[];
+}
+
+/** Everything one swagger document yields: resources and property types, plus the declaration-only interfaces. */
+export interface K8sSwaggerParse {
+  results: K8sParseResult[];
+  /** Sorted by name. */
+  definitionTypes: ParsedDefinitionType[];
+}
+
 export interface ParsedEnum {
   name: string;
   values: string[];
@@ -237,12 +260,22 @@ const PROPERTY_TYPE_DEFS: Record<string, { typeName: string; description: string
  * Returns one result per top-level resource identified by x-kubernetes-group-version-kind.
  */
 export function parseK8sSwagger(data: string | Buffer): K8sParseResult[] {
+  return parseK8sSwaggerTypes(data).results;
+}
+
+/**
+ * Parse the swagger document into resource and property-type results, and the
+ * declaration-only interfaces for every other object definition a resource
+ * reaches (chant #3093).
+ */
+export function parseK8sSwaggerTypes(data: string | Buffer): K8sSwaggerParse {
   const spec: SwaggerSpec = JSON.parse(typeof data === "string" ? data : data.toString("utf-8"));
   const definitions = spec.definitions ?? {};
   const results: K8sParseResult[] = [];
   const operations = parseOperations(spec.paths);
 
-  // Phase 1: Extract top-level resources (definitions with GVK)
+  // Which definitions become resources: those with a GVK, preferred version only.
+  const resourceDefs: Array<{ defKey: string; def: SwaggerDefinition; gvk: GroupVersionKind }> = [];
   for (const [defKey, def] of Object.entries(definitions)) {
     const gvks = def["x-kubernetes-group-version-kind"];
     if (!gvks || gvks.length === 0) continue;
@@ -252,9 +285,22 @@ export function parseK8sSwagger(data: string | Buffer): K8sParseResult[] {
 
     // Skip internal/legacy API versions — only take the preferred version
     if (!isPreferredVersion(defKey, gvk, definitions)) continue;
+    resourceDefs.push({ defKey, def, gvk });
+  }
 
+  // Name every object definition a resource reaches before any property is
+  // typed, so a `$ref` resolves to its interface instead of a Record.
+  const reachable = reachableDefinitions(resourceDefs.map((r) => r.def), definitions);
+  const ctx: TypeContext = {
+    definitions,
+    names: nameDefinitions(reachable, definitions),
+    resources: new Set(resourceDefs.map((r) => r.defKey)),
+  };
+
+  // Phase 1: Extract top-level resources (definitions with GVK)
+  for (const { defKey, def, gvk } of resourceDefs) {
     const typeName = gvkToTypeName(gvk);
-    const result = extractResource(defKey, def, typeName, gvk, definitions);
+    const result = extractResource(defKey, def, typeName, gvk, ctx);
     if (result) {
       const operation = operations.get(gvkKey(gvk));
       if (operation) result.operation = operation;
@@ -267,11 +313,189 @@ export function parseK8sSwagger(data: string | Buffer): K8sParseResult[] {
     const def = definitions[defKey];
     if (!def) continue;
 
-    const result = extractPropertyType(defKey, def, config.typeName, config.description, definitions);
+    const result = extractPropertyType(defKey, def, config.typeName, config.description, ctx);
     if (result) results.push(result);
   }
 
-  return results;
+  // Phase 3: Every other reachable object definition, as an interface.
+  const definitionTypes: ParsedDefinitionType[] = [];
+  for (const defKey of reachable) {
+    if (PROPERTY_TYPE_DEFS[defKey]) continue;
+    const def = definitions[defKey];
+    definitionTypes.push({
+      name: ctx.names.get(defKey)!,
+      defKey,
+      description: def.description,
+      properties: parseProperties(def.properties ?? {}, new Set(def.required ?? []), ctx),
+    });
+  }
+  definitionTypes.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+
+  return { results, definitionTypes };
+}
+
+// ── Definition interfaces (chant #3093) ────────────────────────────
+
+/**
+ * Definitions that stay open however they are reached: `RawExtension` holds an
+ * arbitrary embedded object, and the rest are scalars on the wire. A Quantity
+ * is a string in the schema, but the API server also decodes a number
+ * (`cpu: 1`), and manifests write it both ways.
+ */
+const OPEN_OR_SCALAR_DEFS: Record<string, string> = {
+  "io.k8s.apimachinery.pkg.util.intstr.IntOrString": "string | number",
+  "io.k8s.apimachinery.pkg.api.resource.Quantity": "string | number",
+  "io.k8s.apimachinery.pkg.apis.meta.v1.Time": "string",
+  "io.k8s.apimachinery.pkg.apis.meta.v1.MicroTime": "string",
+  "io.k8s.apimachinery.pkg.runtime.RawExtension": "Record<string, any>",
+};
+
+interface TypeContext {
+  definitions: Record<string, SwaggerDefinition>;
+  /** Definition key → TypeScript name, for every definition typed as a class or interface. */
+  names: Map<string, string>;
+  /** Emitted resource definitions, by key. */
+  resources: Set<string>;
+  /** Resource definitions being inlined, to stop a cycle. */
+  inlining?: Set<string>;
+}
+
+/**
+ * A resource embedded in another object (`StatefulSetSpec.volumeClaimTemplates`
+ * holds PersistentVolumeClaims, a List holds its items) is typed inline with
+ * the props its class takes. A name would have to avoid the class's own.
+ */
+function inlineResourceType(defKey: string, ctx: TypeContext): string {
+  const inlining = ctx.inlining ?? new Set<string>();
+  if (inlining.has(defKey)) return "Record<string, any>";
+  const def = ctx.definitions[defKey];
+  const inner: TypeContext = { ...ctx, inlining: new Set([...inlining, defKey]) };
+  const required = new Set(def.required ?? []);
+  const members = Object.entries(def.properties ?? {})
+    .filter(([name]) => name !== "apiVersion" && name !== "kind" && name !== "status")
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([name, prop]) => `${name}${required.has(name) ? "" : "?"}: ${resolvePropertyType(prop, inner)}`);
+  return members.length === 0 ? "Record<string, any>" : `{ ${members.join("; ")} }`;
+}
+
+/**
+ * Whether a definition becomes a named type: an object with properties that
+ * is not itself a resource. A `$ref` to a resource is typed inline instead
+ * ({@link inlineResourceType}).
+ */
+function isNamedObjectDef(defKey: string, def: SwaggerDefinition | undefined): def is SwaggerDefinition {
+  if (!def?.properties || defKey in OPEN_OR_SCALAR_DEFS) return false;
+  return !def["x-kubernetes-group-version-kind"]?.length;
+}
+
+/**
+ * The object definitions reachable from the resources' authored properties
+ * (everything but `apiVersion`, `kind` and `status`), plus the well-known
+ * property types. Sorted by key. A recursive definition such as
+ * `JSONSchemaProps` is visited once and refers to itself by name, so no depth
+ * bound is needed.
+ */
+function reachableDefinitions(
+  resources: SwaggerDefinition[],
+  definitions: Record<string, SwaggerDefinition>,
+): string[] {
+  const seen = new Set<string>();
+  const queue: string[] = [];
+  const visitRef = (defKey: string) => {
+    if (seen.has(defKey) || !isNamedObjectDef(defKey, definitions[defKey])) return;
+    seen.add(defKey);
+    queue.push(defKey);
+  };
+  const walk = (prop: SwaggerProperty | undefined) => {
+    if (!prop) return;
+    if (prop.$ref) {
+      if (prop.$ref.startsWith("#/definitions/")) visitRef(prop.$ref.slice("#/definitions/".length));
+      return;
+    }
+    walk(prop.items);
+    if (prop.additionalProperties && typeof prop.additionalProperties === "object") walk(prop.additionalProperties);
+  };
+
+  for (const def of resources) {
+    for (const [name, prop] of Object.entries(def.properties ?? {})) {
+      if (name !== "apiVersion" && name !== "kind" && name !== "status") walk(prop);
+    }
+  }
+  for (const defKey of Object.keys(PROPERTY_TYPE_DEFS)) visitRef(defKey);
+  while (queue.length > 0) {
+    const def = definitions[queue.shift()!];
+    for (const prop of Object.values(def.properties ?? {})) walk(prop);
+  }
+  return [...seen].sort();
+}
+
+const VERSION_SEGMENT = /^v\d+((alpha|beta)\d+)?$/;
+
+/** `io.k8s.api.flowcontrol.v1.Subject` → `{ group: "Flowcontrol", version: "V1", kind: "Subject" }`. */
+function definitionKeyParts(defKey: string): { group: string; version: string; kind: string } {
+  const parts = defKey.split(".");
+  const kind = parts[parts.length - 1];
+  const vIdx = parts.length - 2;
+  const version = VERSION_SEGMENT.test(parts[vIdx] ?? "") ? parts[vIdx] : "";
+  const group = (version ? parts[vIdx - 1] : parts[vIdx]) ?? "";
+  const pascal = (s: string) => s.split(/[^A-Za-z0-9]+/).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join("");
+  return { group: pascal(group), version: pascal(version), kind };
+}
+
+/**
+ * Give every reachable definition a TypeScript name.
+ *
+ * The well-known property types keep their friendly names. Every other
+ * definition takes the last segment of its key (`DeploymentSpec`) when no
+ * other reachable definition shares that segment and no resource kind or
+ * friendly name already uses it. Otherwise each contender is qualified by its
+ * API group (`FlowcontrolSubject`, `CoreResourceClaim`), and by group and
+ * version when one group has several (`ResourceV1beta2Device`). The rule
+ * reads only the set of keys, so the result does not depend on the order of
+ * the document.
+ */
+function nameDefinitions(reachable: string[], definitions: Record<string, SwaggerDefinition>): Map<string, string> {
+  const names = new Map<string, string>();
+  const taken = new Set<string>();
+  for (const def of Object.values(definitions)) {
+    for (const gvk of def["x-kubernetes-group-version-kind"] ?? []) taken.add(gvk.kind);
+  }
+  for (const [defKey, config] of Object.entries(PROPERTY_TYPE_DEFS)) {
+    const name = k8sShortName(config.typeName);
+    names.set(defKey, name);
+    taken.add(name);
+  }
+
+  const byKind = new Map<string, string[]>();
+  for (const defKey of reachable) {
+    if (names.has(defKey)) continue;
+    const { kind } = definitionKeyParts(defKey);
+    byKind.set(kind, [...(byKind.get(kind) ?? []), defKey]);
+  }
+
+  for (const [kind, keys] of byKind) {
+    if (keys.length === 1 && !taken.has(kind)) {
+      names.set(keys[0], kind);
+      continue;
+    }
+    const groupCount = new Map<string, number>();
+    for (const k of keys) {
+      const { group } = definitionKeyParts(k);
+      groupCount.set(group, (groupCount.get(group) ?? 0) + 1);
+    }
+    for (const k of keys) {
+      const { group, version } = definitionKeyParts(k);
+      names.set(k, groupCount.get(group)! > 1 ? `${group}${version}${kind}` : `${group}${kind}`);
+    }
+  }
+
+  const owner = new Map<string, string>();
+  for (const [defKey, name] of names) {
+    const prev = owner.get(name);
+    if (prev) throw new Error(`k8s codegen: definitions ${prev} and ${defKey} both map to the type name ${name}`);
+    owner.set(name, defKey);
+  }
+  return names;
 }
 
 /** Stable key for a GVK, used to join the `paths` pass onto the `definitions` pass. */
@@ -429,7 +653,7 @@ function extractResource(
   def: SwaggerDefinition,
   typeName: string,
   gvk: GroupVersionKind,
-  definitions: Record<string, SwaggerDefinition>,
+  ctx: TypeContext,
 ): K8sParseResult | null {
   if (!def.properties) return null;
 
@@ -445,7 +669,7 @@ function extractResource(
     }
   }
 
-  const properties = parseProperties(filteredProps, requiredSet, definitions);
+  const properties = parseProperties(filteredProps, requiredSet, ctx);
 
   return {
     resource: {
@@ -473,12 +697,12 @@ function extractPropertyType(
   def: SwaggerDefinition,
   typeName: string,
   description: string,
-  definitions: Record<string, SwaggerDefinition>,
+  ctx: TypeContext,
 ): K8sParseResult | null {
   if (!def.properties) return null;
 
   const requiredSet = new Set<string>(def.required ?? []);
-  const properties = parseProperties(def.properties, requiredSet, definitions);
+  const properties = parseProperties(def.properties, requiredSet, ctx);
 
   const gvkParts = typeName.split("::");
   return {
@@ -502,12 +726,12 @@ function extractPropertyType(
 function parseProperties(
   properties: Record<string, SwaggerProperty>,
   requiredSet: Set<string>,
-  definitions: Record<string, SwaggerDefinition>,
+  ctx: TypeContext,
 ): ParsedProperty[] {
   const result: ParsedProperty[] = [];
 
   for (const [name, prop] of Object.entries(properties)) {
-    const tsType = resolvePropertyType(prop, definitions);
+    const tsType = resolvePropertyType(prop, ctx);
     const parsed: ParsedProperty = {
       name,
       tsType,
@@ -532,12 +756,12 @@ function parseProperties(
 /**
  * Resolve a swagger property to its TypeScript type string.
  */
-function resolvePropertyType(prop: SwaggerProperty, definitions: Record<string, SwaggerDefinition>): string {
+function resolvePropertyType(prop: SwaggerProperty, ctx: TypeContext): string {
   if (!prop) return "any";
 
   // Handle $ref
   if (prop.$ref) {
-    return resolveRefType(prop.$ref, definitions);
+    return resolveRefType(prop.$ref, ctx);
   }
 
   // x-kubernetes-int-or-string
@@ -561,14 +785,14 @@ function resolvePropertyType(prop: SwaggerProperty, definitions: Record<string, 
       return "boolean";
     case "array":
       if (prop.items) {
-        const itemType = resolvePropertyType(prop.items, definitions);
+        const itemType = resolvePropertyType(prop.items, ctx);
         if (itemType.includes(" | ")) return `(${itemType})[]`;
         return `${itemType}[]`;
       }
       return "any[]";
     case "object":
       if (prop.additionalProperties && typeof prop.additionalProperties === "object") {
-        const valueType = resolvePropertyType(prop.additionalProperties, definitions);
+        const valueType = resolvePropertyType(prop.additionalProperties, ctx);
         return `Record<string, ${valueType}>`;
       }
       return "Record<string, any>";
@@ -580,27 +804,23 @@ function resolvePropertyType(prop: SwaggerProperty, definitions: Record<string, 
 /**
  * Resolve a $ref to a TypeScript type.
  */
-function resolveRefType(ref: string, definitions: Record<string, SwaggerDefinition>): string {
+function resolveRefType(ref: string, ctx: TypeContext): string {
   const prefix = "#/definitions/";
   if (!ref.startsWith(prefix)) return "any";
 
   const defKey = ref.slice(prefix.length);
 
-  // Well-known special types
-  if (defKey === "io.k8s.apimachinery.pkg.util.intstr.IntOrString") return "string | number";
-  if (defKey === "io.k8s.apimachinery.pkg.api.resource.Quantity") return "string";
-  if (defKey === "io.k8s.apimachinery.pkg.apis.meta.v1.Time") return "string";
-  if (defKey === "io.k8s.apimachinery.pkg.apis.meta.v1.MicroTime") return "string";
-  if (defKey === "io.k8s.apimachinery.pkg.runtime.RawExtension") return "Record<string, any>";
+  // Well-known scalars, and RawExtension, which stays open.
+  const fixed = OPEN_OR_SCALAR_DEFS[defKey];
+  if (fixed) return fixed;
 
-  // Check if it's a known property type
-  const ptConfig = PROPERTY_TYPE_DEFS[defKey];
-  if (ptConfig) {
-    return k8sShortName(ptConfig.typeName);
-  }
+  // A property class or a definition interface (chant #3093).
+  const named = ctx.names.get(defKey);
+  if (named) return named;
+  if (ctx.resources.has(defKey)) return inlineResourceType(defKey, ctx);
 
   // Resolve the definition
-  const def = definitions[defKey];
+  const def = ctx.definitions[defKey];
   if (!def) return "any";
 
   // Enum
@@ -620,7 +840,8 @@ function resolveRefType(ref: string, definitions: Record<string, SwaggerDefiniti
     }
   }
 
-  // Object with properties — use Record
+  // An object this pass does not name: a resource of a non-preferred
+  // version, or a definition with no properties (`JSON`, `FieldsV1`).
   if (def.properties) return "Record<string, any>";
 
   return "any";

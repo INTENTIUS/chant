@@ -147,7 +147,7 @@ export function planFromEntities(
     } else if (entityType === TYPE.ip) {
       plan[name] = { endpoint: `${base}/ip_assignments`, method: "POST", body: { type: props.type } };
     } else if (entityType === TYPE.cert) {
-      plan[name] = { endpoint: `${base}/certificates`, method: "POST", body: { hostname: props.hostname } };
+      plan[name] = { endpoint: `${base}/certificates/acme`, method: "POST", body: { hostname: props.hostname } };
     }
   }
   return Object.keys(plan).length ? JSON.stringify(plan) : "";

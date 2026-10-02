@@ -124,9 +124,13 @@ export function isIpRequest(req: FlapsRequest): boolean {
   return /^\/v1\/apps\/[^/]+\/ip_assignments\/?$/.test(req.endpoint);
 }
 
-/** True when a request creates a Certificate (`.../certificates`). Pure. */
+/**
+ * True when a request creates a Certificate: `.../certificates/acme`, or the
+ * bare `.../certificates` that plans built before #3114 carry. Both apply the
+ * same way, through {@link applyCert}. Pure.
+ */
 export function isCertRequest(req: FlapsRequest): boolean {
-  return /^\/v1\/apps\/[^/]+\/certificates\/?$/.test(req.endpoint);
+  return /^\/v1\/apps\/[^/]+\/certificates(\/acme)?\/?$/.test(req.endpoint);
 }
 
 /** True when a request sets a Secret (`.../secrets/{name}`). Pure. */
@@ -248,6 +252,9 @@ const ipUrl = (base: string, app: string, ip: string): string => `${ipsUrl(base,
 const certsUrl = (base: string, app: string): string => `${appUrl(base, app)}/certificates`;
 const certUrl = (base: string, app: string, hostname: string): string =>
   `${certsUrl(base, app)}/${encodeURIComponent(hostname)}`;
+// Certificates are listed at `.../certificates` but created at `.../acme`:
+// flaps has no POST on the list path and answers one with 404 (#3114).
+const acmeCertUrl = (base: string, app: string): string => `${certsUrl(base, app)}/acme`;
 const secretsUrl = (base: string, app: string): string => `${appUrl(base, app)}/secrets`;
 const secretUrl = (base: string, app: string, secretName: string): string =>
   `${secretsUrl(base, app)}/${encodeURIComponent(secretName)}`;
@@ -692,7 +699,11 @@ export async function applyIp(
   return { action: "created", type };
 }
 
-/** Create a certificate if absent (idempotent by hostname). */
+/**
+ * Create an ACME certificate if absent (idempotent by hostname). Always POSTs
+ * `{ hostname }` to `.../certificates/acme`, whatever endpoint the plan entry
+ * names, so a plan built before #3114 applies correctly too.
+ */
 export async function applyCert(
   ctx: ApplyCtx,
   app: string,
@@ -705,7 +716,7 @@ export async function applyCert(
   if ((await listCerts(ctx, app, http, signal)).some((c) => c.hostname === hostname)) {
     return { action: "noop", hostname };
   }
-  const res = await http("POST", certsUrl(ctx.base, app), req.body, undefined, signal);
+  const res = await http("POST", acmeCertUrl(ctx.base, app), { hostname }, undefined, signal);
   if (res.status >= 300) throw new Error(`certificate ${app}/${hostname} create failed (${res.status}): ${res.text}`);
   return { action: "created", hostname };
 }
