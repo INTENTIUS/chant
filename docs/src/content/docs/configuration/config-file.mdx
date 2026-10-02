@@ -97,6 +97,17 @@ telemetry: { attribution: true },
 
 Inside a [workspace](/chant/reference/workspace-declaration/) attribution is on, and `attribution: false` turns it off. Outside one it is off, and `attribution: true` turns it on with the attributes that need no workspace. A project with neither a workspace declaration nor this key builds the same bytes as before. See [how a reader joins a span](/chant/reference/workspace-read-contract/#joining-a-span-to-a-member).
 
+### `run`
+
+Defaults for [`chant run`](/chant/cli/run/) and its subcommands ([#2523](https://github.com/INTENTIUS/chant/issues/2523)). `run.on` names the runtime that hosts the project's Op runs when `--on` is not given: a configured lexicon that declares an `opRuntime`, or `"local"` for the built-in runtime.
+
+```typescript
+lexicons: ["aws", "mylexicon"],
+run: { on: "mylexicon" },
+```
+
+An explicit `--on` takes precedence over `run.on`, and `--on local` selects the built-in runtime for one invocation. When `run.on` names a lexicon that is not configured or has no `opRuntime`, `chant run` refuses with the message `--on` would give. The `run` block accepts only `on`, and a block that fails validation is refused rather than ignored.
+
 ### `environments`
 
 An optional array of environment names the project deploys to. An environment is just a named identity chant threads through the operational layer — there is no per-environment config block to maintain.
@@ -125,17 +136,6 @@ environments: [
 ```
 
 This is for a local emulator (Floci, mudflaps) or any non-default endpoint: without it, `--live --env floci` shells out to each lexicon's CLI honoring whatever the ambient shell happens to export (`AWS_ENDPOINT_URL` for AWS, `FLY_FLAPS_BASE_URL` for Fly) — and if that var isn't set, the read silently targets real AWS/Fly instead of the emulator, returning an empty (but not erroring) result. Declaring the endpoint makes `--env floci` self-sufficient: chant injects it into the right ambient var for the read, unless that var is already set in the shell — an ambient value always wins, so nothing changes for a project that already exports it. If a `--live` describe still comes back with zero resources for an environment that has declared entities, chant warns rather than reporting a quiet "nothing here."
-
-### `run`
-
-Defaults for [`chant run`](/chant/cli/run/) and its subcommands ([#2523](https://github.com/INTENTIUS/chant/issues/2523)). `run.on` names the runtime that hosts the project's Op runs when `--on` is not given: a configured lexicon that declares an `opRuntime`, or `"local"` for the built-in runtime.
-
-```typescript
-lexicons: ["aws", "mylexicon"],
-run: { on: "mylexicon" },
-```
-
-The runtime comes from `--on` first, then `run.on`, then the built-in local runtime. `--on local` selects the built-in runtime for one invocation. A `run.on` naming a lexicon that is not configured, or one with no `opRuntime`, is refused with the message `--on` gives, and so is a `run` block that does not validate. `run` accepts only `on`.
 
 ### `lint.extends`
 
