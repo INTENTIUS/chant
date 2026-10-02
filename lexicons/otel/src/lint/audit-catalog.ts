@@ -2,7 +2,8 @@
  * The otel lexicon's chant audit catalog, contributed via
  * `otelPlugin.auditCatalog()` (#687, #1346).
  *
- * OTEL101-OTEL106 read the emitted collector YAML, so they are `yamlBased`.
+ * OTEL101-OTEL106 and OTEL112-OTEL117 read the emitted collector YAML, so they are
+ * `yamlBased`.
  * OTEL107-OTEL109 read the declared entities (a component's definition, its
  * schema pin), which a standalone YAML file does not carry, so they are
  * constructed with `yamlBased: false`. The two source-level lint rules are
@@ -38,7 +39,7 @@ export const otelAuditCatalog: Record<string, RuleMeta> = {
     "merge-worthy",
     "guidance",
     "Pipeline uses an undeclared component",
-    "Declare the receiver, processor or exporter under its section, or reference the declared entity instead of an id string.",
+    "Declare the receiver, processor or exporter under its section, or reference the declared entity instead of an id string. List a connector as an exporter in one pipeline and a receiver in another.",
     { category: "correctness" },
   ),
   OTEL102: auditRule(
@@ -98,5 +99,53 @@ export const otelAuditCatalog: Record<string, RuleMeta> = {
     "correctness",
     "Custom collector component has no schema pin",
     "Pass defineComponent a pin with the source and version the component's config type follows.",
+  ),
+  OTEL112: auditRule(
+    "OTEL112",
+    "merge-worthy",
+    "guidance",
+    "Connector joins pipelines whose signals it does not convert",
+    "Feed the connector from, and receive from it into, pipelines of the signals it supports (spanmetrics: traces in, metrics out).",
+    { category: "correctness" },
+  ),
+  OTEL113: auditRule(
+    "OTEL113",
+    "merge-worthy",
+    "guidance",
+    "Pipelines form a cycle through connectors",
+    "Break the cycle the message names: drop one connector hop, or send that pipeline's data to an exporter instead of back upstream.",
+    { category: "correctness" },
+  ),
+  OTEL114: auditRule(
+    "OTEL114",
+    "merge-worthy",
+    "guidance",
+    "Connector id also declared as a receiver or exporter",
+    'Give the connector, or the receiver or exporter, its own name (e.g. "datadog/connector") and update the pipelines that list it.',
+    { category: "correctness" },
+  ),
+  OTEL115: auditRule(
+    "OTEL115",
+    "merge-worthy",
+    "guidance",
+    "Routing connector routes to a pipeline that does not receive from it",
+    "List the routing connector in the receivers of every pipeline its table and default_pipelines name, or remove the pipeline from the route.",
+    { category: "correctness" },
+  ),
+  OTEL116: auditRule(
+    "OTEL116",
+    "merge-worthy",
+    "guidance",
+    "Connector splits metrics by a high-cardinality GenAI attribute",
+    "Remove the conversation, response, tool call, session or user id, or the content key, from the connector's dimensions or attributes. Keep it on spans and logs, where a per-request value costs nothing extra.",
+    { category: "efficiency" },
+  ),
+  OTEL117: auditRule(
+    "OTEL117",
+    "merge-worthy",
+    "guidance",
+    "Two started components listen on the same address",
+    "Give one of them another port, or a specific host that doesn't overlap the other's. The collector's own metrics listen on localhost:8888 unless service.telemetry.metrics sets a reader or level none.",
+    { category: "correctness" },
   ),
 };

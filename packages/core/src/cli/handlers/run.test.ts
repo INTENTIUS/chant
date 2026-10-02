@@ -5,6 +5,14 @@ import { join } from "node:path";
 import type { ParsedArgs } from "../registry";
 
 const discoverOpsMock = vi.fn();
+// Default: no steward owns anything discovered, so `stewardTurnGate` (#2750)
+// is a no-op for every test that doesn't explicitly set up a steward — a
+// `mockResolvedValueOnce` in those tests overrides it for one call and this
+// default is what every other call sees.
+const discoverStewardsMock = vi.fn().mockResolvedValue({ stewards: new Map(), errors: [], conflicts: [] });
+const acquireStewardTurnMock = vi.fn();
+const holdBesideLeaseMock = vi.fn();
+const releaseLeaseMock = vi.fn();
 const loadChantConfigMock = vi.fn();
 const writeFileSyncMock = vi.fn();
 const mkdirSyncMock = vi.fn();
@@ -18,7 +26,22 @@ const recordGateApprovalMock = vi.fn();
 const { memoryGateLedgerPort } = await vi.importActual<typeof import("../../op/gate")>("../../op/gate");
 let gateLedger = memoryGateLedgerPort();
 
-vi.mock("../../op/discover", () => ({ discoverOps: () => discoverOpsMock() }));
+vi.mock("../../op/discover", () => ({
+  discoverOps: () => discoverOpsMock(),
+  discoverStewards: () => discoverStewardsMock(),
+}));
+vi.mock("../../op/operator", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../op/operator")>();
+  return { ...actual, acquireStewardTurn: (...args: unknown[]) => acquireStewardTurnMock(...args) };
+});
+vi.mock("../../op/steward-beside", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../op/steward-beside")>();
+  return { ...actual, holdBesideLease: (...args: unknown[]) => holdBesideLeaseMock(...args) };
+});
+vi.mock("../../lifecycle/lease", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../lifecycle/lease")>();
+  return { ...actual, releaseLease: (...args: unknown[]) => releaseLeaseMock(...args) };
+});
 vi.mock("../../config", async () => {
   const actual = await vi.importActual<typeof import("../../config")>("../../config");
   return { ...actual, loadChantConfig: (...args: unknown[]) => loadChantConfigMock(...args) };
@@ -199,6 +222,25 @@ describe("runOp dispatcher", () => {
     stderrWrite.mockRestore();
   });
 
+  test("--work on an Op with no work lease → exit 1, nothing run (#2748)", async () => {
+    discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("hello")]), errors: [] });
+    const stderr = makeStderrSpy();
+    const exit = await runOp({ args: makeArgs({ path: "hello", work: "W-1" }), plugins: [], serializers: [] });
+    expect(exit).toBe(1);
+    expect(stderr.join("\n")).toContain('--work W-1: Op "hello" declares no work lease');
+  });
+
+  test("an Op whose work lease leaves the item to the run, run without --work → exit 1 naming the flag (#2748)", async () => {
+    discoverOpsMock.mockResolvedValue({
+      ops: new Map([["leased", { config: { name: "leased", overview: "leased", phases: [], workLease: {} } }]]),
+      errors: [],
+    });
+    const stderr = makeStderrSpy();
+    const exit = await runOp({ args: makeArgs({ path: "leased", holder: "me" }), plugins: [], serializers: [] });
+    expect(exit).toBe(1);
+    expect(stderr.join("\n")).toContain("chant run leased --work <id>");
+  });
+
   test("--report → exit 1 naming the removal, nothing run (#2116)", async () => {
     discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("hello")]), errors: [] });
     const stderr = makeStderrSpy();
@@ -266,6 +308,204 @@ describe("runOp dispatcher", () => {
     expect(parsed.status).toBe("ok");
     expect(parsed.phases[0].steps[0]).toMatchObject({ fn: "shellCmd", status: "ok" });
     vi.restoreAllMocks();
+  });
+});
+
+/**
+ * chant #2750 — an Op a declared steward lists is one of its turns, not a
+ * run beside one: `chant run <op>` for such an Op takes the steward's turn
+ * lease (in the local form) or is redirected to the steward's thread (on
+ * fountain), rather than running unaware of a turn already in progress.
+ *
+ * `acquireStewardTurn` and `releaseLease` are stubbed here (mocked above):
+ * the point of these tests is the CLI's own decision and its message, not
+ * the lease's git plumbing, which `op/steward.test.ts` and
+ * `lifecycle/lease.test.ts` already cover against a real repo.
+ */
+describe("runOp: a steward's turn (#2750)", () => {
+  function stewardOwning(opName: string, name: string, form: "local" | "fountain" = "local") {
+    return {
+      stewards: new Map([[name, {
+        declaration: {
+          kind: "Chant::Steward", name, ops: [{ name: opName, phases: [] }],
+          form: { default: form, environments: {} }, capabilities: [], vault: null,
+        },
+        filePath: "ops/steward.op.ts", exportName: "steward",
+      }]]),
+      errors: [], conflicts: [],
+    };
+  }
+
+  beforeEach(() => {
+    discoverOpsMock.mockReset();
+    loadChantConfigMock.mockReset().mockResolvedValue({ config: {} });
+    loadPluginsMock.mockReset().mockResolvedValue([]);
+    acquireStewardTurnMock.mockReset();
+    releaseLeaseMock.mockReset().mockResolvedValue(true);
+  });
+
+  test("local form, the turn is free: takes it, runs, and releases it once the run is over", async () => {
+    discoverOpsMock.mockResolvedValue({
+      ops: new Map([localOp("release", [{ kind: "activity", fn: "shellCmd", args: { cmd: "true" } }])]),
+      errors: [],
+    });
+    discoverStewardsMock.mockResolvedValueOnce(stewardOwning("release", "box-steward"));
+    acquireStewardTurnMock.mockResolvedValue({
+      acquired: true,
+      lease: { op: "_turns/box-steward", holder: "h", token: "t1", acquiredAt: "x", expiresAt: "y" },
+    });
+    const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const exit = await runOp({ args: makeArgs({ path: "release" }), plugins: [], serializers: [] });
+    stderrWrite.mockRestore();
+
+    expect(exit).toBe(0);
+    expect(acquireStewardTurnMock).toHaveBeenCalledTimes(1);
+    expect(acquireStewardTurnMock.mock.calls[0]?.[0]).toBe("box-steward");
+    expect(releaseLeaseMock).toHaveBeenCalledTimes(1);
+    expect(releaseLeaseMock).toHaveBeenCalledWith("_turns/box-steward", expect.any(String), "t1");
+  });
+
+  test("local form, a turn is already in progress: refused, naming the steward and holder, nothing runs", async () => {
+    discoverOpsMock.mockResolvedValue({
+      ops: new Map([localOp("release", [{ kind: "activity", fn: "shellCmd", args: { cmd: "true" } }])]),
+      errors: [],
+    });
+    discoverStewardsMock.mockResolvedValueOnce(stewardOwning("release", "box-steward"));
+    acquireStewardTurnMock.mockResolvedValue({
+      acquired: false,
+      reason: "held",
+      heldBy: { op: "_turns/box-steward", holder: "other-host:123:abcd", token: "t0", acquiredAt: "x", expiresAt: "y" },
+    });
+    const stderr = makeStderrSpy();
+    const exit = await runOp({ args: makeArgs({ path: "release" }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(1);
+    const out = stderr.join("\n");
+    expect(out).toContain('steward "box-steward"');
+    expect(out).toContain("other-host:123:abcd");
+    expect(out).toContain("chant operator status --steward box-steward");
+    expect(releaseLeaseMock).not.toHaveBeenCalled();
+  });
+
+  test("fountain form without --on fountain: refused, naming the redirect, no turn lease touched", async () => {
+    discoverOpsMock.mockResolvedValue({ ops: new Map([localOp("release", [])]), errors: [] });
+    discoverStewardsMock.mockResolvedValueOnce(stewardOwning("release", "box-steward", "fountain"));
+    const stderr = makeStderrSpy();
+    const exit = await runOp({ args: makeArgs({ path: "release" }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(1);
+    const out = stderr.join("\n");
+    expect(out).toContain('steward "box-steward"');
+    expect(out).toContain("chant run release --on fountain");
+    expect(acquireStewardTurnMock).not.toHaveBeenCalled();
+  });
+
+  test("fountain form with --on fountain: the local turn-lease check is skipped and the fountain runtime runs it", async () => {
+    const runtime = {
+      name: "fountain",
+      start: vi.fn(async (op: { name: string }) => ({
+        op: op.name,
+        runId: "f-1",
+        result: async () => ({ op: op.name, runId: "f-1", state: "completed" as const, startedAt: "t", endedAt: "t" }),
+      })),
+      status: vi.fn(), log: vi.fn(), list: vi.fn(), cancel: vi.fn(),
+    };
+    discoverOpsMock.mockResolvedValue({ ops: new Map([localOp("release", [])]), errors: [] });
+    discoverStewardsMock.mockResolvedValueOnce(stewardOwning("release", "box-steward", "fountain"));
+    loadChantConfigMock.mockResolvedValue({ config: { lexicons: ["fountain"] } });
+    makeStdoutSpy();
+    const exit = await runOp({
+      args: makeArgs({ path: "release", on: "fountain" }),
+      plugins: [{ name: "fountain", opRuntime: runtime } as never], serializers: [],
+    });
+
+    expect(exit).toBe(0);
+    expect(runtime.start).toHaveBeenCalledTimes(1);
+    expect(acquireStewardTurnMock).not.toHaveBeenCalled();
+  });
+
+  test("local form, the turn lease's own acquire throws (a stale .lock): refused as a lease error, not an uncaught exception, and nothing runs", async () => {
+    discoverOpsMock.mockResolvedValue({
+      ops: new Map([localOp("release", [{ kind: "activity", fn: "shellCmd", args: { cmd: "true" } }])]),
+      errors: [],
+    });
+    discoverStewardsMock.mockResolvedValueOnce(stewardOwning("release", "box-steward"));
+    acquireStewardTurnMock.mockRejectedValue(new Error("cannot lock ref 'refs/chant/lease/_turns/box-steward': File exists"));
+    const stderr = makeStderrSpy();
+
+    const exit = await runOp({ args: makeArgs({ path: "release" }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(1);
+    const out = stderr.join("\n");
+    expect(out).toContain('steward "box-steward"');
+    expect(out).toContain("cannot lock ref");
+    expect(releaseLeaseMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * chant #2861: `chant run <op>` for an Op a steward runs beside its turns
+ * takes the Op's own lease, as `--holder`, and never the steward's turn.
+ * `holdBesideLease` is stubbed; `op/steward-beside.test.ts` runs it against a
+ * real repo.
+ */
+describe("runOp: an Op beside a steward's turns (#2861)", () => {
+  function stewardBeside(opName: string, name: string) {
+    return {
+      stewards: new Map([[name, {
+        declaration: {
+          kind: "Chant::Steward", name, ops: [{ name: "converge", phases: [] }, { name: opName, phases: [] }],
+          beside: [{ op: opName, ready: null }],
+          form: { default: "local", environments: {} }, capabilities: [], vault: null,
+        },
+        filePath: "ops/steward.op.ts", exportName: "steward",
+      }]]),
+      errors: [], conflicts: [],
+    };
+  }
+
+  beforeEach(() => {
+    discoverOpsMock.mockReset();
+    loadChantConfigMock.mockReset().mockResolvedValue({ config: {} });
+    loadPluginsMock.mockReset().mockResolvedValue([]);
+    acquireStewardTurnMock.mockReset();
+    holdBesideLeaseMock.mockReset();
+    releaseLeaseMock.mockReset().mockResolvedValue(true);
+  });
+
+  test("takes the Op's lease as --holder, not the turn, runs, and releases it once the run is over", async () => {
+    discoverOpsMock.mockResolvedValue({
+      ops: new Map([localOp("dispatch", [{ kind: "activity", fn: "shellCmd", args: { cmd: "true" } }])]),
+      errors: [],
+    });
+    discoverStewardsMock.mockResolvedValueOnce(stewardBeside("dispatch", "box-steward"));
+    const release = vi.fn(async () => {});
+    holdBesideLeaseMock.mockResolvedValue({ acquired: true, lease: { op: "dispatch", holder: "h", token: "t1", acquiredAt: "x", expiresAt: "y" }, release });
+    const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const exit = await runOp({ args: makeArgs({ path: "dispatch", holder: "box-steward/dispatch@op1" }), plugins: [], serializers: [] });
+    stderrWrite.mockRestore();
+
+    expect(exit).toBe(0);
+    expect(acquireStewardTurnMock).not.toHaveBeenCalled();
+    expect(holdBesideLeaseMock).toHaveBeenCalledWith("dispatch", "box-steward/dispatch@op1");
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  test("a run of it in progress: refused, naming the holder, nothing runs", async () => {
+    discoverOpsMock.mockResolvedValue({
+      ops: new Map([localOp("dispatch", [{ kind: "activity", fn: "shellCmd", args: { cmd: "true" } }])]),
+      errors: [],
+    });
+    discoverStewardsMock.mockResolvedValueOnce(stewardBeside("dispatch", "box-steward"));
+    holdBesideLeaseMock.mockResolvedValue({ acquired: false, heldBy: "box-steward/dispatch@op1" });
+    const stderr = makeStderrSpy();
+    const exit = await runOp({ args: makeArgs({ path: "dispatch" }), plugins: [], serializers: [] });
+
+    expect(exit).toBe(1);
+    const out = stderr.join("\n");
+    expect(out).toContain(`runs beside steward "box-steward"'s turns`);
+    expect(out).toContain("box-steward/dispatch@op1");
+    expect(acquireStewardTurnMock).not.toHaveBeenCalled();
   });
 });
 
@@ -354,7 +594,9 @@ describe("runOp: --gated-exit (#2243)", () => {
 
   test("a run that fails for any other reason is still red under the flag", async () => {
     discoverOpsMock.mockResolvedValue({
-      ops: new Map([localOp("broken", [{ kind: "activity", fn: "shellCmd", args: { cmd: "exit 7" } }])]),
+      // atMostOnce: one attempt. The default profile retries twice with 5s and
+      // 10s backoff, which put this test at 15s for waits it does not test (#2817).
+      ops: new Map([localOp("broken", [{ kind: "activity", fn: "shellCmd", profile: "atMostOnce", args: { cmd: "exit 7" } }])]),
       errors: [],
     });
     const file = summaryFile();
@@ -1154,6 +1396,53 @@ describe("runOpComponents", () => {
 
       const [, options] = maybeRecordAutoReleaseMock.mock.calls[0];
       expect(options).toMatchObject({ disabled: true });
+      vi.restoreAllMocks();
+    });
+
+    test("--digest-file writes <component>=<digest> for each release the run recorded (#2602)", async () => {
+      runComponentsMock.mockResolvedValue({
+        success: true,
+        selected: ["svc", "infra"],
+        run: {
+          order: ["svc", "infra"],
+          waves: [["svc", "infra"]],
+          results: [
+            { component: "svc", ok: true, status: "ok", records: [] },
+            { component: "infra", ok: true, status: "ok", records: [] },
+          ],
+          ok: true,
+          status: "ok",
+        },
+      });
+      maybeRecordAutoReleaseMock.mockImplementation(async (info: { component: string }) =>
+        info.component === "svc"
+          ? { recorded: true, commit: "a".repeat(40), record: { version: 1, component: "svc", env: "staging", digest: "sha256:abc", gitSha: "x", runId: "local-1", timestamp: "t", actor: "a" } }
+          : { recorded: false, reason: "no-digest" });
+      writeFileSyncMock.mockClear();
+      vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+      const exit = await runOpComponents({ args: makeArgs({ path: "all", env: "staging", digestFile: "out/svc.digest" }), plugins: [], serializers: [] });
+
+      expect(exit).toBe(0);
+      const call = writeFileSyncMock.mock.calls.find(([path]) => String(path).endsWith("out/svc.digest"));
+      expect(call?.[1]).toBe("svc=sha256:abc\n");
+      vi.restoreAllMocks();
+    });
+
+    test("--digest-file is written empty when nothing was recorded (#2602)", async () => {
+      runComponentsMock.mockResolvedValue({
+        success: true,
+        selected: ["svc"],
+        run: { order: ["svc"], waves: [["svc"]], results: [{ component: "svc", ok: true, status: "ok", records: [] }], ok: true, status: "ok" },
+      });
+      maybeRecordAutoReleaseMock.mockResolvedValue({ recorded: false, reason: "opted-out" });
+      writeFileSyncMock.mockClear();
+      vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+      await runOpComponents({ args: makeArgs({ path: "svc", digestFile: "svc.digest" }), plugins: [], serializers: [] });
+
+      const call = writeFileSyncMock.mock.calls.find(([path]) => String(path).endsWith("svc.digest"));
+      expect(call?.[1]).toBe("");
       vi.restoreAllMocks();
     });
 

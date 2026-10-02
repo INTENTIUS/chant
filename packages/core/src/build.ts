@@ -1,6 +1,7 @@
 import type { Declarable } from "./declarable";
 import type { Serializer, SerializerResult } from "./serializer";
 import type { OwnershipMarker } from "./ownership";
+import type { TelemetryAttribution } from "./telemetry-attribution";
 import type { BuildError, DiscoveryErrorType } from "./errors";
 import type { IntrinsicDef, BuildRootContribution, BuildRootContributor } from "./lexicon";
 import { getProvenance, type BuildParamProvenance } from "./provenance";
@@ -193,6 +194,12 @@ export interface BuildOptions {
    * native metadata channel. Resolved from project config by the caller.
    */
   ownership?: OwnershipMarker;
+
+  /**
+   * Telemetry attribution facts (#2558), passed to each serializer's
+   * {@link SerializeContext}. Resolved by the build command; unset at level 0.
+   */
+  telemetry?: TelemetryAttribution;
 
   /**
    * The resolved project configuration, passed through to each serializer's
@@ -876,6 +883,7 @@ async function buildFromDiscoveryResult(
       const serialized = serializer.serialize(applyBound, lexiconLexiconOutputs, {
         ownership: options?.ownership,
         config: options?.config,
+        ...(options?.telemetry ? { telemetry: options.telemetry } : {}),
         ...(receipts.size > 0 ? { receipts } : {}),
       });
       // Collect any non-fatal serializer diagnostics into the build warnings.

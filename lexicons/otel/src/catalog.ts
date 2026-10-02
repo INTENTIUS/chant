@@ -6,13 +6,14 @@
 
 import type { LexiconEntry } from "@intentius/chant/lsp/lexicon-providers";
 import { componentEntityType, type ComponentClass } from "./define";
+import type { ComponentKind } from "./model";
 import * as components from "./components";
 import { PIPELINE_TYPE, SERVICE_TYPE } from "./pipeline";
 
 export interface CatalogEntry {
   className: string;
   entityType: string;
-  kind: "receiver" | "processor" | "exporter" | "extension" | "pipeline" | "service";
+  kind: ComponentKind | "pipeline" | "service";
   /** The collector type, for components. */
   type?: string;
   description: string;

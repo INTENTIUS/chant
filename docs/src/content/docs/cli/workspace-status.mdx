@@ -1,0 +1,383 @@
+---
+title: "chant workspace status"
+description: Each member's latest release in an environment, read from its ledger, and optionally a second environment beside it with the members whose digests differ marked
+diataxis: reference
+---
+
+## Synopsis
+
+```
+chant workspace status <env> [dir] [--compare-to <env>] [--json]
+```
+
+## Description
+
+`chant workspace status` shows which release each member of a [workspace](/chant/reference/workspace-declaration/) has in an environment. Each one is an artifact digest and the git SHA it was built from, as `chant components release` records it. They stay per member, and this command only reads them ([ws-043](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-043-releases.md)). Moving several members together as a train waits for workspace Ops ([#2554](https://github.com/INTENTIUS/chant/issues/2554)).
+
+The command finds the declaration by walking up from `dir` (default: the current directory), as [`chant workspace ls`](/chant/cli/workspace-ls/) does. For each member it lists the latest release of every component in that member's ledger for `<env>`. With `--compare-to <env>`, it lists the second environment beside the first and marks each component whose digest differs, or that has a release in only one of them.
+
+```
+acme  staging compared to prod  (chant/lifecycle at 3f2a91c0)
+
+MEMBER  COMPONENT  STAGING                        PROD
+site    -          no release                     no release
+web     web        sha256:aaaaaaaaaaaa aaaaaaaa   sha256:aaaaaaaaaaaa aaaaaaaa
+api     api        sha256:bbbbbbbbbbbb bbbbbbbb   sha256:cccccccccccc cccccccc   differs
+api     worker     sha256:dddddddddddd dddddddd   -                              only-env
+
+3 members, 2 with a release in staging, 1 differs from prod, 0 unreadable
+```
+
+Each compared component gets one of four states.
+
+| State | Meaning |
+|---|---|
+| `same` | Both environments have the same digest. |
+| `differs` | Both environments have a release of the component, with different digests. |
+| `only-env` | Only the first environment has a release of the component. |
+| `only-compare` | Only the environment given to `--compare-to` has one. |
+
+A release whose ledger records an input digest, such as a pinned Helm deploy, is compared on that digest. Two clusters may render the same input to different bytes, and the input digest is what says they run the same release. The table still shows the digest each cluster received.
+
+### Where the ledgers are read from
+
+Every ledger is on the `chant/lifecycle` branch. A member's releases for an environment are in `_members/<member>/<env>/releases.jsonl` ([#2538](https://github.com/INTENTIUS/chant/issues/2538)). The root member `.` keeps the flat `<env>/releases.jsonl` that a project without a workspace uses. A member with no `_members/<member>/` directory on the branch is read from the flat ledger too, because that is where a chant from before #2538 writes it. When more than one member reads the same flat ledger, they list the same records, and the output says the ledger is shared.
+
+The command reads the branch as it is in the checkout and never fetches it, so it makes no network calls. The output names the branch tip it read. To see what the remote has, fetch the branch first with `git fetch origin chant/lifecycle:chant/lifecycle`.
+
+A member whose ledger can't be read is still listed, with a reason code, and the command still exits 0 ([ws-020](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-020-unreadable.md)).
+
+### Gates
+
+With `--json`, each member also lists its gates, read from the same branch ([#2674](https://github.com/INTENTIUS/chant/issues/2674)). A run that reaches a gate writes a pending fact there, and [`chant approve`](/chant/cli/operator/#approve-op-gate) writes approvals beside it. A member's gate files are in `_members/<member>/_gates/` or the flat `_gates/`, and the choice between them follows its releases. The text view doesn't list gates.
+
+A gate is listed for each environment the command shows, once a run has reached it there. A gate an Op run reached records no environment and is always listed. Its state is read from the newest pending fact for the gate in that environment, the way the next run reads it. Only approvals recorded since that fact, for the plan it names, count ([#2300](https://github.com/INTENTIUS/chant/issues/2300), [#2574](https://github.com/INTENTIUS/chant/issues/2574)). A gate with a quorum counts human approvals only, as `chant approve` reports after each approval.
+
+| State | Meaning |
+|---|---|
+| `approved` | The approvals that count pass the gate: its quorum, or a policy permit in `enforce` mode. |
+| `pending` | The gate is waiting for approvals. `approvals` lists those it has so far, and `needed` how many it needs. |
+| `expired` | Not approved, and the pending fact is past `expiresAt`. The next run records a fresh one. |
+| `superseded` | Not approved, and an approval recorded since the gate was reached names a different plan, so it doesn't count. |
+
+Each gate carries `approve`, the exact command that approves it, to run in the member's directory: `chant approve <component> <gate> --env <env>`, without `--env` for a gate that records no environment.
+
+### Boxes
+
+With `--json`, each member also lists its `box`: the [box block](/chant/reference/workspace-declaration/#boxes) from the declaration, or `null` when it has none ([#2726](https://github.com/INTENTIUS/chant/issues/2726)). Each capability has its `name`, its `broker` (`null` when the declaration names none) and its `scope`. A broker, such as a lobby, reads the scope it enforces for a box from here, so the scopes aren't hard-coded in the broker. The capabilities appear in the JSON only.
+
+```json
+"box": {
+  "capabilities": [
+    { "name": "fountain", "broker": "lobby", "scope": ["agent", "vault", "conversations", "sandboxes"] }
+  ],
+  "isolation": {
+    "host": "local",
+    "slot": 0,
+    "portRange": { "from": 7100, "to": 7119 },
+    "ports": { "app": 7100, "door": 7101, "proxy": 7102, "inject": 7103 },
+    "stateDir": "${XDG_STATE_HOME}/chant/boxes/fern",
+    "state": {
+      "HUD_IDENTITY_PATH": "${XDG_STATE_HOME}/chant/boxes/fern/hud/identity.json",
+      "HUD_DB_PATH": "${XDG_STATE_HOME}/chant/boxes/fern/hud/events.db"
+    },
+    "cookies": { "hud_session": "hud_session_fern", "chaff_door": "chaff_door_fern" }
+  },
+  "intent": {
+    "id": "box-001",
+    "state": "decided",
+    "question": "What is fern for?",
+    "choice": { "option": "a", "reason": "A review queue for the design team." },
+    "answer": "a review queue for the design team",
+    "decided_by": "alex",
+    "decided_on": "2026-09-26"
+  },
+  "services": [
+    { "name": "app", "cmd": "${HOME}/box/run-app.sh", "needs": [], "httpPort": null, "duration": "3s", "health": "http://127.0.0.1:5173/health", "optional": false },
+    { "name": "door", "cmd": "${HOME}/box/run-door.sh", "needs": ["app"], "httpPort": 8080, "duration": "2s", "health": null, "optional": false }
+  ]
+}
+```
+
+`intent` is the decision record the box block names as the box's [intent](/chant/reference/workspace-declaration/#intent), or `null` when it names none ([#2850](https://github.com/INTENTIUS/chant/issues/2850)). It is read from the working tree, from the records of every declared kind named `decision`. `answer` is the label of the `options[]` entry `choice.option` names, or `null` while none is chosen ([#2855](https://github.com/INTENTIUS/chant/issues/2855)). While the record is `proposed`, `choice`, `answer`, `decided_by` and `decided_on` are `null`. When no decision record has the id, every field but `id` is `null` and `chant workspace check` fails with `WSP126`.
+
+`services` lists the [services](/chant/reference/workspace-declaration/#services) the box block declares, in declaration order, or `[]` when it declares none ([#2880](https://github.com/INTENTIUS/chant/issues/2880)). Every field is present. A `needs` the block leaves out prints as `[]` and an `optional` as `false`, and the other fields print as `null`. `cmd` is as declared, with its `${VAR}` references left for the process that applies it. A reader has the declared services here before any converge tick. A steward's `ConvergeOp` that observes them reports each one's verdict in its `lastTick`.
+
+### Stewards
+
+A steward is the one writer that runs a member's operational Ops, on Fountain or locally through `chant operator --steward` ([#2731](https://github.com/INTENTIUS/chant/issues/2731)). The JSON lists the stewards of each member of kind `chant` that has its own `chant.config.ts` or `.json`, read from their declarations in the member's `*.op.ts` files. This is the one part of the output that imports project code, and it imports only those files. Each Op's last run is the newest record in its run ledger on the local branch. The steward's `lease` is the one a local steward holds while it runs, read from the local ref and never fetched. The text view leaves stewards out.
+
+| Field | Meaning |
+|---|---|
+| `name`, `file` | The steward's name, and the `*.op.ts` file that declares it, relative to the member |
+| `form` | `fountain` or `local`: where the steward runs in the environment asked for |
+| `forms` | The declared default form, and the environments whose form differs from it |
+| `vault`, `capabilities` | The vault the steward holds, or `null`, and the box capabilities it reaches through a broker, each with the `broker` the member's box block gives it and `declared: false` when the block doesn't list it ([#2726](https://github.com/INTENTIUS/chant/issues/2726)) |
+| `lease` | The local steward's lease (`holder`, `acquiredAt`, `expiresAt`, `live`), or `null` when no local operator has held it |
+| `ops[]` | Each Op the steward runs, in declaration order (its turns' Ops, then those beside its turns), with `schedule` (`null` for an Op it runs only when asked), the `env` its runs are recorded under, and `lastRun` (`id`, `status`, `started`, `ended`, `gate`, `point`, `phases`) or `null`. `phases` lists each phase of the run with its `status` and `durationMs`. A gated run's `gate` has its `name`, `since`, the `op` it is recorded under and the `approve` command; `op` is a command's own, such as `workspace-upgrade`, when a step's command stopped at its gate ([#2779](https://github.com/INTENTIUS/chant/issues/2779)). `status` is `waiting` for a run that stopped on a decision point, and `point` names that question, with its `state` now (`answered` once a person has answered it). A ConvergeOp also has `lastTick`, its newest tick on the converge ledger: the rules that fired, what each did and for which resource, and what its observer step reported ([#2778](https://github.com/INTENTIUS/chant/issues/2778)). It is `null` for any other Op |
+| `ops[].inFlight` | The run of the Op in flight now, or `null`. A run that writes to the run ledger keeps a record under the checkout's git directory while it runs, and removes it once its ledger record is written. `phase` and `step` are what it is doing now, `phases` the phases it has finished with their `durationMs`, and `item` the work item its lease holds once claimed. `activity` holds the newest 20 lines its steps reported, each with a `seq` counting from 1, and `total` counts every line so far. A shell step reports a line by appending it to the file named in `CHANT_RUN_ACTIVITY`, as plain text or as `{"at": "...", "text": "..."}`. A record whose process on this host is gone is not in flight |
+| `ops[].changesCheckout`, `ops[].workLease` | Whether the Op changes the checkout, and its [work lease](/chant/guide/ops/#running-under-a-work-lease) or `null` ([#2748](https://github.com/INTENTIUS/chant/issues/2748)). `workLease.kind` is the work kind file whose ledger holds the lease, or `null` for the member's own. `workLease.held` lists the leases the steward's turns of this Op hold, the ones whose holder is `<steward>/<op>@<process>`: an `active` one while a turn runs, an `expired` one left by a turn that stopped renewing |
+| `ops[].beside` | For an Op the steward runs beside its turns ([#2861](https://github.com/INTENTIUS/chant/issues/2861)), `ready` says whether a ready step tells the operator when to start it, and `lease` is the Op's own lease (`holder`, `acquiredAt`, `expiresAt`, `live`), which a run of it holds while it runs, or `null`. `null` for an Op run as one of the steward's turns. See [`operator --steward`](/chant/cli/operator/#operator---steward-name) |
+| `waiting[]` | The open decision points the steward waits on ([#2749](https://github.com/INTENTIUS/chant/issues/2749)): for each Op whose newest run is the steward's own and stopped on a question still open, the `op`, the `run`, and the question's `id`, `point`, `state`, `path`, `subject` and `since`. The state is read now, as [`points --open`](/chant/cli/workspace-points/) reads it. A question answered since is left out, and so is one whose Op has a newer run in flight: the Op's lease or one of its work leases was taken after the waiting run ended and is still held. A run is the steward's when its ledger record names the steward, as it does for a run started with `CHANT_STEWARD` set, so an Op the steward's process starts itself is listed here though `ops[]` does not list it |
+
+### Work leases
+
+With `--json`, the document also lists every [work lease](/chant/cli/workspace-work/) in `leases` ([#2732](https://github.com/INTENTIUS/chant/issues/2732)): the flat ledger's first, then each member's, by item. A lease is `active` until its `expiresAt` passes and `expired` after, when anyone may claim the item again. A released lease has no ref and is not listed; its history stays in `_leases/<id>.jsonl`. The leases are read from the local refs and the remote's as last fetched, like everything else here. The text view lists them in a table after the releases.
+
+### Acceptance criteria
+
+`acceptance` counts each work item's [acceptance criteria](/chant/guide/work-items/#acceptance-criteria) ([#2772](https://github.com/INTENTIUS/chant/issues/2772)). Only current items that state criteria are listed, sorted by kind and then item. With no declared work kind that has criteria, the list is empty. Records come from the working tree, and the text view shows a CRITERIA MET column for each item.
+
+| Field | Value |
+|---|---|
+| `member` | the member that declares the work kind, or `null` for the workspace's own |
+| `kind` | the work kind file from the workspace root |
+| `item` | the work item's id |
+| `state` | the item's state |
+| `met` | criteria met by passing evidence of their verification |
+| `total` | criteria the item lists |
+
+A box block with a host also has its [isolation](/chant/reference/workspace-declaration/#isolation) resolved, and `isolation` is `null` in a block without one ([#2727](https://github.com/INTENTIUS/chant/issues/2727)). It comes from the declaration alone, so it is the same whatever environment is asked for. A runtime that plants or starts a box sets these values instead of choosing its own. A state path keeps its environment reference, such as `${XDG_STATE_HOME}`, for the runtime to expand on its machine. The text view shows one line for each box with a host. It gives the host and slot, then the port block and the state directory.
+
+The command doesn't read live state. `--compare-to --live` is refused with a pointer to `chant components status <env> --live`, which reads one member's live state from that member's directory.
+
+## Options
+
+| Option | Effect |
+|---|---|
+| `env` | The environment to show. Required. |
+| `dir` | Where the walk up to the declaration starts. |
+| `--compare-to <env>` | Show a second environment beside the first and mark the members whose digests differ. |
+| `--json` | Print the result as JSON (see [Output](#output)). |
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | The declaration was read. Some ledgers may be unreadable, and each carries a reason code. Differences between environments don't change the exit code. |
+| 1 | No environment was given, `--live` was asked for, the declaration couldn't be read, or an environment name can't be one. |
+
+## Output
+
+The output is part of the workspace [read contract](/chant/reference/workspace-read-contract/). With `--json`, it follows the schema `https://intentius.io/chant/schemas/workspace/status/v1/status.schema.json`, shipped in `@intentius/chant` at `src/workspace/status.schema.json`. Readers ignore fields they don't know. Fields are only added within a contract version, and the code lists are closed.
+
+```json
+{
+  "$schema": "https://intentius.io/chant/schemas/workspace/status/v1/status.schema.json",
+  "contract": 1,
+  "chant": "0.80.0",
+  "env": "staging",
+  "compareTo": "prod",
+  "lifecycle": { "ref": "chant/lifecycle", "commit": "3f2a91c0..." },
+  "workspace": { "name": "acme", "root": ".", "file": "chant.workspace.json" },
+  "members": [
+    {
+      "name": "api",
+      "dir": "apps/api",
+      "kind": "chant",
+      "environments": [
+        {
+          "env": "staging",
+          "ledger": { "layout": "members", "path": "_members/api/staging/releases.jsonl", "shared": false },
+          "releases": [
+            {
+              "component": "api",
+              "digest": "sha256:bbbb...",
+              "gitSha": "bbbbbbbb...",
+              "inputDigest": null,
+              "runId": "1234",
+              "timestamp": "2026-09-20T10:00:00.000Z",
+              "actor": "ci",
+              "flags": []
+            }
+          ],
+          "reason": null
+        },
+        {
+          "env": "prod",
+          "ledger": { "layout": "members", "path": "_members/api/prod/releases.jsonl", "shared": false },
+          "releases": [],
+          "reason": null
+        }
+      ],
+      "compare": {
+        "differs": true,
+        "components": [{ "component": "api", "state": "only-env", "digest": "sha256:bbbb...", "compareDigest": null }]
+      },
+      "readable": true,
+      "gateLedger": { "layout": "members", "path": "_members/api/_gates", "shared": false, "malformed": 0, "reason": null },
+      "gates": [
+        {
+          "component": "api",
+          "name": "deploy",
+          "env": "prod",
+          "planDigest": "jcs1-sha256:7c1e...",
+          "state": "pending",
+          "recordedAt": "2026-09-21T09:00:00.000Z",
+          "expiresAt": "2026-09-23T09:00:00.000Z",
+          "approvals": [{ "principal": "alice", "channel": "cli", "at": "2026-09-21T09:30:00.000Z" }],
+          "needed": 2,
+          "approve": "chant approve api deploy --env prod"
+        }
+      ],
+      "box": null,
+      "stewards": [
+        {
+          "name": "api-steward",
+          "file": "ops/steward.op.ts",
+          "form": "local",
+          "forms": { "default": "local", "environments": { "fountain-k3d": "fountain" } },
+          "vault": null,
+          "capabilities": [{ "name": "fountain", "broker": "lobby", "declared": true }],
+          "lease": { "holder": "box:4821:9f2c1a3b", "acquiredAt": "2026-09-21T08:00:00.000Z", "expiresAt": "2026-09-21T09:05:00.000Z", "live": true },
+          "ops": [
+            {
+              "name": "api-converge",
+              "schedule": { "cron": "*/5 * * * *", "overlap": "skip" },
+              "env": "local",
+              "lastRun": { "id": "0b6f...", "status": "ok", "started": "2026-09-21T09:00:00.000Z", "ended": "2026-09-21T09:00:04.000Z", "gate": null, "point": null, "phases": [{ "name": "Converge", "status": "ok", "durationMs": 3920 }] },
+              "inFlight": null,
+              "lastTick": {
+                "id": "5d1e...",
+                "timestamp": "2026-09-21T09:00:03.000Z",
+                "log": "converge(local): resources=2 in-sync=1 drifted=1 unknown=0 remediated=1 reported=0 skipped-budget=0 skipped-flap=0 gated=0",
+                "firedRuleIds": ["restart-drifted"],
+                "outcomes": [{ "ruleId": "restart-drifted", "action": "ran", "op": "restart-service", "resource": "app", "reason": null }],
+                "resources": [
+                  { "name": "app", "status": "drifted", "detail": "stopped" },
+                  { "name": "hud", "status": "in-sync", "detail": "running, http://127.0.0.1:8081/__hud/health answers 200" }
+                ]
+              },
+              "changesCheckout": false,
+              "workLease": null,
+              "beside": null
+            },
+            { "name": "api-release", "schedule": null, "env": "prod", "lastRun": null, "inFlight": null, "lastTick": null, "changesCheckout": false, "workLease": null, "beside": null },
+            {
+              "name": "api-dispatch",
+              "schedule": null,
+              "env": "local",
+              "lastRun": null,
+              "inFlight": {
+                "id": "3c9a...",
+                "started": "2026-09-21T09:05:00.000Z",
+                "updated": "2026-09-21T09:07:12.000Z",
+                "steward": "api-steward",
+                "item": "W-017",
+                "phase": { "name": "Build", "started": "2026-09-21T09:05:09.000Z" },
+                "step": { "name": "build", "fn": "shellCmd", "started": "2026-09-21T09:05:09.000Z" },
+                "phases": [
+                  { "name": "Pick", "status": "ok", "durationMs": 1210 },
+                  { "name": "Understand", "status": "ok", "durationMs": 7630 }
+                ],
+                "activity": { "total": 2, "lines": [{ "seq": 1, "at": "2026-09-21T09:06:40.000Z", "text": "Edit app/lobby.js" }, { "seq": 2, "at": "2026-09-21T09:07:12.000Z", "text": "Bash npm test" }] }
+              },
+              "lastTick": null,
+              "changesCheckout": true,
+              "workLease": {
+                "kind": null,
+                "held": [
+                  { "item": "W-017", "holder": "api-steward/api-dispatch@box:4821:9f2c1a3b", "token": "6f0c...", "acquiredAt": "2026-09-21T09:05:00.000Z", "expiresAt": "2026-09-21T09:15:00.000Z", "state": "active" }
+                ]
+              },
+              "beside": {
+                "ready": true,
+                "lease": { "holder": "api-steward/api-dispatch@box:4821:9f2c1a3b", "acquiredAt": "2026-09-21T09:05:00.000Z", "expiresAt": "2026-09-21T09:10:00.000Z", "live": true }
+              }
+            }
+          ],
+          "waiting": []
+        }
+      ],
+      "stewardReasons": []
+    }
+  ],
+  "leases": [
+    {
+      "item": "W-001",
+      "member": null,
+      "ref": "refs/chant/lease/work/W-001",
+      "holder": "worker-a",
+      "token": "6f0c...",
+      "acquiredAt": "2026-09-21T09:00:00.000Z",
+      "expiresAt": "2026-09-21T09:10:00.000Z",
+      "state": "active"
+    }
+  ],
+  "acceptance": [
+    { "member": null, "kind": "work/work.kind.mjs", "item": "W-001", "state": "in-progress", "met": 1, "total": 2 }
+  ],
+  "summary": { "members": 3, "released": 2, "unreadable": 0, "differing": 1 }
+}
+```
+
+The example shortens the lists and the digests. `commit` is the local branch tip, or `null` when the checkout has no `chant/lifecycle` branch, in which case every member has no release. `layout` is `members` or `flat`, as described above. A compare `state` is `same`, `differs`, `only-env` or `only-compare`. `compare` and `summary.differing` are `null` without `--compare-to`. `flags` carries `legacy-digest` for a digest recorded before chant used SHA-256 ([#2514](https://github.com/INTENTIUS/chant/issues/2514)).
+
+In `gateLedger`, `path` is the directory of gate files, and `malformed` counts the lines in them that were skipped. An Op gate has `env: null`, and `planDigest` is `null` when the run bound no plan to the gate. An approval's `channel` is `cli`, `mcp` or `acp`, or `null` for an approval recorded before chant recorded the channel.
+
+A failed read prints `{ "$schema", "contract", "chant", "error": { "code", "message", "location" } }` instead, with the location of a parse or schema error in the declaration, or `null`.
+
+### Reason codes
+
+A reason belongs to one environment of one member, and makes that member's `readable` false.
+
+| Code | The ledger |
+|---|---|
+| `ledger-unreadable` | couldn't be read, so nothing from it is listed |
+| `ledger-malformed` | has lines that aren't release records; they are skipped and the rest are listed |
+
+Gates have a reason of their own, in `gateLedger.reason`. It doesn't change `readable` or the summary, and `gates` is empty when there is one.
+
+| Code | The member's gate files |
+|---|---|
+| `gates-no-ledger` | aren't there, because the checkout has no `chant/lifecycle` branch |
+| `gates-no-gate-ledger` | don't exist on the branch, because no run of the member has reached a gate |
+| `gates-ledger-unreadable` | couldn't be read, so no gate is listed |
+
+Stewards have reasons of their own, in `stewardReasons`. They don't change `readable` or the summary.
+
+| Code | Meaning |
+|---|---|
+| `stewards-unreadable` | an `*.op.ts` file couldn't be imported, so a steward it declares may be missing |
+| `stewards-conflict` | a steward was dropped because its name, or an Op it lists, belongs to another steward |
+| `steward-runs-unreadable` | an Op's run ledger or a ConvergeOp's converge ledger couldn't be read, so its `lastRun` or `lastTick` is `null` |
+
+### Error codes
+
+The declaration's codes are listed on [`chant workspace ls`](/chant/cli/workspace-ls/#error-codes). This command returns them except the two that only `--at` causes, plus two of its own.
+
+| Code | Cause |
+|---|---|
+| `not-a-git-repository` | the workspace isn't in a git repository, so there is no ledger branch |
+| `environment-invalid` | an environment name has a character other than letters, digits, `.`, `_` and `-`, or starts with `.` or `_` |
+
+## Use in a pipeline
+
+The exit code doesn't change when environments differ, so a job that should stop on a difference reads the JSON. This one fails when any member in prod runs something other than what staging tested, and prints the members that do.
+
+```bash
+chant workspace status prod --compare-to staging --json > status.json
+jq -r '.members[] | select(.compare.differs) | .name' status.json
+jq -e 'all(.members[]; .compare.differs | not)' status.json > /dev/null
+```
+
+Fetch `chant/lifecycle` in the job before this runs. A CI checkout usually fetches only the ref it builds, and without the ledger branch every member shows no release.
+
+## Examples
+
+```bash
+# Which release each member has in prod
+chant workspace status prod
+
+# Is prod running what staging tested?
+chant workspace status prod --compare-to staging
+
+# The same, for a tool to read
+chant workspace status prod --compare-to staging --json
+
+# The prod gates still waiting for an approval, with the command for each
+chant workspace status prod --json | jq -r '.members[].gates[] | select(.state == "pending") | .approve'
+
+# Which steward runs each member, and how its last runs went
+chant workspace status prod --json | jq -r '.members[].stewards[] | .name + " (" + .form + "): " + ([.ops[] | .name + "=" + (.lastRun.status // "never")] | join(" "))'
+```

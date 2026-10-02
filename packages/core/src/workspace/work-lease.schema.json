@@ -1,0 +1,233 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/work-lease/v1/work-lease.schema.json",
+  "title": "chant workspace work output",
+  "description": "What `chant workspace work claim|renew|release <id> --holder <name> --json` prints (#2732, ws-055): the work lease it wrote, the reason it was refused, or the reason the command could not run. Version 1 of the write contract for work leases. The lease is the ref refs/chant/lease/[_members/<member>/]work/<id>; each write also appends to _leases/<id>.jsonl on chant/lifecycle. Readers ignore fields they do not know; a field is only ever added within a version. The refusal and error codes are closed lists, each in the one closed list of `reason-codes.ts`.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/result"
+    },
+    {
+      "$ref": "#/$defs/refusal"
+    },
+    {
+      "$ref": "#/$defs/failure"
+    }
+  ],
+  "$defs": {
+    "lease": {
+      "type": "object",
+      "required": [
+        "holder",
+        "token",
+        "acquiredAt",
+        "expiresAt"
+      ],
+      "properties": {
+        "holder": {
+          "type": "string",
+          "description": "Who holds the lease, as --holder gave it."
+        },
+        "token": {
+          "type": "string",
+          "description": "The fencing token: new on every claim, kept by every renew."
+        },
+        "acquiredAt": {
+          "type": "string",
+          "description": "When the lease was claimed, ISO 8601."
+        },
+        "expiresAt": {
+          "type": "string",
+          "description": "When the lease expires unless renewed, ISO 8601."
+        }
+      }
+    },
+    "result": {
+      "description": "The lease was written. Exit code 0.",
+      "type": "object",
+      "required": [
+        "$schema",
+        "contract",
+        "item",
+        "event",
+        "kind",
+        "ref",
+        "lease",
+        "history"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/work-lease/v1/work-lease.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "item": {
+          "type": "string",
+          "description": "The work item's id."
+        },
+        "event": {
+          "enum": [
+            "claim",
+            "renew",
+            "release"
+          ]
+        },
+        "kind": {
+          "type": "string",
+          "description": "The work kind file, relative to the repository root, with / separators."
+        },
+        "ref": {
+          "type": "string",
+          "description": "The lease ref, in the ledger of the member owning the work kind."
+        },
+        "lease": {
+          "description": "The lease after a claim or renew; the lease that was given back after a release.",
+          "$ref": "#/$defs/lease"
+        },
+        "history": {
+          "type": "object",
+          "required": [
+            "path",
+            "commit",
+            "pushed"
+          ],
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "The history file on chant/lifecycle, _leases/<id>.jsonl under the member's prefix."
+            },
+            "commit": {
+              "type": "string",
+              "description": "The chant/lifecycle commit that appended the line."
+            },
+            "pushed": {
+              "type": "boolean",
+              "description": "Whether chant/lifecycle reached the remote. False with no remote, and when the remote refused it; the lease stands either way."
+            }
+          }
+        },
+        "refused": false,
+        "error": false
+      }
+    },
+    "refusal": {
+      "description": "The lease was refused. Exit code 2. Nothing was written.",
+      "type": "object",
+      "required": [
+        "$schema",
+        "contract",
+        "item",
+        "event",
+        "kind",
+        "ref",
+        "refused"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/work-lease/v1/work-lease.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "item": {
+          "type": "string",
+          "description": "The work item's id."
+        },
+        "event": {
+          "enum": [
+            "claim",
+            "renew",
+            "release"
+          ]
+        },
+        "kind": {
+          "type": "string",
+          "description": "The work kind file, relative to the repository root, with / separators."
+        },
+        "ref": {
+          "type": "string",
+          "description": "The lease ref, in the ledger of the member owning the work kind."
+        },
+        "refused": {
+          "type": "object",
+          "required": [
+            "code",
+            "message",
+            "heldBy"
+          ],
+          "properties": {
+            "code": {
+              "enum": [
+                "lease-held",
+                "lease-not-held",
+                "lease-token-mismatch",
+                "lease-race",
+                "lease-push-rejected"
+              ]
+            },
+            "message": {
+              "type": "string",
+              "description": "Names the holder when someone holds the lease."
+            },
+            "heldBy": {
+              "description": "The live lease, when there is one.",
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/$defs/lease"
+                }
+              ]
+            }
+          }
+        },
+        "lease": false,
+        "error": false
+      }
+    },
+    "failure": {
+      "description": "The command could not run. Exit code 1. Nothing was written.",
+      "type": "object",
+      "required": [
+        "$schema",
+        "contract",
+        "error"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/work-lease/v1/work-lease.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "enum": [
+                "write-usage-invalid",
+                "kind-unreadable",
+                "work-kind-missing",
+                "work-kind-ambiguous",
+                "work-item-unknown",
+                "work-item-closed",
+                "not-a-git-repository"
+              ]
+            },
+            "message": {
+              "type": "string"
+            }
+          }
+        },
+        "lease": false,
+        "refused": false
+      }
+    }
+  }
+}

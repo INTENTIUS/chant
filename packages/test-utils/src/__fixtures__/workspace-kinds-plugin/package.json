@@ -1,0 +1,11 @@
+{
+  "name": "@example/chant-kinds-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "files": [
+    "workspace-kinds.json"
+  ],
+  "exports": {
+    "./workspace-kinds": "./workspace-kinds.json"
+  }
+}

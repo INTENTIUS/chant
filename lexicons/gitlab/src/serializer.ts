@@ -13,7 +13,7 @@ import type { Serializer } from "@intentius/chant/serializer";
 import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
 import { INTRINSIC_MARKER } from "@intentius/chant/intrinsic";
-import { emitYAML } from "@intentius/chant/yaml";
+import { emitYAMLEntry } from "@intentius/chant/yaml";
 
 /**
  * GitLab CI visitor for the generic serializer walker.
@@ -129,7 +129,7 @@ export const gitlabSerializer: Serializer = {
       }
     }
     if (stages.size > 0) {
-      sections.push("stages:" + emitYAML([...stages], 1));
+      sections.push(emitYAMLEntry("stages", [...stages]));
     }
 
     // Emit defaults
@@ -139,7 +139,7 @@ export const gitlabSerializer: Serializer = {
         entityNames,
       ) as Record<string, unknown> | undefined;
       if (converted) {
-        sections.push("default:" + emitYAML(converted, 1));
+        sections.push(emitYAMLEntry("default", converted));
       }
     }
 
@@ -150,7 +150,7 @@ export const gitlabSerializer: Serializer = {
         entityNames,
       ) as Record<string, unknown> | undefined;
       if (converted) {
-        sections.push("workflow:" + emitYAML(converted, 1));
+        sections.push(emitYAMLEntry("workflow", converted));
       }
     }
 
@@ -163,7 +163,7 @@ export const gitlabSerializer: Serializer = {
       if (converted) {
         // Convert job name from camelCase to kebab-case for YAML
         const yamlName = name.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
-        sections.push(`${yamlName}:` + emitYAML(converted, 1));
+        sections.push(emitYAMLEntry(yamlName, converted));
       }
     }
 

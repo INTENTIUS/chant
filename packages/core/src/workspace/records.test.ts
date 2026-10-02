@@ -11,12 +11,17 @@ const REPO = join(import.meta.dirname, "..", "..", "..", "..");
 const DECISIONS = join(REPO, "docs", "design", "decisions");
 const SAMPLE = readFileSync(join(DECISIONS, "ws-003-seal-scope.md"), "utf-8");
 
-/** A copy of a real decision with its id, state and supersedes links replaced. */
-function decision(id: string, state = "decided", supersedes: string[] = []): string {
+/** A copy of a real decision with its id, state, supersedes and remediates links replaced. */
+function decision(id: string, state = "decided", supersedes: string[] = [], remediates: string[] = []): string {
   const links = supersedes.length === 0 ? "supersedes: []" : `supersedes:\n${supersedes.map((d) => `  - decision: "${d}"`).join("\n")}`;
-  return SAMPLE.replace(/^id: .*$/m, `id: "${id}"`)
+  let text = SAMPLE.replace(/^id: .*$/m, `id: "${id}"`)
     .replace(/^state: .*$/m, `state: "${state}"`)
     .replace(/^supersedes:(?: \[\])?\n(?:  .*\n)*/m, `${links}\n`);
+  if (remediates.length > 0) {
+    const block = `remediates:\n${remediates.map((d) => `  - decision: "${d}"`).join("\n")}\n`;
+    text = text.replace(/^evidence:/m, `${block}evidence:`);
+  }
+  return text;
 }
 
 let dir: string;
@@ -93,6 +98,49 @@ describe("readRecords", () => {
     expect(r.data).not.toBeNull();
   });
 
+  describe("a dissent needs a reason (#2652)", () => {
+    const withReviews = (reviews: string) => decision("ws-001").replace(/^reviews: \[\]$/m, `reviews:\n${reviews}`);
+    const review = (verdict: string, extra = "") => `  - reviewer: "ana"\n    verdict: "${verdict}"\n    on: "2026-09-24"\n${extra}`;
+
+    for (const [label, note] of [
+      ["null", "    note: null\n"],
+      ["empty", '    note: ""\n'],
+      ["blank", '    note: "  "\n'],
+      ["missing", ""],
+    ] as const) {
+      test(`a dissent with a ${label} note is record-schema-invalid, naming the reviewer`, async () => {
+        write("ws-001-a.md", withReviews(review("dissent", note)));
+        const [r] = (await read()).records;
+        expect(r.valid).toBe(false);
+        expect(codes(r)).toEqual(["record-schema-invalid"]);
+        expect(r.reasons[0].message).toBe("/reviews/0 A dissent needs a reason: the dissent by ana has no note.");
+      });
+    }
+
+    test("a dissent with a note is valid, and so are agree and abstain without one", async () => {
+      write(
+        "ws-001-a.md",
+        withReviews(
+          review("dissent", '    note: "the seal should cover the lockfile too"\n') +
+            review("agree") +
+            review("abstain", "    note: null\n"),
+        ),
+      );
+      const [r] = (await read()).records;
+      expect(r.reasons).toEqual([]);
+      expect(r.valid).toBe(true);
+    });
+
+    test("a dissent carries its concern's lifecycle; another verdict cannot", async () => {
+      write("ws-001-a.md", withReviews(review("dissent", '    note: "why"\n    addressed_by: "INTENTIUS/chant#2652"\n    withdrawn_on: "2026-09-25"\n')));
+      expect((await read()).records[0].valid).toBe(true);
+      write("ws-001-a.md", withReviews(review("agree", '    addressed_by: "ws-002"\n')));
+      const [r] = (await read()).records;
+      expect(codes(r)).toEqual(["record-schema-invalid"]);
+      expect(r.reasons[0].message).toBe("/reviews/0 Only a dissent is a concern: the agree by ana cannot carry addressed_by or withdrawn_on.");
+    });
+  });
+
   test("a supersedes link to a missing id is record-supersedes-unknown", async () => {
     write("ws-002-b.md", decision("ws-002", "decided", ["ws-404"]));
     const [r] = (await read()).records;
@@ -133,6 +181,56 @@ describe("readRecords", () => {
     ]);
   });
 
+  test("a decided record supersedes a decided one, under an equal approval rule (#2524 D4)", async () => {
+    write("ws-001-a.md", decision("ws-001", "decided"));
+    write("ws-002-b.md", decision("ws-002", "decided", ["ws-001"]));
+    const all = await read();
+    expect(all.records.map((r) => [r.id, r.supersededBy, r.valid, r.warnings])).toEqual([
+      ["ws-001", "ws-002", true, []],
+      ["ws-002", null, true, []],
+    ]);
+    const current = await read({ current: true });
+    expect(current.records.map((r) => r.id)).toEqual(["ws-002"]);
+  });
+
+  test("a proposed record supersedes nothing: the link is pending, as a warning on the new record", async () => {
+    write("ws-001-a.md", decision("ws-001", "decided"));
+    write("ws-002-b.md", decision("ws-002", "proposed", ["ws-001"]).replace(/^choice:\n  option: .*\n  reason: .*\n/m, "choice: null\n"));
+    const all = await read();
+    expect(all.records.map((r) => [r.id, r.supersededBy, r.valid])).toEqual([
+      ["ws-001", null, true],
+      ["ws-002", null, true],
+    ]);
+    expect(all.records[1].warnings.map((w) => w.code)).toEqual(["record-supersedes-pending"]);
+    expect((await read({ current: true })).records.map((r) => r.id)).toEqual(["ws-001", "ws-002"]);
+  });
+
+  test("a decided record can't supersede a ratified one; a ratified record supersedes any", async () => {
+    write("ws-001-a.md", decision("ws-001", "ratified"));
+    write("ws-002-b.md", decision("ws-002", "decided", ["ws-001"]));
+    write("ws-003-c.md", decision("ws-003", "decided"));
+    write("ws-004-d.md", decision("ws-004", "ratified", ["ws-003"]));
+    const all = await read();
+    expect(all.records.map((r) => [r.id, r.supersededBy, r.warnings.map((w) => w.code)])).toEqual([
+      ["ws-001", null, []],
+      ["ws-002", null, ["record-supersedes-pending"]],
+      ["ws-003", "ws-004", []],
+      ["ws-004", null, []],
+    ]);
+  });
+
+  test("a kind without approval ranks keeps the closed-state rule", async () => {
+    const kind = readFileSync(join(dir, "decisions", "decision.kind.mjs"), "utf-8").replace(/^  approval: .*\n/m, "");
+    writeFileSync(join(dir, "decisions", "decision.kind.mjs"), kind);
+    write("ws-001-a.md", decision("ws-001", "decided"));
+    write("ws-002-b.md", decision("ws-002", "decided", ["ws-001"]));
+    const all = await read();
+    expect(all.records.map((r) => [r.id, r.supersededBy, r.warnings])).toEqual([
+      ["ws-001", null, []],
+      ["ws-002", null, []],
+    ]);
+  });
+
   test("a record superseded twice keeps the first and flags the second", async () => {
     write("ws-001-a.md", decision("ws-001", "ratified"));
     write("ws-002-b.md", decision("ws-002", "ratified", ["ws-001"]));
@@ -142,10 +240,100 @@ describe("readRecords", () => {
     expect(codes(records[2])).toEqual(["record-supersedes-conflict"]);
   });
 
+  test("a remediates link to a missing id is record-remediates-unknown", async () => {
+    write("ws-002-b.md", decision("ws-002", "decided", [], ["ws-404"]));
+    const [r] = (await read()).records;
+    expect(codes(r)).toEqual(["record-remediates-unknown"]);
+  });
+
+  test("a remediates link to an open record is record-remediates-not-closed: a record still open is amended instead", async () => {
+    write("ws-001-a.md", decision("ws-001", "decided"));
+    write("ws-002-b.md", decision("ws-002", "ratified", [], ["ws-001"]));
+    const [ws001, ws002] = (await read()).records;
+    expect(codes(ws002)).toEqual(["record-remediates-not-closed"]);
+    expect(ws001.remediatedBy).toEqual([]);
+  });
+
+  test("remediation leaves the target current and its state unchanged, and several records may remediate the same one (#2774)", async () => {
+    write("ws-001-a.md", decision("ws-001", "ratified"));
+    write("ws-002-b.md", decision("ws-002", "ratified", [], ["ws-001"]));
+    write("ws-003-c.md", decision("ws-003", "ratified", [], ["ws-001"]));
+    const all = await read();
+    const [ws001] = all.records;
+    expect(ws001.state).toBe("ratified");
+    expect(ws001.supersededBy).toBeNull();
+    expect(ws001.remediatedBy).toEqual(["ws-002", "ws-003"]);
+    expect(all.summary.superseded).toBe(0);
+    const current = await read({ current: true });
+    expect(current.records.map((r) => r.id)).toEqual(["ws-001", "ws-002", "ws-003"]);
+  });
+
+  test("remediates and supersedes are independent links, and a record may carry both to different targets (#2774)", async () => {
+    write("ws-001-a.md", decision("ws-001", "ratified"));
+    write("ws-002-b.md", decision("ws-002", "ratified"));
+    write("ws-003-c.md", decision("ws-003", "ratified", ["ws-002"], ["ws-001"]));
+    const all = await read();
+    expect(all.records.map((r) => [r.id, r.supersededBy, r.remediatedBy])).toEqual([
+      ["ws-001", null, ["ws-003"]],
+      ["ws-002", "ws-003", []],
+      ["ws-003", null, []],
+    ]);
+  });
+
   test("a missing records directory is location-missing", async () => {
     const loaded = await loadRecordKind(join(dir, "decisions", "decision.kind.mjs"));
     const moved: LoadedRecordKind = { ...loaded, dir: join(dir, "nowhere") };
     await expect(readRecords(moved, { root: dir, source: workingTreeSource(dir) })).rejects.toMatchObject({ code: "location-missing" });
+  });
+});
+
+/**
+ * A decision made in the workspace (#2654): the workspace source form with no
+ * issue, and no evidence. `constrains` replaces ws-003's.
+ */
+function workspaceDecision(id: string, constrains: string[] = ["member:app"]): string {
+  const list = constrains.length === 0 ? "constrains: []\n" : `constrains:\n${constrains.map((c) => `  - "${c}"\n`).join("")}`;
+  return decision(id)
+    .replace(/^source:\n(?:  .*\n)*/m, 'source:\n  kind: "workspace"\n  member: "app"\n')
+    .replace(/^evidence:\n(?:  .*\n)*/m, "evidence: []\n")
+    .replace(/^constrains:\n(?:  .*\n)*/m, list);
+}
+
+describe("a decision that originates in the workspace (#2654)", () => {
+  test("validates with no issue and no evidence, is current, and carries record-no-evidence", async () => {
+    write("ws-001-a.md", workspaceDecision("ws-001"));
+    const current = await read({ current: true });
+    expect(current.records.map((r) => [r.id, r.valid, r.reasons, r.warnings.map((w) => w.code)])).toEqual([
+      ["ws-001", true, [], ["record-no-evidence"]],
+    ]);
+    expect(current.records[0].data?.source).toEqual({ kind: "workspace", member: "app" });
+  });
+
+  test("takes a session and an issue, and nothing else", async () => {
+    const base = workspaceDecision("ws-001");
+    write("ws-001-a.md", base.replace('  member: "app"\n', '  member: "app"\n  session: "S-0001"\n  issue: "acme/example#77"\n'));
+    write("ws-002-b.md", base.replace('id: "ws-001"', 'id: "ws-002"').replace('  member: "app"\n', '  member: "app"\n  session: null\n'));
+    write("ws-003-c.md", base.replace('id: "ws-001"', 'id: "ws-003"').replace('  member: "app"\n', '  member: "app"\n  row: "Sort order"\n'));
+    write("ws-004-d.md", base.replace('id: "ws-001"', 'id: "ws-004"').replace('  member: "app"\n', ""));
+    const records = (await read()).records;
+    expect(records.map((r) => [r.id, codes(r)])).toEqual([
+      ["ws-001", []],
+      ["ws-002", []],
+      ["ws-003", ["record-schema-invalid"]],
+      ["ws-004", ["record-schema-invalid"]],
+    ]);
+  });
+
+  test("a record with evidence carries no record-no-evidence warning", async () => {
+    write("ws-001-a.md", decision("ws-001"));
+    expect((await read()).records[0].warnings).toEqual([]);
+  });
+
+  test("a record that constrains nothing is refused", async () => {
+    write("ws-001-a.md", workspaceDecision("ws-001", []));
+    const [r] = (await read()).records;
+    expect(codes(r)).toEqual(["record-schema-invalid"]);
+    expect(r.reasons[0].message).toMatch(/constrains/);
   });
 });
 

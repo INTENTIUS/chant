@@ -2,13 +2,14 @@
 //
 // Every `uses:` is pinned to a full commit SHA — the github lexicon's lint
 // treats an unpinned checkout as an error and any other unpinned action as a
-// warning. The cluster credential arrives through an env var, never
-// interpolated into script text.
+// warning. `actionRef(slug, "sha")` reads the commit from the lexicon's pin
+// table and keeps the release as a `# vX.Y.Z` comment. The cluster credential
+// arrives through an env var, never interpolated into script text.
 
-import { Step } from "@intentius/chant-lexicon-github";
+import { Step, actionRef } from "@intentius/chant-lexicon-github";
 
-const CHECKOUT = "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"; // v4.2.2
-const SETUP_NODE = "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020"; // v4.4.0
+const CHECKOUT = actionRef("actions/checkout", "sha");
+const SETUP_NODE = actionRef("actions/setup-node", "sha");
 
 export const checkout = new Step({ name: "Checkout", uses: CHECKOUT });
 

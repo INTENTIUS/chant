@@ -9,9 +9,10 @@
 import { lexiconNames } from "../../lexicon-module";
 import { loadChantConfig } from "../../config";
 import { build } from "../../build";
-import { isResourceDeclarable } from "../../declarable";
+import { isObservableDeclarable } from "../../declarable";
 import { collectBuildRootContributors, collectChangeSubscribers } from "../plugins";
-import { discoverOps } from "../../op/discover";
+import { discoverOps, discoverStewards } from "../../op/discover";
+import { pickSteward, stewardBesideOf, stewardFormFor, stewardLeaseName, stewardTurnOps, DEFAULT_STEWARD_ENV } from "../../op/steward";
 import { loadActivities, loadProfiles } from "../../op/activity-registry";
 import { parseDuration } from "../../op/local-executor";
 import {
@@ -21,13 +22,16 @@ import {
   formatRoundLine,
   formatSignalLine,
   DEFAULT_OPERATOR_INTERVAL_MS,
+  acquireStewardLease,
+  createBesideState,
+  waitForBesideRuns,
   type ChangeSubscriber,
   type OperatorSignalEvent,
   type OperatorTickEvent,
 } from "../../op/operator";
-import { readLease, DEFAULT_LEASE_TTL_MS } from "../../lifecycle/lease";
+import { readLease, releaseLease, currentHolderId, DEFAULT_LEASE_TTL_MS } from "../../lifecycle/lease";
 import { readConvergeLedger, type ConvergeTickRecord } from "../../lifecycle/converge-ledger";
-import { readRunLedger } from "../../lifecycle/run-ledger";
+import { readRunLedger, runEnvOf } from "../../lifecycle/run-ledger";
 import type { OpRunRecord } from "../../op/runtime";
 import type { GateResolutionRecord, PendingGateRecord } from "../../lifecycle/gate-ledger";
 import {
@@ -112,7 +116,7 @@ async function collectOperatorSubscribers(
     // subscription may watch.
     const entities = new Map<string, Map<string, { entityType: string; props: Record<string, unknown> }>>();
     for (const [name, entity] of buildResult.entities) {
-      if (!isResourceDeclarable(entity)) continue;
+      if (!isObservableDeclarable(entity)) continue;
       let perLexicon = entities.get(entity.lexicon);
       if (!perLexicon) entities.set(entity.lexicon, (perLexicon = new Map()));
       perLexicon.set(name, {
@@ -141,6 +145,7 @@ async function collectOperatorSubscribers(
  * leaving the daemon running); omitted, the daemon loops until Ctrl-C.
  */
 export async function runOperator(ctx: CommandContext): Promise<number> {
+  if (ctx.args.steward !== undefined) return runStewardOperator(ctx);
   const { ops, errors } = await discoverConvergeOps({ env: ctx.args.env });
   for (const err of errors) console.error(formatWarning({ message: err }));
 
@@ -165,11 +170,21 @@ export async function runOperator(ctx: CommandContext): Promise<number> {
   const leaseTtlMs = ctx.args.leaseTtl ? parseDuration(ctx.args.leaseTtl) : DEFAULT_LEASE_TTL_MS;
 
   const controller = new AbortController();
+  // `process.on`, not `.once`: a `.once` listener is gone the instant it
+  // fires, so a second SIGINT arriving while shutdown is still in flight
+  // (the `finally` below hasn't run yet) has no listener left and takes
+  // Node's default disposition — the process ends right there, before
+  // whatever the `finally` was going to do. Kept registered for the whole
+  // shutdown and only removed once it's actually over; `stopping` makes a
+  // repeat signal a no-op rather than a second `abort()`/log line (#2872).
+  let stopping = false;
   const onSigint = () => {
+    if (stopping) return;
+    stopping = true;
     console.error(formatWarning({ message: "interrupted — stopping operator" }));
     controller.abort();
   };
-  process.once("SIGINT", onSigint);
+  process.on("SIGINT", onSigint);
 
   const printRound = (events: OperatorTickEvent[]) => {
     for (const event of events) console.error(formatInfo(formatRoundLine(event)));
@@ -201,7 +216,153 @@ export async function runOperator(ctx: CommandContext): Promise<number> {
     });
     return 0;
   } finally {
-    process.removeListener("SIGINT", onSigint);
+    // Only when no signal started this shutdown. After one did, the process
+    // exits right after this returns, and removing the listener would put
+    // SIGINT back to its default disposition for that last stretch: a repeat
+    // signal arriving there ends the process by signal instead of the exit
+    // code (see the steward's `finally` below).
+    if (!stopping) process.removeListener("SIGINT", onSigint);
+  }
+}
+
+// ── chant operator --steward ────────────────────────────────────────────────
+
+/**
+ * `chant operator --steward [<name>] [--env <env>] [--interval] [--lease-ttl]
+ * [--once]` (#2731) — a steward's local form. The same Ops the steward runs on
+ * Fountain, on the same crons, one at a time, each under its operator lease,
+ * and the whole process under the steward's own lease.
+ *
+ * Refuses, before ticking anything:
+ * - an environment whose form is `fountain`, because there the composite's
+ *   Agent and Teammate are the steward and this process would be a second
+ *   writer beside them;
+ * - a steward whose lease another live process holds (a second local
+ *   operator for it).
+ */
+export async function runStewardOperator(ctx: CommandContext): Promise<number> {
+  const { stewards, errors, conflicts } = await discoverStewards();
+  for (const err of errors) console.error(formatWarning({ message: err }));
+  for (const conflict of conflicts) console.error(formatError({ message: conflict }));
+
+  const picked = pickSteward(stewards, ctx.args.steward ?? "");
+  if (typeof picked === "string") {
+    console.error(formatError({ message: picked }));
+    return 1;
+  }
+  const steward = picked;
+  const env = ctx.args.env ?? DEFAULT_STEWARD_ENV;
+  const form = stewardFormFor(steward, env);
+  if (form !== "local") {
+    console.error(formatError({
+      message: `steward "${steward.name}" runs on ${form} in environment "${env}", so a local operator for it would be a second writer`,
+      hint: `Its turns run on the fountain teammate "${steward.name}". Run this in an environment the declaration's form makes local, or change the form.`,
+    }));
+    return 1;
+  }
+
+  let activities, profiles;
+  try {
+    [activities, profiles] = await loadOperatorActivities();
+  } catch (err) {
+    console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));
+    return 1;
+  }
+
+  const intervalMs = ctx.args.interval ? parseDuration(ctx.args.interval) : DEFAULT_OPERATOR_INTERVAL_MS;
+  const leaseTtlMs = ctx.args.leaseTtl ? parseDuration(ctx.args.leaseTtl) : DEFAULT_LEASE_TTL_MS;
+  const holder = currentHolderId();
+
+  // Refuse a second local operator up front rather than letting it loop on
+  // `steward-busy` rounds: one steward is one writer.
+  const first = await acquireStewardLease(steward.name, holder, { ttlMs: leaseTtlMs });
+  if (!first.acquired) {
+    console.error(formatError({
+      message: `steward "${steward.name}" is already running (lease held by ${first.heldBy?.holder ?? "another process"} until ${first.heldBy?.expiresAt ?? "?"})`,
+      hint: "One steward is one writer. Stop the other operator, or wait for its lease to expire.",
+    }));
+    return 1;
+  }
+
+  const controller = new AbortController();
+  // `process.on`, not `.once` (#2872): a supervisor that signals both a
+  // process group and a child sends a second SIGTERM close behind the
+  // first. A `.once` listener has already unregistered itself by then, so
+  // that second signal takes Node's default disposition and ends the
+  // process immediately — before the `finally` below releases the
+  // steward's lease. Kept registered for the whole shutdown and removed
+  // only once it's over, so a second, third or later signal is a no-op
+  // (`stopping` guards against re-aborting or re-logging) rather than a
+  // fast exit that skips the release.
+  let stopping = false;
+  const onSigint = () => {
+    if (stopping) return;
+    stopping = true;
+    console.error(formatWarning({ message: "interrupted — stopping steward" }));
+    controller.abort();
+  };
+  process.on("SIGINT", onSigint);
+  process.on("SIGTERM", onSigint);
+
+  const printRound = (events: OperatorTickEvent[]) => {
+    for (const event of events) console.error(formatInfo(formatRoundLine(event)));
+  };
+
+  const turnOps = stewardTurnOps(steward);
+  const scheduled = turnOps.filter((op) => op.schedule !== undefined);
+  const beside = stewardBesideOf(steward).map((b) => b.op);
+  try {
+    if (ctx.args.once) {
+      // One round, and the runs it started beside the turns (#2861) to their end.
+      const besideState = createBesideState();
+      const events = await runOperatorRound({ steward, holder, leaseTtlMs, activities, profiles, signal: controller.signal, besideState, stewardEnv: env });
+      printRound(events);
+      await waitForBesideRuns(besideState);
+      const ended = besideState.ended.splice(0);
+      printRound(ended);
+      return events.some((e) => e.kind === "tick-failed" || e.kind === "steward-busy" || e.kind === "ready-failed") ||
+        ended.some((e) => e.kind === "beside-ended" && e.code !== 0 && e.code !== 3)
+        ? 1
+        : 0;
+    }
+    console.error(formatInfo(
+      `chant operator: steward ${steward.name} (local) runs ${scheduled.length} scheduled Op(s) of ${turnOps.length} as its turns` +
+        (beside.length > 0 ? `, and ${beside.join(", ")} beside them` : "") +
+        `, checking every ${intervalMs}ms (Ctrl-C to stop)`,
+    ));
+    await runOperatorForever({
+      steward,
+      stewardEnv: env,
+      holder,
+      intervalMs,
+      leaseTtlMs,
+      activities,
+      profiles,
+      signal: controller.signal,
+      onRound: printRound,
+    });
+    return 0;
+  } finally {
+    // The listeners stay registered through this whole `finally`, not just
+    // the `try` above (#2872): the lease release below is itself async (two
+    // more git plumbing calls), and a repeat signal landing in that window
+    // is exactly the shape the issue reported — removing the listeners
+    // first, before awaiting the release, would reopen the same hole one
+    // step later. `stopping` (set already) makes every repeat here a no-op.
+    // A courtesy: the lease expires on its own if this never runs.
+    const { record } = await readLease(stewardLeaseName(steward.name)).catch(() => ({ record: undefined }));
+    if (record?.holder === holder) await releaseLease(stewardLeaseName(steward.name), holder, record.token).catch(() => false);
+    // Removed only when no signal started this shutdown. After one did, the
+    // CLI goes on to `flushAndExit` (../main.ts) and `process.exit`, and
+    // removing the last SIGTERM listener hands the signal back to its
+    // default disposition for that stretch: a repeat SIGTERM arriving there
+    // ended the process by signal (exit code null) with the lease already
+    // released. That was the operator-steward-signal e2e test's intermittent
+    // failure; a SIGTERM every 2ms after the first hit it 8 runs of 8.
+    if (!stopping) {
+      process.removeListener("SIGINT", onSigint);
+      process.removeListener("SIGTERM", onSigint);
+    }
   }
 }
 
@@ -308,6 +469,12 @@ async function statusFor(opName: string, env: string, cwd?: string): Promise<OpS
 export interface StandaloneGateLine {
   op: string;
   gate: string;
+  /**
+   * The Op whose newest run stopped at this gate, when the gate is a
+   * command's own rather than the Op's (#2779): a step running `chant
+   * workspace upgrade` stops its run at `workspace-upgrade` / `<scope>`.
+   */
+  run?: string;
   description?: string;
   expiresAt: string;
   url?: string;
@@ -353,6 +520,32 @@ export async function runOperatorStatus(ctx: CommandContext): Promise<number> {
     }
   }
 
+  // A gate a command decided inside an Op's step (#2779) is recorded under
+  // the command's op, which is not an `*.op.ts`, so the loop above never
+  // reads it. The Op's newest run names it; list it against that Op while it
+  // still stands.
+  for (const [opName, discovered] of [...allOps.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    let newest: OpRunRecord | undefined;
+    try {
+      newest = (await readRunLedger(runEnvOf(discovered.config), opName)).records.at(-1);
+    } catch {
+      continue;
+    }
+    const gateOp = newest?.status === "gated" ? newest.gate?.op : undefined;
+    if (!newest?.gate || !gateOp || gateOp === opName) continue;
+    const record = (await pendingGatesFor(gateOp)).find((r) => r.gate === newest.gate!.name);
+    if (!record || covered.has(`${gateOp} ${record.gate}`)) continue;
+    covered.add(`${gateOp} ${record.gate}`);
+    standalone.push({
+      op: gateOp,
+      gate: record.gate,
+      run: opName,
+      expiresAt: record.expiresAt,
+      ...(record.description ? { description: record.description } : {}),
+      ...(record.url ? { url: record.url } : {}),
+    });
+  }
+
   if (ops.length === 0 && standalone.length === 0) {
     console.error(formatWarning({ message: "No ConvergeOp declarations found" }));
     return 0;
@@ -389,7 +582,7 @@ export async function runOperatorStatus(ctx: CommandContext): Promise<number> {
   if (standalone.length > 0) {
     console.log(formatBold("pending gates (no converge tick)"));
     for (const g of standalone) {
-      console.log(`  - ${g.op} gate "${g.gate}" — resolve: chant approve ${g.op} ${g.gate}`);
+      console.log(`  - ${g.op} gate "${g.gate}"${g.run ? ` (Op ${g.run}'s run stopped here)` : ""} — resolve: chant approve ${g.op} ${g.gate}`);
       if (g.description) console.log(`    ${g.description}`);
       console.log(`    expires: ${g.expiresAt}`);
       if (g.url) console.log(`    approve at: ${g.url}`);
@@ -705,6 +898,7 @@ export async function runApprove(ctx: CommandContext): Promise<number> {
     note: ctx.args.note,
     url: ctx.args.url,
     plan: ctx.args.plan,
+    ...(ctx.args.env !== undefined ? { environment: ctx.args.env } : {}),
     allowSameOrigin: ctx.args.allowSameOrigin,
     ...(ctx.args.roles ? { roles: ctx.args.roles } : {}),
     ...(ctx.args.agent ? { agent: true } : {}),
@@ -751,6 +945,13 @@ export interface GateApprovalOptions {
    * stays one command: run, read what it planned, approve it.
    */
   plan?: string;
+  /**
+   * `--env <env>` (#2574) — which environment's pending fact a component gate
+   * approval answers. A component's gate ledger holds every environment's
+   * facts, so without it the newest one is approved. Ignored for a gate whose
+   * pending facts record no environment (every Op gate).
+   */
+  environment?: string;
   /** `--role` (#2508) — roles the approver claims. */
   roles?: string[];
   /**
@@ -830,21 +1031,35 @@ export async function recordGateApproval(
   // third fallback: approving with no plan in sight is the behaviour
   // INTENTIUS/choudoufu#1026 measured, where the resolution authorised the
   // next run rather than anything anyone had seen.
+  // #2574: a component gate's pending facts carry the environment they were
+  // recorded in, and an approval answers one environment. `--env` picks it;
+  // without it, the newest standing fact decides, and the success line below
+  // names the environment it chose.
+  const ledgerBefore = await readGateLedger(opName);
+  const pendingFor = (all: PendingGateRecord[]): PendingGateRecord[] => {
+    const bound = all.some((p) => p.gate === gate && p.environment !== undefined);
+    return bound && opts.environment !== undefined ? all.filter((p) => p.environment === opts.environment) : all;
+  };
+  const standing = latestPendingGate(pendingFor(ledgerBefore.pending), gate);
+  const environment = standing?.environment;
+
   let planDigest: string | undefined;
   if (opts.plan !== undefined) {
     if (!isPlanDigest(opts.plan)) {
       console.error(formatError({
-        message: `--plan must be a plan digest ("sha256:" and 64 hex characters), got "${opts.plan}"`,
+        message: `--plan must be a plan digest ("jcs1-sha256:" or "sha256:", then 64 hex characters), got "${opts.plan}"`,
         hint: "Copy it from the gated run's `plan :` line, or from the pending-gate summary. It is not a plan file path.",
       }));
       return { ok: false };
     }
     planDigest = opts.plan;
   } else {
-    const standing = latestPendingGate((await readGateLedger(opName)).pending, gate);
     if (!standing) {
       console.error(formatError({
-        message: `Gate "${gate}" on "${opName}" has no pending fact, so there is no plan to approve`,
+        message:
+          opts.environment !== undefined && ledgerBefore.pending.some((p) => p.gate === gate && p.environment !== undefined)
+            ? `Gate "${gate}" on "${opName}" has no pending fact in environment "${opts.environment}", so there is no plan to approve`
+            : `Gate "${gate}" on "${opName}" has no pending fact, so there is no plan to approve`,
         hint:
           `Run \`chant run ${opName}\` first — it plans, stops at the gate, and records the plan this ` +
           `approval would be for. To approve a plan you already have the digest for, pass ` +
@@ -863,7 +1078,7 @@ export async function recordGateApproval(
   // the way #2300 refuses a plan nobody approved.
   const origin = opts.origin ?? currentGateOrigin();
   const ledger = await readGateLedger(opName);
-  const standingForOrigin = latestPendingGate(ledger.pending, gate);
+  const standingForOrigin = latestPendingGate(pendingFor(ledger.pending), gate);
   const refusal = sameOriginRefusal(standingForOrigin?.origin, origin);
   if (refusal && !opts.allowSameOrigin) {
     console.error(formatError({
@@ -939,6 +1154,7 @@ export async function recordGateApproval(
     ...(opts.note ? { note: opts.note } : {}),
     ...(url ? { url } : {}),
     ...(planDigest !== undefined ? { planDigest } : {}),
+    ...(environment !== undefined ? { environment } : {}),
     origin,
     ...(refusal && opts.allowSameOrigin ? { sameOriginOverride: true } : {}),
   });
@@ -954,8 +1170,9 @@ export async function recordGateApproval(
   ));
   if (record.planDigest) {
     console.error(formatInfo(
-      `This approves the plan ${record.planDigest}, and only that plan. A run whose fresh plan ` +
-        "differs refuses rather than applying it.",
+      `This approves the plan ${record.planDigest}` +
+        (record.environment !== undefined ? ` in environment "${record.environment}"` : "") +
+        ", and only that plan. A run whose fresh plan differs refuses rather than applying it.",
     ));
   }
   if (approval) {

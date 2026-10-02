@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-fly",
-  "version": "0.80.0",
+  "version": "0.101.0",
   "type": "module",
   "files": [
     "src/",
@@ -35,6 +35,11 @@
       "types": "./dist/op/activities/index.d.ts",
       "default": "./src/op/activities/index.ts"
     },
+    "./op/activity-contracts": {
+      "development": "./src/op/activity-contracts.ts",
+      "types": "./dist/op/activity-contracts.d.ts",
+      "default": "./src/op/activity-contracts.ts"
+    },
     "./lint/post-synth": {
       "development": "./src/lint/post-synth/index.ts",
       "types": "./dist/lint/post-synth/index.d.ts",
@@ -53,17 +58,20 @@
     "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json && find dist -type f \\( -name \"*.js\" -o -name \"*.js.map\" \\) -delete"
   },
   "dependencies": {
+    "@intentius/chant-lexicon-otel": "*",
     "ws": "^8.18.0"
   },
   "devDependencies": {
     "@intentius/chant": "*",
     "@types/ws": "^8.5.12",
     "tsc-alias": "^1.8.17",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "zod": "^4.3.6"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.80.0",
-    "typescript": "^5.9.3"
+    "@intentius/chant": "^0.101.0",
+    "typescript": "^5.9.3",
+    "zod": "^4.3.6"
   },
   "description": "Fly.io Machines lexicon for chant — declarative IaC in TypeScript",
   "license": "Apache-2.0",

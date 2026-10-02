@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { formatError, formatSuccess } from "../format";
+import { formatError, formatSuccess, formatWarning } from "../format";
 import type { CommandContext } from "../registry";
 
 export async function runDevGenerate(ctx: CommandContext): Promise<number> {
@@ -34,8 +34,10 @@ export async function runDevOnboard(ctx: CommandContext): Promise<number> {
 
   const { onboardCommand, printOnboardResult } = await import("../commands/onboard");
   // chant#2578 — so a lexicon the project declares by path is recognised.
-  const { recordProjectLexicons } = await import("../plugins");
-  await recordProjectLexicons(process.cwd());
+  // chant#2591 — read without running chant.config.ts.
+  const { recordProjectLexicons, unknownPathLexiconsNotice } = await import("../plugins");
+  const notice = unknownPathLexiconsNotice(recordProjectLexicons(process.cwd()));
+  if (notice !== undefined) console.error(formatWarning({ message: notice }));
   const result = onboardCommand({ name, verbose: ctx.args.verbose });
   await printOnboardResult(result, name);
   return result.success ? 0 : 1;

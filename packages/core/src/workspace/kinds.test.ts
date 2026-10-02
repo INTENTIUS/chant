@@ -1,0 +1,337 @@
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import Ajv2020 from "ajv/dist/2020";
+import { afterAll, describe, expect, test } from "vitest";
+import declarationSchema from "./declaration.schema.json";
+import {
+  BUILTIN_KINDS,
+  builtinKindRegistry,
+  createKindRegistry,
+  EXAMPLES_KIND,
+  KINDS_SCHEMA_ID,
+  kindsExportTarget,
+  kindsFileShips,
+  loadKindRegistry,
+  parseKindData,
+  probeKind,
+  readPackageKinds,
+  resolveKind,
+  substituteGraphConfig,
+  type MemberKind,
+} from "./kinds";
+import schema from "./workspace-kinds.schema.json";
+import { workingTree } from "./tree";
+
+const scratch: string[] = [];
+afterAll(() => {
+  for (const d of scratch) rmSync(d, { recursive: true, force: true });
+});
+function dir(files: Record<string, string>): string {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "chant-kinds-")));
+  scratch.push(root);
+  for (const [path, text] of Object.entries(files)) {
+    mkdirSync(dirname(join(root, path)), { recursive: true });
+    writeFileSync(join(root, path), text);
+  }
+  return root;
+}
+
+const kindsFile = (kinds: unknown[]) => JSON.stringify({ schema: 1, kinds });
+const tf = { name: "terraform", description: "a Terraform root module", precedence: 400, probe: { anyFile: ["main.tf"] } };
+
+/**
+ * A package whose code writes a marker file when it is imported, so a test
+ * can tell that reading its kinds imported nothing.
+ */
+function pkg(name: string, version: string, kinds: unknown[] | null, extra: Record<string, unknown> = {}): Record<string, string> {
+  const marker = `globalThis.__chantKindsImported = true; require("node:fs").writeFileSync(require("node:path").join(__dirname, "IMPORTED"), "");\n`;
+  return {
+    [`node_modules/${name}/package.json`]: JSON.stringify({
+      name,
+      version,
+      main: "./index.js",
+      exports: { ".": "./index.js", "./*": "./src/*.js", ...(kinds ? { "./workspace-kinds": "./workspace-kinds.json" } : {}) },
+      ...extra,
+    }),
+    [`node_modules/${name}/index.js`]: marker,
+    [`node_modules/${name}/src/workspace-kinds.js`]: marker,
+    ...(kinds ? { [`node_modules/${name}/workspace-kinds.json`]: kindsFile(kinds) } : {}),
+  };
+}
+
+describe("the built-in kinds (#2535)", () => {
+  test("are chant, workspace, design and other, and the group kind examples", () => {
+    expect(BUILTIN_KINDS.map((k) => `${k.name}:${k.shape}`)).toEqual(["chant:member", "workspace:member", "other:member", "design:member", "examples:group"]);
+    const registry = builtinKindRegistry();
+    expect(registry.names()).toEqual(["chant", "design", "other", "workspace"]);
+    expect(registry.get(EXAMPLES_KIND)?.shape).toBe("group");
+  });
+
+  test("agree with the declaration schema: examples is the one entry kind that makes a group", () => {
+    const entry = declarationSchema.$defs.entry;
+    expect(entry.if.properties.kind.const).toBe(EXAMPLES_KIND);
+    expect(declarationSchema.$defs.group.properties.kind.const).toBe(EXAMPLES_KIND);
+    expect(declarationSchema.$defs.member.if.properties.kind.const).toBe("other");
+    expect(declarationSchema.$defs.member.then.required).toEqual(["because"]);
+  });
+
+  test("a registry refuses a name twice", () => {
+    expect(() => createKindRegistry([{ ...BUILTIN_KINDS[0], source: "x" }])).toThrow(/registered twice/);
+  });
+});
+
+describe("the kinds schema", () => {
+  test("is a valid draft 2020-12 document that compiles in strict mode, with the published $id", () => {
+    const ajv = new Ajv2020({ strict: true, allErrors: true });
+    expect(ajv.validateSchema(schema)).toBe(true);
+    expect(() => ajv.compile(schema)).not.toThrow();
+    expect(KINDS_SCHEMA_ID).toBe("https://intentius.io/chant/schemas/workspace/kinds/v1/workspace-kinds.schema.json");
+  });
+});
+
+describe("parseKindData", () => {
+  test("reads valid kinds, with their source", () => {
+    const data = parseKindData(kindsFile([tf]), "@acme/tf-kinds");
+    expect(data.problems).toEqual([]);
+    expect(data.kinds).toEqual([{ ...tf, shape: "member", outputs: { from: "declared", names: [] }, source: "@acme/tf-kinds" }]);
+  });
+
+  test("a kind may list the outputs its members expose as link targets (#2539)", () => {
+    const data = parseKindData(kindsFile([{ ...tf, outputs: ["state_bucket", "vpc_id"] }]), "p");
+    expect(data.problems).toEqual([]);
+    expect(data.kinds[0].outputs).toEqual({ from: "declared", names: ["state_bucket", "vpc_id"] });
+    expect(parseKindData(kindsFile([{ ...tf, outputs: ["a", "a"] }]), "p").problems[0]).toMatch(/duplicate/);
+  });
+
+  test("refuses a built-in name, a name twice, a schema mismatch and text that isn't JSON", () => {
+    expect(parseKindData(kindsFile([{ ...tf, name: "chant" }]), "p").problems).toEqual(["p: kind chant is built in and can't be supplied by a package"]);
+    expect(parseKindData(kindsFile([{ ...tf, name: "examples" }]), "p").problems[0]).toMatch(/examples is built in/);
+    expect(parseKindData(kindsFile([tf, tf]), "p").problems).toEqual(["p: kind terraform is listed twice"]);
+    expect(parseKindData(kindsFile([{ ...tf, precedence: 1000 }]), "p").problems[0]).toMatch(/precedence/);
+    expect(parseKindData(kindsFile([{ ...tf, probe: { anyFile: ["../main.tf"] } }]), "p").problems[0]).toMatch(/anyFile/);
+    expect(parseKindData(kindsFile([{ ...tf, run: "node x.js" }]), "p").problems[0]).toMatch(/additional properties/);
+    expect(parseKindData("{", "p").problems[0]).toMatch(/^p: the kinds file is not JSON/);
+  });
+});
+
+describe("a kind's graph block (#2874)", () => {
+  const graph = { lexicon: "tf", config: { moduleRoot: "{workspace}", roots: { "{member}": { dir: "{dir}" } } } };
+
+  test("is read as data, and refuses a field it doesn't know", () => {
+    const data = parseKindData(kindsFile([{ ...tf, graph }]), "p");
+    expect(data.problems).toEqual([]);
+    expect(data.kinds[0].graph).toEqual(graph);
+    expect(parseKindData(kindsFile([{ ...tf, graph: { ...graph, run: "x" } }]), "p").problems[0]).toMatch(/additional properties/);
+    expect(parseKindData(kindsFile([{ ...tf, graph: { lexicon: "Bad Name", config: {} } }]), "p").problems[0]).toMatch(/lexicon/);
+    expect(parseKindData(kindsFile([{ ...tf, graph: { lexicon: "tf" } }]), "p").problems[0]).toMatch(/config/);
+  });
+
+  test("substitutes {member}, {dir} and {workspace} in keys and values, and nothing else", () => {
+    const out = substituteGraphConfig(
+      { moduleRoot: "{workspace}", roots: { "{member}": { dir: "{dir}", note: "{other} at {dir}/x" } }, list: ["{member}", 3, true, null] },
+      { member: "net", dir: "/ws/estates/net", workspace: "/ws" },
+    );
+    expect(out).toEqual({ moduleRoot: "/ws", roots: { net: { dir: "/ws/estates/net", note: "{other} at /ws/estates/net/x" } }, list: ["net", 3, true, null] });
+  });
+
+  test("records the supplying package, and is dropped with a problem when the lexicon is not that package", () => {
+    const root = dir({
+      ...pkg("@intentius/chant-lexicon-tf", "1.0.0", [{ ...tf, graph }]),
+      ...pkg("@acme/other", "1.0.0", [{ ...tf, name: "other-tf", graph }]),
+    });
+    const good = loadKindRegistry([{ package: "@intentius/chant-lexicon-tf", version: "1.0.0", path: null }], root);
+    expect(good.problems).toEqual([]);
+    expect(good.registry.get("terraform")).toMatchObject({ graph, packageDir: join(root, "node_modules/@intentius/chant-lexicon-tf") });
+
+    const bad = loadKindRegistry([{ package: "@acme/other", version: "1.0.0", path: null }], root);
+    expect(bad.problems.map((p) => p.message)).toEqual([expect.stringMatching(/other-tf reads its members with lexicon tf, which is @intentius\/chant-lexicon-tf, and this package is @acme\/other/)]);
+    expect(bad.registry.get("other-tf")?.graph).toBeUndefined();
+    expect(bad.registry.get("other-tf")).toBeDefined();
+  });
+
+  test("the terraform lexicon's kinds read their members with it, named for the member at the workspace root", () => {
+    const lexicon = join(import.meta.dirname, "..", "..", "..", "..", "lexicons", "terraform");
+    const read = readPackageKinds(lexicon);
+    expect(read.problems).toEqual([]);
+    for (const name of ["terraform", "choudoufu"]) {
+      const k = read.kinds.find((x) => x.name === name)!;
+      expect(k.graph?.lexicon).toBe("terraform");
+      expect(substituteGraphConfig(k.graph!.config, { member: "net", dir: "/ws/net", workspace: "/ws" })).toMatchObject({ moduleRoot: "/ws", roots: { net: { dir: "/ws/net" } } });
+    }
+    expect(read.kinds.find((x) => x.name === "choudoufu")!.graph!.config.binary).toBe("choudoufu");
+  });
+});
+
+describe("reading a package's kinds", () => {
+  test("follows only the literal ./workspace-kinds key, and only to a JSON file inside the package", () => {
+    expect(kindsExportTarget({ exports: { "./*": "./src/*.ts" } })).toBeUndefined();
+    expect(kindsExportTarget({ exports: { "./workspace-kinds": "./k.json" } })).toBe("./k.json");
+    expect(kindsExportTarget({ exports: { "./workspace-kinds": { types: "./k.d.ts", default: "./k.json" } } })).toBe("./k.json");
+    expect(kindsExportTarget({ exports: { "./workspace-kinds": "./src/kinds.ts" } })).toEqual({ problem: expect.stringMatching(/must name a \.json file/) });
+    expect(kindsExportTarget({ exports: { "./workspace-kinds": ["./a.json"] } })).toEqual({ problem: expect.stringMatching(/must name one file/) });
+  });
+
+  test("refuses a target outside the package, and a target that doesn't exist", () => {
+    const root = dir({
+      "a/package.json": JSON.stringify({ name: "a", exports: { "./workspace-kinds": "./../b/k.json" } }),
+      "b/k.json": kindsFile([tf]),
+      "c/package.json": JSON.stringify({ name: "c", exports: { "./workspace-kinds": "./missing.json" } }),
+    });
+    expect(readPackageKinds(join(root, "a")).problems[0]).toMatch(/outside the package/);
+    expect(readPackageKinds(join(root, "c")).problems[0]).toMatch(/does not exist/);
+  });
+
+  test("a package with no subpath supplies no kinds and no problem", () => {
+    const root = dir({ "package.json": JSON.stringify({ name: "lexicon", exports: { ".": "./index.js" } }) });
+    expect(readPackageKinds(root)).toEqual({ kinds: [], problems: [], file: undefined });
+  });
+
+  test("knows whether the kinds file ships, from package.json files", () => {
+    const root = dir({ "package.json": JSON.stringify({ files: ["dist/", "./kinds"] }) });
+    expect(kindsFileShips(root, join(root, "kinds/workspace-kinds.json"))).toBe(true);
+    expect(kindsFileShips(root, join(root, "dist/k.json"))).toBe(true);
+    expect(kindsFileShips(root, join(root, "workspace-kinds.json"))).toBe(false);
+    const open = dir({ "package.json": JSON.stringify({ name: "x" }) });
+    expect(kindsFileShips(open, join(open, "workspace-kinds.json"))).toBe(true);
+  });
+});
+
+describe("loadKindRegistry: kinds from the pins", () => {
+  test("reads an installed package's kinds as data and never imports the package", () => {
+    const root = dir(pkg("@acme/chant-lexicon-tf", "1.2.3", [tf]));
+    const { registry, problems } = loadKindRegistry([{ package: "@acme/chant-lexicon-tf", version: "1.2.3", path: null }], root);
+    expect(problems).toEqual([]);
+    expect(registry.get("terraform")).toMatchObject({ source: "@acme/chant-lexicon-tf", precedence: 400 });
+    expect(registry.names()).toEqual(["chant", "design", "other", "terraform", "workspace"]);
+    expect(existsSync(join(root, "node_modules/@acme/chant-lexicon-tf/IMPORTED"))).toBe(false);
+    expect((globalThis as { __chantKindsImported?: boolean }).__chantKindsImported).toBeUndefined();
+  });
+
+  test("finds the package in an ancestor's node_modules, as Node does", () => {
+    const root = dir({ ...pkg("tf-kinds", "1.0.0", [tf]), "ws/.keep": "" });
+    expect(loadKindRegistry([{ package: "tf-kinds", version: "1.0.0", path: null }], join(root, "ws")).registry.get("terraform")).toBeDefined();
+  });
+
+  test("a package without the subpath supplies nothing; one not installed, or at another version, is a problem", () => {
+    const root = dir({ ...pkg("plain", "1.0.0", null), ...pkg("tf-kinds", "2.0.0", [tf]) });
+    const { registry, problems } = loadKindRegistry(
+      [
+        { package: "plain", version: "1.0.0", path: null },
+        { package: "absent", version: "1.0.0", path: null },
+        { package: "tf-kinds", version: "1.0.0", path: null },
+      ],
+      root,
+    );
+    expect(registry.names()).toEqual(["chant", "design", "other", "workspace"]);
+    expect(problems).toEqual([
+      { pin: 1, message: "pinned package absent is not installed; install it to read the kinds it supplies" },
+      { pin: 2, message: "tf-kinds is pinned at 1.0.0, and 2.0.0 is installed" },
+    ]);
+    expect(existsSync(join(root, "node_modules/plain/IMPORTED"))).toBe(false);
+  });
+
+  test("reads a local plugin by path, and leaves out a kind two sources both supply", () => {
+    const root = dir({
+      "plugins/tf/package.json": JSON.stringify({ name: "tf", exports: { "./workspace-kinds": "./k.json" } }),
+      "plugins/tf/k.json": kindsFile([tf, { ...tf, name: "helm-chart", probe: { anyFile: ["Chart.yaml"] } }]),
+      "plugins/tf2/package.json": JSON.stringify({ name: "tf2", exports: { "./workspace-kinds": "./k.json" } }),
+      "plugins/tf2/k.json": kindsFile([tf]),
+    });
+    const { registry, problems } = loadKindRegistry(
+      [
+        { package: null, version: null, path: "plugins/tf" },
+        { package: null, version: null, path: "plugins/tf2" },
+      ],
+      root,
+    );
+    expect(registry.get("helm-chart")?.source).toBe("plugins/tf");
+    expect(registry.get("terraform")).toBeUndefined();
+    expect(problems).toEqual([{ pin: 1, message: "kind terraform is supplied by both plugins/tf and plugins/tf2; a kind name has one source" }]);
+  });
+
+  test("a kinds subpath that names code is refused, and the code is not run", () => {
+    const files = pkg("sneaky", "1.0.0", null, { exports: { "./workspace-kinds": "./index.js" } });
+    const root = dir(files);
+    const { problems } = loadKindRegistry([{ package: "sneaky", version: "1.0.0", path: null }], root);
+    expect(problems[0].message).toMatch(/must name a \.json file/);
+    expect(existsSync(join(root, "node_modules/sneaky/IMPORTED"))).toBe(false);
+  });
+});
+
+describe("resolveKind: overlapping probes", () => {
+  const kind = (name: string, precedence: number, file: string): MemberKind => ({
+    name,
+    description: name,
+    precedence,
+    probe: { anyFile: [file] },
+    shape: "member",
+    outputs: { from: "declared", names: [] },
+    source: "test",
+  });
+
+  test("the highest precedence decides", () => {
+    const registry = createKindRegistry([kind("terraform", 400, "main.tf")]);
+    const tree = workingTree(dir({ "infra/main.tf": "", "infra/chant.config.ts": "" }));
+    const r = resolveKind(registry, tree, "infra");
+    expect(r.claims.map((k) => k.name)).toEqual(["chant", "terraform"]);
+    expect(r.winner?.name).toBe("chant");
+    expect(r.tie).toEqual([]);
+  });
+
+  test("equal highest precedences are a tie, and there is no winner", () => {
+    const registry = createKindRegistry([kind("terraform", 400, "main.tf"), kind("opentofu", 400, "main.tf")]);
+    const r = resolveKind(registry, workingTree(dir({ "main.tf": "" })), "");
+    expect(r.winner).toBeUndefined();
+    expect(r.tie.map((k) => k.name)).toEqual(["opentofu", "terraform"]);
+  });
+
+  test("other and examples never claim, and exclude leaves a kind out", () => {
+    const tree = workingTree(dir({ "chant.workspace.json": "{}", "chant.config.ts": "" }));
+    expect(resolveKind(builtinKindRegistry(), tree, "").winner?.name).toBe("workspace");
+    expect(resolveKind(builtinKindRegistry(), tree, "", ["workspace"]).winner?.name).toBe("chant");
+    expect(resolveKind(builtinKindRegistry(), workingTree(dir({ "README.md": "" })), "").claims).toEqual([]);
+  });
+});
+
+describe("file probes: names with *, and blocks (#2545)", () => {
+  const kind = (probe: MemberKind["probe"]): MemberKind => ({ name: "k", description: "k", precedence: 400, probe, shape: "member", outputs: { from: "declared", names: [] }, source: "test" });
+
+  test("a * in anyFile matches any run of characters in one name, directly in the directory", () => {
+    const tree = workingTree(dir({ "a/network.tf": "", "b/modules/net/main.tf": "", "c/main.tfvars": "", "d/x.tf.json": "" }));
+    const tf = kind({ anyFile: ["*.tf"] });
+    expect(["a", "b", "c", "d"].map((d) => probeKind(tf, tree, d))).toEqual([true, false, false, false]);
+    expect(probeKind(kind({ anyFile: ["*.tf", "*.tf.json"] }), tree, "d")).toBe(true);
+  });
+
+  test("anyBlock finds an unlabelled block opened on a line of its own, in the files it names", () => {
+    const tree = workingTree(
+      dir({
+        "nested/main.tf": 'terraform {\n  live {\n    estate = "e"\n  }\n}\n',
+        "tight/main.tf": "live{\n}\n",
+        "comment/main.tf": "# live {\n",
+        "attribute/main.tf": "locals {\n  live = true\n}\n",
+        "labelled/main.tf": 'live "x" {\n}\n',
+        "other-file/notes.hcl": "live {\n}\n",
+      }),
+    );
+    const live = kind({ anyBlock: { in: ["*.tf"], blocks: ["live"] } });
+    expect(["nested", "tight", "comment", "attribute", "labelled", "other-file"].map((d) => probeKind(live, tree, d))).toEqual([true, true, false, false, false, false]);
+  });
+
+  test("a probe passes when any clause does, and its kind claims the directory", () => {
+    const k = kind({ anyFile: ["estate.chdf.hcl"], anyBlock: { in: ["*.tf"], blocks: ["live"] } });
+    const tree = workingTree(dir({ "s/estate.chdf.hcl": "", "s/main.tf": "", "i/main.tf": "live {}\n", "n/main.tf": "" }));
+    expect(["s", "i", "n"].map((d) => probeKind(k, tree, d))).toEqual([true, true, false]);
+    expect(resolveKind(createKindRegistry([k]), tree, "i").winner?.name).toBe("k");
+  });
+
+  test("the schema takes anyBlock, refuses an empty probe, and parseKindData keeps only the clauses given", () => {
+    const both = { ...tf, probe: { anyFile: ["estate.chdf.hcl"], anyBlock: { in: ["*.tf"], blocks: ["live"] } } };
+    expect(parseKindData(kindsFile([both]), "p").kinds[0].probe).toEqual(both.probe);
+    expect(parseKindData(kindsFile([tf]), "p").kinds[0].probe).toEqual({ anyFile: ["main.tf"] });
+    expect(parseKindData(kindsFile([{ ...tf, probe: {} }]), "p").problems[0]).toMatch(/probe/);
+    expect(parseKindData(kindsFile([{ ...tf, probe: { anyBlock: { in: ["*.tf"], blocks: ["live {"] } } }]), "p").problems[0]).toMatch(/blocks/);
+    expect(parseKindData(kindsFile([{ ...tf, probe: { anyBlock: { in: ["../x.tf"], blocks: ["live"] } } }]), "p").problems[0]).toMatch(/in/);
+  });
+});

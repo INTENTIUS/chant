@@ -8,11 +8,15 @@ import { propsOf } from "../../entity-props";
  * this backstops untyped construction (imported templates, hand-built
  * plans) so a typo fails the build instead of a 422 at apply.
  *
+ * Every runtime but `acp` needs a model: fountain v0.21.0, the pinned spec,
+ * refuses such an Agent at apply with `model: can't be blank` (#2776), and the
+ * generated type leaves `model` optional because `acp` does not take one.
+ *
  * `acp` is the exception on the model. The runtime is in the spec since
- * fountain v0.21.0, which also stopped requiring `model`, and it names a
- * process rather than a hosted model: the model is whatever the command on the
- * other end of the protocol decides to use, so a `model` on an acp agent is a
- * value nothing reads. The command itself is FTN023's business.
+ * fountain v0.21.0, and it names a process rather than a hosted model: the
+ * model is whatever the command on the other end of the protocol decides to
+ * use, so a `model` on an acp agent is a value nothing reads. The command
+ * itself is FTN023's business.
  */
 
 const RUNTIMES = new Set(["claude", "codex", "gemini", "opencode", "acp"]);
@@ -55,6 +59,19 @@ export const runtimeModelValidCheck: PostSynthCheck = {
         continue;
       }
 
+      if (agent.model === undefined || agent.model === null || agent.model === "") {
+        diagnostics.push({
+          checkId: "FTN016",
+          severity: "error",
+          message:
+            `Agent "${name}" has runtime "${typeof agent.runtime === "string" ? agent.runtime : "(unset)"}" and no model — ` +
+            `fountain v0.21.0 refuses it at apply ("model: can't be blank"); every runtime but acp needs a ` +
+            `canonical provider/model_id`,
+          entity: name,
+          lexicon: "fountain",
+        });
+        continue;
+      }
       if (typeof agent.model === "string" && !MODEL_RE.test(agent.model)) {
         diagnostics.push({
           checkId: "FTN016",

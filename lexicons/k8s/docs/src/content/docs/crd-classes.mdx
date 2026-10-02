@@ -1,6 +1,6 @@
 ---
 title: "CRD-Generated Classes"
-description: "Typed K8s::* classes generated from third-party CRDs — Gateway API, cert-manager, CloudNativePG, Infisical, Traefik, the CockroachDB operator, KubeRay, Argo CD, and Flux — plus how the CRD source list works and how to add your own."
+description: "Typed K8s::* classes generated from third-party CRDs — Gateway API, cert-manager, CloudNativePG, Infisical, Traefik, the CockroachDB operator, the Grafana Operator, KubeRay, Argo CD, and Flux — plus how the CRD source list works and how to add your own."
 diataxis: reference
 ---
 
@@ -33,6 +33,7 @@ traefik.io                     Traefik          K8s::Traefik::IngressRoute
 cert-manager.io                CertManager      K8s::CertManager::Certificate
 acme.cert-manager.io           Acme             K8s::Acme::Challenge
 secrets.infisical.com          Infisical        K8s::Infisical::InfisicalSecret
+grafana.integreatly.org        Grafana          K8s::Grafana::GrafanaDashboard
 *.toolkit.fluxcd.io            Flux             K8s::Flux::Kustomization
 fluxcd.controlplane.io         Flux             K8s::Flux::FluxInstance
 ```
@@ -360,6 +361,22 @@ export const db = new CrdbCluster({
 <Aside type="tip">
 The operator-managed `CrdbCluster` is the common single-region production path. For the self-managed, multi-region StatefulSet pattern, use the [`CockroachDbCluster` composite](/chant/tutorials/cockroachdb-multi-region/) instead — the two are complementary.
 </Aside>
+
+## Grafana Operator
+
+`grafana.integreatly.org`, pinned to **v5.25.0**. A Grafana that the Grafana Operator runs reads its dashboards, datasources and folders from these resources, not from files or sidecar ConfigMaps.
+
+| Type | apiVersion / kind |
+|---|---|
+| `GrafanaDashboard` | `grafana.integreatly.org/v1beta1` / `GrafanaDashboard` |
+| `GrafanaDatasource` | `grafana.integreatly.org/v1beta1` / `GrafanaDatasource` |
+| `GrafanaFolder` | `grafana.integreatly.org/v1beta1` / `GrafanaFolder` |
+
+```bash
+kubectl apply --server-side -f https://github.com/grafana/grafana-operator/releases/download/v5.25.0/kustomize-cluster_scoped.yaml
+```
+
+You rarely write these by hand. `GrafanaOperatorResources` in `@intentius/chant-lexicon-grafana/k8s` writes one per grafana `Dashboard`, `Datasource` and folder (see the grafana lexicon's [Provisioning](/chant/lexicons/grafana/provisioning/) page). `chant import` of a `GrafanaDashboard` reads its `spec.json` back into a grafana `Dashboard`, the same way it reads a sidecar dashboard ConfigMap. The operator's other kinds (`Grafana` itself, alerting, library panels) are not generated yet.
 
 ## KubeRay & Argo CD
 

@@ -5,6 +5,7 @@
  * lint rules, and LSP/MCP integration for Kubernetes manifests.
  */
 
+import { compositeCatalog } from "./composites/catalog";
 import type { LexiconPlugin, InitTemplateSet, ResourceMetadata } from "@intentius/chant/lexicon";
 import { k8sBehaviourKinds } from "./behaviour-kinds";
 import type { CommandGroup } from "@intentius/chant/cli/command-group";
@@ -336,6 +337,10 @@ export const service = new Service({
     writeBundleSpec(spec, distDir);
 
     console.error(`Packaged ${stats.resources} resources, ${stats.ruleCount} rules, ${stats.skillCount} skills`);
+  },
+
+  composites() {
+    return compositeCatalog;
   },
 
   mcpTools() {

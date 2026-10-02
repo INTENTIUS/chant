@@ -1,7 +1,6 @@
 import { resolve, join, relative } from "path";
 import type { BuildParamProvenance } from "../../provenance";
-import { readFileSync, writeFileSync, readdirSync, statSync } from "fs";
-import { execFileSync } from "child_process";
+import { readFileSync, writeFileSync, readdirSync } from "fs";
 import { runLint, parseDisableComments } from "../../lint/engine";
 import type { LintRule, LintDiagnostic, LintFix } from "../../lint/rule";
 import type { IntrinsicDef, LexiconPlugin } from "../../lexicon";
@@ -19,8 +18,8 @@ import { runPostSynthChecks } from "../../lint/post-synth";
 import { rule } from "../../lint/declarative";
 import { watchDirectory, formatTimestamp, formatChangedFiles } from "../watch";
 import { formatError, formatInfo } from "../format";
-import { GENERATED_MARKER, hasSkipMarker, compileDiscoveryFilter } from "../../discovery/files";
-import { dirProbe, warnDiscoveryChanges } from "../../discovery/convergence";
+import { hasDiscoveryMarkerSync, isSourceFileName } from "../../discovery/files";
+import { walkDiscovery, workspaceMemberDirs } from "../../discovery/walk";
 import { buildParamValues, resolveBuildParams } from "../../build-params";
 import { setBuildParams } from "../../params";
 import { isNoLexiconDetected } from "../../detectLexicon";
@@ -142,7 +141,13 @@ function lexiconResolutionDiagnostic(projectRoot: string, error: Error): LintDia
  */
 async function loadAllPluginRules(
   projectPath: string,
-): Promise<{ rules: Map<string, LintRule>; intrinsics: IntrinsicDef[]; plugins: LexiconPlugin[]; lexiconError?: Error }> {
+): Promise<{
+  rules: Map<string, LintRule>;
+  intrinsics: IntrinsicDef[];
+  propertyClasses: Set<string>;
+  plugins: LexiconPlugin[];
+  lexiconError?: Error;
+}> {
   const rules = new Map<string, LintRule>();
 
   // Load core COR/EVL rules directly
@@ -199,6 +204,12 @@ async function loadAllPluginRules(
   // hence the guard.
   const intrinsics = plugins.flatMap((plugin) => plugin.intrinsics?.() ?? []);
 
+  // chant #2957 — the class names these plugins declare property-kind, so
+  // COR001, COR004 and COR009 leave out declarables that live inside a
+  // resource (a Grafana panel inside its dashboard) instead of treating
+  // them as resources.
+  const propertyClasses = new Set(plugins.flatMap((plugin) => plugin.propertyClassNames?.() ?? []));
+
   for (const plugin of plugins) {
     if (plugin.lintRules) {
       for (const r of plugin.lintRules()) {
@@ -220,7 +231,7 @@ async function loadAllPluginRules(
     rules.set(r.id, r);
   }
 
-  return { rules, intrinsics, plugins, ...(lexiconError ? { lexiconError } : {}) };
+  return { rules, intrinsics, propertyClasses, plugins, ...(lexiconError ? { lexiconError } : {}) };
 }
 
 /**
@@ -270,80 +281,26 @@ export interface LintResult {
 }
 
 /**
- * Drop paths git ignores. Vendored trees (`vendor/`), build output (`dist/`),
- * and anything else in `.gitignore` are not authored chant source — linting
- * them surfaces EVL/COR errors in code the project never wrote, which then
- * gates `chant graph --format ir` on files outside the graph. Delegates to
- * `git check-ignore` for exact gitignore semantics (nesting, negation) in one
- * batched call; a non-git tree (or absent git) filters nothing.
+ * Every TypeScript file `chant lint` reads under `dir`, through the one
+ * discovery walk (`../../discovery/walk.ts`, #2527): git-ignored paths
+ * (vendored trees and the like, which the project never wrote), dot-directories,
+ * `dist` and, inside a project, child projects are skipped, and so is what the
+ * project's `exclude` globs (#2519) name, unless `include` re-admits it. Test
+ * and spec files, chant-generated files and skip-marked files are left out.
+ * Symlinks are followed, as lint always did.
  */
-function filterGitIgnored(files: string[], cwd: string, ignoredOut?: Set<string>): string[] {
-  if (files.length === 0) return files;
-  try {
-    const out = execFileSync("git", ["check-ignore", "--stdin"], {
-      cwd,
-      // The scan root rides along as one extra probe for #2527's warning
-      // release: whether it is itself ignored. It is never a file in `files`.
-      input: [...files, dirProbe(cwd)].join("\n"),
-      encoding: "utf-8",
-      // stdin piped (input), stdout captured, stderr silenced so a non-git tree's
-      // "fatal: not a git repository" never leaks to the lint output.
-      stdio: ["pipe", "pipe", "ignore"],
-      // Exit 1 means "nothing ignored" — execFileSync throws on non-zero, so the
-      // catch handles it; exit 128 (not a repo) lands there too and filters none.
-    });
-    const ignored = new Set(out.split(/\r?\n/).filter(Boolean));
-    for (const p of ignored) ignoredOut?.add(p);
-    return ignored.size === 0 ? files : files.filter((f) => !ignored.has(f));
-  } catch {
-    // No git, not a repo, or nothing ignored (exit 1) — keep every file.
-    return files;
-  }
-}
-
-/** What {@link getTypeScriptFiles} saw before its git-ignore filter, for #2527's warning. */
-interface TypeScriptScan {
-  raw: string[];
-  ignored: Set<string>;
-}
-
-/**
- * Get all TypeScript files recursively, skipping git-ignored paths and the
- * files `skip` (the project's `exclude` globs, #2519) names. `scanOut`, when
- * given, receives the files found before the ignore filter and the paths git
- * reported ignored.
- */
-function getTypeScriptFiles(dir: string, skip?: (file: string) => boolean, scanOut?: TypeScriptScan): string[] {
-  const files: string[] = [];
-
-  function scan(currentDir: string): void {
-    const entries = readdirSync(currentDir);
-
-    for (const entry of entries) {
-      const fullPath = join(currentDir, entry);
-      const stat = statSync(fullPath);
-
-      if (stat.isDirectory()) {
-        if (entry !== "node_modules" && !entry.startsWith(".")) {
-          scan(fullPath);
-        }
-      } else if (entry.endsWith(".ts") && !entry.endsWith(".test.ts") && !entry.endsWith(".spec.ts")) {
-        if (skip?.(fullPath)) continue;
-        // Skip chant-generated files (worker/workflow/activities bootstrap): they
-        // hold no authored source and use runtime patterns the EVL* rules forbid.
-        // A hand-written file opts out with the skip marker (#2519).
-        const head = readFileSync(fullPath, "utf-8").slice(0, 1024);
-        if (head.slice(0, 256).includes(GENERATED_MARKER) || hasSkipMarker(head)) {
-          continue;
-        }
-        files.push(fullPath);
-      }
-    }
-  }
-
-  scan(dir);
-  scanOut?.raw.push(...files);
-  return filterGitIgnored(files, dir, scanOut?.ignored);
+async function getTypeScriptFiles(dir: string): Promise<string[]> {
+  // A missing or non-directory path fails here, as lint's own walk always did;
+  // the shared walk skips an unreadable directory in silence.
+  readdirSync(dir);
+  return walkDiscovery({
+    walker: "lint",
+    root: dir,
+    globs: await resolveDiscoveryGlobs(dir),
+    excludeDirs: await workspaceMemberDirs(dir),
+    followSymlinks: true,
+    accept: (name, full) => isSourceFileName(name) && !hasDiscoveryMarkerSync(full),
+  });
 }
 
 /**
@@ -601,8 +558,14 @@ async function runOpCheckDiagnostics(
       ? await loadActivityContracts(plugins)
       : await loadActivityContracts(await resolveProjectLexicons(infraPath).catch(() => [] as string[]));
 
+  // SYS010 (#2828) also reads `decide.backends` from the project's config.
+  // A directory whose config does not load simply has none to check.
+  const decideBackends = await loadChantConfig(findProjectRoot(infraPath))
+    .then((loaded) => loaded.config.decide?.backends)
+    .catch(() => undefined);
+
   const raw = runPostSynthChecks(
-    coreOpChecks(),
+    coreOpChecks({ decideBackends }),
     {
       outputs: new Map(),
       entities: entities as Map<string, never>,
@@ -716,6 +679,7 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
   // flagging it. Computed once here regardless of which branch below runs,
   // same as `allRules`.
   const intrinsics = loaded.intrinsics;
+  const propertyClasses = loaded.propertyClasses;
 
   // Merge in any config-level plugin rules (custom .ts rule files)
   if (config.plugins && config.plugins.length > 0) {
@@ -723,19 +687,14 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
     allRules = new Map([...allRules, ...pluginRules]);
   }
 
-  // Get all TypeScript files (scan scoped to the lint arg, git-ignored trees
-  // and the project's `exclude` globs dropped)
-  const scanned: TypeScriptScan = { raw: [], ignored: new Set() };
-  const files = getTypeScriptFiles(infraPath, compileDiscoveryFilter(await resolveDiscoveryGlobs(infraPath)), scanned);
-  // #2527's warning release: which of these the converged walker reads
-  // differently. `files` is today's list, unchanged.
-  await warnDiscoveryChanges({ walker: "lint", root: infraPath, files, lintIgnored: scanned });
+  // Get all TypeScript files, through the one discovery walk (#2527)
+  const files = await getTypeScriptFiles(infraPath);
 
   // Run lint — use per-file rules when overrides are present
   let diagnostics: LintDiagnostic[];
   let suppressed: Array<LintDiagnostic & { reason?: string }> = [];
   if (options.rules) {
-    const result = await runLint(files, options.rules, undefined, intrinsics, projectConfig);
+    const result = await runLint(files, options.rules, undefined, intrinsics, projectConfig, propertyClasses);
     diagnostics = result.diagnostics;
     suppressed = result.suppressed;
   } else if (hasOverrides) {
@@ -743,13 +702,13 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
     for (const file of files) {
       const relativePath = relative(projectRoot, file);
       const { rules: fileRules, ruleOptions } = getDefaultRules(projectRoot, relativePath, allRules);
-      const result = await runLint([file], fileRules, ruleOptions, intrinsics, projectConfig);
+      const result = await runLint([file], fileRules, ruleOptions, intrinsics, projectConfig, propertyClasses);
       diagnostics.push(...result.diagnostics);
       suppressed.push(...result.suppressed);
     }
   } else {
     const { rules, ruleOptions } = getDefaultRules(projectRoot, undefined, allRules);
-    const result = await runLint(files, rules, ruleOptions, intrinsics, projectConfig);
+    const result = await runLint(files, rules, ruleOptions, intrinsics, projectConfig, propertyClasses);
     diagnostics = result.diagnostics;
     suppressed = result.suppressed;
   }
@@ -790,7 +749,7 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
 
     // Re-lint after fixes to get updated diagnostics
     if (options.rules) {
-      const postResult = await runLint(files, options.rules, undefined, intrinsics, projectConfig);
+      const postResult = await runLint(files, options.rules, undefined, intrinsics, projectConfig, propertyClasses);
       diagnostics = postResult.diagnostics;
       suppressed = postResult.suppressed;
     } else if (hasOverrides) {
@@ -799,13 +758,13 @@ export async function lintCommand(options: LintOptions): Promise<LintResult> {
       for (const file of files) {
         const relativePath = relative(projectRoot, file);
         const { rules: fileRules, ruleOptions } = getDefaultRules(projectRoot, relativePath, allRules);
-        const postResult = await runLint([file], fileRules, ruleOptions, intrinsics, projectConfig);
+        const postResult = await runLint([file], fileRules, ruleOptions, intrinsics, projectConfig, propertyClasses);
         diagnostics.push(...postResult.diagnostics);
         suppressed.push(...postResult.suppressed);
       }
     } else {
       const { rules, ruleOptions } = getDefaultRules(projectRoot, undefined, allRules);
-      const postResult = await runLint(files, rules, ruleOptions, intrinsics, projectConfig);
+      const postResult = await runLint(files, rules, ruleOptions, intrinsics, projectConfig, propertyClasses);
       diagnostics = postResult.diagnostics;
       suppressed = postResult.suppressed;
     }

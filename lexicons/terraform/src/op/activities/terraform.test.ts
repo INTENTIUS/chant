@@ -314,8 +314,8 @@ describe("terraformPlanDigest (#2300)", () => {
   });
 
   test("a plan with no resource_changes still digests, rather than throwing", () => {
-    expect(terraformPlanDigest({ format_version: "1.2" })).toMatch(/^sha256:[0-9a-f]{64}$/);
-    expect(terraformPlanDigest(null)).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(terraformPlanDigest({ format_version: "1.2" })).toMatch(/^jcs1-sha256:[0-9a-f]{64}$/);
+    expect(terraformPlanDigest(null)).toMatch(/^jcs1-sha256:[0-9a-f]{64}$/);
   });
 
   test("the change set keeps the fields an approver reads and drops the rest", () => {

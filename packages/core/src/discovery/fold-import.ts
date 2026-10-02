@@ -27,7 +27,7 @@ import {
   type FoldedCompositeStepCall,
 } from "../fold/fold";
 import { isChantOwnedSpecifier, isFoldableHelperName } from "../fold/foldable-helpers";
-import { lexiconModulePath } from "../lexicon-module";
+import { lexiconModulePath, lexiconModuleRoot } from "../lexicon-module";
 import {
   briefNodeText,
   callExpressionMessage,
@@ -258,11 +258,22 @@ export interface FoldSession {
    * under `--sandbox` it is on {@link isTrustedExecutableBinding}'s allowlist,
    * because `loadPlugins` has already imported and run it in this process.
    *
-   * Only the declared module itself is in the set. A package has a root that
-   * bounds its subpaths, and a module path has none, so other files beside it
-   * stay project files.
+   * Only the declared module itself is in the set. The other files of a
+   * multi-file path lexicon are covered by {@link lexiconRoots}.
    */
   readonly lexiconModules: ReadonlySet<string>;
+  /**
+   * chant#2590 — the directory trusted for each path-declared lexicon that has
+   * one (`../lexicon-module.ts`'s `pathLexiconRoot`: the declared `root`, or
+   * the module's own directory, inside the project and not containing its
+   * source directory). A file under one of these gets what a subpath of an
+   * active lexicon package gets: a place on the `--sandbox` trust list, and
+   * no fold as a project file. Its data exports are not read as values,
+   * which is also how a package subpath is treated. A directory that holds
+   * any of the build's own source files is dropped, so the build's source is
+   * never trusted this way.
+   */
+  readonly lexiconRoots: readonly string[];
   /**
    * chant #1093 — this build asked for the #1045 sandbox
    * (`DiscoveryOptions.sandbox`, `chant build --sandbox`), so fold must not
@@ -342,15 +353,23 @@ export function createFoldSession(
   lexiconPackages: readonly string[] = [],
   /** chant#2455 — `ι = executing`. Mutually exclusive with `sandbox`. */
   executing = false,
+  /**
+   * chant#2590 — the build's own source files. A path lexicon's trusted
+   * directory that holds any of them is dropped (see {@link FoldSession.lexiconRoots}).
+   */
+  sourceFiles: readonly string[] = [],
 ): FoldSession {
   // chant#2577 — a lexicon declared by path is that module and no package, so
   // its name contributes the module path and not `@intentius/chant-lexicon-<name>`.
   const packages = new Set(lexiconPackages);
   const modules = new Set<string>();
+  const roots: string[] = [];
   for (const name of lexicons) {
     const modulePath = lexiconModulePath(name);
     if (modulePath === undefined) packages.add(lexiconPackageName(name));
     else modules.add(resolveModulePath(modulePath, modulePath));
+    const root = lexiconModuleRoot(name);
+    if (root !== undefined && !sourceFiles.some((file) => isUnderDirectory(resolvePath(file), root))) roots.push(root);
   }
   return {
     intrinsics,
@@ -361,6 +380,7 @@ export function createFoldSession(
     buildParams,
     lexiconPackages: packages,
     lexiconModules: modules,
+    lexiconRoots: roots,
     sandbox,
     executing,
     factoryModules: new Map(),
@@ -1153,6 +1173,16 @@ function activeLexiconModule(
   return lexiconModules.has(modulePath) ? modulePath : undefined;
 }
 
+/** chant#2590 — true when absolute `file` lies under absolute directory `dir`. */
+function isUnderDirectory(file: string, dir: string): boolean {
+  return file.startsWith(dir.endsWith(sep) ? dir : dir + sep);
+}
+
+/** chant#2590 — true when `path` lies under one of the build's trusted path-lexicon directories. */
+function inPathLexiconRoot(path: string, roots: readonly string[]): boolean {
+  return roots.some((root) => isUnderDirectory(path, root));
+}
+
 /**
  * chant #1995 — the package-ROOT portion of a bare subpath specifier
  * (`@intentius/chant-lexicon-azure/generated/index` ->
@@ -1333,6 +1363,8 @@ interface ResolveCtx {
   lexiconPackages: ReadonlySet<string>;
   /** chant#2577 — see {@link FoldSession.lexiconModules}. */
   lexiconModules: ReadonlySet<string>;
+  /** chant#2590 — see {@link FoldSession.lexiconRoots}. */
+  lexiconRoots: readonly string[];
   /** chant #1093 — see {@link FoldSession.sandbox}. */
   sandbox: boolean;
   /** chant#2455 — see {@link FoldSession.executing}. */
@@ -2484,6 +2516,7 @@ async function interpretCompositeFactory(
     resolvePathCache: ctx.resolvePathCache,
     lexiconPackages: ctx.lexiconPackages,
     lexiconModules: ctx.lexiconModules,
+    lexiconRoots: ctx.lexiconRoots,
     sandbox: ctx.sandbox,
     executing: ctx.executing,
     session: ctx.session,
@@ -3110,6 +3143,9 @@ function isTrustedExecutableBinding(binding: ImportBinding, ctx: ResolveCtx): bo
   // chant#2577 — arm 1 for a lexicon declared by path: the module
   // `loadPlugins` already imported, reached by the path the project imports it by.
   if (ctx.lexiconModules.has(targetPath)) return true;
+  // chant#2590 — the subpath case of the same arm: another file of a
+  // multi-file path lexicon, under its trusted directory.
+  if (inPathLexiconRoot(targetPath, ctx.lexiconRoots)) return true;
   const root = chantCoreRoot();
   return targetPath === root || targetPath.startsWith(root + sep);
 }
@@ -3677,6 +3713,12 @@ async function buildExternals(
       if (lexiconExport) externals.set(localName, lexiconExport.value);
       continue;
     }
+    // chant#2590 — another file of a multi-file path lexicon is a lexicon
+    // subpath, not a project file: it is not folded, and like a package
+    // subpath (see the bare-specifier branch above) its data exports are not
+    // read as values. A constructor or composite from it resolves through the
+    // import path, where `isTrustedExecutableBinding` admits it.
+    if (inPathLexiconRoot(targetPath, session.lexiconRoots)) continue;
     const result = await foldFileMemoized(targetPath, session);
     if (!result.ok) {
       failures.set(localName, locatedMessage(binding.specifierNode, result.reason));
@@ -3704,7 +3746,7 @@ async function buildExternals(
     }
     // chant#2577 — a namespace import of a lexicon is left alone, as the
     // bare-specifier check above leaves a package's alone.
-    if (session.lexiconModules.has(targetPath)) continue;
+    if (session.lexiconModules.has(targetPath) || inPathLexiconRoot(targetPath, session.lexiconRoots)) continue;
     const result = await foldFileMemoized(targetPath, session);
     if (!result.ok) {
       failures.set(localName, locatedMessage(binding.specifierNode, result.reason));
@@ -3812,6 +3854,7 @@ async function tryFoldFileCore(file: string, session: FoldSession): Promise<Fold
       resolvePathCache: session.resolvePathCache,
       lexiconPackages: session.lexiconPackages,
       lexiconModules: session.lexiconModules,
+      lexiconRoots: session.lexiconRoots,
       sandbox: session.sandbox,
       executing: session.executing,
       session,
@@ -4341,6 +4384,7 @@ export async function foldProject(
     options.sandbox ?? false,
     options.lexiconPackages ?? [],
     options.executing ?? false,
+    files,
   );
   const attempts = new Map<string, FoldFileResult>();
   for (const file of files) attempts.set(file, await tryFoldFile(file, intrinsics, session));

@@ -18,7 +18,7 @@ Lint rules analyze your TypeScript source code before build.
 
 **Severity:** warning | **Category:** style
 
-Flags raw `uses:` strings when a typed composite wrapper is available (e.g. `actions/checkout@v4` → `Checkout({})`). Typed composites provide better IDE support and catch configuration errors at compile time.
+Flags raw `uses:` strings when a typed composite wrapper is available (e.g. `actions/checkout@v7` → `Checkout({})`). Typed composites provide better IDE support and catch configuration errors at compile time.
 
 ### GHA002 — Use Expression helpers
 
@@ -169,7 +169,7 @@ Detects cycles in the `needs:` dependency graph. If job A needs B and B needs A 
 
 **Severity:** warning
 
-Flags `actions/checkout` referenced by a tag (e.g. `@v4`) instead of a pinned commit SHA. The narrower precursor to GHA029, kept because checkout is the most common unpinned action.
+Flags `actions/checkout` referenced by a tag (e.g. `@v4`) instead of a pinned commit SHA. The narrower precursor to GHA029, kept because checkout is the most common unpinned action. A trailing version comment (`actions/checkout@<sha> # v7.0.1`) is allowed. The warning names the exact pinned `uses:` value, which `Checkout({ pin: "sha" })` emits.
 
 ### GHA022 — Job without timeout-minutes
 
@@ -415,7 +415,7 @@ To suppress a rule on a specific line:
 
 ```typescript
 // chant-disable-next-line GHA001
-new Step({ uses: "actions/checkout@v4" });
+new Step({ uses: "actions/checkout@v7" });
 ```
 
 To suppress globally in `chant.config.ts`:

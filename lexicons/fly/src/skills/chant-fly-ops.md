@@ -53,3 +53,103 @@ Each prune logs the resource and endpoint it removed, so a prune run is auditabl
 ## Re-applying is safe
 
 A re-apply of an unchanged stack is a no-op per resource: machines whose config is structurally equal to live are skipped, volumes and certificates that already exist are skipped, and an IP of an already-present family is skipped. Only apply-only secrets are always re-set, because flaps exposes no value to diff against.
+
+## Releases on a Machine
+
+A component can deploy to Fly with this lexicon alone. It declares an `App` and the `Machine` that serves, builds them with `chant build --lexicon fly -o dist/fly.json`, and deploys with the `fly-release` step. Here a `Publish` phase (`publish-image`, elided) pushes the image, and the release serves it by digest:
+
+```ts
+import { phase, type Component } from "@intentius/chant/components";
+
+export const web: Component = {
+  name: "web",
+  deploy: [
+    phase("Publish", [/* publish-image */]),
+    phase("Release", [
+      {
+        kind: "fly-release",
+        plan: "dist/fly.json",
+        digest: "@Publish.digest",
+        image: "@Publish.uri",
+        migrations: [{ name: "001_init.sql", command: "node migrate.js 001_init.sql" }],
+        verify: { url: "https://web.example.com", healthPath: "/health" },
+      },
+    ]),
+  ],
+};
+```
+
+The step updates the Machine in place with the release in its `config.metadata`: `chant-release-digest`, `chant-release-git-sha` (the commit, `git rev-parse HEAD` unless given), and `chant-release-previous-digest` (the release it replaced). Each migration then runs inside the Machine through the Machines API's exec, once per environment: its receipt is kept on `chant/lifecycle` at `<env>/receipts/`, and a migration fires again only when its `sha` (or command) changes. After a migration fires, the Machine restarts, and the step checks that it is started with this release and, given a `url`, that its health endpoint answers with this commit or digest. If anything fails after the Machine changed, the step puts back the config the Machine served before (on a first release, it stops the Machine) and fails.
+
+The step's output carries `uri` and `digest`, so `chant run --components web --env prod` records the release in the ledger. `chant components status prod --live` reads the Machine's metadata back and compares its digest with the ledger's: the row is `reconciled` when they agree and `drifted` when the Machine serves something the ledger does not name. The component joins the Machine by name: name the component after the Machine entity, or list it in `liveNames`.
+
+Each release's Machine config is kept on `chant/lifecycle` at `<env>/fly/<app>/<machine>/<digest>.json`. `fly-rollback` puts back the config of the release the serving one replaced (or the digest given as `to`), checks it, and outputs that digest so the ledger records it again. `fly-release`'s own saga compensation does the same.
+
+The steps are also Op activities, for an Op that composes them itself: `flyMachineRelease`, `flyMachineExec`, `flyMachineRestart`, `flyMachineStop`, `flyMachineVerify` and `flyMachineRestore`. Wrap a migration's `flyMachineExec` in `effect()` so it fires once.
+
+### A source tree instead of an image
+
+An app with no image of its own ships as its files on the declared runtime image. Give `fly-release` a `source` in place of `image`: an archive made by core's `sourceArchive` step (`git archive` of one directory of a commit, the same bytes for the same commit), the sha256 it must have, the directory it holds, where the files go (default `/srv/app`) and the command that starts the app there. The archive is read only once its bytes hash to that digest, before the Machine changes, so the Machine never gets a tree nobody approved. The files go into the Machine's config, up to 1 MiB base64. A larger app needs an image.
+
+An Op runs the same steps with the `flyRelease` activity, which takes the environment it ships to as `environment` (`env` stays the Machine's env vars). A release Op gates on the plan core's `releasePlan` writes and records the release with `releaseRecord`:
+
+```ts
+import { Op, phase, gate, build, sourceArchive, releasePlan, releaseRecord } from "@intentius/chant/op";
+import { flyRelease } from "@intentius/chant-lexicon-fly";
+
+const archive = sourceArchive("../app", { id: "archive" });
+const plan = releasePlan({ id: "plan", component: "app", env: "fly", gitSha: archive.out.commit, content: { artifact: { digest: archive.out.digest } } });
+
+export default Op({
+  name: "release",
+  overview: "Ship the app member to Fly once its plan is approved",
+  phases: [
+    phase("Build", [archive, build(".", { script: "build:fly" })]),
+    phase("Plan", [plan]),
+    phase("Gate", [gate("ship", { plan: plan.out.digest })]),
+    phase("Ship", [
+      flyRelease({
+        environment: "fly",
+        plan: "dist/fly.json",
+        digest: plan.out.digest,
+        gitSha: archive.out.commit,
+        source: { archive: archive.out.archive, digest: archive.out.digest, dir: archive.out.dir, start: "node server.js" },
+      }),
+    ]),
+    phase("Record", [releaseRecord({ plan: plan.out.file, digest: plan.out.digest, approval: { op: "release", gate: "ship" } })]),
+  ],
+});
+```
+
+The Machine's metadata names the plan's digest, and so does the ledger record, so `chant components status fly --live` reconciles them. Running the Op again for the same commit plans the same digest, leaves the Machine as it is, and records nothing twice.
+
+### Rolling a source release back
+
+A rollback Op takes the site back to the release it served before the latest one. Core's `releaseRollbackPlan` reads the release ledger, reads the earlier release's plan back, archives the same directory of the same commit again, and refuses unless the archive hashes to the digest that plan recorded. The gate binds to the rollback plan's digest. `flyRollback` puts back the Machine config `flyRelease` recorded for that release. It checks the archive against its digest before any flaps call, and checks that the recorded config carries exactly that tree. `releaseRollbackRecord` appends the restored release with `restores`, the actor and the approver:
+
+```ts
+import { Op, phase, gate, build, releaseRollbackPlan, releaseRollbackRecord } from "@intentius/chant/op";
+import { flyRollback } from "@intentius/chant-lexicon-fly";
+
+const plan = releaseRollbackPlan({ id: "plan", component: "app", env: "fly" });
+
+export default Op({
+  name: "rollback",
+  overview: "Put the previous release back on Fly once the rollback plan is approved",
+  phases: [
+    phase("Plan", [plan, build(".", { script: "build:fly" })]),
+    phase("Gate", [gate("rollback", { plan: plan.out.digest })]),
+    phase("Roll back", [
+      flyRollback({
+        environment: "fly",
+        plan: "dist/fly.json",
+        to: plan.out.to,
+        source: { archive: plan.out.archive, digest: plan.out.archiveDigest, dir: plan.out.dir },
+      }),
+    ]),
+    phase("Record", [releaseRollbackRecord({ plan: plan.out.file, digest: plan.out.digest, approval: { op: "rollback", gate: "rollback" } })]),
+  ],
+});
+```
+
+A rollback's own ledger record is not counted as a release, so running the Op again plans the same rollback, leaves the Machine as it is and records nothing. `to: "sha256:..."` on `releaseRollbackPlan` picks another release. Migrations are not undone.

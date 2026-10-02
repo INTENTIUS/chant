@@ -16,11 +16,25 @@ export { Fly, Region, OrgSlug, AppName, PseudoParameter } from "./pseudo";
 // Ownership marker convention (machine config.metadata keys)
 export { FLY_METADATA_OWNERSHIP_KEYS } from "./ownership";
 
+// The release a Machine serves, in its metadata (#2736): read by
+// describeResources and compared with the release ledger by
+// `chant components status --live`.
+export { RELEASE_METADATA_KEYS, readMachineRelease, withReleaseMetadata } from "./release-metadata";
+export type { MachineRelease } from "./release-metadata";
+
 // Deploy Op composite + typed step builders (#744). `flyDeploy` returns a
 // `boot → build → flyApply → wait → teardown` Op; the step builders wrap the
 // generic `activity()` so the fly activities resolve by name without a core change.
 export { flyDeploy, flapsUp, flapsDown, flyApplyStep, LOCAL_FLAPS_ENDPOINT } from "./composites/fly-deploy";
 export type { FlyDeployOpts, FlyApplyStepOpts, FlapsStepOpts } from "./composites/fly-deploy";
+
+// OpenTelemetry Collector on a Machine, its config declared with the otel lexicon (#2613).
+export { FlyOtelCollector } from "./composites/fly-otel-collector";
+export type { FlyOtelCollectorProps } from "./composites/fly-otel-collector";
+
+// A Fly app that serves one app's releases: App, Machine, and its Volume, IP and Secrets (#2809, ws-056).
+export { FlySite } from "./composites/fly-site";
+export type { FlySiteProps } from "./composites/fly-site";
 
 // Sprite Op step builders. chant #1288 Stage 2: these author
 // `activity("spriteCreate", ...)` steps with authoring-time types derived
@@ -39,17 +53,36 @@ export {
   spriteRestore,
   listCheckpoints,
   spriteDestroy,
+  spriteDelete,
+  spriteUrl,
   spriteWriteFile,
   spriteReadFile,
   spriteListDir,
   spriteRemove,
   spriteApplyNetworkPolicy,
   spriteApplyServices,
+  spriteServiceCreate,
+  spriteServiceGet,
+  spriteServiceList,
+  spriteServiceStart,
+  spriteServiceStop,
+  spriteServiceDelete,
+  spriteServiceLogs,
+  spriteServicesObserve,
+  spriteServiceRestart,
   spriteTaskCreate,
   spriteTaskRefresh,
   spriteTaskRelease,
   spritesUp,
   spritesDown,
+  flyMachineRelease,
+  flyMachineExec,
+  flyMachineRestart,
+  flyMachineStop,
+  flyMachineVerify,
+  flyMachineRestore,
+  flyRelease,
+  flyRollback,
 } from "./op/builders";
 
 // Generated resources — export everything from generated index.

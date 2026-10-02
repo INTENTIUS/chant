@@ -18,20 +18,37 @@ export const REQUIRED_NAMES = [
   "PrometheusReceiver",
   "HostMetricsReceiver",
   "FileLogReceiver",
+  "K8sClusterReceiver",
+  "KubeletStatsReceiver",
   "BatchProcessor",
   "MemoryLimiterProcessor",
   "ResourceProcessor",
   "AttributesProcessor",
   "K8sAttributesProcessor",
   "ResourceDetectionProcessor",
+  "FilterProcessor",
+  "TransformProcessor",
+  "RedactionProcessor",
+  "TailSamplingProcessor",
+  "ProbabilisticSamplerProcessor",
+  "DeltaToCumulativeProcessor",
   "OtlpExporter",
   "OtlpHttpExporter",
   "DebugExporter",
   "PrometheusExporter",
   "GoogleCloudExporter",
+  "LoadBalancingExporter",
+  "SpanMetricsConnector",
+  "ServiceGraphConnector",
+  "RoutingConnector",
+  "ForwardConnector",
+  "CountConnector",
+  "SumConnector",
+  "SignalToMetricsConnector",
   "HealthCheckExtension",
   "PprofExtension",
   "ZPagesExtension",
+  "K8sLeaderElectorExtension",
   "Pipeline",
   "Service",
 ];
@@ -45,6 +62,14 @@ export async function validate(): Promise<ValidateResult> {
     missing.length === 0
       ? { name: "required-names", ok: true }
       : { name: "required-names", ok: false, error: `Missing required names: ${missing.join(", ")}` },
+  );
+
+  // The list names every entity the registry has, so a new built-in is held to it from the start.
+  const unlisted = Object.keys(registry).filter((n) => !REQUIRED_NAMES.includes(n));
+  checks.push(
+    unlisted.length === 0
+      ? { name: "required-names-complete", ok: true }
+      : { name: "required-names-complete", ok: false, error: `In the registry but not in REQUIRED_NAMES: ${unlisted.join(", ")}` },
   );
 
   const classes = (Object.entries(components) as Array<[string, unknown]>).filter(

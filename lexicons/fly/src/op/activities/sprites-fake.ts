@@ -41,7 +41,10 @@ interface StoredService {
   dir?: string;
   needs?: string[];
   http_port?: number;
-  state: { name: string; pid: number; status: string; started_at?: string };
+  state: { name: string; pid: number; status: string; started_at?: string; error?: string };
+  /** Synthetic log lines (#2711) — the fake runs no real process, so `logs` is a
+   * scripted trail of lifecycle events, enough to exercise `spriteServiceLogs`. */
+  logs: string[];
 }
 
 interface SpriteState {
@@ -67,6 +70,12 @@ interface ExecResult {
   stdout: string;
   stderr: string;
   exitCode: number;
+  /**
+   * Fake-only timing hook (#2765): how long `runExec` should hold the frames
+   * before sending them, set by the `sleep` form below. Lets a test prove
+   * `spriteExec`'s `timeoutMs` fires without a slow real exec.
+   */
+  delayMs?: number;
 }
 
 /**
@@ -74,11 +83,24 @@ interface ExecResult {
  * small set of forms so a test (and the example `guarded-task` Op) can write a
  * key, then overwrite/fail it, and prove restore rewinds. Segments split on
  * `;` run in order; the exit code is the last segment's (shell `;` semantics).
+ *
+ * `opts.env`/`opts.dir` (#2765) are the `env`/`dir` exec options after they
+ * cross the wire (`env` as `KEY=VALUE` strings, mirroring what the query
+ * params carry) — `env` and `pwd` below echo them back so a test can prove
+ * they reached the command. Real spritzer only wires `env`/`dir` through in
+ * container exec mode (real processes); its interpreter mode — what
+ * `fakeExec` otherwise mirrors — has no notion of either, so this pair of
+ * forms is fake-only, proven separately from the container-mode docker test.
  */
-export function fakeExec(sprite: SpriteState, cmd: string): ExecResult {
+export function fakeExec(
+  sprite: SpriteState,
+  cmd: string,
+  opts: { env?: string[]; dir?: string } = {},
+): ExecResult {
   let stdout = "";
   let stderr = "";
   let exitCode = 0;
+  let delayMs: number | undefined;
 
   for (const raw of cmd.split(";")) {
     const seg = raw.trim();
@@ -106,6 +128,19 @@ export function fakeExec(sprite: SpriteState, cmd: string): ExecResult {
       exitCode = 1;
     } else if (seg === "true") {
       exitCode = 0;
+    } else if (seg === "env") {
+      // Prints the passed env, sorted `KEY=VALUE` lines, like the real command.
+      stdout += [...(opts.env ?? [])].sort().map((kv) => `${kv}\n`).join("");
+      exitCode = 0;
+    } else if (seg === "pwd") {
+      stdout += `${opts.dir ?? "/"}\n`;
+      exitCode = 0;
+    } else if ((m = seg.match(/^sleep\s+(\d+)$/))) {
+      // Fake-only timing hook (#2765): the argument is milliseconds, not
+      // seconds like the real command — just enough to hold the exec open
+      // past a short `timeoutMs` without a slow test.
+      exitCode = 0;
+      delayMs = Number(m[1]);
     } else if (seg === "./risky.sh") {
       // A scripted failing job: mutates the workspace, then exits non-zero, so
       // the example guarded-task Op demonstrates checkpoint-as-compensation.
@@ -119,7 +154,7 @@ export function fakeExec(sprite: SpriteState, cmd: string): ExecResult {
     }
   }
 
-  return { stdout, stderr, exitCode };
+  return { stdout, stderr, exitCode, ...(delayMs !== undefined ? { delayMs } : {}) };
 }
 
 function unquote(s: string): string {
@@ -225,14 +260,25 @@ export function createSpritesFake(): Promise<{ url: string; close(): Promise<voi
     }
     // argv arrives as repeated `cmd` params; reconstruct the script the small
     // interpreter understands (the tokens round-trip for the space-separated
-    // command forms the example Ops use).
+    // command forms the example Ops use). `dir`/`env` (#2765) mirror
+    // spriteExecWsUrl's encoding: `dir` a single param, `env` repeated
+    // `KEY=VALUE` params.
     const argv = url.searchParams.getAll("cmd");
     const script = argv.join(" ");
-    const result = fakeExec(sprite, script);
-    if (result.stdout) ws.send(frame(STREAM_STDOUT, Buffer.from(result.stdout)));
-    if (result.stderr) ws.send(frame(STREAM_STDERR, Buffer.from(result.stderr)));
-    ws.send(frame(STREAM_EXIT, Buffer.of(result.exitCode & 0xff)));
-    ws.close();
+    const dir = url.searchParams.get("dir") ?? undefined;
+    const env = url.searchParams.getAll("env");
+    const result = fakeExec(sprite, script, { dir, env });
+    const send = (): void => {
+      // The client may already have aborted/timed out and closed its end;
+      // sending on a closed socket would throw, so this is a plain no-op.
+      if (ws.readyState !== ws.OPEN) return;
+      if (result.stdout) ws.send(frame(STREAM_STDOUT, Buffer.from(result.stdout)));
+      if (result.stderr) ws.send(frame(STREAM_STDERR, Buffer.from(result.stderr)));
+      ws.send(frame(STREAM_EXIT, Buffer.of(result.exitCode & 0xff)));
+      ws.close();
+    };
+    if (result.delayMs) setTimeout(send, result.delayMs);
+    else send();
   }
 
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -243,6 +289,11 @@ export function createSpritesFake(): Promise<{ url: string; close(): Promise<voi
     const send = (status: number, body: unknown): void => {
       res.writeHead(status, { "content-type": "application/json" });
       res.end(JSON.stringify(body ?? {}));
+    };
+    // No-body reply (real Sprites' 204s carry no content and no body): #2719.
+    const sendEmpty = (status: number): void => {
+      res.writeHead(status);
+      res.end();
     };
     // NDJSON progress stream: an `info` line then a terminal `complete` line.
     const sendNdjson = (status: number, events: Array<Record<string, unknown>>): void => {
@@ -311,13 +362,14 @@ export function createSpritesFake(): Promise<{ url: string; close(): Promise<voi
       if (method === "POST") {
         const body = ((await readBody(req)) ?? {}) as { rules?: Array<{ domain: string; action: string }> };
         sprite.netPolicy = body.rules ?? [];
-        return send(200, { rules: sprite.netPolicy });
+        // 204 with no body — matches every official SDK and wisp (#2719).
+        return sendEmpty(204);
       }
       return send(404, { error: `not found: ${method} ${path}` });
     }
 
-    // Services: /v1/sprites/{id}/services[/{svc}[/start|stop|restart]].
-    const svcm = path.match(/^\/v1\/sprites\/([^/]+)\/services(?:\/([^/]+)(\/start|\/stop|\/restart)?)?\/?$/);
+    // Services: /v1/sprites/{id}/services[/{svc}[/start|stop|restart|logs]].
+    const svcm = path.match(/^\/v1\/sprites\/([^/]+)\/services(?:\/([^/]+)(\/start|\/stop|\/restart|\/logs)?)?\/?$/);
     if (svcm) {
       const id = decodeURIComponent(svcm[1]);
       const svc = svcm[2] ? decodeURIComponent(svcm[2]) : undefined;
@@ -328,15 +380,30 @@ export function createSpritesFake(): Promise<{ url: string; close(): Promise<voi
       // GET /services — list.
       if (method === "GET" && !svc) return send(200, Object.values(sprite.services));
 
+      // GET /services/{svc}/logs — the tail as NDJSON (#2711).
+      if (method === "GET" && svc && action === "/logs") {
+        const s = sprite.services[svc];
+        if (!s) return send(404, { error: `no service ${svc}` });
+        const n = Number(url.searchParams.get("lines"));
+        const tail = Number.isFinite(n) && n > 0 ? s.logs.slice(-n) : s.logs;
+        return sendNdjson(
+          200,
+          [...tail.map((data) => ({ type: "stdout", data })), { type: "complete", data: `${svc} log tail` }],
+        );
+      }
+
       if (svc && !action) {
         // GET /services/{svc}
         if (method === "GET") {
           const s = sprite.services[svc];
           return s ? send(200, s) : send(404, { error: `no service ${svc}` });
         }
-        // PUT /services/{svc} — create or update.
+        // PUT /services/{svc} — create-or-update, then start (#2711: real
+        // Sprites/spritzer's PUT both defines and starts the service).
         if (method === "PUT") {
-          const b = ((await readBody(req)) ?? {}) as Omit<StoredService, "name" | "state">;
+          const b = ((await readBody(req)) ?? {}) as Omit<StoredService, "name" | "state" | "logs">;
+          const prev = sprite.services[svc];
+          const started = new Date().toISOString();
           sprite.services[svc] = {
             name: svc,
             cmd: b.cmd,
@@ -345,24 +412,49 @@ export function createSpritesFake(): Promise<{ url: string; close(): Promise<voi
             dir: b.dir,
             needs: b.needs,
             http_port: b.http_port,
-            state: sprite.services[svc]?.state ?? { name: svc, pid: 0, status: "stopped" },
+            state: { name: svc, pid: 4321, status: "running", started_at: started },
+            logs: [...(prev?.logs ?? []), `${svc} started (pid 4321)`],
           };
           return send(200, sprite.services[svc]);
+        }
+        // DELETE /services/{svc} — idempotent; a 404 means already gone (#2711).
+        if (method === "DELETE") {
+          if (!(svc in sprite.services)) return send(404, { error: `no service ${svc}` });
+          delete sprite.services[svc];
+          return send(200, {});
         }
       }
 
       // POST /services/{svc}/start|stop|restart — NDJSON, flips status.
-      if (method === "POST" && svc && action) {
+      if (method === "POST" && svc && (action === "/start" || action === "/stop" || action === "/restart")) {
         const s = sprite.services[svc];
         if (!s) return send(404, { error: `no service ${svc}` });
         const stopped = action === "/stop";
         s.state = { name: svc, pid: stopped ? 0 : 4321, status: stopped ? "stopped" : "running", started_at: new Date().toISOString() };
+        s.logs.push(`${svc} ${stopped ? "stopping" : "started"}`);
         return sendNdjson(200, [
           { type: stopped ? "stopping" : "started", data: `${svc} ${stopped ? "stopping" : "started"}` },
           { type: "complete", data: `${svc} ${action.slice(1)} complete` },
         ]);
       }
       return send(404, { error: `not found: ${method} ${path}` });
+    }
+
+    // The sprite URL proxy: /s/{id}[/...] (#2711). Real spritzer routes this to
+    // whatever listens on the `http_port` service's port; the fake has no real
+    // process, so it answers 200 when such a service is `running` and 503
+    // ("nothing is answering", matching spritzer's real error) otherwise —
+    // enough for `spriteUrl`'s wait-for-200 and the stop/start round trip.
+    const sm = path.match(/^\/s\/([^/]+)(?:\/.*)?$/);
+    if (sm) {
+      const id = decodeURIComponent(sm[1]);
+      const sprite = sprites.get(id);
+      if (!sprite || sprite.status === "destroyed") return send(404, { error: `no sprite ${id}` });
+      const serving = Object.values(sprite.services).find((s) => s.http_port !== undefined && s.state.status === "running");
+      if (serving) return send(200, { ok: true, service: serving.name });
+      res.writeHead(503, { "content-type": "application/json", "retry-after": "2" });
+      res.end(JSON.stringify({ error: `sprite ${id}: nothing is answering on its url port` }));
+      return;
     }
 
     // Filesystem API: /v1/sprites/{id}/fs/{read|write|list|delete}. read/write

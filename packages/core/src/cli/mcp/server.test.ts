@@ -1,10 +1,14 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { McpServer } from "./server";
+import { readFileSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { LexiconPlugin } from "../../lexicon";
 import type { Serializer } from "../../serializer";
+
+/** The version in `packages/core/package.json`, read here apart from the code under test. */
+const CORE_VERSION: string = JSON.parse(readFileSync(join(import.meta.dirname, "..", "..", "..", "package.json"), "utf-8")).version;
 
 function createMockPlugin(overrides?: Partial<LexiconPlugin>): LexiconPlugin {
   return {
@@ -51,7 +55,16 @@ describe("McpServer", () => {
       expect(result.protocolVersion).toBe("2026-07-28");
       expect(result.capabilities).toBeDefined();
       expect((result.serverInfo as Record<string, unknown>).name).toBe("chant");
-      expect((result.serverInfo as Record<string, unknown>).version).toBe("0.1.0");
+      expect((result.serverInfo as Record<string, unknown>).version).toBe(CORE_VERSION);
+    });
+
+    test("server info names the installed chant's version, from core's package.json (#2689)", async () => {
+      expect(CORE_VERSION).toMatch(/^\d+\.\d+\.\d+/);
+      expect(CORE_VERSION).not.toBe("0.1.0");
+      for (const params of [{}, { protocolVersion: "2024-11-05" }]) {
+        const response = await server.handleRequest({ jsonrpc: "2.0", id: 1, method: "initialize", params });
+        expect(((response.result as Record<string, unknown>).serverInfo as Record<string, unknown>).version).toBe(CORE_VERSION);
+      }
     });
 
     test("capabilities include tools and resources", async () => {
@@ -94,6 +107,20 @@ describe("McpServer", () => {
       const result = response!.result as Record<string, unknown>;
       expect(result.protocolVersion).toBe("2026-07-28");
     });
+
+    // Claude Code 2.1.274 asks for 2025-11-25 and accepts only these back.
+    for (const version of ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"]) {
+      test(`a Claude Code client asking for ${version} on initialize gets ${version} back`, async () => {
+        const response = await server.handleRequest({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: { protocolVersion: version, capabilities: {}, clientInfo: { name: "claude-code", version: "2.1.274" } },
+        });
+        expect(response.error).toBeUndefined();
+        expect((response.result as Record<string, unknown>).protocolVersion).toBe(version);
+      });
+    }
 
     test("an unrecognized requested version falls back to the latest supported", async () => {
       const response = await server.handleRequest({
@@ -775,6 +802,142 @@ describe("McpServer", () => {
       const parsed = JSON.parse((response.result as { content: Array<{ text: string }> }).content[0].text);
       expect(parsed.total).toBe(30);
       expect(parsed.results.length).toBe(5);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Composite catalog (#2662)
+  // -----------------------------------------------------------------------
+
+  describe("composite catalog", () => {
+    const awsLike = createMockPlugin({
+      name: "aws",
+      composites: () => [
+        {
+          name: "LambdaSqs",
+          lexicon: "aws",
+          description: "A Lambda function fed by an SQS queue through an event source mapping.",
+          bundles: ["EventSourceMapping", "Function", "Queue", "Role"],
+          params: [{ name: "queueName", type: "Value<string>", required: false }],
+        },
+        {
+          name: "VpcDefault",
+          lexicon: "aws",
+          description: "A VPC with public and private subnets.",
+          bundles: ["Subnet", "Vpc"],
+          params: [{ name: "cidr", type: "string", required: false }],
+        },
+      ],
+      mcpResources: () => [
+        {
+          uri: "resource-catalog",
+          name: "Catalog",
+          description: "Resource catalog",
+          mimeType: "application/json",
+          handler: async () => JSON.stringify([
+            { className: "Queue", resourceType: "AWS::SQS::Queue", kind: "resource" },
+          ]),
+        },
+      ],
+    });
+    const k8sLike = createMockPlugin({
+      name: "k8s",
+      composites: () => [
+        {
+          name: "WebApp",
+          lexicon: "k8s",
+          description: "A Deployment and Service.",
+          bundles: ["Deployment", "Service"],
+          params: [{ name: "image", type: "string", required: true }],
+        },
+      ],
+    });
+    const noComposites = createMockPlugin({ name: "cedar" });
+
+    async function call(s: McpServer, name: string, args: Record<string, unknown>) {
+      const response = await s.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name, arguments: args },
+      });
+      return JSON.parse((response.result as { content: Array<{ text: string }> }).content[0].text);
+    }
+
+    test("the composites tool answers what a lexicon has, with bundles and params", async () => {
+      const s = new McpServer([awsLike, k8sLike, noComposites]);
+      const parsed = await call(s, "composites", { lexicon: "aws" });
+      expect(parsed.total).toBe(2);
+      expect(parsed.composites.map((c: { name: string }) => c.name)).toEqual(["LambdaSqs", "VpcDefault"]);
+      expect(parsed.composites[0].bundles).toContain("Queue");
+      expect(parsed.composites[0].params[0].name).toBe("queueName");
+      expect(parsed.lexicons).toEqual(["aws", "k8s", "cedar"]);
+    });
+
+    test("with no filter it lists every lexicon's composites; a lexicon with none adds nothing", async () => {
+      const s = new McpServer([awsLike, k8sLike, noComposites]);
+      const parsed = await call(s, "composites", {});
+      expect(parsed.total).toBe(3);
+      expect((await call(s, "composites", { lexicon: "cedar" })).total).toBe(0);
+    });
+
+    test("query matches a bundled kind, and a name match ranks first", async () => {
+      const s = new McpServer([awsLike, k8sLike]);
+      const byKind = await call(s, "composites", { query: "queue" });
+      expect(byKind.composites.map((c: { name: string }) => c.name)).toEqual(["LambdaSqs"]);
+      const byName = await call(s, "composites", { query: "vpc" });
+      expect(byName.composites[0].name).toBe("VpcDefault");
+      expect((await call(s, "composites", { limit: 1 })).composites).toHaveLength(1);
+    });
+
+    test("chant://composites lists the whole catalog", async () => {
+      const s = new McpServer([awsLike, k8sLike, noComposites]);
+      const list = await s.handleRequest({ jsonrpc: "2.0", id: 1, method: "resources/list" });
+      const uris = (list.result as { resources: Array<{ uri: string }> }).resources.map((r) => r.uri);
+      expect(uris).toContain("chant://composites");
+
+      const read = await s.handleRequest({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "resources/read",
+        params: { uri: "chant://composites" },
+      });
+      const contents = (read.result as { contents: Array<{ mimeType: string; text: string }> }).contents;
+      expect(contents[0].mimeType).toBe("application/json");
+      const catalog = JSON.parse(contents[0].text);
+      expect(catalog.map((c: { lexicon: string; name: string }) => `${c.lexicon}:${c.name}`)).toEqual([
+        "aws:LambdaSqs", "aws:VpcDefault", "k8s:WebApp",
+      ]);
+    });
+
+    test("chant://composites is an empty list with no plugins", async () => {
+      const read = await new McpServer().handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "resources/read",
+        params: { uri: "chant://composites" },
+      });
+      const contents = (read.result as { contents: Array<{ text: string }> }).contents;
+      expect(JSON.parse(contents[0].text)).toEqual([]);
+    });
+
+    test("search finds a resource type and the composite that bundles it", async () => {
+      const s = new McpServer([awsLike, k8sLike]);
+      const parsed = await call(s, "search", { query: "queue" });
+      expect(parsed.total).toBe(2);
+      const kinds = parsed.results.map((r: { kind: string }) => r.kind).sort();
+      expect(kinds).toEqual(["composite", "resource"]);
+      const composite = parsed.results.find((r: { kind: string }) => r.kind === "composite");
+      expect(composite).toMatchObject({ name: "LambdaSqs", lexicon: "aws", bundles: expect.arrayContaining(["Queue"]) });
+      expect(composite.params).toBeUndefined();
+    });
+
+    test("search's lexicon filter applies to composites too", async () => {
+      const s = new McpServer([awsLike, k8sLike]);
+      const parsed = await call(s, "search", { query: "deployment", lexicon: "aws" });
+      expect(parsed.total).toBe(0);
+      const k8s = await call(s, "search", { query: "deployment", lexicon: "k8s" });
+      expect(k8s.results.map((r: { name: string }) => r.name)).toEqual(["WebApp"]);
     });
   });
 
@@ -1466,23 +1629,23 @@ describe("McpServer", () => {
 
       const toolsRes = await s.handleRequest({ jsonrpc: "2.0", id: 2, method: "tools/list" });
       const tools = (toolsRes.result as { tools: Array<{ name: string }> }).tools;
-      expect(tools).toHaveLength(13);
+      expect(tools).toHaveLength(14);
       expect(tools.map((t) => t.name).sort()).toEqual([
-        "build", "explain", "import", "lifecycle-diff", "lifecycle-snapshot", "lint",
+        "build", "composites", "explain", "import", "lifecycle-diff", "lifecycle-snapshot", "lint",
         "op-approve", "op-list", "op-report", "op-run", "op-status",
         "scaffold", "search",
       ]);
 
       const resourcesRes = await s.handleRequest({ jsonrpc: "2.0", id: 3, method: "resources/list" });
       const resources = (resourcesRes.result as { resources: Array<{ uri: string }> }).resources;
-      expect(resources).toHaveLength(8);
+      expect(resources).toHaveLength(9);
     });
 
     test("server with empty plugins array works", async () => {
       const s = new McpServer([]);
       const toolsRes = await s.handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
       const tools = (toolsRes.result as { tools: Array<{ name: string }> }).tools;
-      expect(tools).toHaveLength(13);
+      expect(tools).toHaveLength(14);
     });
   });
 });

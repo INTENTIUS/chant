@@ -31,6 +31,7 @@ import { emitYAML } from "@intentius/chant/yaml";
 import { isDefaultLabels, isDefaultAnnotations, type DefaultLabels, type DefaultAnnotations } from "./default-labels";
 import { isRenderedManifestEntity } from "./manifest-entity";
 import { isEncryptedSecretFileEntity } from "./sops/entity";
+import { isRuleGroup, ruleGroupConfig } from "@intentius/chant-lexicon-prometheus";
 
 const require = createRequire(import.meta.url);
 
@@ -265,8 +266,15 @@ function k8sVisitor(entityNames: Map<Declarable, string>): SerializerVisitor {
 
   return {
     attrRef: (name, attr) => resolveK8sAttr(byName.get(name), name, attr),
-    resourceRef: (name) => name,
+    // A prometheus-lexicon RuleGroup (in a PrometheusRule's spec.groups) is
+    // data, not a reference: it renders as the same group the rule file
+    // holds, whether it was exported as its own entity or written inline.
+    resourceRef: (name) => {
+      const entity = byName.get(name);
+      return isRuleGroup(entity) ? ruleGroupConfig(entity) : name;
+    },
     propertyDeclarable: (entity, walk) => {
+      if (isRuleGroup(entity)) return ruleGroupConfig(entity);
       if (!isResourceDeclarable(entity) || typeof entity.props !== "object" || entity.props === null) {
         return undefined;
       }

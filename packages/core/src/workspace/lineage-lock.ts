@@ -4,8 +4,9 @@
  * The lock records where a project's files came from. It holds one lineage per
  * scope, keyed by the scope's directory relative to the lock's root:
  *
- * - a project made by `chant init --from <repo>@<ref>` or
- *   `chant init --template <name>` has one scope, `"."`;
+ * - a project made by `chant init --from <repo>@<ref>`,
+ *   `chant init --from <dir>` or `chant init --template <name>` has one
+ *   scope, `"."`;
  * - each `chant vendor` target is a scope of kind `vendor` (copied, no
  *   parameters), which replaces its entry in `vendor.json` (ws-038).
  *
@@ -27,6 +28,8 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, posix } from "node:path";
 import { z } from "zod";
+import { WorkspaceReadError } from "./declaration";
+import { classifyFile, declaredFilesFor, type DeclaredFiles } from "./generated-files";
 
 /** Where the lock lives, relative to the project (or workspace) root. */
 export const LOCK_FILE = ".chant/workspace.lock.json";
@@ -63,6 +66,12 @@ const LockFileEntrySchema = z
 const SourceSchema = z.discriminatedUnion("type", [
   /** A git repository at a ref, optionally one directory of it (`#<member>`). */
   z.object({ type: z.literal("git"), repo: z.string().min(1), url: z.string().min(1), path: z.string().optional() }).strict(),
+  /**
+   * A directory on disk (#2647): `path` as given when absolute, otherwise
+   * relative to the lock's directory, and `member` for `#<member>`. It has no
+   * history, so its address is the digest alone.
+   */
+  z.object({ type: z.literal("dir"), path: z.string().min(1), member: z.string().optional() }).strict(),
   /** A lexicon's `initTemplates`, as `chant init --lexicon <lexicon> --template <template>` renders them. */
   z.object({ type: z.literal("lexicon"), lexicon: z.string().min(1), template: z.string().min(1) }).strict(),
   /** `chant vendor` sources, unchanged from `vendor.json`. */
@@ -76,7 +85,8 @@ export type LineageSource = z.infer<typeof SourceSchema>;
  * `digest` is always present: the content hash of the file set as chant wrote
  * it (the same hash `vendor.json` called `checksum`). A git source adds the
  * commit and the tree of the scope's directory; a lexicon template adds the
- * package and chant versions that rendered it.
+ * package and chant versions that rendered it. A directory source has the
+ * digest only.
  */
 const AddressSchema = z
   .object({
@@ -110,6 +120,49 @@ const ManualStepSchema = z
   .strict();
 export type ManualStep = z.infer<typeof ManualStepSchema>;
 
+const CommitId = z.string().regex(/^[0-9a-f]{40,64}$/);
+
+/**
+ * How a scope got its lineage from `chant workspace adopt-lineage` (#2551, D5,
+ * D9, requirement P7), rather than from `chant init`.
+ *
+ * - `by: "files"`: the scope had no lineage. Its files were matched against
+ *   the template's versions, and the history before the lock is vouched for
+ *   by an exact commit range, `commits.to` and every commit before it. The
+ *   range is the one `.chant/trust.json` lists under `adopted`; once that
+ *   entry is at the base revision, an admin has admitted it, and the scope
+ *   reads as provenance `adopted` (D5). Until then it reads as `unattested`.
+ * - `by: "lineage"`: the scope had a directory lineage (#2647), and it was
+ *   moved onto a git source whose files at the chosen ref reproduce every hash
+ *   the lock recorded. The merge base is unchanged, so no history needs
+ *   vouching for, and `previous` keeps the source it replaced.
+ */
+const AdoptionSchema = z
+  .object({
+    by: z.enum(["files", "lineage"]),
+    /** HEAD when the scope was adopted: the range `.chant/trust.json` admits ends here. */
+    commits: z.object({ to: CommitId }).strict(),
+    /** How the chosen version held up against the scope. */
+    match: z
+      .object({
+        /** Files the template has at that version. */
+        files: z.number().int().nonnegative(),
+        /** Of those, the ones the scope holds (or the lock recorded) byte for byte. */
+        identical: z.number().int().nonnegative(),
+        /** The ones it holds with other content: edited since. */
+        edited: z.number().int().nonnegative(),
+        /** The ones it does not hold. */
+        missing: z.number().int().nonnegative(),
+      })
+      .strict(),
+    /** Where the hash index came from: computed from the template, or a cached copy chant re-checked at the chosen version. */
+    index: z.enum(["computed", "cache"]),
+    /** For `by: "lineage"`: the template and source the lineage had before. */
+    previous: z.object({ template: z.string().min(1), source: SourceSchema }).strict().optional(),
+  })
+  .strict();
+export type Adoption = z.infer<typeof AdoptionSchema>;
+
 const LineageSchema = z
   .object({
     kind: z.enum(["template", "vendor"]),
@@ -123,11 +176,26 @@ const LineageSchema = z
     address: AddressSchema.nullable(),
     /** The parameter values the template was instantiated with. Always empty for vendor scopes. */
     parameters: z.record(z.string(), z.unknown()),
+    /**
+     * The parameters the template marks `hostBound` (#2524 D9, #2552), each
+     * with the files, relative to the scope, whose template text carries its
+     * placeholder. `chant workspace export` switches their values for the
+     * export, and `import` switches them back. Absent when the template has none.
+     */
+    hostBound: z.record(z.string(), z.array(z.string().min(1))).optional(),
+    /**
+     * Records whose evidence pins were re-pinned to the substituted content
+     * of a parameterised file (#2549): each record's path in the scope, and the
+     * pinned paths. An upgrade re-pins the base and the target the same way.
+     */
+    repinned: z.array(z.object({ record: z.string().min(1), paths: z.array(z.string().min(1)) }).strict()).optional(),
     /** Migrations applied since instantiation (#2550). */
     migrations: z.array(z.string()),
     /** Per file, relative to the scope directory, in sorted order. */
     files: z.record(z.string(), LockFileEntrySchema),
     manualSteps: z.array(ManualStepSchema),
+    /** Present when the lineage was adopted rather than written at init (#2551). */
+    adoption: AdoptionSchema.optional(),
   })
   .strict();
 export type Lineage = z.infer<typeof LineageSchema>;
@@ -197,9 +265,14 @@ export function emptyLock(): LineageLock {
 export function readLock(root: string): LineageLock | null {
   const path = lockPath(root);
   if (!existsSync(path)) return null;
+  return parseLock(readFileSync(path, "utf-8"));
+}
+
+/** Validate a lock's text, such as one read from a revision (`chant workspace check --at`, #2536). */
+export function parseLock(text: string): LineageLock {
   let raw: unknown;
   try {
-    raw = JSON.parse(readFileSync(path, "utf-8"));
+    raw = JSON.parse(text);
   } catch (err) {
     throw new LockError(`${LOCK_FILE} is not valid JSON: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -234,9 +307,12 @@ function canonical(lock: LineageLock): LineageLock {
       ...(s.ref !== undefined ? { ref: s.ref } : {}),
       address: s.address,
       parameters: s.parameters,
+      ...(s.hostBound !== undefined ? { hostBound: Object.fromEntries(Object.keys(s.hostBound).sort().map((k) => [k, [...s.hostBound![k]].sort()])) } : {}),
+      ...(s.repinned !== undefined ? { repinned: s.repinned } : {}),
       migrations: s.migrations,
       files,
       manualSteps: [...s.manualSteps].sort((a, b) => a.path.localeCompare(b.path)),
+      ...(s.adoption !== undefined ? { adoption: s.adoption } : {}),
     };
   }
   return { lockVersion: lock.lockVersion, scopes };
@@ -257,21 +333,38 @@ export function writeLock(root: string, lock: LineageLock): void {
 // ── Building a lineage ───────────────────────────────────────────────────────
 
 /**
- * The class a file gets when no template says otherwise (D14): skills that
- * `chant update` rewrites are generated, `.mcp.json` is a seed, the rest is
- * owned.
+ * The class a file gets (D14), from the same list the drift check reads
+ * (`generated-files.ts`): a member's declared generated files, passed as
+ * `declared`, then the implicit rules. Skills that `chant update` rewrites
+ * are generated, `.mcp.json` is a seed, a hand-written entry and the rest are
+ * owned. `.chant/types/` is ignored, and {@link fileEntries} leaves it out.
  */
-export function defaultFileClass(path: string): { class: FileClass; command?: string } {
-  if (/^skills\/[^/]+\/SKILL\.md$/.test(path)) return { class: "generated", command: "chant update" };
-  if (path === ".mcp.json") return { class: "seed" };
-  return { class: "owned" };
+export function defaultFileClass(path: string, declared?: DeclaredFiles): { class: FileClass; command?: string } {
+  const c = classifyFile(path, declared);
+  if (c.class === "generated") return { class: "generated", command: c.command };
+  return { class: c.class === "ignored" ? "owned" : c.class };
 }
 
-/** Per-file entries for a file set, each with its default class. */
-export function fileEntries(files: Map<string, Buffer>): Lineage["files"] {
+/**
+ * The declared generated files for the scope directory `absDir`, from the
+ * workspace declaration above it, if any (#2541). A declaration that can't
+ * be read is a {@link LockError}, never an empty list.
+ */
+export function declaredFilesAt(absDir: string): DeclaredFiles {
+  try {
+    return declaredFilesFor(absDir);
+  } catch (err) {
+    if (err instanceof WorkspaceReadError) throw new LockError(`${err.code}: ${err.describe()}`);
+    throw err;
+  }
+}
+
+/** Per-file entries for a file set, each with its default class. Ignored paths (`.chant/types/`) are left out. */
+export function fileEntries(files: Map<string, Buffer>, declared?: DeclaredFiles): Lineage["files"] {
   const out: Lineage["files"] = {};
   for (const path of [...files.keys()].sort()) {
-    out[path] = { ...defaultFileClass(path), sha256: fileHash(files.get(path)!) };
+    if (classifyFile(path, declared).class === "ignored") continue;
+    out[path] = { ...defaultFileClass(path, declared), sha256: fileHash(files.get(path)!) };
   }
   return out;
 }

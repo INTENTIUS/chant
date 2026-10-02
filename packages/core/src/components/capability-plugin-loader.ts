@@ -22,7 +22,7 @@
  */
 
 import { CapabilityRegistry } from "./capability";
-import { lexiconModulePath } from "../lexicon-module";
+import { lexiconModulePath, importLexiconPackage } from "../lexicon-module";
 import type { CapabilityPlugin } from "./capability-plugin";
 import { isCapabilityPlugin } from "./capability-plugin";
 import { starterCapabilityPlugin } from "./starter-plugin";
@@ -62,7 +62,7 @@ export async function loadCapabilityPlugin(name: string): Promise<CapabilityPlug
   const packageName = `@intentius/chant-capability-${name}`;
   let mod: Record<string, unknown>;
   try {
-    mod = (await import(packageName)) as Record<string, unknown>;
+    mod = (await importLexiconPackage(packageName)) as Record<string, unknown>;
   } catch (err) {
     throw new Error(
       `capability plugin package "${packageName}" could not be loaded: ${err instanceof Error ? err.message : String(err)}`,
@@ -118,7 +118,7 @@ export async function loadCapabilityPluginFromLexicon(name: string): Promise<Cap
   const packageName = lexiconModulePath(name) ?? `@intentius/chant-lexicon-${name}`;
   let mod: Record<string, unknown>;
   try {
-    mod = (await import(packageName)) as Record<string, unknown>;
+    mod = (await importLexiconPackage(packageName)) as Record<string, unknown>;
   } catch {
     return null; // lexicon not installed / not resolvable here — nothing to contribute.
   }

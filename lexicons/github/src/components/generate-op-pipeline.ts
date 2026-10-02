@@ -70,8 +70,8 @@
  * that job either, same as `environment:` above does not).
  */
 
-import { emitYAML } from "@intentius/chant/yaml";
-import { resolveOpTrigger } from "@intentius/chant/lexicon";
+import { emitYAML, emitYAMLEntry } from "@intentius/chant/yaml";
+import { memberPathFilter, resolveOpTrigger } from "@intentius/chant/lexicon";
 import type {
   ComponentPipelineOptions as GenerateGithubOpOptions,
   OpEnvironment,
@@ -80,6 +80,7 @@ import type {
   OpPipelineResult as GenerateGithubOpResult,
   OpSetupStep,
   OpTrigger,
+  PipelineMember,
   ScheduledOpSpec,
 } from "@intentius/chant/lexicon";
 import { actionRef } from "../action-pins";
@@ -765,7 +766,49 @@ export function buildGithubOpPipelineDocs(
     files.push({ name: `${spec.name}.yml`, doc });
   }
 
+  if (options.member) {
+    const member = options.member;
+    return { files: files.map((f) => scopeOpFileToMember(f, member)), jobs };
+  }
   return { files, jobs };
+}
+
+/**
+ * Scope one Op's workflow to a workspace member (#2542, #2524 D19). The file
+ * and the workflow take the member's name (`<member>-<op>.yml`, `<member>/<op>`)
+ * and so does the concurrency group, which GitHub keys across the whole
+ * repository. A `push` or `pull_request` trigger is filtered to the member's
+ * paths and this file; a cron trigger has no paths to filter. The Op's own
+ * job starts its `run:` steps in the member's directory. The gate-notice job
+ * checks nothing out and keeps the default.
+ */
+function scopeOpFileToMember(file: GithubOpPipelineFile, member: PipelineMember): GithubOpPipelineFile {
+  const name = `${member.name}-${file.name}`;
+  const paths = memberPathFilter(member, member.fileDir ? `${member.fileDir}/${name}` : undefined);
+  const on: Record<string, unknown> = { ...file.doc.on };
+  for (const event of ["push", "pull_request"]) {
+    if (event in on) on[event] = { ...(on[event] as Record<string, unknown>), paths };
+  }
+  const rooted = member.dir === "." || member.dir === "";
+  const jobsDoc = rooted
+    ? file.doc.jobsDoc
+    : Object.fromEntries(
+        Object.entries(file.doc.jobsDoc).map(([job, props]) => {
+          const { steps, ...rest } = props as Record<string, unknown>;
+          return [job, { ...rest, defaults: { run: { "working-directory": member.dir } }, steps }];
+        }),
+      );
+  const group = (file.doc.concurrency as { group?: unknown }).group;
+  return {
+    name,
+    doc: {
+      ...file.doc,
+      ...(file.doc.name ? { name: `${member.name}/${file.doc.name}` } : {}),
+      on,
+      concurrency: { ...file.doc.concurrency, ...(typeof group === "string" ? { group: `${member.name}-${group}` } : {}) },
+      jobsDoc,
+    },
+  };
 }
 
 /**
@@ -780,14 +823,14 @@ export function emitOpPipelineYAML(doc: GithubOpPipelineDoc): string {
   // it was before the field existed.
   if (doc.header && doc.header.length > 0) sections.push(doc.header.join("\n"));
   if (doc.name) sections.push("name: " + emitYAML(doc.name, 0));
-  sections.push("on:" + emitYAML(doc.on, 1));
-  if (doc.env && Object.keys(doc.env).length > 0) sections.push("env:" + emitYAML(doc.env, 1));
-  sections.push("concurrency:" + emitYAML(doc.concurrency, 1));
-  if (Object.keys(doc.permissions).length > 0) sections.push("permissions:" + emitYAML(doc.permissions, 1));
+  sections.push(emitYAMLEntry("on", doc.on));
+  if (doc.env && Object.keys(doc.env).length > 0) sections.push(emitYAMLEntry("env", doc.env));
+  sections.push(emitYAMLEntry("concurrency", doc.concurrency));
+  if (Object.keys(doc.permissions).length > 0) sections.push(emitYAMLEntry("permissions", doc.permissions));
   // The gated-apply notice job rides in `jobs:` beside the Op's own job, but
   // is carried separately on the doc so a dialect that cannot run it (forgejo,
   // whose runner has no `gh` pointed at its own instance) drops it by omission.
-  sections.push("jobs:" + emitYAML({ ...doc.jobsDoc, ...(doc.gatedNoticeDoc ?? {}) }, 1));
+  sections.push(emitYAMLEntry("jobs", { ...doc.jobsDoc, ...(doc.gatedNoticeDoc ?? {}) }));
   return sections.join("\n\n") + "\n";
 }
 

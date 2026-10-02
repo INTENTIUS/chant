@@ -1,0 +1,7 @@
+{
+  "name": "app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The reader conformance workspace's product: the handler of a small web app."
+}

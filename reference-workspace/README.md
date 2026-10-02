@@ -4,31 +4,90 @@ A small product built as a chant workspace: an app, the chant project that deliv
 
 It lives in the chant repo rather than in a repo of its own, for two reasons. Each phase of the workspace work lands its change here in the same pull request as the feature. And chant's CI tests it against the commit under test, not against a released chant, so a change that breaks it fails before it merges.
 
-Today it is at level 0. There is no `chant.workspace.json`, only [`chant.workspace.draft.json`](chant.workspace.draft.json), which nothing reads. The declaration arrives with [#2534](https://github.com/INTENTIUS/chant/issues/2534).
+It exercises levels 1 to 4 of the workspace work ([#2525](https://github.com/INTENTIUS/chant/issues/2525)). Levels 1 and 2 are in the fixture's own files. Levels 3 and 4 are things a workspace does with git and with a copy of itself, so they run in tests, on copies:
+
+| Level | What it covers | Where it is exercised |
+|---|---|---|
+| 1, declaration | members, kinds, roles, links, `workspace ls`, `check`, `graph`, the read contract | the files here: [`chant.workspace.json`](chant.workspace.json) and the four members. Tested by `test/reference-workspace.test.ts` |
+| 2, records | decision, work, answer, lesson, constraint, preference and session kinds, hash pins, `spec: true`, `closed_digest` seals, supersession, `check --live`, write scope and agent sessions | the files here: [`decisions/`](decisions), [`work/`](work), [`answers/`](answers), [`lessons/`](lessons), [`constraints/`](constraints), [`preferences/`](preferences), [`design/sessions/`](design/sessions) and the `writeScope` and `agents` of the declaration. Tested by `test/reference-workspace.test.ts`, and the triage flow by `test/reference-workspace-triage.e2e.test.ts` |
+| 3, signing | an attestor and a signers file: sealed verdicts, `verify` on a policy change signed and unsigned, signer rotation | not in the fixture's files. `test/reference-workspace-signing.e2e.test.ts` copies the fixture with `chant init --from` into a throwaway git repository, makes ed25519 keys with `ssh-keygen`, writes `.chant/allowed_signers` in the copy and runs the real CLI |
+| 4, lineage | the lock from `init --from`, `--param` and re-pinning, member scopes and `upgrade`, nesting in the chant repo's workspace, `export` and `import` | `chant init --from` on this directory, and the nested declaration in the chant repo's [`chant.workspace.json`](../chant.workspace.json). Tested by `test/reference-workspace.test.ts`, on copies |
+
+The fixture carries no `.chant/allowed_signers`, and that is deliberate. A signers file is a policy, and a copy made with `chant init --from` would inherit it, along with a key whose private half nobody holds. A test that needs signers makes its own keys and writes the file in its copy, and no private key is committed. Without a policy here, the fixture's records are read as `unattested` under a plain checkout, and under the enclosing chant repo's policy when read from inside it.
+
+The declaration's four members, listed by `chant workspace ls`:
+
+```sh
+cd reference-workspace
+chant workspace ls
+```
+
+The chant repo's own [`chant.workspace.json`](../chant.workspace.json) lists this directory as a member of kind `workspace`, a nested workspace. The outer one never writes inside it, and `chant workspace graph` at the chant root reads it only through this workspace's own `chant workspace graph`, with ids such as `reference-workspace/delivery/appService` (#2551).
 
 ## Members
 
 | Member | Directory | Kind | What it is |
 |---|---|---|---|
 | app | [`app/`](app) | `other` | a Node HTTP server with no dependencies, its own Dockerfile and one test. No app kind exists yet ([#2535](https://github.com/INTENTIUS/chant/issues/2535)) |
-| delivery | [`delivery/`](delivery) | `chant` | a chant project on the docker lexicon. `chant build` writes a Compose file that builds the app's image from `app/Dockerfile` and runs it |
-| design-client | [`design-client/`](design-client) | `other`, role `design-app` | a placeholder for a hud client with its own lineage. No hud client package is published to vendor yet |
-| design | [`design/`](design) | `other` | the design data member: a screen spec and a wireframe for the app's home page |
+| delivery | [`delivery/`](delivery) | `chant` | a chant project on the docker lexicon. It declares the app with the `DockerWebService` composite, and `chant build` writes a Compose file that builds the app's image from `app/Dockerfile` and runs it. Its `app` component deploys that composite |
+| design-client | [`design-client/`](design-client) | `other`, role `design-app` | a placeholder directory. It holds no hud client and has no lineage of its own, because no hud client package is published to vendor yet |
+| design | [`design/`](design) | `design` | the design data: a screen spec and a wireframe for the app's home page. It is the data member of D18 ([#2549](https://github.com/INTENTIUS/chant/issues/2549), [ws-062](../docs/design/decisions/ws-062-live-links-and-design-kind.md)): chant reads its files, for the hash pins of decisions and for `graph --intent`, and builds nothing |
 
-The app does not embed the design client, so it declares no `depends-on` link to it (D18).
+The app does not embed the design client, so it declares no `depends-on` link to it (D18). Delivery builds the app's image from `../app`, and that build-context path is its only link to the app until member links land ([#2539](https://github.com/INTENTIUS/chant/issues/2539)). The design client has a lineage of its own: once there is a client to vendor, `design-client/` holds a lock of its own, and `chant workspace upgrade design-client` runs from that directory and writes only inside it. `test/reference-workspace.test.ts` makes such a member in a copy and checks that the upgrade resolves to it.
 
-The root holds this README and [`decisions/`](decisions), the workspace's own decision records in the format of [`docs/design/decisions/`](../docs/design/decisions/README.md), with ids `ref-001` onwards. The kind file and schema beside them are copies of chant's, so a workspace made from this one can read them on its own:
+The root also holds [`chant.template.json`](chant.template.json), the template manifest for `chant init --from` ([#2627](https://github.com/INTENTIUS/chant/issues/2627)). It declares one parameter, `name`, with the default `Reference app`. In this directory the files it lists carry the placeholder `{{chant:name}}`, so the app run from here shows that text as its title. A copy made with `chant init --from` shows the value.
+
+The declaration has an empty `pins` list. Nothing here loads a kind plugin yet, so there is nothing to pin until kinds come from plugins ([#2535](https://github.com/INTENTIUS/chant/issues/2535)).
+
+The root holds the declaration, this README and [`decisions/`](decisions), the workspace's own decision records in the format of [`docs/design/decisions/`](../docs/design/decisions/README.md), with ids `ref-001` onwards. The kind file and schema beside them are copies of chant's, so a workspace made from this one can read them on its own:
 
 ```sh
 cd reference-workspace
 chant workspace records --kind decisions/decision.kind.mjs --current
 ```
 
+[`work/`](work) holds the workspace's work items ([#2683](https://github.com/INTENTIUS/chant/issues/2683)), with the work kind and its schema beside them. `W-001` implements `ref-002` and is in progress, and `W-002` needs `W-001`, so `records` reads it as blocked. The declaration names the work kind beside the decision kind, so `graph --intent` reads both without `--kind`:
+
+```sh
+cd reference-workspace
+chant workspace records --kind work/work.kind.mjs --json
+chant workspace graph --intent design/screens/home.json
+```
+
+[`decisions/points.json`](decisions/points.json) declares the workspace's decision points ([ws-058](../docs/design/decisions/ws-058-decision-points.md)): `finding-triage` and `needs-a-decision` over what `graph --intent` reports, `slice-tier` for a work item's builder tier, and `ship-skip`, taken from chud. Their answers are records in [`answers/`](answers), and `chant workspace points --open` lists the ones waiting on a person:
+
+```sh
+cd reference-workspace
+chant workspace points --open --json
+```
+
+A work item a model or an agent suggests opens `proposed`, with its proposer in `proposed_by`, until a person opens it or drops it.
+
+[`lessons/`](lessons), [`constraints/`](constraints) and [`preferences/`](preferences) hold what a box learns and stands by without weighing options, so it stops living only in a decision's prose ([#2771](https://github.com/INTENTIUS/chant/issues/2771)). A lesson names a situation and what was learned, with `derived_from` naming where it came from. A constraint states a rule, and its `constrains` joins `graph --intent` the way a decision's does. A preference states a default a person or team chose, and a decision may override it without withdrawing it. The declaration names all three beside the decision, work and answer kinds:
+
+```sh
+cd reference-workspace
+chant workspace records --kind lessons/lesson.kind.mjs --json
+chant workspace records --kind constraints/constraint.kind.mjs --json
+```
+
+[`skills/record-decisions/`](skills/record-decisions) and
+[`docs/record-decisions.md`](docs/record-decisions.md) are a harness-neutral
+way to write decision records by hand from a session, before anything
+harvests them automatically ([#2709](https://github.com/INTENTIUS/chant/issues/2709)).
+The skill is plain Markdown with the frontmatter Claude Code, Codex, Gemini
+CLI and opencode all read; the doc is the same ask as one prompt, for a
+harness with no skill mechanism. Both walk the same loop: list what the
+session decided, check it against `chant workspace records --current --json`
+for duplicates and contests, show the list, and write only what's kept with
+`chant workspace records new`. See [Recording Decisions by Hand](https://intentius.io/chant/guide/recording-decisions-by-hand/)
+for the loop end to end.
+
 ## What switches on here, and when
 
 | Issue | What it adds to this workspace |
 |---|---|
-| [#2534](https://github.com/INTENTIUS/chant/issues/2534) | the draft becomes a real `chant.workspace.json`; `chant workspace ls` lists the members |
+| [#2534](https://github.com/INTENTIUS/chant/issues/2534) | landed: `chant.workspace.json` declares the members, and `chant workspace ls` lists them |
 | [#2535](https://github.com/INTENTIUS/chant/issues/2535) | kinds are checked; `other` members need `because`, and an app kind can replace `other` for the app |
 | [#2536](https://github.com/INTENTIUS/chant/issues/2536) | the read contract and its output schemas are tested against this workspace |
 | [#2537](https://github.com/INTENTIUS/chant/issues/2537) | `chant workspace build`, `lint`, `audit` and `graph` run per member |
@@ -36,29 +95,46 @@ chant workspace records --kind decisions/decision.kind.mjs --current
 | [#2539](https://github.com/INTENTIUS/chant/issues/2539) | delivery states its link to the app instead of a build-context path |
 | [#2540](https://github.com/INTENTIUS/chant/issues/2540) | landed: `chant init --from INTENTIUS/chant@<tag>#reference-workspace` copies this directory and writes `.chant/workspace.lock.json`. The design client gets a lineage scope of its own once there is a client to vendor |
 | [#2542](https://github.com/INTENTIUS/chant/issues/2542) | per-member CI pipelines with path filters |
-| [#2546](https://github.com/INTENTIUS/chant/issues/2546) | the decisions become sealed records, read by the spec query |
-| [#2549](https://github.com/INTENTIUS/chant/issues/2549) | records link to `design/` by anchor and pin its files' hashes |
-| [#2550](https://github.com/INTENTIUS/chant/issues/2550) | `chant workspace upgrade` from an older tag of this workspace |
+| [#2546](https://github.com/INTENTIUS/chant/issues/2546) | shipped: the decision kind is marked `spec: true`, so `chant workspace records --current --json` lists the current decisions under `spec`, with `ref-002`'s pin on the design member's `design/screens/home.json`. A decision that becomes `ratified` gets its whole-file seal in `closed_digest`, and the closed session `S-0001` was sealed again by the same rule (ws-063) |
+| [#2549](https://github.com/INTENTIUS/chant/issues/2549) | partly landed: `ref-002` pins `design/screens/home.json` by hash, and `chant workspace records` reports an edit to it as drift. The design member has kind `design`, and `chant workspace check --live --env <env>` resolves declared links against the live graph. The fixture has no deployed environment, so it declares no link for it to resolve. Only the disagreement lint, which waits on [#1939](https://github.com/INTENTIUS/chant/issues/1939), is left |
+| [#2550](https://github.com/INTENTIUS/chant/issues/2550) | landed: `chant workspace upgrade` from an older tag of this workspace |
+| [#2627](https://github.com/INTENTIUS/chant/issues/2627) | landed: [`chant.template.json`](chant.template.json) declares a `name` parameter, the app's display name. `chant init --from ... --param name="Untitled app"` puts it in the home page and the screen spec, and the lock records it |
+| [#2683](https://github.com/INTENTIUS/chant/issues/2683) | landed: [`work/`](work) holds two work items read through `work/work.kind.mjs`. `W-001` implements `ref-002`, and `W-002` needs `W-001`. `chant workspace records` gives each one `ready` and `blockedBy`, and `graph --intent` shows them beside the decisions |
+| [#2662](https://github.com/INTENTIUS/chant/issues/2662) | landed: delivery declares the app as a `DockerWebService` composite instance, and [`delivery/src/app.component.ts`](delivery/src/app.component.ts) is the component that deploys it, naming that kind in `composites`. `chant workspace graph --composites` lists the instance `delivery/app` with the component, matched in the same member. Compose names the service `appService` |
+| [#2559](https://github.com/INTENTIUS/chant/issues/2559) | delivery declares a collector in [`delivery/src/collector.ts`](delivery/src/collector.ts) through the otel lexicon: an OTLP receiver, a memory limiter and batch processor, and an `otlphttp` exporter on a traces pipeline. `chant workspace graph` lists its pipeline and the exporter's endpoint in `collectors`. `npm run build:collector` writes the collector YAML |
+| [#2558](https://github.com/INTENTIUS/chant/issues/2558) | delivery's Compose service carries `OTEL_SERVICE_NAME` and `OTEL_RESOURCE_ATTRIBUTES` (`chant.workspace`, `chant.member`, `chant.decl`), stamped by the docker lexicon. The `app` member declares a `telemetry` link to delivery's `traces` pipeline with protocol `http/protobuf`, and `chant workspace graph` resolves it. The service is declared in delivery, so its spans name delivery as the member while the link is stated on `app`, the member whose code runs in it |
+| [#2741](https://github.com/INTENTIUS/chant/issues/2741) | landed: [`decisions/points.json`](decisions/points.json) declares `finding-triage`, `needs-a-decision`, `slice-tier` and `ship-skip`, and the work kind gains a `proposed` first state with `proposed_by`. The studio smoke claim for the same flow belongs to arugula-salad/studio |
+| [#2709](https://github.com/INTENTIUS/chant/issues/2709) | landed: [`skills/record-decisions/SKILL.md`](skills/record-decisions/SKILL.md) and [`docs/record-decisions.md`](docs/record-decisions.md), a harness-neutral way to propose decision records by hand from a session. Names `chant workspace records new` (or the `records-new` MCP tool from #2707, once it exists); the `source` provenance block from #2708 is filled in once that lands |
+| [#2548](https://github.com/INTENTIUS/chant/issues/2548) | shipped: the declaration names two agent sessions, `app` bound to the app member and `design` bound to the design member, and a `writeScope` that lets an agent propose and review decisions, write work items, propose lessons and give verdicts in a review session, and nothing else of the record kinds. With `CHANT_AGENT=app`, `chant workspace records` writes outside that are refused, and `chant workspace agent app` prints what the session reloads from: its member, its scope and the spec. A commit with a `Chant-Agent: app` trailer that writes outside `app/` fails `chant workspace check --changes` |
+| [#2552](https://github.com/INTENTIUS/chant/issues/2552) | `chant workspace export` writes members that set `travel` into a member with the role `export`, and `chant workspace import` brings the copy back per file. The fixture declares neither, because an older chant refuses the `travel` key and an export member would be a fifth member. `test/reference-workspace.test.ts` sets them in a copy made with `chant init --from`, exports `app` and `design` with the decision and other record directories, checks that only the export member changed and that the export reads its own decisions, then imports an edit made there |
+| [#2771](https://github.com/INTENTIUS/chant/issues/2771) | landed: [`lessons/`](lessons), [`constraints/`](constraints) and [`preferences/`](preferences), three more reference kinds beside the decision, work and answer kinds, one example record each |
 
 ## Tests
 
-[`test/reference-workspace.test.ts`](../test/reference-workspace.test.ts) runs in chant's test job. It checks that the draft's members are on disk and no live declaration is, runs the app's test, builds and lints delivery with no findings, validates the decision files against chant's schema and reads them with `chant workspace records`. It also runs `chant init --from` on this directory at `HEAD` and checks that the copy has a lock and reads its own decisions. The copy is not a working workspace until the declaration lands (#2534), and the workspace commands and their contract tests join the test as their issues land.
+[`test/reference-workspace.test.ts`](../test/reference-workspace.test.ts) runs in chant's unit test shards. It validates the declaration against chant's declaration schema, checks that its members are on disk, runs `chant workspace ls --json` and `chant workspace check` from the commit under test, runs the app's test, builds and lints delivery with no findings, runs `chant workspace graph --composites` and checks the app's row, runs `chant workspace graph` and checks delivery's collector pipeline and exporter endpoint, the app's telemetry link and delivery's span attributes, validates the decision files against chant's schema and reads them with `chant workspace records`, and validates and reads the work items the same way. It validates the decision points. [`test/reference-workspace-triage.e2e.test.ts`](../test/reference-workspace-triage.e2e.test.ts), in chant's `test-e2e` job, walks a finding on a copy from `graph --intent` through the `decide` activity and a stub backend to a proposed work item that a person keeps. [`test/reference-workspace-signing.e2e.test.ts`](../test/reference-workspace-signing.e2e.test.ts), also in `test-e2e`, covers level 3 on a copy with throwaway keys: a verdict sealed with `records review --sign` counts as attested, an unsigned one and one sealed by an unlisted key do not, `chant workspace verify` fails a change to `.chant/allowed_signers` that is unsigned or has no rotation, and passes one with a rotation made by `workspace signers rotate` and `signers sign` ([ws-069](../docs/design/decisions/ws-069-signer-rotation-runner-keys.md)). The first file also runs `chant init --from` on this directory at `HEAD` and checks that the copy is a working workspace: it has a lock, reads its own decisions, lists the same four members with `chant workspace ls`, and passes `chant workspace check`, and that the copy carries the record-decisions skill and prompt, whose example record validates against the decision schema. The per-member workspace commands and their contract tests join the test as their issues land (#2537, #2536).
 
 ## Ownership and support
 
 | | |
 |---|---|
 | Owner | the chant maintainers, [INTENTIUS/chant](https://github.com/INTENTIUS/chant). Changes go through chant's own pull requests |
-| Tags | `reference-workspace-v<minor>` on the chant repo, one per chant minor release, on the same commit as `chant-v<minor>.0`. The first is `reference-workspace-v0.80` |
-| Chant floor | 0.80.0 |
+| Tags | `reference-workspace-v<major>.<minor>` on the chant repo, one per chant minor release, on the same commit as `chant-v<minor>.0`. `just release` cuts it with the chant tag on every minor or major release and pushes both together, and a patch release cuts none ([scripts/release-lib.sh](../scripts/release-lib.sh)). The tags for 0.81 to 0.100 were cut by hand from the `chant-v<minor>.0` commits |
+| Chant floor | 0.101.0 |
 | Upgrade range | a workspace made from any tag of the last three chant minors upgrades to the current one |
 
-The floor is 0.80.0 because that is the first release with `chant workspace records`, which the decision files here are read with ([#2572](https://github.com/INTENTIUS/chant/pull/2572), [#2573](https://github.com/INTENTIUS/chant/pull/2573), merged after 0.79.0). The delivery member alone builds on older releases, but the fixture is only ever tested as a whole. The floor moves up when a phase lands a feature here that an older chant does not have, and the tag for that minor says so below.
+The floor is 0.101.0 because the declaration's `design` member has kind `design`, which an older chant lists with `unknown-kind`. The declaration sets no `minReader`, because the chant under test is 0.100.0 until the 0.101 release. Before that it was 0.94.0, because the declaration's `app` member names its intent with `box.intent` and a work item's source can be a person's ask, both read from 0.94.0 ([#2850](https://github.com/INTENTIUS/chant/issues/2850), [#2851](https://github.com/INTENTIUS/chant/issues/2851)); an older chant rejects the declaration's `box` key. Before that it was 0.85.0, because delivery declares the app with the docker lexicon's `DockerWebService` composite and `graph --composites` reads it ([#2662](https://github.com/INTENTIUS/chant/issues/2662)), neither of which is in 0.84.0. Before that it was 0.81.0, because the declaration needs `chant workspace ls` and the declaration reader ([#2593](https://github.com/INTENTIUS/chant/pull/2593)), merged after 0.80.0. The decision files need `chant workspace records`, which is in 0.80.0 ([#2572](https://github.com/INTENTIUS/chant/pull/2572), [#2573](https://github.com/INTENTIUS/chant/pull/2573)), and the delivery member alone builds on older releases, but the fixture is only ever tested as a whole. The floor moves up when a phase lands a feature here that an older chant does not have, and the tag for that minor says so below.
 
-Until `chant workspace upgrade` exists (#2550), no command performs an upgrade. Within the range, the promise is that each change between two tags is listed below with any manual step it needs, so a workspace made from an older tag can be brought forward by hand from `git diff reference-workspace-v<old> reference-workspace-v<new> -- reference-workspace/`. Once #2550 lands, the same range is what its migrations cover.
+`chant workspace upgrade` ([#2550](https://github.com/INTENTIUS/chant/issues/2550), shipped in 0.81.0) performs an upgrade from an older tag of this workspace. Within the range, each change between two tags is listed below with any manual step it needs, and `git diff reference-workspace-v<old> reference-workspace-v<new> -- reference-workspace/` shows the whole difference.
 
 ## Changes by tag
 
 | Tag | Chant floor | Changes | Manual steps |
 |---|---|---|---|
-| `reference-workspace-v0.80` | 0.80.0 | first tag: the four members at level 0, two decision files, a draft declaration | none |
+| `reference-workspace-v0.81` | 0.81.0 | the four members declared in `chant.workspace.json` at level 1, two decision files | none |
+| `reference-workspace-v0.86` | 0.85.0 | delivery declares the app with the docker lexicon's `DockerWebService` composite and adds `delivery/src/app.component.ts`, the component that deploys it ([#2662](https://github.com/INTENTIUS/chant/issues/2662)) | Compose now names the service `appService` instead of `app`, so a command that names the service, such as `docker compose logs app`, needs the new name |
+| `reference-workspace-v0.86` | 0.85.0, and 0.86.0 for the work kind | adds [`work/`](work), the work kind with two work items ([#2683](https://github.com/INTENTIUS/chant/issues/2683)). A chant older than 0.86.0 refuses `work/work.kind.mjs` as `kind-invalid`, and everything else still reads | none |
+| `reference-workspace-v0.90` | 0.89.0 | adds [`skills/record-decisions/`](skills/record-decisions) and [`docs/record-decisions.md`](docs/record-decisions.md) ([#2709](https://github.com/INTENTIUS/chant/issues/2709)), plain files with no schema or command either depends on | none |
+| `reference-workspace-v0.92` | 0.92.0 for the work kind | adds `finding-triage` and `needs-a-decision` to `decisions/points.json`, `release.work_changed` to `ship-skip`, and a `proposed` first state with `proposedBy` to the work kind ([#2741](https://github.com/INTENTIUS/chant/issues/2741)). `finding-triage` also sends `change-out-of-scope` from `check --changes` to a decision ([#2794](https://github.com/INTENTIUS/chant/issues/2794)). A chant older than 0.92.0 refuses the work kind's `proposedBy` as `kind-invalid` | a work item written through the MCP `records-new` tool now opens `proposed`, so a person moves it to `open` before it is ready |
+| `reference-workspace-v0.93` | 0.93.0 for the new kinds | adds [`lessons/`](lessons), [`constraints/`](constraints) and [`preferences/`](preferences), one example record each ([#2771](https://github.com/INTENTIUS/chant/issues/2771)), and the `remediates` link between records. A chant older than 0.93.0 refuses the three kind files as `kind-invalid` | none |
+| `reference-workspace-v0.94` | 0.94.0 | the `app` member names `ref-003` as its intent with `box.intent`, and a work item's source can be a person's ask ([#2850](https://github.com/INTENTIUS/chant/issues/2850), [#2851](https://github.com/INTENTIUS/chant/issues/2851)). A chant older than 0.94.0 rejects the declaration's `box` key | none |
+| `reference-workspace-v0.101` | 0.101.0 | delivery lists `otel` in its `lexicons` and adds `delivery/src/collector.ts` ([#2559](https://github.com/INTENTIUS/chant/issues/2559)). A chant older than 0.101.0 builds and lints it, but `chant workspace graph` has no `collectors` section. The `app` member's `telemetry` link ([#2558](https://github.com/INTENTIUS/chant/issues/2558)) is a link kind older chants refuse as `WSP092`, and delivery's Compose service gains `OTEL_SERVICE_NAME` and `OTEL_RESOURCE_ATTRIBUTES`. The `design` member has kind `design` ([#2549](https://github.com/INTENTIUS/chant/issues/2549)), which a chant older than 0.101.0 lists with `unknown-kind`, and `chant workspace check` fails on it with `WSP003` | install `@intentius/chant-lexicon-otel` where delivery resolves it, and expect the two new variables in the Compose file |

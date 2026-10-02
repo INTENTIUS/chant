@@ -18,7 +18,8 @@
  * - getting-started: k8s, ownership labels, five root-level Ops, and an
  *   `audit` that finds nothing (plain text even under `--format json`).
  * - local-op-quickstart: Ops only, five lexicons listed, an effect receipt
- *   with its digest (#2514 changes that digest).
+ *   with its digest. That digest was already real SHA-256 over
+ *   `canonicalJson`, so #2514 left it unchanged.
  * - fan-out-estate: aws, multi-stack with fifteen `stacks[]` entries.
  * - adopt-alb-services: `audit --format json` with real findings (docker).
  * - terraform-carve-out: `audit --format json` with TF023 findings, which

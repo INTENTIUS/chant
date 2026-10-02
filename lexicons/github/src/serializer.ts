@@ -12,7 +12,7 @@ import type { Serializer, SerializerResult } from "@intentius/chant/serializer";
 import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
 import { INTRINSIC_MARKER } from "@intentius/chant/intrinsic";
-import { emitYAML } from "@intentius/chant/yaml";
+import { emitYAMLEntry } from "@intentius/chant/yaml";
 
 // ── Key conversion ────────────────────────────────────────────────
 
@@ -459,7 +459,7 @@ function emitYAMLDocument(doc: Record<string, unknown>): string {
       } else if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
         sections.push(`${key}: ${yamlScalar(value)}`);
       } else {
-        sections.push(`${key}:` + emitYAML(value, 1));
+        sections.push(emitYAMLEntry(key, value));
       }
     }
   }
@@ -470,7 +470,7 @@ function emitYAMLDocument(doc: Record<string, unknown>): string {
     if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
       sections.push(`${key}: ${yamlScalar(value)}`);
     } else {
-      sections.push(`${key}:` + emitYAML(value, 1));
+      sections.push(emitYAMLEntry(key, value));
     }
   }
 

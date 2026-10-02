@@ -51,7 +51,9 @@ It separates PR-worthy security findings (with ready-to-apply fix diffs) from hy
 | [@intentius/chant-lexicon-azure](lexicons/azure) | Azure lexicon — ARM resource types, template functions |
 | [@intentius/chant-lexicon-gcp](lexicons/gcp) | GCP lexicon — Deployment Manager resource types |
 | [@intentius/chant-lexicon-gitlab](lexicons/gitlab) | GitLab CI lexicon — pipelines, jobs, variables |
+| [@intentius/chant-lexicon-grafana](lexicons/grafana) | Grafana lexicon — dashboards, panels, typed PromQL/TraceQL/LogQL queries and datasources, emitted as dashboard JSON and provisioning files |
 | [@intentius/chant-lexicon-helm](lexicons/helm) | Helm lexicon — charts, releases, values |
 | [@intentius/chant-lexicon-k8s](lexicons/k8s) | Kubernetes lexicon — Deployments, Services, ConfigMaps + YAML import |
-| [@intentius/chant-lexicon-otel](lexicons/otel) | OpenTelemetry Collector lexicon — typed receivers, processors, exporters and pipelines, emitted as collector YAML |
+| [@intentius/chant-lexicon-otel](lexicons/otel) | OpenTelemetry Collector lexicon — typed receivers, processors, exporters, connectors and pipelines, emitted as collector YAML |
+| [@intentius/chant-lexicon-prometheus](lexicons/prometheus) | Prometheus lexicon — typed recording and alerting rule groups and Alertmanager routing, emitted as a rule file and alertmanager.yml |
 | [@intentius/chant-lexicon-render](lexicons/render) | Render lexicon — services, datastores, env groups, projects; applied straight to the Public API |

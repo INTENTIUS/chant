@@ -1,5 +1,5 @@
 /**
- * `chant workspace upgrade [<scope>] [--to <ref>] [--allow-code] [--dry-run]
+ * `chant workspace upgrade [<scope>] [--to <ref|dir>] [--allow-code] [--dry-run]
  * [--output <file>] [--json]` (#2550).
  *
  * Stages the upgrade in a worktree (see ./lineage-upgrade.ts), then decides
@@ -20,7 +20,7 @@ import { WORKSPACE_UPGRADE_GATE_OP } from "../op/gate-name";
 import { LockError } from "./lineage-lock";
 import { applyStagedUpgrade, describeStaged, stageUpgrade, type ChantRunner, type StagedUpgrade } from "./lineage-upgrade";
 
-const USAGE = "chant workspace upgrade [<scope>] [--to <ref>] [--allow-code] [--dry-run] [--output <patch file>] [--json]";
+const USAGE = "chant workspace upgrade [<scope>] [--to <ref|dir>] [--source <repo>[#<member>]] [--allow-code] [--dry-run] [--output <patch file>] [--json]";
 
 /** The exit code of a gated upgrade: the same as `chant run`'s gated run. */
 export const UPGRADE_GATED_EXIT = 3;
@@ -29,6 +29,8 @@ export interface UpgradeCommandOptions {
   root: string;
   scope?: string;
   to?: string;
+  /** Move the scope to another template (#2551). */
+  source?: string;
   allowCode?: boolean;
   dryRun?: boolean;
   output?: string;
@@ -53,6 +55,7 @@ export async function upgradeCommand(opts: UpgradeCommandOptions): Promise<Upgra
     root: opts.root,
     scope: opts.scope,
     to: opts.to,
+    ...(opts.source !== undefined ? { source: opts.source } : {}),
     allowCode: opts.allowCode,
     runChant: opts.runChant,
   });
@@ -71,8 +74,8 @@ export async function upgradeCommand(opts: UpgradeCommandOptions): Promise<Upgra
         }),
       );
     }
-    if (!staged.changed) {
-      if (!opts.json) console.error(formatSuccess(`scope "${staged.scope}" is already at ${staged.to ?? "its source"}; nothing to upgrade`));
+    if (!staged.changed && staged.checksOk) {
+      if (!opts.json) console.error(formatSuccess(`scope "${staged.gate}" is already at ${staged.to ?? "its source"}; nothing to upgrade`));
       return report("up-to-date", 0);
     }
     if (opts.output) writeFileSync(resolve(opts.output), staged.patch);
@@ -90,11 +93,11 @@ export async function upgradeCommand(opts: UpgradeCommandOptions): Promise<Upgra
       return report("dry-run", 0);
     }
 
-    const gate = staged.scope;
+    const gate = staged.gate;
     const check = await evaluateGate(opts.ledger ?? gitGateLedgerPort({ cwd: staged.repo }), {
       op: WORKSPACE_UPGRADE_GATE_OP,
       gate,
-      description: `upgrade ${staged.template} ${staged.from ?? ""} -> ${staged.to ?? ""} in scope ${staged.scope}`.replace(/\s+/g, " "),
+      description: `upgrade ${staged.template} ${staged.from ?? ""} -> ${staged.to ?? ""} in scope ${staged.member ?? staged.scope}`.replace(/\s+/g, " "),
       planDigest: staged.digest,
       ...(staged.governance ? { approval: staged.governance.approval } : {}),
       ...(opts.now ? { now: opts.now } : {}),
@@ -115,7 +118,7 @@ export async function upgradeCommand(opts: UpgradeCommandOptions): Promise<Upgra
 
     applyStagedUpgrade(staged);
     if (!opts.json) {
-      console.error(formatSuccess(`applied the approved upgrade of "${staged.scope}" (${staged.digest}), approved by ${check.resolution.resolvedBy}. Review and commit it.`));
+      console.error(formatSuccess(`applied the approved upgrade of "${staged.gate}" (${staged.digest}), approved by ${check.resolution.resolvedBy}. Review and commit it.`));
       if (staged.manualSteps.length > 0) {
         console.error(formatInfo(`${staged.manualSteps.length} manual step(s) are open; \`chant workspace check\` fails until each is merged and resolved.`));
       }
@@ -137,6 +140,7 @@ export async function runWorkspaceUpgrade(ctx: CommandContext): Promise<number> 
       root: process.cwd(),
       scope: args.extraPositional,
       to: args.migrateTo,
+      source: args.source,
       allowCode: args.allowCode,
       dryRun: args.dryRun,
       output: args.output,

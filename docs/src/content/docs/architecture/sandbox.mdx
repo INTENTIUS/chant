@@ -76,7 +76,7 @@ This is about code the project authored. What **chant's own** code reaches on ea
 
 With `chant build --sandbox`, no file the project authored is executed in the CLI's own process — not its source files, folded or not, not its `chant.config.ts`, and not its `lint.policies` modules. That covers the whole build: reading the configuration, discovering the resources, and enforcing the project's own organizational policy over the result. The only code that runs there is chant's own and the packages of the lexicons this build loaded.
 
-That allowlist is enforced by resolution, not by what the source says. A specifier is trusted when it is one of the lexicon package names the *build* resolved (`resolveProjectLexicons` -> `loadPlugins`, the same closed set chant #1063 established), or when it resolves to a path inside chant-core's own executing tree. A specifier that merely *looks* chant-owned — `@intentius/chant`, `@intentius/chant-lexicon-anything` — is not enough: an untrusted repo controls both the text in its source and the contents of its own `node_modules`.
+That allowlist is enforced by resolution, not by what the source says. A specifier is trusted when it is one of the lexicon package names the *build* resolved (`resolveProjectLexicons` -> `loadPlugins`, the same closed set chant #1063 established), or when it resolves to a path inside chant-core's own executing tree. A lexicon `chant.config.ts` declares by path is trusted by its module file and by its trusted directory, which never contains the project's source directory (see [A lexicon in your own project](/chant/guide/managing-lexicons/#a-lexicon-in-your-own-project)). A specifier that merely *looks* chant-owned — `@intentius/chant`, `@intentius/chant-lexicon-anything` — is not enough: an untrusted repo controls both the text in its source and the contents of its own `node_modules`.
 
 `examples/sandbox-execution-boundary.test.ts` asserts this over the whole corpus. Every directory `discoverCorpus()` (`examples/differential-corpus.ts`) finds, the same corpus the [fold-coverage numbers](#fold-coverage-today) below measure, has its config loaded and is then built with `{ fold: true, sandbox: true }`, while the three places project code can execute in this process are recorded — `importModule` (`packages/core/src/discovery/import.ts`), `importConfigModule`/`requireConfigModule` (`packages/core/src/config-import.ts`), and `importPolicyModule` (`packages/core/src/lint/policy-import.ts`). No path inside the project's own source directory may appear in the first, and neither of the others may be called at all.
 
@@ -85,6 +85,30 @@ The policy half needs a differently-shaped test, and that is what let it survive
 One residual remains, pre-existing and not closed by this flag:
 
 - **Lexicon packages are resolved from the project's install.** A repo that ships a poisoned `@intentius/chant-lexicon-aws` in its own `node_modules` gets it executed — but the CLI already imports every active lexicon package into its own process to obtain serializers and lint rules, long before discovery starts, so this is a property of loading lexicons at all rather than something fold or `--sandbox` introduces.
+
+## Commands that read `chant.config.ts` without running it
+
+Most commands evaluate `chant.config.ts` before they do anything else, in the sandboxed child when `--sandbox` is given and in the CLI's process otherwise. Four commands never evaluate it, with or without `--sandbox`:
+
+| Command | Why it reads the config |
+|---|---|
+| `chant audit` | to name a lexicon the audited project declares by path, and leave it out of the install line |
+| `chant init --force` into a directory with a config | to see whether the lexicon it scaffolds is declared by path |
+| `chant dev onboard` | to refuse a lexicon declared by path, naming its path |
+| `chant import --agents` | to load the target lexicon from its path when the project declares it that way |
+
+These commands only need the `lexicons` list, so they read it statically (chant #2591, #2589). The file is parsed and the `lexicons` value is reduced by the same folder that folds source files, given the file's own top-level `const`s and nothing else. No module is imported. The reader follows the export shapes the loader accepts: `export default`, `export const config`, or a named `export const lexicons`. What it can read is what fold can reduce without imports: literal values and the `const`s declared in the file, including a `const` holding the whole config. A call to a function declared in the same file also reads, when its body is inside the fold subset.
+
+Anything that needs another module or the environment is unreadable:
+
+- a value imported from another module
+- `process.env`
+- a call to an imported or global function, such as `defineConfig({...})` as the default export
+- a config that re-exports from another file
+
+When the `lexicons` value cannot be read, the command prints a note with the file and the reason. Every lexicon is then treated as a package. The command does not fall back to evaluating the config.
+
+`chant audit` also never records what it reads for the lexicon loaders. A lexicon the audited project declares by path is named in audit's messages, but its module is never imported: audit's checks come only from installed lexicon packages. `chant import --agents` does load a lexicon declared by path from its module, which is project code, the same way `chant build` does.
 
 `lint.plugins` — declarative lint rules, the other project-authored module list in the config — is **not** part of this. `chant build` never loads it; only `chant lint` does, and `chant lint` has no `--sandbox`. It is a different command with a different (unsandboxed) trust model, not a hole in this one.
 
@@ -152,7 +176,7 @@ The same applies to a diagnostic that is data but is not a diagnostic — a miss
 ## Fold coverage today
 
 {/* GENERATED:fold-coverage:start */}
-As of this measurement, **96 of 109** example projects in the corpus fold completely — every file in them reduces to a value with zero module execution. The remaining **13** have at least one file that falls back to running.
+As of this measurement, **99 of 115** example projects in the corpus fold completely — every file in them reduces to a value with zero module execution. The remaining **16** have at least one file that falls back to running.
 {/* GENERATED:fold-coverage:end */}
 
 `--sandbox` isolates the rest, so raising fold coverage is an optimization on top of it, not a precondition.

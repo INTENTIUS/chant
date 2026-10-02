@@ -31,7 +31,7 @@
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { contentDigest, defaultFileClass, fileHash, type Lineage, type ManualStep } from "./lineage-lock";
+import { contentDigest, declaredFilesAt, defaultFileClass, fileHash, type Lineage, type ManualStep } from "./lineage-lock";
 
 export interface UpdateResult {
   written: string[];
@@ -61,9 +61,15 @@ export function applyUpstream(dir: string, lineage: Lineage, upstream: Map<strin
   const result: UpdateResult = { written: [], merged: [], skipped: [], removed: [], kept: [], manualSteps: [] };
   const steps = new Map(lineage.manualSteps.map((s) => [s.path, s]));
   const paths = new Set([...Object.keys(lineage.files), ...upstream.keys()]);
+  // The declaration's generated list is read again on every update, so a
+  // file the member lists after the lock was written is rebuilt, not merged,
+  // and a file it marks hand-written is merged like any other (#2541).
+  const declared = declaredFilesAt(dir);
 
   for (const path of [...paths].sort()) {
     const abs = join(dir, path);
+    const recorded = lineage.files[path];
+    if (recorded && declared.has(path)) lineage.files[path] = { ...defaultFileClass(path, declared), sha256: recorded.sha256 };
     const entry = lineage.files[path];
     if (entry && entry.class !== "owned") {
       // D9: a seed is written once, and a generated file is rebuilt by its
@@ -81,7 +87,7 @@ export function applyUpstream(dir: string, lineage: Lineage, upstream: Map<strin
       result.manualSteps.push(s);
     };
     const record = (sha: string): void => {
-      lineage.files[path] = { ...(lineage.files[path] ?? defaultFileClass(path)), sha256: sha };
+      lineage.files[path] = { ...(lineage.files[path] ?? defaultFileClass(path, declared)), sha256: sha };
       steps.delete(path);
     };
 

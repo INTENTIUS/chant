@@ -7,6 +7,7 @@
 
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -109,7 +110,7 @@ describe("chant workspace upgrade", () => {
       expect(staged.written.sort()).toEqual(["README.md", "src/new.ts"]);
       expect(staged.manualSteps).toEqual([]);
       expect(staged.changedPaths).toEqual([LOCK_FILE, "README.md", "src/a.ts", "src/new.ts"]);
-      expect(staged.digest).toMatch(/^sha256:[0-9a-f]{64}$/);
+      expect(staged.digest).toMatch(/^jcs1-sha256:[0-9a-f]{64}$/);
       // The project's tree is untouched until the gate is approved.
       expect(read(proj, "README.md")).toBe("starter\n");
       expect(existsSync(join(proj, "src/new.ts"))).toBe(false);
@@ -121,6 +122,76 @@ describe("chant workspace upgrade", () => {
     }
     expect(existsSync(join(proj, UPGRADE_DIR))).toBe(false);
     expect(git(proj, ["worktree", "list"]).split("\n")).toHaveLength(1);
+  });
+
+  test("builds and lints the chant member chant.workspace.json declares, not the scope root (#2804)", async () => {
+    release("v2.0.0", {
+      "chant.workspace.json": JSON.stringify({ name: "proj", schema: 1, members: [{ name: "delivery", dir: "delivery", kind: "chant" }] }, null, 2) + "\n",
+      "delivery/chant.config.ts": "export default {};\n",
+    });
+    const calls: Array<{ command: string; cwd: string }> = [];
+    const recording: ChantRunner = async (command, cwd) => {
+      calls.push({ command, cwd });
+      return { exitCode: 0, output: "" };
+    };
+
+    const staged = await stageUpgrade({ root: proj, to: "v2.0.0", runChant: recording });
+    try {
+      // Never at the scope root: it has no chant.config once the project is a workspace.
+      expect(calls.every((c) => c.cwd === join(staged.worktreeProject, "delivery"))).toBe(true);
+      expect(calls.map((c) => c.command).sort()).toEqual(["build", "lint"]);
+      expect(staged.checks).toEqual(
+        expect.arrayContaining([
+          { name: "build", status: "passed", member: "delivery" },
+          { name: "lint", status: "passed", member: "delivery" },
+        ]),
+      );
+    } finally {
+      staged.dispose();
+    }
+  });
+
+  test("a member's own node_modules is linked into the staging worktree for its checks, and stays out of the patch (#2847)", async () => {
+    release("v2.0.0", {
+      "chant.workspace.json": JSON.stringify({ name: "proj", schema: 1, members: [{ name: "delivery", dir: "delivery", kind: "chant" }] }, null, 2) + "\n",
+      "delivery/chant.config.ts": "export default {};\n",
+    });
+    // The member installs its packages itself; git never sees them.
+    put(proj, "delivery/node_modules/member-only/package.json", JSON.stringify({ name: "member-only", version: "1.0.0" }) + "\n");
+    writeFileSync(join(proj, ".git", "info", "exclude"), "node_modules\n");
+    const seen: string[] = [];
+    const recording: ChantRunner = async (command, cwd) => {
+      if (existsSync(join(cwd, "node_modules", "member-only", "package.json"))) seen.push(command);
+      return { exitCode: 0, output: "" };
+    };
+
+    const staged = await stageUpgrade({ root: proj, to: "v2.0.0", runChant: recording });
+    try {
+      expect(seen.sort()).toEqual(["build", "lint"]);
+      expect(staged.changedPaths.some((p) => p.includes("node_modules"))).toBe(false);
+      expect(staged.patch).not.toContain("node_modules");
+    } finally {
+      staged.dispose();
+    }
+    // Disposing the worktree removes the link, never the member's own packages.
+    expect(existsSync(join(proj, "delivery", "node_modules", "member-only", "package.json"))).toBe(true);
+  });
+
+  test("a member's failing build fails the upgrade's checks before the gate (#2804)", async () => {
+    release("v2.0.0", {
+      "chant.workspace.json": JSON.stringify({ name: "proj", schema: 1, members: [{ name: "delivery", dir: "delivery", kind: "chant" }] }, null, 2) + "\n",
+      "delivery/chant.config.ts": "export default {};\n",
+    });
+    const failingBuild: ChantRunner = async (command) => (command === "build" ? { exitCode: 1, output: "boom\n" } : { exitCode: 0, output: "" });
+
+    const result = await upgradeCommand({ root: proj, to: "v2.0.0", runChant: failingBuild });
+    expect(result.outcome).toBe("checks-failed");
+    expect(result.exitCode).toBe(1);
+    expect(result.staged!.checks).toEqual(
+      expect.arrayContaining([{ name: "build", status: "failed", detail: "boom", member: "delivery" }]),
+    );
+    // The tree is unchanged: an unbuildable migration never reaches the gate.
+    expect(git(proj, ["status", "--porcelain"])).toBe("");
   });
 
   test("gates on the patch digest, then applies exactly the approved patch", async () => {
@@ -397,4 +468,197 @@ describe("proposeWorkspaceUpgrade", () => {
     expect(gh.filter((a) => a[1] === "create")).toHaveLength(1);
     expect(gh.filter((a) => a[1] === "edit")).toHaveLength(1);
   });
+});
+
+describe("chant workspace upgrade with template parameters (#2627)", () => {
+  const TITLE_V1 = 'export const title = "{{chant:name}}";\ntwo\nthree\nfour\nfive\nsix\nseven\n';
+
+  beforeEach(async () => {
+    // A template that declares a parameter, and a project made from it with a value.
+    tpl = join(root, "ptpl");
+    proj = join(root, "pproj");
+    mkdirSync(tpl);
+    git(tpl, ["init", "-q", "-b", "main"]);
+    release("v1.0.0", {
+      "chant.template.json": JSON.stringify({ parameters: { name: { type: "string", default: "Starter" } }, files: ["app/title.ts", "README.md"] }),
+      "app/title.ts": TITLE_V1,
+      "README.md": "# {{chant:name}}\n",
+    });
+    const made = await initFromCommand({ from: `${tpl}@v1.0.0`, path: proj, params: { name: "Acme" } });
+    expect(made.error).toBeUndefined();
+    git(proj, ["init", "-q", "-b", "main"]);
+    commitProject("init from v1 with name=Acme");
+  });
+
+  test("the merge base carries the recorded value, so an edited file merges and an unedited one updates", async () => {
+    expect(read(proj, "app/title.ts")).toBe(TITLE_V1.replace("{{chant:name}}", "Acme"));
+    expect(existsSync(join(proj, "chant.template.json"))).toBe(false);
+    expect(readLock(proj)!.scopes["."].parameters).toEqual({ name: "Acme" });
+
+    put(proj, "app/title.ts", 'export const title = "Acme";\ntwo\nthree\nfour\nfive\nsix\nseven (ours)\n');
+    commitProject("edit");
+    release("v2.0.0", {
+      "chant.template.json": JSON.stringify({
+        parameters: { name: { type: "string", default: "Starter" }, owner: { type: "string", default: "platform" } },
+        files: ["app/title.ts", "README.md", "OWNERS"],
+      }),
+      "app/title.ts": 'export const title = "{{chant:name}}";\ntwo (theirs)\nthree\nfour\nfive\nsix\nseven\n',
+      "README.md": "# {{chant:name}} v2\n",
+      OWNERS: "{{chant:owner}}\n",
+    });
+
+    const staged = await stageUpgrade({ root: proj, to: "v2.0.0", runChant: passing });
+    try {
+      expect(staged.manualSteps).toEqual([]);
+      expect(staged.merged).toEqual(["app/title.ts"]);
+      expect(staged.written.sort()).toEqual(["OWNERS", "README.md"]);
+      expect(read(staged.worktreeProject, "app/title.ts")).toBe('export const title = "Acme";\ntwo (theirs)\nthree\nfour\nfive\nsix\nseven (ours)\n');
+      expect(read(staged.worktreeProject, "README.md")).toBe("# Acme v2\n");
+      expect(read(staged.worktreeProject, "OWNERS")).toBe("platform\n");
+      expect(existsSync(join(staged.worktreeProject, "chant.template.json"))).toBe(false);
+      const lineage = readLock(staged.worktreeProject)!.scopes["."];
+      // The recorded value is kept, and a parameter the new version adds takes its default.
+      expect(lineage.parameters).toEqual({ name: "Acme", owner: "platform" });
+      expect(lineage.files["README.md"].sha256).toBe(fileHash("# Acme v2\n"));
+      expect(lineage.files["chant.template.json"]).toBeUndefined();
+    } finally {
+      staged.dispose();
+    }
+  });
+
+  test("a record that pins a substituted file is re-pinned on the base and the target, so it updates with no manual step (#2549)", async () => {
+    const sha = (s: string) => createHash("sha256").update(s).digest("hex");
+    const record = (hash: string) => `---\nschema: 1\nid: "tpl-001"\nevidence:\n  - title: "readme"\n    path: "README.md"\n    sha256: "${hash}"\n---\n`;
+    // A second project, from a v1 whose record pins the template's README.
+    tpl = join(root, "rtpl");
+    proj = join(root, "rproj");
+    mkdirSync(tpl);
+    git(tpl, ["init", "-q", "-b", "main"]);
+    const manifest = JSON.stringify({ parameters: { name: { type: "string", default: "Starter" } }, files: ["README.md"] });
+    release("v1.0.0", { "chant.template.json": manifest, "README.md": "# {{chant:name}}\n", "decisions/tpl-001-x.md": record(sha("# {{chant:name}}\n")) });
+    const made = await initFromCommand({ from: `${tpl}@v1.0.0`, path: proj, params: { name: "Acme" } });
+    expect(made.error).toBeUndefined();
+    expect(read(proj, "decisions/tpl-001-x.md")).toBe(record(sha("# Acme\n")));
+    expect(readLock(proj)!.scopes["."].repinned).toEqual([{ record: "decisions/tpl-001-x.md", paths: ["README.md"] }]);
+    git(proj, ["init", "-q", "-b", "main"]);
+    commitProject("init");
+
+    release("v2.0.0", { "README.md": "# {{chant:name}} v2\n", "decisions/tpl-001-x.md": record(sha("# {{chant:name}} v2\n")) });
+    const staged = await stageUpgrade({ root: proj, to: "v2.0.0", runChant: passing });
+    try {
+      expect(staged.manualSteps).toEqual([]);
+      expect(read(staged.worktreeProject, "decisions/tpl-001-x.md")).toBe(record(sha("# Acme v2\n")));
+      expect(readLock(staged.worktreeProject)!.scopes["."].repinned).toEqual([{ record: "decisions/tpl-001-x.md", paths: ["README.md"] }]);
+    } finally {
+      staged.dispose();
+    }
+  });
+
+  test("an upgrade to the same version changes nothing", async () => {
+    const staged = await stageUpgrade({ root: proj, to: "v1.0.0", runChant: passing });
+    try {
+      expect(staged.changed).toBe(false);
+      expect(staged.manualSteps).toEqual([]);
+    } finally {
+      staged.dispose();
+    }
+  });
+
+  test("a new parameter with no default refuses the upgrade", async () => {
+    release("v2.0.0", {
+      "chant.template.json": JSON.stringify({ parameters: { name: { type: "string" }, region: { type: "string" } }, files: ["README.md"] }),
+    });
+    await expect(stageUpgrade({ root: proj, to: "v2.0.0", runChant: passing })).rejects.toThrow(/region has no default/);
+  });
+});
+
+describe("chant workspace upgrade of a member scope (#2550)", () => {
+  let ws: string;
+  const declaration = {
+    name: "ws",
+    schema: 1,
+    members: [
+      { name: "shop", dir: "shop", kind: "other", because: "made from a template" },
+      { name: "plain", dir: "plain", kind: "other", because: "written by hand" },
+    ],
+  };
+
+  beforeEach(async () => {
+    ws = join(root, "ws");
+    mkdirSync(ws);
+    git(ws, ["init", "-q", "-b", "main"]);
+    put(ws, "chant.workspace.json", JSON.stringify(declaration));
+    put(ws, "plain/readme.md", "by hand\n");
+    const made = await initFromCommand({ from: `${tpl}@v1.0.0`, path: join(ws, "shop") });
+    expect(made.error).toBeUndefined();
+    git(ws, ["add", "-A"]);
+    git(ws, ["commit", "-q", "-m", "workspace"]);
+  });
+
+  test("upgrades the member from the workspace root, writes only inside it, and gates under the member's name", async () => {
+    release("v2.0.0", { "README.md": "starter v2\n", "src/new.ts": "new\n" });
+    const l = ledger();
+    const result = await upgradeCommand({ root: ws, scope: "shop", to: "v2.0.0", runChant: passing, ledger: l, json: true });
+    expect(result.outcome).toBe("gated");
+    expect(result.exitCode).toBe(3);
+    expect(l.pending[0].gate).toBe("shop");
+    const staged = result.staged!;
+    expect(staged.member).toBe("shop");
+    expect(staged.scope).toBe(".");
+    expect(staged.changedPaths.every((p) => p.startsWith("shop/"))).toBe(true);
+
+    l.approve(staged.digest, new Date().toISOString());
+    const applied = await upgradeCommand({ root: ws, scope: "shop", to: "v2.0.0", runChant: passing, ledger: l, json: true });
+    expect(applied.outcome).toBe("applied");
+    expect(read(ws, "shop/README.md")).toBe("starter v2\n");
+    expect(read(ws, "plain/readme.md")).toBe("by hand\n");
+    expect(readLock(join(ws, "shop"))!.scopes["."].ref).toBe("v2.0.0");
+  });
+
+  test("a member is named by directory too, and a member with no lock is refused with the reason", async () => {
+    release("v2.0.0", { "README.md": "starter v2\n" });
+    const staged = await stageUpgrade({ root: ws, scope: "shop/", to: "v2.0.0", runChant: passing });
+    try {
+      expect(staged.member).toBe("shop");
+    } finally {
+      staged.dispose();
+    }
+    await expect(stageUpgrade({ root: ws, scope: "plain", runChant: passing })).rejects.toThrow(/member "plain" \(plain\) has no \.chant\/workspace\.lock\.json, so it was not made from a template/);
+    await expect(stageUpgrade({ root: ws, scope: "nobody", runChant: passing })).rejects.toThrow(/no .*workspace\.lock\.json/);
+  });
+
+  test("a scope the root lock holds is used as written, even when a member has the same directory", async () => {
+    // The root lock records the member's subtree as a scope: the member's own lock is not consulted.
+    const own = readLock(join(ws, "shop"))!;
+    // The recorded repository is relative to the lock's directory, so point it at the template as the root sees it.
+    const moved = { ...own.scopes["."], source: { ...own.scopes["."].source, url: tpl } } as (typeof own.scopes)["."];
+    writeLock(ws, { lockVersion: own.lockVersion, scopes: { shop: moved } });
+    git(ws, ["rm", "-rq", "--cached", "shop/.chant"]);
+    rmSync(join(ws, "shop/.chant"), { recursive: true });
+    commitProject2();
+    release("v2.0.0", { "README.md": "starter v2\n" });
+    const staged = await stageUpgrade({ root: ws, scope: "shop", to: "v2.0.0", runChant: passing });
+    try {
+      expect(staged.member).toBeUndefined();
+      expect(staged.scope).toBe("shop");
+      expect(staged.written).toEqual(["README.md"]);
+      expect(staged.changedPaths.sort()).toEqual([".chant/workspace.lock.json", "shop/README.md"]);
+    } finally {
+      staged.dispose();
+    }
+  });
+
+  test("a scope made by init --template is refused with its reason", async () => {
+    const lock = readLock(join(ws, "shop"))!;
+    lock.scopes["."] = { ...lock.scopes["."], kind: "template", source: { type: "lexicon", lexicon: "aws", template: "basic" } as never, template: "aws/basic" } as never;
+    writeLock(join(ws, "shop"), lock);
+    git(ws, ["add", "-A"]);
+    git(ws, ["commit", "-q", "-m", "lock"]);
+    await expect(stageUpgrade({ root: ws, scope: "shop", runChant: passing })).rejects.toThrow(/made by `chant init --template` \(aws\/basic\) is refused: .*no versioned source/);
+  });
+
+  function commitProject2(): void {
+    git(ws, ["add", "-A"]);
+    git(ws, ["commit", "-q", "-m", "root lock"]);
+  }
 });

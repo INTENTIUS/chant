@@ -1,0 +1,2905 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agents
+  labels:
+    app.kubernetes.io/name: agents
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/part-of: agent-observability
+    app.kubernetes.io/component: namespace
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: observability
+  labels:
+    app.kubernetes.io/name: observability
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/part-of: agent-observability
+    app.kubernetes.io/component: namespace
+
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: otel-agent
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: otel-agent
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: agent
+  annotations:
+    otel.chant.dev/role: agent
+    otel.chant.dev/config: otel-agent-config
+    otel.chant.dev/gateways: observability/otel-gateway=loadbalancing,observability/otel-gateway=service
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: otel-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: otel-agent
+    spec:
+      serviceAccountName: otel-agent-sa
+      containers:
+        - name: otel-agent
+          image: otel/opentelemetry-collector-contrib:0.130.0
+          args:
+            - --config=/etc/otel/config.yaml
+          ports:
+            - containerPort: 4317
+              name: otlp-grpc
+            - containerPort: 4318
+              name: otlp-http
+            - containerPort: 13133
+              name: health
+          resources:
+            requests:
+              cpu: '100m'
+              memory: '256Mi'
+            limits:
+              cpu: '500m'
+              memory: '512Mi'
+          volumeMounts:
+            - name: config
+              mountPath: /etc/otel
+              readOnly: true
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          imagePullPolicy: IfNotPresent
+          livenessProbe:
+            httpGet:
+              path: /
+              port: health
+          readinessProbe:
+            httpGet:
+              path: /
+              port: health
+      volumes:
+        - name: config
+          configMap:
+            name: otel-agent-config
+      tolerations:
+        - operator: Exists
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: otel-agent-sa
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: otel-agent
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: agent
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: otel-agent-role
+  labels:
+    app.kubernetes.io/name: otel-agent
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: rbac
+rules:
+  - apiGroups:
+      - ''
+    resources:
+      - pods
+      - nodes
+      - endpoints
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - apps
+    resources:
+      - replicasets
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - batch
+    resources:
+      - jobs
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - ''
+    resources:
+      - nodes/proxy
+    verbs:
+      - get
+  - apiGroups:
+      - ''
+    resources:
+      - nodes/stats
+      - configmaps
+      - events
+    verbs:
+      - create
+      - get
+  - apiGroups:
+      - ''
+    resources:
+      - configmaps
+    verbs:
+      - get
+      - update
+      - create
+    resourceNames:
+      - otel-container-insight-clusterleader
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: otel-agent-binding
+  labels:
+    app.kubernetes.io/name: otel-agent
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: rbac
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: otel-agent-role
+subjects:
+  - kind: ServiceAccount
+    name: otel-agent-sa
+    namespace: observability
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-agent-config
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: otel-agent
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: config
+  annotations:
+    otel.chant.dev/role: agent
+    otel.chant.dev/workload: DaemonSet/otel-agent
+    otel.chant.dev/gateways: observability/otel-gateway=loadbalancing,observability/otel-gateway=service
+data:
+  config.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+    
+    processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_percentage: 80
+        spike_limit_percentage: 20
+      batch:
+        timeout: 1s
+    
+    exporters:
+      loadbalancing/gateway:
+        routing_key: traceID
+        protocol:
+          otlp:
+            tls:
+              insecure: true
+        resolver:
+          k8s:
+            service: otel-gateway-headless.observability
+            ports: [4317]
+      otlp/gateway:
+        endpoint: otel-gateway.observability.svc:4317
+        tls:
+          insecure: true
+    
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
+    
+    service:
+      extensions: [health_check]
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [loadbalancing/gateway]
+        metrics:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [otlp/gateway]
+        logs:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [otlp/gateway]
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-agent
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: otel-agent
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: agent
+spec:
+  selector:
+    app.kubernetes.io/name: otel-agent
+  internalTrafficPolicy: Local
+  ports:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: otlp-grpc
+      protocol: TCP
+    - name: otlp-http
+      port: 4318
+      targetPort: otlp-http
+      protocol: TCP
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: otel-agent-endpoints
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: otel-agent
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: rbac
+rules:
+  - apiGroups:
+      - ''
+    resources:
+      - endpoints
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - discovery.k8s.io
+    resources:
+      - endpointslices
+    verbs:
+      - get
+      - list
+      - watch
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: otel-agent-endpoints
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: otel-agent
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: rbac
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: otel-agent-endpoints
+subjects:
+  - kind: ServiceAccount
+    name: otel-agent-sa
+    namespace: observability
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agents-default-deny
+  namespace: agents
+  labels:
+    app.kubernetes.io/name: agents
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/part-of: agent-observability
+    app.kubernetes.io/component: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: support-agent
+  namespace: agents
+  labels:
+    app.kubernetes.io/name: support-agent
+    app.kubernetes.io/component: agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: support-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: support-agent
+        app.kubernetes.io/component: agent
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+      containers:
+        - name: agent
+          image: agent-observability-demo:0.1.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: OTLP_ENDPOINT
+              value: http://otel-agent.observability.svc:4318
+            - name: INTERVAL_MS
+              value: '2000'
+          resources:
+            requests:
+              cpu: '20m'
+              memory: '64Mi'
+            limits:
+              cpu: '200m'
+              memory: '128Mi'
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-gateway
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: otel-gateway
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: gateway
+  annotations:
+    otel.chant.dev/role: gateway
+    otel.chant.dev/config: otel-gateway-config
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: otel-gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: otel-gateway
+        app.kubernetes.io/component: gateway
+    spec:
+      serviceAccountName: otel-gateway-sa
+      containers:
+        - name: otel-gateway
+          image: otel/opentelemetry-collector-contrib:0.130.0
+          args:
+            - --config=/etc/otel/config.yaml
+          ports:
+            - containerPort: 4317
+              name: otlp-grpc
+            - containerPort: 13133
+              name: health
+          resources:
+            requests:
+              cpu: '200m'
+              memory: '512Mi'
+            limits:
+              cpu: '1'
+              memory: '1Gi'
+          volumeMounts:
+            - name: config
+              mountPath: /etc/otel
+              readOnly: true
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          imagePullPolicy: IfNotPresent
+          livenessProbe:
+            httpGet:
+              path: /
+              port: health
+          readinessProbe:
+            httpGet:
+              path: /
+              port: health
+      volumes:
+        - name: config
+          configMap:
+            name: otel-gateway-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-gateway
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: otel-gateway
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: gateway
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: otel-gateway
+  ports:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: otlp-grpc
+      protocol: TCP
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-gateway-headless
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: otel-gateway
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: gateway
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: otel-gateway
+  ports:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: otlp-grpc
+      protocol: TCP
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: otel-gateway-sa
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: otel-gateway
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: gateway
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-gateway-config
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: otel-gateway
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: config
+  annotations:
+    otel.chant.dev/role: gateway
+    otel.chant.dev/workload: Deployment/otel-gateway
+data:
+  config.yaml: |
+    # chant: semconv gen_ai github.com/open-telemetry/semantic-conventions@v1.41.1 (transform/genai_content, redaction/genai_content, filter/genai_spans, spanmetrics/genai, sum/genai_tokens)
+    
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+    
+    processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_percentage: 80
+        spike_limit_percentage: 20
+      transform/genai_content:
+        error_mode: ignore
+        trace_statements:
+          - context: span
+            statements: ["delete_key(span.attributes, \"gen_ai.system_instructions\")", "delete_key(span.attributes, \"gen_ai.input.messages\")", "delete_key(span.attributes, \"gen_ai.output.messages\")", "delete_key(span.attributes, \"gen_ai.tool.call.arguments\")", "delete_key(span.attributes, \"gen_ai.tool.call.result\")", "delete_key(span.attributes, \"gen_ai.retrieval.query.text\")", "delete_key(span.attributes, \"gen_ai.retrieval.documents\")", "delete_key(span.attributes, \"gen_ai.prompt\")", "delete_key(span.attributes, \"gen_ai.completion\")", "delete_matching_keys(span.attributes, \"^gen_ai\\\\.(prompt|completion)\\\\.[0-9]+\\\\..+$\")"]
+          - context: spanevent
+            statements: ["delete_key(spanevent.attributes, \"gen_ai.system_instructions\")", "delete_key(spanevent.attributes, \"gen_ai.input.messages\")", "delete_key(spanevent.attributes, \"gen_ai.output.messages\")", "delete_key(spanevent.attributes, \"gen_ai.tool.call.arguments\")", "delete_key(spanevent.attributes, \"gen_ai.tool.call.result\")", "delete_key(spanevent.attributes, \"gen_ai.retrieval.query.text\")", "delete_key(spanevent.attributes, \"gen_ai.retrieval.documents\")", "delete_key(spanevent.attributes, \"gen_ai.prompt\")", "delete_key(spanevent.attributes, \"gen_ai.completion\")", "delete_matching_keys(spanevent.attributes, \"^gen_ai\\\\.(prompt|completion)\\\\.[0-9]+\\\\..+$\")"]
+        log_statements:
+          - context: log
+            statements: ["delete_key(log.attributes, \"gen_ai.system_instructions\")", "delete_key(log.attributes, \"gen_ai.input.messages\")", "delete_key(log.attributes, \"gen_ai.output.messages\")", "delete_key(log.attributes, \"gen_ai.tool.call.arguments\")", "delete_key(log.attributes, \"gen_ai.tool.call.result\")", "delete_key(log.attributes, \"gen_ai.retrieval.query.text\")", "delete_key(log.attributes, \"gen_ai.retrieval.documents\")", "delete_key(log.attributes, \"gen_ai.prompt\")", "delete_key(log.attributes, \"gen_ai.completion\")", "delete_matching_keys(log.attributes, \"^gen_ai\\\\.(prompt|completion)\\\\.[0-9]+\\\\..+$\")", "delete_matching_keys(log.body, \"^(content|message|tool_calls)$\") where IsMap(log.body) and (IsMatch(log.event_name, \"^(gen_ai\\\\.system\\\\.message|gen_ai\\\\.user\\\\.message|gen_ai\\\\.assistant\\\\.message|gen_ai\\\\.tool\\\\.message|gen_ai\\\\.choice)$\") or IsMatch(log.attributes[\"event.name\"], \"^(gen_ai\\\\.system\\\\.message|gen_ai\\\\.user\\\\.message|gen_ai\\\\.assistant\\\\.message|gen_ai\\\\.tool\\\\.message|gen_ai\\\\.choice)$\"))", "set(log.body, \"\") where IsString(log.body) and (IsMatch(log.event_name, \"^(gen_ai\\\\.system\\\\.message|gen_ai\\\\.user\\\\.message|gen_ai\\\\.assistant\\\\.message|gen_ai\\\\.tool\\\\.message|gen_ai\\\\.choice)$\") or IsMatch(log.attributes[\"event.name\"], \"^(gen_ai\\\\.system\\\\.message|gen_ai\\\\.user\\\\.message|gen_ai\\\\.assistant\\\\.message|gen_ai\\\\.tool\\\\.message|gen_ai\\\\.choice)$\"))"]
+      redaction/genai_content:
+        allow_all_keys: true
+        blocked_key_patterns: [^(gen_ai\.system_instructions|gen_ai\.input\.messages|gen_ai\.output\.messages|gen_ai\.tool\.call\.arguments|gen_ai\.tool\.call\.result|gen_ai\.retrieval\.query\.text|gen_ai\.retrieval\.documents|gen_ai\.prompt|gen_ai\.completion)$, "^gen_ai\\.(prompt|completion)\\.[0-9]+\\..+$"]
+      tail_sampling:
+        decision_wait: 5s
+        num_traces: 50000
+        policies:
+          - name: errors
+            type: status_code
+            status_code:
+              status_codes: [ERROR]
+          - name: slow
+            type: latency
+            latency:
+              threshold_ms: 2000
+          - name: baseline
+            type: probabilistic
+            probabilistic:
+              sampling_percentage: 10
+      batch:
+        timeout: 5s
+      filter/genai_spans:
+        error_mode: ignore
+        traces:
+          span: ["attributes[\"gen_ai.operation.name\"] == nil"]
+    
+    exporters:
+      otlp/tempo:
+        endpoint: tempo:4317
+        tls:
+          insecure: true
+      prometheus:
+        endpoint: 0.0.0.0:8889
+        metric_expiration: 10m
+      otlphttp/loki:
+        endpoint: http://loki:3100/otlp
+    
+    connectors:
+      spanmetrics:
+        histogram:
+          unit: ms
+          explicit:
+            buckets: [50ms, 100ms, 250ms, 500ms, 1s, 2s, 5s, 10s]
+        metrics_flush_interval: 15s
+      forward/genai: {}
+      forward/sampled: {}
+      spanmetrics/genai:
+        namespace: genai
+        dimensions:
+          - name: gen_ai.operation.name
+          - name: gen_ai.request.model
+          - name: gen_ai.tool.name
+          - name: error.type
+        histogram:
+          unit: s
+          explicit:
+            buckets: [100ms, 250ms, 500ms, 1s, 2s, 5s, 10s, 20s, 40s, 80s]
+        metrics_flush_interval: 15s
+      sum/genai_tokens:
+        spans:
+          genai.tokens.input:
+            source_attribute: gen_ai.usage.input_tokens
+            description: Input tokens used by GenAI operations
+            conditions: ["attributes[\"gen_ai.usage.input_tokens\"] != nil and not (kind == SPAN_KIND_INTERNAL and (attributes[\"gen_ai.operation.name\"] == \"invoke_agent\" or attributes[\"gen_ai.operation.name\"] == \"invoke_workflow\"))"]
+            attributes:
+              - key: gen_ai.request.model
+                default_value: unknown
+          genai.tokens.output:
+            source_attribute: gen_ai.usage.output_tokens
+            description: Output tokens used by GenAI operations
+            conditions: ["attributes[\"gen_ai.usage.output_tokens\"] != nil and not (kind == SPAN_KIND_INTERNAL and (attributes[\"gen_ai.operation.name\"] == \"invoke_agent\" or attributes[\"gen_ai.operation.name\"] == \"invoke_workflow\"))"]
+            attributes:
+              - key: gen_ai.request.model
+                default_value: unknown
+    
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
+    
+    service:
+      extensions: [health_check]
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, transform/genai_content, redaction/genai_content]
+          exporters: [spanmetrics, forward/genai, forward/sampled]
+        traces/sampled:
+          receivers: [forward/sampled]
+          processors: [tail_sampling, batch]
+          exporters: [otlp/tempo]
+        traces/genai:
+          receivers: [forward/genai]
+          processors: [filter/genai_spans]
+          exporters: [spanmetrics/genai, sum/genai_tokens]
+        metrics:
+          receivers: [otlp, spanmetrics, spanmetrics/genai, sum/genai_tokens]
+          processors: [memory_limiter, batch]
+          exporters: [prometheus]
+        logs:
+          receivers: [otlp]
+          processors: [memory_limiter, transform/genai_content, redaction/genai_content, batch]
+          exporters: [otlphttp/loki]
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: otel-gateway
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: otel-gateway
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: gateway
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: otel-gateway
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/component: dashboards
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: grafana
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: grafana
+        app.kubernetes.io/component: dashboards
+    spec:
+      securityContext:
+        fsGroup: 472
+      containers:
+        - name: grafana
+          image: grafana/grafana:12.4.11
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: GF_AUTH_ANONYMOUS_ENABLED
+              value: 'true'
+            - name: GF_AUTH_ANONYMOUS_ORG_ROLE
+              value: Viewer
+            - name: GF_ANALYTICS_REPORTING_ENABLED
+              value: 'false'
+            - name: GF_ANALYTICS_CHECK_FOR_UPDATES
+              value: 'false'
+            - name: GF_PLUGINS_PREINSTALL_DISABLED
+              value: 'true'
+          ports:
+            - name: http
+              containerPort: 3000
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: '100m'
+              memory: '128Mi'
+            limits:
+              cpu: '1'
+              memory: '512Mi'
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 472
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/grafana
+            - name: tmp
+              mountPath: /tmp
+            - name: grafana-provisioning
+              mountPath: /etc/grafana/provisioning
+              readOnly: true
+            - name: grafana-dashboards-0
+              mountPath: /var/lib/grafana/dashboards/Agent observability
+              readOnly: true
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        - name: grafana-provisioning
+          projected:
+            sources:
+              - configMap:
+                  name: grafana-datasources
+                  items:
+                    - key: chant.yaml
+                      path: datasources/chant.yaml
+              - configMap:
+                  name: grafana-dashboard-providers
+                  items:
+                    - key: chant.yaml
+                      path: dashboards/chant.yaml
+        - name: grafana-dashboards-0
+          projected:
+            sources:
+              - configMap:
+                  name: grafana-dashboard-red-traces-span-metrics
+                  items:
+                    - key: red-traces-span-metrics.json
+                      path: red-traces-span-metrics.json
+              - configMap:
+                  name: grafana-dashboard-slo-support-agent-runs
+                  items:
+                    - key: slo-support-agent-runs.json
+                      path: slo-support-agent-runs.json
+              - configMap:
+                  name: grafana-dashboard-genai-agents
+                  items:
+                    - key: genai-agents.json
+                      path: genai-agents.json
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-red-traces-span-metrics
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/component: dashboards
+    grafana_dashboard: '1'
+  annotations:
+    k8s-sidecar-target-directory: Agent observability
+data:
+  red-traces-span-metrics.json: |
+    {
+      "annotations": {
+        "list": []
+      },
+      "description": "Rate, errors and duration per service from the traces.span.metrics span metrics.",
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 1,
+      "links": [],
+      "panels": [
+        {
+          "type": "row",
+          "collapsed": false,
+          "title": "Rate and errors",
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 0
+          },
+          "id": 1,
+          "panels": []
+        },
+        {
+          "type": "timeseries",
+          "id": 2,
+          "title": "Rate",
+          "description": "Spans per second by service, from traces_span_metrics_calls_total.",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 1
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "A",
+              "expr": "sum by (service_name) (rate(traces_span_metrics_calls_total{service_name=~\"$service\"}[$__rate_interval]))",
+              "legendFormat": "{{service_name}}"
+            }
+          ],
+          "options": {},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps"
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "id": 3,
+          "title": "Errors",
+          "description": "Share of spans with status_code=\"STATUS_CODE_ERROR\", by service.",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 1
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "A",
+              "expr": "(\nsum by (service_name) (rate(traces_span_metrics_calls_total{service_name=~\"$service\", status_code=\"STATUS_CODE_ERROR\"}[$__rate_interval]))\nor\nsum by (service_name) (rate(traces_span_metrics_calls_total{service_name=~\"$service\"}[$__rate_interval])) * 0\n)\n/\nsum by (service_name) (rate(traces_span_metrics_calls_total{service_name=~\"$service\"}[$__rate_interval]))",
+              "legendFormat": "{{service_name}}"
+            }
+          ],
+          "options": {},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "min": 0
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "row",
+          "collapsed": false,
+          "title": "Duration",
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 9
+          },
+          "id": 4,
+          "panels": []
+        },
+        {
+          "type": "timeseries",
+          "id": 5,
+          "title": "Duration p50",
+          "description": "p50 duration of spans by service, from traces_span_metrics_duration_milliseconds.",
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 0,
+            "y": 10
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "A",
+              "expr": "histogram_quantile(0.5, sum by (le, service_name) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=~\"$service\"}[$__rate_interval])))",
+              "legendFormat": "{{service_name}}"
+            }
+          ],
+          "options": {},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms"
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "id": 6,
+          "title": "Duration p95",
+          "description": "p95 duration of spans by service, from traces_span_metrics_duration_milliseconds.",
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 8,
+            "y": 10
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "A",
+              "expr": "histogram_quantile(0.95, sum by (le, service_name) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=~\"$service\"}[$__rate_interval])))",
+              "legendFormat": "{{service_name}}"
+            }
+          ],
+          "options": {},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms"
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "id": 7,
+          "title": "Duration p99",
+          "description": "p99 duration of spans by service, from traces_span_metrics_duration_milliseconds.",
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 16,
+            "y": 10
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "A",
+              "expr": "histogram_quantile(0.99, sum by (le, service_name) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=~\"$service\"}[$__rate_interval])))",
+              "legendFormat": "{{service_name}}"
+            }
+          ],
+          "options": {},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ms"
+            },
+            "overrides": []
+          }
+        }
+      ],
+      "refresh": "1m",
+      "schemaVersion": 42,
+      "tags": [
+        "red",
+        "spanmetrics"
+      ],
+      "templating": {
+        "list": [
+          {
+            "type": "query",
+            "name": "service",
+            "label": "Service",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "prometheus"
+            },
+            "query": "label_values(traces_span_metrics_calls_total, service_name)",
+            "definition": "label_values(traces_span_metrics_calls_total, service_name)",
+            "refresh": 2,
+            "sort": 1,
+            "multi": true,
+            "includeAll": true,
+            "allValue": ".*",
+            "options": []
+          }
+        ]
+      },
+      "time": {
+        "from": "now-6h",
+        "to": "now"
+      },
+      "timepicker": {},
+      "timezone": "browser",
+      "title": "Services: rate, errors, duration",
+      "uid": "red-traces-span-metrics",
+      "weekStart": ""
+    }
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-slo-support-agent-runs
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/component: dashboards
+    grafana_dashboard: '1'
+  annotations:
+    k8s-sidecar-target-directory: Agent observability
+data:
+  slo-support-agent-runs.json: |
+    {
+      "annotations": {
+        "list": []
+      },
+      "description": "99% over 28d: SLI, error budget and burn rates for the support-agent-runs SLO.",
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 1,
+      "links": [],
+      "panels": [
+        {
+          "type": "row",
+          "collapsed": false,
+          "title": "Objective",
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 0
+          },
+          "id": 1,
+          "panels": []
+        },
+        {
+          "type": "stat",
+          "id": 2,
+          "title": "SLI over 28d",
+          "description": "Share of good events over the last 28d. Green at or above the 99% objective.",
+          "gridPos": {
+            "h": 5,
+            "w": 6,
+            "x": 0,
+            "y": 1
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "A",
+              "expr": "1 - slo:sli_error:ratio_rate28d{slo=\"support-agent-runs\"}",
+              "legendFormat": "SLI"
+            }
+          ],
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "decimals": 3,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "value": null,
+                    "color": "red"
+                  },
+                  {
+                    "value": 0.99,
+                    "color": "green"
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "stat",
+          "id": 3,
+          "title": "Objective",
+          "gridPos": {
+            "h": 5,
+            "w": 6,
+            "x": 6,
+            "y": 1
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "A",
+              "expr": "slo:objective:ratio{slo=\"support-agent-runs\"}",
+              "legendFormat": "objective"
+            }
+          ],
+          "options": {
+            "colorMode": "none",
+            "graphMode": "none",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "decimals": 3
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "stat",
+          "id": 4,
+          "title": "Error budget remaining",
+          "description": "Share of the 28d error budget (1% of events) not yet spent. Below 0 the objective is missed.",
+          "gridPos": {
+            "h": 5,
+            "w": 6,
+            "x": 12,
+            "y": 1
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "A",
+              "expr": "slo:error_budget:remaining{slo=\"support-agent-runs\"}",
+              "legendFormat": "remaining"
+            }
+          ],
+          "options": {
+            "colorMode": "background",
+            "graphMode": "area",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "decimals": 1,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "value": null,
+                    "color": "red"
+                  },
+                  {
+                    "value": 0,
+                    "color": "orange"
+                  },
+                  {
+                    "value": 0.25,
+                    "color": "green"
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "stat",
+          "id": 5,
+          "title": "Burn-rate alerts firing",
+          "description": "ErrorBudgetBurn alerts for this SLO, any tier.",
+          "gridPos": {
+            "h": 5,
+            "w": 6,
+            "x": 18,
+            "y": 1
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "A",
+              "expr": "sum(ALERTS{alertname=\"ErrorBudgetBurn\", slo=\"support-agent-runs\", alertstate=\"firing\"}) or vector(0)",
+              "legendFormat": "firing"
+            }
+          ],
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "decimals": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "value": null,
+                    "color": "green"
+                  },
+                  {
+                    "value": 1,
+                    "color": "red"
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "id": 6,
+          "title": "SLI over 28d",
+          "description": "The dashed line is the 99% objective.",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 6
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "A",
+              "expr": "1 - slo:sli_error:ratio_rate28d{slo=\"support-agent-runs\"}",
+              "legendFormat": "SLI"
+            }
+          ],
+          "options": {},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "decimals": 3,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "value": null,
+                    "color": "red"
+                  },
+                  {
+                    "value": 0.99,
+                    "color": "green"
+                  }
+                ]
+              },
+              "custom": {
+                "thresholdsStyle": {
+                  "mode": "dashed"
+                }
+              }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "id": 7,
+          "title": "Error budget remaining",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 6
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "A",
+              "expr": "slo:error_budget:remaining{slo=\"support-agent-runs\"}",
+              "legendFormat": "remaining"
+            }
+          ],
+          "options": {},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "decimals": 1,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "value": null,
+                    "color": "red"
+                  },
+                  {
+                    "value": 0,
+                    "color": "green"
+                  }
+                ]
+              },
+              "custom": {
+                "thresholdsStyle": {
+                  "mode": "dashed"
+                }
+              }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "row",
+          "collapsed": false,
+          "title": "Burn rate by alert window",
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 14
+          },
+          "id": 8,
+          "panels": []
+        },
+        {
+          "type": "timeseries",
+          "id": 9,
+          "title": "Burn rate 1h / 5m (page)",
+          "description": "Error ratio over the budget: 1 spends the 28d budget exactly over 28d. ErrorBudgetBurn fires with severity page while both windows are above 13.44, which spends the budget in 2d2h.",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 15
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "A",
+              "expr": "slo:sli_error:ratio_rate1h{slo=\"support-agent-runs\"} / 0.01",
+              "legendFormat": "1h"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "B",
+              "expr": "slo:sli_error:ratio_rate5m{slo=\"support-agent-runs\"} / 0.01",
+              "legendFormat": "5m"
+            }
+          ],
+          "options": {},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "suffix:x",
+              "decimals": 2,
+              "min": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "value": null,
+                    "color": "green"
+                  },
+                  {
+                    "value": 13.44,
+                    "color": "red"
+                  }
+                ]
+              },
+              "custom": {
+                "thresholdsStyle": {
+                  "mode": "dashed"
+                }
+              }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "id": 10,
+          "title": "Burn rate 6h / 30m (page)",
+          "description": "Error ratio over the budget: 1 spends the 28d budget exactly over 28d. ErrorBudgetBurn fires with severity page while both windows are above 5.6, which spends the budget in 5d.",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 15
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "A",
+              "expr": "slo:sli_error:ratio_rate6h{slo=\"support-agent-runs\"} / 0.01",
+              "legendFormat": "6h"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "B",
+              "expr": "slo:sli_error:ratio_rate30m{slo=\"support-agent-runs\"} / 0.01",
+              "legendFormat": "30m"
+            }
+          ],
+          "options": {},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "suffix:x",
+              "decimals": 2,
+              "min": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "value": null,
+                    "color": "green"
+                  },
+                  {
+                    "value": 5.6,
+                    "color": "red"
+                  }
+                ]
+              },
+              "custom": {
+                "thresholdsStyle": {
+                  "mode": "dashed"
+                }
+              }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "id": 11,
+          "title": "Burn rate 1d / 2h (ticket)",
+          "description": "Error ratio over the budget: 1 spends the 28d budget exactly over 28d. ErrorBudgetBurn fires with severity ticket while both windows are above 2.8, which spends the budget in 1w3d.",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 23
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "A",
+              "expr": "slo:sli_error:ratio_rate1d{slo=\"support-agent-runs\"} / 0.01",
+              "legendFormat": "1d"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "B",
+              "expr": "slo:sli_error:ratio_rate2h{slo=\"support-agent-runs\"} / 0.01",
+              "legendFormat": "2h"
+            }
+          ],
+          "options": {},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "suffix:x",
+              "decimals": 2,
+              "min": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "value": null,
+                    "color": "green"
+                  },
+                  {
+                    "value": 2.8,
+                    "color": "red"
+                  }
+                ]
+              },
+              "custom": {
+                "thresholdsStyle": {
+                  "mode": "dashed"
+                }
+              }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "id": 12,
+          "title": "Burn rate 3d / 6h (ticket)",
+          "description": "Error ratio over the budget: 1 spends the 28d budget exactly over 28d. ErrorBudgetBurn fires with severity ticket while both windows are above 0.933333, which spends the budget in 4w2d.",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 23
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "A",
+              "expr": "slo:sli_error:ratio_rate3d{slo=\"support-agent-runs\"} / 0.01",
+              "legendFormat": "3d"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "B",
+              "expr": "slo:sli_error:ratio_rate6h{slo=\"support-agent-runs\"} / 0.01",
+              "legendFormat": "6h"
+            }
+          ],
+          "options": {},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "suffix:x",
+              "decimals": 2,
+              "min": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "value": null,
+                    "color": "green"
+                  },
+                  {
+                    "value": 0.933333,
+                    "color": "red"
+                  }
+                ]
+              },
+              "custom": {
+                "thresholdsStyle": {
+                  "mode": "dashed"
+                }
+              }
+            },
+            "overrides": []
+          }
+        }
+      ],
+      "refresh": "1m",
+      "schemaVersion": 42,
+      "tags": [
+        "slo",
+        "support-agent-runs"
+      ],
+      "templating": {
+        "list": []
+      },
+      "time": {
+        "from": "now-7d",
+        "to": "now"
+      },
+      "timepicker": {},
+      "timezone": "browser",
+      "title": "SLO: support-agent-runs",
+      "uid": "slo-support-agent-runs",
+      "weekStart": ""
+    }
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-genai-agents
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/component: dashboards
+    grafana_dashboard: '1'
+  annotations:
+    k8s-sidecar-target-directory: Agent observability
+data:
+  genai-agents.json: |
+    {
+      "annotations": {
+        "list": []
+      },
+      "description": "Calls, errors and latency per model and tool, and token usage per model, from the genai GenAI metrics.",
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 1,
+      "links": [],
+      "panels": [
+        {
+          "type": "row",
+          "collapsed": false,
+          "title": "Models",
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 0
+          },
+          "id": 1,
+          "panels": []
+        },
+        {
+          "type": "timeseries",
+          "id": 2,
+          "title": "Calls by model",
+          "description": "GenAI operations per second, from genai_calls_total.",
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 0,
+            "y": 1
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "A",
+              "expr": "sum by (gen_ai_request_model) (rate(genai_calls_total{service_name=~\"$service\", gen_ai_request_model=~\"$model\"}[$__rate_interval]))",
+              "legendFormat": "{{gen_ai_request_model}}"
+            }
+          ],
+          "options": {},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps"
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "id": 3,
+          "title": "Errors by model",
+          "description": "Share of operations that ended with status_code=\"STATUS_CODE_ERROR\".",
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 8,
+            "y": 1
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "A",
+              "expr": "(\nsum by (gen_ai_request_model) (rate(genai_calls_total{service_name=~\"$service\", gen_ai_request_model=~\"$model\", status_code=\"STATUS_CODE_ERROR\"}[$__rate_interval]))\nor\nsum by (gen_ai_request_model) (rate(genai_calls_total{service_name=~\"$service\", gen_ai_request_model=~\"$model\"}[$__rate_interval])) * 0\n)\n/\nsum by (gen_ai_request_model) (rate(genai_calls_total{service_name=~\"$service\", gen_ai_request_model=~\"$model\"}[$__rate_interval]))",
+              "legendFormat": "{{gen_ai_request_model}}"
+            }
+          ],
+          "options": {},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "min": 0
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "id": 4,
+          "title": "Latency p95 by model",
+          "description": "From genai_duration_seconds.",
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 16,
+            "y": 1
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "A",
+              "expr": "histogram_quantile(0.95, sum by (le, gen_ai_request_model) (rate(genai_duration_seconds_bucket{service_name=~\"$service\", gen_ai_request_model=~\"$model\"}[$__rate_interval])))",
+              "legendFormat": "{{gen_ai_request_model}}"
+            }
+          ],
+          "options": {},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s"
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "row",
+          "collapsed": false,
+          "title": "Tools",
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 9
+          },
+          "id": 5,
+          "panels": []
+        },
+        {
+          "type": "timeseries",
+          "id": 6,
+          "title": "Tool calls",
+          "description": "Operations with a gen_ai.tool.name, per second.",
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 0,
+            "y": 10
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "A",
+              "expr": "sum by (gen_ai_tool_name) (rate(genai_calls_total{service_name=~\"$service\", gen_ai_request_model=~\"$model\", gen_ai_tool_name!=\"\"}[$__rate_interval]))",
+              "legendFormat": "{{gen_ai_tool_name}}"
+            }
+          ],
+          "options": {},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps"
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "id": 7,
+          "title": "Errors by tool",
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 8,
+            "y": 10
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "A",
+              "expr": "(\nsum by (gen_ai_tool_name) (rate(genai_calls_total{service_name=~\"$service\", gen_ai_request_model=~\"$model\", gen_ai_tool_name!=\"\", status_code=\"STATUS_CODE_ERROR\"}[$__rate_interval]))\nor\nsum by (gen_ai_tool_name) (rate(genai_calls_total{service_name=~\"$service\", gen_ai_request_model=~\"$model\", gen_ai_tool_name!=\"\"}[$__rate_interval])) * 0\n)\n/\nsum by (gen_ai_tool_name) (rate(genai_calls_total{service_name=~\"$service\", gen_ai_request_model=~\"$model\", gen_ai_tool_name!=\"\"}[$__rate_interval]))",
+              "legendFormat": "{{gen_ai_tool_name}}"
+            }
+          ],
+          "options": {},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "min": 0
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "id": 8,
+          "title": "Latency p95 by tool",
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 16,
+            "y": 10
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "A",
+              "expr": "histogram_quantile(0.95, sum by (le, gen_ai_tool_name) (rate(genai_duration_seconds_bucket{service_name=~\"$service\", gen_ai_request_model=~\"$model\", gen_ai_tool_name!=\"\"}[$__rate_interval])))",
+              "legendFormat": "{{gen_ai_tool_name}}"
+            }
+          ],
+          "options": {},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s"
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "row",
+          "collapsed": false,
+          "title": "Errors",
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 18
+          },
+          "id": 9,
+          "panels": []
+        },
+        {
+          "type": "timeseries",
+          "id": 10,
+          "title": "Errors by type",
+          "description": "Failed operations per second by error.type.",
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 19
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "A",
+              "expr": "sum by (error_type) (rate(genai_calls_total{service_name=~\"$service\", gen_ai_request_model=~\"$model\", status_code=\"STATUS_CODE_ERROR\"}[$__rate_interval]))",
+              "legendFormat": "{{error_type}}"
+            }
+          ],
+          "options": {},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps"
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "row",
+          "collapsed": false,
+          "title": "Tokens",
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 27
+          },
+          "id": 11,
+          "panels": []
+        },
+        {
+          "type": "timeseries",
+          "id": 12,
+          "title": "Input tokens by model",
+          "description": "Tokens per second by model, from genai_tokens_input_total.",
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 0,
+            "y": 28
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "A",
+              "expr": "sum by (gen_ai_request_model) (rate(genai_tokens_input_total{gen_ai_request_model=~\"$model\"}[$__rate_interval]))",
+              "legendFormat": "{{gen_ai_request_model}}"
+            }
+          ],
+          "options": {
+            "tooltip": {
+              "mode": "multi"
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short"
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "timeseries",
+          "id": 13,
+          "title": "Output tokens by model",
+          "description": "Tokens per second by model, from genai_tokens_output_total.",
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 8,
+            "y": 28
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "A",
+              "expr": "sum by (gen_ai_request_model) (rate(genai_tokens_output_total{gen_ai_request_model=~\"$model\"}[$__rate_interval]))",
+              "legendFormat": "{{gen_ai_request_model}}"
+            }
+          ],
+          "options": {
+            "tooltip": {
+              "mode": "multi"
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short"
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "stat",
+          "id": 14,
+          "title": "Input tokens",
+          "description": "Over the dashboard's time range.",
+          "gridPos": {
+            "h": 8,
+            "w": 4,
+            "x": 16,
+            "y": 28
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "A",
+              "expr": "sum(increase(genai_tokens_input_total{gen_ai_request_model=~\"$model\"}[$__range]))",
+              "legendFormat": "Input tokens",
+              "instant": true,
+              "range": false
+            }
+          ],
+          "options": {
+            "graphMode": "none",
+            "colorMode": "none",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "decimals": 0
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "stat",
+          "id": 15,
+          "title": "Output tokens",
+          "description": "Over the dashboard's time range.",
+          "gridPos": {
+            "h": 8,
+            "w": 4,
+            "x": 20,
+            "y": 28
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "A",
+              "expr": "sum(increase(genai_tokens_output_total{gen_ai_request_model=~\"$model\"}[$__range]))",
+              "legendFormat": "Output tokens",
+              "instant": true,
+              "range": false
+            }
+          ],
+          "options": {
+            "graphMode": "none",
+            "colorMode": "none",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "decimals": 0
+            },
+            "overrides": []
+          }
+        }
+      ],
+      "refresh": "1m",
+      "schemaVersion": 42,
+      "tags": [
+        "genai",
+        "agents"
+      ],
+      "templating": {
+        "list": [
+          {
+            "type": "query",
+            "name": "service",
+            "label": "Service",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "prometheus"
+            },
+            "query": "label_values(genai_calls_total, service_name)",
+            "definition": "label_values(genai_calls_total, service_name)",
+            "refresh": 2,
+            "sort": 1,
+            "multi": true,
+            "includeAll": true,
+            "allValue": ".*",
+            "options": []
+          },
+          {
+            "type": "query",
+            "name": "model",
+            "label": "Model",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "prometheus"
+            },
+            "query": "label_values(genai_calls_total, gen_ai_request_model)",
+            "definition": "label_values(genai_calls_total, gen_ai_request_model)",
+            "refresh": 2,
+            "sort": 1,
+            "multi": true,
+            "includeAll": true,
+            "allValue": ".*",
+            "options": []
+          }
+        ]
+      },
+      "time": {
+        "from": "now-6h",
+        "to": "now"
+      },
+      "timepicker": {},
+      "timezone": "browser",
+      "title": "Agents: models, tools and tokens",
+      "uid": "genai-agents",
+      "weekStart": ""
+    }
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/component: dashboards
+    grafana_datasource: '1'
+data:
+  chant.yaml: |
+    # Grafana datasource provisioning, generated by chant.
+    apiVersion: 1
+    datasources:
+      - name: Loki
+        type: loki
+        uid: loki
+        access: proxy
+        url: http://loki:3100
+        editable: false
+      - name: Prometheus
+        type: prometheus
+        uid: prometheus
+        access: proxy
+        url: http://prometheus
+        isDefault: true
+        editable: false
+      - name: Tempo
+        type: tempo
+        uid: tempo
+        access: proxy
+        url: http://tempo:3200
+        jsonData:
+          tracesToLogsV2:
+            datasourceUid: loki
+            filterByTraceID: true
+            spanStartTimeShift: "-5m"
+            spanEndTimeShift: 5m
+          serviceMap:
+            datasourceUid: prometheus
+        editable: false
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-providers
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/component: dashboards
+data:
+  chant.yaml: |
+    # Grafana dashboard provisioning, generated by chant.
+    apiVersion: 1
+    providers:
+      - name: chant
+        orgId: 1
+        folder: ""
+        type: file
+        disableDeletion: false
+        allowUiUpdates: false
+        updateIntervalSeconds: 30
+        options:
+          path: /var/lib/grafana/dashboards
+          foldersFromFilesStructure: true
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/component: dashboards
+spec:
+  selector:
+    app.kubernetes.io/name: grafana
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loki
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: loki
+    app.kubernetes.io/component: logs
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: loki
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: loki
+        app.kubernetes.io/component: logs
+    spec:
+      securityContext:
+        fsGroup: 10001
+      containers:
+        - name: loki
+          image: grafana/loki:3.6.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - -config.file=/etc/loki/loki.yaml
+          ports:
+            - name: http
+              containerPort: 3100
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: '100m'
+              memory: '256Mi'
+            limits:
+              cpu: '1'
+              memory: '1Gi'
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: config
+              mountPath: /etc/loki
+              readOnly: true
+            - name: data
+              mountPath: /loki
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: loki-config
+        - name: data
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loki-config
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: loki
+    app.kubernetes.io/component: logs
+data:
+  loki.yaml: |
+    auth_enabled: false
+    server:
+      http_listen_port: 3100
+      grpc_listen_port: 9096
+    common:
+      instance_addr: 127.0.0.1
+      path_prefix: /loki
+      storage:
+        filesystem:
+          chunks_directory: /loki/chunks
+          rules_directory: /loki/rules
+      replication_factor: 1
+      ring:
+        kvstore:
+          store: inmemory
+    schema_config:
+      configs:
+        - from: 2024-01-01
+          store: tsdb
+          object_store: filesystem
+          schema: v13
+          index:
+            prefix: index_
+            period: 24h
+    limits_config:
+      allow_structured_metadata: true
+    analytics:
+      reporting_enabled: false
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: loki
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: loki
+    app.kubernetes.io/component: logs
+spec:
+  selector:
+    app.kubernetes.io/name: loki
+  ports:
+    - name: http
+      port: 3100
+      targetPort: http
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertmanager
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: alertmanager
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: alertmanager
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: alertmanager
+    spec:
+      containers:
+        - name: alertmanager
+          image: prom/alertmanager:v0.34.1
+          ports:
+            - containerPort: 9093
+              name: http
+          resources:
+            limits:
+              cpu: '500m'
+              memory: '256Mi'
+            requests:
+              cpu: '100m'
+              memory: '128Mi'
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alertmanager
+              readOnly: true
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        - name: config
+          configMap:
+            name: alertmanager-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: alertmanager
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: server
+spec:
+  selector:
+    app.kubernetes.io/name: alertmanager
+  ports:
+    - port: 80
+      targetPort: 9093
+      protocol: TCP
+      name: http
+  type: ClusterIP
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-config
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: alertmanager
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: config
+data:
+  alertmanager.yml: |
+    route:
+      receiver: default
+      group_by:
+        - alertname
+        - slo
+      group_wait: 10s
+      group_interval: 1m
+      routes:
+        - receiver: oncall
+          matchers:
+            - severity="page"
+          repeat_interval: 1h
+        - receiver: tickets
+          matchers:
+            - severity="ticket"
+          repeat_interval: 12h
+    inhibit_rules:
+      - source_matchers:
+          - severity="page"
+        target_matchers:
+          - severity="ticket"
+        equal:
+          - slo
+    receivers:
+      - name: default
+      - name: oncall
+      - name: tickets
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: prometheus
+    spec:
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v3.15.0
+          ports:
+            - containerPort: 9090
+              name: http
+          resources:
+            limits:
+              cpu: '500m'
+              memory: '512Mi'
+            requests:
+              cpu: '100m'
+              memory: '128Mi'
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+              readOnly: true
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        - name: config
+          configMap:
+            name: prometheus-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: server
+spec:
+  selector:
+    app.kubernetes.io/name: prometheus
+  ports:
+    - port: 80
+      targetPort: 9090
+      protocol: TCP
+      name: http
+  type: ClusterIP
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/managed-by: chant
+    app.kubernetes.io/component: config
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+    rule_files:
+      - /etc/prometheus/rules.yml
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets: ["alertmanager:80"]
+    scrape_configs:
+      - job_name: otel-gateway
+        dns_sd_configs:
+          - names: ["otel-gateway-headless.observability.svc.cluster.local"]
+            type: A
+            port: 8889
+            refresh_interval: 15s
+      - job_name: prometheus
+        static_configs:
+          - targets: ["localhost:9090"]
+  rules.yml: |
+    groups:
+      - name: slo-support-agent-runs
+        interval: 15s
+        labels:
+          team: agents
+        rules:
+          - record: slo:sli_error:ratio_rate5m
+            expr: |-
+              (sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support",status_code="STATUS_CODE_ERROR"}[5m])))
+              /
+              (sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support"}[5m])))
+            labels:
+              slo: support-agent-runs
+          - record: slo:sli_error:ratio_rate30m
+            expr: |-
+              (sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support",status_code="STATUS_CODE_ERROR"}[30m])))
+              /
+              (sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support"}[30m])))
+            labels:
+              slo: support-agent-runs
+          - record: slo:sli_error:ratio_rate1h
+            expr: |-
+              (sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support",status_code="STATUS_CODE_ERROR"}[1h])))
+              /
+              (sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support"}[1h])))
+            labels:
+              slo: support-agent-runs
+          - record: slo:sli_error:ratio_rate2h
+            expr: |-
+              (sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support",status_code="STATUS_CODE_ERROR"}[2h])))
+              /
+              (sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support"}[2h])))
+            labels:
+              slo: support-agent-runs
+          - record: slo:sli_error:ratio_rate6h
+            expr: |-
+              (sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support",status_code="STATUS_CODE_ERROR"}[6h])))
+              /
+              (sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support"}[6h])))
+            labels:
+              slo: support-agent-runs
+          - record: slo:sli_error:ratio_rate1d
+            expr: |-
+              (sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support",status_code="STATUS_CODE_ERROR"}[1d])))
+              /
+              (sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support"}[1d])))
+            labels:
+              slo: support-agent-runs
+          - record: slo:sli_error:ratio_rate3d
+            expr: |-
+              (sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support",status_code="STATUS_CODE_ERROR"}[3d])))
+              /
+              (sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support"}[3d])))
+            labels:
+              slo: support-agent-runs
+          - record: slo:sli_error:ratio_rate28d
+            expr: avg_over_time(slo:sli_error:ratio_rate5m{slo="support-agent-runs"}[28d])
+            labels:
+              slo: support-agent-runs
+          - record: slo:objective:ratio
+            expr: vector(0.99)
+            labels:
+              slo: support-agent-runs
+          - record: slo:error_budget:remaining
+            expr: 1 - (slo:sli_error:ratio_rate28d{slo="support-agent-runs"} / 0.01)
+            labels:
+              slo: support-agent-runs
+          - alert: ErrorBudgetBurn
+            expr: |-
+              (
+                slo:sli_error:ratio_rate1h{slo="support-agent-runs"} > (13.44 * 0.01)
+              )
+              and
+              (
+                slo:sli_error:ratio_rate5m{slo="support-agent-runs"} > (13.44 * 0.01)
+              )
+            labels:
+              slo: support-agent-runs
+              severity: page
+              long_window: 1h
+              short_window: 5m
+            annotations:
+              summary: SLO support-agent-runs is burning its error budget more than 13.44x too fast (1h and 5m windows)
+              description: Support agent runs end without an error span. The error ratio over both the last 1h and the last 5m is above 0.1344 (13.44 times the 0.01 budget of a 0.99 objective). At that rate the 28d error budget is gone in 2d2h.
+          - alert: ErrorBudgetBurn
+            expr: |-
+              (
+                slo:sli_error:ratio_rate6h{slo="support-agent-runs"} > (5.6 * 0.01)
+              )
+              and
+              (
+                slo:sli_error:ratio_rate30m{slo="support-agent-runs"} > (5.6 * 0.01)
+              )
+            labels:
+              slo: support-agent-runs
+              severity: page
+              long_window: 6h
+              short_window: 30m
+            annotations:
+              summary: SLO support-agent-runs is burning its error budget more than 5.6x too fast (6h and 30m windows)
+              description: Support agent runs end without an error span. The error ratio over both the last 6h and the last 30m is above 0.056 (5.6 times the 0.01 budget of a 0.99 objective). At that rate the 28d error budget is gone in 5d.
+          - alert: ErrorBudgetBurn
+            expr: |-
+              (
+                slo:sli_error:ratio_rate1d{slo="support-agent-runs"} > (2.8 * 0.01)
+              )
+              and
+              (
+                slo:sli_error:ratio_rate2h{slo="support-agent-runs"} > (2.8 * 0.01)
+              )
+            labels:
+              slo: support-agent-runs
+              severity: ticket
+              long_window: 1d
+              short_window: 2h
+            annotations:
+              summary: SLO support-agent-runs is burning its error budget more than 2.8x too fast (1d and 2h windows)
+              description: Support agent runs end without an error span. The error ratio over both the last 1d and the last 2h is above 0.028 (2.8 times the 0.01 budget of a 0.99 objective). At that rate the 28d error budget is gone in 1w3d.
+          - alert: ErrorBudgetBurn
+            expr: |-
+              (
+                slo:sli_error:ratio_rate3d{slo="support-agent-runs"} > (0.933333 * 0.01)
+              )
+              and
+              (
+                slo:sli_error:ratio_rate6h{slo="support-agent-runs"} > (0.933333 * 0.01)
+              )
+            labels:
+              slo: support-agent-runs
+              severity: ticket
+              long_window: 3d
+              short_window: 6h
+            annotations:
+              summary: SLO support-agent-runs is burning its error budget more than 0.933333x too fast (3d and 6h windows)
+              description: Support agent runs end without an error span. The error ratio over both the last 3d and the last 6h is above 0.00933333 (0.933333 times the 0.01 budget of a 0.99 objective). At that rate the 28d error budget is gone in 4w2d.
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tempo
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: tempo
+    app.kubernetes.io/component: traces
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: tempo
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: tempo
+        app.kubernetes.io/component: traces
+    spec:
+      securityContext:
+        fsGroup: 10001
+      containers:
+        - name: tempo
+          image: grafana/tempo:2.9.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - -config.file=/etc/tempo/tempo.yaml
+          ports:
+            - name: http
+              containerPort: 3200
+            - name: otlp-grpc
+              containerPort: 4317
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: '100m'
+              memory: '256Mi'
+            limits:
+              cpu: '1'
+              memory: '1Gi'
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: config
+              mountPath: /etc/tempo
+              readOnly: true
+            - name: data
+              mountPath: /var/tempo
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: tempo-config
+        - name: data
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tempo-config
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: tempo
+    app.kubernetes.io/component: traces
+data:
+  tempo.yaml: |
+    stream_over_http_enabled: true
+    server:
+      http_listen_port: 3200
+    distributor:
+      receivers:
+        otlp:
+          protocols:
+            grpc:
+              endpoint: 0.0.0.0:4317
+    ingester:
+      max_block_duration: 5m
+    compactor:
+      compaction:
+        block_retention: 24h
+    storage:
+      trace:
+        backend: local
+        wal:
+          path: /var/tempo/wal
+        local:
+          path: /var/tempo/blocks
+    usage_report:
+      reporting_enabled: false
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tempo
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: tempo
+    app.kubernetes.io/component: traces
+spec:
+  selector:
+    app.kubernetes.io/name: tempo
+  ports:
+    - name: http
+      port: 3200
+      targetPort: http
+    - name: otlp-grpc
+      port: 4317
+      targetPort: otlp-grpc

@@ -127,6 +127,60 @@ export { metrics, traces, logs };
 ```
 ```
 
+## genai-agent
+
+The [GenAI preset](../genai-pipeline/) for an agent service: content removed, values that look like card numbers masked, span and token metrics served for Prometheus, and traces sent to Tempo.
+
+```ts title="src/collector.ts"
+```typescript title="collector.ts"
+/**
+ * A collector for an agent service instrumented with the OpenTelemetry GenAI
+ * conventions. Prompts, completions and tool payloads are removed before
+ * anything leaves the collector; every GenAI span also becomes call, error,
+ * duration and token metrics for Prometheus to scrape; and traces go to Tempo.
+ */
+import { genAiPipeline, OtlpExporter, PrometheusExporter, type TLSClientSettings } from "@intentius/chant-lexicon-otel";
+
+const plaintext: TLSClientSettings = { insecure: true };
+
+const tempo = new OtlpExporter({ name: "tempo", endpoint: "tempo.observability:4317", tls: plaintext });
+
+const prometheus = new PrometheusExporter({ endpoint: "0.0.0.0:8889" });
+
+/** Content stays out unless `keepContent: true` is set here. Card-number-like values are masked in whatever is left. */
+export const collector = genAiPipeline({
+  traceExporters: [tempo],
+  metricExporters: [prometheus],
+  maskValues: ["\\b[0-9]{13,16}\\b"],
+  logs: false,
+});
+```
+```
+
+## tail-sampling-gateway
+
+A gateway tier: every span becomes `spanmetrics` metrics first, then a `forward` connector hands the spans to a `traces/sampled` pipeline whose `tail_sampling` keeps errors, traces of 500ms or more and a 10% baseline, and sends them to Tempo. Split into components, sampling and pipelines.
+
+```ts title="src/pipelines.ts"
+```typescript title="pipelines.ts"
+/**
+ * The gateway's pipelines: every span to the span metrics and on to
+ * sampling, the sampled traces to Tempo, the metrics to Prometheus.
+ */
+import { Pipeline } from "@intentius/chant-lexicon-otel";
+import { otlp, memoryLimiter, batch, spanmetrics, tempo, prometheus } from "./components";
+import { toSampling, sampling } from "./sampling";
+
+const traces = new Pipeline({ signal: "traces", receivers: [otlp], processors: [memoryLimiter], exporters: [spanmetrics, toSampling] });
+
+const sampled = new Pipeline({ signal: "traces", name: "sampled", receivers: [toSampling], processors: [sampling, batch], exporters: [tempo] });
+
+const metrics = new Pipeline({ signal: "metrics", receivers: [spanmetrics], processors: [batch], exporters: [prometheus] });
+
+export { traces, sampled, metrics };
+```
+```
+
 ## custom-component
 
 A Splunk HEC exporter defined with `defineComponent`, with a schema pin and its own validation, used next to built-ins. See [Custom components](../custom-components/).

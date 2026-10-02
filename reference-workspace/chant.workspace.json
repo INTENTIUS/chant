@@ -1,0 +1,56 @@
+{
+  "name": "reference",
+  "schema": 1,
+  "members": [
+    {
+      "name": "app",
+      "dir": "app",
+      "kind": "other",
+      "because": "a Node HTTP server with its own Dockerfile and test; no app kind exists yet (#2535)",
+      "box": { "intent": "ref-003" },
+      "links": [{ "member": "delivery", "output": "traces", "kind": "telemetry", "protocol": "http/protobuf" }]
+    },
+    {
+      "name": "delivery",
+      "dir": "delivery",
+      "kind": "chant"
+    },
+    {
+      "name": "design-client",
+      "dir": "design-client",
+      "kind": "other",
+      "roles": ["design-app"],
+      "because": "a placeholder until a hud client package is published to vendor; the kind and upstream come with it"
+    },
+    {
+      "name": "design",
+      "dir": "design",
+      "kind": "design",
+      "because": "the design data member: the screen spec and wireframe the design client edits. Decisions pin its files by hash, and chant reads it and builds nothing",
+      "records": [{ "kind": "sessions/session.kind.mjs" }]
+    }
+  ],
+  "records": [
+    { "kind": "decisions/decision.kind.mjs" },
+    { "kind": "work/work.kind.mjs" },
+    { "kind": "answers/answer.kind.mjs" },
+    { "kind": "lessons/lesson.kind.mjs" },
+    { "kind": "constraints/constraint.kind.mjs" },
+    { "kind": "preferences/preference.kind.mjs" }
+  ],
+  "pins": [],
+  "writeScope": {
+    "agent": {
+      "records": {
+        "decision": ["new", "review"],
+        "work": ["new", "amend", "review"],
+        "lesson": ["new"],
+        "session": ["review"]
+      }
+    }
+  },
+  "agents": [
+    { "name": "app", "member": "app" },
+    { "name": "design", "member": "design" }
+  ]
+}

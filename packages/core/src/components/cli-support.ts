@@ -22,10 +22,10 @@
  *    executor, the CLI entrypoint the driver (#556) never had.
  */
 
-import { lexiconModulePath, lexiconNames } from "../lexicon-module";
+import { lexiconModulePath, lexiconNames, importLexiconPackage } from "../lexicon-module";
 import { discoverComponents } from "./discover";
 import type { BuildParamProvenance } from "../provenance";
-import { projectToJson, type Archetype } from "./component";
+import { inferArchetype, projectToJson, type Archetype } from "./component";
 import {
   resolveComponentGraph,
   runInterpretDriver,
@@ -39,7 +39,7 @@ import {
   type DriverRunResult,
 } from "./driver";
 import type { PendingGateRecord } from "../lifecycle/gate-ledger";
-import type { GateLedgerPort } from "../op/gate";
+import type { GateDigestMismatch, GateLedgerPort } from "../op/gate";
 import { gateName } from "../op/gate-name";
 import { isLexiconPlugin, type LexiconPlugin, type ComponentPipelineOptions } from "../lexicon";
 import type { RunProgressEvent } from "./run-progress";
@@ -152,6 +152,10 @@ export interface ComponentGraphResult {
    * entirely rather than defaulting to a guess; a consumer with no entry here
    * keeps applying its own naming-convention default. */
   composites?: Record<string, string[]>;
+  /** Component name → its archetype, declared or inferred from the composition
+   * (`inferArchetype`), so a reader can label a component without its source
+   * (#2662). */
+  archetypes?: Record<string, Archetype>;
   error?: string;
 }
 
@@ -187,7 +191,9 @@ export async function computeComponentGraph(
   // component name → declared composite kind(s) (#1492), only for components
   // that declared them — no identity fallback (see ComponentGraphResult doc).
   const composites: Record<string, string[]> = {};
+  const archetypes: Record<string, Archetype> = {};
   for (const [name, discovered] of result.components) {
+    archetypes[name] = discovered.component.archetype ?? inferArchetype(discovered.component);
     files[name] = relative(path, discovered.filePath);
     const declared = discovered.component.liveNames;
     liveNames[name] = declared && declared.length > 0 ? [...declared] : [name];
@@ -201,7 +207,7 @@ export async function computeComponentGraph(
     for (const c of driverComponents) {
       for (const dep of c.dependsOn ?? []) edges.push({ from: c.name, to: dep });
     }
-    return { success: true, order, waves, edges, files, liveNames, composites };
+    return { success: true, order, waves, edges, files, liveNames, composites, archetypes };
   } catch (err) {
     if (err instanceof UnknownDependencyError || err instanceof DependencyCycleError) {
       return { success: false, order: [], waves: [], edges: [], error: err.message };
@@ -238,7 +244,7 @@ export interface GenerateComponentsResult {
 async function loadLexiconPlugin(name: string): Promise<LexiconPlugin | null> {
   let mod: Record<string, unknown>;
   try {
-    mod = (await import(lexiconModulePath(name) ?? `@intentius/chant-lexicon-${name}`)) as Record<string, unknown>;
+    mod = (await importLexiconPackage(lexiconModulePath(name) ?? `@intentius/chant-lexicon-${name}`)) as Record<string, unknown>;
   } catch {
     return null;
   }
@@ -432,6 +438,8 @@ export interface RunComponentsResult {
     /** Whether this run's own append reached the remote (#2310); absent when the pending fact was already standing. */
     pushed?: boolean;
     pushWarning?: string;
+    /** Set when an approval stands for this gate, but for another plan or none (#2574). */
+    mismatch?: GateDigestMismatch;
   };
   /** This run's resolved build-time parameters (chant #1108) — the component-driver counterpart of `../cli/commands/build.ts`'s `BuildResult.buildParams`. Present only once the run actually reached dispatch (mirrors `BuildResult.buildParams`, which is likewise absent on an early-error return). */
   buildParams?: BuildParamProvenance[];
@@ -584,6 +592,7 @@ export async function runComponents(
                 gate: run.gate,
                 ...(run.gatePushed !== undefined ? { pushed: run.gatePushed } : {}),
                 ...(run.gatePushWarning ? { pushWarning: run.gatePushWarning } : {}),
+                ...(run.gateMismatch ? { mismatch: run.gateMismatch } : {}),
               },
             }
           : {}),
@@ -632,6 +641,7 @@ export async function runComponents(
             gate: componentResult.gate,
             ...(componentResult.gatePushed !== undefined ? { gatePushed: componentResult.gatePushed } : {}),
             ...(componentResult.gatePushWarning ? { gatePushWarning: componentResult.gatePushWarning } : {}),
+            ...(componentResult.gateMismatch ? { gateMismatch: componentResult.gateMismatch } : {}),
           }
         : {}),
       componentOutputs,
@@ -648,6 +658,7 @@ export async function runComponents(
               gate: componentResult.gate,
               ...(componentResult.gatePushed !== undefined ? { pushed: componentResult.gatePushed } : {}),
               ...(componentResult.gatePushWarning ? { pushWarning: componentResult.gatePushWarning } : {}),
+              ...(componentResult.gateMismatch ? { mismatch: componentResult.gateMismatch } : {}),
             },
           }
         : {}),

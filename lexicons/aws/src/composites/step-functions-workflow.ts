@@ -75,6 +75,7 @@ export interface StepFunctionsWorkflowProps {
   };
 }
 
+/** A Step Functions state machine with its execution role and a log group. */
 export const StepFunctionsWorkflow = Composite((props: StepFunctionsWorkflowProps) => {
   const { defaults } = props;
 

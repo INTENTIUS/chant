@@ -45,6 +45,8 @@ export interface ProposeWorkspaceUpgradeArgs {
   remote?: string;
   /** Run code migrations. Default false. */
   allowCode?: boolean;
+  /** `<repo>[#<member>]`: move the scope to this template through its bridge migration (#2551). Needs `to`. */
+  source?: string;
   /** The directory holding the lineage lock. Default: the working directory. */
   cwd?: string;
   /** Replaces the git and gh child processes. For tests. */
@@ -91,8 +93,8 @@ export function proposalMarker(scope: string): string {
 
 function body(staged: StagedUpgrade, lines: string[]): string {
   return [
-    proposalMarker(staged.scope),
-    `## Template upgrade: \`${staged.scope}\``,
+    proposalMarker(staged.gate),
+    `## Template upgrade: \`${staged.gate}\``,
     "",
     `\`${staged.template}\` from \`${staged.from ?? "(no ref)"}\` to \`${staged.to ?? "(no ref)"}\`.`,
     "",
@@ -131,12 +133,13 @@ export async function proposeWorkspaceUpgrade(args: ProposeWorkspaceUpgradeArgs)
     scope: args.scope,
     to: args.to,
     allowCode: args.allowCode,
+    ...(args.source !== undefined ? { source: args.source } : {}),
     ...(args._runChant ? { runChant: args._runChant } : {}),
   });
   try {
     const lines = describeStaged(staged);
     const result: ProposeWorkspaceUpgradeResult = {
-      scope: staged.scope,
+      scope: staged.gate,
       mode,
       changed: staged.changed,
       proposed: false,
@@ -150,7 +153,7 @@ export async function proposeWorkspaceUpgrade(args: ProposeWorkspaceUpgradeArgs)
     };
     if (!result.changed || !result.checksOk || mode === "report") return result;
 
-    const branch = args.branch ?? proposalBranch(staged.scope);
+    const branch = args.branch ?? proposalBranch(staged.gate);
     const remoteDefault = await defaultBranch(run, staged.repo, remote);
     const base = args.base ?? remoteDefault;
     let current: string | null = null;
@@ -168,7 +171,7 @@ export async function proposeWorkspaceUpgrade(args: ProposeWorkspaceUpgradeArgs)
       throw new Error(`proposeWorkspaceUpgrade: cannot tell the default branch of "${remote}"; pass base`);
     }
 
-    const title = `chore(upgrade): ${staged.template} ${staged.to ?? ""} (${staged.scope})`.replace(/\s+/g, " ").replace(" )", ")");
+    const title = `chore(upgrade): ${staged.template} ${staged.to ?? ""} (${staged.gate})`.replace(/\s+/g, " ").replace(" )", ")");
     result.commit = commitStagedUpgrade(staged, branch, `${title}\n\nPatch digest: ${staged.digest}\n`);
     result.branch = branch;
     result.proposed = true;

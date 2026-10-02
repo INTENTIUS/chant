@@ -1,0 +1,39 @@
+---
+title: "Serialization"
+description: "Output format for the Grafana lexicon"
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-grafana` — DO NOT EDIT.
+    Edit lexicons/grafana/src/codegen/docs.ts instead; changes here are overwritten. */}
+
+The grafana lexicon writes Grafana's own files, keyed by path under the
+directory of the `-o` output:
+
+- `dashboards/<uid>.json`, or `dashboards/<folder>/<uid>.json` for a
+  dashboard with a `folder`: the dashboard JSON, one file per dashboard.
+- `provisioning/datasources/chant.yaml`: every declared datasource.
+- `provisioning/dashboards/chant.yaml`: a file provider for the dashboards
+  directory; a default one unless a `DashboardProvider` is declared.
+- `provisioning/alerting/chant.yaml`: rule groups, contact points, the
+  notification policy tree, mute timings and templates, when the build
+  declares any.
+
+The primary output (the `-o` file itself) is a JSON index of the dashboards,
+datasources, alerting and files that were built.
+
+- Dashboard JSON carries the pinned schema's `schemaVersion`, no numeric `id`,
+  and every field Grafana's schema requires (link defaults, an empty
+  `annotations.list`, `fieldConfig.overrides`).
+- Panels without a position are laid out in declaration order on the 24-column
+  grid. Ids and query `refId`s are assigned in order unless set.
+- A declared `Datasource` is written as `{ type, uid }` wherever it is
+  referenced, and as its uid inside another datasource's `jsonData`.
+- `chant build` rewrites JSON files with sorted keys; Grafana does not care
+  about key order.
+- The dashboard JSON carries no ownership marker. Grafana keeps who manages a
+  dashboard in the resource's metadata on its `dashboard.grafana.app` API,
+  not in the JSON: for a provisioned dashboard, the name of the provider that
+  loaded it, which is `chant` unless a `DashboardProvider` names another.
+  `chant lifecycle diff --live` reads that back (see
+  [Drift and Live Export](../observing/)).
+

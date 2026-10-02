@@ -40,18 +40,16 @@
  * `./component.ts`, already proves the plain-JSON round-trip).
  */
 
-import { readdir } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { existsSync } from "node:fs";
 import { DiscoveryError } from "../errors";
 import { isComponent, type Component } from "./component";
 import type { BuildParamProvenance } from "../provenance";
 import { buildParamValues } from "../build-params";
 import { setBuildParams } from "../params";
-import { compileDiscoveryFilter, hasDiscoveryMarker } from "../discovery/files";
+import { hasDiscoveryMarkerSync } from "../discovery/files";
 import { resolveDiscoveryGlobs } from "../config";
-import { warnDiscoveryChanges } from "../discovery/convergence";
+import { walkDiscovery, workspaceMemberDirs } from "../discovery/walk";
 
 /** One discovered component, paired with the file it was exported from. */
 export interface DiscoveredComponent {
@@ -118,77 +116,24 @@ export interface ImportedComponentModule {
 }
 
 /**
- * Recursively find every `*.component.ts` file under `path`, the same
- * child-project boundary rule `findInfraFiles` (`../discovery/files.ts`)
- * uses: a subdirectory with its own `chant.config.ts` is a separate scope
- * once the outer project's own source root has been established. The
- * project's `exclude`/`include` globs and the skip marker apply here as they
- * do there (#2519).
+ * Every `*.component.ts` file under `path`, through the one discovery walk
+ * (`../discovery/walk.ts`, #2527): the same dot-directory, `dist`,
+ * git-ignore and child-project rules as source discovery, the project's
+ * `exclude`/`include` globs and the skip marker (#2519). Scanned from outside
+ * any project, every child project is read.
  */
 async function findComponentFiles(path: string): Promise<string[]> {
-  const files: string[] = [];
-  let sourceRoot: string | null = null;
-  const skip = compileDiscoveryFilter(await resolveDiscoveryGlobs(path));
-  const skippedChildren: string[] = [];
-
-  async function scanDirectory(dir: string): Promise<void> {
-    let entries;
-    try {
-      entries = await readdir(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-
-    for (const entry of entries) {
-      const fullPath = join(dir, entry.name);
-
-      if (entry.isDirectory()) {
-        // Skip dependency and tool/VCS directories: component sources never live
-        // in them, and descending in is both wasted work and a correctness bug —
-        // e.g. a CI runner like gitlab-ci-local stages a copy of the project
-        // under `.gitlab-ci-local/`, which discovery would otherwise pick up as
-        // duplicate component names alongside the originals.
-        if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
-
-        const configPath = join(fullPath, "chant.config.ts");
-        if (existsSync(configPath)) {
-          if (sourceRoot === null) {
-            sourceRoot = fullPath;
-          } else {
-            skippedChildren.push(fullPath);
-            continue;
-          }
-        }
-        await scanDirectory(fullPath);
-      } else if (
-        entry.isFile() &&
-        entry.name.endsWith(".component.ts") &&
-        !entry.name.endsWith(".test.component.ts") &&
-        !entry.name.endsWith(".spec.component.ts") &&
-        !skip?.(fullPath) &&
-        !(await hasDiscoveryMarker(fullPath))
-      ) {
-        files.push(fullPath);
-      }
-    }
-  }
-
-  await scanDirectory(path);
-  // #2527's warning release: the list returned is today's, unchanged.
-  await warnDiscoveryChanges({
+  return walkDiscovery({
     walker: "components",
     root: path,
-    files,
-    sourceRoot,
-    skippedChildren,
-    fileOk: async (name, full) =>
+    globs: await resolveDiscoveryGlobs(path),
+    excludeDirs: await workspaceMemberDirs(path),
+    accept: (name, full) =>
       name.endsWith(".component.ts") &&
       !name.endsWith(".test.component.ts") &&
       !name.endsWith(".spec.component.ts") &&
-      !skip?.(full) &&
-      !(await hasDiscoveryMarker(full)),
+      !hasDiscoveryMarkerSync(full),
   });
-  return files;
 }
 
 /**

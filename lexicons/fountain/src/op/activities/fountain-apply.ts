@@ -250,10 +250,15 @@ export function isChantOwned(resource: { metadata?: unknown }): boolean {
 
 // ── HTTP ──────────────────────────────────────────────────────────────────
 
-export function defaultFountainHttp(endpoint: string, token: string): FountainHttp {
+/**
+ * The fetch-backed client. `signal`, when given, rides on every request, so an
+ * aborted Op step (timeout or Ctrl-C) cancels the request in flight.
+ */
+export function defaultFountainHttp(endpoint: string, token: string, signal?: AbortSignal): FountainHttp {
   return async (method, path, body) => {
     const res = await fetch(`${endpoint}${path}`, {
       method,
+      ...(signal ? { signal } : {}),
       headers: {
         authorization: `Bearer ${token}`,
         ...(body !== undefined ? { "content-type": "application/json" } : {}),
@@ -267,6 +272,19 @@ export function defaultFountainHttp(endpoint: string, token: string): FountainHt
       // 204s and empty bodies are fine.
     }
     return { status: res.status, json };
+  };
+}
+
+/**
+ * `http`, refusing to start a request once `signal` has fired. The fetch-backed
+ * client already cancels a request in flight; this also stops an injected
+ * client between requests, so an aborted step makes no further call.
+ */
+export function abortable(http: FountainHttp, signal?: AbortSignal): FountainHttp {
+  if (!signal) return http;
+  return (method, path, body) => {
+    signal.throwIfAborted();
+    return http(method, path, body);
   };
 }
 
@@ -632,8 +650,15 @@ async function applyWebhook(
   summary.updated.push(label);
 }
 
+/**
+ * Apply a fountain manifest. The Op activity contract (`ActivityFn`, #2775):
+ * the executor calls `fountainApply(args, signal)`, so the second parameter is
+ * the step's `AbortSignal` and nothing else. The HTTP client and connection
+ * deps are test seams, after it, as every other lexicon's activities take them.
+ */
 export async function fountainApply(
   args: FountainApplyArgs,
+  signal?: AbortSignal,
   http?: FountainHttp,
   deps?: FountainConnectionDeps,
 ): Promise<FountainApplySummary> {
@@ -643,8 +668,9 @@ export async function fountainApply(
   let client = http;
   if (!client) {
     const { endpoint, token } = await resolveConnection(args, deps);
-    client = defaultFountainHttp(endpoint, token);
+    client = defaultFountainHttp(endpoint, token, signal);
   }
+  client = abortable(client, signal);
 
   const summary: FountainApplySummary = {
     created: [],

@@ -56,6 +56,18 @@ describe("collectorTopology", () => {
     ]);
   });
 
+  test("reports the wire protocols a component speaks, and none for one that states none (#2558)", () => {
+    const topo = collectorTopologyOf(entities);
+    const protocols = (id: string) => topo.components.find((c) => c.id === id)!.protocols;
+    expect(protocols("otlp")).toEqual(["grpc", "http/protobuf", "http/json"]);
+    expect(protocols("otlphttp/honeycomb")).toEqual(["http/protobuf"]);
+    expect(protocols("health_check")).toEqual([]);
+    const json = collectorTopologyOf([new OtlpHttpExporter({ endpoint: "https://x", encoding: "json" })]);
+    expect(json.components[0]!.protocols).toEqual(["http/json"]);
+    const httpOnly = collectorTopologyOf([new OtlpReceiver({ protocols: { http: {} } })]);
+    expect(httpOnly.components[0]!.protocols).toEqual(["http/protobuf", "http/json"]);
+  });
+
   test("reports receiver listen addresses, defaults included, and extension endpoints", () => {
     const topo = collectorTopologyOf(entities);
     expect(topo.components.find((c) => c.id === "otlp")!.endpoints).toEqual(["0.0.0.0:4317", "localhost:4318"]);

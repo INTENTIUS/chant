@@ -11,7 +11,8 @@
 
 import { formatError, formatSuccess } from "../cli/format";
 import type { CommandContext } from "../cli/registry";
-import { LOCK_FILE, LockError, readLock, resolveManualStep, scopeStatus, writeLock, type ManualStep } from "./lineage-lock";
+import { LOCK_FILE, LockError, readLock, resolveManualStep, scopeStatus, writeLock, type Adoption, type LineageSource, type ManualStep } from "./lineage-lock";
+import { lineageProvenance, type LineageProvenance } from "./lineage-provenance";
 
 const USAGE = "chant workspace lineage [--json] | chant workspace lineage resolve <path>";
 
@@ -20,12 +21,34 @@ export interface LineageScopeView {
   kind: "template" | "vendor";
   name?: string;
   template: string;
+  /** Where the files came from, as the lock records it: its `type` and the repository, directory, lexicon or URL. */
+  source: LineageSource;
   ref?: string;
   address: Record<string, unknown> | null;
   files: number;
   edited: string[];
   missing: string[];
   manualSteps: ManualStep[];
+  /** How adopt-lineage recorded the lineage (#2551), when it did. */
+  adoption?: Adoption;
+  /** For a lineage adopted by its files: whether the policy at base admits the adopted range (D5, P7). */
+  provenance?: LineageProvenance;
+}
+
+/** One line naming a scope's source kind and where it points (#2647). */
+export function describeSource(source: LineageSource): string {
+  switch (source.type) {
+    case "git":
+      return `git ${source.repo}${source.path ? `#${source.path}` : ""}`;
+    case "dir":
+      return `dir ${source.path}${source.member ? `#${source.member}` : ""}`;
+    case "lexicon":
+      return `lexicon ${source.lexicon}/${source.template}`;
+    case "local":
+      return `local ${source.path}`;
+    case "archive":
+      return `archive ${source.url}${source.subpath ? `#${source.subpath}` : ""}`;
+  }
 }
 
 /** The lock as `--json` prints it: one view per scope, with its state in the tree. */
@@ -34,18 +57,22 @@ export function lineageView(root: string): { lock: string; scopes: LineageScopeV
   if (!lock) return null;
   const scopes = Object.entries(lock.scopes).map(([scope, lineage]) => {
     const st = scopeStatus(root, scope, lineage);
-    return {
+    const view: LineageScopeView = {
       scope,
       kind: lineage.kind,
       ...(lineage.name !== undefined ? { name: lineage.name } : {}),
       template: lineage.template,
+      source: lineage.source,
       ...(lineage.ref !== undefined ? { ref: lineage.ref } : {}),
       address: lineage.address,
       files: Object.keys(lineage.files).length,
       edited: st.customised,
       missing: st.missing,
       manualSteps: lineage.manualSteps,
+      ...(lineage.adoption ? { adoption: lineage.adoption } : {}),
     };
+    const provenance = lineageProvenance(root, lineage);
+    return provenance ? { ...view, provenance } : view;
   });
   return { lock: LOCK_FILE, scopes };
 }
@@ -73,6 +100,9 @@ export async function runWorkspaceLineage(ctx: CommandContext): Promise<number> 
       const pin = s.ref ? `@${s.ref}` : "";
       const at = typeof s.address?.commit === "string" ? ` (${s.address.commit.slice(0, 12)})` : "";
       lines.push(`${s.scope}  ${s.kind}${s.name ? ` ${s.name}` : ""}  ${s.template}${pin}${at}`);
+      lines.push(`  source: ${describeSource(s.source)}`);
+      if (s.adoption?.by === "lineage" && s.adoption.previous) lines.push(`  moved from ${describeSource(s.adoption.previous.source)} by adopt-lineage`);
+      if (s.adoption?.by === "files") lines.push(`  adopted up to ${s.adoption.commits.to.slice(0, 12)}: ${s.provenance?.level ?? "unattested"}, ${s.provenance?.reason ?? ""}`.replace(/, $/, ""));
       lines.push(`  ${s.files} file(s), ${s.edited.length} edited, ${s.missing.length} deleted`);
       for (const m of s.manualSteps) lines.push(`  manual step: ${s.scope === "." ? "" : `${s.scope}/`}${m.path} (${m.reason})`);
     }
