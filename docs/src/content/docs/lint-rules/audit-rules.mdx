@@ -3016,6 +3016,61 @@ Name the actions the workload calls and the ARNs it touches. For the few actions
 | Authority | [AWS IAM security best practices (Apply least-privilege permissions)](https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html#grant-least-privilege) |
 | Prior art | [tfsec `aws-iam-no-policy-wildcards`](https://github.com/aquasecurity/tfsec/blob/master/docs/checks/aws/iam/no-policy-wildcards/index.md) (overlaps) · [Checkov `CKV_AWS_63`](https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/resource/aws/IAMStarActionPolicyDocument.py) (overlaps) · [Checkov `CKV_AWS_49`](https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/data/aws/StarActionPolicyDocument.py) (extends) · [Checkov `CKV_AWS_355`](https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/resource/aws/IAMStarResourcePolicyDocument.py) (overlaps) · [Checkov `CKV_AWS_356`](https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/data/aws/ResourcePolicyDocument.py) (overlaps) |
 
+### TF033
+
+**RDS DB instance or cluster storage is not encrypted** — merge-worthy · guidance
+
+Set `storage_encrypted = true` (and `kms_key_id` for a customer managed key). An existing database cannot be encrypted in place: restore an encrypted copy of a snapshot. An Aurora cluster, or a database created from a snapshot or replica, is reported as not determined, not as a finding.
+
+| | |
+|---|---|
+| Authority | [Amazon RDS User Guide: Encrypting Amazon RDS resources](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Overview.Encryption.html) |
+| Prior art | [tfsec `aws-rds-encrypt-instance-storage-data`](https://github.com/aquasecurity/tfsec/blob/master/docs/checks/aws/rds/encrypt-instance-storage-data/index.md) (overlaps) · [tfsec `aws-rds-encrypt-cluster-storage-data`](https://github.com/aquasecurity/tfsec/blob/master/docs/checks/aws/rds/encrypt-cluster-storage-data/index.md) (overlaps) · [trivy-checks `aws-rds-encrypt-instance-storage-data`](https://github.com/aquasecurity/trivy-checks/blob/main/checks/cloud/aws/rds/encrypt_instance_storage_data.rego) (overlaps) · [trivy-checks `aws-rds-encrypt-cluster-storage-data`](https://github.com/aquasecurity/trivy-checks/blob/main/checks/cloud/aws/rds/encrypt_cluster_storage_data.rego) (overlaps) · [Checkov `CKV_AWS_16`](https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/resource/aws/RDSEncryption.py) (overlaps) · [Checkov `CKV_AWS_96`](https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/resource/aws/AuroraEncryption.py) (overlaps) · [KICS `08bd0760-8752-44e1-9779-7bb369b2b4e4`](https://docs.kics.io/latest/queries/terraform-queries/aws/08bd0760-8752-44e1-9779-7bb369b2b4e4/) (overlaps) |
+
+### TF034
+
+**SNS topic has no server-side encryption** — merge-worthy · guidance
+
+Set `kms_master_key_id` to a customer managed KMS key, or to `"alias/aws/sns"` for the AWS managed one. No AWS default encrypts a topic that names no key.
+
+| | |
+|---|---|
+| Authority | [Amazon SNS Developer Guide: Securing Amazon SNS data with server-side encryption](https://docs.aws.amazon.com/sns/latest/dg/sns-server-side-encryption.html) |
+| Prior art | [tfsec `aws-sns-enable-topic-encryption`](https://github.com/aquasecurity/tfsec/blob/master/docs/checks/aws/sns/enable-topic-encryption/index.md) (equivalent) · [trivy-checks `aws-sns-enable-topic-encryption`](https://github.com/aquasecurity/trivy-checks/blob/main/checks/cloud/aws/sns/enable_topic_encryption.rego) (equivalent) · [Checkov `CKV_AWS_26`](https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/resource/aws/SNSTopicEncryption.py) (equivalent) · [KICS `28545147-2fc6-42d5-a1f9-cf226658e591`](https://docs.kics.io/latest/queries/terraform-queries/aws/28545147-2fc6-42d5-a1f9-cf226658e591/) (equivalent) |
+
+### TF035
+
+**SQS queue turns server-side encryption off** — merge-worthy · guidance
+
+Remove `sqs_managed_sse_enabled = false` (new queues are encrypted with SSE-SQS by default), set it to `true`, or set `kms_master_key_id`. A queue that sets neither attribute is encrypted and is not reported.
+
+| | |
+|---|---|
+| Authority | [Amazon SQS Developer Guide: Encryption at rest in Amazon SQS](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-server-side-encryption.html) |
+| Prior art | [tfsec `aws-sqs-enable-queue-encryption`](https://github.com/aquasecurity/tfsec/blob/master/docs/checks/aws/sqs/enable-queue-encryption/index.md) (overlaps) · [trivy-checks `aws-sqs-enable-queue-encryption`](https://github.com/aquasecurity/trivy-checks/blob/main/checks/cloud/aws/sqs/enable_queue_encryption.rego) (overlaps) · [Checkov `CKV_AWS_27`](https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/resource/aws/SQSQueueEncryption.py) (overlaps) · [KICS `6e8849c1-3aa7-40e3-9063-b85ee300f29f`](https://docs.kics.io/latest/queries/terraform-queries/aws/6e8849c1-3aa7-40e3-9063-b85ee300f29f/) (overlaps) |
+
+### TF036
+
+**EBS volume does not ask for encryption** — merge-worthy · guidance
+
+Set `encrypted = true` (and `kms_key_id` for a customer managed key). A volume that leaves `encrypted` unset depends on the Region's EBS encryption by default and is reported as not determined, not as a finding.
+
+| | |
+|---|---|
+| Authority | [Amazon EBS User Guide: Amazon EBS encryption](https://docs.aws.amazon.com/ebs/latest/userguide/ebs-encryption.html) |
+| Prior art | [trivy-checks `aws-ec2-enable-volume-encryption`](https://github.com/aquasecurity/trivy-checks/blob/main/checks/cloud/aws/ec2/enable_volume_encryption.rego) (overlaps) · [Checkov `CKV_AWS_3`](https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/resource/aws/EBSEncryption.py) (overlaps) · [KICS `cc997676-481b-4e93-aa81-d19f8c5e9b12`](https://docs.kics.io/latest/queries/terraform-queries/aws/cc997676-481b-4e93-aa81-d19f8c5e9b12/) (overlaps) |
+
+### TF037
+
+**ECR repository allows mutable image tags** — merge-worthy · guidance
+
+Set `image_tag_mutability = "IMMUTABLE"`, or `"IMMUTABLE_WITH_EXCLUSION"` with an `image_tag_mutability_exclusion_filter` naming the few moving tags (`latest`) that must stay mutable. The provider default is `MUTABLE`.
+
+| | |
+|---|---|
+| Authority | [Amazon ECR User Guide: Preventing image tags from being overwritten](https://docs.aws.amazon.com/AmazonECR/latest/userguide/image-tag-mutability.html) |
+| Prior art | [tfsec `aws-ecr-enforce-immutable-repository`](https://github.com/aquasecurity/tfsec/blob/master/docs/checks/aws/ecr/enforce-immutable-repository/index.md) (overlaps) · [trivy-checks `aws-ecr-enforce-immutable-repository`](https://github.com/aquasecurity/trivy-checks/blob/main/checks/cloud/aws/ecr/enforce_immutable_repository.rego) (overlaps) · [Checkov `CKV_AWS_51`](https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/resource/aws/ECRImmutableTags.py) (overlaps) · [KICS `d1846b12-20c5-4d45-8798-fc35b79268eb`](https://docs.kics.io/latest/queries/terraform-queries/aws/d1846b12-20c5-4d45-8798-fc35b79268eb/) (overlaps) |
+
 ## Secrets & credentials (SEC)
 
 Lexicon-independent — scans the raw text of every scanned file for likely credentials, regardless of which audit lexicons are installed. Matched values are always redacted; see [suppressing false positives](/chant/cli/audit/#suppressing-a-secrets-finding).
@@ -3345,8 +3400,8 @@ This is credit rather than authority, and it never changes a rule's tier or cate
 
 | Tool | Kind | Licence | Credits |
 |---|---|---|---|
-| [Checkov](https://www.checkov.io/) | scanner | Apache-2.0 | 70 |
-| [KICS](https://docs.kics.io/) | scanner | Apache-2.0 | 50 |
+| [Checkov](https://www.checkov.io/) | scanner | Apache-2.0 | 76 |
+| [KICS](https://docs.kics.io/) | scanner | Apache-2.0 | 55 |
 | [zizmor](https://docs.zizmor.sh/) | scanner | MIT | 38 |
 | [cfn_nag](https://github.com/stelligent/cfn_nag) | scanner | MIT | 20 |
 | [GitLab CI/CD YAML reference](https://docs.gitlab.com/ci/yaml/) | specification | CC-BY-SA-4.0 | 20 |
@@ -3363,15 +3418,16 @@ This is credit rather than authority, and it never changes a rule's tier or cate
 | [octoscan](https://github.com/synacktiv/octoscan) | scanner | GPL-3.0 | 10 |
 | [detect-secrets](https://github.com/Yelp/detect-secrets) | scanner | Apache-2.0 | 9 |
 | [tflint-ruleset-terraform](https://github.com/terraform-linters/tflint-ruleset-terraform) | scanner | MPL-2.0 | 9 |
+| [tfsec](https://github.com/aquasecurity/tfsec) | scanner | MIT | 9 |
 | [actionlint](https://github.com/rhysd/actionlint) | scanner | MIT | 8 |
 | [TruffleHog](https://github.com/trufflesecurity/trufflehog) | scanner | AGPL-3.0 | 8 |
+| [trivy-checks](https://github.com/aquasecurity/trivy-checks) | scanner | MIT | 6 |
 | [gixy-ng (maintained Gixy fork)](https://github.com/dvershinin/gixy) | scanner | MPL-2.0 | 5 |
 | [kubesec](https://kubesec.io/) | scanner | Apache-2.0 | 5 |
 | [tflint-ruleset-redeploy](https://github.com/RedeployAB/tflint-ruleset-redeploy) | scanner | 0BSD | 5 |
 | [Datree](https://hub.datree.io/built-in-rules) | scanner | Apache-2.0 | 4 |
 | [HashiCorp Terraform style guide](https://developer.hashicorp.com/terraform/language/style) | specification | n/a | 4 |
 | [helm lint](https://helm.sh/docs/helm/helm_lint/) | vendor-validator | Apache-2.0 | 4 |
-| [tfsec](https://github.com/aquasecurity/tfsec) | scanner | MIT | 4 |
 | [choudoufu](https://github.com/INTENTIUS/choudoufu) | scanner | MPL-2.0 | 3 |
 | [Flux Kustomization API reference](https://fluxcd.io/flux/components/kustomize/kustomizations/) | specification | n/a | 3 |
 | [hadolint](https://github.com/hadolint/hadolint) | scanner | GPL-3.0 | 3 |

@@ -6,7 +6,7 @@ description: "Every lint rule and post-synth check provided by the Terraform lex
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-terraform` — DO NOT EDIT.
     Edit lexicons/terraform/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-The Terraform lexicon provides **28** rules: 1 lint rule and 27 post-synth checks.
+The Terraform lexicon provides **35** rules: 1 lint rule and 34 post-synth checks.
 
 ## Lint Rules
 
@@ -47,3 +47,10 @@ Post-synth checks validate the serialized output after the build pipeline comple
 | `TF026` | Live root declares delete: "never" but its policy leaves undeclared_tagged at "delete" |
 | `TF027` | Live root's policy block sets undeclared_untagged = "delete", which deletes resources chant does not own |
 | `TF028` | A live root is watched by a TerraformWatchOp built without live: true |
+| `TF029` | Live root names its estate both in chant.config and in its own HCL |
+| `TF031` | IAM policy allows a wildcard Action or Resource |
+| `TF033` | RDS DB instance or cluster storage is not encrypted |
+| `TF034` | SNS topic has no server-side encryption |
+| `TF035` | SQS queue turns server-side encryption off |
+| `TF036` | EBS volume does not ask for encryption |
+| `TF037` | ECR repository allows mutable image tags |
