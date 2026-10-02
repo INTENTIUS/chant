@@ -9,7 +9,7 @@ install:
 
 # Type check the project
 build:
-    npx tsc --noEmit -p packages/core/tsconfig.json
+    scripts/tsc7.sh --noEmit --declaration false --declarationMap false -p packages/core/tsconfig.json
 
 # Build any missing lexicon test artifacts (#923). The suite consumes each
 # lexicon's `src/generated/` barrel (imported by the package) and `dist/meta.json`
@@ -114,7 +114,7 @@ scaffold-check:
     rm -rf "lexicons/$name"
     npx tsx packages/core/src/cli/main.ts init lexicon "$name" >/dev/null
     npm install >/dev/null
-    npx tsc --noEmit -p "lexicons/$name/tsconfig.build.json"
+    scripts/tsc7.sh --noEmit --declaration false --declarationMap false -p "lexicons/$name/tsconfig.build.json"
     echo "scaffold-check: a fresh lexicon installs and typechecks ✓"
 
 # Which pinned dogwood surfaces has upstream moved? (#1688) Reads
