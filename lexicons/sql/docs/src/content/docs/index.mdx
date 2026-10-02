@@ -22,8 +22,10 @@ dependency order and column lineage: see
 [Declaring Tables and Views](./clickhouse-ddl/). The types come from a pinned
 server's catalog: see [Where the Types Come From](./clickhouse-catalog/).
 
-The lexicon is being built in slices (chant #3199); import from a live
-server, observation and the change classifier come next.
+`chant import --from <env>` writes a live server's schema as declarations:
+see [Importing a Live Server](./importing/). The lexicon is being built in
+slices (chant #3199); planning against live and the change classifier come
+next.
 
 
 ## At a Glance
