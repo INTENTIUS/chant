@@ -106,6 +106,24 @@ describe("liveImportFromPlugins (#114)", () => {
     expect(result.error).toContain("live export");
   });
 
+  test("warnings an exporter returns reach the result (#3336)", async () => {
+    const withWarnings: ExportedTemplate = { ...sampleIR, warnings: ["bucket is kept by Terraform; left out"] };
+    const result = await liveImportFromPlugins([fakeExporter("fake", withWarnings)], {
+      environment: "prod",
+      output: outputDir,
+      force: true,
+    });
+    expect(result.success).toBe(true);
+    expect(result.warnings).toContain("bucket is kept by Terraform; left out");
+  });
+
+  test("warnings from an export with no resources are kept on the error result (#3336)", async () => {
+    const empty = fakeExporter("fake", { resources: [], parameters: [], warnings: ["everything is kept by Prisma"] });
+    const result = await liveImportFromPlugins([empty], { environment: "prod", output: outputDir });
+    expect(result.success).toBe(false);
+    expect(result.warnings).toContain("everything is kept by Prisma");
+  });
+
   test("--lexicon narrows to the named exporter", async () => {
     const result = await liveImportFromPlugins(
       [fakeExporter("a", sampleIR), fakeExporter("b", sampleIR)],

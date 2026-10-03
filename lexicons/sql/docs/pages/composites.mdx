@@ -35,8 +35,6 @@ Each member becomes an entity named after the export and the member: `clicksTabl
 
 Every prop except `RollupView`'s `source` is SQL text, spliced into the template the way a string interpolation is (see [Declaring Tables and Views](../clickhouse-ddl/#a-string-is-sql-text)). `columns` is a column list as you would write it inside `CREATE TABLE (...)`, and `orderBy` and `partitionBy` are the clause bodies. A prop that does not parse fails the build with the composite's template line.
 
-Keep a composite call whose props reference another call's member, like `source: clicks.table`, in a file of its own. When the member reference is to a composite call in the same file, the file is run instead of folded.
-
 ## ReplacingTable
 
 A ReplacingMergeTree table with a version column. ReplacingMergeTree keeps one row per sort key, and on a merge the row with the highest version wins, so writing a row again with a higher version is how an update is expressed. Until a merge runs a query sees every version; read with `FINAL`, or aggregate with `argMax`, when only the latest row matters.

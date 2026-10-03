@@ -1400,7 +1400,14 @@ export function fold(
     // would call the tag again and build a second entity discovery never
     // registers. The caller pre-resolves those too; without it the
     // initializer re-folds as before.
-    if (ts.isTaggedTemplateExpression(initializer) && externals?.has(node.text)) {
+    //
+    // chant#3325 — and a same-file `const x = Composite({...})` that a
+    // composite call's props name: the caller resolves it on the live spine
+    // and puts the instance here. Without it the call is refused below.
+    if (
+      (ts.isTaggedTemplateExpression(initializer) || ts.isCallExpression(initializer)) &&
+      externals?.has(node.text)
+    ) {
       return externals.get(node.text) as FoldedValue;
     }
     if (ts.isNewExpression(initializer)) {

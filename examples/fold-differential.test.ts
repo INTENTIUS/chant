@@ -334,10 +334,6 @@ const EXPECTED_RUN_FALLBACK: ReadonlyMap<string, string> = new Map<string, strin
     "`Object.values(agent.members)` as a value: it reads the NodeAgent composite's members at run time",
   ],
   [
-    "lexicons/k8s/examples/otel-gateway",
-    "`gatewayExporter(...)` as a value: it reads the gateway composite's Services at run time; the taint fixpoint then takes the files it imports",
-  ],
-  [
     "lexicons/cpln/examples/secret-access",
     "an ambient `process` read, which wants a build-time parameter instead",
   ],
@@ -450,6 +446,7 @@ const EXPECTED_FOLD: readonly string[] = [
   "lexicons/k8s/examples/operator-stack",
   "lexicons/k8s/examples/org-policy",
   "lexicons/k8s/examples/otel-collector",
+  "lexicons/k8s/examples/otel-gateway",
   "lexicons/k8s/examples/statefulset",
   "lexicons/k8s/examples/web-platform",
 ];
