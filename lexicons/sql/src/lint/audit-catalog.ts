@@ -6,8 +6,10 @@
  * `yamlBased: false`; they are listed for a reader who meets them in a report.
  */
 
-import { auditRule, type RuleMeta } from "@intentius/chant/audit/catalog";
+import { applyLineage, auditRule, type RuleMeta } from "@intentius/chant/audit/catalog";
 import { sqlPostSynthAuditEntries } from "./post-synth/audit-entries";
+import { postgresPostSynthAuditEntries } from "./post-synth/postgres-audit-entries";
+import { sqlAuditLineage } from "./audit-lineage";
 
 function sourceRule(id: string, category: RuleMeta["category"], title: string, remediation: string): RuleMeta {
   return { id, tier: "merge-worthy", fixKind: "guidance", category, title, remediation, yamlBased: false };
@@ -65,4 +67,7 @@ export const sqlAuditCatalog: Record<string, RuleMeta> = {
     { category: "correctness" },
   ),
   ...sqlPostSynthAuditEntries,
+  ...postgresPostSynthAuditEntries,
 };
+
+applyLineage(sqlAuditCatalog, sqlAuditLineage);

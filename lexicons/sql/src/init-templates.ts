@@ -208,7 +208,7 @@ import { users } from "./users";
 
 // Columns are referenced through .columns, which records the view's lineage.
 export const orderTotals = view\`
-  CREATE VIEW \${app}.order_totals AS
+  CREATE VIEW \${app}.order_totals WITH (security_invoker = true) AS
   SELECT u.\${users.columns.id} AS user_id,
          count(o.\${orders.columns.id}) AS order_count,
          coalesce(sum(o.\${orders.columns.amount}), 0) AS total

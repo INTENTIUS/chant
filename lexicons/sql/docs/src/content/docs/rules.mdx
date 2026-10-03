@@ -6,7 +6,7 @@ description: "Every lint rule and post-synth check provided by the SQL lexicon"
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-sql` — DO NOT EDIT.
     Edit lexicons/sql/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-The SQL lexicon provides **26** rules: 6 lint rules and 20 post-synth checks.
+The SQL lexicon provides **44** rules: 6 lint rules and 38 post-synth checks.
 
 ## Lint Rules
 
@@ -45,3 +45,21 @@ Post-synth checks validate the serialized output after the build pipeline comple
 | `SQLCH118` | A MergeTree setting is not one the pinned server has |
 | `SQLCH119` | An object uses a deprecated or experimental engine |
 | `SQLCH120` | A MergeTree engine uses the deprecated positional arguments |
+| `SQLPG101` | A table declares no primary key |
+| `SQLPG102` | A foreign key's referencing columns have no index |
+| `SQLPG103` | A serial column where an identity column is preferred |
+| `SQLPG104` | A timestamp column without time zone |
+| `SQLPG105` | A json column where jsonb fits |
+| `SQLPG106` | A char(n) column |
+| `SQLPG107` | A money column |
+| `SQLPG108` | A varchar(n) column with a habitual length limit |
+| `SQLPG109` | An index duplicates a constraint or another index |
+| `SQLPG110` | A btree index is a prefix of another index |
+| `SQLPG111` | A materialized view has no unique index, so it cannot refresh concurrently |
+| `SQLPG112` | A secret- or PII-named column with no comment on it or its table |
+| `SQLPG113` | An object is in the public schema though the project declares schemas |
+| `SQLPG114` | A storage parameter the object's kind or the pinned major does not accept |
+| `SQLPG115` | A feature the oldest supported major lacks |
+| `SQLPG116` | An extension the pinned major no longer ships |
+| `SQLPG117` | A view without security_invoker runs with its owner's privileges |
+| `SQLPG118` | A table uses INHERITS where declarative partitioning replaced it |

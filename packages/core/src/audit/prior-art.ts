@@ -131,6 +131,12 @@ export const PRIOR_ART = {
   "amtool": { name: "amtool check-config", url: "https://github.com/prometheus/alertmanager/blob/main/cmd/amtool/check_config.go", license: "Apache-2.0", kind: "vendor-validator" },
   "pint": { name: "pint (Cloudflare)", url: "https://github.com/cloudflare/pint", license: "Apache-2.0", kind: "scanner" },
   "dashboard-linter": { name: "Grafana dashboard-linter", url: "https://github.com/grafana/dashboard-linter", license: "Apache-2.0", kind: "scanner" },
+  // Postgres schema and migration checks (#3285). squawk and strong_migrations
+  // are migration linters; their type rules overlap schema-level checks. The
+  // wiki page is documentation, not a tool.
+  "squawk": { name: "squawk", url: "https://github.com/sbdchd/squawk", license: "Apache-2.0", kind: "scanner" },
+  "strong_migrations": { name: "strong_migrations", url: "https://github.com/ankane/strong_migrations", license: "MIT", kind: "scanner" },
+  "postgres-wiki-dont-do-this": { name: "PostgreSQL wiki: Don't Do This", url: "https://wiki.postgresql.org/wiki/Don%27t_Do_This", license: "n/a", kind: "specification" },
 } as const satisfies Record<string, PriorArtEntry>;
 
 export type PriorArtTool = keyof typeof PRIOR_ART;

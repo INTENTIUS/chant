@@ -20,6 +20,24 @@ import { sqlch117 } from "./sqlch117";
 import { sqlch118 } from "./sqlch118";
 import { sqlch119 } from "./sqlch119";
 import { sqlch120 } from "./sqlch120";
+import { sqlpg101 } from "./sqlpg101";
+import { sqlpg102 } from "./sqlpg102";
+import { sqlpg103 } from "./sqlpg103";
+import { sqlpg104 } from "./sqlpg104";
+import { sqlpg105 } from "./sqlpg105";
+import { sqlpg106 } from "./sqlpg106";
+import { sqlpg107 } from "./sqlpg107";
+import { sqlpg108 } from "./sqlpg108";
+import { sqlpg109 } from "./sqlpg109";
+import { sqlpg110 } from "./sqlpg110";
+import { sqlpg111 } from "./sqlpg111";
+import { sqlpg112 } from "./sqlpg112";
+import { sqlpg113 } from "./sqlpg113";
+import { sqlpg114 } from "./sqlpg114";
+import { sqlpg115 } from "./sqlpg115";
+import { sqlpg116 } from "./sqlpg116";
+import { sqlpg117 } from "./sqlpg117";
+import { sqlpg118 } from "./sqlpg118";
 
 export const postSynthChecks: PostSynthCheck[] = [
   sqlch101,
@@ -42,4 +60,22 @@ export const postSynthChecks: PostSynthCheck[] = [
   sqlch118,
   sqlch119,
   sqlch120,
+  sqlpg101,
+  sqlpg102,
+  sqlpg103,
+  sqlpg104,
+  sqlpg105,
+  sqlpg106,
+  sqlpg107,
+  sqlpg108,
+  sqlpg109,
+  sqlpg110,
+  sqlpg111,
+  sqlpg112,
+  sqlpg113,
+  sqlpg114,
+  sqlpg115,
+  sqlpg116,
+  sqlpg117,
+  sqlpg118,
 ];
