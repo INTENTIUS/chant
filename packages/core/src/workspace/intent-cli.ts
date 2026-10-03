@@ -1,9 +1,10 @@
 /**
- * `chant workspace graph --intent <path[:start-end]> [--at <rev>] [--kind <kind file>...] [--json]`
- * (#2651): the intent graph over one region (`intent.ts`), printed as JSON
+ * `chant workspace graph --intent <path[:start-end]|path#symbol> [--at <rev>] [--kind <kind file>...] [--json]`
+ * (#2651, #3034): the intent graph over one region (`intent.ts`), printed as JSON
  * with `--json` or as a walk, one line per node, in the order of #2650
  * section B: the region, its decisions, their artifacts, the commits, and the
- * findings. Under each decision come the commits made inside its window, and
+ * findings, then why the region is like this: who made its current lines and
+ * the decisions governing it, most relevant first. Under each decision come the commits made inside its window, and
  * when any of them is not the decision's own work, the question #2650 B puts
  * to the person about it (#2656). Without `--kind`, the walk reads every
  * record kind the declaration names (#2680).
@@ -13,9 +14,9 @@ import { resolve } from "node:path";
 import { formatError } from "../cli/format";
 import type { CommandContext } from "../cli/registry";
 import { intentRecord, type IntentRecordDocument } from "./intent-record";
-import { intentGraph, type ArtifactNode, type CommitNode, type DecisionNode, type IntentDocument, type IntentEdge, type IntentNode, type RunNode, type WorkNode } from "./intent";
+import { intentGraph, type ArtifactNode, type CommitNode, type DecisionNode, type IntentDocument, type IntentEdge, type IntentNode, type RunNode, type WhyAnswer, type WorkNode } from "./intent";
 
-const USAGE = "chant workspace graph --intent <path[:start-end]> [--at <rev>] [--kind <kind file>...] [--json]";
+const USAGE = "chant workspace graph --intent <path[:start-end]|path#symbol> [--at <rev>] [--kind <kind file>...] [--json]";
 const RECORD_USAGE = "chant workspace graph --intent --record <id> [--at <rev>] [--kind <kind file>...] [--json]";
 
 type Result = Exclude<IntentDocument, { error: unknown }>;
@@ -118,6 +119,33 @@ function commitLine(doc: Result, c: CommitNode): string[] {
   return out;
 }
 
+const span = (l: { start: number; end: number }) => (l.start === l.end ? `${l.start}` : `${l.start}-${l.end}`);
+
+/** Why the region is like this (#3034): the decisions most relevant first, then who made each span of its current lines, then the gaps. */
+export function whyLines(doc: Result, why: WhyAnswer): string[] {
+  const out: string[] = [];
+  const record = (id: string) => {
+    const n = doc.nodes.find((x) => x.id === id);
+    return n && (n.kind === "decision" || n.kind === "work") ? n.record : id;
+  };
+  const runLabel = (id: string) => {
+    const r = doc.nodes.find((n): n is RunNode => n.kind === "run" && n.id === id);
+    if (!r) return id;
+    const what = [r.harness?.name, r.model].filter(Boolean).join("/");
+    return `${r.run}${what ? ` (${what})` : r.recorded ? "" : " (not in the run ledger)"}${r.unit ? ` on ${r.unit}` : ""}`;
+  };
+  out.push(`why       ${why.explained ? "explained" : "unexplained"}${why.lines ? `, lines ${span(why.lines)}` : ""}`);
+  for (const d of why.decisions) {
+    out.push(`  decision  ${record(d.decision)} ${d.relevance}${d.lines > 0 ? `, ${d.lines} ${d.lines === 1 ? "line" : "lines"}` : ""}${d.current ? "" : ", superseded"}${d.closed ? ", closed" : ""}`);
+  }
+  for (const b of why.blame) {
+    const by = b.runs.length > 0 ? `; ${b.runs.map(runLabel).join(", ")}${b.narrowedBy ? " (by its hunks)" : ""}` : b.sha ? "; no run" : "";
+    out.push(`  lines     ${span(b)} ${b.sha ? short(b.sha) : "uncommitted"}${by}`);
+  }
+  for (const g of why.gaps) out.push(`  gap       ${g.code}: ${g.message}${g.lines ? ` (lines ${g.lines.map(span).join(", ")})` : ""}`);
+  return out;
+}
+
 /** The walk as text, one line each, in the order of #2650 section B. */
 export function formatIntent(doc: Result): string {
   const out: string[] = [];
@@ -125,7 +153,8 @@ export function formatIntent(doc: Result): string {
   if (region?.kind === "region") {
     const lines = region.lines ? `:${region.lines.start}${region.lines.end === region.lines.start ? "" : `-${region.lines.end}`}` : "";
     const where = doc.at ? `at ${short(doc.at)}` : "in the working tree";
-    out.push(`region    ${region.path}${lines} (${region.type}, member ${region.member ?? "none"}${region.generated ? ", generated" : ""}) ${where}${region.node ? `, from node ${region.node}` : ""}`);
+    const symbol = region.symbol ? `#${region.symbol.name} (${region.symbol.kind} ${region.symbol.qualified}, lines ${region.lines ? span(region.lines) : "none"})` : lines;
+    out.push(`region    ${region.path}${symbol} (${region.type}, member ${region.member ?? "none"}${region.generated ? ", generated" : ""}) ${where}${region.node ? `, from node ${region.node}` : ""}`);
   }
   const files = ofKind(doc, "file");
   if (files.length > 0) out.push(`files     ${files.length} under the region, ${files.filter((f) => f.generated).length} generated`);
@@ -142,6 +171,7 @@ export function formatIntent(doc: Result): string {
     out.push(`finding   ${f.code}: ${f.message}${by}`);
   }
   for (const r of doc.reasons) out.push(`reason    ${r.code}: ${r.message}`);
+  if (doc.why) out.push(...whyLines(doc, doc.why));
   const kinds = doc.kinds.length === 0 ? "; no --kind, so no decisions were read" : "";
   const work = ofKind(doc, "work").length;
   out.push(`${doc.summary.commits} commits, ${doc.summary.decisions} decisions, ${work > 0 ? `${work} work ${work === 1 ? "item" : "items"}, ` : ""}${doc.summary.artifacts} artifacts, ${doc.summary.findings} findings${kinds}`);
@@ -196,7 +226,7 @@ export async function runWorkspaceIntent(ctx: CommandContext, cwd: string): Prom
     return runRecord(ctx, cwd, args.kinds ?? (args.kind !== undefined ? [args.kind] : undefined));
   }
   if (!args.intent) {
-    console.error(formatError({ message: "--intent needs a region: a path, path:line or path:start-end", hint: USAGE }));
+    console.error(formatError({ message: "--intent needs a region: a path, path:line, path:start-end or path#symbol", hint: USAGE }));
     return 1;
   }
   // No --kind: undefined, so the walk reads the kinds the declaration names (#2680).

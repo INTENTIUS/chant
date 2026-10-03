@@ -44,13 +44,13 @@ Each write fetches `chant/lifecycle` when it fast-forwards, appends with a compa
 | `unit` | `start`, `record` | the work item it worked on: its id, or `{ "id", "kind" }` |
 | `lease` | `start`, `record` | the fencing token of the work lease it ran under |
 | `records` | `start`, `record` | other records it worked on, as `<kind>:<id>`, such as the decision a decide call answered |
-| `instruction` | `start`, `record` | the instruction pinned by hash: `{ "sha256" }`, or `{ "path" }` for chant to hash, each with an optional `ref` |
+| `instruction` | `start`, `record` | the instruction pinned by hash: `{ "sha256" }`, or `{ "path" }` for chant to hash, each with an optional `ref`, and an optional `excerpt` of up to 500 characters to show beside the hash, such as its first line. chant keeps the excerpt as given and never checks it against the hash |
 | `outcome` | `end`, `record` | how it ended, as free text: `done`, `not_done`, `failed`, `cancelled` |
 | `usage` | `end`, `record` | `turns`, `inputTokens`, `outputTokens`, `cacheReadTokens` and `cacheWriteTokens`, each optional |
 | `models` | `end`, `record` | each model's share when the harness reports a breakdown: `model`, `provider`, the token counts and `cost` |
 | `cost` | `end`, `record` | `{ "amount", "currency", "source" }`: the currency is ISO 4217, and `source` says what priced it, such as `harness:claude-code`, `lobby:list-2026-09` or `provider:billed` |
 | `transcript` | `end`, `record` | the transcript pinned by hash, as for `instruction`. chant hashes a `path` and records `sha256`, `bytes` and the `ref` (the path, unless a `ref` is given). It never reads a `ref` back |
-| `commits` | `end`, `record` | commit ids the run made. chant records each commit's full id and `git patch-id --stable` |
+| `commits` | `end`, `record` | commit ids the run made. chant records each commit's full id and `git patch-id --stable`. An entry may instead be `{ "sha", "hunks": [{ "path", "start", "end" }] }`, naming the lines of the commit the run wrote, as new-side line numbers in the commit's version of each file, with the path from the repository root. Give hunks when several runs share one commit, so [`graph --intent`](/chant/cli/workspace-graph/#why-is-it-like-this) can say which run wrote a line ([#3034](https://github.com/INTENTIUS/chant/issues/3034)) |
 
 A field outside this list, such as a transcript's text, is refused with `write-input-invalid`. So is a malformed currency or a commit the repository doesn't have, and an end dated before its start.
 
@@ -90,7 +90,7 @@ A chat turn or a decide call that is over before anything is recorded goes in on
 
 `chant workspace runs --json` prints every run in the ledger, newest first. Each entry folds a run's start and end together, and its `state` is `running` until the end is recorded. The document follows `runs.schema.json`, part of the [read contract](/chant/reference/workspace-read-contract/#agent-runs). It reads the local branch and never fetches.
 
-Each run lists the `commits` it made. A commit the run's end lists has `joinedBy: ["record"]`, and a commit on `HEAD`'s history that carries the run's `Chant-Run` trailer has `"trailer"`. A commit can have both. `decisions` lists, as `<kind>/<id>`, the decisions the run carried out: the ones its work item `implements`, read through the declared work kinds, and the decision records its `records` name.
+Each run lists the `commits` it made. A commit the run's end lists has `joinedBy: ["record"]`, and a commit on `HEAD`'s history that carries the run's `Chant-Run` trailer has `"trailer"`. A commit can have both. `hunks` holds the lines the run's end said it wrote in the commit, or `null`. `decisions` lists, as `<kind>/<id>`, the decisions the run carried out: the ones its work item `implements`, read through the declared work kinds, and the decision records its `records` name.
 
 `totals` sums the runs the filters keep, overall in `all` and per group in `byUnit`, `byDecision` and `byPrincipal`. A run with no work item counts under `unit: null`, and a run with no `by` under `principal: null`. A run carrying out two decisions counts under each.
 

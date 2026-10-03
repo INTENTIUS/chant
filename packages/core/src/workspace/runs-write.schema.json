@@ -358,6 +358,21 @@
                   ]
                 },
                 "description": "record: the run's end lists it. trailer: it carries Chant-Run with the run's id, on HEAD's history."
+              },
+              "hunks": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "$ref": "#/$defs/hunk"
+                    }
+                  }
+                ],
+                "description": "The hunks of the commit the run's end says it wrote, or null when it gives none, and the run is then taken to have made the whole commit (#3034). graph --intent uses them to name which of several runs sharing a commit wrote a line. Added within version 1, so an older document may lack it."
               }
             }
           }
@@ -425,6 +440,11 @@
             "null"
           ],
           "description": "Where the writer keeps it, as the writer named it. chant never reads it back."
+        },
+        "excerpt": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "On the instruction only, and only when the writer gave one (#3034): a short excerpt to show beside the hash, such as its first line. The hash pins the whole instruction; the excerpt is the writer's and is never checked against it. Added within version 1."
         }
       }
     },
@@ -533,6 +553,29 @@
               "$ref": "#/$defs/cost"
             }
           ]
+        }
+      }
+    },
+    "hunk": {
+      "type": "object",
+      "description": "Lines of one file a run wrote in a commit (#3034): new-side line numbers in the commit's own version of the file.",
+      "required": [
+        "path",
+        "start",
+        "end"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "From the repository root, as git names it in the commit's diff."
+        },
+        "start": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "end": {
+          "type": "integer",
+          "minimum": 1
         }
       }
     }

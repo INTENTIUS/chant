@@ -66,7 +66,7 @@
         },
         "region": {
           "type": "string",
-          "description": "The id of the region node."
+          "description": "The id of the region node: region:<path>, with :<start>-<end> for a line range or #<symbol> for a symbol."
         },
         "history": {
           "type": "object",
@@ -90,7 +90,7 @@
                 "file",
                 "directory"
               ],
-              "description": "line-range: git log -L over the region's lines. file: git log --follow over the file. directory: git log over the directory."
+              "description": "line-range: git log -L over the region's lines, a symbol's current lines included. file: git log --follow over the file. directory: git log over the directory."
             },
             "shallow": {
               "type": "boolean",
@@ -182,6 +182,9 @@
               "minimum": 0
             }
           }
+        },
+        "why": {
+          "$ref": "#/$defs/why"
         }
       }
     },
@@ -240,7 +243,7 @@
       }
     },
     "region": {
-      "description": "The region the walk starts from. Its id is region:<path> with :<start>-<end> for a line range.",
+      "description": "The region the walk starts from. Its id is region:<path>, with :<start>-<end> for a line range, or #<symbol> for a symbol (#3034).",
       "type": "object",
       "required": [
         "id",
@@ -274,7 +277,7 @@
               "$ref": "#/$defs/lineRange"
             }
           ],
-          "description": "The line range asked for, in the file as read, or null for the whole path."
+          "description": "The line range asked for, in the file as read, or the current lines of the symbol asked for; null for the whole path."
         },
         "member": {
           "type": [
@@ -309,6 +312,36 @@
             "null"
           ],
           "description": "The graph node id the region was given as, whose sourceLoc it is, or null."
+        },
+        "symbol": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "name",
+                "qualified",
+                "kind"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "The symbol as given after #."
+                },
+                "qualified": {
+                  "type": "string",
+                  "description": "The declaration it resolved to, as a dotted path from the file's top level, such as Server.listen."
+                },
+                "kind": {
+                  "type": "string",
+                  "description": "What declares it: function, class, method, property, interface, type, enum, namespace, variable or member."
+                }
+              }
+            }
+          ],
+          "description": "For a region given as path#symbol (#3034): the symbol and the declaration it resolved to in the tree read; its current lines are in lines and are followed through history as a line range. Null otherwise. Added within version 1, so an older document may lack it."
         }
       }
     },
@@ -1188,7 +1221,7 @@
       }
     },
     "edge": {
-      "description": "constrains: decision or work item to region, file or contract. pins: decision to artifact. touched-by: region to commit. produced-by: commit to unit. serves: unit to contract. supersedes: the newer decision to the one it replaces. cites-evidence: unit, contract or decision to evidence. links: consumer member to producer member. within: commit to a decision whose path window it falls in, or to a work item whose window it falls in. implements: work item to the decision it carries out. needs: work item to a work item it waits on. addressed-by: finding to a work item that addresses it. carries: commit to a decision or work item its Chant-Record trailer names, or to the work item its Chant-Lease was taken on (#3149). made-by: commit to the agent run that made it, joined by its Chant-Run trailer or the run's own list of commits (#3033).",
+      "description": "constrains: decision or work item to region, file or contract. pins: decision to artifact. touched-by: region to commit. produced-by: commit to unit. serves: unit to contract. supersedes: the newer decision to the one it replaces. cites-evidence: unit, contract or decision to evidence. links: consumer member to producer member. within: commit to a decision whose path window it falls in, or to a work item whose window it falls in. implements: work item to the decision it carries out. needs: work item to a work item it waits on. addressed-by: finding to a work item that addresses it. carries: commit to a decision or work item its Chant-Record trailer names, or to the work item its Chant-Lease was taken on (#3149). made-by: commit to the agent run that made it, joined by its Chant-Run trailer or the run's own list of commits (#3033). worked-on: agent run to the work item it worked on and to each record it names, when a kind read has them; the commits it made carry them as they carry a Chant-Lease's item and a Chant-Record (#3034).",
       "oneOf": [
         {
           "$ref": "#/$defs/constrainsEdge"
@@ -1272,7 +1305,10 @@
                 "schema-invalid",
                 "location-missing",
                 "intent-region-invalid",
-                "intent-record-unknown"
+                "intent-record-unknown",
+                "intent-symbol-unsupported",
+                "intent-symbol-unknown",
+                "intent-symbol-ambiguous"
               ]
             },
             "message": {
@@ -1410,7 +1446,8 @@
             "implements",
             "needs",
             "addressed-by",
-            "carries"
+            "carries",
+            "worked-on"
           ]
         }
       }
@@ -1607,7 +1644,7 @@
     },
     "run": {
       "type": "object",
-      "description": "An agent run that made a commit in the walk (#3033), from the run ledger on the local chant/lifecycle branch. Linked from each commit it made by a made-by edge. Added within version 1.",
+      "description": "An agent run that made a commit in the walk (#3033), from the run ledger on the local chant/lifecycle branch. Linked from each commit it made by a made-by edge. Added within version 1. A recorded run has a worked-on edge to the work item it worked on and to each record it names, when a kind read has them (#3034).",
       "required": [
         "id",
         "kind",
@@ -1751,6 +1788,24 @@
               "$ref": "#/$defs/runPin"
             }
           ]
+        },
+        "instruction": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/runPin"
+            }
+          ],
+          "description": "The instruction the run was given, pinned by hash, with the writer's excerpt when it gave one (#3034). Added within version 1."
+        },
+        "lease": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The fencing token of the work lease the run worked under (#3034). Added within version 1."
         }
       }
     },
@@ -1851,6 +1906,11 @@
             "null"
           ],
           "description": "Where the writer keeps it, as the writer named it. chant never reads it back."
+        },
+        "excerpt": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "On the instruction only, and only when the writer gave one (#3034): a short excerpt to show beside the hash, such as its first line. The hash pins the whole instruction; the excerpt is the writer's and is never checked against it. Added within version 1."
         }
       }
     },
@@ -1882,6 +1942,247 @@
             ]
           },
           "description": "trailer: the commit carries Chant-Run with the run's id. record: the run's end lists the commit."
+        }
+      }
+    },
+    "why": {
+      "type": "object",
+      "description": "The answer to why the region is like this (#3034, hud#700): who last wrote its current lines, from git blame, the agent run behind each, and the decisions governing the region, most relevant first. explained is false, with intent-why-no-decision in gaps, when no current decision accounts for it. Added within version 1, so an older document may lack it.",
+      "required": [
+        "lines",
+        "blame",
+        "decisions",
+        "runs",
+        "explained",
+        "gaps"
+      ],
+      "properties": {
+        "lines": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/lineRange"
+            }
+          ],
+          "description": "The lines accounted for: the region's range or symbol, the whole file, or null for a directory, which is not blamed."
+        },
+        "blame": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/whySpan"
+          },
+          "description": "The current lines, top to bottom, in spans that one commit and the same runs last wrote. Read with git blame at the revision read, or in the working tree. Empty for a directory."
+        },
+        "decisions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/whyDecision"
+          },
+          "description": "Every decision node in the graph, most relevant first: current before superseded; then carried, path, contract, issue, member, related; then more of the current lines carried out; closed before open; the narrower path constraint; the later deciding commit."
+        },
+        "runs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/whyRun"
+          },
+          "description": "For a file, the runs that wrote its current lines, most lines first, then the later start. For a directory, every run in the walk, the latest start first, with lines 0."
+        },
+        "explained": {
+          "type": "boolean",
+          "description": "Whether a current decision governs the region at any granularity, or is carried out by the commits or runs that made its current lines."
+        },
+        "gaps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/whyGap"
+          },
+          "description": "What the answer can't account for, each with a closed code."
+        }
+      }
+    },
+    "whySpan": {
+      "type": "object",
+      "required": [
+        "start",
+        "end",
+        "commit",
+        "sha",
+        "runs",
+        "narrowedBy"
+      ],
+      "properties": {
+        "start": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "end": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "commit": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The commit node that last wrote the lines, or null for lines not committed yet."
+        },
+        "sha": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{40,64}$"
+        },
+        "runs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The run nodes behind the lines: the run the commit's Chant-Run names first, then those whose record lists the commit. More than one is intent-why-run-ambiguous."
+        },
+        "narrowedBy": {
+          "enum": [
+            "hunks",
+            null
+          ],
+          "description": "hunks: runs' recorded hunks chose among the runs that made the commit, and a run whose hunks miss the lines is left out. null: every run that made the commit is listed."
+        }
+      }
+    },
+    "whyDecision": {
+      "type": "object",
+      "required": [
+        "decision",
+        "relevance",
+        "current",
+        "closed",
+        "lines"
+      ],
+      "properties": {
+        "decision": {
+          "type": "string",
+          "description": "The decision node."
+        },
+        "relevance": {
+          "enum": [
+            "carried",
+            "path",
+            "contract",
+            "issue",
+            "member",
+            "related"
+          ],
+          "description": "carried: a commit or run that made current lines carries the decision out, through a unit, a Chant-Record or Chant-Lease trailer, or the run's work item and records (for a directory, any commit in the walk). path, contract, issue, member: it constrains the region that way. related: it is in the graph only through supersession, or through a commit that made no current line."
+        },
+        "current": {
+          "type": "boolean",
+          "description": "Not superseded."
+        },
+        "closed": {
+          "type": "boolean",
+          "description": "Its state is one its kind closes, such as ratified."
+        },
+        "lines": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many current lines were made as its own work."
+        }
+      }
+    },
+    "whyRun": {
+      "type": "object",
+      "required": [
+        "run",
+        "lines",
+        "commits",
+        "unit",
+        "decisions"
+      ],
+      "properties": {
+        "run": {
+          "type": "string",
+          "description": "The run node."
+        },
+        "lines": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "commits": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The commit nodes through which it made the lines."
+        },
+        "unit": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "id",
+                "kind",
+                "node"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "node": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "The work node, when a work kind read has the item."
+                }
+              }
+            }
+          ],
+          "description": "The work item the run record names."
+        },
+        "decisions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The decision nodes it carried out: the ones its work item implements and the decision records it names."
+        }
+      }
+    },
+    "whyGap": {
+      "type": "object",
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "enum": [
+            "intent-why-no-decision",
+            "intent-why-no-run",
+            "intent-why-uncommitted",
+            "intent-why-run-ambiguous"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "lines": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/lineRange"
+          },
+          "description": "The lines the gap is about, for intent-why-uncommitted and intent-why-run-ambiguous."
         }
       }
     }

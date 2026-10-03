@@ -42,8 +42,8 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | member link kind | `LINK_KINDS` in `links.ts` | 2 | 0 | 0 |
 | record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 |
 | intent node kind | the node kinds of `intent.schema.json` | 10 | 0 | 3 |
-| intent edge kind | the edge kinds of `intent.schema.json` | 11 | 0 | 3 |
-| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 173 | 0 | 0 |
+| intent edge kind | the edge kinds of `intent.schema.json` | 12 | 0 | 3 |
+| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 180 | 0 | 0 |
 | finding code | the finding codes of `intent.schema.json` | 17 | 0 | 0 |
 | WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 50 | 0 | 0 |
 | hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 |
@@ -157,6 +157,7 @@ Each row follows, in the order of the table above.
 | intent edge kind | `addressed-by` | chant | intent.schema.json | A finding is being closed by a work item that came from it or implements the decision it concerns (#2683). |
 | intent edge kind | `carries` | chant | intent.schema.json | A commit carries a decision or work item its Chant-Record trailer names, or the work item its Chant-Lease was taken on (#3149). |
 | intent edge kind | `made-by` | chant | intent.schema.json | A commit was made by an agent run, joined by its Chant-Run trailer or the run's own list of commits (#3033). |
+| intent edge kind | `worked-on` | chant | intent.schema.json | An agent run worked on a work item, or on a record it names, as its run record says; the commits it made carry them (#3034). |
 | reason code | `declaration-missing` | chant | agent.schema.json, changes.schema.json, check.schema.json, composites.schema.json, graph.schema.json, intent-record.schema.json, intent.schema.json, ls.schema.json, patch.schema.json, points.schema.json, runs-write.schema.json, runs.schema.json, status.schema.json | No chant.workspace.json or .jsonc between the directory and the git root. |
 | reason code | `declaration-ambiguous` | chant | agent.schema.json, changes.schema.json, check.schema.json, composites.schema.json, graph.schema.json, intent-record.schema.json, intent.schema.json, ls.schema.json, patch.schema.json, points.schema.json, runs-write.schema.json, runs.schema.json, status.schema.json | Both chant.workspace.json and chant.workspace.jsonc exist. |
 | reason code | `declaration-unparseable` | chant | agent.schema.json, changes.schema.json, check.schema.json, composites.schema.json, graph.schema.json, intent-record.schema.json, intent.schema.json, ls.schema.json, patch.schema.json, points.schema.json, runs-write.schema.json, runs.schema.json, status.schema.json | The declaration is not valid JSON, or not valid JSONC for .jsonc. |
@@ -266,6 +267,13 @@ Each row follows, in the order of the table above.
 | reason code | `since-session-unknown` | chant | records-since.schema.json | --since has the shape of a session id and names no commit, and no session the kind or the declaration reads has that id. |
 | reason code | `since-session-open` | chant | records-since.schema.json | --since names a session that is still open, so the comparison runs to the working tree. |
 | reason code | `intent-record-unknown` | chant | intent-record.schema.json, intent.schema.json | graph --intent --record names an id that no record of a decision kind read has. |
+| reason code | `intent-symbol-unsupported` | chant | intent.schema.json | The region names a symbol, path#symbol, in a file no symbol resolver reads; a line range still works (#3034). |
+| reason code | `intent-symbol-unknown` | chant | intent.schema.json | The region names a symbol the file does not declare in the tree read (#3034). |
+| reason code | `intent-symbol-ambiguous` | chant | intent.schema.json | The region names a symbol that matches more than one declaration in the file; its qualified name picks one (#3034). |
+| reason code | `intent-why-no-decision` | chant | intent.schema.json | No current decision governs the region or is carried out by what made its current lines, so why.explained is false and hud offers to record one (#3034). |
+| reason code | `intent-why-no-run` | chant | intent.schema.json | No agent run is joined to the commits that made the region's current lines (#3034). |
+| reason code | `intent-why-uncommitted` | chant | intent.schema.json | Some of the region's lines are not committed yet (#3034). |
+| reason code | `intent-why-run-ambiguous` | chant | intent.schema.json | Some lines come from a commit several agent runs made, and no run's recorded hunks say which wrote them (#3034). |
 | reason code | `patch-path-invalid` | chant | patch.schema.json | workspace patch --path names a path that is not relative and inside the workspace. |
 | reason code | `intent-region-invalid` | chant | intent.schema.json | The region's path, or its line range, does not exist in the tree read. |
 | reason code | `intent-history-shallow` | chant | intent-record.schema.json, intent.schema.json | The repository is a shallow clone, so the region's history stops at the clone's boundary. |

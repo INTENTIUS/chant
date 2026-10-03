@@ -179,7 +179,7 @@ describe("the intent graph of app/server.mjs (#2651)", () => {
       "finding:plugin:units:criteria-changed-undecided:1",
     ]);
 
-    expect(node(doc, "region:app/server.mjs")).toEqual({ id: "region:app/server.mjs", kind: "region", path: "app/server.mjs", lines: null, member: "app", at: null, type: "file", generated: false, node: null });
+    expect(node(doc, "region:app/server.mjs")).toEqual({ id: "region:app/server.mjs", kind: "region", path: "app/server.mjs", lines: null, member: "app", at: null, type: "file", generated: false, node: null, symbol: null });
     expect(node(doc, "member:app")).toEqual({ id: "member:app", kind: "member", name: "app", dir: "app", memberKind: "other" });
     expect(node(doc, `commit:${sha.c2}`)).toMatchObject({
       kind: "commit",
@@ -296,8 +296,17 @@ describe("the intent graph of app/server.mjs (#2651)", () => {
       "finding",
       "finding",
       "finding",
+      "why",
+      "decision",
+      "decision",
+      "lines",
+      "lines",
+      "lines",
+      "gap",
+      "gap",
       "3",
     ]);
+    expect(lines[lines.length - 9]).toBe("why       unexplained, lines 1-3");
     expect(lines[0]).toBe("region    app/server.mjs (file, member app) in the working tree");
     expect(lines[1]).toContain("dec-001 decided, superseded by dec-002");
     expect(lines[1]).toContain("path:app/server.mjs (path)");
@@ -307,7 +316,7 @@ describe("the intent graph of app/server.mjs (#2651)", () => {
     expect(lines[4]).toBe("  ask       is this drift, a superseding decision nobody wrote down, or the decision being wrong?");
     expect(lines[6]).toBe(`artifact  design/screens/home.json stale; pinned by dec-001 at ${HOME_SHA.slice(0, 8)} (pinned), dec-002 at ${HOME_SHA.slice(0, 8)} (stale); now ${HOME_SHA.slice(0, 8)}`);
     expect(lines[7]).toContain(`${sha.c4.slice(0, 8)} `);
-    expect(lines.at(-2)).toBe("finding   plugin:units:criteria-changed-undecided: ctr-002 changed its criteria in this commit with no decision");
+    expect(lines.at(-10)).toBe("finding   plugin:units:criteria-changed-undecided: ctr-002 changed its criteria in this commit with no decision");
     expect(lines.at(-1)).toBe("3 commits, 2 decisions, 1 artifacts, 5 findings");
   });
 

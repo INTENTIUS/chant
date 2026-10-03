@@ -157,9 +157,9 @@ describe("runs --json", () => {
     const byId = new Map(doc.runs.map((r) => [r.id, r]));
     const a = byId.get(run.a)!;
     expect(a).toMatchObject({ state: "ended", outcome: "done", by: "alice", agent: "factory", harness: { name: "claude-code", version: "2.1.0" }, model: "claude-opus-5-5", unit: { id: "W-001", kind: null }, lease: "tok-1", decisions: ["decision/s-001"] });
-    expect(a.commits).toEqual([{ sha: sha.c1, patchId: expect.stringMatching(/^[0-9a-f]{40}$/), joinedBy: ["trailer"] }]);
+    expect(a.commits).toEqual([{ sha: sha.c1, patchId: expect.stringMatching(/^[0-9a-f]{40}$/), joinedBy: ["trailer"], hunks: null }]);
     const c = byId.get(run.c)!;
-    expect(c.commits).toEqual([{ sha: sha.c2, patchId: expect.stringMatching(/^[0-9a-f]{40}$/), joinedBy: ["record"] }]);
+    expect(c.commits).toEqual([{ sha: sha.c2, patchId: expect.stringMatching(/^[0-9a-f]{40}$/), joinedBy: ["record"], hunks: null }]);
     expect(c.decisions).toEqual(["decision/s-001"]);
     expect(byId.get(run.d)).toMatchObject({ state: "running", endedAt: null, cost: null, usage: null });
     // Newest first.

@@ -384,11 +384,11 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant workspace graph --composites` (#2662)
       result.composites = true;
     } else if (arg === "--intent") {
-      // `chant workspace graph --intent <path[:start-end]>` (#2651), or `--intent --record <id>` with no region.
+      // `chant workspace graph --intent <path[:start-end]|path#symbol>` (#2651), or `--intent --record <id>` with no region.
       const value = args[i + 1];
       if (value !== undefined && !value.startsWith("-")) result.intent = args[++i];
       else if (args.includes("--record")) result.intent = "";
-      else throw new Error("--intent needs a region: --intent <path[:start-end]>, or --intent --record <id>");
+      else throw new Error("--intent needs a region: --intent <path[:start-end]|path#symbol>, or --intent --record <id>");
     } else if (arg === "--record") {
       // `chant workspace graph --intent --record <id>`
       result.record = args[++i];
@@ -1096,7 +1096,7 @@ Workspace (level 1, #2524):
                         Each composite instance the members declare, with the
                         components whose contract can deploy it; an instance
                         with none lists an empty set
-  workspace graph --intent <path[:start-end]> [--at <rev>] [--kind <kind file>...] [--json]
+  workspace graph --intent <path[:start-end]|path#symbol> [--at <rev>] [--kind <kind file>...] [--json]
                         The intent graph over one region: the commits that
                         touched it, the decisions whose constrains cover it,
                         the artifacts they pin, and findings with closed codes.

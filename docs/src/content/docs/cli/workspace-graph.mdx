@@ -10,7 +10,7 @@ title: "chant workspace graph"
 chant workspace graph [dir] [--at <rev>] [-o <file>] [--member <name>] [--kind <kind file>] [--env <name>] [--no-cache] [--dry-run]
 chant workspace graph [dir] --live --env <name> [--overlay] [--traffic <level>] [-o <file>] [--member <name>] [--kind <kind file>]
 chant workspace graph [dir] --composites [--at <rev>] [-o <file>] [--member <name>] [--env <name>]
-chant workspace graph [dir] --intent <path[:start-end]> [--at <rev>] [--kind <kind file>...] [--json]
+chant workspace graph [dir] --intent <path[:start-end]|path#symbol> [--at <rev>] [--kind <kind file>...] [--json]
 chant workspace graph [dir] --intent --record <id> [--at <rev>] [--kind <kind file>...] [--json]
 ```
 
@@ -274,6 +274,8 @@ With `--intent <region>`, the command prints a different document: the intent gr
 
 The region is a path from `dir` (or the current directory): a file, a directory, `path:line` or `path:start-end`. A graph node id such as `delivery/appService` works too, when no path by that name exists. The region is then the file and line in the node's `sourceLoc`.
 
+`path#symbol` names a declaration instead of lines, such as `lobby/server.mjs#createApp` ([#3034](https://github.com/INTENTIUS/chant/issues/3034)). Line numbers drift as a file is edited, and a symbol does not. chant resolves the symbol to its current lines in the tree read and follows them through history like a line range. The lines run from the declaration's doc comment to its last line. Symbols resolve in TypeScript and JavaScript files. A dotted path such as `Server.listen` names a member, and a bare name that is not top-level finds the one member it names. The region node's `symbol` says what the name resolved to. A file in another language is refused with `intent-symbol-unsupported`, and a line range still works there. A name the file does not declare is `intent-symbol-unknown`, and its message lists the top-level declarations. A name that matches two members is `intent-symbol-ambiguous`, and its message lists the qualified names to choose from.
+
 The walk gathers three sources before it relates any of them:
 
 1. The commits that touched the region. A line range is followed with `git log -L`, a file with `git log --follow`, and a directory with `git log -- <dir>`. Each commit carries its author and date and its trailers. It also has its provenance level, and the pull request number when its subject ends with one.
@@ -311,6 +313,26 @@ finding   intent-constraint-coarse: app/src/server.mjs is constrained only throu
 ```
 
 Without `--kind`, the walk reads every [record kind the declaration names](/chant/reference/workspace-declaration/#record-kinds), in the declaration's order: the workspace's own first, then each member's ([#2680](https://github.com/INTENTIUS/chant/issues/2680)). The declaration is the one the walk reads, at the revision under `--at`, and each kind file is loaded from the working tree, as a `--kind` file is. `--kind` overrides the declaration, and a workspace with neither reads no decisions, as before. The reference workspace declares its decision kind, its work kind and its design member's session kind. The sessions constrain nothing, so `chant workspace graph --intent app/src/server.mjs:19` without `--kind` prints the walk below plus a `work` line for W-001, which constrains `member:app`.
+
+### Why is it like this
+
+The document's `why` answers the question from a line or a symbol ([#3034](https://github.com/INTENTIUS/chant/issues/3034)). For a file region it reads `git blame` over the region's current lines, at `--at` or in the working tree, and gives each span of lines the commit that last wrote it and the [agent runs](/chant/cli/workspace-runs/) behind that commit. When several runs made one commit and a run's end recorded the `hunks` it wrote, the line goes to the run whose hunks hold it. Without hunks every run is listed, and the gap `intent-why-run-ambiguous` names the lines. Lines not committed yet have no commit and the gap `intent-why-uncommitted`.
+
+The decisions come most relevant first. A decision carried out by a commit or run that made current lines comes first: through its unit, its `Chant-Record` or `Chant-Lease` trailer, or the work item and records of the run that made it. A recorded run's work item and records count for its commits as those trailers do. Then come the decisions that constrain the region by path, the narrowest first, and after them those that constrain it more coarsely: by contract or issue, then by member. Superseded decisions come last. The runs come by how many current lines each wrote, each with the work item it worked on. When no current decision governs the region or is carried out by what made it, `explained` is `false` and the gap `intent-why-no-decision` says so. hud offers to record a decision there.
+
+A directory region is not blamed: its `why` lists the decisions the same way and every run in the walk. The text walk prints the answer after the findings:
+
+```
+why       explained, lines 2-4
+  decision  s-001 carried, 1 line
+  decision  s-003 path
+  decision  s-002 member
+  lines     2 3f2b7d10; no run
+  lines     3 9c1e04aa; run-a (claude-code/claude-opus-5-5) on W-001
+  lines     4 3f2b7d10; no run
+```
+
+The [read contract](/chant/reference/workspace-read-contract/#why-the-region-is-like-this) lists the fields. Following a squash merge back to the pull request's commits ([#3035](https://github.com/INTENTIUS/chant/issues/3035)) and joining a commit to its run by patch-id when the trailer is gone ([#3036](https://github.com/INTENTIUS/chant/issues/3036)) are not part of the answer yet.
 
 ### One record's walk
 
@@ -428,7 +450,7 @@ Apart from [chant's own trailers](#chants-trailers), core reads trailers as git 
 | `--member <name>` | Compose only these members. Repeatable, and a comma list works too. |
 | `--kind <kind file>` | Read the records of this record kind and add their [record links](#record-links). The path is resolved against the current directory. With `--intent` it is repeatable, and each file is a record kind, a plugin with [commit joins](#commit-joins), or both. Without it, `--intent` reads every kind the declaration names. |
 | `--composites` | Print the [composite instances and their components](#composites-and-components) instead of the composed graph. Takes neither `--kind` nor `--intent`. |
-| `--intent <region>` | Print the [intent graph](#the-intent-graph) over `path`, `path:line` or `path:start-end` instead of the composed graph. |
+| `--intent <region>` | Print the [intent graph](#the-intent-graph) over `path`, `path:line`, `path:start-end` or `path#symbol` instead of the composed graph. |
 | `--record <id>` | With `--intent` and no region, print [one record's walk](#one-records-walk) over every entry its `constrains` lists. |
 | `--json` | With `--intent`, print the document as JSON instead of the text walk. |
 | `--env <name>` | Passed to each member's `chant graph`. |
