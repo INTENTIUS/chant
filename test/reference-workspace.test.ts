@@ -477,9 +477,9 @@ describe("the design member's contract, driver and evidence kinds (#3148, ws-082
       execFileSync("git", ["init", "-q"], { cwd: root });
       execFileSync("git", ["add", "-A"], { cwd: root });
       execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.test", "commit", "-qm", "reference"], { cwd: root });
-      const ok = <T extends object>(doc: T): T => {
+      const ok = <T extends object>(doc: T): Exclude<T, { error: unknown }> => {
         if ("error" in doc) throw new Error(JSON.stringify((doc as { error: unknown }).error));
-        return doc;
+        return doc as Exclude<T, { error: unknown }>;
       };
       const contract = await queryRecords({ kind: "design/contracts/contract.kind.mjs", cwd: root });
       if ("error" in contract) throw new Error(contract.error.message);
