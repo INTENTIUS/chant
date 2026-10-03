@@ -189,11 +189,11 @@ describe("SQLPG114: storage parameters", () => {
 });
 
 describe("SQLPG115: features newer than the oldest major", () => {
-  test("flags a view's security_invoker (15), NULLS NOT DISTINCT (15) and a virtual column (18)", () => {
-    const v = view`CREATE VIEW v WITH (security_invoker = true) AS SELECT 1 AS a`;
+  test("flags a storage parameter newer than 14, NULLS NOT DISTINCT (15) and a virtual column (18)", () => {
+    const v = view`CREATE MATERIALIZED VIEW v WITH (autovacuum_vacuum_max_threshold = 10) AS SELECT 1 AS a`;
     const t = table`CREATE TABLE t (a int, b int GENERATED ALWAYS AS (a + 1) VIRTUAL, UNIQUE NULLS NOT DISTINCT (a))`;
     const msgs = run("SQLPG115", { v, t }).map((d) => d.message).join("\n");
-    expect(msgs).toMatch(/security_invoker.*needs Postgres 15/);
+    expect(msgs).toMatch(/autovacuum_vacuum_max_threshold.*needs Postgres 18/);
     expect(msgs).toMatch(/virtual generated column b.*Postgres 18/);
     expect(msgs).toMatch(/NULLS NOT DISTINCT.*Postgres 15/);
   });
