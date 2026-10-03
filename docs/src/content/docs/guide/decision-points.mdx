@@ -114,14 +114,14 @@ The answer is written as a record in `answers/`, named for the point and its inp
 | Answered by | State |
 |---|---|
 | a table row | `answered` |
-| a model at or above its threshold | `proposed`, whatever its confidence, with its probabilities, confidence and threshold |
+| a model at or above its threshold | `proposed`, whatever its confidence, with its probabilities, confidence, threshold and the model's `reason` when it gave one |
 | nobody before the quorum | `escalated`, with each decider's reason and any model's answer below its threshold |
 
 Every record carries a `source` block ([#2708](https://github.com/INTENTIUS/chant/issues/2708)) with `via` and, when a model answered, its `model`. The same point, declaration and inputs are answered once. Asking again returns the record that is there. Editing the point changes its version, which asks the question anew, and the old answers get `answer-point-changed`.
 
 ## Answer the open questions
 
-A question is open while it is escalated or proposed. `chant workspace points --open --json` lists them with any model's answer and confidence, so hud can prompt a person. `chant serve mcp` serves the same list as the `workspace-points` tool.
+A question is open while it is escalated or proposed. `chant workspace points --open --json` lists them with any model's answer, confidence and reason, so hud can prompt a person and show why the model chose. `chant serve mcp` serves the same list as the `workspace-points` tool.
 
 ```bash
 chant workspace points answer slice-tier-074b660bbaad --answer medium --by alice
@@ -182,7 +182,7 @@ export default Op({
 | `backends` | Backends by name, in place of `decide.backends` in `chant.config.ts`. |
 | `dryRun` | Ask, but write nothing, and return the question whatever its state. |
 
-OPS012 checks a step's arguments against the activity's contract at `chant build`, so a misspelled argument or a key written as a string fails the build. Before anything is asked, the step checks that every backend the point's model deciders name is configured, and that a brokered key's capability is declared with a broker. It then reads the inputs and asks the point through `askPointInRun`, as above. An answered question is the step's result: `{ id, path, state, open, answer, decider, model, backend, confidence, threshold, answeredBy, escalations, missing }`, where `missing` lists declared inputs the read value did not have.
+OPS012 checks a step's arguments against the activity's contract at `chant build`, so a misspelled argument or a key written as a string fails the build. Before anything is asked, the step checks that every backend the point's model deciders name is configured, and that a brokered key's capability is declared with a broker. It then reads the inputs and asks the point through `askPointInRun`, as above. An answered question is the step's result: `{ id, path, state, open, answer, decider, model, backend, confidence, threshold, reason, answeredBy, escalations, missing }`, where `missing` lists declared inputs the read value did not have.
 
 ### Backends
 
@@ -208,7 +208,7 @@ export default {
 
 A key is `{ env: "VARIABLE" }`, read when the step runs, or a capability a box member declares as brokered, `{ capability, member?, env? }` ([#2726](https://github.com/INTENTIUS/chant/issues/2726)). With `env`, the broker sets that variable for the Op's process. Without it, the broker is the endpoint and adds the key itself, so none is sent. A key is never a string: the config fails to load, and so does a step whose `backends` holds one.
 
-The request is the wire format's: `POST <url>/v1/systemone` with `{ "model", "state", "questions": { "<point>": { "type", "instructions", "criteria" } } }`, the point's inputs as the state. The answer is read from `answers["<point>"]`, where `points ask --response` reads it. The backend counts as unreachable when the call fails or times out, when the key's variable is unset, or when the response is not a 2xx with the answer in it. The model decider's `unreachable` then decides: `"escalate"`, the default, leaves the question open for people with the reason, and `"fail"` writes nothing and fails the step with `point-decider-failed`. In a steward's turn a backend keyed by an environment variable is not called, since the steward would hold its key.
+The request is the wire format's: `POST <url>/v1/systemone` with `{ "model", "state", "questions": { "<point>": { "type", "instructions", "criteria" } } }`, the point's inputs as the state. The answer is read from `answers["<point>"]`, where `points ask --response` reads it, with its optional `reason`. The backend counts as unreachable when the call fails or times out, when the key's variable is unset, or when the response is not a 2xx with the answer in it. The model decider's `unreachable` then decides: `"escalate"`, the default, leaves the question open for people with the reason, and `"fail"` writes nothing and fails the step with `point-decider-failed`. In a steward's turn a backend keyed by an environment variable is not called, since the steward would hold its key.
 
 ### Lint rules
 
