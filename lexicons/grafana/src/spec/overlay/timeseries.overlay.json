@@ -5,6 +5,29 @@
   "patches": [
     {
       "op": "add",
+      "path": "/definitions/VizAnnotations",
+      "value": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "multiLane": { "type": "boolean", "description": "Breaks out each annotation frame into multiple lanes on the x-axis" },
+          "clustering": { "type": "number", "description": "Sets whether clustering is enabled. Any value > 0 will enable clustering." },
+          "lines": { "type": "object", "additionalProperties": false, "properties": { "width": { "type": "number" } } },
+          "regions": { "type": "object", "additionalProperties": false, "properties": { "opacity": { "type": "number" } } }
+        }
+      },
+      "source": "packages/grafana-schema/src/common/mudball.cue:161 (VizAnnotations, with AnnotationDisplayOptions at :170)",
+      "why": "The time series CUE embeds common.OptionsWithAnnotations and declares annotations (public/app/plugins/panel/timeseries/panelcfg.cue:32 and :38); the vendored schema has no such type."
+    },
+    {
+      "op": "add",
+      "path": "/definitions/Options/properties/annotations",
+      "value": { "$ref": "#/definitions/VizAnnotations" },
+      "source": "packages/grafana-schema/src/common/mudball.cue:180 (OptionsWithAnnotations)",
+      "why": "Same: the vendored Options has timezone, legend, tooltip and orientation but not annotations."
+    },
+    {
+      "op": "add",
       "path": "/definitions/GraphFieldConfig/properties/showValues",
       "value": { "type": "boolean", "description": "Show point values on the graph." },
       "source": "packages/grafana-schema/src/common/mudball.cue:257 (:242 at v12.4.0)",

@@ -244,6 +244,30 @@ describe("the issue's reproductions", () => {
     ]);
   });
 
+  test("options.annotations on a time series panel is typed and validates; trend and barchart leave it unknown (#3138)", () => {
+    const annotations = { multiLane: true, clustering: 1, lines: { width: 2 }, regions: { opacity: 0.2 } };
+    expect((((loadVendoredSchema("timeseries").definitions as Json).Options as Json).properties as Json).annotations).toBeUndefined();
+    const panel = new TimeSeriesPanel({ title: "Requests", datasource: prometheus, targets: [rate], options: { annotations } });
+    const json = renderDashboard(new Dashboard({ title: "Annotated", uid: "annotated", panels: [panel] })) as unknown as Json;
+    expect(validateDashboardSchema(json)).toEqual([]);
+    expect(((json.panels as Json[])[0].options as Json).annotations).toEqual(annotations);
+
+    const bad = structuredClone(json);
+    (((bad.panels as Json[])[0].options as Json).annotations as Json).clustering = "on";
+    expect(validateDashboardSchema(bad).map((p) => [p.severity, p.path])).toContainEqual(["error", "/panels/0/options/annotations/clustering"]);
+
+    // Grafana's CUE at the pin gives neither panel the field (trend/panelcfg.cue, barchart/panelcfg.cue).
+    for (const type of ["trend", "barchart"]) {
+      const other = structuredClone(json);
+      Object.assign((other.panels as Json[])[0], { type, options: { annotations } });
+      expect(validateDashboardSchema(other)).toContainEqual({
+        path: "/panels/0/options",
+        message: 'unknown key "annotations" (not in the pinned schema)',
+        severity: "warning",
+      });
+    }
+  });
+
   test("a table cellOptions matching several variants is accepted", () => {
     const panel = new TablePanel({ title: "T", fieldConfig: { defaults: { custom: { cellOptions: { type: "auto" } } } } });
     const json = renderDashboard(new Dashboard({ title: "Table", uid: "table", panels: [panel] })) as unknown as Json;

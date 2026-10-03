@@ -8,6 +8,7 @@ export interface Options {
   legend: VizLegendOptions;
   tooltip: VizTooltipOptions;
   orientation?: VizOrientation;
+  annotations?: VizAnnotations;
 }
 
 export type FieldConfig = GraphFieldConfig;
@@ -211,3 +212,20 @@ export type ScaleDistribution = "linear" | "log" | "ordinal" | "symlog";
  * TODO docs
  */
 export type StackingMode = "none" | "normal" | "percent";
+
+export interface VizAnnotations {
+  /**
+   * Breaks out each annotation frame into multiple lanes on the x-axis
+   */
+  multiLane?: boolean;
+  /**
+   * Sets whether clustering is enabled. Any value > 0 will enable clustering.
+   */
+  clustering?: number;
+  lines?: {
+    width?: number;
+  };
+  regions?: {
+    opacity?: number;
+  };
+}
