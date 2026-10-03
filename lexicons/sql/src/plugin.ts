@@ -19,13 +19,14 @@ import { hover } from "./lsp/hover";
 import { sqlMcpResources, sqlMcpTools } from "./mcp";
 import { sqlConfigSchema } from "./config";
 import { ClickHouseSqlParser } from "./clickhouse/import/parser";
-import { ClickHouseGenerator } from "./clickhouse/import/generator";
+import { sqlTemplateGenerator } from "./import-generator";
 import { sqlCommands } from "./clickhouse/plan/commands";
 import { sqlDeepNormalizationHooks } from "./clickhouse/plan/deep";
 import { versionFromReleaseTag } from "./spec/pin";
 import { POSTGRES_MAJORS, postgresUpstreamPin } from "./spec/postgres-pin";
 import { SQL_OWNERSHIP_CHANNEL } from "./clickhouse/ownership";
 import { CLICKHOUSE_EMULATOR } from "./op/activities/clickhouse-emulator";
+import { POSTGRES_EMULATOR } from "./op/activities/postgres-emulator";
 import { sqlSkills } from "./skill-defs";
 import { detectTemplate } from "./detect";
 import { CDC_TEMPLATE, DEFAULT_TEMPLATE, EVENTS_TEMPLATE, POSTGRES_EVENTS_TEMPLATE, POSTGRES_TEMPLATE, POSTGRES_TENANT_TEMPLATE } from "./init-templates";
@@ -36,8 +37,8 @@ export const sqlPlugin: LexiconPlugin = {
   serializer: sqlSerializer,
   configSchema: sqlConfigSchema,
 
-  /** The pinned clickhouse-server, for `chant emulator up` (#3208). */
-  emulator: CLICKHOUSE_EMULATOR,
+  /** The pinned clickhouse-server (#3208) and postgres (#3280), for `chant emulator up`. */
+  emulator: [CLICKHOUSE_EMULATOR, POSTGRES_EMULATOR],
 
   /** chant's marker is a trailer on the object's comment (#3208, ./clickhouse/ownership.ts). */
   ownershipChannel: SQL_OWNERSHIP_CHANNEL,
@@ -113,7 +114,7 @@ export const sqlPlugin: LexiconPlugin = {
 
   skills: sqlSkills,
 
-  /** The ClickHouse composites (./composites), as the catalog generated from their exports. */
+  /** The ClickHouse and Postgres composites (./composites), as the catalog generated from their exports. */
   composites() {
     return compositeCatalog;
   },
@@ -153,34 +154,61 @@ export const sqlPlugin: LexiconPlugin = {
     return new ClickHouseSqlParser();
   },
 
+  /** One generator for both dialects: each IR resource's type says whose declarations it is. */
   templateGenerator() {
-    return new ClickHouseGenerator();
+    return sqlTemplateGenerator;
   },
 
-  /** Which declared objects exist on the environment's server (`sql.profiles.<env>`, else `CLICKHOUSE_URL`). */
+  /**
+   * Which declared objects exist on the environment's server
+   * (`sql.profiles.<env>`, else `CLICKHOUSE_URL` or `POSTGRES_URL`). The
+   * declarations' dialect picks the reader; node-postgres loads only for a
+   * Postgres one.
+   */
   async describeResources(options) {
+    const { dialectOfEntities } = await import("./live-dialect");
+    if (dialectOfEntities(options.entities) === "postgres") {
+      const { describeResources } = await import("./postgres/live/describe-resources");
+      return describeResources(options);
+    }
     const { describeResources } = await import("./clickhouse/live/describe-resources");
     return describeResources(options);
   },
 
-  /** `chant import --from <env>`: the server's schema, from `SHOW CREATE`, as declarations. */
+  /** `chant import --from <env>`: the server's schema as declarations, from `SHOW CREATE` or the Postgres catalog's printers. */
   async exportResources(options) {
+    const { resolveBindingDialect } = await import("./live-dialect");
+    if ((await resolveBindingDialect(options)) === "postgres") {
+      const { exportResources } = await import("./postgres/import/live-export");
+      return exportResources(options);
+    }
     const { exportResources } = await import("./clickhouse/import/live-export");
     return exportResources(options);
   },
 
   /** Each declared object's live definition, in the declaration's own shape. */
   async observeResourcesDeep(options) {
+    const { dialectOfEntities } = await import("./live-dialect");
+    if (dialectOfEntities(options.entities) === "postgres") {
+      const { observeResourcesDeep } = await import("./postgres/plan/deep");
+      return observeResourcesDeep(options);
+    }
     const { observeResourcesDeep } = await import("./clickhouse/plan/deep");
     return observeResourcesDeep(options);
   },
 
   deepNormalizationHooks: sqlDeepNormalizationHooks,
 
-  /** What an update costs: metadata in-place, a background rewrite rolling, a rebuild replace. */
+  /**
+   * What an update costs. ClickHouse: metadata in-place, a background rewrite
+   * rolling, a rebuild replace. Postgres: metadata in-place, a validation, a
+   * CONCURRENTLY build or an ACCESS EXCLUSIVE rewrite rolling, expand and
+   * contract replace. Each dialect answers for its own types.
+   */
   async classifyDisruption(options) {
     const { classifyDisruption } = await import("./clickhouse/plan/disruption");
-    return classifyDisruption(options);
+    const { classifyPgDisruption } = await import("./postgres/plan/disruption");
+    return { ...classifyDisruption(options), ...classifyPgDisruption(options) };
   },
 
   /** `chant sql diff` and `chant sql plan`: schema changes, classified. */

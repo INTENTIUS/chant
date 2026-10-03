@@ -1,6 +1,8 @@
 /**
  * `chant sql diff` and `chant sql plan`: the classified change between two
- * builds, or between a build and a live server.
+ * builds, or between a build and a live server. A Postgres build (its output
+ * says `"dialect": "postgres"`) or a Postgres binding goes to
+ * `../../postgres/plan/commands.ts`.
  *
  *     chant sql diff <before.json> <after.json> [--json]
  *     chant sql plan <env> <build.json> [--json]
@@ -21,6 +23,16 @@ import { keyedByQualifiedName, schemaFromBuildFile, schemaFromServer } from "./s
 import { dropFormattingOnly } from "./server-format";
 import { bindClickHouse } from "../live/bind";
 import { rebuildOpSuggestions } from "./rebuild-handoff";
+import { readFileSync } from "node:fs";
+
+/** The dialect a build output names. */
+function outputDialect(path: string): string | undefined {
+  try {
+    return (JSON.parse(readFileSync(path, "utf-8")) as { dialect?: string }).dialect;
+  } catch {
+    return undefined;
+  }
+}
 
 function split(args: string[]): { positional: string[]; json: boolean } {
   return { positional: args.filter((a) => !a.startsWith("--")), json: args.includes("--json") };
@@ -36,6 +48,10 @@ export async function runDiff(ctx: CommandGroupContext): Promise<number> {
   if (positional.length !== 2) {
     console.error("usage: chant sql diff <before.json> <after.json> [--json]");
     return 1;
+  }
+  if (outputDialect(positional[1]!) === "postgres") {
+    const { diffPgBuildFiles, emitPg, projectMajor } = await import("../../postgres/plan/commands");
+    return emitPg(diffPgBuildFiles(positional[0]!, positional[1]!, await projectMajor()), json, `${positional[0]} -> ${positional[1]}`);
   }
   const after = schemaFromBuildFile(positional[1]!);
   const diff = diffSchemas(schemaFromBuildFile(positional[0]!), after);
@@ -66,6 +82,10 @@ export async function runPlan(ctx: CommandGroupContext): Promise<number> {
   if (positional.length !== 2) {
     console.error("usage: chant sql plan <env> <build.json> [--json]");
     return 1;
+  }
+  if (outputDialect(positional[1]!) === "postgres") {
+    const { planPgAgainstServer, emitPg } = await import("../../postgres/plan/commands");
+    return emitPg(await planPgAgainstServer(positional[0]!, positional[1]!), json, `${positional[1]} against ${positional[0]}`);
   }
   const diff = await planAgainstServer(positional[0]!, positional[1]!);
   return emit(diff, json, `${positional[1]} against ${positional[0]}`);

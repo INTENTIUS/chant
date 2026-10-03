@@ -316,6 +316,8 @@ describe("chant workspace status on built workspaces", () => {
         isolation: null,
         intent: null,
         services: [],
+        factory: null,
+        listing: null,
       },
     ]);
   });

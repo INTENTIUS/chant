@@ -322,6 +322,37 @@ describe("composite factory interpretation (chant #1023)", () => {
     expect(run).toContain("GetAtt");
   });
 
+  test("a call whose props name a member of a same-file composite call interprets too (chant#3325)", async () => {
+    await writeComposite(
+      ADMISSIBLE_BODY,
+      `export const Reader = Composite((props) => {
+        const reader = new Role({ RoleName: props.name, Description: props.bucket.Arn });
+        return { reader };
+      }, "Reader");`,
+    );
+    await writeMain(`
+      import { Reader, WebApp } from "../composites";
+      export const web = WebApp({ name: "data" });
+      export const readers = Reader({ name: "readers", bucket: web.bucket });
+    `);
+
+    const runResult = await build(srcDir, [specSerializer], undefined, { fold: false });
+    resetFoldExecutionCounts();
+    const foldResult = await build(srcDir, [specSerializer], undefined, {
+      fold: true,
+      lexicons: [LEXICON_NAME],
+    });
+
+    expect(foldResult.errors).toEqual([]);
+    expect(foldResult.foldDecisions.map((d) => d.mode)).toEqual(["fold"]);
+    // `web` is interpreted once: the declarator and the reference share it.
+    expect(foldExecutionCounts()).toMatchObject({ factoryInterpretations: 2, projectFactoryInvocations: 0 });
+    const folded = String(foldResult.outputs.get(LEXICON_NAME));
+    expect(folded).toBe(String(runResult.outputs.get(LEXICON_NAME)));
+    expect(folded).toContain('"webBucket"');
+    expect(JSON.parse(folded).readersReader.props.Description).toEqual({ GetAtt: ["webBucket", "Arn"] });
+  });
+
   test("provenance is stamped from the source's own composite name", async () => {
     await writeComposite(ADMISSIBLE_BODY);
     await writeMain(CALL_WEBAPP);

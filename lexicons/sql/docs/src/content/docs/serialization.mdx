@@ -6,27 +6,42 @@ description: "Output format for the SQL lexicon"
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-sql` — DO NOT EDIT.
     Edit lexicons/sql/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-A build writes two files, beside each other:
+A build writes two files, beside each other. Which pair depends on the
+dialect the project declares.
 
 - The primary output (the `-o` file, `dist/schema.json` by convention), one
-  JSON document. `dialect` is `clickhouse`. `applyOrder` lists the export
-  names in the order the objects have to be created. `objects` holds one entry
-  per declared object, in that order: its export name (`export`), its type
-  (`ClickHouse::Database`, `::Table`, `::View` or `::MaterializedView`), its
-  SQL name (`sqlName`), its parsed definition (columns, engine, keys, TTL,
-  settings, indexes, projections and constraints, and for a view its
-  `select`, `reads`, `to` and `lineage`), `dependsOn`, and its `ddl`.
-  References are written as export names and lineage as `export.column`.
-- `clickhouse.sql`: every statement in `applyOrder`, each ending in `;`,
-  written byte for byte as declared.
+  JSON document. `dialect` is `clickhouse` or `postgres`. `applyOrder`
+  lists the export names in the order the objects have to be created.
+  `objects` holds one entry per declared object, in that order: its export
+  name (`export`), its type, its SQL name (`sqlName`), its parsed
+  definition, `dependsOn`, and its `ddl`. References are written as export
+  names and lineage as `export.column`.
+  - ClickHouse: the types are `ClickHouse::Database`, `::Table`, `::View`
+    and `::MaterializedView`, and the definition holds columns, engine, keys,
+    TTL, settings, indexes, projections and constraints, and for a view its
+    `select`, `reads`, `to` and `lineage`.
+  - Postgres: the document also carries `postgresMajor`, the major the
+    project targets (`sql.postgresMajor`, else 18, the newest pinned). The
+    types are `Postgres::Schema`, `::Table`, `::Index`, `::View`,
+    `::MaterializedView`, `::Sequence`, `::Enum`, `::Domain` and
+    `::Extension`. A table's definition holds its columns, primary key,
+    uniques, checks, foreign keys, exclusions and the rest of its clauses; a
+    view's its `query`, `reads` and `lineage`; an index's its table,
+    method and elements. `dependsOn` names the objects and the columns the
+    statement references.
+- `clickhouse.sql` or `postgres.sql`: every statement in `applyOrder`, each
+  ending in `;`, written byte for byte as declared, with a Postgres
+  template's `COMMENT ON` statements after its `CREATE`.
 
-The order follows the references: a table after its database, a view after the
-tables it reads, a materialized view after its `TO` target. Ties go by export
-name, so the output does not depend on the order files were found in. A
-reference cycle fails the build and names the cycle.
+The order follows the references: a table after its database or schema and the
+types and sequences it uses, a view after the tables it reads, an index after
+its table, a materialized view after its `TO` target. Ties go by export name,
+so the output does not depend on the order files were found in. A reference
+cycle fails the build and names the cycle.
 
-`chant sql diff`, `chant sql plan`, the post-synth checks and
-`clickhouseApply` read the JSON document. Neither file carries chant's
-ownership marker: the applier adds it to each object's comment when it creates
-the object (see [Applying to a Server](../applying/)).
+`chant sql diff`, `chant sql plan`, the post-synth checks and the appliers
+read the JSON document. Neither file carries chant's ownership marker: the
+applier adds it to each object's comment when it creates the object (see
+[Applying to a ClickHouse Server](../applying/) and
+[Applying to a Postgres Server](../postgres-applying/)).
 

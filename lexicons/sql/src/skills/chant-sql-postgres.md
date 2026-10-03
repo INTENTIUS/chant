@@ -162,4 +162,4 @@ chant build src --lexicon sql -o dist/schema.json
 
 ## Not covered
 
-`ALTER`, `CREATE POLICY`, `GRANT`, functions, triggers, rules and the composite and range forms of `CREATE TYPE` are not declared with the tags. Plan-and-apply (lock classes, transactions, timeouts) and the expand-and-contract migration Op have their own skills, which arrive with the code they describe.
+`ALTER`, `CREATE POLICY`, `GRANT`, functions, triggers, rules and the composite and range forms of `CREATE TYPE` are not declared with the tags. Planning a schema change (`chant sql diff`, `chant sql plan`, the lock classes) is the `chant-sql-postgres-plan` skill. Apply and the expand-and-contract migration Op have their own skills, which arrive with the code they describe.

@@ -71,4 +71,32 @@ export const sqlSkills = createSkillsLoader(import.meta.url, [
       },
     ],
   },
+  {
+    file: "chant-sql-postgres-plan.md",
+    name: "chant-sql-postgres-plan",
+    description:
+      "Plan Postgres schema changes with chant sql diff and chant sql plan, and read the change classes (metadata only, validates, needs CONCURRENTLY, ACCESS EXCLUSIVE rewrite, expand and contract) as the lock each takes in production",
+    triggers: [
+      { type: "context" as const, value: "postgres schema change" },
+      { type: "context" as const, value: "postgres lock" },
+      { type: "context" as const, value: "postgres migration" },
+    ],
+    examples: [
+      {
+        title: "Classify a pull request's Postgres schema change offline",
+        output: "chant sql diff base.json head.json",
+      },
+    ],
+  },
+  {
+    file: "chant-sql-postgres-migration.md",
+    name: "chant-sql-postgres-migration",
+    description:
+      "Run a Postgres column rename or type change with PostgresMigrationOp, a gated expand-and-contract Op with a dual-write trigger, a batched backfill with receipts, verification, a switch, replication lag handling and onFailure cleanup",
+    triggers: [
+      { type: "context" as const, value: "postgres column rename" },
+      { type: "context" as const, value: "postgres expand and contract" },
+      { type: "context" as const, value: "postgres backfill" },
+    ],
+  },
 ]);

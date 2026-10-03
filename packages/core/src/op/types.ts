@@ -182,7 +182,8 @@ export interface ActivityStep {
    *
    * `from` is a dot-path into the return value (e.g. `"drifted"` for
    * `{ drifted: boolean }`); when omitted, the whole return value is
-   * recorded.
+   * recorded. An attribute whose path the result does not hold (an optional
+   * field left out) is not recorded, rather than recorded as `undefined`.
    */
   outcomeAttribute?: OutcomeAttribute | OutcomeAttribute[];
 }

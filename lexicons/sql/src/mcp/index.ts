@@ -12,13 +12,18 @@ import { sqlSerializer } from "../serializer";
 import { catalogIndex } from "../lsp/catalog";
 import { database, table, view } from "../clickhouse/entities";
 import { SqlSyntaxError } from "../clickhouse/tokens";
-import { existsSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { diffSchemas } from "../clickhouse/plan/diff";
 import { renderDiff } from "../clickhouse/plan/report";
 import { rebuildOpSuggestions } from "../clickhouse/plan/rebuild-handoff";
 import { CLASSIFIER_RULES } from "../clickhouse/plan/rules";
 import { schemaFromBuildFile, schemaFromBuildOutput } from "../clickhouse/plan/schema";
-import { POSTGRES_KINDS, POSTGRES_TAGS, postgresLookup, postgresMcpResources, postgresParse, postgresSearch } from "./postgres";
+import { asMajor, POSTGRES_KINDS, POSTGRES_TAGS, postgresLookup, postgresMcpResources, postgresParse, postgresSearch } from "./postgres";
+import { diffPgSchemas } from "../postgres/plan/diff";
+import { renderPgDiff } from "../postgres/plan/report";
+import { PG_CLASSIFIER_RULES } from "../postgres/plan/rules";
+import { pgSchemaFromBuildFile, pgSchemaFromBuildOutput } from "../postgres/plan/schema";
+import { migrationOpSuggestions } from "../postgres/migrate/handoff";
 import { CLICKHOUSE_IMAGE_DIGEST, CLICKHOUSE_VERSION, clickhouseImage } from "../spec/pin";
 
 const KINDS = ["engine", "database-engine", "type", "codec", "index-type", "setting", "function", "format"] as const;
@@ -30,7 +35,7 @@ const kindProp = {
   description: `Which part of the catalog. ClickHouse: ${KINDS.join(", ")}. Postgres: ${POSTGRES_KINDS.join(", ")}`,
 };
 const dialectProp = { type: "string", enum: ["clickhouse", "postgres"], description: "The dialect to answer for (default clickhouse)" };
-const majorProp = { type: "number", description: "Postgres only: answer for this major (14 to 18); omitted, every major, with since/until on names not in all" };
+const majorProp = { type: "number", description: "Postgres only: answer for this major (14 to 18; for classify-change, the server's major); omitted, every major, with since/until on names not in all" };
 
 function asDialect(value: unknown): "clickhouse" | "postgres" {
   if (value === undefined || value === "clickhouse") return "clickhouse";
@@ -150,16 +155,19 @@ const parseTool: McpToolContribution = {
 const classifyTool: McpToolContribution = {
   name: "classify-change",
   description:
-    "Classify the schema change between two revisions of a sql lexicon build, offline. Each side is a `chant build` output (a path to the file, or its JSON text). Returns every change with its class (create, drop, metadata, rewrite, rebuild), the SQLCH2xx rule and the ClickHouse restriction behind it with its documentation link, the rebuilds a plan must refuse in place with the ClickHouseRebuildOp declaration to run each one as, rename hints, and a rendered report.",
+    "Classify the schema change between two revisions of a sql lexicon build, offline. Each side is a `chant build` output (a path to the file, or its JSON text); the dialect is the one the output names, or `dialect`. ClickHouse: every change with its class (create, drop, metadata, rewrite, rebuild), the SQLCH2xx rule and the ClickHouse restriction behind it with its documentation link, the rebuilds a plan must refuse in place with the ClickHouseRebuildOp declaration to run each one as, rename hints, and a rendered report. Postgres: every change with its class by the lock it takes (create, metadata, validate, concurrently, rewrite, expand, drop), the SQLPG2xx rule and its restriction with its Postgres documentation link, the `refused` changes that can only be made as expand and contract with the PostgresMigrationOp declaration to run each column rename or type change across kinds as (`migrationOps`), rename hints and a rendered report; `major` is the server's major (default the newest pinned).",
   inputSchema: {
     type: "object",
     properties: {
       before: { type: "string", description: "The earlier build output: a file path or the JSON text" },
       after: { type: "string", description: "The later build output: a file path or the JSON text" },
+      dialect: dialectProp,
+      major: majorProp,
     },
     required: ["before", "after"],
   },
   async handler(params) {
+    if (buildDialect(params) === "postgres") return classifyPostgres(params);
     const side = (v: unknown) => {
       const text = String(v ?? "");
       return !text.trimStart().startsWith("{") && existsSync(text) ? schemaFromBuildFile(text) : schemaFromBuildOutput(text);
@@ -180,6 +188,50 @@ const classifyTool: McpToolContribution = {
     };
   },
 };
+
+/** The dialect a classify call is for: `dialect`, else the one either build output names, else ClickHouse. */
+function buildDialect(params: Record<string, unknown>): "clickhouse" | "postgres" {
+  if (params.dialect !== undefined) return asDialect(params.dialect);
+  for (const v of [params.after, params.before]) {
+    const text = String(v ?? "");
+    try {
+      const json = text.trimStart().startsWith("{") ? text : existsSync(text) ? readFileSync(text, "utf-8") : "";
+      const d = (JSON.parse(json) as { dialect?: string }).dialect;
+      if (d === "postgres") return "postgres";
+      if (d === "clickhouse") return "clickhouse";
+    } catch {
+      // Not JSON we can read: the schema reader reports it.
+    }
+  }
+  return "clickhouse";
+}
+
+function classifyPostgres(params: Record<string, unknown>): unknown {
+  const side = (v: unknown) => {
+    const text = String(v ?? "");
+    return !text.trimStart().startsWith("{") && existsSync(text) ? pgSchemaFromBuildFile(text) : pgSchemaFromBuildOutput(text);
+  };
+  const after = side(params.after);
+  const plain = diffPgSchemas(side(params.before), after, { major: asMajor(params.major) });
+  const migrationOps = migrationOpSuggestions(plain.refused, new Map(after.map((o) => [o.key, o.canonical])), "<env>");
+  const diff = migrationOps.length > 0 ? { ...plain, migrationOps } : plain;
+  const classes: Record<string, number> = {};
+  for (const c of diff.changes) classes[c.class] = (classes[c.class] ?? 0) + 1;
+  return {
+    dialect: "postgres",
+    summary: classes,
+    changes: diff.changes.map((c) => ({ ...c, restriction: PG_CLASSIFIER_RULES[c.rule].restriction, cite: PG_CLASSIFIER_RULES[c.rule].cite })),
+    refused: diff.refused.map((c) => ({
+      object: c.object,
+      field: c.field,
+      rule: c.rule,
+      advice: "No in-place change keeps old readers working: run it as expand and contract (add the new, write both, backfill, move readers, drop the old), as a migration Op.",
+    })),
+    migrationOps,
+    hints: diff.hints,
+    report: renderPgDiff(diff),
+  };
+}
 
 function position(text: string, offset: number): { line: number; column: number } {
   const before = text.slice(0, offset).split("\n");

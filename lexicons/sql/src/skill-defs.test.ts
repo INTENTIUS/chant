@@ -1,11 +1,12 @@
 import { describe, expect, test } from "vitest";
+import { readFileSync } from "node:fs";
 import { sqlPlugin } from "./plugin";
 
 describe("skills", () => {
   const skills = sqlPlugin.skills!();
 
-  test("four skills, each with its file's content and a matching frontmatter name", () => {
-    expect(skills.map((s) => s.name)).toEqual(["chant-sql", "chant-sql-plan", "chant-sql-rebuild", "chant-sql-postgres"]);
+  test("six skills, each with its file's content and a matching frontmatter name", () => {
+    expect(skills.map((s) => s.name)).toEqual(["chant-sql", "chant-sql-plan", "chant-sql-rebuild", "chant-sql-postgres", "chant-sql-postgres-plan", "chant-sql-postgres-migration"]);
     for (const s of skills) {
       expect(s.content.length, s.name).toBeGreaterThan(500);
       expect(s.content).toContain(`skill: ${s.name}\n`);
@@ -25,7 +26,27 @@ describe("skills", () => {
     expect(ids.length).toBeGreaterThan(0);
     for (const id of ids) expect(known.has(id), id).toBe(true);
     expect(pg.content).not.toMatch(/SQLCH\d{3}/);
-    for (const s of skills.filter((s) => s.name !== "chant-sql-postgres")) expect(s.content, s.name).not.toMatch(/Postgres|SQLPG/);
+    for (const s of skills.filter((s) => !s.name.startsWith("chant-sql-postgres"))) {
+      if (["chant-sql", "chant-sql-plan", "chant-sql-rebuild"].includes(s.name)) expect(s.content, s.name).not.toMatch(/Postgres|SQLPG/);
+    }
+  });
+
+  test("the Postgres plan skill cites only classifier rules that exist, names no ClickHouse rule, and stays Postgres-only", async () => {
+    const { PG_CLASSIFIER_RULES } = await import("./postgres/plan/rules");
+    const plan = skills.find((s) => s.name === "chant-sql-postgres-plan")!;
+    const ids = [...new Set(plan.content.match(/SQLPG2\d\d/g) ?? [])];
+    expect(ids.length).toBeGreaterThan(20);
+    for (const id of ids) expect(id in PG_CLASSIFIER_RULES, id).toBe(true);
+    expect(plan.content).not.toMatch(/SQLCH|ClickHouse|MergeTree/);
+  });
+
+  test("every SQLPG0xx and SQLPG1xx id the Postgres skills cite is a lint rule or a post-synth check", async () => {
+    const { rules } = await import("./lint/rules");
+    const { postSynthChecks } = await import("./lint/post-synth");
+    const known = new Set<string>([...rules.map((r) => r.id), ...postSynthChecks.map((c) => c.id)]);
+    for (const s of skills.filter((s) => s.name.startsWith("chant-sql-postgres"))) {
+      for (const id of s.content.match(/SQLPG[01]\d\d/g) ?? []) expect(known.has(id), `${s.name}: ${id}`).toBe(true);
+    }
   });
 
   test("every SQLCH id a skill cites exists in the lexicon", async () => {
@@ -36,5 +57,25 @@ describe("skills", () => {
       // The SQLCH2xx ids are the classifier's, which come from the plan rules, not from a lint rule.
       for (const id of s.content.match(/SQLCH0\d\d|SQLCH1\d\d/g) ?? []) expect(known.has(id), `${s.name}: ${id}`).toBe(true);
     }
+  });
+
+  test("the Postgres migration skill declares the shipped Op with options it has, and cites only rules that exist", async () => {
+    const { PG_CLASSIFIER_RULES } = await import("./postgres/plan/rules");
+    const src = readFileSync(new URL("./postgres/migrate/op.ts", import.meta.url), "utf8");
+    const iface = /export interface PostgresMigrationOpConfig \{([\s\S]*?)\n\}/.exec(src)![1]!;
+    const options = new Set([...iface.matchAll(/^  (\w+)\??:/gm)].map((m) => m[1]!));
+    const mig = skills.find((s) => s.name === "chant-sql-postgres-migration")!;
+    expect(mig.content).toContain('import { PostgresMigrationOp } from "@intentius/chant-lexicon-sql/postgres"');
+    // Every option named in the options list, and every key of a declaration, is on the Op's config.
+    const listed = [...mig.content.matchAll(/^- `(\w+)`(?: \(| and `(\w+)`|:)/gm)].flatMap((m) => [m[1], m[2]]).filter((x): x is string => !!x);
+    const declared = [...mig.content.matchAll(/PostgresMigrationOp\(\{([^}]*)\}\)/g), ...mig.content.matchAll(/PostgresMigrationOp\(\{([\s\S]*?)\n\}\)/g)]
+      .flatMap((m) => [...m[1]!.replace(/\/\/.*$/gm, "").matchAll(/(?:^|[\s,{])(\w+):/g)].map((k) => k[1]!));
+    expect(listed.length).toBeGreaterThan(5);
+    for (const o of [...listed, ...declared]) expect(options.has(o), o).toBe(true);
+    for (const o of ["env", "table", "column", "using", "batchSize", "retain", "replicationLag", "gate", "contractGate"]) expect(mig.content, o).toContain(`\`${o}\``);
+    const ids = [...new Set(mig.content.match(/SQLPG\d{3}/g) ?? [])];
+    expect(ids.length).toBeGreaterThan(1);
+    for (const id of ids) expect(id in PG_CLASSIFIER_RULES, id).toBe(true);
+    expect(mig.content).not.toMatch(/SQLCH|ClickHouse|MergeTree/);
   });
 });

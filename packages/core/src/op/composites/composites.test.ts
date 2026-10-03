@@ -167,6 +167,15 @@ describe("ApplyOp: shape", () => {
     expect(getProps(op).onFailure).toBeUndefined();
   });
 
+  test("target postgres applies the sql build output, dist/schema.json by default (#3280)", () => {
+    const { op } = ApplyOp({ name: "p", env: "prod", target: "postgres", delete: "owned-only" });
+    const phases = getProps(op).phases as Array<Record<string, unknown>>;
+    const applyStep = (phases[2].steps as Array<Record<string, unknown>>)[0];
+    expect(applyStep.fn).toBe("nativeApply");
+    expect(applyStep.args).toEqual({ target: "postgres", env: "prod", output: "dist/schema.json", deleteMode: "owned-only" });
+    expect(getProps(op).onFailure).toBeUndefined();
+  });
+
   test("target grafana applies the build index, dist/grafana.json by default (#3011)", () => {
     const { op } = ApplyOp({ name: "p", env: "prod", target: "grafana", delete: "owned-only" });
     const phases = getProps(op).phases as Array<Record<string, unknown>>;
@@ -292,7 +301,7 @@ describe("ApplyOp: compensation (#125, total-or-refused in #1449)", () => {
   });
 
   test("compensate: true is refused at build time for every rollback-less target (#1449)", () => {
-    for (const target of ["kubectl", "kustomize", "arm", "gcp", "fly", "grafana", "clickhouse"] as const) {
+    for (const target of ["kubectl", "kustomize", "arm", "gcp", "fly", "grafana", "clickhouse", "postgres"] as const) {
       expect(() => ApplyOp({ name: "p", env: "prod", target, compensate: true })).toThrow(
         new RegExp(`ApplyOp "p": compensate is enabled, but target "${target}" has no automatic rollback`),
       );
@@ -314,7 +323,7 @@ describe("ApplyOp: compensation (#125, total-or-refused in #1449)", () => {
   });
 
   test("an object without a command is refused the same way as true", () => {
-    for (const target of ["kubectl", "kustomize", "arm", "gcp", "fly", "grafana", "clickhouse"] as const) {
+    for (const target of ["kubectl", "kustomize", "arm", "gcp", "fly", "grafana", "clickhouse", "postgres"] as const) {
       expect(() => ApplyOp({ name: "p", env: "prod", target, compensate: {} })).toThrow(
         /has no automatic rollback/,
       );
@@ -322,7 +331,7 @@ describe("ApplyOp: compensation (#125, total-or-refused in #1449)", () => {
   });
 
   test("a command lifts the refusal on every target", () => {
-    for (const target of ["kubectl", "kustomize", "arm", "gcp", "fly", "grafana", "clickhouse", "cloudformation"] as const) {
+    for (const target of ["kubectl", "kustomize", "arm", "gcp", "fly", "grafana", "clickhouse", "postgres", "cloudformation"] as const) {
       const { op } = ApplyOp({
         name: "p",
         env: "prod",

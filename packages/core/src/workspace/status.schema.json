@@ -46,6 +46,10 @@
             "baseFrom": { "enum": ["origin/HEAD", "main", "master", null], "description": "Where the target branch was found; null when there is none." }
           }
         },
+        "plantable": {
+          "description": "Added in contract 1 by #3146. Whether a host such as a studio's planter can plant the workspace as one box: exactly one member's box block declares services. Not a check: a records-only or infra workspace is valid and simply not plantable.",
+          "$ref": "#/$defs/plantable"
+        },
         "workspace": {
           "type": "object",
           "required": ["name", "root", "file"],
@@ -485,6 +489,14 @@
       "type": "object",
       "required": ["capabilities", "isolation", "intent", "services"],
       "properties": {
+        "factory": {
+          "description": "Added in contract 1 by #3146. What the box builds and how (ws-077), with every default filled in, or null when the block declares no factory. At most one member's box has one.",
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/factory" }]
+        },
+        "listing": {
+          "description": "Added in contract 1 by #3146. What the box shows of itself on a home site, or null when the block declares no listing.",
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/listing" }]
+        },
         "services": {
           "description": "The services the box block declares (#2880), in declaration order, or empty when it declares none. A reader has them before any converge tick; a steward's ConvergeOp's lastTick carries each one's verdict. cmd is as declared: its ${VAR} references are left for the process that applies it to expand. Added by chant 0.95.0.",
           "type": "array",
@@ -522,6 +534,91 @@
               "scope": { "type": "array", "items": { "type": "string" }, "description": "What of the box's own the broker lets it reach, such as agent, vault, conversations and sandboxes. Empty when none is declared." }
             }
           }
+        }
+      }
+    },
+    "plantable": {
+      "type": "object",
+      "required": ["plantable", "box", "reason"],
+      "properties": {
+        "plantable": { "type": "boolean" },
+        "box": { "type": ["string", "null"], "description": "The member whose box block declares services, or null when the workspace isn't plantable." },
+        "reason": {
+          "description": "Why the workspace isn't plantable, or null when it is.",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["code", "message"],
+              "properties": {
+                "code": { "enum": ["box-none", "box-several"] },
+                "message": { "type": "string" }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "factory": {
+      "type": "object",
+      "required": ["builds", "check", "checks", "builders", "publish"],
+      "properties": {
+        "builds": { "type": "array", "minItems": 1, "items": { "type": "string" }, "description": "The members the factory builds, in declaration order. A work item a person asks for constrains member:<the first>." },
+        "check": {
+          "description": "The verdict command, run from the workspace root, and what it is; null when none is declared.",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["run", "kind"],
+              "properties": {
+                "run": { "type": "string" },
+                "kind": { "enum": ["test", "build", "lint", "plan", "conformance"] }
+              }
+            }
+          ]
+        },
+        "checks": { "type": ["string", "null"], "description": "Where a work item's builder writes its check, from the workspace root, or null for the orchestrator's choice." },
+        "builders": { "type": ["string", "null"], "description": "The member that declares the builder agents, or null." },
+        "publish": {
+          "description": "Where a finished build is published, or null when the factory doesn't publish past the box.",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["forge", "repo", "base", "branchPrefix", "head"],
+              "properties": {
+                "forge": { "const": "github" },
+                "repo": { "type": "string", "description": "owner/name: where the pull request is opened." },
+                "base": { "type": ["string", "null"], "description": "The branch the pull request targets, or null for the repository's default branch." },
+                "branchPrefix": { "type": "string", "description": "What the published branch's name starts with, before the work item's id. chant/work/ unless declared." },
+                "head": { "type": ["string", "null"], "description": "owner/name of the fork the branch is pushed to, or null to push to repo." }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "listing": {
+      "type": "object",
+      "required": ["published", "title", "line", "cover"],
+      "properties": {
+        "published": { "type": "boolean", "description": "Whether the box is listed; true unless declared otherwise." },
+        "title": { "type": "string", "description": "Empty when not declared: a reader shows a name of its own." },
+        "line": { "type": "string", "description": "Empty when not declared." },
+        "cover": {
+          "description": "The cover image, or null when none is declared.",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["path", "sha256"],
+              "properties": {
+                "path": { "type": "string", "description": "From the workspace root." },
+                "sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$", "description": "The sha256 of the file's bytes in the working tree, or null when it can't be read." }
+              }
+            }
+          ]
         }
       }
     },

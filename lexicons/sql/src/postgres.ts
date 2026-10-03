@@ -48,3 +48,28 @@ export {
   type ExtensionProps,
   type LineageEdge,
 } from "./postgres/entities";
+
+export {
+  POSTGRES_PROVIDERS,
+  COMMON_REFUSED,
+  providerData,
+  isPostgresProvider,
+  providerAllowsExtension,
+  isProviderOwned,
+  refusedStatement,
+  normalizeStatement,
+  type PostgresProvider,
+  type ProviderData,
+  type ProviderSource,
+  type RefusedStatement,
+  type LiveObjectRef,
+} from "./postgres/providers";
+
+export {
+  PostgresMigrationOp,
+  type PostgresMigrationOpConfig,
+  type PostgresMigrationOpResources,
+  type PostgresMigrationArgs,
+} from "./postgres/migrate/op";
+export { POSTGRES_RECEIPTS_TABLE } from "./postgres/migrate/receipts";
+export * from "./composites/postgres";

@@ -2,10 +2,10 @@
 title: "References and Lineage"
 description: "How an interpolated table, view or column becomes a reference, and how references give the build its dependency order and a view its column-level lineage"
 diataxis: explanation
-order: 3
+order: 1
 ---
 
-An interpolation that holds a `database`, `table` or `view` entity, or one of a table's or view's `.columns`, is not spliced into the statement as text. It stays a reference. The statement still reads the object's name in the place the reference sits, and the build also knows which object that name belongs to. Everything on this page follows from that.
+An interpolation that holds a declared object (a ClickHouse `database`, `table` or `view`; a Postgres `schema`, `table`, `view`, `sequence`, `type`, `domain` or `extension`), or one of a table's or view's `.columns`, is not spliced into the statement as text. It stays a reference. The statement still reads the object's name in the place the reference sits, and the build also knows which object that name belongs to. Everything on this page follows from that.
 
 ```ts
 export const byKind = view`
@@ -19,9 +19,9 @@ Here `${analytics}`, `${events}` and `${events.columns.kind}` are references. `k
 
 ## Dependency order
 
-Every reference a statement makes is a dependency of the object it declares. A table depends on the database its name is qualified with, a view on the tables and views it reads, a materialized view on its `TO` target as well. The build orders objects so each comes after what it depends on, and writes that order as `applyOrder` in the build output and as the statement order in `clickhouse.sql`. The applier creates objects in that order.
+Every reference a statement makes is a dependency of the object it declares. A table depends on the database its name is qualified with, a view on the tables and views it reads, a materialized view on its `TO` target as well. The build orders objects so each comes after what it depends on, and writes that order as `applyOrder` in the build output and as the statement order in `clickhouse.sql` or `postgres.sql`. The applier creates objects in that order. In Postgres a table also depends on the types and domains its columns use, the sequences its defaults call, and the tables its foreign keys reference, and an index on its table.
 
-References cross files the way any import does. `src/events.ts` imports `analytics` from `./analytics` and interpolates it, and the build resolves it while folding, without running either file. Objects that do not depend on each other are ordered by export name, so the same source always builds the same output. A cycle, which ClickHouse could not create either, fails the build and names the objects in it.
+References cross files the way any import does. `src/events.ts` imports `analytics` from `./analytics` and interpolates it, and the build resolves it while folding, without running either file. Objects that do not depend on each other are ordered by export name, so the same source always builds the same output. A cycle, which the database could not create either, fails the build and names the objects in it.
 
 The order comes from references alone. A view that names its source in plain text, `FROM analytics.events`, still builds and still runs on the server, but the build does not know it reads `events` and may order it first.
 
@@ -41,21 +41,41 @@ The output name is the item's alias, or the column's own name for a bare column 
 
 So the way to get complete lineage is to write every column a view reads as `${table.columns.name}`. The editor helps: inside a `view` template, `${events.` offers `columns`, and `${events.columns.` offers the table's columns with their types.
 
+## In Postgres
+
+The same rules hold, with what Postgres adds.
+
+A sequence is referenced where Postgres reads a `regclass`: `nextval(${invoiceSeq})`, `currval(...)` and `setval(...)` render `nextval('app.invoice_seq'::regclass)`, and any object followed by `::regclass` renders as its quoted name. That is the text the catalog prints back for a default, so a declaration and the server compare equal, and the table depends on the sequence. A name typed in the string, `nextval('app.invoice_seq')`, is not a reference; SQLPG003 warns about it. A sequence `OWNED BY` a column whose default calls `nextval` on it is a real cycle, and the build names it; an identity column avoids it.
+
+A column reference renders as the column's bare name, so in a query that aliases its tables, qualify it with the alias: `u.${users.columns.id}`. Lineage follows Postgres's own naming of a select item. An alias may be written without `AS`; an item with no alias takes the name Postgres gives it, the column's name for a column (also through a cast, so `x::text` is `x`), the function's name for a call (`count(o.id)` is `count`), and `?column?` otherwise. `DISTINCT ON (...)` is skipped. From the getting-started example's view:
+
+```json
+"lineage": [
+  { "output": "user_id",     "expr": "u.id",                       "from": ["users.id"] },
+  { "output": "email",       "expr": "u.email",                    "from": ["users.email"] },
+  { "output": "order_count", "expr": "count(o.id)",                "from": ["orders.id"] },
+  { "output": "total",       "expr": "coalesce(sum(o.amount), 0)", "from": ["orders.amount"] }
+]
+```
+
+A Postgres object's `dependsOn` lists the columns it references as well as the objects (`users.id`, `orders.amount`), so a column a view or an index reads is visible in the build output.
+
 ## What reads it
 
 - The build output carries `dependsOn`, `reads`, `to` and `lineage` for every object; see [Serialization](../serialization/).
 - SQLCH110 compares a materialized view's output columns with its `TO` target's columns, and SQLCH109 flags a materialized view that selects `*`, whose output columns change whenever its source's do. See [Lint Rules and Checks](../lint-rules/).
-- The MCP tool `sql:parse-ddl` returns a statement's parsed entity, its lineage included.
-- `clickhouseApply` creates objects in dependency order, and reports an object whose dependency failed or was not attempted as not attempted itself (`dependency-failed`).
+- SQLPG111 asks for the unique index a Postgres materialized view needs to refresh concurrently, and SQLPG102 for an index on the referencing columns of a foreign key.
+- The MCP tool `sql:parse-ddl` returns a statement's parsed entity, its lineage included; `dialect: "postgres"` parses with the Postgres tags.
+- `clickhouseApply` and `postgresApply` create objects in dependency order, and report an object whose dependency failed or was not attempted as not attempted itself (`dependency-failed`).
 
-`chant lifecycle diff --live` does not compare lineage, reads or a view's `TO` target with the server, because they are derived from the declaration rather than stored by ClickHouse. A changed target is a change to the view's definition, and `chant sql plan` reports it (SQLCH242).
+`chant lifecycle diff --live` does not compare lineage, reads or a view's `TO` target with the server, because they are derived from the declaration rather than stored by the database. A changed ClickHouse target is a change to the view's definition, and `chant sql plan` reports it (SQLCH242).
 
 ## Names and renames
 
-A reference renders as the referenced object's SQL name at build time. Rename a table in its own declaration, `CREATE TABLE ${analytics}.events_v2`, and every statement that references `events` reads `analytics.events_v2` on the next build; nothing else in the source changes. The plan reports the table's rename as metadata only (SQLCH230) and each dependent view's query as changed.
+A reference renders as the referenced object's SQL name at build time. Rename a table in its own declaration, `CREATE TABLE ${analytics}.events_v2`, and every statement that references `events` reads `analytics.events_v2` on the next build; nothing else in the source changes. In ClickHouse the plan reports the table's rename as metadata only (SQLCH230) and each dependent view's query as changed. In Postgres a rename breaks every reader still using the old name, so the plan reports it as expand and contract (SQLPG228); a column rename is SQLPG205, which [Migrating a Column](../postgres-migration/) runs.
 
 The export name is the identity. Renaming the export itself is a TypeScript rename, and the editor's rename-symbol updates every interpolation that uses it.
 
 ## Imported schemas
 
-[`chant import --from <env>`](../importing/) writes a qualified name of another imported object as a reference, so an imported schema builds in the right order. Columns named inside an imported view's SELECT stay text, so an imported view records what it reads but not its column lineage until its column names are rewritten as `.columns` references.
+[`chant import --from <env>`](../importing/) ([Postgres](../postgres-importing/)) writes a qualified name of another imported object as a reference, so an imported schema builds in the right order. Columns named inside an imported view's SELECT stay text, so an imported view records what it reads but not its column lineage until its column names are rewritten as `.columns` references.

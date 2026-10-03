@@ -20,14 +20,20 @@
  * of each. Two databases of different dialects are two projects (two
  * workspace members, #3047 question 1).
  *
+ * A Postgres document also carries `postgresMajor`, the major the project
+ * targets (`sql.postgresMajor`, else the newest pinned major). Post-synth
+ * checks and the lock classifier read it; ClickHouse output has no such field.
+ *
  * Rule ids: `SQL` for rules that hold in every dialect, `SQLCH` for the
  * ClickHouse dialect's (#3199), `SQLPG` for Postgres's (#3289).
  */
 
 import type { Declarable, Serializer, SerializerResult } from "@intentius/chant";
+import type { SerializeContext } from "@intentius/chant/serializer";
 import { isAttrRefLike } from "@intentius/chant/utils";
 import { isClickHouseObject, type ClickHouseObject } from "./clickhouse/entities";
 import { isPostgresObject, type PostgresObject } from "./postgres/entities";
+import { POSTGRES_LATEST_MAJOR } from "./spec/postgres-pin";
 import { applyOrder, lineageJson, referenceName, type LineageEdge } from "./core/references";
 
 export { applyOrder } from "./core/references";
@@ -73,12 +79,23 @@ function postgresObjectJson(name: string, obj: PostgresObject, names: Map<Declar
   ) as Record<string, unknown>;
 }
 
-function serializePostgres(objects: Map<string, PostgresObject>, entities: Map<string, Declarable>): SerializerResult {
+/** The Postgres major the build targets: `sql.postgresMajor`, else the newest pinned major. */
+function targetMajor(config: Record<string, unknown> | undefined): number {
+  const m = (config?.sql as { postgresMajor?: unknown } | undefined)?.postgresMajor;
+  return typeof m === "number" ? m : POSTGRES_LATEST_MAJOR;
+}
+
+function serializePostgres(
+  objects: Map<string, PostgresObject>,
+  entities: Map<string, Declarable>,
+  config?: Record<string, unknown>,
+): SerializerResult {
   const names = new Map<Declarable, string>();
   for (const [name, entity] of entities) names.set(entity, name);
   const order = applyOrder(objects, names);
   const doc = {
     dialect: "postgres",
+    postgresMajor: targetMajor(config),
     applyOrder: order,
     objects: order.map((n) => postgresObjectJson(n, objects.get(n)!, names)),
   };
@@ -94,7 +111,7 @@ export const sqlSerializer: Serializer = {
   name: "sql",
   rulePrefix: "SQL",
 
-  serialize(entities: Map<string, Declarable>): string | SerializerResult {
+  serialize(entities: Map<string, Declarable>, _outputs?: unknown, context?: SerializeContext): string | SerializerResult {
     const objects = new Map<string, ClickHouseObject>();
     const postgres = new Map<string, PostgresObject>();
     for (const [name, entity] of entities) {
@@ -107,7 +124,7 @@ export const sqlSerializer: Serializer = {
           "declare each database in its own project",
       );
     }
-    if (postgres.size > 0) return serializePostgres(postgres, entities);
+    if (postgres.size > 0) return serializePostgres(postgres, entities, context?.config);
     if (objects.size === 0) return "";
 
     const names = new Map<Declarable, string>();

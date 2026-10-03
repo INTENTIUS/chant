@@ -5,6 +5,41 @@ import type { CompositeEntry } from "@intentius/chant/lexicon";
 
 export const compositeCatalog: CompositeEntry[] = [
   {
+    "name": "AuditLogTable",
+    "lexicon": "sql",
+    "description": "An append-only audit log partitioned by month on its timestamp, with a default partition and an index by actor.",
+    "bundles": [
+      "PostgresIndex",
+      "PostgresTable"
+    ],
+    "params": [
+      {
+        "name": "name",
+        "type": "string",
+        "required": true,
+        "description": "The table's name, unqualified."
+      },
+      {
+        "name": "schema",
+        "type": "PostgresSchema | string",
+        "required": false,
+        "description": "The schema the table and its partitions live in: the entity, or its name (default `public`)."
+      },
+      {
+        "name": "timestamp",
+        "type": "string",
+        "required": false,
+        "description": "The event time column, the partition key (default `occurred_at`)."
+      },
+      {
+        "name": "actor",
+        "type": "string",
+        "required": false,
+        "description": "The column naming who acted (default `actor`)."
+      }
+    ]
+  },
+  {
     "name": "CdcMirror",
     "lexicon": "sql",
     "description": "A ReplacingMergeTree mirror of a CDC-fed source table, with a view of the rows not deleted.",
@@ -100,6 +135,130 @@ export const compositeCatalog: CompositeEntry[] = [
         "type": "string",
         "required": false,
         "description": "The partition key (default `toYYYYMM(<timestamp>)`)."
+      }
+    ]
+  },
+  {
+    "name": "JoinTable",
+    "lexicon": "sql",
+    "description": "The table of a many-to-many relation: two foreign keys, a composite primary key and the reverse index.",
+    "bundles": [
+      "PostgresIndex",
+      "PostgresTable"
+    ],
+    "params": [
+      {
+        "name": "name",
+        "type": "string",
+        "required": true,
+        "description": "The table's name, unqualified."
+      },
+      {
+        "name": "schema",
+        "type": "PostgresSchema | string",
+        "required": false,
+        "description": "The schema the table lives in: the entity, or its name (default `public`)."
+      },
+      {
+        "name": "left",
+        "type": "PostgresTable",
+        "required": true,
+        "description": "The table on the left of the relation, as the entity."
+      },
+      {
+        "name": "leftKey",
+        "type": "string",
+        "required": false,
+        "description": "The column on the left table the key references (default `id`)."
+      },
+      {
+        "name": "leftColumn",
+        "type": "string",
+        "required": true,
+        "description": "The join table's column holding the left key: `user_id`."
+      },
+      {
+        "name": "leftType",
+        "type": "string",
+        "required": false,
+        "description": "The left column's type (default `bigint`)."
+      },
+      {
+        "name": "right",
+        "type": "PostgresTable",
+        "required": true,
+        "description": "The table on the right of the relation, as the entity."
+      },
+      {
+        "name": "rightKey",
+        "type": "string",
+        "required": false,
+        "description": "The column on the right table the key references (default `id`)."
+      },
+      {
+        "name": "rightColumn",
+        "type": "string",
+        "required": true,
+        "description": "The join table's column holding the right key: `team_id`."
+      },
+      {
+        "name": "rightType",
+        "type": "string",
+        "required": false,
+        "description": "The right column's type (default `bigint`)."
+      },
+      {
+        "name": "onDelete",
+        "type": "string",
+        "required": false,
+        "description": "What happens to a link when the row it references is deleted (default `CASCADE`)."
+      }
+    ]
+  },
+  {
+    "name": "RefreshedView",
+    "lexicon": "sql",
+    "description": "A materialized view over a source, with the unique index that allows REFRESH ...",
+    "bundles": [
+      "PostgresIndex",
+      "PostgresView"
+    ],
+    "params": [
+      {
+        "name": "name",
+        "type": "string",
+        "required": true,
+        "description": "The view's name, unqualified."
+      },
+      {
+        "name": "schema",
+        "type": "PostgresSchema | string",
+        "required": false,
+        "description": "The schema the view lives in: the entity, or its name (default `public`)."
+      },
+      {
+        "name": "source",
+        "type": "PostgresRelation",
+        "required": true,
+        "description": "The table or view the materialized view reads, as the entity."
+      },
+      {
+        "name": "select",
+        "type": "string",
+        "required": true,
+        "description": "The select list, each computed item aliased: `region, count(*) AS orders, sum(total) AS revenue`."
+      },
+      {
+        "name": "groupBy",
+        "type": "string",
+        "required": true,
+        "description": "The grouping key: `region`."
+      },
+      {
+        "name": "uniqueOn",
+        "type": "string",
+        "required": false,
+        "description": "The columns of the unique index, which must identify one row of the result (default `groupBy`)."
       }
     ]
   },
@@ -251,6 +410,119 @@ export const compositeCatalog: CompositeEntry[] = [
         "type": "string",
         "required": false,
         "description": "The local table's partition key."
+      }
+    ]
+  },
+  {
+    "name": "SoftDeleteTable",
+    "lexicon": "sql",
+    "description": "A table with created and updated timestamps and a soft-delete column, a view of its live rows and an index over them.",
+    "bundles": [
+      "PostgresIndex",
+      "PostgresTable",
+      "PostgresView"
+    ],
+    "params": [
+      {
+        "name": "name",
+        "type": "string",
+        "required": true,
+        "description": "The table's name, unqualified."
+      },
+      {
+        "name": "schema",
+        "type": "PostgresSchema | string",
+        "required": false,
+        "description": "The schema the table, its index and its view live in: the entity, or its name (default `public`)."
+      },
+      {
+        "name": "columns",
+        "type": "string",
+        "required": true,
+        "description": "Every column except the three the composite adds, as SQL, with the primary key: `id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, title text NOT NULL`."
+      },
+      {
+        "name": "liveKey",
+        "type": "string",
+        "required": false,
+        "description": "The column the live-rows index covers: the one the app looks rows up by, as SQL (default `id`)."
+      },
+      {
+        "name": "comment",
+        "type": "string",
+        "required": false,
+        "description": "The table's comment, which also covers its columns for SQLPG112 (default: says rows are soft-deleted)."
+      },
+      {
+        "name": "createdAt",
+        "type": "string",
+        "required": false,
+        "description": "The creation timestamp column (default `created_at`)."
+      },
+      {
+        "name": "updatedAt",
+        "type": "string",
+        "required": false,
+        "description": "The update timestamp column (default `updated_at`)."
+      },
+      {
+        "name": "deletedAt",
+        "type": "string",
+        "required": false,
+        "description": "The deletion timestamp column (default `deleted_at`)."
+      }
+    ]
+  },
+  {
+    "name": "TenantTable",
+    "lexicon": "sql",
+    "description": "A multi-tenant table with the tenant key first in its primary key and its index.",
+    "bundles": [
+      "PostgresIndex",
+      "PostgresTable"
+    ],
+    "params": [
+      {
+        "name": "name",
+        "type": "string",
+        "required": true,
+        "description": "The table's name, unqualified."
+      },
+      {
+        "name": "schema",
+        "type": "PostgresSchema | string",
+        "required": false,
+        "description": "The schema the table lives in: the entity, or its name (default `public`)."
+      },
+      {
+        "name": "columns",
+        "type": "string",
+        "required": true,
+        "description": "Every column except the tenant's, as SQL: `id bigint GENERATED ALWAYS AS IDENTITY, title text NOT NULL`."
+      },
+      {
+        "name": "primaryKey",
+        "type": "string",
+        "required": true,
+        "description": "The columns that, after the tenant, make a row unique: `id`."
+      },
+      {
+        "name": "indexOn",
+        "type": "string",
+        "required": true,
+        "description": "The columns the secondary index covers after the tenant: `created_at DESC`."
+      },
+      {
+        "name": "tenant",
+        "type": "string",
+        "required": false,
+        "description": "The tenant column (default `tenant_id`)."
+      },
+      {
+        "name": "tenantType",
+        "type": "string",
+        "required": false,
+        "description": "The tenant column's type (default `uuid`)."
       }
     ]
   }

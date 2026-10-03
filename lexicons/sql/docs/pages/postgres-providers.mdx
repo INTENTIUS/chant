@@ -1,0 +1,68 @@
+---
+title: "Managed Postgres Providers"
+label: "Managed Providers"
+description: "sql.provider names the managed service a Postgres project runs on: what each provider's data holds, what SQLPG004, import and the plan do with it, and what each data file has not verified"
+diataxis: reference
+group: "Postgres"
+order: 12
+---
+
+A managed Postgres service withholds the superuser, reserves some roles and schemas for itself, installs extensions of its own, and lets a customer create only the extensions on its list. `sql.provider` tells the dialect which service a project runs on.
+
+```ts
+export default {
+  lexicons: ["sql"],
+  sql: {
+    dialect: "postgres",
+    provider: "rds",
+    profiles: {
+      preview: { url: "postgres://ep-example.neon.tech/app", provider: "neon" },
+    },
+  },
+} satisfies ChantConfig;
+```
+
+The values are `rds`, `aurora`, `cloud-sql`, `azure`, `neon` and `supabase`; anything else fails the config check. `sql.profiles.<env>.provider` overrides `sql.provider` for one environment. Leave both out for a self-hosted server.
+
+## What reads it
+
+| Where | What it does |
+|---|---|
+| SQLPG004 (lint) | reports an `extension` template that creates an extension the provider does not allow. Lint has no environment, so it reads `sql.provider`, else the one provider every profile that names one agrees on, and stays silent when there is none or they disagree |
+| `chant import --from <env>` | leaves out the provider's reserved schemas and everything in them, and the extensions it installs itself |
+| `chant lifecycle diff --live`, `describeResources` | reports those objects `foreign` |
+| `chant sql plan`, `postgresApply` | never proposes or makes a drop of them; the applier reports a declared one `filtered` |
+
+The provider's data is also exported from `@intentius/chant-lexicon-sql/postgres` for a tool of your own: `providerData(provider)` returns it, `providerAllowsExtension(provider, name)` answers `true`, `false`, or `undefined` when the provider's list is partial and does not name the extension, `isProviderOwned(provider, { kind, name })` says whether a role, schema or extension is the provider's, and `refusedStatement(provider, sql)` matches a statement against the provider's refused statements. Nothing in the build, plan or apply checks statements against that last list today, and the dialect declares no roles, so the reserved roles are read only by `isProviderOwned`.
+
+## The providers
+
+Each provider's data is one file under `lexicons/sql/src/postgres/providers/`, read from its documentation on 2026-10-03 and citing each page in `providerData(provider).sources`. A provider changes its lists without announcing it, so a list is a snapshot. An extension the provider added since is reported by SQLPG004 until the file is refreshed; disable the rule on that line meanwhile.
+
+| Provider | Allowed extensions | Installs itself | Reserved schemas | Refuses beyond the common three |
+|---|---|---|---|---|
+| `rds` (Amazon RDS for PostgreSQL) | 83, the major 18 table | `aws_commons`, `aws_lambda`, `aws_s3`, `rds_tools`, `log_fdw`, `pg_transport` | none | `CREATE TABLESPACE ... LOCATION` |
+| `aurora` (Aurora PostgreSQL) | 94, the Aurora 18 table | `apg_plan_mgmt`, `aurora_stat_utils`, `aws_commons`, `aws_lambda`, `aws_ml`, `aws_s3`, `log_fdw`, `pg_ad_mapping`, `pg_columnmask`, `pgdam`, `rds_activity_stream`, `rds_tools` | none | `CREATE TABLESPACE ... LOCATION` |
+| `cloud-sql` (Cloud SQL for PostgreSQL) | 79 | `google_ml_integration`, `google_read_only_session` | none | |
+| `azure` (Azure Database for PostgreSQL flexible server) | 80, the entries with a major 18 version | `azure_ai`, `azure_storage`, `pg_diskann` | none | altering `azure_pg_admin`, granting to it |
+| `neon` | 76, the PG18 column | `neon`, `neon_utils`, `pg_session_jwt`, `lakebase_text`, `lakebase_tokenizer`, `lakebase_vector` | none | `CREATE TABLESPACE`, altering `neon_superuser` |
+| `supabase` | 23, partial | `pg_graphql`, `pg_net`, `pgmq`, `index_advisor` | `auth`, `storage`, `etl` | none beyond the two it states |
+
+The common three, which need the superuser every provider withholds, are `ALTER SYSTEM`, `COPY ... PROGRAM`, and a role created or altered `SUPERUSER`. Supabase's page states only the last two.
+
+Supabase's extension list is rendered by a script and could not be read whole, so its list is marked partial (`extensionListComplete: false`) and SQLPG004 does not report an extension outside it.
+
+## What the data has not verified
+
+Every file lists in `toCheck` what its pages did not confirm, each with the page to check. As read on 2026-10-03:
+
+| Provider | Not verified |
+|---|---|
+| RDS | the reserved roles beyond `rds_superuser` were not read from a page; the refused statements beyond the common three come from the documented master-user model, not a statement list; per-major differences in the extension list. |
+| Aurora | per-release differences inside major 18 and the other majors' tables; `pgdam` and `pg_columnmask` were listed with no description read; the same role and statement gaps as RDS. |
+| Cloud SQL | `anon` (the page lists `postgresql_anonymizer`, and the `CREATE EXTENSION` name was not read); the list is the newest major's, and older majors drop some entries; no page read names a schema Cloud SQL owns. |
+| Azure | the `azure.extensions` allowlist parameter and the extensions that need `shared_preload_libraries` (the page rendered no body); no reserved schema read from a page; `wal2json` and `pg_partman_bgw` may not take `CREATE EXTENSION`; older majors' lists. |
+| Neon | no reserved schema read from a page; `pg_repack` needs a paid plan and Neon Support to enable, and `pg_ivm` is not available for new installs; older majors' columns. |
+| Supabase | the full extension list; reserved schemas beyond `auth`, `storage` and `etl` (`extensions`, `realtime`, `graphql`, `graphql_public`, `vault`, `net`, `supabase_functions` and `pgbouncer` were not read from a page, so they import and plan as the project's); refused statements beyond the two the page lists; the installed extensions are inferred from the extension pages' names, not from a statement of ownership. |
+
+Every list is for the newest major. A project on an older major can be told an extension is allowed that the provider does not offer there.

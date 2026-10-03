@@ -1,0 +1,104 @@
+---
+title: "Importing a Postgres Server"
+description: "chant import --from <env> writes a Postgres server's schema as declarations, in the text the catalog's own printers give, leaving out what an ORM, an extension or a managed provider owns"
+diataxis: how-to
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-sql` — DO NOT EDIT.
+    Edit lexicons/sql/docs/pages/postgres-importing.mdx instead; changes here are overwritten. */}
+
+
+`chant import --from <env>` reads the schema of the Postgres server an environment is bound to and writes it as declarations: one `schema.ts` holding a `schema`, `table`, `index`, `view`, `sequence`, `type`, `domain` or `extension` for each object, in dependency order.
+
+## Bind the environment
+
+Name the server per environment in `chant.config.ts`. A `postgres://` URL is what makes a profile a Postgres one. Credentials are named by their environment variable, never written in the config or the URL:
+
+```ts
+import type { ChantConfig } from "@intentius/chant/config";
+import "@intentius/chant-lexicon-sql";
+
+export default {
+  lexicons: ["sql"],
+  sql: {
+    dialect: "postgres",
+    profiles: {
+      prod: {
+        url: "postgres://db.internal:5432/shop",
+        user: { env: "PG_USER" },
+        password: { env: "PG_PROD_PASSWORD" },
+        schemas: ["app", "billing"],
+        defaultSchema: "app",
+      },
+    },
+  },
+} satisfies ChantConfig;
+```
+
+`schemas` limits the read. Without it every schema is read except the server's own (`pg_catalog`, `information_schema`, `pg_toast` and the temporary schemas). `defaultSchema` is the schema a declaration without one is in, `public` when omitted. A profile naming a variable that is not set stops the import before anything is read, naming the variable.
+
+An environment with no profile falls back to `POSTGRES_URL`, `POSTGRES_USER` and `POSTGRES_PASSWORD`. Since an empty project declares nothing that says which dialect it is, an import picks it from the profile's URL, else `sql.dialect`, else `POSTGRES_URL` being set without `CLICKHOUSE_URL`; set `sql.dialect: "postgres"` to be sure. The same binding is what `chant lifecycle diff <env> --live`, `chant sql plan` and the applier read. Each session sets an empty `search_path`, as `pg_dump` does, so what the server prints never depends on the login role's own path.
+
+## Import
+
+```bash
+chant import --from prod --output src/
+```
+
+Postgres has no `SHOW CREATE TABLE`, so each statement is assembled the way `pg_dump` assembles it, from the catalog's own printers: `format_type()`, `pg_get_expr()`, `pg_get_constraintdef()`, `pg_get_indexdef()`, `pg_get_viewdef()` and `pg_get_partkeydef()`, with `COMMENT ON` statements after the `CREATE`. The declaration is the server's canonical form, so it reads differently from what someone wrote by hand. From the getting-started example, applied and then imported:
+
+```ts
+export const orders = table`
+  CREATE TABLE ${appSchema}.orders (
+      id bigint GENERATED ALWAYS AS IDENTITY,
+      user_id bigint NOT NULL,
+      invoice_no bigint DEFAULT nextval(${invoiceSeq}) NOT NULL,
+      status ${orderStatus} DEFAULT 'placed'::${orderStatus} NOT NULL,
+      amount numeric(12,2) NOT NULL,
+      placed_at timestamp with time zone DEFAULT now() NOT NULL,
+      CONSTRAINT orders_pkey PRIMARY KEY (id),
+      CONSTRAINT orders_amount_check CHECK (amount >= 0::numeric),
+      CONSTRAINT orders_user_id_fkey FOREIGN KEY (user_id) REFERENCES ${appUsers}(id) ON DELETE CASCADE
+  )`;
+
+export const ordersUserIdIdx = index`
+  CREATE INDEX orders_user_id_idx ON ${orders} USING btree (user_id, placed_at DESC)`;
+```
+
+What is changed from the printed text:
+
+- A qualified name of another imported object becomes a reference to its export: a table in `REFERENCES` or `FROM`, a type in a column, the object's own schema, an extension's `WITH SCHEMA`. A sequence in a default becomes `nextval(${invoiceSeq})`, the form the tag renders back to `nextval('app.invoice_seq'::regclass)`. The build then orders the objects, and the references are there for an edit later.
+- Identity and sequence options are written only where they differ from what `CREATE SEQUENCE` would choose. A `serial` column whose sequence is exactly the one Postgres makes for `serial` is written as `serial`.
+- chant's ownership trailer is taken out of every comment.
+
+Column names stay text, in constraints and in view queries, so an imported view records the tables it reads but not its column lineage. Rewrite its columns as `${table.columns.name}` to get it.
+
+Export names come from the object's name: a schema is `<name>Schema` and an extension `<name>Extension`, and a table or index whose name is in more than one schema takes its schema as a prefix (`appUsers`, `authUsers`).
+
+The import builds and plans as no change against the server it came from, because a plan compares through the same normalization: `0::numeric` and `0`, `timestamp with time zone` and `timestamptz`, the server's constraint names and unnamed constraints that say the same thing. It can still draw post-synth warnings the hand-written schema would not, such as SQLPG103 for a `serial` column.
+
+## What is left out
+
+- The server's own schemas, and the `public` schema itself (the objects in it are imported).
+- Every object an extension created (`pg_depend.deptype = 'e'`). The extension is imported, not its types and functions, and `plpgsql`, which every database has, is not imported at all.
+- An identity column's sequence, the indexes a primary key or unique constraint creates, and the partitions of a partitioned index: each comes with the object that makes it.
+- chant's own working objects: the `__chant_receipts` tables and the columns and constraints of a migration in progress.
+- Functions, triggers, policies, roles and grants, which the dialect does not declare.
+
+### Objects another tool keeps
+
+An ORM's or migration runner's revision table is read and marked with the tool's name: `_prisma_migrations`, `schema_migrations`, `ar_internal_metadata`, `django_migrations`, `alembic_version`, `__drizzle_migrations`, `flyway_schema_history`, `goose_db_version`, `knex_migrations`, `SequelizeMeta` and `pgmigrations`, with their sequences and indexes. Import leaves them out, since a declaration of them would have chant change what that tool owns. The import says so on stderr, naming the table and its tool:
+
+```
+warning: public._prisma_migrations is kept by Prisma Migrate; left out, since declaring it would have chant change what that tool owns
+```
+
+`chant lifecycle diff --live` reports such a table `foreign`, and a plan never proposes dropping it.
+
+A managed provider's own objects read the same way when `sql.provider` (or the profile's `provider`) names it: the schemas it reserves and everything in them, and the extensions it installs itself. With `provider: "supabase"`, the `auth` schema and its tables are not imported. See [Managed Providers](../postgres-providers/) for each provider's lists.
+
+## Narrowing the import
+
+`--owned` imports the objects whose comment carries chant's ownership marker, the trailer the applier sets (see [Applying to a Postgres Server](../postgres-applying/#the-ownership-marker)). `--type Postgres::Table` imports one kind, and `--name app.tickets` (or `--name tickets`) one object. `--verbatim` changes nothing for Postgres: the printers already leave out what the server would add by itself.
+
+`chant import schema.sql`, from a file of statements, reads ClickHouse DDL only. To start from a Postgres dump, load it into a scratch server and import from that.

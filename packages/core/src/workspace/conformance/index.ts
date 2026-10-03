@@ -102,17 +102,24 @@ export const REFERENCE_READS: Record<ReadContractCommand, string[]> = {
   runs: [],
 };
 
-/** One chant run: the arguments after `chant`, and what it printed. */
+/** One chant run: the arguments after `chant`, what it was given on stdin, and what it printed. */
 export interface ChantRun {
   argv: string[];
+  /** What the caller gave chant on stdin, such as a record's fields for `--from -` (#3159). Absent when nothing was. */
+  input?: string;
   status: number | null;
   stdout: string;
   stderr: string;
 }
 
-/** How a reader runs chant. It runs in the workspace; the reader never sees the path. */
+/**
+ * How a reader or a writer runs chant. It runs in the workspace; the caller
+ * never sees the path. A writer passes `input` for a command that reads its
+ * fields from stdin (`--from -`, `--set -`, `--inputs -`, #3159); a reader
+ * never needs it.
+ */
 export interface ChantTransport {
-  run(argv: string[]): Promise<ChantRun>;
+  run(argv: string[], options?: { input?: string }): Promise<ChantRun>;
 }
 
 export interface WorkspaceReader {
@@ -582,10 +589,13 @@ export function conformanceTarget(options: WorkspaceReaderConformanceOptions = {
   return { workspaceDir: ws.dir, chantCommand, dispose: ws.dispose };
 }
 
-/** Run `command` in `cwd`, collecting what it printed. Resolves, never rejects. */
-function runChant(command: string[], argv: string[], cwd: string, timeoutMs: number): Promise<ChantRun> {
+/** Run `command` in `cwd`, with `input` on stdin when given, collecting what it printed. Resolves, never rejects. */
+export function runChant(command: string[], argv: string[], cwd: string, timeoutMs: number, input?: string): Promise<ChantRun> {
   return new Promise((settle) => {
-    const child = spawn(command[0], [...command.slice(1), ...argv], { cwd, env: { ...process.env, NO_COLOR: "1" }, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(command[0], [...command.slice(1), ...argv], { cwd, env: { ...process.env, NO_COLOR: "1" }, stdio: ["pipe", "pipe", "pipe"] });
+    const given = input === undefined ? {} : { input };
+    // Without input, stdin is closed at once, as it was when it was ignored.
+    child.stdin.on("error", () => {}).end(input ?? "");
     let stdout = "";
     let stderr = "";
     child.stdout.setEncoding("utf-8").on("data", (s: string) => (stdout += s));
@@ -593,11 +603,11 @@ function runChant(command: string[], argv: string[], cwd: string, timeoutMs: num
     const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
     child.on("error", (e) => {
       clearTimeout(timer);
-      settle({ argv: [...argv], status: null, stdout, stderr: `${stderr}${e.message}` });
+      settle({ argv: [...argv], ...given, status: null, stdout, stderr: `${stderr}${e.message}` });
     });
     child.on("close", (status) => {
       clearTimeout(timer);
-      settle({ argv: [...argv], status, stdout, stderr });
+      settle({ argv: [...argv], ...given, status, stdout, stderr });
     });
   });
 }
@@ -657,10 +667,10 @@ export function recordingTransport(target: () => { workspaceDir: string; chantCo
     return { argv: [...argv], status: 0, stdout: JSON.stringify(doc), stderr: "" };
   };
   const transport: ChantTransport = {
-    async run(argv) {
+    async run(argv, options) {
       calls.push([...argv]);
       const t = target();
-      const run = over === "mcp" ? await viaMcp(argv) : await runChant(t.chantCommand, argv, t.workspaceDir, timeoutMs);
+      const run = over === "mcp" ? await viaMcp(argv) : await runChant(t.chantCommand, argv, t.workspaceDir, timeoutMs, options?.input);
       printed.push(run);
       return run;
     },
@@ -731,3 +741,6 @@ export async function runWorkspaceReaderConformance(reader: WorkspaceReaderFacto
     target.dispose();
   }
 }
+
+// The writer suite (#3159), published from this same entry.
+export * from "./writer";

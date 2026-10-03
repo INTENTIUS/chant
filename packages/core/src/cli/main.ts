@@ -939,6 +939,12 @@ Workspace (level 1, #2524):
                         A work item's lease history: each claim with its token
                         and holder, and how it ended, released with an outcome
                         or never released (expired or lost). Read-only
+  workspace work evidence <id> --holder <name> --token <token> --from <file|-> [--kind <kind file>]
+                        Attach evidence for one acceptance criterion under the
+                        lease you hold: the entry (criterion, result, title,
+                        a url or a path pinned by hash) is appended to the
+                        item's pins through records amend. Prints the
+                        work-evidence document and never commits
   workspace runs [--unit <id>] [--decision <id>] [--by <principal>] [--since <rev>] [--json]
                         The agent runs in the run ledger on chant/lifecycle, each
                         with its model, tokens, cost and the commits it made,

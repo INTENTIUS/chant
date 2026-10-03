@@ -37,7 +37,8 @@ import { POINTS_ERROR_CODES, POINTS_SOURCE_REASON_CODES } from "./points-cli";
 import { POINTS_WRITE_ERROR_CODES } from "./decide";
 import { PATCH_ERROR_CODES } from "./patch";
 import { AGENT_ERROR_CODES } from "./agent-cli";
-import { WRITE_SCOPE_CODES } from "./write-scope";
+import { SCOPE_FINDING_CODES, WRITE_SCOPE_CODES } from "./write-scope";
+import { PLANTABLE_REASON_CODES } from "./box-factory";
 import { ROTATION_REFUSAL_CODES } from "./trust/rotation";
 import { SIGNERS_ERROR_CODES } from "./trust/signers-cli";
 import { EVIDENCE_ERROR_CODES } from "./trust/evidence";
@@ -96,6 +97,8 @@ const PER_COMMAND: Record<string, readonly string[]> = {
   PATCH_ERROR_CODES,
   AGENT_ERROR_CODES,
   WRITE_SCOPE_CODES,
+  SCOPE_FINDING_CODES,
+  PLANTABLE_REASON_CODES,
   ROTATION_REFUSAL_CODES,
   SIGNERS_ERROR_CODES,
   EVIDENCE_ERROR_CODES,

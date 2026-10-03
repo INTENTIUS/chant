@@ -25,7 +25,10 @@
  * writes folders, library panels and dashboards over Grafana's HTTP API.
  * `clickhouse` joined after it (#3208): the sql lexicon's `clickhouseApply`,
  * which sends a ClickHouse server the CREATE and ALTER statements a build's
- * classified changes need, over its HTTP interface.
+ * classified changes need, over its HTTP interface. `postgres` joined after
+ * that (#3280): the sql lexicon's `postgresApply`, which sends a Postgres
+ * server the statements a build's classified changes need, grouped into
+ * transactions, with `CONCURRENTLY` statements outside them.
  * **The dispatcher stayed here**, because "which
  * mechanism applies this target" is not any one product's knowledge — and
  * because the activity keeps its name, its arguments and its place in
@@ -45,7 +48,7 @@ import { importLexiconPackage } from "../../lexicon-module";
 const execAsync = promisify(exec);
 
 /** The native apply mechanism for a target. */
-export type ApplyTarget = "cloudformation" | "kubectl" | "arm" | "kustomize" | "gcp" | "fly" | "grafana" | "clickhouse";
+export type ApplyTarget = "cloudformation" | "kubectl" | "arm" | "kustomize" | "gcp" | "fly" | "grafana" | "clickhouse" | "postgres";
 
 /**
  * How apply treats resources no longer declared.
@@ -63,7 +66,10 @@ export type ApplyTarget = "cloudformation" | "kubectl" | "arm" | "kustomize" | "
  *   with no ownership stack are reported not-prunable), `clickhouse` drops
  *   tables, views and databases whose comment carries the project's marker
  *   (via the sql lexicon's `clickhouseApply`; a project with no ownership
- *   stack is reported not-prunable), and
+ *   stack is reported not-prunable), `postgres` drops the objects in the
+ *   declared schemas whose comment carries the project's marker (via the sql
+ *   lexicon's `postgresApply`; never an object another tool keeps, and a
+ *   project with no ownership stack is reported not-prunable), and
  *   `cloudformation` is bounded by the stack — which holds, because a
  *   resource CFN did not create is not in the stack.
  * - `gated` — same delete scope as `owned-only`, but an approval gate precedes
@@ -79,8 +85,8 @@ export interface NativeApplyArgs {
    * `cloudformation`, the ARM resource group on `arm`, the chant environment
    * on `kubectl`/`kustomize`, and on `grafana` the chant environment whose
    * `grafana.profiles.<env>` names the Grafana to write to, and on
-   * `clickhouse` the chant environment whose `sql.profiles.<env>` names the
-   * server. On `gcp` and
+   * `clickhouse` and `postgres` the chant environment whose
+   * `sql.profiles.<env>` names the server. On `gcp` and
    * `fly` it is a log label only — the
    * gcp applier resolves the project (`GOOGLE_CLOUD_PROJECT` env / CNRM
    * annotation) and endpoint (`GCP_ENDPOINT_URL` env) itself, and the fly
@@ -91,7 +97,7 @@ export interface NativeApplyArgs {
    * `dist` (a dir) for kubectl, `template.json` (a file) for
    * CloudFormation/ARM, `dist/gcp.yaml` for gcp, `dist/fly.json` for fly,
    * `dist/grafana.json` (the build index) for grafana, `dist/schema.json`
-   * (the sql lexicon's build output) for clickhouse. */
+   * (the sql lexicon's build output) for clickhouse and postgres. */
   output?: string;
   /** Delete handling. Default: never. */
   deleteMode?: DeleteMode;
@@ -237,6 +243,18 @@ export type ClickHouseApplier = (
   },
   signal?: AbortSignal,
 ) => Promise<ApplyResult>;
+
+/**
+ * The sql lexicon's Postgres applier, as this module needs to call it
+ * (#3280): `postgresApply` composed with the lexicon's own `toApplyResult`,
+ * the same seam as {@link ClickHouseApplier}. An expand-and-contract change
+ * and a rolled-back transaction's objects ride it as NOT-ATTEMPTED.
+ *
+ * `environment` selects `sql.profiles.<environment>` (else `POSTGRES_URL`).
+ * The ownership marker and the timeouts are not passed: `postgresApply`
+ * reads `ownership` and the profile from the project's `chant.config.ts`.
+ */
+export type PostgresApplier = ClickHouseApplier;
 
 /**
  * The aws lexicon's CloudFormation applier, as this module needs to call it
@@ -486,6 +504,36 @@ async function loadClickHouseApplier(): Promise<ClickHouseApplier> {
 }
 
 /**
+ * Load the sql lexicon's `postgresApply` (#3280). Same variable-specifier
+ * trick as {@link loadK8sApplier}, for the same reason.
+ */
+async function loadPostgresApplier(): Promise<PostgresApplier> {
+  const spec = "@intentius/chant-lexicon-sql/op/activities";
+  type SqlModule = {
+    postgresApply?: (args: Parameters<PostgresApplier>[0], signal?: AbortSignal) => Promise<unknown>;
+    toApplyResult?: (result: unknown) => ApplyResult;
+  };
+  let mod: SqlModule;
+  try {
+    mod = (await importLexiconPackage(spec)) as SqlModule;
+  } catch (err) {
+    throw new Error(
+      `apply target "postgres" needs @intentius/chant-lexicon-sql, which could not be loaded ` +
+        `(${err instanceof Error ? err.message : String(err)}). Postgres applies go through the sql ` +
+        `lexicon's applier (chant #3280); install the sql lexicon and list it in chant.config.ts.`,
+    );
+  }
+  const { postgresApply, toApplyResult } = mod;
+  if (typeof postgresApply !== "function") {
+    throw new Error("the installed @intentius/chant-lexicon-sql exports no postgresApply — it predates chant #3280");
+  }
+  if (typeof toApplyResult !== "function") {
+    throw new Error("the installed @intentius/chant-lexicon-sql exports no toApplyResult — it predates chant #3208");
+  }
+  return async (args, signal) => toApplyResult(await postgresApply(args, signal));
+}
+
+/**
  * Load the aws lexicon's `awsApply` (#1449). Same variable-specifier trick as
  * {@link loadK8sApplier}, for the same reason.
  */
@@ -543,7 +591,8 @@ async function loadAwsRollback(): Promise<AwsRollback> {
  * (the CNRM manifest) for gcp, `dist/fly.json` (the serialized plan) for fly,
  * `dist/grafana.json` (the index the grafana serializer writes, with the
  * dashboard files beside it) for grafana, `dist/schema.json` (the sql
- * lexicon's build output) for clickhouse. Pure — exported for testing.
+ * lexicon's build output) for clickhouse and postgres. Pure — exported for
+ * testing.
  */
 export function defaultOutput(target: ApplyTarget): string {
   switch (target) {
@@ -557,6 +606,7 @@ export function defaultOutput(target: ApplyTarget): string {
     case "grafana":
       return "dist/grafana.json";
     case "clickhouse":
+    case "postgres":
       return "dist/schema.json";
     default:
       return "template.json";
@@ -597,7 +647,8 @@ function collapseEnvelope(envelope: ApplyResult, label: string): NativeApplyResu
  * Apply declared source to the cloud via the target's native mechanism.
  * Deletes (when enabled) ride that mechanism's own delete path — marker-scoped
  * on `kubectl`, tag-scoped on `arm`, label-scoped on `gcp`, marker- and
- * app-scoped on `fly`, label-scoped on `grafana`, and stack-scoped on
+ * app-scoped on `fly`, label-scoped on `grafana`, comment-marker-scoped on
+ * `clickhouse` and `postgres`, and stack-scoped on
  * `cloudformation`, where the deploy
  * itself removes resources dropped from the template and `deleteMode` changes
  * nothing: a resource CFN did not create is not in the stack. See
@@ -619,6 +670,7 @@ export async function nativeApply(
   flyApplier?: FlyApplier,
   grafanaApplier?: GrafanaApplier,
   clickhouseApplier?: ClickHouseApplier,
+  postgresApplier?: PostgresApplier,
 ): Promise<NativeApplyResult> {
   const output = args.output ?? defaultOutput(args.target);
   const deleteMode = args.deleteMode ?? "never";
@@ -722,6 +774,18 @@ export async function nativeApply(
     const apply = clickhouseApplier ?? (await loadClickHouseApplier());
     const envelope = await apply({ buildPath: output, environment: args.env, prune: deleteMode !== "never" }, signal);
     // A refused rebuild and a column drop an additive apply withholds ride the
+    // envelope as NOT-ATTEMPTED, so an Op can gate on them.
+    return collapseEnvelope(envelope, args.env);
+  }
+
+  if (args.target === "postgres") {
+    // postgres (#3280): the sql lexicon's applier. env selects
+    // `sql.profiles.<env>`; the marker and the lock and statement timeouts
+    // come from the project's chant.config.ts inside postgresApply.
+    const apply = postgresApplier ?? (await loadPostgresApplier());
+    const envelope = await apply({ buildPath: output, environment: args.env, prune: deleteMode !== "never" }, signal);
+    // A refused expand-and-contract change, a column drop an additive apply
+    // withholds, and the objects of a rolled-back transaction ride the
     // envelope as NOT-ATTEMPTED, so an Op can gate on them.
     return collapseEnvelope(envelope, args.env);
   }

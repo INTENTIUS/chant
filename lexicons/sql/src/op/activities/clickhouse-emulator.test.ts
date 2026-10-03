@@ -6,7 +6,7 @@ import { clickhouseImage } from "../../spec/pin";
 
 describe("the ClickHouse emulator capability (#3208)", () => {
   test("is declared on the plugin, so chant emulator up boots it", () => {
-    expect(emulatorsOf(sqlPlugin.emulator)).toEqual([CLICKHOUSE_EMULATOR]);
+    expect(emulatorsOf(sqlPlugin.emulator)[0]).toEqual(CLICKHOUSE_EMULATOR);
   });
 
   test("runs the pinned image by digest, and names CLICKHOUSE_URL as its endpoint", () => {

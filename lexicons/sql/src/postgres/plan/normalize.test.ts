@@ -1,0 +1,148 @@
+import { describe, expect, test } from "vitest";
+import * as pg from "../entities";
+import { canonicalExpr, canonicalPgObject, canonicalType, sameConstraint } from "./normalize";
+
+/** Parse a statement the way the deep read parses what the server prints. */
+const live = <T extends { entityType: string; props: object }>(tag: (s: TemplateStringsArray) => T, sql: string) => {
+  const e = tag(Object.assign([sql], { raw: [sql] }) as unknown as TemplateStringsArray);
+  return canonicalPgObject(e.entityType, e.props as Record<string, unknown>);
+};
+const declared = (e: { entityType: string; props: object }) => canonicalPgObject(e.entityType, e.props as Record<string, unknown>);
+
+/** Two canonical objects say the same thing: fields, columns and constraints (unnamed ones matched by body). */
+function same(a: ReturnType<typeof declared>, b: ReturnType<typeof declared>) {
+  expect(a.fields).toEqual(b.fields);
+  expect(a.columns).toEqual(b.columns);
+  expect(a.constraints.length).toBe(b.constraints.length);
+  for (const c of a.constraints) expect(b.constraints.some((d) => sameConstraint(c, d))).toBe(true);
+}
+
+const app = pg.schema`CREATE SCHEMA app`;
+const status = pg.type`CREATE TYPE ${app}.order_status AS ENUM ('placed', 'paid')`;
+const invoiceSeq = pg.sequence`CREATE SEQUENCE ${app}.invoice_seq AS bigint START WITH 1000`;
+const users = pg.table`CREATE TABLE ${app}.users (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, email text NOT NULL UNIQUE)`;
+
+describe("types and expressions", () => {
+  test("a type is its format_type() spelling", () => {
+    expect(canonicalType("timestamptz")).toBe("timestamp with time zone");
+    expect(canonicalType("int4")).toBe("integer");
+    expect(canonicalType("int")).toBe("integer");
+    expect(canonicalType("varchar(20)")).toBe("character varying(20)");
+    expect(canonicalType("numeric(12, 2)")).toBe("numeric(12,2)");
+    expect(canonicalType("int[]")).toBe("integer[]");
+    expect(canonicalType("int ARRAY[3]")).toBe("integer[]");
+    expect(canonicalType("timestamp(3)")).toBe("timestamp(3) without time zone");
+    expect(canonicalType("order_status")).toBe("public.order_status");
+    expect(canonicalType("app.Order_Status")).toBe("app.order_status");
+  });
+
+  test("an expression drops literal casts, case, spacing and outer parentheses", () => {
+    expect(canonicalExpr("'placed'::app.order_status")).toBe(canonicalExpr("'placed'"));
+    expect(canonicalExpr("(amount >= (0)::numeric)")).not.toBe(canonicalExpr("amount >= 0"));
+    expect(canonicalExpr("(amount >= 0::numeric)")).toBe(canonicalExpr("amount >= 0"));
+    expect(canonicalExpr("'-1'::integer")).toBe(canonicalExpr("-1"));
+    expect(canonicalExpr("COALESCE(sum(o.amount), 0::numeric)")).toBe(canonicalExpr("coalesce(sum(o.amount), 0)"));
+    expect(canonicalExpr("(status = ANY (ARRAY['placed'::text, 'paid'::text]))")).toBe(canonicalExpr("status IN ('placed', 'paid')"));
+    expect(canonicalExpr("'x'::character varying")).toBe(canonicalExpr("'x'"));
+  });
+});
+
+describe("what Postgres 18.6 prints reads as the declaration", () => {
+  test("a table with identity, a sequence default, an enum default, a check and a foreign key", () => {
+    const d = pg.table`
+      CREATE TABLE ${app}.orders (
+        id         bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        user_id    bigint NOT NULL REFERENCES ${users} (${users.columns.id}) ON DELETE CASCADE,
+        invoice_no bigint NOT NULL DEFAULT nextval(${invoiceSeq}),
+        status     ${status} NOT NULL DEFAULT 'placed',
+        amount     numeric(12, 2) NOT NULL CHECK (amount >= 0),
+        placed_at  timestamptz NOT NULL DEFAULT now()
+      );
+      COMMENT ON TABLE ${app}.orders IS 'Placed'`;
+    same(
+      declared(d),
+      live(
+        pg.table,
+        `CREATE TABLE app.orders (
+    id bigint GENERATED ALWAYS AS IDENTITY,
+    user_id bigint NOT NULL,
+    invoice_no bigint DEFAULT nextval('app.invoice_seq'::regclass) NOT NULL,
+    status app.order_status DEFAULT 'placed'::app.order_status NOT NULL,
+    amount numeric(12,2) NOT NULL,
+    placed_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT orders_pkey PRIMARY KEY (id),
+    CONSTRAINT orders_amount_check CHECK (amount >= 0::numeric),
+    CONSTRAINT orders_user_id_fkey FOREIGN KEY (user_id) REFERENCES app.users(id) ON DELETE CASCADE
+);
+COMMENT ON TABLE app.orders IS 'Placed [chant managed-by=chant stack=shop env=prod]'`,
+      ),
+    );
+  });
+
+  test("serial spellings stay unqualified", () => {
+    expect(["serial", "SERIAL", "bigserial", "smallserial"].map((t) => canonicalType(t, "app"))).toEqual(["serial", "serial", "bigserial", "smallserial"]);
+  });
+
+  test("serial, a collation, a generated column, identity options, an exclusion and storage parameters", () => {
+    const d = pg.table`CREATE TABLE ${app}.events (
+      id serial PRIMARY KEY, during tstzrange, k text COLLATE "C" DEFAULT 'x',
+      n int GENERATED ALWAYS AS (id * 2) STORED,
+      big bigint GENERATED BY DEFAULT AS IDENTITY (START WITH 5 INCREMENT BY 2),
+      EXCLUDE USING gist (during WITH &&), CONSTRAINT k_len CHECK (length(k) < 10)) WITH (fillfactor = 70)`;
+    same(
+      declared(d),
+      live(
+        pg.table,
+        `CREATE TABLE app.events (
+    id serial,
+    during tstzrange,
+    k text COLLATE "C" DEFAULT 'x'::text,
+    n integer GENERATED ALWAYS AS (id * 2) STORED,
+    big bigint GENERATED BY DEFAULT AS IDENTITY (INCREMENT BY 2 START WITH 5),
+    CONSTRAINT events_pkey PRIMARY KEY (id),
+    CONSTRAINT k_len CHECK (length(k) < 10),
+    CONSTRAINT events_during_excl EXCLUDE USING gist (during WITH &&)
+) WITH (fillfactor=70)`,
+      ),
+    );
+  });
+
+  test("an index, a view, a sequence and a domain", () => {
+    const orders = pg.table`CREATE TABLE ${app}.orders (id bigint, user_id bigint, placed_at timestamptz, amount numeric)`;
+    same(
+      declared(pg.index`CREATE INDEX orders_user_id_idx ON ${orders} (${orders.columns.user_id}, ${orders.columns.placed_at} DESC)`),
+      live(pg.index, "CREATE INDEX orders_user_id_idx ON app.orders USING btree (user_id, placed_at DESC)"),
+    );
+    same(
+      declared(pg.view`
+        CREATE VIEW ${app}.order_totals AS
+        SELECT u.${users.columns.id} AS user_id, u.${users.columns.email},
+               count(o.${orders.columns.id}) AS order_count, coalesce(sum(o.${orders.columns.amount}), 0) AS total
+        FROM ${users} u LEFT JOIN ${orders} o ON o.${orders.columns.user_id} = u.${users.columns.id}
+        GROUP BY u.${users.columns.id}, u.${users.columns.email}`),
+      live(
+        pg.view,
+        `CREATE VIEW app.order_totals AS
+SELECT u.id AS user_id,
+    u.email,
+    count(o.id) AS order_count,
+    COALESCE(sum(o.amount), 0::numeric) AS total
+   FROM app.users u
+     LEFT JOIN app.orders o ON o.user_id = u.id
+  GROUP BY u.id, u.email`,
+      ),
+    );
+    same(declared(invoiceSeq), live(pg.sequence, "CREATE SEQUENCE app.invoice_seq START WITH 1000"));
+    same(
+      declared(pg.domain`CREATE DOMAIN ${app}.email AS text CONSTRAINT email_shape CHECK (VALUE ~ '^[^@]+@')`),
+      live(pg.domain, "CREATE DOMAIN app.email AS text CONSTRAINT email_shape CHECK (VALUE ~ '^[^@]+@'::text)"),
+    );
+  });
+
+  test("a real difference stays different", () => {
+    const a = declared(pg.table`CREATE TABLE t (a int DEFAULT 1)`);
+    const b = live(pg.table, "CREATE TABLE public.t (a integer DEFAULT 2)");
+    expect(a.columns[0]!.default).not.toBe(b.columns[0]!.default);
+    expect(declared(pg.table`CREATE TABLE t (a int)`).schema).toBe("public");
+  });
+});

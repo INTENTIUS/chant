@@ -1,7 +1,7 @@
 import { describe, test, expect } from "vitest";
 import { applyResult } from "../../apply";
 import { defaultOutput, nativeApply, compensateApply, hasNativeRollback } from "./apply";
-import type { K8sApplier, AzureApplier, GcpApplier, FlyApplier, GrafanaApplier, ClickHouseApplier, AwsApplier, AwsRollback } from "./apply";
+import type { K8sApplier, AzureApplier, GcpApplier, FlyApplier, GrafanaApplier, ClickHouseApplier, PostgresApplier, AwsApplier, AwsRollback } from "./apply";
 
 /**
  * The kubectl branch moved to the k8s lexicon in chant #1075, the arm branch to
@@ -545,6 +545,59 @@ describe("nativeApply: clickhouse dispatches to the sql lexicon (chant #3208)", 
   });
 });
 
+describe("nativeApply: postgres dispatches to the sql lexicon (chant #3280)", () => {
+  const spy = (): { calls: Array<Parameters<PostgresApplier>[0]>; applier: PostgresApplier } => {
+    const calls: Array<Parameters<PostgresApplier>[0]> = [];
+    const applier: PostgresApplier = async (args) => {
+      calls.push(args);
+      return applyResult([]);
+    };
+    return { calls, applier };
+  };
+  const applyPostgres = (args: Parameters<typeof nativeApply>[0], applier: PostgresApplier) =>
+    nativeApply(args, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, applier);
+
+  test("output maps to the build path and env to the environment, and nothing else is passed", async () => {
+    const { calls, applier } = spy();
+    await applyPostgres({ target: "postgres", env: "prod", output: "dist/schema.json" }, applier);
+    expect(calls).toEqual([{ buildPath: "dist/schema.json", environment: "prod", prune: false }]);
+  });
+
+  test("owned-only and gated prune; never and the default do not", async () => {
+    for (const [deleteMode, prune] of [["owned-only", true], ["gated", true], ["never", false], [undefined, false]] as const) {
+      const { calls, applier } = spy();
+      await applyPostgres({ target: "postgres", env: "prod", ...(deleteMode ? { deleteMode } : {}) }, applier);
+      expect(calls[0].prune).toBe(prune);
+    }
+  });
+
+  test("defaults the build path to dist/schema.json", async () => {
+    const { calls, applier } = spy();
+    await applyPostgres({ target: "postgres", env: "prod" }, applier);
+    expect(calls[0].buildPath).toBe("dist/schema.json");
+    expect(defaultOutput("postgres")).toBe("dist/schema.json");
+  });
+
+  test("counts come from the envelope, a refused expand-and-contract change among the not-attempted", async () => {
+    const applier: PostgresApplier = async () =>
+      applyResult(
+        [
+          { kind: "Postgres::Schema", name: "app", action: "unchanged" },
+          { kind: "Postgres::Table", name: "app.users", action: "updated" },
+        ],
+        [{ kind: "Postgres::Table", name: "app.old", deleted: true }],
+        [{ kind: "Postgres::Table", name: "app.orders", reason: "unsupported-kind", detail: "SQLPG205 Rename a column" }],
+      );
+    expect(await applyPostgres({ target: "postgres", env: "prod" }, applier)).toEqual({ applied: 2, pruned: 1, notAttempted: 1 });
+  });
+
+  test("with nothing injected it resolves the real sql lexicon's postgresApply", async () => {
+    const err = await nativeApply({ target: "postgres", env: "prod", output: "/nonexistent/chant-3280-schema.json" }).catch((e: unknown) => e);
+    expect(String(err)).toMatch(/ENOENT|no such file/);
+    expect(String(err)).not.toMatch(/could not be loaded/);
+  });
+});
+
 describe("nativeApply: cloudformation dispatches to the aws lexicon (chant #1449)", () => {
   /** Records what the applier was handed, and reports a settled create. */
   const spy = (): { calls: Array<Parameters<AwsApplier>[0]>; applier: AwsApplier } => {
@@ -645,11 +698,11 @@ describe("compensateApply: cloudformation rolls back through the aws lexicon (ch
     expect(result).toEqual({ command: "echo custom-rollback" });
   });
 
-  test("kubectl / kustomize / arm / gcp / fly / grafana / clickhouse without a command throw — the defensive branch (#1449)", async () => {
+  test("kubectl / kustomize / arm / gcp / fly / grafana / clickhouse / postgres without a command throw — the defensive branch (#1449)", async () => {
     // Unreachable from a built ApplyOp, which refuses this combination at
     // build time. A hand-assembled op that reaches it fails loudly rather than
     // returning a result that could read as a revert.
-    for (const target of ["kubectl", "kustomize", "arm", "gcp", "fly", "grafana", "clickhouse"] as const) {
+    for (const target of ["kubectl", "kustomize", "arm", "gcp", "fly", "grafana", "clickhouse", "postgres"] as const) {
       const err = await compensateApply({ target, env: "prod" }).catch((e: unknown) => e);
       expect(String(err)).toMatch(`no automatic rollback for target "${target}"`);
       expect(String(err)).toMatch(/NOT\s+reverted/);
@@ -659,7 +712,7 @@ describe("compensateApply: cloudformation rolls back through the aws lexicon (ch
 
   test("hasNativeRollback: cloudformation only", () => {
     expect(hasNativeRollback("cloudformation")).toBe(true);
-    for (const target of ["kubectl", "kustomize", "arm", "gcp", "fly", "grafana", "clickhouse"] as const) {
+    for (const target of ["kubectl", "kustomize", "arm", "gcp", "fly", "grafana", "clickhouse", "postgres"] as const) {
       expect(hasNativeRollback(target)).toBe(false);
     }
   });

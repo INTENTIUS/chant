@@ -506,7 +506,7 @@
   "formatting/bold-first-bullet": 1
  },
  "docs/src/content/docs/concepts/typescript-as-data.mdx": {
-  "formatting/em-dash-density": 52,
+  "formatting/em-dash-density": 51,
   "discourse/punchy-fragments": 2,
   "claude/colon-reveal": 7,
   "repetition/near-duplicate": 4,
@@ -699,7 +699,7 @@
   "formatting/em-dash-density": 23,
   "discourse/punchy-fragments": 2,
   "formatting/bold-first-bullet": 2,
-  "tricolon/comma-series": 4
+  "tricolon/comma-series": 3
  },
  "docs/src/content/docs/guide/organizational-policy.mdx": {
   "formatting/em-dash-density": 21,
@@ -780,7 +780,7 @@
   "anaphora/repeated-opening": 2
  },
  "docs/src/content/docs/lexicon-authoring/crd-sources.mdx": {
-  "formatting/em-dash-density": 20,
+  "formatting/em-dash-density": 19,
   "claude/colon-reveal": 2,
   "tricolon/comma-series": 3
  },
@@ -841,7 +841,7 @@
  "docs/src/content/docs/lexicon-authoring/onboarding-skill.mdx": {
   "formatting/em-dash-density": 6,
   "claude/colon-reveal": 5,
-  "tricolon/comma-series": 2,
+  "tricolon/comma-series": 1,
   "discourse/punchy-fragments": 1
  },
  "docs/src/content/docs/lexicon-authoring/overview.mdx": {
@@ -1057,6 +1057,11 @@
   "claude/colon-reveal": 3
  },
  "docs/src/content/docs/reference/workspace-read-contract.mdx": {
+  "claude/colon-reveal": 3
+ },
+ "docs/src/content/docs/reference/workspace-writer-conformance.mdx": {
+  "formatting/em-dash-density": 2,
+  "discourse/punchy-fragments": 1,
   "claude/colon-reveal": 3
  },
  "docs/src/content/docs/serialization/multi-stack.mdx": {

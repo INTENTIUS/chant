@@ -1,0 +1,188 @@
+---
+title: "Declaring Postgres Objects"
+label: "Declaring Objects"
+description: "Postgres schemas, tables, indexes, views, materialized views, sequences, enum types, domains and extensions as tagged templates: the eight tags, nextval(${seq}), COMMENT ON, and what each interpolation means"
+diataxis: how-to
+group: "Postgres"
+order: 11
+---
+
+A Postgres object is declared as its own DDL, inside a tagged template from `@intentius/chant-lexicon-sql/postgres`:
+
+```ts
+import { schema, sequence, table, index } from "@intentius/chant-lexicon-sql/postgres";
+
+export const app = schema`CREATE SCHEMA app`;
+
+export const ticketSeq = sequence`CREATE SEQUENCE ${app}.ticket_seq AS bigint START WITH 1000`;
+
+export const tickets = table`
+  CREATE TABLE ${app}.tickets (
+    id       bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    no       bigint NOT NULL DEFAULT nextval(${ticketSeq}),
+    title    text NOT NULL,
+    priority int NOT NULL DEFAULT 3,
+    CONSTRAINT tickets_priority_ck CHECK (priority BETWEEN 1 AND 5)
+  );
+  COMMENT ON TABLE ${app}.tickets IS 'Support tickets';
+  COMMENT ON CONSTRAINT tickets_priority_ck ON ${app}.tickets IS 'One to five'`;
+
+export const ticketsTitle = index`
+  CREATE INDEX CONCURRENTLY tickets_title_idx ON ${tickets} (${tickets.columns.title})`;
+```
+
+`chant build` parses each template when it folds the file, without running it, into one entity. The export name (`tickets`) is the object's identity in chant; the name in the SQL (`app.tickets`) is its name in the database. An unquoted name folds to lower case, as Postgres folds it, so `CREATE TABLE Tickets` is `tickets`, and `.columns` is keyed by the folded name. An object whose name has no schema is in the environment's default schema, `public` unless the profile's `defaultSchema` says otherwise.
+
+## The tags
+
+| Tag | Statement | Entity type |
+|---|---|---|
+| `schema` | `CREATE SCHEMA` | `Postgres::Schema` |
+| `table` | `CREATE TABLE`, including `PARTITION OF` | `Postgres::Table` |
+| `index` | `CREATE [UNIQUE] INDEX [CONCURRENTLY] name ON ...` | `Postgres::Index` |
+| `view` | `CREATE VIEW` or `CREATE MATERIALIZED VIEW` | `Postgres::View`, `Postgres::MaterializedView` |
+| `sequence` | `CREATE SEQUENCE` | `Postgres::Sequence` |
+| `type` | `CREATE TYPE name AS ENUM (...)` | `Postgres::Enum` |
+| `domain` | `CREATE DOMAIN` | `Postgres::Domain` |
+| `extension` | `CREATE EXTENSION` | `Postgres::Extension` |
+
+A template holds one `CREATE`, of its tag's kind, followed by any `COMMENT ON` statements for that object. A different statement, a second `CREATE`, or DDL that does not parse is SQLPG001, reported at the token as a line and column of the `.ts` file. The `type` tag declares enum types only; a composite or range type is refused at `(` or `RANGE`.
+
+Functions, triggers, row-level security policies, roles and grants have no tag. Declare them with the tool that manages them today; an import leaves them out.
+
+## Tables
+
+A table's declaration records every column (type, `NOT NULL`, default, `GENERATED ... AS IDENTITY`, `GENERATED ALWAYS AS (...) STORED` or `VIRTUAL`, collation, compression, storage) and every constraint: the primary key, unique constraints (with `NULLS NOT DISTINCT`, `INCLUDE`, `WITH`), checks (with `NO INHERIT`, `NOT VALID`, `NOT ENFORCED`), foreign keys (with `MATCH`, actions and deferral) and exclusion constraints. A constraint written on a column's line is filed with the table's, as Postgres files it. It also records `PARTITION BY`, `PARTITION OF ... FOR VALUES`, `OF type`, `LIKE`, `INHERITS`, `USING`, storage parameters in `WITH (...)`, `ON COMMIT` and a tablespace.
+
+A partition is a table of its own that names its parent by reference:
+
+{{file:postgres-partitioned-events/src/events.ts}}
+
+`REFERENCES ${users} (${users.columns.id})` makes the referenced table a dependency, so the build creates it first. A foreign key to a table the project does not declare can name it as text, `REFERENCES billing.accounts (id)`; the build then cannot order the two.
+
+Name the constraints you expect to change. A constraint left unnamed gets a name from the server (`orders_amount_check`); a plan matches it by what it says rather than by that name, so it is not reported as changed, but a `COMMENT ON CONSTRAINT` needs the name in the declaration.
+
+## Indexes
+
+An index needs a name, and the name is unqualified: an index lives in its table's schema, and its name is its identity on the server. An unnamed index is SQLPG001.
+
+```ts
+export const ticketsOpen = index`
+  CREATE INDEX CONCURRENTLY tickets_open_idx ON ${tickets} USING btree (${tickets.columns.priority})
+  INCLUDE (${tickets.columns.title})
+  WHERE ${tickets.columns.priority} > 3`;
+```
+
+The index records `CONCURRENTLY`, its method, its elements (with the column when an element is a plain column), `INCLUDE` and `WHERE`. Declare `CONCURRENTLY` on any index you add to a table that already holds rows: without it the build blocks every write to the table until it ends, and [the plan](../postgres-change-classifier/) reports SQLPG241. An index on a table the same plan creates is part of the create (SQLPG200), since an empty table has no writes to block; if it is declared `CONCURRENTLY`, the applier still builds it outside a transaction, once the table's transaction has committed.
+
+## Views and materialized views
+
+The `view` tag takes both. A view records its query, the objects its `FROM` and `JOIN` read (by reference), and the column lineage of its select list; see [References and Lineage](../references-and-lineage/).
+
+```ts
+export const openTickets = view`
+  CREATE VIEW ${app}.open_tickets WITH (security_invoker = true) AS
+  SELECT t.${tickets.columns.id}, t.${tickets.columns.title}
+  FROM ${tickets} t
+  WHERE t.${tickets.columns.priority} > 3`;
+```
+
+In a join or with a table alias, qualify each column reference with the alias, `t.${tickets.columns.id}`: the reference renders as the column's bare name.
+
+Set `security_invoker = true` (Postgres 15 and later) unless the view should run with its owner's privileges; SQLPG117 reports a view without it. A materialized view can end in `WITH NO DATA`, and needs a unique index over plain columns before `REFRESH MATERIALIZED VIEW CONCURRENTLY` works, which SQLPG111 checks; the `RefreshedView` composite declares both.
+
+## Sequences and regclass references
+
+`nextval(${seq})`, `currval(${seq})` and `setval(${seq}, ...)` render the sequence as a `regclass` literal, `nextval('app.ticket_seq'::regclass)`, which is how `pg_get_expr` prints the default back. The declaration and the server's catalog then read the same, and the table depends on the sequence. Any declared object followed by `::regclass` renders the same way: `pg_relation_size(${tickets}::regclass)` reads `pg_relation_size('app.tickets'::regclass)`.
+
+A name typed in a string, `nextval('app.ticket_seq')`, records no reference, so the build may create the table before the sequence. SQLPG003 warns about it.
+
+A sequence `OWNED BY` a column whose default calls `nextval` on that same sequence is a cycle, and the build fails naming it. An identity column, `GENERATED ALWAYS AS IDENTITY`, is the form to use there; it owns its sequence without declaring one, and SQLPG103 suggests it over `serial`.
+
+## Enum types, domains and extensions
+
+```ts
+import { domain, extension, type } from "@intentius/chant-lexicon-sql/postgres";
+
+export const ticketStatus = type`CREATE TYPE ${app}.ticket_status AS ENUM ('open', 'closed')`;
+
+export const email = domain`CREATE DOMAIN ${app}.email AS text CHECK (VALUE ~ '@')`;
+
+export const trgm = extension`CREATE EXTENSION pg_trgm WITH SCHEMA ${app}`;
+```
+
+A column of an enum type or a domain names it by reference, `status ${ticketStatus} NOT NULL DEFAULT 'open'`, so the build creates the type first. Labels are added to an enum in place (SQLPG260); removing or reordering them is expand and contract (SQLPG261).
+
+An extension is checked against the configured managed provider's list (SQLPG004, see [Managed Providers](../postgres-providers/)) and against the target major's catalog (SQLPG116 for one the major no longer ships). The objects an extension creates are its own, and chant neither declares nor imports them.
+
+## Comments
+
+Postgres has no inline comment clause, so a template follows its `CREATE` with `COMMENT ON` statements. They may name the object itself, one of its columns, or one of its named constraints, and nothing else:
+
+```sql
+COMMENT ON TABLE ${app}.tickets IS 'Support tickets';
+COMMENT ON COLUMN ${app}.tickets.title IS 'What the reporter typed';
+COMMENT ON CONSTRAINT tickets_priority_ck ON ${app}.tickets IS 'One to five'
+```
+
+They fold into the entity's comment, each column's and each constraint's, and stay in the DDL the build writes. The applier sets the object's own comment with chant's ownership marker after it; see [Applying to a Postgres Server](../postgres-applying/#the-ownership-marker). SQLPG112 asks for a comment on a column named like a secret or personal data (`password`, `token`, `email`, `phone` and similar), or on its table.
+
+## Interpolations
+
+What an interpolation means is decided by its value:
+
+| Value | Renders as | Records |
+|---|---|---|
+| a Postgres entity (`${tickets}`) | its schema-qualified name, `app.tickets`; a schema as its name | a reference |
+| a column (`${tickets.columns.title}`) | the column's name, `title` | a reference to the column |
+| a sequence in `nextval`, `currval`, `setval`, or any entity before `::regclass` | a `regclass` literal, `'app.ticket_seq'::regclass` | a reference |
+| a string | SQL text, spliced in before the statement is parsed | nothing |
+| a number or bigint | a numeric literal | nothing |
+| `true`, `false`, `null` | `true`, `false`, `NULL` | nothing |
+| `literal(value)` | a quoted string literal | nothing |
+
+### Columns go through `.columns`
+
+`${tickets.title}` is not a column. An entity's own fields (`kind`, `lexicon`, `entityType`, `props`, `sqlName`, `dependsOn`) would splice their value in as SQL text, so `${tickets.kind}` where a column is called `kind` builds into a different statement. SQLPG002 reports it for an entity the file declares or imports from a project file. Write `${tickets.columns.kind}`.
+
+### A string is SQL text
+
+A plain string is spliced into the statement as SQL, the way a composite's `columns` prop is:
+
+```ts
+const auditColumns = "created_at timestamptz NOT NULL DEFAULT now(), created_by text";
+
+export const notes = table`
+  CREATE TABLE ${app}.notes (
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    ${auditColumns}
+  )`;
+```
+
+When the string is a value, wrap it in `literal()`: `DEFAULT ${literal("it's")}` renders `DEFAULT 'it''s'`. `literal()` doubles a single quote and leaves a backslash as an ordinary character, as Postgres reads a string with `standard_conforming_strings` on, the default since 9.1.
+
+## Renames
+
+The export name is the identity, so changing the name in the SQL under the same export is a rename of the object, which the plan treats as expand and contract (SQLPG228). A renamed column says so on its own line, and a renamed object before its `CREATE`:
+
+```sql
+-- previously: tickets
+CREATE TABLE ${app}.issues (
+  id    bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  title text NOT NULL   -- previously: subject
+)
+```
+
+See [Postgres Locks and the Change Classifier](../postgres-change-classifier/#identity-and-renames) for how a plan reads the hint, and [Migrating a Column](../postgres-migration/) for running a column rename.
+
+## One dialect per build
+
+A project's build holds one dialect. Declaring a Postgres object and a ClickHouse object in the same project fails the build, naming one of each. Two databases of different dialects are two projects. `sql.dialect: "postgres"` in `chant.config.ts` marks a project as Postgres when nothing declared says so yet, such as before an import.
+
+## In the editor
+
+Inside a template whose tag is imported from `/postgres`, `chant serve lsp` completes type names, index and table access methods after `USING`, storage parameters inside `WITH (` for the object's kind, extensions after `CREATE EXTENSION`, function names in expressions and key words, and offers the file's declared objects after `${` and their columns after `${t.columns.`. Hover shows what the catalog says about the name. Both read the catalog of the project's major, `sql.postgresMajor`, so a name that major lacks is not offered; see [The Postgres Pin and Supported Majors](../postgres-majors/).
+
+## What the build records
+
+Each entity's parsed definition, its references and its lineage are in the build output; see [Serialization](../serialization/). [Lint Rules and Checks](../lint-rules/) lists SQLPG001 to SQLPG004, which run over the source, and SQLPG101 to SQLPG118, which run over the build.

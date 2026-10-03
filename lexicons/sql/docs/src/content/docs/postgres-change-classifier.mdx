@@ -1,0 +1,113 @@
+---
+title: "Postgres Locks and the Change Classifier"
+description: "How a Postgres schema change is classified by the lock it takes and whether it reads or rewrites the table, each with the documentation behind it"
+diataxis: reference
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-sql` — DO NOT EDIT.
+    Edit lexicons/sql/docs/pages/postgres-change-classifier.mdx instead; changes here are overwritten. */}
+
+
+{/* Written by src/codegen/postgres-classifier-page.ts from src/postgres/plan/rules.ts. Edit the rules, then run npm run docs. */}
+
+Every change between two Postgres schemas is classified before anything runs, by the lock it takes and whether it reads or rewrites the table, as the Postgres 18 reference states them. Where 14 to 17 differ, the rule says so.
+
+| Class | Means | Disruption |
+|---|---|---|
+| create | a new object; nothing that exists changes | `in-place` |
+| metadata only | a catalog change under a brief lock; no row is read or written | `in-place` |
+| validates under a weaker lock | every row is read to check a constraint, under a lock weaker than ACCESS EXCLUSIVE | `rolling` |
+| needs CONCURRENTLY | an index build or drop that blocks writes unless it is CONCURRENTLY, which cannot run in a transaction block | `rolling` |
+| ACCESS EXCLUSIVE rewrite or scan | the table is rewritten or read in full while reads and writes wait | `rolling` |
+| expand and contract | no in-place change keeps old readers working; a plan refuses it | `replace` |
+| drop | the object, and a table's or sequence's data, is gone | `destroy` |
+
+The disruption column is what `chant lifecycle plan` reports for each update. A changed path alone cannot always say which rule applies (a column's type, a constraint, a view's query, an enum's labels), and those report `unknown` there; `chant sql plan` has both definitions and classifies them.
+
+```bash
+chant sql diff base.json head.json     # two chant build outputs, offline
+chant sql plan prod schema.json        # a build output against the prod server
+```
+
+Both read the build's `dialect` and exit 2 when a change can only be made as expand and contract. `--json` prints the changes, the hints, the refused changes and the migration Op suggestions as one document. `chant sql diff` compares a pull request's base and head builds with no server. `chant sql plan` reads the server `sql.profiles.<env>` binds (else `POSTGRES_URL`), in the profile's `schemas` when it lists them, otherwise in the default schema and every schema the build declares an object in. Where the normalization rules leave an expression different, it asks that server: the declared view, or the table's column types, defaults, generated expressions and checks, are created as temporary objects in a transaction that is always rolled back, and read back with the same printers, so a view's `SELECT *` and the server's added parentheses are not reported as changes.
+
+## Which major
+
+Two rules change class across the supported majors: a STORED generated column's expression (SQLPG212) is a rewrite from 17 and expand and contract before it, and a table's access method (SQLPG226) is a rewrite from 15 and expand and contract before it.
+
+- `chant sql diff` classifies for the major the builds recorded (`postgresMajor` in the build output): the newer build's, else the older build's, else `sql.postgresMajor`, else 18. A diff between two revisions does not depend on today's config.
+- `chant sql plan` classifies for the major the server runs (`server_version_num`), since the server is what takes the locks. When the build targets another major, the plan says so in a hint.
+
+## Identity and renames
+
+An object is identified by its export name between two builds, and by its schema-qualified name against a server, which has no export names. Tables, views, materialized views, sequences and indexes share one namespace per schema, types and domains another, and schemas and extensions are matched by name.
+
+A rename is declared where it happens. Before a CREATE, `-- previously: <old name>` says the object had another name; on a column's line, it says the column did:
+
+```sql
+CREATE TABLE app.orders (
+  id   bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  memo text   -- previously: note
+)
+```
+
+Without the hint, a column dropped and another added with the same type in the same place are reported as a drop and an add, with a hint asking whether it is a rename. A constraint left unnamed is matched by what it says, not by the name Postgres gave it, and an index on a table the same plan creates is part of the create.
+
+An object another tool keeps is never proposed for a drop: an ORM's or migration runner's revision table with its sequence and indexes, and, with `sql.provider` set, the provider's own schemas and extensions. The plan names each in a hint and leaves it alone. Any other object in the schemas the plan reads that the build does not declare is a drop (SQLPG270); the applier drops it only when told to prune and only when it carries this project's marker.
+
+## After the plan
+
+The plan only reports. [`postgresApply`](../postgres-applying/) makes every change that is not expand and contract, grouping the statements into transactions by class and running `CONCURRENTLY` builds outside them. A column rename (SQLPG205) or a type change across kinds (SQLPG208) runs as `PostgresMigrationOp`, and both commands print the declaration to start from for each such column (`migrationOps` in `--json`): see [Migrating a Column](../postgres-migration/). The other expand-and-contract changes (a NOT NULL column with no default, a view losing or reordering columns, partitioning, a rename of a table, an enum label removed) have no Op yet and are made by hand.
+
+## The rules
+
+| Id | Class | Change | Restriction |
+|---|---|---|---|
+| SQLPG200 | create | Create an object | A new object is created; nothing existing changes. A table created in the same plan as its indexes needs no CONCURRENTLY. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-createtable.html) |
+| SQLPG201 | metadata only | Add a column | ADD COLUMN with no default, or with a non-volatile default, changes only the catalog under ACCESS EXCLUSIVE: the default is stored once and read for existing rows (since 11, so in every supported major). A NOT NULL column needs that default. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-altertable.html) |
+| SQLPG202 | ACCESS EXCLUSIVE rewrite or scan | Add a column whose value has to be computed for every row | ADD COLUMN with a volatile default (clock_timestamp(), random(), gen_random_uuid(), nextval()), a STORED generated column or an identity column rewrites the whole table under ACCESS EXCLUSIVE. A VIRTUAL generated column (18) does not. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-altertable.html) |
+| SQLPG203 | EXPAND AND CONTRACT | Add a NOT NULL column with no default | ADD COLUMN ... NOT NULL with no default fails on a table that has rows. Add it nullable, backfill it, then set NOT NULL. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-altertable.html) |
+| SQLPG204 | metadata only | Drop a column | DROP COLUMN only hides the column in the catalog under ACCESS EXCLUSIVE; its space is reclaimed as rows are rewritten. The data is gone. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-altertable.html) |
+| SQLPG205 | EXPAND AND CONTRACT | Rename a column | RENAME COLUMN is a catalog change, but every reader still using the old name fails the moment it runs: add the new column, write both, move readers, drop the old. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-altertable.html) |
+| SQLPG206 | metadata only | Change a column's type without a rewrite | ALTER COLUMN TYPE to a binary-coercible type (varchar(n) to a longer varchar or to text, numeric(p,s) to a wider precision or to unconstrained numeric, cidr to inet) needs no rewrite; indexes on the column may still be rebuilt. ACCESS EXCLUSIVE, briefly. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-altertable.html) |
+| SQLPG207 | ACCESS EXCLUSIVE rewrite or scan | Change a column's type with a rewrite | ALTER COLUMN TYPE that is not binary-coercible (integer to bigint, a shorter varchar, real to double precision) rewrites the table and rebuilds its indexes under ACCESS EXCLUSIVE. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-altertable.html) |
+| SQLPG208 | EXPAND AND CONTRACT | Change a column's type across kinds | A type change between kinds (text to integer, a type to an enum) needs a USING expression and breaks readers that expect the old type: add the new column, backfill, move readers, drop the old. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-altertable.html) |
+| SQLPG209 | metadata only | Change a column's default | SET DEFAULT and DROP DEFAULT change only the catalog; existing rows keep their values. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-altertable.html) |
+| SQLPG210 | ACCESS EXCLUSIVE rewrite or scan | Set NOT NULL | SET NOT NULL reads the whole table under ACCESS EXCLUSIVE, unless a valid CHECK (column IS NOT NULL) constraint already proves it (since 12). Declare that check NOT VALID, validate it, then set NOT NULL; 18 can also add NOT NULL ... NOT VALID. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-altertable.html) |
+| SQLPG211 | metadata only | Drop NOT NULL | DROP NOT NULL changes only the catalog. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-altertable.html) |
+| SQLPG212 | ACCESS EXCLUSIVE rewrite or scan | Change a generated column's expression | ALTER COLUMN SET EXPRESSION (17 and later) rewrites a STORED generated column under ACCESS EXCLUSIVE; on 14 to 16 the column has to be dropped and added. A VIRTUAL column (18) changes only the catalog. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-altertable.html) |
+| SQLPG213 | metadata only | Change a column's identity | ADD, SET and DROP IDENTITY change the column's sequence and the catalog, not the rows. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-altertable.html) |
+| SQLPG214 | ACCESS EXCLUSIVE rewrite or scan | Change a column's collation | A collation change is ALTER COLUMN TYPE with COLLATE: the column's indexes are rebuilt under ACCESS EXCLUSIVE. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-altertable.html) |
+| SQLPG215 | metadata only | Change a column's storage or compression | SET STORAGE and SET COMPRESSION apply to values written afterwards; existing values are not rewritten. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-altertable.html) |
+| SQLPG216 | metadata only | Change a comment | COMMENT ON changes only the catalog. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-comment.html) |
+| SQLPG217 | metadata only | Add a constraint NOT VALID | ADD CONSTRAINT ... NOT VALID checks new rows only and reads none of the existing ones; a foreign key takes SHARE ROW EXCLUSIVE on both tables, briefly. Validate it as a separate step. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-altertable.html) |
+| SQLPG218 | ACCESS EXCLUSIVE rewrite or scan | Add a CHECK constraint | ADD CONSTRAINT ... CHECK reads every row under ACCESS EXCLUSIVE. Declare it NOT VALID, then remove NOT VALID to validate it under SHARE UPDATE EXCLUSIVE (SQLPG220). [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-altertable.html) |
+| SQLPG219 | validates under a weaker lock | Add a foreign key | ADD FOREIGN KEY reads every row under SHARE ROW EXCLUSIVE on both tables, which blocks writes to them for the scan. Declare it NOT VALID, then remove NOT VALID to validate it under SHARE UPDATE EXCLUSIVE (SQLPG220). [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-altertable.html) |
+| SQLPG220 | validates under a weaker lock | Validate a constraint | VALIDATE CONSTRAINT reads every row under SHARE UPDATE EXCLUSIVE, so reads and writes go on (ROW SHARE on a foreign key's referenced table). [Postgres 18 docs](https://www.postgresql.org/docs/18/explicit-locking.html) |
+| SQLPG221 | needs CONCURRENTLY | Add a primary key or unique constraint | ADD PRIMARY KEY or UNIQUE builds its index under ACCESS EXCLUSIVE. Build the unique index CONCURRENTLY first, then ADD CONSTRAINT ... USING INDEX, which changes only the catalog. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-altertable.html) |
+| SQLPG222 | ACCESS EXCLUSIVE rewrite or scan | Add an exclusion constraint | ADD CONSTRAINT ... EXCLUDE builds its index under ACCESS EXCLUSIVE; there is no concurrent form. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-altertable.html) |
+| SQLPG223 | metadata only | Drop a constraint | DROP CONSTRAINT changes the catalog under ACCESS EXCLUSIVE, briefly; a primary key's or unique constraint's index goes with it. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-altertable.html) |
+| SQLPG224 | metadata only | Change storage parameters | SET and RESET of storage parameters change the catalog; fillfactor and the autovacuum parameters take only SHARE UPDATE EXCLUSIVE. Rows are not rewritten; a new fillfactor applies to pages written afterwards. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-altertable.html) |
+| SQLPG225 | ACCESS EXCLUSIVE rewrite or scan | Make a table LOGGED or UNLOGGED | SET LOGGED and SET UNLOGGED rewrite the table under ACCESS EXCLUSIVE. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-altertable.html) |
+| SQLPG226 | ACCESS EXCLUSIVE rewrite or scan | Change a table's access method or tablespace | SET ACCESS METHOD (15 and later) and SET TABLESPACE rewrite the table under ACCESS EXCLUSIVE. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-altertable.html) |
+| SQLPG227 | EXPAND AND CONTRACT | Change partitioning or inheritance | A table's partition key, its parent or bound, INHERITS and OF type cannot be altered in place: a new table is filled and swapped in. DETACH PARTITION CONCURRENTLY (14 and later) and ATTACH PARTITION, which takes SHARE UPDATE EXCLUSIVE on the parent, are the steps. [Postgres 18 docs](https://www.postgresql.org/docs/18/ddl-partitioning.html) |
+| SQLPG228 | EXPAND AND CONTRACT | Rename an object or move it to another schema | RENAME and SET SCHEMA are catalog changes, but every reader still using the old name fails at once: create the new name (a view over the old object works), move readers, drop the old. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-altertable.html) |
+| SQLPG229 | metadata only | Rename an index | ALTER INDEX ... RENAME changes only the catalog; nothing reads an index by name. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-alterindex.html) |
+| SQLPG240 | needs CONCURRENTLY | Create an index CONCURRENTLY | CREATE INDEX CONCURRENTLY builds the index without blocking writes (SHARE UPDATE EXCLUSIVE), in two scans, and cannot run inside a transaction block; a failed build leaves an INVALID index to drop. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-createindex.html#SQL-CREATEINDEX-CONCURRENTLY) |
+| SQLPG241 | needs CONCURRENTLY | Create an index without CONCURRENTLY | CREATE INDEX on an existing table takes SHARE, which blocks every write to the table until the build ends. Declare it CONCURRENTLY. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-createindex.html#SQL-CREATEINDEX-CONCURRENTLY) |
+| SQLPG242 | needs CONCURRENTLY | Drop an index | DROP INDEX takes ACCESS EXCLUSIVE on the table; DROP INDEX CONCURRENTLY waits for running queries instead, and cannot run inside a transaction block. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-dropindex.html) |
+| SQLPG243 | needs CONCURRENTLY | Change an index | An index's definition cannot be altered: it is dropped and created, both CONCURRENTLY to keep writes going (SQLPG240, SQLPG242). [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-createindex.html#SQL-CREATEINDEX-CONCURRENTLY) |
+| SQLPG250 | metadata only | Change a view's query, keeping its columns | CREATE OR REPLACE VIEW replaces the query under ACCESS EXCLUSIVE on the view when the new query keeps the old columns, by name, in order, and only appends new ones. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-createview.html) |
+| SQLPG251 | EXPAND AND CONTRACT | Change a view's columns | A view whose columns are removed, renamed or reordered cannot be replaced: it is dropped and created, and every view and reader on top of it with it. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-createview.html) |
+| SQLPG252 | ACCESS EXCLUSIVE rewrite or scan | Change a materialized view's query | A materialized view's query cannot be altered: it is dropped and created, and its rows are computed again, with every view on top of it dropped too. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-creatematerializedview.html) |
+| SQLPG253 | metadata only | Change a view's options | ALTER VIEW ... SET (check_option, security_barrier, security_invoker) changes only the catalog. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-alterview.html) |
+| SQLPG260 | metadata only | Add an enum label | ALTER TYPE ... ADD VALUE changes only the catalog; since 12 it can run in a transaction block, but the new label cannot be used in that transaction. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-altertype.html) |
+| SQLPG261 | EXPAND AND CONTRACT | Remove or reorder enum labels | An enum label cannot be removed and labels cannot be reordered in place: a new type is created, columns are moved to it, and the old one is dropped. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-altertype.html) |
+| SQLPG262 | validates under a weaker lock | Add a domain constraint | ALTER DOMAIN ADD CONSTRAINT (and SET NOT NULL) checks every column of the domain's type in every table; ADD CONSTRAINT ... NOT VALID skips existing rows and VALIDATE CONSTRAINT checks them later. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-alterdomain.html) |
+| SQLPG263 | metadata only | Change a domain's default or drop its constraint | ALTER DOMAIN SET DEFAULT, DROP NOT NULL and DROP CONSTRAINT change only the catalog. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-alterdomain.html) |
+| SQLPG264 | EXPAND AND CONTRACT | Change a domain's data type | A domain's underlying type cannot be altered: a new domain is created and columns are moved to it. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-alterdomain.html) |
+| SQLPG265 | metadata only | Change a sequence's options | ALTER SEQUENCE changes the sequence's own row; tables are not touched. A sequence's AS type bounds its values. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-altersequence.html) |
+| SQLPG266 | metadata only | Change an extension's version or schema | ALTER EXTENSION UPDATE runs the extension's update script, which may itself alter objects; SET SCHEMA moves its objects. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-alterextension.html) |
+| SQLPG267 | metadata only | Change a schema's owner | ALTER SCHEMA ... OWNER TO changes only the catalog. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-alterschema.html) |
+| SQLPG268 | EXPAND AND CONTRACT | Change an object's kind | A view and a materialized view, or a table and either, are different kinds of object: the old one is dropped and the new one created. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-createview.html) |
+| SQLPG270 | drop | Drop an object | The object and, for a table, a materialized view or a sequence, its data are gone. [Postgres 18 docs](https://www.postgresql.org/docs/18/sql-droptable.html) |

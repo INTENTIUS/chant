@@ -688,7 +688,8 @@ class PgParser extends SqlCursor {
       } else {
         if (!always) this.fail("expected IDENTITY (a generated column is GENERATED ALWAYS AS)");
         const expr = this.checkedParens();
-        const kind = this.accept("VIRTUAL") ? "virtual" : (this.accept("STORED"), "stored");
+        // Neither word is VIRTUAL, the default from 18 (the pinned major); 14 to 17 require STORED.
+        const kind = this.accept("STORED") ? "stored" : (this.accept("VIRTUAL"), "virtual");
         col.generated = { kind, expr, always };
       }
     } else if (this.accept("CHECK")) push("CHECK", { expr: this.checkedParens() });

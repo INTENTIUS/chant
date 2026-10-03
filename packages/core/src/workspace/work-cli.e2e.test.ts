@@ -158,10 +158,37 @@ describe("chant workspace work (#2732)", () => {
     expect(json(closed).error.code).toBe("work-item-closed");
     const verb = await chant(root, ["workspace", "work", "grab", "W-001", "--holder", "a"]);
     expect(verb.code).toBe(1);
-    expect(verb.stderr).toContain("claim, renew, release or history");
+    expect(verb.stderr).toContain("claim, renew, release, history or evidence");
     const noHolder = await chant(root, ["workspace", "work", "claim", "W-001"]);
     expect(noHolder.code).toBe(1);
     expect(noHolder.stderr).toContain("--holder");
+  }, 120_000);
+
+  test("evidence (#3159): needs the holder, the token and the entry, runs only under the live lease, and names only a criterion the item lists", async () => {
+    const entry = JSON.stringify({ criterion: "AC-1", result: "pass", title: "The test", url: "https://example.com/ci/1" });
+    const usage = await chant(root, ["workspace", "work", "evidence", "W-002", "--holder", "a", "--from", "-"]);
+    expect(usage.code).toBe(1);
+    expect(JSON.parse(usage.stdout).error).toMatchObject({ code: "write-usage-invalid", message: expect.stringContaining("--token") });
+    const evidence = (holder: string, token: string) =>
+      new Promise<Run>((resolve) => {
+        const child = spawn(CHANT[0], [...CHANT.slice(1), "workspace", "work", "evidence", "W-002", "--holder", holder, "--token", token, "--from", "-"], { cwd: root, env: { ...process.env, NO_COLOR: "1" } });
+        let stdout = "";
+        let stderr = "";
+        child.stdout.on("data", (d) => (stdout += d));
+        child.stderr.on("data", (d) => (stderr += d));
+        child.on("close", (code) => resolve({ code, stdout, stderr }));
+        child.stdin.end(entry);
+      });
+    // worker-d holds W-002 since the records test above: anyone else is refused.
+    const held = json(await chant(root, ["workspace", "work", "claim", "W-002", "--holder", "ev", "--json"])).refused.heldBy as { holder: string; token: string };
+    const other = await evidence("ev", "none");
+    expect(other.code).toBe(1);
+    expect(JSON.parse(other.stdout).error.code).toBe("lease-held");
+    const stale = await evidence(held.holder, "not-the-token");
+    expect(JSON.parse(stale.stdout).error.code).toBe("lease-token-mismatch");
+    const unlisted = await evidence(held.holder, held.token);
+    expect(unlisted.code).toBe(1);
+    expect(JSON.parse(unlisted.stdout).error.code).toBe("work-criterion-unknown");
   }, 120_000);
 
   test("the lease fields reach an MCP client through workspace-records and workspace-status", async () => {

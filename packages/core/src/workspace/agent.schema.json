@@ -165,6 +165,28 @@
                   }
                 }
               }
+            },
+            "protected": {
+              "type": "array",
+              "description": "Added in contract 1 by #3146. The paths writeScope.agent.protected keeps the session from writing even inside its member, each a glob from the workspace root that also covers everything under a directory it matches, with the top-level keys of a JSON file a write may still change in except. Empty when none is listed. check --changes reports a write to one with write-scope-protected.",
+              "items": {
+                "type": "object",
+                "required": [
+                  "path",
+                  "except"
+                ],
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  },
+                  "except": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
             }
           }
         },
