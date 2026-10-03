@@ -1,7 +1,7 @@
 /**
  * `chant dev pinned-upgrade <lexicon-dir>` command implementation.
  *
- * Detects whether a pinned-version lexicon (k8s, gcp, docker, gitlab) has a
+ * Detects whether a lexicon that declares `upstreamPin` has a
  * newer stable upstream release. When it does, it dry-run bumps the pinned
  * version constant, regenerates + surface-diffs (via #524's regenLexicon), then
  * reverts the bump — leaving the working tree unchanged.
@@ -10,14 +10,13 @@
  */
 
 import { existsSync } from "fs";
-import { basename, resolve } from "path";
+import { resolve } from "path";
 import {
   checkPinnedUpgrade,
+  lexiconNameOf,
   type LexiconId,
   type UpgradeCheckResult,
 } from "../../codegen/pinned-upgrade";
-
-const PINNED_LEXICONS: readonly LexiconId[] = ["k8s", "gcp", "docker", "gitlab"];
 
 export interface PinnedUpgradeOptions {
   /** Resolved path to the lexicon directory. */
@@ -31,12 +30,13 @@ export interface PinnedUpgradeOptions {
 }
 
 /**
- * Infer the lexicon id from a directory name. Returns null when the directory
- * basename is not one of the pinned lexicons.
+ * Infer the lexicon id from a directory: its package name
+ * (`@intentius/chant-lexicon-<name>`), else the directory name. Whether the
+ * lexicon is pinned is the plugin's `upstreamPin`, checked by
+ * `checkPinnedUpgrade`, not a list here.
  */
-export function inferLexicon(lexiconDir: string): LexiconId | null {
-  const name = basename(lexiconDir);
-  return (PINNED_LEXICONS as readonly string[]).includes(name) ? (name as LexiconId) : null;
+export function inferLexicon(lexiconDir: string): LexiconId {
+  return lexiconNameOf(lexiconDir);
 }
 
 /**
@@ -52,22 +52,12 @@ export function semverLabel(result: UpgradeCheckResult): "minor" | "major" | "no
 
 /**
  * Run the pinned-upgrade check and return the structured result.
- * Never throws — a missing dir or an unrecognised lexicon becomes a fetchError.
+ * Never throws — a missing dir or a lexicon with no `upstreamPin` becomes a fetchError.
  */
 export async function runPinnedUpgrade(opts: PinnedUpgradeOptions): Promise<UpgradeCheckResult> {
   const dir = resolve(opts.lexiconDir);
 
   const lexicon = opts.lexicon ?? inferLexicon(dir);
-  if (!lexicon) {
-    return {
-      lexicon: "k8s",
-      hasUpgrade: false,
-      from: "(unknown)",
-      to: null,
-      validation: null,
-      fetchError: `Not a pinned lexicon directory: ${dir}. Expected one of: ${PINNED_LEXICONS.join(", ")}.`,
-    };
-  }
 
   if (!existsSync(dir)) {
     return {
@@ -128,6 +118,7 @@ export function printPinnedUpgradeResult(result: UpgradeCheckResult, json: boole
           validationOk: result.validation?.ok ?? null,
           failures: result.validation?.failures ?? [],
           fetchError: result.fetchError,
+          manualPin: result.manualPin ?? null,
         },
         null,
         2,
@@ -147,6 +138,15 @@ export function printPinnedUpgradeResult(result: UpgradeCheckResult, json: boole
         `  pinned=${result.from}` +
         (result.to ? ` latest=${result.to}` : ""),
     );
+    return;
+  }
+
+  if (result.manualPin) {
+    console.log(
+      c(`[${result.lexicon}] upgrade available`, COLORS.bold) + `  ${result.from} -> ${result.to}`,
+    );
+    console.log(`  The pin in ${result.manualPin.file} cannot be rewritten generically, so nothing was edited or regenerated.`);
+    console.log(`  ${result.manualPin.instructions}`);
     return;
   }
 

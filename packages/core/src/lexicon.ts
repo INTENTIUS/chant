@@ -432,6 +432,13 @@ export interface UpstreamPin {
   readonly pattern: RegExp;
   /** Rebuild a line that matched `pattern`, substituting the new version. */
   replace(newVersion: string, line: string): string;
+  /**
+   * Set when the version line is not the whole pin: other constants (an image
+   * digest, a checksum) move with it and `replace` cannot compute them. The
+   * upgrade tooling then reports the newer version and this text, and edits
+   * nothing. Say what to move and how.
+   */
+  readonly alsoMoves?: string;
   /** Where to query for the latest stable upstream tag. */
   readonly upstream: {
     readonly owner: string;
