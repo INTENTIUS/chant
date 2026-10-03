@@ -107,7 +107,7 @@ describe("a work lease in one clone", () => {
 
     const again = await claimWorkLease("W-003", "carol", { cwd, ttlMs: 1_000, now: at(t0) });
     if (!again.ok) throw new Error(again.message);
-    const closed = await releaseWorkLease("W-003", "dispatcher", { cwd, outcome: "expired", now: at("2026-09-25T11:00:00.000Z") });
+    const closed = await releaseWorkLease("W-003", "dispatcher", { cwd, outcome: "abandoned", now: at("2026-09-25T11:00:00.000Z") });
     expect(closed).toMatchObject({ ok: true, lease: { holder: "carol" } });
   });
 

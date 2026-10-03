@@ -52,7 +52,11 @@ ref-002 puts the home screen's spec in the design member, and the app is to impl
 | `evidence` | The proof of done: links, or workspace files pinned by hash. Empty while the work is open. |
 | `owner` | Who has taken the work, a forge login or an agent's name. Optional. |
 | `opened_on`, `closed_on` | Dates as `YYYY-MM-DD`. `closed_on` is set on `done` or `dropped`. |
-| `source` | Where the work came from: a gap, an issue (`issue`), the workspace (`kind: workspace` with a `member`), or a person's ask (`ask`). A gap may name the `finding-triage` answer that made it work as `answer`. |
+| `contract` | Optional. The contract record the work builds, by id. See [Contract, tier and attempts](#contract-tier-and-attempts). |
+| `tier` | Optional. The builder tier the work is built at, one of the tiers the kind declares. |
+| `max_attempts` | Optional. How many failed attempts the item gets before a runner leaves it to people, in place of the kind's default. |
+| `result` | Optional. `{ lease: <token> }`, the lease the last build ran under. Nothing else about the build goes on the item. |
+| `source` | Where the work came from: a gap, an issue (`issue`), the workspace (`kind: workspace` with a `member`), a person's ask (`ask`), or the box's decided intent (`intent`). A gap may name the `finding-triage` answer that made it work as `answer`. |
 | `supersedes` | Earlier work this one replaces, as `{ work: <id> }`. |
 
 To write one without an editor, pass its fields as JSON to `records new` and leave out `id`. The command picks the next id (`W-003` after `W-002`) and writes the file once the schema accepts it:
@@ -68,7 +72,7 @@ A work kind declares no reviews, so `records review` on W-003 is refused with `r
 
 An item an agent or a decision point's model suggests opens `proposed`, the work kind's first state ([#2741](https://github.com/INTENTIUS/chant/issues/2741)). `records new work --by <name>` writes the proposer to `proposed_by`, and the MCP `records-new` tool opens every new work item `proposed`. A proposed item is never `ready`. A person keeps it by amending its state to `open`, or drops it. [Decision Points](/chant/guide/decision-points/#from-a-finding-to-a-work-item) shows the flow from a finding's triage answer to a kept work item.
 
-Fields that start with `x-` are free for your own use. W-001 keeps its id while its state changes, so the file is edited in place rather than written once under a content hash. A kind may read JSON files since [ws-053](https://github.com/INTENTIUS/chant/issues/2664), but `records new` and `records amend` write Markdown only, so the work kind stays Markdown until they write JSON.
+Fields that start with `x-` are free for your own use. The fields above replace the `x-factory` fields studio kept on work items, and studio's `x-studio` block on work is retired. W-001 keeps its id while its state changes, so the file is edited in place rather than written once under a content hash. A kind may read JSON files since [ws-053](https://github.com/INTENTIUS/chant/issues/2664), but `records new` and `records amend` write Markdown only, so the work kind stays Markdown until they write JSON.
 
 ## Start from a gap
 
@@ -128,6 +132,24 @@ chant workspace records new work --from - <<'JSON'
 JSON
 ```
 
+## Start from the box's intent
+
+The first build of a box comes from its intent: the decision its `box` block names, once a person decides it ([#2850](https://github.com/INTENTIUS/chant/issues/2850), [#3147](https://github.com/INTENTIUS/chant/issues/3147)). `source.intent` records the decision and the person's answer to it:
+
+```yaml
+implements:
+  - "intent-001"
+source:
+  intent:
+    decision: "intent-001"
+    question: "What should this box build?"
+    answer: "A notes app with tags"
+    by: "morgan"
+    at: "2026-10-03T09:00:00Z"
+```
+
+`decision`, `answer` and `by` are required. A runner treats the item like an ask, and builds it once.
+
 ## Ready and blocked
 
 `chant workspace records` reads the work kind, and the decision kind it names in `work.decisions`, at the same revision:
@@ -166,6 +188,32 @@ The read warns about links it can't follow. The warnings leave the record valid:
 | `work-done-gap-open` | is done, and the finding its `source` names still fires on its region |
 | `work-acceptance-unmet` | is done, and an [acceptance criterion](#acceptance-criteria) has no passing evidence of the verification it expects |
 | `work-acceptance-self-verified` | has a passing `manual` verdict by its own `owner`, which does not count |
+| `work-contract-unknown` | names a contract no record of the kind's contract kind has |
+| `work-contract-undecided` | names a contract that is not approved, such as a draft |
+| `work-tier-unknown` | names a `tier` the kind's `work.tier.tiers` doesn't list |
+
+## Contract, tier and attempts
+
+The work kind's `work` block declares four more links ([#3147](https://github.com/INTENTIUS/chant/issues/3147)). Each is optional, and the reference kind declares the last three:
+
+```js
+work: {
+  // ...
+  tier: { field: "tier", tiers: ["small", "medium", "large"] },
+  attempts: { field: "max_attempts", max: 3 },
+  answers: "../answers/answer.kind.mjs",
+  contract: { field: "contract", kind: "../contracts/contract.kind.mjs" },
+},
+```
+
+| Entry | What the read does with it |
+|---|---|
+| `contract` | Takes the field holding the contract record the item builds, and that contract's kind file. `records --json` gives each item `contract: { id, state }`, or `null` when it names none. An unknown contract is warned `work-contract-unknown`, and one the contract kind doesn't rank as approved `work-contract-undecided`. The reference workspace has no contract kind yet, so its kind leaves this entry out. |
+| `tier` | Takes the field holding the item's builder tier and the tiers the workspace allows, listed once. A tier outside them is warned `work-tier-unknown`. Without a tier, the slice-tier decision point picks one. |
+| `attempts` | Takes the field holding an item's own attempt limit and the default `max`. [`chant workspace work history`](/chant/cli/workspace-work/#history) counts failed attempts from the lease history against it and says when the item is exhausted. |
+| `answers` | Takes the answer kind file. `records --json` gives each item `answers`, every decision-point answer whose `constrains` holds the item's id, with its `point`, `state`, `answer` and `answeredBy`. In the working tree this includes the answers a steward keeps on the lifecycle ledger. The understand point's answer about an item is read here, never stored on the item. |
+
+`result` keeps only the lease token of the last build. What ran it, the agent, model, harness and session, belongs to the run record.
 
 ## Pick ready work as an agent
 

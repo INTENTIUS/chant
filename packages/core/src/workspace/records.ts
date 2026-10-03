@@ -419,6 +419,23 @@ export const recordKindSchema = z
      * done record with a criterion that no passing evidence meets is warned
      * `work-acceptance-unmet`, which `check` fails on (WSP117). Optional, and
      * a record without the list is read as before.
+     *
+     * #3147 adds four, each optional:
+     *
+     * - `contract`: the front-matter field naming the contract record the
+     *   item builds, and the kind file of those records (relative to this
+     *   kind file). Each record gets `contract` with that record's state,
+     *   warned `work-contract-unknown` or `work-contract-undecided`.
+     * - `tier`: the field holding the item's builder tier, and the tiers the
+     *   workspace allows, declared once here. A tier outside them is warned
+     *   `work-tier-unknown`.
+     * - `attempts`: the field holding an item's own attempt limit, and the
+     *   default `max` for items without one. `work history` counts attempts
+     *   against it.
+     * - `answers`: the answer kind file (relative to this kind file) whose
+     *   records answer decision points about an item. Each record gets
+     *   `answers`, the answers whose `constrains` names its id, joined by id
+     *   rather than copied onto the item.
      */
     work: z
       .object({
@@ -429,6 +446,14 @@ export const recordKindSchema = z
         done: z.string().min(1),
         closedOn: z.string().min(1),
         acceptance: z.object({ field: z.string().min(1), implementer: z.string().min(1) }).strict().optional(),
+        contract: z.object({ field: z.string().min(1), kind: z.string().min(1) }).strict().optional(),
+        tier: z
+          .object({ field: z.string().min(1), tiers: z.array(z.string().min(1)).min(1) })
+          .strict()
+          .refine((t) => new Set(t.tiers).size === t.tiers.length, { message: "work.tier.tiers lists each tier once", path: ["tiers"] })
+          .optional(),
+        attempts: z.object({ field: z.string().min(1), max: z.number().int().min(1) }).strict().optional(),
+        answers: z.string().min(1).optional(),
       })
       .strict()
       .optional(),
@@ -1148,6 +1173,8 @@ export interface RecordEntry {
   implements?: WorkLink[];
   /** For a work kind with acceptance criteria (#2772): how many of the record's criteria passing evidence meets, or null when it lists none. */
   acceptance?: WorkAcceptance | null;
+  /** For a work kind with a contract link (#3147): the contract record the item builds, with its state, or null when it names none. */
+  contract?: WorkLink | null;
 }
 
 export interface ReadRecordsOptions {

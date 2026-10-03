@@ -199,6 +199,17 @@
         "state": { "type": ["string", "null"], "description": "The linked record's state as it writes it, or null when no record has the id." }
       }
     },
+    "workAnswer": {
+      "type": "object",
+      "required": ["id", "point", "state", "answer", "answeredBy"],
+      "properties": {
+        "id": { "type": "string", "description": "The answer record's id: the point's name and the first 12 hex digits of its inputs hash." },
+        "point": { "type": ["string", "null"], "description": "The decision point it answers." },
+        "state": { "type": ["string", "null"], "description": "escalated, proposed or answered." },
+        "answer": { "oneOf": [{ "type": "string" }, { "type": "boolean" }, { "type": "null" }], "description": "The answer, or null while there is none." },
+        "answeredBy": { "type": "array", "items": { "type": "string" }, "description": "The people who answered or confirmed it; empty when a table or a model answered." }
+      }
+    },
     "decisionWork": {
       "type": "object",
       "required": ["id", "path", "state", "supersededBy", "implementedBy"],
@@ -243,7 +254,7 @@
           "items": { "$ref": "#/$defs/asset" }
         },
         "warnings": {
-          "description": "Added in contract 1 by #2549. Findings that leave the record valid: a pinned file that changed, went missing or did not follow a superseding decision, a supersedes link that has no effect yet, (added by #2654) an evidence list that is empty, (added by #2672) a verdict that names no digest, or (added by #2683) a work record's links and dates, or (added by #2688) a record whose author seal is not attested under a signers file at base, or (added by #2772) a work record's acceptance criteria unmet when it is done, or met by a manual verdict from its implementer. A work record never carries record-no-evidence; a done one with no evidence carries work-done-unpinned. valid and --current do not look at them.",
+          "description": "Added in contract 1 by #2549. Findings that leave the record valid: a pinned file that changed, went missing or did not follow a superseding decision, a supersedes link that has no effect yet, (added by #2654) an evidence list that is empty, (added by #2672) a verdict that names no digest, or (added by #2683) a work record's links and dates, or (added by #2688) a record whose author seal is not attested under a signers file at base, or (added by #2772) a work record's acceptance criteria unmet when it is done, or met by a manual verdict from its implementer, or (added by #3147) a work record's contract that no record has or nobody approved, or a builder tier its kind does not list. A work record never carries record-no-evidence; a done one with no evidence carries work-done-unpinned. valid and --current do not look at them.",
           "type": "array",
           "items": { "$ref": "#/$defs/warning" }
         },
@@ -290,6 +301,15 @@
         "worktree": {
           "enum": ["committed", "modified", "new"],
           "description": "Added in contract 1 by #3160, on every record of a read of the working tree in a git repository; absent under --at and outside git. committed when the file is as HEAD holds it, modified when it differs from HEAD, new when HEAD doesn't hold it, staged or not. modified and new are the records a person has kept and not yet committed or applied."
+        },
+        "contract": {
+          "description": "Added in contract 1 by #3147, on every parsed record of a work kind whose work block names a contract kind. The contract record the item builds, by the id in the work block's contract field, with that record's state now; state is null when no record of the contract kind has the id. Null when the item names no contract.",
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/workLink" }]
+        },
+        "answers": {
+          "description": "Added in contract 1 by #3147, on every record with an id of a work kind whose work block names an answer kind. The decision-point answers about the item: each answer record whose constrains names the item's id, in path order, joined by id and never copied onto the item. Read at the same revision; in the working tree, with the answers a steward keeps on the lifecycle ledger laid over it. Absent when the answer kind can't be read.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/workAnswer" }
         },
         "lease": {
           "description": "Added in contract 1 by #2732, on every record of a work kind with an id, read in the working tree (absent under --at). The item's active work lease (chant workspace work claim), or null when nobody holds one live. Read from the local lease refs, refs/chant/lease/[_members/<member>/]work/<id> and the remote's as last fetched, of the ledger owning the work kind file; records never fetches.",
@@ -367,6 +387,9 @@
             "work-done-gap-open",
             "work-acceptance-unmet",
             "work-acceptance-self-verified",
+            "work-contract-unknown",
+            "work-contract-undecided",
+            "work-tier-unknown",
             "answer-points-unreadable",
             "answer-point-unknown",
             "answer-point-changed",

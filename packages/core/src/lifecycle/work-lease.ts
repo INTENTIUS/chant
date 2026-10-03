@@ -100,6 +100,93 @@ export interface WorkLeaseState extends WorkLease {
   ref: string;
 }
 
+/**
+ * How a work lease can end (#3147): the closed list of outcomes a release
+ * records. A new outcome is a contract change. Readers of an older history
+ * may still find free text from before the list was closed, which counts as
+ * an attempt (see {@link outcomeCountsAsAttempt}).
+ */
+export const WORK_LEASE_OUTCOMES = [
+  /** The work was finished: built, checked and recorded. */
+  "done",
+  /** A build ran and did not finish, or the run failed. Counts as an attempt. */
+  "not_done",
+  /** An expired lease closed out by someone other than its holder: the worker went away. Counts as an attempt. */
+  "abandoned",
+  /** The run stopped at a gate, waiting for an approval. */
+  "gated",
+  /** The run stopped on a decision point's open question, waiting for a person. */
+  "waiting",
+  /** The item was dropped, such as by a refuse at the understand point. Nothing was built. */
+  "dropped",
+  /** The understand point answered redraft: the item goes back to its author. Nothing was built. */
+  "redraft",
+  /** The understand point answered ask: the item waits on a question to its author. Nothing was built. */
+  "ask",
+] as const;
+export type WorkLeaseOutcome = (typeof WORK_LEASE_OUTCOMES)[number];
+
+/** The outcomes that count toward an item's attempt limit. */
+export const ATTEMPT_OUTCOMES: readonly WorkLeaseOutcome[] = ["not_done", "abandoned"];
+
+/** Whether `value` is one of {@link WORK_LEASE_OUTCOMES}. */
+export function isWorkLeaseOutcome(value: unknown): value is WorkLeaseOutcome {
+  return typeof value === "string" && (WORK_LEASE_OUTCOMES as readonly string[]).includes(value);
+}
+
+/**
+ * Whether a release with `outcome` counts toward the item's attempt limit:
+ * `not_done` and `abandoned` do, and so does a release that gave no outcome
+ * or one outside the closed list (free text written before #3147), since
+ * nothing says the work got anywhere.
+ */
+export function outcomeCountsAsAttempt(outcome: string | null | undefined): boolean {
+  if (!isWorkLeaseOutcome(outcome)) return true;
+  return ATTEMPT_OUTCOMES.includes(outcome);
+}
+
+/** The ref prefix that keeps an unfinished attempt's work (#3147). */
+export const KEPT_REF_PREFIX = "refs/chant/kept/";
+
+/**
+ * Where the work of an attempt that ended `not_done` is kept: one ref per
+ * lease token, `refs/chant/kept/[<member>/...]<item>/<token>`, scoped by the
+ * members the way the work branch `chant/work/[<member>/]<item>` is.
+ */
+export function keptAttemptRef(id: string, token: string, members: readonly string[] = []): string {
+  return `${keptAttemptPrefix(id, members)}${token}`;
+}
+
+/** The prefix under which every kept attempt of item `id` sits. */
+export function keptAttemptPrefix(id: string, members: readonly string[] = []): string {
+  return `${KEPT_REF_PREFIX}${members.length ? `${members.join("/")}/` : ""}${id}/`;
+}
+
+/** One kept attempt, as `work history` lists it. */
+export interface KeptAttempt {
+  /** The lease token the attempt ran under. */
+  token: string;
+  ref: string;
+  /** The commit the ref points at. */
+  commit: string;
+}
+
+/** Every kept attempt of item `id`, from the local refs, sorted by ref. Empty outside git. */
+export async function listKeptAttempts(id: string, opts: { cwd: string; members?: readonly string[] }): Promise<KeptAttempt[]> {
+  const prefix = keptAttemptPrefix(id, opts.members ?? []);
+  const out = await getRuntime().spawn(["git", "for-each-ref", "--format=%(refname) %(objectname)", prefix], { cwd: opts.cwd });
+  if (out.exitCode !== 0) return [];
+  return out.stdout
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => {
+      const [ref, commit] = line.split(" ");
+      return { token: ref.slice(prefix.length), ref, commit };
+    })
+    .filter((k) => k.token !== "" && !k.token.includes("/"))
+    .sort((a, b) => (a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0));
+}
+
 /** One line of `_leases/<id>.jsonl`. */
 export interface LeaseHistoryRecord {
   version: 1;
@@ -115,7 +202,7 @@ export interface LeaseHistoryRecord {
   expiresAt: string;
   /** When the event happened. */
   timestamp: string;
-  /** How the work ended, on a release. Free text such as done, not_done or skipped. */
+  /** How the work ended, on a release: one of {@link WORK_LEASE_OUTCOMES}, or free text in a line written before #3147. */
   outcome?: string;
   note?: string;
 }
@@ -257,7 +344,8 @@ async function finish(
 /**
  * Give the lease on `id` back. The holder releases a live lease (with
  * `token`, only that one); anyone may release an expired one, which is how an
- * abandoned claim is closed out. `outcome` says how the work ended. Refused
+ * abandoned claim is closed out. `outcome` says how the work ended, from the
+ * closed list {@link WORK_LEASE_OUTCOMES}; any other value throws. Refused
  * with `lease-not-held` when there is no lease, and `lease-held` when someone
  * else holds it live.
  */
@@ -267,6 +355,9 @@ export async function releaseWorkLease(
   opts: WorkLeaseOptions & { token?: string; outcome?: string; note?: string },
 ): Promise<WorkLeaseResult> {
   checkId(id);
+  if (opts.outcome !== undefined && !isWorkLeaseOutcome(opts.outcome)) {
+    throw new Error(`${JSON.stringify(opts.outcome)} is not a work lease outcome: use one of ${WORK_LEASE_OUTCOMES.join(", ")}`);
+  }
   const key = workLeaseKey(id);
   const now = opts.now?.() ?? new Date();
   const { record } = await readLease(key, { cwd: opts.cwd });

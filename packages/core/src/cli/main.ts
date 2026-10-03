@@ -923,7 +923,7 @@ Workspace (level 1, #2524):
                         closing commit and seal, in one write. Without
                         --kind, the one session kind the declaration names.
                         Prints {path, id, changed, seal, closedRev}
-  workspace work claim|renew|release <id> --holder <name> [--kind <kind file>] [--ttl <seconds|duration>] [--token <token>] [--outcome <text>] [--note <text>] [--json]
+  workspace work claim|renew|release <id> --holder <name> [--kind <kind file>] [--ttl <seconds|duration>] [--token <token>] [--outcome <outcome>] [--note <text>] [--json]
                         Take, heartbeat or give back the lease on a work item:
                         refs/chant/lease/work/<id>, a compare-and-set ref with a
                         fencing token and an expiry, pushed to the remote so

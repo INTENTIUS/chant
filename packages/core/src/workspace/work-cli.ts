@@ -26,13 +26,18 @@ import type { CommandContext } from "../cli/registry";
 import { parseDuration } from "../op/duration";
 import {
   claimWorkLease,
+  isWorkLeaseOutcome,
   leaseHistoryPath,
+  listKeptAttempts,
   listWorkLeases,
+  outcomeCountsAsAttempt,
   readLeaseHistory,
   releaseWorkLease,
   renewWorkLease,
   workLeaseRef,
   WORK_ITEM_ID_PATTERN,
+  WORK_LEASE_OUTCOMES,
+  type KeptAttempt,
   type WorkLease,
   type WorkLeaseRefusal,
   type WorkLeaseResult,
@@ -53,10 +58,10 @@ export const WORK_LEASE_CONTRACT_VERSION = 1;
 /** `$id` of the JSON Schema for the `--json` output, shipped beside this file. */
 export const WORK_LEASE_OUTPUT_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/work-lease/v1/work-lease.schema.json";
 
-export { WORK_LEASE_REFUSALS } from "../lifecycle/work-lease";
+export { WORK_LEASE_REFUSALS, WORK_LEASE_OUTCOMES } from "../lifecycle/work-lease";
 
 const USAGE = [
-  "chant workspace work claim|renew|release <id> --holder <name> [--kind <kind file>] [--ttl <seconds|duration>] [--token <token>] [--outcome <text>] [--note <text>] [--json]",
+  "chant workspace work claim|renew|release <id> --holder <name> [--kind <kind file>] [--ttl <seconds|duration>] [--token <token>] [--outcome <outcome>] [--note <text>] [--json]",
   "chant workspace work history <id> [--kind <kind file>] [--json]",
 ].join("\n");
 
@@ -193,6 +198,9 @@ export async function workLease(req: WorkLeaseRequest): Promise<WorkLeaseDocumen
   const doc = { $schema: WORK_LEASE_OUTPUT_SCHEMA_ID, contract: WORK_LEASE_CONTRACT_VERSION };
   try {
     if (!WORK_ITEM_ID_PATTERN.test(req.id) || req.id.includes("..")) throw new WorkError("write-usage-invalid", `${JSON.stringify(req.id)} is not a work item id`);
+    if (req.outcome !== undefined && !isWorkLeaseOutcome(req.outcome)) {
+      throw new WorkError("write-usage-invalid", `${JSON.stringify(req.outcome)} is not a lease outcome: use one of ${WORK_LEASE_OUTCOMES.join(", ")}`);
+    }
     if (!gitRoot(req.cwd)) throw new WorkError("not-a-git-repository", "a work lease is a git ref, and this directory is not in a git repository");
     const { loaded, state, root } = await findWorkItem(req.id, req.cwd, req.kind);
     if (req.verb === "claim" && state !== null && (loaded.kind.closedStates ?? []).includes(state)) {
@@ -259,6 +267,27 @@ export interface LeaseClaim {
   ended: ClaimEnd;
   /** The release, when it was released. */
   release: { by: string; at: string; outcome: string | null; note: string | null } | null;
+  /**
+   * Whether the claim counts toward the item's attempt limit (#3147): one
+   * released `not_done` or `abandoned`, with no outcome or an outcome from
+   * before the list was closed, or one that expired or was lost unreleased.
+   * Not one that is held, and not one released with any other outcome.
+   */
+  attempt: boolean;
+  /** The ref keeping this claim's unfinished work, `refs/chant/kept/.../<item>/<token>`, or null. */
+  kept: string | null;
+}
+
+/** An item's attempts against its limit (#3147). */
+export interface WorkAttempts {
+  /** The claims that count as attempts. */
+  failed: number;
+  /** The item's limit: its own field, else its kind's default; null when neither declares one. */
+  limit: number | null;
+  /** How many attempts are left, never below 0; null without a limit. */
+  remaining: number | null;
+  /** True once failed reaches the limit: a runner leaves the item to people. */
+  exhausted: boolean;
 }
 
 /** What `work history --json` prints. */
@@ -283,17 +312,21 @@ export type WorkHistoryDocument =
       /** Lines of the history that are not lease events, left out. */
       malformed: number;
       summary: { claims: number; released: number; held: number; expired: number; lost: number; outcomes: Record<string, number> };
+      /** The item's attempts against its limit (#3147). */
+      attempts: WorkAttempts;
+      /** Every kept attempt of the item, by ref (#3147). */
+      kept: KeptAttempt[];
     }
   | { $schema: string; contract: number; chant: string; error: { code: WorkHistoryErrorCode; message: string } };
 
 /** Fold a history into its claims: one per token, in the order they were first seen. */
-export function claimsOf(events: LeaseHistoryRecord[], live: Pick<WorkLeaseState, "token" | "state"> | null): LeaseClaim[] {
+export function claimsOf(events: LeaseHistoryRecord[], live: Pick<WorkLeaseState, "token" | "state"> | null, kept: readonly KeptAttempt[] = []): LeaseClaim[] {
   const byToken = new Map<string, LeaseClaim>();
   const order: string[] = [];
   for (const e of events) {
     let c = byToken.get(e.token);
     if (!c) {
-      c = { token: e.token, holder: e.holder, acquiredAt: e.acquiredAt, expiresAt: e.expiresAt, renewals: 0, ended: "expired", release: null };
+      c = { token: e.token, holder: e.holder, acquiredAt: e.acquiredAt, expiresAt: e.expiresAt, renewals: 0, ended: "expired", release: null, attempt: false, kept: null };
       byToken.set(e.token, c);
       order.push(e.token);
     }
@@ -307,8 +340,28 @@ export function claimsOf(events: LeaseHistoryRecord[], live: Pick<WorkLeaseState
     else if (live && live.token === token) c.ended = live.state === "active" ? "held" : "expired";
     else if (i < order.length - 1) c.ended = "lost";
     else c.ended = "expired";
+    c.attempt = c.ended === "released" ? outcomeCountsAsAttempt(c.release?.outcome) : c.ended !== "held";
+    c.kept = kept.find((k) => k.token === token)?.ref ?? null;
     return c;
   });
+}
+
+/**
+ * The attempt limit of a work record (#3147): the integer in the field the
+ * kind's `work.attempts.field` names, else the kind's `work.attempts.max`;
+ * null when the kind declares no attempts.
+ */
+export function attemptLimit(kind: LoadedRecordKind["kind"], data: Record<string, unknown> | null): number | null {
+  const spec = kind.work?.attempts;
+  if (!spec) return null;
+  const own = data?.[spec.field];
+  return typeof own === "number" && Number.isInteger(own) && own >= 1 ? own : spec.max;
+}
+
+/** Count `claims`' attempts against `limit`. */
+export function attemptsOf(claims: readonly LeaseClaim[], limit: number | null): WorkAttempts {
+  const failed = claims.filter((c) => c.attempt).length;
+  return { failed, limit, remaining: limit === null ? null : Math.max(0, limit - failed), exhausted: limit !== null && failed >= limit };
 }
 
 /**
@@ -322,12 +375,13 @@ export async function workHistory(req: { id: string; cwd: string; kind?: string 
   try {
     if (!WORK_ITEM_ID_PATTERN.test(req.id) || req.id.includes("..")) throw new WorkError("work-item-unknown", `${JSON.stringify(req.id)} is not a work item id`);
     if (!gitRoot(req.cwd)) throw new WorkError("not-a-git-repository", "a work lease's history is on the chant/lifecycle branch, and this directory is not in a git repository");
-    const { loaded, root } = await findWorkItem(req.id, req.cwd, req.kind);
+    const { loaded, root, record } = await findWorkItem(req.id, req.cwd, req.kind);
     const leaseCwd = dirname(loaded.file);
-    const { prefix } = await resolveMemberLedger(leaseCwd);
+    const { prefix, members } = await resolveMemberLedger(leaseCwd);
     const { records: events, malformed } = await readLeaseHistory(req.id, { cwd: leaseCwd });
     const live = (await listWorkLeases({ cwd: leaseCwd, memberPrefix: prefix })).find((l) => l.item === req.id) ?? null;
-    const claims = claimsOf(events, live);
+    const kept = await listKeptAttempts(req.id, { cwd: leaseCwd, members });
+    const claims = claimsOf(events, live, kept);
     const count = (end: ClaimEnd) => claims.filter((c) => c.ended === end).length;
     const outcomes: Record<string, number> = {};
     for (const c of claims) if (c.release?.outcome) outcomes[c.release.outcome] = (outcomes[c.release.outcome] ?? 0) + 1;
@@ -342,6 +396,8 @@ export async function workHistory(req: { id: string; cwd: string; kind?: string 
       events,
       malformed,
       summary: { claims: claims.length, released: count("released"), held: count("held"), expired: count("expired"), lost: count("lost"), outcomes },
+      attempts: attemptsOf(claims, attemptLimit(loaded.kind, record.data)),
+      kept,
     };
   } catch (err) {
     if (err instanceof WorkError) return { ...head, error: { code: err.code as WorkHistoryErrorCode, message: err.message } };
@@ -357,6 +413,10 @@ export function formatWorkHistory(doc: Extract<WorkHistoryDocument, { claims: un
     lines.push(`  ${c.acquiredAt}  ${c.holder}  token ${c.token}  ${c.renewals} renewal${c.renewals === 1 ? "" : "s"}  ${how}`);
   }
   if (doc.claims.length === 0) lines.push("  never claimed");
+  const a = doc.attempts;
+  if (a.limit !== null) lines.push(`  ${a.failed} of ${a.limit} attempt${a.limit === 1 ? "" : "s"} used${a.exhausted ? "; left to people" : ""}`);
+  else if (a.failed > 0) lines.push(`  ${a.failed} attempt${a.failed === 1 ? "" : "s"} counted; the kind declares no limit`);
+  for (const k of doc.kept) lines.push(`  kept: ${k.ref} (${k.commit.slice(0, 12)})`);
   if (doc.malformed > 0) lines.push(`  ${doc.malformed} malformed line${doc.malformed === 1 ? "" : "s"} left out`);
   return lines.join("\n");
 }
