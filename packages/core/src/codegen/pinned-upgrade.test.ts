@@ -12,8 +12,11 @@ import {
   revertVersionBump,
   checkPinnedUpgrade,
   loadUpstreamPin,
+  lexiconNameOf,
+  applyPinnedVersionBump,
   type LexiconId,
 } from "./pinned-upgrade";
+import { runPinnedUpgrade } from "../cli/commands/pinned-upgrade";
 
 // ── Version parsing / comparison ──────────────────────────────────────
 
@@ -395,5 +398,106 @@ describe("loadUpstreamPin — pin descriptors come from the lexicon plugins (#68
 
   test("an unresolvable lexicon package resolves to null (tolerant)", async () => {
     expect(await loadUpstreamPin("definitely-not-a-lexicon")).toBeNull();
+  });
+});
+
+// ── #3258: any lexicon that declares upstreamPin, loaded from its directory ──
+
+describe("loadUpstreamPin from a lexicon directory (#3258)", () => {
+  const repoLexicons = join(__dirname, "../../../../lexicons");
+
+  test("sql: -lts tag suffix, a replace that strips the tag, and a companion-digest note", async () => {
+    const dir = join(repoLexicons, "sql");
+    const pin = await loadUpstreamPin(lexiconNameOf(dir), dir);
+    expect(pin?.upstream).toEqual({ owner: "ClickHouse", repo: "ClickHouse", kind: "releases", tagSuffix: "-lts" });
+    expect(pin?.alsoMoves).toMatch(/CLICKHOUSE_IMAGE_DIGEST/);
+    expect(pin?.replace("v26.8.20.5-lts", 'export const CLICKHOUSE_VERSION = "26.8.15.10";')).toBe(
+      'export const CLICKHOUSE_VERSION = "26.8.20.5";',
+    );
+  });
+
+  test("k3s and cedar declare a pin and no companion note", async () => {
+    for (const name of ["k3s", "cedar"]) {
+      const dir = join(repoLexicons, name);
+      const pin = await loadUpstreamPin(lexiconNameOf(dir), dir);
+      expect(pin, name).not.toBeNull();
+      expect(pin?.alsoMoves, name).toBeUndefined();
+    }
+  });
+
+  test("lexiconNameOf reads the package name, then the directory name", () => {
+    expect(lexiconNameOf(join(repoLexicons, "sql"))).toBe("sql");
+    const root = mkdtempSync(join(tmpdir(), "chant-name-"));
+    try {
+      expect(lexiconNameOf(root)).toBe(root.split("/").pop());
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a directory whose plugin has no upstreamPin gets a clear message", async () => {
+    const result = await runPinnedUpgrade({ lexiconDir: join(repoLexicons, "aws") });
+    expect(result.hasUpgrade).toBe(false);
+    expect(result.fetchError).toMatch(/declares no upstreamPin/);
+  });
+});
+
+describe("pinned-upgrade for a pin that moves with a digest (sql shape, network mocked)", () => {
+  function sqlShaped(root: string): { dir: string; pin: string } {
+    const dir = makeWorkingLexicon(root, "sql", "src/spec/pin.ts", [
+      'export const CLICKHOUSE_VERSION = "26.8.15.10";',
+      'export const CLICKHOUSE_IMAGE_DIGEST = "sha256:aaaa";',
+      "",
+    ].join("\n"));
+    return { dir, pin: join(dir, "src/spec/pin.ts") };
+  }
+
+  test("reports the newer -lts version with instructions and edits nothing", async () => {
+    const root = mkdtempSync(join(tmpdir(), "chant-up-"));
+    try {
+      const { dir, pin } = sqlShaped(root);
+      const before = readFileSync(pin, "utf-8");
+      const result = await checkPinnedUpgrade({
+        lexiconDir: dir,
+        lexicon: "sql",
+        resolverOverride: async () => "v26.8.20.5-lts",
+      });
+      expect(result.hasUpgrade).toBe(true);
+      expect(result.from).toBe("26.8.15.10");
+      expect(result.to).toBe("v26.8.20.5-lts");
+      expect(result.validation).toBeNull();
+      expect(result.manualPin?.file).toBe("src/spec/pin.ts");
+      expect(result.manualPin?.instructions).toMatch(/digest/);
+      expect(readFileSync(pin, "utf-8")).toBe(before);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("the -lts tag compares equal to the bare pinned version", async () => {
+    const root = mkdtempSync(join(tmpdir(), "chant-up-"));
+    try {
+      const { dir } = sqlShaped(root);
+      const result = await checkPinnedUpgrade({
+        lexiconDir: dir,
+        lexicon: "sql",
+        resolverOverride: async () => "v26.8.15.10-lts",
+      });
+      expect(result.hasUpgrade).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("applyPinnedVersionBump refuses a pin it cannot rewrite generically", async () => {
+    const root = mkdtempSync(join(tmpdir(), "chant-up-"));
+    try {
+      const { dir, pin } = sqlShaped(root);
+      const before = readFileSync(pin, "utf-8");
+      await expect(applyPinnedVersionBump("sql", dir, "v26.8.20.5-lts")).rejects.toThrow(/generically/);
+      expect(readFileSync(pin, "utf-8")).toBe(before);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

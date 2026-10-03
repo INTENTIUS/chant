@@ -1,5 +1,6 @@
 /**
- * Pinned-version upgrade detection for k8s, gcp, docker, gitlab lexicons.
+ * Pinned-version upgrade detection for any lexicon that declares `upstreamPin`
+ * (k8s, k3s, gcp, docker, gitlab, cedar, sql).
  *
  * For each lexicon with a pinned upstream version constant, this module:
  *   1. Reads the currently pinned version from the source file.
@@ -21,8 +22,9 @@
  *   (returns the latest version tag, or null when no stable release is found).
  */
 
-import { readFileSync, writeFileSync } from "fs";
-import { join } from "path";
+import { existsSync, readFileSync, writeFileSync } from "fs";
+import { join, resolve } from "path";
+import { pathToFileURL } from "url";
 import { regenLexicon, type RegenResult } from "./lexicon-regen";
 import { fetchWithRetry } from "./fetch";
 import { isLexiconPlugin, type UpstreamPin } from "../lexicon";
@@ -52,6 +54,12 @@ export interface UpgradeCheckResult {
   validation: RegenResult | null;
   /** Human-readable error when the upstream query itself failed. */
   fetchError: string | null;
+  /**
+   * Set when the new version was found but the pin cannot be rewritten
+   * generically (it moves with other constants). Nothing was edited or
+   * regenerated; `instructions` says what to move by hand.
+   */
+  manualPin?: { file: string; instructions: string };
 }
 
 /** Injectable upstream version resolver. Returns the latest stable tag or null. */
@@ -198,17 +206,66 @@ export function revertVersionBump(filePath: string, original: string): void {
  * not self-upgradable). Mirrors ../components/capability-plugin-loader.ts's
  * lexicon-borne loading.
  */
-export async function loadUpstreamPin(lexicon: LexiconId): Promise<UpstreamPin | null> {
-  let mod: Record<string, unknown>;
+export async function loadUpstreamPin(lexicon: LexiconId, lexiconDir?: string): Promise<UpstreamPin | null> {
+  const pinOf = (mod: Record<string, unknown>): UpstreamPin | null => {
+    for (const value of Object.values(mod)) {
+      if (isLexiconPlugin(value) && value.upstreamPin) return value.upstreamPin;
+    }
+    return null;
+  };
+  // The directory the caller pointed at wins: it is the checkout whose pin
+  // file will be edited, and it need not be installed under node_modules.
+  const entry = lexiconDir ? lexiconEntry(lexiconDir) : null;
+  if (entry) {
+    try {
+      const pin = pinOf((await import(pathToFileURL(entry).href)) as Record<string, unknown>);
+      if (pin) return pin;
+    } catch {
+      // fall through to the package-name route
+    }
+  }
   try {
-    mod = (await importLexiconPackage(`@intentius/chant-lexicon-${lexicon}`)) as Record<string, unknown>;
+    return pinOf((await importLexiconPackage(`@intentius/chant-lexicon-${lexicon}`)) as Record<string, unknown>);
   } catch {
     return null;
   }
-  for (const value of Object.values(mod)) {
-    if (isLexiconPlugin(value) && value.upstreamPin) return value.upstreamPin;
+}
+
+/** The module a lexicon directory's package.json exposes as ".", or null when it declares none. */
+function lexiconEntry(lexiconDir: string): string | null {
+  try {
+    const pkg = JSON.parse(readFileSync(join(lexiconDir, "package.json"), "utf-8")) as {
+      main?: string;
+      exports?: Record<string, unknown> | string;
+    };
+    let rel: unknown = pkg.main;
+    const root = typeof pkg.exports === "string" ? pkg.exports : pkg.exports?.["."];
+    if (typeof root === "string") rel = root;
+    else if (root && typeof root === "object") {
+      const conds = root as Record<string, unknown>;
+      rel = conds.development ?? conds.default ?? conds.import ?? rel;
+    }
+    if (typeof rel !== "string") return null;
+    const abs = resolve(lexiconDir, rel);
+    return existsSync(abs) ? abs : null;
+  } catch {
+    return null;
   }
-  return null;
+}
+
+/**
+ * The lexicon name a directory holds, from its package.json
+ * (`@intentius/chant-lexicon-<name>`), falling back to the directory name.
+ */
+export function lexiconNameOf(lexiconDir: string): string {
+  try {
+    const pkg = JSON.parse(readFileSync(join(lexiconDir, "package.json"), "utf-8")) as { name?: string };
+    const m = /^@intentius\/chant-lexicon-(.+)$/.exec(pkg.name ?? "");
+    if (m) return m[1]!;
+  } catch {
+    // no package.json
+  }
+  return resolve(lexiconDir).split("/").pop() ?? lexiconDir;
 }
 
 /** Build a concrete `PinLocation` (absolute path + patterns) from a lexicon's descriptor and its checkout dir. */
@@ -304,7 +361,7 @@ function resolverFor(pin: UpstreamPin): UpstreamResolver {
 export async function checkPinnedUpgrade(opts: CheckPinnedUpgradeOptions): Promise<UpgradeCheckResult> {
   const { lexiconDir, lexicon, force = false, verbose = false, skipBuild, skipBundle, skipLint } = opts;
 
-  const pin = await loadUpstreamPin(lexicon);
+  const pin = await loadUpstreamPin(lexicon, lexiconDir);
   if (!pin) {
     return {
       lexicon,
@@ -312,7 +369,7 @@ export async function checkPinnedUpgrade(opts: CheckPinnedUpgradeOptions): Promi
       from: "(unknown)",
       to: null,
       validation: null,
-      fetchError: `Lexicon "${lexicon}" declares no upstreamPin (not self-upgradable), or its plugin package could not be loaded.`,
+      fetchError: `Lexicon "${lexicon}" declares no upstreamPin, so there is no pinned upstream version to check (see lexicon-authoring/generate, "Pinning the upstream schema"), or its plugin could not be loaded from ${lexiconDir}.`,
     };
   }
   const location = pinLocationFrom(pin, lexiconDir);
@@ -354,6 +411,21 @@ export async function checkPinnedUpgrade(opts: CheckPinnedUpgradeOptions): Promi
       to: latestTag,
       validation: null,
       fetchError: null,
+    };
+  }
+
+  // A pin the descriptor's `replace` cannot move alone (a companion digest,
+  // say): report the new version and how to move it. Editing the version
+  // line only would leave a pin that fails generation.
+  if (pin.alsoMoves) {
+    return {
+      lexicon,
+      hasUpgrade: true,
+      from,
+      to: latestTag,
+      validation: null,
+      fetchError: null,
+      manualPin: { file: pin.file, instructions: pin.alsoMoves },
     };
   }
 
@@ -416,8 +488,11 @@ export async function applyPinnedVersionBump(
   lexiconDir: string,
   newVersion: string,
 ): Promise<{ filePath: string }> {
-  const pin = await loadUpstreamPin(lexicon);
+  const pin = await loadUpstreamPin(lexicon, lexiconDir);
   if (!pin) throw new Error(`Lexicon "${lexicon}" declares no upstreamPin (not self-upgradable).`);
+  if (pin.alsoMoves) {
+    throw new Error(`Lexicon "${lexicon}" cannot have its pin rewritten generically: ${pin.alsoMoves}`);
+  }
   const location = pinLocationFrom(pin, lexiconDir);
   applyVersionBump(location, newVersion);
   return { filePath: location.filePath };

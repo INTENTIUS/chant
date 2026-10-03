@@ -264,13 +264,22 @@ upstreamPin: {
 | `pattern` | Regex whose **first capture group** is the current version |
 | `replace(v, line)` | Rebuild a matched line with the new version |
 | `upstream.kind` | `releases` for published releases, `tags` for every git tag |
-| `upstream.tagSuffix` | Only consider tags with this suffix — gitlab uses `-ee` |
+| `upstream.tagSuffix` | Only consider tags with this suffix — gitlab uses `-ee`, sql uses `-lts` |
+| `alsoMoves` | Optional. Set when other constants move with the version and `replace` cannot compute them. The tooling reports the new version and this text, and edits nothing |
 
-k8s, k3s, gcp, gitlab, docker and cedar declare one. `checkPinnedUpgrade`
+k8s, k3s, gcp, gitlab, docker, cedar and sql declare one. `checkPinnedUpgrade`
 (`packages/core/src/codegen/pinned-upgrade.ts`) uses it to report an available
 upgrade, apply it, regenerate, and revert cleanly if the regeneration fails —
 which is the reason `replace` exists rather than the tooling doing a blind
 string substitution.
+
+`chant dev pinned-upgrade <dir>` loads the plugin at `<dir>` and uses whatever
+`upstreamPin` it declares; there is no list of supported lexicons in core. A
+lexicon with no `upstreamPin` gets a message saying so. The sql pin sets
+`alsoMoves`, because its server image digest sits beside the version in
+`src/spec/pin.ts` and a new tag has a new digest: `pinned-upgrade` reports the
+newer `-lts` release and how to move both constants, and does not edit the file
+or regenerate.
 
 ### When there is no version to pin to
 
