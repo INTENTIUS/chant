@@ -241,3 +241,72 @@ describe("records --since <session id> (#2693)", () => {
     expect((await sinceDoc({ kind: DECISIONS_KIND, since: "v-1", cwd: root })).session).toBeUndefined();
   });
 });
+
+describe("a UI review batch as a session (#3350, ws-083)", () => {
+  const anchor = { route: "/notes?page=2#top", elements: [{ selector: "[data-hud-id=status]", tag: "p", text: "Running.", state: "anchored", basis: "authored" }] };
+
+  test("a batch is written through records new, answered and replied to through amend, and closed with each comment's exit", async () => {
+    const root = declared();
+    const sent = await newRecord({
+      kind: SESSIONS_KIND,
+      fields: newSessionFields({
+        title: "Review of /notes",
+        agenda: [{ text: "Comment-mode review of /notes" }],
+        attendance: [{ principal: "alice", class: "person", roles: ["reviewer"] }, { principal: "hud-chat", class: "agent" }],
+        comments: [
+          { text: "Say which build is running.", by: "alice", anchor },
+          { text: "", anchor: { route: "/notes?page=2#top", elements: [{ selector: "main > ul", state: "ambiguous" }] } },
+        ],
+        rounds: [{ round: 0, note: "The list's second page, mostly.", by: "alice", at: "2026-09-25T09:00:00Z", ended: null }],
+      }),
+      cwd: root,
+    });
+    created.expectValid(sent);
+    if ("error" in sent) throw new Error(`${sent.error.code}: ${sent.error.message}`);
+
+    const answered = (round: number, extra: Record<string, unknown>[]) => [
+      { text: "Say which build is running.", by: "alice", anchor, answers: [{ round: 0, disposition: "needs-discussion", note: "The commit, or the release tag?", by: "hud-chat", at: "2026-09-25T09:02:00Z" }, ...extra] },
+      { text: "", anchor: { route: "/notes?page=2#top", elements: [{ selector: "main > ul", state: "ambiguous" }] }, answers: [{ round, disposition: "handled", note: "Paged the list by 20.", at: "2026-09-25T09:03:00Z" }] },
+    ];
+    const first = await amendRecord({
+      kind: SESSIONS_KIND,
+      id: sent.id,
+      fields: JSON.stringify({ comments: answered(0, []), rounds: [{ round: 0, note: "The list's second page, mostly.", by: "alice", at: "2026-09-25T09:00:00Z", ended: "2026-09-25T09:04:00Z" }] }),
+      cwd: root,
+    });
+    expect(code(first)).toBe("ok");
+
+    const comments = answered(0, [{ round: 1, disposition: "handled", note: "Shows the release tag now.", by: "hud-chat", at: "2026-09-25T09:11:00Z" }]);
+    (comments[0] as Record<string, unknown>).replies = [{ round: 1, text: "The release tag.", by: "alice", at: "2026-09-25T09:10:00Z" }];
+    (comments[0] as Record<string, unknown>).exit = "kept";
+    (comments[0] as Record<string, unknown>).follow_ups = ["work:W-007"];
+    (comments[1] as Record<string, unknown>).exit = "sent";
+    const rounds = [
+      { round: 0, note: "The list's second page, mostly.", by: "alice", at: "2026-09-25T09:00:00Z", ended: "2026-09-25T09:04:00Z" },
+      { round: 1, note: null, by: "alice", at: "2026-09-25T09:10:00Z", ended: "2026-09-25T09:12:00Z" },
+    ];
+    expect(code(await amendRecord({ kind: SESSIONS_KIND, id: sent.id, fields: JSON.stringify({ comments, rounds, closed_by: "alice" }), cwd: root }))).toBe("ok");
+    const closed = await closeRecord({ kind: SESSIONS_KIND, id: sent.id, cwd: root, now: new Date("2026-09-25T09:15:00Z") });
+    close.expectValid(closed);
+    expect(code(closed)).toBe("ok");
+
+    const doc = await queryRecords({ kind: SESSIONS_KIND, cwd: root });
+    if ("error" in doc) throw new Error(doc.error.message);
+    const s2 = doc.records.find((r) => r.id === sent.id)!;
+    expect([s2.state, s2.valid, s2.reasons]).toEqual(["closed", true, []]);
+    expect((s2.data!.comments as { exit?: string }[]).map((c) => c.exit)).toEqual(["kept", "sent"]);
+  });
+
+  test.each([
+    ["an answer with another disposition", { text: "x", answers: [{ round: 0, disposition: "kept", note: "n" }] }],
+    ["an answer with no note", { text: "x", answers: [{ round: 0, disposition: "skipped", note: " " }] }],
+    ["a reply in round 0", { text: "x", replies: [{ round: 0, text: "r" }] }],
+    ["an anchor with no element", { text: "x", anchor: { route: "/", elements: [] } }],
+    ["an element in an unknown state", { text: "x", anchor: { route: "/", elements: [{ selector: "p", state: "moved" }] } }],
+    ["an exit that is not kept, sent or dismissed", { text: "x", exit: "handled" }],
+  ])("records new refuses %s", async (_label, comment) => {
+    const root = declared();
+    const doc = await newRecord({ kind: SESSIONS_KIND, fields: newSessionFields({ comments: [comment] }), cwd: root, dryRun: true });
+    expect(code(doc)).toBe("record-schema-invalid");
+  });
+});

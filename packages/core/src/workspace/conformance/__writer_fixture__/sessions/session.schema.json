@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "urn:intentius:chant:session:1",
   "title": "Review session",
-  "description": "The front matter of a review-session file (#2673, #2650 C10): a group walking an agenda of records together, who attended, and the verdicts the session produced. Its verdicts judge decisions, contracts and drivers, the kinds the session kind names as subjects (#3148, ws-082). Each verdict is also an entry in the judged record's reviews list, whose session field names this session. A closed session is sealed: closed_digest is sha256: and the lowercase hex SHA-256 of the JCS form of the whole session without closed_digest (its front matter as core and the text below it as body, line endings LF, #2546), and chant workspace records checks it on every read (session-seal-mismatch).",
+  "description": "The front matter of a review-session file (#2673, #2650 C10): a group walking an agenda of records together, who attended, and the verdicts the session produced. Its verdicts judge decisions, contracts and drivers, the kinds the session kind names as subjects (#3148, ws-082). A comment-mode review of the app's UI is a session too, one per review batch, with its comments, the agent's answers and the rounds of replies (#3350, ws-083). Each verdict is also an entry in the judged record's reviews list, whose session field names this session. A closed session is sealed: closed_digest is sha256: and the lowercase hex SHA-256 of the JCS form of the whole session without closed_digest (its front matter as core and the text below it as body, line endings LF, #2546), and chant workspace records checks it on every read (session-seal-mismatch).",
   "type": "object",
   "additionalProperties": false,
   "patternProperties": {
@@ -141,6 +141,16 @@
       "uniqueItems": true,
       "items": { "$ref": "#/definitions/recordRef" }
     },
+    "comments": {
+      "description": "What people said in the session, in order (#3350, ws-083). A comment-mode review of the app's UI is one session per review batch: each comment is anchored to the page and elements it was made on, the agent that worked the batch answers each one, and a person may reply in later rounds. The comments are numbered from 1 by their position, as hud numbers them. Optional.",
+      "type": "array",
+      "items": { "$ref": "#/definitions/comment" }
+    },
+    "rounds": {
+      "description": "The rounds of a review batch (#3350, ws-083): round 0 is the batch as it was sent, with its note; each later round is a person's replies, which send the batch back for another turn. ended is when the agent's turn for the round ended, null while it is working. Optional.",
+      "type": "array",
+      "items": { "$ref": "#/definitions/round" }
+    },
     "closed_digest": {
       "description": "The seal, written when the session closes.",
       "type": "string",
@@ -149,6 +159,113 @@
   },
   "definitions": {
     "rev": { "type": "string", "pattern": "^[0-9a-f]{40,64}$" },
+    "comment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text"],
+      "properties": {
+        "text": {
+          "description": "What the person wrote. Empty when the comment only marks its elements for the round's note.",
+          "type": "string"
+        },
+        "by": { "description": "Who wrote it. Optional; a review batch's reviewer is in attendance.", "type": "string", "minLength": 1 },
+        "at": { "description": "When it was written. Optional.", "$ref": "#/definitions/dateTime" },
+        "anchor": {
+          "description": "Where in the app the comment was made: the page's route and the elements it points at.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["route", "elements"],
+          "properties": {
+            "route": {
+              "description": "The page, as its path with any query and hash.",
+              "type": "string",
+              "minLength": 1
+            },
+            "elements": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["selector", "state"],
+                "properties": {
+                  "selector": { "description": "A CSS selector for the element.", "type": "string", "minLength": 1 },
+                  "tag": { "description": "The element's tag name.", "type": "string", "minLength": 1 },
+                  "text": { "description": "The element's text when the comment was made, cut short.", "type": "string" },
+                  "state": {
+                    "description": "anchored: the selector found exactly the element. ambiguous: it found more than one. lost: it found none.",
+                    "enum": ["anchored", "ambiguous", "lost"]
+                  },
+                  "basis": {
+                    "description": "What the selector was built from: an authored anchor (data-hud-id), the element's id, a test id, or its path in the page. Optional.",
+                    "enum": ["authored", "id", "testid", "path"]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "answers": {
+          "description": "The agent's answers to the comment, one per round it answered in, oldest first; the last is the current one. handled: it changed something, and note says what. skipped: it did not, and note says why. needs-discussion: note is the question a person has to settle, by replying in a later round.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["round", "disposition", "note"],
+            "properties": {
+              "round": { "type": "integer", "minimum": 0 },
+              "disposition": { "enum": ["handled", "skipped", "needs-discussion"] },
+              "note": { "type": "string", "pattern": "\\S" },
+              "by": { "description": "The agent that answered. Optional.", "type": "string", "minLength": 1 },
+              "at": { "$ref": "#/definitions/dateTime" }
+            }
+          }
+        },
+        "replies": {
+          "description": "A person's replies to the comment, one per round from round 1.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["round", "text"],
+            "properties": {
+              "round": { "type": "integer", "minimum": 1 },
+              "text": { "type": "string", "pattern": "\\S" },
+              "by": { "type": "string", "minLength": 1 },
+              "at": { "$ref": "#/definitions/dateTime" }
+            }
+          }
+        },
+        "exit": {
+          "description": "How the comment left the box, once a person decided (hud#703, studio-039): kept, its record stays in the repository as the source of the work its changes are; sent, it went out with Send; dismissed, it was let go. Absent until then.",
+          "enum": ["kept", "sent", "dismissed"]
+        },
+        "follow_ups": {
+          "description": "Records the comment led to, as <kind>:<id>, such as the work item that carries its change. Optional.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/definitions/recordRef" }
+        }
+      }
+    },
+    "round": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["round", "note", "at"],
+      "properties": {
+        "round": { "type": "integer", "minimum": 0 },
+        "note": {
+          "description": "The note sent with the round, or null when there was none. A reply round needs a reply or a note.",
+          "type": ["string", "null"]
+        },
+        "by": { "description": "Who sent the round. Optional.", "type": "string", "minLength": 1 },
+        "at": { "description": "When the round was sent.", "$ref": "#/definitions/dateTime" },
+        "ended": {
+          "description": "When the agent's turn for the round ended, or null while it is working. Optional.",
+          "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/dateTime" }]
+        }
+      }
+    },
     "recordRef": {
       "description": "A record as <kind>:<id>, such as contract:C-002 or work:W-004.",
       "type": "string",
