@@ -18,15 +18,10 @@
  * error the build would not have.
  */
 
-import { isTrivia, SqlSyntaxError, type Token } from "./tokens";
+import type { Token } from "./tokens";
+import { kw, SqlCursor, unquoteWith, type Span } from "../core/cursor";
 
-/** A run of tokens [from, to) in the token list, trivia included. */
-export interface Span {
-  from: number;
-  to: number;
-  /** Value indexes of the interpolations inside the span. */
-  refs: number[];
-}
+export type { Span } from "../core/cursor";
 
 export interface ColumnNode {
   /** The name as written, unquoted. Empty when the name is an interpolation. */
@@ -121,93 +116,32 @@ export interface ViewNode extends StorageNode {
 
 export type CreateNode = DatabaseNode | TableNode | ViewNode;
 
-const kw = (t: Token | undefined, ...words: string[]): boolean =>
-  t !== undefined && t.kind === "ident" && words.includes(t.text.toUpperCase());
-
 /** A token that can stand where a name goes. */
 const isNameToken = (t: Token | undefined): boolean =>
   t !== undefined &&
   (t.kind === "ident" || t.kind === "qident" || t.kind === "ref" || (t.kind === "number" && /[A-Za-z_]/.test(t.text)));
 
-export const unquote = (text: string): string =>
-  /^[`"].*[`"]$/s.test(text) ? text.slice(1, -1).replace(/``/g, "`").replace(/""/g, '"') : text;
+/** A name with its `` ` `` or `"` quotes taken off. */
+export const unquote = (text: string): string => unquoteWith(text, '`"');
 
 const countOf = (text: string, c: string): number => text.split(c).length - 1;
 
 const STORAGE_KEYWORDS = ["ENGINE", "ORDER", "PRIMARY", "PARTITION", "SAMPLE", "TTL", "SETTINGS", "COMMENT"];
 
-class Parser {
-  /** Indexes of the significant (non-trivia) tokens. */
-  private readonly sig: number[];
-  private p = 0;
-
-  constructor(private readonly tokens: Token[]) {
-    this.sig = tokens.map((t, i) => (isTrivia(t) ? -1 : i)).filter((i) => i >= 0);
+class Parser extends SqlCursor {
+  /** `ORDER`, `PARTITION`, `SAMPLE` and `GROUP` stop only before `BY`, `PRIMARY` only before `KEY`. */
+  protected override stopsAt(stop: readonly string[]): boolean {
+    if (!super.stopsAt(stop)) return false;
+    const word = this.peek()!.text.toUpperCase();
+    const two = ["ORDER", "PARTITION", "SAMPLE", "GROUP"].includes(word) ? kw(this.peek(1), "BY") : true;
+    const key = word === "PRIMARY" ? kw(this.peek(1), "KEY") : true;
+    return two && key;
   }
 
-  private peek(n = 0): Token | undefined {
-    const idx = this.sig[this.p + n];
-    return idx === undefined ? undefined : this.tokens[idx];
-  }
-
-  /** Token-list index of the significant token `n` ahead. */
-  private idx(n = 0): number {
-    return this.sig[this.p + n] ?? this.tokens.length;
-  }
-
-  private next(): Token {
-    const t = this.peek();
-    if (!t) this.fail("unexpected end of statement");
-    this.p++;
-    return t;
-  }
-
-  fail(message: string, t: Token | undefined = this.peek()): never {
-    const at = t ?? this.lastToken();
-    const shown = t ? ` at '${t.kind === "ref" ? "${...}" : t.text}'` : "";
-    throw new SqlSyntaxError(`${message}${shown}`, at?.part ?? 0, t ? at!.start : (at?.end ?? 0), at);
-  }
-
-  private lastToken(): Token | undefined {
-    const last = this.sig[this.sig.length - 1];
-    return last === undefined ? undefined : this.tokens[last];
-  }
-
-  private accept(...words: string[]): boolean {
-    if (kw(this.peek(), ...words)) {
-      this.p++;
-      return true;
-    }
-    return false;
-  }
-
-  private expect(...words: string[]): void {
-    if (!this.accept(...words)) this.fail(`expected ${words.join(" or ")}`);
-  }
-
-  private isPunct(c: string, n = 0): boolean {
-    const t = this.peek(n);
-    return t !== undefined && t.kind === "punct" && t.text === c;
-  }
-
-  private acceptPunct(c: string): boolean {
-    if (this.isPunct(c)) {
-      this.p++;
-      return true;
-    }
-    return false;
-  }
-
-  private expectPunct(c: string): void {
-    if (!this.acceptPunct(c)) this.fail(`expected '${c}'`);
-  }
-
-  private atEnd(): boolean {
-    return this.peek() === undefined || this.isPunct(";");
-  }
-
-  private span(from: number, refs: number[]): Span {
-    return { from, to: this.idx(-1) + 1, refs };
+  /** Array and map literals: `[` and `]` arrive inside operator runs. */
+  protected override depthChange(t: Token): number {
+    if (t.kind === "op") return countOf(t.text, "[") + countOf(t.text, "{") - countOf(t.text, "]") - countOf(t.text, "}");
+    return super.depthChange(t);
   }
 
   /** One name token. */
@@ -233,64 +167,6 @@ class Parser {
       one();
     }
     return this.span(from, refs);
-  }
-
-  /**
-   * An expression as a token span: everything up to a top-level `,` or `)`,
-   * or a top-level keyword in `stop`. Parentheses are balanced, not parsed.
-   */
-  private expr(stop: readonly string[] = [], stopAtComma = true): Span {
-    const from = this.idx();
-    const refs: number[] = [];
-    let depth = 0;
-    const startP = this.p;
-    for (;;) {
-      const t = this.peek();
-      if (t === undefined) break;
-      if (depth === 0) {
-        if (t.kind === "punct" && (t.text === ")" || t.text === ";" || (stopAtComma && t.text === ","))) break;
-        if (t.kind === "ident" && stop.includes(t.text.toUpperCase())) {
-          const word = t.text.toUpperCase();
-          const two = ["ORDER", "PARTITION", "SAMPLE", "GROUP"].includes(word) ? kw(this.peek(1), "BY") : true;
-          const key = word === "PRIMARY" ? kw(this.peek(1), "KEY") : true;
-          if (two && key) break;
-        }
-      }
-      if (t.kind === "punct" && t.text === "(") depth++;
-      if (t.kind === "punct" && t.text === ")") depth--;
-      // Array and map literals: `[` and `]` arrive inside operator runs.
-      if (t.kind === "op") depth += countOf(t.text, "[") + countOf(t.text, "{") - countOf(t.text, "]") - countOf(t.text, "}");
-      if (t.kind === "ref") refs.push(t.part);
-      this.p++;
-    }
-    if (this.p === startP) this.fail("expected an expression");
-    return this.span(from, refs);
-  }
-
-  /** `( ... )` balanced: the span between the parentheses. */
-  private parenthesized(): Span {
-    this.expectPunct("(");
-    if (this.isPunct(")")) {
-      const at = this.idx();
-      this.p++;
-      return { from: at, to: at, refs: [] };
-    }
-    const inner = this.exprList();
-    this.expectPunct(")");
-    return inner;
-  }
-
-  /** A comma-separated expression list as one span. */
-  private exprList(stop: readonly string[] = []): Span {
-    const first = this.expr(stop);
-    let last = first;
-    const refs = [...first.refs];
-    while (this.isPunct(",")) {
-      this.p++;
-      last = this.expr(stop);
-      refs.push(...last.refs);
-    }
-    return { from: first.from, to: last.to, refs };
   }
 
   /** `UInt64`, `Nullable(String)`, `DateTime64(3, 'UTC')`, `Tuple(a UInt8, b String)`. */

@@ -279,38 +279,26 @@ function pinLocationFrom(pin: UpstreamPin, lexiconDir: string): PinLocation {
 
 // ── Real upstream resolvers ───────────────────────────────────────────
 
+export interface LatestTagOptions {
+  /** Only keep tags ending with this suffix. */
+  tagSuffix?: string;
+  /** Map a raw tag to a version, or null to skip it (see `UpstreamPin.upstream.tagVersion`). */
+  tagVersion?: (tag: string) => string | null;
+  /** Only keep versions whose major equals this one's. */
+  sameMajorAs?: string;
+}
+
 /**
- * Fetch GitHub releases or tags from the given repo and return the
- * latest stable version tag (highest semver, no pre-release).
- *
- * `kind` selects whether to use the releases API (which has published
- * stable releases) or the tags API (which has every git tag).
- *
- * `tagSuffix` filters tags to only those ending with the given string
- * (e.g. "-ee" for GitLab).
+ * Pick the highest stable version from a list of GitHub release or tag items.
+ * Pure: the network lives in `latestGitHubRelease`.
  */
-async function latestGitHubRelease(
-  owner: string,
-  repo: string,
+export function pickLatest(
+  items: ReadonlyArray<{ tag_name?: string; name?: string; prerelease?: boolean }>,
   kind: "releases" | "tags",
-  tagSuffix?: string,
-): Promise<string | null> {
-  const token = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
-  const headers: Record<string, string> = {
-    Accept: "application/vnd.github+json",
-    "X-GitHub-Api-Version": "2022-11-28",
-  };
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-
-  const url = `https://api.github.com/repos/${owner}/${repo}/${kind}?per_page=50`;
-
-  const resp = await fetchWithRetry(url, 4, 1000, { headers });
-
-  const items = (await resp.json()) as Array<{
-    tag_name?: string;
-    name?: string;
-    prerelease?: boolean;
-  }>;
+  opts: LatestTagOptions = {},
+): string | null {
+  const { tagSuffix, tagVersion } = opts;
+  const major = opts.sameMajorAs !== undefined ? majorOf(opts.sameMajorAs, tagVersion) : undefined;
 
   let best: string | null = null;
   let bestParsed: number[] | null = null;
@@ -328,11 +316,15 @@ async function latestGitHubRelease(
     // Apply optional suffix filter (e.g. "-ee" for GitLab)
     if (tagSuffix && !rawTag.endsWith(tagSuffix)) continue;
 
-    const parsed = parseVersion(rawTag);
+    const candidate = tagVersion ? tagVersion(rawTag) : rawTag;
+    if (!candidate) continue;
+
+    const parsed = parseVersion(candidate);
     if (!parsed) continue;
+    if (major !== undefined && parsed[0] !== major) continue;
 
     if (!bestParsed || compareVersionTuples(parsed, bestParsed) > 0) {
-      best = rawTag;
+      best = candidate;
       bestParsed = parsed;
     }
   }
@@ -340,9 +332,59 @@ async function latestGitHubRelease(
   return best;
 }
 
+/** First numeric segment of a pinned value, which may be a mapped version or a raw tag. */
+function majorOf(value: string, tagVersion?: (tag: string) => string | null): number | undefined {
+  const parsed = parseVersion(value) ?? (tagVersion ? parseVersion(tagVersion(value) ?? "") : null);
+  return parsed?.[0];
+}
+
+const TAG_PAGE_SIZE = 100;
+const TAG_MAX_PAGES = 20;
+
+/**
+ * Fetch GitHub releases or tags from the given repo and return the
+ * latest stable version tag (highest semver, no pre-release).
+ *
+ * `kind` selects whether to use the releases API (which has published
+ * stable releases) or the tags API (which has every git tag).
+ *
+ * `tagSuffix` filters tags to only those ending with the given string
+ * (e.g. "-ee" for GitLab). `tagVersion` and `sameMajorAs` are described on
+ * `UpstreamPin.upstream`; with `tagVersion` every page of tags is read.
+ */
+async function latestGitHubRelease(
+  owner: string,
+  repo: string,
+  kind: "releases" | "tags",
+  opts: LatestTagOptions = {},
+): Promise<string | null> {
+  const token = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
+  const headers: Record<string, string> = {
+    Accept: "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+  };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  type Item = { tag_name?: string; name?: string; prerelease?: boolean };
+  const paged = kind === "tags" && opts.tagVersion !== undefined;
+  const perPage = paged ? TAG_PAGE_SIZE : 50;
+  const items: Item[] = [];
+  for (let page = 1; page <= (paged ? TAG_MAX_PAGES : 1); page++) {
+    const url = `https://api.github.com/repos/${owner}/${repo}/${kind}?per_page=${perPage}&page=${page}`;
+    const resp = await fetchWithRetry(url, 4, 1000, { headers });
+    const batch = (await resp.json()) as Item[];
+    items.push(...batch);
+    if (batch.length < perPage) break;
+  }
+
+  return pickLatest(items, kind, opts);
+}
+
 /** Build the real GitHub-backed upstream resolver from a lexicon's declared `upstream` descriptor. */
-function resolverFor(pin: UpstreamPin): UpstreamResolver {
-  return () => latestGitHubRelease(pin.upstream.owner, pin.upstream.repo, pin.upstream.kind, pin.upstream.tagSuffix);
+export function resolverFor(pin: UpstreamPin, from: string): UpstreamResolver {
+  const { owner, repo, kind, tagSuffix, tagVersion, trackMajor } = pin.upstream;
+  return () =>
+    latestGitHubRelease(owner, repo, kind, { tagSuffix, tagVersion, sameMajorAs: trackMajor ? from : undefined });
 }
 
 // ── Main function ─────────────────────────────────────────────────────
@@ -388,7 +430,7 @@ export async function checkPinnedUpgrade(opts: CheckPinnedUpgradeOptions): Promi
   }
 
   // Query upstream
-  const resolver = opts.resolverOverride ?? resolverFor(pin);
+  const resolver = opts.resolverOverride ?? resolverFor(pin, from);
   let latestTag: string | null;
   try {
     latestTag = await resolver();
@@ -403,7 +445,9 @@ export async function checkPinnedUpgrade(opts: CheckPinnedUpgradeOptions): Promi
     };
   }
 
-  if (!latestTag || !isNewer(latestTag, from)) {
+  // The pin may hold the raw tag (REL_18_6) where the resolver returns the mapped version (18.6).
+  const fromVersion = parseVersion(from) ? from : (pin.upstream.tagVersion?.(from) ?? from);
+  if (!latestTag || !isNewer(latestTag, fromVersion)) {
     return {
       lexicon,
       hasUpgrade: false,

@@ -33,8 +33,16 @@ describe("the sql config namespace", () => {
     expect(sqlConfigSchema.safeParse({}).success).toBe(true);
   });
 
-  test("refuses a dialect it does not declare", () => {
-    expect(sqlConfigSchema.safeParse({ dialect: "postgres" }).success).toBe(false);
+  test("accepts a list of dialects", () => {
+    expect(sqlConfigSchema.safeParse({ dialect: ["clickhouse"] }).success).toBe(true);
+    expect(sqlConfigSchema.safeParse({ dialect: [] }).success).toBe(false);
+  });
+
+  test("refuses postgres as not implemented yet, and any other name as unknown", () => {
+    const message = (dialect: unknown) => sqlConfigSchema.safeParse({ dialect }).error?.issues[0]?.message;
+    expect(message("postgres")).toMatch(/^the postgres dialect is not implemented yet/);
+    expect(message(["clickhouse", "postgres"])).toMatch(/^the postgres dialect is not implemented yet/);
+    expect(message("mysql")).toBe("expected a dialect (clickhouse) or a non-empty list of them");
   });
 
   test("refuses an unknown key rather than ignoring it", () => {

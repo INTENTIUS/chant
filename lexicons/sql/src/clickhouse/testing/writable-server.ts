@@ -7,7 +7,7 @@
  * answered, and does not change the definition. Not a SQL engine.
  */
 
-import { createServer, type Server } from "node:http";
+import { startHttpStub } from "../../core/testing/http-stub";
 import { canonicalObject } from "../plan/normalize";
 
 export interface StoredObject {
@@ -134,18 +134,8 @@ export async function writableClickHouse(initial: StoredObject[] = []): Promise<
     return { status: 200, text: "" };
   };
 
-  const server: Server = createServer((req, res) => {
-    let body = "";
-    req.on("data", (c) => (body += c));
-    req.on("end", () => {
-      const { status, text } = answer(body);
-      res.statusCode = status;
-      res.end(text);
-    });
-  });
-  await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
-  const { port } = server.address() as { port: number };
-  state.url = `http://127.0.0.1:${port}`;
-  state.close = () => new Promise((r) => server.close(() => r()));
+  const stub = await startHttpStub((body) => answer(body));
+  state.url = stub.url;
+  state.close = stub.close;
   return state;
 }
