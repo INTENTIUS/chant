@@ -150,14 +150,22 @@ function isStepOutputRefValue(value: unknown): boolean {
   return typeof value === "object" && value !== null && (value as Record<symbol, unknown>)[STEP_OUTPUT_REF_BRAND] === true;
 }
 
-/** The value at `path` (a zod issue's `.path`) inside `obj`, or `undefined` if any segment doesn't resolve. */
-function valueAtPath(obj: unknown, path: ReadonlyArray<PropertyKey>): unknown {
+/**
+ * Does any prefix of `path` (a zod issue's `.path`) inside `obj` land on a
+ * step-output reference? A reference stands in for the whole value at its
+ * position, so an issue at or below it describes the placeholder, not the
+ * value it resolves to. "Below" matters for a whole-value reference in a
+ * record-typed arg (`inputs: step.out.json`, #3299): zod walks the
+ * reference's own keys, brand symbol included, and reports issues inside it.
+ */
+function pathCrossesStepOutputRef(obj: unknown, path: ReadonlyArray<PropertyKey>): boolean {
   let current = obj;
   for (const segment of path) {
-    if (current === null || typeof current !== "object") return undefined;
+    if (current === null || typeof current !== "object") return false;
     current = (current as Record<PropertyKey, unknown>)[segment];
+    if (isStepOutputRefValue(current)) return true;
   }
-  return current;
+  return false;
 }
 
 /** Unwrap `ZodOptional`/`ZodNullable`/`ZodDefault` (and similar) down to the schema they wrap. */
@@ -270,16 +278,18 @@ export function validateActivitySteps(
       const parsed = contract.args.safeParse(step.args ?? {});
       if (!parsed.success) {
         for (const issue of parsed.error.issues) {
-          // A step-output reference (#1290) sitting at this path is a
-          // placeholder object at build time, not the value it will
-          // resolve to — so an args-schema type mismatch here is a false
+          // A step-output reference (#1290) sitting at this path, or above
+          // it, is a placeholder object at build time, not the value it
+          // will resolve to — so an args-schema issue there is a false
           // positive; OPS013 (`validateStepOutputRefs`) is what validates
           // a reference, against the *producer's* declared return schema.
           // An unrecognized-key issue's path is the parent object (`[]`
           // for a top-level extra key), which is never itself a reference,
           // so a genuinely misspelled key is still caught either way.
-          if (isStepOutputRefValue(valueAtPath(step.args, issue.path))) continue;
-          const path = issue.path.length > 0 ? issue.path.join(".") : "(args)";
+          if (pathCrossesStepOutputRef(step.args, issue.path)) continue;
+          // String(), not join(): a zod path can hold a symbol key, and
+          // join() throws converting one (#3299).
+          const path = issue.path.length > 0 ? issue.path.map((segment) => String(segment)).join(".") : "(args)";
           issues.push({ opName: config.name, phase: phase.name, fn: step.fn, message: `args.${path}: ${issue.message}` });
         }
       }
