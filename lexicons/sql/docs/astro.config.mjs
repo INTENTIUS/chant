@@ -62,6 +62,10 @@ export default defineConfig({
                               "slug": "composites"
                         },
                         {
+                              "label": "Postgres Locks and the Change Classifier",
+                              "slug": "postgres-change-classifier"
+                        },
+                        {
                               "label": "Lint Rules and Checks",
                               "slug": "lint-rules"
                         },
