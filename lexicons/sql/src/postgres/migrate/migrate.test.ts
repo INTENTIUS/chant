@@ -151,6 +151,7 @@ const observation = (change: "rename" | "type", over: Partial<MigrationObservati
     column: change === "rename" ? { name: "login", type: "text", notNull: true } : { name: "amount", type: "numeric(12,2)", notNull: true, default: "0", comment: "In euros" },
     oid: "16384",
     batchKey: "id",
+    keyColumns: [{ name: "id", type: "bigint" }],
     carried: [],
     carriedStates: new Map(),
     views: [],
