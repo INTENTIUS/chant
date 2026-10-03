@@ -24,7 +24,9 @@ describe("init templates", () => {
     try {
       expect(result.errors).toEqual([]);
       expect(result.outputs.get("prometheus")).toBeTruthy();
-      expect(runPostSynthChecks(postSynthChecks, result)).toEqual([]);
+      // As `chant build` reports them: through the default (`recommended`) preset.
+      const recommended = new Set(prometheusPlugin.lintPresets!().recommended);
+      expect(runPostSynthChecks(postSynthChecks, result).filter((d) => recommended.has(d.checkId))).toEqual([]);
       const lint = await lintCommand({ path: join(dir, "src"), format: "stylish", fix: false });
       expect(lint.errorCount + lint.warningCount, lint.output).toBe(0);
     } finally {

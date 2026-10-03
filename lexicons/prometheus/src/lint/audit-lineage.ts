@@ -21,12 +21,31 @@
  *   configurable "this label or annotation must exist" checks that pint ships
  *   with nothing enabled, so they overlap PROM106 and PROM107 and no more.
  *
+ * The PROM211-PROM219 rule-file checks (#3363), against the same list:
+ * - alerts/comparison and promql/regexp are the same checks as PROM213 and
+ *   PROM218, so those are equivalent.
+ * - rule/for enforces a configured minimum `for`, and alerts/annotation a
+ *   configured annotation; with `for` required and runbook_url named they
+ *   are PROM211 and PROM212. alerts/for is not credited: it rejects bad
+ *   values and a redundant `for: 0s`, not a missing `for`.
+ * - alerts/template covers PROM214's dropped label and checks template
+ *   syntax besides. promql/rate reads the metric type from a live
+ *   Prometheus's metadata; PROM215 has only the name to go on. rule/name
+ *   is a configured name regex; PROM217 fixes it to level:metric:operations.
+ *   All three overlap.
+ *
  * Deliberately without a credit from these tools:
  * - PROM001 and PROM003: a literal credential in TypeScript source, and the
  *   Slo objective/window model. Neither tool reads either.
  * - PROM202 (severity not routed) and PROM207 (receiver never routed to):
  *   check-config accepts both, and `amtool config routes test` answers a
  *   different question (where one given label set goes).
+ * - PROM216 (histogram_quantile without _bucket or le) and PROM219
+ *   (alertname set by hand): no pint check reports either, and promtool's
+ *   rulefmt accepts both.
+ * - PROM220-PROM224: check-config accepts insecure_skip_verify, SMTP auth
+ *   without TLS, credentials over http://, a repeat_interval under
+ *   group_interval, and an inhibit rule without equal.
  */
 import type { Lineage } from "@intentius/chant/audit/catalog";
 
@@ -66,4 +85,11 @@ export const prometheusAuditLineage: Record<string, Lineage[]> = {
   PROM208: [amtool("equivalent")],
   PROM209: [amtool("overlaps")],
   PROM210: [amtool("overlaps")],
+  PROM211: [{ tool: "pint", rule: "rule/for", url: `${PINT}/rule/for.md`, relation: "overlaps" }],
+  PROM212: [{ tool: "pint", rule: "alerts/annotation", url: `${PINT}/alerts/annotation.md`, relation: "overlaps" }],
+  PROM213: [{ tool: "pint", rule: "alerts/comparison", url: `${PINT}/alerts/comparison.md`, relation: "equivalent" }],
+  PROM214: [{ tool: "pint", rule: "alerts/template", url: `${PINT}/alerts/template.md`, relation: "overlaps" }],
+  PROM215: [{ tool: "pint", rule: "promql/rate", url: `${PINT}/promql/rate.md`, relation: "overlaps" }],
+  PROM217: [{ tool: "pint", rule: "rule/name", url: `${PINT}/rule/name.md`, relation: "overlaps" }],
+  PROM218: [{ tool: "pint", rule: "promql/regexp", url: `${PINT}/promql/regexp.md`, relation: "equivalent" }],
 };
