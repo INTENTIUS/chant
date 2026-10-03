@@ -190,6 +190,8 @@ export const sqlPlugin: LexiconPlugin = {
     file: "src/spec/pin.ts",
     pattern: /export const CLICKHOUSE_VERSION\s*=\s*"([^"]+)"/,
     replace: (v: string, line: string) => line.replace(/= "[^"]+"/, `= "${versionFromReleaseTag(v)}"`),
+    alsoMoves:
+      "CLICKHOUSE_IMAGE_DIGEST in src/spec/pin.ts moves with the version: set CLICKHOUSE_VERSION to the new release, set the digest to that tag's image digest (docker buildx imagetools inspect clickhouse/clickhouse-server:<version>), then run `chant dev generate` and read the diff of src/spec/clickhouse-catalog.snapshot.json.",
     upstream: { owner: "ClickHouse", repo: "ClickHouse", kind: "releases", tagSuffix: "-lts" },
   },
 };
