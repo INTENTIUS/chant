@@ -88,4 +88,15 @@ export const sqlSkills = createSkillsLoader(import.meta.url, [
       },
     ],
   },
+  {
+    file: "chant-sql-postgres-migration.md",
+    name: "chant-sql-postgres-migration",
+    description:
+      "Run a Postgres column rename or type change with PostgresMigrationOp, a gated expand-and-contract Op with a dual-write trigger, a batched backfill with receipts, verification, a switch, replication lag handling and onFailure cleanup",
+    triggers: [
+      { type: "context" as const, value: "postgres column rename" },
+      { type: "context" as const, value: "postgres expand and contract" },
+      { type: "context" as const, value: "postgres backfill" },
+    ],
+  },
 ]);
