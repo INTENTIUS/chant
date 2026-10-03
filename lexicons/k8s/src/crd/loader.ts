@@ -10,6 +10,7 @@ import { fetchWithRetry } from "@intentius/chant/codegen/fetch";
 import type { CRDSource, CRDSpec } from "./types";
 import type { K8sParseResult } from "../spec/parse";
 import { parseCRD } from "./parser";
+import { chartYamlFiles, pullOciChart, readTarGz } from "./oci-chart";
 
 /**
  * Load CRDs from a source and return parsed K8sParseResult entries.
@@ -93,8 +94,11 @@ async function loadFromURL(source: CRDSource): Promise<string> {
  * unchanged — a chart carrying more CRDs than a consumer wants is the same
  * situation as Flux's install bundle.
  *
- * Needs the `helm` binary at generation time, the same shape of dependency
- * that type="cluster" has on `kubectl`.
+ * An `oci://` chart is pulled over the registry's HTTP API and unpacked in
+ * process, so generation does not depend on `helm` being on PATH. Before,
+ * a host without helm dropped the chart's kinds with only a warning and the
+ * generated surface changed with the machine. Only a classic `https://` chart
+ * repository still shells out to `helm pull`.
  */
 async function loadFromHelmChart(source: CRDSource): Promise<string> {
   if (!source.chart) {
@@ -105,6 +109,26 @@ async function loadFromHelmChart(source: CRDSource): Promise<string> {
       `CRD source type 'helm' requires a 'version' property (chart: ${source.chart}). ` +
       "An unpinned chart makes generated output depend on when it was generated.",
     );
+  }
+
+  const subdir = source.chartSubdir ?? "crds";
+
+  if (source.chart.startsWith("oci://")) {
+    let tgz: Buffer;
+    try {
+      tgz = await pullOciChart(source.chart, source.version, source.digest);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`could not pull chart ${source.chart} ${source.version}: ${msg}`);
+    }
+    const files = chartYamlFiles(readTarGz(tgz), subdir);
+    if (files.length === 0) {
+      throw new Error(
+        `chart ${source.chart} ${source.version} has no CRD YAML in '${subdir}'. ` +
+        "Charts that template their CRDs instead of shipping them in crds/ need 'chartSubdir'.",
+      );
+    }
+    return files.map(([, text]) => text).join("\n---\n");
   }
 
   const { execFile } = await import("child_process");
@@ -142,7 +166,6 @@ async function loadFromHelmChart(source: CRDSource): Promise<string> {
       );
     }
 
-    const subdir = source.chartSubdir ?? "crds";
     const crdDir = join(workdir, unpacked[0].name, subdir);
 
     let entries: string[];

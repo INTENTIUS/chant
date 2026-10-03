@@ -80,10 +80,10 @@ export async function generate(opts: K8sGenerateOptions = {}): Promise<GenerateR
         try {
           const parsed = await loadMultipleCRDs([source]);
           crdResults.push(...parsed);
-          log(`Loaded ${parsed.length} CRD type(s) from ${source.url ?? source.path ?? "cluster"}`);
+          log(`Loaded ${parsed.length} CRD type(s) from ${source.url ?? source.path ?? source.chart ?? "cluster"}`);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          warnings.push({ file: source.url ?? source.path ?? "cluster", error: msg });
+          warnings.push({ file: source.url ?? source.path ?? source.chart ?? "cluster", error: msg });
           log(`Warning: failed to load CRD: ${msg}`);
         }
       }
