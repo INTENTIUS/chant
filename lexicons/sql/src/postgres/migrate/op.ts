@@ -66,7 +66,11 @@ export interface PostgresMigrationOpConfig {
   build?: boolean;
   /** How long the old column is kept after the switch, as a duration (`7d`, `36h`). Default: `7d`. */
   retain?: string;
-  /** The width of one batch's key range. Default: 1000. */
+  /**
+   * Rows per batch: the width of a batch's range of a primary key of one
+   * integer column, or how many keys lie between two recorded boundaries of
+   * any other key (uuid, text, several columns). Default: 1000.
+   */
   batchSize?: number;
   /**
    * Pause the backfill while a replica's replay lag is above `max`, for up to

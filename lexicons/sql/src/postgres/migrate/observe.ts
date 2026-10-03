@@ -26,7 +26,7 @@
  *
  * Anything else is refused with a {@link MigrationRefusal}, naming what to
  * do: a table that is not there, partitioned or inheriting; no primary key
- * of one integer column to batch by; a column change the Op does not make
+ * to batch by; a column change the Op does not make
  * (a rename and a type change at once, a rename of a column with a default,
  * a generated or identity column); something that uses the column and is
  * not carried over to the new one (`./carry.ts`: indexes, key, check and
@@ -48,6 +48,7 @@ import type { ColumnDef } from "../entities";
 import type { DeclaredPgObject } from "../apply/statements";
 import { col, migrationNames, MIGRATION_TRAILER_KEY, pgName, type MigrationChange, type MigrationNames } from "./names";
 import { publicationsOf, type PublicationHit } from "./replication";
+import { keyText, type KeyColumn } from "./batches";
 import { carriedStates, carriedSubject, discoverDependents, type CarriedObject, type CarriedState, type CarriedView } from "./carry";
 
 /** A refusal: the migration cannot start, or cannot go on, for a reason a person has to act on. */
@@ -90,8 +91,10 @@ export interface MigrationObservation {
   column: ColumnDef;
   /** The table's oid. */
   oid: string;
-  /** Its primary key's one integer column, which the backfill batches by. */
+  /** Its primary key, which the backfill batches by: `id`, or `(tenant_id, id)`. */
   batchKey: string;
+  /** The primary key's columns, in its order (`./batches.ts`). */
+  keyColumns: KeyColumn[];
   /** The indexes and constraints on the old column, carried over to the new one before the switch (`./carry.ts`). */
   carried: CarriedObject[];
   /** Their working copies on the server, by working name. */
@@ -307,13 +310,14 @@ export async function observeMigration(input: ObserveInput): Promise<MigrationOb
 
   const source = state === "migrate" ? columns.get(sourceName) : undefined;
   let batchKey = "";
+  let keyColumns: KeyColumn[] = [];
   let dependents: { carried: CarriedObject[]; views: CarriedView[] } = { carried: [], views: [] };
   let states = new Map<string, CarriedState>();
   let expression = col(sourceName);
   let publications: PublicationHit[] = [];
   if (state === "migrate") {
     if (!source) throw new MigrationRefusal(`${where}: the column ${sourceName} the values come from is not on the server`);
-    ({ batchKey, dependents } = await refuseUnsupported(input, names, rel.oid, source, column, changes, rename !== undefined, typeChange));
+    ({ batchKey, keyColumns, dependents } = await refuseUnsupported(input, names, rel.oid, source, column, changes, rename !== undefined, typeChange));
     states = await carriedStates(
       client,
       dependents.carried,
@@ -359,6 +363,7 @@ export async function observeMigration(input: ObserveInput): Promise<MigrationOb
     column,
     oid: rel.oid,
     batchKey,
+    keyColumns,
     carried: dependents.carried,
     carriedStates: states,
     views: dependents.views,
@@ -386,7 +391,7 @@ async function refuseUnsupported(
   changes: readonly PgChange[],
   rename: boolean,
   typeChange: PgChange | undefined,
-): Promise<{ batchKey: string; dependents: { carried: CarriedObject[]; views: CarriedView[] } }> {
+): Promise<{ batchKey: string; keyColumns: KeyColumn[]; dependents: { carried: CarriedObject[]; views: CarriedView[] } }> {
   const where = `${names.schema}.${names.table}`;
   if (rename && typeChange) {
     throw new MigrationRefusal(
@@ -422,19 +427,19 @@ async function refuseUnsupported(
         `The old column could not be dropped while they use it.`,
     );
   }
-  const keys = await input.client.query<{ name: string; type: string }>(
+  const keys = await input.client.query<KeyColumn>(
     `SELECT a.attname AS name, pg_catalog.format_type(a.atttypid, a.atttypmod) AS type
-     FROM pg_catalog.pg_constraint c JOIN pg_catalog.pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
-     WHERE c.conrelid = $1::oid AND c.contype = 'p'`,
+     FROM pg_catalog.pg_constraint c, pg_catalog.unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+     JOIN pg_catalog.pg_attribute a ON a.attnum = k.attnum
+     WHERE c.conrelid = $1::oid AND c.contype = 'p' AND a.attrelid = c.conrelid ORDER BY k.ord`,
     [oid],
   );
-  if (keys.length !== 1 || !["smallint", "integer", "bigint"].includes(keys[0]!.type)) {
+  if (keys.length === 0) {
     throw new MigrationRefusal(
-      `${where} has ${keys.length === 0 ? "no primary key" : keys.length > 1 ? `a primary key of ${keys.length} columns` : `a ${keys[0]!.type} primary key`}. ` +
-        `The backfill fills the new column in batches of key ranges, which needs a primary key of one smallint, integer or bigint column in this release.`,
+      `${where} has no primary key. The backfill fills the new column in batches of the primary key's ranges, the same rows in every run, which needs one; declare a primary key first.`,
     );
   }
-  return { batchKey: keys[0]!.name, dependents: { carried: dependents.carried, views: dependents.views } };
+  return { batchKey: keyText(keys), keyColumns: keys, dependents: { carried: dependents.carried, views: dependents.views } };
 }
 
 /**

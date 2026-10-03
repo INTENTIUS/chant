@@ -5,9 +5,10 @@
  * ## Backfill
  *
  * The rows that were in the table before the dual write started are filled
- * in batches: one range of the primary key per batch, `[b * size, (b + 1) *
- * size)`, so a batch is the same rows on every run however many rows were
- * written since. Each batch is one transaction:
+ * in batches: one range of the primary key per batch (`./batches.ts`:
+ * `[b * size, (b + 1) * size)` of an integer key, else between boundaries
+ * recorded in the receipt store), so a batch is the same rows on every run
+ * however many rows were written since. Each batch is one transaction:
  *
  *     UPDATE t SET new = <expression> WHERE key >= lo AND key < hi AND new IS DISTINCT FROM <expression>;
  *     INSERT INTO __chant_receipts ... -- the batch's receipt, last
@@ -51,6 +52,7 @@ import { postgresReceiptStore, receiptAddress, type PostgresReceiptStore } from 
 import { waitForReplicas } from "./replication";
 import { batchPrefix, identityOf, inTransaction, observe, type MigrationRun } from "./steps";
 import { carriedNotReady, requiresNotNull } from "./carry";
+import { integerBatches, isIntegerKey, recordedBatches, type Batch } from "./batches";
 
 export interface BackfillResult {
   state: MigrationObservation["state"];
@@ -69,17 +71,20 @@ export interface BackfillResult {
 /** The effect a batch is, and its receipt's address suffix. */
 export const batchEffect = (key: string, batch: string): string => `migrate/${key}/${batch}`;
 
-/** The receipt's expected value for one batch: bound to the table, the new column's attribute number, the range and the expression. */
-export function batchExpectation(o: MigrationObservation, batch: string, size: number): string {
-  const effect = batchEffect(o.names.key, batch);
+/** The receipt's expected value for one batch: bound to the table, the new column's attribute number, the batch's rows and the expression. */
+export function batchExpectation(o: MigrationObservation, batch: Pick<Batch, "id" | "inputs">): string {
+  const effect = batchEffect(o.names.key, batch.id);
   return receiptExpectation(
     EffectReceipt(effect, {
       effect,
       flavor: "hash",
-      inputs: { migration: o.names.key, table: o.oid, column: o.newColumn!.attnum, batch, size, key: o.batchKey, expression: o.expression },
+      inputs: { migration: o.names.key, table: o.oid, column: o.newColumn!.attnum, ...batch.inputs, expression: o.expression },
     }),
   );
 }
+
+/** The address suffix of the recorded batch boundaries of a key that is not one integer column. */
+export const BATCHES_RECORD = "batches";
 
 export interface BackfillDeps {
   /** The receipt store. Default: `<schema>.__chant_receipts` over the run's connection. */
@@ -106,40 +111,48 @@ export async function backfill(run: MigrationRun, deps: BackfillDeps = {}): Prom
   await receipts.ensure();
   const recorded = await receipts.readAll(batchPrefix(identity, n.key));
 
-  const size = String(run.batchSize);
-  const key = col(o.batchKey);
-  const batches = (
-    await run.client.query<{ b: string }>(`SELECT pg_catalog.floor(${key}::numeric / ${size})::bigint::text AS b FROM ${n.qualifiedTable} GROUP BY 1 ORDER BY 1`)
-  ).map((r) => r.b);
+  const batches = isIntegerKey(o.keyColumns)
+    ? await integerBatches(run.client, n.qualifiedTable, o.keyColumns[0]!, run.batchSize)
+    : (
+        await recordedBatches(run.client, {
+          table: n.qualifiedTable,
+          oid: o.oid,
+          attnum: o.newColumn.attnum,
+          keys: o.keyColumns,
+          size: run.batchSize,
+          effect: batchEffect(n.key, BATCHES_RECORD),
+          receipts,
+          log: run.log,
+          ...(run.signal ? { signal: run.signal } : {}),
+        })
+      ).batches;
   result.batches = batches.length;
   const wait = deps.waitForReplicas ?? waitForReplicas;
   const target = `${col(n.newColumn)}`;
 
   for (const b of batches) {
     run.signal?.throwIfAborted();
-    const effect = batchEffect(n.key, b);
-    const expectation = batchExpectation(o, b, run.batchSize);
+    const effect = batchEffect(n.key, b.id);
+    const expectation = batchExpectation(o, b);
     if (recorded.get(receiptAddress(identity, effect)) === expectation) {
       result.skipped++;
       continue;
     }
     if (run.replicationLag) result.pausedMs += await wait(run.client, run.replicationLag, { log: run.log, ...(run.signal ? { signal: run.signal } : {}) });
-    const lo = (BigInt(b) * BigInt(run.batchSize)).toString();
-    const hi = ((BigInt(b) + 1n) * BigInt(run.batchSize)).toString();
     const updated = await inTransaction(run, async (exec) => {
       const [row] = await exec(
-        `WITH u AS (UPDATE ${n.qualifiedTable} SET ${target} = (${o.expression}) WHERE ${key} >= $1 AND ${key} < $2 AND ${target} IS DISTINCT FROM (${o.expression}) RETURNING 1) ` +
+        `WITH u AS (UPDATE ${n.qualifiedTable} SET ${target} = (${o.expression}) WHERE ${b.where} AND ${target} IS DISTINCT FROM (${o.expression}) RETURNING 1) ` +
           "SELECT count(*)::int AS n FROM u",
-        [lo, hi],
+        b.params,
       );
       // The receipt, last, in the batch's own transaction.
       await receipts.write({ name: effect, effect, flavor: "hash", inputs: {} }, expectation);
-      await deps.beforeCommit?.(b);
+      await deps.beforeCommit?.(b.id);
       return Number(row?.n ?? 0);
     });
     result.rows += updated;
     result.filled++;
-    await deps.afterBatch?.(b);
+    await deps.afterBatch?.(b.id);
   }
   run.log(`-- backfill of ${n.key}: ${result.batches} batch(es), ${result.filled} filled (${result.rows} row(s)), ${result.skipped} already filled`);
   return result;
