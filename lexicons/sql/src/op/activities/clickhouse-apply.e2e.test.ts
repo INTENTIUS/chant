@@ -132,7 +132,7 @@ describe.skipIf(!enabled)("applying to a clickhouse-server", () => {
     const r = await apply([DB, rebuilt, OLD, BY_KIND]);
     expect(r.notAttempted).toHaveLength(1);
     expect(r.notAttempted[0]).toMatchObject({ kind: "ClickHouse::Table", name: "shop.events", reason: "unsupported-kind" });
-    expect(r.notAttempted[0]!.detail).toMatch(/SQLCH220.*clickhouse\.com\/docs.*#3198/);
+    expect(r.notAttempted[0]!.detail).toMatch(/SQLCH220.*clickhouse\.com\/docs.*ClickHouseRebuildOp\(\{ table: "shop\.events"/);
     expect(await showCreate("shop.events")).toBe(before);
   }, 120_000);
 

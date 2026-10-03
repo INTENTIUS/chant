@@ -2,6 +2,7 @@
 
 import { CLASSIFIER_RULES } from "./rules";
 import type { SchemaDiff } from "./diff";
+import { renderRebuildOps } from "./rebuild-handoff";
 
 const CLASS_LABEL: Record<string, string> = {
   create: "create",
@@ -41,6 +42,7 @@ export function renderDiff(diff: SchemaDiff, opts: { title?: string } = {}): str
       "",
       `Refused: ${diff.rebuilds.length} change(s) need a rebuild, which ClickHouse cannot make to the existing table. ` +
         "A rebuild runs as its own migration (create the new table, backfill, verify, swap), not in place.",
+      ...renderRebuildOps(diff.rebuildOps ?? []),
     );
   }
   return lines.join("\n");

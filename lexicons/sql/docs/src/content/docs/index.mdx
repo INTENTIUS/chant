@@ -26,7 +26,9 @@ server's catalog: see [Where the Types Come From](./clickhouse-catalog/).
 see [Importing a Live Server](./importing/). Every schema change is
 classified as metadata only, a background rewrite or a rebuild, each with the
 ClickHouse `ALTER` restriction behind it, and a rebuild is refused in place:
-see [Planning and the Change Classifier](./change-classifier/).
+see [Planning and the Change Classifier](./change-classifier/). A rebuild runs
+as `ClickHouseRebuildOp`, a gated Op that fills a new table, verifies it and
+swaps it in: see [Rebuilding a Table](./rebuild/).
 
 
 ## At a Glance

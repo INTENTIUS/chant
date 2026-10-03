@@ -36,7 +36,7 @@ Every declared object comes back with one verdict.
 | applied, `created` | the server does not have it; its declared `CREATE` runs, with chant's marker in its comment |
 | applied, `updated` | the server has it and the `ALTER`s for its changes ran |
 | applied, `unchanged` | nothing to change and the marker in place; nothing is sent |
-| not attempted, `unsupported-kind` | a change needs a rebuild (a sorting key, a partition key, an engine, a key column's type). Nothing is sent for the object. The detail names each rule, the `ALTER` restriction behind it and the ClickHouse page it is stated on, and points at the rebuild migration Op |
+| not attempted, `unsupported-kind` | a change needs a rebuild (a sorting key, a partition key, an engine, a key column's type). Nothing is sent for the object. The detail names each rule, the `ALTER` restriction behind it and the ClickHouse page it is stated on, and the [`ClickHouseRebuildOp`](../rebuild/) declaration that runs it instead |
 | not attempted, `filtered` | the change drops a column, which destroys its data, and the apply may not delete (`delete: "never"`, the default) |
 | not attempted, `dependency-failed` | an object it references is not on the server because creating it failed or was not attempted |
 | not attempted, `no-binding` / `no-credentials` | there is no server to apply to, or it refused the credentials |
