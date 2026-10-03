@@ -72,3 +72,4 @@ export {
   type PostgresMigrationArgs,
 } from "./postgres/migrate/op";
 export { POSTGRES_RECEIPTS_TABLE } from "./postgres/migrate/receipts";
+export * from "./composites/postgres";

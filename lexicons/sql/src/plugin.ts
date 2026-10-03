@@ -114,7 +114,7 @@ export const sqlPlugin: LexiconPlugin = {
 
   skills: sqlSkills,
 
-  /** The ClickHouse composites (./composites), as the catalog generated from their exports. */
+  /** The ClickHouse and Postgres composites (./composites), as the catalog generated from their exports. */
   composites() {
     return compositeCatalog;
   },
