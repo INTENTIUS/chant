@@ -80,6 +80,13 @@ describe("normalization", () => {
     );
   });
 
+  test("a Replicated*MergeTree with no arguments is the one the server prints with its default Keeper path and replica", () => {
+    const shown = (engine: string) => canonicalObject(`CREATE TABLE t (a UInt8, v UInt8) ENGINE = ${engine} ORDER BY a`).engine;
+    expect(shown("ReplicatedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')")).toBe(shown("ReplicatedMergeTree"));
+    expect(shown("ReplicatedReplacingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}', v)")).toBe(shown("ReplicatedReplacingMergeTree(v)"));
+    expect(shown("ReplicatedMergeTree('/clickhouse/tables/{shard}/t', '{replica}')")).not.toBe(shown("ReplicatedMergeTree"));
+  });
+
   test("a setting at its default is not part of the definition", () => {
     expect(canonicalObject("CREATE TABLE t (a UInt8) ENGINE = MergeTree ORDER BY a SETTINGS index_granularity = 8192").settings).toEqual({});
     expect(canonicalObject("CREATE TABLE t (a UInt8) ENGINE = MergeTree ORDER BY a SETTINGS min_bytes_for_wide_part = '0'").settings).toEqual({ min_bytes_for_wide_part: "0" });

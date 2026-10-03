@@ -103,6 +103,14 @@ const INTERVAL_UNITS: Record<string, string> = {
 
 const isName = (t: Token | undefined) => t !== undefined && (t.kind === "ident" || t.kind === "qident");
 
+/**
+ * The Keeper path and replica name a `Replicated*MergeTree` gets when its
+ * declaration leaves them out: the stock `default_replica_path` and
+ * `default_replica_name`, which `SHOW CREATE` then prints.
+ */
+export const DEFAULT_REPLICA_PATH = "'/clickhouse/tables/{uuid}/{shard}'";
+export const DEFAULT_REPLICA_NAME = "'{replica}'";
+
 /** One token's canonical text. */
 function tokenText(t: Token): string {
   if (t.kind === "qident") return unquote(t.text);
@@ -286,7 +294,10 @@ export function canonicalObject(ddl: string, defaultDatabase = "default"): Canon
 
   const engine = node.engine;
   if (engine) {
-    const args = engine.args?.map((a) => canonicalExpression(spanText(tokens, a) ?? "", database)) ?? [];
+    let args = engine.args?.map((a) => canonicalExpression(spanText(tokens, a) ?? "", database)) ?? [];
+    // `ENGINE = ReplicatedMergeTree` with no Keeper path and replica name is
+    // printed back with the server's defaults filled in; the two say the same.
+    if (/^Replicated.*MergeTree$/.test(engine.name) && args[0] === DEFAULT_REPLICA_PATH && args[1] === DEFAULT_REPLICA_NAME) args = args.slice(2);
     obj.engineName = engine.name;
     obj.engine = args.length ? `${engine.name}(${args.join(", ")})` : engine.name;
   }

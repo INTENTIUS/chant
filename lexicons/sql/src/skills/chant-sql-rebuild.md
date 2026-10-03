@@ -50,10 +50,14 @@ The swap gate is bound to a digest of the plan and the verification (row counts 
 
 ## When something goes wrong
 
-- A run stopped during the backfill (Ctrl-C, a killed job) is not a failure. The next run resumes from the receipts in `chant_receipts.receipts` on the same server, and a partition whose copy was cut off before its receipt is cleared and copied again, so no row is copied twice.
+- A run stopped during the backfill (Ctrl-C, a killed job) is not a failure. The next run resumes from the receipts in `chant_receipts.receipts` on the same server (in `<db>.__chant_receipts` on a Replicated database), and a partition whose copy was cut off before its receipt is cleared and copied again, so no row is copied twice.
 - A failed step (a failed copy after its retries, a verification mismatch, a refused declaration) runs onFailure: the new table `<t>__chant_new` and the dual-write view `<t>__chant_dual` are dropped, and the next run starts from a new table. The original table is untouched until the swap.
 - A verification mismatch in materialized-view mode usually means rows arrived with a time before the cut-over later than `cutoverDelay`. Raise the delay and run again.
-- The Op refuses a database that is not Atomic (`EXCHANGE TABLES` needs it), a table whose change is not a rebuild (use the applier), and an object already under one of its working names that is not its own.
+- The Op refuses a database that is neither Atomic nor Replicated (`EXCHANGE TABLES` needs one of them), a table whose change is not a rebuild (use the applier), and an object already under one of its working names that is not its own. In a Replicated database it also refuses a table, or a declaration, whose engine is not `Replicated*MergeTree`: a plain MergeTree keeps different rows on each replica and one replica's copy would lose the others'.
+
+## On a Replicated database
+
+The Op runs on a `Replicated` database (two replicas with Keeper are covered by the e2e test). Declare the tables `ENGINE = ReplicatedMergeTree` with no arguments, so each table, the new one included, gets its own Keeper path from its UUID; an explicit path without `{uuid}` is refused. `chant run` can reach any replica, and a different one on each run: the DDL reaches every replica through the database, the receipts live in `<db>.__chant_receipts` and replicate, each step that reads rows first waits for its replica to catch up (`SYSTEM SYNC REPLICA`), and a copy still running on another replica is killed with `KILL QUERY ON CLUSTER '<db>'`. A dependent view is detached `PERMANENTLY`, the only form the database takes, and attached again.
 
 ## Checking it is done
 
