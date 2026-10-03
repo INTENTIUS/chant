@@ -73,7 +73,7 @@ export class ReplicaFetchError extends Error {
     const sources = [...new Set(missing.map((m) => m.source))];
     const shown = missing
       .slice(0, 10)
-      .map((m) => `${m.part} from ${m.source}${m.sourceActive ? "" : " (inactive)"}${m.lastError ? ` (last fetch error: ${m.lastError})` : ""}`)
+      .map((m) => m.part + " from " + m.source + (m.sourceActive ? "" : " (inactive)") + (m.lastError ? " (last fetch error: " + m.lastError + ")" : ""))
       .join(", ");
     super(
       `${table}: waited ${Math.round(waitedMs / 1000)}s for replica ${replica} to fetch what the other replicas wrote, and ${missing.length} part(s) are still to fetch: ${shown}${missing.length > 10 ? ", ..." : ""}. ` +
