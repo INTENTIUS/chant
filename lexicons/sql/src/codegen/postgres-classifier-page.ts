@@ -18,7 +18,7 @@ label: "Locks and the Change Classifier"
 description: "How a Postgres schema change is classified by the lock it takes and whether it reads or rewrites the table, each with the documentation behind it"
 diataxis: reference
 group: "Postgres"
-order: 4
+order: 11
 ---
 
 {/* Written by src/codegen/postgres-classifier-page.ts from src/postgres/plan/rules.ts. Edit the rules, then run npm run docs. */}

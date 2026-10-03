@@ -1,11 +1,12 @@
 ---
 title: "Declaring Postgres Objects"
-label: "Declaring Objects"
 description: "Postgres schemas, tables, indexes, views, materialized views, sequences, enum types, domains and extensions as tagged templates: the eight tags, nextval(${seq}), COMMENT ON, and what each interpolation means"
 diataxis: how-to
-group: "Postgres"
-order: 11
 ---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-sql` — DO NOT EDIT.
+    Edit lexicons/sql/docs/pages/postgres-ddl.mdx instead; changes here are overwritten. */}
+
 
 A Postgres object is declared as its own DDL, inside a tagged template from `@intentius/chant-lexicon-sql/postgres`:
 
@@ -56,7 +57,43 @@ A table's declaration records every column (type, `NOT NULL`, default, `GENERATE
 
 A partition is a table of its own that names its parent by reference:
 
-{{file:postgres-partitioned-events/src/events.ts}}
+```typescript title="events.ts"
+import { index, schema, table } from "@intentius/chant-lexicon-sql/postgres";
+
+export const telemetry = schema`CREATE SCHEMA telemetry`;
+
+// A partitioned table's primary key has to include the partition key, so
+// the key is (id, occurred_at). Rows route to the partition whose range holds
+// occurred_at; a row outside every range goes to the default partition
+// instead of failing the insert.
+export const events = table`
+  CREATE TABLE ${telemetry}.events (
+    id          bigint GENERATED ALWAYS AS IDENTITY,
+    occurred_at timestamptz NOT NULL,
+    device_id   bigint NOT NULL,
+    kind        text NOT NULL,
+    payload     jsonb NOT NULL DEFAULT '{}',
+    PRIMARY KEY (id, occurred_at)
+  ) PARTITION BY RANGE (occurred_at)`;
+
+// One partition per month, created ahead of time. Ranges are half-open: the
+// upper bound belongs to the next month.
+export const eventsOct = table`
+  CREATE TABLE ${telemetry}.events_2026_10 PARTITION OF ${events} FOR VALUES FROM ('2026-10-01') TO ('2026-11-01')`;
+
+export const eventsNov = table`
+  CREATE TABLE ${telemetry}.events_2026_11 PARTITION OF ${events} FOR VALUES FROM ('2026-11-01') TO ('2026-12-01')`;
+
+export const eventsDec = table`
+  CREATE TABLE ${telemetry}.events_2026_12 PARTITION OF ${events} FOR VALUES FROM ('2026-12-01') TO ('2027-01-01')`;
+
+export const eventsDefault = table`
+  CREATE TABLE ${telemetry}.events_default PARTITION OF ${events} DEFAULT`;
+
+// An index on the parent exists on every partition, present and future.
+export const eventsByDevice = index`
+  CREATE INDEX events_by_device_idx ON ${events} (${events.columns.device_id}, ${events.columns.occurred_at} DESC)`;
+```
 
 `REFERENCES ${users} (${users.columns.id})` makes the referenced table a dependency, so the build creates it first. A foreign key to a table the project does not declare can name it as text, `REFERENCES billing.accounts (id)`; the build then cannot order the two.
 

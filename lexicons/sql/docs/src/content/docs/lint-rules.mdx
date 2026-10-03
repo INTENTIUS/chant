@@ -15,7 +15,9 @@ The sql lexicon's rule ids all start with `SQL`. Rules that hold in every dialec
 | SQLCH001 to SQLCH003 | lint rules over the TypeScript source | `chant lint`, the editor, and `chant serve lsp` |
 | SQLCH101 to SQLCH120 | post-synth checks over the build output | `chant build` and `chant lint` |
 | SQLCH200 to SQLCH250 | the change classifier's rules | `chant sql diff`, `chant sql plan`, `clickhouseApply`; see [Planning and the Change Classifier](../change-classifier/) |
-| SQLPG001 to SQLPG003 | Postgres lint rules over the TypeScript source | `chant lint`, the editor, and `chant serve lsp` |
+| SQLPG001 to SQLPG004 | Postgres lint rules over the TypeScript source | `chant lint`, the editor, and `chant serve lsp` |
+| SQLPG101 to SQLPG118 | Postgres post-synth checks over the build output | `chant build` and `chant lint` |
+| SQLPG200 to SQLPG270 | the Postgres change classifier's rules | `chant sql diff`, `chant sql plan`, `postgresApply`; see [Postgres Locks and the Change Classifier](../postgres-change-classifier/) |
 
 The [All Rules](../rules/) page is the generated list. This page says what each rule means. Every post-synth check has an entry in the lexicon's `auditCatalog()`, which is what `chant audit` reports it under.
 
@@ -29,12 +31,13 @@ The [All Rules](../rules/) page is the generated list. This page says what each 
 | SQLPG001 | error | The DDL in a Postgres template does not parse, the template holds another statement than its tag (a `CREATE INDEX` in `table`) or a second `CREATE`, or an index has no name. Reported at the token, as a line and column in the `.ts` file; a default that is not a `b_expr` (`DEFAULT 1 IN (1, 2)`) is reported at `IN`. An index's name is its identity on the server, so an unnamed one, which Postgres would name itself, is refused | Fix the statement, use the tag for the statement it holds, and name every index |
 | SQLPG002 | error | `${users.kind}` where `${users.columns.kind}` was meant, as SQLCH003 for Postgres templates | Reach the column through `.columns` |
 | SQLPG003 | warning | An object named in a string where Postgres reads a `regclass`: `nextval('app.ticket_seq')`, `currval`, `setval`, or `'app.t'::regclass`. A name in a string records no reference, so the build can create the table before the sequence | Interpolate the declared object: `nextval(${ticketSeq})` renders `nextval('app.ticket_seq'::regclass)`, as the catalog prints it, and keeps the dependency |
+| SQLPG004 | error | An `extension` template creates an extension the provider named in `sql.provider` (or in the one provider every profile names) does not allow: `CREATE EXTENSION pg_stat_monitor` on Neon. The lists are snapshots of each provider's documentation, dated in `providerData(provider).sources`; a provider whose list is partial (Supabase) is not reported for a name outside it. Silent when no provider is set | Use an extension the provider lists, change `sql.provider`, or disable the rule on the line if the provider has added the extension since the list was read |
 
 ## Post-synth checks
 
 ### Engines, codecs and settings
 
-These read the pinned server's catalog, so a pin move can change their verdicts (see [Where the Types Come From](../clickhouse-catalog/)).
+These read the pinned server's catalog, so a pin move can change their verdicts (see [Where the ClickHouse Types Come From](../clickhouse-catalog/)).
 
 | Id | Severity | Flags | What to change |
 |---|---|---|---|
@@ -68,6 +71,31 @@ These read the pinned server's catalog, so a pin move can change their verdicts 
 | SQLCH109 | warning | A materialized view that selects `*`. Its output columns become whatever the source has today, so adding a column to the source changes what the view writes | List the columns |
 | SQLCH110 | warning | A materialized view writes an output column its `TO` target does not declare. ClickHouse matches the columns by name, so that column is not stored. Judged against a target the same build declares, and only when the select list names its columns | Alias the select item to a target column, or add the column to the target |
 | SQLCH116 | warning | A view declared `SQL SECURITY DEFINER` without a `DEFINER`. Its access then depends on whoever ran the `CREATE`, so the same declaration grants different access in each environment | Name the `DEFINER` |
+
+### Postgres
+
+The Postgres checks read the build output, and the three that depend on the version read the major it records (`postgresMajor`: `sql.postgresMajor`, else 18) against the per-major catalogs (see [The Postgres Pin and Supported Majors](../postgres-majors/)). Several follow rules of [squawk](https://squawkhq.com), [strong_migrations](https://github.com/ankane/strong_migrations) and the PostgreSQL wiki's "Don't Do This" page, credited in the audit catalog.
+
+| Id | Severity | Flags | What to change |
+|---|---|---|---|
+| SQLPG101 | warning | A table with no primary key, and no `UNIQUE` constraint over `NOT NULL` columns. Logical replication then needs a `REPLICA IDENTITY` to send its updates and deletes, and nothing names one row. Partitions, typed tables and `LIKE` copies are skipped | Add a primary key |
+| SQLPG102 | warning | A foreign key whose referencing columns no index leads with. A delete or key update on the referenced table scans this one | Create an index whose leading columns are the foreign key's |
+| SQLPG103 | warning | A `smallserial`, `serial` or `bigserial` column | Declare it `GENERATED ALWAYS AS IDENTITY` |
+| SQLPG104 | warning | A `timestamp` column without time zone | Use `timestamptz` |
+| SQLPG105 | warning | A `json` column | Use `jsonb`, unless the exact text must be kept |
+| SQLPG106 | warning | A `char(n)` column, which pads with spaces | Use `text`, or `varchar(n)` for a length rule |
+| SQLPG107 | warning | A `money` column, whose meaning depends on `lc_monetary` | Use `numeric(p, s)` and a currency column |
+| SQLPG108 | warning | A `varchar(n)` with a habitual limit (50, 100, 128, 200, 250, 255, 256, 500, 512, 1000, 1024) rather than a rule | Use `text`, with a `CHECK` where the length is a rule |
+| SQLPG109 | warning | An index that duplicates a primary key, a unique constraint or another index | Drop the duplicate |
+| SQLPG110 | warning | A btree index that is a leading prefix of another index on the same table | Drop the prefix index; the wider one serves the same queries |
+| SQLPG111 | warning | A materialized view with no unique index, so `REFRESH ... CONCURRENTLY` is refused and every refresh blocks readers | Add a unique index over plain columns, or use `RefreshedView` |
+| SQLPG112 | warning | A column named like a secret or personal data (`password`, `token`, `api_key`, `ssn`, `email`, `phone`, `address` and similar) with no comment on it or on its table | Say in a `COMMENT ON` what it holds and how it is protected |
+| SQLPG113 | warning | An object in `public` while the project declares schemas of its own | Qualify it with a declared schema |
+| SQLPG114 | error | A storage parameter in `WITH (...)` that the object's kind does not take, that the catalog does not know, or that the target major removed | Fix the name, or use a parameter the target major has |
+| SQLPG115 | warning | A feature newer than the target major: a storage parameter by the catalog's first major, `NULLS NOT DISTINCT` (15), `NOT ENFORCED` and virtual generated columns (18) | Avoid the feature, or raise `sql.postgresMajor` |
+| SQLPG116 | error | An extension the target major no longer ships, such as `adminpack` from 17 | Remove it, or target an older major |
+| SQLPG117 | warning | A view without `security_invoker`, which runs with its owner's privileges and bypasses the reader's row-level security | Set `security_invoker = true` in its `WITH` options |
+| SQLPG118 | warning | A table using `INHERITS` where declarative partitioning replaced it | Use `PARTITION BY` and `PARTITION OF` |
 
 ## Suppressing a finding
 

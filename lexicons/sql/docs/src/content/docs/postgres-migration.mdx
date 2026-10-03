@@ -2,9 +2,11 @@
 title: "Migrating a Column"
 description: "PostgresMigrationOp runs a column rename or a type change across kinds as expand and contract in a gated Op: new column, dual-write trigger, batched backfill with receipts, verification, switch, retention, contract"
 diataxis: how-to
-group: "Postgres"
-order: 14
 ---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-sql` — DO NOT EDIT.
+    Edit lexicons/sql/docs/pages/postgres-migration.mdx instead; changes here are overwritten. */}
+
 
 Some column changes Postgres can make in a moment and still break every reader. `ALTER TABLE ... RENAME COLUMN` is a catalog change, but every query that still names the old column fails from the instant it commits. A type change between kinds, such as `text` to `numeric`, needs a `USING` expression and breaks readers that expect the old type. [The classifier](../postgres-change-classifier/) puts these in the expand-and-contract class (SQLPG205 and SQLPG208), and both `chant sql plan` and the [applier](../postgres-applying/) refuse them in place. `PostgresMigrationOp` is what runs them.
 

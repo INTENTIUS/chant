@@ -1,11 +1,12 @@
 ---
 title: "Importing a Postgres Server"
-label: "Importing a Live Server"
 description: "chant import --from <env> writes a Postgres server's schema as declarations, in the text the catalog's own printers give, leaving out what an ORM, an extension or a managed provider owns"
 diataxis: how-to
-group: "Postgres"
-order: 12
 ---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-sql` — DO NOT EDIT.
+    Edit lexicons/sql/docs/pages/postgres-importing.mdx instead; changes here are overwritten. */}
+
 
 `chant import --from <env>` reads the schema of the Postgres server an environment is bound to and writes it as declarations: one `schema.ts` holding a `schema`, `table`, `index`, `view`, `sequence`, `type`, `domain` or `extension` for each object, in dependency order.
 

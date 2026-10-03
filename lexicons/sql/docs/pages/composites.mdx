@@ -5,7 +5,9 @@ diataxis: reference
 order: 1
 ---
 
-Five composites for ClickHouse tables that are usually declared the same way. They are exported from `@intentius/chant-lexicon-sql/clickhouse` and built from the `table` and `view` tags, so what they produce is the same kind of entity a hand-written template produces, with the same checks.
+Ten composites for tables that are usually declared the same way, five per dialect. Each dialect's subpath exports only its own: `ReplacingTable`, `EventsTable`, `RollupView`, `CdcMirror` and `ShardedTable` from `@intentius/chant-lexicon-sql/clickhouse`, and `SoftDeleteTable`, `AuditLogTable`, `JoinTable`, `TenantTable` and `RefreshedView` from `@intentius/chant-lexicon-sql/postgres`. Each is built from its dialect's tags, so what they produce is the same kind of entity a hand-written template produces, with the same checks.
+
+## ClickHouse composites
 
 ```ts title="src/clicks.ts"
 import { EventsTable } from "@intentius/chant-lexicon-sql/clickhouse";
@@ -35,7 +37,7 @@ Each member becomes an entity named after the export and the member: `clicksTabl
 
 Every prop except `RollupView`'s `source` is SQL text, spliced into the template the way a string interpolation is (see [Declaring Tables and Views](../clickhouse-ddl/#a-string-is-sql-text)). `columns` is a column list as you would write it inside `CREATE TABLE (...)`, and `orderBy` and `partitionBy` are the clause bodies. A prop that does not parse fails the build with the composite's template line.
 
-## ReplacingTable
+### ReplacingTable
 
 A ReplacingMergeTree table with a version column. ReplacingMergeTree keeps one row per sort key, and on a merge the row with the highest version wins, so writing a row again with a higher version is how an update is expressed. Until a merge runs a query sees every version; read with `FINAL`, or aggregate with `argMax`, when only the latest row matters.
 
@@ -52,7 +54,7 @@ A ReplacingMergeTree table with a version column. ReplacingMergeTree keeps one r
 | `versionType` | `UInt64` | a UInt, Date, DateTime or DateTime64 type |
 | `partitionBy` | none | |
 
-## EventsTable
+### EventsTable
 
 An append-only MergeTree events table, partitioned by its timestamp and expired by TTL. It sets `ttl_only_drop_parts = 1`, so expiry drops whole parts once every row in them has expired instead of rewriting parts to remove single rows. That is cheap when the partition key and the TTL follow the same column, as they do by default.
 
@@ -70,7 +72,7 @@ An append-only MergeTree events table, partitioned by its timestamp and expired 
 | `ttlDays` | `90` | days a row is kept |
 | `partitionBy` | `toYYYYMM(<timestamp>)` | keep it no finer than a day (SQLCH112) |
 
-## RollupView
+### RollupView
 
 A materialized view that rolls a source table up into a target table declared beside it. The view writes into the target with `TO`, so the target is an ordinary table that can be queried, altered and backfilled on its own, and dropping the view leaves the data. The view reads `source` by reference, so the build creates the source and the target before the view.
 
@@ -90,7 +92,7 @@ A materialized view that rolls a source table up into a target table declared be
 | `engine` | `SummingMergeTree` | use `AggregatingMergeTree` for `-State` columns |
 | `partitionBy` | none | |
 
-## CdcMirror
+### CdcMirror
 
 A ReplacingMergeTree mirror of a table in another database, fed by change data capture (ClickPipes, Debezium through Kafka, PeerDB). The pipeline writes every change to a source row as a new row, with an increasing version and a deleted flag. With both engine arguments, ReplacingMergeTree keeps the latest version per key and drops rows whose latest version is a delete when it merges them. The `current` view reads the table with `FINAL` and leaves out deleted rows, which is what a query of the source table would have returned.
 
@@ -108,7 +110,7 @@ A ReplacingMergeTree mirror of a table in another database, fed by change data c
 | `deleted` | `_is_deleted` | the deleted flag the pipeline writes, `UInt8`, 1 for a delete |
 | `partitionBy` | none | |
 
-## ShardedTable
+### ShardedTable
 
 A ReplicatedMergeTree table on every node of a cluster, and the Distributed table that spreads reads and writes across it. Both are created `ON CLUSTER`. The local table holds each shard's rows and replicates them within the shard; with no engine arguments it takes the server's default replication path. The Distributed table holds no data: an insert goes to one shard by the sharding key, and a query runs on every shard and merges the results. It names the local table by reference, so the build creates the local table first.
 
@@ -126,8 +128,98 @@ A ReplicatedMergeTree table on every node of a cluster, and the Distributed tabl
 | `shardingKey` | `rand()` | |
 | `partitionBy` | none | the local table's partition key |
 
+## Postgres composites
+
+Every Postgres composite takes `name`, unqualified, and `schema`, the schema entity or its name (default `public`); the members are created in that schema. The other props are SQL text unless the table says they are entities. All five pass SQLPG101 to SQLPG118: their views set `security_invoker`, and none uses a feature newer than the oldest supported major. `lexicons/sql/examples/postgres-composites` declares all five:
+
+{{file:postgres-composites/src/accounts.ts}}
+
+{{file:postgres-composites/src/memberships.ts}}
+
+### SoftDeleteTable
+
+A table whose rows are deleted by marking them. The composite appends `created_at` and `updated_at` (`timestamptz NOT NULL DEFAULT now()`) and a nullable `deleted_at` to the columns it is given; a row is live while `deleted_at` is null. `<name>_live` is a view of the live rows with `security_invoker`, so row-level security on the table applies to whoever reads the view, and a partial index on the live rows keeps lookups off the deleted ones. Postgres has no default that follows an update: the application, or a trigger it owns, sets `updated_at`.
+
+| Member | Entity |
+|---|---|
+| `table` | `Postgres::Table` |
+| `live` | `Postgres::View`, `<name>_live`: `SELECT * FROM <table> WHERE <deletedAt> IS NULL` |
+| `liveIndex` | `Postgres::Index`, `<name>_live_idx` on `(<liveKey>) WHERE <deletedAt> IS NULL` |
+
+| Prop | Default | |
+|---|---|---|
+| `columns` | | every column except the three added, with the primary key |
+| `liveKey` | `id` | the column the app looks rows up by |
+| `comment` | says rows are soft-deleted | the table's comment, which also answers SQLPG112 for its columns |
+| `createdAt`, `updatedAt`, `deletedAt` | `created_at`, `updated_at`, `deleted_at` | the three columns' names |
+
+### AuditLogTable
+
+An append-only audit log partitioned by month. The parent is `PARTITION BY RANGE (<timestamp>)` with columns `id`, the timestamp, the actor, `action`, `subject` and `details jsonb`, and its primary key is `(id, <timestamp>)`, since every unique key on a partitioned table must include the partition key. A default partition takes rows no month's partition covers yet. Each month's partition is one more `table` call, `PARTITION OF ${audit.table} FOR VALUES FROM (...) TO (...)`, made ahead of time by whatever keeps partitions.
+
+| Member | Entity |
+|---|---|
+| `table` | `Postgres::Table`, the partitioned parent |
+| `defaultPartition` | `Postgres::Table`, `<name>_default`, `PARTITION OF <table> DEFAULT` |
+| `actorIndex` | `Postgres::Index`, `<name>_actor_idx` on `(<actor>, <timestamp> DESC)` |
+
+| Prop | Default | |
+|---|---|---|
+| `timestamp` | `occurred_at` | the event time and partition key |
+| `actor` | `actor` | the column naming who acted |
+
+### JoinTable
+
+The table of a many-to-many relation. Two foreign keys, a primary key on `(<leftColumn>, <rightColumn>)` that also serves lookups from the left, and a reverse index on `(<rightColumn>, <leftColumn>)` that serves lookups from the right and keeps a delete on the right table off a scan (SQLPG102). Both foreign keys cascade by default.
+
+| Member | Entity |
+|---|---|
+| `table` | `Postgres::Table`, with a `created_at` column |
+| `reverseIndex` | `Postgres::Index`, `<name>_reverse_idx` |
+
+| Prop | Default | |
+|---|---|---|
+| `left`, `right` | | the two tables, as entities (a member such as `users.table` works) |
+| `leftColumn`, `rightColumn` | | the join table's columns holding each key |
+| `leftKey`, `rightKey` | `id` | the referenced columns |
+| `leftType`, `rightType` | `bigint` | |
+| `onDelete` | `CASCADE` | |
+
+### TenantTable
+
+A multi-tenant table whose tenant column leads every key and index. The tenant column (`NOT NULL`) goes in front of the columns given, the primary key is `(<tenant>, <primaryKey>)`, and one index covers `(<tenant>, <indexOn>)`, so a query scoped to one tenant reads one contiguous range of each. Row-level security is separate: a policy on the table keeps one tenant's role out of another's rows, and the dialect does not declare policies.
+
+| Member | Entity |
+|---|---|
+| `table` | `Postgres::Table` |
+| `index` | `Postgres::Index`, `<name>_tenant_idx` |
+
+| Prop | Default | |
+|---|---|---|
+| `columns` | | every column except the tenant's |
+| `primaryKey` | | the columns that make a row unique after the tenant |
+| `indexOn` | | the columns the index covers after the tenant |
+| `tenant` | `tenant_id` | |
+| `tenantType` | `uuid` | |
+
+### RefreshedView
+
+A materialized view and the unique index `REFRESH MATERIALIZED VIEW CONCURRENTLY` needs (SQLPG111). Without that index every refresh takes an `ACCESS EXCLUSIVE` lock that blocks readers. The view reads `source` by reference, so the build orders them and the view's lineage names the source's columns.
+
+| Member | Entity |
+|---|---|
+| `view` | `Postgres::MaterializedView`: `SELECT <select> FROM <source> GROUP BY <groupBy>` |
+| `uniqueIndex` | `Postgres::Index`, `<name>_key`, unique on `(<uniqueOn>)` |
+
+| Prop | Default | |
+|---|---|---|
+| `source` | | the table or view it reads, as the entity |
+| `select` | | the select list, each computed item aliased |
+| `groupBy` | | the grouping key |
+| `uniqueOn` | `groupBy` | columns that identify one row of the result |
+
 ## Where each field came from
 
 When `chant build` interprets a composite's factory instead of calling it, it records where each field of each member came from (see [What a Composite Records About Its Fields](/chant/guide/composite-resources/#what-a-composite-records-about-its-fields)). The tags report which fields each interpolation landed in, so for `EventsTable` the build knows that the table's `ttl` came from the `timestamp` and `ttlDays` parameters, while its engine and its `ttl_only_drop_parts` setting are fixed by the composite. A drift on the TTL is then reported by `chant lifecycle diff` as a change to `ttlDays` at the call site, and a drift on the engine is refused by name. An interpolated entity or member, such as `RollupView`'s `source`, is wiring inside the composite and governs no field.
 
-That record exists only when the factory is interpreted. Each of the five has a body chant can interpret, and imported from `@intentius/chant-lexicon-sql/clickhouse` as above it is: chant reads the package's TypeScript source and follows the dialect's barrel to the module that defines the composite ([#3247](https://github.com/INTENTIUS/chant/issues/3247)). A composite that is called instead records `unknown` for every field it emits, and a drift on one of those fields falls back to editing the declared value. That happens when the build runs without `--fold`, or when the calling file falls back to run.
+That record exists only when the factory is interpreted. Each of the ten has a body chant can interpret, and imported from `@intentius/chant-lexicon-sql/clickhouse` or `/postgres` it is: chant reads the package's TypeScript source and follows the dialect's barrel to the module that defines the composite ([#3247](https://github.com/INTENTIUS/chant/issues/3247)). A composite that is called instead records `unknown` for every field it emits, and a drift on one of those fields falls back to editing the declared value. That happens when the build runs without `--fold`, or when the calling file falls back to run.

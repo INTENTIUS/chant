@@ -1,11 +1,12 @@
 ---
 title: "Getting Started with Postgres"
-label: "Getting Started"
 description: "Declare a Postgres schema with the sql lexicon, build it, apply it to a local server, add a column and an index, and see a column rename refused"
 diataxis: tutorial
-group: "Postgres"
-order: 11
 ---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-sql` — DO NOT EDIT.
+    Edit lexicons/sql/docs/pages/postgres-getting-started.mdx instead; changes here are overwritten. */}
+
 
 This walks through the Postgres example the lexicon ships: a schema, an enum type, a sequence, two tables with a foreign key, an index and a view. You build it, apply it to a Postgres server running in Docker, add a column and an index to the live tables, and then rename a column to see why some changes are not made in place.
 
@@ -41,19 +42,78 @@ export default { lexicons: ["sql"], sql: { dialect: "postgres" } } satisfies Cha
 
 Each object is its own DDL inside a tagged template from `@intentius/chant-lexicon-sql/postgres`, and the export name (`app`, `orderStatus`) is how chant knows the object. A template may follow its `CREATE` with `COMMENT ON` statements for the same object:
 
-{{file:postgres-getting-started/src/app.ts}}
+```typescript title="app.ts"
+import { schema, sequence, type } from "@intentius/chant-lexicon-sql/postgres";
+
+export const app = schema`
+  CREATE SCHEMA app;
+  COMMENT ON SCHEMA app IS 'The shop'`;
+
+export const orderStatus = type`
+  CREATE TYPE ${app}.order_status AS ENUM ('placed', 'paid', 'shipped', 'cancelled')`;
+
+// Invoice numbers start at 1000; orders take theirs with nextval(${invoiceSeq}).
+export const invoiceSeq = sequence`
+  CREATE SEQUENCE ${app}.invoice_seq AS bigint START WITH 1000`;
+```
 
 `${app}.users` makes the table a reference to the schema, so the build creates the schema first. The column comment is part of the table's declaration:
 
-{{file:postgres-getting-started/src/users.ts}}
+```typescript title="users.ts"
+import { table } from "@intentius/chant-lexicon-sql/postgres";
+import { app } from "./app";
+
+export const users = table`
+  CREATE TABLE ${app}.users (
+    id         bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    email      text NOT NULL UNIQUE,   -- login name, compared case-insensitively by the app
+    created_at timestamptz NOT NULL DEFAULT now()
+  );
+  COMMENT ON TABLE ${app}.users IS 'One row per account';
+  COMMENT ON COLUMN ${app}.users.email IS 'Unique; lower-cased by the app'`;
+```
 
 `orders` references three more objects. `REFERENCES ${users} (${users.columns.id})` is a foreign key whose target the build knows. `nextval(${invoiceSeq})` renders as `nextval('app.invoice_seq'::regclass)`, which is how the server prints the default back, and makes the sequence a dependency. `${orderStatus}` is the enum type. The index is named, because the name is its identity on the server:
 
-{{file:postgres-getting-started/src/orders.ts}}
+```typescript title="orders.ts"
+import { index, table } from "@intentius/chant-lexicon-sql/postgres";
+import { app, invoiceSeq, orderStatus } from "./app";
+import { users } from "./users";
+
+export const orders = table`
+  CREATE TABLE ${app}.orders (
+    id         bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    user_id    bigint NOT NULL REFERENCES ${users} (${users.columns.id}) ON DELETE CASCADE,
+    invoice_no bigint NOT NULL DEFAULT nextval(${invoiceSeq}),
+    status     ${orderStatus} NOT NULL DEFAULT 'placed',
+    amount     numeric(12, 2) NOT NULL CHECK (amount >= 0),
+    placed_at  timestamptz NOT NULL DEFAULT now()
+  )`;
+
+// The index is named: the name is its identity on the server.
+export const ordersUserId = index`
+  CREATE INDEX orders_user_id_idx ON ${orders} (${orders.columns.user_id}, ${orders.columns.placed_at} DESC)`;
+```
 
 The view reads both tables through column references, qualified with the alias the query gives each table. Those references are its lineage: the build records that `order_count` comes from `orders.id` and `total` from `orders.amount`:
 
-{{file:postgres-getting-started/src/order-totals.ts}}
+```typescript title="order-totals.ts"
+import { view } from "@intentius/chant-lexicon-sql/postgres";
+import { app } from "./app";
+import { orders } from "./orders";
+import { users } from "./users";
+
+// In a join, qualify each column reference: u.${users.columns.id}.
+export const orderTotals = view`
+  CREATE VIEW ${app}.order_totals WITH (security_invoker = true) AS
+  SELECT u.${users.columns.id} AS user_id,
+         u.${users.columns.email},
+         count(o.${orders.columns.id}) AS order_count,
+         coalesce(sum(o.${orders.columns.amount}), 0) AS total
+  FROM ${users} u
+  LEFT JOIN ${orders} o ON o.${orders.columns.user_id} = u.${users.columns.id}
+  GROUP BY u.${users.columns.id}, u.${users.columns.email}`;
+```
 
 ## 3. Build and lint
 

@@ -1,11 +1,12 @@
 ---
 title: "Applying to a Postgres Server"
-label: "Applying to a Server"
 description: "postgresApply makes a Postgres server hold what a build declares: statements grouped into transactions by the lock they take, CONCURRENTLY outside them, lock and statement timeouts on every statement, ownership in the comment, and an owned-only prune"
 diataxis: how-to
-group: "Postgres"
-order: 13
 ---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-sql` — DO NOT EDIT.
+    Edit lexicons/sql/docs/pages/postgres-applying.mdx instead; changes here are overwritten. */}
+
 
 `postgresApply` makes the Postgres server an environment is bound to hold what a `chant build` declares. It is what `ApplyOp` runs for `target: "postgres"`, and an Op step of its own for a hand-written Op. It sends the statements for every change [the classifier](../postgres-change-classifier/) does not put in the expand-and-contract class, and nothing for the objects that have one.
 
