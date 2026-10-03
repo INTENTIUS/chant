@@ -22,7 +22,7 @@ import { clickhouseQuery } from "../http";
 import { ident, sqlString } from "../apply/statements";
 import { rebuildPlanSubject, RebuildRefusal, type RebuildObservation } from "./observe";
 import { sourcePartitionExpression } from "./partitions";
-import { cutoverOf, observe, utcLiteral, waitOn, type RebuildRun } from "./steps";
+import { cutoverOf, observe, syncReplica, utcLiteral, waitOn, type RebuildRun } from "./steps";
 
 export interface PartitionCheck {
   partition: string;
@@ -67,6 +67,9 @@ export async function verifyRebuild(run: RebuildRun): Promise<VerifyResult> {
   const cutover = cutoverOf(run, o);
   await waitOn(run, n.database, n.name);
   await waitOn(run, n.database, n.newName);
+  // In a Replicated database: count what every replica wrote, not what this one has fetched so far.
+  await syncReplica(run, o, n.database, n.name);
+  await syncReplica(run, o, n.database, n.newName);
 
   const types = new Map(
     (

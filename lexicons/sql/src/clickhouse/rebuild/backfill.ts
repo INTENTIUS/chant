@@ -27,6 +27,16 @@
  * goes on with an INSERT whose client went away) is killed before the
  * partition is cleared. A backfill interrupted halfway therefore resumes at
  * the first partition without a receipt, and no row is copied twice.
+ *
+ * In a Replicated database (#3249) a resumed backfill may run on another
+ * replica than the one the copy ran on. The kill is `KILL QUERY ON CLUSTER`
+ * the database's own cluster, so it reaches the replica still running the
+ * copy; before the old table's partitions are listed, and before the new
+ * table's rows are counted, this replica fetches what the others wrote
+ * (`SYSTEM SYNC REPLICA`); and the receipts replicate with the tables
+ * (`./receipts.ts`). Each copy runs with `insert_deduplicate = 0`: a
+ * replicated table remembers the blocks it was given, and a partition copied
+ * again after its rows were cleared would otherwise be dropped as a repeat.
  */
 
 import { EffectReceipt, receiptExpectation } from "@intentius/chant/effect-receipt";
@@ -35,7 +45,7 @@ import { ident, sqlString } from "../apply/statements";
 import { clickhouseReceiptStore, receiptAddress, type ClickHouseReceiptStore } from "./receipts";
 import { RebuildRefusal, type RebuildObservation } from "./observe";
 import { sourcePartitionExpression, sourcePartitions } from "./partitions";
-import { cutoverOf, observe, serverNow, utcLiteral, waitOn, type RebuildRun } from "./steps";
+import { cutoverOf, observe, serverNow, syncReplica, utcLiteral, waitOn, type RebuildRun } from "./steps";
 
 export interface BackfillResult {
   state: RebuildObservation["state"];
@@ -90,6 +100,7 @@ export async function backfill(run: RebuildRun, deps: BackfillDeps = {}): Promis
     }
   }
   await waitOn(run, n.database, n.name);
+  await syncReplica(run, o, n.database, n.name);
 
   const cutColumn = run.dualWrite.mode === "materialized-view" ? o.copied.find((c) => c.name === (run.dualWrite as { cutoverColumn: string }).cutoverColumn) : undefined;
   const sourceRange = cutColumn && cutover !== undefined ? ` AND ${ident(cutColumn.source)} < ${utcLiteral(cutover)}` : "";
@@ -99,7 +110,8 @@ export async function backfill(run: RebuildRun, deps: BackfillDeps = {}): Promis
   const select = o.copied.map((c) => ident(c.source)).join(", ");
 
   const identity = { ...(run.marker?.stack ? { stack: run.marker.stack } : {}), ...(run.marker?.env ? { env: run.marker.env } : {}) };
-  const receipts = deps.receipts ?? clickhouseReceiptStore(run.target.endpoint, identity, run.runId ? { runId: run.runId } : {});
+  const receipts =
+    deps.receipts ?? clickhouseReceiptStore(run.target.endpoint, identity, { ...(run.runId ? { runId: run.runId } : {}), ...(o.replicated ? { replicatedIn: n.database } : {}) });
   const recorded = await receipts.readAll(receiptAddress(identity, `rebuild/${n.key}/`));
 
   const partitions = await sourcePartitions(run.target, n);
@@ -114,7 +126,15 @@ export async function backfill(run: RebuildRun, deps: BackfillDeps = {}): Promis
     }
 
     const queryId = `chant-rebuild-${o.newTable.uuid}-${p}`;
-    await clickhouseQuery(run.target.endpoint, `KILL QUERY WHERE query_id = ${sqlString(queryId)} SYNC`);
+    if (o.replicated) {
+      // On every replica that answers: the copy may be running on another one than this run's.
+      await clickhouseQuery(run.target.endpoint, `KILL QUERY ON CLUSTER ${sqlString(n.database)} WHERE query_id = ${sqlString(queryId)} SYNC`, {
+        settings: { distributed_ddl_output_mode: "throw_only_active" },
+      });
+      await syncReplica(run, o, n.database, n.newName);
+    } else {
+      await clickhouseQuery(run.target.endpoint, `KILL QUERY WHERE query_id = ${sqlString(queryId)} SYNC`);
+    }
     const mine = `${fromOld} = ${sqlString(p)}${targetRange}`;
     const [left] = await clickhouseQuery<{ n: string | number }>(run.target.endpoint, `SELECT count() AS n FROM ${n.newTable} WHERE ${mine}`);
     if (Number(left?.n ?? 0) > 0) {
@@ -128,7 +148,7 @@ export async function backfill(run: RebuildRun, deps: BackfillDeps = {}): Promis
 
     const sql = `INSERT INTO ${n.newTable} (${columns}) SELECT ${select} FROM ${n.table} WHERE _partition_id = ${sqlString(p)}${sourceRange}`;
     run.log(sql);
-    await clickhouseQuery(run.target.endpoint, sql, { queryId, settings: { async_insert: "0" }, ...(run.signal ? { signal: run.signal } : {}) });
+    await clickhouseQuery(run.target.endpoint, sql, { queryId, settings: { async_insert: "0", insert_deduplicate: "0" }, ...(run.signal ? { signal: run.signal } : {}) });
     // The receipt, last, on success only.
     await receipts.write({ name: effect, effect, flavor: "hash", inputs: {} }, expectation);
     result.copied++;

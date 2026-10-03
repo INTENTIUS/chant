@@ -29,6 +29,15 @@
  *
  * Write discipline: the backfill writes a partition's receipt after the
  * partition's copy succeeded, last, and nothing else writes one.
+ *
+ * In a Replicated database (#3249) the receipts sit beside the tables they
+ * witness, in `<db>.__chant_receipts`, a `ReplicatedReplacingMergeTree`: the
+ * database runs its CREATE on every replica and the table replicates its
+ * rows, so a receipt written by a copy on one replica is read by a resumed
+ * backfill on another. Each read first waits for this replica to fetch what
+ * the others wrote (`SYSTEM SYNC REPLICA ... LIGHTWEIGHT`). A separate
+ * `chant_receipts` database would exist on the one replica the backfill
+ * first ran on.
  */
 
 import { OWNERSHIP_MANAGED_BY_VALUE } from "@intentius/chant/ownership";
@@ -42,8 +51,15 @@ export const RECEIPTS_DATABASE = "chant_receipts";
 /** The table, one row per receipt write. */
 export const RECEIPTS_TABLE = "receipts";
 
+/** The table in a Replicated database that holds the receipts of the rebuilds in it. */
+export const REPLICATED_RECEIPTS_TABLE = "__chant_receipts";
+
+/** Where the receipts are kept: `chant_receipts.receipts`, or `<db>.__chant_receipts` for a Replicated database. */
+export function receiptsTable(replicatedIn?: string): { database: string; name: string } {
+  return replicatedIn ? { database: replicatedIn, name: REPLICATED_RECEIPTS_TABLE } : { database: RECEIPTS_DATABASE, name: RECEIPTS_TABLE };
+}
+
 const COMMENT = `chant effect receipts [chant ${CLICKHOUSE_COMMENT_OWNERSHIP_KEYS.managedBy}=${OWNERSHIP_MANAGED_BY_VALUE} ${RECEIPTS_TRAILER_KEY}=effects]`;
-const TABLE = `${ident(RECEIPTS_DATABASE)}.${ident(RECEIPTS_TABLE)}`;
 /** Plain synchronous inserts: an async insert can be acknowledged before it is written. */
 const SYNC = { async_insert: "0" };
 
@@ -61,31 +77,44 @@ export interface ClickHouseReceiptStore extends ReceiptStore {
  * A receipt store on the server at `endpoint`. Creates the receipts database
  * and table on first write if they are not there. `identity` is the
  * project's ownership stack and env, which every address starts with.
+ * `replicatedIn` names a Replicated database to keep them in instead.
  */
-export function clickhouseReceiptStore(endpoint: ClickHouseEndpoint, identity: { stack?: string; env?: string }, opts: { runId?: string } = {}): ClickHouseReceiptStore {
+export function clickhouseReceiptStore(
+  endpoint: ClickHouseEndpoint,
+  identity: { stack?: string; env?: string },
+  opts: { runId?: string; replicatedIn?: string } = {},
+): ClickHouseReceiptStore {
+  const where = receiptsTable(opts.replicatedIn);
+  const TABLE = `${ident(where.database)}.${ident(where.name)}`;
   let ensured = false;
   const ensure = async () => {
     if (ensured) return;
-    await clickhouseQuery(endpoint, `CREATE DATABASE IF NOT EXISTS ${ident(RECEIPTS_DATABASE)} COMMENT ${sqlString(COMMENT)}`);
+    if (!opts.replicatedIn) await clickhouseQuery(endpoint, `CREATE DATABASE IF NOT EXISTS ${ident(RECEIPTS_DATABASE)} COMMENT ${sqlString(COMMENT)}`);
     await clickhouseQuery(
       endpoint,
       `CREATE TABLE IF NOT EXISTS ${TABLE} (address String, effect String, expectation String, run_id String, written_at DateTime64(3) DEFAULT now64(3)) ` +
-        `ENGINE = ReplacingMergeTree(written_at) ORDER BY address COMMENT ${sqlString(COMMENT)}`,
+        `ENGINE = ${opts.replicatedIn ? "ReplicatedReplacingMergeTree" : "ReplacingMergeTree"}(written_at) ORDER BY address COMMENT ${sqlString(COMMENT)}`,
     );
     ensured = true;
   };
   const exists = async () => {
     const rows = await clickhouseQuery<{ n: number | string }>(
       endpoint,
-      `SELECT count() AS n FROM system.tables WHERE database = ${sqlString(RECEIPTS_DATABASE)} AND name = ${sqlString(RECEIPTS_TABLE)}`,
+      `SELECT count() AS n FROM system.tables WHERE database = ${sqlString(where.database)} AND name = ${sqlString(where.name)}`,
     );
     return Number(rows[0]?.n ?? 0) > 0;
+  };
+  /** Whether there is a table to read; in a Replicated database, after this replica has caught up with it. */
+  const readable = async () => {
+    if (!ensured && !(await exists())) return false;
+    if (opts.replicatedIn) await clickhouseQuery(endpoint, `SYSTEM SYNC REPLICA ${TABLE} LIGHTWEIGHT`);
+    return true;
   };
   const address = (receipt: EffectReceiptRef) => receiptAddress(identity, receipt.effect);
 
   return {
     async read(receipt) {
-      if (!ensured && !(await exists())) return undefined;
+      if (!(await readable())) return undefined;
       const rows = await clickhouseQuery<{ expectation: string }>(
         endpoint,
         `SELECT expectation FROM ${TABLE} WHERE address = ${sqlString(address(receipt))} ORDER BY written_at DESC LIMIT 1`,
@@ -93,7 +122,7 @@ export function clickhouseReceiptStore(endpoint: ClickHouseEndpoint, identity: {
       return rows[0]?.expectation;
     },
     async readAll(prefix) {
-      if (!ensured && !(await exists())) return new Map();
+      if (!(await readable())) return new Map();
       const rows = await clickhouseQuery<{ address: string; expectation: string }>(
         endpoint,
         `SELECT address, argMax(expectation, written_at) AS expectation FROM ${TABLE} WHERE startsWith(address, ${sqlString(prefix)}) GROUP BY address`,
