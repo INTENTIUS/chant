@@ -241,13 +241,13 @@ function refuseRelation(where: string, rel: RelationRow): void {
   if (rel.parents) {
     throw new MigrationRefusal(
       `${where} inherits from ${rel.parents}. An inherited column is changed through its parent, and the Op does not migrate inheritance trees: ` +
-        `a write to a child table does not fire its parent's dual-write trigger, and each child's indexes and constraints are its own. Migrate by hand, or move to declarative partitioning.`,
+        `a write to a child table does not fire its parent's dual-write trigger, and each child's indexes and constraints are its own. Migrate by hand, or move to declarative partitioning (chant #3333).`,
     );
   }
   if (rel.kind === "r" && rel.children) {
     throw new MigrationRefusal(
       `${where} has inheritance children (${rel.children}). The Op does not migrate inheritance trees: a write to a child table does not fire the parent's dual-write trigger, ` +
-        `so the new column would miss it, and each child's indexes and constraints are its own. Migrate by hand, or move to declarative partitioning.`,
+        `so the new column would miss it, and each child's indexes and constraints are its own. Migrate by hand, or move to declarative partitioning (chant #3333).`,
     );
   }
   if (rel.kind !== "r" && rel.kind !== "p") throw new MigrationRefusal(`${where} is not a table (relkind ${rel.kind}); the migration Op migrates a table's column`);
@@ -391,7 +391,8 @@ export async function observeMigration(input: ObserveInput): Promise<MigrationOb
         `${where}.${sourceName} is sent by logical replication publication(s) ${publications.map((p) => `${p.name}${p.allColumns ? " (every column)" : ""}`).join(", ")}. ` +
           `A subscriber applies changes by column name and must have every column the publisher sends, so the column the expand adds would stop the subscriber's apply at the first backfilled row, ` +
           `and the switch would need the same change on the subscriber at the same moment (https://www.postgresql.org/docs/18/logical-replication-col-lists.html). ` +
-          `Leave the column out of the publication with a column list (15 and later), or migrate the subscriber's table as well and run this Op on a table no publication sends.`,
+          `Leave the column out of the publication with a column list (15 and later), or migrate the subscriber's table as well and run this Op on a table no publication sends. ` +
+          `A migration of the publisher and the subscriber together is chant #3332.`,
       );
     }
   }
@@ -439,14 +440,15 @@ async function refuseUnsupported(
   if (rename && typeChange) {
     throw new MigrationRefusal(
       `${where}: ${source.name} is renamed to ${names.column} and its type changes (${typeChange.before} -> ${typeChange.after}) in one declaration. ` +
-        `Migrate one at a time: declare the rename with the old type, run the Op to its end, then change the type.`,
+        `Migrate one at a time: declare the rename with the old type, run the Op to its end, then change the type. ` +
+        `(In one run both names would stay written until the contract, which needs a conversion back to the old type for writers of the new name; chant #3331.)`,
     );
   }
   if (rename && (source.default !== undefined || column.default !== undefined)) {
     throw new MigrationRefusal(
       `${where}: ${source.name} has a default (${source.default ?? column.default}). During a rename both columns are written, each from the other, ` +
         `and a row inserted by a writer that names one column would get the other's default, which the trigger cannot tell from a value it was given. ` +
-        `Drop the default first (the applier does), rename, then declare it again.`,
+        `Drop the default first (the applier does), rename, then declare it again. A rename that keeps its default needs versioned views (chant #3331).`,
     );
   }
   if (source.generated || (column.generated && column.generated.kind !== "identity")) {

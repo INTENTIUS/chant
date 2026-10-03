@@ -277,7 +277,7 @@ export async function discoverDependents(input: DiscoverInput): Promise<Dependen
       if (input.partitioned && (type === "p" || type === "u" || type === "f")) {
         keyIndexes.add(String(r.idx));
         refused.push(
-          `${type === "f" ? "foreign key" : type === "p" ? "primary key" : "unique constraint"} ${name} on ${where}: on a partitioned table ${type === "f" ? "a foreign key cannot be added NOT VALID and validated while writes go on" : "a key cannot be attached from an index built CONCURRENTLY (ADD CONSTRAINT ... USING INDEX is not supported on partitioned tables)"}, so carrying it over would hold ACCESS EXCLUSIVE for a full build; drop it, migrate, then declare it again`,
+          `${type === "f" ? "foreign key" : type === "p" ? "primary key" : "unique constraint"} ${name} on ${where}: on a partitioned table ${type === "f" ? "a foreign key cannot be added NOT VALID and validated while writes go on" : "a key cannot be attached from an index built CONCURRENTLY (ADD CONSTRAINT ... USING INDEX is not supported on partitioned tables)"}, so carrying it over would hold ACCESS EXCLUSIVE for a full build; drop it, migrate, then declare it again (chant #3333)`,
         );
         continue;
       }
@@ -344,7 +344,7 @@ export async function discoverDependents(input: DiscoverInput): Promise<Dependen
       if (kind === "i" || kind === "I") {
         if (keyIndexes.has(String(r.oid))) continue;
         if (kind === "I") {
-          refused.push(`index ${r.schema}.${name} is a partitioned index, which cannot be built CONCURRENTLY; drop it, migrate, then declare it again`);
+          refused.push(`index ${r.schema}.${name} is a partitioned index, which cannot be built CONCURRENTLY; drop it, migrate, then declare it again (chant #3333)`);
           continue;
         }
         if (r.valid !== true) {
@@ -395,7 +395,7 @@ export async function discoverDependents(input: DiscoverInput): Promise<Dependen
         const seq: ColumnSequence = { kind: dep?.deptype === "i" ? "identity" : "serial", schema: String(r.schema), name, ident: `${quoteIdent(String(r.schema))}.${quoteIdent(name)}` };
         if (rename) {
           refused.push(
-            `sequence ${r.schema}.${name} gives the column its values (${seq.kind === "identity" ? "an identity column" : "a serial column's default"}); during a rename a writer that names the new column would be given the old one's next value by the trigger, which it cannot tell from a value the writer chose (see the default on a rename)`,
+            `sequence ${r.schema}.${name} gives the column its values (${seq.kind === "identity" ? "an identity column" : "a serial column's default"}); during a rename a writer that names the new column would be given the old one's next value by the trigger, which it cannot tell from a value the writer chose; a rename that keeps its sequence needs versioned views (chant #3331)`,
           );
         } else sequence = seq;
       } else {
