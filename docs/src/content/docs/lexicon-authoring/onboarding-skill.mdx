@@ -98,10 +98,11 @@ is versioned in lockstep with core.
 
    This patches the root `package.json`, the root `tsconfig.json` `paths` map,
    `.github/workflows/chant.yml`, `test/Dockerfile.smoke`, and
-   `test/smoke-npm-lexicons.txt`. It does not touch `publish.yml` (nothing
-   there is per lexicon) or `test/smoke-e2e-lexicons.txt` (add the lexicon by
-   hand if an e2e example uses it); the "Not patched" output says so. It is
-   idempotent, and it prints a `chant dev check-lexicon` report at the end.
+   `test/smoke-npm-lexicons.txt`. `publish.yml` stays untouched because
+   nothing in it is per lexicon, and so does `test/smoke-e2e-lexicons.txt`
+   (add the lexicon by hand if an e2e example uses it); the "Not patched"
+   output says so. Rerunning changes nothing, and a `chant dev check-lexicon`
+   report prints at the end.
 
    Ignore one line in that printed report. It says to tag the first publish
    `v<version>`; that tag matches no workflow trigger. Step 7 has the real
