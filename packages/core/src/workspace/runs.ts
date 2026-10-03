@@ -21,7 +21,8 @@
  *   it worked on, and the instruction pinned by hash.
  * - `end`: the outcome, the turns and tokens, the cost with its currency and
  *   the source of its prices, the transcript pinned by hash, and the commits
- *   the run made, each with its `git patch-id --stable` (#3036).
+ *   the run made, each with its `git patch-id --stable` (#3036) and, when
+ *   the writer knows them, the hunks of it the run wrote (#3034).
  *
  * The file name is `_agent-runs`, not `runs`, because an Op run already has
  * `<env>/runs__<op>.jsonl` (`../lifecycle/run-ledger.ts`).
@@ -95,6 +96,20 @@ export interface RunPin {
   bytes: number | null;
   /** Where the caller keeps it, as the caller names it: a path on a box, a URL. chant never reads it back. */
   ref: string | null;
+  /**
+   * For the instruction only: a short excerpt the writer chose to show beside
+   * the hash, such as its first line (#3034). The hash pins the whole
+   * instruction; the excerpt is never checked against it. Absent when none was given.
+   */
+  excerpt?: string;
+}
+
+/** Lines of one file that a run wrote in a commit: new-side line numbers in the commit's own version of the file. */
+export interface RunHunk {
+  /** From the repository root, as git names it in the commit's diff. */
+  path: string;
+  start: number;
+  end: number;
 }
 
 /** A commit a run's end lists. */
@@ -102,6 +117,12 @@ export interface RunCommit {
   sha: string;
   /** `git patch-id --stable` of the commit, or null for a commit with no patch, such as a merge. */
   patchId: string | null;
+  /**
+   * The hunks of the commit this run wrote, when the writer knows them, such
+   * as when several runs share one commit (#3034). Absent when not given: the
+   * run is then taken to have made the whole commit.
+   */
+  hunks?: RunHunk[];
 }
 
 /** The `start` line of `_agent-runs/<id>.jsonl`. */
@@ -154,6 +175,24 @@ const pinSchema = z
   .object({ sha256: z.string().regex(SHA256, "64 lower-case hex digits").optional(), path: nonEmpty.optional(), ref: nonEmpty.optional() })
   .strict()
   .refine((p) => (p.sha256 === undefined) !== (p.path === undefined), "give sha256, or a path for chant to hash, not both");
+/** The longest instruction excerpt kept, in characters. */
+export const INSTRUCTION_EXCERPT_MAX = 500;
+const instructionSchema = z
+  .object({
+    sha256: z.string().regex(SHA256, "64 lower-case hex digits").optional(),
+    path: nonEmpty.optional(),
+    ref: nonEmpty.optional(),
+    excerpt: z.string().trim().min(1).max(INSTRUCTION_EXCERPT_MAX).optional(),
+  })
+  .strict()
+  .refine((p) => (p.sha256 === undefined) !== (p.path === undefined), "give sha256, or a path for chant to hash, not both");
+const lineNumber = z.number().int().positive();
+const hunkSchema = z
+  .object({ path: nonEmpty, start: lineNumber, end: lineNumber })
+  .strict()
+  .refine((h) => h.end >= h.start, "end is not before start")
+  .refine((h) => !h.path.startsWith("/") && !h.path.split("/").includes(".."), "a path from the repository root");
+const commitSchema = z.union([z.string().regex(COMMIT, "a commit id"), z.object({ sha: z.string().regex(COMMIT, "a commit id"), hunks: z.array(hunkSchema).min(1) }).strict()]);
 
 const startFields = {
   id: z.string().regex(RUN_ID_PATTERN, "letters, digits, '.', '_' and '-', starting with a letter or digit").optional(),
@@ -166,7 +205,7 @@ const startFields = {
   unit: z.union([nonEmpty, z.object({ id: nonEmpty, kind: nonEmpty.optional() }).strict()]).optional(),
   lease: nonEmpty.optional(),
   records: z.array(z.string().refine((s) => parseRecordRef(s) !== undefined, "<kind>:<id>")).optional(),
-  instruction: pinSchema.optional(),
+  instruction: instructionSchema.optional(),
 };
 const endFields = {
   endedAt: iso.optional(),
@@ -175,7 +214,7 @@ const endFields = {
   models: z.array(z.object({ model: nonEmpty, provider: nonEmpty.optional(), inputTokens: count.optional(), outputTokens: count.optional(), cacheReadTokens: count.optional(), cacheWriteTokens: count.optional(), cost: costSchema.optional() }).strict()).optional(),
   cost: costSchema.optional(),
   transcript: pinSchema.optional(),
-  commits: z.array(z.string().regex(COMMIT, "a commit id")).optional(),
+  commits: z.array(commitSchema).optional(),
 };
 
 /** The fields `runs start --from` takes. */
@@ -232,9 +271,10 @@ function hashFile(path: string): RunPin {
   return { sha256: createHash("sha256").update(bytes).digest("hex"), bytes: statSync(path).size, ref: null };
 }
 
-function pinOf(p: z.infer<typeof pinSchema> | undefined, cwd: string, what: string): RunPin | null {
+function pinOf(p: (z.infer<typeof pinSchema> & { excerpt?: string }) | undefined, cwd: string, what: string): RunPin | null {
   if (!p) return null;
-  if (p.sha256) return { sha256: p.sha256, bytes: null, ref: p.ref ?? null };
+  const excerpt = p.excerpt === undefined ? {} : { excerpt: p.excerpt };
+  if (p.sha256) return { sha256: p.sha256, bytes: null, ref: p.ref ?? null, ...excerpt };
   const path = resolve(cwd, p.path!);
   let pin: RunPin;
   try {
@@ -242,7 +282,7 @@ function pinOf(p: z.infer<typeof pinSchema> | undefined, cwd: string, what: stri
   } catch (err) {
     throw new RunWriteError("write-input-invalid", `${what}.path ${p.path} can't be read to hash it: ${err instanceof Error ? err.message : String(err)}`);
   }
-  return { ...pin, ref: p.ref ?? p.path! };
+  return { ...pin, ref: p.ref ?? p.path!, ...excerpt };
 }
 
 // ── Building the lines ───────────────────────────────────────────────────────
@@ -282,10 +322,15 @@ function startLine(input: RunStartInput, id: string, at: string, cwd: string): R
 
 function endLine(input: RunEndInput, id: string, at: string, top: string, cwd: string): RunEndLine {
   const commits: RunCommit[] = [];
-  for (const c of input.commits ?? []) {
+  for (const entry of input.commits ?? []) {
+    const c = typeof entry === "string" ? entry : entry.sha;
     const sha = commitId(top, c);
     if (!sha) throw new RunWriteError("write-input-invalid", `commits: ${c} names no commit in this repository`);
-    if (!commits.some((x) => x.sha === sha)) commits.push({ sha, patchId: patchIdOf(top, sha) });
+    const hunks = typeof entry === "string" ? undefined : entry.hunks.map((h) => ({ path: h.path, start: h.start, end: h.end }));
+    const listed = commits.find((x) => x.sha === sha);
+    if (listed) {
+      if (hunks) listed.hunks = [...(listed.hunks ?? []), ...hunks];
+    } else commits.push({ sha, patchId: patchIdOf(top, sha), ...(hunks ? { hunks } : {}) });
   }
   const usage = input.usage
     ? { turns: input.usage.turns ?? null, inputTokens: input.usage.inputTokens ?? null, outputTokens: input.usage.outputTokens ?? null, cacheReadTokens: input.usage.cacheReadTokens ?? null, cacheWriteTokens: input.usage.cacheWriteTokens ?? null }
@@ -497,6 +542,8 @@ export interface RunCommitView {
   patchId: string | null;
   /** How the commit joins the run: `trailer` when it carries `Chant-Run`, `record` when the run's end lists it. */
   joinedBy: ("trailer" | "record")[];
+  /** The hunks of the commit the run's end says it wrote, or null when it gives none (#3034). */
+  hunks: RunHunk[] | null;
 }
 
 /** One run, its start and end folded together, as `runs --json` and `graph --intent` report it. */
@@ -551,7 +598,7 @@ export function foldRun(id: string, path: string, lines: RunLine[]): RunView | u
     models: end?.models ?? [],
     cost: end?.cost ?? null,
     transcript: end?.transcript ?? null,
-    commits: (end?.commits ?? []).map((c) => ({ sha: c.sha, patchId: c.patchId, joinedBy: ["record" as const] })),
+    commits: (end?.commits ?? []).map((c) => ({ sha: c.sha, patchId: c.patchId, joinedBy: ["record" as const], hunks: Array.isArray(c.hunks) && c.hunks.length > 0 ? c.hunks : null })),
     decisions: [],
     ledger: path,
   };
@@ -598,7 +645,7 @@ export function joinTrailerCommits(runs: Map<string, RunView>, byTrailer: Map<st
       const listed = run.commits.find((c) => c.sha === sha);
       if (listed) {
         if (!listed.joinedBy.includes("trailer")) listed.joinedBy.push("trailer");
-      } else run.commits.push({ sha, patchId: patchIdOf(top, sha), joinedBy: ["trailer"] });
+      } else run.commits.push({ sha, patchId: patchIdOf(top, sha), joinedBy: ["trailer"], hunks: null });
     }
   }
 }

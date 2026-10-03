@@ -160,6 +160,9 @@ export const REASONS = {
   // The intent graph (graph --intent, #2651): a read that fails.
   "intent-region-invalid": "The region's path, or its line range, does not exist in the tree read.",
   "intent-record-unknown": "graph --intent --record names an id that no record of a decision kind read has.",
+  "intent-symbol-unsupported": "The region names a symbol, path#symbol, in a file no symbol resolver reads; a line range still works.",
+  "intent-symbol-unknown": "The region names a symbol the file does not declare in the tree read.",
+  "intent-symbol-ambiguous": "The region names a symbol that matches more than one declaration in the file; its qualified name picks one.",
   // The intent graph: part of the walk that can't be read. The document is still printed.
   "intent-history-shallow": "The repository is a shallow clone, so the region's history stops at the clone's boundary.",
   "intent-plugin-failed": "A kind file's commitJoins, which joins commits to units, contracts and evidence, failed for a commit.",
@@ -181,6 +184,11 @@ export const REASONS = {
   "intent-decision-unimplemented": "A decided decision constrains the region, no work item that is not dropped implements it, and no commit falls in its window.",
   "intent-work-blocked": "A work item constraining the region has commits in its window while a work item it needs is not done.",
   "intent-work-open-decided-code": "Commits in the region are a decision's own work while the work item implementing that decision is still open.",
+  // The intent graph's answer to why the region is like this (#3034): what it can't account for.
+  "intent-why-no-decision": "No current decision governs the region at any granularity, and none is carried out by the commits or runs that made its current lines.",
+  "intent-why-no-run": "None of the region's current lines was made by a commit an agent run is joined to.",
+  "intent-why-uncommitted": "Some of the region's lines are not committed yet.",
+  "intent-why-run-ambiguous": "Some lines come from a commit several agent runs made, and no run's recorded hunks say which wrote them.",
   // The forward coverage check (check --changes, #2773): findings, one per changed path.
   "change-uncovered": "A path the diff changes is covered by no current decided record and no open work item, by path or by its member.",
   "change-out-of-scope": "A record in hand for the change, such as the work item it is for or a decision that item implements, lists a path the diff changes in its out_of_scope.",
