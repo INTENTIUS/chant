@@ -9,9 +9,11 @@ import { build } from "@intentius/chant/build";
 import type { SerializerResult } from "@intentius/chant/serializer";
 import { sqlPlugin, sqlSerializer } from "@intentius/chant-lexicon-sql";
 
-describe("the getting-started example, folded and run", () => {
-  test("builds byte-identical both ways", async () => {
-    const src = join(import.meta.dirname, "getting-started", "src");
+const EXAMPLES = ["getting-started", "events-pipeline", "cdc-mirror", "sharded-cluster", "rebuild-migration"];
+
+describe("the examples, folded and run", () => {
+  test.each(EXAMPLES)("%s builds byte-identical both ways", async (example) => {
+    const src = join(import.meta.dirname, example, "src");
     const intrinsics = sqlPlugin.intrinsics!();
     const folded = await build(src, [sqlSerializer], undefined, { fold: true, intrinsics, lexicons: ["sql"] });
     const ran = await build(src, [sqlSerializer], undefined, { fold: false, intrinsics, lexicons: ["sql"] });
