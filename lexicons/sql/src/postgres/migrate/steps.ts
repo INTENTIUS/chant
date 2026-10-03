@@ -298,7 +298,9 @@ export async function carryOver(run: MigrationRun): Promise<CarryResult> {
   if (o.state !== "migrate") return result;
   const n = o.names;
   if (!o.newColumn || !o.trigger) throw new MigrationRefusal(`${n.key}: the new column and its dual write are not there; the Expand and Dual write phases make them`);
-  for (const c of o.carried) {
+  // Indexes first: a foreign key onto the new column needs the working unique index it references.
+  const indexesFirst = [...o.carried].sort((a, b) => Number(a.kind !== "index" && a.kind !== "key") - Number(b.kind !== "index" && b.kind !== "key"));
+  for (const c of indexesFirst) {
     result.carried.push(`${c.kind} ${c.tableName}.${c.name} -> ${c.target}`);
     const state = o.carriedStates.get(c.working);
     const comment = workingComment(n, run.marker, "carry", `${c.kind} ${c.name} on the new column`, { of: c.name });
