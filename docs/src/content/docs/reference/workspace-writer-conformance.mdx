@@ -22,7 +22,7 @@ The [reader suite](/chant/reference/workspace-read-contract/#testing-a-reader) h
 | `decision` | `records new` | `workspace records new decisions/decision.kind.mjs --from -` | `records-new.schema.json` | a new decision, `fix-002` |
 | `amend` | `records amend` | `workspace records amend fix-002 --kind <kind> --set -` | `records-amend.schema.json` | the decision's title |
 | `review` | `records review` | `workspace records review fix-002 --kind <kind> --verdict agree --by <name> --note <text>` | `records-review.schema.json` | a review on the decision |
-| `session` | `records new` | `workspace records new sessions/session.kind.mjs --from -` | `records-new.schema.json` | an open review session, `S-0001` |
+| `session` | `records new` | `workspace records new sessions/session.kind.mjs --from -` | `records-new.schema.json` | an open review session, `S-0001`, holding one anchored review comment and its round ([#3350](https://github.com/INTENTIUS/chant/issues/3350)) |
 | `close` | `records close` | `workspace records close S-0001 --kind <kind>` | `records-close.schema.json` | the session, closed and sealed |
 | `ask` | `points ask` | `workspace points ask slice-tier --inputs - --subject W-001 --kind <kind>` | `points-write.schema.json` | a question, escalated to people |
 | `answer` | `points answer` | `workspace points answer <id> --answer medium --by <name> --kind <kind>` | `points-write.schema.json` | the people's answer |
