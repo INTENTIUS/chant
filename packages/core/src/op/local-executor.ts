@@ -417,9 +417,11 @@ async function runStep(
       if (step.id) resultsById.set(step.id, result);
       const record: StepRecord = { ...base, status: "ok", durationMs: Date.now() - start };
       const attrs = outcomeAttributesOf(step);
-      if (attrs.length > 0) {
-        record.outcomes = attrs.map((a) => ({ name: a.name, value: resolvePath(result, a.from) }));
-        record.outcome = record.outcomes[0];
+      // An attribute whose path the result does not hold is left off, rather than recorded as undefined.
+      const outcomes = attrs.map((a) => ({ name: a.name, value: resolvePath(result, a.from) })).filter((o) => o.value !== undefined);
+      if (outcomes.length > 0) {
+        record.outcomes = outcomes;
+        record.outcome = outcomes[0];
       }
       return { record, result };
     } catch (err) {

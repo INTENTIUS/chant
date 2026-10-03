@@ -232,6 +232,21 @@ describe("runOpLocally — outcomeAttribute", () => {
     expect(result.records[0].outcome).toEqual({ name: "Drift", value: true });
   });
 
+  test("an attribute whose path the result does not hold is left off, not recorded as undefined", async () => {
+    const done: ActivityFn = async () => ({ state: "done", switched: false });
+    const config = op({
+      phases: [{ name: "Switch", steps: [
+        { kind: "activity", fn: "migrationSwitch", outcomeAttribute: [{ name: "OldColumn", from: "oldColumn" }, { name: "State", from: "state" }] },
+        { kind: "activity", fn: "migrationRetain", outcomeAttribute: { name: "RetainUntil", from: "retainUntil" } },
+      ] }],
+    });
+    const result = await runOpLocally(config, new Map([["migrationSwitch", done], ["migrationRetain", done]]), PROFILES);
+    expect(result.records[0].outcomes).toEqual([{ name: "State", value: "done" }]);
+    expect(result.records[0].outcome).toEqual({ name: "State", value: "done" });
+    expect(result.records[1].outcomes).toBeUndefined();
+    expect(result.records[1].outcome).toBeUndefined();
+  });
+
   test("a step with no attribute leaves both fields absent", async () => {
     const noop: ActivityFn = async () => ({ ok: true });
     const config = op({ phases: [{ name: "Plan", steps: [{ kind: "activity", fn: "noop" }] }] });

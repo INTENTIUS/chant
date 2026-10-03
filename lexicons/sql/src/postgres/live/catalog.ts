@@ -23,9 +23,9 @@
  * - an index that backs a constraint (the constraint creates it), and an
  *   index partition (the partitioned index creates it);
  * - chant's own receipts tables (`../../core/ownership.ts`), and the working
- *   columns and checks of an expand-and-contract migration in progress
- *   (`../migrate/names.ts`), so a table reads as it was before the migration
- *   until its switch, and as declared after it.
+ *   columns, constraints and indexes of an expand-and-contract migration in
+ *   progress (`../migrate/names.ts`, `../migrate/carry.ts`), so a table reads
+ *   as it was before the migration until its switch, and as declared after it.
  *
  * Objects another tool owns, an ORM's or a migration runner's revision table
  * ({@link FOREIGN_TABLES}), are read and marked with the tool, so import
@@ -539,6 +539,8 @@ export async function readLiveSchema(client: PostgresClient, scope: SchemaScope 
       s.params,
     );
     for (const r of rows) {
+      // An index a migration builds on its new column, or keeps on the old one until its contract.
+      if (hasChantTrailerKey(str(r.comment), [MIGRATION_TRAILER_KEY])) continue;
       const q = qname(String(r.schema), String(r.name));
       out.push({
         type: POSTGRES_ENTITY_TYPES.index,

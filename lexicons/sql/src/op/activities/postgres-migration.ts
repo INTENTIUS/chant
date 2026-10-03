@@ -20,12 +20,14 @@ import { PG_CLASSIFIER_RULES } from "../../postgres/plan/rules";
 import { declaredTable, migrationPlanDigest, observeMigration } from "../../postgres/migrate/observe";
 import { backfill, verifyMigration, type BackfillDeps, type BackfillResult, type VerifyResult } from "../../postgres/migrate/backfill";
 import {
+  carryOver,
   compensate,
   contract,
   expand,
   retainPlan,
   startDualWrite,
   switchColumns,
+  type CarryResult,
   type CompensateResult,
   type ContractResult,
   type DualWriteResult,
@@ -65,7 +67,8 @@ async function withRun<T>(args: PostgresMigrationArgs, signal: AbortSignal | und
   const marker = resolveOwnershipMarker(args, config, "PostgresMigrationOp");
   const target = await resolveBoundTarget({ ...(args.environment !== undefined ? { environment: args.environment } : {}), config: config ?? {}, ...(deps.env ? { env: deps.env } : {}) });
   const json = readFileSync(resolve(cwd, args.buildPath), "utf8");
-  const declared = declaredTable(declaredObjects(json, target.defaultSchema), args.table);
+  const objects = declaredObjects(json, target.defaultSchema);
+  const declared = declaredTable(objects, args.table);
   const major = buildMajor(json) ?? config?.sql?.postgresMajor;
   const lag = args.replicationLag;
   const client = await (deps.connect ?? ((e) => connectPostgres(e, { applicationName: "chant migration" })))(target.endpoint);
@@ -75,6 +78,7 @@ async function withRun<T>(args: PostgresMigrationArgs, signal: AbortSignal | und
       client,
       target,
       declared,
+      objects,
       column: args.column,
       ...(args.using !== undefined ? { using: args.using } : {}),
       ...(marker ? { marker } : {}),
@@ -118,6 +122,7 @@ export async function postgresMigrationPlan(args: PostgresMigrationArgs, signal?
       client: run.client,
       target: run.target,
       declared: run.declared,
+      ...(run.objects ? { objects: run.objects } : {}),
       column: run.column,
       ...(run.marker ? { marker: run.marker } : {}),
       ...(run.using !== undefined ? { using: run.using } : {}),
@@ -148,6 +153,11 @@ export async function postgresMigrationDualWrite(args: PostgresMigrationArgs, si
 
 export async function postgresMigrationBackfill(args: PostgresMigrationArgs, signal?: AbortSignal, deps: PostgresMigrationDeps = {}): Promise<BackfillResult> {
   return withRun(args, signal, deps, (run) => backfill(run, deps.backfill));
+}
+
+/** Carry over: the indexes and constraints on the old column, made again on the new one. */
+export async function postgresMigrationCarry(args: PostgresMigrationArgs, signal?: AbortSignal, deps: PostgresMigrationDeps = {}): Promise<CarryResult> {
+  return withRun(args, signal, deps, carryOver);
 }
 
 export async function postgresMigrationVerify(args: PostgresMigrationArgs, signal?: AbortSignal, deps: PostgresMigrationDeps = {}): Promise<VerifyResult> {
