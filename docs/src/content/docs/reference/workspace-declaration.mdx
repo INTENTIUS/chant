@@ -150,7 +150,7 @@ Because `chant workspace check` reads source and runs no member, it can't read a
 
 ## Record kinds
 
-The declaration names the workspace's record kinds, so a reader never has to guess which kind files exist ([#2680](https://github.com/INTENTIUS/chant/issues/2680)). A member lists the kinds it holds in its `records`. Kinds whose records belong to no one member, such as a decisions directory at the root, go in the top-level `records`. The reference workspace declares its decision kind that way, and its design member declares the review-session kind. In this example the design member holds a kind of its own too:
+The declaration names the workspace's record kinds, so a reader never has to guess which kind files exist ([#2680](https://github.com/INTENTIUS/chant/issues/2680)). A member lists the kinds it holds in its `records`. Kinds whose records belong to no one member, such as a decisions directory at the root, go in the top-level `records`. The reference workspace declares its decision kind that way, and its design member declares the review-session kind with the design kinds of [#3148](https://github.com/INTENTIUS/chant/issues/3148). In this example the design member holds a kind of its own too:
 
 ```json
 {

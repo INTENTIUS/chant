@@ -163,6 +163,11 @@ describe("the writer fixture (#3159)", () => {
       ["answers/answer.schema.json", "answers/answer.schema.json"],
       ["decisions/points.json", "decisions/points.json"],
       ["sessions/session.schema.json", "design/sessions/session.schema.json"],
+      // The session kind's other subject kinds (#3148).
+      ["contracts/contract.kind.mjs", "design/contracts/contract.kind.mjs"],
+      ["contracts/contract.schema.json", "design/contracts/contract.schema.json"],
+      ["drivers/driver.kind.mjs", "design/drivers/driver.kind.mjs"],
+      ["drivers/driver.schema.json", "design/drivers/driver.schema.json"],
     ];
     for (const [ours, theirs] of same) expect(readFileSync(join(WRITER_FIXTURE_DIR, ours), "utf-8"), ours).toBe(readFileSync(join(repoRoot, "reference-workspace", theirs), "utf-8"));
     // The session kind sits one directory higher here than in the reference

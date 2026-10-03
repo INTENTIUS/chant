@@ -12,7 +12,7 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import Ajv2020 from "ajv/dist/2020";
@@ -22,9 +22,11 @@ import { queryRecords, type RecordsDocument } from "./records-cli";
 import { newRecord, runRecordsWrite } from "./records-write";
 import { loadRecordKind, parseJsonRecord, RECORD_FORMATS, recordTextDigest } from "./records";
 import schema from "./records.schema.json";
+import newSchema from "./records-new.schema.json";
 
 const REPO = join(import.meta.dirname, "..", "..", "..", "..");
 const validateOutput = new Ajv2020({ strict: true, allErrors: true }).compile(schema);
+const validateNew = new Ajv2020({ strict: true, allErrors: true }).compile(newSchema);
 
 let root: string;
 beforeEach(() => {
@@ -398,19 +400,51 @@ describe("a JSON session kind (#2673)", () => {
 });
 
 describe("the write commands", () => {
-  test("refuse a JSON kind and a content-addressed one, which they cannot write", async () => {
-    for (const kind of ["unit", "evidence"]) {
-      const doc = await newRecord({ kind: `design/${kind}.kind.mjs`, fields: "{}", cwd: root, dryRun: true });
-      expect("error" in doc && doc.error.code).toBe("write-usage-invalid");
-      expect("error" in doc && doc.error.message).toMatch(/write only Markdown front matter records with an idField/);
-    }
+  test("refuse a JSON kind with an id field, which they cannot write", async () => {
+    const doc = await newRecord({ kind: "design/unit.kind.mjs", fields: "{}", cwd: root, dryRun: true });
+    expect("error" in doc && doc.error.code).toBe("write-usage-invalid");
+    expect("error" in doc && doc.error.message).toMatch(/write only Markdown front matter records with an idField/);
+  });
+
+  test("records new writes a content-addressed record as JSON named for its bytes, and reads it back valid (ws-082)", async () => {
+    // The fields in another order: the file holds them in the schema's.
+    const fields = JSON.stringify(Object.fromEntries(Object.entries(EVIDENCE).reverse()));
+    const dry = await newRecord({ kind: "design/evidence.kind.mjs", fields, cwd: root, dryRun: true });
+    if ("error" in dry) throw new Error(dry.error.message);
+    const h = sha256(json(EVIDENCE));
+    expect(dry).toMatchObject({ id: h, path: `design/evidence/${h}.json`, dryRun: true, text: json(EVIDENCE), warnings: [] });
+    expect(validateNew(dry), JSON.stringify(validateNew.errors)).toBe(true);
+    expect(readdirSync(join(root, "design", "evidence"))).toEqual([]);
+
+    const doc = await newRecord({ kind: "design/evidence.kind.mjs", fields, cwd: root });
+    expect(doc).toMatchObject({ id: h, path: `design/evidence/${h}.json`, dryRun: false });
+    expect(readFileSync(join(root, "design", "evidence", `${h}.json`), "utf-8")).toBe(json(EVIDENCE));
+    const [read] = (await query("evidence")).records;
+    expect([read.id, read.valid, warned(read)]).toEqual([h, true, []]);
+
+    // The same bytes again are the same record, already written.
+    const again = await newRecord({ kind: "design/evidence.kind.mjs", fields, cwd: root });
+    expect("error" in again && again.error.code).toBe("record-id-taken");
+  });
+
+  test("records new refuses content-addressed fields the schema refuses, an id prefix and a seal", async () => {
+    const bad = await newRecord({ kind: "design/evidence.kind.mjs", fields: JSON.stringify({ ...EVIDENCE, tree: "not-a-tree" }), cwd: root });
+    expect("error" in bad && bad.error.code).toBe("record-schema-invalid");
+    const prefixed = await newRecord({ kind: "design/evidence.kind.mjs", fields: JSON.stringify(EVIDENCE), prefix: "ev", cwd: root });
+    expect("error" in prefixed && prefixed.error.message).toMatch(/--prefix allocates nothing/);
+    const signed = await newRecord({ kind: "design/evidence.kind.mjs", fields: JSON.stringify(EVIDENCE), sign: true, cwd: root });
+    expect("error" in signed && signed.error.message).toMatch(/names no author to seal/);
+    expect(readdirSync(join(root, "design", "evidence"))).toEqual([]);
   });
 });
 
 describe("the write commands through a declared kind (#2680)", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  test.each(["unit", "evidence"])("refuse the declared %s kind with write-usage-invalid", async (kind) => {
+  test.each([
+    ["unit", ["new", "amend", "review"], /write only Markdown front matter records with an idField/],
+    ["evidence", ["amend", "review"], /a content-addressed record never changes once records new writes it/],
+  ] as const)("refuse the declared %s kind with write-usage-invalid", async (kind, verbs, why) => {
     write(
       "chant.workspace.json",
       json({ name: "acme", schema: 1, members: [{ name: "design", dir: "design", kind: "other", because: "acme's records" }], records: [{ kind: `design/${kind}.kind.mjs` }] }),
@@ -425,13 +459,13 @@ describe("the write commands through a declared kind (#2680)", () => {
       ["amend", "U-0001", "--set", join(root, "fields.json"), "--dry-run"],
       ["review", "U-0001", "--verdict", "agree", "--by", "bo", "--dry-run"],
     ];
-    for (const argv of runs) {
+    for (const argv of runs.filter((r) => (verbs as readonly string[]).includes(r[0]))) {
       out.length = 0;
       const status = await runRecordsWrite({ args: parseArgs(["workspace", "records", ...argv]), plugins: [] } as never);
       const doc = JSON.parse(out.join("\n")) as { error?: { code: string; message: string } };
       expect(status, argv[0]).toBe(1);
       expect(doc.error?.code, argv[0]).toBe("write-usage-invalid");
-      expect(doc.error?.message, argv[0]).toMatch(/write only Markdown front matter records with an idField/);
+      expect(doc.error?.message, argv[0]).toMatch(why);
     }
   });
 });
@@ -554,6 +588,8 @@ describe("kinds without a lifecycle", () => {
     ["an unknown format", { ...KINDS.closure, format: "yaml" }, /format/],
     ["a session block without states", { ...KINDS.closure, session: { verdicts: "approvals", seal: "seal", subjects: { kind: "contract.kind.mjs" } } }, /session: a session kind must have states/],
     ["a seal without states (#2546)", { ...KINDS.closure, seal: { field: "seal" } }, /seal: a kind without states cannot have seal/],
+    ["session subjects listing a kind twice (ws-082)", { ...KINDS.session, session: { verdicts: "approvals", seal: "seal", subjects: { kinds: ["contract.kind.mjs", "contract.kind.mjs"] } } }, /lists each kind file once/],
+    ["session subjects with both kind and kinds (ws-082)", { ...KINDS.session, session: { verdicts: "approvals", seal: "seal", subjects: { kind: "contract.kind.mjs", kinds: ["contract.kind.mjs"] } } }, /subjects/],
     ["a seal naming another field than session.seal (#2546)", { ...KINDS.session, session: { verdicts: "approvals", seal: "seal", subjects: { kind: "contract.kind.mjs" } }, seal: { field: "closed_digest" } }, /seal: seal.field and session.seal name the field/],
   ])("a kind with %s is kind-invalid, naming the field", async (_label, kind, why) => {
     write("design/closure.kind.mjs", kindFile(kind));
