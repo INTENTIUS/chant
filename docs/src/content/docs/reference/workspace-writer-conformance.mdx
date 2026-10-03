@@ -1,0 +1,112 @@
+---
+title: Workspace Writer Conformance
+description: The suite a tool such as hud or studio's factory runs to show it writes a workspace only through chant's write contract and keeps no fact outside the repository.
+diataxis: reference
+---
+
+The repo is the database ([ws-074](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-074-the-repo-is-the-database.md)). Every durable fact about a workspace is a file in the repository or a line on its `chant/lifecycle` ledger, and a tool writes one only through chant's write commands. ws-074 lets a tool keep secrets and telemetry outside the repository. It may also keep caches it can rebuild from the repo, and the runtime state of its substrate.
+
+The [reader suite](/chant/reference/workspace-read-contract/#testing-a-reader) holds a reader to the read contract, and this one holds a writer to the write contract ([#3159](https://github.com/INTENTIUS/chant/issues/3159)). Both ship in `@intentius/chant` and are wired the same way.
+
+| Import | For |
+|---|---|
+| `@intentius/chant/workspace/conformance` | any test runner: `runWorkspaceWriterConformance` returns the problems. It imports no runner and loads under plain `node` |
+| `@intentius/chant/workspace/conformance/vitest` | vitest: `describeWorkspaceWriterConformance` adds one test per step and one per check after the script |
+
+## The actions a writer covers
+
+`WRITE_CONTRACT_ACTIONS` lists them, and `WRITER_SCRIPT` performs each at least once, in this order. A writer lists the ones it performs in `actions`, and the report names the rest in `skipped`. Those steps still run, through chant directly, because later steps build on them.
+
+| Step | Action | Command | Output schema | What chant writes |
+|---|---|---|---|---|
+| `decision` | `records new` | `workspace records new decisions/decision.kind.mjs --from -` | `records-new.schema.json` | a new decision, `fix-002` |
+| `amend` | `records amend` | `workspace records amend fix-002 --kind <kind> --set -` | `records-amend.schema.json` | the decision's title |
+| `review` | `records review` | `workspace records review fix-002 --kind <kind> --verdict agree --by <name> --note <text>` | `records-review.schema.json` | a review on the decision |
+| `session` | `records new` | `workspace records new sessions/session.kind.mjs --from -` | `records-new.schema.json` | an open review session, `S-0001` |
+| `close` | `records close` | `workspace records close S-0001 --kind <kind>` | `records-close.schema.json` | the session, closed and sealed |
+| `ask` | `points ask` | `workspace points ask slice-tier --inputs - --subject W-001 --kind <kind>` | `points-write.schema.json` | a question, escalated to people |
+| `answer` | `points answer` | `workspace points answer <id> --answer medium --by <name> --kind <kind>` | `points-write.schema.json` | the people's answer |
+| `claim` | `work claim` | `workspace work claim W-001 --holder <name> --kind <kind> --json` | `work-lease.schema.json` | the lease ref and a `chant/lifecycle` line |
+| `renew` | `work renew` | `workspace work renew W-001 --holder <name> --token <token> --kind <kind> --json` | `work-lease.schema.json` | the same |
+| `evidence` | `work evidence` | `workspace work evidence W-001 --holder <name> --token <token> --from - --kind <kind>` | `work-evidence.schema.json` | evidence for `AC-1` on the work item |
+| `release` | `work release` | `workspace work release W-001 --holder <name> --token <token> --outcome done --kind <kind> --json` | `work-lease.schema.json` | the lease ref and a `chant/lifecycle` line |
+| `run-start` | `runs start` | `workspace runs start --from -` | `runs-write.schema.json` | a run's start on the run ledger |
+| `run-end` | `runs end` | `workspace runs end writer-run-1 --from -` | `runs-write.schema.json` | the run's end |
+| `run-record` | `runs record` | `workspace runs record --from -` | `runs-write.schema.json` | a whole run |
+
+`work evidence` is the `workEvidence` activity as a command ([chant workspace work](/chant/cli/workspace-work/#evidence)), so a writer that is not an Op attaches evidence through chant too. `records new`, `records amend`, `records review`, `records close`, `points` and `runs` print their document without a flag, and a writer may add `--json` to them. The lease verbs print it only with `--json`.
+
+## Wiring a writer
+
+The suite builds the writer by calling the function you pass with a transport and a context. The transport runs chant in the workspace and records every call. The context has `stateDir`, a directory outside the workspace for the writer's private state, such as its database. The writer never gets the workspace's path.
+
+| Member | Required | Does |
+|---|---|---|
+| `write(step)` | yes | Performs one step: runs its one command through the transport, with `step.input` on stdin when the step has one, and returns the parsed document chant printed. `step.params` holds the step's values by name, and `step.args` the arguments `writeArgv(action, params)` builds from them. |
+| `facts()` | yes | Returns the facts the tool shows, read the way the tool reads them, as any JSON value. It may make read-contract calls only. |
+| `holds()` | no | Lists what the tool holds: `{ record, kind }`, `{ run }`, `{ lease, kind }`, or `{ exempt, what }` with `exempt` one of `cache`, `telemetry`, `secret` or `runtime`. |
+| `close()` | no | Lets go of the state directory, such as closing a database, before the suite deletes it. |
+
+The options are `actions`, the actions the writer performs (all of them by default), and `privateState`, what the writer keeps in `stateDir`: each entry a `path` from the state directory, where a directory covers everything under it, and `is`, one or more of `cache`, `telemetry`, `secret` and `runtime`. `chantCommand` and `timeoutMs` are the reader suite's.
+
+A writer of reviews and answers, with a SQLite database as its cache, tested with `node:test` after `npm i -D @intentius/chant`:
+
+```js
+// writer-conformance.test.mjs, run with: node --test
+import assert from "node:assert/strict";
+import { join } from "node:path";
+import { test } from "node:test";
+import { runWorkspaceWriterConformance } from "@intentius/chant/workspace/conformance";
+import { createWriter } from "./writer.js";
+
+const myWriter = (chant, { stateDir }) => {
+  const writer = createWriter({ chant, dbPath: join(stateDir, ".hud", "events.db") });
+  return {
+    async write(step) {
+      if (step.action === "records review") return writer.review(step.params);
+      if (step.action === "points answer") return writer.answer(step.params);
+      throw new Error(`not one of this writer's actions: ${step.action}`);
+    },
+    facts: () => writer.listReviewsAndAnswers(),
+    close: () => writer.close(),
+  };
+};
+
+test("my writer writes only through chant", { timeout: 600_000 }, async () => {
+  const report = await runWorkspaceWriterConformance(myWriter, {
+    actions: ["records review", "points answer"],
+    privateState: [{ path: ".hud", is: ["cache", "telemetry"] }],
+  });
+  assert.deepEqual(report.problems, []);
+});
+```
+
+With vitest, `describeWorkspaceWriterConformance({ name, writer, actions, privateState })` from the `vitest` entry takes the same writer. `referenceWriter` is the smallest writer that conforms: each step is its command, and its facts are read with `records` and `runs`.
+
+## The checks
+
+For each step the writer performs, the suite fails when any of these is false:
+
+| Check | How |
+|---|---|
+| the step made exactly one chant call: the action's command, with the step's arguments in order and its JSON flag, and the step's fields on stdin | the transport records every call and what it was given |
+| the writer returned the document chant printed, unchanged | compared with the recorded output |
+| the document validates against the action's output schema, and chant wrote rather than refused | the schemas `@intentius/chant` ships, with its own ajv |
+| every file that changed is the path the document reports writing | every file outside `.git` is hashed before and after the step |
+| every git ref that moved is the lease ref or the `chant/lifecycle` commit the document reports | the refs and `HEAD` are read before and after the step |
+
+After the script it fails when any of these is false:
+
+| Check | How |
+|---|---|
+| `facts()` makes only read-contract calls and changes nothing | its calls, the files and the refs, before and after |
+| the state directory holds only what `privateState` declares | listed after the script |
+| amnesia: the writer shows the same facts with its private state deleted | `facts()` before; then `close()`, the state directory deleted, the writer built again with the same `stateDir`, and `facts()` again; the two must be equal |
+| everything `holds()` names is in the repository, or one of the four exceptions | each record read with `records`, each run with `runs`, each lease with `work history` |
+| every fact the script produced reads back through the read contract | `records --uncommitted` for each kind, `work history W-001` and `runs` |
+
+A writer that keeps a review only in its database passes the step and fails amnesia. A writer that writes a record file itself fails the step's file check. Writing it with `git commit` also moves `HEAD` and fails the step's ref check.
+
+## The workspace
+
+The suite writes a new workspace in a temporary directory for each run and removes it afterwards. It never writes to a workspace you name. The workspace is the reader suite's ([Testing a reader](/chant/reference/workspace-read-contract/#testing-a-reader)) with `src/workspace/conformance/__writer_fixture__/` copied over it. The overlay copies the work, answer and session kinds and their schemas from the reference workspace, with its decision points file. It adds one open work item, `W-001`, whose criterion `AC-1` takes unit evidence. The declaration names the four record kinds. Nothing is committed after that commit: the writes stay in the working tree, as ws-074 leaves them.

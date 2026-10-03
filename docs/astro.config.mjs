@@ -212,6 +212,7 @@ export default defineConfig({
 						{ label: 'Workspace Declaration', slug: 'reference/workspace-declaration' },
 						{ label: 'Workspace Kinds', slug: 'reference/workspace-kinds' },
 						{ label: 'Workspace Read Contract', slug: 'reference/workspace-read-contract' },
+						{ label: 'Workspace Writer Conformance', slug: 'reference/workspace-writer-conformance' },
 						{ label: 'Decision Record Kind', slug: 'reference/decision-kind' },
 						{ label: 'Decision Review Views', slug: 'reference/decision-review-views' },
 						{ label: 'chant and hud Boundary', slug: 'reference/boundary' },
