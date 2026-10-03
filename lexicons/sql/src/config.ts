@@ -31,13 +31,24 @@
  * `postgres` is the second (#3289). A list (`dialect: ["clickhouse",
  * "postgres"]`) is accepted for a workspace with members of more than one
  * dialect (#3047 question 1); one build still holds one dialect.
+ *
+ * `provider` (#3282) names the managed Postgres service, on the namespace or
+ * on one profile: `sql: { dialect: "postgres", provider: "rds" }`, or
+ * `profiles: { prod: { url, provider: "aurora" } }`. A provider's data lives
+ * in `@intentius/chant-lexicon-sql/postgres` (`providerData`).
  */
 
 import { z } from "zod";
 import type { ChantConfig } from "@intentius/chant/config";
 import { PLANNED_SQL_DIALECTS, SQL_DIALECTS } from "./dialects";
+import { POSTGRES_PROVIDERS } from "./postgres/providers/types";
 
 const envRef = z.strictObject({ env: z.string() });
+
+/** The managed Postgres service an environment runs on (#3282). */
+const providerName = z.enum(POSTGRES_PROVIDERS, {
+  error: () => `expected a Postgres provider (${POSTGRES_PROVIDERS.join(", ")})`,
+});
 
 export const sqlProfileSchema = z.strictObject({
   /** Base URL of the server's HTTP interface. */
@@ -54,6 +65,12 @@ export const sqlProfileSchema = z.strictObject({
   databases: z.array(z.string()).optional(),
   /** The database an unqualified declaration is created in. `default` when omitted. */
   defaultDatabase: z.string().optional(),
+  /**
+   * The managed service this environment's Postgres runs on, when it differs
+   * from `sql.provider`. Import reads the provider's own roles, schemas and
+   * extensions as foreign.
+   */
+  provider: providerName.optional(),
 });
 
 const dialectName = z.enum(SQL_DIALECTS);
@@ -71,6 +88,12 @@ function dialectError(input: unknown): string {
 export const sqlConfigSchema = z.strictObject({
   /** The dialect, or the dialects, the project's schema is for. */
   dialect: z.union([dialectName, z.array(dialectName).min(1)], { error: (iss) => dialectError(iss.input) }).optional(),
+  /**
+   * The managed Postgres service the project deploys to (`rds`, `aurora`,
+   * `cloud-sql`, `azure`, `neon`, `supabase`). SQLPG004 reads it to refuse an
+   * extension the provider does not allow. Omit it for a self-hosted server.
+   */
+  provider: providerName.optional(),
   /** One server per chant environment. */
   profiles: z.record(z.string(), sqlProfileSchema).optional(),
 });
