@@ -33,7 +33,7 @@ This patches up to six files (`packages/core/src/cli/commands/onboard.ts`):
 
 Onboard leaves some files alone and names them in its "Not patched" output:
 
-- `.github/workflows/publish.yml` has no per-lexicon lines to patch. CI builds every lexicon through `scripts/ci-lexicon-artifacts.sh`, and `scripts/publish-packages.sh` enumerates the workspace, so a new lexicon is built and published without an edit.
+- `.github/workflows/publish.yml` has no per-lexicon lines to patch. `scripts/ci-lexicon-artifacts.sh` builds every workspace lexicon and `scripts/publish-packages.sh` publishes them, so a new lexicon needs no edit.
 - `test/Dockerfile.smoke-npm` reads `test/smoke-npm-lexicons.txt`, which is the file onboard patches.
 - `test/smoke-e2e-lexicons.txt` is opt-in. It lists the lexicons an e2e example uses and the lexicons they depend on, so add yours there by hand when an example needs it.
 
