@@ -38,6 +38,7 @@
 
 import { DECLARABLE_MARKER, type Declarable } from "@intentius/chant/declarable";
 import { AttrRef } from "@intentius/chant/attrref";
+import { setInterpolationFields } from "@intentius/chant/provenance";
 import { isTrivia, SqlSyntaxError, tokenize, tokenizeText, untokenize, type Token } from "./tokens";
 import { parseCreate, unquote, type ColumnNode, type CreateNode, type Span, type StorageNode } from "./parser";
 
@@ -304,6 +305,21 @@ export class SqlTemplateError extends Error {
 interface Ctx {
   tokens: Token[];
   values: readonly unknown[];
+  /**
+   * Per interpolation, the props paths its spliced text landed in (#3212).
+   * Only spliced text counts: an interpolated entity or column is a reference
+   * to a sibling, not a value the author typed into this field.
+   */
+  fed: Array<Set<string>>;
+}
+
+/** Record that the spliced text inside `span` fed `path`. */
+function feed(ctx: Ctx, span: Span | undefined, path: string): void {
+  if (!span) return;
+  for (let i = span.from; i < span.to; i++) {
+    const splice = ctx.tokens[i]!.splice;
+    if (splice !== undefined) ctx.fed[splice]!.add(path);
+  }
 }
 
 /**
@@ -346,9 +362,10 @@ function splice(tag: string, parts: readonly string[], values: readonly unknown[
   return out;
 }
 
-/** A span's text, interpolations rendered, trimmed. */
-function text(ctx: Ctx, span: Span | undefined): string | undefined {
+/** A span's text, interpolations rendered, trimmed. With `path`, the span's spliced text is recorded as feeding it. */
+function text(ctx: Ctx, span: Span | undefined, path?: string): string | undefined {
   if (!span || span.to <= span.from) return undefined;
+  if (path) feed(ctx, span, path);
   return untokenize(ctx.tokens.slice(span.from, span.to), (i) => renderReference(ctx.values[i])).trim();
 }
 
@@ -362,6 +379,7 @@ function stringValue(s: string | undefined): string | undefined {
 }
 
 function columnDef(ctx: Ctx, c: ColumnNode): ColumnDef {
+  for (const span of [c.nameSpan, c.type, c.default?.expr, c.codec, c.ttl, c.comment, c.statistics, c.settings]) feed(ctx, span, "columns");
   const def: ColumnDef = { name: c.name || req(text(ctx, c.nameSpan)) };
   const set = <K extends keyof ColumnDef>(k: K, v: ColumnDef[K] | undefined) => {
     if (v !== undefined) def[k] = v;
@@ -383,11 +401,12 @@ function columnDef(ctx: Ctx, c: ColumnNode): ColumnDef {
 function storageProps(ctx: Ctx, node: StorageNode): StorageProps {
   const out: StorageProps = {};
   if (node.engine) {
+    feed(ctx, node.engine.nameSpan, "engine.name");
     const name = node.engine.name || req(text(ctx, node.engine.nameSpan));
-    out.engine = node.engine.args ? { name, args: node.engine.args.map((a) => req(text(ctx, a))) } : { name };
+    out.engine = node.engine.args ? { name, args: node.engine.args.map((a) => req(text(ctx, a, "engine.args"))) } : { name };
   }
   const put = (k: "orderBy" | "primaryKey" | "partitionBy" | "sampleBy" | "ttl", span: Span | undefined) => {
-    const v = text(ctx, span);
+    const v = text(ctx, span, k);
     if (v !== undefined) out[k] = v;
   };
   put("orderBy", node.orderBy);
@@ -395,7 +414,8 @@ function storageProps(ctx: Ctx, node: StorageNode): StorageProps {
   put("partitionBy", node.partitionBy);
   put("sampleBy", node.sampleBy);
   put("ttl", node.ttl);
-  if (node.settings) out.settings = Object.fromEntries(node.settings.map((s) => [s.key, req(text(ctx, s.value))]));
+  feed(ctx, node.settingsClause, "settings");
+  if (node.settings) out.settings = Object.fromEntries(node.settings.map((s) => [s.key, req(text(ctx, s.value, "settings"))]));
   return out;
 }
 
@@ -460,14 +480,27 @@ function lineage(ctx: Ctx, select: Span): { edges: LineageEdge[]; reads: ClickHo
 function qualified(ctx: Ctx, span: Span): { database?: string; name: string } {
   const sig = ctx.tokens.slice(span.from, span.to).filter((t) => !isTrivia(t));
   const pieces: string[] = [];
+  const splices: Array<number | undefined> = [];
   for (const t of sig) {
     if (t.kind === "punct" && t.text === ".") continue;
     if (t.kind === "ref") {
       const v = ctx.values[t.part];
-      if (isClickHouseObject(v) && v.entityType === CLICKHOUSE_ENTITY_TYPES.database) pieces.push((v as ClickHouseDatabase).props.name);
-      else pieces.push(...renderReference(v).split("."));
-    } else pieces.push(unquote(t.text));
+      const refPieces = isClickHouseObject(v) && v.entityType === CLICKHOUSE_ENTITY_TYPES.database
+        ? [(v as ClickHouseDatabase).props.name]
+        : renderReference(v).split(".");
+      for (const piece of refPieces) {
+        pieces.push(piece);
+        splices.push(undefined);
+      }
+    } else {
+      pieces.push(unquote(t.text));
+      splices.push(t.splice);
+    }
   }
+  const last = pieces.length - 1;
+  splices.forEach((splice, i) => {
+    if (splice !== undefined) ctx.fed[splice]!.add(i === last ? "name" : "database");
+  });
   return pieces.length >= 2 ? { database: pieces[pieces.length - 2], name: pieces[pieces.length - 1]! } : { name: pieces[0] ?? "" };
 }
 
@@ -505,7 +538,8 @@ function build(tag: Expect, strings: TemplateStringsArray | readonly string[], v
         : `on template line ${parts.slice(0, err.part).join("${}").split("\n").length + parts[err.part]!.slice(0, err.offset).split("\n").length - 1}`;
     throw new SqlTemplateError(tag, `${err.message} (${where})`, err.part, err.offset);
   }
-  const ctx: Ctx = { tokens, values };
+  const ctx: Ctx = { tokens, values, fed: values.map(() => new Set<string>()) };
+  for (const t of tokens) if (t.splice !== undefined) ctx.fed[t.splice]!.add("ddl");
   if (node.statement !== tag) {
     const holds = node.statement === "database" ? "CREATE DATABASE" : node.statement === "table" ? "CREATE TABLE" : "CREATE VIEW";
     throw new SqlTemplateError(tag, `holds a ${holds}; use the ${node.statement} tag`, 0, 0);
@@ -515,19 +549,29 @@ function build(tag: Expect, strings: TemplateStringsArray | readonly string[], v
   const ddl = req(untokenize(tokens, (i) => renderReference(values[i])).trim().replace(/;\s*$/, ""));
   const source = { strings: parts };
   const dependsOn = [...new Set(values.filter((v) => isClickHouseObject(v) || isColumnRef(v)))];
-  const common = { name, database, onCluster: text(ctx, node.onCluster), comment: stringValue(text(ctx, node.comment)) };
+  const common = {
+    name,
+    database,
+    onCluster: text(ctx, node.onCluster, "onCluster"),
+    comment: stringValue(text(ctx, node.comment, "comment")),
+  };
+  const done = <T extends ClickHouseObject>(entity: T): T => {
+    setInterpolationFields(entity, ctx.fed.map((paths) => [...paths].sort()));
+    return entity;
+  };
 
   if (node.statement === "database") {
+    feed(ctx, node.engine?.nameSpan, "engine.name");
     const engine = node.engine
       ? node.engine.args
-        ? { name: node.engine.name, args: node.engine.args.map((a) => req(text(ctx, a))) }
+        ? { name: node.engine.name, args: node.engine.args.map((a) => req(text(ctx, a, "engine.args"))) }
         : { name: node.engine.name }
       : undefined;
     const settings = node.settings
-      ? Object.fromEntries(node.settings.map((s) => [s.key, req(text(ctx, s.value))]))
+      ? Object.fromEntries(node.settings.map((s) => [s.key, req(text(ctx, s.value, "settings"))]))
       : undefined;
     const props: DatabaseProps = strip({ ...common, engine, settings, ddl, source });
-    return makeEntity(CLICKHOUSE_ENTITY_TYPES.database, quoteIdentifier(name), props, undefined, dependsOn);
+    return done(makeEntity(CLICKHOUSE_ENTITY_TYPES.database, quoteIdentifier(name), props, undefined, dependsOn));
   }
 
   if (node.statement === "table") {
@@ -538,37 +582,42 @@ function build(tag: Expect, strings: TemplateStringsArray | readonly string[], v
       ifNotExists: node.ifNotExists,
       columns,
       indexes: node.indexes.map((i) =>
-        strip({ name: i.name, expr: req(text(ctx, i.expr)), type: req(text(ctx, i.type)), granularity: text(ctx, i.granularity) }),
+        strip({
+          name: i.name,
+          expr: req(text(ctx, i.expr, "indexes")),
+          type: req(text(ctx, i.type, "indexes")),
+          granularity: text(ctx, i.granularity, "indexes"),
+        }),
       ),
-      projections: node.projections.map((p) => ({ name: p.name, definition: req(text(ctx, p.body)) })),
-      constraints: node.constraints.map((c) => ({ name: c.name, kind: c.kind, expr: req(text(ctx, c.expr)) })),
+      projections: node.projections.map((p) => ({ name: p.name, definition: req(text(ctx, p.body, "projections")) })),
+      constraints: node.constraints.map((c) => ({ name: c.name, kind: c.kind, expr: req(text(ctx, c.expr, "constraints")) })),
       ...storageProps(ctx, node),
       ddl,
       source,
     });
-    return makeEntity(CLICKHOUSE_ENTITY_TYPES.table, sqlName, props, columns.map((c) => c.name), dependsOn);
+    return done(makeEntity(CLICKHOUSE_ENTITY_TYPES.table, sqlName, props, columns.map((c) => c.name), dependsOn));
   }
 
   const lin = lineage(ctx, node.select);
   let to: ClickHouseObject | string | undefined;
   if (node.to) {
     const target = node.to.refs.length === 1 ? values[node.to.refs[0]!] : undefined;
-    to = isClickHouseObject(target) ? target : text(ctx, node.to);
+    to = isClickHouseObject(target) ? target : text(ctx, node.to, "to");
   }
   const columns = node.columns.map((c) => columnDef(ctx, c));
   const props: ViewProps = strip({
     ...common,
     orReplace: node.orReplace,
     ifNotExists: node.ifNotExists,
-    refresh: text(ctx, node.refresh),
+    refresh: text(ctx, node.refresh, "refresh"),
     append: node.append,
     to,
     columns,
     ...storageProps(ctx, node),
     populate: node.populate,
     empty: node.empty,
-    security: text(ctx, node.security),
-    select: req(text(ctx, node.select)),
+    security: text(ctx, node.security, "security"),
+    select: req(text(ctx, node.select, "select")),
     reads: lin.reads,
     lineage: lin.edges,
     ddl,
@@ -576,7 +625,8 @@ function build(tag: Expect, strings: TemplateStringsArray | readonly string[], v
   });
   const outputs = columns.length > 0 ? columns.map((c) => c.name) : lin.edges.map((e) => e.output);
   const type = node.materialized ? CLICKHOUSE_ENTITY_TYPES.materializedView : CLICKHOUSE_ENTITY_TYPES.view;
-  return makeEntity(type, sqlName, props, outputs, dependsOn);
+  feed(ctx, node.select, "lineage");
+  return done(makeEntity(type, sqlName, props, outputs, dependsOn));
 }
 
 /** `` database`CREATE DATABASE ...` ``: one ClickHouse database, parsed at build time. */

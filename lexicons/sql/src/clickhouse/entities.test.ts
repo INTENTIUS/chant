@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { isDeclarable } from "@intentius/chant/declarable";
 import { buildDependencyGraph } from "@intentius/chant/discovery/graph";
+import { getInterpolationFields } from "@intentius/chant/provenance";
 import { database, isColumnRef, literal, table, view, SqlTemplateError } from "./entities";
 
 const users = table`
@@ -151,5 +152,37 @@ describe("refusals", () => {
   test("a backslash is read raw, as written", () => {
     const t = table`CREATE TABLE t (re String DEFAULT '\d+\t') ENGINE = Log`;
     expect(t.props.columns[0]!.default!.expr).toBe("'\\d+\\t'");
+  });
+});
+
+// #3212: the tag says which fields each interpolation fed, so a composite's
+// parameter can be traced to the field it produced.
+describe("the fields each interpolation fed", () => {
+  test("spliced text feeds the fields it was parsed into, and the DDL", () => {
+    const name = "app.clicks";
+    const t = table`
+      CREATE TABLE ${name} (${"url String"}, ts DateTime)
+      ENGINE = ReplacingMergeTree(${"ts"})
+      PARTITION BY ${"toYYYYMM(ts)"}
+      ORDER BY url
+      TTL ts + INTERVAL ${30} DAY
+      SETTINGS ${"index_granularity = 4096"}
+      COMMENT ${literal("hits")}`;
+    expect(getInterpolationFields(t)).toEqual([
+      ["database", "ddl", "name"],
+      ["columns", "ddl"],
+      ["ddl", "engine.args"],
+      ["ddl", "partitionBy"],
+      ["ddl", "ttl"],
+      ["ddl", "settings"],
+      ["comment", "ddl"],
+    ]);
+  });
+
+  test("an interpolated entity or column is a reference and feeds nothing", () => {
+    const v = view`
+      CREATE MATERIALIZED VIEW ${"by_kind"} ENGINE = SummingMergeTree ORDER BY ${events.columns.kind}
+      AS SELECT ${events.columns.kind}, count() AS n FROM ${events} GROUP BY ${events.columns.kind}`;
+    expect(getInterpolationFields(v)).toEqual([["ddl", "name"], [], [], [], []]);
   });
 });

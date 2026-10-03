@@ -76,6 +76,28 @@ export const dailyMv = view`
 
 A materialized view's `TO` target is fixed when the view is created. Changing it later is a rebuild, see the `chant-sql-plan` skill.
 
+## Composites
+
+`@intentius/chant-lexicon-sql/clickhouse` exports five composites for tables that are usually declared the same way. Each is built from the `table` and `view` tags, and each prop is SQL text spliced into the template:
+
+| Composite | Members | What it is |
+|---|---|---|
+| `ReplacingTable` | `table` | ReplacingMergeTree with a version column (`version`, UInt64 by default) |
+| `EventsTable` | `table` | MergeTree partitioned by its timestamp (`ts`), with a TTL (`ttlDays`, default 90) and `ttl_only_drop_parts` |
+| `RollupView` | `table`, `view` | A target table (SummingMergeTree by default) and a materialized view writing to it from `source` |
+| `CdcMirror` | `table`, `current` | ReplacingMergeTree(`_version`, `_is_deleted`) for a CDC feed, and a view of its live rows |
+| `ShardedTable` | `local`, `distributed` | ReplicatedMergeTree `ON CLUSTER` and the Distributed table over it |
+
+```ts
+import { EventsTable, RollupView } from "@intentius/chant-lexicon-sql/clickhouse";
+
+export const events = EventsTable({ name: "events", columns: "user_id UUID, kind LowCardinality(String)", orderBy: "(kind, user_id, ts)", ttlDays: 30 });
+```
+
+Put a composite whose props reference another call's member (`source: events.table`) in its own file; a same-file reference to a composite call's member makes the file run instead of fold. Alias each item of a `RollupView` select list to a target column, or SQLCH110 reports it.
+
+When chant interprets a composite's factory at build time, each field records the parameter it came from, so drift on `ttl` is reported as a change to `ttlDays`. Chant interprets a factory only from a project file, or from a package path a tsconfig `paths` entry maps to source, and only from the module that defines it. A composite imported from the installed package records its fields as `unknown`.
+
 ## Checks
 
 | Id | When | What it flags |
