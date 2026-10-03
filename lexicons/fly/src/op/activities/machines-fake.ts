@@ -54,6 +54,16 @@ export interface MachinesFakeOptions {
 
 const json = (status: number, body: unknown) => ({ status, text: body === undefined ? "" : JSON.stringify(body) });
 
+/** Fly's certificate-list page size: 25 when no `limit` is given, 500 at most. */
+export const CERT_PAGE_DEFAULT = 25;
+export const CERT_PAGE_MAX = 500;
+// The fake's cursor is an offset in disguise; callers must treat it as opaque.
+const offsetCursor = (offset: number): string => Buffer.from(`certs:${offset}`).toString("base64url");
+const cursorOffset = (cursor: string): number | undefined => {
+  const m = /^certs:(\d+)$/.exec(Buffer.from(cursor, "base64url").toString());
+  return m ? Number(m[1]) : undefined;
+};
+
 let seq = 0;
 const nextId = (prefix: string) => `${prefix}${(++seq).toString(16).padStart(10, "0")}`;
 
@@ -166,7 +176,7 @@ export function createMachinesFake(options: MachinesFakeOptions = {}): MachinesF
       return json(404, { error: `no ${method} ${action}` });
     }
     if (kind === "ip_assignments") return method === "GET" ? json(200, { ips: [] }) : json(200, {});
-    if (kind === "certificates") return certificates(app, method, seg.slice(4), b);
+    if (kind === "certificates") return certificates(app, method, seg.slice(4), b, searchParams);
     if (kind === "volumes" || kind === "secrets") return method === "GET" ? json(200, []) : json(200, {});
     return json(404, { error: "not found" });
   };
@@ -175,12 +185,25 @@ export function createMachinesFake(options: MachinesFakeOptions = {}): MachinesF
   // `.../certificates`, created only at `.../certificates/acme`, read and
   // deleted at `.../certificates/{hostname}`. A POST to the bare list path is
   // the 404 flaps gives, so an applier that posts there fails here too.
-  function certificates(app: string, method: string, rest: string[], b: Record<string, unknown>) {
+  // The list pages like Fly's (#3224): `limit` defaults to 25 and is capped at
+  // 500, and `next_cursor` is present while certificates remain. mudflaps
+  // returns the whole list in one page (INTENTIUS/mudflaps#71).
+  function certificates(app: string, method: string, rest: string[], b: Record<string, unknown>, q: URLSearchParams) {
     const hostnames = certs.get(app) ?? [];
     const detail = (hostname: string) => ({ hostname, acme_requested: true, configured: false, status: "pending" });
     if (rest.length === 0) {
-      if (method === "GET") return json(200, { certificates: hostnames.map(detail), total_count: hostnames.length });
-      return { status: 404, text: "404 page not found" };
+      if (method !== "GET") return { status: 404, text: "404 page not found" };
+      const limit = Math.min(CERT_PAGE_MAX, Math.max(1, Number(q.get("limit")) || CERT_PAGE_DEFAULT));
+      const cursor = q.get("cursor");
+      const from = cursor === null ? 0 : cursorOffset(cursor);
+      if (from === undefined) return json(400, { error: `invalid cursor ${cursor}` });
+      const page = hostnames.slice(from, from + limit);
+      const more = from + limit < hostnames.length;
+      return json(200, {
+        certificates: page.map(detail),
+        ...(more ? { next_cursor: offsetCursor(from + limit) } : {}),
+        total_count: hostnames.length,
+      });
     }
     if (rest.length === 1 && rest[0] === "acme" && method === "POST") {
       const hostname = typeof b.hostname === "string" ? b.hostname : "";
