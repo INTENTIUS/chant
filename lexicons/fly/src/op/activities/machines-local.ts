@@ -309,7 +309,8 @@ export function createLocalMachines(options: LocalMachinesOptions = {}): LocalMa
       let stderr = "";
       child.stdout!.on("data", (d) => (stdout += d));
       child.stderr!.on("data", (d) => (stderr += d));
-      const timer = setTimeout(() => killGroup(child, "SIGKILL"), timeoutSecs * 1000);
+      // killGroupNow: a child missed by one group kill would hold the output pipes, and "close" would wait for it.
+      const timer = setTimeout(() => killGroupNow(child), timeoutSecs * 1000);
       child.once("error", (error) => {
         clearTimeout(timer);
         done({ exit_code: 127, stdout, stderr: `${stderr}${error.message}` });
