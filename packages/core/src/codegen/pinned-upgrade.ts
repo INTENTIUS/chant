@@ -44,6 +44,8 @@ export type { UpstreamPin };
 export interface UpgradeCheckResult {
   /** Lexicon identifier. */
   lexicon: LexiconId;
+  /** The pin's label. Set only when the plugin declares more than one pin. */
+  pin?: string;
   /** Whether a newer stable upstream version was found. */
   hasUpgrade: boolean;
   /** Current pinned version string (e.g. "v1.32.0"). */
@@ -70,6 +72,11 @@ export interface CheckPinnedUpgradeOptions {
   lexiconDir: string;
   /** Which lexicon to check. */
   lexicon: LexiconId;
+  /**
+   * Label of the one pin to check, for a plugin that declares several. Omitted:
+   * `checkPinnedUpgrade` checks the first pin, `checkPinnedUpgrades` all of them.
+   */
+  pin?: string;
   /**
    * Override the upstream resolver (useful in tests to inject mocks).
    * When omitted the real GitHub API is called.
@@ -207,27 +214,53 @@ export function revertVersionBump(filePath: string, original: string): void {
  * lexicon-borne loading.
  */
 export async function loadUpstreamPin(lexicon: LexiconId, lexiconDir?: string): Promise<UpstreamPin | null> {
-  const pinOf = (mod: Record<string, unknown>): UpstreamPin | null => {
+  return (await loadUpstreamPins(lexicon, lexiconDir))[0]?.pin ?? null;
+}
+
+/** One pin of a plugin with the label it is addressed by. */
+export interface LabeledPin {
+  label: string;
+  pin: UpstreamPin;
+}
+
+/**
+ * Every pin a plugin declares: its `upstreamPin` (labelled by its own `label`,
+ * else the lexicon's name) followed by each `upstreamPins` entry. Empty when
+ * the plugin declares none or cannot be loaded.
+ */
+export function pinsOfPlugin(plugin: { upstreamPin?: UpstreamPin; upstreamPins?: readonly UpstreamPin[] }, lexicon: LexiconId): LabeledPin[] {
+  const pins: LabeledPin[] = [];
+  if (plugin.upstreamPin) pins.push({ label: plugin.upstreamPin.label ?? lexicon, pin: plugin.upstreamPin });
+  for (const pin of plugin.upstreamPins ?? []) pins.push({ label: pin.label ?? `${lexicon}-${pins.length}`, pin });
+  return pins;
+}
+
+/** Load every pin the lexicon's plugin declares; see {@link loadUpstreamPin} for where it looks. */
+export async function loadUpstreamPins(lexicon: LexiconId, lexiconDir?: string): Promise<LabeledPin[]> {
+  const pinsOf = (mod: Record<string, unknown>): LabeledPin[] => {
     for (const value of Object.values(mod)) {
-      if (isLexiconPlugin(value) && value.upstreamPin) return value.upstreamPin;
+      if (isLexiconPlugin(value)) {
+        const pins = pinsOfPlugin(value, lexicon);
+        if (pins.length > 0) return pins;
+      }
     }
-    return null;
+    return [];
   };
   // The directory the caller pointed at wins: it is the checkout whose pin
   // file will be edited, and it need not be installed under node_modules.
   const entry = lexiconDir ? lexiconEntry(lexiconDir) : null;
   if (entry) {
     try {
-      const pin = pinOf((await import(pathToFileURL(entry).href)) as Record<string, unknown>);
-      if (pin) return pin;
+      const pins = pinsOf((await import(pathToFileURL(entry).href)) as Record<string, unknown>);
+      if (pins.length > 0) return pins;
     } catch {
       // fall through to the package-name route
     }
   }
   try {
-    return pinOf((await importLexiconPackage(`@intentius/chant-lexicon-${lexicon}`)) as Record<string, unknown>);
+    return pinsOf((await importLexiconPackage(`@intentius/chant-lexicon-${lexicon}`)) as Record<string, unknown>);
   } catch {
-    return null;
+    return [];
   }
 }
 
@@ -401,19 +434,53 @@ export function resolverFor(pin: UpstreamPin, from: string): UpstreamResolver {
  * without any lasting change to the working tree.
  */
 export async function checkPinnedUpgrade(opts: CheckPinnedUpgradeOptions): Promise<UpgradeCheckResult> {
-  const { lexiconDir, lexicon, force = false, verbose = false, skipBuild, skipBundle, skipLint } = opts;
+  const selected = await selectPins(opts);
+  if ("error" in selected) return selected.error;
+  return checkOnePin(selected.pins[0]!, opts, selected.multiple);
+}
 
-  const pin = await loadUpstreamPin(lexicon, lexiconDir);
-  if (!pin) {
-    return {
-      lexicon,
-      hasUpgrade: false,
-      from: "(unknown)",
-      to: null,
-      validation: null,
-      fetchError: `Lexicon "${lexicon}" declares no upstreamPin, so there is no pinned upstream version to check (see lexicon-authoring/generate, "Pinning the upstream schema"), or its plugin could not be loaded from ${lexiconDir}.`,
-    };
+/**
+ * Check every pin the plugin declares (or the one named by `opts.pin`), one
+ * result each, in declaration order. A plugin with one pin gives one result,
+ * the same as `checkPinnedUpgrade`. Pins are checked one after another: each
+ * dry-run bump edits and reverts a file, and regenerates.
+ */
+export async function checkPinnedUpgrades(opts: CheckPinnedUpgradeOptions): Promise<UpgradeCheckResult[]> {
+  const selected = await selectPins({ ...opts, pin: opts.pin });
+  if ("error" in selected) return [selected.error];
+  const results: UpgradeCheckResult[] = [];
+  for (const labeled of selected.pins) results.push(await checkOnePin(labeled, opts, selected.multiple));
+  return results;
+}
+
+/** Choose the pins to check: all of them, or the one `opts.pin` names. */
+async function selectPins(
+  opts: CheckPinnedUpgradeOptions,
+): Promise<{ pins: LabeledPin[]; multiple: boolean } | { error: UpgradeCheckResult }> {
+  const { lexiconDir, lexicon } = opts;
+  const fail = (fetchError: string): { error: UpgradeCheckResult } => ({
+    error: { lexicon, hasUpgrade: false, from: "(unknown)", to: null, validation: null, fetchError },
+  });
+  const all = await loadUpstreamPins(lexicon, lexiconDir);
+  if (all.length === 0) {
+    return fail(
+      `Lexicon "${lexicon}" declares no upstreamPin, so there is no pinned upstream version to check (see lexicon-authoring/generate, "Pinning the upstream schema"), or its plugin could not be loaded from ${lexiconDir}.`,
+    );
   }
+  const labels = all.map((p) => p.label);
+  const dup = labels.find((l, i) => labels.indexOf(l) !== i);
+  if (dup) return fail(`Lexicon "${lexicon}" declares two pins labelled "${dup}"; each pin's label must be unique.`);
+  const multiple = all.length > 1;
+  if (opts.pin === undefined) return { pins: all, multiple };
+  const chosen = all.find((p) => p.label === opts.pin);
+  if (!chosen) return fail(`Lexicon "${lexicon}" has no pin labelled "${opts.pin}". Pins: ${labels.join(", ")}.`);
+  return { pins: [chosen], multiple };
+}
+
+async function checkOnePin(labeled: LabeledPin, opts: CheckPinnedUpgradeOptions, multiple: boolean): Promise<UpgradeCheckResult> {
+  const { lexiconDir, lexicon, force = false, verbose = false, skipBuild, skipBundle, skipLint } = opts;
+  const { pin } = labeled;
+  const tag = multiple ? { pin: labeled.label } : {};
   const location = pinLocationFrom(pin, lexiconDir);
 
   // Read current pin
@@ -421,6 +488,7 @@ export async function checkPinnedUpgrade(opts: CheckPinnedUpgradeOptions): Promi
   if (!from) {
     return {
       lexicon,
+      ...tag,
       hasUpgrade: false,
       from: "(unknown)",
       to: null,
@@ -437,6 +505,7 @@ export async function checkPinnedUpgrade(opts: CheckPinnedUpgradeOptions): Promi
   } catch (e) {
     return {
       lexicon,
+      ...tag,
       hasUpgrade: false,
       from,
       to: null,
@@ -450,6 +519,7 @@ export async function checkPinnedUpgrade(opts: CheckPinnedUpgradeOptions): Promi
   if (!latestTag || !isNewer(latestTag, fromVersion)) {
     return {
       lexicon,
+      ...tag,
       hasUpgrade: false,
       from,
       to: latestTag,
@@ -464,6 +534,7 @@ export async function checkPinnedUpgrade(opts: CheckPinnedUpgradeOptions): Promi
   if (pin.alsoMoves) {
     return {
       lexicon,
+      ...tag,
       hasUpgrade: true,
       from,
       to: latestTag,
@@ -480,6 +551,7 @@ export async function checkPinnedUpgrade(opts: CheckPinnedUpgradeOptions): Promi
   } catch (e) {
     return {
       lexicon,
+      ...tag,
       hasUpgrade: true,
       from,
       to: latestTag,
@@ -506,6 +578,7 @@ export async function checkPinnedUpgrade(opts: CheckPinnedUpgradeOptions): Promi
 
   return {
     lexicon,
+    ...tag,
     hasUpgrade: true,
     from,
     to: latestTag,
@@ -531,8 +604,10 @@ export async function applyPinnedVersionBump(
   lexicon: LexiconId,
   lexiconDir: string,
   newVersion: string,
+  pinLabel?: string,
 ): Promise<{ filePath: string }> {
-  const pin = await loadUpstreamPin(lexicon, lexiconDir);
+  const pins = await loadUpstreamPins(lexicon, lexiconDir);
+  const pin = (pinLabel === undefined ? pins[0] : pins.find((p) => p.label === pinLabel))?.pin;
   if (!pin) throw new Error(`Lexicon "${lexicon}" declares no upstreamPin (not self-upgradable).`);
   if (pin.alsoMoves) {
     throw new Error(`Lexicon "${lexicon}" cannot have its pin rewritten generically: ${pin.alsoMoves}`);
