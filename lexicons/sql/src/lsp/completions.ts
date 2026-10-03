@@ -2,6 +2,7 @@ import * as ts from "typescript";
 import type { CompletionContext, CompletionItem } from "@intentius/chant/lsp/types";
 import { lexiconCompletions } from "@intentius/chant/lsp/lexicon-providers";
 import { catalogIndex, type CatalogIndex } from "./catalog";
+import { postgresCompletions } from "./postgres";
 import { registryIndex } from "./registry";
 import { declarations, expectAfter, locate, offsetAt, tokensBefore, wordAround, type Expect } from "./template";
 import type { SqlTag } from "../lint/rules/templates";
@@ -19,6 +20,8 @@ const LIMIT = 200;
  * entity classes from the generated registry.
  */
 export function completions(ctx: CompletionContext): CompletionItem[] {
+  const pg = postgresCompletions(ctx);
+  if (pg) return pg;
   const refs = interpolationCompletions(ctx);
   if (refs) return refs;
 
