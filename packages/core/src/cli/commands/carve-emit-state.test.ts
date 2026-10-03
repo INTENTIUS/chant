@@ -3,6 +3,7 @@ import { mkdtempSync, writeFileSync, rmSync, readFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { carveEmit, formatCarveEmit } from "./carve-emit";
+import { generateTsConfig, SCAFFOLD_DEV_DEPENDENCIES } from "./init";
 import { lintCommand } from "./lint";
 import { loadHcl2json } from "../../terraform/parse";
 import { readCarveManifest } from "../../terraform/manifest";
@@ -136,6 +137,9 @@ describe("carve emit --state (real adoption from tfstate)", () => {
       const pkg = JSON.parse(readFileSync(join(out, "package.json"), "utf-8"));
       expect(pkg.scripts.build).toBe("chant build src --lexicon aws");
       expect(Object.keys(pkg.dependencies)).toEqual(["@intentius/chant", "@intentius/chant-lexicon-aws"]);
+      // What `chant init` writes, which test/example-tsconfigs.e2e.test.ts compiles under TS 5.9 and 7 (#3233).
+      expect(pkg.devDependencies).toEqual(SCAFFOLD_DEV_DEPENDENCIES);
+      expect(JSON.parse(readFileSync(join(out, "tsconfig.json"), "utf-8"))).toEqual(JSON.parse(generateTsConfig()));
       expect(readFileSync(join(out, "chant.config.ts"), "utf-8")).toContain('lexicons: ["aws"]');
 
       // A second emit into the same dir leaves the scaffold (and edits) alone.
