@@ -447,6 +447,25 @@ export interface UpstreamPin {
     readonly kind: "releases" | "tags";
     /** Only consider tags ending with this suffix (e.g. "-ee" for GitLab). */
     readonly tagSuffix?: string;
+    /**
+     * Map a raw tag to the version string the pin stores, or null to skip the
+     * tag. For upstreams whose tags are not versions: postgres/postgres tags
+     * are `REL_18_6`, `REL_18_BETA1`, `REL9_6_24`, so
+     * `(t) => /^REL_(\d+)_(\d+)$/.exec(t)?.slice(1).join(".") ?? null` gives
+     * `18.6` and drops betas, release candidates and the old spelling.
+     *
+     * When set, the tool reads every page of the tag list (not just the first
+     * 50), because such lists are not ordered by version, and the version this
+     * returns is what `replace` receives and what the report shows. The pinned
+     * constant may hold either the mapped version or the raw tag.
+     */
+    readonly tagVersion?: (tag: string) => string | null;
+    /**
+     * Only consider versions whose first numeric segment equals the pinned
+     * version's, so a pin on `17.9` reports `17.11` and never `18.6`. For
+     * lexicons that pin one snapshot per major line. Default false.
+     */
+    readonly trackMajor?: boolean;
   };
 }
 
