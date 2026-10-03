@@ -130,6 +130,27 @@ function killGroup(child: ChildProcess | undefined, signal: NodeJS.Signals): voi
   }
 }
 
+/**
+ * SIGKILL a process group until nothing in it is left to kill. One kill(-pgid)
+ * can miss a child that a member is forking at that moment: the child joins the
+ * group after the signal went out, and then outlives the rest (seen on macOS,
+ * #3202). Sending again once the forker is dead catches it. Synchronous, so it
+ * works in an "exit" handler; it stops as soon as the group is empty (or only
+ * zombies), and gives up after about 100ms.
+ */
+function killGroupNow(child: ChildProcess | undefined): void {
+  if (!child?.pid) return;
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  for (let i = 0; i < 20; i++) {
+    try {
+      process.kill(-child.pid, "SIGKILL");
+    } catch {
+      return;
+    }
+    Atomics.wait(pause, 0, 0, 5);
+  }
+}
+
 async function freePort(): Promise<number> {
   const srv = createNetServer();
   await new Promise<void>((ok, fail) => srv.once("error", fail).listen(0, "127.0.0.1", ok));
@@ -225,9 +246,10 @@ export function createLocalMachines(options: LocalMachinesOptions = {}): LocalMa
       // Wait for the leader to exit and the rest of its group to go.
       await Promise.race([exited, new Promise((ok) => setTimeout(ok, stopTimeoutMs))]);
       while (groupAlive(child.pid) && Date.now() < deadline) await new Promise((ok) => setTimeout(ok, 25));
-      if (groupAlive(child.pid)) {
+      // Sent again each round: one group kill can miss a child being forked as it lands (see killGroupNow).
+      while (groupAlive(child.pid)) {
         killGroup(child, "SIGKILL");
-        while (groupAlive(child.pid)) await new Promise((ok) => setTimeout(ok, 25));
+        await new Promise((ok) => setTimeout(ok, 25));
       }
     }
     for (const path of r.files) rmSync(path, { force: true });
@@ -266,7 +288,7 @@ export function createLocalMachines(options: LocalMachinesOptions = {}): LocalMa
       if (r.stopping) return;
       say(`${key} instance ${m.instance_id} exited ${signal ?? code}`);
       // A process that ends on its own leaves its Machine stopped, and its group is killed with it.
-      killGroup(child, "SIGKILL");
+      killGroupNow(child);
       if (m.instance_id === r.instance && m.state === "started") m.state = "stopped";
     });
     say(`started ${key} instance ${m.instance_id}: ${files.length} files, ${argv.join(" ")}${port ? `, on 127.0.0.1:${port}` : ""}`);
@@ -347,7 +369,7 @@ export function createLocalMachines(options: LocalMachinesOptions = {}): LocalMa
   const killAll = () => {
     for (const r of running.values()) {
       r.stopping = true;
-      killGroup(r.child, "SIGKILL");
+      killGroupNow(r.child);
     }
   };
   const onSignal = (sig: NodeJS.Signals) => {
