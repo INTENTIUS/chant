@@ -50,6 +50,7 @@ import { MigrationRefusal, migrationPlanSubject, type MigrationObservation } fro
 import { postgresReceiptStore, receiptAddress, type PostgresReceiptStore } from "./receipts";
 import { waitForReplicas } from "./replication";
 import { batchPrefix, identityOf, inTransaction, observe, type MigrationRun } from "./steps";
+import { carriedNotReady, requiresNotNull } from "./carry";
 
 export interface BackfillResult {
   state: MigrationObservation["state"];
@@ -197,10 +198,18 @@ export async function verifyMigration(run: MigrationRun): Promise<VerifyResult> 
   if (r.mismatched > 0 || r.checksum !== r.expected) {
     throw new MigrationVerificationError(n.key, { state: o.state, ...r }, `${r.mismatched} of ${r.rows} row(s) have ${n.newColumn} different from ${o.expression} (checksums ${r.checksum} and ${r.expected})`);
   }
-  if (o.column.notNull && r.nulls > 0) {
-    throw new MigrationVerificationError(n.key, { state: o.state, ...r }, `${r.nulls} of ${r.rows} row(s) have ${n.newColumn} NULL, and ${n.column} is declared NOT NULL`);
+  if (requiresNotNull(o.column, o.carried) && r.nulls > 0) {
+    throw new MigrationVerificationError(n.key, { state: o.state, ...r }, `${r.nulls} of ${r.rows} row(s) have ${n.newColumn} NULL, and ${n.column} is declared NOT NULL or is in the primary key`);
   }
-  const summary = `${n.key}: ${r.rows} row(s), ${n.newColumn} equal to ${o.expression} in every one (checksum ${r.checksum})`;
+  const notReady = carriedNotReady(o.carried, o.carriedStates);
+  if (notReady.length > 0) {
+    throw new MigrationRefusal(`${n.key}: ${notReady.map((c) => `${c.kind} ${c.working}`).join(", ")} on the new column is not there or not yet valid; the Carry over phase makes them`);
+  }
+  const carried =
+    o.carried.length > 0 || o.views.length > 0
+      ? `; ${o.carried.map((c) => `${c.kind} ${c.name}${c.target !== c.name ? ` (as ${c.target})` : ""}`).join(", ") || "no index or constraint"} carried over${o.views.length > 0 ? `, view(s) ${o.views.map((v) => v.name).join(", ")} made again at the switch` : ""}`
+      : "";
+  const summary = `${n.key}: ${r.rows} row(s), ${n.newColumn} equal to ${o.expression} in every one (checksum ${r.checksum})${carried}`;
   run.log(`-- ${summary}`);
   return {
     state: o.state,

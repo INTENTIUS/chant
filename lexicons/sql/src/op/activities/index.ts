@@ -40,6 +40,7 @@ export {
   postgresMigrationExpand,
   postgresMigrationDualWrite,
   postgresMigrationBackfill,
+  postgresMigrationCarry,
   postgresMigrationVerify,
   postgresMigrationSwitch,
   postgresMigrationRetain,

@@ -28,9 +28,10 @@
  * do: a table that is not there, partitioned or inheriting; no primary key
  * of one integer column to batch by; a column change the Op does not make
  * (a rename and a type change at once, a rename of a column with a default,
- * a generated or identity column); an index, a constraint or a view that
- * uses the column; a publication that sends it; a working object chant did
- * not make.
+ * a generated or identity column); something that uses the column and is
+ * not carried over to the new one (`./carry.ts`: indexes, key, check and
+ * foreign key constraints and declared views are); a publication that sends
+ * it; a working object chant did not make.
  */
 
 import type { OwnershipMarker } from "@intentius/chant/ownership";
@@ -47,6 +48,7 @@ import type { ColumnDef } from "../entities";
 import type { DeclaredPgObject } from "../apply/statements";
 import { col, migrationNames, MIGRATION_TRAILER_KEY, pgName, type MigrationChange, type MigrationNames } from "./names";
 import { publicationsOf, type PublicationHit } from "./replication";
+import { carriedStates, carriedSubject, discoverDependents, type CarriedObject, type CarriedState, type CarriedView } from "./carry";
 
 /** A refusal: the migration cannot start, or cannot go on, for a reason a person has to act on. */
 export class MigrationRefusal extends Error {
@@ -90,6 +92,12 @@ export interface MigrationObservation {
   oid: string;
   /** Its primary key's one integer column, which the backfill batches by. */
   batchKey: string;
+  /** The indexes and constraints on the old column, carried over to the new one before the switch (`./carry.ts`). */
+  carried: CarriedObject[];
+  /** Their working copies on the server, by working name. */
+  carriedStates: Map<string, CarriedState>;
+  /** The views that read the old column, made again at the switch. */
+  views: CarriedView[];
   columns: Map<string, ServerColumn>;
   /** The column the values come from, while there is one. */
   source?: ServerColumn;
@@ -112,6 +120,8 @@ export interface ObserveInput {
   declared: DeclaredPgObject;
   column: string;
   marker?: OwnershipMarker;
+  /** Every object the build declares; the views the switch makes again come from here. Default: the table alone. */
+  objects?: readonly DeclaredPgObject[];
   /** The type change's expression, over the old row's columns. Default: `CAST(<column> AS <declared type>)`. */
   using?: string;
   /** The major the build targets; the server's own wins. */
@@ -162,23 +172,6 @@ async function serverColumns(client: PostgresClient, oid: string): Promise<Map<s
       ];
     }),
   );
-}
-
-/** What else on the server uses a column: indexes, constraints, views, rules, triggers, statistics. Its own default and its NOT NULL (a constraint of its own from 18) are not counted. */
-export async function columnDependents(client: PostgresClient, oid: string, attnum: number): Promise<string[]> {
-  const rows = await client.query<{ what: string }>(
-    `SELECT DISTINCT pg_catalog.pg_describe_object(d.classid, d.objid, d.objsubid) AS what
-     FROM pg_catalog.pg_depend d
-     WHERE d.refclassid = 'pg_catalog.pg_class'::pg_catalog.regclass AND d.refobjid = $1::oid AND d.refobjsubid = $2
-       AND d.classid <> 'pg_catalog.pg_attrdef'::pg_catalog.regclass AND d.deptype IN ('n', 'a', 'i')
-       AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint nn WHERE d.classid = 'pg_catalog.pg_constraint'::pg_catalog.regclass AND nn.oid = d.objid AND nn.contype = 'n')
-     UNION
-     SELECT pg_catalog.pg_describe_object('pg_catalog.pg_constraint'::pg_catalog.regclass, c.oid, 0)
-     FROM pg_catalog.pg_constraint c WHERE c.confrelid = $1::oid AND $2 = ANY(c.confkey)
-     ORDER BY 1`,
-    [oid, attnum],
-  );
-  return rows.map((r) => r.what);
 }
 
 /** The server's major, from `server_version_num`. */
@@ -314,11 +307,27 @@ export async function observeMigration(input: ObserveInput): Promise<MigrationOb
 
   const source = state === "migrate" ? columns.get(sourceName) : undefined;
   let batchKey = "";
+  let dependents: { carried: CarriedObject[]; views: CarriedView[] } = { carried: [], views: [] };
+  let states = new Map<string, CarriedState>();
   let expression = col(sourceName);
   let publications: PublicationHit[] = [];
   if (state === "migrate") {
     if (!source) throw new MigrationRefusal(`${where}: the column ${sourceName} the values come from is not on the server`);
-    batchKey = await refuseUnsupported(input, names, rel.oid, source, column, changes, rename !== undefined, typeChange);
+    ({ batchKey, dependents } = await refuseUnsupported(input, names, rel.oid, source, column, changes, rename !== undefined, typeChange));
+    states = await carriedStates(
+      client,
+      dependents.carried,
+      (comment) => {
+        const pairs = pairsOf(comment);
+        if (!pairs) return comment === undefined ? "none" : "theirs";
+        return pairs.get(MIGRATION_TRAILER_KEY) === names.key && pairs.get("role") === "carry" && carriesMarker(comment, marker) ? "ours" : "theirs";
+      },
+      (what) => {
+        throw new MigrationRefusal(
+          `${where}: ${what} exists and is not this migration's (its comment carries no migration=${names.key} role=carry marker for this project). The migration uses that name, so it stops rather than touch it; rename or drop it by hand.`,
+        );
+      },
+    );
     if (change === "type") {
       expression = input.using ?? `CAST(${col(sourceName)} AS ${column.type})`;
       if (expression.includes("$chant$")) throw new MigrationRefusal(`${where}: the using expression may not contain $chant$, which quotes the dual-write function's body`);
@@ -350,6 +359,9 @@ export async function observeMigration(input: ObserveInput): Promise<MigrationOb
     column,
     oid: rel.oid,
     batchKey,
+    carried: dependents.carried,
+    carriedStates: states,
+    views: dependents.views,
     columns,
     ...(source ? { source } : {}),
     ...(newColumn ? { newColumn } : {}),
@@ -364,7 +376,7 @@ export async function observeMigration(input: ObserveInput): Promise<MigrationOb
   };
 }
 
-/** The checks that hold only while there is something to migrate. Returns the batch key. */
+/** The checks that hold only while there is something to migrate. Returns the batch key and what the Op carries over. */
 async function refuseUnsupported(
   input: ObserveInput,
   names: MigrationNames,
@@ -374,7 +386,7 @@ async function refuseUnsupported(
   changes: readonly PgChange[],
   rename: boolean,
   typeChange: PgChange | undefined,
-): Promise<string> {
+): Promise<{ batchKey: string; dependents: { carried: CarriedObject[]; views: CarriedView[] } }> {
   const where = `${names.schema}.${names.table}`;
   if (rename && typeChange) {
     throw new MigrationRefusal(
@@ -395,12 +407,19 @@ async function refuseUnsupported(
       `${where}.${names.column}: a generated or identity column, or a change to its collation, storage or generation (${unsupported.map(ruleText).join("; ") || "generated or identity"}), is not migrated by the Op in this release.`,
     );
   }
-  const dependents = await columnDependents(input.client, oid, source.attnum);
-  if (dependents.length > 0) {
+  const dependents = await discoverDependents({
+    client: input.client,
+    names,
+    oid,
+    attnum: source.attnum,
+    objects: input.objects ?? [input.declared],
+    declared: input.declared,
+    defaultSchema: input.target.defaultSchema,
+  });
+  if (dependents.refused.length > 0) {
     throw new MigrationRefusal(
-      `${where}.${source.name} is used by ${dependents.join("; ")}. ` +
-        `The migration Op does not yet carry indexes, constraints and views over to the new column (chant #3322), and the old column could not be dropped while they use it. ` +
-        `Drop them, migrate the column, then declare them on the new column.`,
+      `${where}.${source.name} is used by what the migration Op does not carry over to the new column: ${dependents.refused.join("; ")}. ` +
+        `The old column could not be dropped while they use it.`,
     );
   }
   const keys = await input.client.query<{ name: string; type: string }>(
@@ -415,7 +434,7 @@ async function refuseUnsupported(
         `The backfill fills the new column in batches of key ranges, which needs a primary key of one smallint, integer or bigint column in this release.`,
     );
   }
-  return keys[0]!.name;
+  return { batchKey: keys[0]!.name, dependents: { carried: dependents.carried, views: dependents.views } };
 }
 
 /**
@@ -433,6 +452,7 @@ export function migrationPlanSubject(o: MigrationObservation): Record<string, un
     expression: o.expression,
     batchKey: o.batchKey,
     rules: o.changes.map((c) => c.rule),
+    ...(o.carried.length > 0 || o.views.length > 0 ? { dependents: carriedSubject(o) } : {}),
   };
 }
 

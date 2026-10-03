@@ -25,6 +25,7 @@ import { col, migrationNames, MIGRATION_TRAILER_KEY, type MigrationNames } from 
 import { MigrationRefusal, observeMigration, type MigrationObservation } from "./observe";
 import { postgresReceiptStore, receiptAddress } from "./receipts";
 import type { ReplicationLagBound } from "./replication";
+import { addCarriedConstraint, carriedNotReady, carriedSwitchStatements, requiresNotNull, type CarriedObject } from "./carry";
 
 /** What every step is given. */
 export interface MigrationRun {
@@ -32,6 +33,8 @@ export interface MigrationRun {
   target: PostgresTarget;
   /** The declared table. */
   declared: DeclaredPgObject;
+  /** Every object the build declares: the switch makes the views that read the column again from theirs. */
+  objects?: readonly DeclaredPgObject[];
   /** The declared column being migrated. */
   column: string;
   /** The type change's expression over the old row's columns. */
@@ -64,6 +67,7 @@ export const observe = (run: MigrationRun): Promise<MigrationObservation> =>
     target: run.target,
     declared: run.declared,
     column: run.column,
+    ...(run.objects ? { objects: run.objects } : {}),
     ...(run.marker ? { marker: run.marker } : {}),
     ...(run.using !== undefined ? { using: run.using } : {}),
     ...(run.major !== undefined ? { major: run.major } : {}),
@@ -117,11 +121,44 @@ export async function inTransaction<T>(run: MigrationRun, body: (exec: (sql: str
   }
 }
 
+/**
+ * Run one statement outside any transaction (`CREATE INDEX CONCURRENTLY`,
+ * `DROP INDEX CONCURRENTLY`), with `lock_timeout` and `statement_timeout`
+ * set for the session first (none for a scan). A lock timeout leaves a
+ * `CONCURRENTLY` build's index INVALID: `cleanup` drops it, and the statement
+ * is tried again as a transaction is.
+ */
+export async function outsideTransaction(run: MigrationRun, sql: string, opts: { scan?: boolean; cleanup?: () => Promise<void> } = {}): Promise<void> {
+  const retries = run.lockRetries ?? 5;
+  for (let attempt = 0; ; attempt++) {
+    run.signal?.throwIfAborted();
+    await run.client.query(`SET lock_timeout = ${ms(run.lockTimeoutMs)}`);
+    await run.client.query(`SET statement_timeout = ${ms(opts.scan ? 0 : run.statementTimeoutMs)}`);
+    try {
+      run.log(sql);
+      await run.client.query(sql);
+      return;
+    } catch (err) {
+      await opts.cleanup?.().catch(() => undefined);
+      if (run.signal?.aborted) throw err;
+      if (err instanceof PostgresQueryError && err.code === SQLSTATE_LOCK_NOT_AVAILABLE && attempt < retries) {
+        run.log(`-- lock_timeout ${run.lockTimeoutMs}ms: another session holds a lock this statement needs; trying again (${attempt + 1}/${retries})`);
+        await new Promise((r) => setTimeout(r, 250 * 2 ** attempt));
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
+/** A working object's role: the new column, the old one after the switch, the dual write, the NOT NULL proof, a carried index or constraint. */
+export type WorkingRole = "new" | "old" | "dual" | "nn" | "carry";
+
 /** The trailer pairs a working object carries besides the marker. */
-const working = (names: MigrationNames, role: "new" | "old" | "dual" | "nn", extra: Record<string, string> = {}) => ({ [MIGRATION_TRAILER_KEY]: names.key, role, ...extra });
+const working = (names: MigrationNames, role: WorkingRole, extra: Record<string, string> = {}) => ({ [MIGRATION_TRAILER_KEY]: names.key, role, ...extra });
 
 /** A working object's comment: a description, then chant's trailer. */
-export const workingComment = (names: MigrationNames, marker: OwnershipMarker | undefined, role: "new" | "old" | "dual" | "nn", text: string, extra: Record<string, string> = {}): string =>
+export const workingComment = (names: MigrationNames, marker: OwnershipMarker | undefined, role: WorkingRole, text: string, extra: Record<string, string> = {}): string =>
   stampedComment(`chant migration of ${names.key}: ${text}`, marker, working(names, role, extra));
 
 const commentOnColumn = (names: MigrationNames, column: string, text: string | undefined) =>
@@ -230,6 +267,77 @@ export async function startDualWrite(run: MigrationRun): Promise<DualWriteResult
   return { state: o.state, trigger: n.trigger, created: true };
 }
 
+// ── carry over ─────────────────────────────────────────────────────────
+
+export interface CarryResult {
+  state: MigrationObservation["state"];
+  /** Working copies made in this run. */
+  built: number;
+  /** Working copies already there and ready. */
+  ready: number;
+  /** Views the switch makes again. */
+  views: number;
+  /** Each carried object, `<kind> <name> -> <name after the switch>`. */
+  carried: string[];
+}
+
+const qualifiedIndex = (c: CarriedObject, name: string) => `${quoteIdent(c.schema)}.${quoteIdent(name)}`;
+
+/**
+ * Carry over: make each index and constraint on the old column again on the
+ * new one, under a working name (`./carry.ts`). An index (a key's too) is
+ * built `CONCURRENTLY`, outside any transaction, so writes go on; a build
+ * that failed or was killed leaves an INVALID index, which the next run
+ * drops and builds again. A check or a foreign key is added `NOT VALID` with
+ * its comment in one transaction, then validated under SHARE UPDATE
+ * EXCLUSIVE. Runs after the backfill, so every row has its new value.
+ */
+export async function carryOver(run: MigrationRun): Promise<CarryResult> {
+  const o = await observe(run);
+  const result: CarryResult = { state: o.state, built: 0, ready: 0, views: o.views.length, carried: [] };
+  if (o.state !== "migrate") return result;
+  const n = o.names;
+  if (!o.newColumn || !o.trigger) throw new MigrationRefusal(`${n.key}: the new column and its dual write are not there; the Expand and Dual write phases make them`);
+  for (const c of o.carried) {
+    result.carried.push(`${c.kind} ${c.tableName}.${c.name} -> ${c.target}`);
+    const state = o.carriedStates.get(c.working);
+    const comment = workingComment(n, run.marker, "carry", `${c.kind} ${c.name} on the new column`, { of: c.name });
+    if (c.kind === "index" || c.kind === "key") {
+      const ident = qualifiedIndex(c, c.working);
+      if (state?.ready) {
+        if (!state.marked) await inTransaction(run, (exec) => exec(`COMMENT ON INDEX ${ident} IS ${pgString(comment)}`));
+        result.ready++;
+        continue;
+      }
+      if (state?.present) await outsideTransaction(run, `DROP INDEX CONCURRENTLY IF EXISTS ${ident}`);
+      const dropInvalid = async () => {
+        const [row] = await run.client.query<{ invalid: boolean }>("SELECT NOT i.indisvalid AS invalid FROM pg_catalog.pg_index i WHERE i.indexrelid = pg_catalog.to_regclass($1)", [ident]);
+        if (row?.invalid) await run.client.query(`DROP INDEX CONCURRENTLY IF EXISTS ${ident}`);
+      };
+      await outsideTransaction(run, c.definition, { scan: true, cleanup: dropInvalid });
+      await inTransaction(run, (exec) => exec(`COMMENT ON INDEX ${ident} IS ${pgString(comment)}`));
+      result.built++;
+      continue;
+    }
+    if (state?.ready) {
+      result.ready++;
+      continue;
+    }
+    if (!state?.present) {
+      await inTransaction(run, async (exec) => {
+        await exec(addCarriedConstraint(c));
+        await exec(`COMMENT ON CONSTRAINT ${quoteIdent(c.working)} ON ${c.table} IS ${pgString(comment)}`);
+      });
+    }
+    if (c.validated) await inTransaction(run, (exec) => exec(`ALTER TABLE ${c.table} VALIDATE CONSTRAINT ${quoteIdent(c.working)}`), { scan: true });
+    result.built++;
+  }
+  if (o.carried.length > 0 || o.views.length > 0) {
+    run.log(`-- ${n.key}: ${o.carried.length} index(es) and constraint(s) on the new column (${result.built} made, ${result.ready} already there); ${o.views.length} view(s) made again at the switch`);
+  }
+  return result;
+}
+
 // ── switch ─────────────────────────────────────────────────────────────
 
 export interface SwitchResult {
@@ -253,11 +361,19 @@ export function switchStatements(o: MigrationObservation, marker: OwnershipMarke
   const t = n.qualifiedTable;
   const declared = o.column;
   const oldComment = workingComment(n, marker, "old", `the old ${n.change === "rename" ? "name" : "column"}, kept until ${retainUntil}`, { "retain-until": retainUntil });
+  const carried = carriedSwitchStatements(
+    o.carried,
+    o.views,
+    n.change,
+    (c) => workingComment(n, marker, "old", `the old ${c.kind} ${c.name}, on ${n.oldColumn} until the contract drops it`, { of: c.name }),
+    marker,
+  );
   const out: string[] = [];
-  if (declared.notNull) out.push(`ALTER TABLE ${t} ALTER COLUMN ${col(n.newColumn)} SET NOT NULL`);
+  if (requiresNotNull(declared, o.carried)) out.push(`ALTER TABLE ${t} ALTER COLUMN ${col(n.newColumn)} SET NOT NULL`);
   if (o.check) out.push(`ALTER TABLE ${t} DROP CONSTRAINT ${col(n.check)}`);
   if (n.change === "type") {
     out.push(`DROP TRIGGER ${col(n.trigger)} ON ${t}`);
+    out.push(...carried.before);
     if (o.source!.notNull) out.push(`ALTER TABLE ${t} ALTER COLUMN ${col(n.source)} DROP NOT NULL`);
     if (o.source!.default !== undefined) out.push(`ALTER TABLE ${t} ALTER COLUMN ${col(n.source)} DROP DEFAULT`);
     out.push(`ALTER TABLE ${t} RENAME COLUMN ${col(n.source)} TO ${col(n.oldColumn)}`);
@@ -267,9 +383,11 @@ export function switchStatements(o: MigrationObservation, marker: OwnershipMarke
     out.push(commentOnColumn(n, n.oldColumn, oldComment));
     out.push(`DROP FUNCTION ${n.qualifiedFn}()`);
   } else {
+    out.push(...carried.before);
     out.push(commentOnColumn(n, n.column, declared.comment));
     out.push(commentOnColumn(n, n.oldColumn, oldComment));
   }
+  out.push(...carried.after);
   return out;
 }
 
@@ -286,8 +404,13 @@ export async function switchColumns(run: MigrationRun): Promise<SwitchResult> {
   if (o.state === "done") return { state: o.state, switched: false };
   if (o.state === "switched") return { state: o.state, switched: false, oldColumn: n.oldColumn, ...retention(o) };
   if (!o.newColumn || !o.trigger || !o.fn) throw new MigrationRefusal(`${n.key}: the new column and its dual write are not there; the Expand and Dual write phases make them`);
+  const notReady = carriedNotReady(o.carried, o.carriedStates);
+  if (notReady.length > 0) {
+    throw new MigrationRefusal(`${n.key}: ${notReady.map((c) => `${c.kind} ${c.working}`).join(", ")} on the new column is not there or not yet valid; the Carry over phase makes them`);
+  }
+  const notNull = requiresNotNull(o.column, o.carried);
 
-  if (o.column.notNull && !o.newColumn.notNull) {
+  if (notNull && !o.newColumn.notNull) {
     if (!o.check) {
       await inTransaction(run, async (exec) => {
         await exec(`ALTER TABLE ${n.qualifiedTable} ADD CONSTRAINT ${col(n.check)} CHECK (${col(n.newColumn)} IS NOT NULL) NOT VALID`);
@@ -299,7 +422,7 @@ export async function switchColumns(run: MigrationRun): Promise<SwitchResult> {
     }
   }
   const retainUntil = new Date((await serverNow(run.client)) + run.retainMs).toISOString();
-  const withCheck = { ...o, check: o.check ?? (o.column.notNull && !o.newColumn.notNull ? { name: n.check, validated: true } : undefined) } as MigrationObservation;
+  const withCheck = { ...o, check: o.check ?? (notNull && !o.newColumn.notNull ? { name: n.check, validated: true } : undefined) } as MigrationObservation;
   await inTransaction(run, async (exec) => {
     for (const sql of switchStatements(withCheck, run.marker, retainUntil)) await exec(sql);
   });
@@ -388,7 +511,9 @@ export interface CompensateResult {
 
 /**
  * onFailure: drop what the expand added, and nothing else: the trigger, its
- * function, the NOT NULL check and the new column, each only when its
+ * function, the NOT NULL check, the carried indexes and constraints (another
+ * table's foreign key onto the new column first, which would keep the column
+ * from being dropped) and the new column, each only when its
  * comment names this migration and its role and carries this project's
  * marker, and the migration's receipts. After the switch nothing is undone:
  * the old column is kept (`role=old`) and the next run finishes the
@@ -429,6 +554,20 @@ export async function compensate(run: Pick<MigrationRun, "client" | "target" | "
   );
   const newColumns = cols.filter((c) => ours(c.comment, "new")).map((c) => c.name);
   const nn = checks.filter((c) => ours(c.comment, "nn")).map((c) => c.name);
+  // Carried constraints, this table's and those of tables whose foreign keys were carried onto the new column.
+  const carriedConstraints = (
+    await run.client.query<{ name: string; rel: string; comment: string | null }>(
+      `SELECT k.conname AS name, k.conrelid::pg_catalog.regclass::text AS rel, pg_catalog.obj_description(k.oid, 'pg_constraint') AS comment
+       FROM pg_catalog.pg_constraint k WHERE pg_catalog.strpos(pg_catalog.obj_description(k.oid, 'pg_constraint'), $1) > 0 ORDER BY k.conrelid = $2::oid, k.conname`,
+      [`${MIGRATION_TRAILER_KEY}=`, rel.oid],
+    )
+  ).filter((c) => ours(c.comment, "carry"));
+  const carriedIndexes = (
+    await run.client.query<{ name: string; comment: string | null }>(
+      "SELECT i.indexrelid::pg_catalog.regclass::text AS name, pg_catalog.obj_description(i.indexrelid, 'pg_class') AS comment FROM pg_catalog.pg_index i WHERE i.indrelid = $1::oid ORDER BY 1",
+      [rel.oid],
+    )
+  ).filter((c) => ours(c.comment, "carry"));
   const dropped: string[] = [];
   const full: MigrationRun = { ...(run as MigrationRun), batchSize: 0, retainMs: 0, replicationLag: false };
   await inTransaction(full, async (exec) => {
@@ -443,6 +582,14 @@ export async function compensate(run: Pick<MigrationRun, "client" | "target" | "
     for (const c of nn) {
       await exec(`ALTER TABLE ${n.qualifiedTable} DROP CONSTRAINT ${col(c)}`);
       dropped.push(`constraint ${c}`);
+    }
+    for (const c of carriedConstraints) {
+      await exec(`ALTER TABLE ${c.rel} DROP CONSTRAINT ${col(c.name)}`);
+      dropped.push(`constraint ${c.name} on ${c.rel}`);
+    }
+    for (const c of carriedIndexes) {
+      await exec(`DROP INDEX ${c.name}`);
+      dropped.push(`index ${c.name}`);
     }
     for (const c of newColumns) {
       await exec(`ALTER TABLE ${n.qualifiedTable} DROP COLUMN ${col(c)}`);
