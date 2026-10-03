@@ -151,7 +151,8 @@ The build writes each library panel a dashboard places into that dashboard's `__
 
 - [Apply over the API](../applying/) writes it to the library before the dashboards, in its folder.
 - Grafana's own import (Dashboards → New → Import, or `POST /api/dashboards/import`) creates it from `__elements`.
-- File provisioning, and the sidecar ConfigMaps that load the same files, do not: Grafana stores the dashboard with its `__elements` and draws the reference only once a library panel with that uid exists. Checked against Grafana 12.4.11 and 13.2.2. `GrafanaOperatorResources` does not write them either yet (#3186).
+- `GrafanaOperatorResources` writes a `GrafanaLibraryPanel` for it (see [Provisioning](../provisioning/)).
+- File provisioning, and the sidecar ConfigMaps that load the same files, do not: Grafana stores the dashboard with its `__elements` and draws the reference only once a library panel with that uid exists. Checked against Grafana 12.4.11 and 13.2.2.
 
 ## Variables
 

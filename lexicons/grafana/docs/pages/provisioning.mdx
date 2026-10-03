@@ -72,6 +72,7 @@ export const grafanaResources = GrafanaOperatorResources({
 | Resource | Spec |
 |---|---|
 | `grafana-folder-<uid>`, a `GrafanaFolder` per folder | the folder's `uid` and `title`, and `parentFolderRef` naming its parent's resource |
+| `grafana-library-panel-<uid>`, a `GrafanaLibraryPanel` per library panel the dashboards place | `uid`, `json` (the panel model with its `name` and `uid`), and `folderRef` naming its folder's resource |
 | `grafana-dashboard-<uid>`, a `GrafanaDashboard` per dashboard | `json`, the text of `dashboardJson(dashboard)`, and `folderRef` naming its folder's resource |
 | `grafana-datasource-<uid>`, a `GrafanaDatasource` per datasource | `uid`, and the provisioning entry as `datasource` |
 
@@ -79,7 +80,7 @@ export const grafanaResources = GrafanaOperatorResources({
 
 Pick the delivery by what runs your Grafana: export `GrafanaConfigMaps` for the Helm chart's sidecar or a plain Deployment, and `GrafanaOperatorResources` for the operator. To export both, set `dashboardSource: "configMap"` and use the same `name`: each `GrafanaDashboard` then reads its JSON from the dashboard ConfigMap through `configMapRef`, so it is stored once.
 
-Library panels are not written as resources yet (#3186): a `GrafanaDashboard`'s `json` carries them in `__elements`, which does not create them, so apply them over the API.
+Each library panel is its own `GrafanaLibraryPanel`, written once however many dashboards place it, because a `GrafanaDashboard`'s `__elements` does not create it. It goes in the folder its `LibraryPanel` names, else in the first dashboard's folder, as with the API applier.
 
 Folders are always `GrafanaFolder` resources with the uids the build gives them, so a nested `folder` or a `Folder` with `parent` keeps its place and its uid. Dashboard providers are not written; the operator does not use them.
 

@@ -5,6 +5,7 @@ import { loadAll } from "js-yaml";
 import { Dashboard } from "./dashboard";
 import { Datasource } from "./datasource";
 import { StatPanel } from "./panels";
+import { LibraryPanel, LibraryPanelRef } from "./library-panel";
 import { PromQuery } from "./query";
 import { dashboardJson } from "./build";
 import { Folder } from "./folder";
@@ -145,6 +146,35 @@ describe("GrafanaOperatorResources (#3015)", () => {
     const docs = ops({ entities: [red], dashboardSource: "configMap" });
     const sidecar = grafanaConfigMapLayout({ entities: [red] }).dashboards[0];
     expect(docs[1].spec).toEqual({ instanceSelector: selector, configMapRef: { name: sidecar.configMap, key: sidecar.key }, folderRef: "grafana-folder-services" });
+  });
+
+  test("a GrafanaLibraryPanel per library panel the dashboards place, once each, in its folder (#3186)", () => {
+    const burn = new LibraryPanel({ name: "Burn rate", folder: "SLOs", panel: stat() });
+    const owners = new LibraryPanel({ name: "Owners", uid: "owners", panel: stat() });
+    const team = new Dashboard({
+      title: "Team",
+      uid: "team",
+      folder: "Team A",
+      panels: [burn, owners, new LibraryPanelRef({ libraryPanel: { uid: "in-grafana", name: "Already there" } })],
+    });
+    const other = new Dashboard({ title: "Other", uid: "other", panels: [burn] });
+    const docs = ops({ entities: [prometheus, team, other] });
+    expect(docs.map((d) => [d.kind, d.metadata.name])).toEqual([
+      ["GrafanaFolder", "grafana-folder-slos"],
+      ["GrafanaFolder", "grafana-folder-team-a"],
+      ["GrafanaLibraryPanel", "grafana-library-panel-burn-rate"],
+      ["GrafanaLibraryPanel", "grafana-library-panel-owners"],
+      ["GrafanaDashboard", "grafana-dashboard-team"],
+      ["GrafanaDashboard", "grafana-dashboard-other"],
+      ["GrafanaDatasource", `grafana-datasource-${prometheus.uid}`],
+    ]);
+    const [, , burnDoc, ownersDoc] = docs;
+    // The LibraryPanel's own folder; one without a folder goes in the first dashboard's, as the API applier puts it.
+    expect(burnDoc.spec).toMatchObject({ instanceSelector: selector, uid: "burn-rate", folderRef: "grafana-folder-slos" });
+    expect(ownersDoc.spec).toMatchObject({ instanceSelector: selector, uid: "owners", folderRef: "grafana-folder-team-a" });
+    // The operator reads the element's name and uid from the model; the model is the panel as __elements carries it.
+    const element = (JSON.parse(dashboardJson(team)) as { __elements: Record<string, { model: Record<string, unknown> }> }).__elements["burn-rate"];
+    expect(JSON.parse(burnDoc.spec.json as string)).toEqual({ ...element.model, name: "Burn rate", uid: "burn-rate" });
   });
 
   test("datasource secrets become valuesFrom entries reading the Secret", () => {
