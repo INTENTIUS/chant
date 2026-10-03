@@ -398,6 +398,18 @@ export function renderPostgresModule(catalogs: readonly PostgresCatalog[]): Rend
     "};",
   ];
 
+  // The parser's ColId rule and identifier quoting read the latest major's key words (#3279).
+  const keywordTable = [
+    `/** Every key word at the latest pinned major, by its \`pg_get_keywords()\` category: U unreserved, C column name, T type or function name, R reserved. */`,
+    `export const KEYWORDS: Readonly<Record<string, "U" | "C" | "T" | "R">> = {`,
+    ...keywords
+      .filter((k) => k.range.until === undefined)
+      .map((k) => k.latest)
+      .sort((a, b) => compare(a.word, b.word))
+      .map((k) => `  ${key(k.word)}: ${JSON.stringify(k.code)},`),
+    "};",
+  ];
+
   const tables = [
     ...header("The tables lint and the LSP read, typed by ./postgres-types."),
     `import type { ColumnTypeSpec, SettingSpec, StorageParameterSpec } from "../postgres/catalog-types";`,
@@ -410,6 +422,8 @@ export function renderPostgresModule(catalogs: readonly PostgresCatalog[]): Rend
     ...storageTable,
     "",
     ...typeTable,
+    "",
+    ...keywordTable,
     "",
   ].join("\n");
 

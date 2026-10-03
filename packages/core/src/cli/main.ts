@@ -928,7 +928,7 @@ Workspace (level 1, #2524):
                         closing commit and seal, in one write. Without
                         --kind, the one session kind the declaration names.
                         Prints {path, id, changed, seal, closedRev}
-  workspace work claim|renew|release <id> --holder <name> [--kind <kind file>] [--ttl <seconds|duration>] [--token <token>] [--outcome <text>] [--note <text>] [--json]
+  workspace work claim|renew|release <id> --holder <name> [--kind <kind file>] [--ttl <seconds|duration>] [--token <token>] [--outcome <outcome>] [--note <text>] [--json]
                         Take, heartbeat or give back the lease on a work item:
                         refs/chant/lease/work/<id>, a compare-and-set ref with a
                         fencing token and an expiry, pushed to the remote so
@@ -1184,10 +1184,13 @@ Lexicon development:
                             --check: fail if the committed baseline drifted (never writes);
                             --run-examples: also run example build harness;
                             --pinned-digest <file>: verify spec digest before regen)
-  dev pinned-upgrade <dir> Report if a lexicon that declares upstreamPin (k8s, k3s, gcp, docker,
+  dev pinned-upgrade <dir> [pin]
+                           Report if a lexicon that declares upstreamPin (k8s, k3s, gcp, docker,
                            gitlab, cedar, sql) has a newer upstream release; dry-run bump + regen +
                            surface-diff, then revert. A pin that moves with other constants (sql's
-                           image digest) is reported with how to move it, not edited
+                           image digest) is reported with how to move it, not edited. A lexicon
+                           with several pins (sql: clickhouse, postgres-14 .. postgres-18) gets one
+                           report per pin; name a pin to check only that one
                            (reports only; --force bypasses the spec cache, -f json for JSON)
   dev rolling-upgrade <dir>  Report rolling-spec drift (aws, azure, github): regen from
                            latest, diff surface vs committed baseline, print delta + PR

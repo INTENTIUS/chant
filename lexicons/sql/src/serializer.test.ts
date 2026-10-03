@@ -7,8 +7,9 @@
 import { describe, expect, test } from "vitest";
 import { DECLARABLE_MARKER, type Declarable } from "@intentius/chant/declarable";
 import type { SerializerResult } from "@intentius/chant/serializer";
-import { CLICKHOUSE_DDL_FILE, sqlSerializer } from "./serializer";
+import { CLICKHOUSE_DDL_FILE, POSTGRES_DDL_FILE, sqlSerializer } from "./serializer";
 import { database, table, view } from "./clickhouse/entities";
+import * as pg from "./postgres/entities";
 
 const analytics = database`CREATE DATABASE analytics ENGINE = Atomic`;
 const events = table`
@@ -80,5 +81,40 @@ describe("sql serializer", () => {
     // A cycle cannot be written with tags (a reference must exist first), so make one by hand.
     (a.dependsOn as unknown[]).push(b);
     expect(() => run([["a", a], ["b", b]])).toThrow(/reference cycle.*a -> b -> a/);
+  });
+});
+
+describe("sql serializer, Postgres", () => {
+  const app = pg.schema`CREATE SCHEMA app`;
+  const users = pg.table`CREATE TABLE ${app}.users (id bigint PRIMARY KEY, email text NOT NULL)`;
+  const orders = pg.table`
+    CREATE TABLE ${app}.orders (id bigint PRIMARY KEY, user_id bigint REFERENCES ${users} (${users.columns.id}));
+    COMMENT ON TABLE ${app}.orders IS 'Placed orders'`;
+  const byUser = pg.index`CREATE INDEX orders_user_idx ON ${orders} (${orders.columns.user_id})`;
+
+  test("4. a Postgres build is its own document, with postgres.sql beside it", () => {
+    const r = run([["users", users], ["app", app]]);
+    expect(doc(r).dialect).toBe("postgres");
+    expect(doc(r).objects[1]).toMatchObject({ export: "users", type: "Postgres::Table", name: "users", schema: "app", sqlName: "app.users" });
+    expect(r.files![POSTGRES_DDL_FILE]).toBe("CREATE SCHEMA app;\n\nCREATE TABLE app.users (id bigint PRIMARY KEY, email text NOT NULL);\n");
+    expect(r.verbatimFiles).toEqual([POSTGRES_DDL_FILE]);
+  });
+
+  test("7. an index comes after its table, a table after what it references, comments stay with their object", () => {
+    const r = run([["byUser", byUser], ["orders", orders], ["users", users], ["app", app]]);
+    expect(doc(r).applyOrder).toEqual(["app", "users", "orders", "byUser"]);
+    expect(r.files![POSTGRES_DDL_FILE]).toContain("COMMENT ON TABLE app.orders IS 'Placed orders';\n\nCREATE INDEX");
+  });
+
+  test("12. references nested in props are written as export names", () => {
+    const d = doc(run([["app", app], ["users", users], ["orders", orders], ["byUser", byUser]]));
+    expect(d.objects.find((o) => o.export === "orders")!.foreignKeys).toEqual([
+      { columns: ["user_id"], references: "users", refTable: "app.users", refColumns: ["id"] },
+    ]);
+    expect(d.objects.find((o) => o.export === "byUser")).toMatchObject({ table: "orders", tableName: "app.orders" });
+  });
+
+  test("one build holds one dialect", () => {
+    expect(() => run([["events", events], ["users", users]])).toThrow(/one build holds one dialect.*ClickHouse \(events\) and Postgres \(users\)/);
   });
 });

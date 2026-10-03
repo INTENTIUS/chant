@@ -44,5 +44,17 @@ export const recordKind = {
     // What done means, stated on the record (#2772): each criterion expects
     // a verification, and a manual verdict never comes from the owner.
     acceptance: { field: "acceptance", implementer: "owner" },
+    // The builder tiers an item may name in tier, declared once here (#3147).
+    // The same three the slice-tier decision point answers with.
+    tier: { field: "tier", tiers: ["small", "medium", "large"] },
+    // An item is left to people after this many failed attempts, counted
+    // from its lease history (chant workspace work history). An item's own
+    // max_attempts overrides it (#3147).
+    attempts: { field: "max_attempts", max: 3 },
+    // Decision points' answers about an item are joined from the answer
+    // kind by the item's id, never copied onto the item (#3147).
+    answers: "../answers/answer.kind.mjs",
+    // A workspace with a contract kind links items to contracts with
+    // contract: { field: "contract", kind: "<contract kind file>" }.
   },
 };

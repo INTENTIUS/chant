@@ -81,15 +81,16 @@ export function versionFromReleaseTag(tag: string): string | null {
 }
 
 /**
- * The `upstreamPin` descriptor for one major's line in this file. A plugin
- * holds a single `upstreamPin` (the sql plugin's is ClickHouse's), so these
- * are exported for the Postgres upgrade tooling to dispatch over rather than
- * attached to the plugin: each tracks only its own major (`trackMajor`), so
- * the 17 pin reports `17.12` and never `18.6`.
+ * The upstream pin descriptor for one major's line in this file, labelled
+ * `postgres-<major>`. The sql plugin lists all five in `upstreamPins` beside
+ * ClickHouse's `upstreamPin`, so `chant dev pinned-upgrade` and the upgrade Op
+ * report each. Each tracks only its own major (`trackMajor`), so the 17 pin
+ * reports `17.12` and never `18.6`.
  */
-export function postgresUpstreamPin(major: number): UpstreamPin {
+export function postgresUpstreamPin(major: number): UpstreamPin & { readonly label: string } {
   postgresPin(major);
   return {
+    label: `postgres-${major}`,
     file: "src/spec/postgres-pin.ts",
     pattern: new RegExp(`\\{ major: ${major}, version: "([^"]+)"`),
     replace: (v: string, line: string) =>

@@ -9,7 +9,7 @@ import { build } from "@intentius/chant/build";
 import type { SerializerResult } from "@intentius/chant/serializer";
 import { sqlPlugin, sqlSerializer } from "@intentius/chant-lexicon-sql";
 
-const EXAMPLES = ["getting-started", "events-pipeline", "cdc-mirror", "sharded-cluster", "rebuild-migration"];
+const EXAMPLES = ["getting-started", "events-pipeline", "cdc-mirror", "sharded-cluster", "rebuild-migration", "postgres-getting-started"];
 
 describe("the examples, folded and run", () => {
   test.each(EXAMPLES)("%s builds byte-identical both ways", async (example) => {

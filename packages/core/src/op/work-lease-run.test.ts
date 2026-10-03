@@ -342,4 +342,51 @@ describe("an Op that changes the checkout", () => {
       expect(git(["status", "--porcelain"], dir).stdout).toBe(" M app/index.ts\n");
     });
   });
+
+  test("a run that ends not_done keeps its attempt at refs/chant/kept/<item>/<token>, committed and uncommitted work, and the branch goes back (#3147)", async () => {
+    await withTestDir(async (dir) => {
+      await initRepo(dir);
+      const head = git(["rev-parse", "HEAD"], dir).stdout.trim();
+      const activities = new Map<string, ActivityFn>([
+        [
+          "build",
+          async (args) => {
+            const worktree = String(args.worktree);
+            writeFileSync(join(worktree, "app", "feature.ts"), "export const feature = true;\n");
+            expect(git(["add", "-A"], worktree).status).toBe(0);
+            expect(git(["commit", "-q", "-m", "half a build"], worktree).status).toBe(0);
+            writeFileSync(join(worktree, "app", "notes.md"), "left uncommitted\n");
+            throw new Error("the check fails");
+          },
+        ],
+      ]);
+      const result = await run(dispatchOp({ workLease: { item: "W-8" }, changesCheckout: true }, [step("build", { worktree: workLeaseOutput("worktree") })]), activities, dir);
+      expect(result.status).toBe("fail");
+      const token = result.workLease!.token!;
+      const kept = `refs/chant/kept/W-8/${token}`;
+      expect(result.workLease).toMatchObject({ item: "W-8", released: true, outcome: "not_done", kept });
+      // Both the commit and the uncommitted file are in the kept attempt; the branch is where the run started.
+      expect(git(["show", `${kept}:app/feature.ts`], dir).stdout).toBe("export const feature = true;\n");
+      expect(git(["show", `${kept}:app/notes.md`], dir).stdout).toBe("left uncommitted\n");
+      expect(git(["rev-parse", "chant/work/W-8"], dir).stdout.trim()).toBe(head);
+      expect(git(["rev-parse", "HEAD"], dir).stdout.trim()).toBe(head);
+    });
+  });
+
+  test("a run whose step names a lease outcome releases it, and keeps nothing when it changed nothing; a word outside the list is not_done (#3147)", async () => {
+    await withTestDir(async (dir) => {
+      await initRepo(dir);
+      let word = "dropped";
+      const activities = new Map<string, ActivityFn>([["record", async () => ({ outcome: word })]]);
+      const op = () => dispatchOp({ workLease: { item: "W-9", outcome: stepOutput("record", "outcome") }, changesCheckout: true }, [step("record", {}, { id: "record" })]);
+      const dropped = await run(op(), activities, dir);
+      expect(dropped.workLease).toMatchObject({ released: true, outcome: "dropped", kept: null });
+      word = "skipped";
+      const other = await run(op(), activities, dir);
+      expect(other.workLease).toMatchObject({ released: true, outcome: "not_done", kept: null });
+      const last = (await readLeaseHistory("W-9", { cwd: dir })).records.at(-1);
+      expect(last).toMatchObject({ event: "release", outcome: "not_done" });
+      expect(last?.note).toMatch(/"skipped" is not a work lease outcome/);
+    });
+  });
 });

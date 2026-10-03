@@ -492,7 +492,7 @@ export interface ParsedArgs {
   ttl?: string;
   /** `chant workspace work renew|release <id> --token <token>` (#2732): the fencing token the caller holds. */
   token?: string;
-  /** `chant workspace work release <id> --outcome <text>` (#2732): how the work ended, such as done or not_done. */
+  /** `chant workspace work release <id> --outcome <outcome>` (#2732): how the work ended, one of the closed list WORK_LEASE_OUTCOMES (#3147). */
   outcome?: string;
   /** `chant operator --once` (#1485) — run a single round and exit, instead of looping until Ctrl-C. Also the offline test/cron-invoker story. */
   once?: boolean;

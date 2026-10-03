@@ -65,7 +65,7 @@
         },
         "outcome": {
           "type": "string",
-          "description": "How the work ended, on a release. Free text such as done, not_done, gated or waiting."
+          "description": "How the work ended, on a release: one of the closed list in work-lease.schema.json's $defs/outcome (#3147), done, not_done, abandoned, gated, waiting, dropped, redraft or ask. A line written before #3147 may hold other free text."
         },
         "note": {
           "type": "string"
@@ -146,6 +146,17 @@
               }
             }
           ]
+        },
+        "attempt": {
+          "type": "boolean",
+          "description": "Added in contract 1 by #3147. Whether the claim counts toward the item's attempt limit: released not_done or abandoned, released with no outcome or with free text from before the outcomes were closed, or ended expired or lost. Never one that is held, and never one released done, gated, waiting, dropped, redraft or ask."
+        },
+        "kept": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Added in contract 1 by #3147. The ref keeping the claim's unfinished work, refs/chant/kept/[<member>/]<item>/<token>, written when a run that changes the checkout ended not_done; null when there is none."
         }
       }
     },
@@ -298,6 +309,67 @@
                 "minimum": 1
               },
               "description": "How many released claims gave each outcome."
+            }
+          }
+        },
+        "attempts": {
+          "type": "object",
+          "description": "Added in contract 1 by #3147. The item's attempts against its limit. limit is the item's own field named by the kind's work.attempts.field, else the kind's work.attempts.max, else null. A runner leaves an exhausted item to people.",
+          "required": [
+            "failed",
+            "limit",
+            "remaining",
+            "exhausted"
+          ],
+          "properties": {
+            "failed": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "The claims whose attempt is true."
+            },
+            "limit": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            },
+            "remaining": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "description": "limit minus failed, never below 0; null without a limit."
+            },
+            "exhausted": {
+              "type": "boolean",
+              "description": "True once failed reaches the limit; false without one."
+            }
+          }
+        },
+        "kept": {
+          "type": "array",
+          "description": "Added in contract 1 by #3147. Every kept attempt of the item, from the local refs under refs/chant/kept/[<member>/]<item>/, sorted by ref.",
+          "items": {
+            "type": "object",
+            "required": [
+              "token",
+              "ref",
+              "commit"
+            ],
+            "properties": {
+              "token": {
+                "type": "string",
+                "description": "The lease token the attempt ran under."
+              },
+              "ref": {
+                "type": "string"
+              },
+              "commit": {
+                "type": "string",
+                "description": "The commit the ref points at."
+              }
             }
           }
         }
