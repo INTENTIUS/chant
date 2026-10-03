@@ -2,6 +2,7 @@
 title: "Applying to a Server"
 description: "clickhouseApply makes a ClickHouse server hold what a build declares: CREATE and ALTER for metadata and background-rewrite changes, a rebuild refused, a prune bounded by chant's comment marker"
 diataxis: how-to
+order: 5
 ---
 
 `clickhouseApply` makes the server an environment is bound to hold what a `chant build` declares. It is what `ApplyOp` runs for `target: "clickhouse"`, and an Op step of its own for a hand-written Op. It sends the statements for the changes [the classifier](../change-classifier/) puts in the metadata-only and background-rewrite classes, and nothing for a rebuild.

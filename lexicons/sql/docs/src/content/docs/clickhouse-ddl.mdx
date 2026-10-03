@@ -1,6 +1,6 @@
 ---
 title: "Declaring Tables and Views"
-description: "ClickHouse databases, tables, views and materialized views as SQL-shaped tagged templates, with references, dependency order and column lineage"
+description: "ClickHouse databases, tables, views and materialized views as SQL-shaped tagged templates: the four tags, materialized views, and what each kind of interpolation means"
 diataxis: how-to
 ---
 
@@ -32,7 +32,54 @@ export const byKind = view`
   GROUP BY kind`;
 ```
 
-`chant build` parses each template when it folds the file, without running it, into one entity. The export name (`events`) is the object's identity in chant; the name in the SQL (`analytics.events`) is its name in the database.
+`chant build` parses each template when it folds the file, without running it, into one entity. The export name (`events`) is the object's identity in chant; the name in the SQL (`analytics.events`) is its name in the database. A changed SQL name under the same export is a rename, not a drop and a create.
+
+## The tags
+
+| Tag | Statement | Entity type |
+|---|---|---|
+| `database` | `CREATE DATABASE` | `ClickHouse::Database` |
+| `table` | `CREATE TABLE` | `ClickHouse::Table` |
+| `view` | `CREATE VIEW` | `ClickHouse::View` |
+| `view` | `CREATE MATERIALIZED VIEW` | `ClickHouse::MaterializedView` |
+
+Each template holds exactly one statement of its tag's kind. `OR REPLACE`, `IF NOT EXISTS` and `ON CLUSTER` are read, and so are a `COMMENT` on the object and on each column.
+
+A table's definition is read clause by clause: columns with type, `DEFAULT`, `MATERIALIZED`, `ALIAS` or `EPHEMERAL` expression, codec, TTL and comment; the engine and its arguments; `ORDER BY`, `PRIMARY KEY`, `PARTITION BY` and `SAMPLE BY`; the table TTL; `SETTINGS`; skip indexes, projections and constraints. Expressions are kept as written. `CREATE TABLE ... AS` and `CREATE TABLE ... AS SELECT` cannot be declared this way, because the table's columns would come from somewhere else.
+
+## Materialized views
+
+A materialized view is an insert trigger on the table it selects from. Declare it with the `view` tag. The usual form writes into a target table that is declared on its own:
+
+```ts
+export const dailyActive = table`
+  CREATE TABLE ${analytics}.daily_active (
+    day    Date,
+    kind   LowCardinality(String),
+    users  AggregateFunction(uniq, UUID)
+  )
+  ENGINE = AggregatingMergeTree
+  ORDER BY (day, kind)`;
+
+export const dailyActiveMv = view`
+  CREATE MATERIALIZED VIEW ${analytics}.daily_active_mv TO ${dailyActive} AS
+  SELECT
+    toDate(${events.columns.ts}) AS day,
+    ${events.columns.kind} AS kind,
+    uniqState(${events.columns.user_id}) AS users
+  FROM ${events}
+  GROUP BY day, kind`;
+```
+
+`TO ${dailyActive}` is a reference, so the build creates the target before the view, and the view's output columns are checked against the target's (SQLCH110). Alias each select item to a target column; the target matches them by name. A `TO` written as a plain name (`TO analytics.daily_active`) is kept as that name and makes no dependency.
+
+The other forms parse too:
+
+- Without `TO`, the view keeps its rows in an inner table, declared inline with `ENGINE = ... ORDER BY ...`. Its engine and keys are fixed like any table's, so changing them is a rebuild (SQLCH243). `POPULATE` and `EMPTY` are read.
+- A refreshable materialized view, `CREATE MATERIALIZED VIEW ... REFRESH EVERY 1 HOUR [APPEND] TO ...`, keeps its `REFRESH` clause; changing the schedule is metadata only (SQLCH244).
+- `DEFINER` and `SQL SECURITY` are read. SQLCH116 flags `SQL SECURITY DEFINER` with no `DEFINER`.
+
+A plain view stores nothing, and changing its query is metadata only (SQLCH240). Changing a materialized view's query is metadata only too (SQLCH241); changing its `TO` target is a rebuild (SQLCH242).
 
 ## Interpolations
 
@@ -46,23 +93,37 @@ What an interpolation means depends on its value:
 | a number, a bigint, a boolean, `null` | a literal | `42`, `true`, `NULL` |
 | `literal(value)` | a string literal | `'quoted and escaped'` |
 
-Columns are reached through `.columns`, and only there. A column called `kind` or `props` would otherwise collide with the entity's own fields: `${events.kind}` is the string `"resource"`, which SQLCH003 flags, and `${events.user_id}` is `undefined`, which the tag refuses, naming `.columns`.
+Any other value, such as an object, an array or `undefined`, fails the build with the template line it is on.
 
-A plain string is SQL text so that a composite can supply a name, a type, an engine or an expression (`ENGINE = ${engine}`, `INTERVAL ${days} DAY`). When a string is a value, say so with `literal()`: `DEFAULT ${literal(plan)}` writes `DEFAULT 'free'`, where `DEFAULT ${plan}` writes `DEFAULT free`, a column named `free`.
+### Columns go through `.columns`
+
+Columns are reached through `.columns`, and only there. The entity's own fields (`kind`, `lexicon`, `entityType`, `props`, `sqlName`, `dependsOn`) would otherwise collide with real column names. `${events.kind}` is the string `"resource"`, which the tag would splice in as SQL text, so SQLCH003 flags it in lint. `${events.user_id}` is `undefined`, and the tag refuses it with a message naming `.columns`. A misspelled column, `${events.columns.usr_id}`, is `undefined` too and refused at build; column names are not checked by the TypeScript compiler.
+
+### A string is SQL text
+
+A plain string is spliced into the statement as SQL, before the statement is parsed. That is what lets a composite or a shared constant supply a name, a type, an engine, a clause or an expression:
+
+```ts
+const engine = "ReplacingMergeTree(updated_at)";
+const days = 30;
+
+export const users = table`
+  CREATE TABLE ${analytics}.users (id UUID, plan String, updated_at DateTime)
+  ENGINE = ${engine}
+  ORDER BY id
+  TTL updated_at + INTERVAL ${days} DAY`;
+```
+
+A syntax error inside spliced text is reported against that interpolation. When a string is a value rather than SQL, say so with `literal()`: `DEFAULT ${literal(plan)}` writes `DEFAULT 'free'`, where `DEFAULT ${plan}` writes `DEFAULT free`, an expression naming a column called `free`. `literal()` folds as a call, so it can sit inside a template in a file that folds.
+
+### Escapes
+
+A template literal cannot hold a bare backquote or `${`. Write them as `` \` `` and `\${`; the tags undo both escapes before parsing, and so does lint.
 
 ## What the build records
 
-References become dependency edges: a view is created after the tables it reads, a materialized view after its `TO` target, a table after its database. The build output lists objects in that order and writes every statement, in the same order, to `clickhouse.sql` beside the JSON document.
-
-A view's lineage is recorded per output column of its top-level select list, from the column references in it: above, `kind` reads `events.kind`. A column written by name inside the SQL is not a reference and is not lineage.
+References become dependency edges and, for a view, column lineage. See [References and Lineage](../references-and-lineage/).
 
 ## Checks
 
-| Id | When | What |
-|---|---|---|
-| SQLCH001 | lint, at the token | the DDL does not parse, or the tag holds a different statement |
-| SQLCH002 | lint, at the column | a `Nullable` column in the sort key or primary key, which ClickHouse refuses without `allow_nullable_key` |
-| SQLCH003 | lint, at the interpolation | `${events.kind}` where `${events.columns.kind}` was meant |
-| SQLCH101 | build | an engine the pinned ClickHouse server does not have |
-
-The parser reads statement structure (columns, engine, keys, TTL, settings, indexes, projections, constraints, view targets and refresh) and keeps every expression as written. `CREATE TABLE ... AS` and `CREATE TABLE ... AS SELECT` are not declared this way.
+Lint parses every template as you type: SQLCH001 reports a statement that does not parse at the token, SQLCH002 a `Nullable` column in a sort or primary key, and SQLCH003 a column written without `.columns`. The build then runs the post-synth checks, SQLCH101 to SQLCH120, against what the pinned server accepts. [Lint Rules and Checks](../lint-rules/) lists each one.

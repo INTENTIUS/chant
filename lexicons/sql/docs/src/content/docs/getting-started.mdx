@@ -1,0 +1,223 @@
+---
+title: "Getting Started"
+description: "Declare a ClickHouse schema with the sql lexicon, build it, apply it to a local server, and plan a change against it"
+diataxis: tutorial
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-sql` — DO NOT EDIT.
+    Edit lexicons/sql/docs/pages/getting-started.mdx instead; changes here are overwritten. */}
+
+
+This walks through the example the lexicon ships: a database, three tables and a materialized view. You build it, apply it to a ClickHouse server running in Docker, then change two things and see how each change is classified.
+
+The package is not on npm yet, so the tutorial runs in a checkout of the chant repository. You need Node.js, npm and Docker.
+
+## 1. Prepare the checkout
+
+```bash
+git clone https://github.com/INTENTIUS/chant.git
+cd chant
+npm ci
+npm run prepack -w @intentius/chant-lexicon-sql
+```
+
+`prepack` generates the ClickHouse types from the committed catalog snapshot and bundles the lexicon. It reads no server and needs no network beyond `npm ci`.
+
+The example lives in `lexicons/sql/examples/getting-started`. Work from there:
+
+```bash
+cd lexicons/sql/examples/getting-started
+```
+
+Its `chant.config.ts` registers the lexicon:
+
+```ts title="chant.config.ts"
+import type { ChantConfig } from "@intentius/chant";
+
+export default { lexicons: ["sql"] } satisfies ChantConfig;
+```
+
+## 2. Read the declarations
+
+The database comes first. Each object is its own DDL inside a tagged template, and the export name (`analytics`) is how chant knows the object:
+
+```typescript title="analytics.ts"
+import { database } from "@intentius/chant-lexicon-sql/clickhouse";
+
+export const analytics = database`
+  CREATE DATABASE analytics
+  ENGINE = Atomic
+  COMMENT 'Product analytics'`;
+```
+
+The events table interpolates the database, which makes it a reference. The build creates the database before the table, and the statement reads `analytics.events`:
+
+```typescript title="events.ts"
+import { table } from "@intentius/chant-lexicon-sql/clickhouse";
+import { analytics } from "./analytics";
+
+export const events = table`
+  CREATE TABLE ${analytics}.events (
+    user_id  UUID,
+    kind     LowCardinality(String),
+    ts       DateTime CODEC(Delta, ZSTD(3)),
+    props    Map(String, String)
+  )
+  ENGINE = MergeTree
+  PARTITION BY toYYYYMM(ts)
+  ORDER BY (user_id, kind, ts)
+  TTL ts + INTERVAL 180 DAY`;
+```
+
+```typescript title="users.ts"
+import { table } from "@intentius/chant-lexicon-sql/clickhouse";
+import { analytics } from "./analytics";
+
+// The latest row per id wins at merge time.
+export const users = table`
+  CREATE TABLE ${analytics}.users (
+    id          UUID,
+    email       String,
+    plan        LowCardinality(String) DEFAULT 'free',
+    updated_at  DateTime
+  )
+  ENGINE = ReplacingMergeTree(updated_at)
+  ORDER BY id`;
+```
+
+The materialized view reads `events` through column references, `${events.columns.ts}` and the others. Those references are the view's lineage: the build records that `day` comes from `events.ts`, `kind` from `events.kind` and `users` from `events.user_id`. `TO ${dailyActive}` makes the target table a dependency too:
+
+```typescript title="active-users.ts"
+import { table, view } from "@intentius/chant-lexicon-sql/clickhouse";
+import { analytics } from "./analytics";
+import { events } from "./events";
+
+// Daily distinct users per event kind, kept current as events are inserted.
+export const dailyActive = table`
+  CREATE TABLE ${analytics}.daily_active (
+    day    Date,
+    kind   LowCardinality(String),
+    users  AggregateFunction(uniq, UUID)
+  )
+  ENGINE = AggregatingMergeTree
+  ORDER BY (day, kind)`;
+
+export const dailyActiveMv = view`
+  CREATE MATERIALIZED VIEW ${analytics}.daily_active_mv TO ${dailyActive} AS
+  SELECT
+    toDate(${events.columns.ts}) AS day,
+    ${events.columns.kind} AS kind,
+    uniqState(${events.columns.user_id}) AS users
+  FROM ${events}
+  GROUP BY day, kind`;
+```
+
+## 3. Build and lint
+
+```bash
+npx chant build src --lexicon sql -o dist/schema.json
+npx chant lint src
+```
+
+The build folds all four files without running them and writes two files. `dist/schema.json` holds every object's parsed definition, with `applyOrder` giving the order to create them in:
+
+```json
+"applyOrder": ["analytics", "dailyActive", "events", "dailyActiveMv", "users"]
+```
+
+`dist/clickhouse.sql` holds the same statements, in that order, as they will be sent. Lint should report no problems. Try writing `${events.kind}` in the view instead of `${events.columns.kind}` to see SQLCH003, or misspell an engine to see SQLCH101 at build.
+
+## 4. Start a server
+
+```bash
+npx chant emulator up --lexicon sql
+export CLICKHOUSE_URL=http://localhost:8123
+```
+
+`chant emulator up` starts the pinned `clickhouse/clickhouse-server` image, the same release the lexicon's types come from, and prints its endpoint. With no `sql.profiles` entry in `chant.config.ts`, every command below reaches the server through `CLICKHOUSE_URL`.
+
+Before applying anything, plan the build against the empty server:
+
+```bash
+npx chant sql plan dev dist/schema.json
+```
+
+Every object is a `create` (SQLCH200). `dev` names the environment; it would select `sql.profiles.dev` if the config declared one.
+
+## 5. Apply
+
+Applying is an Op. Create `ops/schema-apply.op.ts`:
+
+```ts title="ops/schema-apply.op.ts"
+import { ApplyOp } from "@intentius/chant/op";
+
+const { op } = ApplyOp({
+  name: "schema-apply",
+  env: "dev",
+  target: "clickhouse",
+});
+
+export default op;
+```
+
+Run it:
+
+```bash
+npx chant run schema-apply
+```
+
+The Op builds, plans and then applies. Each object is created with chant's ownership marker appended to its comment (`COMMENT '[chant managed-by=chant]'`), and the run ends with `applied 5 resource(s)`. Plan again and the answer is `No changes.`
+
+## 6. Change the TTL
+
+In `src/events.ts`, change `INTERVAL 180 DAY` to `INTERVAL 90 DAY`, rebuild, and plan:
+
+```bash
+npx chant build src --lexicon sql -o dist/schema.json
+npx chant sql plan dev dist/schema.json
+```
+
+```
+events (analytics.events)
+  [background rewrite] ttl: ts + toIntervalDay ( 180 ) -> ts + toIntervalDay ( 90 )
+      SQLCH205 Change a TTL. MODIFY TTL is recorded in metadata, and with materialize_ttl_after_modify (on by default) the server recalculates the TTL over existing data as a mutation. ...
+```
+
+The server printed the old TTL as `toIntervalDay(180)`, and the plan compares the two after undoing that rewriting, so the only change it reports is the number of days. A TTL change is a background rewrite, which `clickhouseApply` makes: run `npx chant run schema-apply` again, and it sends the `ALTER ... MODIFY TTL` and waits until the server's mutation has finished.
+
+## 7. Change the sort key
+
+Copy the current build aside, then change the sort key in `src/events.ts` from `ORDER BY (user_id, kind, ts)` to `ORDER BY (kind, user_id, ts)` and build again. This time compare the two builds offline, the way a pull request check would, with no server:
+
+```bash
+cp dist/schema.json dist/base.json
+# edit ORDER BY in src/events.ts
+npx chant build src --lexicon sql -o dist/schema.json
+npx chant sql diff dist/base.json dist/schema.json
+```
+
+```
+events
+  [REBUILD] orderBy: ( user_id , kind , ts ) -> ( kind , user_id , ts )
+      SQLCH220 Change the sorting key. ...
+
+Refused: 1 change(s) need a rebuild, which ClickHouse cannot make to the existing table.
+```
+
+The command exits 2. ClickHouse stores every part in sort-key order and has no `ALTER` that reorders it, so the rows have to be copied into a new table. `clickhouseApply` would report this table as not attempted and send nothing for it. The output ends with the `ClickHouseRebuildOp` declaration that makes the change as a gated migration instead; [Rebuilding a Table](../rebuild/) walks through it, and [Planning and the Change Classifier](../change-classifier/) lists every rule.
+
+Put the sort key back before going on.
+
+## 8. Clean up
+
+```bash
+npx chant emulator down --lexicon sql
+rm -rf ops dist
+```
+
+## Next
+
+- [Declaring Tables and Views](../clickhouse-ddl/) covers every kind of object and interpolation.
+- [Importing a Live Server](../importing/) starts from a server that already has a schema.
+- [Applying to a Server](../applying/) covers profiles, prune and the ownership marker.
+- `chant init --lexicon sql` scaffolds a project; `--template events` and `--template cdc` pick the events-and-rollup and CDC-mirror layouts.

@@ -29,6 +29,33 @@ const ECS_SENSITIVE_DATA: Authority = {
   url: "https://docs.aws.amazon.com/AmazonECS/latest/developerguide/specifying-sensitive-data.html",
 };
 
+// TF033-TF037 (#2288) cite the AWS service guide page that states the
+// encryption or immutability control each rule checks.
+const AWS_RDS_ENCRYPTION: Authority = {
+  name: "Amazon RDS User Guide: Encrypting Amazon RDS resources",
+  url: "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Overview.Encryption.html",
+};
+
+const AWS_SNS_SSE: Authority = {
+  name: "Amazon SNS Developer Guide: Securing Amazon SNS data with server-side encryption",
+  url: "https://docs.aws.amazon.com/sns/latest/dg/sns-server-side-encryption.html",
+};
+
+const AWS_SQS_SSE: Authority = {
+  name: "Amazon SQS Developer Guide: Encryption at rest in Amazon SQS",
+  url: "https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-server-side-encryption.html",
+};
+
+const AWS_EBS_ENCRYPTION: Authority = {
+  name: "Amazon EBS User Guide: Amazon EBS encryption",
+  url: "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-encryption.html",
+};
+
+const AWS_ECR_TAG_IMMUTABILITY: Authority = {
+  name: "Amazon ECR User Guide: Preventing image tags from being overwritten",
+  url: "https://docs.aws.amazon.com/AmazonECR/latest/userguide/image-tag-mutability.html",
+};
+
 // The vendor guides behind TF014, TF015 and TF021 are credited as lineage in
 // ./audit-lineage.ts, not as `authority` here. `authority` is reserved for
 // security rules that fail a merge (packages/core/src/audit/catalog.test.ts
@@ -378,6 +405,68 @@ export const terraformAuditCatalog: Record<string, RuleMeta> = {
       "Move the value from the container's `environment` to its `secrets`, with a `valueFrom` naming a " +
       "Secrets Manager secret or SSM parameter, and rotate the committed value.",
     authority: [ECS_SENSITIVE_DATA],
+    yamlBased: false,
+  },
+  TF033: {
+    id: "TF033",
+    tier: "merge-worthy",
+    fixKind: "guidance",
+    category: "security",
+    title: "RDS DB instance or cluster storage is not encrypted",
+    remediation:
+      "Set `storage_encrypted = true` (and `kms_key_id` for a customer managed key). An existing database cannot be " +
+      "encrypted in place: restore an encrypted copy of a snapshot. An Aurora cluster, or a database created from a " +
+      "snapshot or replica, is reported as not determined, not as a finding.",
+    authority: [AWS_RDS_ENCRYPTION],
+    yamlBased: false,
+  },
+  TF034: {
+    id: "TF034",
+    tier: "merge-worthy",
+    fixKind: "guidance",
+    category: "security",
+    title: "SNS topic has no server-side encryption",
+    remediation:
+      'Set `kms_master_key_id` to a customer managed KMS key, or to `"alias/aws/sns"` for the AWS managed one. No AWS ' +
+      "default encrypts a topic that names no key.",
+    authority: [AWS_SNS_SSE],
+    yamlBased: false,
+  },
+  TF035: {
+    id: "TF035",
+    tier: "merge-worthy",
+    fixKind: "guidance",
+    category: "security",
+    title: "SQS queue turns server-side encryption off",
+    remediation:
+      "Remove `sqs_managed_sse_enabled = false` (new queues are encrypted with SSE-SQS by default), set it to `true`, " +
+      "or set `kms_master_key_id`. A queue that sets neither attribute is encrypted and is not reported.",
+    authority: [AWS_SQS_SSE],
+    yamlBased: false,
+  },
+  TF036: {
+    id: "TF036",
+    tier: "merge-worthy",
+    fixKind: "guidance",
+    category: "security",
+    title: "EBS volume does not ask for encryption",
+    remediation:
+      "Set `encrypted = true` (and `kms_key_id` for a customer managed key). A volume that leaves `encrypted` unset " +
+      "depends on the Region's EBS encryption by default and is reported as not determined, not as a finding.",
+    authority: [AWS_EBS_ENCRYPTION],
+    yamlBased: false,
+  },
+  TF037: {
+    id: "TF037",
+    tier: "merge-worthy",
+    fixKind: "guidance",
+    category: "security",
+    title: "ECR repository allows mutable image tags",
+    remediation:
+      'Set `image_tag_mutability = "IMMUTABLE"`, or `"IMMUTABLE_WITH_EXCLUSION"` with an ' +
+      "`image_tag_mutability_exclusion_filter` naming the few moving tags (`latest`) that must stay mutable. The " +
+      "provider default is `MUTABLE`.",
+    authority: [AWS_ECR_TAG_IMMUTABILITY],
     yamlBased: false,
   },
 };
