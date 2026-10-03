@@ -22,7 +22,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { normalizeApply } from "@intentius/chant/apply";
-import { memoryGateLedgerPort, runOpLocally, loadProfiles, OpRunFailure, type ActivityFn, type GateLedgerPort, type OpConfig, type OpRunResult } from "@intentius/chant/op";
+import { OpRunFailure, type GateLedgerPort, type OpRunResult } from "@intentius/chant/op";
 import { dockerAvailable, startTestPostgres, type TestPostgres } from "../testing/server";
 import type { PostgresClient } from "../live/client";
 import { planPgAgainstServer } from "../plan/commands";
@@ -30,7 +30,8 @@ import { postgresApply } from "../../op/activities/postgres-apply";
 import { toApplyResult } from "../../op/activities";
 import * as migrationActivities from "../../op/activities/postgres-migration";
 import type { PostgresMigrationDeps } from "../../op/activities/postgres-migration";
-import { PostgresMigrationOp, type PostgresMigrationArgs, type PostgresMigrationOpConfig } from "./op";
+import type { PostgresMigrationArgs, PostgresMigrationOpConfig } from "./op";
+import { ApprovingLedger, runMigrationOp, runOutcome } from "../testing/migration";
 import { POSTGRES_RECEIPTS_TABLE } from "./receipts";
 
 const enabled = await dockerAvailable();
@@ -78,45 +79,9 @@ const columnsOf = async (table: string) =>
   (await admin!.query<{ name: string }>(`SELECT attname AS name FROM pg_attribute WHERE attrelid = '${table}'::regclass AND attnum > 0 AND NOT attisdropped ORDER BY attnum`)).map((r) => r.name);
 const receiptsTableExists = async (schema: string) => (await one<{ t: string | null }>(`SELECT to_regclass('${schema}.${POSTGRES_RECEIPTS_TABLE}')::text AS t`)).t !== null;
 
-/** The migration activities, with the test's config, server and a quiet log, as the local executor resolves them. */
-function activities(): Map<string, ActivityFn> {
-  const map = new Map<string, ActivityFn>();
-  for (const [name, fn] of Object.entries(migrationActivities)) {
-    if (typeof fn !== "function" || !name.startsWith("postgresMigration")) continue;
-    map.set(name, ((args: Record<string, unknown>, signal?: AbortSignal) => (fn as (a: unknown, s?: AbortSignal, d?: unknown) => Promise<unknown>)(args, signal, deps())) as ActivityFn);
-  }
-  return map;
-}
-
-async function runOp(config: PostgresMigrationOpConfig, gates: GateLedgerPort): Promise<OpRunResult> {
-  const { op } = PostgresMigrationOp(config);
-  const props = (op as unknown as { props: OpConfig }).props;
-  return runOpLocally(props, activities(), await loadProfiles(), undefined, { gates, now: new Date().toISOString() });
-}
-
-/** An in-memory gate ledger a person approves on: each approval answers the gate the last run stopped at, for the plan it recorded. */
-class Ledger {
-  private pending: unknown[] = [];
-  private resolutions: unknown[] = [];
-  port = memoryGateLedgerPort();
-
-  approveLast(): void {
-    const last = this.port.appended.at(-1)!;
-    this.pending.push(...this.port.appended);
-    this.resolutions.push({
-      version: 1,
-      kind: "resolution",
-      op: last.op,
-      gate: last.gate,
-      resolvedBy: "e2e",
-      timestamp: new Date(Date.parse(last.timestamp) + 1000).toISOString(),
-      ...(last.planDigest ? { planDigest: last.planDigest } : {}),
-    });
-    this.port = memoryGateLedgerPort({ pending: this.pending as never, resolutions: this.resolutions as never });
-  }
-}
-
-const outcome = (r: OpRunResult, name: string) => r.records.flatMap((x) => x.outcomes ?? []).find((o) => o.name === name)?.value;
+const runOp = (config: PostgresMigrationOpConfig, gates: GateLedgerPort): Promise<OpRunResult> => runMigrationOp(config, gates, () => deps());
+const Ledger = ApprovingLedger;
+const outcome = runOutcome;
 const failed = async (p: Promise<unknown>): Promise<OpRunFailure> => {
   const e = await p.then(
     () => undefined,

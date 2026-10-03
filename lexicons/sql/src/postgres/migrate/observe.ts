@@ -25,12 +25,14 @@
  *   migration is left.
  *
  * Anything else is refused with a {@link MigrationRefusal}, naming what to
- * do: a table that is not there, partitioned or inheriting; no primary key
- * of one integer column to batch by; a column change the Op does not make
- * (a rename and a type change at once, a rename of a column with a default,
- * a generated or identity column); an index, a constraint or a view that
- * uses the column; a publication that sends it; a working object chant did
- * not make.
+ * do: a table that is not there, a partition (run it on the partitioned
+ * table) or an inheritance tree; no primary key to batch by; a column in the
+ * partition key; a generated column; a column change the Op does not make
+ * (a rename and a type change at once, a rename of a column with a default
+ * or a sequence); something that uses the column and is
+ * not carried over to the new one (`./carry.ts`: indexes, key, check and
+ * foreign key constraints and declared views are); a publication that sends
+ * it; a working object chant did not make.
  */
 
 import type { OwnershipMarker } from "@intentius/chant/ownership";
@@ -47,6 +49,8 @@ import type { ColumnDef } from "../entities";
 import type { DeclaredPgObject } from "../apply/statements";
 import { col, migrationNames, MIGRATION_TRAILER_KEY, pgName, type MigrationChange, type MigrationNames } from "./names";
 import { publicationsOf, type PublicationHit } from "./replication";
+import { keyText, type KeyColumn } from "./batches";
+import { carriedStates, carriedSubject, discoverDependents, replaceColumn, storedType, type CarriedObject, type CarriedState, type CarriedView, type ColumnSequence, type Dependents } from "./carry";
 
 /** A refusal: the migration cannot start, or cannot go on, for a reason a person has to act on. */
 export class MigrationRefusal extends Error {
@@ -88,8 +92,20 @@ export interface MigrationObservation {
   column: ColumnDef;
   /** The table's oid. */
   oid: string;
-  /** Its primary key's one integer column, which the backfill batches by. */
+  /** Its primary key, which the backfill batches by: `id`, or `(tenant_id, id)`. */
   batchKey: string;
+  /** The primary key's columns, in its order (`./batches.ts`). */
+  keyColumns: KeyColumn[];
+  /** The indexes and constraints on the old column, carried over to the new one before the switch (`./carry.ts`). */
+  carried: CarriedObject[];
+  /** Their working copies on the server, by working name. */
+  carriedStates: Map<string, CarriedState>;
+  /** The views that read the old column, made again at the switch. */
+  views: CarriedView[];
+  /** The sequence that gives the old column its values (identity or serial), moved to the new column at the switch. */
+  sequence?: ColumnSequence;
+  /** The table is partitioned: every step runs on it, and its partitions follow. */
+  partitioned: boolean;
   columns: Map<string, ServerColumn>;
   /** The column the values come from, while there is one. */
   source?: ServerColumn;
@@ -112,6 +128,8 @@ export interface ObserveInput {
   declared: DeclaredPgObject;
   column: string;
   marker?: OwnershipMarker;
+  /** Every object the build declares; the views the switch makes again come from here. Default: the table alone. */
+  objects?: readonly DeclaredPgObject[];
   /** The type change's expression, over the old row's columns. Default: `CAST(<column> AS <declared type>)`. */
   using?: string;
   /** The major the build targets; the server's own wins. */
@@ -164,23 +182,6 @@ async function serverColumns(client: PostgresClient, oid: string): Promise<Map<s
   );
 }
 
-/** What else on the server uses a column: indexes, constraints, views, rules, triggers, statistics. Its own default and its NOT NULL (a constraint of its own from 18) are not counted. */
-export async function columnDependents(client: PostgresClient, oid: string, attnum: number): Promise<string[]> {
-  const rows = await client.query<{ what: string }>(
-    `SELECT DISTINCT pg_catalog.pg_describe_object(d.classid, d.objid, d.objsubid) AS what
-     FROM pg_catalog.pg_depend d
-     WHERE d.refclassid = 'pg_catalog.pg_class'::pg_catalog.regclass AND d.refobjid = $1::oid AND d.refobjsubid = $2
-       AND d.classid <> 'pg_catalog.pg_attrdef'::pg_catalog.regclass AND d.deptype IN ('n', 'a', 'i')
-       AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint nn WHERE d.classid = 'pg_catalog.pg_constraint'::pg_catalog.regclass AND nn.oid = d.objid AND nn.contype = 'n')
-     UNION
-     SELECT pg_catalog.pg_describe_object('pg_catalog.pg_constraint'::pg_catalog.regclass, c.oid, 0)
-     FROM pg_catalog.pg_constraint c WHERE c.confrelid = $1::oid AND $2 = ANY(c.confkey)
-     ORDER BY 1`,
-    [oid, attnum],
-  );
-  return rows.map((r) => r.what);
-}
-
 /** The server's major, from `server_version_num`. */
 export async function serverMajor(client: PostgresClient): Promise<number> {
   const [row] = await client.query<{ v: string }>("SELECT pg_catalog.current_setting('server_version_num') AS v");
@@ -215,29 +216,63 @@ async function columnChanges(input: ObserveInput): Promise<{ changes: PgChange[]
 
 const ruleText = (c: PgChange) => `${c.rule} ${PG_CLASSIFIER_RULES[c.rule].title} (${c.field}${c.before !== undefined || c.after !== undefined ? `: ${c.before ?? "-"} -> ${c.after ?? "-"}` : ""})`;
 
+interface RelationRow {
+  oid: string;
+  kind: string;
+  partition: boolean;
+  parents: string | null;
+  children: string | null;
+  partkey: string | null;
+  partattrs: number[] | null;
+}
+
+/**
+ * The tables the Op migrates: an ordinary table, and a partitioned one, whose
+ * partitions take every column change, trigger, check and `NOT NULL` from it.
+ * A partition is migrated through its partitioned table. Inheritance (not
+ * partitioning) is refused: a write to a child table does not fire its
+ * parent's trigger, so the dual write would miss it, and a child's indexes
+ * and constraints are its own, which the carry-over does not read.
+ */
+function refuseRelation(where: string, rel: RelationRow): void {
+  if (rel.partition) {
+    throw new MigrationRefusal(`${where} is a partition of ${rel.parents}. A partition's columns are its partitioned table's: run the Op on ${rel.parents}, which migrates every partition.`);
+  }
+  if (rel.parents) {
+    throw new MigrationRefusal(
+      `${where} inherits from ${rel.parents}. An inherited column is changed through its parent, and the Op does not migrate inheritance trees: ` +
+        `a write to a child table does not fire its parent's dual-write trigger, and each child's indexes and constraints are its own. Migrate by hand, or move to declarative partitioning (chant #3333).`,
+    );
+  }
+  if (rel.kind === "r" && rel.children) {
+    throw new MigrationRefusal(
+      `${where} has inheritance children (${rel.children}). The Op does not migrate inheritance trees: a write to a child table does not fire the parent's dual-write trigger, ` +
+        `so the new column would miss it, and each child's indexes and constraints are its own. Migrate by hand, or move to declarative partitioning (chant #3333).`,
+    );
+  }
+  if (rel.kind !== "r" && rel.kind !== "p") throw new MigrationRefusal(`${where} is not a table (relkind ${rel.kind}); the migration Op migrates a table's column`);
+}
+
 /** Observe the migration of the declared table's column on the server. */
 export async function observeMigration(input: ObserveInput): Promise<MigrationObservation> {
   const { client, declared, marker } = input;
   const schema = declared.canonical.schema ?? input.target.defaultSchema;
   const table = declared.canonical.name;
   const where = `${schema}.${table}`;
-  const declaredColumns = (declared.props.columns as ColumnDef[] | undefined) ?? [];
-  const column = declaredColumns.find((c) => c.name === input.column);
-  if (!column) throw new MigrationRefusal(`${where} declares no column ${input.column}. Declared columns: ${declaredColumns.map((c) => c.name).join(", ") || "none"}`);
-
-  const [rel] = await client.query<{ oid: string; kind: string; partition: boolean; inherits: boolean }>(
+  const [rel] = await client.query<RelationRow>(
     `SELECT c.oid::text AS oid, c.relkind::text AS kind, c.relispartition AS partition,
-            EXISTS (SELECT 1 FROM pg_catalog.pg_inherits i WHERE i.inhrelid = c.oid OR i.inhparent = c.oid) AS inherits
+            (SELECT pg_catalog.string_agg(i.inhparent::pg_catalog.regclass::text, ', ') FROM pg_catalog.pg_inherits i WHERE i.inhrelid = c.oid) AS parents,
+            (SELECT pg_catalog.string_agg(i.inhrelid::pg_catalog.regclass::text, ', ' ORDER BY i.inhrelid::pg_catalog.regclass::text) FROM pg_catalog.pg_inherits i WHERE i.inhparent = c.oid) AS children,
+            CASE WHEN c.relkind = 'p' THEN pg_catalog.pg_get_partkeydef(c.oid) END AS partkey,
+            (SELECT p.partattrs::int2[] FROM pg_catalog.pg_partitioned_table p WHERE p.partrelid = c.oid) AS partattrs
      FROM pg_catalog.pg_class c WHERE c.oid = pg_catalog.to_regclass($1)`,
     [`${col(schema)}.${col(table)}`],
   );
   if (!rel) throw new MigrationRefusal(`${where} is not on the server, so there is no column to migrate; the applier creates it`);
-  if (rel.kind !== "r" || rel.partition || rel.inherits) {
-    throw new MigrationRefusal(
-      `${where} is ${rel.kind === "p" ? "partitioned" : rel.partition ? "a partition" : rel.inherits ? "in an inheritance tree" : `not an ordinary table (relkind ${rel.kind})`}. ` +
-        `The migration Op migrates a column of an ordinary table in this release.`,
-    );
-  }
+  refuseRelation(where, rel);
+  const declaredColumns = (declared.props.columns as ColumnDef[] | undefined) ?? [];
+  const column = declaredColumns.find((c) => c.name === input.column);
+  if (!column) throw new MigrationRefusal(`${where} declares no column ${input.column}. Declared columns: ${declaredColumns.map((c) => c.name).join(", ") || "none"}`);
   const columns = await serverColumns(client, rel.oid);
   const { changes, major: planned } = await columnChanges(input);
   const major = planned ?? (await serverMajor(client));
@@ -314,19 +349,37 @@ export async function observeMigration(input: ObserveInput): Promise<MigrationOb
 
   const source = state === "migrate" ? columns.get(sourceName) : undefined;
   let batchKey = "";
+  let keyColumns: KeyColumn[] = [];
+  let dependents: Pick<Dependents, "carried" | "views" | "sequence"> = { carried: [], views: [] };
+  let states = new Map<string, CarriedState>();
   let expression = col(sourceName);
   let publications: PublicationHit[] = [];
   if (state === "migrate") {
     if (!source) throw new MigrationRefusal(`${where}: the column ${sourceName} the values come from is not on the server`);
-    batchKey = await refuseUnsupported(input, names, rel.oid, source, column, changes, rename !== undefined, typeChange);
+    ({ batchKey, keyColumns, dependents } = await refuseUnsupported(input, names, rel, source, column, changes, rename !== undefined, typeChange));
+    states = await carriedStates(
+      client,
+      dependents.carried,
+      (comment) => {
+        const pairs = pairsOf(comment);
+        if (!pairs) return comment === undefined ? "none" : "theirs";
+        return pairs.get(MIGRATION_TRAILER_KEY) === names.key && pairs.get("role") === "carry" && carriesMarker(comment, marker) ? "ours" : "theirs";
+      },
+      (what) => {
+        throw new MigrationRefusal(
+          `${where}: ${what} exists and is not this migration's (its comment carries no migration=${names.key} role=carry marker for this project). The migration uses that name, so it stops rather than touch it; rename or drop it by hand.`,
+        );
+      },
+    );
     if (change === "type") {
-      expression = input.using ?? `CAST(${col(sourceName)} AS ${column.type})`;
+      expression = input.using ?? `CAST(${col(sourceName)} AS ${storedType(column.type)})`;
       if (expression.includes("$chant$")) throw new MigrationRefusal(`${where}: the using expression may not contain $chant$, which quotes the dual-write function's body`);
     } else if (input.using !== undefined) {
       throw new MigrationRefusal(`${where}.${input.column} is a rename of ${sourceName}, which copies the value as it is; using is for a type change`);
     }
     // The declared type as the classifier compared it: the server's spelling (character varying(10), not varchar(10)).
-    const expectedType = change === "type" ? String(typeChange?.after ?? column.type) : source.type;
+    const serial = storedType(column.type) !== column.type;
+    const expectedType = change === "type" ? (serial ? storedType(column.type)! : String(typeChange?.after ?? column.type)) : source.type;
     if (newColumn && newColumn.type !== expectedType) {
       throw new MigrationRefusal(
         `${where}: ${newColumn.name} was made as ${newColumn.type}, from another declaration of ${input.column} (now ${column.type}). The run fails so onFailure drops it, and the next run starts again from the current declaration.`,
@@ -338,7 +391,8 @@ export async function observeMigration(input: ObserveInput): Promise<MigrationOb
         `${where}.${sourceName} is sent by logical replication publication(s) ${publications.map((p) => `${p.name}${p.allColumns ? " (every column)" : ""}`).join(", ")}. ` +
           `A subscriber applies changes by column name and must have every column the publisher sends, so the column the expand adds would stop the subscriber's apply at the first backfilled row, ` +
           `and the switch would need the same change on the subscriber at the same moment (https://www.postgresql.org/docs/18/logical-replication-col-lists.html). ` +
-          `Leave the column out of the publication with a column list (15 and later), or migrate the subscriber's table as well and run this Op on a table no publication sends.`,
+          `Leave the column out of the publication with a column list (15 and later), or migrate the subscriber's table as well and run this Op on a table no publication sends. ` +
+          `A migration of the publisher and the subscriber together is chant #3332.`,
       );
     }
   }
@@ -350,6 +404,12 @@ export async function observeMigration(input: ObserveInput): Promise<MigrationOb
     column,
     oid: rel.oid,
     batchKey,
+    keyColumns,
+    carried: dependents.carried,
+    carriedStates: states,
+    views: dependents.views,
+    ...(dependents.sequence ? { sequence: dependents.sequence } : {}),
+    partitioned: rel.kind === "p",
     columns,
     ...(source ? { source } : {}),
     ...(newColumn ? { newColumn } : {}),
@@ -364,58 +424,77 @@ export async function observeMigration(input: ObserveInput): Promise<MigrationOb
   };
 }
 
-/** The checks that hold only while there is something to migrate. Returns the batch key. */
+/** The checks that hold only while there is something to migrate. Returns the batch key and what the Op carries over. */
 async function refuseUnsupported(
   input: ObserveInput,
   names: MigrationNames,
-  oid: string,
+  rel: RelationRow,
   source: ServerColumn,
   column: ColumnDef,
   changes: readonly PgChange[],
   rename: boolean,
   typeChange: PgChange | undefined,
-): Promise<string> {
+): Promise<{ batchKey: string; keyColumns: KeyColumn[]; dependents: Pick<Dependents, "carried" | "views" | "sequence"> }> {
   const where = `${names.schema}.${names.table}`;
+  const oid = rel.oid;
   if (rename && typeChange) {
     throw new MigrationRefusal(
       `${where}: ${source.name} is renamed to ${names.column} and its type changes (${typeChange.before} -> ${typeChange.after}) in one declaration. ` +
-        `Migrate one at a time: declare the rename with the old type, run the Op to its end, then change the type.`,
+        `Migrate one at a time: declare the rename with the old type, run the Op to its end, then change the type. ` +
+        `(In one run both names would stay written until the contract, which needs a conversion back to the old type for writers of the new name; chant #3331.)`,
     );
   }
   if (rename && (source.default !== undefined || column.default !== undefined)) {
     throw new MigrationRefusal(
       `${where}: ${source.name} has a default (${source.default ?? column.default}). During a rename both columns are written, each from the other, ` +
         `and a row inserted by a writer that names one column would get the other's default, which the trigger cannot tell from a value it was given. ` +
-        `Drop the default first (the applier does), rename, then declare it again.`,
+        `Drop the default first (the applier does), rename, then declare it again. A rename that keeps its default needs versioned views (chant #3331).`,
+    );
+  }
+  if (source.generated || (column.generated && column.generated.kind !== "identity")) {
+    throw new MigrationRefusal(
+      `${where}.${source.name} is a generated column. There is no expand and contract for one: Postgres cannot make an existing column generated, so the new column could only be added generated, ` +
+        `which computes every row under ACCESS EXCLUSIVE (a stored one) or needs no migration (a virtual one stores nothing). The applier makes the change in place (SQLPG207), in a maintenance window for a stored column.`,
     );
   }
   const unsupported = changes.filter((c) => /\.(generated|identity|collate|storage)$/.test(c.field));
-  if (source.generated || source.identity || column.generated || unsupported.length > 0) {
+  if (unsupported.length > 0) {
+    throw new MigrationRefusal(`${where}.${names.column}: a change to its collation, storage, generation or identity (${unsupported.map(ruleText).join("; ")}) is not one the Op makes; the applier makes it in place.`);
+  }
+  if (rel.kind === "p" && ((rel.partattrs ?? []).map(Number).includes(source.attnum) || (rel.partkey !== null && replaceColumn(rel.partkey, source.name, `${source.name}_`) !== rel.partkey))) {
     throw new MigrationRefusal(
-      `${where}.${names.column}: a generated or identity column, or a change to its collation, storage or generation (${unsupported.map(ruleText).join("; ") || "generated or identity"}), is not migrated by the Op in this release.`,
+      `${where}.${source.name} is in the partition key (${rel.partkey}). A changed partition key would move rows between partitions, which no trigger can do; the Op migrates a partitioned table's other columns.`,
     );
   }
-  const dependents = await columnDependents(input.client, oid, source.attnum);
-  if (dependents.length > 0) {
+  const dependents = await discoverDependents({
+    client: input.client,
+    names,
+    oid,
+    attnum: source.attnum,
+    objects: input.objects ?? [input.declared],
+    declared: input.declared,
+    defaultSchema: input.target.defaultSchema,
+    partitioned: rel.kind === "p",
+  });
+  if (dependents.refused.length > 0) {
     throw new MigrationRefusal(
-      `${where}.${source.name} is used by ${dependents.join("; ")}. ` +
-        `The migration Op does not yet carry indexes, constraints and views over to the new column (chant #3322), and the old column could not be dropped while they use it. ` +
-        `Drop them, migrate the column, then declare them on the new column.`,
+      `${where}.${source.name} is used by what the migration Op does not carry over to the new column: ${dependents.refused.join("; ")}. ` +
+        `The old column could not be dropped while they use it.`,
     );
   }
-  const keys = await input.client.query<{ name: string; type: string }>(
+  const keys = await input.client.query<KeyColumn>(
     `SELECT a.attname AS name, pg_catalog.format_type(a.atttypid, a.atttypmod) AS type
-     FROM pg_catalog.pg_constraint c JOIN pg_catalog.pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
-     WHERE c.conrelid = $1::oid AND c.contype = 'p'`,
+     FROM pg_catalog.pg_constraint c, pg_catalog.unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+     JOIN pg_catalog.pg_attribute a ON a.attnum = k.attnum
+     WHERE c.conrelid = $1::oid AND c.contype = 'p' AND a.attrelid = c.conrelid ORDER BY k.ord`,
     [oid],
   );
-  if (keys.length !== 1 || !["smallint", "integer", "bigint"].includes(keys[0]!.type)) {
+  if (keys.length === 0) {
     throw new MigrationRefusal(
-      `${where} has ${keys.length === 0 ? "no primary key" : keys.length > 1 ? `a primary key of ${keys.length} columns` : `a ${keys[0]!.type} primary key`}. ` +
-        `The backfill fills the new column in batches of key ranges, which needs a primary key of one smallint, integer or bigint column in this release.`,
+      `${where} has no primary key. The backfill fills the new column in batches of the primary key's ranges, the same rows in every run, which needs one; declare a primary key first.`,
     );
   }
-  return keys[0]!.name;
+  return { batchKey: keyText(keys), keyColumns: keys, dependents: { carried: dependents.carried, views: dependents.views, ...(dependents.sequence ? { sequence: dependents.sequence } : {}) } };
 }
 
 /**
@@ -433,6 +512,7 @@ export function migrationPlanSubject(o: MigrationObservation): Record<string, un
     expression: o.expression,
     batchKey: o.batchKey,
     rules: o.changes.map((c) => c.rule),
+    ...(o.carried.length > 0 || o.views.length > 0 || o.sequence ? { dependents: carriedSubject(o) } : {}),
   };
 }
 

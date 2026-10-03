@@ -158,6 +158,13 @@ export const postgresMigrationBackfillContract = activityContract(
   tableEntity,
 );
 
+export const postgresMigrationCarryContract = activityContract(
+  "postgresMigrationCarry",
+  migrationArgs,
+  z.object({ state: migrationState, built: z.number(), ready: z.number(), views: z.number(), carried: z.array(z.string()) }),
+  tableEntity,
+);
+
 export const postgresMigrationVerifyContract = activityContract(
   "postgresMigrationVerify",
   migrationArgs,
