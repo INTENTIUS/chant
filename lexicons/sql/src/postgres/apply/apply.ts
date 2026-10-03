@@ -328,7 +328,7 @@ export async function applyPostgres(
       const how = mine.find((c) => c.rule === "SQLPG200" || c.rule === "SQLPG240" || c.rule === "SQLPG241");
       steps = createSteps(obj, opts.marker, { ...(base !== undefined ? { base } : {}), ...(how ? { cls: how.class, rule: how.rule } : {}) });
     } else {
-      const altered = alterSteps(obj, live, mine, { ...(opts.marker ? { marker: opts.marker } : {}), major: opts.major ?? POSTGRES_LATEST_MAJOR });
+      const altered = alterSteps(obj, live, mine, { ...(opts.marker ? { marker: opts.marker } : {}), major: plan.major ?? POSTGRES_LATEST_MAJOR });
       if (altered.unsupported.length > 0) {
         onServer.add(obj.exportName);
         outcome.notAttempted.push({

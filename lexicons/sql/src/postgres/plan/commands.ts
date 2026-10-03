@@ -14,7 +14,7 @@ import { markProviderOwned, readLiveSchema, type LivePgObject } from "../live/ca
 import { scopeFor } from "../live/describe-resources";
 import { diffPgSchemas, type PgSchemaDiff } from "./diff";
 import { renderPgDiff } from "./report";
-import { keyedByQualifiedName, pgSchemaFromBuildFile, pgSchemaFromLive, type PgSchemaObject } from "./schema";
+import { keyedByQualifiedName, pgBuildFileMajor, pgSchemaFromBuildFile, pgSchemaFromLive, type PgSchemaObject } from "./schema";
 import { serverNormalized } from "./server-normalize";
 import { POSTGRES_ENTITY_TYPES } from "../entity-types";
 
@@ -29,8 +29,22 @@ export async function projectMajor(options: { config?: { sql?: { postgresMajor?:
   return (config?.sql as { postgresMajor?: number } | undefined)?.postgresMajor;
 }
 
-export function diffPgBuildFiles(before: string, after: string, major?: number): PgSchemaDiff {
+/**
+ * Offline, the major is the one the builds recorded (`postgresMajor`): the
+ * newer build's, else the older's, so a diff between revisions does not
+ * depend on today's config. `configMajor` (`sql.postgresMajor`) answers for
+ * builds that recorded none.
+ */
+export function diffPgBuildFiles(before: string, after: string, configMajor?: number): PgSchemaDiff {
+  const major = pgBuildFileMajor(after) ?? pgBuildFileMajor(before) ?? configMajor;
   return diffPgSchemas(pgSchemaFromBuildFile(before), pgSchemaFromBuildFile(after), { major });
+}
+
+/** The live server's major, from `server_version_num` (`180006` is 18). */
+async function serverMajor(client: { query<T>(sql: string): Promise<T[]> }): Promise<number | undefined> {
+  const rows = await client.query<{ v: string }>("select current_setting('server_version_num') as v");
+  const n = Number(rows[0]?.v);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n / 10000) : undefined;
 }
 
 const differs = (a: PgSchemaObject, b: PgSchemaObject) =>
@@ -45,6 +59,8 @@ export interface PgServerPlan {
   /** The same, as the catalog read returned it (comments with their trailers). */
   liveObjects: LivePgObject[];
   diff: PgSchemaDiff;
+  /** The major the changes were classified for: the server's, else the one asked for. */
+  major?: number;
 }
 
 /**
@@ -57,7 +73,7 @@ export async function planAgainstClient(
   client: PostgresClient,
   target: PostgresTarget,
   build: readonly PgSchemaObject[],
-  options: { major?: number; readLive?: typeof readLiveSchema; serverNormalize?: typeof serverNormalized } = {},
+  options: { major?: number; environment?: string; readLive?: typeof readLiveSchema; serverNormalize?: typeof serverNormalized } = {},
 ): Promise<PgServerPlan> {
   const declaredRaw = keyedByQualifiedName(build);
   const scope = scopeFor(
@@ -74,14 +90,22 @@ export async function planAgainstClient(
       declared.push({ ...o, canonical: { ...o.canonical, ...(await (options.serverNormalize ?? serverNormalized)(client, o.canonical, target.defaultSchema)) } });
     } else declared.push(o);
   }
-  return { declared, live, liveObjects, diff: diffPgSchemas(live, declared, { major: options.major }) };
+  // The build's major, else the server's own when it differs, since the server is what takes the locks.
+  const running = await serverMajor(client).catch(() => undefined);
+  const major = running ?? options.major;
+  const diff = diffPgSchemas(live, declared, { major });
+  if (running !== undefined && options.major !== undefined && running !== options.major) {
+    diff.hints.push(`the build targets Postgres ${options.major} but ${options.environment ?? "the server"} runs Postgres ${running}; changes are classified for ${running}`);
+  }
+  return { declared, live, liveObjects, diff, ...(major !== undefined ? { major } : {}) };
 }
 
 /** The declared objects against the server, keys by qualified name and labels with the export name. */
 export async function planPgAgainstServer(environment: string, buildFile: string, options: Omit<BindOptions, "environment"> = {}): Promise<PgSchemaDiff> {
   const { target, client } = await bindPostgres({ ...options, environment });
   try {
-    const { declared, diff } = await planAgainstClient(client, target, pgSchemaFromBuildFile(buildFile, target.defaultSchema), { major: await projectMajor(options) });
+    const targeted = pgBuildFileMajor(buildFile) ?? (await projectMajor(options));
+    const { declared, diff } = await planAgainstClient(client, target, pgSchemaFromBuildFile(buildFile, target.defaultSchema), { ...(targeted !== undefined ? { major: targeted } : {}), environment });
     const label = new Map(declared.map((o) => [o.key, `${o.canonical.exportName} (${o.key.split(" ")[1]})`]));
     const changes = diff.changes.map((c) => ({ ...c, object: label.get(c.object) ?? c.object }));
     return { changes, hints: diff.hints, refused: changes.filter((c) => c.class === "expand") };

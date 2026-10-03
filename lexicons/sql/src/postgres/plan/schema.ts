@@ -69,6 +69,7 @@ export function diffObject(type: string, ddl: string, defaultSchema: string): Pg
 
 interface OutputDoc {
   dialect?: string;
+  postgresMajor?: number;
   objects?: Array<{ export: string; type: string; ddl: string }>;
 }
 
@@ -77,6 +78,16 @@ export function pgSchemaFromBuildOutput(json: string, defaultSchema = "public"):
   const doc = JSON.parse(json) as OutputDoc;
   if (doc.dialect !== "postgres" || !Array.isArray(doc.objects)) throw new Error('not a Postgres build output: expected { dialect: "postgres", objects: [...] }');
   return doc.objects.map((o) => ({ key: o.export, canonical: { ...diffObject(o.type, o.ddl, defaultSchema), exportName: o.export } }));
+}
+
+/** The major a Postgres build recorded (`postgresMajor`), or undefined for output that predates the field. */
+export function pgBuildMajor(json: string): number | undefined {
+  const m = (JSON.parse(json) as OutputDoc).postgresMajor;
+  return typeof m === "number" ? m : undefined;
+}
+
+export function pgBuildFileMajor(path: string): number | undefined {
+  return pgBuildMajor(readFileSync(path, "utf-8"));
 }
 
 export function pgSchemaFromBuildFile(path: string, defaultSchema = "public"): PgSchemaObject[] {
