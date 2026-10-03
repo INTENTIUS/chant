@@ -16,6 +16,7 @@ export function minimalReader(chant: ChantTransport) {
     records: ["--json"],
     "graph --intent": ["--json"],
     "graph --composites": ["--json"],
+    runs: ["--json"],
   };
   return {
     async read(command: ReadContractCommand, args: string[]) {

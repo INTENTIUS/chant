@@ -7,7 +7,7 @@
  *
  * - The reads (`workspace-ls`, `workspace-status`, `workspace-graph`,
  *   `workspace-changes`, `workspace-records`, `workspace-points`,
- *   `workspace-work-history`) run `chant workspace <command>
+ *   `workspace-work-history`, `workspace-runs`) run `chant workspace <command>
  *   ... --json` with the chant this server runs as, in the server's
  *   directory, and return the
  *   document it printed, unchanged, with its reason codes (#2536). Running the
@@ -189,6 +189,20 @@ export const workspaceReadTools: ToolDefinition[] = [
       required: ["item"],
     },
   },
+  {
+    name: "workspace-runs",
+    description:
+      "The agent runs in the workspace's run ledger on chant/lifecycle: chant workspace runs --json (runs.schema.json, #3033). Each run has who it worked for, its harness and model, its tokens and cost with the price source, the transcript pinned by hash and the commits it made, and the totals are per work item, per decision and per principal. A run that reports no cost is listed as unpriced, never counted as zero. Returns the document unchanged.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        unit: { type: "string", description: "Only the runs on this work item (--unit)." },
+        decision: { type: "string", description: "Only the runs that carried out this decision, by id or <kind>/<id> (--decision)." },
+        by: { type: "string", description: "Only the runs made for this principal (--by)." },
+        since: { type: "string", description: "Only the runs that made a commit after this revision, or started after it (--since)." },
+      },
+    },
+  },
 ];
 
 export const workspaceWriteTools: ToolDefinition[] = [
@@ -364,6 +378,13 @@ export function readArgv(tool: string, params: Record<string, unknown>): string[
       const item = str(params, "item", true)!;
       const kind = str(params, "kind");
       return ["workspace", "work", "history", item, ...(kind !== undefined ? ["--kind", kind] : []), "--json"];
+    }
+    case "workspace-runs": {
+      const flags = (["unit", "decision", "by", "since"] as const).flatMap((f) => {
+        const v = str(params, f);
+        return v !== undefined ? [`--${f}`, v] : [];
+      });
+      return ["workspace", "runs", ...flags, "--json"];
     }
     case "workspace-points": {
       const kind = str(params, "kind");

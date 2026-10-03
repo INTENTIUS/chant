@@ -572,6 +572,11 @@ export function parseArgs(args: string[]): ParsedArgs {
       const value = args[++i];
       if (!value || value.startsWith("-")) throw new Error(`${arg} needs a value: ${arg} <${arg.slice(2)}>`);
       result[arg.slice(2) as "holder" | "ttl" | "token" | "outcome"] = value;
+    } else if (arg === "--unit" || arg === "--decision") {
+      // `chant workspace runs --unit <id> | --decision <id>` (#3033): the runs on one work item, or for one decision.
+      const value = args[++i];
+      if (!value || value.startsWith("-")) throw new Error(`${arg} needs an id: ${arg} <id>`);
+      result[arg.slice(2) as "unit" | "decision"] = value;
     } else if (arg === "--note") {
       result.note = args[++i];
     } else if (arg === "--expire") {
@@ -927,6 +932,22 @@ Workspace (level 1, #2524):
                         A work item's lease history: each claim with its token
                         and holder, and how it ended, released with an outcome
                         or never released (expired or lost). Read-only
+  workspace runs [--unit <id>] [--decision <id>] [--by <principal>] [--since <rev>] [--json]
+                        The agent runs in the run ledger on chant/lifecycle, each
+                        with its model, tokens, cost and the commits it made,
+                        and totals per work item, decision and principal; a run
+                        that reports no cost is listed as unpriced, never zero.
+                        Read-only, never fetches
+  workspace runs start --from <file|->
+                        Record that an agent run started: who it worked for,
+                        its harness, model, work item and lease. Prints the run
+                        and its Chant-Run trailer. chant never starts a run
+  workspace runs end <run id> [--from <file|->]
+                        Record how a started run ended: its outcome, tokens,
+                        cost and price source, the transcript pinned by hash,
+                        and the commits it made
+  workspace runs record --from <file|->
+                        Record a finished run, its start and end in one write
   workspace points [--open] [--kind <kind file>] [--at <rev>] [--json]
                         List the decision points the declared answer kinds'
                         points files declare, and the questions asked of them;
@@ -1562,6 +1583,8 @@ export const commandRegistry: CommandDef[] = [
   { name: "workspace ls", handler: async (ctx) => (await import("../workspace/ls")).runWorkspaceLs(ctx) },
   // #2732 — the work lease: claim, renew and release a work item.
   { name: "workspace work", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/work-cli")).runWorkspaceWork(ctx) },
+  // #3033 — the agent run record: what each run cost and which commits it made. chant records runs and never starts one.
+  { name: "workspace runs", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/runs-cli")).runWorkspaceRuns(ctx) },
   { name: "workspace status", handler: async (ctx) => (await import("../workspace/status")).runWorkspaceStatus(ctx) },
   { name: "workspace lineage", handler: async (ctx) => (await import("../workspace/lineage-cli")).runWorkspaceLineage(ctx) },
   { name: "workspace upgrade", handler: async (ctx) => (await import("../workspace/lineage-upgrade-cli")).runWorkspaceUpgrade(ctx) },

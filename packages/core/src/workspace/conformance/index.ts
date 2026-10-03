@@ -48,7 +48,7 @@ import { isDeepStrictEqual } from "node:util";
 import { READ_CONTRACT_VERSION } from "../reason-codes";
 
 /** The read-contract commands, as a reader names them. */
-export const READ_CONTRACT_COMMANDS = ["ls", "graph", "check", "status", "records", "graph --intent", "graph --composites"] as const;
+export const READ_CONTRACT_COMMANDS = ["ls", "graph", "check", "status", "records", "graph --intent", "graph --composites", "runs"] as const;
 export type ReadContractCommand = (typeof READ_CONTRACT_COMMANDS)[number];
 
 /**
@@ -64,6 +64,7 @@ export const READ_CONTRACT_SCHEMAS: Record<ReadContractCommand, string> = {
   records: "records.schema.json",
   "graph --intent": "intent.schema.json",
   "graph --composites": "composites.schema.json",
+  runs: "runs.schema.json",
 };
 
 /** The flags that ask each command for its JSON document. A reader adds one of these and nothing else. */
@@ -75,6 +76,7 @@ export const READ_CONTRACT_JSON_FLAGS: Record<ReadContractCommand, readonly (rea
   records: [["--json"]],
   "graph --intent": [["--json"]],
   "graph --composites": [[], ["--json"]],
+  runs: [["--json"]],
 };
 
 /** The arguments the suite passes each read, on the reference workspace or the generated one. */
@@ -86,6 +88,7 @@ export const REFERENCE_READS: Record<ReadContractCommand, string[]> = {
   records: ["--kind", "decisions/decision.kind.mjs"],
   "graph --intent": ["app/src/server.mjs:19", "--kind", "decisions/decision.kind.mjs"],
   "graph --composites": [],
+  runs: [],
 };
 
 /** One chant run: the arguments after `chant`, and what it printed. */
@@ -318,6 +321,7 @@ export const MCP_READ_TOOLS: Partial<Record<ReadContractCommand, string>> = {
   records: "workspace-records",
   "graph --intent": "workspace-graph",
   "graph --composites": "workspace-graph",
+  runs: "workspace-runs",
 };
 
 /**
@@ -350,6 +354,9 @@ export function mcpToolCall(argv: readonly string[]): { name: string; arguments:
     else if (a === "--work") args.work = value();
     else if (a === "--severity") args.severity = value();
     else if (a === "--current") args.current = true;
+    else if (a === "--unit") args.unit = value();
+    else if (a === "--decision") args.decision = value();
+    else if (a === "--by") args.by = value();
     else if (a === "--composites") args.composites = true;
     else if (a.startsWith("-")) return undefined;
     else positional.push(a);
@@ -365,6 +372,8 @@ export function mcpToolCall(argv: readonly string[]): { name: string; arguments:
       return positional.length === 0 && args.range !== undefined ? { name: "workspace-changes", arguments: { ...args, ...(kinds.length ? { kind: kinds } : {}) } } : undefined;
     case "graph":
       return positional.length === 0 ? { name: "workspace-graph", arguments: { ...args, ...(kinds.length ? { kind: kinds } : {}) } } : undefined;
+    case "runs":
+      return positional.length === 0 && kinds.length === 0 ? { name: "workspace-runs", arguments: args } : undefined;
     default:
       return undefined;
   }
@@ -489,7 +498,17 @@ export function createConformanceWorkspace(options: { chantCommand?: string[]; t
       timeout: options.timeoutMs ?? 120_000,
     });
     git(dir, "add", "-A");
-    git(dir, "commit", "--quiet", "-m", "the reader conformance workspace");
+    git(dir, "commit", "--quiet", "-m", "the reader conformance workspace", "-m", "Chant-Run: conformance-run");
+    // One agent run in the run ledger (#3033), which made that commit, so `runs` reads a run with every field.
+    const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: dir, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+    const run = { id: "conformance-run", harness: { name: "conformance", version: "1" }, model: "none", provider: "none", by: "conformance", startedAt: "2026-01-01T00:00:00Z", endedAt: "2026-01-01T00:01:00Z", outcome: "done", usage: { turns: 1, inputTokens: 10, outputTokens: 5 }, cost: { amount: 0.01, currency: "USD", source: "conformance" }, transcript: { sha256: "0".repeat(64), ref: "conformance" }, commits: [head] };
+    execFileSync(chant[0], [...chant.slice(1), "workspace", "runs", "record", "--from", "-"], {
+      cwd: dir,
+      input: JSON.stringify(run),
+      env: { ...process.env, ...GIT_ENV, NO_COLOR: "1" },
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: options.timeoutMs ?? 120_000,
+    });
     return { dir, dispose };
   } catch (e) {
     dispose();

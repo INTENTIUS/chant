@@ -478,6 +478,10 @@ export interface ParsedArgs {
    * project's only steward.
    */
   steward?: string;
+  /** `chant workspace runs --unit <id>` (#3033): only the agent runs on this work item. */
+  unit?: string;
+  /** `chant workspace runs --decision <id>` (#3033): only the agent runs that carried out this decision. */
+  decision?: string;
   /** `chant workspace work claim|renew|release <id> --holder <name>` (#2732): who holds, or releases, the work lease. */
   holder?: string;
   /** `chant run <op> --work <id>` (#2748): the work item an Op with a work lease runs under. `chant workspace check --changes --work <id>` (#2773): the work item in hand. */

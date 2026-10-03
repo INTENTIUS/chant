@@ -34,6 +34,7 @@ const JSON_FLAG: Record<ReadContractCommand, string[]> = {
   records: ["--json"],
   "graph --intent": ["--json"],
   "graph --composites": ["--json"],
+  runs: ["--json"],
 };
 
 /** The smallest reader that conforms, with a hook to misbehave. */
@@ -77,6 +78,18 @@ describe("the generated conformance workspace (#2679)", () => {
   }, 300_000);
 });
 
+describe("the generated workspace's agent run (#3033)", () => {
+  test("runs reads the run the workspace commit names, joined by its trailer and its record", async () => {
+    const docs: Record<string, unknown>[] = [];
+    const report = await runWorkspaceReaderConformance(reader((doc) => (docs.push(doc), doc)), { workspaceDir: ws.dir, commands: ["runs"] });
+    expect(report.problems).toEqual([]);
+    expect(docs[0]).toMatchObject({
+      runs: [{ id: "conformance-run", state: "ended", by: "conformance", cost: { amount: 0.01, currency: "USD" }, commits: [{ joinedBy: ["record", "trailer"] }] }],
+      totals: { all: { runs: 1, unpriced: [] } },
+    });
+  }, 300_000);
+});
+
 describe("commands (#2679)", () => {
   test("only the listed commands are read, and the report names the rest as skipped", async () => {
     const read: string[] = [];
@@ -87,7 +100,7 @@ describe("commands (#2679)", () => {
     expect(report.problems).toEqual([]);
     expect(read).toEqual(["ls", "status", "graph --composites"]);
     expect(report.checked).toEqual(["ls", "status", "graph --composites"]);
-    expect(report.skipped).toEqual(["graph", "check", "records", "graph --intent"]);
+    expect(report.skipped).toEqual(["graph", "check", "records", "graph --intent", "runs"]);
   }, 300_000);
 
   test("a name that is not a contract command, or an empty list, is refused", () => {

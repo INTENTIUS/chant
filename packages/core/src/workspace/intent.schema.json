@@ -216,6 +216,9 @@
         },
         {
           "$ref": "#/$defs/finding"
+        },
+        {
+          "$ref": "#/$defs/run"
         }
       ]
     },
@@ -1182,7 +1185,7 @@
       }
     },
     "edge": {
-      "description": "constrains: decision or work item to region, file or contract. pins: decision to artifact. touched-by: region to commit. produced-by: commit to unit. serves: unit to contract. supersedes: the newer decision to the one it replaces. cites-evidence: unit, contract or decision to evidence. links: consumer member to producer member. within: commit to a decision whose path window it falls in, or to a work item whose window it falls in. implements: work item to the decision it carries out. needs: work item to a work item it waits on. addressed-by: finding to a work item that addresses it. carries: commit to a decision or work item its Chant-Record trailer names, or to the work item its Chant-Lease was taken on (#3149).",
+      "description": "constrains: decision or work item to region, file or contract. pins: decision to artifact. touched-by: region to commit. produced-by: commit to unit. serves: unit to contract. supersedes: the newer decision to the one it replaces. cites-evidence: unit, contract or decision to evidence. links: consumer member to producer member. within: commit to a decision whose path window it falls in, or to a work item whose window it falls in. implements: work item to the decision it carries out. needs: work item to a work item it waits on. addressed-by: finding to a work item that addresses it. carries: commit to a decision or work item its Chant-Record trailer names, or to the work item its Chant-Lease was taken on (#3149). made-by: commit to the agent run that made it, joined by its Chant-Run trailer or the run's own list of commits (#3033).",
       "oneOf": [
         {
           "$ref": "#/$defs/constrainsEdge"
@@ -1198,6 +1201,9 @@
         },
         {
           "$ref": "#/$defs/plainEdge"
+        },
+        {
+          "$ref": "#/$defs/madeByEdge"
         }
       ]
     },
@@ -1593,6 +1599,286 @@
               }
             }
           ]
+        }
+      }
+    },
+    "run": {
+      "type": "object",
+      "description": "An agent run that made a commit in the walk (#3033), from the run ledger on the local chant/lifecycle branch. Linked from each commit it made by a made-by edge. Added within version 1.",
+      "required": [
+        "id",
+        "kind",
+        "run",
+        "recorded",
+        "state",
+        "harness",
+        "model",
+        "provider",
+        "by",
+        "agent",
+        "unit",
+        "startedAt",
+        "endedAt",
+        "outcome",
+        "usage",
+        "cost",
+        "transcript"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^run:"
+        },
+        "kind": {
+          "const": "run"
+        },
+        "run": {
+          "type": "string"
+        },
+        "recorded": {
+          "type": "boolean",
+          "description": "Whether the ledger has the run. A Chant-Run trailer can name a run whose record is missing or not fetched; then every other field is null."
+        },
+        "state": {
+          "enum": [
+            "running",
+            "ended",
+            null
+          ]
+        },
+        "harness": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "name",
+                "version"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "version": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provider": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "by": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "agent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "unit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "startedAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "endedAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "outcome": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "usage": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/runUsage"
+            }
+          ]
+        },
+        "cost": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/runCost"
+            }
+          ]
+        },
+        "transcript": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/runPin"
+            }
+          ]
+        }
+      }
+    },
+    "runUsage": {
+      "type": "object",
+      "required": [
+        "turns",
+        "inputTokens",
+        "outputTokens",
+        "cacheReadTokens",
+        "cacheWriteTokens"
+      ],
+      "properties": {
+        "turns": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "inputTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "outputTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "cacheReadTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "cacheWriteTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      }
+    },
+    "runCost": {
+      "type": "object",
+      "required": [
+        "amount",
+        "currency",
+        "source"
+      ],
+      "properties": {
+        "amount": {
+          "type": "number",
+          "minimum": 0
+        },
+        "currency": {
+          "type": "string",
+          "pattern": "^[A-Z]{3}$",
+          "description": "ISO 4217, such as USD."
+        },
+        "source": {
+          "type": "string",
+          "description": "What priced it, as the writer names it: a harness's own report (harness:claude-code), a proxy's price table (lobby:list-2026-09), a provider's bill."
+        }
+      }
+    },
+    "runPin": {
+      "type": "object",
+      "description": "A file pinned by hash and never copied.",
+      "required": [
+        "sha256",
+        "bytes",
+        "ref"
+      ],
+      "properties": {
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "bytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Its size, when chant hashed the file itself; null when the writer gave the hash."
+        },
+        "ref": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Where the writer keeps it, as the writer named it. chant never reads it back."
+        }
+      }
+    },
+    "madeByEdge": {
+      "type": "object",
+      "required": [
+        "kind",
+        "from",
+        "to",
+        "joinedBy"
+      ],
+      "properties": {
+        "kind": {
+          "const": "made-by"
+        },
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "joinedBy": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "enum": [
+              "trailer",
+              "record"
+            ]
+          },
+          "description": "trailer: the commit carries Chant-Run with the run's id. record: the run's end lists the commit."
         }
       }
     }
