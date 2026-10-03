@@ -767,6 +767,7 @@ describe("workspace init and ls (#2534)", () => {
       "workspace pin",
       "workspace points",
       "workspace records",
+      "workspace runs",
       "workspace signers",
       "workspace status",
       "workspace upgrade",

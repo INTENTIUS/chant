@@ -347,7 +347,7 @@ A commit can point at the lease, the agent run and the records behind it with ch
 |---|---|---|
 | `Chant-Agent` | an agent session the declaration names | reports it; [write scope](/chant/reference/workspace-declaration/#write-scope-and-agent-sessions) judges the commit as that session |
 | `Chant-Lease` | a work lease's fencing token | finds the work item in the lease histories on the local `chant/lifecycle` branch, and links the commit to it |
-| `Chant-Run` | an agent run's id | reports it ([#3033](https://github.com/INTENTIUS/chant/issues/3033)) |
+| `Chant-Run` | an agent run's id | links the commit to a `run` node with the run's model, principal and cost from the [run ledger](/chant/cli/workspace-runs/) ([#3033](https://github.com/INTENTIUS/chant/issues/3033)). A run whose end lists the commit is linked the same way |
 | `Chant-Record` | `<kind>:<id>`, such as `work:W-001` or `decision:ws-075`; repeatable | links the commit to the record when a kind read has it |
 | `Chant-Applied-By`, `Chant-Applied-At`, `Chant-Applied-Commit` | who applied a leased branch, when, and the tip that was applied | reports them on the commit that applied it |
 
