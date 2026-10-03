@@ -12,6 +12,9 @@ const cases: Array<[string | undefined, string[]]> = [
   [undefined, ["shop", "orders", "openOrders"]],
   ["events", ["analytics", "events", "hourly", "hourlyMv"]],
   ["cdc", ["mirror", "customers", "customersCurrent"]],
+  ["postgres", ["app", "users", "orders", "ordersUser", "orderTotals"]],
+  ["postgres-tenant", ["app", "tenants", "projects", "tasks", "tasksProject", "tasksOpen"]],
+  ["postgres-events", ["analytics", "events", "eventsKind", "events202601", "events202602", "events202603"]],
 ];
 
 describe("init templates", () => {
@@ -51,6 +54,15 @@ describe("init templates", () => {
     expect(src["rollup.ts"]).toContain("CREATE MATERIALIZED VIEW");
   });
 
+  test("the postgres templates declare a dialect-true document", async () => {
+    for (const name of ["postgres", "postgres-tenant", "postgres-events"]) {
+      const set = sqlPlugin.initTemplates!(name);
+      for (const text of Object.values(set.src)) expect(text).toContain("@intentius/chant-lexicon-sql/postgres");
+    }
+    expect(sqlPlugin.initTemplates!("postgres-events").src["events.ts"]).toContain("PARTITION BY RANGE (occurred_at)");
+    expect(sqlPlugin.initTemplates!("postgres-tenant").src["tasks.ts"]).toContain("(\${tasks.columns.tenant_id}, \${tasks.columns.project_id})");
+  });
+
   test("the cdc template is a ReplacingMergeTree with a version column", () => {
     expect(sqlPlugin.initTemplates!("cdc").src["customers.ts"]).toContain("ReplacingMergeTree(_version, _deleted)");
   });
@@ -65,6 +77,21 @@ describe("detectTemplate", () => {
 
   test("recognizes a sql build output", () => {
     expect(sqlPlugin.detectTemplate!(build)).toBe(true);
+  });
+
+  test("recognizes a Postgres build output", () => {
+    expect(
+      sqlPlugin.detectTemplate!({
+        dialect: "postgres",
+        applyOrder: ["app", "users"],
+        objects: [{ export: "app", type: "Postgres::Schema" }, { export: "users", type: "Postgres::Table" }],
+      }),
+    ).toBe(true);
+  });
+
+  test("a document whose types are another dialect's is not claimed", () => {
+    expect(sqlPlugin.detectTemplate!({ dialect: "postgres", applyOrder: ["t"], objects: [{ type: "ClickHouse::Table" }] })).toBe(false);
+    expect(sqlPlugin.detectTemplate!({ dialect: "mysql", applyOrder: ["t"], objects: [{ type: "MySql::Table" }] })).toBe(false);
   });
 
   test.each([
