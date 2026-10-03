@@ -155,6 +155,7 @@ const observation = (change: "rename" | "type", over: Partial<MigrationObservati
     carried: [],
     carriedStates: new Map(),
     views: [],
+    partitioned: false,
     columns: new Map(),
     source: { attnum: 2, name: names.source, type: "text", notNull: true, generated: false, identity: false, ...(change === "type" ? { default: "'0'::text" } : {}) },
     changes: [],
@@ -202,6 +203,40 @@ describe("switch", () => {
       "COMMENT ON COLUMN app.orders.amount IS 'In euros'",
       expect.stringMatching(/^COMMENT ON COLUMN app\.orders\.amount__chant_old IS 'chant migration of app\.orders\.amount: the old column, kept until 2026-10-10T00:00:00\.000Z \[chant .* migration=app\.orders\.amount role=old retain-until=2026-10-10T00%3A00%3A00\.000Z\]'$/),
       "DROP FUNCTION app.orders__amount__chant_sync()",
+    ]);
+  });
+
+  test("an identity moves to the new column under its sequence's name, set to where the old one stood", () => {
+    const names = migrationNames("app", "users", "id", "type", "id");
+    const o = observation("type", {
+      names,
+      column: { name: "id", type: "bigint", generated: { kind: "identity", always: true, options: "CACHE 10" } },
+      source: { attnum: 1, name: "id", type: "integer", notNull: true, generated: false, identity: true },
+      sequence: { kind: "identity", schema: "app", name: "users_id_seq", ident: "app.users_id_seq" },
+    });
+    const sql = switchStatements(o, MARKER, "2026-10-10T00:00:00.000Z", { lastValue: "1501", isCalled: true });
+    expect(sql.indexOf("ALTER TABLE app.users ALTER COLUMN id DROP IDENTITY")).toBeLessThan(sql.indexOf("ALTER TABLE app.users ALTER COLUMN id DROP NOT NULL"));
+    expect(sql).toContain("ALTER TABLE app.users ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (SEQUENCE NAME app.users_id_seq CACHE 10)");
+    expect(sql).toContain("SELECT pg_catalog.setval('app.users_id_seq', 1501, true)");
+    expect(sql.indexOf("ALTER TABLE app.users RENAME COLUMN id__chant_new TO id")).toBeLessThan(sql.indexOf("SELECT pg_catalog.setval('app.users_id_seq', 1501, true)"));
+    expect(() => switchStatements(o, MARKER, "2026-10-10T00:00:00.000Z")).toThrow(/needs its sequence's state/);
+  });
+
+  test("a serial column's sequence is handed to the new column, widened, and stays its default", () => {
+    const names = migrationNames("app", "items", "id", "type", "id");
+    const o = observation("type", {
+      names,
+      column: { name: "id", type: "bigserial" },
+      source: { attnum: 1, name: "id", type: "integer", notNull: true, default: "nextval('app.items_id_seq'::regclass)", generated: false, identity: false },
+      sequence: { kind: "serial", schema: "app", name: "items_id_seq", ident: "app.items_id_seq" },
+    });
+    const sql = switchStatements(o, MARKER, "2026-10-10T00:00:00.000Z");
+    expect(sql[0]).toBe("ALTER TABLE app.items ALTER COLUMN id__chant_new SET NOT NULL");
+    expect(sql).toContain("ALTER TABLE app.items ALTER COLUMN id DROP DEFAULT");
+    expect(sql.slice(sql.indexOf("ALTER SEQUENCE app.items_id_seq AS bigint"), sql.indexOf("ALTER SEQUENCE app.items_id_seq AS bigint") + 3)).toEqual([
+      "ALTER SEQUENCE app.items_id_seq AS bigint",
+      "ALTER SEQUENCE app.items_id_seq OWNED BY app.items.id",
+      "ALTER TABLE app.items ALTER COLUMN id SET DEFAULT pg_catalog.nextval('app.items_id_seq'::pg_catalog.regclass)",
     ]);
   });
 
