@@ -208,7 +208,7 @@ export async function readLiveSchema(client: PostgresClient, scope: SchemaScope 
     const s = scopeSql("n.nspname", scope);
     const rows = await client.query<Row>(
       `SELECT e.oid::text AS oid, e.extname AS name, n.nspname AS schema, e.extversion AS version, x.default_version,
-              pg_catalog.obj_description(e.oid, 'pg_extension') AS comment
+              NULLIF(pg_catalog.obj_description(e.oid, 'pg_extension'), x.comment) AS comment
        FROM pg_catalog.pg_extension e JOIN pg_catalog.pg_namespace n ON n.oid = e.extnamespace
        LEFT JOIN pg_catalog.pg_available_extensions x ON x.name = e.extname
        WHERE e.extname <> 'plpgsql' AND (${s.sql} OR n.nspname = 'public')
