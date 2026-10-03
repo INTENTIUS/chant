@@ -230,7 +230,7 @@ describe("YAML -> TypeScript -> YAML", () => {
   }
 
   test.skipIf(!OTELCOL)("otelcol validate accepts every re-emitted config", async () => {
-    // file_storage needs its directories to exist, so fault-tolerant-logs gets temp ones in place of /var/lib/otelcol.
+    // file_storage and hostmetrics need their directories to exist, so fault-tolerant-logs gets temp ones in place of /var/lib/otelcol.
     const storage = mkdtempSync(join(tmpdir(), "chant-otelcol-storage-"));
     try {
       for (const d of ["receiver", "output"]) mkdirSync(join(storage, d));
@@ -243,7 +243,10 @@ describe("YAML -> TypeScript -> YAML", () => {
         ...[...UPSTREAM_BUILTIN_ONLY, "loadbalancing-agent.yaml", "servicegraph-nop.yaml"].map((f): [string, string] => [f, read("upstream", f)]),
         ["fault-tolerant-logs.yaml", read("upstream", "fault-tolerant-logs.yaml").replaceAll("/var/lib/otelcol/file_storage", storage)],
         // hostmetrics' root_path is accepted on linux only, which is where the node agent runs.
-        ...(await exampleOutputs()).filter(([n]) => n !== "k8s-node-agent" || process.platform === "linux"),
+        // It must exist, so the node agent's /hostfs becomes the temp dir.
+        ...(await exampleOutputs())
+          .filter(([n]) => n !== "k8s-node-agent" || process.platform === "linux")
+          .map(([n, y]): [string, string] => [n, y.replaceAll("/hostfs", storage)]),
       ];
       for (const [name, yaml] of yamls) {
         const { yaml: rebuilt } = await importAndBuild(yaml);
