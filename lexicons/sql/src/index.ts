@@ -1,5 +1,6 @@
 // The sql lexicon. Each database dialect is a subpath:
 //   @intentius/chant-lexicon-sql/clickhouse
+//   @intentius/chant-lexicon-sql/postgres
 // The root exports the plugin, the serializer and the dialect list.
 
 export { sqlPlugin } from "./plugin";
@@ -12,3 +13,9 @@ export { sqlConfigSchema, type SqlConfig } from "./config";
 // root's exports). Declarations import them from the dialect subpath,
 // `@intentius/chant-lexicon-sql/clickhouse`.
 export { database, table, view, literal } from "./clickhouse/entities";
+
+// The Postgres tags whose names ClickHouse does not export, for the same reason.
+// A tag folds as the function its file imports, so `table` imported from
+// `@intentius/chant-lexicon-sql/postgres` is Postgres's. Declarations import
+// them from the dialect subpath.
+export { schema, index, sequence, type, domain, extension } from "./postgres/entities";

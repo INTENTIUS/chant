@@ -1,8 +1,9 @@
 /**
  * The sql lexicon plugin.
  *
- * One lexicon, a subpath per database dialect (#3047, "Packaging"); ClickHouse
- * is the first, at `@intentius/chant-lexicon-sql/clickhouse`. Generation reads
+ * One lexicon, a subpath per database dialect (#3047, "Packaging"): ClickHouse
+ * at `@intentius/chant-lexicon-sql/clickhouse`, Postgres at
+ * `@intentius/chant-lexicon-sql/postgres` (#3289). Generation reads
  * the pinned ClickHouse server's catalog (src/spec/), and the rest of the
  * plugin is the shared machinery every dialect plugs into.
  */
@@ -79,19 +80,27 @@ export const sqlPlugin: LexiconPlugin = {
   },
 
   /**
-   * The ClickHouse tags fold: `chant build` reduces a `table`, `view` or
-   * `database` template to the entity the tag builds, without running the
-   * file. `literal(...)` folds as a call so it can sit inside a tag.
+   * The tags fold: `chant build` reduces a `table`, `view` or other template
+   * to the entity the tag builds, without running the file. An intrinsic is
+   * registered by name and folds as the function the file imports, so
+   * `table` from `/clickhouse` and `table` from `/postgres` are each their
+   * own dialect's. `literal(...)` folds as a call so it can sit inside a tag.
    */
   intrinsics(): IntrinsicDef[] {
     return [
       { name: "database", isTag: true, description: "A ClickHouse CREATE DATABASE, parsed into a database entity" },
-      { name: "table", isTag: true, description: "A ClickHouse CREATE TABLE, parsed into a table entity" },
+      { name: "table", isTag: true, description: "A ClickHouse or Postgres CREATE TABLE, parsed into a table entity" },
       {
         name: "view",
         isTag: true,
-        description: "A ClickHouse CREATE VIEW or CREATE MATERIALIZED VIEW, parsed into a view entity with its lineage",
+        description: "A CREATE VIEW or CREATE MATERIALIZED VIEW, parsed into a view entity with its lineage",
       },
+      { name: "schema", isTag: true, description: "A Postgres CREATE SCHEMA, parsed into a schema entity" },
+      { name: "index", isTag: true, description: "A Postgres CREATE INDEX, parsed into an index entity" },
+      { name: "sequence", isTag: true, description: "A Postgres CREATE SEQUENCE, parsed into a sequence entity" },
+      { name: "type", isTag: true, description: "A Postgres CREATE TYPE ... AS ENUM, parsed into an enum entity" },
+      { name: "domain", isTag: true, description: "A Postgres CREATE DOMAIN, parsed into a domain entity" },
+      { name: "extension", isTag: true, description: "A Postgres CREATE EXTENSION, parsed into an extension entity" },
       {
         name: "literal",
         isTag: false,
