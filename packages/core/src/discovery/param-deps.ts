@@ -361,3 +361,48 @@ export function collectCompositeOrigins(
   walk(props, "");
   return out;
 }
+
+/**
+ * Path → composite origin for an entity a registered tag built inside an
+ * interpreted composite factory body (chant #3212).
+ *
+ * The tag reports which props paths each interpolation fed (`fields`, from
+ * `setInterpolationFields`), because only the tag parsed the text. This joins
+ * that with the factory parameters each interpolation's expression reads,
+ * walked exactly as {@link collectCompositeOrigins} walks a property's
+ * expression, so a body `const` is followed and a sibling entity is not.
+ *
+ * A path fed by an interpolation that reads a parameter is that parameter. Every
+ * other top-level key of `props` is something the factory's text fixes, and is
+ * recorded `composite-literal` at the key, which a parameter recorded deeper
+ * still outranks by longest prefix.
+ */
+export function collectTagOrigins(
+  interpolations: readonly ts.Expression[],
+  fields: ReadonlyArray<readonly string[]>,
+  props: unknown,
+  consts: ReadonlyMap<string, ts.Expression>,
+  scope: CompositeParamScope,
+  composite: string,
+): Record<string, PathOrigin> {
+  const out: Record<string, PathOrigin> = {};
+
+  interpolations.forEach((expr, index) => {
+    const found = new Set<string>();
+    readCompositeParameters(expr, consts, scope, found);
+    if (found.size === 0) return;
+    for (const path of fields[index] ?? []) {
+      const existing = out[path];
+      const merged = new Set(existing?.kind === "composite-parameter" ? existing.parameters : []);
+      for (const parameter of found) merged.add(parameter);
+      out[path] = { kind: "composite-parameter", composite, parameters: [...merged].sort() };
+    }
+  });
+
+  if (props !== null && typeof props === "object" && !Array.isArray(props)) {
+    for (const [key, value] of Object.entries(props)) {
+      if (value !== undefined) out[key] ??= { kind: "composite-literal", composite };
+    }
+  }
+  return out;
+}

@@ -1,7 +1,7 @@
 import * as ts from "typescript";
 import { describe, expect, test } from "vitest";
 import { collectConsts } from "../fold/fold";
-import { collectCompositeOrigins, collectParamDependencies } from "./param-deps";
+import { collectCompositeOrigins, collectParamDependencies, collectTagOrigins } from "./param-deps";
 import type { PathOrigin } from "../provenance";
 
 /**
@@ -225,5 +225,70 @@ describe("collectCompositeOrigins", () => {
     expect(compositeOriginsOf(`return new Thing({ [props.key]: 1, name: props.name });`)).toEqual({
       name: fromParam("name"),
     });
+  });
+});
+
+/**
+ * chant #3212 — the same join for a registered tag. The fixture body ends in
+ * `return table\`...\``; `fields` stands in for what the tag reports per
+ * interpolation, and `props` for the entity it built.
+ */
+function tagOriginsOf(body: string, fields: string[][], props: Record<string, unknown>): Record<string, PathOrigin> {
+  const file = ts.createSourceFile("factory.ts", `const f = (props) => { ${body} };`, ts.ScriptTarget.Latest, true);
+  const consts = new Map<string, ts.Expression>();
+  let tagged: ts.TaggedTemplateExpression | undefined;
+  const visit = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+      consts.set(node.name.text, node.initializer);
+    }
+    if (ts.isReturnStatement(node) && node.expression && ts.isTaggedTemplateExpression(node.expression)) {
+      tagged = node.expression;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  if (!tagged || !ts.isTemplateExpression(tagged.template)) throw new Error("fixture returns no interpolated tag");
+  return collectTagOrigins(
+    tagged.template.templateSpans.map((span) => span.expression),
+    fields,
+    props,
+    consts,
+    { whole: new Set(["props"]), destructured: new Map() },
+    "WebService",
+  );
+}
+
+describe("collectTagOrigins", () => {
+  test("a field an interpolation fed is that interpolation's parameters; every other key is fixed", () => {
+    expect(
+      tagOriginsOf(
+        "return table`CREATE TABLE ${props.name} ENGINE = MergeTree TTL ts + INTERVAL ${props.ttl.days} DAY`;",
+        [["name", "ddl"], ["ttl", "ddl"]],
+        { name: "t", engine: "MergeTree", ttl: "ts + INTERVAL 30 DAY", ddl: "...", absent: undefined },
+      ),
+    ).toEqual({
+      name: fromParam("name"),
+      ttl: fromParam("ttl.days"),
+      ddl: fromParam("name", "ttl.days"),
+      engine: fixed,
+    });
+  });
+
+  test("a body const is followed, a sibling entity is not, and an interpolation reading no parameter adds nothing", () => {
+    expect(
+      tagOriginsOf(
+        "const base = `${props.name}_daily`; const events = new Thing({}); return table`CREATE TABLE ${base} ENGINE = ${\"Summing\"} COMMENT ${events}`;",
+        [["name"], ["engine"], ["comment"]],
+        { name: "t_daily", engine: "Summing", comment: "events" },
+      ),
+    ).toEqual({ name: fromParam("name"), engine: fixed, comment: fixed });
+  });
+
+  test("a parameter recorded under a key outranks the key's fixed record", () => {
+    expect(
+      tagOriginsOf("return table`ENGINE = Replacing(${props.version})`;", [["engine.args"]], {
+        engine: { name: "Replacing", args: ["v"] },
+      }),
+    ).toEqual({ "engine.args": fromParam("version"), engine: fixed });
   });
 });
