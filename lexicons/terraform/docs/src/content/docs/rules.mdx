@@ -6,7 +6,7 @@ description: "Every lint rule and post-synth check provided by the Terraform lex
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-terraform` — DO NOT EDIT.
     Edit lexicons/terraform/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-The Terraform lexicon provides **32** rules: 1 lint rule and 31 post-synth checks.
+The Terraform lexicon provides **37** rules: 1 lint rule and 36 post-synth checks.
 
 ## Lint Rules
 
@@ -51,3 +51,8 @@ Post-synth checks validate the serialized output after the build pipeline comple
 | `TF030` | Security group rule allows unrestricted ingress on a sensitive port |
 | `TF031` | IAM policy allows a wildcard Action or Resource |
 | `TF032` | ECS container definition passes a credential as a plaintext environment value |
+| `TF033` | RDS DB instance or cluster storage is not encrypted |
+| `TF034` | SNS topic has no server-side encryption |
+| `TF035` | SQS queue turns server-side encryption off |
+| `TF036` | EBS volume does not ask for encryption |
+| `TF037` | ECR repository allows mutable image tags |
