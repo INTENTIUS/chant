@@ -612,7 +612,7 @@ export function wipRestore(req: WipRestoreRequest): WipWriteDocument {
     let target: WipSnapshot | null;
     if (req.snapshot === undefined) {
       target = readSnapshot(top, ref);
-      if (!target) throw new WipError("wip-none", `branch ${branch} has no work-in-progress snapshot under ${ref}; chant workspace wip lists the ones there are, and wip fetch brings a replicated one from the remote`);
+      if (!target) throw new WipError("wip-none", `branch ${branch} has no work-in-progress snapshot under ${ref}; chant workspace wip lists the ones there are` + "; wip fetch brings back one that was replicated");
     } else {
       target = readSnapshot(top, req.snapshot);
       if (!target) throw new WipError("wip-snapshot-unknown", `${req.snapshot} is not a work-in-progress snapshot chant took; chant workspace wip lists them`);
