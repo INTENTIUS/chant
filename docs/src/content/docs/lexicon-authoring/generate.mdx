@@ -282,12 +282,12 @@ newer `-lts` release and how to move both constants, and does not edit the file
 or regenerate.
 
 `LexiconUpgradeOp` finds pinned lexicons the same way. Any lexicon that is not
-one of the rolling ones (aws, azure, github, fly) is checked through its plugin's
+rolling (aws, azure, github and fly are) is checked through its plugin's
 `upstreamPin`, so a lexicon that adds a pin needs no change in core. In
 `pull-request` mode the Op opens a version-bump PR for a pin `replace` can
-rewrite. For a pin with `alsoMoves` it stays report-only whatever the mode: the
-report names the newer version and the manual step, and no branch, bump or PR is
-made.
+rewrite. A pin with `alsoMoves` stays report-only whatever the mode: the report
+names the newer version and the manual step, and the Op makes no branch and
+opens no PR.
 
 ### When there is no version to pin to
 
