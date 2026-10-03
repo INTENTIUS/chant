@@ -153,7 +153,7 @@ describe("updating", () => {
     expect(users).toMatchObject({ kind: "Postgres::Table", reason: "unsupported-kind" });
     expect(users!.detail).toMatch(/SQLPG205 Rename a column/);
     expect(users!.detail).toMatch(/postgresql\.org\/docs\/18/);
-    expect(users!.detail).toMatch(/migration Op \(chant #3281\)/);
+    expect(users!.detail).toContain('PostgresMigrationOp({ table: "app.users", column: "mail", ... })');
     expect(s.writes).toEqual([]);
   });
 

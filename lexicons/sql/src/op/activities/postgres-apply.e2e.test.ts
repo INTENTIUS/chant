@@ -147,7 +147,7 @@ describe.skipIf(!enabled)("applying to the pinned Postgres server", () => {
     const renamed = { ...usersV2, ddl: usersV2.ddl.replace("email text NOT NULL,", "login text NOT NULL, -- previously: email") };
     const refused = normalizeApply(toApplyResult(await apply([APP, renamed, fk(false), TOTALS, ORDERS_USER_IDX])));
     expect(refused.notAttempted.find((n) => n.name === "app.users")).toMatchObject({ reason: "unsupported-kind" });
-    expect(refused.notAttempted.find((n) => n.name === "app.users")!.detail).toMatch(/SQLPG205.*#3281/s);
+    expect(refused.notAttempted.find((n) => n.name === "app.users")!.detail).toMatch(/SQLPG205.*PostgresMigrationOp\(\{ table: "app\.users", column: "login"/s);
     expect(await one("SELECT count(*)::int AS n FROM information_schema.columns WHERE table_schema = 'app' AND table_name = 'users' AND column_name = 'email'")).toEqual({ n: 1 });
 
     // A lock timeout: another session holds a lock on orders, and the ALTER gives up after lock_timeout instead of queueing.
