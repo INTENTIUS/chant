@@ -16,7 +16,7 @@
 import { classifiedChange, type ChangeSet, type ClassifiedChange } from "../../core/classifier";
 import { matchByIdentity } from "../../core/diff";
 import { PG_CLASSIFIER_RULES, type PgChangeClass, type PgClassifierRuleId } from "./rules";
-import { sameConstraint, type CanonicalColumn, type CanonicalConstraint } from "./normalize";
+import { sameConstraint, serialBase, type CanonicalColumn, type CanonicalConstraint } from "./normalize";
 import type { PgDiffObject, PgSchemaObject } from "./schema";
 import { POSTGRES_LATEST_MAJOR } from "../../spec/postgres-pin";
 import type { PostgresMigrationOpSuggestion } from "../migrate/handoff";
@@ -107,8 +107,17 @@ function diffColumns(key: string, before: PgDiffObject, after: PgDiffObject, out
     matched.add(b.name);
     const at = `columns.${a.name}`;
     if (b.type !== a.type) {
-      const rule = coercible(b.type ?? "", a.type ?? "") ? "SQLPG206" : family(b.type ?? "") === family(a.type ?? "") ? "SQLPG207" : "SQLPG208";
-      out.push(change(key, `${at}.type`, rule, b.type, a.type));
+      // A serial spelling is an integer column with an owned sequence and a nextval default:
+      // the change is classified by the integer types, and a change of the shorthand alone is a default.
+      const bt = serialBase(b.type) ?? b.type ?? "";
+      const at2 = serialBase(a.type) ?? a.type ?? "";
+      const serial = serialBase(b.type) !== undefined || serialBase(a.type) !== undefined;
+      if (bt === at2) out.push(change(key, `${at}.default`, "SQLPG209", b.type, a.type, { note: "the column gains or loses its owned sequence and nextval default" }));
+      else {
+        const rule = coercible(bt, at2) ? "SQLPG206" : family(bt) === family(at2) ? "SQLPG207" : "SQLPG208";
+        const note = serial && serialBase(b.type) !== undefined && serialBase(a.type) !== undefined ? { note: `${bt} to ${at2}; the owned sequence is widened to ${at2} (ALTER SEQUENCE ... AS ${at2}, SQLPG265)` } : {};
+        out.push(change(key, `${at}.type`, rule, b.type, a.type, note));
+      }
     }
     if (b.default !== a.default) out.push(change(key, `${at}.default`, "SQLPG209", b.default, a.default));
     if (b.notNull !== a.notNull) {

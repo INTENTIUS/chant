@@ -130,7 +130,8 @@ describe.skipIf(!enabled)("a serial column widened to bigserial", () => {
     await apply(writeBuild("sr-v1.json", [SR, items("serial")]));
     await admin!.query("INSERT INTO sr.items (v) SELECT 'v' || g FROM generate_series(1, 800) g");
     writeBuild("sr-v2.json", [SR, items("bigserial")]);
-    expect((await plan("sr-v2.json")).migrationOps?.map((o) => o.column)).toEqual(["id"]);
+    // serial to bigserial is integer to bigint, SQLPG207, with the sequence widened: the plan prints it unqualified.
+    expect((await plan("sr-v2.json")).changes.map((c) => [c.rule, c.field, c.before, c.after])).toEqual([["SQLPG207", "columns.id.type", "serial", "bigserial"]]);
 
     const runs = await runToEnd(config({ name: "migrate-items-id", table: "sr.items", column: "id", output: "sr-v2.json" }), async () => {
       await admin!.query("INSERT INTO sr.items (v) VALUES ('during')");
