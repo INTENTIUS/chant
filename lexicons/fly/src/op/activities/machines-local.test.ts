@@ -166,6 +166,30 @@ describe("the running mode of the local Machines API (#2831)", () => {
     expect(JSON.parse((await machines.http("GET", `http://f/v1/apps/shop/machines/${id}/wait?state=started`)).text)).toEqual({ ok: false });
   });
 
+  test("an exec that times out while its command is forking leaves nothing behind", { timeout: 30_000 }, async () => {
+    const machines = createLocalMachines({ root: tmp(), log: join(tmp(), "log") });
+    open.push(machines);
+    await machines.http("POST", "http://f/v1/apps", { app_name: "shop" });
+    const r = await machines.http("POST", "http://f/v1/apps/shop/machines", { name: "web", config: {} });
+    const id = JSON.parse(r.text).id as string;
+    // Forks a long sleep and kills it, over and over: a child that one group kill misses survives (#3202),
+    // and it holds the exec's output pipes, so the exec would not answer until it ended.
+    const marker = `299.${process.pid}${Math.floor(Math.random() * 1e6)}`;
+    try {
+      const out = await machines.http("POST", `http://f/v1/apps/shop/machines/${id}/exec`, {
+        command: ["sh", "-c", `while :; do sleep ${marker} & kill $!; done`],
+        timeout: 1,
+      });
+      expect(JSON.parse(out.text).exit_code).not.toBe(0);
+      const deadline = Date.now() + 10_000;
+      const left = () => spawnSync("pgrep", ["-f", `sleep ${marker}`], { encoding: "utf8" }).stdout.trim();
+      while (left() && Date.now() < deadline) await new Promise((ok) => setTimeout(ok, 50));
+      expect(left()).toBe("");
+    } finally {
+      spawnSync("pkill", ["-KILL", "-f", `sleep ${marker}`]);
+    }
+  });
+
   test("with no root, guest paths are host paths", async () => {
     const dir = tmp();
     const machines = createLocalMachines({ log: join(dir, "log") });
@@ -178,6 +202,10 @@ describe("the running mode of the local Machines API (#2831)", () => {
     expect(readFileSync(join(dir, "a/b.txt"), "utf8")).toBe("hi");
   });
 
+  /** Forks children for a while, then becomes one: the host is ended while it is still forking. */
+  const FORKS = "i=0; while [ $i -lt 100 ]; do sleep 300 & i=$((i+1)); done; exec sleep 301";
+  /** The live (not zombie) members of a process group, as pgrep lists them. */
+  const group = (pgid: number) => spawnSync("pgrep", ["-g", String(pgid)], { encoding: "utf8" }).stdout.trim();
   for (const how of ["SIGTERM", "SIGINT", "exit"] as const) {
     test(`a Machine's process does not outlive its host process (${how})`, { timeout: 60_000 }, async () => {
       const root = tmp();
@@ -187,7 +215,7 @@ describe("the running mode of the local Machines API (#2831)", () => {
         `import { createLocalMachines } from ${JSON.stringify(join(here, "machines-local.ts"))};
 const m = createLocalMachines({ root: ${JSON.stringify(root)}, log: ${JSON.stringify(join(root, "log"))} });
 await m.http("POST", "http://f/v1/apps", { app_name: "shop" });
-await m.http("POST", "http://f/v1/apps/shop/machines", { name: "web", config: { init: { cmd: ["sh", "-c", "sleep 300 & exec sleep 301"] } } });
+await m.http("POST", "http://f/v1/apps/shop/machines", { name: "web", config: { init: { cmd: ["sh", "-c", ${JSON.stringify(FORKS)}] } } });
 console.log(JSON.stringify(m.processes()[0].pid));
 ${how === "exit" ? "setTimeout(() => process.exit(0), 100);" : "setInterval(() => undefined, 1000);"}
 `,
@@ -198,15 +226,22 @@ ${how === "exit" ? "setTimeout(() => process.exit(0), 100);" : "setInterval(() =
         env: { ...process.env, TSX_DISABLE_CACHE: "1" },
       });
       const pid = await new Promise<number>((ok) => host.stdout!.once("data", (d) => ok(Number(String(d).trim()))));
-      expect(alive(pid)).toBe(true);
-      const exited = new Promise((ok) => host.once("exit", ok));
-      if (how !== "exit") host.kill(how);
-      await exited;
-      for (let i = 0; i < 50 && alive(pid); i++) await new Promise((ok) => setTimeout(ok, 20));
-      expect(alive(pid)).toBe(false);
-      // Nor does anything the command started in its group.
-      const left = spawnSync("pgrep", ["-g", String(pid)], { encoding: "utf8" }).stdout.trim();
-      expect(left).toBe("");
+      try {
+        expect(alive(pid)).toBe(true);
+        const exited = new Promise((ok) => host.once("exit", ok));
+        // Sent while the command is still forking, which is when a single group kill can miss a child (#3202).
+        if (how !== "exit") host.kill(how);
+        await exited;
+        // Killed processes still take a moment to go (and the leader to be reaped), more so on a loaded host, so poll.
+        // Anything left after the deadline was never killed: a missed child sleeps for 300s.
+        const deadline = Date.now() + 10_000;
+        while ((alive(pid) || group(pid)) && Date.now() < deadline) await new Promise((ok) => setTimeout(ok, 50));
+        expect(alive(pid)).toBe(false);
+        // Nor does anything the command started in its group.
+        expect(group(pid)).toBe("");
+      } finally {
+        spawnSync("pkill", ["-KILL", "-g", String(pid)]);
+      }
     });
   }
 });
