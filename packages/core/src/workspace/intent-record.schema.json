@@ -402,6 +402,9 @@
             "$ref": "#/$defs/recordRef"
           },
           "description": "Each other decision whose window holds the commit and whose path: entries cover one of the commit's files."
+        },
+        "joins": {
+          "$ref": "#/$defs/trailerJoins"
         }
       }
     },
@@ -523,6 +526,123 @@
           }
         },
         "commits": false
+      }
+    },
+    "trailerJoins": {
+      "type": "object",
+      "description": "What chant's own commit trailers join the commit to (#3149, ws-075). Added within version 1, so an older document may lack it.",
+      "required": [
+        "agent",
+        "lease",
+        "run",
+        "records",
+        "applied"
+      ],
+      "properties": {
+        "agent": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Chant-Agent: the agent session that wrote the commit (ws-067)."
+        },
+        "lease": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "token",
+                "item"
+              ],
+              "properties": {
+                "token": {
+                  "type": "string",
+                  "description": "Chant-Lease: the work lease's fencing token."
+                },
+                "item": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "The work item a lease history on the local chant/lifecycle branch names for the token, or null when none does."
+                }
+              }
+            }
+          ]
+        },
+        "run": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Chant-Run: the agent run that made the commit (#3033)."
+        },
+        "records": {
+          "type": "array",
+          "description": "Each well-formed Chant-Record value, <kind>:<id>, in order.",
+          "items": {
+            "type": "object",
+            "required": [
+              "kind",
+              "id",
+              "node"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "description": "The record kind's name."
+              },
+              "id": {
+                "type": "string"
+              },
+              "node": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The id of the record's node, record:<kind>/<id>, when a kind read has the record; null otherwise."
+              }
+            }
+          }
+        },
+        "applied": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "by",
+                "at",
+                "commit"
+              ],
+              "properties": {
+                "by": {
+                  "type": "string",
+                  "description": "Chant-Applied-By: who applied the branch."
+                },
+                "at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Chant-Applied-At, ISO 8601, or null when it is missing."
+                },
+                "commit": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Chant-Applied-Commit: the applied branch's tip, or null when it is missing or not a commit id."
+                }
+              }
+            }
+          ]
+        }
       }
     }
   }
