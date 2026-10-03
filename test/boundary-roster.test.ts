@@ -142,10 +142,14 @@ describe("the boundary roster (#2657)", () => {
     expect(wrong).toEqual([]);
   });
 
-  test("the node kinds the intent schema joins from a plugin are owned by a plugin, and so are their record kinds", () => {
+  test("the node kinds the intent schema joins from a plugin are owned by a plugin, and so are their record kinds unless the reference workspace declares one", () => {
     for (const k of JOINED_NODE_KINDS) {
       expect(rows.find((r) => r.category === "intent-node-kind" && r.concept === k)?.owner, `intent-node-kind ${k}`).toBe("plugin");
-      expect(rows.find((r) => r.category === "record-kind" && r.concept === k)?.owner, `record-kind ${k}`).toBe("plugin");
+      // The reference workspace's design member declares contract and evidence kinds of chant's own (#3148, ws-082);
+      // a plugin's commitJoins still supplies the joined node.
+      const kind = rows.find((r) => r.category === "record-kind" && r.concept === k);
+      const owner = kind?.owner === "chant" && kind.carrier.startsWith("reference-workspace/") ? "plugin or the reference workspace" : kind?.owner;
+      expect(owner === "plugin" || owner === "plugin or the reference workspace", `record-kind ${k} is ${kind?.owner}`).toBe(true);
     }
     const others = rows.filter((r) => r.category === "intent-node-kind" && !JOINED_NODE_KINDS.includes(r.concept));
     expect(others.filter((r) => r.owner !== "chant").map((r) => r.concept)).toEqual([]);
