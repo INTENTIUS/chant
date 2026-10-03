@@ -1002,9 +1002,10 @@ Workspace (level 1, #2524):
                         Put the working tree back as the snapshot (the branch's
                         latest by default) holds it, after a snapshot of how it
                         is now; HEAD never moves
-  workspace wip push | fetch
-                        Push the refs the replicate policy names to its remote,
-                        never forced; or, on a replacement box, bring them back
+  workspace wip push    Push the refs the box's replicate policy names to its
+                        remote, never forced, for the host's schedule
+  workspace wip fetch   On a replacement box, bring back what was replicated:
+                        create or fast-forward the local refs, then wip restore
   workspace points [--open] [--kind <kind file>] [--at <rev>] [--json]
                         List the decision points the declared answer kinds'
                         points files declare, and the questions asked of them;
