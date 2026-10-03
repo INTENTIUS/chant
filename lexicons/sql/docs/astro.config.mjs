@@ -34,6 +34,10 @@ export default defineConfig({
                         {
                               "label": "Importing a Live Server",
                               "slug": "importing"
+                        },
+                        {
+                              "label": "Rebuilding a Table",
+                              "slug": "rebuild"
                         }
                   ]
             },

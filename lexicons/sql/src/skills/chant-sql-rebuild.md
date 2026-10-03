@@ -1,67 +1,62 @@
 ---
 skill: chant-sql-rebuild
-description: Run a ClickHouse rebuild migration (a sorting key, partition key or engine change) as a gated Op with backfill receipts, verification, an exchange swap and onFailure cleanup; depends on the rebuild Op in #3198
+description: Run a ClickHouse table rebuild (a sorting key, primary key, partition key, engine or key column type change) with ClickHouseRebuildOp, a gated Op with backfill receipts, verification, an exchange swap and onFailure cleanup
 user-invocable: true
 ---
 # Running a ClickHouse rebuild migration
 
-Use this skill when `chant sql plan` or `chant sql diff` exits 2 because a change is a rebuild: a sorting key rename or reorder (SQLCH220), a primary key change (SQLCH221), a partition key change (SQLCH222), an engine or engine argument change such as a ReplacingMergeTree version column (SQLCH223), or a materialized view's `TO` target (SQLCH242). ClickHouse has no ALTER for these. The data is copied into a new table, and the old one is swapped out.
+Use this skill when `chant sql plan` or `chant sql diff` exits 2 because a table's change is a rebuild: a sorting key rename or reorder (SQLCH220), a primary key change (SQLCH221), a partition key change (SQLCH222), an engine or engine argument change such as a ReplacingMergeTree version column (SQLCH223), or a key column's type (SQLCH211). ClickHouse has no ALTER for these. The data is copied into a new table, and the old one is swapped out.
 
-## Dependency on #3198
+`ClickHouseRebuildOp` rebuilds tables. A view's or materialized view's rebuild-class change (SQLCH224, SQLCH242, SQLCH243) is a drop and a create of that view, not this Op.
 
-The rebuild Op is issue #3198 ("the ClickHouse rebuild migration as a gated composite Op"). It is not built when this skill is written. Everything below under "The Op" is what #3198's issue body commits to, not shipped behavior. Names of the composite and its options are not final, so this skill shows none: read the sql docs page "The rebuild migration Op" and the lexicon's exports once #3198 has merged, and correct anything here that differs. Four decisions are still open in that issue and are listed at the end.
+## Declare the Op
 
-## The phases
+The plan names the Op for each refused table, with the table filled in and a dual-write mode suggested. Copy it into an `*.op.ts` file in the same pull request as the schema change:
 
-| Phase | Step |
-|---|---|
-| Create | the new table |
-| Dual write | a materialized view from old to new, or an application switch behind a gate |
-| Backfill | `INSERT ... SELECT` per partition, each in an `effect()` with a receipt |
-| Verify | row counts and checksums per partition |
-| Gate | approval bound to the plan digest, with the verification in its context |
-| Swap | `EXCHANGE TABLES`, then recreate the materialized views that read the table |
-| Retain | the old table for N days, then a gated drop |
-| `onFailure` | drop the new table |
+```typescript
+// ops/rebuild-events.op.ts
+import { ClickHouseRebuildOp } from "@intentius/chant-lexicon-sql/clickhouse";
 
-What this gives you:
-
-- The gate comes after verification and before the swap. The person approving sees the per-partition counts and checksums, and the approval is bound to the plan digest, so a plan that changed after it was reviewed does not run under the old approval.
-- Backfill is one `effect()` per partition. A receipt is written last, only when the partition's copy succeeded, so a run interrupted halfway resumes from its receipts and does not copy a partition twice.
-- The old table is kept for a retention period and dropped only behind a second gate.
-- A failed run triggers `onFailure`, which drops the new table. The old table has not been touched at that point, because the swap is the step after the gate.
-
-## Running it
-
-An Op is run with `chant run <name>`, in process, or on a steward with `--on fountain`. A gate stops the run and is resolved with `chant approve <gate-name>`. The record of a run, including receipts, is what `chant run` resumes from; the MCP tools `op-run`, `op-status` and `op-signal` start and watch it programmatically.
-
-Typical order for a sorting key change in a pull request:
-
-```bash
-chant build src --lexicon sql -o head.json
-chant sql diff base.json head.json     # exits 2, names SQLCH220 and the table
+export const { op } = ClickHouseRebuildOp({
+  name: "rebuild-shop-events",
+  env: "prod",                       // sql.profiles.prod
+  table: "shop.events",              // database.name on the server
+  dualWrite: { mode: "materialized-view", cutoverColumn: "ts" },
+  retain: "7d",                      // how long the old table is kept
+});
 ```
 
-then hand the classified rebuild to the Op (how the plan passes it on is one of the open decisions below), watch it reach the gate, read the verification, approve, and let it swap.
+Options: `name`, `env`, `table`, `dualWrite` (required); `output` (default `dist/schema.json`), `path`, `build` (default true runs `chant build` first), `retain` (default `7d`), `gate` (the swap gate: `gate`, `timeout`, `description`, `approval`), `dropGate`, `writesGate` (app mode), `backfillTimeout` (default `6h`), `mutationTimeout` (default `10m`), `stack`, `ownershipEnv`.
 
-Using the Op from your own `*.op.ts` file follows the shape in the Ops guide: `Op({ name, phases })`, `phase(...)`, `gate(...)`, and `effect(receipt, steps)` for the backfill. Do not hand-write the swap with `shell` unless #3198 has not merged and you accept the risk: the receipts and the gate binding are the point.
+Pick the dual-write mode:
 
-## Constraints to check before starting
+- `{ mode: "materialized-view", cutoverColumn: "ts", cutoverDelay?: "1m" }` when the table has a time column rows arrive in order of. Writes keep flowing: a materialized view sends rows at or after the cut-over to the new table, the backfill copies the rows before it.
+- `{ mode: "app" }` otherwise. A gate, `<name>-writes-stopped`, waits for someone to confirm the application stopped writing to the table; writes resume after the swap.
 
-- `EXCHANGE TABLES` needs both tables in a database on the Atomic engine. A database on another engine is one of the open decisions; check the database's engine first.
-- Background rewrites must finish before the swap. How a run waits on them (through `system.mutations`) is an open decision.
-- During the dual-write phase, inserts reach both tables. A materialized view from old to new does this for you; an application switch needs the application's cooperation and sits behind a gate.
-- Materialized views that read the old table are recreated after the swap. Their `TO` targets are fixed at creation, so recreating them is the step, not altering them.
+## Run it
 
-## Open decisions in #3198
+```bash
+chant run rebuild-shop-events        # new table, dual write, backfill, verify; exits 3 at approve-rebuild-shop-events
+chant run status rebuild-shop-events # the Verification, VerifiedPartitions and VerifiedRows outcomes
+chant approve rebuild-shop-events approve-rebuild-shop-events --actor <you>
+chant run rebuild-shop-events        # swaps, recreates the views that read the table; exits 3 at approve-rebuild-shop-events-drop
+chant approve rebuild-shop-events approve-rebuild-shop-events-drop --actor <you>
+chant run rebuild-shop-events        # drops the old table once retain has passed
+```
 
-1. Where backfill receipts live: git, or a table in ClickHouse.
-2. What to do when the database is not on the Atomic engine.
-3. How a run waits on background rewrites through `system.mutations`.
-4. How the plan hands a classified rebuild to the Op.
+Each run goes as far as the next gate. Every step reads the server again, so re-running after a gate, a crash or an approval carries on where the last run stopped.
 
-When one of these is settled on the issue, update this skill to say which way it went.
+The swap gate is bound to a digest of the plan and the verification (row counts and checksums per partition). If the next run verifies different numbers, the gate asks again. The drop gate is bound to the old table's UUID and retention date; approving it early is fine, nothing is dropped before the date.
 
-## Done means
+## When something goes wrong
 
-A sort-key change in a pull request plans as this Op, stops at its gate with verification attached, swaps, and recreates the materialized views that read the table. `chant sql plan` against the server then reports no changes.
+- A run stopped during the backfill (Ctrl-C, a killed job) is not a failure. The next run resumes from the receipts in `chant_receipts.receipts` on the same server, and a partition whose copy was cut off before its receipt is cleared and copied again, so no row is copied twice.
+- A failed step (a failed copy after its retries, a verification mismatch, a refused declaration) runs onFailure: the new table `<t>__chant_new` and the dual-write view `<t>__chant_dual` are dropped, and the next run starts from a new table. The original table is untouched until the swap.
+- A verification mismatch in materialized-view mode usually means rows arrived with a time before the cut-over later than `cutoverDelay`. Raise the delay and run again.
+- The Op refuses a database that is not Atomic (`EXCHANGE TABLES` needs it), a table whose change is not a rebuild (use the applier), and an object already under one of its working names that is not its own.
+
+## Checking it is done
+
+`chant sql plan <env> dist/schema.json` reports no changes for the table, `<t>__chant_old` is gone after the drop, and a later `chant run` of the Op reports `RebuildState` `done`. Then remove the `*.op.ts` file.
+
+The rebuild's working tables carry chant's comment marker with `rebuild=<db.t>` and a role, and plans, imports and prunes leave them out, so an `ApplyOp` for the rest of the schema can run beside a rebuild.

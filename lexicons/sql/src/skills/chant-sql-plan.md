@@ -82,7 +82,7 @@ The server rewrites DDL on `SHOW CREATE` (quoting, `INTERVAL 1 DAY` as `toInterv
 
 1. `chant build src --lexicon sql -o head.json` on the pull request branch, and the same on the base branch into `base.json`.
 2. `chant sql diff base.json head.json`.
-3. A rebuild exits 2. Do not merge it as an ordinary change: it goes through the rebuild Op (`chant-sql-rebuild`).
+3. A rebuild exits 2. Do not merge it as an ordinary change: the report names the `ClickHouseRebuildOp` declaration to add for each refused table (`rebuildOps` in `--json`), and the rebuild runs as that Op (`chant-sql-rebuild`).
 
 ## Using plans in Ops
 

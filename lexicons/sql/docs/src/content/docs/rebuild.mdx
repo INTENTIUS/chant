@@ -1,0 +1,119 @@
+---
+title: "Rebuilding a Table"
+description: "ClickHouseRebuildOp runs a change ALTER cannot make (a sorting key, a partition key, an engine, a key column's type) as a gated Op: new table, dual write, backfill with receipts, verification, swap, retention"
+diataxis: how-to
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-sql` — DO NOT EDIT.
+    Edit lexicons/sql/docs/pages/rebuild.mdx instead; changes here are overwritten. */}
+
+
+Some changes ClickHouse cannot make to the table it has. The sorting key is the on-disk order and, in a `ReplacingMergeTree`, the dedup identity, so changing it means writing every row again into a new table. [The classifier](../change-classifier/) puts these in the rebuild class, and both `chant sql plan` and the [applier](../applying/) refuse them in place. `ClickHouseRebuildOp` is what runs them.
+
+## Start from the plan
+
+Change the declaration in a pull request. `chant sql plan <env> dist/schema.json` (or `chant sql diff` between the base and head builds) refuses the change, exits 2, and names the Op to run for each refused table:
+
+```
+shop.events (shop.events)
+  [REBUILD] orderBy: ( ts , user_id ) -> ( user_id , ts )
+      SQLCH220 Change the sorting key. ...
+
+Refused: 1 change(s) need a rebuild, which ClickHouse cannot make to the existing table. ...
+
+Run it as the rebuild migration Op, declared in an *.op.ts file (import { ClickHouseRebuildOp } from "@intentius/chant-lexicon-sql/clickhouse"), then `chant run <name>` until it is done:
+  export const { op } = ClickHouseRebuildOp({ name: "rebuild-shop-events", env: "prod", table: "shop.events", dualWrite: { mode: "materialized-view", cutoverColumn: "ts" } });
+```
+
+`--json` carries the same as `rebuildOps`, and the applier's not-attempted detail names `ClickHouseRebuildOp({ table: "shop.events", ... })`. The suggested `dualWrite` uses the table's first time column when it has one, and app mode otherwise. Put the declaration in the pull request beside the schema change:
+
+```typescript
+// ops/rebuild-events.op.ts
+import { ClickHouseRebuildOp } from "@intentius/chant-lexicon-sql/clickhouse";
+
+export const { op } = ClickHouseRebuildOp({
+  name: "rebuild-shop-events",
+  env: "prod",                  // sql.profiles.prod
+  table: "shop.events",
+  dualWrite: { mode: "materialized-view", cutoverColumn: "ts" },
+  retain: "7d",
+});
+```
+
+The Op's own Plan phase classifies the table's change again, against the server, when it runs. A table whose change is not a rebuild is refused with the rules that apply in place, and the applier is the way to make them.
+
+## The phases
+
+| Phase | What it does |
+|---|---|
+| Build | `chant build` (the project's `build` script); `build: false` skips it |
+| Plan | classifies the change, reports how far the rebuild has got |
+| Create | the new table, `events__chant_new`, from the declaration, once the old table's unfinished mutations are done |
+| Dual write | a materialized view from the old table to the new one, or a gate for the application to stop writing |
+| Backfill | `INSERT ... SELECT` per partition of the old table, each with a receipt |
+| Verify | row counts and checksums per partition, old against new |
+| Approve | a gate bound to the plan and the verification |
+| Swap | `EXCHANGE TABLES`, then recreate the materialized views that read the table |
+| Retain | the old table stays as `events__chant_old` until `retain` (default `7d`) has passed |
+| Approve drop | a gate bound to that old table |
+| Drop | the old table, once its date has passed |
+| onFailure | drops the new table and the dual-write view |
+
+Run it with `chant run rebuild-shop-events`. Each run goes as far as the next gate and exits 3 there. Every step reads the server again before it acts, so the next run, after an approval or a crash, carries on from where the last one stopped and repeats nothing that is done.
+
+The objects the rebuild makes carry chant's [ownership marker](../applying/#the-ownership-marker) with two more pairs, `rebuild=shop.events` and the object's role (`new`, `dual` or `old`). A plan, an import and a prune leave them out, so an `ApplyOp` running beside a rebuild neither proposes dropping them nor prunes them.
+
+## Keeping up with writes
+
+`dualWrite` decides how rows written during the rebuild reach the new table.
+
+`{ mode: "materialized-view", cutoverColumn: "ts" }` keeps writes flowing. The Op creates `events__chant_dual`, a materialized view on the old table that writes every row whose `ts` is at or after a cut-over into the new table. The cut-over is the server's time when the view is created plus `cutoverDelay` (default `1m`), and the backfill copies the rows before it once that time has passed. The cut-over column has to be a time that rows arrive in order of, give or take the delay. A row that arrives later than that, with a time before the cut-over, is in neither half; the verification finds it and the run fails rather than swap a table missing it. ClickHouse's [backfilling guide](https://clickhouse.com/docs/data-modeling/backfilling) describes the same split.
+
+`{ mode: "app" }` is for a table with no such column. The Dual write phase is a gate, `<name>-writes-stopped`, and approving it says the application has stopped writing to the old table (paused, or buffering). The backfill then copies every row, and writes resume against the table's own name after the swap, where the new table now is.
+
+## The gates
+
+The swap gate's approval is for one plan and one verification. Its digest covers the definitions on both sides, the classified changes, the columns copied, the dual-write mode and, per partition, the row count and checksum the Verify phase read. A run that verifies different numbers needs a fresh approval. The run record carries the verification as outcomes (`Verification`, `VerifiedPartitions`, `VerifiedRows`), which `chant run status` and `chant operator log` show:
+
+```bash
+chant run rebuild-shop-events                              # gated: approve-rebuild-shop-events
+chant approve rebuild-shop-events approve-rebuild-shop-events --actor alex
+chant run rebuild-shop-events                              # swaps; gated: approve-rebuild-shop-events-drop
+chant approve rebuild-shop-events approve-rebuild-shop-events-drop --actor alex
+chant run rebuild-shop-events                              # drops the old table once retain has passed
+```
+
+`gate.approval` takes a quorum, roles and a Cedar policy as any gate does; with a policy, the verified partition and row counts are added to its context. The drop gate binds the old table by its UUID and retention date. Approving it early is allowed: the Drop phase drops nothing until the date has passed and says so, and a run after the date drops it.
+
+Once the swap has run, the swap gate has nothing left to approve, and later runs pass it on the approval already recorded.
+
+## Receipts and resuming
+
+Each partition's copy is an effect with a receipt, in the [read, compare, run, write](/chant/concepts/effect-receipts/) cycle `effect()` uses: a partition whose receipt matches is skipped, and a partition's receipt is written after its copy succeeded, last. The receipts are rows on the same server:
+
+```sql
+SELECT address, expectation, run_id, written_at FROM chant_receipts.receipts
+WHERE address LIKE 'shop/prod/rebuild/shop.events/%'
+```
+
+They live there, not on the `chant/lifecycle` branch, because a receipt has to go when the data it witnesses goes. onFailure drops the new table, and each receipt's expectation is bound to the new table's UUID, so a new table made again finds every old receipt stale and copies every partition again. A receipt in git would go on saying those partitions were copied.
+
+A run stopped during the backfill (Ctrl-C, a killed job, a lost machine) is not a failure: it runs no onFailure, and the next run resumes at the first partition without a receipt. A run killed between a partition's `INSERT` and its receipt leaves rows with no receipt. The next run finds them, deletes them (waiting for that mutation in `system.mutations`) and copies the partition once more, so no row is in the new table twice. Each partition's copy runs under a query id made from the new table and the partition, and a copy the server is still running from a run whose client went away is killed first.
+
+A step that fails is a failure. The backfill step retries three times, and the Verify step fails on any difference. onFailure then drops `events__chant_new` and `events__chant_dual`, only when their comments name this rebuild and carry this project's marker, and the next run starts again from a new table. After the `EXCHANGE`, onFailure touches nothing: the next run finishes the swap.
+
+## Background rewrites
+
+The Create phase waits until `system.mutations` lists nothing unfinished for the old table, so the copy reads what a pending type change or TTL change produces, and the Verify phase waits on both tables. The wait is ten minutes by default (`mutationTimeout`); a mutation still running then fails the step with its id, and one the server reports failing fails it at once with the server's reason.
+
+## Materialized views that read the table
+
+In ClickHouse 26.8 a materialized view follows its source table by name, so after the `EXCHANGE` the views that read `shop.events` already read the new table. The Swap phase detaches and attaches each of them, which makes the server analyze its query against the new table's columns and types: a view the new definition breaks fails the swap there, with the old table still kept, instead of on the next insert. A view with an inner table keeps its data, which dropping and creating it would not. Inserts that land while a view is detached are not passed to it, so in materialized-view mode, where writes go on through the swap, that window is one `DETACH` and one `ATTACH` long. The Swap phase reports the views as the `Dependents` outcome.
+
+## What the Op refuses
+
+- A database that is not `Atomic`. `EXCHANGE TABLES` needs the [Atomic engine](https://clickhouse.com/docs/sql-reference/statements/exchange), and swapping with two `RENAME`s would leave a moment with no table for writes to land in. Convert the database to Atomic first.
+- A table the server does not have, or a declaration that is not a table.
+- A change with no rebuild in it. The applier makes those.
+- An object under one of the rebuild's names (`__chant_new`, `__chant_dual`, `__chant_old`) that does not carry this rebuild's marker. The Op stops rather than fill or drop somebody else's table.
+- A new rebuild of a table whose last rebuild still retains its old table. Drop the old table first.

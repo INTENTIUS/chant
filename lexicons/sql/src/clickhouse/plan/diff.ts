@@ -18,6 +18,7 @@
 
 import { CLASSIFIER_RULES, type ChangeClass, type ClassifierRuleId } from "./rules";
 import type { CanonicalColumn, CanonicalObject } from "./normalize";
+import type { RebuildOpSuggestion } from "./rebuild-handoff";
 import { MERGE_TREE_SETTINGS } from "../../generated/clickhouse";
 
 export interface SchemaObject {
@@ -47,6 +48,8 @@ export interface SchemaDiff {
   rebuilds: Change[];
   /** Hints for the author: a drop and an add that look like a rename. */
   hints: string[];
+  /** For each table refused as a rebuild, the rebuild migration Op to run instead (`./rebuild-handoff.ts`). */
+  rebuildOps?: RebuildOpSuggestion[];
 }
 
 const qualified = (o: CanonicalObject) => (o.database ? `${o.database}.${o.name}` : o.name);
