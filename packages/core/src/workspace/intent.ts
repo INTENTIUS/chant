@@ -1,6 +1,7 @@
 /**
  * The intent graph over one region: `chant workspace graph --intent
- * <path[:start-end]>` (#2651; #2650 sections B and C1; #2524 D8, D15).
+ * <path[:start-end]|path#symbol>` (#2651; #2650 sections B and C1; #2524 D8,
+ * D15; #3034).
  *
  * A person points at some code and asks how it got this way and who decided
  * it should be this way. This module gathers what the workspace records about
@@ -31,6 +32,13 @@
  * runs for every commit in that order. chant emits the
  * graph and hud renders it (#2524 D8, D15). Git is read through a local
  * `git` subprocess only: no fetch, no network.
+ *
+ * A region can name a symbol, `path#symbol`, which `symbols.ts` resolves to
+ * its current lines (#3034). For a file region the document also carries
+ * `why`: who made the region's current lines, from `git blame`, the agent run
+ * behind each (narrowed by the hunks a run recorded when several share a
+ * commit), and the decisions governing the region, most relevant first, with
+ * `explained: false` and closed gap codes when nothing accounts for it.
  */
 
 import { execFileSync } from "node:child_process";
@@ -48,7 +56,8 @@ import type { DecidedIn } from "./record-decided";
 import { importKindModule, loadRecordKind, parseFrontMatter, RecordReadError, supersedesTargets, type LoadedRecordKind } from "./records";
 import { queryRecords, type RecordView } from "./records-cli";
 import { isPluginCode, type PluginCode, type ReasonCode } from "./reason-codes";
-import { runsForCommits, type RunCost, type RunPin, type RunUsage } from "./runs";
+import { runsForCommits, type RunCost, type RunPin, type RunUsage, type RunView } from "./runs";
+import { resolveSymbol } from "./symbols";
 import { readTrailerJoins, type CommitTrailerJoins } from "./trailer-joins";
 import { joinPath, skippedDir, type WorkspaceTree } from "./tree";
 import { activeAttestors, type ProvenanceLevel } from "./trust/attestor";
@@ -125,8 +134,27 @@ export const INTENT_ERROR_CODES = [
   "intent-region-invalid",
   /** --record names an id no record of a decision kind read has. */
   "intent-record-unknown",
+  /** The region names a symbol in a file no resolver reads (#3034). */
+  "intent-symbol-unsupported",
+  /** The region names a symbol the file does not declare (#3034). */
+  "intent-symbol-unknown",
+  /** The region names a symbol that matches more than one declaration (#3034). */
+  "intent-symbol-ambiguous",
 ] as const satisfies readonly ReasonCode[];
 export type IntentErrorCode = (typeof INTENT_ERROR_CODES)[number];
+
+/** Why `why` can't account for some or all of a region (#3034). Closed. */
+export const INTENT_WHY_CODES = [
+  /** No current decision governs the region, at any granularity, and none is carried out by the commits or runs that made its lines. */
+  "intent-why-no-decision",
+  /** None of the region's current lines was made by a commit an agent run is joined to. */
+  "intent-why-no-run",
+  /** Some of the region's lines are not committed, so nothing made them yet. */
+  "intent-why-uncommitted",
+  /** Some lines come from a commit that several runs made, and no run's recorded hunks say which wrote them. */
+  "intent-why-run-ambiguous",
+] as const satisfies readonly ReasonCode[];
+export type IntentWhyCode = (typeof INTENT_WHY_CODES)[number];
 
 export class IntentError extends Error {
   constructor(
@@ -159,6 +187,8 @@ export interface RegionNode {
   generated: boolean | null;
   /** Set when the region was given as a graph node id. */
   node: string | null;
+  /** Set when the region was given as `path#symbol` (#3034): the symbol as given, the declaration it resolved to, and its kind. `lines` holds its current lines. */
+  symbol?: { name: string; qualified: string; kind: string } | null;
 }
 
 export interface FileNode {
@@ -363,6 +393,10 @@ export interface RunNode {
   usage: RunUsage | null;
   cost: RunCost | null;
   transcript: RunPin | null;
+  /** The instruction the run was given, pinned by hash, with the writer's excerpt when it gave one (#3034). */
+  instruction?: RunPin | null;
+  /** The fencing token of the work lease it worked under (#3034). */
+  lease?: string | null;
 }
 
 export type IntentNode = RegionNode | FileNode | MemberNode | CommitNode | JoinedNode | EvidenceEntryNode | DecisionNode | WorkNode | ArtifactNode | LinkNode | FindingNode | RunNode;
@@ -375,7 +409,74 @@ export type IntentEdge =
   | { kind: "touched-by"; from: string; to: string; lines: LineRange[] | null }
   | { kind: "within"; from: string; to: string; state: "decided" | "decided-by-window" | "worked" }
   | { kind: "made-by"; from: string; to: string; joinedBy: ("trailer" | "record")[] }
-  | { kind: "produced-by" | "serves" | "cites-evidence" | "supersedes" | "links" | "implements" | "needs" | "addressed-by" | "carries"; from: string; to: string };
+  | { kind: "produced-by" | "serves" | "cites-evidence" | "supersedes" | "links" | "implements" | "needs" | "addressed-by" | "carries" | "worked-on"; from: string; to: string };
+
+/** Lines of the region that one commit, and the same runs, last wrote (#3034). */
+export interface WhySpan {
+  start: number;
+  end: number;
+  /** The commit node, or null for lines not committed yet. */
+  commit: string | null;
+  sha: string | null;
+  /** The run nodes behind these lines: the run the commit's Chant-Run names first, then those whose record lists it. */
+  runs: string[];
+  /** `hunks` when a run's recorded hunks chose among the commit's runs; null when every run that made the commit is listed. */
+  narrowedBy: "hunks" | null;
+}
+
+/** Why a decision is in `why`, most relevant first (#3034). */
+export type WhyRelevance = "carried" | "path" | "contract" | "issue" | "member" | "related";
+
+export interface WhyDecision {
+  decision: string;
+  /**
+   * carried: a commit or run that made the region's current lines carries it
+   * out. path, contract, issue, member: it constrains the region that way.
+   * related: it is in the graph only through supersession, or because a
+   * commit that no longer made any current line carried it out.
+   */
+  relevance: WhyRelevance;
+  /** Not superseded. */
+  current: boolean;
+  /** Its state is one its kind closes, such as ratified. */
+  closed: boolean;
+  /** How many of the region's current lines were made as its own work. */
+  lines: number;
+}
+
+export interface WhyRun {
+  run: string;
+  /** How many of the region's current lines it wrote. */
+  lines: number;
+  /** The commit nodes through which it made them. */
+  commits: string[];
+  /** The work item it worked on, as the run record names it, and its node when a work kind read has it. */
+  unit: { id: string; kind: string | null; node: string | null } | null;
+  /** The decision nodes it carried out: through its work item's implements, and the decision records it names. */
+  decisions: string[];
+}
+
+export interface WhyGap {
+  code: IntentWhyCode;
+  message: string;
+  /** The lines the gap is about, when it is about some of them. */
+  lines?: LineRange[];
+}
+
+/** The answer to "why is it like this" over the region (#3034, hud#700). */
+export interface WhyAnswer {
+  /** The lines accounted for: the region's range, the whole file, or null for a directory, which is not blamed. */
+  lines: LineRange | null;
+  /** The current lines, top to bottom, each span with the commit and runs that last wrote it. Empty for a directory. */
+  blame: WhySpan[];
+  /** The decisions governing the region, most relevant first. */
+  decisions: WhyDecision[];
+  /** The runs that wrote the current lines, most lines first; for a directory, every run in the walk, newest first. */
+  runs: WhyRun[];
+  /** Whether a current decision governs the region or is carried out by what made its lines. */
+  explained: boolean;
+  gaps: WhyGap[];
+}
 
 export interface IntentReason {
   code: IntentReasonCode;
@@ -399,13 +500,14 @@ export type IntentDocument =
       edges: IntentEdge[];
       reasons: IntentReason[];
       summary: { commits: number; decisions: number; artifacts: number; findings: number };
+      why: WhyAnswer;
     })
   | (Head & { error: { code: IntentErrorCode; message: string } });
 
 export interface IntentQuery {
   /** Where the walk up to the declaration starts, and what the region path is relative to. */
   cwd: string;
-  /** `path`, `path:line` or `path:start-end`, or a graph node id `<member>/<id>`. */
+  /** `path`, `path:line`, `path:start-end` or `path#symbol`, or a graph node id `<member>/<id>`. */
   region: string;
   at?: string;
   /**
@@ -475,6 +577,45 @@ export function regionHistory(top: string, rev: string, gitPath: string, type: "
     .map((s) => s.trim())
     .filter(Boolean)
     .map((sha) => ({ sha, lines: null }));
+}
+
+/** One current line of a file, and the commit that last wrote it. */
+export interface BlamedLine {
+  line: number;
+  /** Null for a line not committed yet. */
+  sha: string | null;
+  /** The file's path in that commit, from the repository root. */
+  origPath: string;
+  /** The line's number in that commit's version of the file. */
+  origLine: number;
+}
+
+const ZERO_SHA = /^0+$/;
+
+/**
+ * `git blame` over a file's lines (#3034): at `rev`, or in the working tree
+ * when `rev` is null, where a line not committed yet has no commit. Undefined
+ * when git can't blame the file, such as one never committed.
+ */
+export function blameLines(top: string, rev: string | null, gitPath: string, lines: LineRange | null): BlamedLine[] | undefined {
+  const out = tryGit(top, ["blame", "--line-porcelain", ...(lines ? [`-L${lines.start},${lines.end}`] : []), ...(rev ? [rev] : []), "--", gitPath]);
+  if (out === undefined) return undefined;
+  const result: BlamedLine[] = [];
+  let current: { sha: string; origLine: number; line: number; origPath: string } | undefined;
+  for (const l of out.split("\n")) {
+    if (l.startsWith("\t")) {
+      if (current) result.push({ line: current.line, sha: ZERO_SHA.test(current.sha) ? null : current.sha, origPath: current.origPath, origLine: current.origLine });
+      current = undefined;
+      continue;
+    }
+    const head = l.match(/^([0-9a-f]{40,64}) (\d+) (\d+)(?: \d+)?$/);
+    if (head) {
+      current = { sha: head[1], origLine: Number(head[2]), line: Number(head[3]), origPath: gitPath };
+      continue;
+    }
+    if (current && l.startsWith("filename ")) current.origPath = l.slice("filename ".length);
+  }
+  return result;
 }
 
 /** Subject, body, author, date and trailers of each commit. */
@@ -573,7 +714,8 @@ export function parseRegion(arg: string): { path: string; lines: LineRange | nul
   return { path: m[1], lines: { start, end } };
 }
 
-function regionId(path: string, lines: LineRange | null): string {
+function regionId(path: string, lines: LineRange | null, symbol?: string): string {
+  if (symbol !== undefined) return `region:${path}#${symbol}`;
   return `region:${path}${lines ? `:${lines.start}${lines.end === lines.start ? "" : `-${lines.end}`}` : ""}`;
 }
 
@@ -684,13 +826,34 @@ export async function loadKinds(query: IntentQuery, top: string): Promise<Loaded
   return out;
 }
 
-async function resolveRegion(query: IntentQuery, located: LocatedWorkspace, declaration: Declaration): Promise<{ path: string; lines: LineRange | null; node: string | null }> {
+interface ResolvedRegion {
+  path: string;
+  lines: LineRange | null;
+  node: string | null;
+  symbol: { name: string; qualified: string; kind: string } | null;
+}
+
+async function resolveRegion(query: IntentQuery, located: LocatedWorkspace, declaration: Declaration): Promise<ResolvedRegion> {
   const parsed = parseRegion(query.region);
   if ("error" in parsed) throw new IntentError("intent-region-invalid", parsed.error);
-  const rel = toPosix(relative(realpathOr(located.rootOnDisk), resolve(realpathOr(query.cwd), parsed.path)));
-  const path = rel === "" ? "." : rel;
-  if (path === "." || (isWorkspacePath(path) && !path.startsWith("../") && located.tree.stat(path) !== undefined)) {
-    return { path, lines: parsed.lines, node: null };
+  const inWorkspace = (p: string): string | undefined => {
+    const rel = toPosix(relative(realpathOr(located.rootOnDisk), resolve(realpathOr(query.cwd), p)));
+    const path = rel === "" ? "." : rel;
+    return path === "." || (isWorkspacePath(path) && !path.startsWith("../") && located.tree.stat(path) !== undefined) ? path : undefined;
+  };
+  const path = inWorkspace(parsed.path);
+  if (path !== undefined) return { path, lines: parsed.lines, node: null, symbol: null };
+  // path#symbol (#3034): the symbol's current lines in the tree read.
+  const hash = parsed.lines ? -1 : query.region.lastIndexOf("#");
+  if (hash > 0) {
+    const name = query.region.slice(hash + 1);
+    const file = inWorkspace(query.region.slice(0, hash));
+    if (file !== undefined && name !== "") {
+      if (file === "." || located.tree.stat(file) !== "file") throw new IntentError("intent-region-invalid", `${file} is a directory, and a symbol needs a file`);
+      const r = resolveSymbol(file, located.tree.read(file), name);
+      if (!r.ok) throw new IntentError(r.reason === "unsupported" ? "intent-symbol-unsupported" : r.reason === "ambiguous" ? "intent-symbol-ambiguous" : "intent-symbol-unknown", `${r.message}${located.tree.label}`);
+      return { path: file, lines: r.declaration.lines, node: null, symbol: { name, qualified: r.declaration.qualified, kind: r.declaration.kind } };
+    }
   }
   // A graph node id, <member>/<id>, when no such path exists (#2650 B1).
   const slash = query.region.indexOf("/");
@@ -699,10 +862,10 @@ async function resolveRegion(query: IntentQuery, located: LocatedWorkspace, decl
     const loc = await (query.resolveNode ?? resolveNodeFromGraph)(query.cwd, query.at, member.name, query.region);
     if (loc) {
       const file = joinPath(member.dir, loc.file);
-      return { path: file === "" ? "." : file, lines: loc.line ? { start: loc.line, end: loc.line } : null, node: query.region };
+      return { path: file === "" ? "." : file, lines: loc.line ? { start: loc.line, end: loc.line } : null, node: query.region, symbol: null };
     }
   }
-  throw new IntentError("intent-region-invalid", `${query.region} is not a path in the workspace${located.tree.label}, or a graph node id`);
+  throw new IntentError("intent-region-invalid", `${query.region} is not a path in the workspace${located.tree.label}, a path#symbol, or a graph node id`);
 }
 
 /** Build the intent document. Never throws an {@link IntentError}, {@link WorkspaceReadError} or {@link RecordReadError}. */
@@ -749,8 +912,19 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
 
   // The region, its files and its member.
   const member = region.path === "." ? (declaration.members.find((m) => m.dir === ".")?.name ?? null) : memberHolding(region.path, declaration.members);
-  const rid = regionId(region.path, region.lines);
-  add<RegionNode>({ id: rid, kind: "region", path: region.path, lines: region.lines, member, at: located.at, type, generated: type === "file" ? isGeneratedPath(declaration, region.path) : null, node: region.node });
+  const rid = regionId(region.path, region.lines, region.symbol?.name);
+  add<RegionNode>({
+    id: rid,
+    kind: "region",
+    path: region.path,
+    lines: region.lines,
+    member,
+    at: located.at,
+    type,
+    generated: type === "file" ? isGeneratedPath(declaration, region.path) : null,
+    node: region.node,
+    symbol: region.symbol,
+  });
   const files = type === "dir" ? filesUnder(located.tree, region.path) : [];
   for (const f of files) add<FileNode>({ id: `file:${f}`, kind: "file", path: f, member: memberHolding(f, declaration.members), generated: isGeneratedPath(declaration, f) });
   const memberNode = (name: string) => {
@@ -766,6 +940,19 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
   const workspacePrefix = located.root === "." ? "" : located.root;
   const gitPath = joinPath(workspacePrefix, region.path);
   const touched = rev ? regionHistory(top, rev, gitPath, type, region.lines) : [];
+  // Who last wrote each current line of a file region (#3034). A commit blame
+  // names and the history walk missed, as when a move confuses git log -L,
+  // joins the commits that touched the region.
+  const fileLines = type === "file" ? (region.lines ?? { start: 1, end: Math.max(1, located.tree.read(region.path).replace(/\n$/, "").split("\n").length) }) : null;
+  const blamed: BlamedLine[] =
+    fileLines === null
+      ? []
+      : ((rev ? blameLines(top, located.at, gitPath, region.lines) : undefined) ??
+        // A file git can't blame in the working tree has never been committed: every line is new.
+        (located.at === null ? Array.from({ length: fileLines.end - fileLines.start + 1 }, (_, i) => ({ line: fileLines.start + i, sha: null, origPath: gitPath, origLine: fileLines.start + i })) : []));
+  for (const sha of new Set(blamed.map((b) => b.sha).filter((x): x is string => x !== null))) {
+    if (!touched.some((t) => t.sha === sha)) touched.push({ sha, lines: null });
+  }
   const details = commitDetails(top, touched.map((t) => t.sha));
 
   // Each commit's provenance, judged by the policy at base as records judges a record's (#2547).
@@ -873,6 +1060,8 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
         usage: r?.usage ?? null,
         cost: r?.cost ?? null,
         transcript: r?.transcript ?? null,
+        instruction: r?.instruction ?? null,
+        lease: r?.lease ?? null,
       });
       edges.push({ kind: "made-by", from: `commit:${t.sha}`, to: node.id, joinedBy: ref.joinedBy });
     }
@@ -1171,16 +1360,6 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
     }
     if (node.constrains.length > 0) workCovering.push(h);
   }
-  for (const h of workAll.filter((x) => x.node)) {
-    for (const id of implementedIds(h)) {
-      const hit = decisionById.get(id.slice("record:".length))!;
-      edges.push({ kind: "implements", from: h.node!.id, to: decisionNode(hit.kind, hit.view).id });
-    }
-    for (const n of idList(h.view.data, workSpec(h).needs)) {
-      const hit = workByKey.get(`${h.kind.records!.loaded.kind.name}/${n}`);
-      if (hit) edges.push({ kind: "needs", from: h.node!.id, to: workNode(hit).id });
-    }
-  }
   const workWindows = new Map<string, { from: Set<string>; until: Set<string> | null }>();
   if (rev) {
     for (const h of workCovering) {
@@ -1202,6 +1381,30 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
   // each, and is the own work of a decision it names or that a work item it
   // names implements.
   const recordKinds = new Map(kinds.filter((k) => k.records).map((k) => [k.records!.loaded.kind.name, k]));
+  /** The work item a run worked on and the records it names, among the kinds read, deduplicated. */
+  const runTargets = (r: RunView): { node: string; work?: WorkHit; decision?: string }[] => {
+    const out: { node: string; work?: WorkHit; decision?: string }[] = [];
+    const push = (x: { node: string; work?: WorkHit; decision?: string }) => {
+      if (!out.some((o) => o.node === x.node)) out.push(x);
+    };
+    if (r.unit) {
+      const named = r.unit.kind ? workKinds.filter((k) => k.records!.loaded.kind.name === r.unit!.kind) : workKinds;
+      const hits = named.map((k) => workByKey.get(`${k.records!.loaded.kind.name}/${r.unit!.id}`)).filter((h): h is WorkHit => h !== undefined);
+      if (hits.length === 1) push({ node: workNode(hits[0]).id, work: hits[0] });
+    }
+    for (const ref of r.records) {
+      const k = recordKinds.get(ref.kind);
+      if (!k) continue;
+      if (k.records!.loaded.kind.work) {
+        const h = workByKey.get(`${ref.kind}/${ref.id}`);
+        if (h) push({ node: workNode(h).id, work: h });
+        continue;
+      }
+      const hit = decisionById.get(`${ref.kind}/${ref.id}`);
+      if (hit) push({ node: decisionNode(hit.kind, hit.view).id, decision: `${ref.kind}/${ref.id}` });
+    }
+    return out;
+  };
   for (const t of touched) {
     const c = nodes.get(`commit:${t.sha}`) as CommitNode | undefined;
     const j = joined.get(t.sha);
@@ -1235,6 +1438,37 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
     if (item) {
       const hits = workKinds.map((k) => workByKey.get(`${k.records!.loaded.kind.name}/${item}`)).filter((h): h is WorkHit => h !== undefined);
       if (hits.length === 1) carryWork(hits[0]);
+    }
+    // The runs that made the commit (#3034): its run's work item and the
+    // records the run names are carried as a Chant-Lease and a Chant-Record are.
+    for (const ref of runJoins.refs.get(t.sha) ?? []) {
+      const r = runJoins.runs.get(ref.id);
+      if (!r) continue;
+      for (const target of runTargets(r)) {
+        if (target.work) carryWork(target.work);
+        else if (target.decision) {
+          carry(target.node);
+          j.decisions.push(target.decision);
+        }
+      }
+    }
+  }
+  // Each recorded run in the walk to the work item and records it worked on (#3034).
+  for (const n of [...nodes.values()]) {
+    if (n.kind !== "run") continue;
+    const r = runJoins.runs.get(n.run);
+    if (!r) continue;
+    for (const target of runTargets(r)) edges.push({ kind: "worked-on", from: n.id, to: target.node });
+  }
+  // Each work item in the graph, those its commits and runs carry included, to the decisions it implements and the items it needs.
+  for (const h of workAll.filter((x) => x.node)) {
+    for (const id of implementedIds(h)) {
+      const hit = decisionById.get(id.slice("record:".length))!;
+      edges.push({ kind: "implements", from: h.node!.id, to: decisionNode(hit.kind, hit.view).id });
+    }
+    for (const n of idList(h.view.data, workSpec(h).needs)) {
+      const hit = workByKey.get(`${h.kind.records!.loaded.kind.name}/${n}`);
+      if (hit) edges.push({ kind: "needs", from: h.node!.id, to: workNode(hit).id });
     }
   }
 
@@ -1418,6 +1652,7 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
     }
   }
   for (const f of findings) nodes.set(f.id, f);
+  const why = explain();
   const all = [...nodes.values()];
   return {
     doc: {
@@ -1436,7 +1671,121 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
         artifacts: all.filter((n) => n.kind === "artifact").length,
         findings: findings.length,
       },
+      why,
     },
     failed: reasons.some((r) => r.code === "intent-plugin-failed"),
   };
+
+  /** "Why is it like this" over the region (#3034): who made its current lines, and the decisions governing it, most relevant first. */
+  function explain(): WhyAnswer {
+    const hunksOf = (run: string, sha: string) => runJoins.runs.get(run)?.commits.find((c) => c.sha === sha)?.hunks ?? null;
+    // Each current line: its commit, and the runs that wrote it.
+    const who = blamed.map((b) => {
+      if (b.sha === null) return { line: b.line, sha: null, runs: [] as string[], narrowedBy: null as "hunks" | null };
+      const sha = b.sha;
+      const refs = (runJoins.refs.get(sha) ?? []).map((r) => r.id);
+      const withHunks = refs.filter((id) => hunksOf(id, sha) !== null);
+      if (withHunks.length === 0) return { line: b.line, sha, runs: refs, narrowedBy: null };
+      const wrote = withHunks.filter((id) => hunksOf(id, sha)!.some((h) => h.path === b.origPath && h.start <= b.origLine && b.origLine <= h.end));
+      // A run that recorded its hunks and doesn't cover the line didn't write it; a run that recorded none may have.
+      return { line: b.line, sha, runs: wrote.length > 0 ? wrote : refs.filter((id) => !withHunks.includes(id)), narrowedBy: "hunks" as const };
+    });
+    const spans: WhySpan[] = [];
+    for (const w of who) {
+      const last = spans[spans.length - 1];
+      if (last && last.end === w.line - 1 && last.sha === w.sha && last.narrowedBy === w.narrowedBy && last.runs.join("\0") === w.runs.map((r) => `run:${r}`).join("\0")) {
+        last.end = w.line;
+        continue;
+      }
+      spans.push({ start: w.line, end: w.line, commit: w.sha ? `commit:${w.sha}` : null, sha: w.sha, runs: w.runs.map((r) => `run:${r}`), narrowedBy: w.narrowedBy });
+    }
+    const ranges = (lines: number[]): LineRange[] => {
+      const out: LineRange[] = [];
+      for (const l of lines) {
+        const last = out[out.length - 1];
+        if (last && last.end === l - 1) last.end = l;
+        else out.push({ start: l, end: l });
+      }
+      return out;
+    };
+
+    // The decisions, most relevant first.
+    const decisionNodes = [...nodes.values()].filter((n): n is DecisionNode => n.kind === "decision");
+    const ownLines = (d: DecisionNode) => who.filter((w) => w.sha !== null && ownWork(joined.get(w.sha) ?? { contracts: [], authorship: [], decisions: [], carries: [] }, d)).length;
+    const ORDER: WhyRelevance[] = ["carried", "path", "contract", "issue", "member", "related"];
+    const ranked = decisionNodes.map((d) => {
+      const lines = ownLines(d);
+      const carried = lines > 0 || (fileLines === null && touched.some((t) => ownWork(joined.get(t.sha) ?? { contracts: [], authorship: [], decisions: [], carries: [] }, d)));
+      const granularities = new Set(d.constrains.map((c) => c.granularity));
+      const relevance: WhyRelevance = carried ? "carried" : ((["path", "contract", "issue", "member"] as const).find((g) => granularities.has(g)) ?? "related");
+      // A narrower path constraint is more specific to the region.
+      const specificity = Math.max(0, ...d.constrains.filter((c) => c.granularity === "path").map((c) => c.entry.length));
+      return { d, entry: { decision: d.id, relevance, current: d.supersededBy === null, closed: d.closed, lines } satisfies WhyDecision, specificity };
+    });
+    ranked.sort(
+      (a, b) =>
+        Number(b.entry.current) - Number(a.entry.current) ||
+        ORDER.indexOf(a.entry.relevance) - ORDER.indexOf(b.entry.relevance) ||
+        b.entry.lines - a.entry.lines ||
+        Number(b.entry.closed) - Number(a.entry.closed) ||
+        b.specificity - a.specificity ||
+        (b.d.decidedIn?.date ?? "").localeCompare(a.d.decidedIn?.date ?? "") ||
+        a.d.id.localeCompare(b.d.id),
+    );
+    const decisions = ranked.map((r) => r.entry);
+
+    // The runs that wrote the current lines, most lines first; for a directory, every run in the walk.
+    const runNodes = [...nodes.values()].filter((n): n is RunNode => n.kind === "run");
+    const runEntry = (n: RunNode, lines: number, commits: string[]): WhyRun => {
+      const r = runJoins.runs.get(n.run);
+      const targets = edges.filter((e) => e.kind === "worked-on" && e.from === n.id).map((e) => nodes.get(e.to));
+      const work = r?.unit ? targets.find((t): t is WorkNode => t?.kind === "work" && t.record === r.unit!.id) : undefined;
+      const carried = new Set<string>();
+      for (const t of targets) {
+        if (t?.kind === "decision") carried.add(t.id);
+        if (t?.kind === "work") for (const e of edges) if (e.kind === "implements" && e.from === t.id) carried.add(e.to);
+      }
+      return { run: n.id, lines, commits, unit: r?.unit ? { id: r.unit.id, kind: r.unit.kind, node: work?.id ?? null } : null, decisions: [...carried] };
+    };
+    let runs: WhyRun[];
+    if (fileLines !== null) {
+      const tally = new Map<string, { lines: number; commits: Set<string> }>();
+      for (const w of who) {
+        for (const id of w.runs) {
+          const t = tally.get(id) ?? tally.set(id, { lines: 0, commits: new Set() }).get(id)!;
+          t.lines++;
+          t.commits.add(`commit:${w.sha}`);
+        }
+      }
+      runs = [...tally]
+        .map(([id, t]) => ({ n: nodes.get(`run:${id}`) as RunNode, t }))
+        .filter((x) => x.n !== undefined)
+        .sort((a, b) => b.t.lines - a.t.lines || (b.n.startedAt ?? "").localeCompare(a.n.startedAt ?? "") || a.n.run.localeCompare(b.n.run))
+        .map((x) => runEntry(x.n, x.t.lines, [...x.t.commits]));
+    } else {
+      runs = runNodes
+        .sort((a, b) => (b.startedAt ?? "").localeCompare(a.startedAt ?? "") || a.run.localeCompare(b.run))
+        .map((n) => runEntry(n, 0, edges.filter((e) => e.kind === "made-by" && e.to === n.id).map((e) => e.from)));
+    }
+
+    const explained = decisions.some((d) => d.current && d.relevance !== "related");
+    const gaps: WhyGap[] = [];
+    if (!explained) {
+      gaps.push({
+        code: "intent-why-no-decision",
+        message: readsRecords ? `no current decision governs ${region.path}, and none is carried out by what made its lines` : `no record kind was read, so no decision can account for ${region.path}`,
+      });
+    }
+    const committed = who.filter((w) => w.sha !== null);
+    if (fileLines !== null ? committed.length > 0 && committed.every((w) => w.runs.length === 0) : touched.length > 0 && runNodes.length === 0) {
+      gaps.push({ code: "intent-why-no-run", message: `no agent run is joined to the commits that made ${fileLines !== null ? "the current lines of " : ""}${region.path}` });
+    }
+    const uncommitted = who.filter((w) => w.sha === null).map((w) => w.line);
+    if (uncommitted.length > 0) gaps.push({ code: "intent-why-uncommitted", message: `${uncommitted.length} ${uncommitted.length === 1 ? "line is" : "lines are"} not committed yet`, lines: ranges(uncommitted) });
+    const ambiguous = who.filter((w) => w.runs.length > 1).map((w) => w.line);
+    if (ambiguous.length > 0) {
+      gaps.push({ code: "intent-why-run-ambiguous", message: `${ambiguous.length} ${ambiguous.length === 1 ? "line comes" : "lines come"} from a commit several runs made, and no run's recorded hunks say which wrote ${ambiguous.length === 1 ? "it" : "them"}`, lines: ranges(ambiguous) });
+    }
+    return { lines: fileLines, blame: spans, decisions, runs, explained, gaps };
+  }
 }

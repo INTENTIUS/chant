@@ -226,6 +226,9 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `since-session-open` | reason, `records --since` | `--since` names a session that is still open, so the comparison runs to the working tree. |
 | `intent-region-invalid` | error, `graph --intent` | The region's path, or its line range, does not exist in the tree read. |
 | `intent-record-unknown` | error, `graph --intent --record` | No record of a decision kind read has the id. |
+| `intent-symbol-unsupported` | error, `graph --intent` | The region names a symbol, `path#symbol`, in a file no symbol resolver reads. A line range still works for it. |
+| `intent-symbol-unknown` | error, `graph --intent` | The file does not declare the symbol in the tree read. The message lists its top-level declarations. |
+| `intent-symbol-ambiguous` | error, `graph --intent` | The symbol matches more than one declaration in the file. The message lists their qualified names, and giving one picks it. |
 | `patch-path-invalid` | error, `patch` | A `--path` is not a relative path inside the workspace. |
 | `intent-history-shallow` | reason, `graph --intent` | The repository is a shallow clone, so the region's history stops at the clone's boundary. |
 | `intent-plugin-failed` | reason, `graph --intent` | A kind file's `commitJoins` failed for a commit. |
@@ -246,6 +249,10 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `intent-decision-unimplemented` | finding, `graph --intent` | A decided decision constrains the region, no work item that is not dropped implements it, and no commit falls in its window. Only with a work kind read. |
 | `intent-work-blocked` | finding, `graph --intent` | A work item constraining the region has commits in its window while a work item it needs is not done. |
 | `intent-work-open-decided-code` | finding, `graph --intent` | Commits in the region are a decision's own work while the work item implementing that decision is still open. |
+| `intent-why-no-decision` | gap, `graph --intent` | No current decision governs the region at any granularity, and none is carried out by the commits or runs that made its current lines. `why.explained` is `false`. |
+| `intent-why-no-run` | gap, `graph --intent` | No agent run is joined to the commits that made the region's current lines. |
+| `intent-why-uncommitted` | gap, `graph --intent` | Some of the region's lines are not committed yet. The gap's `lines` names them. |
+| `intent-why-run-ambiguous` | gap, `graph --intent` | Some lines come from a commit several agent runs made, and no run's recorded hunks say which wrote them. The gap's `lines` names them. |
 | `change-uncovered` | finding, `check --changes` | A path the diff changes is covered by no current decided record and no open work item, by path or by its member. |
 | `change-out-of-scope` | finding, `check --changes` | A record in hand for the change, such as the work item it is for or a decision that item implements, lists a path the diff changes in its `out_of_scope`. |
 | `composites-no-chant-member` | reason, `graph --composites` | No member of kind `chant` was read, so nothing declares a composite instance or a component. |
@@ -378,10 +385,10 @@ A work lease is written by [`chant workspace work claim|renew|release`](/chant/c
 | `by`, `agent` | the principal it worked for and the agent session it ran as |
 | `harness`, `model`, `provider` | `{ name, version }`, and the model and provider as the writer named them |
 | `unit`, `lease`, `records` | the work item `{ id, kind }`, the lease token, and the other records it worked on as `{ kind, id }` |
-| `instruction`, `transcript` | each pinned as `{ sha256, bytes, ref }`, or `null`. Neither is ever copied |
+| `instruction`, `transcript` | each pinned as `{ sha256, bytes, ref }`, or `null`. Neither is ever copied. The instruction may also carry `excerpt`, a short excerpt the writer gave to show beside the hash ([#3034](https://github.com/INTENTIUS/chant/issues/3034)) |
 | `usage`, `models` | the turns and token counts, `null` when it reported none, and each model's share when the harness gave one |
 | `cost` | `{ amount, currency, source }`, or `null` when it reported no cost |
-| `commits` | `{ sha, patchId, joinedBy }`: `record` when its end lists the commit, `trailer` when the commit on `HEAD`'s history carries its `Chant-Run` |
+| `commits` | `{ sha, patchId, joinedBy, hunks }`: `record` when its end lists the commit, `trailer` when the commit on `HEAD`'s history carries its `Chant-Run`. `hunks` lists `{ path, start, end }`, the lines the run wrote in that commit, when its end gave them, and is `null` otherwise ([#3034](https://github.com/INTENTIUS/chant/issues/3034)) |
 | `decisions` | `<kind>/<id>` of each decision its work item implements, and each decision record it names |
 | `ledger` | its file on the branch |
 
@@ -405,9 +412,9 @@ A record kind with an `answers` block is an answer kind ([ws-058](https://github
 
 ## The intent graph
 
-`chant workspace graph --intent <region> --json` prints the intent graph over one region ([#2651](https://github.com/INTENTIUS/chant/issues/2651)). It encodes the walk from a piece of code back to the decisions, artifacts and commits behind it, as [#2650](https://github.com/INTENTIUS/chant/issues/2650) section B describes it. chant emits the graph and a reader such as hud draws it (D8 and D15 of [#2524](https://github.com/INTENTIUS/chant/issues/2524)).
+`chant workspace graph --intent <region> --json` prints the intent graph over one region ([#2651](https://github.com/INTENTIUS/chant/issues/2651)). Besides a path, a line range and a graph node id, the region can be `path#symbol`: a TypeScript or JavaScript declaration, resolved to its current lines ([#3034](https://github.com/INTENTIUS/chant/issues/3034)). It encodes the walk from a piece of code back to the decisions, artifacts and commits behind it, as [#2650](https://github.com/INTENTIUS/chant/issues/2650) section B describes it. chant emits the graph and a reader such as hud draws it (D8 and D15 of [#2524](https://github.com/INTENTIUS/chant/issues/2524)).
 
-A result has `$schema`, `contract`, `chant`, `at` and `workspace` like the other documents. `region` is the id of the region node. `history` names the commit the history was read from (`rev`), how the region was followed (`line-range`, `file` or `directory`) and whether the clone is `shallow`. `kinds` lists each kind file with its `name`, the record kind it reads and the form of its `commitJoins`. The files are the `--kind` files, or without `--kind`, every kind the declaration names, in its order ([#2680](https://github.com/INTENTIUS/chant/issues/2680)). The name is the record kind's name, or for a file with no record kind, the file's name without `.kind.mjs`. `nodes` and `edges` hold the graph, and `reasons` holds parts of the walk that could not be read. A failure has `error: { code, message }` with a declaration code, a record kind code or `intent-region-invalid`.
+A result has `$schema`, `contract`, `chant`, `at` and `workspace` like the other documents. `region` is the id of the region node. `history` names the commit the history was read from (`rev`), how the region was followed (`line-range`, `file` or `directory`) and whether the clone is `shallow`. `kinds` lists each kind file with its `name`, the record kind it reads and the form of its `commitJoins`. The files are the `--kind` files, or without `--kind`, every kind the declaration names, in its order ([#2680](https://github.com/INTENTIUS/chant/issues/2680)). The name is the record kind's name, or for a file with no record kind, the file's name without `.kind.mjs`. `nodes` and `edges` hold the graph, and `reasons` holds parts of the walk that could not be read. `why` answers why the region is like this, as described [below](#why-the-region-is-like-this). A failure has `error: { code, message }` with a declaration code, a record kind code, `intent-region-invalid`, or an `intent-symbol-` code for a symbol that can't be resolved.
 
 The walk runs in this order, and the nodes are listed in it:
 
@@ -421,7 +428,7 @@ The walk runs in this order, and the nodes are listed in it:
 
 | Node kind | Id | Fields |
 |---|---|---|
-| `region` | `region:<path>` or `region:<path>:<start>-<end>` | `path` from the workspace root, `lines` or `null`, `member`, `at`, `type` (`file` or `dir`), `generated` for a file, and `node` when the region was given as a graph node id |
+| `region` | `region:<path>`, `region:<path>:<start>-<end>` or `region:<path>#<symbol>` | `path` from the workspace root, `lines` or `null`, `member`, `at`, `type` (`file` or `dir`), `generated` for a file, `node` when the region was given as a graph node id, and `symbol` as `{ name, qualified, kind }` when it was given as `path#symbol`, with the symbol's current lines in `lines` |
 | `file` | `file:<path>` | `path`, `member`, `generated` |
 | `member` | `member:<name>` | `name`, `dir`, `memberKind` |
 | `commit` | `commit:<sha>` | `sha`, `subject`, `author`, `date`, `trailers`, `pullRequest`, `signature` (the provenance level, judged by the signers at base as `records` judges a record), `lines`, the ranges it changed in a line-range region, `state`: `decided`, `decided-by-window`, `undecided`, or `null` when no record kind was read, and `joins`, what [chant's trailers](#commit-trailers) on it say |
@@ -430,7 +437,7 @@ The walk runs in this order, and the nodes are listed in it:
 | `decision` | `record:<kind>/<id>` | `recordKind`, `record`, `path`, `title`, `state`, `closed`, `valid`, `reasons`, `provenance`, `decided_by`, `decided_on`, `decidedIn` (the commit that decided the record, as `{ sha, date, subject }`, or `null`), `reviews` (agree, dissent, abstain and open concerns, the dissents with neither `addressed_by` nor `withdrawn_on`), `supersededBy`, `supersedes`, and `constrains`, the entries that cover the region with their granularity |
 | `artifact` | `artifact:<path>` | `path`, `anchor`, `pinnedSha256`, `currentSha256` and `pinState`: the state of a current decision's pin, or `unpinned` when only superseded decisions pin it |
 | `link` | `link:<n>` | `row`, the member link row |
-| `run` | `run:<id>` | an agent run that made a commit in the walk ([#3033](https://github.com/INTENTIUS/chant/issues/3033)), from the run ledger: `run`, `recorded`, `state`, `harness`, `model`, `provider`, `by`, `agent`, `unit`, `startedAt`, `endedAt`, `outcome`, `usage`, `cost` and `transcript`. A run a `Chant-Run` trailer names and the ledger lacks has `recorded: false` and nulls |
+| `run` | `run:<id>` | an agent run that made a commit in the walk ([#3033](https://github.com/INTENTIUS/chant/issues/3033)), from the run ledger: `run`, `recorded`, `state`, `harness`, `model`, `provider`, `by`, `agent`, `unit`, `startedAt`, `endedAt`, `outcome`, `usage`, `cost`, `transcript`, and `instruction` and `lease` ([#3034](https://github.com/INTENTIUS/chant/issues/3034)). A run a `Chant-Run` trailer names and the ledger lacks has `recorded: false` and nulls |
 | `finding` | `finding:<code>:<n>` | `code`, `message`, and `concerns`, the ids of the nodes it is about. A plugin's finding also has `plugin`, the kind file that returned it, and `refs`, as the plugin gave them. With a work kind read, every finding has `addressed` and `addressedBy`, the work items addressing it as `{ id, state }` |
 
 | Edge kind | From, to | Fields |
@@ -449,6 +456,7 @@ The walk runs in this order, and the nodes are listed in it:
 | `addressed-by` | finding to a work item that addresses it | |
 | `carries` | commit to a decision or work item its `Chant-Record` trailer names, or to the work item its `Chant-Lease` was taken on | |
 | `made-by` | commit to the agent run that made it | `joinedBy`: `trailer` when the commit carries the run's `Chant-Run`, `record` when the run's end lists the commit |
+| `worked-on` | agent run to the work item it worked on and each record it names, when a kind read has them ([#3034](https://github.com/INTENTIUS/chant/issues/3034)) | |
 
 A decision covers a commit from the commit that decided it until the window of the record superseding it opens. The commit that decided a record is the one that last moved it into an approved state and kept it there: a state its kind's `approval` ranks above 0, or one of its `closedStates` for a kind with no `approval`. For the decision kind that is `decided`, `ratified` or `superseded`. A record added in an approved state was decided by the commit that added it. A record not approved in the history read has none, and its window opens at the commit that added it. `records --json` gives the same commit as `decidedIn` on each record of a kind with `approval` ranks that is not a work kind. A commit outside every path-granularity window is `intent-commit-undecided`, and its `state` is `undecided`.
 
@@ -457,6 +465,21 @@ A commit inside a window can still depart from the decision, and chant can't tel
 A work item's window runs from the commit that added its record to the commit that moved it into a closed state, `done` or `dropped`, that commit included. While the item is open, the window runs to the revision read. A commit inside the window of a work item that constrains the region by path has a `within` edge to the item with `state: "worked"`. The commit's own `state` still comes from the decisions. A work item addresses a finding when its `source.finding` is the finding's code and its `source.region` contains the region or lies inside it, with overlapping lines when both name the same file. It also addresses an `intent-pin-drifted`, `intent-pin-missing` or plugin finding that concerns a decision the item implements. The walk brings in a work item that addresses a finding, and the decisions and work items that a work item in the graph implements or needs, one link deep.
 
 A plugin's finding is about the commit it was returned for, so that commit's id comes first in `concerns`. Each of its `refs` that names a node in the graph follows as that node's id. chant first tries a ref as a node id, and then behind each node kind's prefix, such as `commit:` or `artifact:`. After that it tries the ref as a decision's record id or the start of a commit sha. A ref that names nothing in the graph stays in `refs` only. Plugin findings come after chant's own, in commit order. A decision that constrains a path below a directory region has a `constrains` edge to each file under that path, and it does not count as constraining the whole region.
+
+### Why the region is like this
+
+`why` is the answer hud's "why is it like this" view reads ([#3034](https://github.com/INTENTIUS/chant/issues/3034)). It is derived from the graph and adds no node. Every id in it names a node in `nodes`.
+
+| Field | Meaning |
+|---|---|
+| `lines` | the lines accounted for: the region's range or symbol, the whole file, or `null` for a directory |
+| `blame` | the current lines, top to bottom, as spans `{ start, end, commit, sha, runs, narrowedBy }`. `git blame` names the commit that last wrote each line, at `--at` or in the working tree, where a line not committed yet has `commit: null`. `runs` names the run nodes behind the commit, joined as `made-by` joins them. When a run's end recorded `hunks` for the commit, a run whose hunks miss the line is left out and `narrowedBy` is `hunks`. Empty for a directory |
+| `decisions` | every decision node, most relevant first, as `{ decision, relevance, current, closed, lines }`. `relevance` is `carried` when a commit or run that made current lines carries the decision out (through a unit, a `Chant-Record` or `Chant-Lease` trailer, or the run's work item and records), else the granularity it constrains the region at (`path`, `contract`, `issue`, `member`), else `related`. Current decisions come first, then by relevance in that order, then the most current lines carried out, closed before open, the narrower path, and the later deciding commit |
+| `runs` | the runs that wrote current lines, most lines first, as `{ run, lines, commits, unit, decisions }`. `unit` is the work item the run record names, `{ id, kind, node }`, with its node when a work kind read has it. `decisions` lists the decisions its work item implements and the decision records it names. For a directory, every run in the walk, the latest start first |
+| `explained` | whether a current decision governs the region or is carried out by what made its lines |
+| `gaps` | `{ code, message, lines? }` with the closed codes `intent-why-no-decision`, `intent-why-no-run`, `intent-why-uncommitted` and `intent-why-run-ambiguous` |
+
+A recorded run's work item and the records it names are carried by each commit the run made, the way a `Chant-Lease` item and a `Chant-Record` are, so the commit can be a decision's own work through its run. `why` was added within contract 1, so a reader that finds no `why` is reading an older chant, and falls back to the graph.
 
 The document joins the others by the member name (`member` on region and file nodes, and `member:<name>` nodes), by the record id (`record` on a decision node, `records[].id` in `graph --kind` and `records`), and by the commit id (`at` and `provenance.commit`).
 

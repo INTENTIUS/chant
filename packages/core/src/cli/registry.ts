@@ -315,7 +315,7 @@ export interface ParsedArgs {
   noCache?: boolean;
   /** `chant workspace graph --composites` (#2662): print each composite instance with the components that can deploy it. */
   composites?: boolean;
-  /** `chant workspace graph --intent <path[:start-end]>` (#2651): the region the intent graph is over. Empty with `--record`. */
+  /** `chant workspace graph --intent <path[:start-end]|path#symbol>` (#2651): the region the intent graph is over. Empty with `--record`. */
   intent?: string;
   /** `chant workspace graph --intent --record <id>`: walk one decision record over every entry its constrains lists. */
   record?: string;

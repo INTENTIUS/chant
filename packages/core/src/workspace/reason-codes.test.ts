@@ -14,7 +14,7 @@ import { MEMBER_RUN_REASON_CODES } from "./compose-graph";
 import { COMPOSITES_ENVIRONMENT_REASON_CODES, COMPOSITES_ERROR_CODES, COMPOSITES_REASON_CODES, COMPOSITES_RUNTIME_REASON_CODES } from "./composites";
 import { WORKSPACE_ERROR_CODES } from "./declaration";
 import { GRAPH_ERROR_CODES } from "./graph-cli";
-import { INTENT_ERROR_CODES, INTENT_FINDING_CODES, INTENT_REASON_CODES } from "./intent";
+import { INTENT_ERROR_CODES, INTENT_FINDING_CODES, INTENT_REASON_CODES, INTENT_WHY_CODES } from "./intent";
 import { CHECK_CODES, CHECK_ERROR_CODES } from "./lineage-check";
 import { GROUP_REASON_CODES, MEMBER_REASON_CODES } from "./ls";
 import intentSchema from "./intent.schema.json";
@@ -74,6 +74,7 @@ const PER_COMMAND: Record<string, readonly string[]> = {
   INTENT_ERROR_CODES,
   INTENT_FINDING_CODES,
   INTENT_REASON_CODES,
+  INTENT_WHY_CODES,
   CHANGES_FINDING_CODES,
   CHANGES_ERROR_CODES,
   COMPOSITES_ERROR_CODES,

@@ -111,7 +111,7 @@ export const workspaceReadTools: ToolDefinition[] = [
           items: { type: "string" },
           description: "Record kind files whose records join the graph (--kind). The plain graph takes one; intent takes several.",
         },
-        intent: { type: "string", description: "The region for the intent graph: a workspace path, path:line or path:start-end (--intent)." },
+        intent: { type: "string", description: "The region for the intent graph: a workspace path, path:line, path:start-end, or path#symbol for a TypeScript or JavaScript declaration such as src/server.ts#createApp (--intent). The document's why answers why the region is like this." },
         composites: { type: "boolean", description: "The composites document instead (--composites). Takes no kind or intent." },
         at: atProp,
       },
