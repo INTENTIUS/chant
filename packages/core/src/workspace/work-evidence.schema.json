@@ -186,6 +186,7 @@
                 "write-scope-kind",
                 "write-scope-class-unknown",
                 "agent-unknown",
+                "principal-unidentified",
                 "record-unparseable",
                 "record-schema-invalid",
                 "record-id-duplicate",

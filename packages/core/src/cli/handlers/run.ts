@@ -453,6 +453,7 @@ export async function runOpApprove(ctx: CommandContext): Promise<number> {
     note: ctx.args.note,
     url: ctx.args.url,
     plan: ctx.args.plan,
+    ...(ctx.args.sign !== undefined ? { sign: ctx.args.sign } : {}),
   });
   if (!outcome.ok) return 1;
 

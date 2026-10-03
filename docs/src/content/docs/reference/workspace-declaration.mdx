@@ -60,6 +60,7 @@ chant finds the file by walking up from the current directory to the git root, t
 | `changes` | no | The [forward coverage check](/chant/cli/workspace-check/#the-forward-coverage-check) of `chant workspace check --changes`: `severity` (`off`, `warn` or `fail`, default `warn`) and `ignore`, globs over file paths from the workspace root whose changes need no record, such as lockfiles and generated output. It was added in chant 0.92.0. |
 | `writeScope` | no | Who may write what: for each principal class, the members whose files it may write and the record kinds it may write, with which verbs. See [Write scope and agent sessions](#write-scope-and-agent-sessions). It was added in chant 0.101.0. |
 | `agents` | no | The agent sessions, each bound to one member. See [Write scope and agent sessions](#write-scope-and-agent-sessions). It was added in chant 0.101.0. |
+| `identity` | no | Who a person-attributed record or gate approval may name, and which gates pass only on a signed approval. See [Identity](#identity). It was added in chant 0.102.0. |
 | `quorum` | no | How many agree verdicts besides the decider's a record needs, as an integer from 0. [`chant workspace records`](/chant/cli/workspace-records/#reviews-and-quorum) reports each record's quorum against it, and it applies to every record kind with a reviews list. The default is 2. It was added in chant 0.86.0, so a declaration that sets it should set `minReader` to `"0.86.0"`. |
 | `$schema`, `$comment` | no | Editor hints and notes. chant ignores them. |
 | `x-...` | no | Any field whose name starts with `x-`, for people and other tools. Allowed on every object in the file. |
@@ -242,6 +243,44 @@ A writer's class comes from the role grants in the trust policy at base. A princ
 All three read `writeScope` and `agents` from the declaration at base (`origin/HEAD`, `main` or `master`, or the range's base for `check --changes`), with the trust policy read there too. An agent can't widen its own scope by editing its copy of the declaration, and an edit to the declaration by a writer restricted to members is itself out of scope. On a developer machine this detects; run in CI with an attestation policy at base, the principal is the signer the policy trusts ([ws-002](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-002-local-promise.md)).
 
 [`chant workspace agent <name>`](/chant/cli/workspace-agent/) prints what a session reloads from: its member, its scope and the spec.
+
+## Identity
+
+A record's `by`, `decided_by`, reviewer or answerer, and a gate approval's `--actor`, name a person. chant never signs a person in ([ws-052](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-052-chant-hud-boundary.md)). The surface that does (hud, studio's planter, behold) maps the session to one of these principals and passes it to chant's write commands ([#3163](https://github.com/INTENTIUS/chant/issues/3163), [ws-080](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-080-person-identity-forge-or-signer.md)):
+
+| Form | Written as | What vouches for it |
+|---|---|---|
+| forge identity | `github:<login>`, `gitlab:<login>`, or `<forge>@<host>:<login>` for `forgejo`, `gitea` or a self-hosted `github` or `gitlab`, such as `forgejo@codeberg.org:alice` | The surface that signed the person in through the forge. chant records it as given, folding case. |
+| signer | a principal `.chant/allowed_signers` lists at base, often the person's forge identity | A seal made with `--sign` by a key listed for that principal, verified against the signers at base. |
+| role holder | a principal holding the `agent`, `runner` or `service` role at base, or listed by a declared agent session | The role grant at base. Not a person. |
+| name | anything else, such as a hud roster name or `$USER` | Nothing. |
+
+The role grants in `.chant/trust.json` and the signers file name people by the same string, so `github:alice` is one person in a record, in the key list and in a [principal class](/chant/reference/workspace-kinds/#principal-classes-from-a-package).
+
+```json
+"identity": {
+  "attribution": "identified",
+  "gates": {
+    "ship": { "class": "operator" },
+    "rollback": {}
+  }
+}
+```
+
+| Field | Value |
+|---|---|
+| `attribution` | `any`, the default, takes any name. `identified` refuses a name: [`records new`, `amend` and `review`](/chant/cli/workspace-records/#writing-records), [`points answer`](/chant/cli/workspace-points/) and `chant approve` refuse a `--by`, author field, answerer or `--actor` that is not a forge identity, a signer or a role holder, with `principal-unidentified`. |
+| `gates` | Gates by name. A gate of that name, in any member, Op or component, counts only an approval sealed with `chant approve --sign` by a key the signers file at base lists for its approver. With `class`, the approver must also be in that class, read from the role grants at base. A class no pinned package supplies lets nothing through. Without a signers file at base, nothing passes. |
+
+Both are read from the declaration at base, so a change can't loosen its own rule. A run, `chant workspace status` and `chant approve` all apply `gates`. `chant approve` refuses an approval the rule would not count before writing it, and a run or status leaves out any such approval already on the ledger, so a hud invite link alone can't clear the gate. `status --json` marks such a gate with `signed`.
+
+An approval for a gate under `gates` is made like this, in the member's directory, with a key the signers file lists for `github:alice`:
+
+```bash
+chant approve web ship --env prod --plan <digest> --actor github:alice --sign ~/.ssh/id_ed25519
+```
+
+The seal is an ssh signature in the `chant-gate` namespace over the op or component, the gate, the environment, the plan digest, the approver and the time, so it can't be moved to another plan or gate.
 
 ## Diagrams
 

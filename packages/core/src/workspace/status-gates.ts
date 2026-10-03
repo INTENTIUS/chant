@@ -22,7 +22,7 @@ import { execFileSync } from "node:child_process";
 import { samePlanDigest } from "../lifecycle/plan-digest";
 import type { GateResolutionRecord, PendingGateRecord } from "../lifecycle/gate-ledger";
 import { isPendingGateExpired, latestPendingGate, latestResolutionForPlan, parseGateLedger } from "../lifecycle/gate-ledger";
-import { tallyGateApprovals } from "../op/gate";
+import { tallyGateApprovals, type GateApprovalRule } from "../op/gate";
 import type { ReasonCode } from "./reason-codes";
 
 /** Why a member's gates can't be listed. Closed: a new code is a contract change. */
@@ -63,9 +63,19 @@ export interface StatusGate {
   approvals: StatusGateApproval[];
   /** How many human approvals the gate needs: its quorum's count, 1 without one. */
   needed: number;
+  /**
+   * The declaration's rule for the gate (#3163, ws-080): set when
+   * `identity.gates` names it, so only an approval sealed by a signer at
+   * base (from `class`, when it names one) counts, and `approve` carries
+   * `--sign`. Null when any approval counts.
+   */
+  signed: { class: string | null } | null;
   /** The command that approves it, run in the member's directory. */
   approve: string;
 }
+
+/** The rule for a gate, by name, as `identity.gates` at base sets it (#3163). Null when it sets none. */
+export type GateRuleLookup = (gate: string) => GateApprovalRule | null;
 
 export interface StatusGateLedger {
   /** `members` for `_members/<member>/_gates`, `flat` for `_gates`. */
@@ -110,15 +120,17 @@ export const defaultGateLedgerReader: GateLedgerReader = async (dir, commit, cwd
  * plan this read showed and not whatever happens to be pending by the time
  * someone runs it.
  */
-export function approveCommand(component: string, gate: string, env: string | null, planDigest?: string | null): string {
-  return `chant approve ${component} ${gate}${env !== null ? ` --env ${env}` : ""}${planDigest ? ` --plan ${planDigest}` : ""}`;
+export function approveCommand(component: string, gate: string, env: string | null, planDigest?: string | null, signed = false): string {
+  return `chant approve ${component} ${gate}${env !== null ? ` --env ${env}` : ""}${planDigest ? ` --plan ${planDigest}` : ""}${signed ? " --sign" : ""}`;
 }
 
 const approvalOf = (r: GateResolutionRecord): StatusGateApproval => ({ principal: r.resolvedBy, channel: r.origin ?? null, at: r.timestamp });
 
 /** One gate in one environment, decided against its newest pending fact. */
-function decide(component: string, standing: PendingGateRecord, resolutions: GateResolutionRecord[], now: string): StatusGate {
+function decide(component: string, standing: PendingGateRecord, all: GateResolutionRecord[], now: string, rule: GateApprovalRule | null): StatusGate {
   const gate = standing.gate;
+  // #3163: under identity.gates, an unsigned approval, or one from outside the class, doesn't count, as a run reads it.
+  const resolutions = rule === null ? all : all.filter((r) => r.gate !== gate || rule.refuses(r) === null);
   const env = standing.environment ?? null;
   const since = standing.timestamp;
   const planDigest = standing.planDigest;
@@ -156,7 +168,8 @@ function decide(component: string, standing: PendingGateRecord, resolutions: Gat
     expiresAt: standing.expiresAt,
     approvals: approvals.map(approvalOf),
     needed,
-    approve: approveCommand(component, gate, env, planDigest),
+    signed: rule === null ? null : { class: rule.requirement.class },
+    approve: approveCommand(component, gate, env, planDigest, rule !== null),
   };
 }
 
@@ -167,7 +180,7 @@ function decide(component: string, standing: PendingGateRecord, resolutions: Gat
  * gate whose other facts have one is left out, as a run leaves it out: such a
  * line binds no environment, and `chant approve --expire` writes one.
  */
-export function gatesInLedger(component: string, content: string, envs: readonly string[], now: string): { gates: StatusGate[]; malformed: number } {
+export function gatesInLedger(component: string, content: string, envs: readonly string[], now: string, rules: GateRuleLookup = () => null): { gates: StatusGate[]; malformed: number } {
   const { pending, resolutions, malformed } = parseGateLedger(content);
   const gates: StatusGate[] = [];
   for (const gate of [...new Set(pending.map((p) => p.gate))].sort()) {
@@ -181,7 +194,7 @@ export function gatesInLedger(component: string, content: string, envs: readonly
       byEnv.set(env, [...(byEnv.get(env) ?? []), p]);
     }
     for (const env of [...byEnv.keys()].sort((a, b) => envs.indexOf(a ?? "") - envs.indexOf(b ?? ""))) {
-      gates.push(decide(component, latestPendingGate(byEnv.get(env)!, gate)!, resolutions, now));
+      gates.push(decide(component, latestPendingGate(byEnv.get(env)!, gate)!, resolutions, now, rules(gate)));
     }
   }
   return { gates, malformed };
@@ -196,6 +209,7 @@ export async function readMemberGates(
   cwd: string,
   now: string,
   read: GateLedgerReader = defaultGateLedgerReader,
+  rules: GateRuleLookup = () => null,
 ): Promise<{ gates: StatusGate[]; ledger: StatusGateLedger }> {
   const ledger: StatusGateLedger = { layout, path: dir, shared: false, malformed: 0, reason: null };
   if (commit === null) {
@@ -213,7 +227,7 @@ export async function readMemberGates(
   }
   const gates: StatusGate[] = [];
   for (const component of [...files.keys()].sort()) {
-    const read = gatesInLedger(component, files.get(component)!, envs, now);
+    const read = gatesInLedger(component, files.get(component)!, envs, now, rules);
     gates.push(...read.gates);
     ledger.malformed += read.malformed;
   }

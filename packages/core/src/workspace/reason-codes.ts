@@ -142,6 +142,7 @@ export const REASONS = {
   "write-scope-protected": "The write is to a file writeScope.<class>.protected lists, or one under a directory it lists, outside any top-level keys the entry's except allows (#3146).",
   "write-scope-class-unknown": "The declaration's writeScope at base names a principal class no pinned package supplies, and the writer is judged human, so it may be in that class; the write is refused until the package is installed at the pinned version or the entry removed (#3080).",
   "agent-unknown": "CHANT_AGENT, or a commit's Chant-Agent trailer, names an agent session the declaration at base does not declare.",
+  "principal-unidentified": "chant.workspace.json at base sets identity.attribution to identified, and the write names a person by a bare name: --by, an author field or a decision point's answerer must be a forge identity (github:<login>, gitlab:<login>, <forge>@<host>:<login>), a principal the signers file at base lists, or an agent, runner or service principal (#3163).",
   // A review given in a session (records review --session, #2693).
   "session-unknown": "--session names no session of a session kind whose subjects are the record's kind.",
   "session-not-open": "--session names a session in a closed state, which takes no more verdicts.",

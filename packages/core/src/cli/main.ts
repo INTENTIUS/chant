@@ -455,6 +455,7 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (arg === "--sign") {
       // `chant workspace records review <id> --sign [<key file>]` (#2687): seal the verdict.
       // `records new` and `records amend` take it too, to seal the record's author (#2688).
+      // `chant approve <op> <gate> --sign [<key file>]` seals a gate approval (#3163).
       // With no key file, git's user.signingkey, as `git commit -S` reads it.
       const next = args[i + 1];
       result.sign = next !== undefined && !next.startsWith("-") ? args[++i] : true;
@@ -833,7 +834,11 @@ Ops:
                         and defaults to the PR/MR of the surrounding CI job.
                         The next "chant run <op>" walks through the gate.
                         --expire clears a pending fact without approving it,
-                        so the gate is re-decided from scratch next run
+                        so the gate is re-decided from scratch next run.
+                        --sign [<key file>] seals the approval with an ssh
+                        key; a gate the workspace's identity.gates names
+                        counts only an approval sealed by a key the signers
+                        file at base lists for --actor
 
   graph                 Show Op dependency graph (--stacks for cross-stack order,
                         --format ir|mermaid|dot|layout for the lint-gated graph IR,

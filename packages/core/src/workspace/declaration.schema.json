@@ -137,6 +137,35 @@
       "items": {
         "$ref": "#/$defs/agent"
       }
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Who a person-attributed record or gate approval may name, and which gates need a signed approval (#3163, ws-080). Read from the declaration at base, like writeScope, so a change can't loosen its own rule. A person is named by a forge identity (github:<login>, gitlab:<login>, or <forge>@<host>:<login> for forgejo, gitea or a self-hosted github or gitlab) that the surface which signed them in maps their session to, or by a principal .chant/allowed_signers lists at base. chant never authenticates a person: a forge identity is recorded as the surface gives it, and only a seal verified against the signers at base attests it. Added in schema 1 by chant 0.102.0, so a declaration that uses it sets minReader to 0.102.0 or newer.",
+      "properties": {
+        "attribution": {
+          "enum": ["any", "identified"],
+          "description": "any (the default): a record's by, decided_by, reviewer or answerer and a gate approval's actor may be any name, such as a roster name. identified: each must be a forge identity, a principal the signers file at base lists, or a principal holding the agent, runner or service role at base or listed by a declared agent session; chant workspace records new and review, points answer and chant approve refuse any other name with principal-unidentified."
+        },
+        "gates": {
+          "type": "object",
+          "description": "Gates, by name, that pass only on a signed approval: chant approve --sign with a key the signers file at base lists for the approver. The rule applies to a gate of that name in every member, Op and component. An unsigned approval, or one whose signer is not in class, is recorded nowhere and never counts toward the gate.",
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "class": {
+                "$ref": "#/$defs/className",
+                "description": "The principal class the signer must be in, read from the role grants at base (#3080, ws-079): human, runner, service, or a domain class a pinned package supplies. A class no pinned package supplies lets no approval through (fail closed). Absent: any signer the signers file lists."
+              }
+            }
+          }
+        }
+      }
     }
   },
   "patternProperties": {

@@ -473,6 +473,7 @@
                 "answer-not-candidate",
                 "quorum-not-met",
                 "answer-in-steward-turn",
+                "principal-unidentified",
                 "record-not-found",
                 "record-closed",
                 "record-id-taken",

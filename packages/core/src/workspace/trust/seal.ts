@@ -36,6 +36,12 @@ export const REVIEW_SEAL_NAMESPACE = "chant-review";
 /** The ssh signature namespace of a record's author seal (#2688). */
 export const RECORD_SEAL_NAMESPACE = "chant-record";
 
+/**
+ * The ssh signature namespace of a gate approval's seal (#3163, ws-080), so a
+ * verdict, record or commit signature can't stand in for one.
+ */
+export const GATE_SEAL_NAMESPACE = "chant-gate";
+
 /** A seal as a review entry holds it. */
 export interface VerdictSeal {
   /** The principal who signed: the reviewer, as the signers file names them. */
@@ -79,6 +85,27 @@ export function reviewSealPayload(record: string, digest: string, verdict: strin
  */
 export function recordSealPayload(record: string, digest: string, author: string, state: string | null): Buffer {
   return Buffer.from(`${record}\n${digest}\n${author}\n${state ?? ""}`, "utf-8");
+}
+
+/** The gate approval a seal covers (#3163): the fields of a gate resolution line that say what was approved, by whom and when. */
+export interface SealedGateApproval {
+  op: string;
+  gate: string;
+  environment?: string;
+  planDigest?: string;
+  resolvedBy: string;
+  timestamp: string;
+  seal?: unknown;
+}
+
+/**
+ * The bytes a gate approval's seal signs (#3163): the op (or component), the
+ * gate, the environment, the plan digest, the approver and the time, joined
+ * by LF with no final newline. An approval that binds no environment or plan
+ * signs an empty line for it.
+ */
+export function gateSealPayload(a: SealedGateApproval): Buffer {
+  return Buffer.from(`${a.op}\n${a.gate}\n${a.environment ?? ""}\n${a.planDigest ?? ""}\n${a.resolvedBy}\n${a.timestamp}`, "utf-8");
 }
 
 /** The record an author seal covers (#2688). */
@@ -155,6 +182,22 @@ export function checkRecordSeal(policy: TrustPolicy, r: SealedRecord): SealCheck
   });
 }
 
+/**
+ * Check a gate approval's seal (#3163), as a verdict's is checked, over
+ * {@link gateSealPayload} in the `chant-gate` namespace: it verifies only
+ * when the signers file at base lists a key for the approver.
+ */
+export function checkGateSeal(policy: TrustPolicy, a: SealedGateApproval): SealCheck {
+  return checkSeal(policy, {
+    principal: a.resolvedBy,
+    what: `the approval of gate ${a.gate} by ${a.resolvedBy}`,
+    role: "approver",
+    namespace: GATE_SEAL_NAMESPACE,
+    seal: a.seal,
+    payload: gateSealPayload(a),
+  });
+}
+
 function checkSeal(policy: TrustPolicy, s: SealSubject): SealCheck {
   const where = `${policy.signersPath} at base`;
   if (s.seal === undefined || s.seal === null) {
@@ -205,7 +248,7 @@ function checkIntegrity(principal: string, payload: Buffer, signature: string, n
     const r = sshKeygen(["-Y", "check-novalidate", "-n", namespace, "-s", sigFile], payload);
     if (r.missing) return { attested: null, code: "seal-unverifiable", message: `the seal by ${principal} can't be checked here: ssh-keygen is not installed` };
     if (r.status !== 0) {
-      return { attested: false, code: "seal-signature-invalid", message: `the seal by ${principal} does not verify over ${namespace === RECORD_SEAL_NAMESPACE ? "this record" : "this verdict"}, even without a signers file` };
+      return { attested: false, code: "seal-signature-invalid", message: `the seal by ${principal} does not verify over ${namespace === RECORD_SEAL_NAMESPACE ? "this record" : namespace === GATE_SEAL_NAMESPACE ? "this approval" : "this verdict"}, even without a signers file` };
     }
     const key = FINGERPRINT.exec(r.stdout + r.stderr)?.[1];
     return {
@@ -277,6 +320,14 @@ export function sealVerdict(keyFile: string, v: { record: string; digest: string
  */
 export function sealRecord(keyFile: string, r: { record: string; digest: string; author: string; state: string | null }): VerdictSeal {
   return sign(keyFile, recordSealPayload(r.record, r.digest, r.author, r.state), RECORD_SEAL_NAMESPACE, r.author);
+}
+
+/**
+ * Seal a gate approval (#3163) with the key in `keyFile`, over
+ * {@link gateSealPayload}. Throws a {@link SealError}.
+ */
+export function sealGateApproval(keyFile: string, a: SealedGateApproval): VerdictSeal {
+  return sign(keyFile, gateSealPayload(a), GATE_SEAL_NAMESPACE, a.resolvedBy);
 }
 
 function sign(keyFile: string, payload: Buffer, namespace: string, signer: string): VerdictSeal {

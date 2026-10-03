@@ -380,18 +380,20 @@ export function scopedKind(source: ScopeSource, kindName: string, kindFile: stri
  * Refuse a record write outside the writer's scope (#2548): throws a
  * {@link WriteScopeError}. `agent` is the session the write names
  * (`CHANT_AGENT`), and `principal` who the write names as its author.
+ * Returns what it read at base, for the identity rule (#3163).
  */
 export function refuseRecordWrite(
   cwd: string,
   write: { kindName: string; kindFile: string; recordsDir: string; verb: WriteVerb; agent?: string | null; principal?: string | null },
-): void {
+): ScopeSource {
   const source = scopeSource(cwd);
-  if (source.declaration === null && (write.agent === undefined || write.agent === null)) return;
+  if (source.declaration === null && (write.agent === undefined || write.agent === null)) return source;
   const writer = resolveWriter(source.declaration, source.policy, { agent: write.agent, principal: write.principal }, source.classes);
   const unknown = unknownClassVerdict(source.declaration, writer, source.classes);
   if (!unknown.ok) throw new WriteScopeError(unknown.code, unknown.message);
   const verdict = judgeRecord(source.declaration, writer, scopedKind(source, write.kindName, write.kindFile, write.recordsDir), write.verb);
   if (!verdict.ok) throw new WriteScopeError(verdict.code, verdict.message);
+  return source;
 }
 
 // ── The check over a range ───────────────────────────────────────────────────

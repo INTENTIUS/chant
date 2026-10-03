@@ -130,7 +130,8 @@ chant approve fountain-apply rollout-gate --note "paged on-call first; see the i
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--actor <name>` | `$GITHUB_ACTOR` / `$GITLAB_USER_LOGIN` / `$USER` | Who resolved the gate — recorded on the resolution fact |
+| `--actor <name>` | `$GITHUB_ACTOR` / `$GITLAB_USER_LOGIN` / `$USER` | Who resolved the gate, recorded on the resolution fact. A surface that signs people in (hud, studio) passes the person's forge identity, such as `github:alice`, or a principal the signers file lists. Under a workspace's `identity.attribution: "identified"` any other name is refused ([Identity](/chant/reference/workspace-declaration/#identity)) |
+| `--sign [<key file>]` | — | Seal the approval with an ssh key, or with git's `user.signingkey` when no file is given. The seal attests `--actor` when the signers file at base lists the key for them. A gate the workspace's `identity.gates` names counts only a sealed approval, from its class when it names one, and without `--sign` `chant approve` refuses it ([#3163](https://github.com/INTENTIUS/chant/issues/3163)) |
 | `--url <url>` | the surrounding CI job's PR/MR, when there is one | The address this resolution happened at, typically the PR or MR that carried the change. Recorded typed on the resolution fact so a reader is not sniffing free text for a link. Must be an absolute http or https URL |
 | `--note <text>` | — | Free-text context recorded alongside the resolution. The link belongs in `--url`; this is for everything else |
 | `--env <env>` | the newest pending fact's environment | For a component gate: which environment's pending fact to approve. The resolution records that environment and its plan digest ([#2574](https://github.com/INTENTIUS/chant/issues/2574)). Ignored for an Op gate |

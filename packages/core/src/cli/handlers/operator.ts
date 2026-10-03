@@ -902,6 +902,7 @@ export async function runApprove(ctx: CommandContext): Promise<number> {
     allowSameOrigin: ctx.args.allowSameOrigin,
     ...(ctx.args.roles ? { roles: ctx.args.roles } : {}),
     ...(ctx.args.agent ? { agent: true } : {}),
+    ...(ctx.args.sign !== undefined ? { sign: ctx.args.sign } : {}),
   });
   if (!outcome.ok) return 1;
 
@@ -959,6 +960,15 @@ export interface GateApprovalOptions {
    * model-authored channel it is one whether or not this is set.
    */
   agent?: boolean;
+  /**
+   * `--sign [<key file>]` (#3163, ws-080): seal the approval with an ssh key,
+   * a key file or true for git's `user.signingkey`. The seal attests the
+   * approver when the signers file at base lists the key for them, and a gate
+   * the declaration's `identity.gates` names counts only sealed approvals.
+   */
+  sign?: string | true;
+  /** Where the workspace and the key file are looked up from. Defaults to the process's directory. */
+  cwd?: string;
   /** Replaces the lexicon evaluator a gate policy is loaded from. For tests. */
   evaluator?: GatePolicyEvaluator;
 }
@@ -1107,6 +1117,78 @@ export async function recordGateApproval(
     ...(opts.roles && opts.roles.length > 0 ? { roles: [...new Set(opts.roles)] } : {}),
   };
 
+  // #3163, ws-080: the declaration at base may require a checkable approver
+  // (identity.attribution "identified") and a signed approval for this gate
+  // (identity.gates). Both are judged before anything is written.
+  const cwd = opts.cwd ?? process.cwd();
+  const identity = await import("../../workspace/identity");
+  const { scopeSource } = await import("../../workspace/write-scope");
+  const scope = scopeSource(cwd);
+  try {
+    identity.refuseUnidentified(scope, [resolvedBy], opts.actor !== undefined ? "--actor" : "the approver");
+  } catch (err) {
+    if (!(err instanceof identity.IdentityError)) throw err;
+    console.error(formatError({
+      message: `Gate "${gate}" on "${opName}" was not approved: ${err.message}`,
+      hint: "Pass --actor <forge identity or signer>, as the surface that signed the person in maps them, for example --actor github:<login>.",
+    }));
+    return { ok: false };
+  }
+  const rule = identity.gateAdmissionFrom(scope, gate);
+  if (rule && opts.sign === undefined) {
+    console.error(formatError({
+      message:
+        `Gate "${gate}" needs a signed approval: chant.workspace.json at base names it in identity.gates` +
+        (rule.requirement.class !== null ? `, from the class ${rule.requirement.class}` : "") +
+        `, and this approval is not signed`,
+      hint: `chant approve ${opName} ${gate} --actor <principal> --sign [<key file>], with a key ${scope.policy.signersPath} at base lists for that principal.`,
+    }));
+    return { ok: false };
+  }
+  const timestamp = new Date().toISOString();
+  let seal: GateResolutionRecord["seal"];
+  if (opts.sign !== undefined) {
+    const { resolveSigningKey, sealGateApproval, SealError } = await import("../../workspace/trust/seal");
+    try {
+      const key = resolveSigningKey(opts.sign, cwd);
+      try {
+        seal = sealGateApproval(key.file, {
+          op: opName,
+          gate,
+          ...(environment !== undefined ? { environment } : {}),
+          ...(planDigest !== undefined ? { planDigest } : {}),
+          resolvedBy,
+          timestamp,
+        });
+      } finally {
+        key.cleanup();
+      }
+    } catch (err) {
+      if (!(err instanceof SealError)) throw err;
+      console.error(formatError({ message: `Gate "${gate}" on "${opName}" was not approved: ${err.message}` }));
+      return { ok: false };
+    }
+  }
+  if (rule) {
+    const why = rule.refuses({
+      op: opName,
+      gate,
+      ...(environment !== undefined ? { environment } : {}),
+      ...(planDigest !== undefined ? { planDigest } : {}),
+      resolvedBy,
+      timestamp,
+      seal,
+    });
+    if (why !== null) {
+      console.error(formatError({
+        message: `Gate "${gate}" on "${opName}" was not approved: ${why}`,
+        hint: `identity.gates.${gate} in chant.workspace.json at base counts only an approval signed by a key ${scope.policy.signersPath} lists for the approver` +
+          (rule.requirement.class !== null ? `, who holds the role of the class ${rule.requirement.class}` : "") + ".",
+      }));
+      return { ok: false };
+    }
+  }
+
   // #2508: a gate with a policy has it evaluated for this approval now, while
   // the approver is known, against the context the gated run recorded. The
   // decision is written next to the approval, so a pass can be traced to the
@@ -1148,7 +1230,8 @@ export async function recordGateApproval(
     op: opName,
     gate,
     resolvedBy,
-    timestamp: new Date().toISOString(),
+    timestamp,
+    ...(seal ? { seal } : {}),
     approver,
     ...(policyDecision ? { policyDecision } : {}),
     ...(opts.note ? { note: opts.note } : {}),
@@ -1166,6 +1249,7 @@ export async function recordGateApproval(
   console.error(formatSuccess(
     `Gate "${gate}" on "${opName}" resolved by ${record.resolvedBy} at ${record.timestamp}` +
       (record.url ? ` (${record.url})` : "") +
+      (record.seal ? `, signed with ${record.seal.key}` : "") +
       (pushed ? "" : " (local only — the push did not land)"),
   ));
   if (record.planDigest) {

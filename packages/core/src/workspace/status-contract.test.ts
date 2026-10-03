@@ -453,6 +453,7 @@ describe("gate state in chant workspace status --json (#2674)", () => {
         expiresAt: "2026-12-31T00:00:00.000Z",
         approvals: [{ principal: "alice", channel: "cli", at: "2026-09-20T01:00:00.000Z" }],
         needed: 1,
+        signed: null,
         approve: `chant approve web deploy --env staging --plan ${D("1")}`,
       },
       {
@@ -465,6 +466,7 @@ describe("gate state in chant workspace status --json (#2674)", () => {
         expiresAt: "2026-12-31T00:00:00.000Z",
         approvals: [],
         needed: 1,
+        signed: null,
         approve: `chant approve web deploy --env prod --plan ${D("2")}`,
       },
       {
@@ -478,6 +480,7 @@ describe("gate state in chant workspace status --json (#2674)", () => {
         // The agent's approval doesn't count toward the quorum.
         approvals: [{ principal: "bob", channel: "cli", at: "2026-09-20T02:00:00.000Z" }],
         needed: 2,
+        signed: null,
         approve: `chant approve web review --env staging --plan ${D("4")}`,
       },
     ]);

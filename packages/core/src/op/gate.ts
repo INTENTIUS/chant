@@ -74,6 +74,19 @@ export interface PendingGatePush {
 export interface GateLedgerPort {
   read(op: string): Promise<{ resolutions: GateResolutionRecord[]; pending: PendingGateRecord[] }>;
   appendPending(input: PendingGateInput): Promise<PendingGatePush>;
+  /**
+   * The rule a workspace sets for approvals of `gate` (#3163, ws-080), or
+   * null when none applies: the declaration's `identity.gates`, read at base.
+   * Absent, every approval is judged as before.
+   */
+  approvalRule?(gate: string): Promise<GateApprovalRule | null>;
+}
+
+/** A workspace's rule for which approvals of a gate count (#3163): a signed approval, from a class when it names one. */
+export interface GateApprovalRule {
+  requirement: { gate: string; class: string | null };
+  /** Why `approval` doesn't count, or null when it does. */
+  refuses(approval: GateResolutionRecord): string | null;
 }
 
 /**
@@ -101,6 +114,11 @@ export function gitGateLedgerPort(opts?: { cwd?: string }): GateLedgerPort {
       await requireLifecycleLedger(opts);
       const { resolutions, pending } = await readGateLedger(op, opts);
       return { resolutions, pending };
+    },
+    async approvalRule(gate) {
+      // Loaded on demand: the rule lives in the workspace modules, which import the Op modules.
+      const { gateAdmission } = await import("../workspace/identity");
+      return gateAdmission(opts?.cwd ?? process.cwd(), gate);
     },
     async appendPending(input) {
       const { record } = await appendPendingGate(input, opts);
@@ -399,10 +417,13 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
   // a mismatch with a message instead of silently not counting.
   const env = input.environment;
   const pending = env === undefined ? ledger.pending : ledger.pending.filter((p) => p.environment === env);
-  const resolutions =
+  // #3163: a gate the workspace's identity.gates names counts only signed approvals from its class.
+  const rule = (await port.approvalRule?.(input.gate)) ?? null;
+  const resolutions = (
     env === undefined
       ? ledger.resolutions
-      : ledger.resolutions.filter((r) => r.environment === undefined || r.environment === env);
+      : ledger.resolutions.filter((r) => r.environment === undefined || r.environment === env)
+  ).filter((r) => rule === null || r.gate !== input.gate || rule.refuses(r) === null);
 
   const standing = latestPendingGate(pending, input.gate);
   const since = standing?.timestamp ?? EPOCH;

@@ -683,7 +683,7 @@
     },
     "gate": {
       "type": "object",
-      "required": ["component", "name", "env", "planDigest", "state", "recordedAt", "expiresAt", "approvals", "needed", "approve"],
+      "required": ["component", "name", "env", "planDigest", "state", "recordedAt", "expiresAt", "approvals", "needed", "signed", "approve"],
       "properties": {
         "component": { "type": "string", "description": "The ledger file's key: the component, or the op for a gate an Op run reached." },
         "name": { "type": "string", "description": "The gate's name." },
@@ -712,7 +712,20 @@
           }
         },
         "needed": { "type": "integer", "minimum": 1, "description": "The human approvals the gate needs: its quorum's count, 1 without one." },
-        "approve": { "type": "string", "description": "The chant approve line for the gate, run in the member's directory: chant approve <component> <gate>, with --env <env> when env is not null and --plan <planDigest> when planDigest is not null (#2832), so the line approves the plan this read showed." }
+        "signed": {
+          "description": "Added in contract 1 by #3163. The declaration's rule for the gate, read at base (identity.gates, ws-080): only an approval sealed with chant approve --sign by a key the signers file at base lists for its approver counts, and when class is not null, only one whose approver the role grants at base put in that class. Approvals that don't meet it are left out of approvals and state. Null when any approval counts.",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["class"],
+              "properties": {
+                "class": { "type": ["string", "null"], "description": "The principal class the signer must be in, or null for any listed signer." }
+              }
+            }
+          ]
+        },
+        "approve": { "type": "string", "description": "The chant approve line for the gate, run in the member's directory: chant approve <component> <gate>, with --env <env> when env is not null and --plan <planDigest> when planDigest is not null (#2832), so the line approves the plan this read showed, and --sign when signed is not null (#3163). The caller adds --actor <principal>." }
       }
     },
     "environment": {
