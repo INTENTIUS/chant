@@ -9,6 +9,8 @@ export interface ParsedArgs {
   path: string;
   extraPositional?: string;
   extraPositional2?: string;
+  /** Every positional after the command word, in order (#3308): for a command with more than three, such as `workspace box listing set <member>`. */
+  positionals?: string[];
   output?: string;
   format: string;
   force?: boolean;
@@ -337,6 +339,10 @@ export interface ParsedArgs {
   set?: string;
   /** `chant workspace records review <id> --verdict <v>` (#2670): agree, dissent or abstain. */
   verdict?: string;
+  /** `chant workspace box listing set <member> --cover <image>` (#3308): a PNG, JPEG or WebP picture to copy in as the box's cover. */
+  cover?: string;
+  /** `chant workspace box listing set <member> --cover <image> --cover-path <path>` (#3308): where the cover goes, from the workspace root. */
+  coverPath?: string;
   /**
    * `chant workspace records review <id> --by <principal>` (#2670): the
    * reviewer, as the caller names them. Also `chant workspace records new
