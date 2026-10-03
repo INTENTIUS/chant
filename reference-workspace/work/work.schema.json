@@ -114,6 +114,45 @@
       ],
       "minLength": 1
     },
+    "contract": {
+      "description": "The contract record this item builds, by id (#3147). A kind whose work block names a contract kind reads its state into the record's contract, and warns work-contract-unknown or work-contract-undecided. Null or absent for work that builds no contract.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$"
+    },
+    "tier": {
+      "description": "The builder tier this item is built at, when it is fixed rather than asked of the slice-tier decision point (#3147). One of the tiers the kind's work.tier declares; another is warned work-tier-unknown. Null or absent to leave it to the point.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[a-z][a-z0-9-]{0,31}$"
+    },
+    "max_attempts": {
+      "description": "How many failed attempts this item gets before a runner leaves it to people, overriding the kind's work.attempts.max (#3147). chant workspace work history counts them from the item's lease history. Null or absent for the kind's default.",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 1
+    },
+    "result": {
+      "description": "What the last build of the item ran under (#3147): only the lease token, which joins the item to the run record and to the commits carrying it. Build provenance (agent, model, harness, session, cost) is the run record's, never the item's.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "lease"
+      ],
+      "properties": {
+        "lease": {
+          "description": "The fencing token of the lease the build ran under.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
     "opened_on": {
       "description": "When the item was written, as YYYY-MM-DD. Quoted, so YAML reads it as a string.",
       "type": "string",
@@ -128,7 +167,7 @@
       "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
     },
     "source": {
-      "description": "Where the work came from: a gap the intent graph reported, an issue, the workspace itself, or a person's ask.",
+      "description": "Where the work came from: a gap the intent graph reported, an issue, the workspace itself, a person's ask, or the box's intent once a person decided it.",
       "oneOf": [
         {
           "$ref": "#/definitions/sourceGap"
@@ -141,6 +180,9 @@
         },
         {
           "$ref": "#/definitions/sourceAsk"
+        },
+        {
+          "$ref": "#/definitions/sourceIntent"
         }
       ]
     },
@@ -448,6 +490,50 @@
               "description": "The id of the session the ask came up in, as the client names it. Absent when there was none.",
               "type": "string",
               "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "sourceIntent": {
+      "description": "The first build of a box, opened from its intent (#3147; the box intent is #2850): the decision the box block names as its intent, once a person decided it, and their answer. Replaces studio's x-factory.intent and x-factory.question.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "intent"
+      ],
+      "properties": {
+        "intent": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "decision",
+            "answer",
+            "by"
+          ],
+          "properties": {
+            "decision": {
+              "description": "The intent's decision record, by id.",
+              "$ref": "#/definitions/decisionId"
+            },
+            "question": {
+              "description": "The question the intent asked, as its record words it.",
+              "type": "string",
+              "minLength": 1
+            },
+            "answer": {
+              "description": "The person's answer: the label of the option the decision chose, verbatim.",
+              "type": "string",
+              "minLength": 1
+            },
+            "by": {
+              "description": "Who decided it.",
+              "type": "string",
+              "minLength": 1
+            },
+            "at": {
+              "description": "When it was decided, as an ISO 8601 timestamp.",
+              "type": "string"
             }
           }
         }
