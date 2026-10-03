@@ -72,6 +72,7 @@ import { currentHolderId } from "../lifecycle/lease";
 import { parseDuration } from "./duration";
 import { isStepOutputRef, stepOutput, type StepOutputRef } from "./step-output-ref";
 import { WORK_LEASE_STEP_ID, type OpConfig } from "./types";
+import { replicateAfter } from "../workspace/wip";
 
 export { WORK_LEASE_STEP_ID } from "./types";
 export { workLeaseProblems, workLeaseNeedsRunItem } from "./work-lease-decl";
@@ -416,6 +417,8 @@ export class RunWorkLease {
       outcome,
       note,
     }).catch(() => undefined);
+    // #3172: the box's replicate policy may push the kept attempt and the work branch now. Best effort.
+    if (released?.ok) replicateAfter("release", this.opts.cwd);
     return { ...base, kept, released: released?.ok === true, outcome: released?.ok ? outcome : null };
   }
 

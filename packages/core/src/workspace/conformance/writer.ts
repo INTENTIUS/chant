@@ -76,6 +76,8 @@ export const WRITE_CONTRACT_ACTIONS = [
   "runs end",
   "runs record",
   "box listing set",
+  "wip save",
+  "wip restore",
 ] as const;
 export type WriteContractAction = (typeof WRITE_CONTRACT_ACTIONS)[number];
 
@@ -95,6 +97,8 @@ export const WRITE_CONTRACT_SCHEMAS: Record<WriteContractAction, string> = {
   "runs end": "runs-write.schema.json",
   "runs record": "runs-write.schema.json",
   "box listing set": "box-listing-write.schema.json",
+  "wip save": "wip-write.schema.json",
+  "wip restore": "wip-write.schema.json",
 };
 
 /**
@@ -117,6 +121,8 @@ export const WRITE_CONTRACT_JSON_FLAGS: Record<WriteContractAction, readonly (re
   "runs end": [[], ["--json"]],
   "runs record": [[], ["--json"]],
   "box listing set": [[], ["--json"]],
+  "wip save": [[], ["--json"]],
+  "wip restore": [[], ["--json"]],
 };
 
 /** What each action is given. Field documents are JSON values; the command reads them from stdin. */
@@ -136,6 +142,10 @@ export interface WriteParams {
   "runs record": { run: Record<string, unknown> };
   /** A box's listing (#3308): the member, the listing fields, and an image to copy in as its cover. */
   "box listing set": { member: string; fields: Record<string, unknown>; cover?: string };
+  /** A snapshot of the working tree, uncommitted records included, onto refs/chant/wip/<branch> (#3172): what the caller calls it, and who took it. */
+  "wip save": { label?: string; by?: string };
+  /** Put the working tree back as a snapshot holds it (#3172). */
+  "wip restore": { snapshot: string; by?: string };
 }
 
 /** One write the suite asks of the writer: the action, what it is given, and the command that performs it. */
@@ -214,6 +224,14 @@ export function writeArgv<A extends WriteContractAction>(action: A, params: Writ
       const q = p as WriteParams["box listing set"];
       return { args: [q.member, "--from", "-", ...(q.cover !== undefined ? ["--cover", q.cover] : [])], input: json(q.fields) };
     }
+    case "wip save": {
+      const q = p as WriteParams["wip save"];
+      return { args: [...(q.label !== undefined ? ["--label", q.label] : []), ...(q.by !== undefined ? ["--by", q.by] : [])] };
+    }
+    case "wip restore": {
+      const q = p as WriteParams["wip restore"];
+      return { args: [q.snapshot, ...(q.by !== undefined ? ["--by", q.by] : [])] };
+    }
     default:
       throw new Error(`not a write-contract action: ${String(action)}`);
   }
@@ -274,7 +292,8 @@ const RUN_STARTED = { harness: { name: "conformance", version: "1" }, model: "no
  * decision made, amended and reviewed; a review session opened and closed; a
  * decision point asked and answered; the work item's lease claimed, renewed,
  * evidence attached under it and released; one run started and ended, and one
- * recorded whole; and the box's listing set, with a cover image copied in.
+ * recorded whole; the box's listing set, with a cover image copied in; and a
+ * snapshot of the working tree taken and restored (#3172).
  */
 export const WRITER_SCRIPT: readonly WriterScriptStep[] = [
   step("decision", "records new", () => ({
@@ -353,6 +372,9 @@ export const WRITER_SCRIPT: readonly WriterScriptStep[] = [
     fields: { published: true, title: "The writer suite's box", line: "Listed through chant, read back after amnesia." },
     ...(inputs ? { cover: join(inputs.dir, WRITER_INPUTS.cover.name) } : {}),
   })),
+  // #3172: a checkpoint of everything the script left uncommitted, and putting it back.
+  step("checkpoint", "wip save", () => ({ label: "turn:1", by: WRITER_PRINCIPALS.by })),
+  step("undo", "wip restore", (done) => ({ snapshot: String((done.checkpoint?.snapshot as { commit?: unknown } | undefined)?.commit ?? ""), by: WRITER_PRINCIPALS.by })),
 ];
 
 /** The four things ws-074 lets a tool keep outside the repo. */
@@ -526,6 +548,8 @@ export function isReadCall(argv: readonly string[]): boolean {
       return !["ask", "answer"].includes(sub ?? "");
     case "work":
       return sub === "history";
+    case "wip":
+      return !["save", "restore", "push", "fetch"].includes(sub ?? "");
     default:
       return false;
   }
@@ -600,6 +624,15 @@ export function reportedWrites(action: WriteContractAction, doc: unknown): { pat
     return { paths: [], refs: str(ledger.commit) ? { "refs/heads/chant/lifecycle": String(ledger.commit) } : {} };
   }
   if (action === "box listing set") return { paths: Array.isArray(d.paths) ? d.paths.filter((p): p is string => typeof p === "string") : [], refs: {} };
+  if (action === "wip save" || action === "wip restore") {
+    // The one snapshot ref, at the snapshot taken (the restore's checkpoint), and any ref a push recorded under refs/chant/replica/.
+    const snapshot = (action === "wip save" ? d.snapshot : (d.checkpoint as Record<string, unknown> | undefined)?.snapshot) as { commit?: unknown } | undefined;
+    const refs: Record<string, string> = {};
+    if (str(d.ref) && str(snapshot?.commit)) refs[String(d.ref)] = String(snapshot!.commit);
+    const replication = (d.replication ?? null) as { remote?: string; pushed?: { ref: string; commit: string }[]; upToDate?: number } | null;
+    for (const p of replication?.pushed ?? []) refs[`refs/chant/replica/${replication!.remote}/${p.ref.slice("refs/".length)}`] = p.commit;
+    return { paths: Array.isArray(d.paths) ? d.paths.filter((p): p is string => typeof p === "string") : [], refs };
+  }
   return { paths: str(d.path) ? [String(d.path)] : [], refs: {} };
 }
 
@@ -636,6 +669,12 @@ export async function readListing(run: (argv: string[]) => Promise<ChantRun>): P
   return Object.fromEntries((doc.members ?? []).filter((m) => m.box?.listing).map((m) => [m.name, m.box!.listing]));
 }
 
+/** Each branch's work-in-progress snapshots `wip --json` lists (#3172), by branch: each snapshot's kind and label, newest first. */
+export async function readWip(run: (argv: string[]) => Promise<ChantRun>): Promise<Record<string, [string, string | null][]>> {
+  const doc = JSON.parse((await run(["workspace", "wip", "--json"])).stdout) as { branches?: { branch: string; snapshots: { kind: string; label: string | null }[] }[] };
+  return Object.fromEntries((doc.branches ?? []).map((b) => [b.branch, b.snapshots.map((s) => [s.kind, s.label] as [string, string | null])]));
+}
+
 /** The smallest writer that conforms: each step is its one command, and its facts are read through the read contract. */
 export const referenceWriter: WorkspaceWriterFactory = (chant) => ({
   async write(step) {
@@ -652,6 +691,7 @@ export const referenceWriter: WorkspaceWriterFactory = (chant) => ({
     const runs = JSON.parse((await chant.run(["workspace", "runs", "--json"])).stdout) as { runs: { id: string; state: string }[] };
     out.runs = runs.runs.map((r) => [r.id, r.state]).sort();
     out.listing = await readListing((argv) => chant.run(argv));
+    out.wip = await readWip((argv) => chant.run(argv));
     return out;
   },
 });
@@ -904,6 +944,8 @@ export async function runWorkspaceWriterConformance(writer: WorkspaceWriterFacto
     const runs = new Map(((await direct(["workspace", "runs", "--json"])).runs as { id: string; state: string }[] | undefined ?? []).map((r) => [r.id, r.state]));
     const history = await direct(["workspace", "work", "history", "W-001", "--kind", WRITER_KINDS.work, "--json"]);
     const listings = await readListing((argv) => runChant(chantCommand, argv, ws.dir, timeoutMs));
+    const wipDoc = await direct(["workspace", "wip", "--json"]);
+    const snapshots = new Set(((wipDoc.branches ?? []) as { snapshots: { commit: string }[] }[]).flatMap((b) => b.snapshots.map((x) => x.commit)));
     const claims = (history.claims ?? []) as { token: string; ended: string | null; release?: { outcome?: string } | null }[];
     for (const s of WRITER_SCRIPT) {
       const doc = done[s.id] ?? {};
@@ -926,6 +968,10 @@ export async function runWorkspaceWriterConformance(writer: WorkspaceWriterFacto
       } else if (s.action === "box listing set") {
         const member = String(doc.member ?? "");
         if (!isDeepStrictEqual(listings[member], doc.listing)) after.readBack.push(`read back: ${s.id} (${s.action}) set ${member}'s listing to ${brief(doc.listing)}, and status --json says ${brief(listings[member] ?? null)}`);
+      } else if (s.action === "wip save" || s.action === "wip restore") {
+        const snap = (s.action === "wip save" ? doc.snapshot : (doc.checkpoint as Record<string, unknown> | undefined)?.snapshot) as { commit?: unknown } | undefined;
+        const commit = String(snap?.commit ?? "");
+        if (!snapshots.has(commit)) after.readBack.push(`read back: ${s.id} (${s.action}) wrote snapshot ${commit}, and wip --json does not list it`);
       }
     }
 

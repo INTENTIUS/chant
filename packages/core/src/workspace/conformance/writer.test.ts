@@ -56,6 +56,10 @@ describe("the script (#3159)", () => {
     const listing = buildStep(WRITER_SCRIPT.find((s) => s.id === "listing")!, {}, { dir: "/in" });
     expect(listing.args).toEqual(["app", "--from", "-", "--cover", "/in/cover.png"]);
     expect(buildStep(WRITER_SCRIPT.find((s) => s.id === "listing")!, {}).args).toEqual(["app", "--from", "-"]);
+    // #3172: a snapshot takes no stdin, and the restore names the snapshot the save took.
+    expect(writeArgv("wip save", { label: "turn:1", by: "p" })).toEqual({ args: ["--label", "turn:1", "--by", "p"] });
+    expect(writeArgv("wip save", {})).toEqual({ args: [] });
+    expect(buildStep(WRITER_SCRIPT.find((s) => s.id === "undo")!, { checkpoint: { snapshot: { commit: "c0ffee" } } }).args).toEqual(["c0ffee", "--by", "conformance"]);
   });
 
   test("a later step's params come from the documents of the steps before it", () => {
@@ -117,6 +121,11 @@ describe("unreportedChanges (#3159)", () => {
     const claim = buildStep(WRITER_SCRIPT.find((s) => s.id === "claim")!, {});
     const doc = { ref: "refs/chant/lease/work/W-001", history: { commit: "c2" } };
     expect(reportedWrites("work claim", doc)).toEqual({ paths: [], refs: { "refs/heads/chant/lifecycle": "c2", "refs/chant/lease/work/W-001": "*" } });
+    expect(reportedWrites("wip save", { ref: "refs/chant/wip/main", snapshot: { commit: "s1" }, replication: { remote: "origin", pushed: [{ ref: "refs/chant/wip/main", commit: "s1" }] } })).toEqual({
+      paths: [],
+      refs: { "refs/chant/wip/main": "s1", "refs/chant/replica/origin/chant/wip/main": "s1" },
+    });
+    expect(reportedWrites("wip restore", { ref: "refs/chant/wip/main", checkpoint: { snapshot: { commit: "s2" } }, paths: ["a.txt"] })).toEqual({ paths: ["a.txt"], refs: { "refs/chant/wip/main": "s2" } });
     expect(reportedWrites("box listing set", { paths: ["app/listing/cover.png", "chant.workspace.json"], declaration: { path: "chant.workspace.json" } })).toEqual({ paths: ["app/listing/cover.png", "chant.workspace.json"], refs: {} });
     const before = { "refs/heads/chant/lifecycle": "c1", HEAD: "m 1" };
     expect(unreportedChanges(claim, doc, { before: {}, after: {} }, { before, after: { ...before, "refs/heads/chant/lifecycle": "c2", "refs/chant/lease/work/W-001": "b" } })).toEqual([]);
@@ -136,10 +145,10 @@ describe("state and reads (#3159)", () => {
   });
 
   test("isReadCall: the read contract, never a write verb", () => {
-    for (const argv of [["workspace", "records", "--kind", "k", "--json"], ["workspace", "records", "--uncommitted", "--json"], ["workspace", "runs", "--json"], ["workspace", "points", "--open", "--json"], ["workspace", "work", "history", "W-001"], ["workspace", "ls", "--json"]]) {
+    for (const argv of [["workspace", "wip", "--json"], ["workspace", "records", "--kind", "k", "--json"], ["workspace", "records", "--uncommitted", "--json"], ["workspace", "runs", "--json"], ["workspace", "points", "--open", "--json"], ["workspace", "work", "history", "W-001"], ["workspace", "ls", "--json"]]) {
       expect(isReadCall(argv), argv.join(" ")).toBe(true);
     }
-    for (const argv of [["workspace", "records", "new"], ["workspace", "runs", "start"], ["workspace", "points", "answer"], ["workspace", "work", "claim"], ["workspace", "work", "evidence"], ["build"]]) {
+    for (const argv of [["workspace", "wip", "save"], ["workspace", "wip", "restore"], ["workspace", "wip", "push"], ["workspace", "wip", "fetch"], ["workspace", "records", "new"], ["workspace", "runs", "start"], ["workspace", "points", "answer"], ["workspace", "work", "claim"], ["workspace", "work", "evidence"], ["build"]]) {
       expect(isReadCall(argv), argv.join(" ")).toBe(false);
     }
   });

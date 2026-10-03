@@ -295,6 +295,33 @@ export interface BoxDeclaration {
   factory: BoxFactory | null;
   /** What the box shows of itself on a home site (#3146), or null when the block declares no listing. */
   listing: BoxListing | null;
+  /** Where the box's work in progress is replicated (#3172, ws-085), or null when the block declares no policy. */
+  replicate: BoxReplicate | null;
+  /** The block's JSON Pointer in the file, for messages. */
+  pointer: string;
+}
+
+/** What a replicate policy pushes (#3172): work branches, kept attempts, work-in-progress snapshots and the ledger branch. */
+export const REPLICATE_REF_CLASSES = ["work", "kept", "wip", "ledger"] as const;
+export type ReplicateRefClass = (typeof REPLICATE_REF_CLASSES)[number];
+
+/** When chant pushes on its own under a replicate policy (#3172). */
+export const REPLICATE_TRIGGERS = ["save", "release"] as const;
+export type ReplicateTrigger = (typeof REPLICATE_TRIGGERS)[number];
+
+/** The remote a replicate policy pushes to when it names none. */
+export const DEFAULT_REPLICATE_REMOTE = "origin";
+
+/**
+ * Where a box's work in progress is replicated (#3172, ws-085), with the
+ * defaults filled in: the git remote, which refs, and when chant pushes on
+ * its own. `every` is an interval for the host's own scheduler.
+ */
+export interface BoxReplicate {
+  remote: string;
+  refs: ReplicateRefClass[];
+  on: ReplicateTrigger[];
+  every: string | null;
   /** The block's JSON Pointer in the file, for messages. */
   pointer: string;
 }
@@ -794,6 +821,15 @@ export function parseDeclaration(text: string, file: string, reader: string = re
   // One factory, building and naming declared members (#3146).
   const factory = factoryProblem(members);
   if (factory) throw new WorkspaceReadError("declaration-invalid", factory.message, at(factory.pointer));
+  // One replicate policy (#3172): the checkout is the whole repository's, so one remote takes its work in progress.
+  const replicating = members.filter((m) => m.box?.replicate);
+  if (replicating.length > 1) {
+    throw new WorkspaceReadError(
+      "declaration-invalid",
+      `members ${replicating[0].name} and ${replicating[1].name} both declare replicate in their box block; a checkout's work in progress goes to one remote, so a workspace has one replicate policy`,
+      at(replicating[1].box!.replicate!.pointer),
+    );
+  }
 
   // A diagram name is given once across the declaration (#2764): a reader keys diagrams by name.
   const ownDiagrams = diagramsOf(obj.diagrams, null, "/diagrams");
@@ -971,9 +1007,11 @@ function boxOf(raw: unknown, pointer: string): BoxDeclaration | null {
       publish?: { forge?: "github"; repo: string; base?: string; branchPrefix?: string; head?: string };
     };
     listing?: { published?: boolean; title?: string; line?: string; cover?: string };
+    replicate?: { remote?: string; refs?: ReplicateRefClass[]; on?: ReplicateTrigger[]; every?: string };
   };
   const f = b.factory;
   const l = b.listing;
+  const r = b.replicate;
   return {
     capabilities: (b.capabilities ?? []).map((c, i) => ({ name: c.name, broker: c.broker ?? null, scope: [...(c.scope ?? [])], pointer: `${pointer}/capabilities/${i}` })),
     // The schema requires host and slot together, and host for ports, state and cookies.
@@ -1013,6 +1051,17 @@ function boxOf(raw: unknown, pointer: string): BoxDeclaration | null {
             pointer: `${pointer}/factory`,
           },
     listing: l === undefined ? null : { published: l.published ?? true, title: l.title ?? "", line: l.line ?? "", cover: l.cover ?? null },
+    replicate:
+      r === undefined
+        ? null
+        : {
+            remote: r.remote ?? DEFAULT_REPLICATE_REMOTE,
+            // In the order the closed lists give, so a reader compares them without sorting.
+            refs: REPLICATE_REF_CLASSES.filter((c) => (r.refs ?? REPLICATE_REF_CLASSES).includes(c)),
+            on: REPLICATE_TRIGGERS.filter((t) => (r.on ?? REPLICATE_TRIGGERS).includes(t)),
+            every: r.every ?? null,
+            pointer: `${pointer}/replicate`,
+          },
     pointer,
   };
 }
