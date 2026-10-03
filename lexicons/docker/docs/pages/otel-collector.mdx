@@ -32,7 +32,7 @@ The composite returns two members, `service` and `config`. Their Compose keys ar
 | `signals` | traces, metrics and logs | Which signals get a pipeline in the default config |
 | `config` | none | A full config as otel entities; replaces the default, and `exporters` and `signals` are ignored |
 | `image` | the contrib image at the otel lexicon's pinned version | Collector image |
-| `publishPorts` | `true` | Publish the receiver ports on the host |
+| `publishPorts` | `true` | Publish the ports the config listens on (receivers and the `prometheus` exporter), UDP ones as `/udp` |
 | `restart` | `unless-stopped` | Restart policy |
 | `defaults` | none | Per-member overrides for `service` and `config` |
 

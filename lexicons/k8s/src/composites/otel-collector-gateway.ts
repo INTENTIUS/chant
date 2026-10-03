@@ -200,7 +200,7 @@ export const OtelCollectorGateway = Composite((props: OtelCollectorGatewayProps)
     },
   }, defs?.deployment));
 
-  const servicePorts = runtime.servicePorts.map((p) => ({ name: p.name, port: p.port, targetPort: p.name, protocol: "TCP" }));
+  const servicePorts = runtime.servicePorts.map((p) => ({ name: p.name, port: p.port, targetPort: p.name, protocol: p.protocol ?? "TCP" }));
 
   const service = new Service(mergeDefaults({
     metadata: { name, namespace, labels: gatewayLabels },

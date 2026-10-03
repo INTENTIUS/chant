@@ -9,6 +9,8 @@ import {
   LoadBalancingExporter,
   OtlpReceiver,
   Pipeline,
+  PrometheusExporter,
+  defineComponent,
   Service as CollectorService,
   TailSamplingProcessor,
   collectorTopology,
@@ -78,6 +80,26 @@ describe("OtelCollectorGateway", () => {
     expect(container.ports.map((x: any) => x.containerPort)).toEqual([4317, 4318, 13133]);
     expect(container.readinessProbe).toEqual({ httpGet: { path: "/", port: "health" } });
     expect(container.securityContext.capabilities).toEqual({ drop: ["ALL"] });
+  });
+
+  test("a UDP receiver's port is UDP on the container and the Services, and the prometheus exporter's port is exposed (#3122)", () => {
+    const StatsdReceiver = defineComponent<{ endpoint: string }>()({
+      kind: "receiver",
+      type: "statsd",
+      pin: { source: "github.com/open-telemetry/opentelemetry-collector-contrib", version: "v0.130.0" },
+    });
+    const statsd = new StatsdReceiver({ endpoint: "0.0.0.0:8125" });
+    const prom = new PrometheusExporter({ endpoint: "0.0.0.0:8889" });
+    const gw = OtelCollectorGateway({ config: [new Pipeline({ signal: "metrics", receivers: [statsd], exporters: [prom] })] });
+    expect(p(gw.service).spec.ports).toEqual([
+      { name: "statsd", port: 8125, targetPort: "statsd", protocol: "UDP" },
+      { name: "prometheus", port: 8889, targetPort: "prometheus", protocol: "TCP" },
+    ]);
+    const container = p(gw.deployment).spec.template.spec.containers[0];
+    expect(container.ports).toEqual([
+      { containerPort: 8125, name: "statsd", protocol: "UDP" },
+      { containerPort: 8889, name: "prometheus" },
+    ]);
   });
 
   test("clusterRules adds a ClusterRole bound to the gateway's ServiceAccount", () => {
