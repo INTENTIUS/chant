@@ -10,14 +10,16 @@
  *
  * - `selector.type` is an entity type (`ClickHouse::Table`); `selector.name` is
  *   an object name, `db.name` or `name`.
- * - `owned` returns nothing, with a warning: no ownership marker is stamped on
- *   ClickHouse objects yet, so none can be read back.
+ * - `owned` keeps the objects whose comment carries chant's ownership marker
+ *   (`../ownership.ts`), the trailer the applier stamps. The trailer itself is
+ *   never written into a declaration: `readLiveSchema` takes it off.
  */
 
 import type { ExportedTemplate, ResourceSelector } from "@intentius/chant/lexicon";
 import { bindClickHouse, type BindOptions } from "../live/bind";
 import { readLiveSchema } from "../live/catalog";
 import { objectsToIR, stripServerDefaults, type ImportedObject } from "./ir";
+import { isChantManaged } from "../ownership";
 
 export interface ExportOptions extends Omit<BindOptions, "environment"> {
   environment: string;
@@ -29,16 +31,10 @@ export interface ExportOptions extends Omit<BindOptions, "environment"> {
 }
 
 export async function exportResources(options: ExportOptions): Promise<ExportedTemplate> {
-  if (options.owned) {
-    return {
-      resources: [],
-      parameters: [],
-      warnings: ["nothing is exported with --owned: chant stamps no ownership marker on ClickHouse objects yet, so none can be read back"],
-    } as ExportedTemplate;
-  }
   const target = await bindClickHouse(options);
   const live = await readLiveSchema(target);
   const selected = live.filter((o) => {
+    if (options.owned && !isChantManaged(o.comment)) return false;
     if (options.selector?.type && o.type !== options.selector.type) return false;
     const name = options.selector?.name;
     if (name !== undefined && name !== o.name && name !== `${o.database}.${o.name}`) return false;

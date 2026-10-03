@@ -7,6 +7,7 @@
 import { clickhouseQuery } from "../http";
 import type { ClickHouseTarget } from "./bind";
 import { CLICKHOUSE_ENTITY_TYPES, type ClickHouseEntityType } from "../entities";
+import { stripMarkerFromStatement } from "../ownership";
 
 /** The server's own databases, never part of a declared schema. */
 export const SYSTEM_DATABASES = new Set(["system", "information_schema", "INFORMATION_SCHEMA"]);
@@ -18,8 +19,9 @@ export interface LiveObject {
   /** The engine `system.tables` / `system.databases` report: `MergeTree`, `View`, `MaterializedView`, `Atomic`. */
   engine: string;
   uuid?: string;
+  /** The object's comment as the server holds it, chant's ownership trailer included (`../ownership.ts`). */
   comment?: string;
-  /** `SHOW CREATE`, as the server prints it. */
+  /** `SHOW CREATE` as the server prints it, less chant's ownership trailer, so it reads as the declaration. */
   statement: string;
 }
 
@@ -58,7 +60,7 @@ export async function readLiveSchema(target: ClickHouseTarget, opts: { withState
   const statement = async (kind: "DATABASE" | "TABLE", what: string) =>
     opts.withStatements === false
       ? ""
-      : ((await q<{ statement: string }>(`SHOW CREATE ${kind} ${what}`))[0]?.statement ?? "");
+      : stripMarkerFromStatement((await q<{ statement: string }>(`SHOW CREATE ${kind} ${what}`))[0]?.statement ?? "");
 
   for (const d of databases) {
     out.push({

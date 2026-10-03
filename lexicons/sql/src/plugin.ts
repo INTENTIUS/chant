@@ -22,6 +22,8 @@ import { ClickHouseGenerator } from "./clickhouse/import/generator";
 import { sqlCommands } from "./clickhouse/plan/commands";
 import { sqlDeepNormalizationHooks } from "./clickhouse/plan/deep";
 import { versionFromReleaseTag } from "./spec/pin";
+import { SQL_OWNERSHIP_CHANNEL } from "./clickhouse/ownership";
+import { CLICKHOUSE_EMULATOR } from "./op/activities/clickhouse-emulator";
 import { sqlSkills } from "./skill-defs";
 import { detectTemplate } from "./detect";
 import { CDC_TEMPLATE, DEFAULT_TEMPLATE, EVENTS_TEMPLATE } from "./init-templates";
@@ -30,6 +32,12 @@ export const sqlPlugin: LexiconPlugin = {
   name: "sql",
   serializer: sqlSerializer,
   configSchema: sqlConfigSchema,
+
+  /** The pinned clickhouse-server, for `chant emulator up` (#3208). */
+  emulator: CLICKHOUSE_EMULATOR,
+
+  /** chant's marker is a trailer on the object's comment (#3208, ./clickhouse/ownership.ts). */
+  ownershipChannel: SQL_OWNERSHIP_CHANNEL,
 
   async generate(options?: { verbose?: boolean }): Promise<void> {
     const { generate, writeGeneratedFiles } = await import("./codegen/generate");

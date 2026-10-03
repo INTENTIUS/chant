@@ -151,6 +151,7 @@ answer, and the suite will hold you to it: every verdict must then be `unknown`.
 | k3s | `app.kubernetes.io/managed-by` labels | `describeResources` |
 | k8s | `app.kubernetes.io/managed-by` labels | all three |
 | render | `CHANT_MANAGED_BY` env vars | `describeResources` |
+| sql | a `[chant managed-by=chant stack=… env=…]` trailer on the object's `COMMENT`, after the declared comment | `describeResources`, `exportResources` |
 
 Each lexicon declares its own `ChannelKeys` (`managedBy` / `stack` / `env`); the label convention is shared as `LABEL_OWNERSHIP_KEYS` in `@intentius/chant/ownership`, and each tag-based lexicon keeps its own beside it (`lexicons/aws/src/ownership.ts`, `lexicons/fly/src/ownership.ts`, `lexicons/cedar/src/avp/ownership.ts`).
 

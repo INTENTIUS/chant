@@ -764,7 +764,7 @@
   "claude/colon-reveal": 3
  },
  "docs/src/content/docs/lexicon-authoring/ci-integration.mdx": {
-  "formatting/em-dash-density": 9,
+  "formatting/em-dash-density": 8,
   "discourse/punchy-fragments": 1,
   "claude/colon-reveal": 2,
   "tricolon/comma-series": 4
@@ -797,14 +797,11 @@
   "tricolon/comma-series": 1
  },
  "docs/src/content/docs/lexicon-authoring/importing.mdx": {
-  "formatting/em-dash-density": 5,
   "claude/colon-reveal": 3,
   "tricolon/comma-series": 1,
-  "discourse/punchy-fragments": 1,
   "anaphora/repeated-opening": 1
  },
  "docs/src/content/docs/lexicon-authoring/lint-rules.mdx": {
-  "formatting/em-dash-density": 2,
   "claude/colon-reveal": 2,
   "anaphora/repeated-opening": 1
  },
@@ -829,7 +826,7 @@
   "claude/figurative-suffixes": 1
  },
  "docs/src/content/docs/lexicon-authoring/observation.mdx": {
-  "formatting/em-dash-density": 36,
+  "formatting/em-dash-density": 34,
   "claude/sounds-like-claude": 1,
   "claude/colon-reveal": 8,
   "discourse/punchy-fragments": 3,
