@@ -12,7 +12,7 @@
 import { existsSync } from "fs";
 import { resolve } from "path";
 import {
-  checkPinnedUpgrade,
+  checkPinnedUpgrades,
   lexiconNameOf,
   type LexiconId,
   type UpgradeCheckResult,
@@ -23,6 +23,8 @@ export interface PinnedUpgradeOptions {
   lexiconDir: string;
   /** Explicit lexicon id; inferred from the directory name when omitted. */
   lexicon?: LexiconId;
+  /** Label of one pin to check, for a lexicon that declares several. Omitted: all of them. */
+  pin?: string;
   /** Force re-fetch of the upstream spec during regen. */
   force?: boolean;
   /** Print subprocess output while running. */
@@ -55,24 +57,35 @@ export function semverLabel(result: UpgradeCheckResult): "minor" | "major" | "no
  * Never throws — a missing dir or a lexicon with no `upstreamPin` becomes a fetchError.
  */
 export async function runPinnedUpgrade(opts: PinnedUpgradeOptions): Promise<UpgradeCheckResult> {
+  return (await runPinnedUpgrades(opts))[0]!;
+}
+
+/**
+ * Run the check for every pin the plugin declares (or the one in `opts.pin`),
+ * one result each. A lexicon with one pin gives one result.
+ */
+export async function runPinnedUpgrades(opts: PinnedUpgradeOptions): Promise<UpgradeCheckResult[]> {
   const dir = resolve(opts.lexiconDir);
 
   const lexicon = opts.lexicon ?? inferLexicon(dir);
 
   if (!existsSync(dir)) {
-    return {
-      lexicon,
-      hasUpgrade: false,
-      from: "(unknown)",
-      to: null,
-      validation: null,
-      fetchError: `Lexicon directory not found: ${dir}`,
-    };
+    return [
+      {
+        lexicon,
+        hasUpgrade: false,
+        from: "(unknown)",
+        to: null,
+        validation: null,
+        fetchError: `Lexicon directory not found: ${dir}`,
+      },
+    ];
   }
 
-  return checkPinnedUpgrade({
+  return checkPinnedUpgrades({
     lexiconDir: dir,
     lexicon,
+    pin: opts.pin,
     force: opts.force,
     verbose: opts.verbose,
   });
@@ -102,12 +115,14 @@ function c(text: string, code: string): string {
  */
 export function printPinnedUpgradeResult(result: UpgradeCheckResult, json: boolean): void {
   const label = semverLabel(result);
+  const name = result.pin ? `${result.lexicon}/${result.pin}` : result.lexicon;
 
   if (json) {
     console.log(
       JSON.stringify(
         {
           lexicon: result.lexicon,
+          ...(result.pin ? { pin: result.pin } : {}),
           hasUpgrade: result.hasUpgrade,
           from: result.from,
           to: result.to,
@@ -128,13 +143,13 @@ export function printPinnedUpgradeResult(result: UpgradeCheckResult, json: boole
   }
 
   if (result.fetchError) {
-    console.log(c(`[${result.lexicon}] error: ${result.fetchError}`, COLORS.red));
+    console.log(c(`[${name}] error: ${result.fetchError}`, COLORS.red));
     return;
   }
 
   if (!result.hasUpgrade) {
     console.log(
-      c(`[${result.lexicon}] up to date`, COLORS.green) +
+      c(`[${name}] up to date`, COLORS.green) +
         `  pinned=${result.from}` +
         (result.to ? ` latest=${result.to}` : ""),
     );
@@ -143,7 +158,7 @@ export function printPinnedUpgradeResult(result: UpgradeCheckResult, json: boole
 
   if (result.manualPin) {
     console.log(
-      c(`[${result.lexicon}] upgrade available`, COLORS.bold) + `  ${result.from} -> ${result.to}`,
+      c(`[${name}] upgrade available`, COLORS.bold) + `  ${result.from} -> ${result.to}`,
     );
     console.log(`  The pin in ${result.manualPin.file} cannot be rewritten generically, so nothing was edited or regenerated.`);
     console.log(`  ${result.manualPin.instructions}`);
@@ -152,7 +167,7 @@ export function printPinnedUpgradeResult(result: UpgradeCheckResult, json: boole
 
   // Upgrade available
   console.log(
-    c(`[${result.lexicon}] upgrade available`, COLORS.bold) +
+    c(`[${name}] upgrade available`, COLORS.bold) +
       `  ${result.from} -> ${result.to}`,
   );
 
@@ -201,4 +216,29 @@ export function printPinnedUpgradeResult(result: UpgradeCheckResult, json: boole
   console.log(
     `Validation: ${validationLabel}  Semver: ${c(label, labelColor)}  ${result.from} -> ${result.to}`,
   );
+}
+
+/**
+ * Print one result per pin. One result prints exactly as `printPinnedUpgradeResult`;
+ * several print in turn, and `json` emits an array of the same objects.
+ */
+export function printPinnedUpgradeResults(results: UpgradeCheckResult[], json: boolean): void {
+  if (results.length === 1) {
+    printPinnedUpgradeResult(results[0]!, json);
+    return;
+  }
+  if (json) {
+    // Each result prints as its own JSON object; collect them into one array.
+    const lines: string[] = [];
+    const log = console.log;
+    console.log = (...a: unknown[]) => void lines.push(a.join(" "));
+    try {
+      for (const r of results) printPinnedUpgradeResult(r, true);
+    } finally {
+      console.log = log;
+    }
+    console.log(`[${lines.join(",\n")}]`);
+    return;
+  }
+  for (const r of results) printPinnedUpgradeResult(r, false);
 }

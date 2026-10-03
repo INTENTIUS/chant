@@ -9,7 +9,7 @@ diataxis: reference
 ```
 chant workspace work claim <id> --holder <name> [--kind <kind file>] [--ttl <seconds|duration>] [--note <text>] [--json]
 chant workspace work renew <id> --holder <name> [--kind <kind file>] [--ttl <seconds|duration>] [--token <token>] [--note <text>] [--json]
-chant workspace work release <id> --holder <name> [--kind <kind file>] [--token <token>] [--outcome <text>] [--note <text>] [--json]
+chant workspace work release <id> --holder <name> [--kind <kind file>] [--token <token>] [--outcome <outcome>] [--note <text>] [--json]
 chant workspace work history <id> [--kind <kind file>] [--json]
 ```
 
@@ -23,7 +23,7 @@ The lease is the [operator lease](/chant/cli/operator/) under another key. Its r
 |---|---|
 | `claim` | Takes an item nobody holds. Anyone holding a live lease on it refuses the claim, the same holder included. An expired lease doesn't refuse it, and the new claim gets a new token. |
 | `renew` | Moves the expiry of a live lease the holder already has and keeps its token. With `--token`, the live lease must carry that token. After a lease has expired or been released, `renew` is refused and the holder claims the item again. |
-| `release` | Gives the lease back. The holder releases a live lease. Anyone may release an expired one, which is how a runner closes out a claim whose worker went away. `--outcome` says how the work ended, such as `done` or `not_done`. |
+| `release` | Gives the lease back. The holder releases a live lease. Anyone may release an expired one, which is how a runner closes out a claim whose worker went away. `--outcome` says how the work ended, one of the [outcomes](#outcomes). |
 
 The command finds the item first, in the work kind `--kind` names or, without it, in the one work kind the [declaration](/chant/reference/workspace-declaration/#record-kinds) names that has a record with the id. An id no work record has is an error, and so is a claim on an item in a closed state such as `done` or `dropped`. Renew and release don't check the state, so a lease can always be given back.
 
@@ -45,6 +45,25 @@ Every claim, renew and release appends a line to `_leases/<id>.jsonl` on the `ch
 
 `holder` is the lease's holder and `by` is who wrote the line: they differ only when someone releases another worker's expired lease.
 
+### Outcomes
+
+A release's outcome is one of a closed list ([#3147](https://github.com/INTENTIUS/chant/issues/3147)). `release --outcome` refuses any other word with `write-usage-invalid`, and an Op whose step names one outside the list is released `not_done`. The list is `$defs/outcome` in `work-lease.schema.json`.
+
+| Outcome | Meaning | Counts as an attempt |
+|---|---|---|
+| `done` | The work was finished. | no |
+| `not_done` | A build ran and didn't finish, or the run failed. | yes |
+| `abandoned` | Someone other than the holder closed out an expired lease, because the worker went away. | yes |
+| `gated` | The run stopped at a gate. | no |
+| `waiting` | The run stopped on a decision point's open question. | no |
+| `dropped` | The item was dropped, such as by a `refuse` at the understand point. Nothing was built. | no |
+| `redraft` | The understand point sent the item back to its author to redraft. Nothing was built. | no |
+| `ask` | The understand point sent a question back to the item's author. Nothing was built. | no |
+
+A history written before the list was closed may hold other words. A reader takes such a release as an attempt.
+
+An Op that changes the checkout and ends `not_done` keeps the attempt's work at `refs/chant/kept/<item>/<token>`, or `refs/chant/kept/<member>/<item>/<token>` in a workspace member. The kept commit holds what the run committed on `chant/work/<item>` and what it left uncommitted. The branch goes back to where the run started ([Ops](/chant/guide/ops/#an-op-that-changes-the-checkout)). The refs are local, and `work history` lists them.
+
 ### Members
 
 The lease lives in the ledger of the member that owns the work kind file ([D7](https://github.com/INTENTIUS/chant/issues/2524)), whichever directory the command runs in. A work kind no member owns, such as the reference workspace's `work/work.kind.mjs`, uses the flat ledger: `refs/chant/lease/work/<id>` and `_leases/<id>.jsonl`. A kind inside member `api` uses `refs/chant/lease/_members/api/work/<id>` and `_members/api/_leases/<id>.jsonl`.
@@ -62,7 +81,7 @@ The lease lives in the ledger of the member that owns the work kind file ([D7](h
 | `expired` | It ran out, and nobody released it or claimed the item since. |
 | `lost` | It ran out unreleased, and a later claim took the item. |
 
-A runner that leaves an item to people after a number of failed builds counts the claims that ended other than `released` with outcome `done`, leaving out one that is `held`. `summary` counts the claims by how they ended, and `outcomes` counts the released ones by outcome. `events` holds every line as written. The read is a [read-contract](/chant/reference/workspace-read-contract/#work-items) output, `work-history.schema.json`, and the MCP tool `workspace-work-history` returns the same document. Like the other reads, it reads the local branch and refs and never fetches. It takes no `--holder`, `--ttl`, `--token`, `--outcome` or `--note`.
+Each claim also has `attempt`, which says whether it counts toward the item's attempt limit ([#3147](https://github.com/INTENTIUS/chant/issues/3147)). A claim counts when it was released `not_done` or `abandoned`, released with no outcome, or ended `expired` or `lost`. A claim that is `held` doesn't count. Each claim's `kept` names the ref keeping its unfinished work, or is `null`. `attempts` totals them against the limit. The limit is the item's own field that the work kind's `work.attempts.field` names (`max_attempts` in the reference kind), or else the kind's `work.attempts.max`. `exhausted` turns true once `failed` reaches the limit, and a runner then leaves the item to people. Without a declared limit, `limit` and `remaining` are `null` and `exhausted` is false. `kept` lists every kept attempt of the item. `summary` counts the claims by how they ended, and `outcomes` counts the released ones by outcome. `events` holds every line as written. The read is a [read-contract](/chant/reference/workspace-read-contract/#work-items) output, `work-history.schema.json`, and the MCP tool `workspace-work-history` returns the same document. Like the other reads, it reads the local branch and refs and never fetches. It takes no `--holder`, `--ttl`, `--token`, `--outcome` or `--note`.
 
 ## Options
 
@@ -73,7 +92,7 @@ A runner that leaves an item to people after a number of failed builds counts th
 | `--kind <kind file>` | The work kind. Without it, the declared work kind that has the id. |
 | `--ttl <seconds\|duration>` | How long a claim or renew lasts: a whole number of seconds, or a duration such as `10m`. Default 10 minutes. |
 | `--token <token>` | For `renew` and `release`: the fencing token the caller holds. A lease with another token is refused with `lease-token-mismatch`. |
-| `--outcome <text>` | For `release`: how the work ended, written to the history line. |
+| `--outcome <outcome>` | For `release`: how the work ended, one of the [outcomes](#outcomes), written to the history line. |
 | `--note <text>` | Free text written to the history line. |
 | `--json` | Print the result as JSON. |
 
@@ -142,12 +161,16 @@ An error prints `{ "$schema", "contract", "error": { "code", "message" } }`. The
       "expiresAt": "2026-09-25T10:13:20.000Z",
       "renewals": 1,
       "ended": "released",
-      "release": { "by": "worker-a", "at": "2026-09-25T10:09:00.000Z", "outcome": "done", "note": null }
+      "release": { "by": "worker-a", "at": "2026-09-25T10:09:00.000Z", "outcome": "done", "note": null },
+      "attempt": false,
+      "kept": null
     }
   ],
   "events": [],
   "malformed": 0,
-  "summary": { "claims": 1, "released": 1, "held": 0, "expired": 0, "lost": 0, "outcomes": { "done": 1 } }
+  "summary": { "claims": 1, "released": 1, "held": 0, "expired": 0, "lost": 0, "outcomes": { "done": 1 } },
+  "attempts": { "failed": 0, "limit": 3, "remaining": 3, "exhausted": false },
+  "kept": []
 }
 ```
 
@@ -167,7 +190,7 @@ An error prints `{ "$schema", "contract", "error": { "code", "message" } }`. The
 
 | Code | Cause |
 |---|---|
-| `write-usage-invalid` | A missing verb, id or `--holder`, or a flag the verb doesn't take. |
+| `write-usage-invalid` | A missing verb, id or `--holder`, a flag the verb doesn't take, or an `--outcome` outside the [outcomes](#outcomes). |
 | `kind-unreadable` | The work kind or its records could not be read. |
 | `work-kind-missing` | `--kind` is not a work kind, or the declaration names none. |
 | `work-kind-ambiguous` | More than one declared work kind has a record with the id; pass `--kind`. |

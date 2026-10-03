@@ -17,6 +17,9 @@
  * - `implements`: each decision it names, with that decision's state;
  * - `acceptance`, for a kind with acceptance criteria (#2772): how many of the
  *   record's criteria passing evidence of the expected verification meets;
+ * - `contract`, for a kind with a contract link (#3147): the contract record
+ *   the item builds, with its state, read from the contract kind at the same
+ *   revision;
  *
  * and each decision `implementedBy`, the work records naming it. The
  * warnings are closed codes. `work-done-gap-open` is not raised here: it
@@ -48,6 +51,12 @@ export const WORK_WARNING_CODES = [
   "work-acceptance-unmet",
   /** A passing `manual` verdict on a criterion names the record's implementer, so it does not count: a manual verdict comes from someone else (#2772). */
   "work-acceptance-self-verified",
+  /** The record names a contract no record of the kind's contract kind has (#3147). */
+  "work-contract-unknown",
+  /** The record names a contract whose state is not approved, such as a draft (#3147). */
+  "work-contract-undecided",
+  /** The record names a builder tier its kind's `work.tier.tiers` does not list (#3147). */
+  "work-tier-unknown",
 ] as const satisfies readonly ReasonCode[];
 export type WorkWarningCode = (typeof WORK_WARNING_CODES)[number];
 
@@ -56,6 +65,49 @@ export interface WorkLink {
   id: string;
   /** The linked record's state, or null when no record has the id. */
   state: string | null;
+}
+
+/**
+ * One decision-point answer about a work item (#3147), as `records --json`
+ * joins it from the answer kind the work kind names: the answer records whose
+ * `constrains` names the item's id. The item never copies them.
+ */
+export interface WorkAnswer {
+  /** The answer record's id, such as understand-0123456789ab. */
+  id: string;
+  /** The decision point it answers. */
+  point: string | null;
+  /** escalated, proposed or answered. */
+  state: string | null;
+  /** The answer, or null while there is none. */
+  answer: string | boolean | null;
+  /** The people who answered or confirmed it, empty when a table or model did. */
+  answeredBy: string[];
+}
+
+/**
+ * The answers about each work item: every answer record whose `constrains`
+ * names the item's id, in path order, by item id.
+ */
+export function workAnswers(answerRecords: readonly RecordEntry[], ids: Iterable<string>): Map<string, WorkAnswer[]> {
+  const out = new Map<string, WorkAnswer[]>();
+  for (const id of ids) out.set(id, []);
+  for (const a of answerRecords) {
+    if (a.id === null || a.data === null) continue;
+    for (const target of idList(a.data, "constrains")) {
+      const list = out.get(target);
+      if (!list || list.some((x) => x.id === a.id)) continue;
+      const answer = a.data.answer;
+      list.push({
+        id: a.id,
+        point: typeof a.data.point === "string" ? a.data.point : null,
+        state: a.state,
+        answer: typeof answer === "string" || typeof answer === "boolean" ? answer : null,
+        answeredBy: idList(a.data, "answered_by"),
+      });
+    }
+  }
+  return out;
 }
 
 /** A decision as a work read lists it: its state and the work records implementing it. */
@@ -174,6 +226,16 @@ export async function applyWork(loaded: LoadedRecordKind, entries: RecordEntry[]
   for (const e of entries) if (e.id !== null && !byId.has(e.id)) byId.set(e.id, e);
   const closed = new Set(kind.closedStates);
 
+  // The contract kind a work item names its contract in (#3147), read at the same revision.
+  let contracts: { kind: LoadedRecordKind; byId: Map<string, RecordEntry> } | undefined;
+  if (work.contract) {
+    const contractKind = await loadRecordKind(work.contract.kind, dirname(loaded.file));
+    const contractRead = await readRecords(contractKind, { root: options.root, source: options.source });
+    const contractById = new Map<string, RecordEntry>();
+    for (const c of contractRead.records) if (c.id !== null && !contractById.has(c.id)) contractById.set(c.id, c);
+    contracts = { kind: contractKind, byId: contractById };
+  }
+
   // Records in a needs cycle: those that reach themselves.
   const inCycle = new Set<string>();
   for (const start of byId.keys()) {
@@ -240,6 +302,26 @@ export async function applyWork(loaded: LoadedRecordKind, entries: RecordEntry[]
           code: "work-acceptance-unmet",
           message: `${e.id ?? e.path} is ${work.done}, and no passing evidence meets ${unmet.map((c) => `${c.id} (${c.verification})`).join(", ")}`,
         });
+      }
+    }
+    if (contracts && work.contract) {
+      const named = e.data[work.contract.field];
+      if (typeof named === "string" && named !== "") {
+        const c = contracts.byId.get(named);
+        e.contract = { id: named, state: c?.state ?? null };
+        if (!c) {
+          e.warnings.push({ code: "work-contract-unknown", message: `names the contract ${named}, which no record in ${work.contract.kind} has` });
+        } else if (!isDecided(contracts.kind.kind, c.state)) {
+          e.warnings.push({ code: "work-contract-undecided", message: `names the contract ${named}, which is ${c.state ?? "in no state"}: the work may build a contract nobody approved` });
+        }
+      } else {
+        e.contract = null;
+      }
+    }
+    if (work.tier) {
+      const tier = e.data[work.tier.field];
+      if (typeof tier === "string" && !work.tier.tiers.includes(tier)) {
+        e.warnings.push({ code: "work-tier-unknown", message: `names the builder tier ${tier}, which the kind's tiers (${work.tier.tiers.join(", ")}) do not list` });
       }
     }
     if (e.state !== null && closed.has(e.state) && typeof e.data[work.closedOn] !== "string") {
