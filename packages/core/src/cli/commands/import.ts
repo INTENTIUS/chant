@@ -759,6 +759,8 @@ export async function liveImportFromPlugins(
       warnings.push(`${plugin.name}: live export failed — ${err instanceof Error ? err.message : String(err)}`);
       continue;
     }
+    // What the exporter left out or could not carry (#3336).
+    if (ir.warnings) warnings.push(...ir.warnings);
     if (ir.resources.length === 0) continue;
     irParts.push(ir);
     generatorLexicon ??= plugin;
