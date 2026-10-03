@@ -138,7 +138,8 @@ function diffColumns(key: string, before: PgDiffObject, after: PgDiffObject, out
 
 // ── Constraints ────────────────────────────────────────────────────────
 
-function addConstraintRule(c: CanonicalConstraint): PgClassifierRuleId {
+/** The rule adding a constraint falls under. */
+export function addConstraintRule(c: CanonicalConstraint): PgClassifierRuleId {
   if (c.notValid) return "SQLPG217";
   switch (c.kind) {
     case "CHECK":
@@ -268,9 +269,13 @@ function createdTables(matches: ReturnType<typeof matchByIdentity<PgDiffObject>>
  * Classify every change from `before` to `after`. Objects another tool owns
  * (an ORM's revision table) are never proposed for a drop.
  */
-export function diffPgSchemas(before: readonly PgSchemaObject[], after: readonly PgSchemaObject[], options: PgDiffOptions = {}): PgSchemaDiff {
-  const major = options.major ?? POSTGRES_LATEST_MAJOR;
-  const matches = matchByIdentity(before, after, {
+/**
+ * Which object of `before` each object of `after` is: by key, else by a
+ * `-- previously:` hint naming the old one. The diff and the applier
+ * (`../apply/`) match the same way.
+ */
+export function matchPgObjects(before: readonly PgSchemaObject[], after: readonly PgSchemaObject[]): ReturnType<typeof matchByIdentity<PgDiffObject>> {
+  return matchByIdentity(before, after, {
     qualified: (o) => `${o.kind === "schema" ? "schema" : o.kind === "extension" ? "extension" : o.kind === "enum" || o.kind === "domain" ? "type" : "relation"} ${qualified(o)}`,
     previously: (o) => o.previously,
     previousNames: (o, prev) => {
@@ -278,6 +283,11 @@ export function diffPgSchemas(before: readonly PgSchemaObject[], after: readonly
       return [`${space} ${prev}`, ...(o.schema && !prev.includes(".") ? [`${space} ${o.schema}.${prev}`] : [])];
     },
   });
+}
+
+export function diffPgSchemas(before: readonly PgSchemaObject[], after: readonly PgSchemaObject[], options: PgDiffOptions = {}): PgSchemaDiff {
+  const major = options.major ?? POSTGRES_LATEST_MAJOR;
+  const matches = matchPgObjects(before, after);
   const newTables = createdTables(matches);
   const changes: PgChange[] = [];
   const hints: string[] = [];

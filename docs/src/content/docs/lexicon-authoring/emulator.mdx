@@ -36,15 +36,17 @@ export const myfakeDown = (args = {}, signal?: AbortSignal) => myfake.down(args,
 emulator: MY_EMULATOR,
 ```
 
-`EmulatorSpec` (`packages/core/src/op/emulator-lifecycle.ts:12`) has four
-required fields and three optional ones:
+`EmulatorSpec` (`packages/core/src/op/emulator-lifecycle.ts:12`) has three
+required fields, a readiness check, and optional ones:
 
 | Field | Required | Meaning |
 |---|---|---|
 | `name` | yes | Default container name |
 | `image` | yes | Docker image, with a version tag |
 | `containerPort` | yes | Port the emulator listens on inside the container |
-| `healthPath` | yes | Health path on the host port |
+| `healthPath` | one of these two | Health path on the host port, polled over HTTP |
+| `readyCommand` | one of these two | A command run in the container (`docker exec`) whose exit status 0 means ready, for a server with no HTTP health endpoint, such as `pg_isready` |
+| `endpoint` | no | `(port: number) => string`, the URL tooling connects to. Default: `http://localhost:<port>` |
 | `ready` | no | `(healthBody: string) => boolean`. Default: any 200 is ready |
 | `runArgs` | no | Extra `docker run` args inserted before the image, e.g. a socket mount |
 | `upstream` | no | `{ repo }`, the `owner/repo` whose latest release names the current version |
@@ -60,7 +62,7 @@ This distinction once cost the repo three of its four emulators. azure and gcp
 both built the exact spec above in `src/op/activities/` and used it from their
 Ops without setting `plugin.emulator`, so `chant emulator up --all` booted Floci
 and nothing else while the local-testing docs presented all three clouds as
-equal local targets (chant #1345). All six capabilities are declared now. The
+equal local targets (chant #1345). All of them are declared now. The
 lesson holds anyway. The wrapper is not the declaration.
 
 ## More than one
@@ -92,10 +94,11 @@ depend on getting it right:
   endpoint variable and asserted azure had none, while azure's own
   `describe-resources.ts` read `AZURE_ENDPOINT_URL` on every call.
 
-Each of the six declared capabilities names exactly one endpoint variable:
+Each of the seven declared capabilities names exactly one endpoint variable:
 `AWS_ENDPOINT_URL`, `AZURE_ENDPOINT_URL`, `GCP_ENDPOINT_URL`,
-`FLY_FLAPS_BASE_URL` (mudflaps), `SPRITES_BASE_URL` (spritzer) and
-`CLICKHOUSE_URL` (sql). Return `{}`
+`FLY_FLAPS_BASE_URL` (mudflaps), `SPRITES_BASE_URL` (spritzer),
+`CLICKHOUSE_URL` (sql's ClickHouse) and `POSTGRES_URL` (sql's Postgres, a
+`postgres://` URL, declared with `readyCommand` and `endpoint`). Return `{}`
 if your emulator is reached only through an explicit apply argument. That is a real answer, and a better one than naming a
 variable nothing reads.
 

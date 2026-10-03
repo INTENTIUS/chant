@@ -26,6 +26,7 @@ import { versionFromReleaseTag } from "./spec/pin";
 import { POSTGRES_MAJORS, postgresUpstreamPin } from "./spec/postgres-pin";
 import { SQL_OWNERSHIP_CHANNEL } from "./clickhouse/ownership";
 import { CLICKHOUSE_EMULATOR } from "./op/activities/clickhouse-emulator";
+import { POSTGRES_EMULATOR } from "./op/activities/postgres-emulator";
 import { sqlSkills } from "./skill-defs";
 import { detectTemplate } from "./detect";
 import { CDC_TEMPLATE, DEFAULT_TEMPLATE, EVENTS_TEMPLATE, POSTGRES_EVENTS_TEMPLATE, POSTGRES_TEMPLATE, POSTGRES_TENANT_TEMPLATE } from "./init-templates";
@@ -36,8 +37,8 @@ export const sqlPlugin: LexiconPlugin = {
   serializer: sqlSerializer,
   configSchema: sqlConfigSchema,
 
-  /** The pinned clickhouse-server, for `chant emulator up` (#3208). */
-  emulator: CLICKHOUSE_EMULATOR,
+  /** The pinned clickhouse-server (#3208) and postgres (#3280), for `chant emulator up`. */
+  emulator: [CLICKHOUSE_EMULATOR, POSTGRES_EMULATOR],
 
   /** chant's marker is a trailer on the object's comment (#3208, ./clickhouse/ownership.ts). */
   ownershipChannel: SQL_OWNERSHIP_CHANNEL,

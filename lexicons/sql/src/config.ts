@@ -88,6 +88,24 @@ export const sqlProfileSchema = z.strictObject({
    * extensions as foreign.
    */
   provider: providerName.optional(),
+  /**
+   * Postgres apply: how long one statement waits for its lock before it
+   * fails (`lock_timeout`), in milliseconds, so a change blocked behind a
+   * long query fails fast instead of queueing every query behind it. 5000
+   * when omitted.
+   */
+  lockTimeoutMs: z.number().int().nonnegative().optional(),
+  /**
+   * Postgres apply: the `statement_timeout` for a statement that changes only
+   * the catalog, in milliseconds. 60000 when omitted.
+   */
+  statementTimeoutMs: z.number().int().nonnegative().optional(),
+  /**
+   * Postgres apply: the `statement_timeout` for a statement that reads or
+   * rewrites every row (a table rewrite, a constraint validation, a
+   * `CONCURRENTLY` index build), in milliseconds. 0, no limit, when omitted.
+   */
+  scanTimeoutMs: z.number().int().nonnegative().optional(),
 });
 
 const dialectName = z.enum(SQL_DIALECTS);
