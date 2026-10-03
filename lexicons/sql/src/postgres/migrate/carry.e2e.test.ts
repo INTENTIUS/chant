@@ -30,6 +30,8 @@ import { postgresApply } from "../../op/activities/postgres-apply";
 import { toApplyResult } from "../../op/activities";
 import { postgresMigrationPlan, type PostgresMigrationDeps } from "../../op/activities/postgres-migration";
 import type { PostgresMigrationOpConfig } from "./op";
+import { build } from "@intentius/chant/build";
+import { sqlPlugin, sqlSerializer } from "../../index";
 
 const enabled = await dockerAvailable();
 let server: TestPostgres | undefined;
@@ -285,4 +287,49 @@ describe.skipIf(!enabled)("what the Op does not carry is refused at the Plan", (
     expect(refusal).toContain("view inv.stock reads the column, and the build does not declare it; the switch makes each such view again from its declaration");
     expect(refusal).toContain("materialized view inv.totals reads the column; making it again would scan in the switch's transaction");
   }, 120_000);
+});
+
+describe.skipIf(!enabled)("the postgres-column-rename example", () => {
+  test("its rename of a unique username to login plans as the Op and runs to the end", async () => {
+    const result = await build(join(import.meta.dirname, "../../../examples/postgres-column-rename/src"), [sqlSerializer], undefined, {
+      fold: true,
+      intrinsics: sqlPlugin.intrinsics!(),
+      lexicons: ["sql"],
+    });
+    expect(result.errors).toEqual([]);
+    writeFileSync(join(dir, "example.json"), (result.outputs.get("sql") as { primary: string }).primary);
+    // The server as it was before the example's change: the column is still username.
+    await admin!.query("CREATE SCHEMA app");
+    await admin!.query("CREATE TABLE app.users (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, username text NOT NULL UNIQUE, created_at timestamptz NOT NULL DEFAULT now())");
+    await admin!.query("INSERT INTO app.users (username) SELECT 'user' || g FROM generate_series(1, 300) g");
+    const p = await plan("example.json");
+    expect(p.migrationOps?.map((o) => [o.table, o.column, o.rule])).toEqual([["app.users", "login", "SQLPG205"]]);
+
+    const ledger = new ApprovingLedger();
+    const c: PostgresMigrationOpConfig = { name: "rename-users-username-to-login", env: "e2e", table: "app.users", column: "login", build: false, path: dir, output: "example.json", retain: "0s", stack: MARKER.stack, ownershipEnv: MARKER.env };
+    const statuses: string[] = [];
+    let last: OpRunResult | undefined;
+    for (let i = 0; i < 4; i++) {
+      last = await runOp(c, ledger);
+      statuses.push(last.status);
+      if (last.status !== "gated") break;
+      ledger.approveLast();
+    }
+    expect(statuses).toEqual(["gated", "gated", "ok"]);
+    expect(await columnsOf("app.users")).toEqual(["id", "created_at", "login"]);
+    expect(await constraintsOf("app.users")).toEqual([
+      { name: "users_login_key", def: "UNIQUE (login)", validated: true },
+      { name: "users_pkey", def: "PRIMARY KEY (id)", validated: true },
+    ]);
+    expect((await plan("example.json")).changes.filter((ch) => ch.object.includes("users"))).toEqual([]);
+
+    // A finished migration reports done, and no outcome of a step that had nothing to do.
+    const done = await runOp(c, ledger);
+    expect(done.status).toBe("ok");
+    expect(outcome(done, "MigrationState")).toBe("done");
+    const names = done.records.flatMap((r) => r.outcomes ?? []);
+    expect(names.every((o) => o.value !== undefined)).toBe(true);
+    expect(names.map((o) => o.name)).not.toContain("OldColumn");
+    expect(names.map((o) => o.name)).not.toContain("RetainUntil");
+  }, 300_000);
 });
