@@ -44,6 +44,7 @@ describe("PostgresMigrationOp", () => {
       "Expand",
       "Dual write",
       "Backfill",
+      "Carry over",
       "Verify",
       "Approve",
       "Switch",
@@ -104,7 +105,7 @@ describe("PostgresMigrationOp", () => {
   test("every migration step is an activity the sql lexicon exports, and none is a receipt activity", () => {
     const exported = new Set(Object.entries(activitiesModule).filter(([, v]) => typeof v === "function").map(([k]) => k));
     const steps = propsOf(BASE).phases.flatMap((p) => p.steps).filter((s) => s.kind === "activity" && (s as { fn: string }).fn.startsWith("postgresMigration"));
-    expect(steps).toHaveLength(8);
+    expect(steps).toHaveLength(9);
     for (const s of steps) expect(exported.has((s as { fn: string }).fn)).toBe(true);
     expect(exported.has("receiptRead")).toBe(false);
   });
@@ -150,6 +151,9 @@ const observation = (change: "rename" | "type", over: Partial<MigrationObservati
     column: change === "rename" ? { name: "login", type: "text", notNull: true } : { name: "amount", type: "numeric(12,2)", notNull: true, default: "0", comment: "In euros" },
     oid: "16384",
     batchKey: "id",
+    carried: [],
+    carriedStates: new Map(),
+    views: [],
     columns: new Map(),
     source: { attnum: 2, name: names.source, type: "text", notNull: true, generated: false, identity: false, ...(change === "type" ? { default: "'0'::text" } : {}) },
     changes: [],
