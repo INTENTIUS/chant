@@ -21,7 +21,9 @@
  * the server `chant import --from <env>`, `chant lifecycle diff <env> --live`
  * and `plan` read. Credentials are named by their environment variable, never
  * written in the config. An environment with no profile falls back to
- * `CLICKHOUSE_URL`, `CLICKHOUSE_USER` and `CLICKHOUSE_PASSWORD`.
+ * `CLICKHOUSE_URL`, `CLICKHOUSE_USER` and `CLICKHOUSE_PASSWORD`, or for
+ * Postgres `POSTGRES_URL`, `POSTGRES_USER` and `POSTGRES_PASSWORD`. A profile
+ * whose `url` is `postgres://` or `postgresql://` is a Postgres server.
  *
  * `dialect` names the database a project's schema is for. Declarations carry
  * their dialect in their own type (a ClickHouse table is `ClickHouse::Table`),
@@ -40,7 +42,12 @@ import { PLANNED_SQL_DIALECTS, SQL_DIALECTS } from "./dialects";
 const envRef = z.strictObject({ env: z.string() });
 
 export const sqlProfileSchema = z.strictObject({
-  /** Base URL of the server's HTTP interface. */
+  /**
+   * Where the server is. ClickHouse: the base URL of its HTTP interface
+   * (`http://clickhouse:8123`). Postgres: a connection URL
+   * (`postgres://db.internal:5432/shop`), with no password in it; the scheme
+   * is what makes a profile a Postgres one.
+   */
   url: z.string(),
   /** The user, named by its environment variable. `default` when omitted. */
   user: envRef.optional(),
@@ -54,6 +61,15 @@ export const sqlProfileSchema = z.strictObject({
   databases: z.array(z.string()).optional(),
   /** The database an unqualified declaration is created in. `default` when omitted. */
   defaultDatabase: z.string().optional(),
+  /**
+   * Postgres: the schemas this environment's schema lives in. Import and
+   * observation read these and nothing else; when omitted, every schema except
+   * the server's own (`pg_catalog`, `information_schema`, `pg_toast`, the temp
+   * schemas).
+   */
+  schemas: z.array(z.string()).optional(),
+  /** Postgres: the schema an unqualified declaration is created in. `public` when omitted. */
+  defaultSchema: z.string().optional(),
 });
 
 const dialectName = z.enum(SQL_DIALECTS);

@@ -62,19 +62,24 @@ export async function startScratchContainer(options: {
   readyTimeoutMs: number;
   /** What the container did not do in time, for the error: `did not answer /ping`. */
   notReady: string;
+  /** Called with the container's name once it is running, before the readiness wait. */
+  onStarted?: (name: string) => void;
+  /** Remove the container's anonymous volumes with it (an image that declares a `VOLUME`, as `postgres` does). */
+  removeVolumes?: boolean;
 }): Promise<ScratchContainer> {
   const name = uniqueContainerName(options.namePrefix);
   let removed = false;
   const stop = async (): Promise<void> => {
     if (removed) return;
     removed = true;
-    await exec("docker", ["rm", "-f", name]).catch(() => undefined);
+    await exec("docker", ["rm", "-f", ...(options.removeVolumes ? ["-v"] : []), name]).catch(() => undefined);
   };
 
   try {
     const env = Object.entries(options.env ?? {}).flatMap(([k, v]) => ["-e", `${k}=${v}`]);
     await exec("docker", ["run", "-d", "--name", name, "-p", `127.0.0.1::${options.containerPort}`, ...env, options.image], { timeout: 600_000 });
     const port = await publishedPort(name, options.containerPort);
+    options.onStarted?.(name);
     const deadline = Date.now() + options.readyTimeoutMs;
     while (!(await options.ready(port))) {
       if (Date.now() > deadline) throw new Error(`${name} ${options.notReady} within the timeout`);
