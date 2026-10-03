@@ -21,16 +21,21 @@ record that nothing here can create for you — hand your agent
 chant dev onboard <name>
 ```
 
-This patches 6 files (`packages/core/src/cli/commands/onboard.ts:305`):
+This patches up to six files (`packages/core/src/cli/commands/onboard.ts`):
 
 | File | What it adds |
 |------|-------------|
 | `package.json` (root) | `@intentius/chant-lexicon-<name>: "workspace:*"` dependency |
-| `tsconfig.json` (root) | `paths` mappings for the package and its subpaths (chant #1614). The whole-repo typecheck runs `moduleResolution: node`, which never reads exports maps, so a lexicon without this entry fails the `check` job as soon as an example imports it |
-| `.github/workflows/chant.yml` | Prepack lines in check/test jobs + validate step |
-| `.github/workflows/publish.yml` | Prepack line in test job. No publish step is needed; `scripts/publish-packages.sh` enumerates the workspace |
+| `tsconfig.json` (root) | `paths` mappings for the package and its subpaths, written `./lexicons/<name>/...` like the existing entries (chant #1614, #3227). The whole-repo typecheck runs `moduleResolution: node`, which never reads exports maps, so a lexicon without this entry fails the `check` job as soon as an example imports it. With no `baseUrl`, a path without the leading `./` makes tsx's tsconfig loader throw |
+| `.github/workflows/chant.yml` | Prepack lines in any check/test `run:` block that lists them, and a validate step |
 | `test/Dockerfile.smoke` | `<name>` in the `for lex in ...` lexicon list of the workspace smoke test |
-| `test/Dockerfile.smoke-npm` | `<name>` in both `for lex in ...` lexicon lists of the npm tarball smoke test |
+| `test/smoke-npm-lexicons.txt` | `<name>` on its own line. The npm tarball smoke (`test/Dockerfile.smoke-npm`) and `smoke.sh` both read this list |
+
+Onboard leaves some files alone and names them in its "Not patched" output:
+
+- `.github/workflows/publish.yml` has no per-lexicon lines to patch. CI builds every lexicon through `scripts/ci-lexicon-artifacts.sh`, and `scripts/publish-packages.sh` enumerates the workspace, so a new lexicon is built and published without an edit.
+- `test/Dockerfile.smoke-npm` reads `test/smoke-npm-lexicons.txt`, which is the file onboard patches.
+- `test/smoke-e2e-lexicons.txt` is opt-in. It lists the lexicons an e2e example uses and the lexicons they depend on, so add yours there by hand when an example needs it.
 
 The command is idempotent. A second run changes nothing and reports each file as already covered.
 

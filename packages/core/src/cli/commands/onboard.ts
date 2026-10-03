@@ -117,6 +117,10 @@ function patchRootPackageJson(root: string, name: string): PatchResult {
  * The whole-repo typecheck runs with `moduleResolution: node`, which never
  * reads package exports maps, so every lexicon needs a bare + subpath
  * mapping here or an example importing the package fails to resolve.
+ *
+ * Entries are `./`-prefixed like every other entry (#3227): with no `baseUrl`
+ * (removed in #3205) a bare `lexicons/...` path is invalid and tsx's tsconfig
+ * loader throws on it for every run in the repo.
  */
 export function patchRootTsconfigPaths(root: string, name: string): PatchResult {
   const tsconfigPath = join(root, "tsconfig.json");
@@ -128,8 +132,8 @@ export function patchRootTsconfigPaths(root: string, name: string): PatchResult 
 
   const bare = `@intentius/chant-lexicon-${name}`;
   const wanted: Record<string, string[]> = {
-    [bare]: [`lexicons/${name}/src/index.ts`],
-    [`${bare}/*`]: [`lexicons/${name}/src/*`],
+    [bare]: [`./lexicons/${name}/src/index.ts`],
+    [`${bare}/*`]: [`./lexicons/${name}/src/*`],
   };
 
   let changed = false;
@@ -297,7 +301,15 @@ function patchPublishWorkflow(root: string, name: string): PatchResult {
   }
 
   if (!insertPrepackAfterEach(lines, name)) {
-    return { patched: false, reason: "no prepack line found to anchor on" };
+    // #3227 — not a failure and not "covered by a prepack line": publish.yml
+    // carries no per-lexicon lines. The run builds every lexicon through
+    // scripts/ci-lexicon-artifacts.sh and publishes through
+    // scripts/publish-packages.sh, both of which enumerate the workspace.
+    return {
+      patched: false,
+      reason:
+        "nothing to patch: it has no per-lexicon prepack lines; scripts/ci-lexicon-artifacts.sh and scripts/publish-packages.sh enumerate the workspace",
+    };
   }
   writeFileSync(filePath, lines.join("\n"));
   return { patched: true };
@@ -321,10 +333,32 @@ export function patchDockerfile(filePath: string, name: string): PatchResult {
 
   const changed = addToLexiconLoops(lines, name) || insertPrepackAfterEach(lines, name);
   if (!changed) {
+    // #3227 — the smoke-npm and smoke-e2e images read their lexicon list from
+    // a file. Point at it instead of reporting a missing anchor.
+    const listFile = lines.join("\n").match(/test\/(smoke-[\w-]+-lexicons\.txt)/)?.[1];
+    if (listFile) {
+      return { patched: false, reason: `reads its lexicon list from test/${listFile}, not from the Dockerfile` };
+    }
     return { patched: false, reason: "no lexicon loop or prepack line found to anchor on" };
   }
 
   writeFileSync(filePath, lines.join("\n"));
+  return { patched: true };
+}
+
+/**
+ * Append a lexicon to a one-name-per-line list file (test/smoke-npm-lexicons.txt).
+ * Idempotent; keeps the file's trailing newline.
+ */
+export function patchLexiconList(filePath: string, name: string): PatchResult {
+  const rel = filePath.split("/").slice(-2).join("/");
+  if (!existsSync(filePath)) return { patched: false, reason: `${rel} not found` };
+  const content = readFileSync(filePath, "utf-8");
+  if (content.split("\n").some((l) => l.trim() === name)) {
+    return { patched: false, reason: `${name} already in ${rel}` };
+  }
+  const sep = content === "" || content.endsWith("\n") ? "" : "\n";
+  writeFileSync(filePath, `${content}${sep}${name}\n`);
   return { patched: true };
 }
 
@@ -375,6 +409,20 @@ export function onboardCommand(options: OnboardOptions): OnboardResult {
     patchDockerfile(join(root, "test/Dockerfile.smoke-npm"), options.name),
   );
 
+  // 6. Smoke image lexicon lists (#3227). The npm smoke packs every lexicon.
+  //    The e2e list is opt-in: it names the lexicons an example uses plus
+  //    their dependencies, so onboard leaves it alone and says so.
+  record(
+    "smoke-npm-lexicons.txt",
+    "lexicon list",
+    patchLexiconList(join(root, "test/smoke-npm-lexicons.txt"), options.name),
+  );
+  if (existsSync(join(root, "test/smoke-e2e-lexicons.txt"))) {
+    skipped.push(
+      `smoke-e2e-lexicons.txt: not patched; it lists only lexicons an e2e example uses (and their dependencies). Add ${options.name} to test/smoke-e2e-lexicons.txt when an example needs it`,
+    );
+  }
+
   return { success: true, patched, skipped, verbose: options.verbose };
 }
 
@@ -396,7 +444,7 @@ export async function printOnboardResult(result: OnboardResult, name: string): P
 
   if (result.skipped.length > 0) {
     console.log("");
-    console.log("Skipped (already covered):");
+    console.log("Not patched (already covered, or nothing to patch):");
     for (const s of result.skipped) {
       console.log(`  ${s}`);
     }
