@@ -75,6 +75,57 @@ describe("sql classify-change", () => {
   });
 });
 
+describe("sql classify-change for Postgres", () => {
+  const build = (...ddl: string[]) =>
+    JSON.stringify({ dialect: "postgres", objects: ddl.map((d, i) => ({ export: `t${i}`, type: "Postgres::Table", ddl: d })) });
+  const orders = "CREATE TABLE app.orders (id bigint PRIMARY KEY, amount numeric(12,2) NOT NULL, note varchar(20))";
+  type R = {
+    dialect: string;
+    summary: Record<string, number>;
+    changes: Array<{ field: string; rule: string; class: string; cite: string; restriction: string }>;
+    refused: Array<{ rule: string; advice: string }>;
+    report: string;
+  };
+
+  test("dispatches on the dialect the build names, with class, rule and citation", async () => {
+    const r = (await tool("classify-change").handler({
+      before: build(orders),
+      after: build(orders.replace("note varchar(20)", "note varchar(20), tag text")),
+    })) as R;
+    expect(r.dialect).toBe("postgres");
+    expect(r.changes).toHaveLength(1);
+    expect(r.changes[0]).toMatchObject({ field: "columns.tag", rule: "SQLPG201", class: "metadata" });
+    expect(r.changes[0]!.cite).toMatch(/^https:\/\/www\.postgresql\.org\/docs\/18\//);
+    expect(r.changes[0]!.restriction).toMatch(/ADD COLUMN/);
+    expect(r.refused).toEqual([]);
+  });
+
+  test("a change only expand and contract can make is refused", async () => {
+    const r = (await tool("classify-change").handler({
+      before: build(orders),
+      after: build(orders.replace("amount numeric(12,2)", "amount text")),
+    })) as R;
+    expect(r.summary.expand).toBeGreaterThan(0);
+    expect(r.refused.length).toBeGreaterThan(0);
+    expect(r.refused[0]!.advice).toMatch(/expand and contract/);
+    expect(r.report).toMatch(/Refused/);
+  });
+
+  test("the dialect argument and the major are honoured", async () => {
+    const stored = "CREATE TABLE t (a int, b int GENERATED ALWAYS AS (a * 2) STORED)";
+    const r = (changed: string, major?: number) =>
+      tool("classify-change").handler({ dialect: "postgres", major, before: build(stored), after: build(changed) }) as Promise<R>;
+    const changed = stored.replace("a * 2", "a * 3");
+    expect((await r(changed, 17)).changes[0]!.class).toBe("rewrite");
+    expect((await r(changed, 16)).changes[0]!.class).toBe("expand");
+  });
+
+  test("identical builds have no changes", async () => {
+    const r = (await tool("classify-change").handler({ before: build(orders), after: build(orders) })) as R;
+    expect(r.changes).toEqual([]);
+  });
+});
+
 describe("sql MCP resources", () => {
   test("serve JSON from the catalog", async () => {
     const byUri = (uri: string) => sqlMcpResources().find((r) => r.uri === uri)!;
