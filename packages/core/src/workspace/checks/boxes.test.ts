@@ -160,6 +160,7 @@ describe("the box block in the declaration", () => {
       services: [],
       factory: null,
       listing: null,
+      publisher: null,
       capabilities: [
         { name: "fountain", broker: "lobby", scope: ["agent", "vault"], pointer: "/members/0/box/capabilities/0" },
         { name: "inference", broker: null, scope: [], pointer: "/members/0/box/capabilities/1" },
