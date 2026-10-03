@@ -7,7 +7,7 @@
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
-import { getPrimaryOutput, extractJobs } from "./yaml-helpers";
+import { getPrimaryOutput, topLevelKey, RESERVED_TOP_LEVEL_KEYS } from "./yaml-helpers";
 
 export function checkDuplicateJobNames(yaml: string): PostSynthDiagnostic[] {
   const diagnostics: PostSynthDiagnostic[] = [];
@@ -18,10 +18,9 @@ export function checkDuplicateJobNames(yaml: string): PostSynthDiagnostic[] {
   const lines = yaml.split("\n");
 
   for (const line of lines) {
-    const topMatch = line.match(/^(\.?[a-z][a-z0-9_.-]*):/);
-    if (topMatch) {
-      const name = topMatch[1];
-      if (["stages", "default", "workflow", "variables", "include"].includes(name)) continue;
+    const name = topLevelKey(line);
+    if (name !== undefined) {
+      if (RESERVED_TOP_LEVEL_KEYS.has(name)) continue;
       keyCounts.set(name, (keyCounts.get(name) ?? 0) + 1);
     }
   }

@@ -6,23 +6,15 @@
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
-import { getPrimaryOutput, extractJobs } from "./yaml-helpers";
+import { getPrimaryOutput, topLevelSections } from "./yaml-helpers";
 
 const INSECURE_REGISTRY_PATTERN = /docker\s+(push|pull|tag|login)\s+.*http:\/\/[^\s]+/;
 
 export function checkInsecureRegistry(yaml: string): PostSynthDiagnostic[] {
   const diagnostics: PostSynthDiagnostic[] = [];
 
-  const sections = yaml.split("\n\n");
-  for (const section of sections) {
-    const lines = section.split("\n");
-    if (lines.length === 0) continue;
-
-    const topMatch = lines[0].match(/^(\.?[a-z][a-z0-9_.-]*):/);
-    if (!topMatch) continue;
-    const jobName = topMatch[1];
-
-    for (const line of lines) {
+  for (const { key: jobName, text } of topLevelSections(yaml)) {
+    for (const line of text.split("\n")) {
       if (INSECURE_REGISTRY_PATTERN.test(line)) {
         diagnostics.push({
           checkId: "WGL017",

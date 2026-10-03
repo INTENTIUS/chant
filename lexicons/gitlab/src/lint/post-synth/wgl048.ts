@@ -8,7 +8,7 @@
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
-import { getPrimaryOutput } from "./yaml-helpers";
+import { getPrimaryOutput, topLevelSections } from "./yaml-helpers";
 
 export const wgl048: PostSynthCheck = {
   id: "WGL048",
@@ -19,7 +19,7 @@ export const wgl048: PostSynthCheck = {
 
     for (const [, output] of ctx.outputs) {
       const yaml = getPrimaryOutput(output);
-      const workflowSection = yaml.split("\n\n").find((s) => /^workflow:/.test(s));
+      const workflowSection = topLevelSections(yaml).find((s) => s.key === "workflow")?.text;
       if (!workflowSection) continue;
       if (!/^\s+name:/m.test(workflowSection)) {
         diagnostics.push({

@@ -43,3 +43,17 @@ describe("WGL042: unreachable rules after unconditional match", () => {
     expect(diags).toHaveLength(0);
   });
 });
+
+describe("WGL042: job ids the old line parser skipped (#3256)", () => {
+  test("checks a job whose id starts with a capital", () => {
+    const yaml = `Build_Docs:
+  rules:
+    - when: always
+    - if: $CI_COMMIT_BRANCH == "main"
+  script: make docs
+`;
+    const diags = wgl042.check(makeCtx(yaml));
+    expect(diags).toHaveLength(1);
+    expect(diags[0].entity).toBe("Build_Docs");
+  });
+});

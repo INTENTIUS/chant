@@ -10,9 +10,7 @@
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
-import { getPrimaryOutput, isMergeRequestReachable } from "./yaml-helpers";
-
-const RESERVED_TOP_LEVEL_KEYS = new Set(["stages", "default", "workflow", "variables", "include", "cache"]);
+import { getPrimaryOutput, isMergeRequestReachable, extractJobs, extractJobSection } from "./yaml-helpers";
 
 export const wgl050: PostSynthCheck = {
   id: "WGL050",
@@ -24,11 +22,10 @@ export const wgl050: PostSynthCheck = {
     for (const [, output] of ctx.outputs) {
       const yaml = getPrimaryOutput(output);
 
-      for (const section of yaml.split("\n\n")) {
-        const top = section.split("\n")[0]?.match(/^(\.?[a-z][a-z0-9_.-]*):/i);
-        if (!top) continue;
-        const jobName = top[1];
-        if (jobName.startsWith(".") || RESERVED_TOP_LEVEL_KEYS.has(jobName)) continue;
+      for (const [jobName] of extractJobs(yaml)) {
+        if (jobName.startsWith(".")) continue;
+        const section = extractJobSection(yaml, jobName);
+        if (!section) continue;
         if (/deploy/i.test(jobName)) continue; // cancelling mid-deploy is a hazard, not a win
 
         if (!isMergeRequestReachable(section)) continue;

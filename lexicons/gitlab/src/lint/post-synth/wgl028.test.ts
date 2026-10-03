@@ -93,3 +93,30 @@ test-app:
     expect(diags).toHaveLength(0);
   });
 });
+
+describe("WGL028: needs the old line parser dropped (#3256)", () => {
+  test("reads a need listed after an artifacts: line", () => {
+    const yaml = `stages:
+  - build
+  - deploy
+
+lint:
+  stage: build
+  script: make lint
+
+build:
+  stage: build
+  script: make
+
+deploy:
+  stage: deploy
+  needs:
+    - job: lint
+      artifacts: false
+    - job: build
+  script: ./deploy.sh
+`;
+    const diags = checkRedundantNeeds(yaml);
+    expect(diags.map((d) => d.message.match(/lists "([^"]+)"/)?.[1])).toEqual(["lint", "build"]);
+  });
+});

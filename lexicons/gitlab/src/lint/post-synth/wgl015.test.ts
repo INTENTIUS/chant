@@ -137,3 +137,38 @@ job-a:
     expect(diags).toHaveLength(0);
   });
 });
+
+describe("WGL015: needs the old line parser dropped (#3256)", () => {
+  test("finds a cycle through a need listed after an artifacts: line", () => {
+    const yaml = `build:
+  needs: [deploy]
+  script: make
+
+deploy:
+  needs:
+    - job: lint
+      artifacts: true
+    - job: build
+  script: ./deploy.sh
+
+lint:
+  script: make lint
+`;
+    const diags = checkCircularNeeds(makeCtx(yaml));
+    expect(diags).toHaveLength(1);
+    expect(diags[0].message).toContain("build");
+    expect(diags[0].message).toContain("deploy");
+  });
+
+  test("finds a cycle through a job whose id starts with a capital", () => {
+    const yaml = `Build:
+  needs: [deploy]
+  script: make
+
+deploy:
+  needs: [Build]
+  script: ./deploy.sh
+`;
+    expect(checkCircularNeeds(makeCtx(yaml))).toHaveLength(1);
+  });
+});

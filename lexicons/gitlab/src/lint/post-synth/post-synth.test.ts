@@ -153,3 +153,32 @@ describe("WGL011: unreachable job", () => {
     expect(diags).toHaveLength(0);
   });
 });
+
+describe("WGL010: job ids the old line parser skipped (#3256)", () => {
+  test("flags a job whose id starts with a capital", () => {
+    const yaml = `stages:
+  - build
+
+Build_Docs:
+  stage: docs
+  script:
+    - make docs
+`;
+    const diags = wgl010.check(makeCtx(yaml));
+    expect(diags).toHaveLength(1);
+    expect(diags[0].entity).toBe("Build_Docs");
+  });
+
+  test("reads a flow-list stages: and jobs with no blank line between them", () => {
+    const yaml = `stages: [build, test]
+build:
+  stage: build
+  script: make
+lint:
+  stage: lint
+  script: make lint
+`;
+    const diags = wgl010.check(makeCtx(yaml));
+    expect(diags.map((d) => d.entity)).toEqual(["lint"]);
+  });
+});

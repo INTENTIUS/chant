@@ -6,7 +6,7 @@
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
-import { getPrimaryOutput, extractGlobalVariables } from "./yaml-helpers";
+import { getPrimaryOutput, extractGlobalVariables, topLevelSections } from "./yaml-helpers";
 
 export function checkUnusedVariables(yaml: string): PostSynthDiagnostic[] {
   const diagnostics: PostSynthDiagnostic[] = [];
@@ -20,14 +20,13 @@ export function checkUnusedVariables(yaml: string): PostSynthDiagnostic[] {
     // Check if $VARNAME or ${VARNAME} appears anywhere in the YAML (outside the variables block)
     const refPattern = new RegExp(`\\$\\{?${varName}\\}?`);
     // Also check for uses in extends, needs, etc. — search all sections
-    const sections = yaml.split("\n\n");
     let found = false;
 
-    for (const section of sections) {
+    for (const { key, text } of topLevelSections(yaml)) {
       // Skip the global variables section itself
-      if (section.trimStart().startsWith("variables:")) continue;
+      if (key === "variables") continue;
 
-      if (refPattern.test(section)) {
+      if (refPattern.test(text)) {
         found = true;
         break;
       }

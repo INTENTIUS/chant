@@ -69,3 +69,28 @@ build:
     expect(wgl049.check(makeCtx(yaml))).toHaveLength(0);
   });
 });
+
+describe("WGL049: job ids and section boundaries (#3256)", () => {
+  test("flags a job whose id starts with a capital", () => {
+    const yaml = `Build_App:
+  script:
+    - npm ci
+`;
+    const diags = wgl049.check(makeCtx(yaml));
+    expect(diags).toHaveLength(1);
+    expect(diags[0].entity).toBe("Build_App");
+  });
+
+  test("a cache: in the next job is not read as this job's cache", () => {
+    const yaml = `build:
+  script:
+    - npm ci
+other:
+  cache:
+    paths: [node_modules/]
+  script: echo
+`;
+    const diags = wgl049.check(makeCtx(yaml));
+    expect(diags.map((d) => d.entity)).toEqual(["build"]);
+  });
+});

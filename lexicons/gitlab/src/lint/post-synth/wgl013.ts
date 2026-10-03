@@ -8,7 +8,9 @@
  * Both cause GitLab pipeline validation failures.
  *
  * Caveat: when `include:` is present, referenced jobs may come from
- * included files, so the check is skipped.
+ * included files, so the check is skipped. A `- job: x` entry with
+ * `optional: true` may name a job that is not in the pipeline (GitLab
+ * ignores it), so it is not reported as dangling.
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
@@ -36,7 +38,7 @@ export function checkInvalidNeeds(ctx: PostSynthContext): PostSynthDiagnostic[] 
             entity: jobName,
             lexicon: "gitlab",
           });
-        } else if (!jobNames.has(need)) {
+        } else if (!jobNames.has(need) && !job.optionalNeeds?.includes(need)) {
           diagnostics.push({
             checkId: "WGL013",
             severity: "error",
