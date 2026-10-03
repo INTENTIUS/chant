@@ -77,6 +77,7 @@ export const WRITE_CONTRACT_ACTIONS = [
   "runs start",
   "runs end",
   "runs record",
+  "box listing set",
 ] as const;
 export type WriteContractAction = (typeof WRITE_CONTRACT_ACTIONS)[number];
 
@@ -95,12 +96,13 @@ export const WRITE_CONTRACT_SCHEMAS: Record<WriteContractAction, string> = {
   "runs start": "runs-write.schema.json",
   "runs end": "runs-write.schema.json",
   "runs record": "runs-write.schema.json",
+  "box listing set": "box-listing-write.schema.json",
 };
 
 /**
- * The flags a writer may add to each command. The record, points, evidence
- * and run writes always print their document, so a writer adds nothing or
- * `--json`; a lease prints its document only with `--json`.
+ * The flags a writer may add to each command. The record, points, evidence,
+ * run and listing writes always print their document, so a writer adds
+ * nothing or `--json`; a lease prints its document only with `--json`.
  */
 export const WRITE_CONTRACT_JSON_FLAGS: Record<WriteContractAction, readonly (readonly string[])[]> = {
   "records new": [[], ["--json"]],
@@ -116,6 +118,7 @@ export const WRITE_CONTRACT_JSON_FLAGS: Record<WriteContractAction, readonly (re
   "runs start": [[], ["--json"]],
   "runs end": [[], ["--json"]],
   "runs record": [[], ["--json"]],
+  "box listing set": [[], ["--json"]],
 };
 
 /** What each action is given. Field documents are JSON values; the command reads them from stdin. */
@@ -133,6 +136,8 @@ export interface WriteParams {
   "runs start": { run: Record<string, unknown> };
   "runs end": { id: string; fields: Record<string, unknown> };
   "runs record": { run: Record<string, unknown> };
+  /** A box's listing (#3308): the member, the listing fields, and an image to copy in as its cover. */
+  "box listing set": { member: string; fields: Record<string, unknown>; cover?: string };
 }
 
 /** One write the suite asks of the writer: the action, what it is given, and the command that performs it. */
@@ -207,6 +212,10 @@ export function writeArgv<A extends WriteContractAction>(action: A, params: Writ
       const q = p as WriteParams["runs end"];
       return { args: [q.id, "--from", "-"], input: json(q.fields) };
     }
+    case "box listing set": {
+      const q = p as WriteParams["box listing set"];
+      return { args: [q.member, "--from", "-", ...(q.cover !== undefined ? ["--cover", q.cover] : [])], input: json(q.fields) };
+    }
     default:
       throw new Error(`not a write-contract action: ${String(action)}`);
   }
@@ -220,6 +229,32 @@ export const WRITER_KINDS = {
   work: "work/work.kind.mjs",
 } as const;
 
+/** The member of the writer workspace whose box block the script lists (#3308). */
+export const WRITER_BOX = "app";
+
+/**
+ * The files the suite makes for a run outside the workspace, for a step to
+ * hand chant: the cover image the listing step copies in (#3308), a PNG.
+ */
+export const WRITER_INPUTS = {
+  cover: {
+    name: "cover.png",
+    bytes: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64"),
+  },
+} as const;
+
+/** Where the suite put {@link WRITER_INPUTS} for this run. */
+export interface WriterInputs {
+  dir: string;
+}
+
+/** Write {@link WRITER_INPUTS} into `dir`. */
+export function writeWriterInputs(dir: string): WriterInputs {
+  mkdirSync(dir, { recursive: true });
+  for (const f of Object.values(WRITER_INPUTS)) writeFileSync(join(dir, f.name), f.bytes);
+  return { dir };
+}
+
 /** The principals the script writes as. */
 export const WRITER_PRINCIPALS = { holder: "conformance-writer", reviewer: "conformance-reviewer", by: "conformance" } as const;
 
@@ -227,10 +262,11 @@ export const WRITER_PRINCIPALS = { holder: "conformance-writer", reviewer: "conf
 export interface WriterScriptStep<A extends WriteContractAction = WriteContractAction> {
   id: string;
   action: A;
-  params(done: Record<string, Record<string, unknown>>): WriteParams[A];
+  /** `inputs` is where the suite put {@link WRITER_INPUTS}; a step that hands chant one of them leaves it out without. */
+  params(done: Record<string, Record<string, unknown>>, inputs?: WriterInputs): WriteParams[A];
 }
 
-const step = <A extends WriteContractAction>(id: string, action: A, params: (done: Record<string, Record<string, unknown>>) => WriteParams[A]): WriterScriptStep => ({ id, action, params }) as WriterScriptStep;
+const step = <A extends WriteContractAction>(id: string, action: A, params: (done: Record<string, Record<string, unknown>>, inputs?: WriterInputs) => WriteParams[A]): WriterScriptStep => ({ id, action, params }) as WriterScriptStep;
 
 const leaseToken = (done: Record<string, Record<string, unknown>>): string => String((done.claim?.lease as { token?: unknown } | undefined)?.token ?? "");
 const RUN_STARTED = { harness: { name: "conformance", version: "1" }, model: "none", provider: "none", by: WRITER_PRINCIPALS.by, unit: "W-001" };
@@ -240,7 +276,7 @@ const RUN_STARTED = { harness: { name: "conformance", version: "1" }, model: "no
  * decision made, amended and reviewed; a review session opened and closed; a
  * decision point asked and answered; the work item's lease claimed, renewed,
  * evidence attached under it and released; one run started and ended, and one
- * recorded whole.
+ * recorded whole; and the box's listing set, with a cover image copied in.
  */
 export const WRITER_SCRIPT: readonly WriterScriptStep[] = [
   step("decision", "records new", () => ({
@@ -323,6 +359,11 @@ export const WRITER_SCRIPT: readonly WriterScriptStep[] = [
       commits: [],
       ...RUN_STARTED,
     },
+  })),
+  step("listing", "box listing set", (_d, inputs) => ({
+    member: WRITER_BOX,
+    fields: { published: true, title: "The writer suite's box", line: "Listed through chant, read back after amnesia." },
+    ...(inputs ? { cover: join(inputs.dir, WRITER_INPUTS.cover.name) } : {}),
   })),
 ];
 
@@ -570,6 +611,7 @@ export function reportedWrites(action: WriteContractAction, doc: unknown): { pat
     const ledger = (d.ledger ?? {}) as Record<string, unknown>;
     return { paths: [], refs: str(ledger.commit) ? { "refs/heads/chant/lifecycle": String(ledger.commit) } : {} };
   }
+  if (action === "box listing set") return { paths: Array.isArray(d.paths) ? d.paths.filter((p): p is string => typeof p === "string") : [], refs: {} };
   return { paths: str(d.path) ? [String(d.path)] : [], refs: {} };
 }
 
@@ -594,10 +636,16 @@ export function unreportedChanges(
   return problems;
 }
 
-/** Build the step a script step is at, from the documents of the steps before it. */
-export function buildStep(s: WriterScriptStep, done: Record<string, Record<string, unknown>>): WriteStep {
-  const params = s.params(done);
+/** Build the step a script step is at, from the documents of the steps before it and where the suite put its inputs. */
+export function buildStep(s: WriterScriptStep, done: Record<string, Record<string, unknown>>, inputs?: WriterInputs): WriteStep {
+  const params = s.params(done, inputs);
   return { id: s.id, action: s.action, params, ...writeArgv(s.action, params) } as WriteStep;
+}
+
+/** The box listings `status --json` prints, by member: what a home site shows of each box (#3308). */
+export async function readListing(run: (argv: string[]) => Promise<ChantRun>): Promise<Record<string, unknown>> {
+  const doc = JSON.parse((await run(["workspace", "status", "dev", "--json"])).stdout) as { members?: { name: string; box: { listing?: unknown } | null }[] };
+  return Object.fromEntries((doc.members ?? []).filter((m) => m.box?.listing).map((m) => [m.name, m.box!.listing]));
 }
 
 /** The smallest writer that conforms: each step is its one command, and its facts are read through the read contract. */
@@ -615,6 +663,7 @@ export const referenceWriter: WorkspaceWriterFactory = (chant) => ({
     }
     const runs = JSON.parse((await chant.run(["workspace", "runs", "--json"])).stdout) as { runs: { id: string; state: string }[] };
     out.runs = runs.runs.map((r) => [r.id, r.state]).sort();
+    out.listing = await readListing((argv) => chant.run(argv));
     return out;
   },
 });
@@ -628,7 +677,8 @@ export interface WriterConformanceWorkspace {
 /**
  * Generate the writer conformance workspace: the reader suite's workspace
  * ({@link createConformanceWorkspace}), with `__writer_fixture__/` copied over
- * it, the four kinds declared in its `records`, and that committed.
+ * it, the four kinds declared in its `records`, a box block on
+ * {@link WRITER_BOX} for the listing step, and that committed.
  */
 export function createWriterConformanceWorkspace(options: { chantCommand?: string[]; timeoutMs?: number } = {}): WriterConformanceWorkspace {
   const ws = createConformanceWorkspace({ chantCommand: options.chantCommand, timeoutMs: options.timeoutMs });
@@ -637,6 +687,8 @@ export function createWriterConformanceWorkspace(options: { chantCommand?: strin
     const declFile = join(ws.dir, "chant.workspace.json");
     const decl = JSON.parse(readFileSync(declFile, "utf-8")) as Record<string, unknown>;
     decl.records = Object.values(WRITER_KINDS).map((kind) => ({ kind }));
+    const box = (decl.members as { name: string; box?: unknown }[] | undefined)?.find((m) => m.name === WRITER_BOX);
+    if (box) box.box = {};
     writeFileSync(declFile, `${JSON.stringify(decl, null, 2)}\n`);
     const git = (...args: string[]) =>
       execFileSync("git", ["-c", "user.name=chant", "-c", "user.email=chant@localhost", "-c", "commit.gpgsign=false", ...args], {
@@ -724,6 +776,8 @@ export async function runWorkspaceWriterConformance(writer: WorkspaceWriterFacto
   const privateState = options.privateState ?? [];
   const ws = createWriterConformanceWorkspace({ chantCommand, timeoutMs });
   const stateDir = realpathSync(mkdtempSync(join(tmpdir(), "chant-writer-state-")));
+  const inputsDir = realpathSync(mkdtempSync(join(tmpdir(), "chant-writer-inputs-")));
+  const inputs = writeWriterInputs(inputsDir);
   const calls: ChantRun[] = [];
   const transport: ChantTransport = {
     async run(argv, opts) {
@@ -747,7 +801,7 @@ export async function runWorkspaceWriterConformance(writer: WorkspaceWriterFacto
     let built = writer(transport, { stateDir });
     const done: Record<string, Record<string, unknown>> = {};
     for (const s of WRITER_SCRIPT) {
-      const st = buildStep(s, done);
+      const st = buildStep(s, done, inputs);
       if (!checked.includes(st.action)) {
         const doc = await direct(["workspace", ...st.action.split(" "), ...st.args, ...WRITE_CONTRACT_JSON_FLAGS[st.action][0]], st.input);
         done[st.id] = doc;
@@ -861,6 +915,7 @@ export async function runWorkspaceWriterConformance(writer: WorkspaceWriterFacto
     }
     const runs = new Map(((await direct(["workspace", "runs", "--json"])).runs as { id: string; state: string }[] | undefined ?? []).map((r) => [r.id, r.state]));
     const history = await direct(["workspace", "work", "history", "W-001", "--kind", WRITER_KINDS.work, "--json"]);
+    const listings = await readListing((argv) => runChant(chantCommand, argv, ws.dir, timeoutMs));
     const claims = (history.claims ?? []) as { token: string; ended: string | null; release?: { outcome?: string } | null }[];
     for (const s of WRITER_SCRIPT) {
       const doc = done[s.id] ?? {};
@@ -880,6 +935,9 @@ export async function runWorkspaceWriterConformance(writer: WorkspaceWriterFacto
         const want = s.action === "runs start" ? undefined : "ended";
         if (!runs.has(id)) after.readBack.push(`read back: ${s.id} (${s.action}) wrote run ${id}, and runs does not list it`);
         else if (want && runs.get(id) !== want) after.readBack.push(`read back: ${s.id} (${s.action}) ended run ${id}, and runs says it is ${runs.get(id)}`);
+      } else if (s.action === "box listing set") {
+        const member = String(doc.member ?? "");
+        if (!isDeepStrictEqual(listings[member], doc.listing)) after.readBack.push(`read back: ${s.id} (${s.action}) set ${member}'s listing to ${brief(doc.listing)}, and status --json says ${brief(listings[member] ?? null)}`);
       }
     }
 
@@ -887,6 +945,7 @@ export async function runWorkspaceWriterConformance(writer: WorkspaceWriterFacto
     return { problems, checked, skipped, results, after, facts, workspaceDir: ws.dir };
   } finally {
     rmSync(stateDir, { recursive: true, force: true });
+    rmSync(inputsDir, { recursive: true, force: true });
     ws.dispose();
   }
 }

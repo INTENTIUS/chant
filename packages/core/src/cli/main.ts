@@ -423,6 +423,14 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant workspace records amend <id> --set <file|->` (#2670)
       result.set = args[++i];
       if (!result.set || (result.set.startsWith("-") && result.set !== "-")) throw new Error("--set needs a JSON file, or - for standard input: --set <file|->");
+    } else if (arg === "--cover") {
+      // `chant workspace box listing set <member> --cover <image>` (#3308)
+      result.cover = args[++i];
+      if (!result.cover || result.cover.startsWith("-")) throw new Error("--cover needs a PNG, JPEG or WebP file: --cover <image>");
+    } else if (arg === "--cover-path") {
+      // `chant workspace box listing set <member> --cover <image> --cover-path <path>` (#3308)
+      result.coverPath = args[++i];
+      if (!result.coverPath || result.coverPath.startsWith("-")) throw new Error("--cover-path needs a path from the workspace root: --cover-path <path>");
     } else if (arg === "--verdict") {
       // `chant workspace records review <id> --verdict agree|dissent|abstain` (#2670)
       result.verdict = args[++i];
@@ -659,6 +667,7 @@ export function parseArgs(args: string[]): ParsedArgs {
       // flags" isn't something this loop can name in isolation.
       throw new Error(`Unknown flag: ${arg}\nRun "chant --help" to see supported flags.`);
     } else if (!arg.startsWith("-")) {
+      if (result.command) (result.positionals ??= []).push(arg);
       if (!result.command) {
         result.command = arg;
       } else if (result.path === ".") {
@@ -966,6 +975,12 @@ Workspace (level 1, #2524):
                         and the commits it made
   workspace runs record --from <file|->
                         Record a finished run, its start and end in one write
+  workspace box listing set <member> [--from <file|->] [--cover <image> [--cover-path <path>]] [--by <principal>] [--dry-run]
+                        Change a box's listing (published, title, line, cover)
+                        in the declaration, in place, keeping its formatting
+                        and comments; --cover copies a PNG, JPEG or WebP into
+                        the repository. Judged by the write scope at base.
+                        Prints the box-listing-write document; never commits
   workspace points [--open] [--kind <kind file>] [--at <rev>] [--json]
                         List the decision points the declared answer kinds'
                         points files declare, and the questions asked of them;
@@ -1630,6 +1645,8 @@ export const commandRegistry: CommandDef[] = [
   { name: "workspace graph", handler: async (ctx) => (await import("../workspace/member-commands")).runWorkspaceMembers(ctx, "graph") },
   // Each unit decides for itself whether its config is loaded (runCommandInProcess).
   { name: "workspace member-run", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/member-run")).runWorkspaceMemberRun(ctx, runCommandInProcess) },
+  // #3308 — a box's listing, written through chant so a tool never edits the declaration itself (ws-074).
+  { name: "workspace box", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/box-cli")).runWorkspaceBox(ctx) },
   { name: "workspace pin", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/pin-cli")).runWorkspacePin(ctx) },
   // #2548 — an agent session's member, write scope and spec, for a session that resumes.
   { name: "workspace agent", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/agent-cli")).runWorkspaceAgent(ctx) },

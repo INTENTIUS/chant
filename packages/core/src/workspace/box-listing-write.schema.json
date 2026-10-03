@@ -1,0 +1,202 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/box-listing-write/v1/box-listing-write.schema.json",
+  "title": "chant workspace box listing set output",
+  "description": "What `chant workspace box listing set <member> [--from <file|->] [--cover <image>]` prints (#3308): the box's listing before and after, the files the write changed, and the cover it copied, or the reason it wrote nothing. The write changes only members[i].box.listing in the declaration, in place, keeping the file's formatting and comments, and the cover file it copies. It never commits. Readers ignore fields they do not know; a field is only ever added within a version. The error codes are a closed list, each in the one closed list of `reason-codes.ts`. Contract version 1 of this document is written by chant 0.103.0 and newer.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/result"
+    },
+    {
+      "$ref": "#/$defs/failure"
+    }
+  ],
+  "$defs": {
+    "result": {
+      "description": "The listing was written, or would be with --dry-run, or already held what was given (changed false). Exit code 0.",
+      "type": "object",
+      "required": ["$schema", "contract", "chant", "member", "declaration", "paths", "changed", "dryRun", "previous", "listing", "cover"],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/box-listing-write/v1/box-listing-write.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string",
+          "description": "The chant that wrote it."
+        },
+        "member": {
+          "type": "string",
+          "description": "The member whose box block holds the listing."
+        },
+        "declaration": {
+          "type": "object",
+          "required": ["path", "sha256"],
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "The declaration file, relative to the repository root (the working directory outside git), with / separators."
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "description": "The sha256 of the declaration's bytes after the write, or as they would be with --dry-run."
+            }
+          }
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Every file the write changed, or would change with --dry-run, relative to the repository root: the cover it copied, then the declaration. Empty when the listing and cover already held what was given."
+        },
+        "changed": {
+          "type": "boolean",
+          "description": "Whether any file changed: paths is not empty."
+        },
+        "dryRun": {
+          "type": "boolean",
+          "description": "True when --dry-run was given and nothing was written."
+        },
+        "previous": {
+          "description": "The listing before the write, as chant workspace status --json prints it, or null when the box declared none.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/listing"
+            }
+          ]
+        },
+        "listing": {
+          "$ref": "#/$defs/listing",
+          "description": "The listing after the write, as chant workspace status --json prints it, defaults filled in and the cover hashed."
+        },
+        "cover": {
+          "description": "The image --cover copied in, or null without --cover.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": ["path", "sha256", "bytes", "type", "replaced"],
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "description": "Where it was copied, from the workspace root: --cover-path, else the listing's cover when its extension fits, else <member dir>/listing/cover.<png|jpg|webp>."
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "bytes": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "type": {
+                  "enum": ["image/png", "image/jpeg", "image/webp"]
+                },
+                "replaced": {
+                  "type": ["string", "null"],
+                  "description": "The cover the listing named before, from the workspace root, when it was another file. That file is left in place; the caller removes it in the same commit if nothing else uses it."
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "listing": {
+      "type": "object",
+      "required": ["published", "title", "line", "cover"],
+      "properties": {
+        "published": {
+          "type": "boolean"
+        },
+        "title": {
+          "type": "string"
+        },
+        "line": {
+          "type": "string"
+        },
+        "cover": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": ["path", "sha256"],
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "description": "From the workspace root."
+                },
+                "sha256": {
+                  "type": ["string", "null"],
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "failure": {
+      "type": "object",
+      "description": "Nothing was written. Exit code 1.",
+      "required": ["$schema", "contract", "chant", "member", "error"],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/box-listing-write/v1/box-listing-write.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "member": {
+          "type": ["string", "null"]
+        },
+        "error": {
+          "type": "object",
+          "required": ["code", "message"],
+          "properties": {
+            "code": {
+              "enum": [
+                "declaration-missing",
+                "declaration-ambiguous",
+                "declaration-unparseable",
+                "declaration-invalid",
+                "placement-invalid",
+                "reader-too-old",
+                "root-chant-required",
+                "not-a-git-repository",
+                "revision-unknown",
+                "write-usage-invalid",
+                "write-input-invalid",
+                "listing-member-unknown",
+                "listing-box-missing",
+                "listing-cover-invalid",
+                "write-scope-member",
+                "write-scope-protected",
+                "write-scope-class-unknown",
+                "agent-unknown",
+                "principal-unidentified"
+              ]
+            },
+            "message": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

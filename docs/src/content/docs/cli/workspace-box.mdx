@@ -1,0 +1,113 @@
+---
+title: "chant workspace box"
+description: Change a box's listing, its title, line, published flag and cover picture, through chant instead of editing the workspace declaration
+diataxis: reference
+---
+
+## Synopsis
+
+```
+chant workspace box listing set <member> [--from <file|->] [--cover <image> [--cover-path <path>]] [--by <principal>] [--dry-run] [--json]
+```
+
+## Description
+
+A box's listing is what a home site that lists boxes shows of it, such as its title and its cover picture. The listing lives on the member's [box block](/chant/reference/workspace-declaration/#listing) as `members[i].box.listing` in `chant.workspace.json` ([#3146](https://github.com/INTENTIUS/chant/issues/3146), [ws-077](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-077-factory-fields-on-the-box-block.md)). Under [ws-074](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-074-the-repo-is-the-database.md) a tool writes the repo only through chant. A tool such as hud therefore changes a listing with this command and never edits the declaration itself ([#3308](https://github.com/INTENTIUS/chant/issues/3308)).
+
+`box listing set` changes only the listing's own properties, editing the declaration in place. The rest of the file is left byte for byte, comments and trailing commas in a `chant.workspace.jsonc` included. A property the write adds goes after the listing's last one, and a box with no listing gets one after the box block's last property. Before writing, the command checks the declaration it would write against the declaration schema. It never commits. As after the [record writes](/chant/cli/workspace-records/#writing-records), the caller commits the change and opens the pull request.
+
+The member must declare a box block. A member without one is refused with `listing-box-missing`.
+
+## The fields
+
+`--from` names a JSON file, or `-` for standard input, holding an object of the fields to change. A field left out keeps its value, and `null` takes a field out of the declaration so it reads as its default.
+
+| Field | Holds |
+|---|---|
+| `published` | `true` or `false`. Default `true` |
+| `title` | at most 60 characters, with no control character. Default `""` |
+| `line` | at most 140 characters, with no control character. Default `""` |
+| `cover` | a PNG, JPEG or WebP file already in the workspace, as a path from the workspace root |
+| `x-*` | any value, kept as given |
+
+Any other field is refused with `write-input-invalid`, and so is a value the declaration schema refuses, such as a 61-character title.
+
+## The cover
+
+`--cover <image>` copies a picture into the repository and points the listing at it, so one call sets the fields and the cover. The image is read from the path given, relative to the current directory, and must be a PNG, JPEG or WebP of at most 5 MiB, told by its first bytes. It goes to:
+
+1. `--cover-path <path>`, from the workspace root, when given. Its extension must fit the picture's format.
+2. Otherwise the listing's current cover, when its extension fits.
+3. Otherwise `<member dir>/listing/cover.png`, `.jpg` or `.webp`.
+
+When the cover moves to another file, `cover.replaced` names the one the listing named before. That file stays in place, and the caller removes it in the same commit if nothing else uses it. `--cover` and a `cover` field together are refused with `write-usage-invalid`. Bytes the destination already holds are not written again.
+
+## Who may write
+
+The write is judged as [`check --changes`](/chant/cli/workspace-check/#the-forward-coverage-check) judges the commit that will carry it, by the write scope in the declaration at base ([#2548](https://github.com/INTENTIUS/chant/issues/2548)), so a working-tree edit can't widen it. The writer is the agent session `CHANT_AGENT` names, the session listing the `--by` principal, or the class the principal's role grants give.
+
+- The declaration is at the workspace root, in no member. A class whose `writeScope.<class>.members` leaves out paths in no member is refused with `write-scope-member`, and so is every agent session, since a session writes only its own member.
+- A `protected` entry covering the declaration refuses the write with `write-scope-protected`, unless its `except` allows the change. `{ "path": "chant.workspace.json", "except": ["/members/*/box/listing"] }` keeps the declaration protected and lets any box's listing change.
+- The cover's path is judged the same way, as a file in its member.
+- When the declaration at base sets `identity.attribution` to `identified`, a bare name in `--by` is refused with `principal-unidentified`. Pass a forge identity such as `github:alice`, or a signer ([ws-080](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-080-person-identity-forge-or-signer.md)).
+
+## Output
+
+The command prints one JSON document following `https://intentius.io/chant/schemas/workspace/box-listing-write/v1/box-listing-write.schema.json`, with or without `--json`.
+
+```sh
+chant workspace box listing set app --by github:alice --cover /tmp/upload-7f3a.png --from - <<'EOF'
+{ "title": "Fern", "line": "A garden planner for a small allotment" }
+EOF
+```
+
+```json
+{
+  "$schema": "https://intentius.io/chant/schemas/workspace/box-listing-write/v1/box-listing-write.schema.json",
+  "contract": 1,
+  "chant": "0.103.0",
+  "member": "app",
+  "declaration": { "path": "chant.workspace.json", "sha256": "20dd0267..." },
+  "paths": ["app/listing/cover.png", "chant.workspace.json"],
+  "changed": true,
+  "dryRun": false,
+  "previous": null,
+  "listing": {
+    "published": true,
+    "title": "Fern",
+    "line": "A garden planner for a small allotment",
+    "cover": { "path": "app/listing/cover.png", "sha256": "7343d363..." }
+  },
+  "cover": { "path": "app/listing/cover.png", "sha256": "7343d363...", "bytes": 48213, "type": "image/png", "replaced": null }
+}
+```
+
+| Field | Holds |
+|---|---|
+| `member` | the member whose box holds the listing |
+| `declaration` | the declaration file from the repository root, and the sha256 of its bytes after the write |
+| `paths` | every file the write changed, from the repository root. Empty when the listing and cover already held what was given, and then `changed` is `false` |
+| `previous`, `listing` | the listing before and after, as [`status --json`](/chant/reference/workspace-read-contract/#factory-listing-and-plantable) prints it, with defaults filled in and the cover's sha256. `previous` is `null` when the box had no listing |
+| `cover` | the image `--cover` copied, or `null` |
+
+`--dry-run` prints the same document and writes nothing. A refused write leaves every file as it was and exits 1. Its document carries `error: { code, message }` instead.
+
+| Code | When |
+|---|---|
+| `listing-member-unknown` | the declaration names no such member |
+| `listing-box-missing` | the member declares no box block |
+| `listing-cover-invalid` | the cover can't be read, isn't a picture of a format above, is over 5 MiB, or has a bad path or extension |
+| `write-usage-invalid` | the command line is missing a value or gives a conflicting one |
+| `write-input-invalid` | the fields aren't a JSON object of listing fields, or the declaration schema refuses them |
+| `write-scope-member`, `write-scope-protected`, `write-scope-class-unknown`, `agent-unknown` | the write scope at base refuses the writer |
+| `principal-unidentified` | `--by` is a bare name under `identity.attribution: "identified"` |
+| a declaration code | the declaration can't be read, as for any workspace read |
+
+The [writer conformance suite](/chant/reference/workspace-writer-conformance/) drives this command as its `box listing set` action, and its amnesia test reads the listing back through `status --json`.
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | The listing was written, would be with `--dry-run`, or already held what was given |
+| 1 | Nothing was written: the document's `error` says why |

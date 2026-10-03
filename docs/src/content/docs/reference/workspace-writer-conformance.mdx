@@ -33,8 +33,9 @@ The [reader suite](/chant/reference/workspace-read-contract/#testing-a-reader) h
 | `run-start` | `runs start` | `workspace runs start --from -` | `runs-write.schema.json` | a run's start on the run ledger |
 | `run-end` | `runs end` | `workspace runs end writer-run-1 --from -` | `runs-write.schema.json` | the run's end |
 | `run-record` | `runs record` | `workspace runs record --from -` | `runs-write.schema.json` | a whole run |
+| `listing` | `box listing set` | `workspace box listing set app --from - --cover <dir>/cover.png` | `box-listing-write.schema.json` | the `app` box's listing in the declaration, and its cover at `app/listing/cover.png` |
 
-`work evidence` is the `workEvidence` activity as a command ([chant workspace work](/chant/cli/workspace-work/#evidence)), so a writer that is not an Op attaches evidence through chant too. `records new`, `records amend`, `records review`, `records close`, `points` and `runs` print their document without a flag, and a writer may add `--json` to them. The lease verbs print it only with `--json`.
+`work evidence` is the `workEvidence` activity as a command ([chant workspace work](/chant/cli/workspace-work/#evidence)), so a writer that is not an Op attaches evidence through chant too. `box listing set` is how a tool changes a box's listing ([chant workspace box](/chant/cli/workspace-box/), [#3308](https://github.com/INTENTIUS/chant/issues/3308)). Its cover is a 1x1 PNG the suite writes for each run to a directory outside the workspace, `WRITER_INPUTS`. `records new`, `records amend`, `records review`, `records close`, `points`, `runs` and `box listing set` print their document without a flag, and a writer may add `--json` to them. The lease verbs print it only with `--json`.
 
 ## Wiring a writer
 
@@ -81,7 +82,7 @@ test("my writer writes only through chant", { timeout: 600_000 }, async () => {
 });
 ```
 
-With vitest, `describeWorkspaceWriterConformance({ name, writer, actions, privateState })` from the `vitest` entry takes the same writer. `referenceWriter` is the smallest writer that conforms: each step is its command, and its facts are read with `records` and `runs`.
+With vitest, `describeWorkspaceWriterConformance({ name, writer, actions, privateState })` from the `vitest` entry takes the same writer. `referenceWriter` is the smallest writer that conforms: each step is its command, and its facts are read with `records`, `runs` and the box listings `status dev --json` prints (`readListing`).
 
 ## The checks
 
@@ -92,7 +93,7 @@ For each step the writer performs, the suite fails when any of these is false:
 | the step made exactly one chant call: the action's command, with the step's arguments in order and its JSON flag, and the step's fields on stdin | the transport records every call and what it was given |
 | the writer returned the document chant printed, unchanged | compared with the recorded output |
 | the document validates against the action's output schema, and chant wrote rather than refused | the schemas `@intentius/chant` ships, with its own ajv |
-| every file that changed is the path the document reports writing | every file outside `.git` is hashed before and after the step |
+| every file that changed is the path the document reports writing (for `box listing set`, one of its `paths`) | every file outside `.git` is hashed before and after the step |
 | every git ref that moved is the lease ref or the `chant/lifecycle` commit the document reports | the refs and `HEAD` are read before and after the step |
 
 After the script it fails when any of these is false:
@@ -103,10 +104,10 @@ After the script it fails when any of these is false:
 | the state directory holds only what `privateState` declares | listed after the script |
 | amnesia: the writer shows the same facts with its private state deleted | `facts()` before; then `close()`, the state directory deleted, the writer built again with the same `stateDir`, and `facts()` again; the two must be equal |
 | everything `holds()` names is in the repository, or one of the four exceptions | each record read with `records`, each run with `runs`, each lease with `work history` |
-| every fact the script produced reads back through the read contract | `records --uncommitted` for each kind, `work history W-001` and `runs` |
+| every fact the script produced reads back through the read contract | `records --uncommitted` for each kind, `work history W-001`, `runs`, and the listing in `status dev --json` |
 
 A writer that keeps a review only in its database passes the step and fails amnesia. A writer that writes a record file itself fails the step's file check. Writing it with `git commit` also moves `HEAD` and fails the step's ref check.
 
 ## The workspace
 
-The suite writes a new workspace in a temporary directory for each run and removes it afterwards. It never writes to a workspace you name. The workspace is the reader suite's ([Testing a reader](/chant/reference/workspace-read-contract/#testing-a-reader)) with `src/workspace/conformance/__writer_fixture__/` copied over it. The overlay copies the work, answer and session kinds and their schemas from the reference workspace, with its decision points file. The contract and driver kinds come along too, since a session's verdicts may name their records. It adds one open work item, `W-001`, whose criterion `AC-1` takes unit evidence. The declaration names the four record kinds. Nothing is committed after that commit: the writes stay in the working tree, as ws-074 leaves them.
+The suite writes a new workspace in a temporary directory for each run and removes it afterwards. It never writes to a workspace you name. The workspace is the reader suite's ([Testing a reader](/chant/reference/workspace-read-contract/#testing-a-reader)) with `src/workspace/conformance/__writer_fixture__/` copied over it. The overlay copies the work, answer and session kinds and their schemas from the reference workspace, with its decision points file. The contract and driver kinds come along too, since a session's verdicts may name their records. It adds one open work item, `W-001`, whose criterion `AC-1` takes unit evidence. The declaration names the four record kinds and gives the `app` member an empty box block for the listing step. Nothing is committed after that commit: the writes stay in the working tree, as ws-074 leaves them.

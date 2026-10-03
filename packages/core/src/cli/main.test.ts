@@ -255,6 +255,13 @@ describe("parseArgs", () => {
     expect(result.extraPositional2).toBe(undefined);
   });
 
+  test("positionals keeps every positional after the command, for workspace box listing set <member> (#3308)", () => {
+    const result = parseArgs(["workspace", "box", "listing", "set", "app", "--from", "-", "--cover", "c.png", "--cover-path", "app/c.png"]);
+    expect(result.positionals).toEqual(["box", "listing", "set", "app"]);
+    expect(result).toMatchObject({ path: "box", extraPositional: "listing", migrateFrom: "-", cover: "c.png", coverPath: "app/c.png" });
+    expect(() => parseArgs(["workspace", "box", "listing", "set", "app", "--cover"])).toThrow(/--cover needs/);
+  });
+
   // ── components release/status flags (#568) ──────────────────────────────
 
   test("parses --component, --digest, --git-sha, --run-id, --actor for components release", () => {
@@ -751,6 +758,7 @@ describe("workspace init and ls (#2534)", () => {
       "workspace adopt-lineage",
       "workspace agent",
       "workspace audit",
+      "workspace box",
       "workspace build",
       "workspace check",
       "workspace evidence",

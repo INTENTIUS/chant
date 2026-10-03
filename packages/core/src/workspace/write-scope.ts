@@ -61,6 +61,7 @@ import {
   type ClassRegistry,
 } from "./principal-classes";
 import type { ReasonCode } from "./reason-codes";
+import { parseJsonText } from "./jsonc";
 import { memberHolding } from "./record-assets";
 import { gitRoot } from "./record-source";
 import { normalisePrincipal, parseFrontMatter } from "./records";
@@ -253,22 +254,43 @@ export function protectedEntry(entries: readonly ProtectedPath[], path: string):
   return null;
 }
 
+/** What an array item an `except` pointer covers is compared as, so the items after it keep their places. */
+const REMOVED = Symbol("except");
+
+/** Remove every value `pointer` matches from `value`, in place; a `*` token matches every key or index at its level. */
+function removeAtPointer(value: unknown, tokens: readonly string[]): void {
+  if (tokens.length === 0 || value === null || typeof value !== "object") return;
+  const [head, ...rest] = tokens;
+  const container = value as Record<string, unknown>;
+  const names = head === "*" ? Object.keys(container) : Object.prototype.hasOwnProperty.call(container, head) ? [head] : [];
+  for (const name of names) {
+    if (rest.length > 0) removeAtPointer(container[name], rest);
+    else if (Array.isArray(value)) (value as unknown[])[Number(name)] = REMOVED;
+    else delete container[name];
+  }
+}
+
 /**
- * Whether JSON text `before` and `after` differ only in the top-level keys
- * `except` names. False when either is missing or isn't a JSON object.
+ * Whether JSON text `before` and `after` differ only in what `except`
+ * allows: a top-level key, or, for an entry starting with `/`, the values a
+ * JSON Pointer matches, where a `*` token matches every key or array index
+ * at its level (`/members/*\/box/listing`, #3308). Comments and trailing
+ * commas are read, so a `.jsonc` declaration is judged too. False when either
+ * is missing or isn't a JSON object.
  */
 export function onlyKeysChanged(before: string | null, after: string | null, except: readonly string[]): boolean {
   if (before === null || after === null || except.length === 0) return false;
   const strip = (text: string): Record<string, unknown> | null => {
-    try {
-      const value = JSON.parse(text) as unknown;
-      if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
-      const copy = { ...(value as Record<string, unknown>) };
-      for (const key of except) delete copy[key];
-      return copy;
-    } catch {
-      return null;
+    const parsed = parseJsonText(text, { jsonc: true });
+    if (!parsed.ok) return null;
+    const value = parsed.value;
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+    const copy = structuredClone(value) as Record<string, unknown>;
+    for (const entry of except) {
+      if (entry.startsWith("/")) removeAtPointer(copy, entry.slice(1).split("/").map((t) => t.replace(/~1/g, "/").replace(/~0/g, "~")));
+      else delete copy[entry];
     }
+    return copy;
   };
   const a = strip(before);
   const b = strip(after);
@@ -303,7 +325,7 @@ export function judgePath(declaration: Declaration | null, writer: Writer, path:
   const guarded = protectedEntry(scope.protected, path);
   if (guarded === null) return OK;
   if (guarded.except.length > 0 && change && onlyKeysChanged(change.before(), change.after(), guarded.except)) return OK;
-  const allowance = guarded.except.length > 0 ? `, outside the top-level keys it allows (${guarded.except.join(", ")})` : "";
+  const allowance = guarded.except.length > 0 ? `, outside what its except allows (${guarded.except.join(", ")})` : "";
   return {
     ok: false,
     code: "write-scope-protected",
