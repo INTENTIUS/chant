@@ -23,7 +23,7 @@ import {
   type ObserverAdapter,
 } from "@intentius/chant/observation";
 import { bindPostgres, classifyPostgresFailure, redactUrl, type BindOptions, type PostgresTarget } from "./bind";
-import { liveKey, readLiveSchema, type LivePgObject } from "./catalog";
+import { liveKey, markProviderOwned, readLiveSchema, type LivePgObject } from "./catalog";
 import { POSTGRES_ENTITY_TYPES } from "../entity-types";
 import { isChantManaged, readMarker, stripMarker } from "../../core/ownership";
 import { identValue } from "../parser";
@@ -58,7 +58,7 @@ function adapter(options: BindOptions & { owned?: boolean; declared: DeclaredEnt
     async bind() {
       const { target, client } = await bindPostgres(options);
       try {
-        const live = await readLiveSchema(client, { schemas: scopeFor(target, options.declared.filter((d) => d.type.startsWith("Postgres::"))) });
+        const live = markProviderOwned(await readLiveSchema(client, { schemas: scopeFor(target, options.declared.filter((d) => d.type.startsWith("Postgres::"))) }), target.provider);
         return { target, byKey: new Map(live.map((o) => [liveKey(o.type, o.schema, o.name), o])) };
       } finally {
         await client.end();

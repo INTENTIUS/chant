@@ -7,6 +7,7 @@
 import type { ChantConfig } from "@intentius/chant/config";
 import type { UnobservedReason } from "@intentius/chant/observation";
 import { connectPostgres, PostgresQueryError, type PostgresClient, type PostgresEndpoint } from "./client";
+import type { PostgresProvider } from "../providers/types";
 
 export interface PostgresTarget {
   endpoint: PostgresEndpoint;
@@ -16,6 +17,8 @@ export interface PostgresTarget {
   schemas?: string[];
   /** The schema an unqualified declaration lives in. */
   defaultSchema: string;
+  /** The managed service the server runs on (`sql.profiles.<env>.provider`, else `sql.provider`); its own objects read as foreign. */
+  provider?: PostgresProvider;
 }
 
 export interface UnresolvedTarget {
@@ -46,6 +49,8 @@ export function resolvePostgresTarget(input: {
 }): PostgresTarget | UnresolvedTarget {
   const env = input.env ?? process.env;
   const profile = input.environment !== undefined ? input.config?.sql?.profiles?.[input.environment] : undefined;
+  const provider = (profile && isPostgresUrl(profile.url) ? profile.provider : undefined) ?? input.config?.sql?.provider;
+  const withProvider = <T extends object>(t: T): T => (provider ? { ...t, provider } : t);
   if (profile && isPostgresUrl(profile.url)) {
     const source = `sql.profiles.${input.environment}`;
     const endpoint: PostgresEndpoint = { url: profile.url };
@@ -56,14 +61,14 @@ export function resolvePostgresTarget(input: {
       if (value === undefined) return { reason: "no-credentials", detail: `${source}.${key} names ${ref.env}, which is not set` };
       endpoint[key] = value;
     }
-    return { endpoint, source, ...(profile.schemas ? { schemas: profile.schemas } : {}), defaultSchema: profile.defaultSchema ?? "public" };
+    return withProvider({ endpoint, source, ...(profile.schemas ? { schemas: profile.schemas } : {}), defaultSchema: profile.defaultSchema ?? "public" });
   }
   const url = env.POSTGRES_URL;
   if (!url) {
     const where = input.environment !== undefined ? `sql.profiles.${input.environment} names no postgres:// server and ` : "";
     return { reason: "no-binding", detail: `${where}POSTGRES_URL is not set, so there is no Postgres server to read` };
   }
-  return {
+  return withProvider({
     endpoint: {
       url,
       ...(env.POSTGRES_USER !== undefined ? { user: env.POSTGRES_USER } : {}),
@@ -71,7 +76,7 @@ export function resolvePostgresTarget(input: {
     },
     source: "env POSTGRES_URL",
     defaultSchema: "public",
-  };
+  });
 }
 
 /** A target that could not be resolved. */
