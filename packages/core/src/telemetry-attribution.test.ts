@@ -2,7 +2,15 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, test } from "vitest";
-import { mergeResourceAttributes, resolveTelemetryAttribution, TELEMETRY_ATTRIBUTES, telemetryEnvironment } from "./telemetry-attribution";
+import {
+  mergeResourceAttributes,
+  RELEASE_ATTRIBUTES_VARIABLE,
+  releaseAttributesSuffix,
+  releaseEnvironment,
+  resolveTelemetryAttribution,
+  TELEMETRY_ATTRIBUTES,
+  telemetryEnvironment,
+} from "./telemetry-attribution";
 
 const scratch = mkdtempSync(join(tmpdir(), "chant-2558-"));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
@@ -87,5 +95,19 @@ describe("mergeResourceAttributes", () => {
   test("keeps keys already set and appends the rest", () => {
     expect(mergeResourceAttributes("a=1,chant.member=mine", "chant.workspace=w,chant.member=m")).toBe("a=1,chant.member=mine,chant.workspace=w");
     expect(mergeResourceAttributes("", "a=1")).toBe("a=1");
+  });
+});
+
+describe("release attributes (#3061, ws-081)", () => {
+  test("the suffix starts with a comma, percent-encodes, and is empty when the release knows nothing", () => {
+    expect(releaseAttributesSuffix({ version: "sha256:abc", revision: "0123abc" })).toBe(",service.version=sha256%3Aabc,vcs.ref.head.revision=0123abc");
+    expect(releaseAttributesSuffix({ revision: "0123abc" })).toBe(",vcs.ref.head.revision=0123abc");
+    expect(releaseAttributesSuffix({})).toBe("");
+    expect(releaseAttributesSuffix(undefined)).toBe("");
+  });
+
+  test("the environment carries the suffix under CHANT_RELEASE_ATTRIBUTES, or nothing", () => {
+    expect(releaseEnvironment({ revision: "r" })).toEqual({ [RELEASE_ATTRIBUTES_VARIABLE]: ",vcs.ref.head.revision=r" });
+    expect(releaseEnvironment({})).toEqual({});
   });
 });

@@ -8,6 +8,7 @@
 
 import type { Capability } from "../capability";
 import { defaultProcessRunner, q, type ProcessRunner } from "./process-runner";
+import { releaseEnvironment } from "../../telemetry-attribution";
 
 export interface ShellInput {
   /** Command to run. */
@@ -36,10 +37,13 @@ export interface ShellOutput {
 export function createShellCapability(processRunner: ProcessRunner = defaultProcessRunner()): Capability<ShellInput, ShellOutput> {
   return {
     kind: "shell",
-    async run(_ctx, input) {
+    async run(ctx, input) {
+      // A release run exports its attributes (#3061, ws-081), so a `docker compose up` here fills the
+      // Compose file's `${CHANT_RELEASE_ATTRIBUTES:-}`. A value the step sets itself wins.
+      const env = { ...releaseEnvironment(ctx.release), ...(input.env ?? {}) };
       const envPrefix =
-        input.env && Object.keys(input.env).length > 0
-          ? `env ${Object.entries(input.env).map(([k, v]) => `${k}=${q(v)}`).join(" ")} `
+        Object.keys(env).length > 0
+          ? `env ${Object.entries(env).map(([k, v]) => `${k}=${q(v)}`).join(" ")} `
           : "";
       const { stdout } = await processRunner.run(`${envPrefix}${input.cmd}`, { cwd: input.cwd });
       return { stdout, exitCode: 0 };

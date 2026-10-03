@@ -560,6 +560,11 @@ export async function runPromotion(options: RunPromotionOptions): Promise<Driver
       // #2574: a gate approval for this promote or rollback is bound to the
       // release it deploys, as well as the environment and composition.
       releases: expected,
+      // #3061: the workload's service.version and vcs.ref.head.revision are the earlier release's own.
+      releaseIdentity: (component) => {
+        const item = plan.items.find((i) => i.component === component);
+        return item ? { version: item.digest, revision: item.source.gitSha } : undefined;
+      },
       ...(options.onProgress ? { onProgress: options.onProgress } : {}),
       ...(options.gates ? { gates: options.gates } : {}),
       ...(options.now ? { now: options.now } : {}),

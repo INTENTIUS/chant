@@ -12,7 +12,7 @@
 import type { Declarable } from "@intentius/chant/declarable";
 import { isPropertyDeclarable, isResourceDeclarable } from "@intentius/chant/declarable";
 import type { SerializeContext, Serializer, SerializerResult } from "@intentius/chant/serializer";
-import { mergeResourceAttributes, telemetryEnvironment, type TelemetryAttribution } from "@intentius/chant/telemetry-attribution";
+import { mergeResourceAttributes, RELEASE_ATTRIBUTES_VARIABLE, telemetryEnvironment, type TelemetryAttribution } from "@intentius/chant/telemetry-attribution";
 import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
 import { INTRINSIC_MARKER } from "@intentius/chant/intrinsic";
@@ -107,11 +107,25 @@ function imageDigest(image: unknown): string | undefined {
   return at === -1 ? undefined : image.slice(at + 1);
 }
 
+/** Compose's reference to the release attributes a deploy exports (#3061, ws-081), empty when unset. */
+const RELEASE_REF = `\${${RELEASE_ATTRIBUTES_VARIABLE}:-}`;
+
+/** A resource-attributes value that ends with the release reference, once. */
+function withReleaseRef(value: string): string {
+  return value.includes(RELEASE_REF) ? value : `${value}${RELEASE_REF}`;
+}
+
 /**
  * Stamp one service's attributes as `OTEL_SERVICE_NAME` and
  * `OTEL_RESOURCE_ATTRIBUTES` in its environment. A value the service already
  * sets is kept: its own `OTEL_SERVICE_NAME` wins, and its own resource
  * attributes keep their keys while the missing ones are appended.
+ *
+ * `OTEL_RESOURCE_ATTRIBUTES` ends with `${CHANT_RELEASE_ATTRIBUTES:-}`, which
+ * Compose fills from the environment of `docker compose up`: a release deploy
+ * exports `service.version` and `vcs.ref.head.revision` there (#3061,
+ * ws-081), and any other `up` leaves it empty, so this output does not change
+ * with a release.
  */
 function stampTelemetry(service: Record<string, unknown>, name: string, telemetry: TelemetryAttribution): void {
   const version = imageDigest(service.image);
@@ -122,9 +136,9 @@ function stampTelemetry(service: Record<string, unknown>, name: string, telemetr
     const has = (key: string) => entries.findIndex((e) => e === key || e.startsWith(`${key}=`));
     if (has("OTEL_SERVICE_NAME") === -1) entries.push(`OTEL_SERVICE_NAME=${vars.OTEL_SERVICE_NAME}`);
     const at = has("OTEL_RESOURCE_ATTRIBUTES");
-    if (at === -1) entries.push(`OTEL_RESOURCE_ATTRIBUTES=${vars.OTEL_RESOURCE_ATTRIBUTES}`);
+    if (at === -1) entries.push(`OTEL_RESOURCE_ATTRIBUTES=${withReleaseRef(vars.OTEL_RESOURCE_ATTRIBUTES)}`);
     else if (entries[at]!.includes("=")) {
-      entries[at] = `OTEL_RESOURCE_ATTRIBUTES=${mergeResourceAttributes(entries[at]!.slice(entries[at]!.indexOf("=") + 1), vars.OTEL_RESOURCE_ATTRIBUTES)}`;
+      entries[at] = `OTEL_RESOURCE_ATTRIBUTES=${withReleaseRef(mergeResourceAttributes(entries[at]!.slice(entries[at]!.indexOf("=") + 1), vars.OTEL_RESOURCE_ATTRIBUTES))}`;
     }
     service.environment = entries;
     return;
@@ -132,8 +146,8 @@ function stampTelemetry(service: Record<string, unknown>, name: string, telemetr
   const map: Record<string, unknown> = env && typeof env === "object" ? { ...(env as Record<string, unknown>) } : {};
   if (!("OTEL_SERVICE_NAME" in map)) map.OTEL_SERVICE_NAME = vars.OTEL_SERVICE_NAME;
   const own = map.OTEL_RESOURCE_ATTRIBUTES;
-  if (own === undefined) map.OTEL_RESOURCE_ATTRIBUTES = vars.OTEL_RESOURCE_ATTRIBUTES;
-  else if (typeof own === "string") map.OTEL_RESOURCE_ATTRIBUTES = mergeResourceAttributes(own, vars.OTEL_RESOURCE_ATTRIBUTES);
+  if (own === undefined) map.OTEL_RESOURCE_ATTRIBUTES = withReleaseRef(vars.OTEL_RESOURCE_ATTRIBUTES);
+  else if (typeof own === "string") map.OTEL_RESOURCE_ATTRIBUTES = withReleaseRef(mergeResourceAttributes(own, vars.OTEL_RESOURCE_ATTRIBUTES));
   service.environment = map;
 }
 

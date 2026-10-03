@@ -12,6 +12,8 @@
  * Cloud implementations are a later phase (see epic #551, issue #554).
  */
 
+import type { ReleaseIdentity } from "../telemetry-attribution";
+
 /**
  * Ambient information a capability's `run`/`rollback` receives, independent of
  * its typed `input`. Deliberately minimal for this phase: the orchestrator
@@ -27,6 +29,14 @@ export interface DeployContext {
   component: string;
   /** Arbitrary environment config resolved by the orchestrator (registry URLs, cluster names, ...). */
   vars?: Record<string, unknown>;
+  /**
+   * The release this run deploys (#3061, ws-081): the commit, set by the
+   * caller, and the digest of the artifact a publish step has promoted so
+   * far in this component's run, set by the driver. A deploy step passes it
+   * to the workload with `releaseEnvironment()`. Absent outside
+   * `chant run --components`.
+   */
+  release?: ReleaseIdentity;
 }
 
 /**
