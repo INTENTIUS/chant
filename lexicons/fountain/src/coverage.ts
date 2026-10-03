@@ -35,7 +35,7 @@ import { parseFountainOpenAPI, fountainShortName, MODELED_REQUEST_SCHEMAS } from
 export const EXCLUDED_KINDS: Record<string, string> = {
   // Runs, turns, and the envelope around them.
   ConversationCreateRequest: "conversations are runs, not declarables — started by the fountainRun op",
-  PromptRequest: "turn-level input inside a conversation run",
+  PromptRequest: "turn-level input inside a conversation run — sent by the fountainPrompt op",
   PermissionAnswerRequest: "a human's answer to one tool card mid-run — an event on a conversation, not estate",
   TeamMessageRequest: "one turn addressed to a teammate — the run, not the seat",
   ConversationLabelsRequest:
