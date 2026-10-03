@@ -8,25 +8,85 @@ description: "Database schema as typed declarations, one dialect at a time; Clic
 
 The sql lexicon declares database schema in TypeScript, one database dialect
 at a time. ClickHouse is the first dialect, at
-`@intentius/chant-lexicon-sql/clickhouse`.
+`@intentius/chant-lexicon-sql/clickhouse`. The package is not on npm yet;
+[Getting Started](./getting-started/) runs it from a checkout of the chant
+repository.
 
-chant is spec-true per dialect, not database-agnostic. Each dialect's engines,
-column types, codecs and settings are that database's own, read from a pinned
-server, because databases differ in ways a schema tool has to respect:
-ClickHouse has no foreign keys and rebuilds a table to change its sort key,
-where Postgres changes most things in place inside a transaction.
+```ts
+import { database, table, view } from "@intentius/chant-lexicon-sql/clickhouse";
 
-Tables, views, materialized views and databases are declared as their own
-DDL in tagged templates, parsed at build time into entities with references,
-dependency order and column lineage: see
-[Declaring Tables and Views](./clickhouse-ddl/). The types come from a pinned
-server's catalog: see [Where the Types Come From](./clickhouse-catalog/).
+export const analytics = database`CREATE DATABASE analytics ENGINE = Atomic`;
 
-`chant import --from <env>` writes a live server's schema as declarations:
-see [Importing a Live Server](./importing/). Every schema change is
-classified as metadata only, a background rewrite or a rebuild, each with the
-ClickHouse `ALTER` restriction behind it, and a rebuild is refused in place:
-see [Planning and the Change Classifier](./change-classifier/).
+export const events = table`
+  CREATE TABLE ${analytics}.events (
+    user_id  UUID,
+    kind     LowCardinality(String),
+    ts       DateTime
+  )
+  ENGINE = MergeTree
+  ORDER BY (user_id, kind, ts)`;
+
+export const byKind = view`
+  CREATE VIEW ${analytics}.by_kind AS
+  SELECT ${events.columns.kind} AS kind, count() AS n
+  FROM ${events}
+  GROUP BY kind`;
+```
+
+## Spec-true per dialect
+
+chant is spec-true per dialect, not database-agnostic. For SQL the spec is
+the database's own DDL, so a ClickHouse declaration is a ClickHouse
+`CREATE` statement, and the engines, column types, codecs and settings it can
+name are the ones a pinned ClickHouse server lists in its `system.*` tables.
+There is no neutral schema model that each dialect is translated from.
+
+The reason is that databases differ exactly where a schema tool does its
+work. ClickHouse has no foreign keys and no transactional DDL, and it cannot
+change a table's sort key, partition key or engine in place: the rows have to
+be copied into a new table. Postgres makes most of those changes in place,
+inside a transaction. A neutral model would have to hide those differences, so
+a plan could not say what a change will cost, or carry every dialect's
+features and check each one against the target anyway. So each dialect has its
+own types, parser, lint rules, change classifier and applier. What stays the
+same from one dialect to the next is the way you work: the tagged-template
+form, references and lineage, the three change classes, plan, apply, and Ops
+for what a plan cannot do in place.
+
+## Pages
+
+- [Getting Started](./getting-started/): declare a schema, build it, apply it
+  to a local server and plan a change against it.
+- [Declaring Tables and Views](./clickhouse-ddl/): databases, tables, views and
+  materialized views as tagged templates, and what each kind of interpolation
+  means.
+- [References and Lineage](./references-and-lineage/): how references become
+  dependency order and column-level lineage.
+- [Importing a Live Server](./importing/): `chant import --from <env>` writes
+  a running server's schema as declarations.
+- [Planning and the Change Classifier](./change-classifier/): every change
+  classified as metadata only, a background rewrite or a rebuild, each with the
+  ClickHouse `ALTER` restriction behind it.
+- [Applying to a Server](./applying/): `clickhouseApply`, chant's ownership
+  marker on the object's comment, and the local server `chant emulator` starts.
+- [Rebuilding a Table](./rebuild/): `ClickHouseRebuildOp` for the changes
+  ClickHouse cannot make in place: a new table filled, verified and swapped in.
+- [Composites](./composites/): `ReplacingTable`, `EventsTable`,
+  `RollupView`, `CdcMirror` and `ShardedTable`.
+- [Lint Rules and Checks](./lint-rules/): every SQLCH lint rule and post-synth
+  check.
+- [Where the Types Come From](./clickhouse-catalog/): the pinned server, the
+  committed catalog snapshot, and how to move the pin.
+
+## Schema changes and `chant migrate`
+
+`chant migrate` translates a file from one lexicon's format into another's,
+such as a GitHub Actions workflow into GitLab CI. It does not run schema
+migrations, and the sql lexicon registers nothing for it. A schema change is a
+change to the declarations: `chant sql diff` or `chant sql plan` classifies
+it, `clickhouseApply` makes the metadata-only and background-rewrite changes,
+and a change that needs a rebuild runs as `ClickHouseRebuildOp`, a gated
+migration Op: see [Rebuilding a Table](./rebuild/).
 
 
 ## At a Glance

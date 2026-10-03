@@ -7,7 +7,7 @@
 import { clickhouseQuery } from "../http";
 import type { ClickHouseTarget } from "./bind";
 import { CLICKHOUSE_ENTITY_TYPES, type ClickHouseEntityType } from "../entities";
-import { stripMarkerFromStatement } from "../ownership";
+import { isChantWorkingObject, stripMarkerFromStatement } from "../ownership";
 
 /** The server's own databases, never part of a declared schema. */
 export const SYSTEM_DATABASES = new Set(["system", "information_schema", "INFORMATION_SCHEMA"]);
@@ -40,6 +40,12 @@ export function entityTypeOfEngine(engine: string): ClickHouseEntityType {
  * A materialized view's inner table (`.inner_id.<uuid>`, `.inner.<name>`)
  * belongs to its view and is left out, as are temporary tables and
  * dictionaries (not declared in slice 1).
+ *
+ * So are chant's own working objects (`../ownership.ts`
+ * `isChantWorkingObject`): a rebuild migration's new, dual-write and retained
+ * tables, and the effect receipts database. None of them is a declaration, so
+ * a plan, an import or a prune that saw them would propose dropping, importing
+ * or pruning the very objects a rebuild in progress depends on.
  */
 export async function readLiveSchema(target: ClickHouseTarget, opts: { withStatements?: boolean } = {}): Promise<LiveObject[]> {
   const q = <T>(sql: string) => clickhouseQuery<T>(target.endpoint, sql);
@@ -56,6 +62,7 @@ export async function readLiveSchema(target: ClickHouseTarget, opts: { withState
       `ORDER BY database, name`,
   );
 
+  const working = new Set(databases.filter((d) => isChantWorkingObject(d.comment)).map((d) => d.name));
   const out: LiveObject[] = [];
   const statement = async (kind: "DATABASE" | "TABLE", what: string) =>
     opts.withStatements === false
@@ -63,6 +70,7 @@ export async function readLiveSchema(target: ClickHouseTarget, opts: { withState
       : stripMarkerFromStatement((await q<{ statement: string }>(`SHOW CREATE ${kind} ${what}`))[0]?.statement ?? "");
 
   for (const d of databases) {
+    if (working.has(d.name)) continue;
     out.push({
       type: CLICKHOUSE_ENTITY_TYPES.database,
       name: d.name,
@@ -73,6 +81,7 @@ export async function readLiveSchema(target: ClickHouseTarget, opts: { withState
     });
   }
   for (const t of tables) {
+    if (working.has(t.database) || isChantWorkingObject(t.comment)) continue;
     out.push({
       type: entityTypeOfEngine(t.engine),
       database: t.database,

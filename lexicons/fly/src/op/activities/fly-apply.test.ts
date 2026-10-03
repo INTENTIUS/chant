@@ -40,13 +40,16 @@ import {
   flyApply,
   flyDelete,
   toApplyResult,
+  listCerts,
+  CERT_PAGE_LIMIT,
+  MAX_CERT_PAGES,
   DEFAULT_FLAPS_BASE_URL,
   LEASE_NONCE_HEADER,
   type FlyHttp,
   type FlapsRequest,
   type ApplyCtx,
 } from "./fly-apply";
-import { createMachinesFake } from "./machines-fake";
+import { createMachinesFake, CERT_PAGE_DEFAULT } from "./machines-fake";
 
 const CTX: ApplyCtx = { base: "http://localhost:4280" };
 const NO_WAIT = { intervalMs: 0, deadlineMs: 5_000 };
@@ -649,6 +652,102 @@ describe("flyApply creates certificates at /certificates/acme (#3114)", () => {
     const out = await run(fake, { app, keep: cert("keep.com") }, true);
     expect(out.prunedCerts).toEqual([{ app: "demo", hostname: "drop.com" }]);
     expect(fake.certs.get("demo")).toEqual(["keep.com"]);
+  });
+});
+
+/**
+ * #3224: Fly pages the certificate list (25 by default, 500 at most, with a
+ * `next_cursor`), and the in-memory flaps does the same. Every reader goes
+ * through listCerts, which follows the cursor to the end.
+ */
+describe("certificate list pagination (#3224)", () => {
+  const app = { endpoint: "/v1/apps", method: "POST", body: { app_name: "demo" } };
+  const cert = (hostname: string) => ({ endpoint: "/v1/apps/demo/certificates/acme", method: "POST", body: { hostname } });
+  const hosts = (n: number) => Array.from({ length: n }, (_, i) => `h${String(i).padStart(4, "0")}.example.com`);
+  const planOf = (hostnames: string[]): string => {
+    const dir = mkdtempSync(join(tmpdir(), "fly-3224-"));
+    const planPath = join(dir, "plan.json");
+    writeFileSync(planPath, JSON.stringify({ app, ...Object.fromEntries(hostnames.map((h) => [h, cert(h)])) }));
+    return planPath;
+  };
+  const run = (fake: ReturnType<typeof createMachinesFake>, hostnames: string[], prune = false) =>
+    flyApply({ planPath: planOf(hostnames), endpoint: CTX.base, wait: NO_WAIT, prune }, undefined, fake.http);
+  const certGets = (fake: ReturnType<typeof createMachinesFake>) => fake.calls.filter((c) => c === "GET /v1/apps/demo/certificates");
+
+  test("the in-memory flaps pages the list at 25 with a next_cursor, as Fly does", async () => {
+    const fake = createMachinesFake();
+    fake.apps.add("demo");
+    fake.certs.set("demo", hosts(30));
+    const first = JSON.parse((await fake.http("GET", `${CTX.base}/v1/apps/demo/certificates`)).text);
+    expect(first.certificates).toHaveLength(CERT_PAGE_DEFAULT);
+    expect(first.total_count).toBe(30);
+    expect(typeof first.next_cursor).toBe("string");
+    const second = JSON.parse((await fake.http("GET", `${CTX.base}/v1/apps/demo/certificates?cursor=${first.next_cursor}`)).text);
+    expect(second.certificates).toHaveLength(5);
+    expect(second.next_cursor).toBeUndefined();
+  });
+
+  test("a re-apply of more certificates than one page is a no-op", async () => {
+    const fake = createMachinesFake();
+    const all = hosts(30);
+    await run(fake, all);
+    expect(fake.certs.get("demo")).toEqual(all);
+    const again = await run(fake, all);
+    expect(again.certs.every((c) => c.action === "noop")).toBe(true);
+    expect(fake.calls.filter((c) => c === "POST /v1/apps/demo/certificates/acme")).toHaveLength(30);
+  });
+
+  test("prune removes undeclared certificates past the first page", async () => {
+    const fake = createMachinesFake();
+    const all = hosts(30);
+    await run(fake, all);
+    const out = await run(fake, all.slice(0, 3), true);
+    expect(out.prunedCerts.map((c) => c.hostname)).toEqual(all.slice(3));
+    expect(fake.certs.get("demo")).toEqual(all.slice(0, 3));
+  });
+
+  test("listCerts asks for the largest page and follows the cursor past it", async () => {
+    const fake = createMachinesFake();
+    fake.apps.add("demo");
+    const all = hosts(2 * CERT_PAGE_LIMIT + 3);
+    fake.certs.set("demo", all);
+    const listed = await listCerts(CTX, "demo", fake.http);
+    expect(listed.map((c) => c.hostname)).toEqual(all);
+    expect(certGets(fake)).toHaveLength(3);
+  });
+
+  test("an absent app lists no certificates", async () => {
+    const fake = createMachinesFake();
+    expect(await listCerts(CTX, "nope", fake.http)).toEqual([]);
+  });
+
+  test("a repeated cursor fails loudly instead of looping", async () => {
+    let gets = 0;
+    const http: FlyHttp = async () => {
+      gets++;
+      return { status: 200, text: JSON.stringify({ certificates: [{ hostname: `h${gets}` }], next_cursor: "same" }) };
+    };
+    await expect(listCerts(CTX, "demo", http)).rejects.toThrow(/repeated cursor "same"/);
+    expect(gets).toBe(2);
+  });
+
+  test("a cursor that never ends fails after the page cap", async () => {
+    let gets = 0;
+    const http: FlyHttp = async () => {
+      gets++;
+      return { status: 200, text: JSON.stringify({ certificates: [], next_cursor: `c${gets}` }) };
+    };
+    await expect(listCerts(CTX, "demo", http)).rejects.toThrow(new RegExp(`after ${MAX_CERT_PAGES} pages`));
+    expect(gets).toBe(MAX_CERT_PAGES);
+  });
+
+  test("a failed later page is an error, not a short list", async () => {
+    let gets = 0;
+    const http: FlyHttp = async () =>
+      ++gets === 1
+        ? { status: 200, text: JSON.stringify({ certificates: [{ hostname: "a" }], next_cursor: "n" }) }
+        : { status: 404, text: "gone" };
+    await expect(listCerts(CTX, "demo", http)).rejects.toThrow(/certificate list failed for demo \(404\)/);
   });
 });
 

@@ -26,8 +26,7 @@ function entityBindings(source: ts.SourceFile, tagged: Set<ts.Node>): Set<string
 }
 
 /**
- * SQLCH003: a column written as `${events.kind}` instead of
- * `${events.columns.kind}`.
+ * SQLCH003: a column written as `${events.kind}` instead of `${events.columns.kind}`.
  *
  * Columns are reached through `.columns`. `kind`, `lexicon`, `entityType`,
  * `props`, `sqlName` and `dependsOn` are the entity's own fields, so

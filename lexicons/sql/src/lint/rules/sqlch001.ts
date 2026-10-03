@@ -6,8 +6,7 @@ import { findTemplates, templatePosition, tokensOf } from "./templates";
 const STATEMENT: Record<string, string> = { database: "CREATE DATABASE", table: "CREATE TABLE", view: "CREATE VIEW" };
 
 /**
- * SQLCH001: the DDL in a `database`, `table` or `view` template does not parse,
- * or holds a different statement than its tag.
+ * SQLCH001: the DDL in a `database`, `table` or `view` template does not parse, or holds another statement than its tag.
  *
  * The same parse runs when the build calls the tag, and fails the build there.
  * This rule reports it in the editor and in `chant lint`, at the token, before

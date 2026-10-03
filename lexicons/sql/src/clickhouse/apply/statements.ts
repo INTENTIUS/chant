@@ -18,7 +18,7 @@
 import type { OwnershipMarker } from "@intentius/chant/ownership";
 import { isTrivia, tokenizeText, type Token } from "../tokens";
 import { parseCreate, type CreateNode, type Span, type TableNode, type ViewNode } from "../parser";
-import type { CanonicalObject } from "../plan/normalize";
+import { canonicalObject, type CanonicalObject } from "../plan/normalize";
 import type { Change } from "../plan/diff";
 import { CLASSIFIER_RULES } from "../plan/rules";
 import { stampedComment } from "../ownership";
@@ -103,11 +103,17 @@ function statementBody(tokens: Token[]): string {
  * The declared `CREATE` with chant's ownership marker in its comment: the
  * declared comment, if any, with the trailer after it, or a `COMMENT` clause
  * added at the end. Set in the `CREATE` itself, so no object is ever created
- * unmarked. `orReplace` turns `CREATE VIEW` into `CREATE OR REPLACE VIEW`.
+ * unmarked. `orReplace` turns `CREATE VIEW` into `CREATE OR REPLACE VIEW`;
+ * `trailer` adds pairs to the marker (the rebuild migration's working
+ * objects, `../rebuild/`).
  */
-export function createStatement(obj: DeclaredObject, marker: OwnershipMarker | undefined, opts: { orReplace?: boolean } = {}): string {
+export function createStatement(
+  obj: DeclaredObject,
+  marker: OwnershipMarker | undefined,
+  opts: { orReplace?: boolean; trailer?: Readonly<Record<string, string>> } = {},
+): string {
   const { tokens, node } = parsed(obj);
-  const literal = sqlString(stampedComment(obj.canonical.comment, marker));
+  const literal = sqlString(stampedComment(obj.canonical.comment, marker, opts.trailer));
   let sql: string;
   if (node.comment) {
     sql =
@@ -147,14 +153,44 @@ export const isRebuild = (c: Change): boolean => c.class === "rebuild";
 /** Changes that remove data from an object the build still declares: withheld unless the apply may delete. */
 export const isDestructiveAlter = (c: Change): boolean => c.rule === "SQLCH202";
 
-/** A refused change in a sentence: the rule, the restriction, where it is stated, and where the change goes instead. */
-export function refusalDetail(changes: readonly Change[]): string {
+/**
+ * A refused change in a sentence: the rule, the restriction, where it is
+ * stated, and where the change goes instead: the rebuild migration Op for
+ * the table (`key`, `database.name`), or for a view or database, which the
+ * Op does not rebuild, a drop and a create.
+ */
+export function refusalDetail(changes: readonly Change[], key?: string, type?: string): string {
   const parts = changes.map((c) => {
     const rule = CLASSIFIER_RULES[c.rule];
     const values = c.before !== undefined || c.after !== undefined ? ` (${c.before ?? "none"} -> ${c.after ?? "none"})` : "";
     return `${c.rule} ${rule.title} on ${c.field}${values}: ${rule.restriction} ${rule.cite}`;
   });
-  return `needs a rebuild, which ALTER cannot make: ${parts.join("; ")}. Run it as the rebuild migration Op (chant #3198)`;
+  const instead =
+    type === undefined || type === CLICKHOUSE_ENTITY_TYPES.table
+      ? `Run it as the rebuild migration Op: ClickHouseRebuildOp({ table: ${JSON.stringify(key ?? "<database.table>")}, ... }) from @intentius/chant-lexicon-sql/clickhouse`
+      : "The rebuild migration Op rebuilds tables only; drop and create this object instead";
+  return `needs a rebuild, which ALTER cannot make: ${parts.join("; ")}. ${instead}`;
+}
+
+/**
+ * The declaration under another name in the same database: the rebuild
+ * migration creates its new table from the declared `CREATE` this way.
+ */
+export function renamedDeclaration(obj: DeclaredObject, name: string, defaultDatabase = "default"): DeclaredObject {
+  const { tokens, node } = parsed(obj);
+  if (node.statement === "database") throw new Error(`${obj.key}: a database is not renamed this way`);
+  const ddl =
+    tokens
+      .slice(0, node.name.from)
+      .map((t) => t.text)
+      .join("") +
+    qualifiedIdent(obj.canonical.database ?? defaultDatabase, name) +
+    tokens
+      .slice(node.name.to)
+      .map((t) => t.text)
+      .join("");
+  const canonical = canonicalObject(ddl, defaultDatabase);
+  return { ...obj, ddl, canonical, key: `${canonical.database}.${canonical.name}` };
 }
 
 // ── tables ────────────────────────────────────────────────────────────

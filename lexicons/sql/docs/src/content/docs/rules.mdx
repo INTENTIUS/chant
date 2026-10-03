@@ -12,9 +12,9 @@ The SQL lexicon provides **23** rules: 3 lint rules and 20 post-synth checks.
 
 | ID | Severity | Category | Description |
 |----|----------|----------|-------------|
-| `SQLCH001` | error | correctness | the DDL in a `database`, `table` or `view` template does not parse, |
+| `SQLCH001` | error | correctness | the DDL in a `database`, `table` or `view` template does not parse, or holds another statement than its tag. |
 | `SQLCH002` | error | correctness | a `Nullable` column in a table's sort key or primary key. |
-| `SQLCH003` | error | correctness | a column written as `$\{events.kind\}` instead of |
+| `SQLCH003` | error | correctness | a column written as `$\{events.kind\}` instead of `$\{events.columns.kind\}`. |
 
 ## Post-Synth Checks
 

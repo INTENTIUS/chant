@@ -53,3 +53,11 @@ export {
   type ProjectionForm,
 } from "./clickhouse/overlays/projections";
 export { CLICKHOUSE_IMAGE_DIGEST, CLICKHOUSE_IMAGE_REPOSITORY, clickhouseImage } from "./spec/pin";
+export {
+  ClickHouseRebuildOp,
+  type ClickHouseRebuildOpConfig,
+  type ClickHouseRebuildOpResources,
+  type ClickHouseRebuildArgs,
+} from "./clickhouse/rebuild/op";
+export type { DualWrite } from "./clickhouse/rebuild/observe";
+export { RECEIPTS_DATABASE, RECEIPTS_TABLE } from "./clickhouse/rebuild/receipts";

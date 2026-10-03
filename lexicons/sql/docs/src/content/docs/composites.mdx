@@ -1,0 +1,138 @@
+---
+title: "Composites"
+description: "ReplacingTable, EventsTable, RollupView, CdcMirror and ShardedTable: their members, props and defaults, and when their fields keep parameter provenance"
+diataxis: reference
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-sql` — DO NOT EDIT.
+    Edit lexicons/sql/docs/pages/composites.mdx instead; changes here are overwritten. */}
+
+
+Five composites for ClickHouse tables that are usually declared the same way. They are exported from `@intentius/chant-lexicon-sql/clickhouse` and built from the `table` and `view` tags, so what they produce is the same kind of entity a hand-written template produces, with the same checks.
+
+```ts title="src/clicks.ts"
+import { EventsTable } from "@intentius/chant-lexicon-sql/clickhouse";
+
+export const clicks = EventsTable({
+  name: "analytics.clicks",
+  columns: "user_id UUID, url String",
+  orderBy: "(url, user_id, ts)",
+  ttlDays: 30,
+});
+```
+
+```ts title="src/rollup.ts"
+import { RollupView } from "@intentius/chant-lexicon-sql/clickhouse";
+import { clicks } from "./clicks";
+
+export const clicksPerDay = RollupView({
+  name: "analytics.clicks_per_day",
+  source: clicks.table,
+  columns: "day Date, url String, n UInt64",
+  select: "toDate(ts) AS day, url, count() AS n",
+  groupBy: "day, url",
+});
+```
+
+Each member becomes an entity named after the export and the member: `clicksTable`, `clicksPerDayTable` and `clicksPerDayView` above. Members are reached as properties of the instance (`clicks.table`), and a member is a reference like any entity.
+
+Every prop except `RollupView`'s `source` is SQL text, spliced into the template the way a string interpolation is (see [Declaring Tables and Views](../clickhouse-ddl/#a-string-is-sql-text)). `columns` is a column list as you would write it inside `CREATE TABLE (...)`, and `orderBy` and `partitionBy` are the clause bodies. A prop that does not parse fails the build with the composite's template line.
+
+Keep a composite call whose props reference another call's member, like `source: clicks.table`, in a file of its own. When the member reference is to a composite call in the same file, the file is run instead of folded.
+
+## ReplacingTable
+
+A ReplacingMergeTree table with a version column. ReplacingMergeTree keeps one row per sort key, and on a merge the row with the highest version wins, so writing a row again with a higher version is how an update is expressed. Until a merge runs a query sees every version; read with `FINAL`, or aggregate with `argMax`, when only the latest row matters.
+
+| Member | Entity |
+|---|---|
+| `table` | `ClickHouse::Table`, `ENGINE = ReplacingMergeTree(<version>)` |
+
+| Prop | Default | |
+|---|---|---|
+| `name` | | `name` or `database.name` |
+| `columns` | | every column except the version column |
+| `orderBy` | | the sort key, which is also the key rows are deduplicated by |
+| `version` | `version` | the version column, appended to `columns` |
+| `versionType` | `UInt64` | a UInt, Date, DateTime or DateTime64 type |
+| `partitionBy` | none | |
+
+## EventsTable
+
+An append-only MergeTree events table, partitioned by its timestamp and expired by TTL. It sets `ttl_only_drop_parts = 1`, so expiry drops whole parts once every row in them has expired instead of rewriting parts to remove single rows. That is cheap when the partition key and the TTL follow the same column, as they do by default.
+
+| Member | Entity |
+|---|---|
+| `table` | `ClickHouse::Table`, `ENGINE = MergeTree` with `TTL <timestamp> + INTERVAL <ttlDays> DAY` |
+
+| Prop | Default | |
+|---|---|---|
+| `name` | | `name` or `database.name` |
+| `columns` | | every column except the timestamp |
+| `orderBy` | | the sort key; put the columns queries filter on first |
+| `timestamp` | `ts` | the timestamp column, appended to `columns`; the TTL and the default partition key read it |
+| `timestampType` | `DateTime` | a Date, DateTime or DateTime64 type |
+| `ttlDays` | `90` | days a row is kept |
+| `partitionBy` | `toYYYYMM(<timestamp>)` | keep it no finer than a day (SQLCH112) |
+
+## RollupView
+
+A materialized view that rolls a source table up into a target table declared beside it. The view writes into the target with `TO`, so the target is an ordinary table that can be queried, altered and backfilled on its own, and dropping the view leaves the data. The view reads `source` by reference, so the build creates the source and the target before the view.
+
+| Member | Entity |
+|---|---|
+| `table` | `ClickHouse::Table`, the target |
+| `view` | `ClickHouse::MaterializedView`, named `<name>_mv`, `TO` the target |
+
+| Prop | Default | |
+|---|---|---|
+| `name` | | the target's name |
+| `source` | | the table or view the rollup reads, as the entity (`events`, or a member such as `clicks.table`) |
+| `columns` | | the target's columns |
+| `select` | | the select list; alias each item to a target column, or SQLCH110 reports it |
+| `groupBy` | | the grouping key |
+| `orderBy` | `(<groupBy>)` | the target's sort key; SummingMergeTree collapses rows that share it |
+| `engine` | `SummingMergeTree` | use `AggregatingMergeTree` for `-State` columns |
+| `partitionBy` | none | |
+
+## CdcMirror
+
+A ReplacingMergeTree mirror of a table in another database, fed by change data capture (ClickPipes, Debezium through Kafka, PeerDB). The pipeline writes every change to a source row as a new row, with an increasing version and a deleted flag. With both engine arguments, ReplacingMergeTree keeps the latest version per key and drops rows whose latest version is a delete when it merges them. The `current` view reads the table with `FINAL` and leaves out deleted rows, which is what a query of the source table would have returned.
+
+| Member | Entity |
+|---|---|
+| `table` | `ClickHouse::Table`, `ENGINE = ReplacingMergeTree(<version>, <deleted>)` |
+| `current` | `ClickHouse::View`, named `<name>_current`: `SELECT * EXCEPT (<version>, <deleted>) FROM <table> FINAL WHERE <deleted> = 0` |
+
+| Prop | Default | |
+|---|---|---|
+| `name` | | the mirror's name |
+| `columns` | | the source table's columns, without the version and deleted columns |
+| `primaryKey` | | the source table's primary key, used as the mirror's sort key |
+| `version` | `_version` | the version column the pipeline writes, `UInt64` |
+| `deleted` | `_is_deleted` | the deleted flag the pipeline writes, `UInt8`, 1 for a delete |
+| `partitionBy` | none | |
+
+## ShardedTable
+
+A ReplicatedMergeTree table on every node of a cluster, and the Distributed table that spreads reads and writes across it. Both are created `ON CLUSTER`. The local table holds each shard's rows and replicates them within the shard; with no engine arguments it takes the server's default replication path. The Distributed table holds no data: an insert goes to one shard by the sharding key, and a query runs on every shard and merges the results. It names the local table by reference, so the build creates the local table first.
+
+| Member | Entity |
+|---|---|
+| `local` | `ClickHouse::Table`, named `<name>_local`, `ENGINE = ReplicatedMergeTree` |
+| `distributed` | `ClickHouse::Table`, named `<name>`, `ENGINE = Distributed(<cluster>, currentDatabase(), <local>, <shardingKey>)` |
+
+| Prop | Default | |
+|---|---|---|
+| `name` | | unqualified: the Distributed engine names its table in the current database |
+| `cluster` | | the cluster both tables are created on, as the server's `remote_servers` names it |
+| `columns` | | both tables declare the same list |
+| `orderBy` | | the local table's sort key |
+| `shardingKey` | `rand()` | |
+| `partitionBy` | none | the local table's partition key |
+
+## Where each field came from
+
+When `chant build` interprets a composite's factory instead of calling it, it records where each field of each member came from (see [What a Composite Records About Its Fields](/chant/guide/composite-resources/#what-a-composite-records-about-its-fields)). The tags report which fields each interpolation landed in, so for `EventsTable` the build knows that the table's `ttl` came from the `timestamp` and `ttlDays` parameters, while its engine and its `ttl_only_drop_parts` setting are fixed by the composite. A drift on the TTL is then reported by `chant lifecycle diff` as a change to `ttlDays` at the call site, and a drift on the engine is refused by name. An interpolated entity or member, such as `RollupView`'s `source`, is wiring inside the composite and governs no field.
+
+That record exists only when the factory is interpreted, and chant interprets a composite only when it is imported from a project file, or from a package path that a tsconfig `paths` entry maps to source, and from the module that defines it. A composite imported from the installed package, `@intentius/chant-lexicon-sql/clickhouse`, or through a barrel that re-exports it, is called instead, and every field it emits records `unknown`. A drift on one of those fields falls back to editing the declared value. [#3247](https://github.com/INTENTIUS/chant/issues/3247) tracks lifting that limit.

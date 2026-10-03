@@ -22,7 +22,7 @@ import { resolveEmitProvider } from "../../terraform/carve-provider";
 import { readStateResource, type StateResource } from "../../terraform/state";
 import { writeCarveManifest, type CarveManifest } from "../../terraform/manifest";
 import { adoptFromState, type DeferredParam, type FoldedContribution } from "../../terraform/adopt-state";
-import { getChantVersion } from "./init";
+import { generateTsConfig, getChantVersion, SCAFFOLD_DEV_DEPENDENCIES } from "./init";
 import type { LexiconPlugin, ResourceSelector } from "../../lexicon";
 import type { ImportResult, LiveImportOptions } from "./import";
 
@@ -242,8 +242,8 @@ function deferredParams(report: CarveReport, attributes: Record<string, unknown>
 
 /**
  * Scaffold the emitted source into a buildable chant project: chant.config.ts,
- * package.json, tsconfig.json — same shape `chant init` produces, so
- * `npm install && npm run build` works in the output dir as-is. Existing files
+ * package.json, tsconfig.json, with the tsconfig and devDependencies `chant init`
+ * writes (#3233), so `npm install && npm run build` works in the output dir as-is. Existing files
  * are never overwritten (re-emits and user edits survive). Deferred inputs are
  * declared as `buildParams` (#998), defaults taken from the state's resolved
  * values, so the first build reproduces what is live while every survivor-fed
@@ -263,26 +263,12 @@ function scaffoldProject(outDir: string, lexicon: string, params: DeferredParam[
       "@intentius/chant": `^${ver}`,
       [`@intentius/chant-lexicon-${lexicon}`]: `^${ver}`,
     },
-    devDependencies: {
-      typescript: "^5.0.0",
-    },
-  };
-  const tsconfig = {
-    compilerOptions: {
-      target: "ES2022",
-      module: "NodeNext",
-      moduleResolution: "NodeNext",
-      strict: true,
-      esModuleInterop: true,
-      skipLibCheck: true,
-    },
-    include: ["src"],
-    exclude: ["node_modules"],
+    devDependencies: { ...SCAFFOLD_DEV_DEPENDENCIES },
   };
   const files: Array<[string, string]> = [
     ["package.json", JSON.stringify(packageJson, null, 2) + "\n"],
     ["chant.config.ts", renderConfig(lexicon, params)],
-    ["tsconfig.json", JSON.stringify(tsconfig, null, 2) + "\n"],
+    ["tsconfig.json", generateTsConfig() + "\n"],
   ];
 
   const written: string[] = [];

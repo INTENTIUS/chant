@@ -76,12 +76,21 @@ export interface CommentMarker {
   env?: string;
 }
 
-/** The trailer for a marker: `[chant managed-by=chant stack=<stack> env=<env>]`. */
-export function markerTrailer(marker: OwnershipMarker | undefined): string {
+/**
+ * The trailer for a marker: `[chant managed-by=chant stack=<stack> env=<env>]`.
+ * `extra` appends more pairs after the marker's own; the rebuild migration
+ * (`./rebuild/`) uses them to say which rebuild an object it made belongs to.
+ * Keys are `[A-Za-z0-9._-]+`; values are encoded like the rest.
+ */
+export function markerTrailer(marker: OwnershipMarker | undefined, extra: Readonly<Record<string, string>> = {}): string {
   const k = CLICKHOUSE_COMMENT_OWNERSHIP_KEYS;
   const pairs = [`${k.managedBy}=${OWNERSHIP_MANAGED_BY_VALUE}`];
   if (marker?.stack) pairs.push(`${k.stack}=${encode(marker.stack)}`);
   if (marker?.env) pairs.push(`${k.env}=${encode(marker.env)}`);
+  for (const [key, value] of Object.entries(extra)) {
+    if (!/^[A-Za-z0-9._-]+$/.test(key)) throw new Error(`ownership trailer key ${JSON.stringify(key)} is not [A-Za-z0-9._-]+`);
+    pairs.push(`${key}=${encode(value)}`);
+  }
   return `[chant ${pairs.join(" ")}]`;
 }
 
@@ -90,18 +99,17 @@ export function stripMarker(comment: string): string {
   return comment.replace(TRAILER, "");
 }
 
-/** The comment to set: the declared comment, then the trailer. */
-export function stampedComment(declared: string | undefined, marker: OwnershipMarker | undefined): string {
+/** The comment to set: the declared comment, then the trailer (with `extra` pairs, see {@link markerTrailer}). */
+export function stampedComment(declared: string | undefined, marker: OwnershipMarker | undefined, extra?: Readonly<Record<string, string>>): string {
   const own = stripMarker(declared ?? "");
-  return own ? `${own} ${markerTrailer(marker)}` : markerTrailer(marker);
+  return own ? `${own} ${markerTrailer(marker, extra)}` : markerTrailer(marker, extra);
 }
 
-/** The marker a comment carries, or undefined when it carries none. */
-export function readMarker(comment: string | undefined): CommentMarker | undefined {
+/** Every pair in a comment's trailer, decoded, or undefined when it has no trailer. */
+export function readTrailerPairs(comment: string | undefined): Map<string, string> | undefined {
   const m = TRAILER.exec(comment ?? "");
   if (!m) return undefined;
-  const k = CLICKHOUSE_COMMENT_OWNERSHIP_KEYS;
-  const pairs = new Map(
+  return new Map(
     m[1]!
       .trim()
       .split(" ")
@@ -110,6 +118,45 @@ export function readMarker(comment: string | undefined): CommentMarker | undefin
         return [p.slice(0, at), decode(p.slice(at + 1))] as const;
       }),
   );
+}
+
+/**
+ * The trailer key naming the table a rebuild migration object belongs to
+ * (`./rebuild/`). An object carrying it is the rebuild's own working object,
+ * not a declaration: a new table being filled, the dual-write view, an old
+ * table being retained. Reading a schema leaves those out
+ * (`./live/catalog.ts`), so a plan, an import or a prune never sees them.
+ */
+export const REBUILD_TRAILER_KEY = "rebuild";
+
+/**
+ * The trailer key on the database and table that hold effect receipts
+ * (`./rebuild/receipts.ts`). Like a rebuild's working objects, they are
+ * chant's own bookkeeping and never part of a declared schema.
+ */
+export const RECEIPTS_TRAILER_KEY = "receipts";
+
+/** Whether a comment marks a rebuild migration's working object. */
+export function isRebuildObject(comment: string | undefined): boolean {
+  const pairs = readTrailerPairs(comment);
+  return pairs?.get(CLICKHOUSE_COMMENT_OWNERSHIP_KEYS.managedBy) === OWNERSHIP_MANAGED_BY_VALUE && pairs.has(REBUILD_TRAILER_KEY);
+}
+
+/**
+ * Whether a comment marks one of chant's own working objects: a rebuild's
+ * new, dual-write or retained table, or the receipts database and table.
+ * Schema reads leave them out.
+ */
+export function isChantWorkingObject(comment: string | undefined): boolean {
+  const pairs = readTrailerPairs(comment);
+  return pairs?.get(CLICKHOUSE_COMMENT_OWNERSHIP_KEYS.managedBy) === OWNERSHIP_MANAGED_BY_VALUE && (pairs.has(REBUILD_TRAILER_KEY) || pairs.has(RECEIPTS_TRAILER_KEY));
+}
+
+/** The marker a comment carries, or undefined when it carries none. */
+export function readMarker(comment: string | undefined): CommentMarker | undefined {
+  const pairs = readTrailerPairs(comment);
+  if (!pairs) return undefined;
+  const k = CLICKHOUSE_COMMENT_OWNERSHIP_KEYS;
   const managedBy = pairs.get(k.managedBy);
   if (managedBy === undefined) return undefined;
   const stack = pairs.get(k.stack);

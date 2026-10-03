@@ -2,6 +2,7 @@
 title: "Applying to a Server"
 description: "clickhouseApply makes a ClickHouse server hold what a build declares: CREATE and ALTER for metadata and background-rewrite changes, a rebuild refused, a prune bounded by chant's comment marker"
 diataxis: how-to
+order: 5
 ---
 
 `clickhouseApply` makes the server an environment is bound to hold what a `chant build` declares. It is what `ApplyOp` runs for `target: "clickhouse"`, and an Op step of its own for a hand-written Op. It sends the statements for the changes [the classifier](../change-classifier/) puts in the metadata-only and background-rewrite classes, and nothing for a rebuild.
@@ -36,7 +37,7 @@ Every declared object comes back with one verdict.
 | applied, `created` | the server does not have it; its declared `CREATE` runs, with chant's marker in its comment |
 | applied, `updated` | the server has it and the `ALTER`s for its changes ran |
 | applied, `unchanged` | nothing to change and the marker in place; nothing is sent |
-| not attempted, `unsupported-kind` | a change needs a rebuild (a sorting key, a partition key, an engine, a key column's type). Nothing is sent for the object. The detail names each rule, the `ALTER` restriction behind it and the ClickHouse page it is stated on, and points at the rebuild migration Op |
+| not attempted, `unsupported-kind` | a change needs a rebuild (a sorting key, a partition key, an engine, a key column's type). Nothing is sent for the object. The detail names each rule, the `ALTER` restriction behind it and the ClickHouse page it is stated on, and the [`ClickHouseRebuildOp`](../rebuild/) declaration that runs it instead |
 | not attempted, `filtered` | the change drops a column, which destroys its data, and the apply may not delete (`delete: "never"`, the default) |
 | not attempted, `dependency-failed` | an object it references is not on the server because creating it failed or was not attempted |
 | not attempted, `no-binding` / `no-credentials` | there is no server to apply to, or it refused the credentials |

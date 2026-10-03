@@ -23,6 +23,7 @@ export function renderClassifierPage(): string {
 title: "Planning and the Change Classifier"
 description: "How a ClickHouse schema change is classified as metadata only, a background rewrite or a rebuild, each with the ALTER restriction behind it"
 diataxis: reference
+order: 5
 ---
 
 {/* Written by src/codegen/classifier-page.ts from src/clickhouse/plan/rules.ts. Edit the rules, then run npm run docs. */}
@@ -43,6 +44,12 @@ chant sql plan prod schema.json        # a build output against the prod server
 \`\`\`
 
 Both exit 2 when a change needs a rebuild. \`chant sql diff\` compares a pull request's base and head builds with no server. \`chant sql plan\` reads the server \`sql.profiles.<env>\` binds, and asks that server's formatter about any expression the normalization rules leave different, so the server's own rewriting (\`INTERVAL 1 DAY\` as \`toIntervalDay(1)\`, \`a+b*2\` as \`a + (b * 2)\`) is not reported as a change.
+
+## After the plan
+
+The plan only reports. [\`clickhouseApply\`](../applying/) makes the metadata-only and background-rewrite changes, and refuses a rebuild the same way the plan does, sending nothing for that object. A rebuild runs as \`ClickHouseRebuildOp\`, a gated migration Op that creates the new table, backfills it, verifies it and swaps it in: see [Rebuilding a Table](../rebuild/). Both commands print the Op declaration to start from for each refused table.
+
+\`chant migrate\` plays no part in any of this. It translates a file from one lexicon's format into another's, such as a GitHub Actions workflow into GitLab CI, and does not run schema migrations.
 
 ## Identity and renames
 

@@ -29,7 +29,7 @@ is named `-op.ts` rather than `.op.ts` on disk) so the page cannot drift from
 what the tests actually run.
 */}
 
-The Terraform lexicon ships one source-level lint rule and thirty-one
+The Terraform lexicon ships one source-level lint rule and thirty-six
 post-synth checks, plus TF023, which runs only in `chant audit` and is
 documented here beside the rest of the family. See [Lint
 Rules](/chant/lexicons/terraform/rules/) for the generated, always-current
@@ -1763,3 +1763,343 @@ a container with no environment, and a `data.template_file` definition reported
 as not determined). The failing ones are trivy-checks' failing heredoc and
 govuk-forms/forms-admin, where the Postgres sidecar's password fires while the
 two containers fed from `local.forms_admin_env_vars` are not determined.
+
+## The flat encryption and immutability rules (TF033 to TF037)
+
+TF033 to TF037 are the Terraform counterparts of the aws lexicon's WAW021,
+WAW025, WAW026, WAW028 and WAW054. Each reads one or two scalar attributes,
+and each was a perfect rename in the
+[fidelity probe](https://github.com/INTENTIUS/chant/blob/main/docs/design/waw-hcl-fidelity-probe.md).
+That is the hazard. A WAW rule reads a template chant synthesized, where an
+absent property is false. A Terraform configuration someone else wrote is
+three-valued: an attribute is present, absent and insecure, or absent and set
+by a provider or AWS default the configuration never mentions. The probe found
+that WAW026, bridged, reports every correctly encrypted SQS queue.
+
+So each rule below answers, for its own resource, what absence means, cited to
+the provider schema and docs (`hashicorp/aws` v6.67.0) and to the AWS default.
+The answers differ:
+
+| Rule | Resource and attribute | Absent means |
+|---|---|---|
+| TF033 | `aws_db_instance.storage_encrypted` | insecure, reported |
+| TF033 | `aws_rds_cluster.storage_encrypted`, Aurora | not determined |
+| TF033 | `aws_rds_cluster.storage_encrypted`, Multi-AZ DB cluster | insecure, reported |
+| TF034 | `aws_sns_topic.kms_master_key_id` | insecure, reported |
+| TF035 | `aws_sqs_queue.sqs_managed_sse_enabled` / `kms_master_key_id` | secure, silent |
+| TF036 | `aws_ebs_volume.encrypted` | not determined |
+| TF037 | `aws_ecr_repository.image_tag_mutability` | insecure, reported |
+
+All five share the not-determined convention TF030 to TF032 use. A finding
+needs a literal that proves it. When the value a rule needs is a reference, a
+template, a conditional or a function call, the rule reports one `info`
+diagnostic starting `Not determined:` that names the attribute and why, and
+never a warning or an error. A key argument that names an attribute of a
+managed resource or data source (`aws_kms_key.sns.arn`) is read as set,
+because the provider computes a key's id or ARN and it is never empty; a
+`var.kms_key` can be `null` and is not determined.
+
+## TF033: an RDS DB instance or cluster does not encrypt its storage
+
+An `aws_db_instance` or `aws_rds_cluster` whose `storage_encrypted` is `false`,
+or absent where the default is `false`. Severity `error`, as WAW021.
+
+**Why it matters.** The storage, its automated backups, snapshots and read
+replicas are all unencrypted, and encryption cannot be turned on later in
+place: the database has to be restored from an encrypted copy of a snapshot,
+which means a cut-over.
+
+**The fix.** Set `storage_encrypted = true`, and `kms_key_id` for a customer
+managed key. For an existing database, copy a snapshot with encryption on,
+restore from the copy and cut over.
+
+**What absence means.** It depends on the resource and on how the database is
+created.
+
+`aws_db_instance`: insecure. `storage_encrypted` is optional and not computed,
+and the provider docs say "The default is `false` if not specified." The plain
+create path and the `s3_import` path send that `false` to AWS. The replica
+(`replicate_source_db`), snapshot (`snapshot_identifier`) and point-in-time
+(`restore_to_point_in_time`) paths never send `storage_encrypted` at all: the
+instance takes its encryption from the source, or for a cross-region replica
+from `kms_key_id`. For those TF033 reports not determined unless
+`storage_encrypted = true` is written. A literal `snapshot_identifier = ""` is
+not a source, because the provider reads it with `GetOk`.
+
+`aws_rds_cluster` running Aurora (`engine` `aurora-mysql` or
+`aurora-postgresql`, or absent, which provider v5 defaulted to `aurora`): not
+determined. `storage_encrypted` is optional and computed, and AWS has
+[encrypted every new Aurora cluster at rest](https://aws.amazon.com/blogs/database/use-default-encryption-at-rest-for-new-amazon-aurora-clusters/)
+since 2026-02-16 with an AWS-owned key, whatever `StorageEncrypted` says. The
+API then reports `StorageEncrypted: false` with `StorageEncryptionType:
+sse-rds`. A cluster created before that date with encryption off is
+unencrypted, and nothing in the configuration says when the cluster was
+created. Most Aurora clusters in an existing estate predate the change, so
+TF033 does not read absence (or an explicit `false`) as secure. It reports not
+determined and suggests writing `storage_encrypted = true`.
+`engine_mode = "serverless"` (Serverless v1) was always encrypted and is
+silent.
+
+`aws_rds_cluster` running a Multi-AZ DB cluster (`engine` `mysql` or
+`postgres`): insecure. The provider docs say the default is `false`, and the
+Aurora change does not cover these. A cluster restored or replicated from a
+source (`snapshot_identifier`, `restore_to_point_in_time`,
+`replication_source_identifier`, `global_cluster_identifier`) is not
+determined.
+
+Not checked: `aws_rds_cluster_instance`, whose `storage_encrypted` is
+computed-only and never appears in a configuration; `aws_rds_global_cluster`;
+and whether the key is customer managed.
+
+**Prior art.** tfsec's
+[`aws-rds-encrypt-instance-storage-data`](https://github.com/aquasecurity/tfsec/blob/master/docs/checks/aws/rds/encrypt-instance-storage-data/index.md)
+and
+[`aws-rds-encrypt-cluster-storage-data`](https://github.com/aquasecurity/tfsec/blob/master/docs/checks/aws/rds/encrypt-cluster-storage-data/index.md),
+their successors in trivy-checks
+([instance](https://github.com/aquasecurity/trivy-checks/blob/main/checks/cloud/aws/rds/encrypt_instance_storage_data.rego),
+[cluster](https://github.com/aquasecurity/trivy-checks/blob/main/checks/cloud/aws/rds/encrypt_cluster_storage_data.rego)),
+checkov's
+[`CKV_AWS_16`](https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/resource/aws/RDSEncryption.py)
+and
+[`CKV_AWS_96`](https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/resource/aws/AuroraEncryption.py),
+and KICS's
+[DB Instance Storage Not Encrypted](https://docs.kics.io/latest/queries/terraform-queries/aws/08bd0760-8752-44e1-9779-7bb369b2b4e4/).
+All overlap: each reports an absent `storage_encrypted` on every cluster and
+every restored instance, where TF033 answers not determined.
+
+```hcl
+resource "aws_db_instance" "default" {
+
+  name                   = var.dbname
+  engine                 = "mysql"
+  option_group_name      = aws_db_option_group.default.name
+  parameter_group_name   = aws_db_parameter_group.default.name
+  db_subnet_group_name   = aws_db_subnet_group.default.name
+  vpc_security_group_ids = ["${aws_security_group.default.id}"]
+
+  identifier              = "rds-${local.resource_prefix.value}"
+  engine_version          = "8.0" # Latest major version 
+  instance_class          = "db.t3.micro"
+  allocated_storage       = "20"
+  username                = "admin"
+  password                = var.password
+  apply_immediately       = true
+  multi_az                = false
+  backup_retention_period = 0
+  storage_encrypted       = false
+  skip_final_snapshot     = true
+  monitoring_interval     = 0
+  publicly_accessible     = true
+```
+
+From `fixtures/TF033/positive.tf` (the first twenty-one lines of the block),
+vendored from
+[bridgecrewio/terragoat](https://github.com/bridgecrewio/terragoat/blob/729f8da62c6a85ce4af5ad3d123de97776d954c4/terraform/aws/db-app.tf)
+(Apache-2.0), a deliberately vulnerable estate.
+
+## TF034: an SNS topic has no server-side encryption
+
+An `aws_sns_topic` with no `kms_master_key_id`, or with `kms_master_key_id =
+""`. Severity `warning`, as WAW025.
+
+**Why it matters.** SNS keeps a message until every subscription has it. With
+no key, SNS stores those messages without server-side encryption, and the
+payloads of alarms, events and notifications often carry account ids, resource
+names and customer data.
+
+**The fix.** Set `kms_master_key_id` to a customer managed KMS key, or to
+`"alias/aws/sns"` for the AWS managed one. A customer managed key also lets a
+key policy decide which publishers may use it.
+
+**What absence means.** Insecure, and reported. `kms_master_key_id` is optional
+with no default, and
+[SNS server-side encryption](https://docs.aws.amazon.com/sns/latest/dg/sns-server-side-encryption.html)
+is on only when the topic names a KMS key. Unlike SQS, no AWS default turns it
+on for new topics. `kms_master_key_id = null` is the same as absent.
+
+**Prior art.** tfsec's
+[`aws-sns-enable-topic-encryption`](https://github.com/aquasecurity/tfsec/blob/master/docs/checks/aws/sns/enable-topic-encryption/index.md),
+trivy-checks'
+[`aws-sns-enable-topic-encryption`](https://github.com/aquasecurity/trivy-checks/blob/main/checks/cloud/aws/sns/enable_topic_encryption.rego),
+checkov's
+[`CKV_AWS_26`](https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/resource/aws/SNSTopicEncryption.py)
+and KICS's
+[SNS Topic Not Encrypted](https://docs.kics.io/latest/queries/terraform-queries/aws/28545147-2fc6-42d5-a1f9-cf226658e591/)
+are equivalent: they agree that absence is insecure.
+
+```hcl
+resource "aws_sns_topic" "user_updates" {
+  name              = "user-updates-topic"
+  kms_master_key_id = ""
+}
+```
+
+From `fixtures/TF034/positive.tf`, vendored from KICS's own test corpus
+([Checkmarx/kics](https://github.com/Checkmarx/kics/blob/8a0f0bbaf380c6f9110bfe9808311f49aac45cde/assets/queries/terraform/aws/sns_topic_not_encrypted/test/positive1.tf),
+Apache-2.0). `fixtures/TF034/positive-absent.tf`, from
+[radian-software/riju](https://github.com/radian-software/riju/blob/ace9df7cd8f186b869af14d721e055864ed8f3e4/tf/sns.tf)
+(MIT), is the same finding for a topic that never mentions a key.
+
+## TF035: an SQS queue turns its server-side encryption off
+
+An `aws_sqs_queue` with `sqs_managed_sse_enabled = false` and no
+`kms_master_key_id`. Severity `warning`, as WAW026.
+
+**Why it matters.** Turning SSE-SQS off stores message bodies unencrypted, and
+it is never an accident of omission: someone wrote `false`. It is often a
+leftover from a queue created outside Terraform before SQS encrypted by
+default, as in the fixture below.
+
+**The fix.** Remove the line (new queues are encrypted by default), set it to
+`true`, or set `kms_master_key_id` to `"alias/aws/sqs"` or a customer managed
+key.
+
+**What absence means.** Secure, and silent. This is the case that made the
+bridge unshippable. `sqs_managed_sse_enabled` is optional and computed, the
+provider docs say Terraform "will only perform drift detection of its value
+when present in a configuration", and since October 2022
+[SQS encrypts every new queue with SSE-SQS by default](https://aws.amazon.com/blogs/compute/announcing-server-side-encryption-with-amazon-simple-queue-service-managed-encryption-keys-sse-sqs-by-default/)
+when it is created over HTTPS, which the provider always uses. A queue that sets
+neither attribute is encrypted. A queue created before that date and never
+changed may not be; the configuration cannot show its age, and TF035 does not
+guess. A `kms_master_key_id` from a variable with `sqs_managed_sse_enabled`
+unset is silent too: whether the variable is a key or `null`, the queue is
+encrypted.
+
+Not determined: `sqs_managed_sse_enabled` from an expression with no key, and
+`sqs_managed_sse_enabled = false` beside a key from a variable.
+
+**Prior art.** tfsec's
+[`aws-sqs-enable-queue-encryption`](https://github.com/aquasecurity/tfsec/blob/master/docs/checks/aws/sqs/enable-queue-encryption/index.md),
+trivy-checks'
+[`aws-sqs-enable-queue-encryption`](https://github.com/aquasecurity/trivy-checks/blob/main/checks/cloud/aws/sqs/enable_queue_encryption.rego),
+checkov's
+[`CKV_AWS_27`](https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/resource/aws/SQSQueueEncryption.py)
+and KICS's
+[SQS With SSE Disabled](https://docs.kics.io/latest/queries/terraform-queries/aws/6e8849c1-3aa7-40e3-9063-b85ee300f29f/)
+overlap: all four report a queue that sets neither attribute, which TF035
+reads as encrypted.
+
+```hcl
+resource "aws_sqs_queue" "notify_internal_tasks_queue" {
+  provider = aws.core_services
+  name     = "${var.celery_queue_prefix}notify-internal-tasks"
+  # This queue was created outside of terraform and has this value set to false in staging and production.
+  sqs_managed_sse_enabled = false
+  max_message_size        = var.sqs_max_message_size
+  # This queue was created outside of terraform and has this value set to default in staging and production.
+  visibility_timeout_seconds = var.sqs_visibility_timeout_default
+}
+```
+
+From `fixtures/TF035/positive.tf`, vendored from
+[cds-snc/notification-terraform](https://github.com/cds-snc/notification-terraform/blob/f202d882331fa2814170e4a65695291797af282d/aws/common/sqs.tf)
+(MIT). `fixtures/TF035/negative-absent.tf` is a queue from the same file that
+sets neither attribute, and TF035 is silent on it.
+
+## TF036: an EBS volume does not ask for encryption
+
+An `aws_ebs_volume` with `encrypted = false`. Severity `warning`, as WAW028.
+
+**Why it matters.** An unencrypted volume leaves its data, its snapshots and
+every volume restored from those snapshots unencrypted.
+
+**The fix.** Set `encrypted = true`, and `kms_key_id` for a customer managed
+key, or remove the line and rely on the Region's EBS encryption by default,
+made explicit as below.
+
+**What absence means.** Not determined. `encrypted` is optional, computed and
+forces replacement. Whether a volume created without it is encrypted depends
+on the Region's
+[EBS encryption by default](https://docs.aws.amazon.com/ebs/latest/userguide/encryption-by-default.html),
+which is account state the parse cannot see, and a volume built from
+`snapshot_id` also follows its snapshot. TF036 reports one `info` diagnostic.
+
+One configuration does settle absence: the volume `depends_on` an
+`aws_ebs_encryption_by_default` in the same module whose `enabled` is absent
+(the provider default is `true`) or `true`, with the same `provider` and
+`region`. The `depends_on` matters. Without it Terraform may create the volume
+first, and encryption by default "has no effect on existing EBS volumes".
+
+`encrypted = false` is a finding even though the account default can override
+it, because the literal is wrong either way. With encryption by default off,
+the volume is unencrypted. With it on, AWS encrypts the volume anyway ("you
+cannot disable it for individual volumes"), the volume stops matching the
+configuration, and since `encrypted` forces replacement Terraform plans to
+replace the volume on every apply. TerraGoat's source records this in a
+comment: `#encrypted = false # Setting this causes the volume to be recreated
+on apply`.
+
+**Prior art.** trivy-checks'
+[`aws-ec2-enable-volume-encryption`](https://github.com/aquasecurity/trivy-checks/blob/main/checks/cloud/aws/ec2/enable_volume_encryption.rego),
+checkov's
+[`CKV_AWS_3`](https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/resource/aws/EBSEncryption.py)
+and KICS's
+[EBS Volume Encryption Disabled](https://docs.kics.io/latest/queries/terraform-queries/aws/cc997676-481b-4e93-aa81-d19f8c5e9b12/)
+overlap: they report an unset `encrypted` as unencrypted. tfsec's page for the
+same check exists, but its frozen rule index no longer lists it, so it is not
+credited.
+
+```hcl
+resource "aws_ebs_volume" "vol2" {
+    availability_zone = "us-west-2a"
+    size = 40
+    tags {
+        Name = "HelloWorld"
+    }
+    encrypted = false
+}
+```
+
+From `fixtures/TF036/positive.tf`, vendored from config-lint's example files
+([stelligent/config-lint](https://github.com/stelligent/config-lint/blob/8e87d18df9df2413a3bf3f57a3ceaf17a2140da9/example-files/config/volumes.tf),
+MIT).
+
+## TF037: an ECR repository lets an image tag be repointed
+
+An `aws_ecr_repository` whose `image_tag_mutability` is `MUTABLE`,
+`MUTABLE_WITH_EXCLUSION`, or absent. Severity `error`, as WAW054.
+
+**Why it matters.** With mutable tags, anyone who can push can move `prod` or
+`v1.4.2` to different image content after it was deployed, scanned or signed.
+The next task that pulls the tag runs something nobody reviewed, and the
+deployment record still names the old tag.
+
+**The fix.** Set `image_tag_mutability = "IMMUTABLE"` and push a new tag for
+every build. If a workflow needs a few moving tags (`latest`, `stage`), use
+`IMMUTABLE_WITH_EXCLUSION` and name them in
+`image_tag_mutability_exclusion_filter` blocks; every other tag stays
+immutable.
+
+**What absence means.** Insecure, and reported. `image_tag_mutability` is
+optional with `Default: MUTABLE` in the provider schema.
+
+Provider v6 accepts four values, two of them added for the
+[exclusion filters AWS shipped in 2025](https://docs.aws.amazon.com/AmazonECR/latest/userguide/image-tag-mutability.html).
+`IMMUTABLE_WITH_EXCLUSION` is silent: the excluded tags are a written-down
+exception. A filter that is nothing but `*` matches every tag and is reported,
+and a filter from an expression or a `dynamic` block is not determined.
+`MUTABLE_WITH_EXCLUSION` keeps every tag mutable except the ones its filters
+name, and is reported.
+
+**Prior art.** tfsec's
+[`aws-ecr-enforce-immutable-repository`](https://github.com/aquasecurity/tfsec/blob/master/docs/checks/aws/ecr/enforce-immutable-repository/index.md),
+trivy-checks'
+[`aws-ecr-enforce-immutable-repository`](https://github.com/aquasecurity/trivy-checks/blob/main/checks/cloud/aws/ecr/enforce_immutable_repository.rego),
+checkov's
+[`CKV_AWS_51`](https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/resource/aws/ECRImmutableTags.py)
+and KICS's
+[ECR Image Tag Not Immutable](https://docs.kics.io/latest/queries/terraform-queries/aws/d1846b12-20c5-4d45-8798-fc35b79268eb/)
+overlap: they agree on absence, and none of them reads
+`IMMUTABLE_WITH_EXCLUSION`, which they report and TF037 passes.
+
+```hcl
+resource aws_ecr_repository "repository" {
+  name                 = "${local.resource_prefix.value}-repository"
+  image_tag_mutability = "MUTABLE"
+```
+
+From `fixtures/TF037/positive.tf` (the first three lines of the block),
+vendored from
+[bridgecrewio/terragoat](https://github.com/bridgecrewio/terragoat/blob/729f8da62c6a85ce4af5ad3d123de97776d954c4/terraform/aws/ecr.tf)
+(Apache-2.0).

@@ -14,7 +14,8 @@
  * - NOT-ATTEMPTED `unsupported-kind`: a change ClickHouse cannot make with
  *   `ALTER` (a sorting key, a partition key, an engine, a key column's type).
  *   Nothing is sent for the object; the detail names each rule and the
- *   restriction behind it, and points at the rebuild migration Op (#3198).
+ *   restriction behind it, and names the rebuild migration Op to run instead
+ *   (`ClickHouseRebuildOp`, #3198).
  * - NOT-ATTEMPTED `filtered`: the change drops a column, which destroys its
  *   data, and the apply was not allowed to delete.
  * - NOT-ATTEMPTED `dependency-failed`: an object it references is not on the
@@ -209,7 +210,7 @@ export async function applyClickHouse(target: ClickHouseTarget, declared: readon
     const refused = mine.filter(isRebuild);
     if (refused.length > 0) {
       if (liveObject) onServer.add(obj.exportName);
-      outcome.notAttempted.push({ ...ref, reason: "unsupported-kind", detail: refusalDetail(refused) });
+      outcome.notAttempted.push({ ...ref, reason: "unsupported-kind", detail: refusalDetail(refused, obj.key, obj.type) });
       continue;
     }
     const destructive = mine.filter(isDestructiveAlter);

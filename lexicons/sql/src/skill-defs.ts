@@ -43,7 +43,7 @@ export const sqlSkills = createSkillsLoader(import.meta.url, [
     file: "chant-sql-rebuild.md",
     name: "chant-sql-rebuild",
     description:
-      "Run a ClickHouse rebuild migration (a sorting key, partition key or engine change) as a gated Op with backfill receipts, verification, an exchange swap and onFailure cleanup; depends on the rebuild Op in #3198",
+      "Run a ClickHouse table rebuild (a sorting key, primary key, partition key, engine or key column type change) with ClickHouseRebuildOp, a gated Op with backfill receipts, verification, an exchange swap and onFailure cleanup",
     triggers: [
       { type: "context" as const, value: "clickhouse rebuild" },
       { type: "context" as const, value: "change sorting key" },

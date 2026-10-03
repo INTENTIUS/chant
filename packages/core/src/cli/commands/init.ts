@@ -63,6 +63,16 @@ export interface InitResult {
 }
 
 /**
+ * The devDependencies a scaffolded project gets, from `chant init` and from
+ * `chant carve` (#3233). The project's TypeScript is for its editor and `tsc`
+ * only; chant parses with its own copy, so any 5.9+ or 7 release works (#3089).
+ */
+export const SCAFFOLD_DEV_DEPENDENCIES = {
+  "@types/node": "^24.0.0",
+  typescript: "^5.9.3 || ^7.0.0",
+} as const;
+
+/**
  * Generate package.json content
  */
 function generatePackageJson(
@@ -88,12 +98,7 @@ function generatePackageJson(
       ...extraScripts,
     },
     dependencies,
-    // The project's TypeScript is for its editor and `tsc` only; chant parses
-    // with its own copy, so any 5.9+ or 7 release works (#3089).
-    devDependencies: {
-      "@types/node": "^24.0.0",
-      typescript: "^5.9.3 || ^7.0.0",
-    },
+    devDependencies: { ...SCAFFOLD_DEV_DEPENDENCIES },
   };
 
   return JSON.stringify(pkg, null, 2);
@@ -108,7 +113,7 @@ function generatePackageJson(
  * file (#3089). `types` names node because TypeScript 6 and later no longer load
  * every `@types` package by default.
  */
-function generateTsConfig(): string {
+export function generateTsConfig(): string {
   const config = {
     compilerOptions: {
       target: "ES2022",

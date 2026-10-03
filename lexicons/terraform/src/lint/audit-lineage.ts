@@ -511,4 +511,48 @@ export const terraformAuditLineage: Record<string, Lineage[]> = {
       relation: "overlaps",
     },
   ],
+  // TF033-TF037 (#2288). Every tool below reports an absent attribute the
+  // same as an insecure one, which is right for SNS (TF034) and ECR (TF037)
+  // and wrong for the rest: SQS encrypts new queues by default, an unset
+  // EBS `encrypted` follows the Region's encryption by default, and Aurora
+  // encrypts new clusters whatever `storage_encrypted` says. Where chant's
+  // answer to absence differs the credit is "overlaps"; where it agrees and
+  // the condition is the same, "equivalent". The ECR credits are "overlaps"
+  // too: none of them knows provider v6's `IMMUTABLE_WITH_EXCLUSION`, which
+  // TF037 passes and they report. trivy-checks ids are the live
+  // Rego checks (not `deprecated` stubs) at aquasecurity/trivy-checks
+  // 71c05d02845c. tfsec has no TF036 credit: its frozen `rules.md`, which
+  // the prior-art sweep indexes, no longer lists an EBS volume check.
+  TF033: [
+    { tool: "tfsec", rule: "aws-rds-encrypt-instance-storage-data", url: "https://github.com/aquasecurity/tfsec/blob/master/docs/checks/aws/rds/encrypt-instance-storage-data/index.md", relation: "overlaps" },
+    { tool: "tfsec", rule: "aws-rds-encrypt-cluster-storage-data", url: "https://github.com/aquasecurity/tfsec/blob/master/docs/checks/aws/rds/encrypt-cluster-storage-data/index.md", relation: "overlaps" },
+    { tool: "trivy-checks", rule: "aws-rds-encrypt-instance-storage-data", url: "https://github.com/aquasecurity/trivy-checks/blob/main/checks/cloud/aws/rds/encrypt_instance_storage_data.rego", relation: "overlaps" },
+    { tool: "trivy-checks", rule: "aws-rds-encrypt-cluster-storage-data", url: "https://github.com/aquasecurity/trivy-checks/blob/main/checks/cloud/aws/rds/encrypt_cluster_storage_data.rego", relation: "overlaps" },
+    { tool: "checkov", rule: "CKV_AWS_16", url: "https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/resource/aws/RDSEncryption.py", relation: "overlaps" },
+    { tool: "checkov", rule: "CKV_AWS_96", url: "https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/resource/aws/AuroraEncryption.py", relation: "overlaps" },
+    { tool: "kics", rule: "08bd0760-8752-44e1-9779-7bb369b2b4e4", url: "https://docs.kics.io/latest/queries/terraform-queries/aws/08bd0760-8752-44e1-9779-7bb369b2b4e4/", relation: "overlaps" },
+  ],
+  TF034: [
+    { tool: "tfsec", rule: "aws-sns-enable-topic-encryption", url: "https://github.com/aquasecurity/tfsec/blob/master/docs/checks/aws/sns/enable-topic-encryption/index.md", relation: "equivalent" },
+    { tool: "trivy-checks", rule: "aws-sns-enable-topic-encryption", url: "https://github.com/aquasecurity/trivy-checks/blob/main/checks/cloud/aws/sns/enable_topic_encryption.rego", relation: "equivalent" },
+    { tool: "checkov", rule: "CKV_AWS_26", url: "https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/resource/aws/SNSTopicEncryption.py", relation: "equivalent" },
+    { tool: "kics", rule: "28545147-2fc6-42d5-a1f9-cf226658e591", url: "https://docs.kics.io/latest/queries/terraform-queries/aws/28545147-2fc6-42d5-a1f9-cf226658e591/", relation: "equivalent" },
+  ],
+  TF035: [
+    { tool: "tfsec", rule: "aws-sqs-enable-queue-encryption", url: "https://github.com/aquasecurity/tfsec/blob/master/docs/checks/aws/sqs/enable-queue-encryption/index.md", relation: "overlaps" },
+    { tool: "trivy-checks", rule: "aws-sqs-enable-queue-encryption", url: "https://github.com/aquasecurity/trivy-checks/blob/main/checks/cloud/aws/sqs/enable_queue_encryption.rego", relation: "overlaps" },
+    { tool: "checkov", rule: "CKV_AWS_27", url: "https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/resource/aws/SQSQueueEncryption.py", relation: "overlaps" },
+    { tool: "kics", rule: "6e8849c1-3aa7-40e3-9063-b85ee300f29f", url: "https://docs.kics.io/latest/queries/terraform-queries/aws/6e8849c1-3aa7-40e3-9063-b85ee300f29f/", relation: "overlaps" },
+  ],
+  TF036: [
+    { tool: "trivy-checks", rule: "aws-ec2-enable-volume-encryption", url: "https://github.com/aquasecurity/trivy-checks/blob/main/checks/cloud/aws/ec2/enable_volume_encryption.rego", relation: "overlaps" },
+    { tool: "checkov", rule: "CKV_AWS_3", url: "https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/resource/aws/EBSEncryption.py", relation: "overlaps" },
+    { tool: "kics", rule: "cc997676-481b-4e93-aa81-d19f8c5e9b12", url: "https://docs.kics.io/latest/queries/terraform-queries/aws/cc997676-481b-4e93-aa81-d19f8c5e9b12/", relation: "overlaps" },
+  ],
+  TF037: [
+    { tool: "tfsec", rule: "aws-ecr-enforce-immutable-repository", url: "https://github.com/aquasecurity/tfsec/blob/master/docs/checks/aws/ecr/enforce-immutable-repository/index.md", relation: "overlaps" },
+    { tool: "trivy-checks", rule: "aws-ecr-enforce-immutable-repository", url: "https://github.com/aquasecurity/trivy-checks/blob/main/checks/cloud/aws/ecr/enforce_immutable_repository.rego", relation: "overlaps" },
+    { tool: "checkov", rule: "CKV_AWS_51", url: "https://github.com/bridgecrewio/checkov/blob/main/checkov/terraform/checks/resource/aws/ECRImmutableTags.py", relation: "overlaps" },
+    { tool: "kics", rule: "d1846b12-20c5-4d45-8798-fc35b79268eb", url: "https://docs.kics.io/latest/queries/terraform-queries/aws/d1846b12-20c5-4d45-8798-fc35b79268eb/", relation: "overlaps" },
+  ],
 };

@@ -27,18 +27,35 @@ export class ClickHouseQueryError extends Error {
   }
 }
 
+/** Per-query options. */
+export interface QueryOptions {
+  /**
+   * The query's id on the server (`system.processes`, `KILL QUERY`). The
+   * server refuses a second query with an id that is still running, which is
+   * what a caller that must never run one statement twice at once relies on.
+   */
+  queryId?: string;
+  /** Server settings for this query alone, e.g. `{ mutations_sync: "2" }`. */
+  settings?: Record<string, string>;
+  /** Abandons the request. The server may go on running a statement it already started. */
+  signal?: AbortSignal;
+}
+
 /** Run one statement and return its rows. A statement that returns nothing yields `[]`. */
 export async function clickhouseQuery<Row = Record<string, unknown>>(
   endpoint: ClickHouseEndpoint,
   sql: string,
+  opts: QueryOptions = {},
 ): Promise<Row[]> {
   const headers: Record<string, string> = { "content-type": "text/plain; charset=utf-8" };
   if (endpoint.user !== undefined) headers["X-ClickHouse-User"] = endpoint.user;
   if (endpoint.password !== undefined) headers["X-ClickHouse-Key"] = endpoint.password;
-  const res = await fetch(`${endpoint.url.replace(/\/$/, "")}/?default_format=JSONEachRow`, {
+  const params = new URLSearchParams({ default_format: "JSONEachRow", ...(opts.queryId !== undefined ? { query_id: opts.queryId } : {}), ...opts.settings });
+  const res = await fetch(`${endpoint.url.replace(/\/$/, "")}/?${params.toString()}`, {
     method: "POST",
     headers,
     body: sql,
+    ...(opts.signal ? { signal: opts.signal } : {}),
   });
   const text = await res.text();
   if (!res.ok) throw new ClickHouseQueryError(res.status, text, sql);

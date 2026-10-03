@@ -2,6 +2,7 @@
 title: "Importing a Live Server"
 description: "chant import --from <env> writes a ClickHouse server's schema as database, table and view declarations, from SHOW CREATE"
 diataxis: how-to
+order: 4
 ---
 
 `chant import --from <env>` reads the schema of the server an environment is bound to and writes it as declarations: one `schema.ts` holding a `database`, `table` or `view` for each object, in dependency order.

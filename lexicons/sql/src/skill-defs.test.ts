@@ -12,9 +12,9 @@ describe("skills", () => {
     }
   });
 
-  test("the rebuild skill says it depends on #3198", () => {
+  test("the rebuild skill declares the shipped Op", () => {
     const rebuild = skills.find((s) => s.name === "chant-sql-rebuild")!;
-    expect(rebuild.content).toContain("#3198");
+    expect(rebuild.content).toContain('import { ClickHouseRebuildOp } from "@intentius/chant-lexicon-sql/clickhouse"');
   });
 
   test("every SQLCH id a skill cites exists in the lexicon", async () => {
