@@ -89,7 +89,7 @@ describe("ClickHouseRebuildOp", () => {
     const contracts = new Map<string, ActivityContract>();
     collectActivityContracts(contractsModule as unknown as Record<string, unknown>, contracts);
     const merged = mergeActivityContracts(await loadActivityContracts([]), contracts);
-    for (const config of [BASE, { ...BASE, dualWrite: { mode: "app" as const }, retain: "3d", stack: "shop", ownershipEnv: "prod" }]) {
+    for (const config of [BASE, { ...BASE, dualWrite: { mode: "app" as const }, retain: "3d", replicaTimeout: "30s", stack: "shop", ownershipEnv: "prod" }]) {
       const props = propsOf(config);
       expect(validateActivitySteps(props, merged)).toEqual([]);
       expect(validateStepOutputRefs(props, merged)).toEqual([]);

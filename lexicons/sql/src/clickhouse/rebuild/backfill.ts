@@ -37,6 +37,10 @@
  * (`./receipts.ts`). Each copy runs with `insert_deduplicate = 0`: a
  * replicated table remembers the blocks it was given, and a partition copied
  * again after its rows were cleared would otherwise be dropped as a repeat.
+ *
+ * With a replica down (#3270) the kill goes on without it, and each sync
+ * either finds nothing that replica alone has and returns, or stops the step
+ * naming it (`./replicas.ts`).
  */
 
 import { EffectReceipt, receiptExpectation } from "@intentius/chant/effect-receipt";
@@ -44,6 +48,7 @@ import { clickhouseQuery } from "../http";
 import { ident, sqlString } from "../apply/statements";
 import { clickhouseReceiptStore, receiptAddress, type ClickHouseReceiptStore } from "./receipts";
 import { RebuildRefusal, type RebuildObservation } from "./observe";
+import { DDL_SETTINGS } from "./replicas";
 import { sourcePartitionExpression, sourcePartitions } from "./partitions";
 import { cutoverOf, observe, serverNow, syncReplica, utcLiteral, waitOn, type RebuildRun } from "./steps";
 
@@ -111,7 +116,12 @@ export async function backfill(run: RebuildRun, deps: BackfillDeps = {}): Promis
 
   const identity = { ...(run.marker?.stack ? { stack: run.marker.stack } : {}), ...(run.marker?.env ? { env: run.marker.env } : {}) };
   const receipts =
-    deps.receipts ?? clickhouseReceiptStore(run.target.endpoint, identity, { ...(run.runId ? { runId: run.runId } : {}), ...(o.replicated ? { replicatedIn: n.database } : {}) });
+    deps.receipts ??
+    clickhouseReceiptStore(run.target.endpoint, identity, {
+      ...(run.runId ? { runId: run.runId } : {}),
+      ...(o.replicated ? { replicatedIn: n.database } : {}),
+      ...(run.replicaTimeoutMs !== undefined ? { replicaTimeoutMs: run.replicaTimeoutMs } : {}),
+    });
   const recorded = await receipts.readAll(receiptAddress(identity, `rebuild/${n.key}/`));
 
   const partitions = await sourcePartitions(run.target, n);
@@ -127,9 +137,12 @@ export async function backfill(run: RebuildRun, deps: BackfillDeps = {}): Promis
 
     const queryId = `chant-rebuild-${o.newTable.uuid}-${p}`;
     if (o.replicated) {
-      // On every replica that answers: the copy may be running on another one than this run's.
+      // On every replica that answers: the copy may be running on another one
+      // than this run's. A replica that is down is skipped once Keeper sees it
+      // inactive; nothing of its can be running a copy that still writes,
+      // and a part it wrote before going down is waited for by the sync below.
       await clickhouseQuery(run.target.endpoint, `KILL QUERY ON CLUSTER ${sqlString(n.database)} WHERE query_id = ${sqlString(queryId)} SYNC`, {
-        settings: { distributed_ddl_output_mode: "throw_only_active" },
+        settings: DDL_SETTINGS,
       });
       await syncReplica(run, o, n.database, n.newName);
     } else {

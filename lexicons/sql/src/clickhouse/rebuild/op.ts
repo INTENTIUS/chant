@@ -71,6 +71,13 @@ export interface ClickHouseRebuildOpConfig {
   backfillTimeout?: string;
   /** How long to wait for one table's mutations. Default: `10m`. */
   mutationTimeout?: string;
+  /**
+   * In a Replicated database, how long a step that reads rows waits for the
+   * replica it talks to to fetch what the others wrote, before it stops
+   * naming a replica that is down and holds parts no other has. Each attempt
+   * of the step waits this long. Default: `2m`.
+   */
+  replicaTimeout?: string;
   /** Ownership stack. Default: `ownership.stack` in `chant.config.ts`. */
   stack?: string;
   /** Ownership env. Default: `ownership.env` in `chant.config.ts`. */
@@ -89,6 +96,7 @@ export interface ClickHouseRebuildArgs {
   dualWrite: DualWrite;
   retain?: string;
   mutationTimeout?: string;
+  replicaTimeout?: string;
   stack?: string;
   ownershipEnv?: string;
   cwd?: string;
@@ -112,6 +120,7 @@ export function ClickHouseRebuildOp(config: ClickHouseRebuildOpConfig): ClickHou
     dualWrite: config.dualWrite,
     ...(config.retain ? { retain: config.retain } : {}),
     ...(config.mutationTimeout ? { mutationTimeout: config.mutationTimeout } : {}),
+    ...(config.replicaTimeout ? { replicaTimeout: config.replicaTimeout } : {}),
     ...(config.stack ? { stack: config.stack } : {}),
     ...(config.ownershipEnv ? { ownershipEnv: config.ownershipEnv } : {}),
     ...(config.path && config.path !== "." ? { cwd: config.path } : {}),

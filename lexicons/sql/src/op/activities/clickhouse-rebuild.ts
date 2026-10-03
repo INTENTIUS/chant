@@ -68,6 +68,7 @@ export async function rebuildRun(args: ClickHouseRebuildArgs, signal: AbortSigna
     dualWrite: args.dualWrite,
     retainMs: parseDuration(args.retain ?? "7d"),
     ...(args.mutationTimeout ? { mutationTimeoutMs: parseDuration(args.mutationTimeout) } : {}),
+    ...(args.replicaTimeout ? { replicaTimeoutMs: parseDuration(args.replicaTimeout) } : {}),
     log: deps.log ?? ((line: string) => console.log(line)),
     ...(signal ? { signal } : {}),
     ...(runId ? { runId } : {}),

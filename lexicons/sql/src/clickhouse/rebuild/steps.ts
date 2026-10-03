@@ -14,6 +14,7 @@ import type { ClickHouseTarget } from "../live/bind";
 import { carriesMarker, readTrailerPairs, REBUILD_TRAILER_KEY, stampedComment } from "../ownership";
 import { createStatement, ident, qualifiedIdent, renamedDeclaration, sqlString, type DeclaredObject } from "../apply/statements";
 import { waitForMutations } from "../apply/mutations";
+import { DDL_SETTINGS, syncReplicaWithin } from "./replicas";
 import {
   changesBetween,
   observeRebuild,
@@ -36,6 +37,8 @@ export interface RebuildRun {
   retainMs: number;
   /** How long to wait for one table's mutations. Default: ten minutes. */
   mutationTimeoutMs?: number;
+  /** In a Replicated database, how long a step waits for this replica to fetch what the others wrote. Default: two minutes. */
+  replicaTimeoutMs?: number;
   log: (line: string) => void;
   signal?: AbortSignal;
   /** The run's id, recorded on the receipts it writes. */
@@ -56,10 +59,15 @@ export const utcLiteral = (ms: number): string => `toDateTime64(${sqlString(sqlU
 
 export const observe = (run: RebuildRun): Promise<RebuildObservation> => observeRebuild(run.target, run.declared, run.marker);
 
+/**
+ * One DDL statement. In a Replicated database it goes on without the
+ * replicas that are down, which run it from the database's log when they
+ * come back (`./replicas.ts`).
+ */
 const q = (run: RebuildRun, sql: string) => {
   run.signal?.throwIfAborted();
   run.log(sql);
-  return clickhouseQuery(run.target.endpoint, sql, run.signal ? { signal: run.signal } : {});
+  return clickhouseQuery(run.target.endpoint, sql, { settings: DDL_SETTINGS, ...(run.signal ? { signal: run.signal } : {}) });
 };
 
 export async function waitOn(run: RebuildRun, database: string, table: string): Promise<void> {
@@ -75,11 +83,17 @@ export async function waitOn(run: RebuildRun, database: string, table: string): 
  * others have written to `database.table` (`SYSTEM SYNC REPLICA ...
  * LIGHTWEIGHT`, which waits for fetches and not for merges). A step that
  * reads rows on one replica after a copy ran on another reads them all.
- * Nothing to wait for in an Atomic database.
+ * A replica that is down and holds parts this one lacks stops the step once
+ * `replicaTimeoutMs` has passed, naming it (`./replicas.ts`). Nothing to
+ * wait for in an Atomic database.
  */
 export async function syncReplica(run: RebuildRun, o: Pick<RebuildObservation, "replicated">, database: string, table: string): Promise<void> {
   if (!o.replicated) return;
-  await q(run, `SYSTEM SYNC REPLICA ${qualifiedIdent(database, table)} LIGHTWEIGHT`);
+  await syncReplicaWithin(run.target.endpoint, database, table, {
+    ...(run.replicaTimeoutMs !== undefined ? { timeoutMs: run.replicaTimeoutMs } : {}),
+    log: run.log,
+    ...(run.signal ? { signal: run.signal } : {}),
+  });
 }
 
 /** The trailer pairs a working object carries besides the marker. */
@@ -208,7 +222,9 @@ export interface SwapResult {
  * passed to it; in materialized-view mode writes go on through the swap, so
  * that window is the length of one DETACH and one ATTACH. In a Replicated
  * database the DETACH is `PERMANENTLY`, the form that database takes, and
- * the EXCHANGE, the DETACH and the ATTACH each run on every replica.
+ * the EXCHANGE, the DETACH and the ATTACH each run on every replica: now on
+ * the live ones, and from the database's log on one that is down, when it
+ * comes back.
  */
 export async function swapTables(run: RebuildRun): Promise<SwapResult> {
   const o = await observe(run);
@@ -359,7 +375,7 @@ export async function compensate(run: Pick<RebuildRun, "target" | "declared" | "
     if (!row || pairs?.get(REBUILD_TRAILER_KEY) !== n.key || pairs.get("role") !== role || !carriesMarker(row.comment, run.marker)) continue;
     const sql = `DROP ${what} ${qualifiedIdent(n.database, name)} SYNC`;
     run.log(sql);
-    await clickhouseQuery(run.target.endpoint, sql);
+    await clickhouseQuery(run.target.endpoint, sql, { settings: DDL_SETTINGS });
     dropped.push(`${n.database}.${name}`);
   }
   return { dropped };
