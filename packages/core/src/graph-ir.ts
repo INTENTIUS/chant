@@ -384,6 +384,23 @@ function refTarget(ref: AttrRef, reverse: Map<object, string>): string | undefin
   return ref.getLogicalName() ?? (parent ? reverse.get(parent) : undefined);
 }
 
+/**
+ * The node id a whole declarable held in a config bag stands for, or undefined
+ * when it is not a node of this graph (an inlined property-kind resource, say,
+ * which is config of the holder and gets walked instead). An entity can name
+ * another entity directly rather than through an AttrRef, as the sql lexicon's
+ * enumerable `dependsOn` does with the tables, views and databases a statement
+ * mentions (#3257); that is a reference to the node, not a nested bag.
+ */
+function nodeReference(
+  value: unknown,
+  reverse: Map<object, string>,
+  nodeIds: Set<string>,
+): string | undefined {
+  const id = reverse.get(value as object);
+  return id !== undefined && nodeIds.has(id) ? id : undefined;
+}
+
 /** Project a value into a JSON-safe, scrubbed form. References become `{ $ref }`. */
 function project(value: unknown, seen: Set<unknown>, reverse: Map<object, string>, nodeIds: Set<string>): unknown {
   if (value === null) return null;
@@ -414,6 +431,9 @@ function project(value: unknown, seen: Set<unknown>, reverse: Map<object, string
   // Nested declarables (e.g. an inlined property-kind resource) keep their
   // config in a non-enumerable `props` bag, like top-level nodes — project that.
   if (isDeclarable(value)) {
+    // Another node held whole is a reference to it, not config to inline.
+    const to = nodeReference(value, reverse, nodeIds);
+    if (to) return { $ref: to } satisfies AttrRefEnvelope;
     const out = projectConfig(value, seen, reverse, nodeIds);
     seen.delete(value);
     return out;
@@ -516,6 +536,15 @@ function collectEdges(
       // — resolve it to an edge instead of dropping it as an opaque intrinsic (#513).
       const to = refIntrinsicTarget(value);
       if (to && to !== from && nodeIds.has(to)) edges.push({ from, to, kind: "ref", viaAttr });
+      return;
+    }
+    // A whole node held in props or an enumerable field (the sql lexicon's
+    // `dependsOn`) is a reference to it: draw the edge, and do not walk its
+    // config, whose refs belong to that node's own edges (#3257). Checked
+    // before `seen` so the same node under two attributes yields both edges.
+    const held = nodeReference(value, reverse, nodeIds);
+    if (held) {
+      if (held !== from) edges.push({ from, to: held, kind: "ref", viaAttr });
       return;
     }
     if (seen.has(value)) return;
