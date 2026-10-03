@@ -15,6 +15,7 @@ export const {
   READ_CONTRACT_JSON_FLAGS,
   REFERENCE_READS,
   CONFORMANCE_FIXTURE_DIR,
+  UNCOMMITTED_DECISION,
   defaultChantCommand,
   referenceWorkspaceDir,
   readContractSchema,

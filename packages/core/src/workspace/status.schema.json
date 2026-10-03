@@ -31,6 +31,21 @@
             }
           }
         },
+        "checkout": {
+          "description": "Added in contract 1 by #3160. The branch, head and base of the checkout status ran in. records --uncommitted --json lists the records that working tree holds modified or new against head.",
+          "type": "object",
+          "required": ["branch", "head", "base", "baseFrom"],
+          "properties": {
+            "branch": { "type": ["string", "null"], "description": "The checked-out branch's short name, such as chant/work/w-12, or null when HEAD is detached." },
+            "head": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40,64}$", "description": "The full commit id HEAD names, or null before the first commit." },
+            "base": {
+              "type": ["string", "null"],
+              "pattern": "^[0-9a-f]{40,64}$",
+              "description": "The merge base of head and the target branch tip (origin/HEAD, else main, else master), the commit the branch forked from. Null without a head, a target, or common history."
+            },
+            "baseFrom": { "enum": ["origin/HEAD", "main", "master", null], "description": "Where the target branch was found; null when there is none." }
+          }
+        },
         "workspace": {
           "type": "object",
           "required": ["name", "root", "file"],

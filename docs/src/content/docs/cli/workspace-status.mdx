@@ -169,6 +169,7 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
   "env": "staging",
   "compareTo": "prod",
   "lifecycle": { "ref": "chant/lifecycle", "commit": "3f2a91c0..." },
+  "checkout": { "branch": "chant/work/w-12", "head": "9c41e0d2...", "base": "5b30a8fb...", "baseFrom": "main" },
   "workspace": { "name": "acme", "root": ".", "file": "chant.workspace.json" },
   "members": [
     {
@@ -311,7 +312,7 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
 }
 ```
 
-The example shortens the lists and the digests. `commit` is the local branch tip, or `null` when the checkout has no `chant/lifecycle` branch, in which case every member has no release. `layout` is `members` or `flat`, as described above. A compare `state` is `same`, `differs`, `only-env` or `only-compare`. `compare` and `summary.differing` are `null` without `--compare-to`. `flags` carries `legacy-digest` for a digest recorded before chant used SHA-256 ([#2514](https://github.com/INTENTIUS/chant/issues/2514)).
+The example shortens the lists and the digests. `commit` is the local branch tip, or `null` when the checkout has no `chant/lifecycle` branch, in which case every member has no release. `checkout` names the checkout status ran in ([#3160](https://github.com/INTENTIUS/chant/issues/3160)): its `branch` (`null` when `HEAD` is detached), the commit `HEAD` names in `head`, and in `base` the merge base of `head` and the target branch (`origin/HEAD`, else `main`, else `master`, named in `baseFrom`). [`records --uncommitted`](/chant/cli/workspace-records/#uncommitted-records) lists the records that working tree holds modified or new against `head`. `layout` is `members` or `flat`, as described above. A compare `state` is `same`, `differs`, `only-env` or `only-compare`. `compare` and `summary.differing` are `null` without `--compare-to`. `flags` carries `legacy-digest` for a digest recorded before chant used SHA-256 ([#2514](https://github.com/INTENTIUS/chant/issues/2514)).
 
 In `gateLedger`, `path` is the directory of gate files, and `malformed` counts the lines in them that were skipped. An Op gate has `env: null`, and `planDigest` is `null` when the run bound no plan to the gate. An approval's `channel` is `cli`, `mcp` or `acp`, or `null` for an approval recorded before chant recorded the channel.
 
