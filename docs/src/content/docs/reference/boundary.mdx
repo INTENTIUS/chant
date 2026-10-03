@@ -21,6 +21,7 @@ chant provides the repository specification and nothing that faces a person. hud
 | writer conformance: a writer writes only through the write contract, and keeps no fact outside the repo |  |  |
 | the writing and verifying commands: `approve`, `records pin`, `verify`, `check`, gates, ledgers |  |  |
 | findings as data |  |  |
+| who a person-attributed record or gate approval names: forge identities, signer principals, identity.attribution, signed gates |  |  |
 
 ## Rules
 
@@ -35,7 +36,7 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 
 | Category | Where the code keeps it | chant | hud | plugin |
 |---|---|---|---|---|
-| boundary cell | the table of #2657, one row per cell | 9 | 5 | 3 |
+| boundary cell | the table of #2657, one row per cell | 10 | 5 | 3 |
 | workspace command | `commandRegistry` in `cli/main.ts`, and each sub-verb its help names | 44 | 0 | 0 |
 | member kind | `BUILTIN_KIND_NAMES` in `kinds.ts` | 5 | 0 | 0 |
 | record kind | none in core; `decision` and `session` are this repository's, the rest a plugin's | 4 | 0 | 4 |
@@ -43,7 +44,7 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 |
 | intent node kind | the node kinds of `intent.schema.json` | 10 | 0 | 3 |
 | intent edge kind | the edge kinds of `intent.schema.json` | 12 | 0 | 3 |
-| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 180 | 0 | 0 |
+| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 181 | 0 | 0 |
 | finding code | the finding codes of `intent.schema.json` | 17 | 0 | 0 |
 | WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 50 | 0 | 0 |
 | hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 |
@@ -63,7 +64,8 @@ Each row follows, in the order of the table above.
 | boundary cell | findings as data | chant | check.schema.json, intent.schema.json | A finding is a node or a row with a closed code, so a reader can draw it and a test can assert it. |
 | boundary cell | rendering | hud | alecraso/hud | Drawing the documents of the read contract for a person. |
 | boundary cell | review actions as UI (agree, dissent, propose, quorum meter, live sessions) | hud | alecraso/hud | The buttons and meters a reviewer uses; each verdict lands as a pull request that chant then reads. |
-| boundary cell | identity, sessions, who is looking | hud | alecraso/hud | Signing a person in and knowing who is present; chant never authenticates a person. |
+| boundary cell | identity, sessions, who is looking | hud | alecraso/hud | Signing a person in, knowing who is present, and mapping the session to the forge identity or signer principal it passes to chant's write commands as --by or --actor (#3163); chant never authenticates a person. |
+| boundary cell | who a person-attributed record or gate approval names: forge identities, signer principals, identity.attribution, signed gates | chant | declaration.schema.json, status.schema.json | The forms a person is named by, the declaration's identity block read at base, and the seal that attests an approval against the signers at base (#3163, ws-080). |
 | boundary cell | the agent chat, the dev proxy, comment mode | hud | alecraso/hud | The interactive surfaces around a workspace, none of which chant serves. |
 | boundary cell | the question put to the person at each finding | hud | alecraso/hud | hud asks and never answers; the finding it asks about comes from chant as data. |
 | boundary cell | domain record kinds (contracts, units, evidence, drivers, sessions) | plugin | a record kind file and its schema, named in chant.workspace.json records or passed with --kind; jhgaylor/chud (transitional owner, jhgaylor/chud#78, #79, #80) | The record kinds a development model defines; core ships none of them, and the declaration names the ones a workspace holds. |
@@ -259,6 +261,7 @@ Each row follows, in the order of the table above.
 | reason code | `write-scope-member` | chant | changes.schema.json, records-amend.schema.json, records-close.schema.json, records-new.schema.json, records-review.schema.json, work-evidence.schema.json | The write is to a file, or to a record kind, of a member outside the writer's scope: an agent session writes only its own member, and writeScope.&lt;class&gt;.members leaves the member out. |
 | reason code | `write-scope-kind` | chant | changes.schema.json, records-amend.schema.json, records-close.schema.json, records-new.schema.json, records-review.schema.json, work-evidence.schema.json | The write is to a record kind writeScope.&lt;class&gt;.records does not list, with a verb it does not list for the kind, or deletes a record. |
 | reason code | `write-scope-protected` | chant | changes.schema.json | The write is to a file writeScope.&lt;class&gt;.protected lists, or one under a directory it lists, outside any top-level keys the entry's except allows (#3146). |
+| reason code | `principal-unidentified` | chant | points-write.schema.json, records-amend.schema.json, records-new.schema.json, records-review.schema.json, work-evidence.schema.json | chant.workspace.json at base sets identity.attribution to identified, and the write names a person by a bare name rather than a forge identity, a signer at base, or an agent, runner or service principal (#3163). |
 | reason code | `write-scope-class-unknown` | chant | changes.schema.json, records-amend.schema.json, records-close.schema.json, records-new.schema.json, records-review.schema.json, work-evidence.schema.json | The declaration's writeScope at base names a principal class no pinned package supplies, and the writer is judged human, so it may be in that class; the write is refused until the package is installed at the pinned version or the entry removed (#3080). |
 | reason code | `agent-unknown` | chant | agent.schema.json, changes.schema.json, records-amend.schema.json, records-close.schema.json, records-new.schema.json, records-review.schema.json, work-evidence.schema.json | CHANT_AGENT, or a commit's Chant-Agent trailer, names an agent session the declaration at base does not declare. |
 | reason code | `session-unknown` | chant | records-review.schema.json | --session names no session of a session kind whose subjects are the record's kind. |

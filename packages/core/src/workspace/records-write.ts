@@ -50,7 +50,8 @@ import { policyAtBase, resolveBase } from "./trust/provenance";
 import { WorkspaceReadError } from "./declaration";
 import { findSessionKinds, headCommit, sessionKindsFor } from "./session-kinds";
 import { workingTree } from "./tree";
-import { AGENT_ENV, refuseRecordWrite, WRITE_SCOPE_CODES, WriteScopeError } from "./write-scope";
+import { AGENT_ENV, refuseRecordWrite, WRITE_SCOPE_CODES, WriteScopeError, type ScopeSource } from "./write-scope";
+import { IDENTITY_CODES, IdentityError, refuseUnidentified } from "./identity";
 import type { WriteVerb } from "./declaration";
 
 // ── Contract ─────────────────────────────────────────────────────────────────
@@ -78,6 +79,7 @@ export const NEW_ERROR_CODES = [
   "record-state-not-initial",
   "ratify-quorum-not-met",
   ...WRITE_SCOPE_CODES,
+  ...IDENTITY_CODES,
   ...RECORD_REASON_CODES,
 ] as const satisfies readonly ReasonCode[];
 
@@ -93,6 +95,7 @@ export const AMEND_ERROR_CODES = [
   "record-sign-failed",
   "ratify-quorum-not-met",
   ...WRITE_SCOPE_CODES,
+  ...IDENTITY_CODES,
   ...RECORD_REASON_CODES,
 ] as const satisfies readonly ReasonCode[];
 
@@ -108,6 +111,7 @@ export const REVIEW_ERROR_CODES = [
   "session-unknown",
   "session-not-open",
   ...WRITE_SCOPE_CODES,
+  ...IDENTITY_CODES,
   ...RECORD_REASON_CODES,
 ] as const satisfies readonly ReasonCode[];
 
@@ -361,8 +365,24 @@ export async function open(kind: string, cwd: string): Promise<Opened> {
  * written with `verb`, by the session `agent` names (`CHANT_AGENT`) or the
  * principal `by` names. Throws a {@link WriteScopeError}.
  */
-export function refuseOutOfScope(o: Opened, verb: WriteVerb, cwd: string, writer: { agent?: string; by?: string }): void {
-  refuseRecordWrite(cwd, { kindName: o.loaded.kind.name, kindFile: o.loaded.file, recordsDir: o.loaded.dir, verb, agent: writer.agent, principal: writer.by });
+export function refuseOutOfScope(o: Opened, verb: WriteVerb, cwd: string, writer: { agent?: string; by?: string }): ScopeSource {
+  const source = refuseRecordWrite(cwd, { kindName: o.loaded.kind.name, kindFile: o.loaded.file, recordsDir: o.loaded.dir, verb, agent: writer.agent, principal: writer.by });
+  // #3163: under identity.attribution "identified" at base, --by names a forge identity or a signer.
+  if (writer.by !== undefined) refuseUnidentified(source, [writer.by], "--by", { agent: writer.agent });
+  return source;
+}
+
+/**
+ * Refuse author fields (the kind's reviews.decider and proposedBy fields)
+ * that name a person by a bare name, under identity.attribution
+ * "identified" at base (#3163). `flag` is where the fields came from.
+ */
+function refuseUnidentifiedAuthors(source: ScopeSource, kind: Opened["loaded"]["kind"], fields: Record<string, unknown>, flag: string, agent?: string): void {
+  const names = [kind.reviews?.decider, kind.proposedBy?.field]
+    .filter((f): f is string => f !== undefined)
+    .map((f) => fields[f])
+    .filter((v): v is string => typeof v === "string" && v.trim() !== "");
+  refuseUnidentified(source, names, `${flag} author`, { agent });
 }
 
 /**
@@ -628,7 +648,7 @@ function today(): string {
 }
 
 export function failure<C>(schema: string, err: unknown): WriteFailure<C> {
-  if (err instanceof RecordWriteError || err instanceof RecordReadError || err instanceof WriteScopeError) {
+  if (err instanceof RecordWriteError || err instanceof RecordReadError || err instanceof WriteScopeError || err instanceof IdentityError) {
     return { $schema: schema, contract: RECORDS_WRITE_CONTRACT_VERSION, error: { code: err.code as C, message: err.message } };
   }
   throw err;
@@ -773,9 +793,10 @@ export async function newRecord(opts: NewRecordOptions & ChannelOptions): Promis
       throw new RecordWriteError("write-usage-invalid", `--prefix takes letters and digits, starting with a letter, not ${JSON.stringify(opts.prefix)}`);
     }
     const o = await open(opts.kind, opts.cwd);
-    refuseOutOfScope(o, "new", opts.cwd, opts);
+    const scope = refuseOutOfScope(o, "new", opts.cwd, opts);
     const fields = applyChannel(o, parseFields(opts.fields, "--from"), opts, true, "--from");
     const { kind, schema } = o.loaded;
+    refuseUnidentifiedAuthors(scope, kind, fields, "--from", opts.agent);
     refuseSealField(o, fields, "--from");
     refuseRevisionFields(kind, fields, {}, "--from");
     const idField = kind.idField!;
@@ -858,9 +879,10 @@ export interface AmendRecordOptions {
 export async function amendRecord(opts: AmendRecordOptions & ChannelOptions): Promise<AmendDocument> {
   try {
     const o = await open(opts.kind, opts.cwd);
-    refuseOutOfScope(o, "amend", opts.cwd, opts);
+    const scope = refuseOutOfScope(o, "amend", opts.cwd, opts);
     const given = applyChannel(o, parseFields(opts.fields, "--set"), opts, false, "--set");
     const { kind } = o.loaded;
+    refuseUnidentifiedAuthors(scope, kind, given, "--set", opts.agent);
     refuseSealField(o, given, "--set");
     const before = await readAll(o, o.source);
     const target = findRecord(before, opts.id, kind.name);

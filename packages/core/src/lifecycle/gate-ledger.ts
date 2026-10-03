@@ -187,6 +187,22 @@ export interface GateResolutionRecord {
    * was recorded. Present only when the gate declared a policy.
    */
   policyDecision?: GatePolicyDecision;
+  /**
+   * An ssh signature over this approval by `resolvedBy` (#3163, ws-080):
+   * `chant approve --sign`, in the `chant-gate` namespace over the op, gate,
+   * environment, plan digest, approver and timestamp. It attests the approver
+   * only when the signers file at base lists a key for them. A gate the
+   * declaration's `identity.gates` names counts only approvals whose seal
+   * verifies. Absent on an unsigned approval.
+   */
+  seal?: GateApprovalSeal;
+}
+
+/** A gate approval's seal (#3163): who signed, the key's fingerprint (reported, never trusted), and the armored signature. */
+export interface GateApprovalSeal {
+  signer: string;
+  key: string;
+  signature: string;
 }
 
 export type GateResolutionInput = Omit<GateResolutionRecord, "version" | "kind">;

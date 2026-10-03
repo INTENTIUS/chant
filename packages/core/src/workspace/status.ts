@@ -48,6 +48,8 @@ import { resolveBoxIntents, unresolvedIntent, type BoxIntent } from "./box-inten
 import { factoryView, listingView, plantability, treeBytes, type FactoryView, type ListingView, type Plantable } from "./box-factory";
 import { declaredRecordKinds, readDeclaration, readerVersion, WorkspaceReadError, type Declaration, type ErrorLocation, type Member } from "./declaration";
 import type { ReasonCode } from "./reason-codes";
+import { gateAdmissionFrom } from "./identity";
+import { scopeSource } from "./write-scope";
 import { GATE_REASON_CODES, readMemberGates, type GateLedgerReader, type StatusGate, type StatusGateLedger } from "./status-gates";
 import { STEWARD_REASON_CODES, readMemberStewards, type StatusSteward, type StewardReasonCode } from "./status-stewards";
 import { gitTop, workingTree } from "./tree";
@@ -410,12 +412,15 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
     const isolation = new Map(resolveBoxes(declaration).map((b) => [b.member.name, b.isolation]));
     const intents = new Map((await resolveBoxIntents(declaration, found.dir)).map((i) => [i.member, i.record?.intent ?? unresolvedIntent(i.id)]));
     const coverBytes = treeBytes(workingTree(found.dir));
+    // #3163: the declaration's identity.gates at base, read once for every member's gates.
+    const ruleSource = scopeSource(found.dir);
+    const rules = (gate: string) => gateAdmissionFrom(ruleSource, gate);
     const members: StatusMember[] = [];
     for (const m of declaration.members) {
       const environments: StatusEnvironment[] = [];
       for (const env of envs) environments.push(await readEnvironment(m, env, found.dir, read));
       const own = await hasMemberLedger(m, found.dir);
-      const gates = await readMemberGates(own ? `${MEMBERS_DIR}/${m.name}/${GATES_DIR}` : GATES_DIR, own ? "members" : "flat", commit, envs, found.dir, now, query.readGates);
+      const gates = await readMemberGates(own ? `${MEMBERS_DIR}/${m.name}/${GATES_DIR}` : GATES_DIR, own ? "members" : "flat", commit, envs, found.dir, now, query.readGates, rules);
       const stewards = await (query.readStewards ?? readMemberStewards)(resolve(found.dir, m.dir), query.env, now, m.kind, m.box);
       members.push({
         name: m.name,

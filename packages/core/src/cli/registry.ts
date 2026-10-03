@@ -348,6 +348,7 @@ export interface ParsedArgs {
   /**
    * `chant workspace records review <id> --sign [<key file>]` (#2687): the key that seals the verdict, or true for git's user.signingkey.
    * On `records new` and `records amend`, the key that seals the record's author (#2688).
+   * On `chant approve` and `chant run approve`, the key that seals the gate approval (#3163).
    */
   sign?: string | true;
   /** `chant workspace records review <id> --session <id>` (#2670): the review session the verdict was given in. */

@@ -68,6 +68,8 @@ import { AGENT_ROLE } from "./records-cli";
 import type { SourceVia } from "./source-block";
 import type { RecordSource } from "./record-source";
 import { currentStewardTurn } from "../op/steward-turn";
+import { IdentityError, refuseUnidentified } from "./identity";
+import { scopeSource } from "./write-scope";
 import { RefCASConflictError } from "../lifecycle/git";
 import { readLedgerAnswers, refreshLedger, withLedgerAnswers, writeLedgerAnswer, type LedgerAnswers } from "./answers-ledger";
 
@@ -99,6 +101,8 @@ export const POINTS_WRITE_ERROR_CODES = [
   "record-id-taken",
   /** The answer was given during a steward's turn (#2749): a steward never answers a question, its own or another's. */
   "answer-in-steward-turn",
+  /** An answerer is named by a bare name, and identity.attribution at base is identified (#3163). */
+  "principal-unidentified",
   ...RECORD_REASON_CODES,
 ] as const satisfies readonly ReasonCode[];
 export type PointsWriteErrorCode = (typeof POINTS_WRITE_ERROR_CODES)[number];
@@ -256,7 +260,7 @@ export type PointsWriteDocument =
   | { $schema: string; contract: number; verb: "ask" | "answer"; error: { code: PointsWriteErrorCode; message: string } };
 
 function failure(verb: "ask" | "answer", err: unknown): PointsWriteDocument {
-  if (err instanceof PointsWriteError || err instanceof RecordWriteError || err instanceof RecordReadError) {
+  if (err instanceof PointsWriteError || err instanceof RecordWriteError || err instanceof RecordReadError || err instanceof IdentityError) {
     return { $schema: POINTS_WRITE_SCHEMA_ID, contract: POINTS_WRITE_CONTRACT_VERSION, verb, error: { code: err.code as PointsWriteErrorCode, message: err.message } };
   }
   if (err instanceof WorkspaceReadError) {
@@ -611,6 +615,8 @@ export async function answerPoint(opts: AnswerPointOptions): Promise<PointsWrite
         `this is the steward ${turn.steward}'s turn, and a steward never answers a decision point: a person answers ${opts.id} through hud or \`chant workspace points answer\` at a shell`,
       );
     }
+    // #3163: under identity.attribution "identified" at base, each answerer is a forge identity or a signer.
+    refuseUnidentified(scopeSource(opts.cwd), opts.by, "--by");
     const kinds = await answerKindFiles(opts.cwd, opts.kind);
     if (kinds.length === 0) throw new PointsWriteError("points-undeclared", "no record kind with an answers block is declared: name one with --kind, or declare one in chant.workspace.json");
     let found:

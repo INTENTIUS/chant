@@ -148,6 +148,22 @@ export interface ProtectedPath {
  */
 export type WriteScope = Record<PrincipalClass, ClassScope>;
 
+/** A gate the declaration's `identity.gates` names (#3163, ws-080): it passes only on a signed approval. */
+export interface SignedGate {
+  gate: string;
+  /** The class the signer must be in, or null for any signer the signers file at base lists. */
+  class: PrincipalClass | null;
+  pointer: string;
+}
+
+/** The declaration's `identity` block (#3163, ws-080), read at base. */
+export interface IdentityPolicy {
+  /** `identified`: a person-attributed write must name a forge identity, a signer at base, or an agent, runner or service principal. */
+  attribution: "any" | "identified";
+  /** By gate name. */
+  gates: Record<string, SignedGate>;
+}
+
 /** An agent session the declaration names (#2524 D20, #2548): bound to one member. */
 export interface AgentDeclaration {
   name: string;
@@ -449,6 +465,8 @@ export interface Declaration {
   writeScope: WriteScope | null;
   /** The agent sessions, in file order (#2548). */
   agents: AgentDeclaration[];
+  /** Who a person-attributed write may name, and which gates need a signed approval (#3163), or null when the declaration has no `identity` block. */
+  identity: IdentityPolicy | null;
   /** The file, relative to the workspace root's tree (`chant.workspace.json` or `.jsonc`). */
   file: string;
 }
@@ -815,6 +833,7 @@ export function parseDeclaration(text: string, file: string, reader: string = re
     changes: changesOf(obj.changes as Record<string, unknown> | undefined),
     writeScope,
     agents,
+    identity: identityOf(obj.identity),
     file,
   };
 }
@@ -852,6 +871,17 @@ function writeScopeOf(raw: unknown, members: Member[], at: (pointer: string, key
  * (#2548): names are unique, each names a declared member, and a principal
  * is listed by one session at most.
  */
+/** The `identity` block, already validated by the schema (#3163). */
+function identityOf(raw: unknown): IdentityPolicy | null {
+  if (raw === undefined) return null;
+  const block = raw as { attribution?: "any" | "identified"; gates?: Record<string, { class?: string }> };
+  const gates: Record<string, SignedGate> = {};
+  for (const [gate, entry] of Object.entries(block.gates ?? {})) {
+    gates[gate] = { gate, class: entry.class ?? null, pointer: `/identity/gates/${gate.replace(/~/g, "~0").replace(/\//g, "~1")}` };
+  }
+  return { attribution: block.attribution ?? "any", gates };
+}
+
 function agentsOf(raw: unknown, members: Member[], at: (pointer: string, key?: boolean) => ErrorLocation): AgentDeclaration[] {
   const agents = ((raw as { name: string; member: string; principals?: string[] }[] | undefined) ?? []).map((a, i) => ({
     name: a.name,
