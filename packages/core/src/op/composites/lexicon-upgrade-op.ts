@@ -13,9 +13,13 @@
  * lands on the Op itself (#2120).
  *
  * Lexicon classification (which check the activity dispatches to):
- *   PINNED  {k8s, gcp, docker, gitlab} → checkPinnedUpgrade
- *   ROLLING {aws, azure, github}       → checkRollingUpgrade
- * helm / forgejo are excluded — no upstream spec.
+ *   ROLLING {aws, azure, github, fly}  → checkRollingUpgrade
+ *   PINNED  any other lexicon whose plugin declares `upstreamPin`
+ *           (k8s, k3s, gcp, docker, gitlab, cedar, sql, ...) → checkPinnedUpgrade
+ * The pinned set is discovered from the plugin at run time, the way `chant dev
+ * pinned-upgrade` does. A pin that moves with other constants (`alsoMoves`, as
+ * sql's version plus digest) is report-only. helm / forgejo are excluded: no
+ * upstream spec.
  *
  * Finding-modes mirror ReconcileOp: `report` (default, no external services)
  * | `issue` | `pull-request`. For the epic goal, `pull-request` opens/updates a
@@ -43,9 +47,15 @@ import { Op, phase } from "../builders";
 import type { OpResource } from "../resource";
 import type { LexiconUpgradeMode, SupportedLexicon } from "../activities/lexicon-upgrade";
 
-/** The in-scope lexicons. helm / forgejo are excluded (no upstream spec). */
+/**
+ * The lexicons known to be in scope. This is not a gate: a lexicon that declares
+ * `upstreamPin` is dispatched without being listed. helm / forgejo are excluded
+ * (no upstream spec).
+ */
 export const IN_SCOPE_LEXICONS: readonly SupportedLexicon[] = [
   "k8s",
+  "k3s",
+  "sql",
   "gcp",
   "docker",
   "gitlab",
@@ -86,15 +96,19 @@ export interface LexiconUpgradeOpResources {
   op: InstanceType<typeof OpResource>;
 }
 
+const EXCLUDED_LEXICONS: ReadonlySet<string> = new Set(["helm", "forgejo"]);
+
 /**
- * Build a LexiconUpgradeOp for one lexicon. Rejects out-of-scope lexicons at
- * construction time so a typo never silently produces a no-op Op.
+ * Build a LexiconUpgradeOp for one lexicon. Rejects the lexicons with no
+ * upstream spec at construction time. Whether any other name declares a pin is
+ * only known by loading its plugin, so the activity checks that at run time and
+ * fails with a clear message for a name that has none.
  */
 export function LexiconUpgradeOp(config: LexiconUpgradeOpConfig): LexiconUpgradeOpResources {
-  if (!IN_SCOPE_LEXICONS.includes(config.lexicon)) {
+  if (EXCLUDED_LEXICONS.has(config.lexicon)) {
     throw new Error(
       `LexiconUpgradeOp: "${config.lexicon}" is not in scope. ` +
-        `In-scope lexicons: ${IN_SCOPE_LEXICONS.join(", ")} ` +
+        `Known lexicons: ${IN_SCOPE_LEXICONS.join(", ")}, and any lexicon declaring upstreamPin ` +
         `(helm, forgejo have no upstream spec).`,
     );
   }

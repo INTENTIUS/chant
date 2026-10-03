@@ -1,6 +1,8 @@
 /**
  * lexiconUpgrade — the upgrade-detection and PR-automation activity for
- * in-scope lexicons (k8s, gcp, docker, gitlab, aws, azure, github).
+ * in-scope lexicons: every lexicon whose plugin declares `upstreamPin` (k8s,
+ * k3s, gcp, docker, gitlab, cedar, sql, ...) plus the rolling ones (aws, azure,
+ * github, fly).
  *
  * Classifies the lexicon as pinned or rolling, calls the right check function,
  * then surfaces the result in the requested mode: report (default), issue, or
@@ -25,7 +27,7 @@ import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { UpgradeCheckResult, LexiconId } from "../../codegen/pinned-upgrade";
+import type { UpgradeCheckResult, LexiconId, UpstreamPin } from "../../codegen/pinned-upgrade";
 import type { RollingUpgradeResult, RollingLexicon } from "../../codegen/rolling-upgrade";
 import { bumpForSeverity, bumpPackageJsonVersion } from "../../codegen/version-bump";
 import { postOrUpdateGithubIssue } from "./reconcile";
@@ -48,8 +50,9 @@ export type SemverLabel = "minor" | "breaking";
 export interface LexiconUpgradeArgs {
   /**
    * Which lexicon to check. Determines pinned vs rolling dispatch:
-   *   PINNED: k8s, gcp, docker, gitlab, cedar
    *   ROLLING: aws, azure, github, fly
+   *   PINNED: any other lexicon whose plugin declares `upstreamPin`
+   *           (discovered at run time, as `chant dev pinned-upgrade` does)
    */
   lexicon: SupportedLexicon;
   /**
@@ -77,6 +80,13 @@ export interface LexiconUpgradeArgs {
    * Override the applyPinnedVersionBump function — inject a mock in tests.
    */
   _applyBump?: ApplyBumpFn;
+  /**
+   * Override pin discovery — inject a mock in tests. The real one is
+   * `loadUpstreamPin` from core, the loader `chant dev pinned-upgrade` uses.
+   * Not consulted when `_checkPinned` is injected: that stands in for the
+   * whole pinned check.
+   */
+  _loadPin?: (lexicon: string, lexiconDir: string) => Promise<UpstreamPin | null>;
   /**
    * Override the package.json version writer — inject a mock in tests.
    * Defaults to bumpPackageJsonVersion.
@@ -177,19 +187,30 @@ export function computeBumpedVersion(
 
 // ── Classification ────────────────────────────────────────────────────
 
-// cedar pins `CEDAR_WASM_VERSION`, a dependency version rather than a spec
-// URL, but the pinned-constant machinery is the same (#1650).
-const PINNED_LEXICONS: ReadonlySet<string> = new Set<LexiconId>(["k8s", "gcp", "docker", "gitlab", "cedar"]);
+// Rolling lexicons follow their upstream spec with no version constant, so
+// they are a fixed list. Every other lexicon is pinned when its plugin declares
+// `upstreamPin` (cedar's CEDAR_WASM_VERSION, sql's ClickHouse version, k3s...):
+// discovered at run time, not listed here.
 const ROLLING_LEXICONS: ReadonlySet<string> = new Set<RollingLexicon>(["aws", "azure", "github", "fly"]);
-
-/** Return true when the lexicon uses a pinned version constant. */
-export function isPinned(lexicon: SupportedLexicon): lexicon is LexiconId {
-  return PINNED_LEXICONS.has(lexicon);
-}
 
 /** Return true when the lexicon follows a rolling spec (no pinned constant). */
 export function isRolling(lexicon: SupportedLexicon): lexicon is RollingLexicon {
   return ROLLING_LEXICONS.has(lexicon);
+}
+
+/**
+ * Return true when the lexicon's plugin declares an `upstreamPin` (loaded from
+ * `lexiconDir`, else from its installed package), the same discovery
+ * `chant dev pinned-upgrade` does.
+ */
+export async function isPinned(
+  lexicon: SupportedLexicon,
+  lexiconDir?: string,
+  loadPin?: (lexicon: string, lexiconDir: string) => Promise<UpstreamPin | null>,
+): Promise<boolean> {
+  if (isRolling(lexicon)) return false;
+  const load = loadPin ?? (async (l, d) => (await import("../../codegen/pinned-upgrade")).loadUpstreamPin(l, d));
+  return (await load(lexicon, lexiconDir ?? `${process.cwd()}/lexicons/${lexicon}`)) !== null;
 }
 
 // ── Semver labeling ───────────────────────────────────────────────────
@@ -235,8 +256,10 @@ export function buildUpgradeSummary(opts: {
   semverLabel: SemverLabel | null;
   validationOk: boolean;
   failures?: Array<{ step: string; output: string }>;
+  /** Set for a pin that moves with other constants: nothing was bumped or regenerated. */
+  manualPin?: { file: string; instructions: string };
 }): string {
-  const { lexicon, from, to, deltaText, semverLabel, validationOk, failures = [] } = opts;
+  const { lexicon, from, to, deltaText, semverLabel, validationOk, failures = [], manualPin } = opts;
 
   // Example validation status (#604): the upgrade check lints the lexicon's
   // examples (regenLexicon step 6), and an example failure makes validation
@@ -256,6 +279,17 @@ export function buildUpgradeSummary(opts: {
   );
 
   lines.push(``);
+
+  if (manualPin) {
+    lines.push(`### Manual pin bump`);
+    lines.push(``);
+    lines.push(
+      `This pin cannot be rewritten automatically, so nothing was edited or regenerated. ` +
+        `Edit \`${manualPin.file}\`: ${manualPin.instructions}`,
+    );
+    lines.push(``);
+    return lines.join("\n");
+  }
 
   if (!validationOk) {
     lines.push(`### Validation failures`);
@@ -430,9 +464,12 @@ async function getRealApplyBump(): Promise<ApplyBumpFn> {
 /**
  * Run the lexicon upgrade check for one lexicon and surface the result.
  *
- * Pinned lexicons (k8s, gcp, docker, gitlab):
+ * Pinned lexicons (any whose plugin declares `upstreamPin`):
  *   Calls checkPinnedUpgrade. A PR is opened only when hasUpgrade=true AND
  *   validation passed. Validation failures produce a report or issue.
+ *   A pin that moves with other constants (`alsoMoves`, sql's version plus
+ *   digest) is report-only: the summary names the newer version and the
+ *   manual step, and no branch, bump or PR is made.
  *
  * Rolling lexicons (aws, azure, github):
  *   Calls checkRollingUpgrade. A PR is opened only when the surface changed
@@ -472,7 +509,12 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
   let to: string | null | undefined;
   let freshSnapshotJson: string | null = null;
 
-  if (isPinned(lexicon)) {
+  // An injected check stands in for the whole pinned check, so discovery runs
+  // only on the real path.
+  const pinned = !isRolling(lexicon) && (args._checkPinned ? true : await isPinned(lexicon, lexiconDir, args._loadPin));
+  let manualPin: { file: string; instructions: string } | undefined;
+
+  if (pinned) {
     const checkPinned = args._checkPinned ?? (await getRealCheckPinned());
     const result = await checkPinned({ lexiconDir, lexicon });
 
@@ -500,6 +542,7 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
     hasUpgrade = result.hasUpgrade;
     from = result.from;
     to = result.to;
+    manualPin = result.manualPin;
     severity = result.validation?.severity ?? "none";
     deltaText = result.validation?.deltaText ?? "";
     validationOk = result.validation?.ok ?? true;
@@ -524,7 +567,7 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
   } else {
     throw new Error(
       `Lexicon "${lexicon as string}" is not supported by LexiconUpgradeOp. ` +
-        `Supported: k8s, gcp, docker, gitlab, aws, azure, github`,
+        `Supported: the rolling lexicons (${[...ROLLING_LEXICONS].join(", ")}) and any lexicon whose plugin declares upstreamPin.`,
     );
   }
 
@@ -537,6 +580,7 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
     semverLabel,
     validationOk,
     failures,
+    manualPin,
   });
 
   // ── 2. No upgrade ─────────────────────────────────────────────────
@@ -591,8 +635,13 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
   // rolling drift as an issue instead; re-baselining stays a deliberate
   // maintainer action (`chant dev surface-diff <lexicon> --update-snapshot --bump`).
   // Pinned lexicons keep opening version-bump PRs.
-  const effectiveMode: LexiconUpgradeMode =
-    mode === "pull-request" && isRolling(lexicon) ? "issue" : mode;
+  // A pin that moves with other constants cannot be bumped here, so it is
+  // report-only whatever the mode.
+  const effectiveMode: LexiconUpgradeMode = manualPin
+    ? "report"
+    : mode === "pull-request" && isRolling(lexicon)
+      ? "issue"
+      : mode;
 
   if (effectiveMode === "report") {
     return {
@@ -662,7 +711,7 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
     await gh(`git checkout ${shellQuote(branch)}`);
 
     // For pinned lexicons: apply the spec version bump permanently on this branch.
-    if (isPinned(lexicon) && to) {
+    if (pinned && to) {
       const applyBump = args._applyBump ?? (await getRealApplyBump());
       const { filePath } = await applyBump(lexicon, lexiconDir, to);
       await gh(`git add ${shellQuote(filePath)}`).catch(() => {/* best-effort */});
