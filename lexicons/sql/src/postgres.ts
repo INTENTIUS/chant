@@ -64,3 +64,11 @@ export {
   type RefusedStatement,
   type LiveObjectRef,
 } from "./postgres/providers";
+
+export {
+  PostgresMigrationOp,
+  type PostgresMigrationOpConfig,
+  type PostgresMigrationOpResources,
+  type PostgresMigrationArgs,
+} from "./postgres/migrate/op";
+export { POSTGRES_RECEIPTS_TABLE } from "./postgres/migrate/receipts";

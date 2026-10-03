@@ -22,7 +22,10 @@
  *   column's sequence, since the column prints as `serial`;
  * - an index that backs a constraint (the constraint creates it), and an
  *   index partition (the partitioned index creates it);
- * - chant's own receipts tables (`../../core/ownership.ts`).
+ * - chant's own receipts tables (`../../core/ownership.ts`), and the working
+ *   columns and checks of an expand-and-contract migration in progress
+ *   (`../migrate/names.ts`), so a table reads as it was before the migration
+ *   until its switch, and as declared after it.
  *
  * Objects another tool owns, an ORM's or a migration runner's revision table
  * ({@link FOREIGN_TABLES}), are read and marked with the tool, so import
@@ -34,6 +37,7 @@ import type { PostgresClient } from "./client";
 import { POSTGRES_ENTITY_TYPES, type PostgresEntityType } from "../entity-types";
 import { quoteIdent } from "../keywords";
 import { hasChantTrailerKey, RECEIPTS_TRAILER_KEY, stripMarker } from "../../core/ownership";
+import { MIGRATION_TRAILER_KEY } from "../migrate/names";
 import { isProviderOwned, providerData } from "../providers";
 import type { PostgresProvider } from "../providers/types";
 
@@ -414,8 +418,9 @@ export async function readLiveSchema(client: PostgresClient, scope: SchemaScope 
     const rel = String(t.oid);
     const q = qname(String(t.schema), String(t.name));
     if (hasChantTrailerKey(str(t.comment), [RECEIPTS_TRAILER_KEY])) continue;
-    const cols = columns.filter((c) => String(c.rel) === rel);
-    const cons = constraints.filter((c) => String(c.rel) === rel);
+    const working = (comment: unknown) => hasChantTrailerKey(str(comment), [MIGRATION_TRAILER_KEY]);
+    const cols = columns.filter((c) => String(c.rel) === rel && !working(c.comment));
+    const cons = constraints.filter((c) => String(c.rel) === rel && !working(c.comment));
     const pkColumns = new Set(
       cons.filter((c) => c.type === "p").flatMap((c) => (c.keys as number[] | null) ?? []).map((n) => String(n)),
     );
