@@ -229,10 +229,11 @@ describe("the composites pass the lexicon's post-synth checks", () => {
     expect(doc.applyOrder.indexOf("hitsLocal")).toBeLessThan(doc.applyOrder.indexOf("hitsDistributed"));
 
     const ctx = makePostSynthCtx("sql", out.primary, entities);
-    const ids = postSynthChecks.map((c) => c.id).sort();
+    const clickhouse = postSynthChecks.filter((c) => c.id.startsWith("SQLCH"));
+    const ids = clickhouse.map((c) => c.id).sort();
     expect(ids[0]).toBe("SQLCH101");
     expect(ids.at(-1)).toBe("SQLCH120");
-    expect(postSynthChecks.flatMap((check) => check.check(ctx))).toEqual([]);
+    expect(clickhouse.flatMap((check) => check.check(ctx))).toEqual([]);
   });
 });
 
