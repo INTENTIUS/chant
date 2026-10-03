@@ -156,7 +156,7 @@ export const otelAuditCatalog: Record<string, RuleMeta> = {
       "report-only",
       "guidance",
       "Pipeline processor can remove or replace a telemetry attribution key",
-      "Leave service.name, service.version, deployment.environment.name, vcs.ref.head.revision and chant.* keys alone: use insert rather than upsert or update, keep them in keep_keys, and set override: false on resourcedetection.",
+      "Leave service.name, service.version, deployment.environment.name, vcs.ref.head.revision and chant.* keys alone: use insert rather than upsert or update, keep them in keep_keys and in redaction's allowed_keys, and set override: false on resourcedetection.",
       { category: "correctness" },
     ),
     yamlBased: false,

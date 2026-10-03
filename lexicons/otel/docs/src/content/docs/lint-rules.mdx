@@ -180,8 +180,16 @@ A workload built inside a workspace, or in a project with `telemetry.attribution
 | `resource` | a `delete`, `update`, `upsert` or `hash` action on a protected `key`, or a `delete` or `hash` whose `pattern` matches one |
 | `transform` | a statement on the resource's attributes (`resource.attributes`, or `attributes` in a `context: resource` group) calling `set` or `delete_key` on a protected key, `delete_matching_keys` with a pattern that matches one, or `keep_keys` or `keep_matching_keys` that leaves one out |
 | `resourcedetection` | `override` on, which is the default at the pinned release, with the `env`, `dynatrace`, `heroku` or `elastic_beanstalk` detector. `env` is also the default detector list. |
+| `groupbyattrs` | a protected key in `keys`: a record attribute with that key is copied over the resource's value |
+| `redaction` | `allow_all_keys` off, its default, with a protected key missing from `allowed_keys` and `ignored_keys`, which deletes it. Also a `blocked_key_patterns` entry that matches a protected key, which masks it. |
+| `sumologic` | `translate_attributes`, on by default, which renames `service.name` to `service` on log and metric resources. Also `nest_attributes` over a protected key, or an `aggregate_attributes` prefix that matches one. |
+| `schema` | a target in the `https://opentelemetry.io/schemas/` family below 1.29.0, which renames `vcs.ref.head.revision` back to `vcs.repository.ref.revision`. Below 1.27.0 it also renames `deployment.environment.name` back to `deployment.environment`. |
+| `metricstransform` | a `group` transform whose `group_resource_labels` sets a protected key |
+| `logstransform` | an `add`, `remove`, `move` or `copy` operator on `resource["<key>"]` for a protected key, a `retain` that lists resource fields and leaves one out, or a parser with `parse_to: resource` |
 
-`insert` only adds a key the resource lacks, so it passes. `extract` writes the pattern's named groups, and a group name can't contain a dot, so it passes too. The `transform` case matches the statement's text rather than parsing OTTL, and the message says so. The `attributes` processor changes span, log and metric attributes, not the resource's, so OTEL118 doesn't read it.
+`insert` only adds a key the resource lacks, so it passes. `extract` writes the pattern's named groups, and a group name can't contain a dot, so it passes too. The `transform` case matches the statement's text rather than parsing OTTL, and the message says so. A `redaction` `blocked_values` pattern matches values, which the config doesn't show, so it isn't checked.
+
+Two processors that look relevant are not reported. `k8sattributes` can extract `service.name` and `service.version` from pod labels, but it writes pod metadata only where the key is absent or empty, so it never replaces the workload's value. `NodeAgent` therefore passes. The `attributes` processor changes span, log and metric attributes, not the resource's.
 
 The check runs only when the build stamps the attribution. A project outside a workspace without `telemetry.attribution: true` gets no OTEL118 findings. For `resourcedetection`, set `override: false` to keep the values the workload set.
 
