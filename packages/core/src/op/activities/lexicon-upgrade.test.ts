@@ -18,23 +18,37 @@ import type { UpgradeCheckResult } from "../../codegen/pinned-upgrade";
 import type { RollingUpgradeResult } from "../../codegen/rolling-upgrade";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { writeFileSync, readFileSync } from "node:fs";
+import { writeFileSync, readFileSync, mkdirSync } from "node:fs";
 
 // ── Classification ────────────────────────────────────────────────────
 
 describe("pinned vs rolling classification", () => {
-  test("pinned lexicons", () => {
-    for (const l of ["k8s", "gcp", "docker", "gitlab"] as const) {
-      expect(isPinned(l)).toBe(true);
+  const pin = {
+    file: "src/pin.ts",
+    pattern: /V = "(.+)"/,
+    replace: (v: string) => `V = "${v}"`,
+    upstream: { owner: "o", repo: "r", kind: "releases" as const },
+  };
+
+  test("pinned lexicons are any whose plugin declares upstreamPin", async () => {
+    const loadPin = vi.fn(async () => pin);
+    for (const l of ["k8s", "gcp", "docker", "gitlab", "sql", "k3s", "cedar"]) {
+      expect(await isPinned(l, "/x", loadPin)).toBe(true);
       expect(isRolling(l)).toBe(false);
     }
   });
 
-  test("rolling lexicons", () => {
+  test("a lexicon without a pin is not pinned", async () => {
+    expect(await isPinned("helm", "/x", async () => null)).toBe(false);
+  });
+
+  test("rolling lexicons", async () => {
+    const loadPin = vi.fn(async () => null);
     for (const l of ["aws", "azure", "github"] as const) {
       expect(isRolling(l)).toBe(true);
-      expect(isPinned(l)).toBe(false);
+      expect(await isPinned(l, "/x", loadPin)).toBe(false);
     }
+    expect(loadPin).not.toHaveBeenCalled();
   });
 });
 
@@ -388,6 +402,86 @@ describe("lexiconUpgrade breakage handling", () => {
 });
 
 // ── out-of-scope rejection ────────────────────────────────────────────
+
+describe("discovered pinned lexicons (#3266)", () => {
+  const pin = {
+    file: "src/pin.ts",
+    pattern: /V = "(.+)"/,
+    replace: (v: string) => `V = "${v}"`,
+    upstream: { owner: "o", repo: "r", kind: "releases" as const },
+  };
+
+  test("a lexicon with a declared pin reaches the pinned check and opens a PR", async () => {
+    const checkPinned: CheckPinnedFn = vi.fn(async () => pinnedResult());
+    const applyBump = vi.fn(async () => ({ filePath: "/x/src/pin.ts" }));
+    const { gh } = recordingGh();
+    const dir = join(tmpdir(), `chant-3266-${process.pid}`);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ version: "0.1.0" }));
+    const r = await lexiconUpgrade({
+      lexicon: "k3s",
+      lexiconDir: dir,
+      mode: "pull-request",
+      _loadPin: async () => pin,
+      _checkPinned: checkPinned,
+      _applyBump: applyBump,
+      _bumpPackageVersion: vi.fn(),
+      _gh: gh,
+    });
+    expect(checkPinned).toHaveBeenCalledOnce();
+    expect(applyBump).toHaveBeenCalledWith("k3s", dir, "v1.33.0");
+    expect(r.hasUpgrade).toBe(true);
+  });
+
+  test("a lexicon with no pin and not rolling is rejected", async () => {
+    await expect(
+      lexiconUpgrade({ lexicon: "helm", mode: "report", _loadPin: async () => null }),
+    ).rejects.toThrow(/not supported/);
+  });
+
+  test("a discovered pin reaches the real check when none is injected", async () => {
+    const loadPin = vi.fn(async () => pin);
+    // The real checkPinnedUpgrade loads the pin itself; an empty dir has no
+    // plugin, so it reports the fetch error rather than throwing "not supported".
+    const r = await lexiconUpgrade({
+      lexicon: "sql",
+      lexiconDir: join(tmpdir(), "chant-3266-none"),
+      mode: "report",
+      _loadPin: loadPin,
+    });
+    expect(loadPin).toHaveBeenCalledOnce();
+    expect(r.validationOk).toBe(false);
+  });
+
+  test("an alsoMoves pin is report-only: newer version and manual step, no bump, no git", async () => {
+    const manual = pinnedResult({
+      validation: null,
+      from: "25.8.1.1-lts",
+      to: "26.3.1.1-lts",
+      manualPin: { file: "src/spec/pin.ts", instructions: "move CLICKHOUSE_IMAGE_DIGEST too" },
+    });
+    const applyBump = vi.fn();
+    const { gh, calls } = recordingGh();
+    for (const mode of ["report", "issue", "pull-request"] as const) {
+      const r = await lexiconUpgrade({
+        lexicon: "sql",
+        mode,
+        _checkPinned: vi.fn(async () => manual),
+        _applyBump: applyBump,
+        _gh: gh,
+      });
+      expect(r.hasUpgrade).toBe(true);
+      expect(r.mode).toBe("report");
+      expect(r.prUrl).toBeUndefined();
+      expect(r.issueUrl).toBeUndefined();
+      expect(r.summary).toContain("26.3.1.1-lts");
+      expect(r.summary).toContain("move CLICKHOUSE_IMAGE_DIGEST too");
+      expect(r.summary).toContain("src/spec/pin.ts");
+    }
+    expect(applyBump).not.toHaveBeenCalled();
+    expect(calls).toHaveLength(0);
+  });
+});
 
 describe("out-of-scope lexicons", () => {
   test("helm/forgejo throw", async () => {

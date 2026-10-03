@@ -281,6 +281,14 @@ lexicon with no `upstreamPin` gets a message saying so. The sql pin sets
 newer `-lts` release and how to move both constants, and does not edit the file
 or regenerate.
 
+`LexiconUpgradeOp` finds pinned lexicons the same way. Any lexicon that is not
+one of the rolling ones (aws, azure, github, fly) is checked through its plugin's
+`upstreamPin`, so a lexicon that adds a pin needs no change in core. In
+`pull-request` mode the Op opens a version-bump PR for a pin `replace` can
+rewrite. For a pin with `alsoMoves` it stays report-only whatever the mode: the
+report names the newer version and the manual step, and no branch, bump or PR is
+made.
+
 ### When there is no version to pin to
 
 `upstreamPin` resolves a version constant against GitHub releases or tags. Some
