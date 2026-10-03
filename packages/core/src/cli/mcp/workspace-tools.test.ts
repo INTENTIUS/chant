@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { createConformanceWorkspace, defaultChantCommand, mcpToolCall, type ConformanceWorkspace } from "../../workspace/conformance";
 import { McpServer } from "./server";
-import { workspaceReadTools, workspaceWriteTools } from "./workspace-tools";
+import { readArgv, workspaceReadTools, workspaceWriteTools } from "./workspace-tools";
 
 const KIND = "decisions/decision.kind.mjs";
 const chant = defaultChantCommand();
@@ -161,6 +161,9 @@ describe("reads", () => {
 
   test("the conformance suite's argv maps to the tool that answers it", () => {
     expect(mcpToolCall(["workspace", "records", "--kind", KIND, "--json"])).toEqual({ name: "workspace-records", arguments: { kind: KIND } });
+    expect(mcpToolCall(["workspace", "records", "--uncommitted", "--kind", KIND, "--json"])).toEqual({ name: "workspace-records", arguments: { uncommitted: true, kind: KIND } });
+    expect(readArgv("workspace-records", { kind: KIND, uncommitted: true })).toEqual(["workspace", "records", "--kind", KIND, "--uncommitted", "--json"]);
+    expect(() => readArgv("workspace-records", { uncommitted: true, at: "HEAD" })).toThrow(/takes no at or since/);
     expect(mcpToolCall(["workspace", "status", "dev", "--json"])).toEqual({ name: "workspace-status", arguments: { env: "dev" } });
     expect(mcpToolCall(["workspace", "graph", "--intent", "a.mjs:1", "--kind", KIND, "--json"])).toEqual({ name: "workspace-graph", arguments: { intent: "a.mjs:1", kind: [KIND] } });
     expect(mcpToolCall(["workspace", "graph", "--composites", "--json"])).toEqual({ name: "workspace-graph", arguments: { composites: true } });

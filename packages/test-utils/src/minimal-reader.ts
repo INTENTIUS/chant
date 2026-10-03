@@ -14,6 +14,7 @@ export function minimalReader(chant: ChantTransport) {
     check: ["--format", "json"],
     status: ["--json"],
     records: ["--json"],
+    "records --uncommitted": ["--json"],
     "graph --intent": ["--json"],
     "graph --composites": ["--json"],
   };

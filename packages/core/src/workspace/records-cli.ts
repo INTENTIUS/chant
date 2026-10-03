@@ -15,6 +15,11 @@
  *
  * With `--since <rev>` it prints what changed between two revisions instead,
  * through `records-since.ts` (#2673).
+ *
+ * A working-tree read in git says, for each record, whether it is committed,
+ * modified or new against `HEAD`, and names the branch, head and base of the
+ * checkout; `--uncommitted` lists only the records `HEAD` doesn't hold
+ * (#3160, `records-checkout.ts`).
  */
 
 import { execFileSync } from "node:child_process";
@@ -48,6 +53,7 @@ import {
   type SealInput,
   type VerdictAttestation,
 } from "./records";
+import { readCheckoutHead, worktreeStates, type CheckoutView, type WorktreeState } from "./records-checkout";
 import { gitTree, workingTree, type WorkspaceTree } from "./tree";
 import type { DecisionWork } from "./work";
 import { activeAttestors, type CommitAttestor, type ProvenanceLevel } from "./trust/attestor";
@@ -62,7 +68,7 @@ export const RECORDS_CONTRACT_VERSION = 1;
 export const RECORDS_OUTPUT_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/records/v1/records.schema.json";
 
 const USAGE =
-  "chant workspace records [--kind <kind file>] [--current] [--at <rev>] [--base <rev>] [--require attested] [--json] | chant workspace records [--kind <kind file>] --since <rev|session id> [--at <rev>] [--json] | chant workspace records pin <path> | chant workspace records new|amend|review|close (#2670, #2693)";
+  "chant workspace records [--kind <kind file>] [--current] [--uncommitted | --at <rev>] [--base <rev>] [--require attested] [--json] | chant workspace records [--kind <kind file>] --since <rev|session id> [--at <rev>] [--json] | chant workspace records pin <path> | chant workspace records new|amend|review|close (#2670, #2693)";
 
 /** Exit code when the read worked and a record falls below `--require`. */
 export const EXIT_BELOW_REQUIRED = 2;
@@ -81,6 +87,8 @@ export interface RecordsQuery {
    * false; the intent graph passes false, since it raises the warning itself.
    */
   workGaps?: boolean;
+  /** List only the records that are modified or new against `HEAD` (#3160). Needs git and a working-tree read. */
+  uncommitted?: boolean;
 }
 
 /**
@@ -108,6 +116,12 @@ export type RecordView = RecordEntry & {
    * (`record-decided.ts`). The intent graph's windows open at this commit.
    */
   decidedIn?: DecidedIn | null;
+  /**
+   * For a read in the working tree of a git repository (#3160): whether the
+   * record's file is as `HEAD` holds it (`committed`), changed from it
+   * (`modified`), or not in it (`new`), staged or not. Absent under `--at`.
+   */
+  worktree?: WorktreeState;
 };
 
 /** The role in the trust policy whose holders' verdicts the quorum does not count (#2671). */
@@ -134,6 +148,10 @@ export type RecordsDocument =
       /** The directory pinned paths resolve in, from the repository root: the workspace holding the kind file, or the repository root (#2549). */
       workspaceRoot: string;
       current: boolean;
+      /** Whether only the records `HEAD` doesn't hold were listed (`--uncommitted`, #3160). */
+      uncommitted: boolean;
+      /** For a read in the working tree of a git repository (#3160): the branch, head and base it is on, and the records deleted from it. Absent under `--at`. */
+      checkout?: CheckoutView;
       trust: TrustView;
       records: RecordView[];
       summary: { total: number; valid: number; invalid: number; superseded: number };
@@ -227,7 +245,8 @@ export async function queryDeclaredRecords(kinds: { declared: RecordKindDeclarat
     const doc = await queryRecords({ ...query, kind: k.file });
     out.push({ ...doc, declared: { member: k.declared.member, path: k.declared.path, name: k.declared.name } });
   }
-  return { $schema: RECORDS_OUTPUT_SCHEMA_ID, contract: RECORDS_CONTRACT_VERSION, kinds: out, ...(query.current ? { spec: specOf(out) } : {}) };
+  // The spec is every current spec record; an --uncommitted read lists only some, so it has none.
+  return { $schema: RECORDS_OUTPUT_SCHEMA_ID, contract: RECORDS_CONTRACT_VERSION, kinds: out, ...(query.current && !query.uncommitted ? { spec: specOf(out) } : {}) };
 }
 
 /** A records read, before provenance. */
@@ -356,6 +375,8 @@ export async function readRecordsFor(
 
 /** Run the query and build the document `--json` prints. Never throws a {@link RecordReadError}. */
 export async function queryRecords(query: RecordsQuery): Promise<RecordsDocument> {
+  // A revision has no working tree to hold anything uncommitted; the CLI and the MCP tool refuse the pair first.
+  if (query.uncommitted && query.at !== undefined) throw new Error("--uncommitted reads the working tree and takes no --at");
   try {
     const { loaded, root, top, at, workspaceRoot, tree, result } = await readRecordsFor(query);
     // Provenance, judged by the policy at base and never by the tree read (#2547).
@@ -395,6 +416,23 @@ export async function queryRecords(query: RecordsQuery): Promise<RecordsDocument
       const leases = await activeWorkLeases(loaded.file);
       for (const r of records) if (r.id !== null) r.lease = leases.get(r.id) ?? null;
     }
+    // Which records the checkout holds uncommitted, judged after every record is read, so links still resolve across the whole set (#3160).
+    let checkout: CheckoutView | undefined;
+    let listed = records;
+    let summary = result.summary;
+    if (at === null && top) {
+      const { head, ...rest } = readCheckoutHead(top, query.base);
+      const dir = relative(root, loaded.dir).split(sep).join("/") || ".";
+      const { states, deleted } = worktreeStates(top, head, dir, records.map((r) => r.path), new RegExp(loaded.kind.location.match));
+      for (const r of records) r.worktree = states.get(r.path) ?? "new";
+      checkout = { branch: rest.branch, head, base: rest.base, baseFrom: rest.baseFrom, deleted };
+      if (query.uncommitted) {
+        listed = records.filter((r) => r.worktree !== "committed");
+        summary = { ...summary, total: listed.length, valid: listed.filter((r) => r.valid).length, invalid: listed.filter((r) => !r.valid).length };
+      }
+    } else if (query.uncommitted && !top) {
+      throw new RecordReadError("not-a-git-repository", "--uncommitted compares the working tree with HEAD, and this directory is not in a git repository");
+    }
     return {
       $schema: RECORDS_OUTPUT_SCHEMA_ID,
       contract: RECORDS_CONTRACT_VERSION,
@@ -408,9 +446,11 @@ export async function queryRecords(query: RecordsQuery): Promise<RecordsDocument
       at,
       workspaceRoot,
       current: !!query.current,
+      uncommitted: !!query.uncommitted,
+      ...(checkout ? { checkout } : {}),
       trust: { base: base.commit, baseFrom: base.from, active: policy.active, signersPath: policy.signersPath, problems: policy.problems },
-      records,
-      summary: result.summary,
+      records: listed,
+      summary,
       ...(result.decisions ? { decisions: result.decisions } : {}),
     };
   } catch (err) {
@@ -561,6 +601,11 @@ export async function runWorkspaceRecords(ctx: CommandContext): Promise<number> 
     console.error(formatError({ message: `chant workspace records takes no argument but pin, new, amend, review or close (got ${args.extraPositional})`, hint: USAGE }));
     return 1;
   }
+  const pairing = uncommittedPairing(args);
+  if (pairing) {
+    console.error(formatError({ message: pairing, hint: USAGE }));
+    return 1;
+  }
   if (!args.kind) return runDeclaredRecords(args);
   if (args.require !== undefined && args.require !== "attested") {
     console.error(formatError({ message: `--require takes one level, attested, not ${JSON.stringify(args.require)}`, hint: USAGE }));
@@ -579,13 +624,13 @@ export async function runWorkspaceRecords(ctx: CommandContext): Promise<number> 
     else console.log(formatSince(since));
     return "error" in since ? 1 : 0;
   }
-  const doc = await queryRecords({ kind: args.kind, current: args.current, at: args.at, base: args.base, cwd: process.cwd() });
+  const doc = await queryRecords({ kind: args.kind, current: args.current, uncommitted: args.uncommitted, at: args.at, base: args.base, cwd: process.cwd() });
   if (args.json) {
     console.log(JSON.stringify(doc, null, 2));
   } else if ("error" in doc) {
     console.error(formatError({ message: `${doc.error.code}: ${doc.error.message}`, hint: USAGE }));
   } else {
-    console.log(formatRecords(doc.records, doc.summary, doc.at));
+    console.log(formatRecords(doc.records, doc.summary, doc.at, doc.checkout));
   }
   if ("error" in doc) return 1;
   if (args.require) {
@@ -643,7 +688,7 @@ async function runDeclaredRecords(args: CommandContext["args"]): Promise<number>
     return 1;
   }
   if (args.since !== undefined) return runDeclaredSince(declared, args);
-  const set = await queryDeclaredRecords(declared, { current: args.current, at: args.at, base: args.base, cwd: process.cwd() });
+  const set = await queryDeclaredRecords(declared, { current: args.current, uncommitted: args.uncommitted, at: args.at, base: args.base, cwd: process.cwd() });
   if (args.json) console.log(JSON.stringify(set, null, 2));
   for (const doc of args.json ? [] : set.kinds) {
     if ("error" in doc) {
@@ -651,7 +696,7 @@ async function runDeclaredRecords(args: CommandContext["args"]): Promise<number>
       continue;
     }
     console.log(`${doc.declared.name ?? doc.kind.name} (${doc.declared.path})`);
-    console.log(formatRecords(doc.records, doc.summary, doc.at));
+    console.log(formatRecords(doc.records, doc.summary, doc.at, doc.checkout));
   }
   if (set.kinds.some((d) => "error" in d)) return 1;
   if (args.require) {
@@ -717,7 +762,20 @@ export function belowRequired(records: RecordView[], required: ProvenanceLevel):
   return records.filter((r) => r.provenance.level !== required);
 }
 
-function formatRecords(records: RecordView[], summary: { total: number; valid: number; invalid: number; superseded: number }, at: string | null): string {
+/** Why `--uncommitted` can't be given with the other flags given, or undefined when it can (#3160). */
+function uncommittedPairing(args: CommandContext["args"]): string | undefined {
+  if (!args.uncommitted) return undefined;
+  if (args.at !== undefined) return "--uncommitted reads the working tree against HEAD, and takes no --at";
+  if (args.since !== undefined) return "--uncommitted takes no --since: --since compares two revisions";
+  return undefined;
+}
+
+function formatRecords(
+  records: RecordView[],
+  summary: { total: number; valid: number; invalid: number; superseded: number },
+  at: string | null,
+  checkout?: CheckoutView,
+): string {
   const lines: string[] = [];
   const idWidth = Math.max(2, ...records.map((r) => (r.id ?? "-").length));
   const stateWidth = Math.max(5, ...records.map((r) => (r.state ?? "-").length));
@@ -728,7 +786,8 @@ function formatRecords(records: RecordView[], summary: { total: number; valid: n
     const remediated = r.remediatedBy.length > 0 ? `  remediated by ${r.remediatedBy.join(", ")}` : "";
     const attested = r.provenance.level === "attested" ? `  attested by ${r.provenance.principal}` : "";
     const sealed = r.attested === true ? `  sealed by ${(r.data?.[RECORD_SEAL_FIELD] as { signer: string }).signer}` : "";
-    lines.push(`${(r.id ?? "-").padEnd(idWidth)}  ${(r.state ?? "-").padEnd(stateWidth)}  ${title}${superseded}${remediated}${attested}${sealed}${flag}`);
+    const uncommitted = r.worktree === "new" || r.worktree === "modified" ? `  (${r.worktree}, uncommitted)` : "";
+    lines.push(`${(r.id ?? "-").padEnd(idWidth)}  ${(r.state ?? "-").padEnd(stateWidth)}  ${title}${superseded}${remediated}${attested}${sealed}${uncommitted}${flag}`);
     if (r.ready !== undefined) {
       const blocked = (r.blockedBy ?? []).map((b) => `${b.id} (${b.state ?? "unknown"})`).join(", ");
       const implemented = (r.implements ?? []).map((d) => `${d.id} (${d.state ?? "unknown"})`).join(", ");
@@ -745,9 +804,16 @@ function formatRecords(records: RecordView[], summary: { total: number; valid: n
       lines.push(`${" ".repeat(idWidth + 2)}quorum ${q.agreed} of ${q.need} agreed, ${verdict}; ${q.notCounted.length} not counted${concerns}`);
     }
   }
+  for (const path of checkout?.deleted ?? []) lines.push(`${"-".padEnd(idWidth)}  ${"-".padEnd(stateWidth)}  ${path}  (deleted, uncommitted)`);
   lines.push(
     `${summary.total} records${at ? ` at ${at.slice(0, 8)}` : ""}: ${summary.valid} valid, ${summary.invalid} invalid, ${summary.superseded} superseded`,
   );
+  if (checkout) {
+    const branch = checkout.branch ?? "a detached HEAD";
+    const head = checkout.head ? ` at ${checkout.head.slice(0, 8)}` : " with no commits";
+    const base = checkout.base ? `, forked from ${checkout.base.slice(0, 8)} of ${checkout.baseFrom}` : "";
+    lines.push(`working tree on ${branch}${head}${base}`);
+  }
   return lines.join("\n");
 }
 
