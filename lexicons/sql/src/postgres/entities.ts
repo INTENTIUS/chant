@@ -599,6 +599,7 @@ function checkDef(ctx: Ctx, c: ConstraintNode): CheckDef {
 function foreignKeyDef(ctx: Ctx, c: ConstraintNode, columns: string[]): ForeignKeyDef {
   const r = c.references!;
   feed(ctx, r.table.span, "foreignKeys");
+  for (const x of r.columns) feed(ctx, x.span, "foreignKeys");
   return strip(
     {
       name: c.name,
@@ -854,7 +855,12 @@ function build(tag: PostgresTag, strings: TemplateStringsArray | readonly string
         }
       };
       node.columns.forEach((c, i) => c.constraints.forEach((k) => file(k, [columns[i]!.name])));
-      node.constraints.forEach((k) => file(k, k.columns.map((x) => columnName(ctx, x))));
+      node.constraints.forEach((k) => {
+        // Text spliced into a key's column list feeds the key's columns.
+        const path = k.kind === "PRIMARY KEY" ? "primaryKey.columns" : k.kind === "UNIQUE" ? "uniques" : k.kind === "FOREIGN KEY" ? "foreignKeys" : undefined;
+        if (path) for (const x of k.columns) feed(ctx, x.span, path);
+        file(k, k.columns.map((x) => columnName(ctx, x)));
+      });
       const named = new Map<string, Commentable>();
       for (const c of [primaryKey, ...uniques, ...checks, ...foreignKeys, ...exclusions]) if (c?.name) named.set(c.name, c);
       const comment = applyComments(tag, ctx, comments, q, ["TABLE"], { columns: new Map(columns.map((c) => [c.name, c])), constraints: named });
