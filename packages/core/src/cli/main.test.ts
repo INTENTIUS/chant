@@ -769,6 +769,7 @@ describe("workspace init and ls (#2534)", () => {
       "workspace init",
       "workspace lineage",
       "workspace lint",
+      "workspace lock",
       "workspace ls",
       "workspace member-run",
       "workspace patch",

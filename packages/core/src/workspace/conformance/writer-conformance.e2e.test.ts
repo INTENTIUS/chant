@@ -94,6 +94,8 @@ describe("the writer conformance suite (#3159)", () => {
     expect(report.skipped).toEqual([]);
     expect(report.results.map((r) => [r.id, r.by])).toEqual(WRITER_SCRIPT.map((s) => [s.id, "writer"]));
     expect(report.facts.after).toEqual(report.facts.before);
+    // #3173: three amendments of one record at once, one written, two refused with record-conflict and written on retry.
+    expect(report.after.concurrent).toEqual([]);
     expect(report.facts.before).toMatchObject({
       decision: [["fix-001", "decided"], ["fix-002", "proposed"]],
       session: [["S-0001", "closed"]],
@@ -139,5 +141,26 @@ describe("the writer conformance suite (#3159)", () => {
       'holds: events is held as "database"; outside the repo a tool keeps only cache, telemetry, secret, runtime (ws-074)',
     ]);
     expect(report.after.readBack).toEqual([]);
+    expect(report.after.concurrent).toEqual([]);
+  }, 900_000);
+
+  test.concurrent("a writer that hides a conflict by writing again without --expect is caught (#3173)", async () => {
+    const blindRetry: WorkspaceWriterFactory = (chant, ctx) => {
+      const inner = referenceWriter(chant, ctx);
+      return {
+        async write(step) {
+          const doc = (await inner.write(step)) as { error?: { code: string } };
+          if (doc.error?.code !== "record-conflict" || step.action !== "records amend") return doc;
+          // Overwrites whatever the other writer wrote, and reports success.
+          const args = step.args.filter((a, i, all) => a !== "--expect" && all[i - 1] !== "--expect");
+          return JSON.parse((await chant.run(["workspace", "records", "amend", ...args], { input: step.input })).stdout);
+        },
+        facts: () => inner.facts(),
+      };
+    };
+    const report = await runWorkspaceWriterConformance(blindRetry, { actions: ["records amend"] });
+    expect(report.after.concurrent.length).toBeGreaterThan(0);
+    expect(report.after.concurrent.every((p) => p.startsWith("concurrent: "))).toBe(true);
+    expect(report.after.concurrent.join("\n")).toMatch(/made 2 chant calls/);
   }, 900_000);
 });

@@ -33,6 +33,16 @@
  *      repository does not have, unless it names itself one of the four
  *      exceptions.
  *
+ *   5. Concurrent writes (#3173, ws-089). When the writer performs `records
+ *      amend`, the suite has it make three amendments of the script's
+ *      decision at once, each from the digest the suite read
+ *      (`--expect <digest>`), as two people and an agent would. Exactly one
+ *      must be written; the other two must come back as chant's
+ *      record-conflict refusal, naming the winner's digest, returned to the
+ *      suite unchanged rather than retried blindly or hidden. The suite then
+ *      has the writer retry each from the digest its refusal named, and each
+ *      retry must be written. See {@link CONCURRENT_AMENDS}.
+ *
  * `facts()` may only read: every chant call it makes must be a read-contract
  * command, and it must leave the workspace as it was.
  *
@@ -122,7 +132,8 @@ export const WRITE_CONTRACT_JSON_FLAGS: Record<WriteContractAction, readonly (re
 /** What each action is given. Field documents are JSON values; the command reads them from stdin. */
 export interface WriteParams {
   "records new": { kind: string; fields: Record<string, unknown> };
-  "records amend": { id: string; kind: string; fields: Record<string, unknown> };
+  /** `expect` (#3173): the record's digest the write builds on, passed as `--expect`. */
+  "records amend": { id: string; kind: string; fields: Record<string, unknown>; expect?: string };
   "records review": { id: string; kind: string; verdict: "agree" | "dissent" | "abstain"; by: string; note?: string };
   "records close": { id: string; kind: string };
   "points ask": { point: string; kind: string; inputs: Record<string, unknown>; subject?: string };
@@ -167,7 +178,7 @@ export function writeArgv<A extends WriteContractAction>(action: A, params: Writ
     }
     case "records amend": {
       const q = p as WriteParams["records amend"];
-      return { args: [q.id, "--kind", q.kind, "--set", "-"], input: json(q.fields) };
+      return { args: [q.id, "--kind", q.kind, "--set", "-", ...(q.expect !== undefined ? ["--expect", q.expect] : [])], input: json(q.fields) };
     }
     case "records review": {
       const q = p as WriteParams["records review"];
@@ -355,6 +366,24 @@ export const WRITER_SCRIPT: readonly WriterScriptStep[] = [
   })),
 ];
 
+/**
+ * The concurrent case (#3173): three amendments of the script's decision the
+ * writer makes at once, each setting its question, as two people and an
+ * agent answering the same record would. The suite gives each the digest it
+ * read as `expect`.
+ */
+export const CONCURRENT_AMENDS: readonly { id: string; fields: Record<string, unknown> }[] = [
+  { id: "concurrent-alice", fields: { question: "How does a tool write a fact about this workspace, as alice reads it?" } },
+  { id: "concurrent-bob", fields: { question: "How does a tool write a fact about this workspace, as bob reads it?" } },
+  { id: "concurrent-agent", fields: { question: "How does a tool write a fact about this workspace, as the agent reads it?" } },
+];
+
+/** The amend step of {@link CONCURRENT_AMENDS} entry `c`, on record `id`, from digest `expect`. */
+export function concurrentAmendStep(c: { id: string; fields: Record<string, unknown> }, id: string, expect: string): WriteStep {
+  const params: WriteParams["records amend"] = { id, kind: WRITER_KINDS.decision, fields: c.fields, expect };
+  return { id: c.id, action: "records amend", params, ...writeArgv("records amend", params) } as WriteStep;
+}
+
 /** The four things ws-074 lets a tool keep outside the repo. */
 export const PRIVATE_STATE_CATEGORIES = ["cache", "telemetry", "secret", "runtime"] as const;
 export type PrivateStateCategory = (typeof PRIVATE_STATE_CATEGORIES)[number];
@@ -436,8 +465,8 @@ export interface WorkspaceWriterConformanceReport {
   /** The actions not in `actions`, so not applicable to this writer. */
   skipped: WriteContractAction[];
   results: WriterStepResult[];
-  /** The problems of the checks after the script, by check. */
-  after: { facts: string[]; state: string[]; amnesia: string[]; holds: string[]; readBack: string[] };
+  /** The problems of the checks after the script, by check. `concurrent` is empty, and not run, when the writer does not perform records amend. */
+  after: { facts: string[]; state: string[]; amnesia: string[]; holds: string[]; readBack: string[]; concurrent: string[] };
   /** What `facts()` returned before amnesia and after. */
   facts: { before: unknown; after: unknown };
   /** The workspace written. Removed before the report is returned. */
@@ -782,7 +811,7 @@ export async function runWorkspaceWriterConformance(writer: WorkspaceWriterFacto
       throw new Error(`chant ${argv.join(" ")} printed no JSON (exit ${run.status}): ${run.stderr.trim()}`);
     }
   };
-  const after = { facts: [] as string[], state: [] as string[], amnesia: [] as string[], holds: [] as string[], readBack: [] as string[] };
+  const after = { facts: [] as string[], state: [] as string[], amnesia: [] as string[], holds: [] as string[], readBack: [] as string[], concurrent: [] as string[] };
   const facts: { before: unknown; after: unknown } = { before: undefined, after: undefined };
   const results: WriterStepResult[] = [];
   try {
@@ -817,6 +846,11 @@ export async function runWorkspaceWriterConformance(writer: WorkspaceWriterFacto
       done[st.id] = printed ?? ((doc ?? {}) as Record<string, unknown>);
       problems.push(...unreportedChanges(st, done[st.id], files, refs));
       results.push({ id: st.id, action: st.action, by: "writer", args: st.args, problems });
+    }
+
+    // Concurrent writes (#3173): three amendments of one record at once, each from the digest read.
+    if (checked.includes("records amend")) {
+      after.concurrent.push(...(await concurrentAmends(built, calls, direct, String(done.decision?.id ?? ""), ws.dir)));
     }
 
     // What the writer shows, read only through the read contract.
@@ -929,11 +963,122 @@ export async function runWorkspaceWriterConformance(writer: WorkspaceWriterFacto
       }
     }
 
-    const problems = [...results.flatMap((r) => r.problems), ...after.facts, ...after.state, ...after.amnesia, ...after.holds, ...after.readBack];
+    const problems = [...results.flatMap((r) => r.problems), ...after.concurrent, ...after.facts, ...after.state, ...after.amnesia, ...after.holds, ...after.readBack];
     return { problems, checked, skipped, results, after, facts, workspaceDir: ws.dir };
   } finally {
     rmSync(stateDir, { recursive: true, force: true });
     rmSync(inputsDir, { recursive: true, force: true });
     ws.dispose();
+  }
+}
+
+/**
+ * The concurrent case (#3173, ws-089): the writer makes the three
+ * {@link CONCURRENT_AMENDS} of record `id` at once, each from the digest the
+ * suite read. Exactly one is written and the others are refused with
+ * record-conflict naming its digest; each is then retried from the digest
+ * its refusal named, and written. Returns the problems, each starting
+ * `concurrent:`.
+ */
+export async function concurrentAmends(
+  built: WorkspaceWriter,
+  calls: ChantRun[],
+  direct: (argv: string[], input?: string) => Promise<Record<string, unknown>>,
+  id: string,
+  dir: string,
+): Promise<string[]> {
+  const problems: string[] = [];
+  const digestOf = async (): Promise<{ digest: string; path: string } | undefined> => {
+    const doc = await direct(["workspace", "records", "--kind", WRITER_KINDS.decision, "--json"]);
+    const r = ((doc.records ?? []) as { id: string; digest: string; path: string }[]).find((x) => x.id === id);
+    return r ? { digest: r.digest, path: r.path } : undefined;
+  };
+  const start = await digestOf();
+  if (!start) return [`concurrent: the script's decision ${id || "(none)"} can't be read back to amend`];
+  const files = { before: worktreeDigest(dir), after: {} as Record<string, string> };
+  const refs = { before: gitRefs(dir), after: {} as Record<string, string> };
+  const steps = CONCURRENT_AMENDS.map((c) => concurrentAmendStep(c, id, start.digest));
+  calls.length = 0;
+  const docs = await Promise.all(
+    steps.map(async (st) => {
+      try {
+        return { st, doc: await built.write(st) };
+      } catch (e) {
+        problems.push(`concurrent: ${st.id} (${st.action}): the writer threw: ${(e as Error).message}`);
+        return { st, doc: undefined };
+      }
+    }),
+  );
+  // Each step's call: the one that gave chant its fields.
+  const printed = new Map<string, Record<string, unknown> | undefined>();
+  for (const { st, doc } of docs) {
+    const mine = calls.filter((c) => c.input !== undefined && st.input !== undefined && isDeepStrictEqual(safeJson(c.input), JSON.parse(st.input)));
+    const callProblems = writerCallProblems(st, mine);
+    if (callProblems.length > 0) {
+      problems.push(...callProblems.map((p) => `concurrent: ${p}`));
+      continue;
+    }
+    const out = safeJson(mine[0].stdout) as Record<string, unknown> | undefined;
+    printed.set(st.id, out);
+    if (!isDeepStrictEqual(doc, out)) problems.push(`concurrent: ${st.id} (${st.action}): the writer must return the document chant printed, unchanged, refusal included, and it returned something else`);
+    const { validate } = writeContractSchema(st.action);
+    if (!validate(out)) problems.push(`concurrent: ${st.id} (${st.action}): the document does not validate against ${WRITE_CONTRACT_SCHEMAS[st.action]}: ${JSON.stringify(validate.errors)}`);
+  }
+  if (problems.length > 0) return problems;
+  const won = steps.filter((st) => printed.get(st.id)?.error === undefined);
+  const lost = steps.filter((st) => printed.get(st.id)?.error !== undefined);
+  if (won.length !== 1) {
+    problems.push(`concurrent: ${won.length} of the three amendments from digest ${start.digest} were written (${won.map((s) => s.id).join(", ") || "none"}); exactly one may be`);
+    return problems;
+  }
+  const d1 = String(printed.get(won[0].id)?.digest ?? "");
+  for (const st of lost) {
+    const doc = printed.get(st.id)!;
+    const code = (doc.error as { code?: string }).code;
+    const conflict = doc.conflict as { digest?: string; expected?: string } | undefined;
+    if (code !== "record-conflict") problems.push(`concurrent: ${st.id} was refused with ${code}, not record-conflict`);
+    else if (conflict?.digest !== d1 || conflict?.expected !== start.digest) problems.push(`concurrent: ${st.id}'s conflict names ${brief(conflict)}, not expected ${start.digest} and digest ${d1}`);
+  }
+  files.after = worktreeDigest(dir);
+  refs.after = gitRefs(dir);
+  const changed = treeChanges(files.before, files.after).filter((c) => c.replace(/ \((added|changed|removed)\)$/, "") !== start.path);
+  if (changed.length > 0) problems.push(`concurrent: files changed that chant did not report writing: ${changed.join(", ")}`);
+  if (Object.keys(refChanges(refs.before, refs.after)).length > 0) problems.push(`concurrent: git refs changed: ${Object.keys(refChanges(refs.before, refs.after)).join(", ")}`);
+  if (problems.length > 0) return problems;
+  // Each loser retries from the digest it was told, one after the other.
+  let digest = d1;
+  for (const st of lost) {
+    const retry = concurrentAmendStep(CONCURRENT_AMENDS.find((c) => c.id === st.id)!, id, digest);
+    calls.length = 0;
+    let doc: unknown;
+    try {
+      doc = await built.write(retry);
+    } catch (e) {
+      problems.push(`concurrent: ${st.id}'s retry: the writer threw: ${(e as Error).message}`);
+      continue;
+    }
+    const p = writerCallProblems({ ...retry, id: `${st.id} retry` } as WriteStep, calls);
+    if (p.length > 0) {
+      problems.push(...p.map((x) => `concurrent: ${x}`));
+      continue;
+    }
+    const out = safeJson(calls[0].stdout) as Record<string, unknown> | undefined;
+    if (out?.error !== undefined) {
+      problems.push(`concurrent: ${st.id}'s retry from ${digest} was refused: ${brief(out.error)}`);
+      continue;
+    }
+    if (!isDeepStrictEqual(doc, out)) problems.push(`concurrent: ${st.id}'s retry: the writer must return the document chant printed, unchanged`);
+    digest = String(out?.digest ?? "");
+  }
+  const end = await digestOf();
+  if (problems.length === 0 && end?.digest !== digest) problems.push(`concurrent: after the retries records --json gives ${id} digest ${end?.digest}, and the last retry printed ${digest}`);
+  return problems;
+}
+
+function safeJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
   }
 }

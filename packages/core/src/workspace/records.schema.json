@@ -302,6 +302,22 @@
           "enum": ["committed", "modified", "new"],
           "description": "Added in contract 1 by #3160, on every record of a read of the working tree in a git repository; absent under --at and outside git. committed when the file is as HEAD holds it, modified when it differs from HEAD, new when HEAD doesn't hold it, staged or not. modified and new are the records a person has kept and not yet committed or applied."
         },
+        "lastWrite": {
+          "description": "Added in contract 1 by #3173, beside worktree. The last chant write of the record's file in this working tree (records new, amend, review or close, points ask or answer), from the write journal in the git directory, while the file still holds the text that write left; null when the journal doesn't know it, such as after a commit was checked out or the file was edited by hand. A UI shows it with digest, so a person sees who changed a record they are looking at. It is a cache, never a fact: the journal can be lost.",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["verb", "by", "agent", "at"],
+              "properties": {
+                "verb": { "type": "string", "description": "The write command, such as records amend or points answer." },
+                "by": { "type": ["string", "null"], "description": "The principal the write named (--by, or the people who answered), or null when it named none." },
+                "agent": { "type": ["string", "null"], "description": "The agent session the write was made in (CHANT_AGENT), or null." },
+                "at": { "type": "string", "description": "When, as an ISO 8601 time." }
+              }
+            }
+          ]
+        },
         "contract": {
           "description": "Added in contract 1 by #3147, on every parsed record of a work kind whose work block names a contract kind. The contract record the item builds, by the id in the work block's contract field, with that record's state now; state is null when no record of the contract kind has the id. Null when the item names no contract.",
           "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/workLink" }]

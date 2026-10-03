@@ -19,6 +19,14 @@
  * as well, after checking both files, so the two lists never differ.
  * `records close` is in `records-close.ts`.
  *
+ * Each write holds the working tree's write lock (`write-lock.ts`, #3173,
+ * ws-089) from its first read to its last write, so writes to one working
+ * tree never interleave. `amend`, `review` and `close` take `--expect
+ * <digest>`: the record's digest the caller last read. When the record has
+ * moved on since, the write is refused with record-conflict, naming the
+ * digest it has now and the last chant write of it, and the caller re-reads
+ * and tries again.
+ *
  * `new --sign` and `amend --sign` seal the record's author (#2688), and
  * `review --sign` seals a verdict (#2687): see `trust/seal.ts`. A record of
  * a kind that declares `seal` gets its whole-file seal when `new` or `amend`
@@ -53,6 +61,7 @@ import { workingTree } from "./tree";
 import { AGENT_ENV, refuseRecordWrite, WRITE_SCOPE_CODES, WriteScopeError, type ScopeSource } from "./write-scope";
 import { IDENTITY_CODES, IdentityError, refuseUnidentified } from "./identity";
 import type { WriteVerb } from "./declaration";
+import { lastWriteReader, noteWrites, withWriteLock, writeFileAtomic, WriteLockError, WRITE_LOCK_CODES, type LastWrite, type WriteLockWho } from "./write-lock";
 
 // ── Contract ─────────────────────────────────────────────────────────────────
 
@@ -78,6 +87,7 @@ export const NEW_ERROR_CODES = [
   "source-harvest-not-proposed",
   "record-state-not-initial",
   "ratify-quorum-not-met",
+  ...WRITE_LOCK_CODES,
   ...WRITE_SCOPE_CODES,
   ...IDENTITY_CODES,
   ...RECORD_REASON_CODES,
@@ -94,6 +104,8 @@ export const AMEND_ERROR_CODES = [
   "amend-supersede-instead",
   "record-sign-failed",
   "ratify-quorum-not-met",
+  "record-conflict",
+  ...WRITE_LOCK_CODES,
   ...WRITE_SCOPE_CODES,
   ...IDENTITY_CODES,
   ...RECORD_REASON_CODES,
@@ -110,6 +122,8 @@ export const REVIEW_ERROR_CODES = [
   "review-sign-failed",
   "session-unknown",
   "session-not-open",
+  "record-conflict",
+  ...WRITE_LOCK_CODES,
   ...WRITE_SCOPE_CODES,
   ...IDENTITY_CODES,
   ...RECORD_REASON_CODES,
@@ -127,10 +141,26 @@ export class RecordWriteError extends Error {
   constructor(
     readonly code: WriteErrorCode,
     message: string,
+    /** With record-conflict: the record as it is now. */
+    readonly conflict?: RecordConflict,
   ) {
     super(message);
     this.name = "RecordWriteError";
   }
+}
+
+/**
+ * What a record-conflict refusal says about the record (#3173): the digest
+ * the caller expected, the one it has now, and the last chant write of it
+ * when the journal knows it. The caller re-reads the record and writes again
+ * with `--expect` set to `digest`.
+ */
+export interface RecordConflict {
+  id: string;
+  path: string;
+  expected: string;
+  digest: string;
+  lastWrite: LastWrite | null;
 }
 
 export interface KindView {
@@ -151,6 +181,12 @@ export interface WriteResult {
   dryRun: boolean;
   /** The written record's warnings, as `records` would report them. */
   warnings: RecordWarning[];
+  /**
+   * The record's digest after the write, as `records --json` reports it
+   * (#3173): what the caller passes as `--expect` to its next write of the
+   * record.
+   */
+  digest: string;
   /** With --dry-run, the whole text the command would write. */
   text?: string;
 }
@@ -159,6 +195,8 @@ export interface WriteFailure<C> {
   $schema: string;
   contract: number;
   error: { code: C; message: string };
+  /** With record-conflict (#3173): the record as it is now. */
+  conflict?: RecordConflict;
 }
 
 /** A record's author seal as `new` and `amend` write it with `--sign` (#2688). */
@@ -470,6 +508,35 @@ async function refuseRatifyBelowQuorum(o: Opened, written: RecordEntry, id: stri
   );
 }
 
+/**
+ * Refuse a write to `target` when the caller expected another digest
+ * (#3173): someone wrote the record since the caller read it. Called holding
+ * the write lock, after the records are read, so the digest compared is the
+ * one the write would build on.
+ */
+export function refuseStale(o: Opened, target: RecordEntry, id: string, expect: string | undefined): void {
+  if (expect === undefined || expect === target.digest) return;
+  const lastWrite = lastWriteReader(o.root)(target.path, o.source.read(target.path));
+  const who = lastWrite ? ` It was last written by chant workspace ${lastWrite.verb}${lastWrite.by ? ` for ${lastWrite.by}` : ""}${lastWrite.agent ? ` in agent session ${lastWrite.agent}` : ""} at ${lastWrite.at}.` : "";
+  throw new RecordWriteError(
+    "record-conflict",
+    `${id} has changed since the digest given with --expect (${expect}): its digest is now ${target.digest}.${who} Read it again with chant workspace records --json, and write again with --expect ${target.digest} if the change still stands`,
+    { id, path: target.path, expected: expect, digest: target.digest, lastWrite },
+  );
+}
+
+/** Refuse a --expect that is not a digest, before anything is read. */
+function refuseExpectShape(expect: string | undefined): void {
+  if (expect !== undefined && !/^[0-9a-f]{64}$/.test(expect)) {
+    throw new RecordWriteError("write-usage-invalid", `--expect takes a record's digest, 64 lowercase hex digits as records --json prints it, not ${JSON.stringify(expect)}`);
+  }
+}
+
+/** Who a write names, for the lock's owner file and the journal. */
+export function writeWho(verb: string, opts: { by?: string; agent?: string }): WriteLockWho {
+  return { verb, by: opts.by ?? null, agent: opts.agent ?? null };
+}
+
 export function findRecord(entries: RecordEntry[], id: string, kind: string): RecordEntry & { data: Record<string, unknown> } {
   const hits = entries.filter((e) => e.id === id);
   if (hits.length === 0) throw new RecordWriteError("record-not-found", `no ${kind} record has id ${id}`);
@@ -648,8 +715,9 @@ function today(): string {
 }
 
 export function failure<C>(schema: string, err: unknown): WriteFailure<C> {
-  if (err instanceof RecordWriteError || err instanceof RecordReadError || err instanceof WriteScopeError || err instanceof IdentityError) {
-    return { $schema: schema, contract: RECORDS_WRITE_CONTRACT_VERSION, error: { code: err.code as C, message: err.message } };
+  if (err instanceof RecordWriteError || err instanceof RecordReadError || err instanceof WriteScopeError || err instanceof IdentityError || err instanceof WriteLockError) {
+    const conflict = err instanceof RecordWriteError ? err.conflict : undefined;
+    return { $schema: schema, contract: RECORDS_WRITE_CONTRACT_VERSION, error: { code: err.code as C, message: err.message }, ...(conflict ? { conflict } : {}) };
   }
   throw err;
 }
@@ -786,8 +854,16 @@ function applyChannel(o: Opened, fields: Record<string, unknown>, opts: ChannelO
   return out;
 }
 
-/** `records new`: write one new record from validated fields, sealed by its author with `sign`. */
+/** `records new`: write one new record from validated fields, sealed by its author with `sign`. Holds the write lock (#3173). */
 export async function newRecord(opts: NewRecordOptions & ChannelOptions): Promise<NewDocument> {
+  try {
+    return await withWriteLock(opts.cwd, writeWho("records new", opts), opts.dryRun, () => newRecordLocked(opts));
+  } catch (err) {
+    return failure<NewErrorCode>(RECORDS_NEW_SCHEMA_ID, err);
+  }
+}
+
+async function newRecordLocked(opts: NewRecordOptions & ChannelOptions): Promise<NewDocument> {
   try {
     if (opts.prefix !== undefined && !/^[A-Za-z][A-Za-z0-9]*$/.test(opts.prefix)) {
       throw new RecordWriteError("write-usage-invalid", `--prefix takes letters and digits, starting with a letter, not ${JSON.stringify(opts.prefix)}`);
@@ -830,7 +906,10 @@ export async function newRecord(opts: NewRecordOptions & ChannelOptions): Promis
     const written = await validatedEntry(o, before, path, text);
     await refuseRatifyBelowQuorum(o, written, id);
     const warnings = written.warnings;
-    if (!opts.dryRun) writeFileSync(abs(o, path), text, { flag: "wx" });
+    if (!opts.dryRun) {
+      writeFileSync(abs(o, path), text, { flag: "wx" });
+      noteWrites(o.root, [{ path, text }], writeWho("records new", opts));
+    }
     return {
       $schema: RECORDS_NEW_SCHEMA_ID,
       contract: RECORDS_WRITE_CONTRACT_VERSION,
@@ -840,6 +919,7 @@ export async function newRecord(opts: NewRecordOptions & ChannelOptions): Promis
       ...(seal ? { seal } : {}),
       dryRun: !!opts.dryRun,
       warnings,
+      digest: written.digest,
       ...(opts.dryRun ? { text } : {}),
     };
   } catch (err) {
@@ -860,6 +940,8 @@ export interface AmendRecordOptions {
   sign?: string | true;
   /** The agent session the write is made in (#2548). */
   agent?: string;
+  /** The record's digest the caller last read (#3173): the write is refused with record-conflict when the record has another. */
+  expect?: string;
 }
 
 /**
@@ -878,6 +960,15 @@ export interface AmendRecordOptions {
  */
 export async function amendRecord(opts: AmendRecordOptions & ChannelOptions): Promise<AmendDocument> {
   try {
+    refuseExpectShape(opts.expect);
+    return await withWriteLock(opts.cwd, writeWho("records amend", opts), opts.dryRun, () => amendRecordLocked(opts));
+  } catch (err) {
+    return failure<AmendErrorCode>(RECORDS_AMEND_SCHEMA_ID, err);
+  }
+}
+
+async function amendRecordLocked(opts: AmendRecordOptions & ChannelOptions): Promise<AmendDocument> {
+  try {
     const o = await open(opts.kind, opts.cwd);
     const scope = refuseOutOfScope(o, "amend", opts.cwd, opts);
     const given = applyChannel(o, parseFields(opts.fields, "--set"), opts, false, "--set");
@@ -886,6 +977,7 @@ export async function amendRecord(opts: AmendRecordOptions & ChannelOptions): Pr
     refuseSealField(o, given, "--set");
     const before = await readAll(o, o.source);
     const target = findRecord(before, opts.id, kind.name);
+    refuseStale(o, target, opts.id, opts.expect);
     const old = target.data;
     refuseRevisionFields(kind, given, old, "--set");
     const isClosed = target.state !== null && (kind.closedStates ?? []).includes(target.state);
@@ -951,12 +1043,17 @@ export async function amendRecord(opts: AmendRecordOptions & ChannelOptions): Pr
       if (stableJson(old[kind.seal.field]) !== stableJson(closedSeal.data[kind.seal.field])) changed.push(kind.seal.field);
     }
     let warnings = target.warnings;
+    let digest = target.digest;
     if (changed.length > 0) {
       const written = await validatedEntry(o, before, target.path, text);
       if (kind.stateField !== undefined && changed.includes(kind.stateField)) await refuseRatifyBelowQuorum(o, written, opts.id);
       warnings = written.warnings;
+      digest = written.digest;
     }
-    if (!opts.dryRun && changed.length > 0) writeFileSync(abs(o, target.path), text);
+    if (!opts.dryRun && changed.length > 0) {
+      writeFileAtomic(abs(o, target.path), text);
+      noteWrites(o.root, [{ path: target.path, text }], writeWho("records amend", opts));
+    }
     return {
       $schema: RECORDS_AMEND_SCHEMA_ID,
       contract: RECORDS_WRITE_CONTRACT_VERSION,
@@ -968,6 +1065,7 @@ export async function amendRecord(opts: AmendRecordOptions & ChannelOptions): Pr
       ...(sealDropped ? { sealDropped } : {}),
       dryRun: !!opts.dryRun,
       warnings,
+      digest,
       ...(opts.dryRun ? { text } : {}),
     };
   } catch (err) {
@@ -997,6 +1095,8 @@ export interface ReviewRecordOptions {
   sign?: string | true;
   /** The agent session the write is made in (#2548). */
   agent?: string;
+  /** The record's digest the reviewer judged (#3173): the verdict is refused with record-conflict when the record has moved on. */
+  expect?: string;
 }
 
 /**
@@ -1006,6 +1106,15 @@ export interface ReviewRecordOptions {
  * id, the digest, the verdict, the reviewer and the date (`trust/seal.ts`).
  */
 export async function reviewRecord(opts: ReviewRecordOptions): Promise<ReviewDocument> {
+  try {
+    refuseExpectShape(opts.expect);
+    return await withWriteLock(opts.cwd, writeWho("records review", opts), opts.dryRun, () => reviewRecordLocked(opts));
+  } catch (err) {
+    return failure<ReviewErrorCode>(RECORDS_REVIEW_SCHEMA_ID, err);
+  }
+}
+
+async function reviewRecordLocked(opts: ReviewRecordOptions): Promise<ReviewDocument> {
   try {
     if (!(VERDICTS as readonly string[]).includes(opts.verdict)) {
       throw new RecordWriteError("write-usage-invalid", `--verdict takes ${VERDICTS.join(", ")}, not ${JSON.stringify(opts.verdict)}`);
@@ -1021,6 +1130,7 @@ export async function reviewRecord(opts: ReviewRecordOptions): Promise<ReviewDoc
     const field = kind.reviews.field;
     const before = await readAll(o, o.source);
     const target = findRecord(before, opts.id, kind.name);
+    refuseStale(o, target, opts.id, opts.expect);
     if (target.state !== null && (kind.closedStates ?? []).includes(target.state)) {
       throw new RecordWriteError("record-closed", `${opts.id} is ${target.state}, a closed state, so it takes no more reviews`);
     }
@@ -1047,7 +1157,8 @@ export async function reviewRecord(opts: ReviewRecordOptions): Promise<ReviewDoc
     const list = [...reviews, review];
     const text = replaceFields(current, { [field]: list }, { ...target.data, [field]: list });
     if (text === undefined) throw new RecordWriteError("record-unparseable", `${target.path}: the ${field} block can't be rewritten in place without changing the rest of the file`);
-    const warnings = await validateWrite(o, before, target.path, text);
+    const writtenEntry = await validatedEntry(o, before, target.path, text);
+    const warnings = writtenEntry.warnings;
     // The same verdict on the session's own list (#2693), validated with the review in place, so the two lists never differ.
     let session: { path: string; text: string; out: ReviewSession } | undefined;
     if (inSession) {
@@ -1063,8 +1174,9 @@ export async function reviewRecord(opts: ReviewRecordOptions): Promise<ReviewDoc
       session = { path: st.path, text: sText, out: { id: opts.session!, path: st.path, verdict, ...(opts.dryRun ? { text: sText } : {}) } };
     }
     if (!opts.dryRun) {
-      writeFileSync(abs(o, target.path), text);
-      if (session) writeFileSync(abs(o, session.path), session.text);
+      writeFileAtomic(abs(o, target.path), text);
+      if (session) writeFileAtomic(abs(o, session.path), session.text);
+      noteWrites(o.root, [{ path: target.path, text }, ...(session ? [{ path: session.path, text: session.text }] : [])], writeWho("records review", opts));
     }
     return {
       $schema: RECORDS_REVIEW_SCHEMA_ID,
@@ -1076,6 +1188,7 @@ export async function reviewRecord(opts: ReviewRecordOptions): Promise<ReviewDoc
       ...(session ? { session: session.out } : {}),
       dryRun: !!opts.dryRun,
       warnings,
+      digest: writtenEntry.digest,
       ...(opts.dryRun ? { text } : {}),
     };
   } catch (err) {
@@ -1130,9 +1243,9 @@ async function seal(sign: string | true, cwd: string, v: { record: string; diges
 
 export const WRITE_USAGE = [
   "chant workspace records new [<kind file or declared kind>] --from <file|-> [--prefix <prefix>] [--by <name>] [--sign [<key file>]] [--dry-run]",
-  "chant workspace records amend <id> [--kind <kind file>] --set <file|-> [--sign [<key file>]] [--dry-run]",
-  "chant workspace records review <id> [--kind <kind file>] --verdict agree|dissent|abstain --by <principal> [--note <text>] [--session <id>] [--sign [<key file>]] [--dry-run]",
-  "chant workspace records close <session id> [--kind <session kind file>] [--dry-run]",
+  "chant workspace records amend <id> [--kind <kind file>] --set <file|-> [--expect <digest>] [--sign [<key file>]] [--dry-run]",
+  "chant workspace records review <id> [--kind <kind file>] --verdict agree|dissent|abstain --by <principal> [--note <text>] [--session <id>] [--expect <digest>] [--sign [<key file>]] [--dry-run]",
+  "chant workspace records close <session id> [--kind <session kind file>] [--expect <digest>] [--dry-run]",
 ].join("\n");
 
 function usage(schema: string, message: string): WriteFailure<"write-usage-invalid"> {
@@ -1226,12 +1339,13 @@ export async function runRecordsWrite(ctx: CommandContext): Promise<number> {
     if (!id) return print(usage(RECORDS_CLOSE_SCHEMA_ID, "close needs the session's id"));
     const kind = args.kind !== undefined ? resolveWriteKind(args.kind, cwd) : await declaredSessionKind(RECORDS_CLOSE_SCHEMA_ID, cwd);
     if (typeof kind !== "string") return print(kind);
-    return print(await closeRecord({ kind, id, dryRun: args.dryRun, cwd, agent }));
+    return print(await closeRecord({ kind, id, dryRun: args.dryRun, cwd, agent, expect: args.expect }));
   }
   if (verb === "new") {
     const named = args.extraPositional2 ?? args.kind;
     const kind = named !== undefined ? resolveWriteKind(named, cwd) : declaredWriteKind(RECORDS_NEW_SCHEMA_ID, cwd, "new needs the kind file");
     if (typeof kind !== "string") return print(kind);
+    if (args.expect !== undefined) return print(usage(RECORDS_NEW_SCHEMA_ID, "--expect is not taken by new: a new record has no digest yet, and its id is allocated under the write lock"));
     const input = readInput(RECORDS_NEW_SCHEMA_ID, "--from", args.migrateFrom, cwd);
     if (typeof input !== "string") return print(input);
     return print(await newRecord({ kind, fields: input, prefix: args.prefix, by: args.by, sign: args.sign, dryRun: args.dryRun, cwd, agent }));
@@ -1245,11 +1359,11 @@ export async function runRecordsWrite(ctx: CommandContext): Promise<number> {
     if (args.by !== undefined) return print(usage(schema, "--by is not taken by amend: set decided_by, or a kind's proposedBy field, with --set"));
     const input = readInput(schema, "--set", args.set, cwd);
     if (typeof input !== "string") return print(input);
-    return print(await amendRecord({ kind, id, fields: input, sign: args.sign, dryRun: args.dryRun, cwd, agent }));
+    return print(await amendRecord({ kind, id, fields: input, sign: args.sign, dryRun: args.dryRun, cwd, agent, expect: args.expect }));
   }
   if (args.verdict === undefined) return print(usage(schema, "--verdict agree|dissent|abstain is required"));
   if (args.by === undefined) return print(usage(schema, "--by <principal> is required"));
   return print(
-    await reviewRecord({ kind, id, verdict: args.verdict, by: args.by, note: args.note, session: args.session, sign: args.sign, dryRun: args.dryRun, cwd, agent }),
+    await reviewRecord({ kind, id, verdict: args.verdict, by: args.by, note: args.note, session: args.session, sign: args.sign, dryRun: args.dryRun, cwd, agent, expect: args.expect }),
   );
 }

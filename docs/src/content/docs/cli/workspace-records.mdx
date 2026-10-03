@@ -15,9 +15,9 @@ chant workspace records [--kind <kind file>] [--current] [--uncommitted | --at <
 chant workspace records [--kind <kind file>] --since <rev|session id> [--at <rev>] [--json]
 chant workspace records pin <path>
 chant workspace records new [<kind file>] --from <file|-> [--prefix <prefix>] [--by <name>] [--sign [<key file>]] [--dry-run]
-chant workspace records amend <id> [--kind <kind file>] --set <file|-> [--sign [<key file>]] [--dry-run]
-chant workspace records review <id> [--kind <kind file>] --verdict agree|dissent|abstain --by <principal> [--note <text>] [--session <id>] [--sign [<key file>]] [--dry-run]
-chant workspace records close <session id> [--kind <session kind file>] [--dry-run]
+chant workspace records amend <id> [--kind <kind file>] --set <file|-> [--expect <digest>] [--sign [<key file>]] [--dry-run]
+chant workspace records review <id> [--kind <kind file>] --verdict agree|dissent|abstain --by <principal> [--note <text>] [--session <id>] [--expect <digest>] [--sign [<key file>]] [--dry-run]
+chant workspace records close <session id> [--kind <session kind file>] [--expect <digest>] [--dry-run]
 ```
 
 ## Description
@@ -871,6 +871,29 @@ A kind the declaration names can also be given by its declared name, or by its f
 The id never changes (`amend-id-immutable`). Both refusals say what to do instead: write the change as a new record whose `supersedes` names this one, which replaces it once it is approved at least as strongly. The session schema has no field for that link. For such a kind, `record-closed` says to write a new record in its place. For a session it says to open a new session. An amendment that changes nothing writes nothing and prints an empty `changed`. The author seal follows its own rule, under [Sealing a record](#sealing-a-record): `--sign` writes it again, and without `--sign` a change that moves the digest or the state removes it and `sealDropped` says so.
 
 `review` appends `{reviewer, verdict, note, on, digest, session, seal}`. `seal` is written only with `--sign`. `on` is today's date in UTC, `note` and `session` appear only when given, and a dissent without a non-empty `--note` is refused with `review-note-required`. `digest` is the record's digest by the [digest rule](#digest-rule), the one `records --json` prints for it. The command rewrites only the reviews block and keeps every other byte of the file, so after the review the record's digest is still the one the verdict names ([#2672](https://github.com/INTENTIUS/chant/issues/2672)). A record in a closed state takes no review, and a kind that declares no `reviews` takes none (`review-unsupported`). With `--session`, the session has to exist and be open, and the verdict goes on its list too (see [Sessions from a UI](#sessions-from-a-ui)).
+
+### Writers at the same time
+
+Several principals write one working tree at once, so every write holds the working tree's write lock from its first read to its write ([#3173](https://github.com/INTENTIUS/chant/issues/3173)). Writes wait for each other instead of interleaving, and each one builds on what the one before it wrote. A write waits up to `CHANT_WRITE_LOCK_WAIT_MS` milliseconds, 15000 by default, and is then refused with `write-lock-timeout`, naming who holds the lock. Every result carries `digest`, the record's digest after the write, as `records --json` prints it.
+
+`amend`, `review` and `close` take `--expect <digest>`, the digest the caller read the record at. When someone wrote the record since, the write is refused with `record-conflict`, and `conflict` names what the record holds now.
+
+```json
+{
+  "error": { "code": "record-conflict", "message": "ws-012 has changed since the digest given with --expect ..." },
+  "conflict": {
+    "id": "ws-012",
+    "path": "decisions/ws-012-cache-keys.md",
+    "expected": "3be1...",
+    "digest": "9f04...",
+    "lastWrite": { "verb": "records amend", "by": null, "agent": "app-agent", "at": "2026-10-03T17:02:11.304Z" }
+  }
+}
+```
+
+Read the record again, show the person what changed, and write again with `--expect` set to `conflict.digest`. Of several writes from one digest exactly one is written. A verdict doesn't move the digest, so a review that lands between a read and an amendment is kept and is no conflict. A write without `--expect` still waits its turn and applies its fields to the record as it is then. Two amendments of different fields both land, and the later of two amendments of one field wins. `records --json` prints each record's `lastWrite` in a working tree, so a UI can say who changed a record before anyone writes.
+
+For several writes that nobody else interleaves with, take the lock for the batch with [`chant workspace lock acquire`](/chant/reference/workspace-read-contract/#concurrent-writers). Each write of the batch then runs with `CHANT_WRITE_LOCK=<token>`, and `lock release` ends it.
 
 Every write is judged against the writer's [write scope](/chant/reference/workspace-declaration/#write-scope-and-agent-sessions), read from the declaration at base ([#2548](https://github.com/INTENTIUS/chant/issues/2548)). When the `CHANT_AGENT` environment variable names an agent session, the write is that session's, bound to its one member. Otherwise the principal `--by` names is judged as the session that lists it, or by its role grants at base. A write outside the scope is refused before anything is read or written, with `write-scope-member` (a record kind of another member) or `write-scope-kind` (a kind or verb the writer's records rule leaves out), and a session the declaration doesn't name with `agent-unknown`. A principal's class may also be a domain class a pinned package supplies ([#3080](https://github.com/INTENTIUS/chant/issues/3080)); while `writeScope` names a class no pinned package supplies, a write judged `human` is refused with `write-scope-class-unknown`. Without a `writeScope` block or `agents`, nothing is refused.
 

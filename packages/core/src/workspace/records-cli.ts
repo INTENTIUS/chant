@@ -23,7 +23,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { formatError } from "../cli/format";
 import type { CommandContext } from "../cli/registry";
@@ -54,6 +54,15 @@ import {
   type VerdictAttestation,
 } from "./records";
 import { readCheckoutHead, worktreeStates, type CheckoutView, type WorktreeState } from "./records-checkout";
+import { lastWriteReader, type LastWrite } from "./write-lock";
+
+function readTextOrNull(file: string): string | null {
+  try {
+    return readFileSync(file, "utf-8");
+  } catch {
+    return null;
+  }
+}
 import { gitTree, workingTree, type WorkspaceTree } from "./tree";
 import type { DecisionWork, WorkAnswer } from "./work";
 import { activeAttestors, type CommitAttestor, type ProvenanceLevel } from "./trust/attestor";
@@ -122,6 +131,12 @@ export type RecordView = RecordEntry & {
    * (`modified`), or not in it (`new`), staged or not. Absent under `--at`.
    */
   worktree?: WorktreeState;
+  /**
+   * Beside `worktree` (#3173): the last chant write of the record's file, from
+   * the write journal (`write-lock.ts`), while the file holds the text it
+   * left, or null.
+   */
+  lastWrite?: LastWrite | null;
   /**
    * For a work kind whose work block names an answer kind (#3147): the
    * decision-point answers about the item, the answer records whose
@@ -451,6 +466,8 @@ export async function queryRecords(query: RecordsQuery): Promise<RecordsDocument
       const dir = relative(root, loaded.dir).split(sep).join("/") || ".";
       const { states, deleted } = worktreeStates(top, head, dir, records.map((r) => r.path), new RegExp(loaded.kind.location.match));
       for (const r of records) r.worktree = states.get(r.path) ?? "new";
+      const lastWrite = lastWriteReader(top);
+      for (const r of records) r.lastWrite = lastWrite(r.path, readTextOrNull(join(top, ...r.path.split("/"))));
       checkout = { branch: rest.branch, head, base: rest.base, baseFrom: rest.baseFrom, deleted };
       if (query.uncommitted) {
         listed = records.filter((r) => r.worktree !== "committed");
