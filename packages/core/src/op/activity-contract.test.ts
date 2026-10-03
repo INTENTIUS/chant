@@ -7,7 +7,8 @@
 
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { activity, phase, effect } from "./builders";
+import { activity, decide, phase, effect } from "./builders";
+import { decideContract } from "./activities/activity-contracts";
 import type { OpConfig } from "./types";
 import {
   activityContract,
@@ -115,6 +116,25 @@ describe("validateActivitySteps() — passing Ops", () => {
     const config = opWith({ phases: [phase("Diff", [step])] });
     const issues = validateActivitySteps(config, new Map([["lifecycleDiff", lifecycleDiffContract]]));
     expect(issues.some((i) => i.message.includes("Unrecognized key") && i.message.includes("typo"))).toBe(true);
+  });
+});
+
+describe("validateActivitySteps() — a whole-value reference in a record-typed arg (#3299)", () => {
+  const contracts = new Map([["decide", decideContract]]);
+
+  it("accepts decide's `inputs: step.out.json` without throwing", () => {
+    const fetch = activity("fetchInputs", {}, { id: "fetch" });
+    const ask = decide("dispatch-tier", { inputs: fetch.out.json as unknown as Record<string, unknown> });
+    const config = opWith({ phases: [phase("Fetch", [fetch]), phase("Decide", [ask])] });
+    expect(validateActivitySteps(config, contracts)).toEqual([]);
+  });
+
+  it("reports a symbol key in a record-typed arg as a finding instead of throwing", () => {
+    const step = activity("decide", { point: "dispatch-tier", inputs: { [Symbol("odd")]: 1 } });
+    const config = opWith({ phases: [phase("Decide", [step])] });
+    const issues = validateActivitySteps(config, contracts);
+    expect(issues.length).toBeGreaterThan(0);
+    expect(issues[0].message).toContain("args.inputs.Symbol(odd)");
   });
 });
 

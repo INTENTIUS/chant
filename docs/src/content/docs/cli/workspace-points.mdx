@@ -39,7 +39,7 @@ It never writes and never calls a model.
 | `model` | Its answer at or above its threshold is a proposal, and the record is `proposed`. Below the threshold, the next decider is asked. |
 | `quorum` | Always last. The record is `escalated`, open for people. |
 
-chant calls no model. `--response <file>` hands it a `POST /v1/systemone` response the caller already got from a backend, `{ "model": ..., "answers": { "<point>": ... } }`, and a model decider reads its answer there. It is observed only when `model` is the pinned id the decider names. Without `--response` a model decider is not asked, so the question moves on to the quorum. The [`decide` Op activity](/chant/guide/decision-points/#the-decide-activity) makes the call from an Op and passes the answer the same way.
+chant calls no model. `--response <file>` hands it a `POST /v1/systemone` response the caller already got from a backend, `{ "model": ..., "answers": { "<point>": ... } }`, and a model decider reads its answer there. It is observed only when `model` is the pinned id the decider names. An answer may carry `reason`, the model's own explanation of its choice ([#3345](https://github.com/INTENTIUS/chant/issues/3345)). chant keeps it as `reason` beside a proposal, or as `model_reason` in the escalation of an answer below the threshold. A workspace whose `answer.schema.json` copy predates these fields keeps no reason, and copying `point-answer.schema.json` anew turns them on. Without `--response` a model decider is not asked, so the question moves on to the quorum. The [`decide` Op activity](/chant/guide/decision-points/#the-decide-activity) makes the call from an Op and passes the answer the same way.
 
 The record's id is the point's name and the first 12 hex digits of the sha256 of the point, its declaration and the inputs. So the same question is answered once. Asking again returns the record that is there, with `reused: true`, when it is `proposed` or `answered`. An `escalated` record is asked again, since a backend may answer now. It is rewritten only when the chain no longer escalates.
 
@@ -51,7 +51,7 @@ In a steward's turn, including a `points ask` that an Op's step runs while `CHAN
 
 `points answer <id> --answer <value> --by <name>` records people's answer to an open question. The answer is one of the question's candidates, and for a `noul` it is `true`, `false`, `yes` or `no`. Each `--by` names one person who answered. The point's quorum counts distinct people, after trimming and lower-casing. It leaves out anyone holding the `agent` role in the trust policy at base, the steward that asked the question, and when the quorum names roles, anyone holding none of them. Too few is `quorum-not-met`, and nothing is written. An answer given during a steward's turn, or by a process the turn started, is refused with `answer-in-steward-turn`: a steward waits on a question and never answers it ([Steward](/chant/lexicons/fountain/steward/)).
 
-People who give the answer a model proposed confirm it, and the model stays the record's decider. Any other answer is the quorum's, and the model's proposal moves into the record's `escalations`. Either way the record becomes `answered`, with `answered_by` and `answered_on`, and it never changes again.
+People who give the answer a model proposed confirm it, and the model stays the record's decider. Any other answer is the quorum's, and the model's proposal moves into the record's `escalations`, its `reason` as `model_reason`. Either way the record becomes `answered`, with `answered_by` and `answered_on`, and it never changes again.
 
 ## Output
 
@@ -61,8 +61,9 @@ People who give the answer a model proposed confirm it, and the model stays the 
 |---|---|
 | `state`, `open` | `escalated`, `proposed` or `answered`. Open until answered. |
 | `answer`, `decider` | The answer and who gave it: a table row, a model with its backend and model id, or a quorum with who answered. |
-| `model` | Any model's answer, with `confidence`, `threshold`, `model` and `observed`. It is observed for a proposal. For an escalated question it is the last answer below a threshold. |
-| `escalations` | Each decider asked before the one that answered, and why it did not. |
+| `reason` | The model's explanation of a proposal, or of a proposal a person confirmed. null when the model gave none or a model did not decide. |
+| `model` | Any model's answer, with `confidence`, `threshold`, `model`, `observed` and `reason`. It is observed for a proposal. For an escalated question it is the last answer below a threshold. |
+| `escalations` | Each decider asked before the one that answered, and why it did not (`reason`), with a model's own explanation as `model_reason`. |
 | `current` | The point is still declared as it was when asked. |
 | `warnings` | The `answer-` codes: the points file can't be read, the point is gone, or it changed. |
 

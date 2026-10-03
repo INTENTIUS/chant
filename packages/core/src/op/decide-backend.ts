@@ -6,8 +6,12 @@
  * POST <url>/v1/systemone          Authorization: Bearer <key>
  * { "model": "jev-1.13.0", "state": {...}, "questions": { "<name>": { "type": "noul" | "choice" | "score", "instructions": ..., "criteria": ... } } }
  *
- * { "model": "jev-1.13.0", "answers": { "<name>": { "type": "noul", "noul": 0.22 } | { "type": "choice", "choice": ..., "probabilities": {...}, "confidence": ... } | { "type": "score", ... } } }
+ * { "model": "jev-1.13.0", "answers": { "<name>": { "type": "noul", "noul": 0.22, "reason"?: ... } | { "type": "choice", "choice": ..., "probabilities": {...}, "confidence": ..., "reason"?: ... } | { "type": "score", ..., "reason"?: ... } } }
  * ```
+ *
+ * `reason` is optional: the model's own explanation of its answer (#3345).
+ * Core keeps it in the answer record beside a proposal, or as `model_reason`
+ * in the escalation entry of an answer below the threshold.
  *
  * {@link backendAsk} turns a set of backends into core's `ModelAsk`, the
  * model call `askPoint` takes (`../workspace/points.ts`). This file

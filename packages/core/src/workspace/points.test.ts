@@ -232,6 +232,18 @@ describe("the decider chain (#2739)", () => {
     expect(r.escalations[1]).toMatchObject({ kind: "model", answer: "medium", confidence: 0.25, threshold: 0.8, reason: "not observed: confidence 0.25 is below the threshold 0.8" });
   });
 
+  test("the model's reason is kept with a proposal, and in the escalation of an answer below the threshold (#3345)", async () => {
+    const proposed = await runChain("slice-tier", SLICE, big, stub({ type: "choice", choice: "large", probabilities: { large: 0.9 }, confidence: 0.9, reason: "  Nine criteria across three services.\n" }));
+    expect(proposed).toMatchObject({ status: "proposed", reason: "Nine criteria across three services." });
+    const low = await runChain("n", NOUL, {}, stub({ type: "noul", noul: 0.6, reason: "Probably, but the diff is small." }));
+    expect(low.escalations[0]).toMatchObject({ kind: "model", answer: true, reason: "not observed: confidence 0.6 is below the threshold 0.8", model_reason: "Probably, but the diff is small." });
+    // A blank or non-string reason is no reason.
+    const blank = await runChain("slice-tier", SLICE, big, stub({ type: "choice", choice: "large", confidence: 0.9, reason: "  " }));
+    expect(blank).not.toHaveProperty("reason");
+    const odd = await runChain("slice-tier", SLICE, big, stub({ type: "choice", choice: "large", confidence: 0.9, reason: 3 } as unknown as WireAnswer));
+    expect(odd).not.toHaveProperty("reason");
+  });
+
   test("without a backend, or with an unpinned model answering, the model is not asked or not observed", async () => {
     expect((await runChain("slice-tier", SLICE, big)).escalations[1].reason).toBe("not asked: no model backend was given to this ask");
     const r = await runChain("slice-tier", SLICE, big, stub({ type: "choice", choice: "large", confidence: 0.99 }, "bosun-latest"));

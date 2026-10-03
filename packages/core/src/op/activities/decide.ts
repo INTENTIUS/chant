@@ -84,6 +84,8 @@ export interface DecideResult {
   backend: string | null;
   confidence: number | null;
   threshold: number | null;
+  /** For a model's answer: the model's own explanation of it, when the backend gave one (#3345). */
+  reason: string | null;
   /** The people who answered, when people did. */
   answeredBy: string[];
   /** Each decider that was asked and did not answer, and why. */
@@ -159,6 +161,7 @@ function result(q: QuestionView, missing: string[]): DecideResult {
     backend: byModel ? (q.model?.backend ?? null) : null,
     confidence: byModel ? q.confidence : null,
     threshold: byModel ? q.threshold : null,
+    reason: byModel ? q.reason : null,
     answeredBy: q.answeredBy,
     escalations: q.escalations,
     missing,

@@ -260,7 +260,8 @@ describe("delivery member", () => {
       // The docker lexicon stamps the span attributes inside a workspace (#2558, D22).
       const env = (compose.services.appService as { environment?: Record<string, string> }).environment!;
       expect(env.OTEL_SERVICE_NAME).toBe("appService");
-      expect(env.OTEL_RESOURCE_ATTRIBUTES).toBe("chant.workspace=reference,chant.member=delivery,chant.decl=appService");
+      // It ends with the reference a release deploy fills with service.version and vcs.ref.head.revision (#3061, ws-081).
+      expect(env.OTEL_RESOURCE_ATTRIBUTES).toBe("chant.workspace=reference,chant.member=delivery,chant.decl=appService${CHANT_RELEASE_ATTRIBUTES:-}");
       const build = compose.services.appService?.build;
       expect(build).toBeDefined();
       // The package.json build script writes the file to delivery/dist/, and

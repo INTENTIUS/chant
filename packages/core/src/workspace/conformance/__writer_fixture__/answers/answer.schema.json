@@ -36,6 +36,7 @@
     "probabilities": { "$ref": "#/definitions/probabilities" },
     "confidence": { "$ref": "#/definitions/unit" },
     "threshold": { "$ref": "#/definitions/unit" },
+    "reason": { "type": "string", "minLength": 1, "description": "model: the model's own explanation of its answer, when the backend gave one (#3345). Kept when a person confirms the proposal; moved into the escalations as model_reason when people answer otherwise." },
     "escalations": {
       "type": "array",
       "description": "The deciders asked before the one that answered, or before the quorum, and why each did not answer.",
@@ -87,7 +88,8 @@
         "answer": { "type": ["string", "boolean", "null"] },
         "probabilities": { "$ref": "#/definitions/probabilities" },
         "confidence": { "$ref": "#/definitions/unit" },
-        "threshold": { "$ref": "#/definitions/unit" }
+        "threshold": { "$ref": "#/definitions/unit" },
+        "model_reason": { "type": "string", "minLength": 1, "description": "model: the model's own explanation of the answer it gave, when the backend gave one (#3345). reason is why the decider did not answer." }
       },
       "additionalProperties": false
     }

@@ -74,7 +74,7 @@ From the k8s lexicon package, run generation. It fetches each source, parses the
 npm run generate -w @intentius/chant-lexicon-k8s
 ```
 
-Generation writes three artifacts into `src/generated/`: `index.d.ts` (the types), `index.ts` (the runtime factory index), and `lexicon-k8s.json` (the registry). The log line reports the counts and any CRD it failed to load.
+Generation writes three artifacts into `src/generated/`: `index.d.ts` (the types), `index.ts` (the runtime factory index), and `lexicon-k8s.json` (the registry). The log line reports the counts. A source that fails to load (a registry that is down, a digest that no longer matches) fails generation, and the error names every such source, so a missing operator cannot drop its kinds from the output unnoticed. To generate without them on purpose, for example offline, set `CHANT_K8S_ALLOW_CRD_FAILURES=1`: each failure is then a warning and the output lacks that source's kinds.
 
 ### What a CRD becomes
 
