@@ -208,7 +208,7 @@ Readers take the top-level list first. The members' lists follow in file order.
 |---|---|
 | `members` | The members whose files the class may write, by name, or `"*"` for every path. Without it, every path. A path in no member, such as `chant.workspace.json` at the root, is in scope only under `"*"`. The `agent` entry takes no `members`: a session writes only the member it is bound to. |
 | `records` | Kind names, as the kind file's `recordKind.name` or the name the declaration gives it, each with the verbs the class may write it with: `new`, `amend`, `review` and `close`. A kind left out can't be written at all. Without `records`, every kind in reach with every verb. |
-| `protected` | Paths the class may not write, even inside a member it may. Each entry is a glob from the workspace root, or `{ "path", "except" }` for a JSON file the class may change only in the top-level keys `except` names. An entry covers the files it matches and everything under a directory it matches, so `"box"` covers `box/ops/guard.mjs`. The `agent` entry takes it too. Added in chant 0.102.0 ([#3146](https://github.com/INTENTIUS/chant/issues/3146)). |
+| `protected` | Paths the class may not write, even inside a member it may. Each entry is a glob from the workspace root, or `{ "path", "except" }` for a JSON file the class may change only in what `except` names: a top-level key, or a JSON Pointer starting with `/`, where a `*` token matches every key or array index at its level ([#3308](https://github.com/INTENTIUS/chant/issues/3308)). An entry covers the files it matches and everything under a directory it matches, so `"box"` covers `box/ops/guard.mjs`. The `agent` entry takes it too. Added in chant 0.102.0 ([#3146](https://github.com/INTENTIUS/chant/issues/3146)). |
 
 A kind a member declares is in reach when that member is. The workspace's own kinds, from the top-level `records`, are in every writer's reach, so an agent bound to `app` can propose a decision that lives at the root. A record is never deleted under a restricted scope.
 
@@ -223,7 +223,7 @@ A kind a member declares is in reach when that member is. The workspace's own ki
 }
 ```
 
-A record file is judged by `records`, never by `protected`: leave a record kind out of `records`, or narrow its verbs, to keep a builder off it. `check --changes` reports a write to a protected path with `write-scope-protected`. For an entry with `except`, it parses the file before and after the commit, and the change is in scope when the two differ only in those top-level keys. [`chant workspace agent --json`](/chant/cli/workspace-agent/) lists a session's protected paths, so a factory's guard can apply the same list to a build's diff before anything is committed.
+A record file is judged by `records`, never by `protected`: leave a record kind out of `records`, or narrow its verbs, to keep a builder off it. `check --changes` reports a write to a protected path with `write-scope-protected`. For an entry with `except`, it parses the file before and after the commit, and the change is in scope when the two differ only in those top-level keys and the values those pointers match. `{ "path": "chant.workspace.json", "except": ["/members/*/box/listing"] }` keeps the declaration protected and lets a box's listing change, which is what [`chant workspace box listing set`](/chant/cli/workspace-box/) writes. [`chant workspace agent --json`](/chant/cli/workspace-agent/) lists a session's protected paths, so a factory's guard can apply the same list to a build's diff before anything is committed.
 
 Each entry in `agents` is a session:
 
@@ -508,6 +508,8 @@ A box can show itself on a home site that lists boxes, with a title, a line and 
 | `cover` | no | A PNG, JPEG or WebP picture of the box, as a file from the workspace root. `status` and `graph` print its sha256, so a reader can cache it by hash. |
 
 A title or line with a control character, such as a newline, can't be read. Since `factory` and `listing` are new in chant 0.102.0, a box block with either needs `minReader` at `"0.102.0"` or later.
+
+A tool such as hud changes the listing with [`chant workspace box listing set`](/chant/cli/workspace-box/), which edits only these fields and copies a cover picture in, rather than editing the declaration itself ([#3308](https://github.com/INTENTIUS/chant/issues/3308)).
 
 ### Plantable
 

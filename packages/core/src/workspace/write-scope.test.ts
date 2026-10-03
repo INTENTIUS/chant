@@ -28,7 +28,7 @@ import { parseDeclaration, WorkspaceReadError } from "./declaration";
 import { parseFrontMatter } from "./records";
 import { amendRecord, newRecord, renderRecord, reviewRecord } from "./records-write";
 import { emptyPolicy } from "./trust/policy";
-import { judgePath, judgeRecord, principalClass, resolveWriter, WriteScopeError } from "./write-scope";
+import { judgePath, judgeRecord, onlyKeysChanged, principalClass, resolveWriter, WriteScopeError } from "./write-scope";
 import { createWorkspaceTools } from "../cli/mcp/workspace-tools";
 
 const DECISIONS = join(REPO, "docs", "design", "decisions");
@@ -138,6 +138,21 @@ describe("the declaration's writeScope and agents (#2548)", () => {
     expect(err).toBeInstanceOf(WorkspaceReadError);
     expect((err as WorkspaceReadError).code).toBe("declaration-invalid");
     expect((err as Error).message).toMatch(message);
+  });
+});
+
+describe("a protected JSON file's except by JSON Pointer (#3308)", () => {
+  const decl = (listing: unknown, intent = "ws-001") => JSON.stringify({ name: "w", members: [{ name: "a", box: { intent, listing } }, { name: "b" }] });
+  test("a * token matches every key or index at its level, and only what the pointer names may change", () => {
+    expect(onlyKeysChanged(decl({ title: "A" }), decl({ title: "B" }), ["/members/*/box/listing"])).toBe(true);
+    expect(onlyKeysChanged(decl({ title: "A" }), decl(undefined), ["/members/*/box/listing"])).toBe(true);
+    expect(onlyKeysChanged(decl({ title: "A" }), decl({ title: "B" }, "ws-002"), ["/members/*/box/listing"])).toBe(false);
+    expect(onlyKeysChanged(decl({ title: "A" }), decl({ title: "B" }), ["/members/1/box/listing"])).toBe(false);
+    expect(onlyKeysChanged(decl({ title: "A" }), decl({ title: "B" }), ["/members/0/box/listing"])).toBe(true);
+    expect(onlyKeysChanged(decl({ title: "A" }), decl({ title: "B" }), ["name"])).toBe(false);
+  });
+  test("reads a .jsonc file's comments and trailing commas", () => {
+    expect(onlyKeysChanged('{ "a": 1, // x\n "b": 2, }', '{ "a": 1, "b": 3 }', ["b"])).toBe(true);
   });
 });
 

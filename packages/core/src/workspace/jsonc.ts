@@ -31,6 +31,13 @@ export type JsonParseResult =
        * `key` is set. Falls back to the nearest ancestor that has a position.
        */
       locate(pointer: string, key?: boolean): TextLocation;
+      /**
+       * Where the value at `pointer` is in the text, as offsets: its key's
+       * opening quote (null for an array item or the root), the value's first
+       * character, and the offset just past its last. Undefined when there is
+       * no value at `pointer`. For editing the text in place (#3308).
+       */
+      span(pointer: string): { key: number | null; start: number; end: number } | undefined;
     }
   | { ok: false; message: string; location: TextLocation };
 
@@ -63,6 +70,7 @@ export function parseJsonText(text: string, options: JsonParseOptions): JsonPars
   };
 
   const values = new Map<string, number>();
+  const ends = new Map<string, number>();
   const keys = new Map<string, number>();
   let i = text.charCodeAt(0) === 0xfeff ? 1 : 0;
 
@@ -113,6 +121,12 @@ export function parseJsonText(text: string, options: JsonParseOptions): JsonPars
   function parseValue(pointer: string): unknown {
     skip();
     values.set(pointer, i);
+    const value = parseAt(pointer);
+    ends.set(pointer, i);
+    return value;
+  }
+
+  function parseAt(pointer: string): unknown {
     const c = text[i];
     if (c === "{") return parseObject(pointer);
     if (c === "[") return parseArray(pointer);
@@ -222,6 +236,12 @@ export function parseJsonText(text: string, options: JsonParseOptions): JsonPars
           if (at !== undefined) return toLocation(at);
           if (p === "") return toLocation(0);
         }
+      },
+      span(pointer) {
+        const start = values.get(pointer);
+        const end = ends.get(pointer);
+        if (start === undefined || end === undefined) return undefined;
+        return { key: keys.get(pointer) ?? null, start, end };
       },
     };
   } catch (err) {

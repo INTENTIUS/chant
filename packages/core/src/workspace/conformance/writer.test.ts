@@ -49,6 +49,13 @@ describe("the script (#3159)", () => {
       input: '{"criterion":"AC-1"}',
     });
     expect(writeArgv("runs end", { id: "r", fields: {} })).toEqual({ args: ["r", "--from", "-"], input: "{}" });
+    expect(writeArgv("box listing set", { member: "app", fields: { title: "T" }, cover: "/in/cover.png" })).toEqual({
+      args: ["app", "--from", "-", "--cover", "/in/cover.png"],
+      input: '{"title":"T"}',
+    });
+    const listing = buildStep(WRITER_SCRIPT.find((s) => s.id === "listing")!, {}, { dir: "/in" });
+    expect(listing.args).toEqual(["app", "--from", "-", "--cover", "/in/cover.png"]);
+    expect(buildStep(WRITER_SCRIPT.find((s) => s.id === "listing")!, {}).args).toEqual(["app", "--from", "-"]);
   });
 
   test("a later step's params come from the documents of the steps before it", () => {
@@ -110,6 +117,7 @@ describe("unreportedChanges (#3159)", () => {
     const claim = buildStep(WRITER_SCRIPT.find((s) => s.id === "claim")!, {});
     const doc = { ref: "refs/chant/lease/work/W-001", history: { commit: "c2" } };
     expect(reportedWrites("work claim", doc)).toEqual({ paths: [], refs: { "refs/heads/chant/lifecycle": "c2", "refs/chant/lease/work/W-001": "*" } });
+    expect(reportedWrites("box listing set", { paths: ["app/listing/cover.png", "chant.workspace.json"], declaration: { path: "chant.workspace.json" } })).toEqual({ paths: ["app/listing/cover.png", "chant.workspace.json"], refs: {} });
     const before = { "refs/heads/chant/lifecycle": "c1", HEAD: "m 1" };
     expect(unreportedChanges(claim, doc, { before: {}, after: {} }, { before, after: { ...before, "refs/heads/chant/lifecycle": "c2", "refs/chant/lease/work/W-001": "b" } })).toEqual([]);
     expect(unreportedChanges(claim, doc, { before: {}, after: {} }, { before, after: { ...before, "refs/heads/chant/lifecycle": "c3" } })[0]).toMatch(/git refs changed that chant did not report writing: refs\/heads\/chant\/lifecycle/);

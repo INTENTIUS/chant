@@ -239,6 +239,10 @@
  "docs/src/content/docs/cli/workspace-audit.mdx": {
   "formatting/em-dash-density": 2
  },
+ "docs/src/content/docs/cli/workspace-box.mdx": {
+  "formatting/em-dash-density": 2,
+  "claude/colon-reveal": 2
+ },
  "docs/src/content/docs/cli/workspace-build.mdx": {
   "formatting/em-dash-density": 2
  },
