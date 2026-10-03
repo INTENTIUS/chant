@@ -88,7 +88,7 @@ describe("kubectl-apply with a release (#3061, ws-081)", () => {
     let reads = 0;
     const cap = createKubectlApplyCapability(
       async (args) => {
-        calls.push(args as Record<string, unknown>);
+        calls.push({ ...args });
         return { applied: [], pruned: [], fieldManager: "chant:x" };
       },
       () => {
