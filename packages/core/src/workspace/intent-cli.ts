@@ -13,7 +13,7 @@ import { resolve } from "node:path";
 import { formatError } from "../cli/format";
 import type { CommandContext } from "../cli/registry";
 import { intentRecord, type IntentRecordDocument } from "./intent-record";
-import { intentGraph, type ArtifactNode, type CommitNode, type DecisionNode, type IntentDocument, type IntentEdge, type IntentNode, type WorkNode } from "./intent";
+import { intentGraph, type ArtifactNode, type CommitNode, type DecisionNode, type IntentDocument, type IntentEdge, type IntentNode, type RunNode, type WorkNode } from "./intent";
 
 const USAGE = "chant workspace graph --intent <path[:start-end]> [--at <rev>] [--kind <kind file>...] [--json]";
 const RECORD_USAGE = "chant workspace graph --intent --record <id> [--at <rev>] [--kind <kind file>...] [--json]";
@@ -94,7 +94,6 @@ function joinLines(j: CommitNode["joins"] | undefined): string[] {
   const out: string[] = [];
   if (j.agent) out.push(`  agent     ${j.agent}`);
   if (j.lease) out.push(`  lease     ${j.lease.token}${j.lease.item ? ` on ${j.lease.item}` : ", no lease history names it"}`);
-  if (j.run) out.push(`  run       ${j.run}`);
   for (const r of j.records) out.push(`  record    ${r.kind}:${r.id}${r.node ? "" : ", in no kind read"}`);
   if (j.applied) out.push(`  applied   by ${j.applied.by}${j.applied.at ? ` at ${j.applied.at}` : ""}${j.applied.commit ? `, ${short(j.applied.commit)}` : ""}`);
   return out;
@@ -110,6 +109,12 @@ function commitLine(doc: Result, c: CommitNode): string[] {
     for (const s of edgesFrom(doc, e.to, "cites-evidence")) out.push(`  evidence  ${s.to.slice("evidence:".length)}`);
   }
   out.push(...joinLines(c.joins));
+  for (const e of edgesFrom(doc, c.id, "made-by")) {
+    const r = doc.nodes.find((n): n is RunNode => n.kind === "run" && n.id === e.to);
+    if (!r) continue;
+    const what = r.recorded ? `${[r.harness?.name, r.model].filter(Boolean).join("/") || "no model recorded"}${r.by ? ` for ${r.by}` : ""}${r.cost ? `, ${r.cost.amount} ${r.cost.currency}` : ", unpriced"}` : "not in the run ledger";
+    out.push(`  run       ${r.run}: ${what}`);
+  }
   return out;
 }
 
@@ -160,7 +165,8 @@ export function formatIntentRecord(doc: RecordResult): string {
           : c.bucket === "within-other"
             ? `within ${c.alsoWithin.map((w) => w.record).join(", ")}`
             : "nothing else accounts for it";
-    out.push(`${c.bucket.padEnd(12)} ${short(c.sha)} ${c.date.slice(0, 10)} ${c.subject}; ${why}; ${c.files.join(", ") || c.entries.join(", ")}`);
+    const runs = (c.runs ?? []).map((r) => `run ${r.id}${r.model ? ` (${r.model})` : ""}`).join(", ");
+    out.push(`${c.bucket.padEnd(12)} ${short(c.sha)} ${c.date.slice(0, 10)} ${c.subject}; ${why}${runs ? `; ${runs}` : ""}; ${c.files.join(", ") || c.entries.join(", ")}`);
   }
   for (const x of doc.reasons) out.push(`reason    ${x.code}: ${x.message}`);
   const n = doc.counts;

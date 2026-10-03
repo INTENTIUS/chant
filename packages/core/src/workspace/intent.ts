@@ -48,6 +48,7 @@ import type { DecidedIn } from "./record-decided";
 import { importKindModule, loadRecordKind, parseFrontMatter, RecordReadError, supersedesTargets, type LoadedRecordKind } from "./records";
 import { queryRecords, type RecordView } from "./records-cli";
 import { isPluginCode, type PluginCode, type ReasonCode } from "./reason-codes";
+import { runsForCommits, type RunCost, type RunPin, type RunUsage } from "./runs";
 import { readTrailerJoins, type CommitTrailerJoins } from "./trailer-joins";
 import { joinPath, skippedDir, type WorkspaceTree } from "./tree";
 import { activeAttestors, type ProvenanceLevel } from "./trust/attestor";
@@ -339,7 +340,32 @@ export interface WorkNode {
   warnings: { code: WorkWarningCode; message: string }[];
 }
 
-export type IntentNode = RegionNode | FileNode | MemberNode | CommitNode | JoinedNode | EvidenceEntryNode | DecisionNode | WorkNode | ArtifactNode | LinkNode | FindingNode;
+/**
+ * An agent run that made a commit in the walk (#3033): from the run ledger on
+ * the local `chant/lifecycle` branch. A run a `Chant-Run` trailer names and
+ * the ledger lacks is listed with `recorded: false` and nothing else known.
+ */
+export interface RunNode {
+  id: string;
+  kind: "run";
+  run: string;
+  recorded: boolean;
+  state: "running" | "ended" | null;
+  harness: { name: string; version: string | null } | null;
+  model: string | null;
+  provider: string | null;
+  by: string | null;
+  agent: string | null;
+  unit: string | null;
+  startedAt: string | null;
+  endedAt: string | null;
+  outcome: string | null;
+  usage: RunUsage | null;
+  cost: RunCost | null;
+  transcript: RunPin | null;
+}
+
+export type IntentNode = RegionNode | FileNode | MemberNode | CommitNode | JoinedNode | EvidenceEntryNode | DecisionNode | WorkNode | ArtifactNode | LinkNode | FindingNode | RunNode;
 
 export type Granularity = "path" | "member" | "contract" | "issue";
 
@@ -348,6 +374,7 @@ export type IntentEdge =
   | { kind: "pins"; from: string; to: string; pinnedSha256: string | null; pinState: PinState }
   | { kind: "touched-by"; from: string; to: string; lines: LineRange[] | null }
   | { kind: "within"; from: string; to: string; state: "decided" | "decided-by-window" | "worked" }
+  | { kind: "made-by"; from: string; to: string; joinedBy: ("trailer" | "record")[] }
   | { kind: "produced-by" | "serves" | "cites-evidence" | "supersedes" | "links" | "implements" | "needs" | "addressed-by" | "carries"; from: string; to: string };
 
 export interface IntentReason {
@@ -815,6 +842,39 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
       const evidence = result.evidence === undefined ? [] : Array.isArray(result.evidence) ? result.evidence : [result.evidence];
       for (const e of evidence) edges.push({ kind: "cites-evidence", from: unitId ?? contractId ?? cid, to: joinedNode("evidence", e) });
       entry.authorship.push(...(result.authorship ?? []));
+    }
+  }
+
+  // The agent runs that made each commit (#3033): the one its Chant-Run names, and any whose record lists it.
+  const runJoins = await runsForCommits(
+    top,
+    located.rootOnDisk,
+    touched.map((t) => ({ sha: t.sha, run: trailerJoins.get(t.sha)?.joins.run ?? null })),
+  );
+  for (const t of touched) {
+    if (!nodes.has(`commit:${t.sha}`)) continue;
+    for (const ref of runJoins.refs.get(t.sha) ?? []) {
+      const r = runJoins.runs.get(ref.id);
+      const node = add<RunNode>({
+        id: `run:${ref.id}`,
+        kind: "run",
+        run: ref.id,
+        recorded: r !== undefined,
+        state: r?.state ?? null,
+        harness: r?.harness ?? null,
+        model: r?.model ?? null,
+        provider: r?.provider ?? null,
+        by: r?.by ?? null,
+        agent: r?.agent ?? null,
+        unit: r?.unit?.id ?? null,
+        startedAt: r?.startedAt ?? null,
+        endedAt: r?.endedAt ?? null,
+        outcome: r?.outcome ?? null,
+        usage: r?.usage ?? null,
+        cost: r?.cost ?? null,
+        transcript: r?.transcript ?? null,
+      });
+      edges.push({ kind: "made-by", from: `commit:${t.sha}`, to: node.id, joinedBy: ref.joinedBy });
     }
   }
 

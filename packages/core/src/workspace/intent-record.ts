@@ -53,6 +53,7 @@ import { constraintCovers, isWorkspacePath, memberHolding } from "./record-asset
 import type { DecidedIn } from "./record-decided";
 import { RecordReadError } from "./records";
 import type { RecordView } from "./records-cli";
+import { runsForCommits, type RunRef } from "./runs";
 import { readTrailerJoins, type CommitTrailerJoins } from "./trailer-joins";
 import { joinPath } from "./tree";
 import { locateWorkspace } from "./which-chant";
@@ -95,6 +96,8 @@ export interface RecordCommit {
   unit: string | null;
   /** What chant's own trailers join the commit to (#3149), as a commit node in `graph --intent` reports it. */
   joins: CommitTrailerJoins;
+  /** The agent runs that made the commit (#3033): the one its Chant-Run names, and any whose record lists it. */
+  runs: RunRef[];
   /** The record's constrains entries whose history listed the commit. */
   entries: string[];
   /** The files the commit changed in the record's region, from the workspace root. Empty when git lists none, as for a merge that changed nothing against its first parent there. */
@@ -307,6 +310,11 @@ async function walk(query: IntentRecordQuery, head: Head): Promise<IntentRecordR
   const trailerJoins = readTrailerJoins(top, [...details.values()]);
   const recordKinds = new Map(kinds.filter((k) => k.records).map((k) => [k.records!.loaded.kind.name, k]));
   const workKinds = kinds.filter((k) => k.records?.loaded.kind.work);
+  const runJoins = await runsForCommits(
+    top,
+    located.rootOnDisk,
+    shas.map((sha) => ({ sha, run: trailerJoins.get(sha)?.joins.run ?? null })),
+  );
   const workImplements = (k: LoadedKind, id: string): boolean | undefined => {
     const v = k.records!.views.find((x) => x.id === id);
     return v ? idList(v.data, k.records!.loaded.kind.work!.implements).includes(view.id!) : undefined;
@@ -359,6 +367,7 @@ async function walk(query: IntentRecordQuery, head: Head): Promise<IntentRecordR
       pullRequest: pr ? Number(pr[1]) : null,
       unit,
       joins,
+      runs: runJoins.refs.get(sha) ?? [],
       entries: listed.get(sha)!,
       files: files.get(sha) ?? [],
       bucket: isOwn ? "own" : workedBy.length > 0 ? "worked" : alsoWithin.length > 0 ? "within-other" : "unexplained",
