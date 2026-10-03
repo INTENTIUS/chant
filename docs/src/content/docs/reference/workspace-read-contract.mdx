@@ -10,7 +10,7 @@ Tools that show a workspace read it through one contract ([#2536](https://github
 
 | Contract | chant floor | Declaration | Output schemas |
 |---|---|---|---|
-| 1 | 0.81.0 | schema 1 | `ls`, `graph`, `check`, `status`, `records`, `records-since`, `intent`, `intent-record`, `composites`, `points`, `changes`, `patch`, `work-history` and `agent`, each at `v1` |
+| 1 | 0.81.0 | schema 1 | `ls`, `graph`, `check`, `status`, `records`, `records-since`, `intent`, `intent-record`, `composites`, `points`, `changes`, `patch`, `work-history`, `agent` and `runs`, each at `v1` |
 
 Every document carries `contract`, the version it follows, and `$schema`, its schema's `$id`. Most also carry `chant`, the version of the chant that wrote it. A reader that knows contract 1 refuses a document with any other `contract` value. Given a chant older than the floor, the reader can say so and name the version to install, since that chant doesn't write the contract at all.
 
@@ -37,6 +37,7 @@ Each schema ships in `@intentius/chant` at `src/workspace/<command>.schema.json`
 | the [`workEvidence`](/chant/guide/work-items/#acceptance-criteria) Op activity | its result, or the refusal it fails with | `https://intentius.io/chant/schemas/workspace/work-evidence/v1/work-evidence.schema.json` |
 | [`chant workspace work history`](/chant/cli/workspace-work/#reading-leases) | `--json` | `https://intentius.io/chant/schemas/workspace/work-history/v1/work-history.schema.json` |
 | [`chant workspace agent`](/chant/cli/workspace-agent/) | `--json` | `https://intentius.io/chant/schemas/workspace/agent/v1/agent.schema.json` |
+| [`chant workspace runs`](/chant/cli/workspace-runs/#reading-runs) | `--json` | `https://intentius.io/chant/schemas/workspace/runs/v1/runs.schema.json` |
 | [`chant workspace signers`](/chant/cli/workspace-signers/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/signers/v1/signers.schema.json` |
 | [`chant workspace evidence verify`](/chant/cli/workspace-evidence/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/evidence/v1/evidence.schema.json` |
 
@@ -229,7 +230,7 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `intent-history-shallow` | reason, `graph --intent` | The repository is a shallow clone, so the region's history stops at the clone's boundary. |
 | `intent-plugin-failed` | reason, `graph --intent` | A kind file's `commitJoins` failed for a commit. |
 | `intent-commit-undecided` | finding, `graph --intent` | A commit changed the region when no decision constrained it at path granularity. |
-| `intent-commit-bare` | finding, `graph --intent` | A commit names no unit, no pull request and no decision covering the region at its time. |
+| `intent-commit-bare` | finding, `graph --intent` | A commit names no unit, carries no record through its Chant-Record or Chant-Lease trailer, and has no pull request and no decision covering the region at its time. |
 | `intent-pin-drifted` | finding, `graph --intent` | A decision's pinned artifact no longer hashes to the pin. |
 | `intent-pin-missing` | finding, `graph --intent` | A decision's pinned artifact does not exist in the tree read. |
 | `intent-pin-stale` | finding, `graph --intent` | A current decision constraining the region pins an artifact at the hash a record it supersedes pinned, and the artifact has not changed since. |
@@ -297,6 +298,11 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `lease-token-mismatch` | refusal, `work`; error, `workEvidence` | The live lease on the work item carries another fencing token than the one given. |
 | `lease-race` | refusal, `work` | Another writer changed the lease between this command's read and its write. |
 | `lease-push-rejected` | refusal, `work` | The remote refused the lease push: another clone claimed the item first, or the remote could not be reached. |
+| `run-exists` | error, `runs start` and `runs record` | The fields give a run id the ledger already has. |
+| `run-unknown` | error, `runs end` | The ledger has no start for the run. |
+| `run-ended` | error, `runs end` | The run's end is already recorded. |
+| `runs-no-ledger` | reason, `runs` | The checkout has no `chant/lifecycle` branch, so there are no agent runs to read. |
+| `runs-ledger-malformed` | reason, `runs` | Some lines of the agent run ledger aren't run events; the rest are read. |
 
 `graph --intent` may also carry findings a plugin contributes through its [`commitJoins`](/chant/cli/workspace-graph/#commit-joins) ([#2656](https://github.com/INTENTIUS/chant/issues/2656)). Their codes are outside the list. Each is `plugin:<name>:<code>`, where `<name>` is the kind's name in the document's `kinds` (the kind file's `commitJoinsName` when it has one) and `<code>` is lower case words joined by dashes. The plugin owns its namespace, and chant only carries the finding. A reader that switches on codes can tell the two apart by the `plugin:` prefix.
 
@@ -361,6 +367,26 @@ A work lease is written by [`chant workspace work claim|renew|release`](/chant/c
 
 `chant workspace work history <id> --json` reads one item's history back from the ledger of the member that owns its work kind ([#2785](https://github.com/INTENTIUS/chant/issues/2785)). The document follows `work-history.schema.json`. The history file's place on the branch is `ledger`, and the lease ref's record now is `lease`. `events` holds every line, and `claims` folds the lines into one entry per fencing token. Each claim says how it `ended`: `released` with its `release` (`by`, `at`, `outcome`, `note`), `held`, `expired`, or `lost` to a later claim. Since [#3147](https://github.com/INTENTIUS/chant/issues/3147) the outcome is one of a [closed list](/chant/cli/workspace-work/#outcomes), and each claim says whether it counts as an `attempt` and names its `kept` attempt ref. The document totals them in `attempts` (`failed`, `limit`, `remaining`, `exhausted`) against the item's attempt limit and lists `kept`, so a runner reads the limit from chant instead of counting `claims` itself. It never fetches either. `chant serve mcp` serves it as `workspace-work-history`.
 
+## Agent runs
+
+`chant workspace runs --json` reads the run ledger, `_agent-runs/<id>.jsonl` on `chant/lifecycle` in the workspace root's ledger ([#3033](https://github.com/INTENTIUS/chant/issues/3033), [ws-076](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-076-the-agent-run-record.md)). chant records runs and never starts one; whatever ran the agent writes them with `runs start`, `end` and `record`. The document follows `runs.schema.json`. `ledger` names the branch, the directory and the tip read (`null` with no branch). `filter` repeats the options given. The table lists the fields of each entry in `runs`.
+
+| Field | Meaning |
+|---|---|
+| `id`, `state` | the run id, the value of its commits' `Chant-Run` trailer, and `running` or `ended` |
+| `startedAt`, `endedAt`, `outcome` | when it ran and how it ended, `null` while it runs |
+| `by`, `agent` | the principal it worked for and the agent session it ran as |
+| `harness`, `model`, `provider` | `{ name, version }`, and the model and provider as the writer named them |
+| `unit`, `lease`, `records` | the work item `{ id, kind }`, the lease token, and the other records it worked on as `{ kind, id }` |
+| `instruction`, `transcript` | each pinned as `{ sha256, bytes, ref }`, or `null`. Neither is ever copied |
+| `usage`, `models` | the turns and token counts, `null` when it reported none, and each model's share when the harness gave one |
+| `cost` | `{ amount, currency, source }`, or `null` when it reported no cost |
+| `commits` | `{ sha, patchId, joinedBy }`: `record` when its end lists the commit, `trailer` when the commit on `HEAD`'s history carries its `Chant-Run` |
+| `decisions` | `<kind>/<id>` of each decision its work item implements, and each decision record it names |
+| `ledger` | its file on the branch |
+
+`totals` holds `all`, `byUnit`, `byDecision` and `byPrincipal`, each with `runs`, `running`, `tokens`, `cost` (one sum per currency), `unpriced`, the runs that report no cost, and `unreported`, the runs that report no usage. A run without a cost is listed, never counted as zero. A metering reader sums `cost` per currency and shows `unpriced` beside it. `reasons` holds `runs-no-ledger` and `runs-ledger-malformed`, and `kind-unreadable` when a work kind can't be read to find what its items implement. `chant serve mcp` serves the document as `workspace-runs`.
+
 ## Decision points
 
 A record kind with an `answers` block is an answer kind ([ws-058](https://github.com/INTENTIUS/chant/issues/2739)). Its `answers.points` names a JSON points file, validated against `decision-points.schema.json`, which `@intentius/chant` exports as `@intentius/chant/workspace/decision-points.schema.json`. Each input a point reads is named for one of this contract's outputs, optionally followed by dotted field names.
@@ -398,12 +424,13 @@ The walk runs in this order, and the nodes are listed in it:
 | `region` | `region:<path>` or `region:<path>:<start>-<end>` | `path` from the workspace root, `lines` or `null`, `member`, `at`, `type` (`file` or `dir`), `generated` for a file, and `node` when the region was given as a graph node id |
 | `file` | `file:<path>` | `path`, `member`, `generated` |
 | `member` | `member:<name>` | `name`, `dir`, `memberKind` |
-| `commit` | `commit:<sha>` | `sha`, `subject`, `author`, `date`, `trailers`, `pullRequest`, `signature` (the provenance level, judged by the signers at base as `records` judges a record), `lines`, the ranges it changed in a line-range region, and `state`: `decided`, `decided-by-window`, `undecided`, or `null` when no record kind was read |
+| `commit` | `commit:<sha>` | `sha`, `subject`, `author`, `date`, `trailers`, `pullRequest`, `signature` (the provenance level, judged by the signers at base as `records` judges a record), `lines`, the ranges it changed in a line-range region, `state`: `decided`, `decided-by-window`, `undecided`, or `null` when no record kind was read, and `joins`, what [chant's trailers](#commit-trailers) on it say |
 | `unit`, `contract`, `evidence` | `<kind>:<id>` | `ref`, the plugin's own id, `plugin`, the kind file that supplied it, and `data`, its other fields. A decision's URL evidence is an `evidence` node with `plugin: null` and `data` holding `title`, `url`, `as_of` and `sha256` |
 | `work` | `record:<kind>/<id>` | `recordKind`, `record`, `path`, `title`, `state`, `closed`, `valid`, `reasons`, `provenance`, `owner`, `ready`, `blockedBy`, `implements`, `needs`, `source` (the gap it came from as `{ finding, region, decision?, artifact? }`, or `null`), `supersededBy`, `constrains` and `warnings`, the `work-` warnings. Read only with a work kind passed as `--kind` |
 | `decision` | `record:<kind>/<id>` | `recordKind`, `record`, `path`, `title`, `state`, `closed`, `valid`, `reasons`, `provenance`, `decided_by`, `decided_on`, `decidedIn` (the commit that decided the record, as `{ sha, date, subject }`, or `null`), `reviews` (agree, dissent, abstain and open concerns, the dissents with neither `addressed_by` nor `withdrawn_on`), `supersededBy`, `supersedes`, and `constrains`, the entries that cover the region with their granularity |
 | `artifact` | `artifact:<path>` | `path`, `anchor`, `pinnedSha256`, `currentSha256` and `pinState`: the state of a current decision's pin, or `unpinned` when only superseded decisions pin it |
 | `link` | `link:<n>` | `row`, the member link row |
+| `run` | `run:<id>` | an agent run that made a commit in the walk ([#3033](https://github.com/INTENTIUS/chant/issues/3033)), from the run ledger: `run`, `recorded`, `state`, `harness`, `model`, `provider`, `by`, `agent`, `unit`, `startedAt`, `endedAt`, `outcome`, `usage`, `cost` and `transcript`. A run a `Chant-Run` trailer names and the ledger lacks has `recorded: false` and nulls |
 | `finding` | `finding:<code>:<n>` | `code`, `message`, and `concerns`, the ids of the nodes it is about. A plugin's finding also has `plugin`, the kind file that returned it, and `refs`, as the plugin gave them. With a work kind read, every finding has `addressed` and `addressedBy`, the work items addressing it as `{ id, state }` |
 
 | Edge kind | From, to | Fields |
@@ -420,6 +447,8 @@ The walk runs in this order, and the nodes are listed in it:
 | `implements` | work item to the decision it carries out | |
 | `needs` | work item to a work item it waits on | |
 | `addressed-by` | finding to a work item that addresses it | |
+| `carries` | commit to a decision or work item its `Chant-Record` trailer names, or to the work item its `Chant-Lease` was taken on | |
+| `made-by` | commit to the agent run that made it | `joinedBy`: `trailer` when the commit carries the run's `Chant-Run`, `record` when the run's end lists the commit |
 
 A decision covers a commit from the commit that decided it until the window of the record superseding it opens. The commit that decided a record is the one that last moved it into an approved state and kept it there: a state its kind's `approval` ranks above 0, or one of its `closedStates` for a kind with no `approval`. For the decision kind that is `decided`, `ratified` or `superseded`. A record added in an approved state was decided by the commit that added it. A record not approved in the history read has none, and its window opens at the commit that added it. `records --json` gives the same commit as `decidedIn` on each record of a kind with `approval` ranks that is not a work kind. A commit outside every path-granularity window is `intent-commit-undecided`, and its `state` is `undecided`.
 
@@ -444,7 +473,7 @@ The document joins the others by the member name (`member` on region and file no
 | `commits[]` | the commits in the window, newest first by commit date |
 | `counts` | `commits`, a count for each bucket (`own`, `worked`, `withinOther`, `unexplained`), and `outsideWindow`, the commits that changed the region outside the window |
 
-A commit has `sha`, `subject`, `author`, `date`, `trailers` and `pullRequest` as a commit node has them. `unit` is the unit a commit join gave it, or `null`. `entries` names the constrains entries whose history lists it, and `files` the files it changed in the record's region, from the workspace root. For a merge, `files` is read against its first parent. The bucket is the first of these that holds:
+A commit has `sha`, `subject`, `author`, `date`, `trailers`, `pullRequest` and `joins` as a commit node has them. `unit` is the unit a commit join gave it, or `null`. `runs` lists the agent runs that made it, each with `id`, `recorded`, `state`, `harness`, `model`, `provider`, `by`, `agent`, `unit` and `joinedBy`. `entries` names the constrains entries whose history lists it, and `files` the files it changed in the record's region, from the workspace root. For a merge, `files` is read against its first parent. The bucket is the first of these that holds:
 
 | `bucket` | The commit |
 |---|---|
@@ -454,6 +483,20 @@ A commit has `sha`, `subject`, `author`, `date`, `trailers` and `pullRequest` as
 | `unexplained` | matches none of these |
 
 `workedBy` and `alsoWithin` list every match as `{ recordKind, record, state }`, whatever the bucket. If the record can't be walked, the result is a failure whose `error.code` is the declaration's code, the record kind's, or `intent-record-unknown`.
+
+### Commit trailers
+
+chant reads seven trailers of its own on a commit ([#3149](https://github.com/INTENTIUS/chant/issues/3149), [ws-075](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-075-commit-trailers.md)). They point at facts kept by id elsewhere, so a commit that keeps its message through a rebase or a cherry-pick keeps its joins. chant never makes a commit; the writer adds these lines.
+
+| Trailer | Value | `joins` field |
+|---|---|---|
+| `Chant-Agent` | the agent session that wrote the commit ([ws-067](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-067-write-scope-and-agent-sessions.md)) | `agent` |
+| `Chant-Lease` | the fencing token of the work lease the commit was made under | `lease`: `{ token, item }`, where `item` is the work item a lease history on the local `chant/lifecycle` branch names for the token, or `null` |
+| `Chant-Run` | the id of the agent run that made the commit ([#3033](https://github.com/INTENTIUS/chant/issues/3033)) | `run`, and a `made-by` edge to the run's node |
+| `Chant-Record` | `<kind>:<id>`: a record the commit carries out or changes, by its kind's name. Repeatable | `records`: `{ kind, id, node }` each, with `node` the record's node id when a kind read has it, else `null` |
+| `Chant-Applied-By`, `Chant-Applied-At`, `Chant-Applied-Commit` | on the commit that applied a leased branch: who, when (ISO 8601) and the branch tip applied | `applied`: `{ by, at, commit }`, or `null` without `Chant-Applied-By` |
+
+Keys compare without case, as git's do, and a malformed `Chant-Record` value is skipped. Every other trailer is a plugin's. A `carries` edge runs from the commit to each record and lease item a kind read has, and the commit is the own work of a decision it carries, or of a decision a work item it carries implements. Commits made before these trailers, or by tools that write their own, keep their plugin joins.
 
 ## The patch read
 
@@ -598,6 +641,8 @@ A reader writes only through chant commands ([ws-052](https://github.com/INTENTI
 | `chant workspace records review` | `https://intentius.io/chant/schemas/workspace/records-review/v1/records-review.schema.json` | `path`, `id`, `review`, and `session` with `--session` |
 | `chant workspace records close` | `https://intentius.io/chant/schemas/workspace/records-close/v1/records-close.schema.json` | `path`, `id`, `changed`, `seal`, `closedRev` |
 
+An agent run goes to the run ledger on `chant/lifecycle`, never to the working tree, through [`chant workspace runs start|end|record`](/chant/cli/workspace-runs/) ([#3033](https://github.com/INTENTIUS/chant/issues/3033)). Their document follows `https://intentius.io/chant/schemas/workspace/runs-write/v1/runs-write.schema.json`. It holds the run as `runs --json` reports it and the place on the branch the line went, with the `Chant-Run` line for the run's commits in `trailer`. A refused write writes nothing and exits 1 with `run-exists`, `run-unknown`, `run-ended` or `write-input-invalid` in `error`.
+
 [`chant workspace work`](/chant/cli/workspace-work/) writes a work lease rather than a record, and prints a document following `https://intentius.io/chant/schemas/workspace/work-lease/v1/work-lease.schema.json` ([#2732](https://github.com/INTENTIUS/chant/issues/2732)). Its result carries `item`, `event`, `kind`, `ref`, `lease` and `history`, and a refusal carries `refused` with a `lease-` code and exits 2.
 
 The schemas ship beside the read schemas and follow their shape: a `oneOf` of a result and a failure, `contract: 1`, and a closed list of error codes from the same list as every read. A result also carries `kind`, `dryRun`, the written record's `warnings`, and `text` under `--dry-run`. A failure exits 1 and writes nothing. chant 0.86.0 is the first release to print these documents.
@@ -662,4 +707,4 @@ The reader never gets the workspace's path, so the transport is its only route t
 
 With `over: "mcp"`, the same reader's calls are answered by `chant serve mcp` ([#2707](https://github.com/INTENTIUS/chant/issues/2707)). The transport starts one server session in the workspace and turns each call into the workspace tool that answers it, such as `workspace-records` for `workspace records --kind <kind> --json`. It also runs the command itself, and the suite fails when the tool's document differs from the command's. `check` has no tool, so over MCP it is not applicable.
 
-Outside the chant repository the suite writes a workspace to a temporary directory and removes it afterwards. The workspace is copied from the fixture in `src/workspace/conformance/__fixture__/` of `@intentius/chant`. Its chant member declares one composite and the component that deploys it, and its `decisions/` directory holds one decision. `chant workspace init --yes` declares it, and git commits it on `main`. The suite then writes a second decision, `fix-002`, proposed, and leaves it uncommitted, so `records --uncommitted` lists one record. `createConformanceWorkspace()` called directly leaves it out unless given `uncommitted: true`, so a test that writes records there allocates the ids it did before. Inside the chant repository the suite reads `reference-workspace/`. Both have the files the suite's arguments name, such as `decisions/decision.kind.mjs` and `app/src/server.mjs:19`. `workspaceDir` names another workspace with those files. `chantCommand` names the chant to run. By default that is the first `node_modules/.bin/chant` above the current directory, then the chant the suite came with.
+Outside the chant repository the suite writes a workspace to a temporary directory and removes it afterwards. The workspace is copied from the fixture in `src/workspace/conformance/__fixture__/` of `@intentius/chant`. Its chant member declares one composite and the component that deploys it, and its `decisions/` directory holds one decision. `chant workspace init --yes` declares it, and git commits it on `main` with a `Chant-Run` trailer, and `chant workspace runs record` writes that run to the run ledger, so `runs` reads a run with every field. The suite then writes a second decision, `fix-002`, proposed, and leaves it uncommitted, so `records --uncommitted` lists one record. `createConformanceWorkspace()` called directly leaves it out unless given `uncommitted: true`, so a test that writes records there allocates the ids it did before. Inside the chant repository the suite reads `reference-workspace/`. Both have the files the suite's arguments name, such as `decisions/decision.kind.mjs` and `app/src/server.mjs:19`. `workspaceDir` names another workspace with those files. `chantCommand` names the chant to run. By default that is the first `node_modules/.bin/chant` above the current directory, then the chant the suite came with.

@@ -12,7 +12,7 @@ The sql lexicon's rule ids all start with `SQL`. Rules that hold in every dialec
 | SQLCH001 to SQLCH003 | lint rules over the TypeScript source | `chant lint`, the editor, and `chant serve lsp` |
 | SQLCH101 to SQLCH120 | post-synth checks over the build output | `chant build` and `chant lint` |
 | SQLCH200 to SQLCH250 | the change classifier's rules | `chant sql diff`, `chant sql plan`, `clickhouseApply`; see [Planning and the Change Classifier](../change-classifier/) |
-| SQLPG001 to SQLPG003 | Postgres lint rules over the TypeScript source | `chant lint`, the editor, and `chant serve lsp` |
+| SQLPG001 to SQLPG004 | Postgres lint rules over the TypeScript source | `chant lint`, the editor, and `chant serve lsp` |
 
 The [All Rules](../rules/) page is the generated list. This page says what each rule means. Every post-synth check has an entry in the lexicon's `auditCatalog()`, which is what `chant audit` reports it under.
 
@@ -26,6 +26,7 @@ The [All Rules](../rules/) page is the generated list. This page says what each 
 | SQLPG001 | error | The DDL in a Postgres template does not parse, the template holds another statement than its tag (a `CREATE INDEX` in `table`) or a second `CREATE`, or an index has no name. Reported at the token, as a line and column in the `.ts` file; a default that is not a `b_expr` (`DEFAULT 1 IN (1, 2)`) is reported at `IN`. An index's name is its identity on the server, so an unnamed one, which Postgres would name itself, is refused | Fix the statement, use the tag for the statement it holds, and name every index |
 | SQLPG002 | error | `${users.kind}` where `${users.columns.kind}` was meant, as SQLCH003 for Postgres templates | Reach the column through `.columns` |
 | SQLPG003 | warning | An object named in a string where Postgres reads a `regclass`: `nextval('app.ticket_seq')`, `currval`, `setval`, or `'app.t'::regclass`. A name in a string records no reference, so the build can create the table before the sequence | Interpolate the declared object: `nextval(${ticketSeq})` renders `nextval('app.ticket_seq'::regclass)`, as the catalog prints it, and keeps the dependency |
+| SQLPG004 | error | An `extension` template creates an extension the provider named in `sql.provider` (or in the one provider every profile names) does not allow: `CREATE EXTENSION pg_stat_monitor` on Neon. The lists are snapshots of each provider's documentation, dated in `providerData(provider).sources`; a provider whose list is partial (Supabase) is not reported for a name outside it. Silent when no provider is set | Use an extension the provider lists, change `sql.provider`, or disable the rule on the line if the provider has added the extension since the list was read |
 
 ## Post-synth checks
 

@@ -15,7 +15,7 @@
 
 import type { ExportedTemplate, ResourceSelector } from "@intentius/chant/lexicon";
 import { bindPostgres, type BindOptions } from "../live/bind";
-import { readLiveSchema } from "../live/catalog";
+import { markProviderOwned, readLiveSchema } from "../live/catalog";
 import { objectsToIR, type ImportedPgObject } from "./ir";
 import { isChantManaged } from "../../core/ownership";
 
@@ -32,7 +32,7 @@ export async function exportResources(options: ExportOptions): Promise<ExportedT
   const { target, client } = await bindPostgres(options);
   let live;
   try {
-    live = await readLiveSchema(client, { schemas: target.schemas });
+    live = markProviderOwned(await readLiveSchema(client, { schemas: target.schemas }), target.provider);
   } finally {
     await client.end();
   }

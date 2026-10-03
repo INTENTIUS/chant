@@ -1,0 +1,121 @@
+---
+title: "chant workspace runs"
+description: Keep what each agent run cost and which commits it made in the run ledger on chant/lifecycle, and read the runs back with totals per work item, decision and principal
+diataxis: reference
+---
+
+## Synopsis
+
+```
+chant workspace runs [--unit <id>] [--decision <id>] [--by <principal>] [--since <rev>] [--json]
+chant workspace runs start --from <file|->
+chant workspace runs end <run id> [--from <file|->]
+chant workspace runs record --from <file|->
+```
+
+## Description
+
+An agent run is one session of a model working in the repository, such as a factory's build of a work item or one chat turn. The run record says who the run worked for, which harness and model ran it, what it cost and which commits it made ([#3033](https://github.com/INTENTIUS/chant/issues/3033), [ws-076](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-076-the-agent-run-record.md)).
+
+chant records runs and never starts one. Whatever ran the agent writes the record. In a studio box that is the factory's build step, or hud for a chat turn. The record goes to the run ledger, `_agent-runs/<run id>.jsonl` on the `chant/lifecycle` branch, beside the [work lease histories](/chant/cli/workspace-work/#history). Nothing is written to the working tree, so a run's record never shows up in a pull request's diff. The ledger is append-only. A run gets a `start` line and an `end` line, and neither changes after it is written ([ws-068](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-068-ledgers-stay-ledgers.md)).
+
+A transcript is never copied into the record. The record pins it by sha256, with the place the writer keeps it, and so does the instruction the run was given.
+
+| Verb | Writes |
+|---|---|
+| `start` | the run's start, with a new id unless the fields give one. Refused with `run-exists` for an id the ledger has |
+| `end <run id>` | how a started run ended. Refused with `run-unknown` for a run with no start, and `run-ended` for one that already ended |
+| `record` | a finished run's start and end in one write, for a caller that reports a run only once it is over |
+
+Each write fetches `chant/lifecycle` when it fast-forwards, appends with a compare-and-set of the branch, and pushes it. The push is best-effort, and `ledger.pushed` says whether the remote took it. Each prints one JSON document, `runs-write.schema.json`, and exits 0 when it wrote and 1 when nothing was written.
+
+## The fields
+
+`--from` names a JSON file, or `-` for standard input. Every field is optional except `harness` on `start` and `record`.
+
+| Field | On | Holds |
+|---|---|---|
+| `id` | `start`, `record` | the run id to use: letters, digits, `.`, `_` and `-`. Without it chant allocates one from the start time, such as `20261003T061522Z-3f9a1c2e` |
+| `startedAt`, `endedAt` | `start` and `record`, `end` and `record` | ISO 8601. Default: now. `record` without `startedAt` starts the run when it ended |
+| `by` | `start`, `record` | the principal the run worked for: the person who prompted it, or the service that asked |
+| `agent` | `start`, `record` | the agent session it ran as ([ws-067](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-067-write-scope-and-agent-sessions.md)). Default: `CHANT_AGENT` |
+| `harness` | `start`, `record` | `"claude-code"`, or `{ "name", "version" }` |
+| `model`, `provider` | `start`, `record` | such as `claude-opus-5-5` and `anthropic` |
+| `unit` | `start`, `record` | the work item it worked on: its id, or `{ "id", "kind" }` |
+| `lease` | `start`, `record` | the fencing token of the work lease it ran under |
+| `records` | `start`, `record` | other records it worked on, as `<kind>:<id>`, such as the decision a decide call answered |
+| `instruction` | `start`, `record` | the instruction pinned by hash: `{ "sha256" }`, or `{ "path" }` for chant to hash, each with an optional `ref` |
+| `outcome` | `end`, `record` | how it ended, as free text: `done`, `not_done`, `failed`, `cancelled` |
+| `usage` | `end`, `record` | `turns`, `inputTokens`, `outputTokens`, `cacheReadTokens` and `cacheWriteTokens`, each optional |
+| `models` | `end`, `record` | each model's share when the harness reports a breakdown: `model`, `provider`, the token counts and `cost` |
+| `cost` | `end`, `record` | `{ "amount", "currency", "source" }`: the currency is ISO 4217, and `source` says what priced it, such as `harness:claude-code`, `lobby:list-2026-09` or `provider:billed` |
+| `transcript` | `end`, `record` | the transcript pinned by hash, as for `instruction`. chant hashes a `path` and records `sha256`, `bytes` and the `ref` (the path, unless a `ref` is given). It never reads a `ref` back |
+| `commits` | `end`, `record` | commit ids the run made. chant records each commit's full id and `git patch-id --stable` |
+
+A field outside this list, such as a transcript's text, is refused with `write-input-invalid`. So is a malformed currency or a commit the repository doesn't have, and an end dated before its start.
+
+A factory reports a build in two steps. It starts the run before the builder runs.
+
+```sh
+chant workspace runs start --from - <<'EOF'
+{ "harness": { "name": "claude-code", "version": "2.1.0" }, "model": "claude-opus-5-5", "provider": "anthropic",
+  "by": "alice", "agent": "factory", "unit": "W-012", "lease": "6f1d0c2a-3b4e-4f6a-9d1e-0a2b3c4d5e6f" }
+EOF
+```
+
+```json
+{
+  "$schema": "https://intentius.io/chant/schemas/workspace/runs-write/v1/runs-write.schema.json",
+  "contract": 1,
+  "verb": "start",
+  "run": { "id": "20261003T061522Z-3f9a1c2e", "state": "running", "startedAt": "2026-10-03T06:15:22.000Z", "...": "..." },
+  "trailer": "Chant-Run: 20261003T061522Z-3f9a1c2e",
+  "ledger": { "branch": "chant/lifecycle", "path": "_agent-runs/20261003T061522Z-3f9a1c2e.jsonl", "commit": "4c1d...", "pushed": true }
+}
+```
+
+Each commit the run makes carries the `trailer` line ([chant's trailers](/chant/cli/workspace-graph/#chants-trailers)), and the end follows once the builder returns.
+
+```sh
+chant workspace runs end 20261003T061522Z-3f9a1c2e --from - <<'EOF'
+{ "outcome": "done", "usage": { "turns": 14, "inputTokens": 182340, "outputTokens": 9120, "cacheReadTokens": 1204000 },
+  "cost": { "amount": 1.84, "currency": "USD", "source": "harness:claude-code" },
+  "transcript": { "path": "/home/sprite/.claude/projects/app/9b2e.jsonl" } }
+EOF
+```
+
+A chat turn or a decide call that is over before anything is recorded goes in one write with `runs record`.
+
+## Reading runs
+
+`chant workspace runs --json` prints every run in the ledger, newest first. Each entry folds a run's start and end together, and its `state` is `running` until the end is recorded. The document follows `runs.schema.json`, part of the [read contract](/chant/reference/workspace-read-contract/#agent-runs). It reads the local branch and never fetches.
+
+Each run lists the `commits` it made. A commit the run's end lists has `joinedBy: ["record"]`, and a commit on `HEAD`'s history that carries the run's `Chant-Run` trailer has `"trailer"`. A commit can have both. `decisions` lists, as `<kind>/<id>`, the decisions the run carried out: the ones its work item `implements`, read through the declared work kinds, and the decision records its `records` name.
+
+`totals` sums the runs the filters keep, overall in `all` and per group in `byUnit`, `byDecision` and `byPrincipal`. A run with no work item counts under `unit: null`, and a run with no `by` under `principal: null`. A run carrying out two decisions counts under each.
+
+| Field | Holds |
+|---|---|
+| `runs`, `running` | how many runs, and how many have no end yet |
+| `tokens` | `input`, `output`, `cacheRead`, `cacheWrite`, summed over the runs that report usage |
+| `cost` | one `{ currency, amount }` per currency, since two currencies don't add |
+| `unpriced` | the runs that report no cost, running ones included. They are left out of `cost`, never counted as zero |
+| `unreported` | the runs that report no usage, left out of `tokens` |
+
+| Option | Keeps |
+|---|---|
+| `--unit <id>` | the runs on that work item |
+| `--decision <id>` | the runs that carried out that decision, by its id or `<kind>/<id>` |
+| `--by <principal>` | the runs made for that principal |
+| `--since <rev>` | the runs that made a commit in `<rev>..HEAD`, or started after `<rev>`'s commit date |
+
+A checkout with no `chant/lifecycle` branch reads no runs and says so with the reason `runs-no-ledger`. Lines in the ledger that aren't run events are counted in `malformed` and named by `runs-ledger-malformed`. Without `--json`, the read prints one line per run and the totals. `chant serve mcp` serves the same document as the `workspace-runs` tool.
+
+[`chant workspace graph --intent`](/chant/cli/workspace-graph/#chants-trailers) links each commit in a region to the run that made it, with the model and the cost.
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | The read succeeded, or the write was made |
+| 1 | The declaration could not be read, `--since` names no commit, the command line is wrong, or the write was refused |

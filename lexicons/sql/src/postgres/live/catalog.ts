@@ -34,6 +34,8 @@ import type { PostgresClient } from "./client";
 import { POSTGRES_ENTITY_TYPES, type PostgresEntityType } from "../entity-types";
 import { quoteIdent } from "../keywords";
 import { hasChantTrailerKey, RECEIPTS_TRAILER_KEY, stripMarker } from "../../core/ownership";
+import { isProviderOwned, providerData } from "../providers";
+import type { PostgresProvider } from "../providers/types";
 
 /** The server's own schemas, never part of a declared schema. */
 export const SYSTEM_SCHEMAS = ["pg_catalog", "information_schema", "pg_toast"];
@@ -547,3 +549,23 @@ export async function readLiveSchema(client: PostgresClient, scope: SchemaScope 
 
 /** The key an object is found by: its type and schema-qualified name. */
 export const liveKey = (type: string, schema: string | undefined, name: string): string => `${type} ${schema ?? ""}.${name}`;
+
+/**
+ * Mark what the managed service owns (#3282) as foreign: its reserved
+ * schemas and everything in them, and the extensions it installs itself
+ * (`rdsadmin`, Supabase's `auth` and `storage`, ...). They are the
+ * provider's, so import leaves them out and observation never reports them
+ * as chant's.
+ */
+export function markProviderOwned(objects: readonly LivePgObject[], provider: PostgresProvider | undefined): LivePgObject[] {
+  if (!provider) return [...objects];
+  const label = providerData(provider).label;
+  return objects.map((o) => {
+    if (o.foreign) return o;
+    const owned =
+      (o.type === POSTGRES_ENTITY_TYPES.schema && isProviderOwned(provider, { kind: "schema", name: o.name })) ||
+      (o.type === POSTGRES_ENTITY_TYPES.extension && isProviderOwned(provider, { kind: "extension", name: o.name })) ||
+      (o.schema !== undefined && isProviderOwned(provider, { kind: "schema", name: o.schema }));
+    return owned ? { ...o, foreign: label } : o;
+  });
+}

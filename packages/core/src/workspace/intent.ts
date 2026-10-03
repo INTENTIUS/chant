@@ -48,6 +48,8 @@ import type { DecidedIn } from "./record-decided";
 import { importKindModule, loadRecordKind, parseFrontMatter, RecordReadError, supersedesTargets, type LoadedRecordKind } from "./records";
 import { queryRecords, type RecordView } from "./records-cli";
 import { isPluginCode, type PluginCode, type ReasonCode } from "./reason-codes";
+import { runsForCommits, type RunCost, type RunPin, type RunUsage } from "./runs";
+import { readTrailerJoins, type CommitTrailerJoins } from "./trailer-joins";
 import { joinPath, skippedDir, type WorkspaceTree } from "./tree";
 import { activeAttestors, type ProvenanceLevel } from "./trust/attestor";
 import { commitProvenance, policyAtBase, resolveBase } from "./trust/provenance";
@@ -66,7 +68,7 @@ export const INTENT_OUTPUT_SCHEMA_ID = "https://intentius.io/chant/schemas/works
 export const INTENT_FINDING_CODES = [
   /** A commit touched the region when no decision constrained it at path granularity. */
   "intent-commit-undecided",
-  /** A commit has no unit, no pull request reference and no decision covering the region at its time. */
+  /** A commit has no unit, carries no record through chant's trailers, has no pull request reference and no decision covering the region at its time. */
   "intent-commit-bare",
   /** A pinned artifact's bytes no longer hash to the pin. */
   "intent-pin-drifted",
@@ -196,6 +198,13 @@ export interface CommitNode {
    * null when no record kind was read.
    */
   state: CommitState | null;
+  /**
+   * What chant's own trailers join the commit to (#3149, ws-075): the agent
+   * session, the work lease and the item it was taken on, the agent run, the
+   * records it names and the apply it records. A record or a lease item that
+   * a kind read has is linked by a `carries` edge.
+   */
+  joins: CommitTrailerJoins;
 }
 
 export type CommitState = "decided" | "decided-by-window" | "undecided";
@@ -331,7 +340,32 @@ export interface WorkNode {
   warnings: { code: WorkWarningCode; message: string }[];
 }
 
-export type IntentNode = RegionNode | FileNode | MemberNode | CommitNode | JoinedNode | EvidenceEntryNode | DecisionNode | WorkNode | ArtifactNode | LinkNode | FindingNode;
+/**
+ * An agent run that made a commit in the walk (#3033): from the run ledger on
+ * the local `chant/lifecycle` branch. A run a `Chant-Run` trailer names and
+ * the ledger lacks is listed with `recorded: false` and nothing else known.
+ */
+export interface RunNode {
+  id: string;
+  kind: "run";
+  run: string;
+  recorded: boolean;
+  state: "running" | "ended" | null;
+  harness: { name: string; version: string | null } | null;
+  model: string | null;
+  provider: string | null;
+  by: string | null;
+  agent: string | null;
+  unit: string | null;
+  startedAt: string | null;
+  endedAt: string | null;
+  outcome: string | null;
+  usage: RunUsage | null;
+  cost: RunCost | null;
+  transcript: RunPin | null;
+}
+
+export type IntentNode = RegionNode | FileNode | MemberNode | CommitNode | JoinedNode | EvidenceEntryNode | DecisionNode | WorkNode | ArtifactNode | LinkNode | FindingNode | RunNode;
 
 export type Granularity = "path" | "member" | "contract" | "issue";
 
@@ -340,7 +374,8 @@ export type IntentEdge =
   | { kind: "pins"; from: string; to: string; pinnedSha256: string | null; pinState: PinState }
   | { kind: "touched-by"; from: string; to: string; lines: LineRange[] | null }
   | { kind: "within"; from: string; to: string; state: "decided" | "decided-by-window" | "worked" }
-  | { kind: "produced-by" | "serves" | "cites-evidence" | "supersedes" | "links" | "implements" | "needs" | "addressed-by"; from: string; to: string };
+  | { kind: "made-by"; from: string; to: string; joinedBy: ("trailer" | "record")[] }
+  | { kind: "produced-by" | "serves" | "cites-evidence" | "supersedes" | "links" | "implements" | "needs" | "addressed-by" | "carries"; from: string; to: string };
 
 export interface IntentReason {
   code: IntentReasonCode;
@@ -752,10 +787,14 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
     unit?: string;
     contracts: string[];
     authorship: string[];
-    /** The record ids the commit's units and contracts say they carry out. */
+    /** The record ids the commit's units and contracts say they carry out, and the ones its Chant-Record and Chant-Lease trailers name or implement. */
     decisions: string[];
+    /** The nodes of the records the commit's own trailers name (#3149). */
+    carries: string[];
   }
   const joined = new Map<string, Joined>();
+  // chant's own trailers on each commit (#3149), with the items their lease tokens name.
+  const trailerJoins = readTrailerJoins(top, [...details.values()]);
   const pluginFindings: { commit: string; plugin: string; finding: PluginFinding }[] = [];
   const failedPlugins = new Set<string>();
   for (const t of touched) {
@@ -769,11 +808,11 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
       : { level: "unattested" as const, reason: policy.problems.length ? policy.problems.join("; ") : `no signers file (${policy.signersPath}) at base; attestation is off` };
     const pr = c.subject.match(/\(#([0-9]+)\)\s*$/);
     const cid = `commit:${c.sha}`;
-    add<CommitNode>({ id: cid, kind: "commit", sha: c.sha, subject: c.subject, author: c.author, date: c.date, trailers: c.trailers, pullRequest: pr ? Number(pr[1]) : null, signature, lines: t.lines, state: null });
+    add<CommitNode>({ id: cid, kind: "commit", sha: c.sha, subject: c.subject, author: c.author, date: c.date, trailers: c.trailers, pullRequest: pr ? Number(pr[1]) : null, signature, lines: t.lines, state: null, joins: trailerJoins.get(c.sha)!.joins });
     edges.push({ kind: "touched-by", from: rid, to: cid, lines: t.lines });
 
     // 2. Each commit's origin, from the plugins.
-    const entry: Joined = { contracts: [], authorship: [], decisions: [] };
+    const entry: Joined = { contracts: [], authorship: [], decisions: [], carries: [] };
     joined.set(c.sha, entry);
     for (const k of kinds) {
       if (!k.joins) continue;
@@ -803,6 +842,39 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
       const evidence = result.evidence === undefined ? [] : Array.isArray(result.evidence) ? result.evidence : [result.evidence];
       for (const e of evidence) edges.push({ kind: "cites-evidence", from: unitId ?? contractId ?? cid, to: joinedNode("evidence", e) });
       entry.authorship.push(...(result.authorship ?? []));
+    }
+  }
+
+  // The agent runs that made each commit (#3033): the one its Chant-Run names, and any whose record lists it.
+  const runJoins = await runsForCommits(
+    top,
+    located.rootOnDisk,
+    touched.map((t) => ({ sha: t.sha, run: trailerJoins.get(t.sha)?.joins.run ?? null })),
+  );
+  for (const t of touched) {
+    if (!nodes.has(`commit:${t.sha}`)) continue;
+    for (const ref of runJoins.refs.get(t.sha) ?? []) {
+      const r = runJoins.runs.get(ref.id);
+      const node = add<RunNode>({
+        id: `run:${ref.id}`,
+        kind: "run",
+        run: ref.id,
+        recorded: r !== undefined,
+        state: r?.state ?? null,
+        harness: r?.harness ?? null,
+        model: r?.model ?? null,
+        provider: r?.provider ?? null,
+        by: r?.by ?? null,
+        agent: r?.agent ?? null,
+        unit: r?.unit?.id ?? null,
+        startedAt: r?.startedAt ?? null,
+        endedAt: r?.endedAt ?? null,
+        outcome: r?.outcome ?? null,
+        usage: r?.usage ?? null,
+        cost: r?.cost ?? null,
+        transcript: r?.transcript ?? null,
+      });
+      edges.push({ kind: "made-by", from: `commit:${t.sha}`, to: node.id, joinedBy: ref.joinedBy });
     }
   }
 
@@ -1125,6 +1197,47 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
     return !!w && w.from.has(sha) && !w.until?.has(sha);
   };
 
+  // The records chant's own trailers name (#3149): a Chant-Record of a kind
+  // read, and the work item a Chant-Lease was taken on. The commit carries
+  // each, and is the own work of a decision it names or that a work item it
+  // names implements.
+  const recordKinds = new Map(kinds.filter((k) => k.records).map((k) => [k.records!.loaded.kind.name, k]));
+  for (const t of touched) {
+    const c = nodes.get(`commit:${t.sha}`) as CommitNode | undefined;
+    const j = joined.get(t.sha);
+    if (!c || !j) continue;
+    const carry = (to: string) => {
+      if (j.carries.includes(to)) return;
+      j.carries.push(to);
+      edges.push({ kind: "carries", from: c.id, to });
+    };
+    const carryWork = (h: WorkHit): string => {
+      const node = workNode(h);
+      carry(node.id);
+      j.decisions.push(...implementedIds(h).map((id) => id.slice("record:".length)));
+      return node.id;
+    };
+    for (const r of c.joins.records) {
+      const k = recordKinds.get(r.kind);
+      if (!k) continue;
+      if (k.records!.loaded.kind.work) {
+        const h = workByKey.get(`${r.kind}/${r.id}`);
+        if (h) r.node = carryWork(h);
+        continue;
+      }
+      const hit = decisionById.get(`${r.kind}/${r.id}`);
+      if (!hit) continue;
+      r.node = decisionNode(hit.kind, hit.view).id;
+      carry(r.node);
+      j.decisions.push(`${r.kind}/${r.id}`);
+    }
+    const item = c.joins.lease?.item;
+    if (item) {
+      const hits = workKinds.map((k) => workByKey.get(`${k.records!.loaded.kind.name}/${item}`)).filter((h): h is WorkHit => h !== undefined);
+      if (hits.length === 1) carryWork(hits[0]);
+    }
+  }
+
   const coveredAt = (sha: string, granularities: Granularity[]) =>
     covering.filter((c) => {
       if (!c.node.constrains.some((x) => granularities.includes(x.granularity))) return false;
@@ -1133,9 +1246,10 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
     });
   const readsRecords = kinds.some((k) => k.records);
   // A decision's own work: a commit whose unit, or that unit's contract, names
-  // the decision, or whose unit serves a contract the decision constrains.
+  // the decision, or whose unit serves a contract the decision constrains; or
+  // a commit whose own trailers name the decision, or a work item implementing it.
   const ownWork = (j: Joined, d: DecisionNode) =>
-    !!j.unit && (j.decisions.some((x) => x === d.record || x === `${d.recordKind}/${d.record}`) || d.constrains.some((x) => x.granularity === "contract" && j.contracts.includes(x.entry)));
+    (!!j.unit || j.carries.length > 0) && (j.decisions.some((x) => x === d.record || x === `${d.recordKind}/${d.record}`) || d.constrains.some((x) => x.granularity === "contract" && j.contracts.includes(x.entry)));
   for (const t of touched) {
     const c = nodes.get(`commit:${t.sha}`) as CommitNode | undefined;
     if (!c) continue;
@@ -1152,8 +1266,8 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
     if (readsRecords && c.state === "undecided") {
       find("intent-commit-undecided", `${t.sha.slice(0, 8)} changed the region when no decision constrained ${region.path} by path`, [c.id, rid]);
     }
-    if (readsRecords && !j.unit && c.pullRequest === null && coveredAt(t.sha, ["path", "member", "contract", "issue"]).length === 0) {
-      find("intent-commit-bare", `${t.sha.slice(0, 8)} names no unit, no pull request and no decision`, [c.id]);
+    if (readsRecords && !j.unit && j.carries.length === 0 && c.pullRequest === null && coveredAt(t.sha, ["path", "member", "contract", "issue"]).length === 0) {
+      find("intent-commit-bare", `${t.sha.slice(0, 8)} names no unit, no record, no pull request and no decision`, [c.id]);
     }
     const claims = [...new Set(j.authorship)].filter((key) => hasTrailer(c.trailers, key));
     if (claims.length > 0 && c.signature.level !== "attested") {

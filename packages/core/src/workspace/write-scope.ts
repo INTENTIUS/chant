@@ -48,13 +48,14 @@ import { gitRoot } from "./record-source";
 import { normalisePrincipal, parseFrontMatter } from "./records";
 import { emptyPolicy, type TrustPolicy } from "./trust/policy";
 import { commitProvenance, policyAtBase, resolveBase } from "./trust/provenance";
+import { AGENT_TRAILER } from "./trailers";
 import { locateWorkspace } from "./which-chant";
 
 /** The environment variable naming the agent session a write is made in. */
 export const AGENT_ENV = "CHANT_AGENT";
 
-/** The commit trailer naming the agent session a commit was made in. */
-export const AGENT_TRAILER = "Chant-Agent";
+/** The commit trailer naming the agent session a commit was made in, one of chant's trailers (`trailers.ts`). */
+export { AGENT_TRAILER };
 
 /** Why a write is outside its writer's scope. Closed. */
 export const WRITE_SCOPE_CODES = ["write-scope-member", "write-scope-kind", "agent-unknown"] as const satisfies readonly ReasonCode[];

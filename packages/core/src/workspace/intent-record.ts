@@ -17,7 +17,8 @@
  *
  * - `own`: the record's own work, as the region walk judges it: a commit a
  *   plugin joins to a unit whose unit or contract names the record, or that
- *   serves a contract the record constrains.
+ *   serves a contract the record constrains; or a commit whose own trailers
+ *   (#3149) name the record, or a work item that implements it.
  * - `worked`: inside the window of a work item that is not dropped and that
  *   implements the record, or whose `path:` entries cover a file the commit
  *   changed in the record's region.
@@ -52,6 +53,8 @@ import { constraintCovers, isWorkspacePath, memberHolding } from "./record-asset
 import type { DecidedIn } from "./record-decided";
 import { RecordReadError } from "./records";
 import type { RecordView } from "./records-cli";
+import { runsForCommits, type RunRef } from "./runs";
+import { readTrailerJoins, type CommitTrailerJoins } from "./trailer-joins";
 import { joinPath } from "./tree";
 import { locateWorkspace } from "./which-chant";
 import { idList } from "./work";
@@ -91,6 +94,10 @@ export interface RecordCommit {
   pullRequest: number | null;
   /** The unit a plugin joined the commit to, or null. */
   unit: string | null;
+  /** What chant's own trailers join the commit to (#3149), as a commit node in `graph --intent` reports it. */
+  joins: CommitTrailerJoins;
+  /** The agent runs that made the commit (#3033): the one its Chant-Run names, and any whose record lists it. */
+  runs: RunRef[];
   /** The record's constrains entries whose history listed the commit. */
   entries: string[];
   /** The files the commit changed in the record's region, from the workspace root. Empty when git lists none, as for a merge that changed nothing against its first parent there. */
@@ -299,11 +306,36 @@ async function walk(query: IntentRecordQuery, head: Head): Promise<IntentRecordR
   const failedPlugins = new Set<string>();
   const constrainedContracts = constrains.filter((c) => c.granularity === "contract").map((c) => c.entry);
   const commits: RecordCommit[] = [];
+  // chant's own trailers (#3149): the record named outright, or a work item that implements it.
+  const trailerJoins = readTrailerJoins(top, [...details.values()]);
+  const recordKinds = new Map(kinds.filter((k) => k.records).map((k) => [k.records!.loaded.kind.name, k]));
+  const workKinds = kinds.filter((k) => k.records?.loaded.kind.work);
+  const runJoins = await runsForCommits(
+    top,
+    located.rootOnDisk,
+    shas.map((sha) => ({ sha, run: trailerJoins.get(sha)?.joins.run ?? null })),
+  );
+  const workImplements = (k: LoadedKind, id: string): boolean | undefined => {
+    const v = k.records!.views.find((x) => x.id === id);
+    return v ? idList(v.data, k.records!.loaded.kind.work!.implements).includes(view.id!) : undefined;
+  };
   for (const sha of shas) {
     const c = details.get(sha);
     if (!c) continue;
     let unit: string | null = null;
     let isOwn = false;
+    const joins = trailerJoins.get(sha)!.joins;
+    for (const r of joins.records) {
+      const k = recordKinds.get(r.kind);
+      if (!k || !k.records!.views.some((v) => v.id === r.id)) continue;
+      r.node = `record:${r.kind}/${r.id}`;
+      if (k.records!.loaded.kind.work ? workImplements(k, r.id) : r.kind === kind.name && r.id === view.id) isOwn = true;
+    }
+    const item = joins.lease?.item;
+    if (item) {
+      const holding = workKinds.filter((k) => k.records!.views.some((v) => v.id === item));
+      if (holding.length === 1 && workImplements(holding[0], item)) isOwn = true;
+    }
     for (const k of kinds) {
       if (!k.joins) continue;
       let result;
@@ -334,6 +366,8 @@ async function walk(query: IntentRecordQuery, head: Head): Promise<IntentRecordR
       trailers: c.trailers,
       pullRequest: pr ? Number(pr[1]) : null,
       unit,
+      joins,
+      runs: runJoins.refs.get(sha) ?? [],
       entries: listed.get(sha)!,
       files: files.get(sha) ?? [],
       bucket: isOwn ? "own" : workedBy.length > 0 ? "worked" : alsoWithin.length > 0 ? "within-other" : "unexplained",

@@ -32,6 +32,11 @@ describe("the sql config namespace", () => {
     expect(sqlConfigSchema.safeParse({ dialect: "clickhouse" }).success).toBe(true);
     expect(sqlConfigSchema.safeParse({ dialect: "postgres" }).success).toBe(true);
     expect(sqlConfigSchema.safeParse({}).success).toBe(true);
+    for (const provider of ["rds", "aurora", "cloud-sql", "azure", "neon", "supabase"]) {
+      expect(sqlConfigSchema.safeParse({ dialect: "postgres", provider }).success, provider).toBe(true);
+      expect(sqlConfigSchema.safeParse({ profiles: { prod: { url: "postgres://x", provider } } }).success, provider).toBe(true);
+    }
+    expect(sqlConfigSchema.safeParse({ provider: "heroku" }).success).toBe(false);
   });
 
   test("accepts a list of dialects", () => {

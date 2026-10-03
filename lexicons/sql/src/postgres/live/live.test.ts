@@ -4,7 +4,7 @@ import { normalizeObservation } from "@intentius/chant/observation";
 import { classifyPostgresFailure, PostgresBindingError, redactUrl, resolvePostgresTarget } from "./bind";
 import { PostgresQueryError } from "./client";
 import { describeResources } from "./describe-resources";
-import { readLiveSchema, sequenceOptions } from "./catalog";
+import { markProviderOwned, readLiveSchema, sequenceOptions, type LivePgObject } from "./catalog";
 import { fakeClient, type FakeCatalog } from "../testing/fake-client";
 import { dialectOfBinding, dialectOfEntities } from "../../live-dialect";
 import { sqlPlugin } from "../../plugin";
@@ -156,4 +156,43 @@ describeObservationConformance({
       run: () => describeResources({ ...options({ users: DECLARED.users }), environment: "staging", env: {} }),
     },
   ],
+});
+
+describe("a managed provider's own objects (sql.provider)", () => {
+  const live: LivePgObject[] = [
+    { type: "Postgres::Schema", name: "auth", oid: "1", statement: "CREATE SCHEMA auth" },
+    { type: "Postgres::Table", schema: "auth", name: "users", oid: "2", statement: "CREATE TABLE auth.users (id uuid)" },
+    { type: "Postgres::Extension", name: "pg_net", oid: "3", statement: "CREATE EXTENSION pg_net WITH SCHEMA extensions" },
+    { type: "Postgres::Table", schema: "app", name: "orders", oid: "4", statement: "CREATE TABLE app.orders (id bigint)" },
+  ];
+
+  test("on Supabase, its schemas, what is in them and its extensions read as Supabase's", () => {
+    const marked = markProviderOwned(live, "supabase");
+    expect(marked.map((o) => [o.name, o.foreign])).toEqual([
+      ["auth", "Supabase"],
+      ["users", "Supabase"],
+      ["pg_net", "Supabase"],
+      ["orders", undefined],
+    ]);
+    expect(markProviderOwned(live, undefined).every((o) => o.foreign === undefined)).toBe(true);
+  });
+
+  test("the provider comes from the profile, else the namespace", () => {
+    expect(resolvePostgresTarget({ environment: "s", config: { sql: { provider: "supabase", profiles: { s: { url: "postgres://x/y" } } } }, env: {} })).toMatchObject({ provider: "supabase" });
+    expect(resolvePostgresTarget({ environment: "s", config: { sql: { provider: "rds", profiles: { s: { url: "postgres://x/y", provider: "neon" } } } }, env: {} })).toMatchObject({ provider: "neon" });
+  });
+
+  test("describeResources reports a declared object in a provider schema as foreign", async () => {
+    const r = normalizeObservation(
+      await describeResources({
+        environment: "prod",
+        config: { sql: { provider: "supabase", profiles: { prod: { url: "postgres://db/shop" } } } },
+        env: {},
+        entityNames: ["authUsers"],
+        entities: new Map([["authUsers", entity("Postgres::Table", { schema: "auth", name: "users" })]]),
+        connect: async () => fakeClient({ tables: [{ schema: "auth", name: "users", comment: "[chant managed-by=chant]" }] }),
+      }),
+    );
+    expect(r.resources.authUsers).toMatchObject({ ownership: "foreign", attributes: { keptBy: "Supabase" } });
+  });
 });
