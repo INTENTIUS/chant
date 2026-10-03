@@ -18,6 +18,12 @@ import { matchByIdentity } from "../../core/diff";
 import { PG_CLASSIFIER_RULES, type PgChangeClass, type PgClassifierRuleId } from "./rules";
 import { sameConstraint, type CanonicalColumn, type CanonicalConstraint } from "./normalize";
 import type { PgDiffObject, PgSchemaObject } from "./schema";
+import { POSTGRES_LATEST_MAJOR } from "../../spec/postgres-pin";
+
+/** What the diff needs to know beyond the two schemas: the server's major (`sql.postgresMajor`, else the newest pinned). */
+export interface PgDiffOptions {
+  major?: number;
+}
 
 export type PgChange = ClassifiedChange<PgClassifierRuleId, PgChangeClass>;
 
@@ -66,7 +72,7 @@ function family(t: string): string {
   return base;
 }
 
-function diffColumns(key: string, before: PgDiffObject, after: PgDiffObject, out: PgChange[], hints: string[], tableIsNew: boolean): void {
+function diffColumns(key: string, before: PgDiffObject, after: PgDiffObject, out: PgChange[], hints: string[], tableIsNew: boolean, major: number): void {
   const byName = new Map(before.columns.map((c) => [c.name, c]));
   const afterNames = new Set(after.columns.map((c) => c.name));
   const matched = new Set<string>();
@@ -109,9 +115,13 @@ function diffColumns(key: string, before: PgDiffObject, after: PgDiffObject, out
       } else out.push(change(key, `${at}.notNull`, "SQLPG211", "NOT NULL", "NULL"));
     }
     if (b.generated !== a.generated) {
-      out.push(
-        change(key, `${at}.generated`, "SQLPG212", b.generated, a.generated, a.generated?.startsWith("virtual ") && b.generated?.startsWith("virtual ") ? { class: "metadata", note: "a VIRTUAL column (18) changes only the catalog" } : {}),
-      );
+      const virtual = a.generated?.startsWith("virtual ") && b.generated?.startsWith("virtual ");
+      const extra: Partial<PgChange> = virtual
+        ? { class: "metadata", note: "a VIRTUAL column (18) changes only the catalog" }
+        : major < 17
+          ? { class: "expand", note: `Postgres ${major} has no SET EXPRESSION: the column is dropped and added` }
+          : {};
+      out.push(change(key, `${at}.generated`, "SQLPG212", b.generated, a.generated, extra));
     }
     if (b.identity !== a.identity) out.push(change(key, `${at}.identity`, "SQLPG213", b.identity, a.identity));
     if (b.collate !== a.collate) out.push(change(key, `${at}.collate`, "SQLPG214", b.collate, a.collate));
@@ -165,7 +175,7 @@ function diffConstraints(key: string, before: PgDiffObject, after: PgDiffObject,
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 const show = (v: unknown): string | undefined => (v === undefined ? undefined : typeof v === "string" ? v : JSON.stringify(v));
 
-function diffObject(key: string, before: PgDiffObject, after: PgDiffObject, out: PgChange[], hints: string[]): void {
+function diffObject(key: string, before: PgDiffObject, after: PgDiffObject, out: PgChange[], hints: string[], major: number): void {
   if (before.kind !== after.kind) {
     out.push(change(key, "kind", "SQLPG268", before.kind, after.kind));
     return;
@@ -236,11 +246,11 @@ function diffObject(key: string, before: PgDiffObject, after: PgDiffObject, out:
       break;
     }
     case "table":
-      diffColumns(key, before, after, out, hints, false);
+      diffColumns(key, before, after, out, hints, false, major);
       diffConstraints(key, before, after, out, false);
       field("with", "SQLPG224");
       field("unlogged", "SQLPG225");
-      field("using", "SQLPG226");
+      field("using", "SQLPG226", major < 15 ? { class: "expand", note: `Postgres ${major} has no SET ACCESS METHOD: the table is created again` } : {});
       field("tablespace", "SQLPG226");
       for (const k of ["partitionBy", "partitionOf", "partitionBound", "inherits"]) field(k, "SQLPG227");
       break;
@@ -258,7 +268,8 @@ function createdTables(matches: ReturnType<typeof matchByIdentity<PgDiffObject>>
  * Classify every change from `before` to `after`. Objects another tool owns
  * (an ORM's revision table) are never proposed for a drop.
  */
-export function diffPgSchemas(before: readonly PgSchemaObject[], after: readonly PgSchemaObject[]): PgSchemaDiff {
+export function diffPgSchemas(before: readonly PgSchemaObject[], after: readonly PgSchemaObject[], options: PgDiffOptions = {}): PgSchemaDiff {
+  const major = options.major ?? POSTGRES_LATEST_MAJOR;
   const matches = matchByIdentity(before, after, {
     qualified: (o) => `${o.kind === "schema" ? "schema" : o.kind === "extension" ? "extension" : o.kind === "enum" || o.kind === "domain" ? "type" : "relation"} ${qualified(o)}`,
     previously: (o) => o.previously,
@@ -284,7 +295,7 @@ export function diffPgSchemas(before: readonly PgSchemaObject[], after: readonly
       }
       const destructive = o.kind === "table" || o.kind === "materializedView" || o.kind === "sequence";
       changes.push(change(m.before.key, o.kind, o.kind === "index" ? "SQLPG242" : "SQLPG270", qualified(o), undefined, destructive ? { destructive: true } : {}));
-    } else diffObject(m.after.key, m.before.canonical, m.after.canonical, changes, hints);
+    } else diffObject(m.after.key, m.before.canonical, m.after.canonical, changes, hints, major);
   }
   return { changes, hints, refused: changes.filter((c) => c.class === "expand") };
 }

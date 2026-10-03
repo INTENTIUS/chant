@@ -50,8 +50,8 @@ export async function runDiff(ctx: CommandGroupContext): Promise<number> {
     return 1;
   }
   if (outputDialect(positional[1]!) === "postgres") {
-    const { diffPgBuildFiles, emitPg } = await import("../../postgres/plan/commands");
-    return emitPg(diffPgBuildFiles(positional[0]!, positional[1]!), json, `${positional[0]} -> ${positional[1]}`);
+    const { diffPgBuildFiles, emitPg, projectMajor } = await import("../../postgres/plan/commands");
+    return emitPg(diffPgBuildFiles(positional[0]!, positional[1]!, await projectMajor()), json, `${positional[0]} -> ${positional[1]}`);
   }
   const after = schemaFromBuildFile(positional[1]!);
   const diff = diffSchemas(schemaFromBuildFile(positional[0]!), after);

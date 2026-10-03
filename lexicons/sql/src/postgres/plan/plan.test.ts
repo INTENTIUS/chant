@@ -163,6 +163,16 @@ describe("objects", () => {
   });
 });
 
+describe("the major (sql.postgresMajor)", () => {
+  test("a stored generated expression is a rewrite from 17 and expand before; a table's access method is expand before 15", () => {
+    const g = (e: string) => table(`CREATE TABLE app.orders (a int, b int GENERATED ALWAYS AS (${e}) STORED)`);
+    expect(diffPgSchemas([g("a * 2")], [g("a * 3")]).changes[0]).toMatchObject({ rule: "SQLPG212", class: "rewrite" });
+    expect(diffPgSchemas([g("a * 2")], [g("a * 3")], { major: 16 }).changes[0]).toMatchObject({ rule: "SQLPG212", class: "expand" });
+    const am = (m: string) => table(`CREATE TABLE app.orders (a int) USING ${m}`);
+    expect(diffPgSchemas([am("heap")], [am("columnar")], { major: 14 }).changes[0]).toMatchObject({ rule: "SQLPG226", class: "expand" });
+  });
+});
+
 describe("the report, disruption and the rule table", () => {
   test("the report names the class, the rule, the lock and the citation, and the refusal", () => {
     const text = renderPgDiff(diff([table(ORDERS)], [table("CREATE TABLE app.orders (id bigint PRIMARY KEY, amount numeric(12,2) NOT NULL, note varchar(20), status integer)")]));
