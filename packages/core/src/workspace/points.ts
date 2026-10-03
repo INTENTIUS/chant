@@ -311,12 +311,25 @@ export interface WireQuestion {
   criteria: Record<string, string> | string[];
 }
 
-/** One answer in the wire format's shape. */
+/**
+ * One answer in the wire format's shape. `reason` is the model's own
+ * explanation of its answer, when the backend gives one (#3345): kept in the
+ * answer record beside a proposal, or in the escalation entry of an answer
+ * below the threshold, so a person sees why the model chose.
+ */
 export type WireAnswer =
-  | { type: "noul"; noul: number }
-  | { type: "choice"; choice: string; probabilities?: Record<string, number>; confidence?: number }
-  | { type: "score"; score?: number; legend?: unknown; probabilities?: Record<string, number>; confidence?: number }
+  | { type: "noul"; noul: number; reason?: string }
+  | { type: "choice"; choice: string; probabilities?: Record<string, number>; confidence?: number; reason?: string }
+  | { type: "score"; score?: number; legend?: unknown; probabilities?: Record<string, number>; confidence?: number; reason?: string }
   | { type: "unsupported" };
+
+/** A wire answer's reason, trimmed, or undefined when it gives none (or not a string). */
+export function answerReason(answer: WireAnswer | undefined): string | undefined {
+  const raw = (answer as { reason?: unknown } | undefined)?.reason;
+  if (typeof raw !== "string") return undefined;
+  const reason = raw.trim();
+  return reason === "" ? undefined : reason;
+}
 
 export function wireQuestion(question: Question): WireQuestion {
   return { type: question.type, instructions: question.instructions, criteria: question.criteria };
@@ -388,7 +401,12 @@ export function observe(question: Question, answer: WireAnswer | undefined, thre
   return { observed: false, answer: choice, probabilities, confidence, reason: `confidence ${confidence} is below the threshold ${threshold}` };
 }
 
-/** A decider that was asked and did not answer, and why. */
+/**
+ * A decider that was asked and did not answer, and why: `reason` is chant's
+ * account of why it did not answer. `model_reason` is the model's own
+ * explanation of the answer it gave (#3345), when it gave one; it is not named
+ * `reason` because that field already says why the decider escalated.
+ */
 export interface Escalation {
   kind: "table" | "model";
   reason: string;
@@ -398,6 +416,7 @@ export interface Escalation {
   probabilities?: Record<string, number>;
   confidence?: number;
   threshold?: number;
+  model_reason?: string;
 }
 
 export type ChainResult =
@@ -409,6 +428,8 @@ export type ChainResult =
       probabilities: Record<string, number>;
       confidence: number;
       threshold: number;
+      /** The model's explanation of its answer, when the backend gave one (#3345). */
+      reason?: string;
       escalations: Escalation[];
     }
   | { status: "escalated"; decider: { kind: "quorum"; count: number; roles?: string[] }; escalations: Escalation[] };
@@ -455,6 +476,7 @@ export async function runChain(name: string, point: Point, inputs: Record<string
         continue;
       }
       const seen = observe(point.question, reply.answer, d.threshold);
+      const why = answerReason(reply.answer);
       if (seen.observed) {
         return {
           status: "proposed",
@@ -463,6 +485,7 @@ export async function runChain(name: string, point: Point, inputs: Record<string
           probabilities: seen.probabilities,
           confidence: seen.confidence,
           threshold: d.threshold,
+          ...(why !== undefined ? { reason: why } : {}),
           escalations,
         };
       }
@@ -475,6 +498,7 @@ export async function runChain(name: string, point: Point, inputs: Record<string
         ...(seen.confidence !== undefined ? { confidence: seen.confidence } : {}),
         threshold: d.threshold,
         reason: `not observed: ${seen.reason}`,
+        ...(why !== undefined ? { model_reason: why } : {}),
       });
     } else {
       return { status: "escalated", decider: { kind: "quorum", count: d.count, ...(d.roles ? { roles: d.roles } : {}) }, escalations };
