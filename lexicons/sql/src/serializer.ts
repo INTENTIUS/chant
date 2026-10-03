@@ -20,45 +20,13 @@
  */
 
 import type { Declarable, Serializer, SerializerResult } from "@intentius/chant";
-import { isAttrRefLike } from "@intentius/chant/utils";
-import { isClickHouseObject, type ClickHouseObject, type LineageEdge } from "./clickhouse/entities";
+import { isClickHouseObject, type ClickHouseObject } from "./clickhouse/entities";
+import { applyOrder, lineageJson, referenceName, type LineageEdge } from "./core/references";
+
+export { applyOrder } from "./core/references";
 
 /** The file the statements are written to, beside the primary output. */
 export const CLICKHOUSE_DDL_FILE = "clickhouse.sql";
-
-function referenceName(value: unknown, names: Map<Declarable, string>): string | undefined {
-  if (isAttrRefLike(value)) {
-    const parent = value.parent.deref() as Declarable | undefined;
-    const owner = parent ? names.get(parent) : undefined;
-    return owner ? `${owner}.${value.attribute}` : undefined;
-  }
-  return names.get(value as Declarable);
-}
-
-/** Export names in creation order. */
-export function applyOrder(objects: Map<string, ClickHouseObject>, names: Map<Declarable, string>): string[] {
-  const deps = new Map<string, string[]>();
-  for (const [name, obj] of objects) {
-    const on = new Set<string>();
-    for (const ref of obj.dependsOn) {
-      const parent = isAttrRefLike(ref) ? (ref.parent.deref() as Declarable | undefined) : (ref as Declarable);
-      const dep = parent ? names.get(parent) : undefined;
-      if (dep !== undefined && dep !== name && objects.has(dep)) on.add(dep);
-    }
-    deps.set(name, [...on].sort());
-  }
-  const order: string[] = [];
-  const done = new Set<string>();
-  const visit = (n: string, stack: string[]) => {
-    if (done.has(n)) return;
-    if (stack.includes(n)) throw new Error(`sql: a reference cycle between schema objects: ${[...stack, n].join(" -> ")}`);
-    for (const d of deps.get(n) ?? []) visit(d, [...stack, n]);
-    done.add(n);
-    order.push(n);
-  };
-  for (const n of [...objects.keys()].sort()) visit(n, []);
-  return order;
-}
 
 function objectJson(name: string, obj: ClickHouseObject, names: Map<Declarable, string>): Record<string, unknown> {
   const props = { ...(obj.props as Record<string, unknown>) };
@@ -68,11 +36,7 @@ function objectJson(name: string, obj: ClickHouseObject, names: Map<Declarable, 
   if (props.reads) props.reads = (props.reads as unknown[]).map((r) => referenceName(r, names) ?? null);
   if (props.to !== undefined && typeof props.to !== "string") props.to = referenceName(props.to, names) ?? null;
   if (props.lineage) {
-    props.lineage = (props.lineage as LineageEdge[]).map((e) => ({
-      output: e.output,
-      expr: e.expr,
-      from: e.from.map((r) => referenceName(r, names) ?? null),
-    }));
+    props.lineage = lineageJson(props.lineage as LineageEdge[], names);
   }
   const dependsOn = [...new Set(obj.dependsOn.map((r) => referenceName(r, names)).filter((n) => n !== undefined))];
   return JSON.parse(

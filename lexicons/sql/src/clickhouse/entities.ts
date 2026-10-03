@@ -36,13 +36,18 @@
  * through `.columns`), and the refusal says so.
  */
 
-import { DECLARABLE_MARKER, type Declarable } from "@intentius/chant/declarable";
-import { AttrRef } from "@intentius/chant/attrref";
+import type { AttrRef } from "@intentius/chant/attrref";
 import { setInterpolationFields } from "@intentius/chant/provenance";
-import { isTrivia, SqlSyntaxError, tokenize, tokenizeText, untokenize, type Token } from "./tokens";
+import { CLICKHOUSE_LEXICAL, isTrivia, SqlSyntaxError, untokenize } from "./tokens";
 import { parseCreate, unquote, type ColumnNode, type CreateNode, type Span, type StorageNode } from "./parser";
+import { feed, lineage, spanText as text, splice as spliceWith, templateSyntaxError, type TemplateCtx, type TemplateDialect } from "../core/interpolation";
+import { SQL_LEXICON, SqlObject, isColumnRefOf, isSqlObjectOf, makeSqlEntity } from "../core/entity";
+import type { LineageEdge } from "../core/references";
+import { SqlLiteral, SqlTemplateError, describeValue as describe, stripUnset as strip, templateParts } from "../core/template";
 
-export const SQL_LEXICON = "sql";
+export { SQL_LEXICON } from "../core/entity";
+export type { LineageEdge } from "../core/references";
+export { SqlLiteral, SqlTemplateError, templateParts, unescapeTemplateDelimiters } from "../core/template";
 
 export const CLICKHOUSE_ENTITY_TYPES = {
   database: "ClickHouse::Database",
@@ -72,15 +77,6 @@ export interface EngineDef {
   name: string;
   /** Each argument's text, as written. Absent when the engine is written without parentheses. */
   args?: string[];
-}
-
-/** One output column of a view and the columns it is computed from. */
-export interface LineageEdge {
-  output: string;
-  /** The select-list expression, rendered. */
-  expr: string;
-  /** The column references inside it. */
-  from: AttrRef[];
 }
 
 interface StorageProps {
@@ -140,13 +136,6 @@ export interface ViewProps extends CommonProps, StorageProps {
   ifNotExists?: boolean;
 }
 
-/** A spliced value meant as a string literal. Made by {@link literal}. */
-export class SqlLiteral {
-  constructor(readonly sql: string) {
-    Object.freeze(this);
-  }
-}
-
 /**
  * A string as a quoted, escaped ClickHouse string literal. An interpolated
  * plain string is SQL text; wrap it in `literal()` when it is a value.
@@ -159,21 +148,11 @@ export function literal(value: string | number | boolean | null): SqlLiteral {
 
 // ── Entities ───────────────────────────────────────────────────────────
 
-/** The members a ClickHouse entity has besides its props. */
-export abstract class ClickHouseObject implements Declarable {
-  declare readonly [DECLARABLE_MARKER]: true;
-  declare readonly lexicon: "sql";
+/** The members a ClickHouse entity has besides its props (the shared core's {@link SqlObject}). */
+export abstract class ClickHouseObject extends SqlObject {
   declare readonly entityType: ClickHouseEntityType;
-  declare readonly kind: "resource";
   /** The name the object is referred to by in SQL: `name`, or `database.name`. */
   declare readonly sqlName: string;
-  /** The parsed definition; each entity kind narrows it. */
-  declare readonly props: object;
-  /**
-   * Everything the DDL references, enumerable so core's dependency graph and
-   * `chant graph` see the edges.
-   */
-  declare readonly dependsOn: readonly unknown[];
 }
 
 export interface ClickHouseDatabase extends ClickHouseObject {
@@ -197,9 +176,6 @@ export interface ClickHouseView extends ClickHouseRelation {
   readonly props: ViewProps;
 }
 
-const hidden = (target: object, key: string | symbol, value: unknown) =>
-  Object.defineProperty(target, key, { value, enumerable: false, writable: false, configurable: false });
-
 function makeEntity(
   entityType: ClickHouseEntityType,
   sqlName: string,
@@ -207,39 +183,16 @@ function makeEntity(
   columnNames: readonly string[] | undefined,
   dependsOn: unknown[],
 ): ClickHouseObject {
-  const entity = Object.create(ClickHouseObject.prototype) as ClickHouseObject;
-  hidden(entity, DECLARABLE_MARKER, true);
-  hidden(entity, "lexicon", SQL_LEXICON);
-  hidden(entity, "entityType", entityType);
-  hidden(entity, "kind", "resource");
-  hidden(entity, "props", props);
-  hidden(entity, "sqlName", sqlName);
-  if (columnNames) {
-    const columns: Record<string, AttrRef> = {};
-    for (const name of columnNames) columns[name] = new AttrRef(entity, name);
-    hidden(entity, "columns", Object.freeze(columns));
-  }
-  Object.defineProperty(entity, "dependsOn", { value: dependsOn, enumerable: true });
-  return entity;
+  return makeSqlEntity(ClickHouseObject.prototype as ClickHouseObject, entityType, sqlName, props, columnNames, dependsOn);
 }
 
 export function isClickHouseObject(value: unknown): value is ClickHouseObject {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    (value as Declarable).lexicon === SQL_LEXICON &&
-    typeof (value as ClickHouseObject).sqlName === "string" &&
-    typeof (value as Declarable).entityType === "string" &&
-    (value as Declarable).entityType.startsWith("ClickHouse::")
-  );
+  return isSqlObjectOf(value, "ClickHouse::");
 }
 
 /** A column reference: an AttrRef whose parent is a ClickHouse table or view. */
 export function isColumnRef(value: unknown): value is AttrRef {
-  if (typeof value !== "object" || value === null) return false;
-  const v = value as Partial<AttrRef>;
-  if (typeof v.attribute !== "string" || typeof v.parent?.deref !== "function") return false;
-  return isClickHouseObject(v.parent.deref());
+  return isColumnRefOf(value, isClickHouseObject);
 }
 
 // ── Rendering interpolations ───────────────────────────────────────────
@@ -247,33 +200,6 @@ export function isColumnRef(value: unknown): value is AttrRef {
 /** A name as ClickHouse reads it: bare when it is a plain identifier, backquoted otherwise. */
 export function quoteIdentifier(name: string): string {
   return /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) ? name : `\`${name.replace(/`/g, "``")}\``;
-}
-
-function describe(value: unknown): string {
-  if (value === undefined) return "undefined";
-  if (value === null) return "null";
-  if (Array.isArray(value)) return "an array";
-  return typeof value === "object" ? `an object (${Object.prototype.toString.call(value)})` : `a ${typeof value}`;
-}
-
-/** The SQL text a non-reference value splices in, or an error message. */
-function spliceText(value: unknown): string | { error: string } {
-  if (typeof value === "string") return value;
-  if (typeof value === "number") {
-    return Number.isFinite(value) ? String(value) : { error: `the number ${value} has no SQL form` };
-  }
-  if (typeof value === "bigint") return value.toString();
-  if (typeof value === "boolean") return value ? "true" : "false";
-  if (value === null) return "NULL";
-  if (value instanceof SqlLiteral) return value.sql;
-  if (value === undefined) {
-    return {
-      error:
-        "undefined. A column is referenced through `.columns` (`${events.columns.user_id}`, not " +
-        "`${events.user_id}`), and a column name that does not exist is undefined too",
-    };
-  }
-  return { error: `${describe(value)}, which has no SQL form` };
 }
 
 function renderReference(value: unknown): string {
@@ -284,90 +210,20 @@ function renderReference(value: unknown): string {
 
 // ── Building ───────────────────────────────────────────────────────────
 
-/** Where interpolation `index` sits in the template, for a message: the line of the template it is on. */
-function interpolationLine(parts: readonly string[], index: number): number {
-  return parts.slice(0, index + 1).join("${}").split("\n").length;
-}
+/** ClickHouse as the shared template machinery reads it (`../core/interpolation.ts`). */
+export const CLICKHOUSE_TEMPLATES: TemplateDialect = {
+  lexical: CLICKHOUSE_LEXICAL,
+  isObject: isClickHouseObject,
+  isColumnRef,
+  renderReference,
+  identValue: unquote,
+  unnamedOutput: (n) => `_${n}`,
+};
 
-/** An error from a tag: the statement kind, the template line, and what went wrong. */
-export class SqlTemplateError extends Error {
-  constructor(
-    tag: string,
-    message: string,
-    readonly part: number,
-    readonly offset: number,
-  ) {
-    super(`${tag}\`...\`: ${message}`);
-    this.name = "SqlTemplateError";
-  }
-}
+type Ctx = TemplateCtx;
 
-interface Ctx {
-  tokens: Token[];
-  values: readonly unknown[];
-  /**
-   * Per interpolation, the props paths its spliced text landed in (#3212).
-   * Only spliced text counts: an interpolated entity or column is a reference
-   * to a sibling, not a value the author typed into this field.
-   */
-  fed: Array<Set<string>>;
-}
-
-/** Record that the spliced text inside `span` fed `path`. */
-function feed(ctx: Ctx, span: Span | undefined, path: string): void {
-  if (!span) return;
-  for (let i = span.from; i < span.to; i++) {
-    const splice = ctx.tokens[i]!.splice;
-    if (splice !== undefined) ctx.fed[splice]!.add(path);
-  }
-}
-
-/**
- * Splice every interpolation that is not a reference into the token list as
- * SQL text. References stay `ref` tokens for the parser and the entity to see.
- */
-function splice(tag: string, parts: readonly string[], values: readonly unknown[]): Token[] {
-  const out: Token[] = [];
-  for (const t of tokenize(parts)) {
-    if (t.kind !== "ref") {
-      out.push(t);
-      continue;
-    }
-    const value = values[t.part];
-    if (isClickHouseObject(value) || isColumnRef(value)) {
-      out.push(t);
-      continue;
-    }
-    const text = spliceText(value);
-    if (typeof text !== "string") {
-      throw new SqlTemplateError(
-        tag,
-        `the interpolation on template line ${interpolationLine(parts, t.part)} is ${text.error}`,
-        t.part,
-        parts[t.part]!.length,
-      );
-    }
-    try {
-      for (const s of tokenizeText(text, t.part)) out.push({ ...s, splice: t.part });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      throw new SqlTemplateError(
-        tag,
-        `the text interpolated on template line ${interpolationLine(parts, t.part)} does not tokenize: ${message}`,
-        t.part,
-        parts[t.part]!.length,
-      );
-    }
-  }
-  return out;
-}
-
-/** A span's text, interpolations rendered, trimmed. With `path`, the span's spliced text is recorded as feeding it. */
-function text(ctx: Ctx, span: Span | undefined, path?: string): string | undefined {
-  if (!span || span.to <= span.from) return undefined;
-  if (path) feed(ctx, span, path);
-  return untokenize(ctx.tokens.slice(span.from, span.to), (i) => renderReference(ctx.values[i])).trim();
-}
+/** The tag's splice: plain values become SQL text, references stay `ref` tokens. */
+const splice = (tag: string, parts: readonly string[], values: readonly unknown[]) => spliceWith(CLICKHOUSE_TEMPLATES, tag, parts, values);
 
 const req = (s: string | undefined): string => s ?? "";
 
@@ -419,63 +275,6 @@ function storageProps(ctx: Ctx, node: StorageNode): StorageProps {
   return out;
 }
 
-/**
- * Column-level lineage of a view's SELECT: one edge per item of the top-level
- * select list. FROM, WHERE and GROUP BY stay text; the tables and views they
- * interpolate land in `reads`. A column written by name inside the SQL is not
- * lineage: only references are (#3047, "no parsing of SQL for names").
- */
-function lineage(ctx: Ctx, select: Span): { edges: LineageEdge[]; reads: ClickHouseObject[] } {
-  const sig: number[] = [];
-  for (let i = select.from; i < select.to; i++) if (!isTrivia(ctx.tokens[i]!)) sig.push(i);
-  const tok = (i: number) => ctx.tokens[i]!;
-  const isKw = (i: number, w: string) => tok(i).kind === "ident" && tok(i).text.toUpperCase() === w;
-  let depth = 0;
-  let selectAt = -1;
-  let fromAt = sig.length;
-  const commas: number[] = [];
-  for (let k = 0; k < sig.length; k++) {
-    const t = tok(sig[k]!);
-    if (t.kind === "punct" && t.text === "(") depth++;
-    else if (t.kind === "punct" && t.text === ")") depth--;
-    else if (depth === 0 && selectAt < 0 && isKw(sig[k]!, "SELECT")) {
-      selectAt = k;
-      if (sig[k + 1] !== undefined && isKw(sig[k + 1]!, "DISTINCT")) selectAt = k + 1;
-    } else if (depth === 0 && selectAt >= 0 && fromAt === sig.length && isKw(sig[k]!, "FROM")) fromAt = k;
-    else if (depth === 0 && selectAt >= 0 && fromAt === sig.length && t.kind === "punct" && t.text === ",") commas.push(k);
-  }
-  const edges: LineageEdge[] = [];
-  if (selectAt >= 0) {
-    const bounds = [selectAt, ...commas, fromAt];
-    for (let b = 0; b + 1 < bounds.length; b++) {
-      const items = sig.slice(bounds[b]! + 1, bounds[b + 1]);
-      if (items.length === 0) continue;
-      let output: string | undefined;
-      let exprItems = items;
-      const asAt = items.findIndex((i) => isKw(i, "AS"));
-      if (asAt >= 0 && asAt === items.length - 2) {
-        output = unquote(tok(items[asAt + 1]!).text);
-        exprItems = items.slice(0, asAt);
-      } else if (items.length === 1) {
-        const t = tok(items[0]!);
-        if (t.kind === "ref" && isColumnRef(ctx.values[t.part])) output = (ctx.values[t.part] as AttrRef).attribute;
-        else if (t.kind === "ident" || t.kind === "qident") output = unquote(t.text);
-      } else if (items.length === 3 && tok(items[1]!).text === "." && (tok(items[2]!).kind === "ident" || tok(items[2]!).kind === "qident")) {
-        output = unquote(tok(items[2]!).text);
-      }
-      const refs = exprItems.filter((i) => tok(i).kind === "ref").map((i) => tok(i).part);
-      const exprSpan: Span = { from: exprItems[0]!, to: exprItems[exprItems.length - 1]! + 1, refs };
-      edges.push({
-        output: output ?? `_${b + 1}`,
-        expr: req(text(ctx, exprSpan)),
-        from: [...new Set(refs.map((i) => ctx.values[i]).filter(isColumnRef))],
-      });
-    }
-  }
-  const reads = [...new Set(select.refs.map((i) => ctx.values[i]).filter(isClickHouseObject))];
-  return { edges, reads };
-}
-
 /** `name` or `db.name` from a qualified-name span; an interpolated database entity names the database. */
 function qualified(ctx: Ctx, span: Span): { database?: string; name: string } {
   const sig = ctx.tokens.slice(span.from, span.to).filter((t) => !isTrivia(t));
@@ -504,25 +303,7 @@ function qualified(ctx: Ctx, span: Span): { database?: string; name: string } {
   return pieces.length >= 2 ? { database: pieces[pieces.length - 2], name: pieces[pieces.length - 1]! } : { name: pieces[0] ?? "" };
 }
 
-const strip = <T extends object>(o: T): T =>
-  Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== false)) as T;
-
 type Expect = "database" | "table" | "view";
-
-/**
- * A template's parts as the SQL reads them: the raw text, so a backslash in a
- * regex or an escape stays as written, with the two escapes a template
- * literal forces undone. `` \` `` is a backquote and `\${` is `${`; neither
- * can be written in a template any other way.
- */
-export function templateParts(strings: TemplateStringsArray | readonly string[]): string[] {
-  const raw = (strings as TemplateStringsArray).raw ?? strings;
-  return raw.map(unescapeTemplateDelimiters);
-}
-
-export function unescapeTemplateDelimiters(part: string): string {
-  return part.replace(/\\(`|\$\{)/g, "$1");
-}
 
 function build(tag: Expect, strings: TemplateStringsArray | readonly string[], values: readonly unknown[]): ClickHouseObject {
   const parts = templateParts(strings);
@@ -532,13 +313,9 @@ function build(tag: Expect, strings: TemplateStringsArray | readonly string[], v
     node = parseCreate(tokens);
   } catch (err) {
     if (!(err instanceof SqlSyntaxError)) throw err;
-    const where =
-      err.token?.splice !== undefined
-        ? `in the text interpolated on template line ${interpolationLine(parts, err.token.splice)}`
-        : `on template line ${parts.slice(0, err.part).join("${}").split("\n").length + parts[err.part]!.slice(0, err.offset).split("\n").length - 1}`;
-    throw new SqlTemplateError(tag, `${err.message} (${where})`, err.part, err.offset);
+    throw templateSyntaxError(tag, parts, err);
   }
-  const ctx: Ctx = { tokens, values, fed: values.map(() => new Set<string>()) };
+  const ctx: Ctx = { d: CLICKHOUSE_TEMPLATES, tokens, values, fed: values.map(() => new Set<string>()) };
   for (const t of tokens) if (t.splice !== undefined) ctx.fed[t.splice]!.add("ddl");
   if (node.statement !== tag) {
     const holds = node.statement === "database" ? "CREATE DATABASE" : node.statement === "table" ? "CREATE TABLE" : "CREATE VIEW";
@@ -598,7 +375,7 @@ function build(tag: Expect, strings: TemplateStringsArray | readonly string[], v
     return done(makeEntity(CLICKHOUSE_ENTITY_TYPES.table, sqlName, props, columns.map((c) => c.name), dependsOn));
   }
 
-  const lin = lineage(ctx, node.select);
+  const lin = lineage<ClickHouseObject>(ctx, node.select);
   let to: ClickHouseObject | string | undefined;
   if (node.to) {
     const target = node.to.refs.length === 1 ? values[node.to.refs[0]!] : undefined;

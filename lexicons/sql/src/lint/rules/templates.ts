@@ -2,93 +2,34 @@
  * Finding the ClickHouse tags in a source file, for the source-level rules
  * (and the editor). A rule reads the template's raw parts straight from the
  * TypeScript AST and parses them the way the tag does, with every
- * interpolation left a reference: lint cannot know the values.
+ * interpolation left a reference: lint cannot know the values. The finder is
+ * the shared core's (`../../core/find-templates.ts`); a tag is ClickHouse's
+ * because of the module it is imported from.
  */
 
-import * as ts from "typescript";
+import type * as ts from "typescript";
 import { tokenize, type Token } from "../../clickhouse/tokens";
-import { unescapeTemplateDelimiters } from "../../clickhouse/entities";
+import { findSqlTemplates, type FoundTemplate as SqlFoundTemplate, type TemplateSource } from "../../core/find-templates";
+
+export { templatePosition, tokenPosition } from "../../core/find-templates";
 
 export type SqlTag = "database" | "table" | "view";
 
-const TAGS = new Set<string>(["database", "table", "view"]);
-const MODULES = new Set(["@intentius/chant-lexicon-sql", "@intentius/chant-lexicon-sql/clickhouse"]);
+/**
+ * The ClickHouse tags, by the modules they are imported from. The package
+ * root still exports them, so it counts as ClickHouse too.
+ */
+export const CLICKHOUSE_TEMPLATE_SOURCE: TemplateSource<SqlTag> = {
+  dialect: "clickhouse",
+  modules: ["@intentius/chant-lexicon-sql", "@intentius/chant-lexicon-sql/clickhouse"],
+  tags: ["database", "table", "view"],
+};
 
-export interface FoundTemplate {
-  node: ts.TaggedTemplateExpression;
-  tag: SqlTag;
-  /** The template's raw parts, backslashes as written. */
-  parts: string[];
-  /** Source offset of each part's first character. */
-  starts: number[];
-  /** The source text of each interpolation's expression. */
-  expressions: ts.Expression[];
-}
+export type FoundTemplate = SqlFoundTemplate<SqlTag>;
 
-/** Local names bound to the sql tags by this file's imports: `{ table as t }` maps `t` to `table`. */
-function tagBindings(source: ts.SourceFile): Map<string, SqlTag> {
-  const out = new Map<string, SqlTag>();
-  for (const stmt of source.statements) {
-    if (!ts.isImportDeclaration(stmt) || !ts.isStringLiteral(stmt.moduleSpecifier)) continue;
-    if (!MODULES.has(stmt.moduleSpecifier.text)) continue;
-    const named = stmt.importClause?.namedBindings;
-    if (!named || !ts.isNamedImports(named)) continue;
-    for (const el of named.elements) {
-      const imported = (el.propertyName ?? el.name).text;
-      if (TAGS.has(imported)) out.set(el.name.text, imported as SqlTag);
-    }
-  }
-  return out;
-}
-
+/** Every ClickHouse template in the file (the shared core's finder). */
 export function findTemplates(source: ts.SourceFile): FoundTemplate[] {
-  const bindings = tagBindings(source);
-  if (bindings.size === 0) return [];
-  const found: FoundTemplate[] = [];
-  const visit = (node: ts.Node) => {
-    if (ts.isTaggedTemplateExpression(node) && ts.isIdentifier(node.tag) && bindings.has(node.tag.text)) {
-      const t = node.template;
-      // As the tag reads them: raw, with `\`` and `\${` undone. An offset after one of those is off by one.
-      const parts = (
-        ts.isNoSubstitutionTemplateLiteral(t)
-          ? [t.rawText ?? t.text]
-          : [t.head.rawText ?? t.head.text, ...t.templateSpans.map((s) => s.literal.rawText ?? s.literal.text)]
-      ).map(unescapeTemplateDelimiters);
-      // A part's text begins one character after its opening delimiter (` or }).
-      const starts = ts.isNoSubstitutionTemplateLiteral(t)
-        ? [t.getStart(source) + 1]
-        : [t.head.getStart(source) + 1, ...t.templateSpans.map((s) => s.literal.getStart(source) + 1)];
-      const expressions = ts.isNoSubstitutionTemplateLiteral(t) ? [] : t.templateSpans.map((s) => s.expression);
-      found.push({ node, tag: bindings.get(node.tag.text)!, parts, starts, expressions });
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(source);
-  return found;
-}
-
-/** 1-based line and column of a template offset. */
-export function templatePosition(
-  source: ts.SourceFile,
-  found: FoundTemplate,
-  part: number,
-  offset: number,
-): { line: number; column: number } {
-  const pos = (found.starts[part] ?? found.node.getStart(source)) + offset;
-  const { line, character } = source.getLineAndCharacterOfPosition(pos);
-  return { line: line + 1, column: character + 1 };
-}
-
-/** A token's position; an interpolation's is its expression's. */
-export function tokenPosition(source: ts.SourceFile, found: FoundTemplate, token: Token): { line: number; column: number } {
-  if (token.kind === "ref") {
-    const expr = found.expressions[token.part];
-    if (expr) {
-      const { line, character } = source.getLineAndCharacterOfPosition(expr.getStart(source));
-      return { line: line + 1, column: character + 1 };
-    }
-  }
-  return templatePosition(source, found, token.part, token.start);
+  return findSqlTemplates(source, [CLICKHOUSE_TEMPLATE_SOURCE]);
 }
 
 export const tokensOf = (found: FoundTemplate): Token[] => tokenize(found.parts);

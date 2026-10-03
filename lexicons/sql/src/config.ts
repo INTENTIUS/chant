@@ -28,11 +28,14 @@
  * so the setting is for the things a declaration cannot answer: which dialect
  * a live environment is read as on import, and which dialect's checks run on
  * output that names none. It defaults to `clickhouse`, the only dialect so far.
+ * A list (`dialect: ["clickhouse"]`) is accepted for a project with members
+ * of more than one dialect (#3047 question 1); `postgres` is refused as not
+ * implemented yet until its first slice lands (#3279).
  */
 
 import { z } from "zod";
 import type { ChantConfig } from "@intentius/chant/config";
-import { SQL_DIALECTS } from "./dialects";
+import { PLANNED_SQL_DIALECTS, SQL_DIALECTS } from "./dialects";
 
 const envRef = z.strictObject({ env: z.string() });
 
@@ -53,8 +56,21 @@ export const sqlProfileSchema = z.strictObject({
   defaultDatabase: z.string().optional(),
 });
 
+const dialectName = z.enum(SQL_DIALECTS);
+
+/** Why a `dialect` value is refused: a planned dialect is "not implemented yet", anything else unknown. */
+function dialectError(input: unknown): string {
+  const names = Array.isArray(input) ? input : [input];
+  const planned = names.find((n): n is string => typeof n === "string" && (PLANNED_SQL_DIALECTS as readonly string[]).includes(n));
+  if (planned !== undefined) {
+    return `the ${planned} dialect is not implemented yet (#3289); the implemented dialects are ${SQL_DIALECTS.join(", ")}`;
+  }
+  return `expected a dialect (${SQL_DIALECTS.join(", ")}) or a non-empty list of them`;
+}
+
 export const sqlConfigSchema = z.strictObject({
-  dialect: z.enum(SQL_DIALECTS).optional(),
+  /** The dialect, or the dialects, the project's schema is for. */
+  dialect: z.union([dialectName, z.array(dialectName).min(1)], { error: (iss) => dialectError(iss.input) }).optional(),
   /** One server per chant environment. */
   profiles: z.record(z.string(), sqlProfileSchema).optional(),
 });

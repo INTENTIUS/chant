@@ -119,7 +119,7 @@ An in-process guard says nothing about a child process, so the offline phases' s
 
 | Command | Spawns | Module | Destination | Why |
 |---|---|---|---|---|
-| `npm run generate in lexicons/sql after a ClickHouse pin move, or with --force` | `docker run` | `lexicons/sql/src/clickhouse/container.ts` | the container registry, for `clickhouse/clickhouse-server` at the pinned tag and digest when the image is not already local | `docker run` starts the pinned server on a random loopback port so generation can read its catalog, and the container is removed afterwards. The pull is the only egress; the catalog read itself is loopback. |
+| `npm run generate in lexicons/sql after a ClickHouse pin move, or with --force` | `docker run` | `lexicons/sql/src/core/container.ts` | the container registry, for `clickhouse/clickhouse-server` at the pinned tag and digest when the image is not already local | `docker run` starts the pinned server on a random loopback port so generation can read its catalog, and the container is removed afterwards. The pull is the only egress; the catalog read itself is loopback. |
 
 ### Starting a project from a template
 

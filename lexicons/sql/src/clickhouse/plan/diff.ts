@@ -17,37 +17,19 @@
  */
 
 import { CLASSIFIER_RULES, type ChangeClass, type ClassifierRuleId } from "./rules";
-import type { CanonicalColumn, CanonicalObject } from "./normalize";
+import type { CanonicalObject } from "./normalize";
 import type { RebuildOpSuggestion } from "./rebuild-handoff";
 import { MERGE_TREE_SETTINGS } from "../../generated/clickhouse";
+import { classifiedChange, type ChangeSet, type ClassifiedChange } from "../../core/classifier";
+import { changedEntries, matchByIdentity, type Keyed } from "../../core/diff";
 
-export interface SchemaObject {
-  /** The object's identity in the comparison: an export name, or `database.name` against live. */
-  key: string;
-  canonical: CanonicalObject;
-}
+export type SchemaObject = Keyed<CanonicalObject>;
 
-export interface Change {
-  /** The object's identity. */
-  object: string;
-  /** What changed, e.g. `columns.kind.type`, `orderBy`, `name`. */
-  field: string;
-  before?: string;
-  after?: string;
-  rule: ClassifierRuleId;
-  class: ChangeClass;
-  /** Data is removed and not recoverable. */
-  destructive?: boolean;
-  /** What a reader should know besides the rule. */
-  note?: string;
-}
+export type Change = ClassifiedChange<ClassifierRuleId, ChangeClass>;
 
-export interface SchemaDiff {
-  changes: Change[];
+export interface SchemaDiff extends ChangeSet<Change> {
   /** The rebuilds a plan must refuse to make in place. */
   rebuilds: Change[];
-  /** Hints for the author: a drop and an add that look like a rename. */
-  hints: string[];
   /** For each table refused as a rebuild, the rebuild migration Op to run instead (`./rebuild-handoff.ts`). */
   rebuildOps?: RebuildOpSuggestion[];
 }
@@ -55,15 +37,7 @@ export interface SchemaDiff {
 const qualified = (o: CanonicalObject) => (o.database ? `${o.database}.${o.name}` : o.name);
 
 function change(object: string, field: string, rule: ClassifierRuleId, before?: unknown, after?: unknown, extra: Partial<Change> = {}): Change {
-  return {
-    object,
-    field,
-    ...(before !== undefined ? { before: String(before) } : {}),
-    ...(after !== undefined ? { after: String(after) } : {}),
-    rule,
-    class: CLASSIFIER_RULES[rule].class,
-    ...extra,
-  };
+  return classifiedChange(CLASSIFIER_RULES, object, field, rule, before, after, extra);
 }
 
 /** The column names a key expression mentions. */
@@ -139,9 +113,7 @@ function diffColumns(key: string, before: CanonicalObject, after: CanonicalObjec
 }
 
 function diffMap(key: string, field: string, before: Record<string, string>, after: Record<string, string>, rule: ClassifierRuleId, out: Change[]) {
-  for (const name of [...new Set([...Object.keys(before), ...Object.keys(after)])].sort()) {
-    if (before[name] !== after[name]) out.push(change(key, `${field}.${name}`, rule, before[name], after[name]));
-  }
+  for (const name of changedEntries(before, after)) out.push(change(key, `${field}.${name}`, rule, before[name], after[name]));
 }
 
 function diffObject(key: string, before: CanonicalObject, after: CanonicalObject, out: Change[], hints: string[]): void {
@@ -197,8 +169,7 @@ function diffObject(key: string, before: CanonicalObject, after: CanonicalObject
   if (before.sampleBy !== after.sampleBy) out.push(change(key, "sampleBy", "SQLCH217", before.sampleBy, after.sampleBy));
   if (before.ttl !== after.ttl) out.push(change(key, "ttl", "SQLCH205", before.ttl, after.ttl));
 
-  for (const name of [...new Set([...Object.keys(before.settings), ...Object.keys(after.settings)])].sort()) {
-    if (before.settings[name] === after.settings[name]) continue;
+  for (const name of changedEntries(before.settings, after.settings)) {
     const spec = (MERGE_TREE_SETTINGS as Record<string, { readonly: boolean } | undefined>)[name];
     out.push(change(key, `settings.${name}`, spec?.readonly ? "SQLCH218" : "SQLCH206", before.settings[name], after.settings[name]));
   }
@@ -215,27 +186,18 @@ function diffObject(key: string, before: CanonicalObject, after: CanonicalObject
 export function diffSchemas(before: readonly SchemaObject[], after: readonly SchemaObject[]): SchemaDiff {
   const changes: Change[] = [];
   const hints: string[] = [];
-  const byKey = new Map(before.map((o) => [o.key, o]));
-  const byQualified = new Map(before.map((o) => [qualified(o.canonical), o]));
-  const afterKeys = new Set(after.map((o) => o.key));
-  const matched = new Set<string>();
-
-  for (const a of after) {
-    let b = byKey.get(a.key);
-    const prev = a.canonical.previously;
-    if (!b && prev) {
-      const candidate = byKey.get(prev) ?? byQualified.get(prev) ?? byQualified.get(`${a.canonical.database}.${prev}`);
-      if (candidate && !afterKeys.has(candidate.key)) b = candidate;
+  const matches = matchByIdentity(before, after, {
+    qualified,
+    previously: (o) => o.previously,
+    previousNames: (o, prev) => [prev, `${o.database}.${prev}`],
+  });
+  for (const m of matches) {
+    if (m.kind === "created") changes.push(change(m.after.key, "object", "SQLCH200", undefined, qualified(m.after.canonical)));
+    else if (m.kind === "matched") diffObject(m.after.key, m.before.canonical, m.after.canonical, changes, hints);
+    else {
+      const b = m.before;
+      changes.push(change(b.key, "object", "SQLCH250", qualified(b.canonical), undefined, { destructive: b.canonical.kind === "table" || b.canonical.kind === "materializedView" }));
     }
-    if (!b) {
-      changes.push(change(a.key, "object", "SQLCH200", undefined, qualified(a.canonical)));
-      continue;
-    }
-    matched.add(b.key);
-    diffObject(a.key, b.canonical, a.canonical, changes, hints);
-  }
-  for (const b of before) {
-    if (!matched.has(b.key)) changes.push(change(b.key, "object", "SQLCH250", qualified(b.canonical), undefined, { destructive: b.canonical.kind === "table" || b.canonical.kind === "materializedView" }));
   }
   return { changes, rebuilds: changes.filter((c) => c.class === "rebuild"), hints };
 }
