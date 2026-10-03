@@ -70,6 +70,18 @@ export async function waitOn(run: RebuildRun, database: string, table: string): 
   if (ids.length > 0) run.log(`-- waited for ${database}.${table} mutation(s) ${ids.join(", ")}`);
 }
 
+/**
+ * In a Replicated database, wait until this replica has every part the
+ * others have written to `database.table` (`SYSTEM SYNC REPLICA ...
+ * LIGHTWEIGHT`, which waits for fetches and not for merges). A step that
+ * reads rows on one replica after a copy ran on another reads them all.
+ * Nothing to wait for in an Atomic database.
+ */
+export async function syncReplica(run: RebuildRun, o: Pick<RebuildObservation, "replicated">, database: string, table: string): Promise<void> {
+  if (!o.replicated) return;
+  await q(run, `SYSTEM SYNC REPLICA ${qualifiedIdent(database, table)} LIGHTWEIGHT`);
+}
+
 /** The trailer pairs a working object carries besides the marker. */
 const working = (key: string, role: "new" | "dual" | "old", extra: Record<string, string> = {}) => ({ [REBUILD_TRAILER_KEY]: key, role, ...extra });
 
@@ -194,7 +206,9 @@ export interface SwapResult {
  * insert. A view with an inner table keeps its data, which dropping and
  * creating it would not. Inserts that land while a view is detached are not
  * passed to it; in materialized-view mode writes go on through the swap, so
- * that window is the length of one DETACH and one ATTACH.
+ * that window is the length of one DETACH and one ATTACH. In a Replicated
+ * database the DETACH is `PERMANENTLY`, the form that database takes, and
+ * the EXCHANGE, the DETACH and the ATTACH each run on every replica.
  */
 export async function swapTables(run: RebuildRun): Promise<SwapResult> {
   const o = await observe(run);
@@ -228,11 +242,18 @@ export async function swapTables(run: RebuildRun): Promise<SwapResult> {
   const dependents = await dependentViews(run, n.database, n.name);
   for (const d of dependents) {
     const [database, name] = d;
-    await q(run, `DETACH TABLE ${qualifiedIdent(database, name)}`);
+    // A Replicated database takes DETACH only as PERMANENTLY, run on every replica.
+    const permanently = database === n.database ? o.replicated : await isReplicatedDatabase(run, database);
+    await q(run, `DETACH TABLE ${qualifiedIdent(database, name)}${permanently ? " PERMANENTLY" : ""}`);
     await q(run, `ATTACH TABLE ${qualifiedIdent(database, name)}`);
   }
   await q(run, `ALTER TABLE ${n.table} MODIFY COMMENT ${sqlString(stampedComment(run.declared.canonical.comment, run.marker))}`);
   return { state: "swapped", swapped: true, dependents: dependents.map(([d, v]) => `${d}.${v}`), oldTable: `${n.database}.${n.oldName}`, ...(retainUntil ? { retainUntil } : {}) };
+}
+
+async function isReplicatedDatabase(run: RebuildRun, database: string): Promise<boolean> {
+  const [row] = await clickhouseQuery<{ engine: string }>(run.target.endpoint, `SELECT engine FROM system.databases WHERE name = ${sqlString(database)}`);
+  return row?.engine === "Replicated";
 }
 
 async function objectComment(run: RebuildRun, database: string, name: string): Promise<string | undefined> {

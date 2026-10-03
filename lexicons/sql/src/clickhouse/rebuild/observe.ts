@@ -26,8 +26,15 @@
  *   left.
  *
  * Anything else is refused with a {@link RebuildRefusal}: a database that is
- * not Atomic, a table that is not there, a change that is not a rebuild, a
- * working object chant did not make.
+ * neither Atomic nor Replicated, a table that is not there, a change that is
+ * not a rebuild, a working object chant did not make.
+ *
+ * A Replicated database (#3249) is Atomic on every replica, with its DDL run
+ * on each through Keeper, so the same EXCHANGE swaps the table everywhere.
+ * Its tables have to be `Replicated*MergeTree` on both sides of the rebuild:
+ * a plain MergeTree there keeps a different set of rows on each replica, and
+ * a copy run on one replica would fill the new table with that replica's rows
+ * alone.
  */
 
 import type { OwnershipMarker } from "@intentius/chant/ownership";
@@ -149,6 +156,12 @@ export interface RebuildObservation {
   exchanged: boolean;
   /** The columns the backfill copies, and the verification compares. */
   copied: CopiedColumn[];
+  /**
+   * The database is Replicated: every replica runs its DDL, the tables'
+   * rows replicate through Keeper, and a step reading rows first waits for
+   * this replica to catch up (`SYSTEM SYNC REPLICA`).
+   */
+  replicated: boolean;
 }
 
 const qualifiedKey = (o: DeclaredObject) => `${o.canonical.database ?? "default"}.${o.canonical.name}`;
@@ -239,13 +252,14 @@ export async function observeRebuild(target: ClickHouseTarget, declared: Declare
 
   const [db] = await clickhouseQuery<{ engine: string }>(target.endpoint, `SELECT engine FROM system.databases WHERE name = ${sqlString(database)}`);
   if (!db) throw new RebuildRefusal(`database ${database} is not on the server, so there is no ${names.key} to rebuild; the applier creates it`);
-  if (db.engine !== "Atomic") {
+  if (db.engine !== "Atomic" && db.engine !== "Replicated") {
     throw new RebuildRefusal(
       `database ${database} uses the ${db.engine} engine. The swap is EXCHANGE TABLES, which ClickHouse supports only in an Atomic database ` +
-        `(https://clickhouse.com/docs/sql-reference/statements/exchange), and two RENAMEs in its place would leave a moment with no ${names.key} for writes to land in. ` +
+        `(https://clickhouse.com/docs/sql-reference/statements/exchange) and the Replicated one built on it, and two RENAMEs in its place would leave a moment with no ${names.key} for writes to land in. ` +
         `Convert the database to Atomic first (https://clickhouse.com/docs/engines/database-engines/atomic), then run the rebuild.`,
     );
   }
+  const replicated = db.engine === "Replicated";
 
   const objects = await serverObjects(target, names);
   const liveRow = objects.get(names.name);
@@ -281,6 +295,10 @@ export async function observeRebuild(target: ClickHouseTarget, declared: Declare
         `The applier makes these in place (ApplyOp with target "clickhouse").`,
     );
   }
+  if (state === "rebuild") {
+    if (replicated) refuseUnreplicated(names, liveRow.engine, declared.canonical.engineName);
+    refuseSharedKeeperPath(names, liveCanonical.engine, declared.canonical.engine);
+  }
   if (state === "done" && (newTable || dual)) {
     throw new RebuildRefusal(
       `${names.key} already holds its declaration, and ${[newTable, dual].filter(Boolean).map((o) => `${names.database}.${o!.name}`).join(" and ")} from an unfinished rebuild is still there. ` +
@@ -301,7 +319,42 @@ export async function observeRebuild(target: ClickHouseTarget, declared: Declare
     ...(exchangedOld ? { exchangedOld } : {}),
     exchanged,
     copied,
+    replicated,
   };
+}
+
+const REPLICATED_MERGE_TREE = /^Replicated.*MergeTree$/;
+
+/** In a Replicated database, both the table and its declaration have to replicate their rows. */
+function refuseUnreplicated(names: RebuildNames, live: string, declared: string | undefined): void {
+  const side = !REPLICATED_MERGE_TREE.test(live) ? `the table is ${live}` : declared !== undefined && !REPLICATED_MERGE_TREE.test(declared) ? `the declaration makes it ${declared}` : undefined;
+  if (!side) return;
+  throw new RebuildRefusal(
+    `${names.key} is in a Replicated database and ${side}, which keeps a separate set of rows on each replica. ` +
+      `The backfill runs on one replica and would copy that replica's rows alone, while the EXCHANGE runs on every replica, so the others would swap in a table without their rows. ` +
+      `Rebuild it from and to a Replicated*MergeTree engine (ENGINE = ReplicatedMergeTree, with no arguments in a Replicated database), or move it to an Atomic database first.`,
+  );
+}
+
+/** The Keeper path a `Replicated*MergeTree` engine names, when it names one. */
+function keeperPath(engine: string | undefined): string | undefined {
+  const m = /^Replicated\w*MergeTree\(\s*('(?:[^'\\]|\\.)*')/.exec(engine ?? "");
+  return m?.[1];
+}
+
+/**
+ * The new table is made from the declaration under another name. With an
+ * explicit Keeper path that is the old table's own and has no `{uuid}` in
+ * it, both tables would be the same replicated table to Keeper, and the
+ * create would fail on a replica that is already there or, worse, share parts.
+ */
+function refuseSharedKeeperPath(names: RebuildNames, live: string | undefined, declared: string | undefined): void {
+  const path = keeperPath(declared);
+  if (!path || path.includes("{uuid}") || path !== keeperPath(live)) return;
+  throw new RebuildRefusal(
+    `${names.key} names its Keeper path explicitly, ${path}, and the new table made from the declaration would get the same path as the old table. ` +
+      `Put {uuid} in the path (or leave the engine's arguments out, which defaults to '/clickhouse/tables/{uuid}/{shard}'), so each table has its own.`,
+  );
 }
 
 /**

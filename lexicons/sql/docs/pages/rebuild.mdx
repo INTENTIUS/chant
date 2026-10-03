@@ -93,6 +93,8 @@ SELECT address, expectation, run_id, written_at FROM chant_receipts.receipts
 WHERE address LIKE 'shop/prod/rebuild/shop.events/%'
 ```
 
+In a [Replicated database](#on-a-replicated-database) they are in `shop.__chant_receipts` instead, beside the tables, so every replica has them.
+
 They live there, not on the `chant/lifecycle` branch, because a receipt has to go when the data it witnesses goes. onFailure drops the new table, and each receipt's expectation is bound to the new table's UUID, so a new table made again finds every old receipt stale and copies every partition again. A receipt in git would go on saying those partitions were copied.
 
 A run stopped during the backfill (Ctrl-C, a killed job, a lost machine) is not a failure: it runs no onFailure, and the next run resumes at the first partition without a receipt. A run killed between a partition's `INSERT` and its receipt leaves rows with no receipt. The next run finds them, deletes them (waiting for that mutation in `system.mutations`) and copies the partition once more, so no row is in the new table twice. Each partition's copy runs under a query id made from the new table and the partition, and a copy the server is still running from a run whose client went away is killed first.
@@ -107,9 +109,25 @@ The Create phase waits until `system.mutations` lists nothing unfinished for the
 
 In ClickHouse 26.8 a materialized view follows its source table by name, so after the `EXCHANGE` the views that read `shop.events` already read the new table. The Swap phase detaches and attaches each of them, which makes the server analyze its query against the new table's columns and types: a view the new definition breaks fails the swap there, with the old table still kept, instead of on the next insert. A view with an inner table keeps its data, which dropping and creating it would not. Inserts that land while a view is detached are not passed to it, so in materialized-view mode, where writes go on through the swap, that window is one `DETACH` and one `ATTACH` long. The Swap phase reports the views as the `Dependents` outcome.
 
+## On a Replicated database
+
+A database on the [`Replicated` engine](https://clickhouse.com/docs/engines/database-engines/replicated) (the one ClickHouse's Kubernetes operator makes) is Atomic on each replica, and it runs every DDL statement on all of them through Keeper. The rebuild runs there as it does on one server: the new table, the dual-write view, the `EXCHANGE TABLES`, the views' `DETACH` and `ATTACH` and the drop each reach every replica, and `chant run` can talk to any one of them, or to a different one on each run. The e2e test runs it on two replicas of the pinned server with Keeper, moving between them from run to run.
+
+The tables have to replicate their rows. Declare them `ReplicatedMergeTree` (or another `Replicated*MergeTree`) with no arguments, which a Replicated database fills in as `'/clickhouse/tables/{uuid}/{shard}', '{replica}'`; the plan reads that back as the same engine. Each table then gets its own Keeper path from its UUID, so the new table never shares the old one's.
+
+What changes on a Replicated database:
+
+- The receipts are rows of `shop.__chant_receipts`, a `ReplicatedReplacingMergeTree` in the same database, so a backfill resumed on another replica reads the receipts the first one wrote. Its comment carries chant's marker, and plan, import and prune leave it out.
+- Before the backfill lists the old table's partitions, before it counts what a cut-off copy left in the new table, and before the verification reads either table, the replica waits until it has fetched what the others wrote (`SYSTEM SYNC REPLICA ... LIGHTWEIGHT`).
+- The kill of a copy still running under its query id is `KILL QUERY ON CLUSTER 'shop'`, the database's own cluster, because that copy may be on another replica than the one the resumed run talks to. Replicas that do not answer are skipped.
+- Every copy runs with `insert_deduplicate = 0`. A replicated table remembers the blocks it was given, and a partition copied again after its rows were cleared would otherwise be dropped as a repeat.
+- A dependent view is detached with `DETACH TABLE ... PERMANENTLY`, the only `DETACH` a Replicated database takes, then attached again.
+
 ## What the Op refuses
 
-- A database that is not `Atomic`. `EXCHANGE TABLES` needs the [Atomic engine](https://clickhouse.com/docs/sql-reference/statements/exchange), and swapping with two `RENAME`s would leave a moment with no table for writes to land in. Convert the database to Atomic first. A `Replicated` database is refused too, though it is Atomic underneath, until a test against a cluster with Keeper shows `EXCHANGE TABLES` behaving there ([#3249](https://github.com/INTENTIUS/chant/issues/3249)).
+- A database that is neither `Atomic` nor `Replicated`. `EXCHANGE TABLES` needs the [Atomic engine](https://clickhouse.com/docs/sql-reference/statements/exchange), and swapping with two `RENAME`s would leave a moment with no table for writes to land in. Convert the database to Atomic first.
+- In a Replicated database, a table that is a plain `MergeTree` (or any engine that is not `Replicated*MergeTree`), or a declaration that makes it one. Such a table keeps a different set of rows on each replica: the backfill would copy the rows of the replica it runs on, and the `EXCHANGE` on every replica would swap in a table without the others' rows. Rebuild it to a replicated engine, or move it to an Atomic database first.
+- A declaration whose `Replicated*MergeTree` names the same explicit Keeper path as the table has, without `{uuid}` in it. The new table would get that path too. Put `{uuid}` in the path, or leave the engine's arguments out.
 - A table the server does not have, or a declaration that is not a table.
 - A change with no rebuild in it. The applier makes those.
 - An object under one of the rebuild's names (`__chant_new`, `__chant_dual`, `__chant_old`) that does not carry this rebuild's marker. The Op stops rather than fill or drop somebody else's table.
