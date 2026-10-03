@@ -4,8 +4,8 @@ import { sqlPlugin } from "./plugin";
 describe("skills", () => {
   const skills = sqlPlugin.skills!();
 
-  test("four skills, each with its file's content and a matching frontmatter name", () => {
-    expect(skills.map((s) => s.name)).toEqual(["chant-sql", "chant-sql-plan", "chant-sql-rebuild", "chant-sql-postgres"]);
+  test("five skills, each with its file's content and a matching frontmatter name", () => {
+    expect(skills.map((s) => s.name)).toEqual(["chant-sql", "chant-sql-plan", "chant-sql-rebuild", "chant-sql-postgres", "chant-sql-postgres-plan"]);
     for (const s of skills) {
       expect(s.content.length, s.name).toBeGreaterThan(500);
       expect(s.content).toContain(`skill: ${s.name}\n`);
@@ -25,7 +25,27 @@ describe("skills", () => {
     expect(ids.length).toBeGreaterThan(0);
     for (const id of ids) expect(known.has(id), id).toBe(true);
     expect(pg.content).not.toMatch(/SQLCH\d{3}/);
-    for (const s of skills.filter((s) => s.name !== "chant-sql-postgres")) expect(s.content, s.name).not.toMatch(/Postgres|SQLPG/);
+    for (const s of skills.filter((s) => !s.name.startsWith("chant-sql-postgres"))) {
+      if (["chant-sql", "chant-sql-plan", "chant-sql-rebuild"].includes(s.name)) expect(s.content, s.name).not.toMatch(/Postgres|SQLPG/);
+    }
+  });
+
+  test("the Postgres plan skill cites only classifier rules that exist, names no ClickHouse rule, and stays Postgres-only", async () => {
+    const { PG_CLASSIFIER_RULES } = await import("./postgres/plan/rules");
+    const plan = skills.find((s) => s.name === "chant-sql-postgres-plan")!;
+    const ids = [...new Set(plan.content.match(/SQLPG2\d\d/g) ?? [])];
+    expect(ids.length).toBeGreaterThan(20);
+    for (const id of ids) expect(id in PG_CLASSIFIER_RULES, id).toBe(true);
+    expect(plan.content).not.toMatch(/SQLCH|ClickHouse|MergeTree/);
+  });
+
+  test("every SQLPG0xx and SQLPG1xx id the Postgres skills cite is a lint rule or a post-synth check", async () => {
+    const { rules } = await import("./lint/rules");
+    const { postSynthChecks } = await import("./lint/post-synth");
+    const known = new Set<string>([...rules.map((r) => r.id), ...postSynthChecks.map((c) => c.id)]);
+    for (const s of skills.filter((s) => s.name.startsWith("chant-sql-postgres"))) {
+      for (const id of s.content.match(/SQLPG[01]\d\d/g) ?? []) expect(known.has(id), `${s.name}: ${id}`).toBe(true);
+    }
   });
 
   test("every SQLCH id a skill cites exists in the lexicon", async () => {
