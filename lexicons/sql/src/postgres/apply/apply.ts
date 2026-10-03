@@ -304,7 +304,7 @@ export async function applyPostgres(
     const refused = mine.filter(isRefused);
     if (refused.length > 0) {
       if (live) onServer.add(obj.exportName);
-      outcome.notAttempted.push({ ...ref, reason: "unsupported-kind", detail: refusalDetail(refused, obj.name) });
+      outcome.notAttempted.push({ ...ref, reason: "unsupported-kind", detail: refusalDetail(refused, obj.name, obj.canonical) });
       continue;
     }
     const destructive = mine.filter(isDestructive);

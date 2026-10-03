@@ -17,6 +17,7 @@ import { renderPgDiff } from "./report";
 import { keyedByQualifiedName, pgBuildFileMajor, pgSchemaFromBuildFile, pgSchemaFromLive, type PgSchemaObject } from "./schema";
 import { serverNormalized } from "./server-normalize";
 import { POSTGRES_ENTITY_TYPES } from "../entity-types";
+import { migrationOpSuggestions } from "../migrate/handoff";
 
 export function emitPg(diff: PgSchemaDiff, json: boolean, title: string): number {
   console.log(json ? JSON.stringify(diff, null, 2) : renderPgDiff(diff, { title }));
@@ -37,7 +38,14 @@ export async function projectMajor(options: { config?: { sql?: { postgresMajor?:
  */
 export function diffPgBuildFiles(before: string, after: string, configMajor?: number): PgSchemaDiff {
   const major = pgBuildFileMajor(after) ?? pgBuildFileMajor(before) ?? configMajor;
-  return diffPgSchemas(pgSchemaFromBuildFile(before), pgSchemaFromBuildFile(after), { major });
+  const head = pgSchemaFromBuildFile(after);
+  return withMigrationOps(diffPgSchemas(pgSchemaFromBuildFile(before), head, { major }), head, "<env>");
+}
+
+/** The diff with the migration Op to run for each refused column rename or type change (`../migrate/handoff.ts`). */
+export function withMigrationOps(diff: PgSchemaDiff, declared: readonly PgSchemaObject[], env: string, defaultSchema = "public"): PgSchemaDiff {
+  const migrationOps = migrationOpSuggestions(diff.refused, new Map(declared.map((o) => [o.key, o.canonical])), env, defaultSchema);
+  return migrationOps.length > 0 ? { ...diff, migrationOps } : diff;
 }
 
 /** The live server's major, from `server_version_num` (`180006` is 18). */
@@ -106,9 +114,10 @@ export async function planPgAgainstServer(environment: string, buildFile: string
   try {
     const targeted = pgBuildFileMajor(buildFile) ?? (await projectMajor(options));
     const { declared, diff } = await planAgainstClient(client, target, pgSchemaFromBuildFile(buildFile, target.defaultSchema), { ...(targeted !== undefined ? { major: targeted } : {}), environment });
+    const { migrationOps } = withMigrationOps(diff, declared, environment, target.defaultSchema);
     const label = new Map(declared.map((o) => [o.key, `${o.canonical.exportName} (${o.key.split(" ")[1]})`]));
     const changes = diff.changes.map((c) => ({ ...c, object: label.get(c.object) ?? c.object }));
-    return { changes, hints: diff.hints, refused: changes.filter((c) => c.class === "expand") };
+    return { changes, hints: diff.hints, refused: changes.filter((c) => c.class === "expand"), ...(migrationOps ? { migrationOps } : {}) };
   } finally {
     await client.end();
   }

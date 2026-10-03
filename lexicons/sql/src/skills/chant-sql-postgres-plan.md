@@ -145,7 +145,7 @@ The server prints DDL its own way (`format_type()`, schema-qualified names, norm
 1. `chant build src --lexicon sql -o head.json` on the pull request branch, and the same on the base branch into `base.json`.
 2. `chant sql diff base.json head.json`.
 3. Read the `Warning` line: it counts the rewrites, each of which blocks the table's reads and writes until done. The rule names the form that does not.
-4. An exit of 2 means a refused change. Do not merge it as an ordinary change: it runs as expand and contract (add the new, write both, backfill, move readers, drop the old), as a migration Op. That Op and its skill come with #3281.
+4. An exit of 2 means a refused change. Do not merge it as an ordinary change: it runs as expand and contract (add the new, write both, backfill, move readers, drop the old). For a column rename (SQLPG205) or a type change across kinds (SQLPG208) the report names the `PostgresMigrationOp` declaration to add (`migrationOps` in `--json`); run it with `chant run <name>` until it is done. The other expand-and-contract changes have no Op yet.
 
 ## Applying
 

@@ -23,6 +23,7 @@ import { diffPgSchemas } from "../postgres/plan/diff";
 import { renderPgDiff } from "../postgres/plan/report";
 import { PG_CLASSIFIER_RULES } from "../postgres/plan/rules";
 import { pgSchemaFromBuildFile, pgSchemaFromBuildOutput } from "../postgres/plan/schema";
+import { migrationOpSuggestions } from "../postgres/migrate/handoff";
 import { CLICKHOUSE_IMAGE_DIGEST, CLICKHOUSE_VERSION, clickhouseImage } from "../spec/pin";
 
 const KINDS = ["engine", "database-engine", "type", "codec", "index-type", "setting", "function", "format"] as const;
@@ -154,7 +155,7 @@ const parseTool: McpToolContribution = {
 const classifyTool: McpToolContribution = {
   name: "classify-change",
   description:
-    "Classify the schema change between two revisions of a sql lexicon build, offline. Each side is a `chant build` output (a path to the file, or its JSON text); the dialect is the one the output names, or `dialect`. ClickHouse: every change with its class (create, drop, metadata, rewrite, rebuild), the SQLCH2xx rule and the ClickHouse restriction behind it with its documentation link, the rebuilds a plan must refuse in place with the ClickHouseRebuildOp declaration to run each one as, rename hints, and a rendered report. Postgres: every change with its class by the lock it takes (create, metadata, validate, concurrently, rewrite, expand, drop), the SQLPG2xx rule and its restriction with its Postgres documentation link, the `refused` changes that can only be made as expand and contract, rename hints and a rendered report; `major` is the server's major (default the newest pinned).",
+    "Classify the schema change between two revisions of a sql lexicon build, offline. Each side is a `chant build` output (a path to the file, or its JSON text); the dialect is the one the output names, or `dialect`. ClickHouse: every change with its class (create, drop, metadata, rewrite, rebuild), the SQLCH2xx rule and the ClickHouse restriction behind it with its documentation link, the rebuilds a plan must refuse in place with the ClickHouseRebuildOp declaration to run each one as, rename hints, and a rendered report. Postgres: every change with its class by the lock it takes (create, metadata, validate, concurrently, rewrite, expand, drop), the SQLPG2xx rule and its restriction with its Postgres documentation link, the `refused` changes that can only be made as expand and contract with the PostgresMigrationOp declaration to run each column rename or type change across kinds as (`migrationOps`), rename hints and a rendered report; `major` is the server's major (default the newest pinned).",
   inputSchema: {
     type: "object",
     properties: {
@@ -210,7 +211,10 @@ function classifyPostgres(params: Record<string, unknown>): unknown {
     const text = String(v ?? "");
     return !text.trimStart().startsWith("{") && existsSync(text) ? pgSchemaFromBuildFile(text) : pgSchemaFromBuildOutput(text);
   };
-  const diff = diffPgSchemas(side(params.before), side(params.after), { major: asMajor(params.major) });
+  const after = side(params.after);
+  const plain = diffPgSchemas(side(params.before), after, { major: asMajor(params.major) });
+  const migrationOps = migrationOpSuggestions(plain.refused, new Map(after.map((o) => [o.key, o.canonical])), "<env>");
+  const diff = migrationOps.length > 0 ? { ...plain, migrationOps } : plain;
   const classes: Record<string, number> = {};
   for (const c of diff.changes) classes[c.class] = (classes[c.class] ?? 0) + 1;
   return {
@@ -223,6 +227,7 @@ function classifyPostgres(params: Record<string, unknown>): unknown {
       rule: c.rule,
       advice: "No in-place change keeps old readers working: run it as expand and contract (add the new, write both, backfill, move readers, drop the old), as a migration Op.",
     })),
+    migrationOps,
     hints: diff.hints,
     report: renderPgDiff(diff),
   };

@@ -19,6 +19,7 @@ import { PG_CLASSIFIER_RULES, type PgChangeClass, type PgClassifierRuleId } from
 import { sameConstraint, type CanonicalColumn, type CanonicalConstraint } from "./normalize";
 import type { PgDiffObject, PgSchemaObject } from "./schema";
 import { POSTGRES_LATEST_MAJOR } from "../../spec/postgres-pin";
+import type { PostgresMigrationOpSuggestion } from "../migrate/handoff";
 
 /** What the diff needs to know beyond the two schemas: the server's major (`sql.postgresMajor`, else the newest pinned). */
 export interface PgDiffOptions {
@@ -30,6 +31,8 @@ export type PgChange = ClassifiedChange<PgClassifierRuleId, PgChangeClass>;
 export interface PgSchemaDiff extends ChangeSet<PgChange> {
   /** The changes a plan refuses to make in place: expand and contract only. */
   refused: PgChange[];
+  /** The `PostgresMigrationOp` to run for each refused column rename or type change (#3281). */
+  migrationOps?: PostgresMigrationOpSuggestion[];
 }
 
 const change = (object: string, field: string, rule: PgClassifierRuleId, before?: unknown, after?: unknown, extra: Partial<PgChange> = {}): PgChange =>

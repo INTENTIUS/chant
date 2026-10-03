@@ -31,6 +31,7 @@ import type { PgChange } from "../plan/diff";
 import { PG_CLASSIFIER_RULES, type PgChangeClass, type PgClassifierRuleId } from "../plan/rules";
 import { canonicalOptions, sameConstraint, type CanonicalConstraint, type CanonicalKind } from "../plan/normalize";
 import type { PgDiffObject } from "../plan/schema";
+import { migrationTarget } from "../migrate/handoff";
 import type { CheckDef, ColumnDef, DomainProps, ExclusionDef, ForeignKeyDef, KeyDef, SequenceProps, TableProps } from "../entities";
 
 /** One object as a build declares it, in the shape the applier works with. */
@@ -580,15 +581,23 @@ export function alterSteps(
 /** Whether a change class reads or rewrites rows, so its statement runs in a transaction of its own with the scan timeout. */
 export const scansRows = (cls: PgChangeClass): boolean => cls === "rewrite" || cls === "validate" || cls === "concurrently";
 
-/** The detail of a refused object: each change, the rule and restriction behind it, and the Op that makes it. */
-export function refusalDetail(changes: readonly PgChange[], name: string): string {
+/**
+ * The detail of a refused object: each change, the rule and restriction
+ * behind it, and the Op that makes it. `declared` is the object as declared,
+ * which names the table a column rename or type change is handed to
+ * `PostgresMigrationOp` for (`../migrate/handoff.ts`).
+ */
+export function refusalDetail(changes: readonly PgChange[], name: string, declared?: Pick<PgDiffObject, "kind" | "schema" | "name">): string {
   const lines = changes.map((c) => {
     const r = PG_CLASSIFIER_RULES[c.rule];
     const what = [c.field, c.before !== undefined || c.after !== undefined ? `${c.before ?? "-"} -> ${c.after ?? "-"}` : ""].filter(Boolean).join(" ");
     return `${r.id} ${r.title} (${what}): ${c.note ? `${c.note}. ` : ""}${r.restriction} ${r.cite}`;
   });
-  return (
-    `${name} needs expand and contract, which no in-place statement makes, so nothing was sent for it. ${lines.join(" ")} ` +
-    "Make it with the Postgres expand-and-contract migration Op (chant #3281): add the new, write both, backfill, move readers, then drop the old."
-  );
+  const ops = [...new Set(changes.map((c) => migrationTarget(c, declared)).filter((t) => t !== undefined).map((t) => `PostgresMigrationOp({ table: ${JSON.stringify(t.table)}, column: ${JSON.stringify(t.column)}, ... })`))];
+  const instead =
+    ops.length > 0
+      ? `Run it as the expand-and-contract migration Op: ${ops.join(", ")} from @intentius/chant-lexicon-sql/postgres (add the new column, write both, backfill, switch readers, then drop the old).` +
+        (ops.length < changes.length ? " The other changes have no migration Op yet: make them by hand as expand and contract." : "")
+      : "No migration Op makes this change yet: make it by hand as expand and contract (add the new, write both, backfill, move readers, then drop the old).";
+  return `${name} needs expand and contract, which no in-place statement makes, so nothing was sent for it. ${lines.join(" ")} ${instead}`;
 }

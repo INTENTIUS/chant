@@ -3,6 +3,7 @@
 import { renderChangeSet } from "../../core/classifier";
 import { PG_CHANGE_CLASSES, PG_CLASSIFIER_RULES } from "./rules";
 import type { PgSchemaDiff } from "./diff";
+import { renderMigrationOpSuggestions } from "../migrate/handoff";
 
 export function renderPgDiff(diff: PgSchemaDiff, opts: { title?: string } = {}): string {
   const rewrites = diff.changes.filter((c) => c.class === "rewrite").length;
@@ -15,6 +16,7 @@ export function renderPgDiff(diff: PgSchemaDiff, opts: { title?: string } = {}):
           "",
           `Refused: ${diff.refused.length} change(s) keep no old reader working when made in place. Each runs as expand and contract ` +
             "(add the new, write both, backfill, move readers, drop the old), as a migration Op, not as one statement.",
+          ...renderMigrationOpSuggestions(diff.migrationOps ?? []),
         ]
       : []),
   ];
