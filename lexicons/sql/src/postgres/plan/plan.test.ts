@@ -1,6 +1,10 @@
 import { describe, expect, test } from "vitest";
 import { diffPgSchemas, type PgSchemaDiff } from "./diff";
 import { diffObject, keyedByQualifiedName, renameHints, type PgSchemaObject } from "./schema";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { diffPgBuildFiles } from "./commands";
 import { renderPgDiff } from "./report";
 import { classifyPgDisruption } from "./disruption";
 import { PG_CLASSIFIER_RULES } from "./rules";
@@ -170,6 +174,31 @@ describe("the major (sql.postgresMajor)", () => {
     expect(diffPgSchemas([g("a * 2")], [g("a * 3")], { major: 16 }).changes[0]).toMatchObject({ rule: "SQLPG212", class: "expand" });
     const am = (m: string) => table(`CREATE TABLE app.orders (a int) USING ${m}`);
     expect(diffPgSchemas([am("heap")], [am("columnar")], { major: 14 }).changes[0]).toMatchObject({ rule: "SQLPG226", class: "expand" });
+  });
+});
+
+describe("the major a build records (chant sql diff)", () => {
+  const build = (expr: string, postgresMajor?: number) => {
+    const ddl = `CREATE TABLE app.orders (a int, b int GENERATED ALWAYS AS (${expr}) STORED)`;
+    const doc = { dialect: "postgres", ...(postgresMajor === undefined ? {} : { postgresMajor }), applyOrder: ["orders"], objects: [{ export: "orders", type: "Postgres::Table", name: "orders", ddl }] };
+    const file = join(mkdtempSync(join(tmpdir(), "pg-major-")), "schema.json");
+    writeFileSync(file, JSON.stringify(doc));
+    return file;
+  };
+  const cls = (before: string, after: string, config?: number) => diffPgBuildFiles(before, after, config).changes[0]!.class;
+
+  test("the recorded major decides: SET EXPRESSION is a rewrite at 18 and expand and contract at 14", () => {
+    expect(cls(build("a * 2", 18), build("a * 3", 18))).toBe("rewrite");
+    expect(cls(build("a * 2", 14), build("a * 3", 14))).toBe("expand");
+  });
+  test("the recorded major wins over the config, and the config answers for a build with none", () => {
+    expect(cls(build("a * 2", 18), build("a * 3", 18), 14)).toBe("rewrite");
+    expect(cls(build("a * 2", 14), build("a * 3", 14), 18)).toBe("expand");
+    expect(cls(build("a * 2"), build("a * 3"), 14)).toBe("expand");
+    expect(cls(build("a * 2"), build("a * 3"))).toBe("rewrite");
+  });
+  test("the newer build's major wins over the older one's", () => {
+    expect(cls(build("a * 2", 14), build("a * 3", 18))).toBe("rewrite");
   });
 });
 
