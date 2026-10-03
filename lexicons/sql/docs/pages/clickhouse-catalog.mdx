@@ -2,6 +2,7 @@
 title: "Where the Types Come From"
 description: "The pinned ClickHouse server the dialect's types are read from, the committed catalog snapshot, the overlays, and how to move the pin"
 diataxis: explanation
+order: 8
 ---
 
 ClickHouse publishes no schema for its DDL. What it does publish, inside every server, is a set of `system.*` tables describing what that server accepts. The ClickHouse dialect's types are generated from those tables at one pinned server release, so a type here is a name the pinned server knows, not one a document claims it should.
@@ -45,11 +46,14 @@ Each overlay is checked against the catalog when generation runs. An overlay ent
 
 The pin is `clickhouse/clickhouse-server:26.8.15.10`, an exact patch of the 26.8 LTS line, with its image digest beside it in `src/spec/pin.ts`. Two patches of one line differ (26.8.5.13 and 26.8.15.10 differ by nine query settings), so a floating `26.8` tag would change the generated types with nothing in the repository recording why. The older 26.3 LTS line cannot be the pin: its `system.table_engines` has no usage lines and it has no `system.data_skipping_index_types`, which the argument types are built from.
 
+The same image and digest are what `chant emulator up --lexicon sql` starts and what the lexicon's Docker tests run against, so the local server, the tests and the types always describe one release.
+
 To move it:
 
 1. Change `CLICKHOUSE_VERSION` and `CLICKHOUSE_IMAGE_DIGEST` in `src/spec/pin.ts`.
 2. Run `npm run generate` with Docker available. The snapshot no longer matches the pin, so generation starts the pinned image in a throwaway container, checks that the server reports the pinned version, reads the catalog and rewrites the snapshot.
 3. Review the snapshot's diff. A `-` line is an engine, type, codec or setting the new release removed, which is what would break a declaration.
 4. Fix any overlay entry generation now refuses, and run the tests. `CHANT_SQL_LIVE=1 npx vitest run lexicons/sql/src/spec/catalog.e2e.test.ts` compares the committed snapshot with the pinned server byte for byte.
+5. Run `chant dev surface-diff lexicons/sql`. The lexicon's public surface, its four entity types, is committed as `surface.snapshot.json`, and `validate` checks it on every `prepack`, so a pin move that changes the surface fails CI's validate and check jobs until the new surface is accepted. When the command reports a change, accept it with `chant dev surface-diff lexicons/sql --update-snapshot --bump`, which also bumps the package version by the size of the change. Engine, type and setting names are not part of that surface; their changes show in the catalog snapshot's diff from step 3.
 
-`chant dev pinned-upgrade` reports newer LTS releases from ClickHouse's GitHub releases.
+The plugin declares an `upstreamPin` that points at ClickHouse's `-lts` releases on GitHub, for the self-upgrade tooling. `chant dev pinned-upgrade` reads only the k8s, gcp, docker and gitlab pins today, so check ClickHouse's LTS releases by hand.

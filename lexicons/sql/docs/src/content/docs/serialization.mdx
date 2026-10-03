@@ -6,6 +6,27 @@ description: "Output format for the SQL lexicon"
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-sql` — DO NOT EDIT.
     Edit lexicons/sql/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-The SQL lexicon serializes resources into its native output format during the build step.
+A build writes two files, beside each other:
 
-See the [Serialization](/chant/serialization/output-formats) guide for general information about output formats in chant.
+- The primary output (the `-o` file, `dist/schema.json` by convention), one
+  JSON document. `dialect` is `clickhouse`. `applyOrder` lists the export
+  names in the order the objects have to be created. `objects` holds one entry
+  per declared object, in that order: its export name (`export`), its type
+  (`ClickHouse::Database`, `::Table`, `::View` or `::MaterializedView`), its
+  SQL name (`sqlName`), its parsed definition (columns, engine, keys, TTL,
+  settings, indexes, projections and constraints, and for a view its
+  `select`, `reads`, `to` and `lineage`), `dependsOn`, and its `ddl`.
+  References are written as export names and lineage as `export.column`.
+- `clickhouse.sql`: every statement in `applyOrder`, each ending in `;`,
+  written byte for byte as declared.
+
+The order follows the references: a table after its database, a view after the
+tables it reads, a materialized view after its `TO` target. Ties go by export
+name, so the output does not depend on the order files were found in. A
+reference cycle fails the build and names the cycle.
+
+`chant sql diff`, `chant sql plan`, the post-synth checks and
+`clickhouseApply` read the JSON document. Neither file carries chant's
+ownership marker: the applier adds it to each object's comment when it creates
+the object (see [Applying to a Server](../applying/)).
+

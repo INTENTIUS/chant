@@ -1,0 +1,70 @@
+---
+title: "Lint Rules and Checks"
+description: "Every SQLCH lint rule and post-synth check: what each one flags, why ClickHouse cares, and what to change"
+diataxis: reference
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-sql` — DO NOT EDIT.
+    Edit lexicons/sql/docs/pages/lint-rules.mdx instead; changes here are overwritten. */}
+
+
+The sql lexicon's rule ids all start with `SQL`. Rules that hold in every dialect would be `SQL` plus three digits; there are none yet. ClickHouse rules are `SQLCH` plus three digits, grouped by the hundreds digit:
+
+| Ids | What they are | Where they run |
+|---|---|---|
+| SQLCH001 to SQLCH003 | lint rules over the TypeScript source | `chant lint`, the editor, and `chant serve lsp` |
+| SQLCH101 to SQLCH120 | post-synth checks over the build output | `chant build` and `chant lint` |
+| SQLCH200 to SQLCH250 | the change classifier's rules | `chant sql diff`, `chant sql plan`, `clickhouseApply`; see [Planning and the Change Classifier](../change-classifier/) |
+
+The [All Rules](../rules/) page is the generated list. This page says what each rule means. Every post-synth check has an entry in the lexicon's `auditCatalog()`, which is what `chant audit` reports it under.
+
+## Lint rules
+
+| Id | Severity | Flags | What to change |
+|---|---|---|---|
+| SQLCH001 | error | The DDL in a `database`, `table` or `view` template does not parse, or the template holds a different statement than its tag (a `CREATE VIEW` in `table`). Reported at the token, as a line and column in the `.ts` file. Lint reads every interpolation as a reference, so an error inside text a string interpolation supplies is reported by the build instead | Fix the statement, or use the tag for the statement it holds |
+| SQLCH002 | error | A `Nullable` column, `LowCardinality(Nullable(...))` included, as a key part of `ORDER BY` or `PRIMARY KEY`. ClickHouse refuses the table ("Sorting key contains nullable columns") unless it sets `allow_nullable_key = 1`. A function of the column is not reported | Make the column non-nullable, or set `allow_nullable_key = 1` and accept that `NULL` sorts as a value of its own |
+| SQLCH003 | error | `${events.kind}` where `${events.columns.kind}` was meant, for an entity the file declares or imports from a project file. `kind`, `props`, `lexicon`, `entityType`, `sqlName` and `dependsOn` are the entity's own fields, so the tag would splice in their value as SQL text and the statement would mean something else | Reach the column through `.columns` |
+
+## Post-synth checks
+
+### Engines, codecs and settings
+
+These read the pinned server's catalog, so a pin move can change their verdicts (see [Where the Types Come From](../clickhouse-catalog/)).
+
+| Id | Severity | Flags | What to change |
+|---|---|---|---|
+| SQLCH101 | error | A table, materialized view or database names an engine the pinned server does not have (`system.table_engines`, `system.database_engines`): a misspelling, or an engine a release removed | Use an engine the server lists |
+| SQLCH114 | error | A column `CODEC` names a codec the pinned server does not have (`system.codecs`) | Use a codec the server lists |
+| SQLCH117 | warning | A MergeTree `SETTINGS` entry the pinned server marks obsolete. The server accepts it and ignores it, so the table does not behave as the setting suggests | Remove it |
+| SQLCH118 | error | A MergeTree `SETTINGS` entry the pinned server does not have, usually a typo or a setting a later release added. The `CREATE` fails with "Unknown setting" | Fix the name, or drop the setting |
+| SQLCH119 | warning | An engine the pinned catalog describes as deprecated or experimental, such as the `Ordinary` database engine | Move to the engine that replaced it (`Atomic` for `Ordinary`) |
+| SQLCH120 | warning | A MergeTree engine written with the legacy positional arguments, `MergeTree(date, (key), 8192)` | Write a bare `MergeTree` with `ORDER BY`, `PARTITION BY` and `SETTINGS` |
+
+### Keys and columns
+
+| Id | Severity | Flags | What to change |
+|---|---|---|---|
+| SQLCH102 | error | A `PRIMARY KEY` that is not a prefix of `ORDER BY`. The server refuses the table | Make the primary key a prefix of the sorting key |
+| SQLCH103 | error | The version, sign or `is_deleted` column of a ReplacingMergeTree, CollapsingMergeTree or VersionedCollapsingMergeTree table has a type the engine does not accept. A version is a UInt, Date, DateTime or DateTime64; `is_deleted` is UInt8; a sign is Int8; none may be `Nullable` | Change the column's type |
+| SQLCH104 | error | An engine argument names a column the table does not declare: a Replacing or Collapsing table's version, sign or `is_deleted` column, or a Summing or Coalescing table's summed columns | Declare the column, or fix the name |
+| SQLCH105 | error | `ORDER BY`, `PRIMARY KEY`, `PARTITION BY` or `SAMPLE BY` lists a bare column name the table does not declare. An expression is left to the server | Declare the column, or fix the name |
+| SQLCH106 | error | A skip index expression mentions a column the table does not declare. Projections are not checked | Declare the column, or fix the expression |
+| SQLCH107 | error | A TTL that is a bare column, or a column plus an `INTERVAL`, on a column that is not a Date or DateTime. A function call is left to the server | Base the TTL on a Date or DateTime column |
+| SQLCH111 | warning | A `String` column that a `CHECK` constraint limits to at most 100 values (`col IN (...)` or `col = 'a' OR col = 'b'`). `LowCardinality` dictionary-encodes such a column | Use `LowCardinality(String)` |
+| SQLCH112 | warning | A `PARTITION BY` finer than a day: a bare DateTime column, or a sub-day truncation such as `toStartOfHour`. Every partition is a separate set of parts, and the server stops inserts when a table has too many | Partition by day or coarser, `toYYYYMM(ts)` usually |
+| SQLCH113 | error | A MergeTree table with neither `ORDER BY` nor `PRIMARY KEY`. The server refuses the `CREATE` | Add a sort key, or `ORDER BY tuple()` for none |
+| SQLCH115 | warning | A column named like a secret or personal data (`password`, `token`, `api_key`, `ssn`, `credit_card`, `iban` and similar) with no `COMMENT`, no TTL and no encryption codec. The table's own TTL counts for the whole row | Say what the column holds in a `COMMENT`, bound how long it is kept with a TTL, or encrypt it with `AES_128_GCM_SIV` or `AES_256_GCM_SIV` |
+
+### Databases and views
+
+| Id | Severity | Flags | What to change |
+|---|---|---|---|
+| SQLCH108 | error | `CREATE OR REPLACE TABLE` in a database whose engine is not Atomic (or Replicated, which is Atomic underneath). Judged against a database the same build declares | Use an Atomic database, or drop `OR REPLACE` |
+| SQLCH109 | warning | A materialized view that selects `*`. Its output columns become whatever the source has today, so adding a column to the source changes what the view writes | List the columns |
+| SQLCH110 | warning | A materialized view writes an output column its `TO` target does not declare. ClickHouse matches the columns by name, so that column is not stored. Judged against a target the same build declares, and only when the select list names its columns | Alias the select item to a target column, or add the column to the target |
+| SQLCH116 | warning | A view declared `SQL SECURITY DEFINER` without a `DEFINER`. Its access then depends on whoever ran the `CREATE`, so the same declaration grants different access in each environment | Name the `DEFINER` |
+
+## Suppressing a finding
+
+`lint.rules` in `chant.config.ts` sets any lint rule or post-synth check id to `"off"`, `"warning"` or `"error"`. A lint rule can also be turned off on one line with a `chant-disable` comment. A post-synth check cannot, because its finding names an object in the build output rather than a line of source, so `lint.rules` is the only way to suppress one. See [Rule Configuration](/chant/lint-rules/configuration/#post-synth-checks-and-policies).

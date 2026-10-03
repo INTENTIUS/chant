@@ -2,6 +2,7 @@
 title: "Rebuilding a Table"
 description: "ClickHouseRebuildOp runs a change ALTER cannot make (a sorting key, a partition key, an engine, a key column's type) as a gated Op: new table, dual write, backfill with receipts, verification, swap, retention"
 diataxis: how-to
+order: 6
 ---
 
 Some changes ClickHouse cannot make to the table it has. The sorting key is the on-disk order and, in a `ReplacingMergeTree`, the dedup identity, so changing it means writing every row again into a new table. [The classifier](../change-classifier/) puts these in the rebuild class, and both `chant sql plan` and the [applier](../applying/) refuse them in place. `ClickHouseRebuildOp` is what runs them.
@@ -108,7 +109,7 @@ In ClickHouse 26.8 a materialized view follows its source table by name, so afte
 
 ## What the Op refuses
 
-- A database that is not `Atomic`. `EXCHANGE TABLES` needs the [Atomic engine](https://clickhouse.com/docs/sql-reference/statements/exchange), and swapping with two `RENAME`s would leave a moment with no table for writes to land in. Convert the database to Atomic first.
+- A database that is not `Atomic`. `EXCHANGE TABLES` needs the [Atomic engine](https://clickhouse.com/docs/sql-reference/statements/exchange), and swapping with two `RENAME`s would leave a moment with no table for writes to land in. Convert the database to Atomic first. A `Replicated` database is refused too, though it is Atomic underneath, until a test against a cluster with Keeper shows `EXCHANGE TABLES` behaving there ([#3249](https://github.com/INTENTIUS/chant/issues/3249)).
 - A table the server does not have, or a declaration that is not a table.
 - A change with no rebuild in it. The applier makes those.
 - An object under one of the rebuild's names (`__chant_new`, `__chant_dual`, `__chant_old`) that does not carry this rebuild's marker. The Op stops rather than fill or drop somebody else's table.
