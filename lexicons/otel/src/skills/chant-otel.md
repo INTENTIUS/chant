@@ -100,4 +100,4 @@ The importer writes `receivers.ts`, `processors.ts`, `exporters.ts`, `connectors
 
 ## Reading the result
 
-`collectorTopologyOf(entities)` returns the pipelines, each component's endpoints and schema pin, for each exporter the signals it carries, the connector `edges` between pipelines, and under `semconv` the semantic-conventions version (`GENAI_SEMCONV_PIN`) the config's `gen_ai.` keys follow, as plain data.
+`collectorTopologyOf(entities)` returns the pipelines, each component's endpoints and schema pin, for each exporter the signals it carries, the connector `edges` between pipelines, and under `semconv` the semantic-conventions version the config's `gen_ai.` keys (`GENAI_SEMCONV_PIN`) and `k8s.` keys (`SEMCONV_PIN`) follow, as plain data.

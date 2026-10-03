@@ -32,6 +32,7 @@ export {
   componentEntityType,
   isOTelComponent,
   COLLECTOR_PIN,
+  SEMCONV_PIN,
   GENAI_SEMCONV_PIN,
   type SchemaPin,
   type SafeParseSchema,
