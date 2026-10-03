@@ -177,6 +177,41 @@ export function originOfPath(
   return best === undefined ? undefined : paths[best];
 }
 
+const INTERPOLATION_FIELDS = Symbol.for("chant.interpolationFields");
+
+/**
+ * For an entity a tagged template built: which of its `props` paths each
+ * interpolation fed, by interpolation index (chant #3212). Element `i` lists
+ * the paths the `i`-th `${...}` landed in, in {@link EntityProvenance.paths}'
+ * grammar (dotted names, no array segments). An interpolation that fed no
+ * field the author typed, such as a reference to another entity, lists none.
+ *
+ * Only the tag can say this. It is the tag that parsed the text, so a
+ * `${props.ttlDays}` inside `TTL ts + INTERVAL ${props.ttlDays} DAY` is known
+ * to have fed `ttl` only there. When a composite factory interpreted at fold
+ * time writes the template, `discovery/fold-import.ts` joins these paths with
+ * the factory parameters each interpolation reads, which is what lets drift on
+ * such a field be reported against the parameter. A tag that never calls this
+ * leaves its fields `unknown`, the honest answer, rather than claiming either.
+ *
+ * Stored like provenance itself: non-enumerable and symbol-keyed, so no
+ * serializer, spread or comparison of the output ever sees it.
+ */
+export function setInterpolationFields(entity: object, fields: ReadonlyArray<readonly string[]>): void {
+  if (!Object.isExtensible(entity)) return;
+  Object.defineProperty(entity, INTERPOLATION_FIELDS, {
+    value: Object.freeze(fields.map((paths) => Object.freeze([...paths]))),
+    enumerable: false,
+    writable: true,
+    configurable: true,
+  });
+}
+
+/** What {@link setInterpolationFields} recorded on an entity, if anything. */
+export function getInterpolationFields(entity: object): ReadonlyArray<readonly string[]> | undefined {
+  return (entity as Record<symbol, unknown>)[INTERPOLATION_FIELDS] as ReadonlyArray<readonly string[]> | undefined;
+}
+
 /** One-line rendering of an origin, for diff output. */
 export function describePathOrigin(origin: PathOrigin): string {
   switch (origin.kind) {
