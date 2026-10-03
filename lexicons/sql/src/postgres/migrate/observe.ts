@@ -399,7 +399,7 @@ async function refuseUnsupported(
   if (dependents.length > 0) {
     throw new MigrationRefusal(
       `${where}.${source.name} is used by ${dependents.join("; ")}. ` +
-        `The migration Op does not yet carry indexes, constraints and views over to the new column (chant #3281 follow-up), and the old column could not be dropped while they use it. ` +
+        `The migration Op does not yet carry indexes, constraints and views over to the new column (chant #3322), and the old column could not be dropped while they use it. ` +
         `Drop them, migrate the column, then declare them on the new column.`,
     );
   }
