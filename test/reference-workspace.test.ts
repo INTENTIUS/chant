@@ -78,6 +78,8 @@ import { lintCommand } from "@intentius/chant/cli/commands/lint";
 import { loadPlugins, resolveProjectLexicons } from "@intentius/chant/cli";
 import { parseFrontMatter } from "@intentius/chant/workspace/records";
 import { queryRecords } from "@intentius/chant/workspace/records-cli";
+import { amendRecord, newRecord, reviewRecord } from "@intentius/chant/workspace/records-write";
+import { closeRecord } from "@intentius/chant/workspace/records-close";
 import { initFromCommand } from "@intentius/chant/workspace/lineage-init";
 import { resolveUpgradeTarget } from "@intentius/chant/workspace/lineage-upgrade";
 import { parseDeclaration } from "@intentius/chant/workspace/declaration";
@@ -351,7 +353,7 @@ describe("decision files", () => {
     for (const r of doc.records) expect(dirname(r.path)).toBe("reference-workspace/decisions");
   });
 
-  test("the declaration names the decision, work, answer, lesson, constraint, preference and session kinds, so ls lists them and records reads them without --kind (#2680, #2683, ws-058, #2771)", async () => {
+  test("the declaration names the decision, work, answer, lesson, constraint, preference, session, contract, driver and evidence kinds, so ls lists them and records reads them without --kind (#2680, #2683, ws-058, #2771, #3148)", async () => {
     const ls = lsJson(fixture) as unknown as { workspace: { records: unknown[] }; members: { name: string; records: unknown[] }[] };
     expect(ls.workspace.records).toEqual([
       { name: "decision", path: "decisions/decision.kind.mjs", kind: "decision", reason: null, acceptance: null },
@@ -364,6 +366,9 @@ describe("decision files", () => {
     ]);
     expect(ls.members.find((m) => m.name === "design")!.records).toEqual([
       { name: "session", path: "design/sessions/session.kind.mjs", kind: "session", reason: null, acceptance: null },
+      { name: "contract", path: "design/contracts/contract.kind.mjs", kind: "contract", reason: null, acceptance: null },
+      { name: "driver", path: "design/drivers/driver.kind.mjs", kind: "driver", reason: null, acceptance: null },
+      { name: "evidence", path: "design/evidence/evidence.kind.mjs", kind: "evidence", reason: null, acceptance: null },
     ]);
     const run = chant(fixture, "workspace", "records", "--current", "--json");
     expect(run.status, run.stderr).toBe(0);
@@ -376,6 +381,9 @@ describe("decision files", () => {
       ["constraint", { member: null, path: "constraints/constraint.kind.mjs", name: null }],
       ["preference", { member: null, path: "preferences/preference.kind.mjs", name: null }],
       ["session", { member: "design", path: "design/sessions/session.kind.mjs", name: null }],
+      ["contract", { member: "design", path: "design/contracts/contract.kind.mjs", name: null }],
+      ["driver", { member: "design", path: "design/drivers/driver.kind.mjs", name: null }],
+      ["evidence", { member: "design", path: "design/evidence/evidence.kind.mjs", name: null }],
     ]);
     expect(set.kinds[0].records.map((r) => r.id)).toEqual(files.map((f) => f.slice(0, "ref-000".length)));
   });
@@ -427,6 +435,117 @@ describe("review sessions (#2673)", () => {
     expect(doc.kind).toMatchObject({ name: "session", file: "reference-workspace/design/sessions/session.kind.mjs" });
     expect(doc.records.map((r) => [r.id, r.state, r.valid, r.reasons])).toEqual([["S-0001", "closed", true, []]]);
     expect(doc.records[0].citedBy).toEqual([]);
+  });
+});
+
+describe("the design member's contract, driver and evidence kinds (#3148, ws-082)", () => {
+  function validateAgainst(schemaFile: string, record: unknown): void {
+    const mod = createRequire(join(repoRoot, "packages", "core", "package.json"))("ajv") as { default?: unknown };
+    const Ajv = (mod.default ?? mod) as new (opts: object) => { compile(s: object): Validate };
+    const validate = new Ajv({ allErrors: true, strict: false }).compile(JSON.parse(readFileSync(schemaFile, "utf-8")) as object);
+    expect(validate(record), JSON.stringify(validate.errors, null, 2)).toBe(true);
+  }
+
+  test("C-001 and D-001 validate against their schemas, and records reads them, with C-001's check pinned", async () => {
+    const contractDir = join(fixture, "design", "contracts");
+    const c = parseFrontMatter(readFileSync(join(contractDir, "C-001-the-home-page-follows-its-screen-spec.md"), "utf-8"));
+    if (!c.ok) throw new Error(c.message);
+    validateAgainst(join(contractDir, "contract.schema.json"), c.value);
+    expect((c.value.criteria as { id: string }[]).map((x) => x.id)).toEqual(["a1", "a2"]);
+    const d = parseFrontMatter(readFileSync(join(fixture, "design", "drivers", "D-001-a-home-page-people-can-trust.md"), "utf-8"));
+    if (!d.ok) throw new Error(d.message);
+    validateAgainst(join(fixture, "design", "drivers", "driver.schema.json"), d.value);
+    expect(d.value.members).toEqual(["C-001"]);
+
+    const contracts = await queryRecords({ kind: "design/contracts/contract.kind.mjs", cwd: fixture });
+    if ("error" in contracts) throw new Error(contracts.error.message);
+    expect(contracts.kind).toMatchObject({ name: "contract", schema: "urn:intentius:chant:contract:1" });
+    expect(contracts.records.map((r) => [r.id, r.state, r.valid, r.reasons, r.warnings])).toEqual([["C-001", "draft", true, [], []]]);
+    expect(contracts.records[0].assets).toEqual([expect.objectContaining({ path: "design/contracts/checks/C-001.test.mjs", state: "pinned" })]);
+    const drivers = await queryRecords({ kind: "design/drivers/driver.kind.mjs", cwd: fixture });
+    if ("error" in drivers) throw new Error(drivers.error.message);
+    expect(drivers.records.map((r) => [r.id, r.state, r.valid])).toEqual([["D-001", null, true]]);
+    const evidence = await queryRecords({ kind: "design/evidence/evidence.kind.mjs", cwd: fixture });
+    if ("error" in evidence) throw new Error(evidence.error.message);
+    expect(evidence.records).toEqual([]);
+  });
+
+  test("on a copy: a check run's evidence is written through chant, a session approves C-001 and signs off D-001, and every record reads valid", async () => {
+    const root = mkdtempSync(join(tmpdir(), "chant-3148-"));
+    try {
+      cpSync(fixture, root, { recursive: true, filter: (src) => !/[\\/](node_modules|dist)$/.test(src) });
+      execFileSync("git", ["init", "-q"], { cwd: root });
+      execFileSync("git", ["add", "-A"], { cwd: root });
+      execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.test", "commit", "-qm", "reference"], { cwd: root });
+      const ok = <T extends object>(doc: T): T => {
+        if ("error" in doc) throw new Error(JSON.stringify((doc as { error: unknown }).error));
+        return doc;
+      };
+      const contract = await queryRecords({ kind: "design/contracts/contract.kind.mjs", cwd: root });
+      if ("error" in contract) throw new Error(contract.error.message);
+      const digest = contract.records[0].digest;
+
+      const run = {
+        contract: { id: "C-001", sha: digest },
+        check_sha: (contract.records[0].data!.checks as { sha256: string }[])[0].sha256,
+        check: "design/contracts/checks/C-001.test.mjs",
+        commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf-8" }).trim(),
+        tree: execFileSync("git", ["rev-parse", "HEAD:app"], { cwd: root, encoding: "utf-8" }).trim(),
+        runner: { kind: "factory-check", name: "the reference test" },
+        ok: true,
+        tests: 2,
+        criteria: { a1: "pass", a2: "pass" },
+        output: "ok 1 - a1\nok 2 - a2\n",
+        at: "2026-10-03T12:00:00Z",
+      };
+      const written = ok(await newRecord({ kind: "design/evidence/evidence.kind.mjs", fields: JSON.stringify(run), cwd: root }));
+      expect(written.path).toBe(`design/evidence/${written.id}.json`);
+      expect(createHash("sha256").update(readFileSync(join(root, written.path))).digest("hex")).toBe(written.id);
+
+      const session = {
+        schema: 1,
+        id: "S-0002",
+        title: "Approve the home page contract",
+        state: "open",
+        agenda: [{ record: "C-001", digest, evidence: [written.id] }, { record: "D-001" }],
+        attendance: [
+          { principal: "alice", class: "person", roles: ["reviewer"] },
+          { principal: "facilitator", class: "agent", roles: ["facilitator"] },
+        ],
+        opened: "2026-10-03T12:00:00Z",
+        opened_by: "alice",
+        closed: null,
+        verdicts: [],
+      };
+      ok(await newRecord({ kind: "design/sessions/session.kind.mjs", fields: JSON.stringify(session), cwd: root }));
+      ok(await reviewRecord({ kind: "design/contracts/contract.kind.mjs", id: "C-001", verdict: "agree", by: "alice", session: "S-0002", cwd: root, on: "2026-10-03" }));
+      const sessionDoc = await queryRecords({ kind: "design/sessions/session.kind.mjs", cwd: root });
+      if ("error" in sessionDoc) throw new Error(sessionDoc.error.message);
+      const s2 = sessionDoc.records.find((r) => r.id === "S-0002")!;
+      // The driver has no reviews list: its sign-off is a verdict the session's writer appends.
+      const verdicts = [...(s2.data!.verdicts as unknown[]), { record: "D-001", principal: "alice", verdict: "agree", roles: ["reviewer"], at: "2026-10-03T12:20:00Z" }];
+      ok(await amendRecord({ kind: "design/sessions/session.kind.mjs", id: "S-0002", fields: JSON.stringify({ verdicts, follow_ups: ["work:W-003"], closed_by: "alice" }), cwd: root }));
+      ok(await amendRecord({ kind: "design/contracts/contract.kind.mjs", id: "C-001", fields: JSON.stringify({ state: "approved", approved_by: "alice", approved_on: "2026-10-03" }), cwd: root }));
+      ok(await closeRecord({ kind: "design/sessions/session.kind.mjs", id: "S-0002", cwd: root }));
+
+      // An approved contract changes only in its state, checks and reviews.
+      const retitled = await amendRecord({ kind: "design/contracts/contract.kind.mjs", id: "C-001", fields: JSON.stringify({ title: "Another title" }), cwd: root });
+      expect("error" in retitled && retitled.error.code).toBe("amend-supersede-instead");
+
+      for (const kind of ["design/contracts/contract.kind.mjs", "design/drivers/driver.kind.mjs", "design/evidence/evidence.kind.mjs", "design/sessions/session.kind.mjs"]) {
+        const doc = await queryRecords({ kind, cwd: root });
+        if ("error" in doc) throw new Error(doc.error.message);
+        expect(doc.records.filter((r) => !r.valid).map((r) => [r.id, r.reasons]), kind).toEqual([]);
+      }
+      const after = await queryRecords({ kind: "design/sessions/session.kind.mjs", cwd: root });
+      if ("error" in after) throw new Error(after.error.message);
+      expect(after.records.find((r) => r.id === "S-0002")).toMatchObject({
+        state: "closed",
+        citedBy: [{ id: "C-001", path: "design/contracts/C-001-the-home-page-follows-its-screen-spec.md", index: 0, reviewer: "alice", verdict: "agree" }],
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
@@ -800,7 +919,7 @@ describe("the intent graph on the fixture (#2651)", () => {
     };
     const validate = compile2020(intentSchema);
     expect(validate(doc), JSON.stringify(validate.errors, null, 2)).toBe(true);
-    expect(doc.kinds.map((k) => k.records)).toEqual(["decision", "work", "answer", "lesson", "constraint", "preference", "session"]);
+    expect(doc.kinds.map((k) => k.records)).toEqual(["decision", "work", "answer", "lesson", "constraint", "preference", "session", "contract", "driver", "evidence"]);
     // W-001 constrains member:app. W-002 constrains paths outside this file and only needs W-001, so it stays out.
     expect(doc.nodes.filter((n) => n.kind === "work").map((n) => n.id)).toEqual(["record:work/W-001"]);
     expect(doc.edges).toContainEqual({ kind: "constrains", from: "record:work/W-001", to: doc.region, granularity: "member", entry: "member:app" });
