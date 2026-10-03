@@ -450,10 +450,15 @@ describe("composite factory interpretation (chant #1023)", () => {
     expect([...result.entities.keys()].sort()).toEqual(["webBucket", "webRole"]);
   });
 
-  test("a lexicon-package composite is deliberately not interpreted (rule 1)", async () => {
-    // `LambdaApi` is a composite the aws lexicon itself publishes. It folds —
-    // by invocation, in-process, which is exactly what #1093's allowlist
-    // permits for a package the CLI has already loaded.
+  test("a lexicon-package composite whose body declines is invoked, and the file still folds (rule 1)", async () => {
+    // `LambdaApi` is a composite the aws lexicon itself publishes, reached
+    // through the package barrel. Since chant#3247 it is a candidate for
+    // interpretation like a project composite. Its body declines: the nested
+    // `LambdaFunction` is outside the subset and is invoked (package code,
+    // which #1093's allowlist permits), and `defaults?.permission` on an
+    // absent `defaults` does not resolve. The decline lands where the code
+    // always landed: the package's factory is invoked in-process and the file
+    // folds. The attempt's nested invocation is counted too, hence two.
     await writeMain(`
       import { LambdaApi } from ${JSON.stringify(LEXICON)};
       export const api = LambdaApi({
@@ -469,7 +474,7 @@ describe("composite factory interpretation (chant #1023)", () => {
     expect(result.errors).toEqual([]);
     expect(result.foldDecisions.find((d) => d.file.endsWith("main.ts"))?.mode).toBe("fold");
     expect(foldExecutionCounts()).toMatchObject({ factoryInterpretations: 0, projectFactoryInvocations: 0 });
-    expect(foldExecutionCounts().factoryInvocations).toBe(1);
+    expect(foldExecutionCounts().factoryInvocations).toBe(2);
     expect(result.entities.size).toBeGreaterThan(0);
   });
 
