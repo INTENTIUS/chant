@@ -293,10 +293,10 @@ opens no PR.
 
 ### Tags that are not versions
 
-`postgres/postgres` publishes no GitHub releases, only tags: `REL_18_6`,
-`REL_17_11`, `REL_18_BETA1`, `REL_18_RC1`, plus older spellings such as
+`postgres/postgres` publishes no GitHub releases, only tags, such as `REL_18_6`,
+`REL_17_11`, `REL_18_BETA1` and `REL_18_RC1`, plus older spellings like
 `REL9_6_24` and `Release_2_0`. With `kind: "tags"` alone none of them parses as
-a version, so nothing is ever found. `tagVersion` supplies the mapping:
+a version, so nothing is ever found. `tagVersion` supplies the mapping, as in this sketch.
 
 ```typescript
 upstream: {
@@ -311,7 +311,7 @@ upstream: {
 },
 ```
 
-What the tooling does with it:
+The tooling then behaves as follows.
 
 - A tag the function maps to `null` is skipped, so the pattern above drops the
   `_BETA`/`_RC` tags, `REL_18_STABLE` and the old spellings. Tags with `rc`,
@@ -320,7 +320,7 @@ What the tooling does with it:
 - Versions are compared numerically segment by segment, so `17.11` is newer
   than `17.9`. The mapped value (`18.6`) is what the report shows as `to` and
   what `replace(v, line)` receives. The pinned constant may hold the mapped
-  version or the raw tag (`REL_18_6`); both read as the same version.
+  version or the raw tag (`REL_18_6`). Both read as the same version.
 - With `tagVersion` set the tool reads every page of the tag list (100 per page,
   at most 20 pages), because the tags API is not ordered by version and the
   newest minor is not on the first page. Without it, only the first 50 items
