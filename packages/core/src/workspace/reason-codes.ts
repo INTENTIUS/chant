@@ -139,7 +139,7 @@ export const REASONS = {
   // Write scope (#2548): a records write that is refused, and a commit check --changes reports, outside the writer's scope.
   "write-scope-member": "The write is to a file, or to a record kind, of a member outside the writer's scope: an agent session writes only its own member, and writeScope.<class>.members leaves the member out.",
   "write-scope-kind": "The write is to a record kind writeScope.<class>.records does not list, with a verb it does not list for the kind, or deletes a record.",
-  "write-scope-protected": "The write is to a file writeScope.<class>.protected lists, or one under a directory it lists, outside any top-level keys the entry's except allows (#3146).",
+  "write-scope-protected": "The write is to a file writeScope.<class>.protected lists, or one under a directory it lists, outside the top-level keys or JSON Pointers the entry's except allows (#3146, #3308).",
   "write-scope-class-unknown": "The declaration's writeScope at base names a principal class no pinned package supplies, and the writer is judged human, so it may be in that class; the write is refused until the package is installed at the pinned version or the entry removed (#3080).",
   "agent-unknown": "CHANT_AGENT, or a commit's Chant-Agent trailer, names an agent session the declaration at base does not declare.",
   "principal-unidentified": "chant.workspace.json at base sets identity.attribution to identified, and the write names a person by a bare name: --by, an author field or a decision point's answerer must be a forge identity (github:<login>, gitlab:<login>, <forge>@<host>:<login>), a principal the signers file at base lists, or an agent, runner or service principal (#3163).",
@@ -243,6 +243,10 @@ export const REASONS = {
   "run-ended": "runs end names a run whose end is already recorded.",
   "runs-no-ledger": "The checkout has no chant/lifecycle branch, so there are no agent runs to read.",
   "runs-ledger-malformed": "Some lines of the agent run ledger aren't run events; the rest are read.",
+  // A box's listing written through chant (box listing set, #3308): why the write was refused. Nothing is written.
+  "listing-member-unknown": "box listing set names a member the declaration does not declare.",
+  "listing-box-missing": "box listing set names a member whose entry declares no box block, so it has no listing.",
+  "listing-cover-invalid": "The cover can't be read, is not a PNG, JPEG or WebP picture, is larger than 5 MiB, has a path outside the workspace, or has an extension other than its picture format's.",
   // A box whose isolation fails (check, #2727). Each is also a WSP finding.
   "box-isolation-collision": "Two boxes on one host resolve to the same port, state path or cookie name, or two ports in one box share an offset.",
   "box-isolation-literal": "A host's stateRoot or a box's state entry is a literal machine path instead of one derived from an environment reference and the box's name.",

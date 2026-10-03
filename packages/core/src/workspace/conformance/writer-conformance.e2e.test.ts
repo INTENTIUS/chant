@@ -5,6 +5,7 @@
  * run on a workspace generated from the shipped fixtures, at the same time.
  */
 
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
@@ -13,6 +14,7 @@ import {
   runWorkspaceWriterConformance,
   WRITE_CONTRACT_ACTIONS,
   WRITE_CONTRACT_JSON_FLAGS,
+  WRITER_INPUTS,
   WRITER_KINDS,
   WRITER_SCRIPT,
   type ChantTransport,
@@ -98,6 +100,15 @@ describe("the writer conformance suite (#3159)", () => {
       answer: [[expect.stringMatching(/^slice-tier-/), "answered"]],
       work: [["W-001", "open"]],
       runs: [["conformance-run", "ended"], ["writer-run-1", "ended"], ["writer-run-2", "ended"]],
+      // #3308: the box's listing, set through chant with its cover copied in, survives amnesia.
+      listing: {
+        app: {
+          published: true,
+          title: "The writer suite's box",
+          line: "Listed through chant, read back after amnesia.",
+          cover: { path: "app/listing/cover.png", sha256: createHash("sha256").update(WRITER_INPUTS.cover.bytes).digest("hex") },
+        },
+      },
     });
   }, 900_000);
 
@@ -109,6 +120,7 @@ describe("the writer conformance suite (#3159)", () => {
     expect(report.checked).toEqual(["records new", "records amend", "records review", "points answer"]);
     const by = Object.fromEntries(report.results.map((r) => [r.id, r]));
     expect(by.claim.by).toBe("suite");
+    expect(by.listing).toMatchObject({ by: "suite", problems: [] });
     expect(by.session.problems).toEqual([]);
     expect(by.decision.problems).toEqual(["decision (records new): the writer must return the document chant printed, unchanged, and it returned something else"]);
     expect(by.amend.problems).toHaveLength(2);

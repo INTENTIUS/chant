@@ -1103,7 +1103,7 @@
       }
     },
     "protectedPath": {
-      "description": "A protected path: a glob from the workspace root, or { path, except } for a JSON file whose listed top-level keys may still change.",
+      "description": "A protected path: a glob from the workspace root, or { path, except } for a JSON file whose listed top-level keys, or the values JSON Pointers name, may still change.",
       "oneOf": [
         {
           "$ref": "#/$defs/fileGlob"
@@ -1121,7 +1121,7 @@
               "type": "array",
               "minItems": 1,
               "uniqueItems": true,
-              "description": "Top-level keys of the JSON file a write may change. A change anywhere else in the file, or to a file that doesn't parse as a JSON object before and after, is still outside the scope.",
+              "description": "What a write may change in the JSON file: a top-level key, or, for an entry starting with /, the values a JSON Pointer matches, where a * token matches every key or array index at its level, such as /members/*/box/listing for every box's listing (#3308). A change anywhere else in the file, or to a file that doesn't parse as a JSON object before and after, is still outside the scope.",
               "items": {
                 "type": "string",
                 "minLength": 1
