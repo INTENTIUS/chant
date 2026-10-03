@@ -27,6 +27,7 @@ import { discoverComponents } from "./discover";
 import type { BuildParamProvenance } from "../provenance";
 import { inferArchetype, projectToJson, type Archetype } from "./component";
 import {
+  deployContext,
   resolveComponentGraph,
   runInterpretDriver,
   runComponentDeploy,
@@ -43,7 +44,9 @@ import type { GateDigestMismatch, GateLedgerPort } from "../op/gate";
 import { gateName } from "../op/gate-name";
 import { isLexiconPlugin, type LexiconPlugin, type ComponentPipelineOptions } from "../lexicon";
 import type { RunProgressEvent } from "./run-progress";
-import { relative } from "node:path";
+import { dirname, relative } from "node:path";
+import { existsSync, statSync } from "node:fs";
+import { getHeadCommit } from "../lifecycle/git";
 import { buildCapabilityRegistry } from "./capability-plugin-loader";
 import type { CapabilityRegistry } from "./capability";
 import { applyConfigDefaults } from "./config-defaults";
@@ -421,6 +424,12 @@ export interface RunComponentsOptions {
   buildParams?: BuildParamProvenance[];
   /** Where a `gate` step's facts are read and written (#2119). Defaults to the `chant/lifecycle` orphan branch; a test passes `memoryGateLedgerPort()` from `../op/gate.ts`. */
   gates?: GateLedgerPort;
+  /**
+   * The commit the run deploys, for the workloads' `vcs.ref.head.revision`
+   * (#3061). Default: `git rev-parse HEAD` in the project, or nothing outside
+   * a checkout. `null` passes none.
+   */
+  revision?: string | null;
 }
 
 /** Result of `chant run --components <name|all>`. */
@@ -571,11 +580,19 @@ export async function runComponents(
   const { onProgress } = options;
 
   const gates = options.gates;
+  // #3061: the commit this run deploys, for the workloads' vcs.ref.head.revision. The digest comes
+  // from the run's own publish step. Best effort: outside a git checkout nothing is passed.
+  const revision =
+    options.revision !== undefined
+      ? options.revision ?? undefined
+      : await getHeadCommit({ cwd: existsSync(path) && statSync(path).isDirectory() ? path : dirname(path) }).catch(() => undefined);
+  const releaseIdentity = () => (revision ? { revision } : {});
 
   try {
     if (selector === "all") {
       const run = await runInterpretDriver(resolvedTargets, registry, {
         env,
+        releaseIdentity,
         componentOutputs: seedOutputs,
         onProgress,
         ...(gates ? { gates } : {}),
@@ -618,7 +635,7 @@ export async function runComponents(
     onProgress?.({ type: "component-start", wave: 1, component: componentName });
     const componentResult = await runComponentDeploy(
       resolvedTargets[0],
-      { env, component: componentName },
+      deployContext({ env, releaseIdentity }, componentName),
       registry,
       componentOutputs,
       onProgress,

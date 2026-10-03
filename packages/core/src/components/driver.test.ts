@@ -1069,3 +1069,55 @@ describe("capabilities are consumed exactly as the registry provides them", () =
     expect(failed?.error).toMatch(/capability "some-future-verb" is not implemented/);
   });
 });
+
+describe("the release a deploy step sees (#3061, ws-081)", () => {
+  function setup() {
+    const registry = new CapabilityRegistry();
+    registry.register(fakeCapability("publish-image", { run: () => ({ uri: "ghcr.io/acme/api@sha256:abc", digest: "sha256:abc" }) }).capability);
+    registry.register(fakeCapability("generate-sbom", { run: () => ({ digest: "sha256:sbom" }) }).capability);
+    const deploy = fakeCapability("deploy");
+    registry.register(deploy.capability);
+    return { registry, deploy };
+  }
+
+  it("carries the caller's revision and the digest a publish step promoted, not an SBOM's", async () => {
+    const { registry, deploy } = setup();
+    const api: DriverComponent = {
+      name: "api",
+      dependsOn: [],
+      deploy: [
+        { phase: "Publish", steps: [{ kind: "publish-image" }, { kind: "generate-sbom" }] },
+        { phase: "Deploy", steps: [{ kind: "deploy" }] },
+      ],
+    };
+    const result = await runInterpretDriver([api], registry, { env: "prod", releaseIdentity: () => ({ revision: "0123abc" }) });
+    expect(result.ok).toBe(true);
+    expect(deploy.calls[0]!.ctx.release).toEqual({ revision: "0123abc", version: "sha256:abc" });
+  });
+
+  it("keeps each component's release its own, and passes none without releaseIdentity", async () => {
+    const { registry, deploy } = setup();
+    const api: DriverComponent = { name: "api", dependsOn: [], deploy: [{ phase: "P", steps: [{ kind: "publish-image" }, { kind: "deploy" }] }] };
+    const worker: DriverComponent = { name: "worker", dependsOn: ["api"], deploy: [{ phase: "D", steps: [{ kind: "deploy" }] }] };
+    await runInterpretDriver([api, worker], registry, { env: "prod", releaseIdentity: () => ({ revision: "r1" }) });
+    expect(deploy.calls.map((c) => [c.ctx.component, c.ctx.release])).toEqual([
+      ["api", { revision: "r1", version: "sha256:abc" }],
+      ["worker", { revision: "r1" }],
+    ]);
+    const plain = setup();
+    await runInterpretDriver([{ ...worker, dependsOn: [] }], plain.registry, { env: "prod" });
+    expect(plain.deploy.calls[0]!.ctx.release).toBeUndefined();
+  });
+
+  it("a promote's recorded digest is the version when no step publishes one", async () => {
+    const { registry, deploy } = setup();
+    const api: DriverComponent = { name: "api", dependsOn: [], deploy: [{ phase: "D", steps: [{ kind: "deploy" }] }] };
+    await runInterpretDriver([api], registry, {
+      env: "prod",
+      gates: memoryGateLedgerPort(),
+      releases: new Map([["api", "sha256:recorded"]]),
+      releaseIdentity: () => ({ revision: "r0" }),
+    });
+    expect(deploy.calls[0]!.ctx.release).toEqual({ revision: "r0", version: "sha256:recorded" });
+  });
+});

@@ -30,11 +30,13 @@
  */
 
 import {
+  deployContext,
   runComponentDeploy,
   type DriverComponent,
   type DriverComponentResult,
   type GateContext,
 } from "./driver";
+import type { ReleaseIdentity } from "../telemetry-attribution";
 import { downstreamWithin, remainingFanOut, type FanOutPlan, type FanOutProgress, type FanOutSkip } from "./fan-out";
 import { evaluateGate, gitGateLedgerPort, type GateLedgerPort } from "../op/gate";
 import type { RunProgressEvent } from "./run-progress";
@@ -62,6 +64,8 @@ export interface FanOutRunOptions {
   gate?: FanOutGate;
   /** What an earlier attempt at this same plan already did. */
   progress?: FanOutProgress;
+  /** The release each component deploys (#3061), as `InterpretRunOptions.releaseIdentity`. */
+  releaseIdentity?: (component: string) => ReleaseIdentity | undefined;
 }
 
 export interface FanOutRunResult {
@@ -157,7 +161,7 @@ export async function runFanOut(
         options.onProgress?.({ type: "component-start", wave: waveNum, component: name });
         const result = await runComponentDeploy(
           byName.get(name)!,
-          { env: options.env, component: name, vars: options.vars },
+          deployContext(options, name),
           registry,
           componentOutputs,
           options.onProgress,

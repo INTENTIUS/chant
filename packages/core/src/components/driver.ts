@@ -52,6 +52,8 @@ import { gateName } from "../op/gate-name";
 import { componentPlanDigest } from "./gate-plan";
 import type { PendingGateRecord } from "../lifecycle/gate-ledger";
 import type { CapabilityRegistry, DeployContext } from "./capability";
+import { isPromotedArtifact } from "./auto-release";
+import type { ReleaseIdentity } from "../telemetry-attribution";
 import type { RunProgressEvent, RunProgressStatus } from "./run-progress";
 
 export type { RunProgressEvent } from "./run-progress";
@@ -566,6 +568,11 @@ async function runPhase(
     });
     if (record.status === "ok") {
       phaseOutputs[phaseDef.phase] = { ...(phaseOutputs[phaseDef.phase] ?? {}), ...(output as object) };
+      // The release's service.version is the digest a later deploy step stamps (#3061): the
+      // last artifact this component promoted, the same one auto-release records.
+      if (ctx.release && isPromotedArtifact(output) && typeof output.digest === "string" && output.digest !== "") {
+        ctx.release.version = output.digest;
+      }
     }
     return {
       records: [record],
@@ -715,11 +722,15 @@ export async function runComponentDeploy(
   onProgress?: (event: RunProgressEvent) => void,
   gateContext: GateContext = { port: gitGateLedgerPort() },
 ): Promise<DriverComponentResult> {
+  // Each component tracks its own release: a digest one component promoted never stamps another's deploy.
+  if (ctx.release) ctx = { ...ctx, release: { ...ctx.release } };
   const phaseOutputs: Record<string, Record<string, unknown>> = {};
   // #2574: every gate this component reaches binds its approval to this
   // environment and this composition, so an approval for staging or for last
   // week's deploy cannot pass it.
   const release = gateContext.releases?.get(component.name);
+  // A promote or rollback deploys a recorded digest without publishing one (#2574); that digest is the release's version.
+  if (ctx.release && release !== undefined && ctx.release.version === undefined) ctx.release.version = release;
   const gates: GateContext = {
     ...gateContext,
     planDigest: componentPlanDigest({
@@ -909,6 +920,12 @@ export interface InterpretRunOptions {
   now?: string;
   /** The recorded digest a promote or rollback deploys, per component (#2574). Part of the plan a gate approval is bound to. */
   releases?: ReadonlyMap<string, string>;
+  /**
+   * The release each component deploys (#3061, ws-081), threaded into its
+   * `DeployContext.release`. The driver fills in `version` when a publish
+   * step promotes an artifact. Absent: no deploy step sees a release.
+   */
+  releaseIdentity?: (component: string) => ReleaseIdentity | undefined;
 }
 
 /**
@@ -930,6 +947,15 @@ export interface InterpretRunOptions {
  * purely on the generic `Component`/`Phase`/`Step` shapes and the registry —
  * no branch anywhere names a specific component or capability.
  */
+/** A component's `DeployContext` for a run: its env, vars and, when the caller knows it, its release. */
+export function deployContext(
+  options: { env: string; vars?: Record<string, unknown>; releaseIdentity?: (component: string) => ReleaseIdentity | undefined },
+  component: string,
+): DeployContext {
+  const release = options.releaseIdentity?.(component);
+  return { env: options.env, component, ...(options.vars ? { vars: options.vars } : {}), ...(release ? { release: { ...release } } : {}) };
+}
+
 export async function runInterpretDriver(
   components: DriverComponent[],
   registry: CapabilityRegistry,
@@ -960,7 +986,7 @@ export async function runInterpretDriver(
         onProgress?.({ type: "component-start", wave: waveNum, component: component.name });
         const result = await runComponentDeploy(
           component,
-          { env: options.env, component: component.name, vars: options.vars },
+          deployContext(options, component.name),
           registry,
           componentOutputs,
           onProgress,

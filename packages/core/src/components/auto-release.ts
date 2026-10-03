@@ -41,7 +41,7 @@ import type { DriverStepRecord } from "./driver";
  * driver's own `collectComponentOutputs` stays looser (uri/digest/key) because it
  * only feeds `@<component>.publish.*` wiring, where a false positive is harmless.
  */
-function isPromotedArtifact(output: unknown): output is { uri: string; digest?: string } {
+export function isPromotedArtifact(output: unknown): output is { uri: string; digest?: string } {
   return !!output && typeof output === "object" && "uri" in output && typeof (output as { uri?: unknown }).uri === "string";
 }
 
