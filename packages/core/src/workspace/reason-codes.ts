@@ -140,6 +140,7 @@ export const REASONS = {
   "write-scope-member": "The write is to a file, or to a record kind, of a member outside the writer's scope: an agent session writes only its own member, and writeScope.<class>.members leaves the member out.",
   "write-scope-kind": "The write is to a record kind writeScope.<class>.records does not list, with a verb it does not list for the kind, or deletes a record.",
   "write-scope-protected": "The write is to a file writeScope.<class>.protected lists, or one under a directory it lists, outside any top-level keys the entry's except allows (#3146).",
+  "write-scope-class-unknown": "The declaration's writeScope at base names a principal class no pinned package supplies, and the writer is judged human, so it may be in that class; the write is refused until the package is installed at the pinned version or the entry removed (#3080).",
   "agent-unknown": "CHANT_AGENT, or a commit's Chant-Agent trailer, names an agent session the declaration at base does not declare.",
   // A review given in a session (records review --session, #2693).
   "session-unknown": "--session names no session of a session kind whose subjects are the record's kind.",

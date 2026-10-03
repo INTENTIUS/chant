@@ -21,6 +21,7 @@ import { cleanScratch, contract, git, REPO, repo, writeFiles } from "./__fixture
 import { agentSession } from "./agent-cli";
 import agentSchema from "./agent.schema.json";
 import { checkChanges, type ChangesDocument } from "./changes";
+import { runDeclarationChecks } from "./checks";
 import changesSchema from "./changes.schema.json";
 import { formatChanges } from "./changes-cli";
 import { parseDeclaration, WorkspaceReadError } from "./declaration";
@@ -337,5 +338,129 @@ describe("chant workspace agent: what a session reloads from (#2548)", () => {
     const doc = await agentSession({ cwd: root, name: "ghost" });
     agent.expectValid(doc);
     expect(code(doc)).toBe("agent-unknown");
+  });
+});
+
+describe("principal classes a plugin defines (#3080)", () => {
+  const PLUGIN = "plugins/review";
+  const PRINCIPALS = JSON.stringify({ schema: 1, classes: [{ name: "reviewer", description: "people who review decisions", role: "reviewer" }] });
+  const REVIEWER_SCOPE = { reviewer: { members: ["design"], records: { decision: ["review"] } } };
+  let dom: string;
+  const at: Record<string, string> = {};
+
+  function domainDeclaration(scope: unknown): string {
+    return JSON.stringify({ ...JSON.parse(declaration(scope, [])), pins: [{ path: PLUGIN }] }, null, 2);
+  }
+  function commitIn(message: string, email?: string): string {
+    git(dom, "add", "-A");
+    git(dom, ...(email ? ["-c", `user.email=${email}`] : []), "commit", "-q", "-m", message);
+    return git(dom, "rev-parse", "HEAD");
+  }
+
+  beforeAll(() => {
+    const kind = readFileSync(join(DECISIONS, "decision.kind.mjs"), "utf-8");
+    const schema = readFileSync(join(DECISIONS, "decision.schema.json"), "utf-8");
+    dom = repo({
+      "chant.workspace.json": domainDeclaration(REVIEWER_SCOPE),
+      ".chant/trust.json": JSON.stringify({ schema: 1, roles: { reviewer: ["rev@example.com"] } }),
+      [`${PLUGIN}/package.json`]: JSON.stringify({ name: "review-classes", version: "1.0.0", exports: { "./workspace-principals": "./workspace-principals.json" } }),
+      [`${PLUGIN}/workspace-principals.json`]: PRINCIPALS,
+      [KIND]: kind,
+      "decisions/decision.schema.json": schema,
+      "decisions/ws-001-one.md": record(decided({ id: "ws-001", title: "One" })),
+      [DESIGN_KIND]: kind,
+      "design/decisions/decision.schema.json": schema,
+      "design/decisions/ws-001-screen.md": record(decided({ id: "ws-001", title: "Screen" })),
+      "app/server.mjs": "export const port = 8080;\n",
+      "design/spec.md": "# Spec\n",
+    });
+    at.base = commitIn("the workspace");
+    git(dom, "branch", "-M", "main");
+  });
+
+  test("writeScope takes a domain class's name as a key, in file order", () => {
+    const d = parseDeclaration(domainDeclaration({ reviewer: { records: { decision: ["review"] } }, human: {} }), "chant.workspace.json");
+    expect(Object.keys(d.writeScope!)).toEqual(["reviewer", "human"]);
+    expect(() => parseDeclaration(domainDeclaration({ "x-reviewer": {} }), "chant.workspace.json")).toThrow(WorkspaceReadError);
+    expect(() => parseDeclaration(domainDeclaration({ Reviewer: {} }), "chant.workspace.json")).toThrow(WorkspaceReadError);
+  });
+
+  test("a principal holding the class's role at base is held to its entry; anyone else is a human", async () => {
+    expect(code(await reviewRecord({ kind: KIND, id: "ws-001", verdict: "agree", by: "rev@example.com", cwd: dom, dryRun: true }))).toBeNull();
+    const proposed = await newRecord({ kind: KIND, fields: newDecision("Logs"), by: "rev@example.com", cwd: dom, dryRun: true });
+    expect(proposed).toMatchObject({ error: { code: "write-scope-kind", message: expect.stringContaining("rev@example.com (reviewer) may review decision records, and not new") } });
+    expect(code(await newRecord({ kind: KIND, fields: newDecision("Logs"), by: "lex00", cwd: dom, dryRun: true }))).toBeNull();
+  });
+
+  test("a path-pinned plugin's classes are read at base: remapping the class in the working tree changes nothing", async () => {
+    writeFiles(dom, { [`${PLUGIN}/workspace-principals.json`]: JSON.stringify({ schema: 1, classes: [{ name: "reviewer", description: "d", role: "nobody" }] }) });
+    try {
+      expect(code(await newRecord({ kind: KIND, fields: newDecision("Logs"), by: "rev@example.com", cwd: dom, dryRun: true }))).toBe("write-scope-kind");
+    } finally {
+      writeFiles(dom, { [`${PLUGIN}/workspace-principals.json`]: PRINCIPALS });
+    }
+  });
+
+  test("check --changes judges a commit by its author's domain class", async () => {
+    git(dom, "checkout", "-q", "-b", "work");
+    writeFiles(dom, { "app/server.mjs": "export const port = 9090;\n" });
+    at.outside = commitIn("app: a port", "rev@example.com");
+    writeFiles(dom, { "design/spec.md": "# Spec, reviewed\n" });
+    at.inside = commitIn("design: a note", "rev@example.com");
+    const { doc } = (await checkChanges({ cwd: dom, range: "main..work" })) as { doc: Exclude<ChangesDocument, { error: unknown }> };
+    contract(changesSchema).expectValid(doc);
+    expect(doc.scope).toMatchObject({ restricted: ["reviewer"] });
+    expect(doc.scope!.commits.map((c) => [c.commit, c.class])).toEqual([
+      [at.outside, "reviewer"],
+      [at.inside, "reviewer"],
+    ]);
+    expect(doc.scope!.findings.map((f) => [f.commit, f.code, f.path, f.class])).toEqual([[at.outside, "write-scope-member", "app/server.mjs", "reviewer"]]);
+    git(dom, "checkout", "-q", "main");
+  });
+
+  describe("a class no pinned package supplies fails closed", () => {
+    beforeAll(() => {
+      writeFiles(dom, { "chant.workspace.json": domainDeclaration({ ...REVIEWER_SCOPE, auditor: { members: ["design"] } }) });
+      at.unknown = commitIn("an auditor class no plugin supplies");
+    });
+
+    test("a writer judged human is refused; one in a known class is judged by it", async () => {
+      const refused = await newRecord({ kind: KIND, fields: newDecision("Logs"), by: "lex00", cwd: dom, dryRun: true });
+      expect(refused).toMatchObject({ error: { code: "write-scope-class-unknown", message: expect.stringContaining("writeScope.auditor") } });
+      expect(code(await newRecord({ kind: KIND, fields: newDecision("Logs"), cwd: dom, dryRun: true }))).toBe("write-scope-class-unknown");
+      expect(code(await reviewRecord({ kind: KIND, id: "ws-001", verdict: "agree", by: "rev@example.com", cwd: dom, dryRun: true }))).toBeNull();
+    });
+
+    test("check --changes reports the human's commit as a whole", async () => {
+      git(dom, "checkout", "-q", "-b", "audit");
+      writeFiles(dom, { "design/spec.md": "# Spec, by a person\n" });
+      const human = commitIn("a person's edit");
+      const { doc } = (await checkChanges({ cwd: dom, range: "main..audit" })) as { doc: Exclude<ChangesDocument, { error: unknown }> };
+      contract(changesSchema).expectValid(doc);
+      expect(doc.scope).toMatchObject({ restricted: ["reviewer", "auditor"] });
+      expect(doc.scope!.findings.map((f) => [f.id, f.path, f.class])).toEqual([[`finding:write-scope-class-unknown:${human}`, null, "human"]]);
+      git(dom, "checkout", "-q", "main");
+    });
+
+    test("workspace check reports the unknown class with WSP003", async () => {
+      const report = await runDeclarationChecks(dom, undefined, { gather: false });
+      const found = report.diagnostics.filter((d) => d.ruleId === "WSP003");
+      expect(found).toHaveLength(1);
+      expect(found[0].message).toMatch(/writeScope names the principal class auditor, which no core class or pinned package supplies/);
+      expect(found[0].message).toMatch(/known classes: human, agent, runner, service, reviewer/);
+    });
+  });
+
+  test("workspace check reports an unreadable principals file with WSP002", async () => {
+    const root = repo({
+      "chant.workspace.json": domainDeclaration(REVIEWER_SCOPE),
+      [`${PLUGIN}/package.json`]: JSON.stringify({ exports: { "./workspace-principals": "./workspace-principals.json" } }),
+      [`${PLUGIN}/workspace-principals.json`]: JSON.stringify({ schema: 1, classes: [{ name: "human", description: "d", role: "people" }] }),
+      "app/server.mjs": "",
+      "design/spec.md": "",
+    });
+    const report = await runDeclarationChecks(root, undefined, { gather: false });
+    expect(report.diagnostics.filter((d) => d.ruleId === "WSP002").map((d) => d.message)).toEqual([`${PLUGIN}: class human is a core class and can't be supplied by a package`]);
+    expect(report.diagnostics.filter((d) => d.ruleId === "WSP003").map((d) => d.message)).toEqual([expect.stringContaining("principal class reviewer")]);
   });
 });

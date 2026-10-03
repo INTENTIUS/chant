@@ -152,7 +152,7 @@ describe("the closed list of reason codes", () => {
 
   test("the output schemas name exactly these codes", () => {
     const named = new Set<string>();
-    for (const f of readdirSync(HERE).filter((f) => f.endsWith(".schema.json") && !f.startsWith("declaration") && !f.startsWith("workspace-kinds"))) {
+    for (const f of readdirSync(HERE).filter((f) => f.endsWith(".schema.json") && !f.startsWith("declaration") && !f.startsWith("workspace-kinds") && !f.startsWith("workspace-principals"))) {
       for (const c of schemaCodes(JSON.parse(readFileSync(join(HERE, f), "utf-8")))) {
         expect(isReasonCode(c), `${f} names ${c}, which is not in reason-codes.ts`).toBe(true);
         named.add(c);

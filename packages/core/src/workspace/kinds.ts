@@ -370,14 +370,15 @@ export interface PackageKinds extends KindData {
 }
 
 /**
- * Where a package's `exports` send `./workspace-kinds`, or undefined when
- * the package doesn't export that subpath. Only the literal key counts: a
- * `./*` pattern maps the subpath to code, which chant never runs for kinds.
+ * Where a package's `exports` send `./workspace-kinds` (or another data
+ * subpath, such as `./workspace-principals`), or undefined when the package
+ * doesn't export it. Only the literal key counts: a `./*` pattern maps the
+ * subpath to code, which chant never runs for plugin data.
  */
-export function kindsExportTarget(pkg: Record<string, unknown>): string | undefined | { problem: string } {
+export function kindsExportTarget(pkg: Record<string, unknown>, subpath: string = KINDS_SUBPATH): string | undefined | { problem: string } {
   const exports = pkg.exports;
   if (!exports || typeof exports !== "object" || Array.isArray(exports)) return undefined;
-  const entry = (exports as Record<string, unknown>)[KINDS_SUBPATH];
+  const entry = (exports as Record<string, unknown>)[subpath];
   if (entry === undefined) return undefined;
   let target: unknown = entry;
   if (target && typeof target === "object" && !Array.isArray(target)) {
@@ -385,10 +386,10 @@ export function kindsExportTarget(pkg: Record<string, unknown>): string | undefi
     target = conditions.default ?? conditions.import ?? conditions.require;
   }
   if (typeof target !== "string") {
-    return { problem: `exports["${KINDS_SUBPATH}"] must name one file, as a string or a "default" condition` };
+    return { problem: `exports["${subpath}"] must name one file, as a string or a "default" condition` };
   }
   if (!target.startsWith("./") || !target.endsWith(".json")) {
-    return { problem: `exports["${KINDS_SUBPATH}"] is ${target}; it must name a .json file inside the package, since chant reads kinds as data and never runs a package's code` };
+    return { problem: `exports["${subpath}"] is ${target}; it must name a .json file inside the package, since chant reads plugin data as data and never runs a package's code` };
   }
   return target;
 }
@@ -500,6 +501,37 @@ export interface LoadedKinds {
 }
 
 /**
+ * The directory a pin's plugin data is read from: an installed package at
+ * the pinned version, looked up from `workspaceRoot`, or a path pin's
+ * directory, checked against its integrity digest when it has one. Null for
+ * a pin that names neither. Shared by the kinds and the principal classes
+ * (#3080), so both read a pin the same way.
+ */
+export function pinnedPackageDir(pin: PinLike, workspaceRoot: string): { dir: string; source: string } | { problem: string } | null {
+  if (pin.package) {
+    const dir = findInstalledPackage(pin.package, workspaceRoot);
+    if (!dir) return { problem: `pinned package ${pin.package} is not installed; install it to read the kinds it supplies` };
+    let installed: unknown;
+    try {
+      installed = (JSON.parse(readFileSync(join(dir, "package.json"), "utf-8")) as { version?: unknown }).version;
+    } catch {
+      installed = undefined;
+    }
+    if (pin.version && installed !== pin.version) return { problem: `${pin.package} is pinned at ${pin.version}, and ${String(installed ?? "an unknown version")} is installed` };
+    return { dir, source: pin.package };
+  }
+  if (pin.path) {
+    const dir = join(workspaceRoot, ...pin.path.split("/"));
+    if (pin.integrity) {
+      const checked = checkPinIntegrity(dir, pin.integrity, pin.path);
+      if (!checked.ok) return { problem: checked.message };
+    }
+    return { dir, source: pin.path };
+  }
+  return null;
+}
+
+/**
  * Build the registry for a workspace: the built-in kinds plus the kinds
  * every pin publishes. `workspaceRoot` is the absolute workspace root; a
  * package pin is looked up from there, and a path pin is relative to it.
@@ -514,38 +546,13 @@ export function loadKindRegistry(pins: readonly PinLike[], workspaceRoot: string
   const owner = new Map<string, string>();
   const clashing = new Set<string>();
   pins.forEach((pin, i) => {
-    let dir: string | undefined;
-    let source: string;
-    if (pin.package) {
-      source = pin.package;
-      dir = findInstalledPackage(pin.package, workspaceRoot);
-      if (!dir) {
-        problems.push({ pin: i, message: `pinned package ${pin.package} is not installed; install it to read the kinds it supplies` });
-        return;
-      }
-      let installed: unknown;
-      try {
-        installed = (JSON.parse(readFileSync(join(dir, "package.json"), "utf-8")) as { version?: unknown }).version;
-      } catch {
-        installed = undefined;
-      }
-      if (pin.version && installed !== pin.version) {
-        problems.push({ pin: i, message: `${pin.package} is pinned at ${pin.version}, and ${String(installed ?? "an unknown version")} is installed` });
-        return;
-      }
-    } else if (pin.path) {
-      source = pin.path;
-      dir = join(workspaceRoot, ...pin.path.split("/"));
-      if (pin.integrity) {
-        const checked = checkPinIntegrity(dir, pin.integrity, pin.path);
-        if (!checked.ok) {
-          problems.push({ pin: i, message: checked.message });
-          return;
-        }
-      }
-    } else {
+    const found = pinnedPackageDir(pin, workspaceRoot);
+    if (found === null) return;
+    if ("problem" in found) {
+      problems.push({ pin: i, message: found.problem });
       return;
     }
+    const { dir, source } = found;
     const read = readPackageKinds(dir, source);
     for (const p of read.problems) problems.push({ pin: i, message: p });
     for (const k of read.kinds) {

@@ -107,9 +107,11 @@ export interface ChangesPolicy {
   ignore: string[];
 }
 
-/** The core principal classes (#2524 D5). */
+/** The core principal classes (#2524 D5). A pinned package may supply domain classes too (#3080, `principal-classes.ts`). */
 export const PRINCIPAL_CLASSES = ["human", "agent", "runner", "service"] as const;
-export type PrincipalClass = (typeof PRINCIPAL_CLASSES)[number];
+export type CorePrincipalClass = (typeof PRINCIPAL_CLASSES)[number];
+/** A class name: a core class, or a domain class a pinned package supplies (#3080). */
+export type PrincipalClass = string;
 
 /** How a record is written, as the records commands name it (#2548). */
 export const WRITE_VERBS = ["new", "amend", "review", "close"] as const;
@@ -137,8 +139,14 @@ export interface ProtectedPath {
   except: string[];
 }
 
-/** The declaration's `writeScope` block: an entry per restricted class. A class with no entry is not restricted. */
-export type WriteScope = Partial<Record<PrincipalClass, ClassScope>>;
+/**
+ * The declaration's `writeScope` block: an entry per restricted class, in
+ * file order. A class with no entry is not restricted. A key may name a
+ * domain class a pinned package supplies (#3080); whether one does is known
+ * only once the pins are read, so an unknown key is judged where the scope
+ * is applied, not here.
+ */
+export type WriteScope = Record<PrincipalClass, ClassScope>;
 
 /** An agent session the declaration names (#2524 D20, #2548): bound to one member. */
 export interface AgentDeclaration {
@@ -813,15 +821,14 @@ export function parseDeclaration(text: string, file: string, reader: string = re
 
 /**
  * The `writeScope` block, already validated, with the rule the schema can't
- * say (#2548): a member it names is a declared member.
+ * say (#2548): a member it names is a declared member. Its keys are kept in
+ * file order: the core classes and any domain class (#3080).
  */
 function writeScopeOf(raw: unknown, members: Member[], at: (pointer: string, key?: boolean) => ErrorLocation): WriteScope | null {
   if (raw === undefined) return null;
-  const block = raw as Partial<Record<PrincipalClass, { members?: "*" | string[]; records?: Record<string, WriteVerb[]>; protected?: (string | { path: string; except?: string[] })[] }>>;
+  const block = raw as Record<PrincipalClass, { members?: "*" | string[]; records?: Record<string, WriteVerb[]>; protected?: (string | { path: string; except?: string[] })[] }>;
   const out: WriteScope = {};
-  for (const cls of PRINCIPAL_CLASSES) {
-    const entry = block[cls];
-    if (entry === undefined) continue;
+  for (const [cls, entry] of Object.entries(block)) {
     const pointer = `/writeScope/${cls}`;
     const list = entry.members === undefined || entry.members === "*" ? null : [...entry.members];
     for (const [i, name] of (list ?? []).entries()) {

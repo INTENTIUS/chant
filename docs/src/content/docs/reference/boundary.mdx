@@ -43,7 +43,7 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 |
 | intent node kind | the node kinds of `intent.schema.json` | 10 | 0 | 3 |
 | intent edge kind | the edge kinds of `intent.schema.json` | 11 | 0 | 3 |
-| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 172 | 0 | 0 |
+| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 173 | 0 | 0 |
 | finding code | the finding codes of `intent.schema.json` | 17 | 0 | 0 |
 | WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 50 | 0 | 0 |
 | hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 |
@@ -52,7 +52,7 @@ Each row follows, in the order of the table above.
 
 | Category | Concept | Owner | Carried by | What |
 |---|---|---|---|---|
-| boundary cell | declaration, kinds, members, links, lineage, migrations, `init --from`, `upgrade` | chant | declaration.schema.json, workspace-kinds.schema.json, .chant/workspace.lock.json | The repository specification itself: what a workspace declares, how each member is read, how members join, and where the files came from. |
+| boundary cell | declaration, kinds, members, links, lineage, migrations, `init --from`, `upgrade` | chant | declaration.schema.json, workspace-kinds.schema.json, workspace-principals.schema.json, .chant/workspace.lock.json | The repository specification itself: what a workspace declares, how each member is read, how members join, and where the files came from. |
 | boundary cell | records: schemas, states, seals, pins, supersession, attestation, provenance | chant | records.schema.json | How a record file is validated, sealed, pinned to the files it rests on, superseded and traced to a signed commit. |
 | boundary cell | the read contract: versioned JSON of `ls`, `graph`, `check`, `records`, `status`, `graph --intent`, `graph --composites`, `points`, `work history`, `signers`, `evidence verify`, closed reason codes | chant | ls.schema.json, graph.schema.json, check.schema.json, records.schema.json, status.schema.json, intent.schema.json, composites.schema.json, points.schema.json, work-history.schema.json, signers.schema.json, evidence.schema.json | The only way a reader sees a workspace: one JSON Schema per document, a contract version and a chant floor. |
 | boundary cell | commit trailers: `Chant-Agent`, `Chant-Lease`, `Chant-Run`, `Chant-Record`, `Chant-Applied-By`, `Chant-Applied-At`, `Chant-Applied-Commit` | chant | intent.schema.json, intent-record.schema.json | The names a commit uses to point at its agent session, work lease, agent run, records and apply; whoever makes the commit writes them, and chant reads them back (#3149, ws-075). |
@@ -258,6 +258,7 @@ Each row follows, in the order of the table above.
 | reason code | `write-scope-member` | chant | changes.schema.json, records-amend.schema.json, records-close.schema.json, records-new.schema.json, records-review.schema.json, work-evidence.schema.json | The write is to a file, or to a record kind, of a member outside the writer's scope: an agent session writes only its own member, and writeScope.&lt;class&gt;.members leaves the member out. |
 | reason code | `write-scope-kind` | chant | changes.schema.json, records-amend.schema.json, records-close.schema.json, records-new.schema.json, records-review.schema.json, work-evidence.schema.json | The write is to a record kind writeScope.&lt;class&gt;.records does not list, with a verb it does not list for the kind, or deletes a record. |
 | reason code | `write-scope-protected` | chant | changes.schema.json | The write is to a file writeScope.&lt;class&gt;.protected lists, or one under a directory it lists, outside any top-level keys the entry's except allows (#3146). |
+| reason code | `write-scope-class-unknown` | chant | changes.schema.json, records-amend.schema.json, records-close.schema.json, records-new.schema.json, records-review.schema.json, work-evidence.schema.json | The declaration's writeScope at base names a principal class no pinned package supplies, and the writer is judged human, so it may be in that class; the write is refused until the package is installed at the pinned version or the entry removed (#3080). |
 | reason code | `agent-unknown` | chant | agent.schema.json, changes.schema.json, records-amend.schema.json, records-close.schema.json, records-new.schema.json, records-review.schema.json, work-evidence.schema.json | CHANT_AGENT, or a commit's Chant-Agent trailer, names an agent session the declaration at base does not declare. |
 | reason code | `session-unknown` | chant | records-review.schema.json | --session names no session of a session kind whose subjects are the record's kind. |
 | reason code | `session-not-open` | chant | records-review.schema.json | --session names a session in a closed state, which takes no more verdicts. |
@@ -347,8 +348,8 @@ Each row follows, in the order of the table above.
 | finding code | `intent-work-blocked` | chant | intent.schema.json | A work item constraining the region has commits in its window while a work item it needs is not done. |
 | finding code | `intent-work-open-decided-code` | chant | intent.schema.json | Commits in the region are a decision's own work while the work item implementing that decision is still open. |
 | WSP check | `WSP001` `declaration-unreadable` | chant | check.schema.json | The declaration can be read: it parses, matches the schema and keeps the placement rules. |
-| WSP check | `WSP002` `kinds-unreadable` | chant | check.schema.json | Every pinned package's kinds can be read: it is installed at the pinned version, and its ./workspace-kinds file is valid kind data. |
-| WSP check | `WSP003` `kind-unknown` | chant | check.schema.json | Every member's kind is built in or supplied by a pinned package. Unknown kinds fail closed. |
+| WSP check | `WSP002` `kinds-unreadable` | chant | check.schema.json | Every pinned package's kinds and principal classes can be read: it is installed at the pinned version, its ./workspace-kinds file is valid kind data, and its ./workspace-principals file is valid class data. |
+| WSP check | `WSP003` `kind-unknown` | chant | check.schema.json | Every member's kind is built in or supplied by a pinned package, and so is every principal class writeScope names (#3080). Unknown kinds and classes fail closed. |
 | WSP check | `WSP004` `member-dir-missing` | chant | check.schema.json | Every member's directory exists. |
 | WSP check | `WSP005` `kind-probe-failed` | chant | check.schema.json | Every member's directory is what its kind reads, such as a chant config for a chant member. |
 | WSP check | `WSP006` `kind-probe-tie` | chant | check.schema.json | No directory is claimed by two kinds of the same highest precedence. Ties fail. |

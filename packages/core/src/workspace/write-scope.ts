@@ -25,9 +25,15 @@
  *   detection only (ws-002).
  *
  * A principal's class comes from the role grants in the trust policy at base,
- * through {@link principalClass} alone (the agent, runner and service roles),
+ * through {@link principalClass} alone (the agent, runner and service roles,
+ * then the role each domain class a pinned package supplies names, #3080),
  * or from naming an agent session. Claiming a session only ever narrows what
  * a writer may do, so an unverified `CHANT_AGENT` or trailer is safe to honour.
+ *
+ * A writeScope key no pinned package supplies fails closed: a writer judged
+ * `human` might be in that class, so it is refused with
+ * `write-scope-class-unknown` until the plugin is installed at the pinned
+ * version or the entry is removed.
  */
 
 import { execFileSync } from "node:child_process";
@@ -36,7 +42,6 @@ import { isDeepStrictEqual } from "node:util";
 // @ts-ignore — picomatch has no types declaration
 import picomatch from "picomatch";
 import {
-  PRINCIPAL_CLASSES,
   readDeclaration,
   WorkspaceReadError,
   type AgentDeclaration,
@@ -46,10 +51,20 @@ import {
   type ProtectedPath,
   type WriteVerb,
 } from "./declaration";
+import {
+  classesOf,
+  coreClassRegistry,
+  loadClassRegistry,
+  principalClass as classOf,
+  roleGrants,
+  unknownScopeClasses,
+  type ClassRegistry,
+} from "./principal-classes";
 import type { ReasonCode } from "./reason-codes";
 import { memberHolding } from "./record-assets";
 import { gitRoot } from "./record-source";
 import { normalisePrincipal, parseFrontMatter } from "./records";
+import type { WorkspaceTree } from "./tree";
 import { emptyPolicy, type TrustPolicy } from "./trust/policy";
 import { commitProvenance, policyAtBase, resolveBase } from "./trust/provenance";
 import { AGENT_TRAILER } from "./trailers";
@@ -62,7 +77,7 @@ export const AGENT_ENV = "CHANT_AGENT";
 export { AGENT_TRAILER };
 
 /** Why a write is outside its writer's scope. Closed. */
-export const WRITE_SCOPE_CODES = ["write-scope-member", "write-scope-kind", "agent-unknown"] as const satisfies readonly ReasonCode[];
+export const WRITE_SCOPE_CODES = ["write-scope-member", "write-scope-kind", "write-scope-class-unknown", "agent-unknown"] as const satisfies readonly ReasonCode[];
 export type WriteScopeCode = (typeof WRITE_SCOPE_CODES)[number];
 
 /**
@@ -72,24 +87,15 @@ export type WriteScopeCode = (typeof WRITE_SCOPE_CODES)[number];
 export const SCOPE_FINDING_CODES = [...WRITE_SCOPE_CODES, "write-scope-protected"] as const satisfies readonly ReasonCode[];
 export type ScopeFindingCode = (typeof SCOPE_FINDING_CODES)[number];
 
-/** The classes a role grant puts a principal in, in the order they are tried. Human is the rest. */
-const ROLE_CLASSES = ["agent", "runner", "service"] as const satisfies readonly PrincipalClass[];
+export { classesOf, roleGrants };
 
 /**
- * The role grants a class is read from. Every read of roles for write scope
- * goes through here, so where the grants live (`.chant/trust.json` today,
- * possibly the declaration, #2547) is decided in one place: the policy.
+ * The class a principal is in: the first of agent, runner and service whose
+ * role it holds at base, then the first domain class in `classes` whose role
+ * it holds (#3080), or human.
  */
-export function roleGrants(policy: TrustPolicy): Record<string, string[]> {
-  return policy.roles;
-}
-
-/** The class a principal is in: the first of agent, runner and service whose role it holds at base, or human. */
-export function principalClass(policy: TrustPolicy, principal: string | null): PrincipalClass {
-  if (principal === null) return "human";
-  const name = normalisePrincipal(principal);
-  const grants = roleGrants(policy);
-  return ROLE_CLASSES.find((cls) => (grants[cls] ?? []).some((p) => normalisePrincipal(p) === name)) ?? "human";
+export function principalClass(policy: TrustPolicy, principal: string | null, classes: ClassRegistry = coreClassRegistry()): PrincipalClass {
+  return classOf(policy, principal, classes);
 }
 
 /** Who is writing, as the scope judges it. */
@@ -116,7 +122,12 @@ export class WriteScopeError extends Error {
  * the declaration declares none by that name), in the session that lists
  * `principal`, or else in the class `principal`'s roles give it.
  */
-export function resolveWriter(declaration: Declaration | null, policy: TrustPolicy, given: { agent?: string | null; principal?: string | null }): Writer {
+export function resolveWriter(
+  declaration: Declaration | null,
+  policy: TrustPolicy,
+  given: { agent?: string | null; principal?: string | null },
+  classes: ClassRegistry = coreClassRegistry(),
+): Writer {
   const principal = given.principal ?? null;
   const agents = declaration?.agents ?? [];
   if (given.agent !== undefined && given.agent !== null) {
@@ -137,7 +148,25 @@ export function resolveWriter(declaration: Declaration | null, policy: TrustPoli
     const agent = agents.find((a) => a.principals.some((p) => normalisePrincipal(p) === name));
     if (agent) return { principal, class: "agent", agent };
   }
-  return { principal, class: principalClass(policy, principal), agent: null };
+  return { principal, class: principalClass(policy, principal, classes), agent: null };
+}
+
+/**
+ * Refuse `writer` when the declaration's writeScope names a class `classes`
+ * doesn't know and the writer is judged human (#3080): nothing says which
+ * role puts a principal in the unknown class, so this writer may be in it.
+ * A writer in another class is judged by that class, which comes first.
+ */
+export function unknownClassVerdict(declaration: Declaration | null, writer: Writer, classes: ClassRegistry): { ok: true } | { ok: false; code: "write-scope-class-unknown"; message: string } {
+  if (writer.class !== "human") return OK;
+  const unknown = unknownScopeClasses(declaration?.writeScope ?? null, classes);
+  if (unknown.length === 0) return OK;
+  const list = unknown.map((c) => `writeScope.${c}`).join(", ");
+  return {
+    ok: false,
+    code: "write-scope-class-unknown",
+    message: `${who(writer)} may be in ${unknown.length === 1 ? "a class" : "classes"} no pinned package supplies (${list}), so its scope can't be told; install the package that supplies ${unknown.length === 1 ? "it" : "them"} at the pinned version, or remove the entry (known classes: ${classes.names().join(", ")})`,
+  };
 }
 
 /** The scope that applies to `writer`, or null when its class is not restricted. An agent is always restricted to its member. */
@@ -294,12 +323,14 @@ export interface ScopeSource {
   /** The workspace root from the git root, "." for the git root, or null without a declaration. */
   root: string | null;
   policy: TrustPolicy;
+  /** The principal classes: the core four and those the declaration's pins supply, path pins read where the declaration was (#3080). */
+  classes: ClassRegistry;
 }
 
-function readAt(cwd: string, at?: string): { declaration: Declaration; rootOnDisk: string; root: string } | null {
+function readAt(cwd: string, at?: string): { declaration: Declaration; rootOnDisk: string; root: string; tree: WorkspaceTree } | null {
   try {
     const located = locateWorkspace(cwd, at);
-    return { declaration: readDeclaration(located.tree), rootOnDisk: located.rootOnDisk, root: located.root };
+    return { declaration: readDeclaration(located.tree), rootOnDisk: located.rootOnDisk, root: located.root, tree: located.tree };
   } catch (err) {
     if (err instanceof WorkspaceReadError) return null;
     throw err;
@@ -316,12 +347,16 @@ export function scopeSource(cwd: string): ScopeSource {
   const top = gitRoot(cwd);
   const base = top ? resolveBase(top) : null;
   const policy = top && base ? policyAtBase(top, base) : emptyPolicy(null);
+  const withClasses = (read: NonNullable<ReturnType<typeof readAt>>) => {
+    const { tree, ...rest } = read;
+    return { ...rest, classes: loadClassRegistry(read.declaration.pins, read.rootOnDisk, { tree }).registry };
+  };
   if (base?.commit) {
     const atBase = readAt(cwd, base.commit);
-    if (atBase) return { ...atBase, from: "base", policy };
+    if (atBase) return { ...withClasses(atBase), from: "base", policy };
   }
   const here = readAt(cwd);
-  return here ? { ...here, from: "working-tree", policy } : { declaration: null, from: null, rootOnDisk: null, root: null, policy };
+  return here ? { ...withClasses(here), from: "working-tree", policy } : { declaration: null, from: null, rootOnDisk: null, root: null, policy, classes: coreClassRegistry() };
 }
 
 const toPosix = (p: string) => (sep === "/" ? p : p.split(sep).join("/"));
@@ -352,7 +387,9 @@ export function refuseRecordWrite(
 ): void {
   const source = scopeSource(cwd);
   if (source.declaration === null && (write.agent === undefined || write.agent === null)) return;
-  const writer = resolveWriter(source.declaration, source.policy, { agent: write.agent, principal: write.principal });
+  const writer = resolveWriter(source.declaration, source.policy, { agent: write.agent, principal: write.principal }, source.classes);
+  const unknown = unknownClassVerdict(source.declaration, writer, source.classes);
+  if (!unknown.ok) throw new WriteScopeError(unknown.code, unknown.message);
   const verdict = judgeRecord(source.declaration, writer, scopedKind(source, write.kindName, write.kindFile, write.recordsDir), write.verb);
   if (!verdict.ok) throw new WriteScopeError(verdict.code, verdict.message);
 }
@@ -375,7 +412,7 @@ export interface ScopeCommit {
 }
 
 export interface ScopeFinding {
-  /** `finding:<code>:<commit>:<path>`, or `finding:agent-unknown:<commit>`. */
+  /** `finding:<code>:<commit>:<path>`, or `finding:<code>:<commit>` for agent-unknown and write-scope-class-unknown, which judge the whole commit. */
   id: string;
   code: ScopeFindingCode;
   commit: string;
@@ -392,7 +429,7 @@ export interface ScopeFinding {
 export interface ScopeReport {
   /** The commit the declaration and the trust policy were read at. */
   base: string;
-  /** The classes with a writeScope entry, and agent when any session is declared. */
+  /** The classes with a writeScope entry, and agent when any session is declared: core first, then domain classes in pin order, then any no pinned package supplies. */
   restricted: PrincipalClass[];
   agents: string[];
   commits: ScopeCommit[];
@@ -458,13 +495,17 @@ export async function checkWriteScope(q: {
   prefix: string;
   declaration: Declaration;
   kinds: CheckKind[];
+  /** The principal classes the declaration's pins supply at base (#3080). Without it, the core four. */
+  classes?: ClassRegistry;
 }): Promise<ScopeReport | null> {
   const { top, base, head, prefix, declaration } = q;
+  const classes = q.classes ?? coreClassRegistry();
   if (declaration.writeScope === null && declaration.agents.length === 0) return null;
   const policy = policyAtBase(top, { commit: base, from: "flag" });
   const { activeAttestors } = await import("./trust/attestor");
   const attestors = await activeAttestors();
-  const restricted = PRINCIPAL_CLASSES.filter((c) => declaration.writeScope?.[c] !== undefined || (c === "agent" && declaration.agents.length > 0));
+  const scoped = (c: string) => declaration.writeScope?.[c] !== undefined || (c === "agent" && declaration.agents.length > 0);
+  const restricted = [...classes.names().filter(scoped), ...unknownScopeClasses(declaration.writeScope, classes)];
   const report: ScopeReport = { base, restricted, agents: declaration.agents.map((a) => a.name), commits: [], findings: [] };
   const list = git(top, ["rev-list", "--reverse", "--no-merges", `${base}..${head}`]).split("\n").filter(Boolean);
   for (const commit of list) {
@@ -484,7 +525,7 @@ export async function checkWriteScope(q: {
     }
     let writer: Writer;
     try {
-      writer = resolveWriter(declaration, policy, { agent: named, principal });
+      writer = resolveWriter(declaration, policy, { agent: named, principal }, classes);
     } catch (err) {
       if (!(err instanceof WriteScopeError)) throw err;
       report.commits.push({ commit, subject, principal, attested, class: "agent", agent: named, paths: paths.length });
@@ -492,6 +533,11 @@ export async function checkWriteScope(q: {
       continue;
     }
     report.commits.push({ commit, subject, principal, attested, class: writer.class, agent: writer.agent?.name ?? null, paths: paths.length });
+    const unknown = unknownClassVerdict(declaration, writer, classes);
+    if (!unknown.ok) {
+      report.findings.push({ id: `finding:${unknown.code}:${commit}`, code: unknown.code, commit, path: null, principal, class: writer.class, agent: null, verb: null, message: `${commit.slice(0, 8)}: ${unknown.message}` });
+      continue;
+    }
     if (scopeOf(declaration, writer) === null) continue;
     for (const p of paths) {
       const inWorkspace = prefix === "" ? p.path : p.path.slice(prefix.length + 1);

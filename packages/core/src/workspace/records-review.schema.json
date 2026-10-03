@@ -261,6 +261,7 @@
                 "session-not-open",
                 "write-scope-member",
                 "write-scope-kind",
+                "write-scope-class-unknown",
                 "agent-unknown",
                 "record-unparseable",
                 "record-schema-invalid",

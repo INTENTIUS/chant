@@ -81,7 +81,7 @@ function wspIds(): string[] {
 }
 
 /** The output schemas that name a code, as the roster's carrier lists them. */
-const OUTPUT_SCHEMAS = readdirSync(workspaceSrc).filter((f) => f.endsWith(".schema.json") && f !== "declaration.schema.json" && f !== "workspace-kinds.schema.json").sort();
+const OUTPUT_SCHEMAS = readdirSync(workspaceSrc).filter((f) => f.endsWith(".schema.json") && f !== "declaration.schema.json" && f !== "workspace-kinds.schema.json" && f !== "workspace-principals.schema.json").sort();
 const schemaText = new Map(OUTPUT_SCHEMAS.map((f) => [f, readFileSync(join(workspaceSrc, f), "utf-8")]));
 const schemasNaming = (code: string) => OUTPUT_SCHEMAS.filter((f) => schemaText.get(f)!.includes(`"${code}"`));
 
