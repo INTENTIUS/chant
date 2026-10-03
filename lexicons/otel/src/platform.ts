@@ -17,7 +17,7 @@ import { DebugExporter } from "./components/exporters";
 import { HealthCheckExtension } from "./components/extensions";
 import { Pipeline } from "./pipeline";
 import { SIGNALS, parseComponentId, type CollectorConfig, type Signal } from "./model";
-import { receiverListenerPaths } from "./validate-config";
+import { listenerPaths } from "./validate-config";
 
 /** The contrib collector image at the version the built-in components are typed against. */
 export const COLLECTOR_IMAGE = `otel/opentelemetry-collector-contrib:${COLLECTOR_PIN.version.replace(/^v/, "")}`;
@@ -66,10 +66,12 @@ export interface CollectorPort {
   /** A name usable as a k8s port name: lowercase, `-` separated, at most 15 characters. */
   name: string;
   port: number;
+  /** Set when the listener is UDP. A port without it is TCP. */
+  protocol?: "UDP";
 }
 
 export interface CollectorEndpoints {
-  /** Ports the receivers listen on, in config order, one entry per port. */
+  /** Ports the receivers, then the exporters, listen on, in config order, one entry per port and protocol. */
   ports: CollectorPort[];
   /**
    * The `health_check` extension, when the service enables one and it listens
@@ -109,26 +111,33 @@ function valueAt(value: unknown, path: string[]): unknown {
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
 
 /**
- * The ports a built collector config listens on: the endpoint of every
- * receiver that listens (otlp, zipkin, jaeger; the receivers OTEL117 knows),
- * named after the receiver and the protocol key above it (`otlp-grpc`,
- * `otlp-http`), and the `health_check` port if the service enables it. A
- * receiver whose `endpoint` is a server it connects to, such as
- * kubeletstats' kubelet, adds no port, and neither does a receiver type the
- * table doesn't list.
+ * The ports a built collector config listens on: the address every receiver
+ * and exporter that listens sets (the types OTEL117 knows: otlp, jaeger,
+ * statsd, syslog, the `prometheus` exporter's scrape endpoint and the rest),
+ * named after the component and the key above the address (`otlp-grpc`,
+ * `syslog-udp`), and the `health_check` port if the service enables it. A
+ * component whose `endpoint` is a server it connects to, such as
+ * kubeletstats' kubelet, adds no port, and neither does a type the table
+ * doesn't list. A UDP listener gets `protocol: "UDP"`.
  */
 export function collectorEndpoints(config: CollectorConfig): CollectorEndpoints {
   const ports: CollectorPort[] = [];
-  const seen = new Set<number>();
-  for (const [id, receiverConfig] of Object.entries(config.receivers ?? {})) {
-    const parsed = parseComponentId(id);
-    const base = parsed ? [parsed.type, ...(parsed.name ? [parsed.name] : [])] : [id];
-    for (const path of receiverListenerPaths(parsed?.type ?? id)) {
-      const p = portOf(valueAt(receiverConfig, path));
-      if (!p || seen.has(p.port)) continue;
-      seen.add(p.port);
-      const protocol = path.slice(0, -1).filter((k) => k !== "protocols");
-      ports.push({ name: portName([...base, ...protocol]), port: p.port });
+  const seen = new Set<string>();
+  const sections: Array<["receiver" | "exporter", Record<string, unknown> | undefined]> = [
+    ["receiver", config.receivers],
+    ["exporter", config.exporters],
+  ];
+  for (const [kind, section] of sections) {
+    for (const [id, body] of Object.entries(section ?? {})) {
+      const parsed = parseComponentId(id);
+      const base = parsed ? [parsed.type, ...(parsed.name ? [parsed.name] : [])] : [id];
+      for (const { path, transport } of listenerPaths(kind, parsed?.type ?? id, body)) {
+        const p = portOf(valueAt(body, path));
+        if (!p || seen.has(`${p.port}/${transport}`)) continue;
+        seen.add(`${p.port}/${transport}`);
+        const protocol = path.slice(0, -1).filter((k) => k !== "protocols");
+        ports.push({ name: portName([...base, ...protocol]), port: p.port, ...(transport === "udp" ? { protocol: "UDP" as const } : {}) });
+      }
     }
   }
 

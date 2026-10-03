@@ -149,7 +149,7 @@ export const gateway = OtelCollectorGateway({
 | Member | Kind | Notes |
 |--------|------|-------|
 | `deployment` | Deployment | `replicas` pods, the config mounted at `/etc/otel/config.yaml` |
-| `service` | Service | ClusterIP, the receiver ports |
+| `service` | Service | ClusterIP, the ports the config listens on (receivers and the `prometheus` exporter) |
 | `headlessService` | Service | `clusterIP: None`, named `<name>-headless`, the same ports |
 | `serviceAccount` | ServiceAccount | Named `<name>-sa` |
 | `configMap` | ConfigMap | The rendered collector config, named `<name>-config` |

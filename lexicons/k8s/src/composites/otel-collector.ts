@@ -180,7 +180,7 @@ export const OtelCollector = Composite((props: OtelCollectorProps) => {
     spec: {
       selector: { "app.kubernetes.io/name": name },
       internalTrafficPolicy: "Local",
-      ports: runtime.servicePorts.map((p) => ({ name: p.name, port: p.port, targetPort: p.name, protocol: "TCP" })),
+      ports: runtime.servicePorts.map((p) => ({ name: p.name, port: p.port, targetPort: p.name, protocol: p.protocol ?? "TCP" })),
     },
   }, defs?.service));
 

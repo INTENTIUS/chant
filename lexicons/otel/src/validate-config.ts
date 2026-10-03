@@ -486,12 +486,14 @@ interface Listener {
  * default applies only when the key's parent is in the config: an otlp or
  * jaeger protocol that isn't listed doesn't start. A type not listed here is
  * not checked, since its `endpoint` may be a server it connects to (the
- * kubeletstats receiver's is the kubelet).
+ * kubeletstats receiver's is the kubelet). `transportKey` names a sibling key
+ * that switches the transport (`transport: udp` on carbon).
  */
 interface ListenerSpec {
   path: string[];
   default?: string;
   transport?: "udp";
+  transportKey?: string;
   present?: boolean;
 }
 
@@ -508,6 +510,38 @@ const LISTENERS: Record<"receiver" | "exporter" | "extension", Record<string, Li
       { path: ["protocols", "thrift_binary", "endpoint"], default: "localhost:6832", present: true, transport: "udp" },
       { path: ["protocols", "thrift_compact", "endpoint"], default: "localhost:6831", present: true, transport: "udp" },
     ],
+    opencensus: [{ path: ["endpoint"], default: "localhost:55678" }],
+    otelarrow: [{ path: ["protocols", "grpc", "endpoint"], default: "0.0.0.0:4317" }],
+    skywalking: [
+      { path: ["protocols", "grpc", "endpoint"], default: "localhost:11800", present: true },
+      { path: ["protocols", "http", "endpoint"], default: "localhost:12800", present: true },
+    ],
+    loki: [
+      { path: ["protocols", "grpc", "endpoint"], default: "localhost:3600", present: true },
+      { path: ["protocols", "http", "endpoint"], default: "localhost:3500", present: true },
+    ],
+    statsd: [{ path: ["endpoint"], default: "localhost:8125", transport: "udp", transportKey: "transport" }],
+    carbon: [{ path: ["endpoint"], default: "localhost:2003", transportKey: "transport" }],
+    awsxray: [{ path: ["endpoint"], default: "localhost:2000", transport: "udp", transportKey: "transport" }],
+    collectd: [{ path: ["endpoint"], default: "localhost:8081" }],
+    datadog: [{ path: ["endpoint"], default: "localhost:8126" }],
+    influxdb: [{ path: ["endpoint"], default: "localhost:8086" }],
+    signalfx: [{ path: ["endpoint"], default: "localhost:9943" }],
+    splunk_hec: [{ path: ["endpoint"], default: "localhost:8088" }],
+    sapm: [{ path: ["endpoint"], default: "localhost:7276" }],
+    wavefront: [{ path: ["endpoint"], default: "localhost:2003" }],
+    prometheusremotewrite: [{ path: ["endpoint"], default: "localhost:9090" }],
+    awsfirehose: [{ path: ["endpoint"], default: "localhost:4433" }],
+    faro: [{ path: ["endpoint"], default: "localhost:8080" }],
+    libhoney: [{ path: ["http", "endpoint"], default: "localhost:8080" }],
+    fluentforward: [{ path: ["endpoint"] }],
+    webhookevent: [{ path: ["endpoint"] }],
+    tcplog: [{ path: ["listen_address"] }],
+    udplog: [{ path: ["listen_address"], transport: "udp" }],
+    syslog: [
+      { path: ["tcp", "listen_address"], present: true },
+      { path: ["udp", "listen_address"], present: true, transport: "udp" },
+    ],
   },
   exporter: {
     prometheus: [{ path: ["endpoint"] }],
@@ -519,15 +553,32 @@ const LISTENERS: Record<"receiver" | "exporter" | "extension", Record<string, Li
   },
 };
 
+/** A config key path a component listens on, and the transport it listens with. */
+export interface ListenerPath {
+  path: string[];
+  transport: "tcp" | "udp";
+}
+
+/** The transport a spec listens with in this component config: its `transportKey` value, else its default. */
+function specTransport(spec: ListenerSpec, body: unknown): "tcp" | "udp" {
+  if (spec.transportKey && typeof body === "object" && body !== null) {
+    const value = (body as Record<string, unknown>)[spec.transportKey];
+    if (typeof value === "string" && /^udp[46]?$/.test(value)) return "udp";
+    if (typeof value === "string" && /^tcp[46]?$/.test(value)) return "tcp";
+  }
+  return spec.transport ?? "tcp";
+}
+
 /**
- * The config key paths to the addresses a receiver of this type listens on,
- * from the table OTEL117 checks. Empty for a type not in the table, whose
- * `endpoint` may be a server the collector connects to. `collectorEndpoints`
- * reads the receiver ports from here, so the ports a platform composite
- * publishes and the listeners OTEL117 compares are the same set.
+ * The config key paths to the addresses a receiver or exporter of this type
+ * listens on, from the table OTEL117 checks, with the transport each listens
+ * with in `body`. Empty for a type not in the table, whose `endpoint` may be
+ * a server it connects to. `collectorEndpoints` reads the ports from here, so
+ * the ports a platform composite publishes and the listeners OTEL117 compares
+ * are the same set.
  */
-export function receiverListenerPaths(type: string): string[][] {
-  return (LISTENERS.receiver[type] ?? []).map((spec) => spec.path);
+export function listenerPaths(kind: "receiver" | "exporter", type: string, body: unknown): ListenerPath[] {
+  return (LISTENERS[kind][type] ?? []).map((spec) => ({ path: spec.path, transport: specTransport(spec, body) }));
 }
 
 /** The collector's own metrics endpoint when `service.telemetry.metrics` names no reader. */
@@ -559,7 +610,7 @@ function componentListeners(kind: "receiver" | "exporter" | "extension", id: str
     const { found, value } = at(body, spec.path);
     const address = splitAddress(found && value !== undefined && value !== null ? value : spec.default);
     if (!address) continue;
-    out.push({ owner: `${kind} "${id}" (${spec.path.join(".")})`, component: id, ...address, transport: spec.transport ?? "tcp" });
+    out.push({ owner: `${kind} "${id}" (${spec.path.join(".")})`, component: id, ...address, transport: specTransport(spec, body) });
   }
   return out;
 }

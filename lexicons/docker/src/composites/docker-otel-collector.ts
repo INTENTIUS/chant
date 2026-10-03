@@ -75,7 +75,7 @@ export const DockerOtelCollector = Composite((props: DockerOtelCollectorProps) =
     image,
     command: [`--config=${COLLECTOR_CONFIG_PATH}`],
     configs: [{ source: config, target: COLLECTOR_CONFIG_PATH }],
-    ...(publishPorts && ports.length > 0 ? { ports: ports.map((p) => `${p.port}:${p.port}`) } : {}),
+    ...(publishPorts && ports.length > 0 ? { ports: ports.map((p) => `${p.port}:${p.port}${p.protocol ? "/udp" : ""}`) } : {}),
     restart,
   }, defs?.service));
 

@@ -79,9 +79,9 @@ export interface CollectorRuntime {
   built: BuiltCollector;
   configYaml: string;
   configDir: string;
-  containerPorts: Array<{ containerPort: number; name: string }>;
-  /** The receiver ports, which the Services expose. The health port is left out. */
-  servicePorts: Array<{ name: string; port: number }>;
+  containerPorts: Array<{ containerPort: number; name: string; protocol?: "UDP" }>;
+  /** The receiver and exporter ports, which the Services expose. The health port is left out. */
+  servicePorts: Array<{ name: string; port: number; protocol?: "UDP" }>;
   /** Security context and, when the config enables `health_check`, the probes. */
   containerExtra: Record<string, unknown>;
 }
@@ -93,11 +93,11 @@ export function collectorRuntime(entities: Declarable[]): CollectorRuntime {
 
   // The probe names the port. A health_check on a receiver's port reuses that
   // port's name, since a container port is declared once.
-  const healthPortName = healthCheck ? (ports.find((p) => p.port === healthCheck.port)?.name ?? "health") : undefined;
+  const healthPortName = healthCheck ? (ports.find((p) => p.port === healthCheck.port && !p.protocol)?.name ?? "health") : undefined;
   const probe = healthCheck ? { httpGet: { path: healthCheck.path, port: healthPortName } } : undefined;
   const containerPorts = [
-    ...ports.map((p) => ({ containerPort: p.port, name: p.name })),
-    ...(healthCheck && !ports.some((p) => p.port === healthCheck.port)
+    ...ports.map((p) => ({ containerPort: p.port, name: p.name, ...(p.protocol ? { protocol: p.protocol } : {}) })),
+    ...(healthCheck && !ports.some((p) => p.port === healthCheck.port && !p.protocol)
       ? [{ containerPort: healthCheck.port, name: "health" }]
       : []),
   ];
@@ -107,7 +107,7 @@ export function collectorRuntime(entities: Declarable[]): CollectorRuntime {
     configYaml: collectorYaml(entities),
     configDir,
     containerPorts,
-    servicePorts: ports.map((p) => ({ name: p.name, port: p.port })),
+    servicePorts: ports.map((p) => ({ name: p.name, port: p.port, ...(p.protocol ? { protocol: p.protocol } : {}) })),
     containerExtra: {
       imagePullPolicy: "IfNotPresent",
       securityContext: {

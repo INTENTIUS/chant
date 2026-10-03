@@ -349,6 +349,17 @@ describe("OTEL117 two started components on one address", () => {
     ]);
   });
 
+  test("knows the contrib push receivers' defaults: carbon and wavefront both take localhost:2003 (#3122)", () => {
+    const diags = run({
+      receivers: { carbon: {}, wavefront: {}, "carbon/udp": { transport: "udp" } },
+      exporters: { debug: {} },
+      service: { pipelines: { metrics: { receivers: ["carbon", "wavefront", "carbon/udp"], exporters: ["debug"] } } },
+    });
+    expect(diags.map((d) => d.message)).toEqual([
+      expect.stringMatching(/^receiver "carbon" \(endpoint\) listens on localhost:2003 and receiver "wavefront" \(endpoint\) on localhost:2003/),
+    ]);
+  });
+
   test("a wildcard host overlaps a specific host on the same port, and an extension counts", () => {
     const diags = run({
       receivers: { zipkin: { endpoint: "127.0.0.1:13133" } },
