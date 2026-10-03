@@ -1,0 +1,38 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:intentius:chant:driver:1",
+  "title": "Driver file front matter",
+  "description": "The front matter of one driver file in design/drivers/ (#3148, ws-082): contracts grouped under one intent. The Markdown body after the front matter is the design notes. Values stay within what YAML and JSON share.",
+  "type": "object",
+  "additionalProperties": false,
+  "patternProperties": {
+    "^x-": {}
+  },
+  "required": ["schema", "id", "title", "intent", "members"],
+  "properties": {
+    "schema": {
+      "description": "Format version of this file. Bumped only by a change to this schema.",
+      "const": 1
+    },
+    "id": {
+      "description": "Stable id: D, a dash and three or more digits, as studio numbers its drivers. Never reused, never renumbered.",
+      "type": "string",
+      "pattern": "^D-[0-9]{3,}$"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "intent": {
+      "description": "What the member contracts add up to once all of them hold, in a sentence or two.",
+      "type": "string",
+      "pattern": "\\S"
+    },
+    "members": {
+      "description": "The contracts the driver groups, by id. May be empty while the driver is being planned.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^C-[0-9]{3,}$" }
+    }
+  }
+}

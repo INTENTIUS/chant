@@ -2,9 +2,12 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "urn:intentius:chant:session:1",
   "title": "Review session",
-  "description": "The front matter of a review-session file (#2673, #2650 C10): a group walking an agenda of records together, who attended, and the verdicts the session produced. Each verdict is also an entry in the judged record's reviews list, whose session field names this session. A closed session is sealed: closed_digest is sha256: and the lowercase hex SHA-256 of the JCS form of the whole session without closed_digest (its front matter as core and the text below it as body, line endings LF, #2546), and chant workspace records checks it on every read (session-seal-mismatch).",
+  "description": "The front matter of a review-session file (#2673, #2650 C10): a group walking an agenda of records together, who attended, and the verdicts the session produced. Its verdicts judge decisions, contracts and drivers, the kinds the session kind names as subjects (#3148, ws-082). Each verdict is also an entry in the judged record's reviews list, whose session field names this session. A closed session is sealed: closed_digest is sha256: and the lowercase hex SHA-256 of the JCS form of the whole session without closed_digest (its front matter as core and the text below it as body, line endings LF, #2546), and chant workspace records checks it on every read (session-seal-mismatch).",
   "type": "object",
   "additionalProperties": false,
+  "patternProperties": {
+    "^x-": {}
+  },
   "required": ["schema", "id", "title", "state", "agenda", "attendance", "opened", "closed", "verdicts"],
   "properties": {
     "schema": { "const": 1 },
@@ -16,7 +19,7 @@
     "title": { "type": "string", "minLength": 1 },
     "state": { "enum": ["open", "closed"] },
     "agenda": {
-      "description": "What the session walks, in order: a record by its id, or an item of free text.",
+      "description": "What the session walks, in order: a record by its id, or an item of free text. A record may say what it was when it was put up (digest), the evidence records reviewed with it and any screenshot or recording (#3148).",
       "type": "array",
       "minItems": 1,
       "items": {
@@ -25,7 +28,33 @@
             "type": "object",
             "additionalProperties": false,
             "required": ["record"],
-            "properties": { "record": { "type": "string", "minLength": 1 } }
+            "properties": {
+              "record": { "type": "string", "minLength": 1 },
+              "digest": {
+                "description": "The record's digest when it was put up for review, as chant workspace records --json prints it.",
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "evidence": {
+                "description": "The evidence records reviewed with it, by id: the SHA-256 each evidence file is named for.",
+                "type": "array",
+                "uniqueItems": true,
+                "items": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+              },
+              "media": {
+                "description": "Screenshots and recordings shown with it, each a workspace path or an https link.",
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["kind", "ref"],
+                  "properties": {
+                    "kind": { "enum": ["screenshot", "recording"] },
+                    "ref": { "type": "string", "minLength": 1 }
+                  }
+                }
+              }
+            }
           },
           {
             "type": "object",
@@ -46,11 +75,22 @@
         "properties": {
           "principal": { "type": "string", "minLength": 1 },
           "class": { "enum": ["person", "agent"] },
-          "roles": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
+          "roles": {
+            "description": "The roles the principal holds in the session, such as reviewer or facilitator. A quorum that names roles counts only verdicts by principals holding one.",
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "joined": { "description": "When the principal joined. Optional.", "$ref": "#/definitions/dateTime" }
         }
       }
     },
     "opened": { "$ref": "#/definitions/dateTime" },
+    "opened_by": {
+      "description": "Who opened the session. Optional.",
+      "type": "string",
+      "minLength": 1
+    },
     "opened_rev": {
       "description": "The commit HEAD named when chant workspace records new wrote the session (#2693), or null when the repository had no commit yet; the next records amend, review --session or close fills it. chant writes it, and records --since <session id> reads it. Optional, so a session written before #2693 stays valid.",
       "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/rev" }]
@@ -63,8 +103,13 @@
       "description": "The commit HEAD named when chant workspace records close closed the session (#2693), or null when the repository had no commit. Only a closed session has it. Optional, so a session closed before #2693 stays valid.",
       "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/rev" }]
     },
+    "closed_by": {
+      "description": "Who closes or closed the session, set by an amendment before chant workspace records close seals it. Optional.",
+      "type": "string",
+      "minLength": 1
+    },
     "verdicts": {
-      "description": "The verdicts the session produced, in the order they were given.",
+      "description": "The verdicts the session produced, in the order they were given. Each names a record of one of the session kind's subject kinds: a decision, a contract or a driver.",
       "type": "array",
       "items": {
         "type": "object",
@@ -78,9 +123,23 @@
             "description": "The digest of the record text the verdict judged, as the review entry carries it.",
             "type": "string",
             "pattern": "^[0-9a-f]{64}$"
-          }
+          },
+          "roles": {
+            "description": "The roles the principal gave the verdict in, which a quorum that names roles counts. Optional.",
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "at": { "description": "When the verdict was given. Optional.", "$ref": "#/definitions/dateTime" },
+          "note": { "description": "Why, in the principal's words. Optional.", "type": "string" }
         }
       }
+    },
+    "follow_ups": {
+      "description": "Records the session started for later, as <kind>:<id> with kind the record kind's name, the form a Chant-Record trailer uses (ws-075): contracts drafted, work items proposed, decisions opened. Optional.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/definitions/recordRef" }
     },
     "closed_digest": {
       "description": "The seal, written when the session closes.",
@@ -90,6 +149,11 @@
   },
   "definitions": {
     "rev": { "type": "string", "pattern": "^[0-9a-f]{40,64}$" },
+    "recordRef": {
+      "description": "A record as <kind>:<id>, such as contract:C-002 or work:W-004.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*:[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
     "dateTime": {
       "type": "string",
       "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}(:[0-9]{2}(\\.[0-9]+)?)?(Z|[+-][0-9]{2}:[0-9]{2})$"

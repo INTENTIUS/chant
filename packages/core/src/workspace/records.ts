@@ -381,9 +381,11 @@ export const recordKindSchema = z
      * A review-session kind (#2673, #2650 C10): the front-matter list of the
      * verdicts a session produced, the field that seals a closed session, and
      * the records its verdicts name, as the kind file that locates them
-     * (relative to this kind file's directory). The entries of that kind's
-     * reviews list (its `reviews.field`, or `reviews`) name a session in
-     * `session`. Optional.
+     * (relative to this kind file's directory), or as `kinds`, several kind
+     * files, when a session judges records of more than one kind, such as
+     * decisions and contracts (#3148, ws-082). The entries of each such
+     * kind's reviews list (its `reviews.field`, or `reviews`) name a session
+     * in `session`. Optional.
      *
      * `openedRev`, `closedRev` and `closedOn` (#2693) name the fields that
      * hold the commit a session opened at, the commit it closed at, and when
@@ -395,7 +397,13 @@ export const recordKindSchema = z
       .object({
         verdicts: z.string().min(1),
         seal: z.string().min(1),
-        subjects: z.object({ kind: z.string().min(1) }).strict(),
+        subjects: z.union([
+          z.object({ kind: z.string().min(1) }).strict(),
+          z
+            .object({ kinds: z.array(z.string().min(1)).min(1) })
+            .strict()
+            .refine((x) => new Set(x.kinds).size === x.kinds.length, { message: "session.subjects.kinds lists each kind file once", path: ["kinds"] }),
+        ]),
         openedRev: z.string().min(1).optional(),
         closedRev: z.string().min(1).optional(),
         closedOn: z.string().min(1).optional(),
@@ -560,6 +568,34 @@ export const recordKindSchema = z
 export const ANSWER_STATES = ["escalated", "proposed", "answered"] as const;
 
 export type RecordKind = z.infer<typeof recordKindSchema>;
+
+/** The kind files a session kind's verdicts name records of, relative to the session kind file: `subjects.kind`, or each of `subjects.kinds` (ws-082). */
+export function sessionSubjectKinds(session: NonNullable<RecordKind["session"]>): string[] {
+  return "kinds" in session.subjects ? session.subjects.kinds : [session.subjects.kind];
+}
+
+/** The records of one of a session kind's subject kinds, and the name of their reviews list. */
+export interface SessionSubjects {
+  /** The subject kind file, as the session kind names it. */
+  kind: string;
+  records: RecordEntry[];
+  reviews: string;
+}
+
+/**
+ * A session kind's subject records, each subject kind read from `source`
+ * (#2673, ws-082), for {@link readRecords}' `subjects`. Undefined for a kind
+ * that is not a session kind.
+ */
+export async function readSessionSubjects(loaded: LoadedRecordKind, root: string, source: RecordSource): Promise<SessionSubjects[] | undefined> {
+  if (!loaded.kind.session) return undefined;
+  const out: SessionSubjects[] = [];
+  for (const file of sessionSubjectKinds(loaded.kind.session)) {
+    const subjectKind = await loadRecordKind(resolve(dirname(loaded.file), file), root);
+    out.push({ kind: file, records: (await readRecords(subjectKind, { root, source })).records, reviews: subjectKind.kind.reviews?.field ?? "reviews" });
+  }
+  return out;
+}
 
 /** A kind as loaded: its data, where it came from, and its schema. */
 export interface LoadedRecordKind {
@@ -1195,11 +1231,11 @@ export interface ReadRecordsOptions {
    */
   history?: RecordHistory;
   /**
-   * For a session kind: the records its `session.subjects.kind` locates, read
-   * from the same tree (#2673). Without them no verdict is checked and no
-   * session is cited.
+   * For a session kind: the records each of its subject kinds locates, read
+   * from the same tree (#2673, ws-082). Without them no verdict is checked
+   * and no session is cited.
    */
-  subjects?: { records: RecordEntry[]; reviews: string };
+  subjects?: SessionSubjects[];
   /**
    * The workspace root, from `root` with / separators ("." for `root`
    * itself): where a content-addressed record's own path is reported from

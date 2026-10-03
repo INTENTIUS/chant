@@ -27,7 +27,12 @@
       "dir": "design",
       "kind": "design",
       "because": "the design data member: the screen spec and wireframe the design client edits. Decisions pin its files by hash, and chant reads it and builds nothing",
-      "records": [{ "kind": "sessions/session.kind.mjs" }]
+      "records": [
+        { "kind": "sessions/session.kind.mjs" },
+        { "kind": "contracts/contract.kind.mjs" },
+        { "kind": "drivers/driver.kind.mjs" },
+        { "kind": "evidence/evidence.kind.mjs" }
+      ]
     }
   ],
   "records": [
