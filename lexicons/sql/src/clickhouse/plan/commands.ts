@@ -9,7 +9,9 @@
  * request's base and head, and needs no server. `plan` compares a build with
  * the server `sql.profiles.<env>` binds and asks that server's formatter about
  * expressions the rules leave different. Both exit 2 when a change needs a
- * rebuild, which a plan refuses to make in place, and 0 otherwise.
+ * rebuild, which a plan refuses to make in place, and 0 otherwise; for each
+ * refused table they name the `ClickHouseRebuildOp` to run instead
+ * (`rebuildOps` in `--json`, `./rebuild-handoff.ts`).
  */
 
 import type { CommandGroup, CommandGroupContext } from "@intentius/chant/cli/command-group";
@@ -18,6 +20,7 @@ import { renderDiff } from "./report";
 import { keyedByQualifiedName, schemaFromBuildFile, schemaFromServer } from "./schema";
 import { dropFormattingOnly } from "./server-format";
 import { bindClickHouse } from "../live/bind";
+import { rebuildOpSuggestions } from "./rebuild-handoff";
 
 function split(args: string[]): { positional: string[]; json: boolean } {
   return { positional: args.filter((a) => !a.startsWith("--")), json: args.includes("--json") };
@@ -34,8 +37,10 @@ export async function runDiff(ctx: CommandGroupContext): Promise<number> {
     console.error("usage: chant sql diff <before.json> <after.json> [--json]");
     return 1;
   }
-  const diff = diffSchemas(schemaFromBuildFile(positional[0]!), schemaFromBuildFile(positional[1]!));
-  return emit(diff, json, `${positional[0]} -> ${positional[1]}`);
+  const after = schemaFromBuildFile(positional[1]!);
+  const diff = diffSchemas(schemaFromBuildFile(positional[0]!), after);
+  const rebuildOps = rebuildOpSuggestions(diff, new Map(after.map((o) => [o.key, o.canonical])), "<env>");
+  return emit(rebuildOps.length > 0 ? { ...diff, rebuildOps } : diff, json, `${positional[0]} -> ${positional[1]}`);
 }
 
 /** The declared objects against the server, keys and labels by `database.name`. */
@@ -46,9 +51,14 @@ export async function planAgainstServer(environment: string, buildFile: string, 
   const live = await schemaFromServer(target, databases);
   const diff = diffSchemas(live, declared);
   const changes = await dropFormattingOnly(target.endpoint, diff.changes);
+  const rebuildOps = rebuildOpSuggestions(
+    { ...diff, changes, rebuilds: changes.filter((c) => c.class === "rebuild") },
+    new Map(declared.map((o) => [o.key, o.canonical])),
+    environment,
+  );
   const label = new Map(declared.map((o) => [o.key, `${o.exportName} (${o.key})`]));
   const relabel = changes.map((c) => ({ ...c, object: label.get(c.object) ?? c.object }));
-  return { changes: relabel, rebuilds: relabel.filter((c) => c.class === "rebuild"), hints: diff.hints };
+  return { changes: relabel, rebuilds: relabel.filter((c) => c.class === "rebuild"), hints: diff.hints, ...(rebuildOps.length > 0 ? { rebuildOps } : {}) };
 }
 
 export async function runPlan(ctx: CommandGroupContext): Promise<number> {

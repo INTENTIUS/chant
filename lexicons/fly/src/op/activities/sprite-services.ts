@@ -28,6 +28,7 @@
  */
 
 import { resolveSpritesEndpoint, defaultSpritesHttp, type SpritesHttp } from "./sprites";
+import { logProgress } from "./progress";
 
 // ── URL building (pure) ─────────────────────────────────────────────────────
 
@@ -197,7 +198,7 @@ export async function spriteServiceCreate(
   if (svc.state.status === "failed") {
     throw new Error(`sprite ${args.id} service ${args.name} failed to start: ${svc.state.error ?? "unknown error"}`);
   }
-  console.log(`service: sprite/${args.id}/${args.name} ${svc.state.status} (${base})`);
+  logProgress(`service: sprite/${args.id}/${args.name} ${svc.state.status} (${base})`);
   return svc;
 }
 
@@ -249,7 +250,7 @@ export async function spriteServiceStart(
   if (svc.state.status === "failed") {
     throw new Error(`sprite ${args.id} service ${args.name} failed to start: ${svc.state.error ?? "unknown error"}`);
   }
-  console.log(`service: sprite/${args.id}/${args.name} ${svc.state.status} (${base})`);
+  logProgress(`service: sprite/${args.id}/${args.name} ${svc.state.status} (${base})`);
   return svc;
 }
 
@@ -270,7 +271,7 @@ export async function spriteServiceStop(
     throw new Error(`sprite ${args.id} service ${args.name} stop failed (${res.status}): ${res.text}`);
   }
   const svc = await spriteServiceGet({ id: args.id, name: args.name, endpoint: args.endpoint, token: args.token }, signal, http);
-  console.log(`service: sprite/${args.id}/${args.name} ${svc.state.status} (${base})`);
+  logProgress(`service: sprite/${args.id}/${args.name} ${svc.state.status} (${base})`);
   return svc;
 }
 
@@ -288,7 +289,7 @@ export async function spriteServiceDelete(
   if (res.status >= 300 && res.status !== 404) {
     throw new Error(`sprite ${args.id} service ${args.name} delete failed (${res.status}): ${res.text}`);
   }
-  console.log(`deleted: sprite/${args.id}/${args.name}`);
+  logProgress(`deleted: sprite/${args.id}/${args.name}`);
   return {};
 }
 

@@ -29,7 +29,7 @@ Both exit 2 when a change needs a rebuild. `chant sql diff` compares a pull requ
 
 ## After the plan
 
-The plan only reports. [`clickhouseApply`](../applying/) makes the metadata-only and background-rewrite changes, and refuses a rebuild the same way the plan does, sending nothing for that object. A rebuild runs as its own migration Op (create the new table, backfill, verify, swap), which is still being built ([#3198](https://github.com/INTENTIUS/chant/issues/3198)).
+The plan only reports. [`clickhouseApply`](../applying/) makes the metadata-only and background-rewrite changes, and refuses a rebuild the same way the plan does, sending nothing for that object. A rebuild runs as `ClickHouseRebuildOp`, a gated migration Op that creates the new table, backfills it, verifies it and swaps it in: see [Rebuilding a Table](../rebuild/). Both commands print the Op declaration to start from for each refused table.
 
 `chant migrate` plays no part in any of this. It translates a file from one lexicon's format into another's, such as a GitHub Actions workflow into GitLab CI, and does not run schema migrations.
 

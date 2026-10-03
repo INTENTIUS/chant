@@ -204,7 +204,7 @@ events
 Refused: 1 change(s) need a rebuild, which ClickHouse cannot make to the existing table.
 ```
 
-The command exits 2. ClickHouse stores every part in sort-key order and has no `ALTER` that reorders it, so the rows have to be copied into a new table. `clickhouseApply` would report this table as not attempted and send nothing for it. [Planning and the Change Classifier](../change-classifier/) lists every rule.
+The command exits 2. ClickHouse stores every part in sort-key order and has no `ALTER` that reorders it, so the rows have to be copied into a new table. `clickhouseApply` would report this table as not attempted and send nothing for it. The output ends with the `ClickHouseRebuildOp` declaration that makes the change as a gated migration instead; [Rebuilding a Table](../rebuild/) walks through it, and [Planning and the Change Classifier](../change-classifier/) lists every rule.
 
 Put the sort key back before going on.
 

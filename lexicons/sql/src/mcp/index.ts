@@ -15,6 +15,7 @@ import { SqlSyntaxError } from "../clickhouse/tokens";
 import { existsSync } from "fs";
 import { diffSchemas } from "../clickhouse/plan/diff";
 import { renderDiff } from "../clickhouse/plan/report";
+import { rebuildOpSuggestions } from "../clickhouse/plan/rebuild-handoff";
 import { CLASSIFIER_RULES } from "../clickhouse/plan/rules";
 import { schemaFromBuildFile, schemaFromBuildOutput } from "../clickhouse/plan/schema";
 import { CLICKHOUSE_IMAGE_DIGEST, CLICKHOUSE_VERSION, clickhouseImage } from "../spec/pin";
@@ -132,7 +133,7 @@ const parseTool: McpToolContribution = {
 const classifyTool: McpToolContribution = {
   name: "classify-change",
   description:
-    "Classify the schema change between two revisions of a sql lexicon build, offline. Each side is a `chant build` output (a path to the file, or its JSON text). Returns every change with its class (create, drop, metadata, rewrite, rebuild), the SQLCH2xx rule and the ClickHouse restriction behind it with its documentation link, the rebuilds a plan must refuse in place, rename hints, and a rendered report.",
+    "Classify the schema change between two revisions of a sql lexicon build, offline. Each side is a `chant build` output (a path to the file, or its JSON text). Returns every change with its class (create, drop, metadata, rewrite, rebuild), the SQLCH2xx rule and the ClickHouse restriction behind it with its documentation link, the rebuilds a plan must refuse in place with the ClickHouseRebuildOp declaration to run each one as, rename hints, and a rendered report.",
   inputSchema: {
     type: "object",
     properties: {
@@ -146,13 +147,17 @@ const classifyTool: McpToolContribution = {
       const text = String(v ?? "");
       return !text.trimStart().startsWith("{") && existsSync(text) ? schemaFromBuildFile(text) : schemaFromBuildOutput(text);
     };
-    const diff = diffSchemas(side(params.before), side(params.after));
+    const after = side(params.after);
+    const plain = diffSchemas(side(params.before), after);
+    const rebuildOps = rebuildOpSuggestions(plain, new Map(after.map((o) => [o.key, o.canonical])), "<env>");
+    const diff = rebuildOps.length > 0 ? { ...plain, rebuildOps } : plain;
     const classes: Record<string, number> = {};
     for (const c of diff.changes) classes[c.class] = (classes[c.class] ?? 0) + 1;
     return {
       summary: classes,
       changes: diff.changes.map((c) => ({ ...c, restriction: CLASSIFIER_RULES[c.rule].restriction, cite: CLASSIFIER_RULES[c.rule].cite })),
       rebuilds: diff.rebuilds,
+      rebuildOps,
       hints: diff.hints,
       report: renderDiff(diff),
     };

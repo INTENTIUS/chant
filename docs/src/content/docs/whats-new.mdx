@@ -11,7 +11,7 @@ For the day-to-day reference docs see [Lifecycle Models](/chant/concepts/lifecyc
 
 `@intentius/chant-lexicon-sql` declares database schema in TypeScript, one dialect at a time, and ClickHouse is the first, at `@intentius/chant-lexicon-sql/clickhouse`. Every schema object is written as its own `CREATE` statement inside a tagged template named for its kind. `chant build` parses each template while it folds the file, so an interpolated table or column stays a reference: references order the build and give each view column-level lineage. The ClickHouse types are generated from the `system.*` tables of a pinned `clickhouse-server` release, and three lint rules and twenty post-synth checks hold a schema to what that server accepts.
 
-`chant import --from <env>` writes a running server's schema as declarations. `chant sql diff` and `chant sql plan` classify every change as metadata only, a background rewrite or a rebuild, each with the ClickHouse `ALTER` restriction behind it. `clickhouseApply`, the `clickhouse` target of `ApplyOp`, makes the first two kinds of change and refuses a rebuild. chant's ownership marker is a trailer on each object's comment. The lexicon is spec-true per dialect rather than database-agnostic, and its [overview](/chant/lexicons/sql/) explains why. The package is not on npm yet.
+`chant import --from <env>` writes a running server's schema as declarations. `chant sql diff` and `chant sql plan` classify every change as metadata only, a background rewrite or a rebuild, each with the ClickHouse `ALTER` restriction behind it. `clickhouseApply`, the `clickhouse` target of `ApplyOp`, makes the first two kinds of change and refuses a rebuild, which runs instead as `ClickHouseRebuildOp`: a gated Op that fills a new table partition by partition with a receipt for each, verifies it, and swaps it in. chant's ownership marker is a trailer on each object's comment. The lexicon is spec-true per dialect rather than database-agnostic, and its [overview](/chant/lexicons/sql/) explains why. The package is not on npm yet.
 
 | # | Capability |
 |---|---|
@@ -21,6 +21,7 @@ For the day-to-day reference docs see [Lifecycle Models](/chant/concepts/lifecyc
 | [#3210](https://github.com/INTENTIUS/chant/issues/3210) | Completions and hover inside the templates, and MCP tools and resources |
 | [#3211](https://github.com/INTENTIUS/chant/issues/3211) | Skills, init templates and template detection |
 | [#3213](https://github.com/INTENTIUS/chant/issues/3213) | Post-synth checks SQLCH102 to SQLCH120 |
+| [#3198](https://github.com/INTENTIUS/chant/issues/3198) | `ClickHouseRebuildOp`: dual write, a backfill with receipts, verification, a plan-bound swap gate, and retention of the old table |
 | [#3248](https://github.com/INTENTIUS/chant/pull/3248) | The `ReplacingTable`, `EventsTable`, `RollupView`, `CdcMirror` and `ShardedTable` composites |
 
 ## A component gate approval is bound to its environment and plan

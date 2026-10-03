@@ -69,6 +69,8 @@ for what a plan cannot do in place.
   ClickHouse `ALTER` restriction behind it.
 - [Applying to a Server](./applying/): `clickhouseApply`, chant's ownership
   marker on the object's comment, and the local server `chant emulator` starts.
+- [Rebuilding a Table](./rebuild/): `ClickHouseRebuildOp` for the changes
+  ClickHouse cannot make in place: a new table filled, verified and swapped in.
 - [Composites](./composites/): `ReplacingTable`, `EventsTable`,
   `RollupView`, `CdcMirror` and `ShardedTable`.
 - [Lint Rules and Checks](./lint-rules/): every SQLCH lint rule and post-synth
@@ -83,9 +85,8 @@ such as a GitHub Actions workflow into GitLab CI. It does not run schema
 migrations, and the sql lexicon registers nothing for it. A schema change is a
 change to the declarations: `chant sql diff` or `chant sql plan` classifies
 it, `clickhouseApply` makes the metadata-only and background-rewrite changes,
-and a change that needs a rebuild runs as its own migration Op, which is
-still being built
-([#3198](https://github.com/INTENTIUS/chant/issues/3198)).
+and a change that needs a rebuild runs as `ClickHouseRebuildOp`, a gated
+migration Op: see [Rebuilding a Table](./rebuild/).
 
 
 ## At a Glance

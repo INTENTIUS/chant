@@ -128,7 +128,7 @@ describe("updating", () => {
     expect(r.notAttempted[0]).toMatchObject({ kind: "ClickHouse::Table", name: "analytics.events", reason: "unsupported-kind" });
     expect(r.notAttempted[0]!.detail).toMatch(/SQLCH220 Change the sorting key/);
     expect(r.notAttempted[0]!.detail).toMatch(/clickhouse\.com\/docs/);
-    expect(r.notAttempted[0]!.detail).toMatch(/rebuild migration Op \(chant #3198\)/);
+    expect(r.notAttempted[0]!.detail).toContain('ClickHouseRebuildOp({ table: "analytics.events"');
     expect(s.writes).toEqual([]);
   });
 

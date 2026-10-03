@@ -43,6 +43,10 @@ export default defineConfig({
                         {
                               "label": "Applying to a Server",
                               "slug": "applying"
+                        },
+                        {
+                              "label": "Rebuilding a Table",
+                              "slug": "rebuild"
                         }
                   ]
             },
