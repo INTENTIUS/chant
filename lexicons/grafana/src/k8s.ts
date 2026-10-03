@@ -22,9 +22,10 @@
  *
  * A Grafana run by the Grafana Operator reads custom resources instead
  * (#3015): `GrafanaOperatorResources` writes a `GrafanaDashboard` per
- * dashboard, a `GrafanaDatasource` per datasource and a `GrafanaFolder` per
- * folder, all `grafana.integreatly.org/v1beta1` as the k8s lexicon types
- * them from the operator's CRDs (pinned in its `crd-sources.ts`).
+ * dashboard, a `GrafanaDatasource` per datasource, a `GrafanaFolder` per
+ * folder and a `GrafanaLibraryPanel` per library panel (#3186), all
+ * `grafana.integreatly.org/v1beta1` as the k8s lexicon types them from the
+ * operator's CRDs (pinned in its `crd-sources.ts`).
  *
  * This module is the only part of the grafana lexicon that loads the k8s
  * lexicon; nothing else imports it.
@@ -32,8 +33,9 @@
 
 import { Composite, type CompositeInstance } from "@intentius/chant/composite";
 import type { Declarable } from "@intentius/chant/declarable";
-import { ConfigMap, GrafanaDashboard, GrafanaDatasource, GrafanaFolder } from "@intentius/chant-lexicon-k8s/generated/index";
+import { ConfigMap, GrafanaDashboard, GrafanaDatasource, GrafanaFolder, GrafanaLibraryPanel } from "@intentius/chant-lexicon-k8s/generated/index";
 import { buildGrafana, DASHBOARD_PROVIDERS_FILE, DASHBOARDS_DIR, DATASOURCES_FILE, type ProvisionedDatasource } from "./build";
+import { libraryPanelsOf, type LibraryPanelPlan } from "./api/library-panels";
 import { DEFAULT_DASHBOARDS_PATH } from "./dashboard";
 
 /** The label the Grafana Helm chart's sidecar looks for on dashboard ConfigMaps (`sidecar.dashboards.label`). */
@@ -211,7 +213,7 @@ export interface GrafanaInstanceSelector {
 }
 
 export interface GrafanaOperatorResourcesProps {
-  /** The grafana declarations to deliver: dashboards, datasources and `Folder`s. Anything else is ignored. */
+  /** The grafana declarations to deliver: dashboards (with the library panels they place), datasources and `Folder`s. Anything else is ignored. */
   entities: Iterable<Declarable>;
   /**
    * Which `Grafana` resources pick these up, usually the labels on your
@@ -247,7 +249,13 @@ export interface GrafanaOperatorResourcesProps {
   secretName?: string;
 }
 
-type OperatorEntity = (InstanceType<typeof GrafanaDashboard> | InstanceType<typeof GrafanaDatasource> | InstanceType<typeof GrafanaFolder>) & Declarable;
+type OperatorEntity = (
+  | InstanceType<typeof GrafanaDashboard>
+  | InstanceType<typeof GrafanaDatasource>
+  | InstanceType<typeof GrafanaFolder>
+  | InstanceType<typeof GrafanaLibraryPanel>
+) &
+  Declarable;
 
 export type GrafanaOperatorResourcesMembers = Record<string, OperatorEntity>;
 export type GrafanaOperatorResourcesInstance = CompositeInstance<GrafanaOperatorResourcesMembers> & GrafanaOperatorResourcesMembers;
@@ -313,6 +321,11 @@ export function operatorDatasource(
  *
  * - a `GrafanaFolder` per folder, `<name>-folder-<uid>`, with the folder's uid,
  *   its title, and its parent as `parentFolderRef`;
+ * - a `GrafanaLibraryPanel` per library panel the dashboards place,
+ *   `<name>-library-panel-<uid>`, holding its model with its `name` and `uid`
+ *   in `spec.json` and naming its folder with `folderRef`. File provisioning
+ *   and a `GrafanaDashboard`'s `__elements` do not create library panels, so
+ *   without these a dashboard's library panel references stay empty;
  * - a `GrafanaDashboard` per dashboard, `<name>-dashboard-<uid>`, holding
  *   `dashboardJson(dashboard)` in `spec.json` and naming its folder with
  *   `folderRef`;
@@ -353,6 +366,25 @@ export const GrafanaOperatorResources = Composite<GrafanaOperatorResourcesProps,
     members[memberName(name, prefix)] = new GrafanaFolder({
       metadata: metadata(name),
       spec: { ...common, uid: f.uid, title: f.title, ...(parent ? { parentFolderRef: parent } : {}) },
+    }) as OperatorEntity;
+  }
+
+  // Library panels next, each once. Its folder is the one its `LibraryPanel`
+  // names, else that of the first dashboard placing it, as the API applier does.
+  const libraryPanels = new Map<string, LibraryPanelPlan>();
+  for (const d of built.dashboards) {
+    for (const lp of libraryPanelsOf(d.json as unknown as Record<string, unknown>, d.folderUid).panels) {
+      if (!libraryPanels.has(lp.uid)) libraryPanels.set(lp.uid, lp);
+    }
+  }
+  for (const lp of libraryPanels.values()) {
+    const name = unique(`${prefix}-library-panel-${lp.uid}`);
+    const folder = lp.folderUid !== undefined ? folderRef.get(lp.folderUid) : undefined;
+    const placement = folder ? { folderRef: folder } : lp.folderUid !== undefined ? { folderUID: lp.folderUid } : {};
+    members[memberName(name, prefix)] = new GrafanaLibraryPanel({
+      metadata: metadata(name),
+      // The operator takes the element's name from the model's `name`, and its uid from `spec.uid` (else the model's).
+      spec: { ...common, uid: lp.uid, json: JSON.stringify({ ...lp.model, name: lp.name, uid: lp.uid }, null, 2), ...placement },
     }) as OperatorEntity;
   }
 

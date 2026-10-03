@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-01T19:48:49.930Z",
+  "generatedAt": "2026-10-03T20:09:24.260Z",
   "entries": {
     "APIGroup": {
       "kind": "resource",
@@ -1023,10 +1023,6 @@
         "metadata:false"
       ]
     },
-    "ConfigMapRef": {
-      "kind": "property",
-      "resourceType": "K8s::Grafana::GrafanaDashboard.configMapRef"
-    },
     "Configuration": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::ObjectStore.configuration"
@@ -1776,10 +1772,6 @@
       "kind": "property",
       "resourceType": "K8s::Flux::GitRepository.verify"
     },
-    "GrafanaCom": {
-      "kind": "property",
-      "resourceType": "K8s::Grafana::GrafanaDashboard.grafanaCom"
-    },
     "GrafanaDashboard": {
       "kind": "resource",
       "resourceType": "K8s::Grafana::GrafanaDashboard",
@@ -1883,6 +1875,58 @@
     "GrafanaFolder_Status": {
       "kind": "property",
       "resourceType": "K8s::Grafana::GrafanaFolder.status"
+    },
+    "GrafanaLibraryPanel": {
+      "kind": "resource",
+      "resourceType": "K8s::Grafana::GrafanaLibraryPanel",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "GrafanaLibraryPanel_ConfigMapRef": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaLibraryPanel.configMapRef"
+    },
+    "GrafanaLibraryPanel_Datasource": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaLibraryPanel.datasources"
+    },
+    "GrafanaLibraryPanel_Env": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaLibraryPanel.envs"
+    },
+    "GrafanaLibraryPanel_EnvFrom": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaLibraryPanel.envFrom"
+    },
+    "GrafanaLibraryPanel_GrafanaCom": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaLibraryPanel.grafanaCom"
+    },
+    "GrafanaLibraryPanel_InstanceSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaLibraryPanel.instanceSelector"
+    },
+    "GrafanaLibraryPanel_JsonnetLib": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaLibraryPanel.jsonnetLib"
+    },
+    "GrafanaLibraryPanel_Oci": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaLibraryPanel.oci"
+    },
+    "GrafanaLibraryPanel_Plugin": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaLibraryPanel.plugins"
+    },
+    "GrafanaLibraryPanel_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaLibraryPanel.status"
+    },
+    "GrafanaLibraryPanel_UrlAuthorization": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaLibraryPanel.urlAuthorization"
     },
     "Group": {
       "kind": "property",
@@ -2572,10 +2616,6 @@
         "metadata:false"
       ]
     },
-    "JsonnetLib": {
-      "kind": "property",
-      "resourceType": "K8s::Grafana::GrafanaDashboard.jsonnetLib"
-    },
     "K3sHelmChart": {
       "kind": "resource",
       "resourceType": "K8s::K3s::HelmChart",
@@ -3247,10 +3287,6 @@
     "ObjectStore_Status": {
       "kind": "property",
       "resourceType": "K8s::Cnpg::ObjectStore.status"
-    },
-    "Oci": {
-      "kind": "property",
-      "resourceType": "K8s::Grafana::GrafanaDashboard.oci"
     },
     "OidcIdentityProviderConfig": {
       "kind": "property",
@@ -4768,10 +4804,6 @@
     "UpgradeStrategy": {
       "kind": "property",
       "resourceType": "K8s::Ray::RayService.upgradeStrategy"
-    },
-    "UrlAuthorization": {
-      "kind": "property",
-      "resourceType": "K8s::Grafana::GrafanaDashboard.urlAuthorization"
     },
     "User": {
       "kind": "resource",

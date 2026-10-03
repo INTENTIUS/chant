@@ -367,12 +367,13 @@ The operator-managed `CrdbCluster` is the common single-region production path. 
 | `GrafanaDashboard` | `grafana.integreatly.org/v1beta1` / `GrafanaDashboard` |
 | `GrafanaDatasource` | `grafana.integreatly.org/v1beta1` / `GrafanaDatasource` |
 | `GrafanaFolder` | `grafana.integreatly.org/v1beta1` / `GrafanaFolder` |
+| `GrafanaLibraryPanel` | `grafana.integreatly.org/v1beta1` / `GrafanaLibraryPanel` |
 
 ```bash
 kubectl apply --server-side -f https://github.com/grafana/grafana-operator/releases/download/v5.25.0/kustomize-cluster_scoped.yaml
 ```
 
-You rarely write these by hand. `GrafanaOperatorResources` in `@intentius/chant-lexicon-grafana/k8s` writes one per grafana `Dashboard`, `Datasource` and folder (see the grafana lexicon's [Provisioning](/chant/lexicons/grafana/provisioning/) page). `chant import` of a `GrafanaDashboard` reads its `spec.json` back into a grafana `Dashboard`, the same way it reads a sidecar dashboard ConfigMap. The operator's other kinds (`Grafana` itself, alerting, library panels) are not generated yet.
+You rarely write these by hand. `GrafanaOperatorResources` in `@intentius/chant-lexicon-grafana/k8s` writes one per grafana `Dashboard`, `Datasource`, folder and library panel (see the grafana lexicon's [Provisioning](/chant/lexicons/grafana/provisioning/) page). `chant import` of a `GrafanaDashboard` reads its `spec.json` back into a grafana `Dashboard`, the same way it reads a sidecar dashboard ConfigMap. The operator's other kinds (`Grafana` itself, alerting) are not generated yet.
 
 ## KubeRay & Argo CD
 
