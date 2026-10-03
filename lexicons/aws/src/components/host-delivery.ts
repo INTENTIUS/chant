@@ -22,6 +22,7 @@
 
 import type { Capability } from "@intentius/chant/components/capability";
 import { defaultCloudExecutor, type CloudExecutor } from "./cloud-executor";
+import { releaseEnvironment } from "@intentius/chant/telemetry-attribution";
 
 // ── code-deploy (AWS CodeDeploy) ─────────────────────────────────────────────
 
@@ -181,11 +182,15 @@ export function createRemoteExecCapability(executor: CloudExecutor = defaultClou
   return {
     kind: "remote-exec",
     rollbackPolicy: "needs-opt-out",
-    async run(_ctx, input) {
+    async run(ctx, input) {
       if (input.via === "ssh") {
         throw new Error(`remote-exec: ssh transport not yet supported for host "${input.host}" — use the default ssm transport`);
       }
-      return executor.host.exec({ host: input.host, command: input.command, cwd: input.cwd });
+      // A release run exports its attributes on the host (#3061, ws-081), so a `docker compose up`
+      // fills the Compose file's `${CHANT_RELEASE_ATTRIBUTES:-}`. The value is percent-encoded, so
+      // single quotes hold it.
+      const exports = Object.entries(releaseEnvironment(ctx.release)).map(([k, v]) => `export ${k}='${v}'; `).join("");
+      return executor.host.exec({ host: input.host, command: `${exports}${input.command}`, cwd: input.cwd });
     },
   };
 }

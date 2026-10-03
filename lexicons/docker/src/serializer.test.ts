@@ -365,4 +365,15 @@ describe("telemetry attribution", () => {
     expect(out).not.toContain("OTEL_SERVICE_NAME=api");
     expect(out).toContain("- OTEL_RESOURCE_ATTRIBUTES=chant.workspace=acme,chant.member=delivery");
   });
+
+  test("the resource attributes end with the release reference a deploy fills, once (#3061)", () => {
+    expect(run({ image: "nginx:1" }, attrs)).toContain(
+      "OTEL_RESOURCE_ATTRIBUTES: chant.workspace=acme,chant.member=delivery,chant.decl=api,deployment.environment.name=prod${CHANT_RELEASE_ATTRIBUTES:-}",
+    );
+    const own = run({ image: "x", environment: { OTEL_RESOURCE_ATTRIBUTES: "team=pay${CHANT_RELEASE_ATTRIBUTES:-}" } }, { workspace: "acme" });
+    expect(own.match(/CHANT_RELEASE_ATTRIBUTES/g)).toHaveLength(1);
+    expect(run({ image: "x", environment: ["OTEL_RESOURCE_ATTRIBUTES=team=pay"] }, { workspace: "acme" })).toContain(
+      "- OTEL_RESOURCE_ATTRIBUTES=team=pay,chant.workspace=acme,chant.decl=api${CHANT_RELEASE_ATTRIBUTES:-}",
+    );
+  });
 });

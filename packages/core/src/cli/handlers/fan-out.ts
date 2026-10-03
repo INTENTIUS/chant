@@ -46,6 +46,7 @@ import { renderFanOutHuman, renderFanOutJson, renderFanOutPlan } from "../../com
 import { ndjsonProgressSink } from "../../components/run-progress";
 import { summaryLedgerPrefix, writeGatedRunSummary } from "../../op/gate-summary";
 import { approveCommand } from "../../op/gate";
+import { getHeadCommit } from "../../lifecycle/git";
 import { remainingFanOut, type ChangedUnits, type FanOutProgress } from "../../components/fan-out";
 import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
 import { formatError, formatInfo, formatWarning } from "../format";
@@ -279,8 +280,11 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
   }
 
   const registry = await fanOutRegistry(projectPath, config);
+  // #3061: the commit this run deploys, for the workloads' vcs.ref.head.revision.
+  const revision = await getHeadCommit().catch(() => undefined);
   const result = await runFanOut(derived.plan, derived.components, registry, {
     env: args.env ?? "local",
+    releaseIdentity: () => (revision ? { revision } : {}),
     componentOutputs: seededOutputs,
     ...(gate ? { gate } : {}),
     ...(progress ? { progress } : {}),

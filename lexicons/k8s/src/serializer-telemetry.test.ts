@@ -25,6 +25,11 @@ function docs(out: string): Doc[] {
 }
 
 const podSpec = (containers: unknown[]) => ({ containers });
+const RELEASE_ENV = {
+  name: "CHANT_RELEASE_ATTRIBUTES",
+  valueFrom: { fieldRef: { fieldPath: "metadata.annotations['chant.intentius.io/release-attributes']" } },
+};
+const valueOf = (env: Doc[], name: string) => env.find((e) => e.name === name)?.value;
 const attrs = { workspace: "acme", member: "delivery", environment: "prod" };
 
 const workloads: Array<[string, string, (spec: unknown) => Record<string, unknown>, (doc: Doc) => Doc]> = [
@@ -42,7 +47,11 @@ describe("telemetry attribution on workloads", () => {
     const [doc] = docs(serialize(entities, attrs));
     expect(pod(doc).containers[0].env).toEqual([
       { name: "OTEL_SERVICE_NAME", value: "api" },
-      { name: "OTEL_RESOURCE_ATTRIBUTES", value: "chant.workspace=acme,chant.member=delivery,chant.decl=apiWorkload,deployment.environment.name=prod" },
+      RELEASE_ENV,
+      {
+        name: "OTEL_RESOURCE_ATTRIBUTES",
+        value: "chant.workspace=acme,chant.member=delivery,chant.decl=apiWorkload,deployment.environment.name=prod$(CHANT_RELEASE_ATTRIBUTES)",
+      },
     ]);
   });
 
@@ -71,7 +80,8 @@ describe("telemetry attribution on workloads", () => {
     expect(own.env).toEqual([
       { name: "PORT", value: "80" },
       { name: "OTEL_SERVICE_NAME", value: "checkout" },
-      { name: "OTEL_RESOURCE_ATTRIBUTES", value: "chant.member=mine,team=pay,chant.workspace=acme,chant.decl=api,deployment.environment.name=prod" },
+      RELEASE_ENV,
+      { name: "OTEL_RESOURCE_ATTRIBUTES", value: "chant.member=mine,team=pay,chant.workspace=acme,chant.decl=api,deployment.environment.name=prod$(CHANT_RELEASE_ATTRIBUTES)" },
     ]);
     expect(ref.env).toEqual([
       { name: "OTEL_RESOURCE_ATTRIBUTES", valueFrom: { configMapKeyRef: { name: "otel", key: "attrs" } } },
@@ -79,7 +89,7 @@ describe("telemetry attribution on workloads", () => {
     ]);
   });
 
-  test("an env given as a map keeps its keys and gains the missing ones", () => {
+  test("an env given as a map keeps its keys and gains the missing ones, without the release reference a map cannot order", () => {
     const containers = [{ name: "api", image: "x", env: { PORT: "80", OTEL_SERVICE_NAME: "checkout" } }];
     const entities = new Map([["api", mockResource("K8s::Core::Pod", { metadata: { name: "api" }, spec: podSpec(containers) })]]);
     const env = docs(serialize(entities, { workspace: "acme" }))[0].spec.containers[0].env;
@@ -93,8 +103,8 @@ describe("telemetry attribution on workloads", () => {
     ];
     const entities = new Map([["api", mockResource("K8s::Apps::Deployment", { metadata: { name: "api" }, spec: { template: { spec: podSpec(containers) } } })]]);
     const [api, proxy] = docs(serialize(entities, { workspace: "acme" }))[0].spec.template.spec.containers;
-    expect(api.env[1].value).toBe("chant.workspace=acme,chant.decl=api,service.version=sha256%3Aabc123");
-    expect(proxy.env[1].value).toBe("chant.workspace=acme,chant.decl=api");
+    expect(valueOf(api.env, "OTEL_RESOURCE_ATTRIBUTES")).toBe("chant.workspace=acme,chant.decl=api,service.version=sha256%3Aabc123$(CHANT_RELEASE_ATTRIBUTES)");
+    expect(valueOf(proxy.env, "OTEL_RESOURCE_ATTRIBUTES")).toBe("chant.workspace=acme,chant.decl=api$(CHANT_RELEASE_ATTRIBUTES)");
   });
 
   test("init containers, non-workload kinds and a CRD that reuses a workload kind name are not stamped", () => {
@@ -106,7 +116,7 @@ describe("telemetry attribution on workloads", () => {
     const out = docs(serialize(entities, attrs));
     const deployment = out.find((d) => d.apiVersion === "apps/v1")!;
     expect(deployment.spec.template.spec.initContainers[0].env).toBeUndefined();
-    expect(deployment.spec.template.spec.containers[0].env).toHaveLength(2);
+    expect(deployment.spec.template.spec.containers[0].env).toHaveLength(3);
     expect(JSON.stringify(out.filter((d) => d !== deployment))).not.toContain("OTEL_");
   });
 
@@ -114,5 +124,23 @@ describe("telemetry attribution on workloads", () => {
     const entities = new Map([["worker", mockResource("K8s::Batch::Job", { spec: { template: { spec: podSpec([{ name: "w", image: "x" }]) } } })]]);
     const [doc] = docs(serialize(entities, { workspace: "acme" }));
     expect(doc.spec.template.spec.containers[0].env[0]).toEqual({ name: "OTEL_SERVICE_NAME", value: doc.metadata.name });
+  });
+
+  test("the release reference is added once, and the variable is always defined before it", () => {
+    const containers = [
+      { name: "a", image: "x", env: [{ name: "OTEL_RESOURCE_ATTRIBUTES", value: "team=pay$(CHANT_RELEASE_ATTRIBUTES)" }] },
+      { name: "b", image: "x", env: [{ name: "CHANT_RELEASE_ATTRIBUTES", value: ",team=ops" }] },
+    ];
+    const entities = new Map([["api", mockResource("K8s::Apps::Deployment", { metadata: { name: "api" }, spec: { template: { spec: podSpec(containers) } } })]]);
+    const [a, b] = docs(serialize(entities, { workspace: "acme" }))[0].spec.template.spec.containers;
+    expect(valueOf(a.env, "OTEL_RESOURCE_ATTRIBUTES")).toBe("team=pay$(CHANT_RELEASE_ATTRIBUTES),chant.workspace=acme,chant.decl=api");
+    // The reference is already there, but the variable still has to be defined before it.
+    expect(a.env.map((e: Doc) => e.name)).toEqual(["CHANT_RELEASE_ATTRIBUTES", "OTEL_RESOURCE_ATTRIBUTES", "OTEL_SERVICE_NAME"]);
+    // The container's own definition comes first, so the reference reads it.
+    expect(b.env).toEqual([
+      { name: "CHANT_RELEASE_ATTRIBUTES", value: ",team=ops" },
+      { name: "OTEL_SERVICE_NAME", value: "api" },
+      { name: "OTEL_RESOURCE_ATTRIBUTES", value: "chant.workspace=acme,chant.decl=api$(CHANT_RELEASE_ATTRIBUTES)" },
+    ]);
   });
 });
