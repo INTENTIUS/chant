@@ -1,6 +1,6 @@
 ---
 title: "chant workspace points"
-description: The workspace's decision points and the questions asked of them, and the writes that ask a point, record people's answer and retract it
+description: The workspace's decision points, the questions asked of them, and the writes that ask and answer them
 diataxis: reference
 ---
 
@@ -52,7 +52,7 @@ In a steward's turn, including a `points ask` that an Op's step runs while `CHAN
 
 `points answer <id> --answer <value> --by <name>` records people's answer to an open question. The answer is one of the question's candidates, and for a `noul` it is `true`, `false`, `yes` or `no`. Each `--by` names one person who answered. The point's quorum counts distinct people, after trimming and lower-casing. It leaves out anyone holding the `agent` role in the trust policy at base, the steward that asked the question, and when the quorum names roles, anyone holding none of them. Too few is `quorum-not-met`, and nothing is written. An answer given during a steward's turn, or by a process the turn started, is refused with `answer-in-steward-turn`: a steward waits on a question and never answers it ([Steward](/chant/lexicons/fountain/steward/)).
 
-People who give the answer a model proposed confirm it, and the model stays the record's decider. Any other answer is the quorum's, and the model's proposal moves into the record's `escalations`, its `reason` as `model_reason`. Either way the record becomes `answered`, with `answered_by` and `answered_on`. `--note <text>` keeps what the people who answered say with it as the record's `note` ([#3351](https://github.com/INTENTIUS/chant/issues/3351)). An answer never changes in place: answering an answered question is `record-closed`, and people who want to change it retract it first.
+People who give the answer a model proposed confirm it, and the model stays the record's decider. Any other answer is the quorum's, and the model's proposal moves into the record's `escalations`, its `reason` as `model_reason`. Either way the record becomes `answered`, with `answered_by` and `answered_on`. `--note <text>` is kept as the record's `note` ([#3351](https://github.com/INTENTIUS/chant/issues/3351)). Once given, the record does not change in place. A second `points answer` is refused with `record-closed`, so people who want to change it retract it first.
 
 ## Retracting an answer
 
