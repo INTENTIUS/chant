@@ -1,10 +1,12 @@
 /**
  * A throwaway `clickhouse-server` in a container: started on a random loopback
- * port under a unique name, and always removed.
+ * port under a unique name, and always removed (the shared core's
+ * `../core/container.ts`, ready when it answers `/ping`).
  *
  * Generation uses it on a pin move to read the pinned server's catalog. The
  * live tests use the same helper so every container chant starts is started
- * and cleaned up one way.
+ * and cleaned up one way. A cluster of replicas with embedded Keeper is
+ * ClickHouse's own.
  */
 
 import { execFile } from "node:child_process";
@@ -12,8 +14,10 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { randomBytes } from "node:crypto";
 import { clickhousePing, clickhouseQuery, type ClickHouseEndpoint } from "./http";
+import { publishedPort, startScratchContainer, uniqueContainerName } from "../core/container";
+
+export { dockerAvailable } from "../core/container";
 
 const exec = promisify(execFile);
 
@@ -25,16 +29,6 @@ export interface ScratchServer {
   stop(): Promise<void>;
 }
 
-/** True when a Docker daemon answers. Tests that need a server skip when this is false. */
-export async function dockerAvailable(): Promise<boolean> {
-  try {
-    await exec("docker", ["info", "--format", "{{.ServerVersion}}"], { timeout: 15_000 });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Start `image` and wait until it answers `/ping`. Pulls the image when it is
  * not present, which is the one network step here.
@@ -43,35 +37,17 @@ export async function startScratchServer(
   image: string,
   options: { namePrefix?: string; readyTimeoutMs?: number } = {},
 ): Promise<ScratchServer> {
-  const name = `${options.namePrefix ?? "chant-sql"}-${process.pid}-${randomBytes(4).toString("hex")}`;
-  let removed = false;
-  const stop = async (): Promise<void> => {
-    if (removed) return;
-    removed = true;
-    await exec("docker", ["rm", "-f", name]).catch(() => undefined);
-  };
-
-  try {
-    await exec(
-      "docker",
-      ["run", "-d", "--name", name, "-p", "127.0.0.1::8123", "-e", "CLICKHOUSE_SKIP_USER_SETUP=1", image],
-      { timeout: 600_000 },
-    );
-    const { stdout } = await exec("docker", ["port", name, "8123/tcp"]);
-    const port = stdout.split("\n")[0]?.trim().split(":").pop();
-    if (!port) throw new Error(`docker port reported no host port for ${name}`);
-    const endpoint: ClickHouseEndpoint = { url: `http://127.0.0.1:${port}` };
-
-    const deadline = Date.now() + (options.readyTimeoutMs ?? 60_000);
-    while (!(await clickhousePing(endpoint))) {
-      if (Date.now() > deadline) throw new Error(`${name} did not answer /ping within the timeout`);
-      await new Promise((r) => setTimeout(r, 500));
-    }
-    return { endpoint, name, stop };
-  } catch (err) {
-    await stop();
-    throw err;
-  }
+  const endpointOf = (port: string): ClickHouseEndpoint => ({ url: `http://127.0.0.1:${port}` });
+  const c = await startScratchContainer({
+    image,
+    namePrefix: options.namePrefix ?? "chant-sql",
+    containerPort: 8123,
+    env: { CLICKHOUSE_SKIP_USER_SETUP: "1" },
+    ready: (port) => clickhousePing(endpointOf(port)),
+    readyTimeoutMs: options.readyTimeoutMs ?? 60_000,
+    notReady: "did not answer /ping",
+  });
+  return { endpoint: endpointOf(c.port), name: c.name, stop: c.stop };
 }
 
 export interface ScratchCluster {
@@ -110,7 +86,7 @@ export async function startScratchCluster(
   options: { replicas?: number; namePrefix?: string; readyTimeoutMs?: number } = {},
 ): Promise<ScratchCluster> {
   const count = options.replicas ?? 2;
-  const name = `${options.namePrefix ?? "chant-sql-cluster"}-${process.pid}-${randomBytes(4).toString("hex")}`;
+  const name = uniqueContainerName(options.namePrefix ?? "chant-sql-cluster");
   const network = `${name}-net`;
   const nodes = Array.from({ length: count }, (_, i) => `${name}-r${i + 1}`);
   const dir = mkdtempSync(join(tmpdir(), "chant-sql-cluster-"));
@@ -142,12 +118,7 @@ ${
 </clickhouse>
 `;
 
-  const hostEndpoint = async (node: string): Promise<ClickHouseEndpoint> => {
-    const { stdout } = await exec("docker", ["port", node, "8123/tcp"]);
-    const port = stdout.split("\n")[0]?.trim().split(":").pop();
-    if (!port) throw new Error(`docker port reported no host port for ${node}`);
-    return { url: `http://127.0.0.1:${port}` };
-  };
+  const hostEndpoint = async (node: string): Promise<ClickHouseEndpoint> => ({ url: `http://127.0.0.1:${await publishedPort(node, 8123)}` });
   const waitReady = async (node: string, endpoint: ClickHouseEndpoint, deadline: number): Promise<void> => {
     for (;;) {
       const ready = (await clickhousePing(endpoint)) && (await clickhouseQuery(endpoint, "SELECT count() FROM system.zookeeper WHERE path = '/'").then(() => true, () => false));

@@ -11,21 +11,19 @@
  * read fresh.
  *
  * Nothing is written for the user: the Op is a declaration, reviewed in the
- * pull request like the schema change it carries out.
+ * pull request like the schema change it carries out. The hand-off's shape is
+ * the shared core's (`../../core/handoff.ts`); the Op and the dual-write
+ * suggestion are ClickHouse's.
  */
 
 import type { CanonicalObject } from "./normalize";
 import type { SchemaDiff } from "./diff";
+import { migrationOpName, renderMigrationOps, type MigrationOpSuggestion } from "../../core/handoff";
 
-export interface RebuildOpSuggestion {
+export interface RebuildOpSuggestion extends MigrationOpSuggestion {
   /** `database.name`, the Op's `table`. */
   table: string;
-  /** The Op's suggested name. */
-  name: string;
-  env: string;
   dualWrite: { mode: "materialized-view"; cutoverColumn: string } | { mode: "app" };
-  /** The declaration, ready to paste into an `*.op.ts` file. */
-  declaration: string;
 }
 
 const TIME_TYPE = /^(?:Nullable\s*\(\s*)?(?:Date|Date32|DateTime|DateTime64)\b/;
@@ -42,7 +40,7 @@ export function rebuildOpSuggestions(diff: SchemaDiff, declared: ReadonlyMap<str
     const table = `${c.database ?? "default"}.${c.name}`;
     const time = c.columns.find((col) => !col.nullable && TIME_TYPE.test(col.type) && (!col.defaultKind || col.defaultKind === "DEFAULT"));
     const dualWrite: RebuildOpSuggestion["dualWrite"] = time ? { mode: "materialized-view", cutoverColumn: time.name } : { mode: "app" };
-    const name = `rebuild-${table.replace(/[^A-Za-z0-9]+/g, "-").toLowerCase()}`;
+    const name = migrationOpName("rebuild", table);
     const dw = dualWrite.mode === "app" ? `{ mode: "app" }` : `{ mode: "materialized-view", cutoverColumn: ${JSON.stringify(dualWrite.cutoverColumn)} }`;
     out.push({
       table,
@@ -57,11 +55,5 @@ export function rebuildOpSuggestions(diff: SchemaDiff, declared: ReadonlyMap<str
 
 /** The suggestions as text, for the report. */
 export function renderRebuildOps(ops: readonly RebuildOpSuggestion[]): string[] {
-  if (ops.length === 0) return [];
-  return [
-    "",
-    `Run ${ops.length === 1 ? "it" : "each"} as the rebuild migration Op, declared in an *.op.ts file ` +
-      `(import { ClickHouseRebuildOp } from "@intentius/chant-lexicon-sql/clickhouse"), then \`chant run <name>\` until it is done:`,
-    ...ops.map((o) => `  ${o.declaration}`),
-  ];
+  return renderMigrationOps(ops, { what: "the rebuild migration Op", exportName: "ClickHouseRebuildOp", importPath: "@intentius/chant-lexicon-sql/clickhouse" });
 }

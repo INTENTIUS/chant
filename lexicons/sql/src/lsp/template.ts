@@ -8,58 +8,16 @@
 import * as ts from "typescript";
 import { isTrivia, tokenize, type Token } from "../clickhouse/tokens";
 import { parseCreate, type Span } from "../clickhouse/parser";
-import { findTemplates, type FoundTemplate, type SqlTag } from "../lint/rules/templates";
+import { CLICKHOUSE_TEMPLATE_SOURCE, findTemplates, type FoundTemplate, type SqlTag } from "../lint/rules/templates";
+import { locateIn, type Located as CoreLocated } from "../core/find-templates";
 
-export function offsetAt(content: string, pos: { line: number; character: number }): number {
-  let offset = 0;
-  for (let line = 0; line < pos.line; line++) {
-    const next = content.indexOf("\n", offset);
-    if (next < 0) return content.length;
-    offset = next + 1;
-  }
-  return Math.min(offset + pos.character, content.length);
-}
+export { offsetAt, wordAround } from "../core/find-templates";
 
-export interface Located {
-  source: ts.SourceFile;
-  found: FoundTemplate;
-  /** The template part the cursor is in, or -1 when it is inside an interpolation's expression. */
-  part: number;
-  /** Offset in that part. */
-  offset: number;
-  /** The interpolation the cursor is in, when part is -1. */
-  expression: number;
-  /** Absolute source offset. */
-  at: number;
-}
+export type Located = CoreLocated<SqlTag>;
 
+/** The ClickHouse template the source offset `at` is inside, and where in it. */
 export function locate(content: string, at: number, fileName = "file.ts"): Located | undefined {
-  const source = ts.createSourceFile(fileName, content, ts.ScriptTarget.Latest, true);
-  for (const found of findTemplates(source)) {
-    const start = found.node.template.getStart(source);
-    const end = found.node.template.getEnd();
-    if (at <= start || at >= end) continue;
-    for (let i = 0; i < found.parts.length; i++) {
-      const from = found.starts[i]!;
-      if (at >= from && at <= from + found.parts[i]!.length) {
-        return { source, found, part: i, offset: at - from, expression: -1, at };
-      }
-    }
-    const expression = found.expressions.findIndex((e) => at >= e.getStart(source) && at <= e.getEnd());
-    return { source, found, part: -1, offset: 0, expression, at };
-  }
-  return undefined;
-}
-
-const WORD = /[A-Za-z0-9_]/;
-
-/** The identifier characters around an offset in a part. */
-export function wordAround(text: string, offset: number): { start: number; end: number } {
-  let start = offset;
-  while (start > 0 && WORD.test(text[start - 1]!)) start--;
-  let end = offset;
-  while (end < text.length && WORD.test(text[end]!)) end++;
-  return { start, end };
+  return locateIn(content, at, [CLICKHOUSE_TEMPLATE_SOURCE], fileName);
 }
 
 /** Significant tokens of the template up to `offset` in `part`; undefined when the text before it does not tokenize. */

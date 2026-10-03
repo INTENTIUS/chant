@@ -16,27 +16,23 @@
  * Creating and dropping whole objects are classed `create` and `drop`.
  */
 
+import { classifierRule, type ChangeClasses, type ClassifierRule as SqlClassifierRule } from "../../core/classifier";
+
 export type ChangeClass = "metadata" | "rewrite" | "rebuild" | "create" | "drop";
 
-export interface ClassifierRule {
-  id: string;
-  class: ChangeClass;
-  title: string;
-  /** The restriction, in a sentence. */
-  restriction: string;
-  /** The ClickHouse documentation page the restriction is stated on. */
-  cite: string;
-}
+/** A ClickHouse rule: the shared core's rule shape over these classes, citing a clickhouse.com page. */
+export type ClassifierRule = SqlClassifierRule<ChangeClass>;
+
+/** The classes as data: report order and labels, and what each costs for `classifyDisruption()`. */
+export const CHANGE_CLASSES: ChangeClasses<ChangeClass> = {
+  order: ["create", "metadata", "rewrite", "rebuild", "drop"],
+  label: { create: "create", drop: "drop", metadata: "metadata only", rewrite: "background rewrite", rebuild: "REBUILD" },
+  disruption: { metadata: "in-place", rewrite: "rolling", rebuild: "replace", create: "in-place", drop: "destroy" },
+};
 
 const DOCS = "https://clickhouse.com/docs/sql-reference/statements";
 
-const rule = (id: string, cls: ChangeClass, title: string, restriction: string, cite: string): ClassifierRule => ({
-  id,
-  class: cls,
-  title,
-  restriction,
-  cite,
-});
+const rule = (id: string, cls: ChangeClass, title: string, restriction: string, cite: string): ClassifierRule => classifierRule(id, cls, title, restriction, cite);
 
 export const CLASSIFIER_RULES = {
   SQLCH200: rule("SQLCH200", "create", "Create an object", "A new database, table or view is created; nothing existing changes.", `${DOCS}/create`),

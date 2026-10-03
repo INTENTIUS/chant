@@ -12,3 +12,9 @@
 export const SQL_DIALECTS = ["clickhouse"] as const;
 
 export type SqlDialect = (typeof SQL_DIALECTS)[number];
+
+/**
+ * Dialects being built, not yet declarable (#3289). `sql.dialect` refuses
+ * them with a message saying so, rather than as an unknown name.
+ */
+export const PLANNED_SQL_DIALECTS = ["postgres"] as const;

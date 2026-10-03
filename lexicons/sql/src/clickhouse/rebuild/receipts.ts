@@ -20,7 +20,8 @@
  * ClickHouse client, which is the walk-away property the other rows have.
  *
  * The store implements core's `ReceiptStore` seam
- * (`@intentius/chant/op/receipt-store`). It is not exported as the
+ * (`@intentius/chant/op/receipt-store`), as the sql lexicon's shared
+ * `SqlReceiptStore` (`../../core/receipts.ts`). It is not exported as the
  * `receiptRead` / `receiptWrite` activities: those names are global to a
  * run, and a project that also configures aws or k8s would have its
  * `effect()` steps read ClickHouse instead of SSM or a ConfigMap. The backfill
@@ -43,7 +44,8 @@
  */
 
 import { OWNERSHIP_MANAGED_BY_VALUE } from "@intentius/chant/ownership";
-import type { EffectReceiptRef, ReceiptStore } from "@intentius/chant/op/receipt-store";
+import type { EffectReceiptRef } from "@intentius/chant/op/receipt-store";
+import { receiptAddress, type SqlReceiptStore } from "../../core/receipts";
 import { clickhouseQuery, type ClickHouseEndpoint } from "../http";
 import { ident, sqlString } from "../apply/statements";
 import { CLICKHOUSE_COMMENT_OWNERSHIP_KEYS, RECEIPTS_TRAILER_KEY } from "../ownership";
@@ -66,15 +68,10 @@ const COMMENT = `chant effect receipts [chant ${CLICKHOUSE_COMMENT_OWNERSHIP_KEY
 /** Plain synchronous inserts: an async insert can be acknowledged before it is written. */
 const SYNC = { async_insert: "0" };
 
-/** The receipt's address: `<stack>/<env>/<effect>`, the same fields an ownership marker carries. */
-export function receiptAddress(identity: { stack?: string; env?: string }, effect: string): string {
-  return `${identity.stack || "-"}/${identity.env || "-"}/${effect}`;
-}
+export { receiptAddress } from "../../core/receipts";
 
-export interface ClickHouseReceiptStore extends ReceiptStore {
-  /** Every receipt whose address starts with `prefix`, latest value each: one query for a whole backfill. */
-  readAll(prefix: string): Promise<Map<string, string>>;
-}
+/** The shared core's receipt store, kept on a ClickHouse server. */
+export type ClickHouseReceiptStore = SqlReceiptStore;
 
 /**
  * A receipt store on the server at `endpoint`. Creates the receipts database

@@ -33,7 +33,15 @@
  */
 
 import type { OwnershipMarker } from "@intentius/chant/ownership";
-import type { AppliedResource, ApplyRef, NotAttemptedResource, PrunedResource } from "@intentius/chant/apply";
+import type { ApplyRef } from "@intentius/chant/apply";
+import {
+  SqlApplyError,
+  changesByObject,
+  dependencyFailedDetail,
+  missingDependencies,
+  readBuildObjects,
+  type SqlApplyOutcome,
+} from "../../core/apply";
 import { clickhouseQuery } from "../http";
 import type { ClickHouseTarget } from "../live/bind";
 import { readLiveSchema, type LiveObject } from "../live/catalog";
@@ -57,25 +65,15 @@ import {
 } from "./statements";
 import { waitForMutations } from "./mutations";
 
-type Json = Record<string, unknown>;
-
-const isObject = (v: unknown): v is Json => typeof v === "object" && v !== null && !Array.isArray(v);
+export type { FailedObject } from "../../core/apply";
 
 /**
  * The objects a `chant build` output declares, in creation order. Takes the
  * sql lexicon's primary output, or a multi-lexicon output holding it under
- * `sql`.
+ * `sql` (the shared core's reader).
  */
 export function declaredObjects(json: string, defaultDatabase = "default"): DeclaredObject[] {
-  const raw = JSON.parse(json) as unknown;
-  const doc = isObject(raw) && isObject(raw.sql) ? raw.sql : raw;
-  if (!isObject(doc) || doc.dialect !== "clickhouse" || !Array.isArray(doc.objects)) {
-    throw new Error('not a sql lexicon build output: expected { dialect: "clickhouse", objects: [...] }');
-  }
-  return (doc.objects as unknown[]).map((o, i) => {
-    if (!isObject(o) || typeof o.export !== "string" || typeof o.ddl !== "string" || typeof o.type !== "string") {
-      throw new Error(`sql build output: objects[${i}] has no export, type or ddl`);
-    }
+  return readBuildObjects(json, "clickhouse", (o) => {
     const canonical = canonicalObject(o.ddl, defaultDatabase);
     return {
       exportName: o.export,
@@ -83,7 +81,7 @@ export function declaredObjects(json: string, defaultDatabase = "default"): Decl
       key: canonical.database !== undefined ? `${canonical.database}.${canonical.name}` : canonical.name,
       ddl: o.ddl,
       canonical,
-      dependsOn: [...new Set((Array.isArray(o.dependsOn) ? o.dependsOn : []).filter((d): d is string => typeof d === "string").map((d) => d.split(".")[0]!))],
+      dependsOn: o.dependsOn,
     };
   });
 }
@@ -103,31 +101,16 @@ export interface ClickHouseApplyOptions {
   log?: (line: string) => void;
 }
 
-export interface FailedObject extends ApplyRef {
-  error: string;
-  /** The statements that did run before the one that failed. */
-  statements: string[];
-}
-
-export interface ClickHouseApplyOutcome {
-  /** The server's URL. */
-  target: string;
-  /** Where the binding came from: `sql.profiles.<env>` or `env CLICKHOUSE_URL`. */
-  source: string;
-  applied: Array<AppliedResource & { statements: string[] }>;
-  pruned: Array<PrunedResource & { statement: string }>;
-  notAttempted: NotAttemptedResource[];
-  failed: FailedObject[];
-}
+/**
+ * The shared core's outcome: `target` is the server's URL, `source` where the
+ * binding came from (`sql.profiles.<env>` or `env CLICKHOUSE_URL`).
+ */
+export type ClickHouseApplyOutcome = SqlApplyOutcome;
 
 /** An apply in which the server refused a statement. The outcome says what did and did not happen. */
-export class ClickHouseApplyError extends Error {
-  constructor(readonly outcome: ClickHouseApplyOutcome) {
-    super(
-      `ClickHouse apply to ${outcome.target}: ${outcome.failed.length} object(s) failed ` +
-        `(${outcome.failed.map((f) => `${f.kind}/${f.name}: ${f.error}`).join("; ")}); ` +
-        `${outcome.applied.length} applied, ${outcome.pruned.length} pruned, ${outcome.notAttempted.length} not attempted before and after`,
-    );
+export class ClickHouseApplyError extends SqlApplyError<ClickHouseApplyOutcome> {
+  constructor(outcome: ClickHouseApplyOutcome) {
+    super("ClickHouse", outcome);
     this.name = "ClickHouseApplyError";
   }
 }
@@ -177,8 +160,7 @@ export async function applyClickHouse(target: ClickHouseTarget, declared: readon
   const { objects: liveObjects, canonical: live } = await liveSchema(target, declared);
   const liveByKey = new Map(liveObjects.map((o) => [liveKey(o), o]));
   const changes = await plannedChanges(target, declared, live);
-  const byObject = new Map<string, Change[]>();
-  for (const c of changes) byObject.set(c.object, [...(byObject.get(c.object) ?? []), c]);
+  const byObject = changesByObject(changes);
 
   const outcome: ClickHouseApplyOutcome = { target: target.endpoint.url, source: target.source, applied: [], pruned: [], notAttempted: [], failed: [] };
   /** Export names whose object is on the server. */
@@ -234,10 +216,10 @@ export async function applyClickHouse(target: ClickHouseTarget, declared: readon
       outcome.applied.push({ ...ref, action: "unchanged", ...(liveObject?.uuid ? { physicalId: liveObject.uuid } : {}), statements: [] });
       continue;
     }
-    const missing = obj.dependsOn.filter((d) => exportNames.has(d) && d !== obj.exportName && !onServer.has(d));
+    const missing = missingDependencies(obj.exportName, obj.dependsOn, exportNames, onServer);
     if (missing.length > 0) {
       if (!created) onServer.add(obj.exportName);
-      outcome.notAttempted.push({ ...ref, reason: "dependency-failed", detail: `references ${missing.join(", ")}, which is not on the server: it failed or was not attempted in this apply` });
+      outcome.notAttempted.push({ ...ref, reason: "dependency-failed", detail: dependencyFailedDetail(missing) });
       continue;
     }
 

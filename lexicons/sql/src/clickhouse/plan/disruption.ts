@@ -10,12 +10,10 @@
  * in hand.
  */
 
-import type { DisruptionQuery, DisruptionVerdict, Disruption } from "@intentius/chant/lifecycle/disruption";
+import type { DisruptionQuery, DisruptionVerdict } from "@intentius/chant/lifecycle/disruption";
 import { MERGE_TREE_SETTINGS } from "../../generated/clickhouse";
-import { CLASSIFIER_RULES, type ClassifierRuleId } from "./rules";
-
-const LEVEL: Record<string, Disruption> = { metadata: "in-place", rewrite: "rolling", rebuild: "replace", create: "in-place", drop: "destroy" };
-const RANK: Record<Disruption, number> = { "in-place": 0, rolling: 1, replace: 2, destroy: 3, unknown: 4 };
+import { classifyDisruptionWith } from "../../core/classifier";
+import { CHANGE_CLASSES, CLASSIFIER_RULES, type ClassifierRuleId } from "./rules";
 
 function ruleFor(path: string): ClassifierRuleId | "ambiguous" | undefined {
   const root = path.split(/[.[]/)[0]!;
@@ -50,41 +48,14 @@ function ruleFor(path: string): ClassifierRuleId | "ambiguous" | undefined {
 }
 
 export function classifyDisruption(options: { environment: string; changes: DisruptionQuery[] }): Record<string, DisruptionVerdict> {
-  const out: Record<string, DisruptionVerdict> = {};
-  for (const q of options.changes) {
-    if (q.type !== undefined && !q.type.startsWith("ClickHouse::")) continue;
-    let level: Disruption = "in-place";
-    const because: string[] = [];
-    const rules = new Set<string>();
-    let ambiguous = false;
-    for (const d of q.deltas) {
-      const r = ruleFor(d.path);
-      if (r === undefined || r === "ambiguous") {
-        ambiguous = true;
-        because.push(d.path);
-        continue;
-      }
-      const l = LEVEL[CLASSIFIER_RULES[r].class]!;
-      if (RANK[l] > RANK[level]) {
-        level = l;
-        because.length = 0;
-      }
-      if (RANK[l] === RANK[level]) because.push(d.path);
-      rules.add(r);
-    }
-    if (ambiguous) {
-      out[q.name] = {
-        disruption: "unknown",
-        because,
-        detail: "a sorting-key or column change is metadata, a rewrite or a rebuild depending on the whole definition; `chant sql plan` classifies it",
-      };
-      continue;
-    }
-    out[q.name] = {
-      disruption: level,
-      because,
-      detail: [...rules].map((r) => `${r} ${CLASSIFIER_RULES[r as ClassifierRuleId].title}`).join("; "),
-    };
-  }
-  return out;
+  return classifyDisruptionWith(
+    {
+      typePrefix: "ClickHouse::",
+      rules: CLASSIFIER_RULES,
+      classes: CHANGE_CLASSES,
+      ruleFor,
+      ambiguousDetail: "a sorting-key or column change is metadata, a rewrite or a rebuild depending on the whole definition; `chant sql plan` classifies it",
+    },
+    options,
+  );
 }

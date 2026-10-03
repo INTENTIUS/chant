@@ -34,6 +34,9 @@
 import { isTrivia, tokenizeText, type Token } from "../tokens";
 import { parseCreate, unquote, type ColumnNode, type CreateNode, type Span } from "../parser";
 import { MERGE_TREE_SETTINGS, TYPE_FAMILIES } from "../../generated/clickhouse";
+import { previouslyIn, splitTopLevel as splitTop } from "../../core/normalize";
+
+export { previouslyIn } from "../../core/normalize";
 
 export type ObjectKind = "database" | "table" | "view" | "materializedView";
 
@@ -168,23 +171,6 @@ function unwrapSingle(tokens: string[]): string[] {
   return unwrapSingle(tokens.slice(1, -1));
 }
 
-/** Split canonical text on top-level commas. */
-function splitTop(text: string): string[] {
-  const parts: string[] = [];
-  let depth = 0;
-  let cur: string[] = [];
-  for (const tok of text.split(" ")) {
-    if (tok === "(" || tok === "[") depth++;
-    if (tok === ")" || tok === "]") depth--;
-    if (tok === "," && depth === 0) {
-      parts.push(cur.join(" "));
-      cur = [];
-    } else cur.push(tok);
-  }
-  if (cur.length) parts.push(cur.join(" "));
-  return parts.filter((p) => p.length > 0);
-}
-
 /** A type with its family names canonical: `int` is `Int32`, `BIGINT` is `Int64`. */
 export function canonicalType(text: string): string {
   const families = TYPE_FAMILIES as Record<string, { canonical: string; caseInsensitive: boolean } | undefined>;
@@ -222,15 +208,6 @@ export function canonicalTtl(text: string, ownDatabase?: string): string {
   return splitTop(canonicalExpression(text, ownDatabase))
     .map((rule) => rule.replace(/ DELETE$/, ""))
     .join(" , ");
-}
-
-/** The name in a `-- previously: <name>` comment, when the text holds one. */
-export function previouslyIn(comments: readonly string[]): string | undefined {
-  for (const c of comments) {
-    const m = /^--\s*previously\s*:\s*([`"]?)([^\s`"]+)\1\s*$/i.exec(c.trim());
-    if (m) return m[2];
-  }
-  return undefined;
 }
 
 function spanText(tokens: Token[], span: Span | undefined): string | undefined {

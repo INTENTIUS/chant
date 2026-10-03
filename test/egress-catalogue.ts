@@ -300,7 +300,7 @@ export const NETWORK_SHELL_OUTS: readonly NetworkShellOut[] = [
     binary: "docker",
     subcommand: "run",
     command: "npm run generate in lexicons/sql after a ClickHouse pin move, or with --force",
-    file: "lexicons/sql/src/clickhouse/container.ts",
+    file: "lexicons/sql/src/core/container.ts",
     phase: "codegen",
     destination: "the container registry, for `clickhouse/clickhouse-server` at the pinned tag and digest when the image is not already local",
     why: "`docker run` starts the pinned server on a random loopback port so generation can read its catalog, and the container is removed afterwards. The pull is the only egress; the catalog read itself is loopback.",
