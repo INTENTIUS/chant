@@ -729,13 +729,49 @@ export async function listIps(ctx: ApplyCtx, app: string, http: FlyHttp, signal?
   return body?.ips ?? [];
 }
 
-/** List an app's live certificates (`{ certificates: [...] }`). */
+/**
+ * The page size asked of the certificate list. Fly pages it whether or not a
+ * `limit` is given (default 25, max 500), so asking for the max keeps the
+ * common case to one request.
+ */
+export const CERT_PAGE_LIMIT = 500;
+
+/**
+ * The most certificate pages {@link listCerts} reads before it gives up. At
+ * {@link CERT_PAGE_LIMIT} per page that is 100,000 certificates, far past any
+ * real app, so hitting it means the API never stopped handing out a cursor.
+ */
+export const MAX_CERT_PAGES = 200;
+
+/**
+ * List an app's live certificates, every page of them (#3224). Fly answers
+ * `{ certificates, next_cursor?, total_count }` and pages the list even
+ * without a `limit`; this follows `next_cursor` until it is absent. A cursor
+ * the API already handed out, or more than {@link MAX_CERT_PAGES} pages,
+ * throws rather than looping or returning a partial list, because callers
+ * read "not listed" as "absent" (re-apply creates it, prune skips it).
+ */
 export async function listCerts(ctx: ApplyCtx, app: string, http: FlyHttp, signal?: AbortSignal): Promise<FlapsCert[]> {
-  const res = await http("GET", certsUrl(ctx.base, app), undefined, undefined, signal);
-  if (res.status === 404) return [];
-  if (res.status >= 300) throw new Error(`certificate list failed for ${app} (${res.status}): ${res.text}`);
-  const body = parseJson(res.text) as { certificates?: FlapsCert[] } | undefined;
-  return body?.certificates ?? [];
+  const certs: FlapsCert[] = [];
+  const seen = new Set<string>();
+  let cursor: string | undefined;
+  for (let page = 0; page < MAX_CERT_PAGES; page++) {
+    const q = new URLSearchParams({ limit: String(CERT_PAGE_LIMIT) });
+    if (cursor !== undefined) q.set("cursor", cursor);
+    const res = await http("GET", `${certsUrl(ctx.base, app)}?${q.toString()}`, undefined, undefined, signal);
+    // A 404 on the first page is an absent app; on a later one the list is
+    // half-read, so it is an error like any other.
+    if (res.status === 404 && page === 0) return [];
+    if (res.status >= 300) throw new Error(`certificate list failed for ${app} (${res.status}): ${res.text}`);
+    const body = parseJson(res.text) as { certificates?: FlapsCert[]; next_cursor?: string } | undefined;
+    certs.push(...(body?.certificates ?? []));
+    const next = body?.next_cursor;
+    if (!next) return certs;
+    if (seen.has(next)) throw new Error(`certificate list for ${app} repeated cursor ${JSON.stringify(next)} after ${page + 1} page(s)`);
+    seen.add(next);
+    cursor = next;
+  }
+  throw new Error(`certificate list for ${app} still had a next_cursor after ${MAX_CERT_PAGES} pages`);
 }
 
 /** List an app's live secrets (`{ secrets: [...] }`; digests only, never values). */

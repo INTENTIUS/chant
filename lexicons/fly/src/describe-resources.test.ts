@@ -2,6 +2,7 @@ import { describe, test, expect } from "vitest";
 import { describeObservationConformance } from "@intentius/chant-test-utils";
 import { describeResources, flyPlan } from "./describe-resources";
 import type { FlyHttp } from "./op/activities/fly-apply";
+import { createMachinesFake } from "./op/activities/machines-fake";
 import { FLY_METADATA_OWNERSHIP_KEYS } from "./ownership";
 
 // Injected-HTTP unit tests, mirroring fly-apply.test.ts: a scripted flaps answers
@@ -38,7 +39,8 @@ function entities(pairs: Array<[string, string]>): Map<string, { entityType: str
  * `machines` is the live machine array returned for the app.
  */
 function fakeHttp(machines: Array<Record<string, unknown>>): FlyHttp {
-  return async (method, url) => {
+  return async (method, href) => {
+    const url = href.split("?")[0];
     if (method === "GET" && /\/v1\/apps\/[^/]+$/.test(url)) return { status: 200, text: "{}" }; // app exists
     if (method === "GET" && url.endsWith("/machines")) return { status: 200, text: JSON.stringify(machines) };
     if (method === "GET" && url.endsWith("/volumes")) return { status: 200, text: "[]" };
@@ -158,6 +160,21 @@ describe("describeResources: live machines → ResourceMetadata verdicts", () =>
     );
     expect(res.resources.web).toBeUndefined();
     expect(res.unobserved?.web?.reason).toBe("filtered");
+  });
+});
+
+describe("describeResources reads every page of certificates (#3224)", () => {
+  test("an app with more certificates than one Fly page reports all of them", async () => {
+    const fake = createMachinesFake();
+    fake.apps.add(APP);
+    const hostnames = Array.from({ length: 30 }, (_, i) => `h${i}.example.com`);
+    fake.certs.set(APP, hostnames);
+    const res = await describeResources(
+      { environment: "prod", buildOutput: PLAN, entityNames: ["app", "web"], entities: ENTS, endpoint: ENDPOINT },
+      fake.http,
+    );
+    const certs = Object.values(res.resources).filter((r) => r.type === "Fly::Machines::Certificate");
+    expect(certs.map((r) => r.physicalId).sort()).toEqual([...hostnames].sort());
   });
 });
 
