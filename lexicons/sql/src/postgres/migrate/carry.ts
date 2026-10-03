@@ -100,9 +100,19 @@ export interface CarriedView {
   grants: Array<{ grantee: string; privilege: string; grantable: boolean }>;
 }
 
+/** The sequence that belongs to the column: its identity's, or a `serial` column's. A type change moves it to the new column at the switch. */
+export interface ColumnSequence {
+  kind: "identity" | "serial";
+  schema: string;
+  name: string;
+  /** Quoted and qualified. */
+  ident: string;
+}
+
 export interface Dependents {
   carried: CarriedObject[];
   views: CarriedView[];
+  sequence?: ColumnSequence;
   /** What the Op does not carry, each as a sentence naming the object. */
   refused: string[];
 }
@@ -202,6 +212,8 @@ interface DiscoverInput {
   /** The declared table. */
   declared: DeclaredPgObject;
   defaultSchema: string;
+  /** The table is partitioned: its indexes cannot be built CONCURRENTLY, nor its keys attached USING INDEX. */
+  partitioned?: boolean;
 }
 
 interface Row {
@@ -213,19 +225,20 @@ export async function discoverDependents(input: DiscoverInput): Promise<Dependen
   const { client, names: n, oid, attnum } = input;
   const from = n.source;
   const to = n.newColumn;
-  const deps = await client.query<{ kind: string; objid: string; objsubid: number; what: string }>(
-    `SELECT CASE d.classid WHEN 'pg_catalog.pg_constraint'::pg_catalog.regclass THEN 'constraint' WHEN 'pg_catalog.pg_class'::pg_catalog.regclass THEN 'class'
+  const deps = await client.query<{ kind: string; objid: string; objsubid: number; what: string; deptype: string }>(
+    `SELECT d.deptype::text AS deptype, CASE d.classid WHEN 'pg_catalog.pg_constraint'::pg_catalog.regclass THEN 'constraint' WHEN 'pg_catalog.pg_class'::pg_catalog.regclass THEN 'class'
                            WHEN 'pg_catalog.pg_rewrite'::pg_catalog.regclass THEN 'rewrite' WHEN 'pg_catalog.pg_attrdef'::pg_catalog.regclass THEN 'attrdef' ELSE 'other' END AS kind,
             d.objid::text AS objid, d.objsubid, pg_catalog.pg_describe_object(d.classid, d.objid, d.objsubid) AS what
      FROM pg_catalog.pg_depend d
      WHERE d.refclassid = 'pg_catalog.pg_class'::pg_catalog.regclass AND d.refobjid = $1::oid AND d.refobjsubid = $2 AND d.deptype IN ('n', 'a', 'i')
      UNION
-     SELECT 'constraint', c.oid::text, 0, pg_catalog.pg_describe_object('pg_catalog.pg_constraint'::pg_catalog.regclass, c.oid, 0)
+     SELECT 'n', 'constraint', c.oid::text, 0, pg_catalog.pg_describe_object('pg_catalog.pg_constraint'::pg_catalog.regclass, c.oid, 0)
      FROM pg_catalog.pg_constraint c WHERE c.confrelid = $1::oid AND $2 = ANY(c.confkey)`,
     [oid, attnum],
   );
   const refused: string[] = [];
   const carried: CarriedObject[] = [];
+  let sequence: ColumnSequence | undefined;
   const byKind = (k: string) => [...new Set(deps.filter((d) => d.kind === k).map((d) => d.objid))];
   const table = n.table;
   const rename = n.change === "rename";
@@ -243,7 +256,8 @@ export async function discoverDependents(input: DiscoverInput): Promise<Dependen
               CASE WHEN c.conindid <> 0 AND c.contype IN ('p', 'u') THEN pg_catalog.pg_get_indexdef(c.conindid) END AS indexdef,
               COALESCE(i.indisreplident, false) AS replident, COALESCE(i.indisclustered, false) AS clustered,
               (SELECT a.attname FROM pg_catalog.pg_attribute a WHERE a.attrelid = c.conrelid AND a.attnum = c.conkey[1]) AS first_col,
-              ARRAY(SELECT a.attname FROM pg_catalog.unnest(c.conkey) WITH ORDINALITY k(n, o) JOIN pg_catalog.pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.n ORDER BY k.o)::text[] AS cols
+              ARRAY(SELECT a.attname FROM pg_catalog.unnest(c.conkey) WITH ORDINALITY k(n, o) JOIN pg_catalog.pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.n ORDER BY k.o)::text[] AS cols,
+              t.relkind = 'p' OR EXISTS (SELECT 1 FROM pg_catalog.pg_class f WHERE f.oid = c.confrelid AND f.relkind = 'p') AS frel_partitioned
        FROM pg_catalog.pg_constraint c JOIN pg_catalog.pg_class t ON t.oid = c.conrelid JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
        LEFT JOIN pg_catalog.pg_index i ON i.indexrelid = c.conindid
        WHERE c.oid = ANY($1::oid[]) ORDER BY c.conname`,
@@ -260,6 +274,17 @@ export async function discoverDependents(input: DiscoverInput): Promise<Dependen
       const base = { name, table: qtable, tableName: where, tableOid: String(r.rel), schema: String(r.schema), working: carriedWorkingName(name), validated: r.validated === true, ...(comment !== undefined ? { comment } : {}) };
       const cols = (r.cols as string[] | null) ?? [];
       const newCols = cols.map((c) => (own && c === from ? n.column : c));
+      if (input.partitioned && (type === "p" || type === "u" || type === "f")) {
+        keyIndexes.add(String(r.idx));
+        refused.push(
+          `${type === "f" ? "foreign key" : type === "p" ? "primary key" : "unique constraint"} ${name} on ${where}: on a partitioned table ${type === "f" ? "a foreign key cannot be added NOT VALID and validated while writes go on" : "a key cannot be attached from an index built CONCURRENTLY (ADD CONSTRAINT ... USING INDEX is not supported on partitioned tables)"}, so carrying it over would hold ACCESS EXCLUSIVE for a full build; drop it, migrate, then declare it again`,
+        );
+        continue;
+      }
+      if (type === "f" && !own && r.frel_partitioned === true) {
+        refused.push(`foreign key ${name} on ${where} references a partitioned table, where it cannot be added NOT VALID and validated while writes go on; drop it, migrate, then declare it again`);
+        continue;
+      }
       if (type === "p" || type === "u") {
         keyIndexes.add(String(r.idx));
         const declaredKey = type === "p" ? (tprops.primaryKey?.name ? tprops.primaryKey : undefined) : tprops.uniques?.find((u) => u.name && sameColumns(u.columns, newCols));
@@ -366,7 +391,13 @@ export async function discoverDependents(input: DiscoverInput): Promise<Dependen
           ...(r.clustered === true ? { clustered: true } : {}),
         });
       } else if (kind === "S") {
-        refused.push(`sequence ${r.schema}.${name} belongs to the column (an identity or serial column), which the Op does not migrate yet`);
+        const dep = deps.find((d) => d.kind === "class" && d.objid === String(r.oid));
+        const seq: ColumnSequence = { kind: dep?.deptype === "i" ? "identity" : "serial", schema: String(r.schema), name, ident: `${quoteIdent(String(r.schema))}.${quoteIdent(name)}` };
+        if (rename) {
+          refused.push(
+            `sequence ${r.schema}.${name} gives the column its values (${seq.kind === "identity" ? "an identity column" : "a serial column's default"}); during a rename a writer that names the new column would be given the old one's next value by the trigger, which it cannot tell from a value the writer chose (see the default on a rename)`,
+          );
+        } else sequence = seq;
       } else {
         const what = deps.find((d) => d.kind === "class" && d.objid === String(r.oid))?.what ?? `${r.schema}.${name}`;
         refused.push(what);
@@ -464,7 +495,7 @@ export async function discoverDependents(input: DiscoverInput): Promise<Dependen
     for (const t of taken) refused.push(`${t.name}, the name ${renamed.find((c) => c.target === t.name)!.name} takes after the rename, is already used; rename that object first`);
   }
 
-  return { carried, views, refused };
+  return { carried, views, refused, ...(sequence ? { sequence } : {}) };
 }
 
 // ── statements ──────────────────────────────────────────────────────
@@ -534,15 +565,30 @@ export function carriedSwitchStatements(
 }
 
 /** What the gate binds about the carried objects: each one's kind, names and definition, and each view. */
-export function carriedSubject(d: Pick<Dependents, "carried" | "views">): unknown {
+export function carriedSubject(d: Pick<Dependents, "carried" | "views" | "sequence">): unknown {
   return {
+    ...(d.sequence ? { sequence: { kind: d.sequence.kind, name: `${d.sequence.schema}.${d.sequence.name}` } } : {}),
     carried: d.carried.map((c) => ({ kind: c.kind, table: c.tableName, name: c.name, target: c.target, definition: c.definition, ...(c.primary !== undefined ? { primary: c.primary } : {}) })),
     views: d.views.map((v) => ({ name: v.name, ddl: v.declared.ddl })),
   };
 }
 
-/** Whether a declared column is NOT NULL once it is switched: declared so, or part of a carried primary key. */
-export const requiresNotNull = (column: ColumnDef, carried: readonly CarriedObject[]): boolean => column.notNull === true || carried.some((c) => c.kind === "key" && c.primary === true);
+/** Whether a declared column is NOT NULL once it is switched: declared so, an identity column, or part of a carried primary key. */
+export const requiresNotNull = (column: ColumnDef, carried: readonly CarriedObject[]): boolean =>
+  column.notNull === true || column.generated?.kind === "identity" || SERIAL_TYPES[column.type ?? ""] !== undefined || carried.some((c) => c.kind === "key" && c.primary === true);
+
+/** The integer type of each `serial` spelling: what the column holds, and the sequence's type. */
+export const SERIAL_TYPES: Readonly<Record<string, string>> = {
+  smallserial: "smallint",
+  serial2: "smallint",
+  serial: "integer",
+  serial4: "integer",
+  bigserial: "bigint",
+  serial8: "bigint",
+};
+
+/** A declared column's type as the server holds it: a `serial` spelling is its integer type. */
+export const storedType = (type: string | undefined): string | undefined => (type === undefined ? undefined : (SERIAL_TYPES[type.replace(/^(public|pg_catalog)\./, "")] ?? type));
 
 /** How far a carried object's working copy has got on the server. */
 export interface CarriedState {

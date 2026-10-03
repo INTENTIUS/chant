@@ -25,7 +25,7 @@ import { col, migrationNames, MIGRATION_TRAILER_KEY, type MigrationNames } from 
 import { MigrationRefusal, observeMigration, type MigrationObservation } from "./observe";
 import { postgresReceiptStore, receiptAddress } from "./receipts";
 import type { ReplicationLagBound } from "./replication";
-import { addCarriedConstraint, carriedNotReady, carriedSwitchStatements, requiresNotNull, type CarriedObject } from "./carry";
+import { addCarriedConstraint, carriedNotReady, carriedSwitchStatements, requiresNotNull, SERIAL_TYPES, storedType, type CarriedObject } from "./carry";
 
 /** What every step is given. */
 export interface MigrationRun {
@@ -174,7 +174,7 @@ export interface ExpandResult {
 }
 
 /** The new column's type: the declared one, with its collation when it declares one. */
-const newColumnType = (o: MigrationObservation): string => `${o.names.change === "rename" ? o.source!.type : o.column.type}${o.column.collate ? ` COLLATE ${o.column.collate}` : ""}`;
+const newColumnType = (o: MigrationObservation): string => `${o.names.change === "rename" ? o.source!.type : storedType(o.column.type)}${o.column.collate ? ` COLLATE ${o.column.collate}` : ""}`;
 
 /**
  * Expand: add the new column, nullable and with no default, which changes
@@ -298,7 +298,9 @@ export async function carryOver(run: MigrationRun): Promise<CarryResult> {
   if (o.state !== "migrate") return result;
   const n = o.names;
   if (!o.newColumn || !o.trigger) throw new MigrationRefusal(`${n.key}: the new column and its dual write are not there; the Expand and Dual write phases make them`);
-  for (const c of o.carried) {
+  // Indexes first: a foreign key onto the new column needs the working unique index it references.
+  const indexesFirst = [...o.carried].sort((a, b) => Number(a.kind !== "index" && a.kind !== "key") - Number(b.kind !== "index" && b.kind !== "key"));
+  for (const c of indexesFirst) {
     result.carried.push(`${c.kind} ${c.tableName}.${c.name} -> ${c.target}`);
     const state = o.carriedStates.get(c.working);
     const comment = workingComment(n, run.marker, "carry", `${c.kind} ${c.name} on the new column`, { of: c.name });
@@ -356,7 +358,50 @@ export interface SwitchResult {
  * application, and the trigger keeps both columns written until the
  * contract, so a reader still on the old name goes on working.
  */
-export function switchStatements(o: MigrationObservation, marker: OwnershipMarker | undefined, retainUntil: string): string[] {
+/** Where the old column's sequence stood when the switch took its lock: what the moved identity carries on from. */
+export interface SequenceState {
+  lastValue: string;
+  isCalled: boolean;
+}
+
+/**
+ * The statements that move the old column's sequence to the new one, after
+ * the columns are swapped. An identity cannot be handed from one column to
+ * another, so the old one is dropped (`DROP IDENTITY`, before the swap, which
+ * drops its sequence) and the new column gets one under the same sequence
+ * name, with the declared options, set to where the old one stood. A
+ * `serial` column's sequence is handed over with `OWNED BY`, takes the
+ * declared integer type, and becomes the new column's default.
+ */
+function sequenceStatements(o: MigrationObservation, state: SequenceState | undefined): { before: string[]; after: string[] } {
+  const seq = o.sequence;
+  const n = o.names;
+  const t = n.qualifiedTable;
+  if (!seq || n.change !== "type") return { before: [], after: [] };
+  if (seq.kind === "identity") {
+    if (!state) throw new Error(`${n.key}: the switch moves the identity of ${n.source} and needs its sequence's state, read under the switch's lock`);
+    const g = o.column.generated;
+    const options = [`SEQUENCE NAME ${seq.ident}`, ...(g?.options ? [g.options.trim().replace(/^\(|\)$/g, "")] : [])].join(" ");
+    return {
+      before: [`ALTER TABLE ${t} ALTER COLUMN ${col(n.source)} DROP IDENTITY`],
+      after: [
+        `ALTER TABLE ${t} ALTER COLUMN ${col(n.column)} ADD GENERATED ${g?.always === false ? "BY DEFAULT" : "ALWAYS"} AS IDENTITY (${options})`,
+        `SELECT pg_catalog.setval(${pgString(seq.ident)}, ${BigInt(state.lastValue).toString()}, ${state.isCalled ? "true" : "false"})`,
+      ],
+    };
+  }
+  const intType = SERIAL_TYPES[o.column.type ?? ""];
+  return {
+    before: [],
+    after: [
+      ...(intType ? [`ALTER SEQUENCE ${seq.ident} AS ${intType}`] : []),
+      `ALTER SEQUENCE ${seq.ident} OWNED BY ${t}.${col(n.column)}`,
+      ...(intType ? [`ALTER TABLE ${t} ALTER COLUMN ${col(n.column)} SET DEFAULT pg_catalog.nextval(${pgString(seq.ident)}::pg_catalog.regclass)`] : []),
+    ],
+  };
+}
+
+export function switchStatements(o: MigrationObservation, marker: OwnershipMarker | undefined, retainUntil: string, sequenceState?: SequenceState): string[] {
   const n = o.names;
   const t = n.qualifiedTable;
   const declared = o.column;
@@ -368,17 +413,20 @@ export function switchStatements(o: MigrationObservation, marker: OwnershipMarke
     (c) => workingComment(n, marker, "old", `the old ${c.kind} ${c.name}, on ${n.oldColumn} until the contract drops it`, { of: c.name }),
     marker,
   );
+  const sequence = sequenceStatements(o, sequenceState);
   const out: string[] = [];
   if (requiresNotNull(declared, o.carried)) out.push(`ALTER TABLE ${t} ALTER COLUMN ${col(n.newColumn)} SET NOT NULL`);
   if (o.check) out.push(`ALTER TABLE ${t} DROP CONSTRAINT ${col(n.check)}`);
   if (n.change === "type") {
     out.push(`DROP TRIGGER ${col(n.trigger)} ON ${t}`);
     out.push(...carried.before);
+    out.push(...sequence.before);
     if (o.source!.notNull) out.push(`ALTER TABLE ${t} ALTER COLUMN ${col(n.source)} DROP NOT NULL`);
     if (o.source!.default !== undefined) out.push(`ALTER TABLE ${t} ALTER COLUMN ${col(n.source)} DROP DEFAULT`);
     out.push(`ALTER TABLE ${t} RENAME COLUMN ${col(n.source)} TO ${col(n.oldColumn)}`);
     out.push(`ALTER TABLE ${t} RENAME COLUMN ${col(n.newColumn)} TO ${col(n.column)}`);
     if (declared.default !== undefined) out.push(`ALTER TABLE ${t} ALTER COLUMN ${col(n.column)} SET DEFAULT ${declared.default}`);
+    out.push(...sequence.after);
     out.push(commentOnColumn(n, n.column, declared.comment));
     out.push(commentOnColumn(n, n.oldColumn, oldComment));
     out.push(`DROP FUNCTION ${n.qualifiedFn}()`);
@@ -424,7 +472,14 @@ export async function switchColumns(run: MigrationRun): Promise<SwitchResult> {
   const retainUntil = new Date((await serverNow(run.client)) + run.retainMs).toISOString();
   const withCheck = { ...o, check: o.check ?? (notNull && !o.newColumn.notNull ? { name: n.check, validated: true } : undefined) } as MigrationObservation;
   await inTransaction(run, async (exec) => {
-    for (const sql of switchStatements(withCheck, run.marker, retainUntil)) await exec(sql);
+    let state: SequenceState | undefined;
+    if (o.sequence?.kind === "identity" && n.change === "type") {
+      // Writers wait from here, so the sequence's position read next is where the moved identity carries on.
+      await exec(`LOCK TABLE ${n.qualifiedTable} IN ACCESS EXCLUSIVE MODE`);
+      const [row] = await exec(`SELECT last_value::text AS last, is_called AS called FROM ${o.sequence.ident}`);
+      state = { lastValue: String(row?.last), isCalled: row?.called === true };
+    }
+    for (const sql of switchStatements(withCheck, run.marker, retainUntil, state)) await exec(sql);
   });
   return { state: "switched", switched: true, oldColumn: n.oldColumn, retainUntil };
 }
