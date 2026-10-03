@@ -4,7 +4,7 @@ import { existsSync, statSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, basename, join, sep, isAbsolute, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
-import { isDeclarable, type Declarable } from "../declarable";
+import { isDeclarable, isResourceDeclarable, type Declarable } from "../declarable";
 import { Composite, isCompositeInstance, type CompositeInstance, type CompositeMembers } from "../composite";
 import { isAttrRefLike } from "../utils";
 import { isIntrinsic } from "../intrinsic";
@@ -51,9 +51,10 @@ import { importModule } from "./import";
 import {
   collectCompositeOrigins,
   collectParamDependencies,
+  collectTagOrigins,
   type CompositeParamScope,
 } from "./param-deps";
-import { setPathProvenance } from "../provenance";
+import { getInterpolationFields, setPathProvenance } from "../provenance";
 import { intrinsicCallFoldsEagerly, intrinsicTagFolds, type IntrinsicDef } from "../lexicon";
 import type { BuildParamValue } from "../build-params";
 
@@ -2511,6 +2512,27 @@ function stampCompositeOrigins(entity: unknown, node: ts.NewExpression, ctx: Res
 }
 
 /**
+ * chant #3212 — the same record for an entity a registered tag built inside an
+ * interpreted factory body (`` table`CREATE TABLE ${props.name} ...` ``).
+ *
+ * A tag's props come from parsing its text, so no object literal says which
+ * field each `${...}` landed in. The tag says so itself through
+ * `setInterpolationFields`; a tag that does not leaves the entity's fields
+ * `unknown`, as before.
+ */
+function stampTagOrigins(entity: unknown, node: ts.TaggedTemplateExpression, ctx: ResolveCtx): void {
+  const recorder = ctx.compositeParams;
+  if (!recorder || !isDeclarable(entity) || !isResourceDeclarable(entity)) return;
+  const fields = getInterpolationFields(entity);
+  if (!fields) return;
+  const interpolations = ts.isTemplateExpression(node.template)
+    ? node.template.templateSpans.map((span) => span.expression)
+    : [];
+  const origins = collectTagOrigins(interpolations, fields, entity.props, recorder.consts, recorder.scope, recorder.composite);
+  for (const [path, origin] of Object.entries(origins)) setPathProvenance(entity, path, origin);
+}
+
+/**
  * Interpret an admissible factory's body against `args`, and assemble the
  * result through chant's own {@link Composite}.
  *
@@ -2673,6 +2695,12 @@ async function interpretExpression(node: ts.Expression, ctx: ResolveCtx): Promis
   }
 
   if (ts.isNewExpression(node)) return interpretNewExpression(node, ctx);
+
+  if (ts.isTaggedTemplateExpression(node)) {
+    const value = (await resolveDeclaratorValue(node, ctx)).value;
+    stampTagOrigins(value, node, ctx);
+    return value;
+  }
 
   if (ts.isObjectLiteralExpression(node)) {
     const obj: Record<string, unknown> = {};

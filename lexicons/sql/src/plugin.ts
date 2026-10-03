@@ -27,6 +27,7 @@ import { CLICKHOUSE_EMULATOR } from "./op/activities/clickhouse-emulator";
 import { sqlSkills } from "./skill-defs";
 import { detectTemplate } from "./detect";
 import { CDC_TEMPLATE, DEFAULT_TEMPLATE, EVENTS_TEMPLATE } from "./init-templates";
+import { compositeCatalog } from "./composites/catalog";
 
 export const sqlPlugin: LexiconPlugin = {
   name: "sql",
@@ -101,6 +102,11 @@ export const sqlPlugin: LexiconPlugin = {
   },
 
   skills: sqlSkills,
+
+  /** The ClickHouse composites (./composites), as the catalog generated from their exports. */
+  composites() {
+    return compositeCatalog;
+  },
 
   // `chant init --lexicon sql [--template events|cdc]`; see ./init-templates.ts.
   initTemplates(template?: string) {

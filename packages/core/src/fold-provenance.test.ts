@@ -508,3 +508,143 @@ describe("fold provenance over a real composite build (#2161)", () => {
     expect(verdicts[3].resolution.kind).toBe("edit-declaration");
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// chant #3212 — a registered tag inside a composite factory.
+// ─────────────────────────────────────────────────────────────────────────
+
+const runtimePath = resolve(thisDir, "./runtime");
+const provenancePath = resolve(thisDir, "./provenance");
+
+/**
+ * A SQL-shaped tag, the shape the sql lexicon's `table` takes: it builds one
+ * entity out of its text and reports, per interpolation, which of the entity's
+ * fields that interpolation fed. An interpolated entity is a reference and
+ * feeds nothing the author typed, so it reports no field.
+ */
+const TAGS = `
+  import { createResource } from ${JSON.stringify(runtimePath)};
+  import { setInterpolationFields } from ${JSON.stringify(provenancePath)};
+  const Table = createResource("Test::Table", ${JSON.stringify(LEXICON_NAME)}, {});
+  const CLAUSE = { TABLE: "name", "ENGINE =": "engine", "ORDER BY": "orderBy", TTL: "ttl", COMMENT: "comment" };
+
+  export function table(strings, ...values) {
+    const isEntity = (v) => typeof v === "object" && v !== null && "props" in v;
+    let ddl = strings[0];
+    const fields = values.map((v, i) => {
+      ddl += (isEntity(v) ? v.props.name : String(v)) + strings[i + 1];
+      if (isEntity(v)) return [];
+      const at = (k) => strings[i].lastIndexOf(k);
+      const clause = Object.keys(CLAUSE).sort((a, b) => at(b) - at(a))[0];
+      return at(clause) >= 0 ? [CLAUSE[clause], "ddl"] : ["ddl"];
+    });
+    const m = /CREATE TABLE (\\w+) ENGINE = (\\w+) ORDER BY (\\w+)(?: TTL (.+?))?(?: COMMENT (\\w+))?$/.exec(ddl);
+    if (!m) throw new Error("cannot parse: " + ddl);
+    const props = { name: m[1], engine: m[2], orderBy: m[3], ddl };
+    if (m[4]) props.ttl = m[4];
+    if (m[5]) props.comment = m[5];
+    const entity = new Table(props);
+    setInterpolationFields(entity, fields);
+    return entity;
+  }
+`;
+
+const TAG_COMPOSITES = `
+  import { table } from "./tags";
+  import { Composite } from ${JSON.stringify(compositePath)};
+
+  export const EventsTable = Composite((props) => {
+    const rollupName = \`\${props.name}_daily\`;
+    const events = table\`CREATE TABLE \${props.name} ENGINE = MergeTree ORDER BY ts TTL ts + INTERVAL \${props.ttlDays} DAY\`;
+    const rollup = table\`CREATE TABLE \${rollupName} ENGINE = \${"SummingMergeTree"} ORDER BY ts COMMENT \${events}\`;
+    return { events, rollup };
+  }, "EventsTable");
+`;
+
+const TAG_MAIN = `
+  import { table } from "../tags";
+  import { EventsTable } from "../composites";
+
+  export const audit = table\`CREATE TABLE audit ENGINE = MergeTree ORDER BY ts\`;
+  export const clicks = EventsTable({ name: "clicks", ttlDays: 30 });
+`;
+
+describe("fold provenance through a tagged template in a composite factory (#3212)", () => {
+  let testDir: string;
+  let srcDir: string;
+
+  beforeEach(async () => {
+    const dir = join(repoRoot, ".cache", `chant-3212-${process.pid}-${seq++}`);
+    await rm(dir, { recursive: true, force: true });
+    await mkdir(dir, { recursive: true });
+    testDir = await realpath(dir);
+    srcDir = join(testDir, "src");
+    await mkdir(srcDir, { recursive: true });
+    await writeFile(join(testDir, "tags.ts"), TAGS);
+    await writeFile(join(testDir, "composites.ts"), TAG_COMPOSITES);
+    await writeFile(join(srcDir, "main.ts"), TAG_MAIN);
+  });
+
+  afterEach(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  const buildIt = () =>
+    build(srcDir, [namesSerializer], undefined, {
+      fold: true,
+      lexicons: [LEXICON_NAME],
+      intrinsics: [{ name: "table", isTag: true }],
+    });
+
+  test("a field fed by ${props.x} is that parameter, a field the text fixes is a literal", async () => {
+    const result = await buildIt();
+    expect(result.errors).toEqual([]);
+    const events = result.foldProvenance.clicksEvents;
+    const rollup = result.foldProvenance.clicksRollup;
+    const at = (parameters: string[]) => ({ kind: "composite-parameter", composite: "EventsTable", instance: "clicks", parameters });
+    const fixed = { kind: "composite-literal", composite: "EventsTable", instance: "clicks" };
+
+    expect(events.fields.name).toEqual(at(["name"]));
+    expect(events.fields.ttl).toEqual(at(["ttlDays"]));
+    expect(events.fields.ddl).toEqual(at(["name", "ttlDays"]));
+    expect(events.fields.engine).toEqual(fixed);
+    expect(events.fields.orderBy).toEqual(fixed);
+
+    // Through a body `const`; an interpolated literal string is fixed; an
+    // interpolated sibling entity is wiring, so it governs nothing.
+    expect(rollup.fields.name).toEqual(at(["name"]));
+    expect(rollup.fields.engine).toEqual(fixed);
+    expect(rollup.fields.comment).toEqual(fixed);
+    expect(rollup.fields.ddl).toEqual(at(["name"]));
+
+    expect(result.foldProvenance.audit.fields.ttl).toBeUndefined();
+    expect(result.foldProvenance.audit.fields.name).toEqual({ kind: "direct" });
+  });
+
+  test("drift on a parameter-fed field proposes the parameter at the call site", async () => {
+    const result = await buildIt();
+    const provenanceOf = (name: string): EntityProvenance | undefined => {
+      const entity = result.entities.get(name);
+      return entity ? getProvenance(entity) : undefined;
+    };
+    const drift = (name: string, path: string, declared: unknown, live: unknown): DeepEntityDrift => {
+      const origin = originOfPath(provenanceOf(name)?.paths, path);
+      return { name, type: "Test::Table", changes: [{ path, kind: "changed", declared, live, ...(origin ? { origin } : {}) }] };
+    };
+
+    const [ttl, engine] = resolveDeepDrift(
+      [
+        drift("clicksEvents", "ttl", "ts + INTERVAL 30 DAY", "ts + INTERVAL 90 DAY"),
+        drift("clicksEvents", "engine", "MergeTree", "ReplacingMergeTree"),
+      ],
+      provenanceOf,
+    );
+
+    expect(ttl.resolution.kind).toBe("propose-parameter");
+    if (ttl.resolution.kind !== "propose-parameter") throw new Error("unreachable");
+    expect(ttl.resolution.parameters).toEqual(["ttlDays"]);
+    expect(ttl.resolution.instance).toBe("clicks");
+    expect(ttl.resolution.sourceFile).toContain("main.ts");
+    expect(engine.resolution.kind).toBe("refuse-fixed");
+  });
+});

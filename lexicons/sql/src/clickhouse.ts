@@ -33,6 +33,7 @@ export {
   type ViewProps,
 } from "./clickhouse/entities";
 export * from "./generated/clickhouse";
+export * from "./composites";
 export type * from "./clickhouse/catalog-types";
 export { ENGINE_ARGUMENTS } from "./clickhouse/overlays/engines";
 export { SKIP_INDEX_PARAMETERS } from "./clickhouse/overlays/skip-indexes";
