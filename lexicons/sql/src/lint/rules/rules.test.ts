@@ -7,6 +7,7 @@ import { sqlch003 } from "./sqlch003";
 import { sqlpg001 } from "./sqlpg001";
 import { sqlpg002 } from "./sqlpg002";
 import { sqlpg003 } from "./sqlpg003";
+import { sqlpg004, providerFromConfig } from "./sqlpg004";
 
 const ctx = (code: string): LintContext => ({
   sourceFile: ts.createSourceFile("schema.ts", code, ts.ScriptTarget.Latest, true),
@@ -167,5 +168,61 @@ describe("SQLPG003: an object named in a regclass string", () => {
     const code = `${PG}import { seq } from "./seq";
 export const t = table\`CREATE TABLE t (a bigint DEFAULT nextval(\${seq}))\`;`;
     expect(sqlpg003.check(ctx(code))).toEqual([]);
+  });
+});
+
+describe("SQLPG004: an extension the configured provider does not allow", () => {
+  const withConfig = (code: string, sql: unknown): LintContext => ({ ...ctx(code), projectConfig: { sql } as never });
+  const PGX = 'import { extension, schema } from "@intentius/chant-lexicon-sql/postgres";\n';
+  const ext = (stmt: string) => `${PGX}export const e = extension\`${stmt}\`;`;
+
+  test("is reported at the extension's name when the provider's list lacks it", () => {
+    const [d, ...rest] = sqlpg004.check(withConfig(ext("CREATE EXTENSION pg_squeeze"), { provider: "rds" }));
+    expect(rest).toEqual([]);
+    expect(d).toMatchObject({ ruleId: "SQLPG004", severity: "error", line: 2, column: 45 });
+    expect(d!.message).toMatch(/Amazon RDS for PostgreSQL does not allow the extension "pg_squeeze"/);
+  });
+
+  test("an allowed extension, IF NOT EXISTS and a quoted name are read", () => {
+    expect(sqlpg004.check(withConfig(ext("CREATE EXTENSION IF NOT EXISTS pgcrypto"), { provider: "neon" }))).toEqual([]);
+    expect(sqlpg004.check(withConfig(ext('CREATE EXTENSION "uuid-ossp"'), { provider: "neon" }))).toEqual([]);
+    const d = sqlpg004.check(withConfig(ext("CREATE EXTENSION IF NOT EXISTS plv8"), { provider: "neon" }));
+    expect(d).toHaveLength(1);
+    expect(d[0]!.column).toBe(59);
+  });
+
+  test("each provider reports one name it lacks", () => {
+    const lacks: Record<string, string> = {
+      rds: "timescaledb",
+      aurora: "timescaledb",
+      "cloud-sql": "timescaledb",
+      azure: "pg_stat_monitor",
+      neon: "pg_squeeze",
+    };
+    for (const [provider, name] of Object.entries(lacks)) {
+      expect(sqlpg004.check(withConfig(ext(`CREATE EXTENSION ${name}`), { provider })), provider).toHaveLength(1);
+    }
+  });
+
+  test("a partial list (supabase) does not report a name outside it", () => {
+    expect(sqlpg004.check(withConfig(ext("CREATE EXTENSION pg_trgm"), { provider: "supabase" }))).toEqual([]);
+  });
+
+  test("with no provider, or profiles that disagree, it is silent", () => {
+    expect(sqlpg004.check(ctx(ext("CREATE EXTENSION pg_squeeze")))).toEqual([]);
+    expect(sqlpg004.check(withConfig(ext("CREATE EXTENSION pg_squeeze"), { dialect: "postgres" }))).toEqual([]);
+    const split = { profiles: { a: { url: "x", provider: "rds" }, b: { url: "y", provider: "neon" } } };
+    expect(sqlpg004.check(withConfig(ext("CREATE EXTENSION pg_squeeze"), split))).toEqual([]);
+  });
+
+  test("profiles that all name one provider set it", () => {
+    expect(providerFromConfig({ sql: { profiles: { a: { url: "x", provider: "rds" }, b: { url: "y", provider: "rds" } } } })).toBe("rds");
+    expect(providerFromConfig({ sql: { provider: "azure", profiles: { a: { url: "x", provider: "rds" } } } })).toBe("azure");
+  });
+
+  test("the ClickHouse tags and other statements are not read", () => {
+    const ch = 'import { table } from "@intentius/chant-lexicon-sql/clickhouse";\nexport const t = table`CREATE TABLE t (a String) ENGINE = Log`;';
+    expect(sqlpg004.check(withConfig(ch, { provider: "rds" }))).toEqual([]);
+    expect(sqlpg004.check(withConfig(`${PGX}export const s = schema\`CREATE SCHEMA app\`;`, { provider: "rds" }))).toEqual([]);
   });
 });
