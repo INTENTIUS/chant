@@ -83,3 +83,51 @@ describe("sql MCP resources", () => {
     expect(JSON.parse(await byUri("clickhouse-types").handler()).length).toBeGreaterThan(50);
   });
 });
+
+describe("sql MCP tools for Postgres", () => {
+  test("lookup finds a type, an access method and a storage parameter", async () => {
+    const t = (await tool("lookup").handler({ dialect: "postgres", kind: "type", name: "int4" })) as { matches: Array<{ aliasOf: string }> };
+    expect(t.matches[0]!.aliasOf).toBe("integer");
+    const m = (await tool("lookup").handler({ dialect: "postgres", kind: "index-method", name: "gin" })) as { matches: Array<{ properties: string[] }> };
+    expect(m.matches[0]!.properties.length).toBeGreaterThan(0);
+    const s = (await tool("lookup").handler({ dialect: "postgres", kind: "storage-parameter", name: "fillfactor" })) as { matches: Array<{ targets: string[] }> };
+    expect(s.matches[0]!.targets).toContain("table");
+  });
+
+  test("a function carries since, and major narrows", async () => {
+    const all = (await tool("lookup").handler({ dialect: "postgres", kind: "function", name: "array_sort" })) as { matches: Array<{ since?: number }> };
+    expect(all.matches[0]!.since).toBe(18);
+    const at15 = (await tool("lookup").handler({ dialect: "postgres", kind: "function", name: "array_sort", major: 15 })) as { matches: unknown[]; closest: string[] };
+    expect(at15.matches).toEqual([]);
+    await expect(tool("lookup").handler({ dialect: "postgres", kind: "function", name: "x", major: 13 })).rejects.toThrow(/major must be one of/);
+  });
+
+  test("lookup refuses a ClickHouse kind for Postgres", async () => {
+    await expect(tool("lookup").handler({ dialect: "postgres", kind: "engine", name: "x" })).rejects.toThrow(/kind must be one of/);
+  });
+
+  test("search", async () => {
+    const r = (await tool("search").handler({ dialect: "postgres", kind: "keyword", query: "defer", limit: 5 })) as { total: number };
+    expect(r.total).toBeGreaterThan(0);
+  });
+
+  test("parse-ddl returns the entity", async () => {
+    const r = (await tool("parse-ddl").handler({ dialect: "postgres", tag: "table", ddl: "CREATE TABLE app.t (id bigint PRIMARY KEY, n text NOT NULL)" })) as { ok: boolean; entityType: string; name: string; props: { columns: unknown[] } };
+    expect(r).toMatchObject({ ok: true, entityType: "Postgres::Table", name: "app.t" });
+    expect(r.props.columns).toHaveLength(2);
+  });
+
+  test("parse-ddl reports SQLPG001 at line and column", async () => {
+    const r = (await tool("parse-ddl").handler({ dialect: "postgres", tag: "table", ddl: "CREATE TABLE t (\n  a ARRAY[4]\n)" })) as { ok: boolean; rule: string; line: number };
+    expect(r).toMatchObject({ ok: false, rule: "SQLPG001", line: 2 });
+  });
+
+  test("the postgres resources are registered under the sql namespace", async () => {
+    const uris = sqlMcpResources().map((r) => r.uri);
+    expect(uris).toEqual(expect.arrayContaining(["postgres-pin", "postgres-types", "postgres-access-methods", "postgres-storage-parameters", "postgres-functions", "postgres-keywords", "postgres-settings", "clickhouse-engines"]));
+    const pin = JSON.parse(await sqlMcpResources().find((r) => r.uri === "postgres-pin")!.handler()) as { pins: unknown[] };
+    expect(pin.pins).toHaveLength(5);
+    const fns = JSON.parse(await sqlMcpResources().find((r) => r.uri === "postgres-functions")!.handler()) as Array<{ name: string; since?: number }>;
+    expect(fns.find((f) => f.name === "array_sort")?.since).toBe(18);
+  });
+});

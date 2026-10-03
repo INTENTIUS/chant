@@ -45,7 +45,10 @@ function withinLines(doc: Result, d: DecisionNode): string[] {
       .map((p) => doc.nodes.find((n) => n.id === p.to))
       .map((n) => (n && "ref" in n ? n.ref : undefined))
       .filter(Boolean);
-    const by = unit.length > 0 ? `unit ${unit.join(", ")}` : "no unit";
+    const carried = (c.joins?.records ?? []).filter((r) => r.node !== null).map((r) => `${r.kind}:${r.id}`);
+    const item = c.joins?.lease?.item;
+    if (item && !carried.some((r) => r.endsWith(`:${item}`))) carried.push(`lease on ${item}`);
+    const by = unit.length > 0 ? `unit ${unit.join(", ")}` : carried.length > 0 ? `carries ${carried.join(", ")}` : "no unit";
     const label = e.state === "decided" ? "decided " : "within  ";
     out.push(`  ${label}  ${short(c.sha)} ${c.subject}; ${by}${e.state === "decided" ? `, ${d.record}'s own work` : `, in ${d.record}'s window and not its work`}`);
   }
@@ -85,6 +88,18 @@ function artifactLine(doc: Result, a: ArtifactNode): string {
   return `artifact  ${a.path} ${a.pinState}; pinned by ${by.join(", ")}; now ${short(a.currentSha256)}`;
 }
 
+/** What chant's own trailers on a commit say (#3149), one line each. */
+function joinLines(j: CommitNode["joins"] | undefined): string[] {
+  if (!j) return [];
+  const out: string[] = [];
+  if (j.agent) out.push(`  agent     ${j.agent}`);
+  if (j.lease) out.push(`  lease     ${j.lease.token}${j.lease.item ? ` on ${j.lease.item}` : ", no lease history names it"}`);
+  if (j.run) out.push(`  run       ${j.run}`);
+  for (const r of j.records) out.push(`  record    ${r.kind}:${r.id}${r.node ? "" : ", in no kind read"}`);
+  if (j.applied) out.push(`  applied   by ${j.applied.by}${j.applied.at ? ` at ${j.applied.at}` : ""}${j.applied.commit ? `, ${short(j.applied.commit)}` : ""}`);
+  return out;
+}
+
 function commitLine(doc: Result, c: CommitNode): string[] {
   const lines = c.lines && c.lines.length > 0 ? `, lines ${c.lines.map((l) => (l.start === l.end ? `${l.start}` : `${l.start}-${l.end}`)).join(", ")}` : "";
   const out = [`commit    ${short(c.sha)} ${c.date.slice(0, 10)} ${c.author.name}: ${c.subject}${lines}; ${c.signature.level}`];
@@ -94,6 +109,7 @@ function commitLine(doc: Result, c: CommitNode): string[] {
     for (const s of edgesFrom(doc, e.to, "serves")) out.push(`  contract  ${s.to.slice("contract:".length)}`);
     for (const s of edgesFrom(doc, e.to, "cites-evidence")) out.push(`  evidence  ${s.to.slice("evidence:".length)}`);
   }
+  out.push(...joinLines(c.joins));
   return out;
 }
 
@@ -136,7 +152,9 @@ export function formatIntentRecord(doc: RecordResult): string {
   for (const c of doc.commits) {
     const why =
       c.bucket === "own"
-        ? `unit ${c.unit}`
+        ? c.unit !== null
+          ? `unit ${c.unit}`
+          : `carries ${[...(c.joins?.records ?? []).filter((x) => x.node !== null).map((x) => `${x.kind}:${x.id}`), ...(c.joins?.lease?.item ? [`lease on ${c.joins.lease.item}`] : [])].join(", ")}`
         : c.bucket === "worked"
           ? `worked by ${c.workedBy.map((w) => w.record).join(", ")}`
           : c.bucket === "within-other"

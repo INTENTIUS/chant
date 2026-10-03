@@ -483,6 +483,9 @@
             null
           ],
           "description": "How the decisions constraining the region by path relate to the commit (#2656). decided: it falls inside a decision's window and that decision's own unit made it. decided-by-window: it falls inside a window, and it is not the decision's own work, so the person judges it. undecided: outside every window, with the finding intent-commit-undecided. null: no record kind was read. Added within version 1, so an older document may lack it."
+        },
+        "joins": {
+          "$ref": "#/$defs/trailerJoins"
         }
       }
     },
@@ -1182,7 +1185,7 @@
       }
     },
     "edge": {
-      "description": "constrains: decision or work item to region, file or contract. pins: decision to artifact. touched-by: region to commit. produced-by: commit to unit. serves: unit to contract. supersedes: the newer decision to the one it replaces. cites-evidence: unit, contract or decision to evidence. links: consumer member to producer member. within: commit to a decision whose path window it falls in, or to a work item whose window it falls in. implements: work item to the decision it carries out. needs: work item to a work item it waits on. addressed-by: finding to a work item that addresses it.",
+      "description": "constrains: decision or work item to region, file or contract. pins: decision to artifact. touched-by: region to commit. produced-by: commit to unit. serves: unit to contract. supersedes: the newer decision to the one it replaces. cites-evidence: unit, contract or decision to evidence. links: consumer member to producer member. within: commit to a decision whose path window it falls in, or to a work item whose window it falls in. implements: work item to the decision it carries out. needs: work item to a work item it waits on. addressed-by: finding to a work item that addresses it. carries: commit to a decision or work item its Chant-Record trailer names, or to the work item its Chant-Lease was taken on (#3149).",
       "oneOf": [
         {
           "$ref": "#/$defs/constrainsEdge"
@@ -1400,7 +1403,8 @@
             "links",
             "implements",
             "needs",
-            "addressed-by"
+            "addressed-by",
+            "carries"
           ]
         }
       }
@@ -1475,6 +1479,123 @@
         },
         "subject": {
           "type": "string"
+        }
+      }
+    },
+    "trailerJoins": {
+      "type": "object",
+      "description": "What chant's own commit trailers join the commit to (#3149, ws-075). Added within version 1, so an older document may lack it.",
+      "required": [
+        "agent",
+        "lease",
+        "run",
+        "records",
+        "applied"
+      ],
+      "properties": {
+        "agent": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Chant-Agent: the agent session that wrote the commit (ws-067)."
+        },
+        "lease": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "token",
+                "item"
+              ],
+              "properties": {
+                "token": {
+                  "type": "string",
+                  "description": "Chant-Lease: the work lease's fencing token."
+                },
+                "item": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "The work item a lease history on the local chant/lifecycle branch names for the token, or null when none does."
+                }
+              }
+            }
+          ]
+        },
+        "run": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Chant-Run: the agent run that made the commit (#3033)."
+        },
+        "records": {
+          "type": "array",
+          "description": "Each well-formed Chant-Record value, <kind>:<id>, in order.",
+          "items": {
+            "type": "object",
+            "required": [
+              "kind",
+              "id",
+              "node"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "description": "The record kind's name."
+              },
+              "id": {
+                "type": "string"
+              },
+              "node": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The id of the record's node, record:<kind>/<id>, when a kind read has the record; null otherwise."
+              }
+            }
+          }
+        },
+        "applied": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "by",
+                "at",
+                "commit"
+              ],
+              "properties": {
+                "by": {
+                  "type": "string",
+                  "description": "Chant-Applied-By: who applied the branch."
+                },
+                "at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Chant-Applied-At, ISO 8601, or null when it is missing."
+                },
+                "commit": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Chant-Applied-Commit: the applied branch's tip, or null when it is missing or not a commit id."
+                }
+              }
+            }
+          ]
         }
       }
     }

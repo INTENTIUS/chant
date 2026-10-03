@@ -276,6 +276,8 @@ const FLUX_OPERATOR_INSTALL = `https://github.com/controlplaneio-fluxcd/flux-ope
  */
 const KUBEMICROVM_CHART = "oci://ghcr.io/codriverlabs/helm/kube-microvm-operator";
 const KUBEMICROVM_VERSION = "1.0.11";
+// The chart layer of 1.0.11 on ghcr.io, so a re-pushed tag cannot change generated output.
+const KUBEMICROVM_CHART_DIGEST = "sha256:b15570736277f69bc69bc6bd1d6b89470404b8bbd45970b7dcb29ca9ab69170c";
 
 /**
  * k3s bundled-controller CRDs — helm.cattle.io/v1 + k3s.cattle.io/v1
@@ -562,6 +564,7 @@ export const CRD_SOURCES: CRDSource[] = [
     type: "helm",
     chart: KUBEMICROVM_CHART,
     version: KUBEMICROVM_VERSION,
+    digest: KUBEMICROVM_CHART_DIGEST,
     kinds: ["MicroVM", "MicroVMImage", "MicroVMNetwork", "MicroVMClass", "MicroVMReplicaSet"],
   },
   { type: "url", url: `${KSERVE_CRD_BASE}/serving.kserve.io_inferenceservices.yaml` },
