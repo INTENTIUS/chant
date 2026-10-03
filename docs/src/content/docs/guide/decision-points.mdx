@@ -121,7 +121,7 @@ Every record carries a `source` block ([#2708](https://github.com/INTENTIUS/chan
 
 ## Answer the open questions
 
-A question is open while it is escalated or proposed. `chant workspace points --open --json` lists them with any model's answer, confidence and reason, so hud can prompt a person and show why the model chose. `chant serve mcp` serves the same list as the `workspace-points` tool.
+A question is open while it is escalated or proposed. `chant workspace points --open --json` lists them with any model's answer and confidence, so hud can prompt a person. The model's `reason` comes with its answer, so the person also sees why it chose. `chant serve mcp` serves the same list as the `workspace-points` tool.
 
 ```bash
 chant workspace points answer slice-tier-074b660bbaad --answer medium --by alice
