@@ -114,6 +114,28 @@ describe("the session kind (#2673)", () => {
     expect(then.records.find((r) => r.id === "S-0002")).toMatchObject({ state: "open", valid: true, citedBy: [] });
   });
 
+  test("a verdict may name a contract or a driver, the session kind's other subjects, and a contract review cites the session (#3148, ws-082)", async () => {
+    const root = fixture();
+    const contractFile = join(root, "design", "contracts", "C-001-the-home-page-follows-its-screen-spec.md");
+    writeFileSync(contractFile, readFileSync(contractFile, "utf-8").replace("reviews: []", 'reviews:\n  - reviewer: "alice"\n    verdict: "agree"\n    on: "2026-09-24"\n    session: "S-0002"'));
+    writeFileSync(
+      join(root, "design", "sessions", "S-0002-walk.md"),
+      sessionText({
+        id: "S-0002",
+        state: "closed",
+        agenda: ["C-001", "D-001"],
+        verdicts: [
+          { record: "C-001", principal: "alice", verdict: "agree" },
+          { record: "D-001", principal: "alice", verdict: "agree" },
+          { record: "C-999", principal: "alice", verdict: "agree" },
+        ],
+      }),
+    );
+    const s2 = (await read(root)).records.find((r) => r.id === "S-0002")!;
+    expect(s2.reasons).toEqual([{ code: "session-verdict-unknown-record", message: expect.stringMatching(/verdicts\[2\] names C-999, which no .*decision\.kind\.mjs or .*contract\.kind\.mjs or .*driver\.kind\.mjs record has/) }]);
+    expect(s2.citedBy).toEqual([{ id: "C-001", path: "design/contracts/C-001-the-home-page-follows-its-screen-spec.md", index: 0, reviewer: "alice", verdict: "agree" }]);
+  });
+
   test("the decision kind accepts a review entry naming its session", async () => {
     const root = fixture();
     reviewed(root, ["alice"], "S-0001");

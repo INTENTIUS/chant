@@ -38,8 +38,10 @@
  *
  * The workspace is generated for each run, from the reader suite's fixture
  * and the `__writer_fixture__/` overlay this package ships beside this module:
- * the reference workspace's work, answer and session kinds, its decision
- * points, and one open work item, W-001. Nothing is written anywhere else.
+ * the reference workspace's work, answer and session kinds (with the
+ * contract and driver kinds a session's verdicts may also name), its
+ * decision points, and one open work item, W-001. Nothing is written
+ * anywhere else.
  *
  * Actions a writer does not list in `actions` are not applicable to it. The
  * suite still performs those steps itself, directly through chant, so a later
@@ -320,6 +322,16 @@ export const WRITER_SCRIPT: readonly WriterScriptStep[] = [
       opened: "2026-01-01T00:00:00Z",
       closed: null,
       verdicts: [],
+      // A review comment anchored in the app, as a UI review batch keeps it (#3350).
+      comments: [
+        {
+          text: "The status line should say which build is running.",
+          by: WRITER_PRINCIPALS.reviewer,
+          anchor: { route: "/", elements: [{ selector: "#status", tag: "p", text: "Running.", state: "anchored", basis: "id" }] },
+          answers: [{ round: 0, disposition: "needs-discussion", note: "Which build: the commit or the release?", by: WRITER_PRINCIPALS.holder, at: "2026-01-01T00:02:00Z" }],
+        },
+      ],
+      rounds: [{ round: 0, note: null, by: WRITER_PRINCIPALS.reviewer, at: "2026-01-01T00:01:00Z", ended: "2026-01-01T00:03:00Z" }],
     },
   })),
   step("close", "records close", (d) => ({ id: String(d.session.id), kind: WRITER_KINDS.session })),

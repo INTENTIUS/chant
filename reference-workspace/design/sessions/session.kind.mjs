@@ -8,11 +8,16 @@
 //
 // A session is a group walking an agenda of records together. It keeps who
 // attended and the verdicts it produced, and it is sealed when it closes.
-// Each verdict it produced is also an entry in the judged decision's reviews
-// list, whose session field names the session. chud's session files (such
-// as sessions/S-0001.json) are the starting shape; sessions are markdown
-// front matter here because that is the only record format chant reads
-// (#2664).
+// Each verdict it produced is also an entry in the judged record's reviews
+// list, whose session field names the session. Its verdicts judge decisions,
+// contracts and drivers (#3148, ws-082): studio's design sessions, which
+// approved contracts and signed off drivers, are this kind, and so is a
+// comment-mode review of the app's UI, one session per review batch, with
+// its anchored comments, the agent's answers and the rounds of replies
+// (#3350, ws-083). chud's session
+// files (such as sessions/S-0001.json) are the starting shape; sessions are
+// markdown front matter so that records new, amend, review and close write
+// them.
 export const recordKind = {
   name: "session",
   location: { dir: ".", match: "^S-[0-9]{4,}-.+\\.md$" },
@@ -32,15 +37,16 @@ export const recordKind = {
   // of the session without closed_digest (front matter as core, the text
   // below it as body, line endings LF), written when the session closes
   // (#2546).
-  // subjects: the decisions the verdicts name. Entries of their reviews list
-  // (the decision kind's reviews.field) name a session.
+  // subjects: the kinds of the records the verdicts name, decisions,
+  // contracts and drivers. Entries of their reviews lists (each kind's
+  // reviews.field) name a session.
   // openedRev, closedRev and closedOn (#2693): the fields records new and
   // records close write, the commits the session opened and closed at and
   // the time it closed. records --since <session id> reads the commits.
   session: {
     verdicts: "verdicts",
     seal: "closed_digest",
-    subjects: { kind: "../../decisions/decision.kind.mjs" },
+    subjects: { kinds: ["../../decisions/decision.kind.mjs", "../contracts/contract.kind.mjs", "../drivers/driver.kind.mjs"] },
     openedRev: "opened_rev",
     closedRev: "closed_rev",
     closedOn: "closed",

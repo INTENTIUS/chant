@@ -1,0 +1,143 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:intentius:chant:evidence:1",
+  "title": "Evidence of one check run",
+  "description": "design/evidence/<sha256>.json (#3148, ws-082): the result of one run of one contract's check, named for the SHA-256 of the file's bytes. chant workspace records new writes it from the fields, as JSON with two-space indents and a final newline, and it never changes afterwards. A work item cites it as evidence for a criterion by its path and hash (chant workspace work evidence --path). The fields are the ones studio's factory writes (arugula-salad/studio#47), so evidence written before this kind reads as it.",
+  "type": "object",
+  "additionalProperties": false,
+  "patternProperties": {
+    "^x-": {}
+  },
+  "required": ["contract", "check_sha", "commit", "tree", "runner", "ok", "criteria", "output", "at"],
+  "properties": {
+    "contract": {
+      "description": "The contract checked, and its digest when the check ran: the digest chant workspace records --json prints for the contract record (the SHA-256 of its text without its reviews block). Evidence studio's factory wrote before this kind carries the contract's approved_sha there.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "sha"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^C-[0-9]{3,}$" },
+        "sha": { "$ref": "#/definitions/sha256" }
+      }
+    },
+    "check_sha": {
+      "description": "The SHA-256 of the check file that ran. The contract's checks pin it by the same hash.",
+      "$ref": "#/definitions/sha256"
+    },
+    "check": {
+      "description": "The check file that ran, from the workspace root. Optional.",
+      "type": "string",
+      "pattern": "^(?!/)(?!(?:[^/]*/)*\\.{1,2}(?:/|$))(?!.*//)[^\\\\\\u0000-\\u001f]*[^/\\\\\\u0000-\\u001f]$"
+    },
+    "commit": {
+      "description": "The commit tested, or null when the working tree was tested and differed from HEAD in the app or the check.",
+      "oneOf": [{ "type": "null" }, { "$ref": "#/definitions/gitId" }]
+    },
+    "tree": {
+      "description": "The git tree id of the app as tested. With contract.sha it names what the evidence is about: a release accepts evidence for the tree its commit holds.",
+      "$ref": "#/definitions/gitId"
+    },
+    "work": {
+      "description": "The work item the run checked, when it ran under one's lease. Optional.",
+      "type": "string",
+      "pattern": "^W-[0-9]{3,}$"
+    },
+    "lease": {
+      "description": "The fencing token of the work lease the run held, which joins the evidence to the run record and to the commits that carry the same Chant-Lease trailer (ws-075). Optional.",
+      "type": "string",
+      "minLength": 1
+    },
+    "runner": {
+      "description": "Who ran the check: a kind, such as factory-check for studio's factory, and the runner's name and version.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },
+        "name": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 }
+      }
+    },
+    "ok": {
+      "description": "Whether the check passed: it exited 0, ran at least one test, and left no criterion unchecked.",
+      "type": "boolean"
+    },
+    "tests": {
+      "description": "How many tests ran, not counting skipped ones. A check that ran none is not evidence.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "criteria": {
+      "description": "The result per acceptance criterion, keyed by the contract's criterion id (a1, a2, ...): pass, fail, or unchecked when no test named after it ran.",
+      "type": "object",
+      "propertyNames": { "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$" },
+      "additionalProperties": { "enum": ["pass", "fail", "unchecked"] }
+    },
+    "output": {
+      "description": "The tail of the check's output, at most 6000 characters.",
+      "type": "string",
+      "maxLength": 6000
+    },
+    "at": {
+      "description": "When the run ended, as an ISO 8601 timestamp.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$"
+    },
+    "structural": {
+      "description": "Checks of the contract's references (design assets a criterion is checked against): for each referenced section, each route, element and text it declares, and whether the running app has it. Their results count toward criteria. Optional.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["criterion", "asset", "ok", "expectations"],
+        "properties": {
+          "criterion": { "type": "string", "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$" },
+          "asset": { "type": "string", "minLength": 1 },
+          "ok": { "type": "boolean" },
+          "problem": {
+            "description": "Why nothing was checked: the section is missing, or declares nothing.",
+            "type": "string",
+            "maxLength": 1000
+          },
+          "expectations": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "target", "ok", "detail"],
+              "properties": {
+                "kind": { "enum": ["route", "element", "text"] },
+                "target": { "description": "The route, the CSS selector, or the text.", "type": "string" },
+                "page": { "description": "The page an element or text was looked for on.", "type": ["string", "null"] },
+                "ok": { "type": "boolean" },
+                "detail": { "type": "string", "maxLength": 500 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "source": {
+      "description": "Where what was checked came from, when a builder made it (#2708): how the record was written (via), the builder's harness, its model and its conversation (session). chant checks the shapes of the fields it knows.",
+      "type": "object",
+      "properties": {
+        "via": { "enum": ["cli", "mcp", "harvest"] },
+        "harness": { "type": "string", "minLength": 1 },
+        "model": { "type": "string", "minLength": 1 },
+        "session": {}
+      }
+    }
+  },
+  "definitions": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "gitId": {
+      "description": "A full git object id: 40 hex digits, or 64 in a SHA-256 repository.",
+      "type": "string",
+      "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+    }
+  }
+}

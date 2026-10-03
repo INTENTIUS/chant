@@ -12,7 +12,7 @@
  * `citedBy`. This module only reads; nothing here writes a seal into a file.
  */
 
-import { recordSeal, type RecordEntry, type RecordFormat, type RecordKind } from "./records";
+import { recordSeal, sessionSubjectKinds, type RecordEntry, type RecordFormat, type RecordKind, type SessionSubjects } from "./records";
 
 /** A subject record's review entry that names a session in its `session` field. */
 export interface SessionCitation {
@@ -43,18 +43,19 @@ export function sessionSeal(text: string, field: string, format: RecordFormat = 
 /**
  * Check each session in `entries` against its seal and the subject records,
  * and fill in `citedBy`. `texts` holds each entry's file text by path.
- * `subjects` holds the subject records and the name of their reviews list;
- * it is null when they were not read, and then no verdict is checked.
+ * `subjects` holds the records of each subject kind and the name of their
+ * reviews list; it is null when they were not read, and then no verdict is
+ * checked.
  */
-export function joinSessions(kind: RecordKind, entries: RecordEntry[], texts: Map<string, string>, subjects: { records: RecordEntry[]; reviews: string } | null): void {
+export function joinSessions(kind: RecordKind, entries: RecordEntry[], texts: Map<string, string>, subjects: SessionSubjects[] | null): void {
   const decl = kind.session;
   if (!decl) return;
   const closed = new Set(kind.closedStates);
-  const subjectIds = new Set(subjects?.records.map((s) => s.id).filter((id): id is string => id !== null) ?? []);
+  const subjectIds = new Set((subjects ?? []).flatMap((k) => k.records.map((s) => s.id)).filter((id): id is string => id !== null));
   const citations = new Map<string, SessionCitation[]>();
-  for (const s of subjects?.records ?? []) {
+  for (const { s, reviewsField } of (subjects ?? []).flatMap((k) => k.records.map((s) => ({ s, reviewsField: k.reviews })))) {
     if (s.id === null) continue;
-    const reviews = s.data?.[subjects!.reviews];
+    const reviews = s.data?.[reviewsField];
     if (!Array.isArray(reviews)) continue;
     reviews.forEach((r, index) => {
       if (r === null || typeof r !== "object") return;
@@ -96,7 +97,7 @@ export function joinSessions(kind: RecordKind, entries: RecordEntry[], texts: Ma
       if (v === null || typeof v !== "object") return;
       const record = (v as Record<string, unknown>).record;
       if (typeof record === "string" && !subjectIds.has(record)) {
-        e.reasons.push({ code: "session-verdict-unknown-record", message: `${decl.verdicts}[${i}] names ${record}, which no ${decl.subjects.kind} record has` });
+        e.reasons.push({ code: "session-verdict-unknown-record", message: `${decl.verdicts}[${i}] names ${record}, which no ${sessionSubjectKinds(decl).join(" or ")} record has` });
       }
     });
   }

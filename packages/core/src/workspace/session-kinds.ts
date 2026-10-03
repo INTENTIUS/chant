@@ -11,7 +11,7 @@ import { execFileSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { WorkspaceReadError } from "./declaration";
 import { gitRoot, resolveRevision } from "./record-source";
-import { loadRecordKind, RecordReadError, type LoadedRecordKind } from "./records";
+import { loadRecordKind, RecordReadError, sessionSubjectKinds, type LoadedRecordKind } from "./records";
 import { declaredKindFiles, realpathOr } from "./records-cli";
 
 /** The shape of an id `records --since` looks up as a session before reading it as a revision: `S-0002`, `ws-052`. */
@@ -46,10 +46,10 @@ export async function findSessionKinds(cwd: string, extra: string[] = []): Promi
   return out;
 }
 
-/** The session kinds whose `session.subjects.kind` is the kind file `subjectFile`. */
+/** The session kinds one of whose subject kinds (`session.subjects.kind` or `.kinds`) is the kind file `subjectFile`. */
 export async function sessionKindsFor(subjectFile: string, cwd: string): Promise<LoadedRecordKind[]> {
   const target = realpathOr(resolve(cwd, subjectFile));
-  return (await findSessionKinds(cwd)).filter((k) => realpathOr(resolve(dirname(k.file), k.kind.session!.subjects.kind)) === target);
+  return (await findSessionKinds(cwd)).filter((k) => sessionSubjectKinds(k.kind.session!).some((f) => realpathOr(resolve(dirname(k.file), f)) === target));
 }
 
 /** The full commit id HEAD names in the repository holding `dir`, or null outside git or before the first commit. */
