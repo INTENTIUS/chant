@@ -1,5 +1,5 @@
 /**
- * The ClickHouse composites: their props and defaults, the entity types they
+ * The sql composites (ClickHouse #3212, Postgres #3286): their props and defaults, the entity types they
  * build, the references between members, the lexicon's own post-synth checks
  * over what they build, and the provenance each field keeps (#3212).
  */
@@ -13,7 +13,8 @@ import { build } from "@intentius/chant/build";
 import type { Declarable } from "@intentius/chant/declarable";
 import type { SerializerResult } from "@intentius/chant/serializer";
 import { makePostSynthCtx } from "@intentius/chant-test-utils";
-import { CdcMirror, EventsTable, ReplacingTable, RollupView, ShardedTable } from "./index";
+import { AuditLogTable, CdcMirror, EventsTable, JoinTable, RefreshedView, ReplacingTable, RollupView, ShardedTable, SoftDeleteTable, TenantTable } from "./index";
+import { schema, POSTGRES_ENTITY_TYPES, type PostgresTable } from "../postgres/entities";
 import { table, CLICKHOUSE_ENTITY_TYPES, SqlTemplateError, type ClickHouseObject } from "../clickhouse/entities";
 import { sqlSerializer } from "../serializer";
 import { postSynthChecks } from "../lint/post-synth";
@@ -335,6 +336,324 @@ describe("each field keeps its provenance when the composite is interpreted", ()
     });
     expect(run.errors).toEqual([]);
     expect(result.outputs.get("sql")).toBeDefined();
+    expect(result.outputs.get("sql")).toEqual(run.outputs.get("sql"));
+  });
+});
+
+// ── Postgres composites (#3286) ────────────────────────────────────────
+
+describe("the Postgres composites", () => {
+  const pgTable = (e: unknown) => (e as PostgresTable).props;
+  const pgDdl = (e: unknown) => flat((e as { props: { ddl: string } }).props.ddl);
+  const users = () =>
+    SoftDeleteTable({ name: "users", schema: "app", columns: "id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, email text NOT NULL" });
+
+  describe("SoftDeleteTable", () => {
+    test("defaults: the three timestamp columns, a view and an index over the live rows, in the public schema", () => {
+      const { table: t, live, liveIndex } = SoftDeleteTable({ name: "teams", columns: "id bigint PRIMARY KEY, name text NOT NULL" });
+      expect(t.entityType).toBe(POSTGRES_ENTITY_TYPES.table);
+      expect(pgTable(t).schema).toBe("public");
+      expect(pgTable(t).columns.map((c) => c.name)).toEqual(["id", "name", "created_at", "updated_at", "deleted_at"]);
+      expect(pgTable(t).columns.slice(2).map((c) => [c.type, c.notNull ?? false, c.default])).toEqual([
+        ["timestamptz", true, "now()"],
+        ["timestamptz", true, "now()"],
+        ["timestamptz", false, undefined],
+      ]);
+      expect(live.entityType).toBe(POSTGRES_ENTITY_TYPES.view);
+      expect(pgDdl(live)).toBe(
+        "CREATE VIEW public.teams_live WITH (security_invoker = true) AS SELECT * FROM public.teams WHERE deleted_at IS NULL",
+      );
+      expect(liveIndex.props.name).toBe("teams_live_idx");
+      expect(liveIndex.props.where).toBe("deleted_at IS NULL");
+      expect(liveIndex.props.elements.map((e) => e.column)).toEqual(["id"]);
+      expect(live.dependsOn).toEqual([t]);
+      expect(liveIndex.dependsOn).toEqual([t]);
+    });
+
+    test("the schema, the column names, the live key and the comment are parameters", () => {
+      const app = schema`CREATE SCHEMA app`;
+      const { table: t, live, liveIndex } = SoftDeleteTable({
+        name: "users",
+        schema: app,
+        columns: "id bigint PRIMARY KEY, email text NOT NULL",
+        liveKey: "email",
+        createdAt: "made",
+        updatedAt: "touched",
+        deletedAt: "gone",
+        comment: "Accounts",
+      });
+      expect(pgTable(t).schema).toBe("app");
+      expect(pgTable(t).columns.slice(2).map((c) => c.name)).toEqual(["made", "touched", "gone"]);
+      expect(pgTable(t).comment).toBe("Accounts");
+      expect(pgDdl(live)).toContain("WHERE gone IS NULL");
+      expect(liveIndex.props.where).toBe("gone IS NULL");
+      expect(liveIndex.props.elements.map((e) => e.column)).toEqual(["email"]);
+      expect(t.dependsOn).toEqual([app]);
+    });
+  });
+
+  describe("AuditLogTable", () => {
+    test("defaults: range-partitioned by occurred_at, the key includes it, a default partition and an actor index", () => {
+      const { table: log, defaultPartition, actorIndex } = AuditLogTable({ name: "audit", schema: "app" });
+      expect(pgTable(log).partitionBy).toBe("RANGE (occurred_at)");
+      expect(pgTable(log).primaryKey?.columns).toEqual(["id", "occurred_at"]);
+      expect(pgTable(log).columns.map((c) => c.name)).toEqual(["id", "occurred_at", "actor", "action", "subject", "details"]);
+      expect(pgTable(defaultPartition).name).toBe("audit_default");
+      expect(pgTable(defaultPartition).partitionOf).toBe(log);
+      expect(pgTable(defaultPartition).partitionBound).toBe("DEFAULT");
+      expect(actorIndex.props.elements.map((e) => e.column)).toEqual(["actor", "occurred_at"]);
+      expect(defaultPartition.dependsOn).toContain(log);
+    });
+
+    test("the timestamp and actor columns are parameters", () => {
+      const { table: log, actorIndex } = AuditLogTable({ name: "audit", timestamp: "at", actor: "who" });
+      expect(pgTable(log).partitionBy).toBe("RANGE (at)");
+      expect(pgTable(log).primaryKey?.columns).toEqual(["id", "at"]);
+      expect(actorIndex.props.elements.map((e) => e.column)).toEqual(["who", "at"]);
+    });
+  });
+
+  describe("JoinTable", () => {
+    const sides = () => ({
+      left: TenantTable({ name: "people", columns: "id bigint NOT NULL", primaryKey: "id", indexOn: "id" }).table,
+      right: users().table,
+    });
+
+    test("defaults: bigint columns referencing id, cascade deletes, a composite key and the reverse index", () => {
+      const { left, right } = sides();
+      const { table: links, reverseIndex } = JoinTable({ name: "memberships", left, leftColumn: "person_id", right, rightColumn: "user_id" });
+      expect(pgTable(links).primaryKey?.columns).toEqual(["person_id", "user_id"]);
+      expect(pgTable(links).columns.map((c) => [c.name, c.type])).toEqual([
+        ["person_id", "bigint"],
+        ["user_id", "bigint"],
+        ["created_at", "timestamptz"],
+      ]);
+      expect(pgTable(links).foreignKeys.map((f) => [f.columns, f.refTable, f.refColumns, f.onDelete])).toEqual([
+        [["person_id"], "public.people", ["id"], "CASCADE"],
+        [["user_id"], "app.users", ["id"], "CASCADE"],
+      ]);
+      expect(reverseIndex.props.name).toBe("memberships_reverse_idx");
+      expect(reverseIndex.props.elements.map((e) => e.column)).toEqual(["user_id", "person_id"]);
+      expect(links.dependsOn).toEqual(expect.arrayContaining([left, right]));
+    });
+
+    test("the keys, the types and the delete action are parameters", () => {
+      const { left, right } = sides();
+      const { table: links } = JoinTable({
+        name: "links",
+        left,
+        leftKey: "tenant_id",
+        leftColumn: "a",
+        leftType: "uuid",
+        right,
+        rightKey: "email",
+        rightColumn: "b",
+        rightType: "text",
+        onDelete: "RESTRICT",
+      });
+      expect(pgTable(links).columns.slice(0, 2).map((c) => c.type)).toEqual(["uuid", "text"]);
+      expect(pgTable(links).foreignKeys.map((f) => [f.refColumns, f.onDelete])).toEqual([
+        [["tenant_id"], "RESTRICT"],
+        [["email"], "RESTRICT"],
+      ]);
+    });
+  });
+
+  describe("TenantTable", () => {
+    test("defaults: a uuid tenant_id first, leading the primary key and the index", () => {
+      const { table: t, index: byTenant } = TenantTable({
+        name: "notes",
+        schema: "app",
+        columns: "id bigint NOT NULL, body text",
+        primaryKey: "id",
+        indexOn: "id",
+      });
+      expect(pgTable(t).columns[0]).toMatchObject({ name: "tenant_id", type: "uuid", notNull: true });
+      expect(pgTable(t).primaryKey?.columns).toEqual(["tenant_id", "id"]);
+      expect(byTenant.props.name).toBe("notes_tenant_idx");
+      expect(byTenant.props.elements.map((e) => e.column)).toEqual(["tenant_id", "id"]);
+    });
+
+    test("the tenant column, its type and a compound key are parameters", () => {
+      const { table: t, index: byTenant } = TenantTable({
+        name: "notes",
+        columns: "a int NOT NULL, b int NOT NULL, at timestamptz",
+        primaryKey: "a, b",
+        indexOn: "at DESC",
+        tenant: "org_id",
+        tenantType: "bigint",
+      });
+      expect(pgTable(t).columns[0]).toMatchObject({ name: "org_id", type: "bigint" });
+      expect(pgTable(t).primaryKey?.columns).toEqual(["org_id", "a", "b"]);
+      expect(byTenant.props.elements.map((e) => e.column)).toEqual(["org_id", "at"]);
+    });
+  });
+
+  describe("RefreshedView", () => {
+    test("defaults: a materialized view over its source and a unique index on the grouping key", () => {
+      const source = users().table;
+      const { view, uniqueIndex } = RefreshedView({ name: "by_email", schema: "app", source, select: "email, count(*) AS n", groupBy: "email" });
+      expect(view.entityType).toBe(POSTGRES_ENTITY_TYPES.materializedView);
+      expect(pgDdl(view)).toBe("CREATE MATERIALIZED VIEW app.by_email AS SELECT email, count(*) AS n FROM app.users GROUP BY email");
+      expect(view.props.reads).toEqual([source]);
+      expect(view.dependsOn).toContain(source);
+      expect(uniqueIndex.props.unique).toBe(true);
+      expect(uniqueIndex.props.name).toBe("by_email_key");
+      expect(uniqueIndex.props.elements.map((e) => e.column)).toEqual(["email"]);
+      expect(uniqueIndex.dependsOn).toEqual([view]);
+    });
+
+    test("the unique index's columns are a parameter", () => {
+      const { uniqueIndex } = RefreshedView({
+        name: "daily",
+        source: users().table,
+        select: "email, id, count(*) AS n",
+        groupBy: "email, id",
+        uniqueOn: "id, email",
+      });
+      expect(uniqueIndex.props.elements.map((e) => e.column)).toEqual(["id", "email"]);
+    });
+  });
+
+  test("a prop that is not valid SQL is refused at the interpolation that carried it", () => {
+    expect(() => TenantTable({ name: "notes", columns: "id bigint NOT NULL, (", primaryKey: "id", indexOn: "id" })).toThrow(SqlTemplateError);
+  });
+
+  test("SQLPG101 to SQLPG118 find nothing in any of them", () => {
+    const people = users();
+    const teams = SoftDeleteTable({ name: "teams", schema: "app", columns: "id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, name text NOT NULL" });
+    const members = JoinTable({ name: "memberships", schema: "app", left: people.table, leftColumn: "user_id", right: teams.table, rightColumn: "team_id" });
+    const instances: Array<[string, CompositeInstance]> = [
+      ["users", people],
+      ["teams", teams],
+      ["audit", AuditLogTable({ name: "audit", schema: "app" })],
+      ["memberships", members],
+      [
+        "notes",
+        TenantTable({ name: "notes", schema: "app", columns: "id bigint NOT NULL, body text, created_at timestamptz", primaryKey: "id", indexOn: "created_at DESC" }),
+      ],
+      ["sizes", RefreshedView({ name: "team_sizes", schema: "app", source: members.table, select: "team_id, count(*) AS members", groupBy: "team_id" })],
+    ];
+    const entities = new Map<string, Declarable>([["app", schema`CREATE SCHEMA app` as unknown as Declarable]]);
+    for (const [name, instance] of instances) for (const [k, v] of expandComposite(name, instance)) entities.set(k, v);
+
+    const out = sqlSerializer.serialize(entities) as SerializerResult;
+    const doc = JSON.parse(out.primary) as { applyOrder: string[]; dialect: string };
+    expect(doc.dialect).toBe("postgres");
+    const at = (n: string) => doc.applyOrder.indexOf(n);
+    expect(at("usersTable")).toBeLessThan(at("membershipsTable"));
+    expect(at("membershipsTable")).toBeLessThan(at("sizesView"));
+    expect(at("sizesView")).toBeLessThan(at("sizesUniqueIndex"));
+    expect(at("auditTable")).toBeLessThan(at("auditDefaultPartition"));
+
+    const ctx = makePostSynthCtx("sql", out.primary, entities);
+    const checks = postSynthChecks.filter((c) => c.id.startsWith("SQLPG"));
+    expect(checks).toHaveLength(18);
+    expect(checks.flatMap((check) => check.check(ctx).map((d) => `${check.id} ${d.message}`))).toEqual([]);
+  });
+});
+
+// Provenance through the package import (#3246, #3268)
+
+/** The schema is in its own file: a same-file reference to a folded entity makes the call run. */
+const PG_APP = `
+  import { schema } from "@intentius/chant-lexicon-sql/postgres";
+
+  export const app = schema\`CREATE SCHEMA app\`;
+`;
+
+const PG_ACCOUNTS = `
+  import { SoftDeleteTable, TenantTable } from "@intentius/chant-lexicon-sql/postgres";
+  import { app } from "./app";
+
+  export const users = SoftDeleteTable({ name: "users", schema: app, columns: "id bigint PRIMARY KEY, email text NOT NULL", liveKey: "email", deletedAt: "gone_at" });
+  export const notes = TenantTable({ name: "notes", schema: app, columns: "id bigint NOT NULL, body text", primaryKey: "id", indexOn: "id", tenant: "org_id" });
+`;
+
+/** In its own file: a same-file reference to another composite call's member falls back to run. */
+const PG_LINKS = `
+  import { JoinTable } from "@intentius/chant-lexicon-sql/postgres";
+  import { app } from "./app";
+  import { notes, users } from "./accounts";
+
+  export const links = JoinTable({ name: "note_users", schema: app, left: notes.table, leftColumn: "note_id", right: users.table, rightColumn: "user_id" });
+`;
+
+const PG_SIZES = `
+  import { RefreshedView } from "@intentius/chant-lexicon-sql/postgres";
+  import { app } from "./app";
+  import { links } from "./links";
+
+  export const sizes = RefreshedView({ name: "sizes", schema: app, source: links.table, select: "user_id, count(*) AS notes", groupBy: "user_id" });
+`;
+
+describe("each Postgres field keeps its provenance when the composite is interpreted", () => {
+  let dir: string;
+
+  beforeAll(async () => {
+    const path = join(repoRoot, ".cache", `sql-3286-composites-${process.pid}`);
+    await rm(path, { recursive: true, force: true });
+    await mkdir(join(path, "src"), { recursive: true });
+    dir = await realpath(path);
+    await writeFile(join(dir, "src", "app.ts"), PG_APP);
+    await writeFile(join(dir, "src", "accounts.ts"), PG_ACCOUNTS);
+    await writeFile(join(dir, "src", "links.ts"), PG_LINKS);
+    await writeFile(join(dir, "src", "sizes.ts"), PG_SIZES);
+  });
+
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("a field is the parameter that fed it, or fixed by the composite", async () => {
+    const result = await build(join(dir, "src"), [sqlSerializer], undefined, {
+      fold: true,
+      lexicons: ["sql"],
+      intrinsics: sqlPlugin.intrinsics?.() ?? [],
+    });
+    expect(result.errors).toEqual([]);
+    const param = (composite: string, instance: string, ...parameters: string[]) => ({
+      kind: "composite-parameter",
+      composite,
+      instance,
+      parameters,
+    });
+    const fixed = (composite: string, instance: string) => ({ kind: "composite-literal", composite, instance });
+
+    const u = result.foldProvenance.usersTable!.fields;
+    expect(u.name).toEqual(param("SoftDeleteTable", "users", "name"));
+    expect(u.columns).toEqual(param("SoftDeleteTable", "users", "columns", "createdAt", "deletedAt", "updatedAt"));
+    expect(u.ddl).toEqual(expect.objectContaining({ kind: "composite-parameter", composite: "SoftDeleteTable" }));
+    expect(result.foldProvenance.usersLiveIndex!.fields.where).toEqual(param("SoftDeleteTable", "users", "deletedAt"));
+
+    const t = result.foldProvenance.notesTable!.fields;
+    expect(t.name).toEqual(param("TenantTable", "notes", "name"));
+    expect(t["primaryKey.columns"]).toEqual(param("TenantTable", "notes", "primaryKey", "tenant"));
+    expect(result.foldProvenance.notesIndex!.fields.elements).toEqual(param("TenantTable", "notes", "indexOn", "tenant"));
+
+    const l = result.foldProvenance.linksTable!.fields;
+    expect(l.name).toEqual(param("JoinTable", "links", "name"));
+    expect(l.foreignKeys).toEqual(param("JoinTable", "links", "leftKey", "rightKey"));
+    expect(l["primaryKey.columns"]).toEqual(param("JoinTable", "links", "leftColumn", "rightColumn"));
+    expect(result.foldProvenance.sizesView!.fields.query).toEqual(param("RefreshedView", "sizes", "groupBy", "select"));
+    expect(result.foldProvenance.sizesUniqueIndex!.fields.unique).toEqual(fixed("RefreshedView", "sizes"));
+
+    // A drift on a column the composite fixes is refused; one on the live-row
+    // predicate is a change to `deletedAt` at the `users` call.
+    const provenance = getProvenance(result.entities.get("usersLiveIndex")!);
+    const drift = (path: string, declared: unknown, live: unknown) =>
+      resolveDriftedField({ entity: "usersLiveIndex", path, declared, live, origin: originOfPath(provenance?.paths, path), provenance });
+    const where = drift("where", "gone_at IS NULL", "deleted_at IS NULL").resolution;
+    expect(where).toMatchObject({ kind: "propose-parameter", parameters: ["deletedAt"], instance: "users" });
+    expect(where.sourceFile).toContain("accounts.ts");
+
+    // Interpreting the package's composites writes what calling them writes.
+    const run = await build(join(dir, "src"), [sqlSerializer], undefined, {
+      fold: false,
+      lexicons: ["sql"],
+      intrinsics: sqlPlugin.intrinsics?.() ?? [],
+    });
+    expect(run.errors).toEqual([]);
     expect(result.outputs.get("sql")).toEqual(run.outputs.get("sql"));
   });
 });

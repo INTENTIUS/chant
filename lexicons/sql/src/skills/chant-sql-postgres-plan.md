@@ -5,7 +5,7 @@ user-invocable: true
 ---
 # Planning Postgres schema changes
 
-Use this skill when a declared Postgres schema changes and you need to know what the change does to a running server before anything runs. It covers the offline diff, the plan against a live server and the classifier behind both. Applying a plan is not on main yet: it comes with the Postgres applier (#3280), and this skill gets that section then. The expand-and-contract migration Op (#3281) has its own skill later.
+Use this skill when a declared Postgres schema changes and you need to know what the change does to a running server before anything runs. It covers the offline diff, the plan against a live server, the classifier behind both, and applying a plan with the Postgres applier. The expand-and-contract migration Op has its own skill, `chant-sql-postgres-migration`.
 
 The classes are Postgres's own. A change is classified by the lock it takes and whether it reads or rewrites the table, so the class answers the production question: will this queue behind running queries, block writes, or fail?
 
@@ -145,11 +145,49 @@ The server prints DDL its own way (`format_type()`, schema-qualified names, norm
 1. `chant build src --lexicon sql -o head.json` on the pull request branch, and the same on the base branch into `base.json`.
 2. `chant sql diff base.json head.json`.
 3. Read the `Warning` line: it counts the rewrites, each of which blocks the table's reads and writes until done. The rule names the form that does not.
-4. An exit of 2 means a refused change. Do not merge it as an ordinary change: it runs as expand and contract (add the new, write both, backfill, move readers, drop the old). For a column rename (SQLPG205) or a type change across kinds (SQLPG208) the report names the `PostgresMigrationOp` declaration to add (`migrationOps` in `--json`); run it with `chant run <name>` until it is done. The other expand-and-contract changes have no Op yet.
+4. An exit of 2 means a refused change. Do not merge it as an ordinary change: it runs as expand and contract (add the new, write both, backfill, move readers, drop the old). For a column rename (SQLPG205) or a type change across kinds (SQLPG208) the report names the `PostgresMigrationOp` declaration to add (`migrationOps` in `--json`); run it with `chant run <name>` until it is done (see `chant-sql-postgres-migration`). The other expand-and-contract changes have no Op yet.
 
 ## Applying
 
-The Postgres applier is not on main. Until #3280 lands, a plan is read-only: nothing here sends a statement to the server. Apply, the lock timeouts and transaction handling around it, and the prune rules are added to this skill with that change.
+`ApplyOp` with `target: "postgres"` applies a build (`dist/schema.json`) to the server `sql.profiles.<env>` binds, through `postgresApply`.
+
+```ts
+import { ApplyOp } from "@intentius/chant/op";
+
+const { op } = ApplyOp({ name: "schema-apply", env: "prod", target: "postgres", delete: "gated" });
+```
+
+The applier sends the statements for every change the classifier does not refuse, in the build's order, and a refused change is never sent.
+
+Transactions follow the class, so a long scan holds locks on one table and what came before has committed:
+
+- consecutive catalog-only statements (create, metadata, drop) share one transaction, across objects;
+- a statement that reads or rewrites rows (rewrite and validate classes, an index built without `CONCURRENTLY`) runs in a transaction of its own object;
+- `CREATE INDEX CONCURRENTLY`, `DROP INDEX CONCURRENTLY` and `ALTER TYPE ... ADD VALUE` run alone, outside any transaction. A failed `CONCURRENTLY` build leaves an INVALID index; the applier drops it, and only an invalid one.
+
+A primary key or unique constraint added to an existing table goes in two steps, the unique index built `CONCURRENTLY` and then `ADD CONSTRAINT ... USING INDEX` (SQLPG221), so a busy table is never blocked for the build.
+
+Timeouts are set on every statement: `lock_timeout` 5000 ms, so a statement that cannot get its lock fails instead of queueing behind a long transaction and blocking everything behind it; `statement_timeout` 60000 ms for catalog-only statements, and 0 (no limit) for scans, rewrites and `CONCURRENTLY` builds. Set them per environment with `lockTimeoutMs`, `statementTimeoutMs` and `scanTimeoutMs` on `sql.profiles.<env>`, or per call.
+
+```ts
+profiles: { prod: { url: "postgres://db.internal:5432/shop", lockTimeoutMs: 2000, scanTimeoutMs: 600000 } }
+```
+
+Each object gets a verdict:
+
+- created, updated or unchanged;
+- not attempted `unsupported-kind` for an expand-and-contract change. The detail names each rule, its restriction and the Postgres 18 page, and for a column rename or a type change across kinds the `PostgresMigrationOp` declaration. Also a change with no in-place statement on the target major;
+- not attempted `filtered` for a column drop when the Op may not delete, and for an object another tool keeps (an ORM revision table, a provider schema);
+- not attempted `dependency-failed` when a referenced object is not on the server, or when the object's statements ran in a transaction that rolled back;
+- not attempted `no-binding` or `no-credentials` when the environment names no server or the credentials are missing.
+
+When the server refuses a statement, that object goes to `failed`, the objects that depend on it are `dependency-failed`, and the apply throws `PostgresApplyError` carrying the outcome. The outcome records the timeouts, every statement with the values it ran under and its transaction, and how each transaction ended. A lock timeout reads `lock_timeout 5000ms: another session holds a lock this statement needs; SQLSTATE 55P03`: run again when the blocker has finished. A rolled-back transaction changed nothing, so a re-run starts clean.
+
+The target major is the build output's `postgresMajor`, else `sql.postgresMajor`, and picks `SET EXPRESSION` (17 and later) and `SET STORAGE DEFAULT` (16 and later).
+
+Ownership is a trailer on the object's comment, set with `COMMENT ON` in the transaction that creates it: `One row per account [chant managed-by=chant stack=shop env=prod]`. It replaces the declared object comment on create; column and constraint comments are sent as written. Prune drops owned objects in the declared schemas only: views, indexes (`CONCURRENTLY`), tables, sequences, types, extensions, and schemas last. It never uses `CASCADE`, and an object something else depends on is reported `not-prunable`. Objects without the trailer, and other stacks', are never touched.
+
+To try an apply without a real server, `chant emulator up --lexicon sql` starts the pinned `postgres` image and reports `POSTGRES_URL`, `POSTGRES_USER` and `POSTGRES_PASSWORD`, which the binding reads when no profile names a server.
 
 ## Not covered
 
