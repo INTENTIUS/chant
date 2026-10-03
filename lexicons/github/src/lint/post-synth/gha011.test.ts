@@ -58,4 +58,20 @@ jobs:
     const diags = gha011.check(makeCtx(yaml));
     expect(diags).toHaveLength(0);
   });
+
+  test("flags a scalar needs: naming a missing job (#3201)", () => {
+    const yaml = `name: CI
+on: push
+jobs:
+  test:
+    needs: biuld
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test
+        run: npm test
+`;
+    const diags = gha011.check(makeCtx(yaml));
+    expect(diags).toHaveLength(1);
+    expect(diags[0].message).toContain('"biuld"');
+  });
 });
