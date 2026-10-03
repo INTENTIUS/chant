@@ -210,6 +210,7 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `record-state-not-initial` | error, `records new` through `chant serve mcp` | The fields give a state other than the kind's first: a record written through MCP opens `proposed`, and a person moves it on ([#2707](https://github.com/INTENTIUS/chant/issues/2707)). |
 | `write-scope-member` | error, `records new`, `amend`, `review` and `close`; finding, `check --changes` | The write is to a file, or a record kind, of a member outside the writer's [write scope](/chant/reference/workspace-declaration/#write-scope-and-agent-sessions): an agent session writes only its own member, and `writeScope.<class>.members` leaves the member out ([#2548](https://github.com/INTENTIUS/chant/issues/2548)). |
 | `write-scope-kind` | error, `records new`, `amend`, `review` and `close`; finding, `check --changes` | The write is to a record kind `writeScope.<class>.records` doesn't list, with a verb it doesn't list for the kind, or deletes a record. |
+| `write-scope-protected` | finding, `check --changes` | The write is to a file `writeScope.<class>.protected` lists, or one under a directory it lists, and the change isn't one the entry's `except` allows: a change only to the JSON file's listed top-level keys ([#3146](https://github.com/INTENTIUS/chant/issues/3146)). A record write is never refused with it; records are judged by `writeScope.<class>.records`. |
 | `agent-unknown` | error, `records new`, `amend`, `review`, `close` and `agent`; finding, `check --changes` | `CHANT_AGENT`, or a commit's `Chant-Agent` trailer, names an agent session the declaration at base doesn't declare. |
 | `session-unknown` | error, `records review` | `--session` names no session of a session kind whose subjects are the record's kind ([#2693](https://github.com/INTENTIUS/chant/issues/2693)). |
 | `session-not-open` | error, `records review` | `--session` names a closed session, which takes no more verdicts. |
@@ -266,6 +267,8 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `box-fountain-callback-undeclared` | finding, `check` | `WSP125`: a box member builds a fountain `Box`, whose persistent sandbox fountain gives a callback token scoped to its owner, and its box block doesn't declare `fountain-callback` brokered by `fountain` with scope `owner`. |
 | `box-intent-unknown` | finding, `check` | `WSP126`: a box block names an intent, and no record of a declared kind named `decision` has that id. |
 | `box-intent-unconstrained` | finding, `check` | `WSP127`: the decision record a box names as its intent constrains no member or path of this workspace at all. |
+| `box-none` | `plantable.reason`, `status` and `graph` | No member's box block declares services, so the workspace has no box for a host to plant ([#3146](https://github.com/INTENTIUS/chant/issues/3146)). Not a finding: a workspace need not be plantable. |
+| `box-several` | `plantable.reason`, `status` and `graph` | More than one member's box block declares services, and a planted workspace runs one box. |
 | `signers-file-missing` | error, `signers` | There is no signers file at the base revision, so there is no signer history to read. |
 | `signers-removed` | broken history, `signers` and `verify` | The signers file was removed. Commits merged before the removal keep the set they were judged by; nothing after it verifies. |
 | `rotation-unparseable` | broken history, `signers`; rotation, `verify` | The rotation file beside the signers file is not JSON. |
@@ -583,6 +586,18 @@ Each component also lists the environments it may be deployed to in `environment
 A box block with a host also carries `isolation`: the ports, state paths and cookie names chant derives from the box's identity ([#2727](https://github.com/INTENTIUS/chant/issues/2727)), or `null` without a host. A runtime that plants or starts a box sets these values instead of choosing its own. `check` reports two boxes on a host sharing one with `box-isolation-collision`, and a hard-coded machine path with `box-isolation-literal`. The derivation is on the [declaration page](/chant/reference/workspace-declaration/#isolation). chant never expands the environment reference in a state path and never opens a port.
 
 Each `box` also has `services`, what the block declares for the box's supervisor ([#2880](https://github.com/INTENTIUS/chant/issues/2880)). The list keeps the declaration's order and is `[]` for a block with none. A reader has the declared services before a converge tick reports them in `lastTick`. `status` prints each `cmd` as declared and never expands its `${VAR}` references. The [declaration page](/chant/reference/workspace-declaration/#services) describes the fields.
+
+### Factory, listing and plantable
+
+A box block may declare a `factory` and a `listing` ([#3146](https://github.com/INTENTIUS/chant/issues/3146), [ws-077](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-077-factory-fields-on-the-box-block.md)), contract version 1 additions that readers who don't know them ignore. `status --json` prints both under the member's `box`, and `graph --json` prints them on the member's entry as `box: { factory, listing }`, or `null` when the member's box declares neither. `graph` reads the declaration at the revision `--at` names, so it gives them as they were then.
+
+`factory` has every field, with the defaults filled in: `builds` (the members the factory builds, in declaration order), `check` (`{ run, kind }`, or `null`), `checks` (a directory, or `null` for the orchestrator's choice), `builders` (a member, or `null`) and `publish` (`{ forge, repo, base, branchPrefix, head }`, or `null`). A `null` base means the repository's default branch. The branch prefix defaults to `chant/work/`, and `head` names the fork the branch is pushed to, or stays `null`. At most one member's box has a factory, so a reader takes the first non-null one.
+
+`listing` is `{ published, title, line, cover }`. `published` is `true` unless declared otherwise, `title` and `line` are `""` when not declared, and `cover` is `{ path, sha256 }`, the file from the workspace root and the sha256 of its bytes in the tree read (`null` when the file can't be read), or `null` when none is declared. A reader can serve the cover from the repository and cache it by hash.
+
+Both documents carry a top-level `plantable`: `{ plantable, box, reason }`. A workspace is plantable when exactly one member's box block declares `services`, and `box` names that member. Otherwise `box` is `null` and `reason` is `box-none` or `box-several`. Plantability is never a check finding, since a records-only or infra workspace is valid and simply isn't plantable. A host such as a studio's planter reads this field rather than reimplementing the rule.
+
+`chant workspace agent --json` lists the session's protected paths in `scope.protected`, each `{ path, except }`, so a factory's guard enforces on a build's diff what `check --changes` enforces on its commits.
 
 ## Stewards
 

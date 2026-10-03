@@ -45,6 +45,7 @@ import { readCheckoutHead, type CheckoutHead } from "./records-checkout";
 import { findWorkspaceRoot } from "../project-root";
 import { resolveBoxes, type ResolvedIsolation } from "./box-isolation";
 import { resolveBoxIntents, unresolvedIntent, type BoxIntent } from "./box-intent";
+import { factoryView, listingView, plantability, treeBytes, type FactoryView, type ListingView, type Plantable } from "./box-factory";
 import { declaredRecordKinds, readDeclaration, readerVersion, WorkspaceReadError, type Declaration, type ErrorLocation, type Member } from "./declaration";
 import type { ReasonCode } from "./reason-codes";
 import { GATE_REASON_CODES, readMemberGates, type GateLedgerReader, type StatusGate, type StatusGateLedger } from "./status-gates";
@@ -189,6 +190,10 @@ export interface StatusBox {
   intent: BoxIntent | null;
   /** The services the block declares (#2880), in file order, so a reader has them before any converge tick. Empty when it declares none. */
   services: StatusBoxService[];
+  /** What the box builds and how, with defaults filled in (#3146, ws-077), or null when the block declares no factory. */
+  factory: FactoryView | null;
+  /** What the box shows of itself on a home site, with the cover's sha256 (#3146), or null when the block declares no listing. */
+  listing: ListingView | null;
 }
 
 /** A declared box service as `status --json` prints it (#2880): every field present, null or false when not declared. */
@@ -238,6 +243,8 @@ export type StatusDocument =
       /** The branch, head and base of the checkout read (#3160). `records --uncommitted` lists the records it holds uncommitted. */
       checkout: CheckoutHead;
       workspace: { name: string; root: string; file: string };
+      /** Whether a host can plant the workspace as one box (#3146): exactly one member's box block declares services. */
+      plantable: Plantable;
       members: StatusMember[];
       /** Every work lease in the workspace's ledgers, active and expired, by member then item (#2732). A released lease has no ref and is not listed. */
       leases: StatusLease[];
@@ -402,6 +409,7 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
 
     const isolation = new Map(resolveBoxes(declaration).map((b) => [b.member.name, b.isolation]));
     const intents = new Map((await resolveBoxIntents(declaration, found.dir)).map((i) => [i.member, i.record?.intent ?? unresolvedIntent(i.id)]));
+    const coverBytes = treeBytes(workingTree(found.dir));
     const members: StatusMember[] = [];
     for (const m of declaration.members) {
       const environments: StatusEnvironment[] = [];
@@ -434,6 +442,8 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
                   health: s.health,
                   optional: s.optional,
                 })),
+                factory: factoryView(m.box.factory),
+                listing: listingView(m.box.listing, coverBytes),
               },
         stewards: stewards.stewards,
         stewardReasons: stewards.reasons,
@@ -456,6 +466,7 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
       lifecycle: { ref: LIFECYCLE_REF, commit },
       checkout: readCheckoutHead(top),
       workspace: { name: declaration.name, root: rootDir === "" ? "." : rootDir, file: declaration.file },
+      plantable: plantability(declaration),
       members,
       leases,
       acceptance,

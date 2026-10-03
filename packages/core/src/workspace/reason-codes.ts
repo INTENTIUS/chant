@@ -139,6 +139,7 @@ export const REASONS = {
   // Write scope (#2548): a records write that is refused, and a commit check --changes reports, outside the writer's scope.
   "write-scope-member": "The write is to a file, or to a record kind, of a member outside the writer's scope: an agent session writes only its own member, and writeScope.<class>.members leaves the member out.",
   "write-scope-kind": "The write is to a record kind writeScope.<class>.records does not list, with a verb it does not list for the kind, or deletes a record.",
+  "write-scope-protected": "The write is to a file writeScope.<class>.protected lists, or one under a directory it lists, outside any top-level keys the entry's except allows (#3146).",
   "agent-unknown": "CHANT_AGENT, or a commit's Chant-Agent trailer, names an agent session the declaration at base does not declare.",
   // A review given in a session (records review --session, #2693).
   "session-unknown": "--session names no session of a session kind whose subjects are the record's kind.",
@@ -208,6 +209,9 @@ export const REASONS = {
   // A box's intent, the decision record its box block names (check, #2850). Each is also a WSP finding.
   "box-intent-unknown": "A box block names an intent, and no record of a declared kind named decision has that id.",
   "box-intent-unconstrained": "The decision record a box names as its intent constrains no member or path of this workspace: no member: entry for a declared member and no path: entry at, above or inside one's directory.",
+  // Why a workspace isn't plantable (status and graph, #3146): not a finding, since a workspace need not be.
+  "box-none": "No member's box block declares services, so the workspace has no box for a host to plant.",
+  "box-several": "More than one member's box block declares services, and a planted workspace runs one box.",
   // The work lease (chant workspace work claim|renew|release, #2732): why the command could not run.
   "work-kind-missing": "No work kind to find the item in: --kind names a kind with no work block, or the declaration names no work kind.",
   "work-kind-ambiguous": "More than one declared work kind has a record with the id, so --kind must name one.",

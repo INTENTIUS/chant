@@ -30,6 +30,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { formatError } from "../cli/format";
 import type { CommandContext, ParsedArgs } from "../cli/registry";
+import { graphBox, plantability, type Plantable } from "./box-factory";
 import { composeWorkspaceGraph, readMemberIr, type ComposedMember, type ComposeInput, type WorkspaceGraph } from "./compose-graph";
 import { openGraphCache, splitCached, storeReads, withoutUnits } from "./graph-cache";
 import { readDeclaration, readerVersion, WORKSPACE_ERROR_CODES, WorkspaceReadError, type ErrorLocation } from "./declaration";
@@ -67,7 +68,7 @@ interface Head {
 }
 
 export type GraphDocument =
-  | (Head & { at: string | null } & WorkspaceGraph)
+  | (Head & { at: string | null; plantable: Plantable } & WorkspaceGraph)
   | (Head & { error: { code: GraphErrorCode; message: string; location: ErrorLocation | null } });
 
 export interface GraphQuery {
@@ -258,6 +259,8 @@ export async function workspaceGraph(query: GraphQuery): Promise<GraphResult> {
     }
     // Links (#2539) resolve against the declaration that was read, the revision's for --at, and the kinds installed now.
     const graph = composeWorkspaceGraph({ name: declaration.name, root: located.root }, inputs, { declaration, kinds });
+    // The box's factory and listing (#3146), from the declaration read, so --at gives them at that revision.
+    for (const member of graph.members) member.box = graphBox(declaration.members.find((m) => m.name === member.name)?.box ?? null, located.tree);
     // Nested workspaces (#2551, ws-071): read-only, through their own chant workspace graph.
     const nestedFailed = await expandNested(graph, declaration.members, query, located.rootOnDisk, located.at);
     let recordsFailed = false;
@@ -276,7 +279,7 @@ export async function workspaceGraph(query: GraphQuery): Promise<GraphResult> {
         query.onStderr?.(`${formatError({ message: `--kind ${query.kind}: ${err.code}: ${err.message}`, hint: USAGE })}\n`);
       }
     }
-    return { doc: { ...head, at: located.at, ...graph }, failed: failed || recordsFailed || nestedFailed, ...(components ? { components } : {}) };
+    return { doc: { ...head, at: located.at, plantable: plantability(declaration), ...graph }, failed: failed || recordsFailed || nestedFailed, ...(components ? { components } : {}) };
   } catch (err) {
     if (!(err instanceof WorkspaceReadError)) throw err;
     return { doc: { ...head, error: { code: err.code, message: err.message, location: err.location ?? null } }, failed: true };

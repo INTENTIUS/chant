@@ -237,6 +237,10 @@
           "items": {
             "$ref": "#/$defs/record"
           }
+        },
+        "plantable": {
+          "description": "Added in contract 1 by #3146. Whether a host such as a studio's planter can plant the workspace as one box: exactly one member's box block declares services, read from the declaration at the revision read. Not a check: a records-only or infra workspace is valid and simply not plantable.",
+          "$ref": "#/$defs/plantable"
         }
       }
     },
@@ -372,6 +376,43 @@
               "description": "The nested workspace's links, naming its members as the nested side does."
             }
           }
+        },
+        "box": {
+          "description": "Added in contract 1 by #3146. The factory and listing the member's box block declares (ws-077), read from the declaration at the revision read, so --at gives them as they were. null when the box declares neither, or the member has no box block; the rest of the box block is in chant workspace status --json.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "factory",
+                "listing"
+              ],
+              "properties": {
+                "factory": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/$defs/factory"
+                    }
+                  ]
+                },
+                "listing": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/$defs/listing"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
         }
       },
       "if": {
@@ -1017,6 +1058,212 @@
           "items": {
             "type": "string"
           }
+        }
+      }
+    },
+    "plantable": {
+      "type": "object",
+      "required": [
+        "plantable",
+        "box",
+        "reason"
+      ],
+      "properties": {
+        "plantable": {
+          "type": "boolean"
+        },
+        "box": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The member whose box block declares services, or null when the workspace isn't plantable."
+        },
+        "reason": {
+          "description": "Why the workspace isn't plantable, or null when it is.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "code",
+                "message"
+              ],
+              "properties": {
+                "code": {
+                  "enum": [
+                    "box-none",
+                    "box-several"
+                  ]
+                },
+                "message": {
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "factory": {
+      "type": "object",
+      "required": [
+        "builds",
+        "check",
+        "checks",
+        "builders",
+        "publish"
+      ],
+      "properties": {
+        "builds": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          },
+          "description": "The members the factory builds, in declaration order. A work item a person asks for constrains member:<the first>."
+        },
+        "check": {
+          "description": "The verdict command, run from the workspace root, and what it is; null when none is declared.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "run",
+                "kind"
+              ],
+              "properties": {
+                "run": {
+                  "type": "string"
+                },
+                "kind": {
+                  "enum": [
+                    "test",
+                    "build",
+                    "lint",
+                    "plan",
+                    "conformance"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "checks": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Where a work item's builder writes its check, from the workspace root, or null for the orchestrator's choice."
+        },
+        "builders": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The member that declares the builder agents, or null."
+        },
+        "publish": {
+          "description": "Where a finished build is published, or null when the factory doesn't publish past the box.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "forge",
+                "repo",
+                "base",
+                "branchPrefix",
+                "head"
+              ],
+              "properties": {
+                "forge": {
+                  "const": "github"
+                },
+                "repo": {
+                  "type": "string",
+                  "description": "owner/name: where the pull request is opened."
+                },
+                "base": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "The branch the pull request targets, or null for the repository's default branch."
+                },
+                "branchPrefix": {
+                  "type": "string",
+                  "description": "What the published branch's name starts with, before the work item's id. chant/work/ unless declared."
+                },
+                "head": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "owner/name of the fork the branch is pushed to, or null to push to repo."
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "listing": {
+      "type": "object",
+      "required": [
+        "published",
+        "title",
+        "line",
+        "cover"
+      ],
+      "properties": {
+        "published": {
+          "type": "boolean",
+          "description": "Whether the box is listed; true unless declared otherwise."
+        },
+        "title": {
+          "type": "string",
+          "description": "Empty when not declared: a reader shows a name of its own."
+        },
+        "line": {
+          "type": "string",
+          "description": "Empty when not declared."
+        },
+        "cover": {
+          "description": "The cover image, or null when none is declared.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "path",
+                "sha256"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "description": "From the workspace root."
+                },
+                "sha256": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "pattern": "^[0-9a-f]{64}$",
+                  "description": "The sha256 of the file's bytes at the revision read, or null when it can't be read."
+                }
+              }
+            }
+          ]
         }
       }
     }
