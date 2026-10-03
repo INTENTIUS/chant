@@ -290,6 +290,16 @@ closed_digest: "sha256:4a3e5f4f..."
 
 The seal is the [record seal](#seals-on-closed-records) with the seal field left out: it covers the whole file, front matter and body. Reading a session kind also reads its subject records from the same tree, the working tree or the commit under `--at`. A closed session whose seal no longer matches gets `session-seal-mismatch`, and a verdict naming a record the subjects don't have gets `session-verdict-unknown-record`. Both make the session invalid. Each session record in the output also carries `citedBy`: the subjects' review entries whose `session` names it, each as `{id, path, index, reviewer, verdict}`.
 
+### UI reviews
+
+A comment-mode review of the app's UI is a session too, one per review batch ([#3350](https://github.com/INTENTIUS/chant/issues/3350), [ws-083](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-083-a-ui-review-batch-is-a-session.md)). hud writes it with `records new` when the batch is sent, with `records amend` as each answer or round of replies comes in, and with `records close` once a person keeps or sends it. The reference session schema holds it in two optional lists.
+
+`comments` lists what the reviewer wrote, numbered from 1 by position. Each comment has its `text`, which is empty when it only marks elements for the round's note, and may have `by` and `at`. Its `anchor` holds the page's `route` and the `elements` it points at, each a CSS `selector` with its `tag`, its `text` and `state`. The state is `anchored` when the selector finds exactly the element, `ambiguous` when it finds several, and `lost` when it finds none. `basis` says what the selector was built from: `authored`, `id`, `testid` or `path`.
+
+Each comment's `answers` are the agent's, one per round it answered in, oldest first, each `{round, disposition, note}` with optional `by` and `at`. The disposition is `handled` when the agent changed something, `skipped` when it did not, and `needs-discussion` when a person has to settle a question. In each case `note` says what, why or which question. `replies` are a person's, each `{round, text}` from round 1. Once a person decides, `exit` says how the comment left the box: `kept`, `sent` or `dismissed`, as hud's Keep and Send exits do ([hud#703](https://github.com/arugula-salad/hud/issues/703)). `follow_ups` names the records it led to, such as `work:W-007`.
+
+`rounds` lists the rounds, each `{round, note, at}` with optional `by` and `ended`. Round 0 is the batch as sent, with its note, and each later round is a person's replies, which send the batch back to the agent. `ended` is when the agent's turn for the round ended, and null while it works.
+
 ### Sessions from a UI
 
 A UI such as hud runs a session through four commands and never computes a revision or a seal ([#2693](https://github.com/INTENTIUS/chant/issues/2693)). The commands below run in the reference workspace.

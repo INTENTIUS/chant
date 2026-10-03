@@ -11,7 +11,10 @@
 // Each verdict it produced is also an entry in the judged record's reviews
 // list, whose session field names the session. Its verdicts judge decisions,
 // contracts and drivers (#3148, ws-082): studio's design sessions, which
-// approved contracts and signed off drivers, are this kind. chud's session
+// approved contracts and signed off drivers, are this kind, and so is a
+// comment-mode review of the app's UI, one session per review batch, with
+// its anchored comments, the agent's answers and the rounds of replies
+// (#3350, ws-083). chud's session
 // files (such as sessions/S-0001.json) are the starting shape; sessions are
 // markdown front matter so that records new, amend, review and close write
 // them.
