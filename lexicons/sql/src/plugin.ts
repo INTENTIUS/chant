@@ -1,8 +1,9 @@
 /**
  * The sql lexicon plugin.
  *
- * One lexicon, a subpath per database dialect (#3047, "Packaging"); ClickHouse
- * is the first, at `@intentius/chant-lexicon-sql/clickhouse`. Generation reads
+ * One lexicon, a subpath per database dialect (#3047, "Packaging"): ClickHouse
+ * at `@intentius/chant-lexicon-sql/clickhouse`, Postgres at
+ * `@intentius/chant-lexicon-sql/postgres` (#3289). Generation reads
  * the pinned ClickHouse server's catalog (src/spec/), and the rest of the
  * plugin is the shared machinery every dialect plugs into.
  */
@@ -22,6 +23,7 @@ import { ClickHouseGenerator } from "./clickhouse/import/generator";
 import { sqlCommands } from "./clickhouse/plan/commands";
 import { sqlDeepNormalizationHooks } from "./clickhouse/plan/deep";
 import { versionFromReleaseTag } from "./spec/pin";
+import { POSTGRES_MAJORS, postgresUpstreamPin } from "./spec/postgres-pin";
 import { SQL_OWNERSHIP_CHANNEL } from "./clickhouse/ownership";
 import { CLICKHOUSE_EMULATOR } from "./op/activities/clickhouse-emulator";
 import { sqlSkills } from "./skill-defs";
@@ -79,19 +81,27 @@ export const sqlPlugin: LexiconPlugin = {
   },
 
   /**
-   * The ClickHouse tags fold: `chant build` reduces a `table`, `view` or
-   * `database` template to the entity the tag builds, without running the
-   * file. `literal(...)` folds as a call so it can sit inside a tag.
+   * The tags fold: `chant build` reduces a `table`, `view` or other template
+   * to the entity the tag builds, without running the file. An intrinsic is
+   * registered by name and folds as the function the file imports, so
+   * `table` from `/clickhouse` and `table` from `/postgres` are each their
+   * own dialect's. `literal(...)` folds as a call so it can sit inside a tag.
    */
   intrinsics(): IntrinsicDef[] {
     return [
       { name: "database", isTag: true, description: "A ClickHouse CREATE DATABASE, parsed into a database entity" },
-      { name: "table", isTag: true, description: "A ClickHouse CREATE TABLE, parsed into a table entity" },
+      { name: "table", isTag: true, description: "A ClickHouse or Postgres CREATE TABLE, parsed into a table entity" },
       {
         name: "view",
         isTag: true,
-        description: "A ClickHouse CREATE VIEW or CREATE MATERIALIZED VIEW, parsed into a view entity with its lineage",
+        description: "A CREATE VIEW or CREATE MATERIALIZED VIEW, parsed into a view entity with its lineage",
       },
+      { name: "schema", isTag: true, description: "A Postgres CREATE SCHEMA, parsed into a schema entity" },
+      { name: "index", isTag: true, description: "A Postgres CREATE INDEX, parsed into an index entity" },
+      { name: "sequence", isTag: true, description: "A Postgres CREATE SEQUENCE, parsed into a sequence entity" },
+      { name: "type", isTag: true, description: "A Postgres CREATE TYPE ... AS ENUM, parsed into an enum entity" },
+      { name: "domain", isTag: true, description: "A Postgres CREATE DOMAIN, parsed into a domain entity" },
+      { name: "extension", isTag: true, description: "A Postgres CREATE EXTENSION, parsed into an extension entity" },
       {
         name: "literal",
         isTag: false,
@@ -187,6 +197,7 @@ export const sqlPlugin: LexiconPlugin = {
    * version is not the pin.
    */
   upstreamPin: {
+    label: "clickhouse",
     file: "src/spec/pin.ts",
     pattern: /export const CLICKHOUSE_VERSION\s*=\s*"([^"]+)"/,
     replace: (v: string, line: string) => line.replace(/= "[^"]+"/, `= "${versionFromReleaseTag(v)}"`),
@@ -194,4 +205,7 @@ export const sqlPlugin: LexiconPlugin = {
       "CLICKHOUSE_IMAGE_DIGEST in src/spec/pin.ts moves with the version: set CLICKHOUSE_VERSION to the new release, set the digest to that tag's image digest (docker buildx imagetools inspect clickhouse/clickhouse-server:<version>), then run `chant dev generate` and read the diff of src/spec/clickhouse-catalog.snapshot.json.",
     upstream: { owner: "ClickHouse", repo: "ClickHouse", kind: "releases", tagSuffix: "-lts" },
   },
+
+  /** The Postgres servers, one pin per major (`postgres-14` to `postgres-18`). */
+  upstreamPins: POSTGRES_MAJORS.map(postgresUpstreamPin),
 };

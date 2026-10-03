@@ -24,12 +24,35 @@ export interface TemplateDialect {
   isObject(value: unknown): value is SqlObject;
   /** A column reference to one of this dialect's objects. */
   isColumnRef(value: unknown): value is AttrRef;
-  /** How a referenced object or column renders in the SQL. */
-  renderReference(value: unknown): string;
-  /** A name token's value in a select list (identifier quotes off). */
+  /**
+   * How a referenced object or column renders in the SQL. `index` is the
+   * interpolation's index in the template, for a dialect whose rendering
+   * depends on where the reference sits (Postgres writes a sequence inside
+   * `nextval(...)` as a `regclass` literal).
+   */
+  renderReference(value: unknown, index?: number): string;
+  /** A name token's value in a select list (identifier quotes off, and folded where the dialect folds). */
   identValue(text: string): string;
   /** The output name of the `n`th (1-based) select-list item that has none. */
   unnamedOutput(n: number): string;
+  /**
+   * What lineage reads off a select list beyond ClickHouse's rules, each off
+   * unless set (#3278). `aliasWithoutAs`: `expr name` names its output
+   * `name`; `keyword` says which bare words are key words, so `CASE ... END`
+   * or `a COLLATE "C"` is not read as an alias. `distinctOn`: a
+   * `DISTINCT ON (...)` after `SELECT` is not an item. `qualifiedRefs`:
+   * `alias.${t.columns.c}` names its output after the column. `outputOf`:
+   * the output name of an item with no alias, when the dialect derives one
+   * from the expression (Postgres names `count(x)` "count"); undefined falls
+   * back to {@link unnamedOutput}.
+   */
+  lineage?: {
+    aliasWithoutAs?: boolean;
+    keyword?(t: Token): "reserved" | "keyword" | undefined;
+    distinctOn?: boolean;
+    qualifiedRefs?: boolean;
+    outputOf?(items: readonly Token[], valueOf: (t: Token) => unknown): string | undefined;
+  };
 }
 
 /** A template being built: its tokens, the interpolated values, and what each spliced value fed. */
@@ -98,7 +121,7 @@ export function splice(d: TemplateDialect, tag: string, parts: readonly string[]
 export function spanText(ctx: TemplateCtx, span: Span | undefined, path?: string): string | undefined {
   if (!span || span.to <= span.from) return undefined;
   if (path) feed(ctx, span, path);
-  return untokenize(ctx.tokens.slice(span.from, span.to), (i) => ctx.d.renderReference(ctx.values[i])).trim();
+  return untokenize(ctx.tokens.slice(span.from, span.to), (i) => ctx.d.renderReference(ctx.values[i], i)).trim();
 }
 
 /** A parse error as the tag reports it: on the template line, or in the interpolated text it came from. */
@@ -132,7 +155,21 @@ export function lineage<O extends SqlObject>(ctx: TemplateCtx, select: Span): { 
     else if (t.kind === "punct" && t.text === ")") depth--;
     else if (depth === 0 && selectAt < 0 && isKw(sig[k]!, "SELECT")) {
       selectAt = k;
-      if (sig[k + 1] !== undefined && isKw(sig[k + 1]!, "DISTINCT")) selectAt = k + 1;
+      if (sig[k + 1] !== undefined && isKw(sig[k + 1]!, "DISTINCT")) {
+        selectAt = k + 1;
+        // `DISTINCT ON (a, b)`: the parenthesized list is not a select-list item.
+        if (d.lineage?.distinctOn && sig[k + 2] !== undefined && isKw(sig[k + 2]!, "ON") && tok(sig[k + 3] ?? -1)?.text === "(") {
+          let nest = 0;
+          let j = k + 3;
+          for (; j < sig.length; j++) {
+            const x = tok(sig[j]!);
+            if (x.kind === "punct" && x.text === "(") nest++;
+            else if (x.kind === "punct" && x.text === ")" && --nest === 0) break;
+          }
+          selectAt = j;
+          k = j;
+        }
+      } else if (sig[k + 1] !== undefined && d.lineage?.distinctOn && isKw(sig[k + 1]!, "ALL")) selectAt = k + 1;
     } else if (depth === 0 && selectAt >= 0 && fromAt === sig.length && isKw(sig[k]!, "FROM")) fromAt = k;
     else if (depth === 0 && selectAt >= 0 && fromAt === sig.length && t.kind === "punct" && t.text === ",") commas.push(k);
   }
@@ -154,7 +191,25 @@ export function lineage<O extends SqlObject>(ctx: TemplateCtx, select: Span): { 
         else if (t.kind === "ident" || t.kind === "qident") output = d.identValue(t.text);
       } else if (items.length === 3 && tok(items[1]!).text === "." && (tok(items[2]!).kind === "ident" || tok(items[2]!).kind === "qident")) {
         output = d.identValue(tok(items[2]!).text);
+      } else if (d.lineage?.qualifiedRefs && items.length === 3 && tok(items[1]!).text === "." && tok(items[2]!).kind === "ref" && d.isColumnRef(ctx.values[tok(items[2]!).part])) {
+        // `alias.${t.columns.c}` names its output after the column.
+        output = (ctx.values[tok(items[2]!).part] as AttrRef).attribute;
+      } else if (d.lineage?.aliasWithoutAs && items.length >= 2) {
+        // `expr name`: an alias without AS. The name follows an operand, never an operator or `.`.
+        const last = tok(items[items.length - 1]!);
+        const before = tok(items[items.length - 2]!);
+        const keyword = (t: Token) => (t.kind === "ident" ? d.lineage?.keyword?.(t) : undefined);
+        const operandEnd =
+          before.kind === "ref" || before.kind === "string" || before.kind === "number" || before.kind === "qident" || before.kind === "param" ||
+          (before.kind === "ident" && keyword(before) === undefined) ||
+          (before.kind === "punct" && (before.text === ")" || before.text === "]"));
+        const label = last.kind === "qident" || (last.kind === "ident" && keyword(last) !== "reserved");
+        if (label && operandEnd) {
+          output = d.identValue(last.text);
+          exprItems = items.slice(0, -1);
+        }
       }
+      if (output === undefined && d.lineage?.outputOf) output = d.lineage.outputOf(exprItems.map(tok), (t) => (t.kind === "ref" ? ctx.values[t.part] : undefined));
       const refs = exprItems.filter((i) => tok(i).kind === "ref").map((i) => tok(i).part);
       const exprSpan: Span = { from: exprItems[0]!, to: exprItems[exprItems.length - 1]! + 1, refs };
       edges.push({

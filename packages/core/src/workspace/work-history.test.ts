@@ -9,14 +9,14 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { cleanScratch, contract, git, REPO, repo } from "./__fixtures__/contract-repo";
 import { claimWorkLease, releaseWorkLease, renewWorkLease, type LeaseHistoryRecord } from "../lifecycle/work-lease";
-import { claimsOf, formatWorkHistory, workHistory, type WorkHistoryDocument } from "./work-cli";
+import { claimsOf, formatWorkHistory, workHistory, workLease, type WorkHistoryDocument } from "./work-cli";
 import historySchema from "./work-history.schema.json";
 
 const REF = join(REPO, "reference-workspace");
 const { expectValid } = contract(historySchema);
 
-function work(id: string): string {
-  const data = { schema: 1, id, title: `Work ${id}`, state: "open", implements: [], needs: [], constrains: ["path:app/server.mjs"], evidence: [], opened_on: "2026-09-25", source: { kind: "workspace", member: "app" }, supersedes: [] };
+function work(id: string, extra: Record<string, unknown> = {}): string {
+  const data = { schema: 1, id, title: `Work ${id}`, state: "open", implements: [], needs: [], constrains: ["path:app/server.mjs"], evidence: [], opened_on: "2026-09-25", source: { kind: "workspace", member: "app" }, supersedes: [], ...extra };
   return `---\n${JSON.stringify(data, null, 2)}\n---\n\n# ${id}\n`;
 }
 
@@ -46,6 +46,7 @@ beforeAll(() => {
     "design/work/work.schema.json": readFileSync(join(REF, "work", "work.schema.json"), "utf-8"),
     "design/work/W-001-one.md": work("W-001"),
     "design/work/W-002-two.md": work("W-002"),
+    "design/work/W-004-four.md": work("W-004", { max_attempts: 2 }),
   });
   git(root, "config", "user.name", "History Test");
   git(root, "config", "user.email", "history@example.com");
@@ -88,6 +89,10 @@ describe("workspace work history (#2785)", () => {
     ]);
     expect(doc.events.map((e) => e.event)).toEqual(["claim", "renew", "release", "claim", "claim"]);
     expect(doc.summary).toEqual({ claims: 3, released: 1, held: 0, expired: 1, lost: 1, outcomes: { not_done: 1 } });
+    // Each of the three counts as an attempt (#3147): not_done, lost and expired, against the kind's default of 3.
+    expect(doc.claims.map((c) => c.attempt)).toEqual([true, true, true]);
+    expect(doc.attempts).toEqual({ failed: 3, limit: 3, remaining: 0, exhausted: true });
+    expect(formatWorkHistory(doc)).toContain("3 of 3 attempts used; left to people");
     // The history file is where git would find it, under the member's prefix.
     expect(git(root, "show", `chant/lifecycle:${doc.ledger.path}`).split("\n")).toHaveLength(5);
     expect(formatWorkHistory(doc)).toContain("released not_done by steward/dispatch@1");
@@ -107,6 +112,37 @@ describe("workspace work history (#2785)", () => {
     expect(doc.claims.map((c) => c.ended)).toEqual(["released", "held"]);
     expect(doc.lease).toMatchObject({ holder: "worker-b", token: live.lease.token, state: "active" });
     expect(doc.summary.outcomes).toEqual({ done: 1 });
+    expect(doc.attempts).toEqual({ failed: 0, limit: 3, remaining: 3, exhausted: false });
+  });
+
+  test("outcomes that built nothing don't count as attempts, the item's max_attempts overrides the kind's, and kept attempts are listed (#3147)", async () => {
+    const now = () => new Date();
+    const tokens: string[] = [];
+    for (const outcome of ["dropped", "redraft", "ask", "waiting", "gated", "not_done"]) {
+      const c = await claimWorkLease("W-004", "worker-a", { cwd: kindDir, now });
+      if (!c.ok) throw new Error(c.message);
+      tokens.push(c.lease.token);
+      await releaseWorkLease("W-004", "worker-a", { cwd: kindDir, now, token: c.lease.token, outcome });
+    }
+    // The not_done attempt's work, kept the way a run that changes the checkout keeps it.
+    const kept = `refs/chant/kept/design/W-004/${tokens[5]}`;
+    git(root, "update-ref", kept, "HEAD");
+
+    const doc = await workHistory({ id: "W-004", cwd: root });
+    expectValid(doc);
+    if ("error" in doc) throw new Error(doc.error.message);
+    expect(doc.claims.map((c) => c.attempt)).toEqual([false, false, false, false, false, true]);
+    expect(doc.attempts).toEqual({ failed: 1, limit: 2, remaining: 1, exhausted: false });
+    expect(doc.claims.map((c) => c.kept)).toEqual([null, null, null, null, null, kept]);
+    expect(doc.kept).toEqual([{ token: tokens[5], ref: kept, commit: git(root, "rev-parse", "HEAD").trim() }]);
+    expect(formatWorkHistory(doc)).toContain(`kept: ${kept}`);
+  });
+
+  test("a release outside the closed list of outcomes is refused (#3147)", async () => {
+    await expect(releaseWorkLease("W-002", "worker-b", { cwd: kindDir, outcome: "skipped" })).rejects.toThrow(/not a work lease outcome/);
+    const doc = await workLease({ verb: "release", id: "W-002", holder: "worker-b", cwd: root, outcome: "skipped" });
+    expect(doc).toMatchObject({ error: { code: "write-usage-invalid" } });
+    expect((doc as { error: { message: string } }).error.message).toMatch(/done, not_done, abandoned, gated, waiting, dropped, redraft, ask/);
   });
 
   test("an item never claimed has no claims; an unknown item is an error", async () => {
@@ -142,10 +178,17 @@ describe("claimsOf", () => {
   });
 
   test("a release by someone closing out an expired lease keeps the holder and records who released it", () => {
-    const claims = claimsOf([e("claim", "a"), e("release", "a", { by: "janitor", outcome: "expired" })], null);
+    const claims = claimsOf([e("claim", "a"), e("release", "a", { by: "janitor", outcome: "abandoned" })], null);
     expect(claims).toEqual([
-      { token: "a", holder: "h-a", acquiredAt: "2026-09-25T00:00:00.000Z", expiresAt: "2026-09-25T00:10:00.000Z", renewals: 0, ended: "released", release: { by: "janitor", at: "2026-09-25T00:00:00.000Z", outcome: "expired", note: null } },
+      { token: "a", holder: "h-a", acquiredAt: "2026-09-25T00:00:00.000Z", expiresAt: "2026-09-25T00:10:00.000Z", renewals: 0, ended: "released", release: { by: "janitor", at: "2026-09-25T00:00:00.000Z", outcome: "abandoned", note: null }, attempt: true, kept: null },
     ]);
+  });
+
+  test("a release with free text from before the outcomes were closed counts as an attempt, and one with no outcome too", () => {
+    expect(claimsOf([e("claim", "a"), e("release", "a", { outcome: "skipped" })], null)[0].attempt).toBe(true);
+    expect(claimsOf([e("claim", "a"), e("release", "a")], null)[0].attempt).toBe(true);
+    expect(claimsOf([e("claim", "a"), e("release", "a", { outcome: "done" })], null)[0].attempt).toBe(false);
+    expect(claimsOf([e("claim", "a")], { token: "a", state: "active" })[0].attempt).toBe(false);
   });
 
   test("the live ref decides between held and expired for the newest claim", () => {

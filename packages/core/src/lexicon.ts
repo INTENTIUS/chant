@@ -426,6 +426,13 @@ export interface InitTemplateSet {
  * repos or version-constant locations. See ./codegen/pinned-upgrade.ts.
  */
 export interface UpstreamPin {
+  /**
+   * Short name for this pin (`clickhouse`, `postgres-17`), used to pick one
+   * pin of a plugin that declares several (`chant dev pinned-upgrade <dir>
+   * <label>`). Optional on a lone `upstreamPin`, where it defaults to the
+   * lexicon's name; required on every entry of `upstreamPins`.
+   */
+  readonly label?: string;
   /** Source file (relative to the lexicon package root) holding the pinned version constant. */
   readonly file: string;
   /** Regex whose first capture group is the current pinned version in `file`. */
@@ -1236,6 +1243,14 @@ export interface LexiconPlugin {
 
   /** How this lexicon pins its upstream schema version + where to check for a newer one (self-upgrade tooling — see ./codegen/pinned-upgrade.ts). Omit for lexicons with no pinned upstream. */
   readonly upstreamPin?: UpstreamPin;
+
+  /**
+   * Further pins, for a lexicon that pins more than one upstream (sql: the
+   * ClickHouse pin in `upstreamPin` plus one Postgres server per major). Each
+   * entry needs a unique `label`. The upgrade tooling checks `upstreamPin` and
+   * every entry here, one report per pin. Omit when there is one pin.
+   */
+  readonly upstreamPins?: readonly (UpstreamPin & { readonly label: string })[];
 
   /**
    * Generate a CI pipeline from the discovered component graph — the

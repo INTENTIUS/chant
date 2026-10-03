@@ -32,6 +32,24 @@ export const sqlAuditCatalog: Record<string, RuleMeta> = {
     "A column interpolated without .columns reads the entity's own field instead",
     "Write ${table.columns.name}.",
   ),
+  SQLPG001: sourceRule(
+    "SQLPG001",
+    "correctness",
+    "Postgres DDL in a tagged template does not parse, or holds another statement than its tag",
+    "Fix the statement at the token the message names, or use the tag for the statement it holds; name every index.",
+  ),
+  SQLPG002: sourceRule(
+    "SQLPG002",
+    "correctness",
+    "A column interpolated without .columns reads the entity's own field instead",
+    "Write ${table.columns.name}.",
+  ),
+  SQLPG003: sourceRule(
+    "SQLPG003",
+    "correctness",
+    "A sequence or relation named in a regclass string makes no reference",
+    "Interpolate the declared object: nextval(${sequence}) or ${relation}::regclass.",
+  ),
   SQLCH101: auditRule(
     "SQLCH101",
     "merge-worthy",

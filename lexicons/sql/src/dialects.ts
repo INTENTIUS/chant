@@ -9,12 +9,13 @@
  * respect (ClickHouse has no foreign keys and rebuilds a table to change its
  * sort key; Postgres has transactional DDL).
  */
-export const SQL_DIALECTS = ["clickhouse"] as const;
+export const SQL_DIALECTS = ["clickhouse", "postgres"] as const;
 
 export type SqlDialect = (typeof SQL_DIALECTS)[number];
 
 /**
- * Dialects being built, not yet declarable (#3289). `sql.dialect` refuses
- * them with a message saying so, rather than as an unknown name.
+ * Dialects being built, not yet declarable. `sql.dialect` refuses them with a
+ * message saying so, rather than as an unknown name. None today: Postgres
+ * became declarable with #3279.
  */
-export const PLANNED_SQL_DIALECTS = ["postgres"] as const;
+export const PLANNED_SQL_DIALECTS: readonly string[] = [];

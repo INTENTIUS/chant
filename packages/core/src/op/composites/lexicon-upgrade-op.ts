@@ -85,6 +85,12 @@ export interface LexiconUpgradeOpConfig {
    */
   lexiconDir?: string;
   /**
+   * Label of one pin to check, for a lexicon whose plugin declares several
+   * (`upstreamPins`; sql has `clickhouse` and `postgres-14` to `postgres-18`).
+   * Omit to check every pin.
+   */
+  pin?: string;
+  /**
    * What to produce on findings. Default: "report".
    * @default "report"
    */
@@ -133,6 +139,7 @@ export function LexiconUpgradeOp(config: LexiconUpgradeOpConfig): LexiconUpgrade
           args: {
             lexicon: config.lexicon,
             ...(config.lexiconDir ? { lexiconDir: config.lexiconDir } : {}),
+            ...(config.pin ? { pin: config.pin } : {}),
             mode: onFinding,
           },
           // Surface whether a PR-worthy upgrade was found as the run's

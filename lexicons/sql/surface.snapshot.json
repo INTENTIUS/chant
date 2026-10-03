@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-02T23:51:29.811Z",
+  "generatedAt": "2026-10-03T06:18:13.477Z",
   "entries": {
     "Database": {
       "kind": "resource",
@@ -9,6 +9,42 @@
     "MaterializedView": {
       "kind": "resource",
       "resourceType": "ClickHouse::MaterializedView"
+    },
+    "PostgresDomain": {
+      "kind": "resource",
+      "resourceType": "Postgres::Domain"
+    },
+    "PostgresEnum": {
+      "kind": "resource",
+      "resourceType": "Postgres::Enum"
+    },
+    "PostgresExtension": {
+      "kind": "resource",
+      "resourceType": "Postgres::Extension"
+    },
+    "PostgresIndex": {
+      "kind": "resource",
+      "resourceType": "Postgres::Index"
+    },
+    "PostgresMaterializedView": {
+      "kind": "resource",
+      "resourceType": "Postgres::MaterializedView"
+    },
+    "PostgresSchema": {
+      "kind": "resource",
+      "resourceType": "Postgres::Schema"
+    },
+    "PostgresSequence": {
+      "kind": "resource",
+      "resourceType": "Postgres::Sequence"
+    },
+    "PostgresTable": {
+      "kind": "resource",
+      "resourceType": "Postgres::Table"
+    },
+    "PostgresView": {
+      "kind": "resource",
+      "resourceType": "Postgres::View"
     },
     "Table": {
       "kind": "resource",

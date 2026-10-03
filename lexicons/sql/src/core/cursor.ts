@@ -82,6 +82,18 @@ export class SqlCursor {
     if (!this.accept(...words)) this.fail(`expected ${words.join(" or ")}`);
   }
 
+  /** Whether the next significant tokens are the bare words `words`, in order. */
+  protected is(...words: string[]): boolean {
+    return words.every((w, n) => kw(this.peek(n), w));
+  }
+
+  /** Accept a sequence of bare words, all of them or none. */
+  protected acceptSeq(...words: string[]): boolean {
+    if (!this.is(...words)) return false;
+    this.p += words.length;
+    return true;
+  }
+
   protected isPunct(c: string, n = 0): boolean {
     const t = this.peek(n);
     return t !== undefined && t.kind === "punct" && t.text === c;
