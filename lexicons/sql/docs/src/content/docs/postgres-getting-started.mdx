@@ -1,0 +1,277 @@
+---
+title: "Getting Started with Postgres"
+description: "Declare a Postgres schema with the sql lexicon, build it, apply it to a local server, add a column and an index, and see a column rename refused"
+diataxis: tutorial
+---
+
+{/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-sql` — DO NOT EDIT.
+    Edit lexicons/sql/docs/pages/postgres-getting-started.mdx instead; changes here are overwritten. */}
+
+
+This walks through the Postgres example the lexicon ships: a schema, an enum type, a sequence, two tables with a foreign key, an index and a view. You build it, apply it to a Postgres server running in Docker, add a column and an index to the live tables, and then rename a column to see why some changes are not made in place.
+
+The package is not on npm yet, so the tutorial runs in a checkout of the chant repository. You need Node.js, npm and Docker.
+
+## 1. Prepare the checkout
+
+```bash
+git clone https://github.com/INTENTIUS/chant.git
+cd chant
+npm ci
+npm run prepack -w @intentius/chant-lexicon-sql
+```
+
+`prepack` generates the Postgres types from the committed catalog snapshots, one per supported major, and bundles the lexicon. It reads no server and needs no network beyond `npm ci`.
+
+The example lives in `lexicons/sql/examples/postgres-getting-started`. Work from there:
+
+```bash
+cd lexicons/sql/examples/postgres-getting-started
+```
+
+Its `chant.config.ts` registers the lexicon and says the project is a Postgres one:
+
+```ts title="chant.config.ts"
+import type { ChantConfig } from "@intentius/chant";
+import "@intentius/chant-lexicon-sql";
+
+export default { lexicons: ["sql"], sql: { dialect: "postgres" } } satisfies ChantConfig;
+```
+
+## 2. Read the declarations
+
+Each object is its own DDL inside a tagged template from `@intentius/chant-lexicon-sql/postgres`, and the export name (`app`, `orderStatus`) is how chant knows the object. A template may follow its `CREATE` with `COMMENT ON` statements for the same object:
+
+```typescript title="app.ts"
+import { schema, sequence, type } from "@intentius/chant-lexicon-sql/postgres";
+
+export const app = schema`
+  CREATE SCHEMA app;
+  COMMENT ON SCHEMA app IS 'The shop'`;
+
+export const orderStatus = type`
+  CREATE TYPE ${app}.order_status AS ENUM ('placed', 'paid', 'shipped', 'cancelled')`;
+
+// Invoice numbers start at 1000; orders take theirs with nextval(${invoiceSeq}).
+export const invoiceSeq = sequence`
+  CREATE SEQUENCE ${app}.invoice_seq AS bigint START WITH 1000`;
+```
+
+`${app}.users` makes the table a reference to the schema, so the build creates the schema first. The column comment is part of the table's declaration:
+
+```typescript title="users.ts"
+import { table } from "@intentius/chant-lexicon-sql/postgres";
+import { app } from "./app";
+
+export const users = table`
+  CREATE TABLE ${app}.users (
+    id         bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    email      text NOT NULL UNIQUE,   -- login name, compared case-insensitively by the app
+    created_at timestamptz NOT NULL DEFAULT now()
+  );
+  COMMENT ON TABLE ${app}.users IS 'One row per account';
+  COMMENT ON COLUMN ${app}.users.email IS 'Unique; lower-cased by the app'`;
+```
+
+`orders` references three more objects. `REFERENCES ${users} (${users.columns.id})` is a foreign key whose target the build knows. `nextval(${invoiceSeq})` renders as `nextval('app.invoice_seq'::regclass)`, which is how the server prints the default back, and makes the sequence a dependency. `${orderStatus}` is the enum type. The index is named, because the name is its identity on the server:
+
+```typescript title="orders.ts"
+import { index, table } from "@intentius/chant-lexicon-sql/postgres";
+import { app, invoiceSeq, orderStatus } from "./app";
+import { users } from "./users";
+
+export const orders = table`
+  CREATE TABLE ${app}.orders (
+    id         bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    user_id    bigint NOT NULL REFERENCES ${users} (${users.columns.id}) ON DELETE CASCADE,
+    invoice_no bigint NOT NULL DEFAULT nextval(${invoiceSeq}),
+    status     ${orderStatus} NOT NULL DEFAULT 'placed',
+    amount     numeric(12, 2) NOT NULL CHECK (amount >= 0),
+    placed_at  timestamptz NOT NULL DEFAULT now()
+  )`;
+
+// The index is named: the name is its identity on the server.
+export const ordersUserId = index`
+  CREATE INDEX orders_user_id_idx ON ${orders} (${orders.columns.user_id}, ${orders.columns.placed_at} DESC)`;
+```
+
+The view reads both tables through column references, qualified with the alias the query gives each table. Those references are its lineage: the build records that `order_count` comes from `orders.id` and `total` from `orders.amount`:
+
+```typescript title="order-totals.ts"
+import { view } from "@intentius/chant-lexicon-sql/postgres";
+import { app } from "./app";
+import { orders } from "./orders";
+import { users } from "./users";
+
+// In a join, qualify each column reference: u.${users.columns.id}.
+export const orderTotals = view`
+  CREATE VIEW ${app}.order_totals WITH (security_invoker = true) AS
+  SELECT u.${users.columns.id} AS user_id,
+         u.${users.columns.email},
+         count(o.${orders.columns.id}) AS order_count,
+         coalesce(sum(o.${orders.columns.amount}), 0) AS total
+  FROM ${users} u
+  LEFT JOIN ${orders} o ON o.${orders.columns.user_id} = u.${users.columns.id}
+  GROUP BY u.${users.columns.id}, u.${users.columns.email}`;
+```
+
+## 3. Build and lint
+
+```bash
+npx chant build src --lexicon sql -o dist/schema.json
+npx chant lint src
+```
+
+The build folds the four files without running them and writes two files. `dist/schema.json` holds every object's parsed definition, the major the project targets (`postgresMajor`, 18 when `sql.postgresMajor` is not set), and the order to create them in:
+
+```json
+"applyOrder": ["app", "invoiceSeq", "orderStatus", "users", "orders", "orderTotals", "ordersUserId"]
+```
+
+`dist/postgres.sql` holds the same statements in that order, each with its `COMMENT ON` statements, as they will be sent. Lint should report no problems. To see what a reference is for, write the sequence's name in a string, `nextval('app.invoice_seq')`, and lint again:
+
+```
+src/orders.ts
+   9:48  warning  'app.invoice_seq' names an object in a string, which records no reference, so the build can create this object before it; interpolate the declared object instead: nextval(${...})  SQLPG003
+```
+
+Put the interpolation back before going on.
+
+## 4. Start a server
+
+```bash
+npx chant emulator up --lexicon sql
+export POSTGRES_URL=postgres://localhost:5432/postgres
+export POSTGRES_USER=postgres POSTGRES_PASSWORD=chant
+```
+
+`chant emulator up` starts the pinned `postgres:18.6` image by digest, the same release the newest major's types come from, on port 5432, and the lexicon's pinned ClickHouse server beside it on port 8123. `npx chant emulator up --lexicon sql --json` prints both endpoints with the variables to set. With no `sql.profiles` entry in `chant.config.ts`, every command below reaches the server through `POSTGRES_URL`, `POSTGRES_USER` and `POSTGRES_PASSWORD`. If something on the machine already listens on 5432 or 8123, stop it first.
+
+Before applying anything, plan the build against the empty server:
+
+```bash
+npx chant sql plan dev dist/schema.json
+```
+
+Every object is a `create` (SQLPG200), and the plan ends with `7 create`. `dev` names the environment; it would select `sql.profiles.dev` if the config declared one.
+
+## 5. Apply
+
+Applying is an Op. Create `ops/schema-apply.op.ts`:
+
+```ts title="ops/schema-apply.op.ts"
+import { ApplyOp } from "@intentius/chant/op";
+
+const { op } = ApplyOp({
+  name: "schema-apply",
+  env: "dev",
+  target: "postgres",
+});
+
+export default op;
+```
+
+Run it:
+
+```bash
+npx chant run schema-apply
+```
+
+The Op builds, plans and then applies. Every statement the applier sends is printed. Here they are all creates, which change only the catalog, so they run in one transaction, from `BEGIN` to `COMMIT`, each under a `lock_timeout` of five seconds. Each object's comment gets chant's ownership marker, set with `COMMENT ON` in the same transaction:
+
+```sql
+COMMENT ON TABLE app.users IS 'One row per account [chant managed-by=chant]'
+```
+
+The run ends with `[dev] applied 7 resource(s)`. Plan again, and the answer is `No changes.`
+
+## 6. Add a column and an index
+
+In `src/orders.ts`, add a column after `placed_at`, and an index on `status` at the end of the file:
+
+```ts
+    placed_at  timestamptz NOT NULL DEFAULT now(),
+    note       text
+  )`;
+```
+
+```ts
+export const ordersStatus = index`
+  CREATE INDEX CONCURRENTLY orders_status_idx ON ${orders} (${orders.columns.status})`;
+```
+
+Rebuild and plan:
+
+```bash
+npx chant build src --lexicon sql -o dist/schema.json
+npx chant sql plan dev dist/schema.json
+```
+
+```
+orders (app.orders)
+  [metadata only] columns.note: note text
+      SQLPG201 Add a column. ADD COLUMN with no default, or with a non-volatile default, changes only the catalog under ACCESS EXCLUSIVE: ...
+ordersStatus (app.orders_status_idx)
+  [needs CONCURRENTLY] index: app.orders_status_idx
+      SQLPG240 Create an index CONCURRENTLY. CREATE INDEX CONCURRENTLY builds the index without blocking writes (SHARE UPDATE EXCLUSIVE), in two scans, and cannot run inside a transaction block; ...
+
+1 metadata only, 1 needs CONCURRENTLY
+```
+
+Each change is classified by the lock it takes. A nullable column with no default is a catalog change. An index on a table that already holds rows blocks every write to it for the whole build unless it is built `CONCURRENTLY`; without that word the plan would report SQLPG241 and say to declare it. Run `npx chant run schema-apply` again. The column is added in a transaction, and the index is built outside any transaction, since Postgres refuses `CREATE INDEX CONCURRENTLY` inside one:
+
+```
+BEGIN
+ALTER TABLE app.orders ADD COLUMN note text
+COMMIT
+CREATE INDEX CONCURRENTLY orders_status_idx ON app.orders (status)
+```
+
+The plan after that is `No changes.` again.
+
+## 7. Rename the column
+
+Copy the current build aside, then rename `note` to `memo`, saying on the column's line what it was called:
+
+```ts
+    memo       text   -- previously: note
+```
+
+Build again and compare the two builds offline, the way a pull request check would, with no server:
+
+```bash
+cp dist/schema.json dist/base.json
+# rename the column in src/orders.ts
+npx chant build src --lexicon sql -o dist/schema.json
+npx chant sql diff dist/base.json dist/schema.json
+```
+
+```
+orders
+  [EXPAND AND CONTRACT] columns.memo: note -> memo
+      SQLPG205 Rename a column. RENAME COLUMN is a catalog change, but every reader still using the old name fails the moment it runs: ...
+
+Refused: 1 change(s) keep no old reader working when made in place. ...
+
+Run it as the expand-and-contract migration Op, declared in an *.op.ts file (import { PostgresMigrationOp } from "@intentius/chant-lexicon-sql/postgres"), then `chant run <name>` until it is done:
+  export const { op } = PostgresMigrationOp({ name: "migrate-app-orders-memo", env: "<env>", table: "app.orders", column: "memo" });
+```
+
+The command exits 2. `ALTER TABLE ... RENAME COLUMN` would take a moment, and every query still using `note` would fail from that moment on, so the plan refuses it. Run `npx chant run schema-apply` and the applier refuses it the same way: `app.orders` is reported not attempted, `unsupported-kind`, with the same rule and the same Op, and nothing is sent for it. Without the `-- previously:` line, the plan would instead report a drop of `note` and an add of `memo`, with a hint asking whether it is a rename.
+
+The rename is made by the Op the output names, which adds `memo` beside `note`, keeps both written, copies the rows over and switches readers at a gate. [Migrating a Column](../postgres-migration/) runs it. Put the column's old name back before going on.
+
+## 8. Clean up
+
+```bash
+npx chant emulator down --lexicon sql
+rm -rf ops dist
+```
+
+## Next
+
+- [Declaring Postgres Objects](../postgres-ddl/) covers every tag, constraint and interpolation.
+- [Postgres Locks and the Change Classifier](../postgres-change-classifier/) lists every rule.
+- [Applying to a Postgres Server](../postgres-applying/) covers profiles, timeouts, prune and the ownership marker.
+- [Importing a Postgres Server](../postgres-importing/) starts from a server that already has a schema.
+- `chant init --lexicon sql --template postgres` scaffolds a project like this one; `--template postgres-tenant` gives tenant-keyed tables and indexes, and `--template postgres-events` an events table partitioned by month.

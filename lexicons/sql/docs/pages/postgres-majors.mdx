@@ -1,0 +1,73 @@
+---
+title: "The Postgres Pin and Supported Majors"
+label: "Pin and Supported Majors"
+description: "One pinned postgres release per supported major, 14 to 18: what is read from each catalog, how the union of five majors becomes the dialect's types, what sql.postgresMajor changes, and how a pin moves"
+diataxis: explanation
+group: "Postgres"
+order: 11
+---
+
+Postgres publishes no schema for its DDL either. What a server does publish is its catalog: `pg_type`, `pg_am`, `pg_opclass`, `pg_proc`, `pg_operator`, `pg_settings`, `pg_get_keywords()`, `pg_available_extensions`, and the storage parameters each relation kind accepts. The Postgres dialect's types are generated from those, so a type name, an access method or a storage parameter here is one a pinned server lists.
+
+Unlike ClickHouse, where one LTS release is the pin, Postgres projects run on several majors at once, each supported for five years. So there is one pin per supported major, 14 to 18, each an exact minor of the official `postgres` image by tag and digest:
+
+| Major | Pin |
+|---|---|
+| 14 | `postgres:14.24` |
+| 15 | `postgres:15.19` |
+| 16 | `postgres:16.15` |
+| 17 | `postgres:17.11` |
+| 18 | `postgres:18.6` |
+
+The pins are one line each in `lexicons/sql/src/spec/postgres-pin.ts`, with the digest of each tag's multi-arch manifest beside the version. A floating `18` tag would change the generated types with no commit recording why, and a re-pushed tag must not change them unseen either, so generation runs `image@digest` and refuses a server whose `server_version` is not the pin. Postgres 14 leaves community support in November 2026; dropping it is deleting its line and its snapshot.
+
+## Five catalogs, one set of types
+
+Each major's catalog is committed as `src/spec/postgres-catalog-<major>.snapshot.json`, one entry per line, each section sorted with `COLLATE "C"`. Nothing in it depends on the machine that read it: `pg_settings` is read for its compiled default (`boot_val`), never the scratch server's own `setting`, and nothing is timestamped. Ordinary generation, in a fresh clone, in CI and in `npm run prepack`, reads the five files and needs neither Docker nor a network.
+
+The generated types are the union of the five. Every type, access method, setting, function, key word, extension and storage parameter from any supported major is in the string-literal unions and the settings and storage-parameter interfaces. A name missing from the oldest or the newest major carries `@since` or `@until` in its JSDoc, and an entry in a version-range table that lint and the editor read: `security_invoker` on a view is since 15, `adminpack` until 16. A name present in two majors with a gap between them fails generation, since a range could not describe it.
+
+Hand-written overlays in `src/postgres/overlays/` give the grammar the catalog does not: column type parameters, constraint forms, generated and identity columns, partitioning, index clauses, storage parameter types and ranges, and the enum, domain and sequence DDL. Generation checks them against the catalogs both ways: an overlay entry no major has, or a storage parameter a server accepts that no overlay types, stops it.
+
+## The project's major
+
+`sql.postgresMajor` in `chant.config.ts` names the major a project targets, one of 14 to 18. Without it the project targets 18, the newest.
+
+```ts
+export default { lexicons: ["sql"], sql: { dialect: "postgres", postgresMajor: 16 } } satisfies ChantConfig;
+```
+
+The build records it as `postgresMajor` in its output, and each tool reads it from there or from the config:
+
+| Tool | What the major changes |
+|---|---|
+| the editor (`chant serve lsp`) | completes only names the major has; a name not in every major shows its range on hover. The MCP `sql:lookup` and `sql:search` tools take a `major` argument instead |
+| SQLPG114 | a storage parameter the major removed is an error |
+| SQLPG115 | a feature newer than the major is a warning: `NULLS NOT DISTINCT` before 15, `NOT ENFORCED` and virtual generated columns before 18, storage parameters by their first major |
+| SQLPG116 | an extension the major no longer ships is an error |
+| `chant sql diff` | the class of the two rules that differ by major: a STORED generated expression change (SQLPG212) is a rewrite from 17 and expand and contract before, an access method change (SQLPG226) a rewrite from 15 |
+| `chant sql plan` | classifies for the major the server reports instead, since the server takes the locks, and says so in a hint when the two differ |
+| `postgresApply` | whether `SET EXPRESSION` (17) and `SET STORAGE DEFAULT` (16) can be sent |
+
+The live tests and `chant emulator up` run the newest pin, `postgres:18.6`. A project on an older major gets the older major's names in the editor and its rules in lint and the diff, but nothing in the repository applies to a 14 server in CI.
+
+## Moving a pin
+
+1. Change that major's `version` and `digest` on its one line in `src/spec/postgres-pin.ts`. The digest is the new tag's image digest, from `docker buildx imagetools inspect postgres:<version>`.
+2. Run `npm run generate -w @intentius/chant-lexicon-sql` (or `chant dev generate` in the lexicon's directory) with Docker available. The snapshot no longer matches its pin, so generation starts that image in a throwaway container, checks its `server_version`, reads the catalog and rewrites that major's snapshot. `npm run generate -- --force --major=17` reads one major again even when nothing moved.
+3. Read the snapshot's diff. A `-` line is a setting, function or type the new minor removed, which is what would break a declaration. Minors rarely move the surface: 17.9 and 17.11 differ by one setting.
+4. Fix any overlay entry generation now refuses, and run the tests.
+5. Run `chant dev surface-diff lexicons/sql`, and accept a change with `--update-snapshot --bump`, as for ClickHouse (see [Where the ClickHouse Types Come From](../clickhouse-catalog/)).
+
+Adding a major is one more line and one more snapshot.
+
+The plugin declares one upstream pin per major beside ClickHouse's, labelled `postgres-14` to `postgres-18`. `chant dev pinned-upgrade lexicons/sql` reports all six:
+
+```
+[sql/clickhouse] up to date  pinned=26.8.15.10 latest=v26.8.15.10-lts
+[sql/postgres-14] up to date  pinned=14.24 latest=14.24
+...
+[sql/postgres-18] up to date  pinned=18.6 latest=18.6
+```
+
+Each Postgres pin tracks only its own major, read from the `REL_<major>_<minor>` tags of `postgres/postgres`, so the 17 pin reports `17.12` and never `18.7`. `chant dev pinned-upgrade lexicons/sql postgres-17` checks one. The report names the digest as the step it cannot take: a git tag lands a few days before its image, so a reported version can have no image yet.

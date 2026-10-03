@@ -6,7 +6,7 @@ description: "Every lint rule and post-synth check provided by the SQL lexicon"
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-sql` — DO NOT EDIT.
     Edit lexicons/sql/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-The SQL lexicon provides **44** rules: 6 lint rules and 38 post-synth checks.
+The SQL lexicon provides **45** rules: 7 lint rules and 38 post-synth checks.
 
 ## Lint Rules
 
@@ -18,6 +18,7 @@ The SQL lexicon provides **44** rules: 6 lint rules and 38 post-synth checks.
 | `SQLPG001` | error | correctness | the DDL in a Postgres template does not parse, or does not hold |
 | `SQLPG002` | error | correctness | a column written as `$\{events.kind\}` instead of `$\{events.columns.kind\}`. |
 | `SQLPG003` | warning | correctness | an object named in a string where Postgres reads a `regclass`: |
+| `SQLPG004` | error | correctness | a declared extension the configured provider does not allow. |
 
 ## Post-Synth Checks
 
@@ -58,8 +59,8 @@ Post-synth checks validate the serialized output after the build pipeline comple
 | `SQLPG111` | A materialized view has no unique index, so it cannot refresh concurrently |
 | `SQLPG112` | A secret- or PII-named column with no comment on it or its table |
 | `SQLPG113` | An object is in the public schema though the project declares schemas |
-| `SQLPG114` | A storage parameter the object's kind or the pinned major does not accept |
-| `SQLPG115` | A feature the oldest supported major lacks |
-| `SQLPG116` | An extension the pinned major no longer ships |
+| `SQLPG114` | A storage parameter the object's kind or the target major does not accept |
+| `SQLPG115` | A feature newer than the target major |
+| `SQLPG116` | An extension the target major no longer ships |
 | `SQLPG117` | A view without security_invoker runs with its owner's privileges |
 | `SQLPG118` | A table uses INHERITS where declarative partitioning replaced it |

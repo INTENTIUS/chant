@@ -7,6 +7,25 @@ A hand-curated rollup of capabilities shipped recently. If you learned chant bef
 
 For the day-to-day reference docs see [Lifecycle Models](/chant/concepts/lifecycle-models/), [`chant lifecycle`](/chant/cli/lifecycle/), [Live Import](/chant/guide/live-import/), [Reconciling Lifecycle](/chant/guide/reconciling-lifecycle/), [Drift Detection](/chant/concepts/drift-detection/), and [Implementing Observation](/chant/lexicon-authoring/observation/).
 
+## Postgres schemas in the sql lexicon
+
+The sql lexicon has a second dialect, Postgres, at `@intentius/chant-lexicon-sql/postgres`. Each schema object is written as its own `CREATE` statement in a tagged template, with `COMMENT ON` statements after it, and `nextval(${seq})` keeps a sequence a reference. The types come from one pinned `postgres` release per supported major, 14 to 18. `sql.postgresMajor` picks the major a project targets, and four lint rules and eighteen post-synth checks hold a schema to it.
+
+`chant sql diff` and `chant sql plan` classify every change by the lock it takes and cite the Postgres 18 page for each rule. `postgresApply`, the `postgres` target of `ApplyOp`, groups its statements into transactions by that class and runs `CONCURRENTLY` builds outside them, each statement under a lock timeout. A column rename or a type change across kinds is refused in place and runs as `PostgresMigrationOp`, which fills the new column in batches with a receipt committed in each batch's transaction and waits at a gate before the switch and again before the old column is dropped. Import reads canonical text from the catalog's printers and leaves out what an ORM, an extension or a managed provider owns. The [overview](/chant/lexicons/sql/) explains why the two dialects share a way of working and little else; like the ClickHouse dialect, it runs from a checkout until the package is published.
+
+| # | Capability |
+|---|---|
+| [#3277](https://github.com/INTENTIUS/chant/issues/3277), [#3278](https://github.com/INTENTIUS/chant/issues/3278) | The spikes: types from `pg_catalog` at one pin per major, and a hand-written Postgres DDL parser |
+| [#3279](https://github.com/INTENTIUS/chant/issues/3279) | A dialect-neutral core, the tags and entities, import and observation, and the lock classifier |
+| [#3280](https://github.com/INTENTIUS/chant/issues/3280) | `postgresApply`: transactions, `CONCURRENTLY`, timeouts, the comment ownership marker, prune, and `chant emulator up` for Postgres |
+| [#3281](https://github.com/INTENTIUS/chant/issues/3281) | `PostgresMigrationOp`, the expand-and-contract migration of a column |
+| [#3282](https://github.com/INTENTIUS/chant/issues/3282) | Managed providers as configuration, and SQLPG004 |
+| [#3283](https://github.com/INTENTIUS/chant/issues/3283) | Completions, hover and MCP tools for Postgres templates |
+| [#3284](https://github.com/INTENTIUS/chant/issues/3284) | The Postgres declaring, plan and migration skills, and three init templates |
+| [#3285](https://github.com/INTENTIUS/chant/issues/3285) | Post-synth checks SQLPG101 to SQLPG118 |
+| [#3286](https://github.com/INTENTIUS/chant/issues/3286) | The `SoftDeleteTable`, `AuditLogTable`, `JoinTable`, `TenantTable` and `RefreshedView` composites, and five examples |
+| [#3297](https://github.com/INTENTIUS/chant/pull/3297) | A lexicon can declare several upstream pins; `chant dev pinned-upgrade` reports each Postgres major |
+
 ## ClickHouse schemas in the sql lexicon
 
 `@intentius/chant-lexicon-sql` declares database schema in TypeScript, one dialect at a time, and ClickHouse is the first, at `@intentius/chant-lexicon-sql/clickhouse`. Every schema object is written as its own `CREATE` statement inside a tagged template named for its kind. `chant build` parses each template while it folds the file, so an interpolated table or column stays a reference: references order the build and give each view column-level lineage. The ClickHouse types are generated from the `system.*` tables of a pinned `clickhouse-server` release, and three lint rules and twenty post-synth checks hold a schema to what that server accepts.
