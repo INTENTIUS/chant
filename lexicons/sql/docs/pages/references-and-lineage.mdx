@@ -1,0 +1,61 @@
+---
+title: "References and Lineage"
+description: "How an interpolated table, view or column becomes a reference, and how references give the build its dependency order and a view its column-level lineage"
+diataxis: explanation
+order: 3
+---
+
+An interpolation that holds a `database`, `table` or `view` entity, or one of a table's or view's `.columns`, is not spliced into the statement as text. It stays a reference. The statement still reads the object's name in the place the reference sits, and the build also knows which object that name belongs to. Everything on this page follows from that.
+
+```ts
+export const byKind = view`
+  CREATE VIEW ${analytics}.by_kind AS
+  SELECT ${events.columns.kind} AS kind, count() AS n
+  FROM ${events}
+  GROUP BY kind`;
+```
+
+Here `${analytics}`, `${events}` and `${events.columns.kind}` are references. `kind` in `GROUP BY kind` and `count()` are SQL text.
+
+## Dependency order
+
+Every reference a statement makes is a dependency of the object it declares. A table depends on the database its name is qualified with, a view on the tables and views it reads, a materialized view on its `TO` target as well. The build orders objects so each comes after what it depends on, and writes that order as `applyOrder` in the build output and as the statement order in `clickhouse.sql`. The applier creates objects in that order.
+
+References cross files the way any import does. `src/events.ts` imports `analytics` from `./analytics` and interpolates it, and the build resolves it while folding, without running either file. Objects that do not depend on each other are ordered by export name, so the same source always builds the same output. A cycle, which ClickHouse could not create either, fails the build and names the objects in it.
+
+The order comes from references alone. A view that names its source in plain text, `FROM analytics.events`, still builds and still runs on the server, but the build does not know it reads `events` and may order it first.
+
+## Column-level lineage
+
+For a view or a materialized view, the build records where each output column comes from. One lineage edge is written per item of the top-level select list: the output column's name, the expression, and the column references inside it.
+
+```json
+"lineage": [
+  { "output": "day",   "expr": "toDate(ts)",         "from": ["events.ts"] },
+  { "output": "kind",  "expr": "kind",               "from": ["events.kind"] },
+  { "output": "users", "expr": "uniqState(user_id)", "from": ["events.user_id"] }
+]
+```
+
+The output name is the item's alias, or the column's own name for a bare column reference. An item with neither is named by its position, `_2` for the second. `from` lists only references, written as `export.column`. A column written by name inside the SQL is not lineage: chant does not parse SQL text for names, and it would have to guess which table an unqualified name belongs to. The tables and views `FROM` and `JOIN` interpolate are recorded separately as the view's `reads`.
+
+So the way to get complete lineage is to write every column a view reads as `${table.columns.name}`. The editor helps: inside a `view` template, `${events.` offers `columns`, and `${events.columns.` offers the table's columns with their types.
+
+## What reads it
+
+- The build output carries `dependsOn`, `reads`, `to` and `lineage` for every object; see [Serialization](../serialization/).
+- SQLCH110 compares a materialized view's output columns with its `TO` target's columns, and SQLCH109 flags a materialized view that selects `*`, whose output columns change whenever its source's do. See [Lint Rules and Checks](../lint-rules/).
+- The MCP tool `sql:parse-ddl` returns a statement's parsed entity, its lineage included.
+- `clickhouseApply` creates objects in dependency order, and reports an object whose dependency failed or was not attempted as not attempted itself (`dependency-failed`).
+
+`chant lifecycle diff --live` does not compare lineage, reads or a view's `TO` target with the server, because they are derived from the declaration rather than stored by ClickHouse. A changed target is a change to the view's definition, and `chant sql plan` reports it (SQLCH242).
+
+## Names and renames
+
+A reference renders as the referenced object's SQL name at build time. Rename a table in its own declaration, `CREATE TABLE ${analytics}.events_v2`, and every statement that references `events` reads `analytics.events_v2` on the next build; nothing else in the source changes. The plan reports the table's rename as metadata only (SQLCH230) and each dependent view's query as changed.
+
+The export name is the identity. Renaming the export itself is a TypeScript rename, and the editor's rename-symbol updates every interpolation that uses it.
+
+## Imported schemas
+
+[`chant import --from <env>`](../importing/) writes a qualified name of another imported object as a reference, so an imported schema builds in the right order. Columns named inside an imported view's SELECT stay text, so an imported view records what it reads but not its column lineage until its column names are rewritten as `.columns` references.
