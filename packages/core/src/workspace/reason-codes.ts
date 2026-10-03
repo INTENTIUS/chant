@@ -225,6 +225,12 @@ export const REASONS = {
   "lease-token-mismatch": "The live lease on the work item carries another fencing token than the one given.",
   "lease-race": "Another writer changed the lease between this command's read and its write.",
   "lease-push-rejected": "The remote refused the lease push: another clone claimed the item first, or the remote could not be reached.",
+  // The agent run record (chant workspace runs, #3033): why a write was refused, and what a read could not see. Nothing is written on a refusal.
+  "run-exists": "runs start or runs record was given a run id the ledger already has.",
+  "run-unknown": "runs end names a run the ledger has no start for.",
+  "run-ended": "runs end names a run whose end is already recorded.",
+  "runs-no-ledger": "The checkout has no chant/lifecycle branch, so there are no agent runs to read.",
+  "runs-ledger-malformed": "Some lines of the agent run ledger aren't run events; the rest are read.",
   // A box whose isolation fails (check, #2727). Each is also a WSP finding.
   "box-isolation-collision": "Two boxes on one host resolve to the same port, state path or cookie name, or two ports in one box share an offset.",
   "box-isolation-literal": "A host's stateRoot or a box's state entry is a literal machine path instead of one derived from an environment reference and the box's name.",

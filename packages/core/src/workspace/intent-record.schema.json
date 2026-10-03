@@ -405,6 +405,13 @@
         },
         "joins": {
           "$ref": "#/$defs/trailerJoins"
+        },
+        "runs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/runRef"
+          },
+          "description": "The agent runs that made the commit (#3033). Added within version 1, so an older document may lack it."
         }
       }
     },
@@ -642,6 +649,87 @@
               }
             }
           ]
+        }
+      }
+    },
+    "runRef": {
+      "type": "object",
+      "description": "An agent run that made the commit (#3033).",
+      "required": [
+        "id",
+        "recorded",
+        "state",
+        "harness",
+        "model",
+        "provider",
+        "by",
+        "agent",
+        "unit",
+        "joinedBy"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "recorded": {
+          "type": "boolean",
+          "description": "Whether the run ledger on the local chant/lifecycle branch has the run. When false, only the id is known."
+        },
+        "state": {
+          "enum": [
+            "running",
+            "ended",
+            null
+          ]
+        },
+        "harness": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provider": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "by": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The principal the run worked for."
+        },
+        "agent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "unit": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The work item it worked on."
+        },
+        "joinedBy": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "enum": [
+              "trailer",
+              "record"
+            ]
+          },
+          "description": "trailer: the commit carries Chant-Run with the run's id. record: the run's end lists the commit."
         }
       }
     }

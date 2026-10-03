@@ -1,0 +1,767 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/runs/v1/runs.schema.json",
+  "title": "chant workspace runs output",
+  "description": "What `chant workspace runs --json` prints (#3033, ws-076): every agent run in the run ledger, _agent-runs/<id>.jsonl on chant/lifecycle, with its model, tokens, cost and the commits it made, joined by the run's own list and by the Chant-Run trailer (#3149), and totals per work item, per decision and per principal. A run that reports no cost is listed in unpriced, never counted as zero. It reads the local branch and never fetches. Version 1 of the read contract. Readers ignore fields they do not know; a field is only ever added within a version. The codes are a closed list, each in the one closed list of `reason-codes.ts`.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/result"
+    },
+    {
+      "$ref": "#/$defs/failure"
+    }
+  ],
+  "$defs": {
+    "result": {
+      "type": "object",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "workspace",
+        "ledger",
+        "filter",
+        "runs",
+        "totals",
+        "malformed",
+        "reasons"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/runs/v1/runs.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "workspace": {
+          "type": "object",
+          "required": [
+            "name",
+            "root"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "root": {
+              "type": "string"
+            }
+          }
+        },
+        "ledger": {
+          "type": "object",
+          "required": [
+            "branch",
+            "dir",
+            "commit"
+          ],
+          "properties": {
+            "branch": {
+              "const": "chant/lifecycle"
+            },
+            "dir": {
+              "type": "string"
+            },
+            "commit": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "The local branch tip read, or null when there is no branch."
+            }
+          }
+        },
+        "filter": {
+          "type": "object",
+          "required": [
+            "unit",
+            "decision",
+            "by",
+            "since"
+          ],
+          "properties": {
+            "unit": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "decision": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "by": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "since": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "runs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/run"
+          },
+          "description": "Newest first, by when each started."
+        },
+        "totals": {
+          "type": "object",
+          "required": [
+            "all",
+            "byUnit",
+            "byDecision",
+            "byPrincipal"
+          ],
+          "properties": {
+            "all": {
+              "$ref": "#/$defs/totals"
+            },
+            "byUnit": {
+              "type": "array",
+              "items": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/totals"
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "unit"
+                    ],
+                    "properties": {
+                      "unit": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "byDecision": {
+              "type": "array",
+              "items": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/totals"
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "decision"
+                    ],
+                    "properties": {
+                      "decision": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "byPrincipal": {
+              "type": "array",
+              "items": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/totals"
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "principal"
+                    ],
+                    "properties": {
+                      "principal": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "malformed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "enum": [
+                  "runs-no-ledger",
+                  "runs-ledger-malformed",
+                  "kind-unreadable"
+                ]
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "failure": {
+      "type": "object",
+      "description": "The runs could not be read. Exit code 1.",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "error"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/runs/v1/runs.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "enum": [
+                "declaration-missing",
+                "declaration-ambiguous",
+                "declaration-unparseable",
+                "declaration-invalid",
+                "placement-invalid",
+                "reader-too-old",
+                "root-chant-required",
+                "not-a-git-repository",
+                "revision-unknown"
+              ]
+            },
+            "message": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "run": {
+      "type": "object",
+      "description": "One agent run, its start and end folded together.",
+      "required": [
+        "id",
+        "state",
+        "startedAt",
+        "endedAt",
+        "outcome",
+        "by",
+        "agent",
+        "harness",
+        "model",
+        "provider",
+        "unit",
+        "lease",
+        "records",
+        "instruction",
+        "usage",
+        "models",
+        "cost",
+        "transcript",
+        "commits",
+        "decisions",
+        "ledger"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The run id, the value of the Chant-Run trailer on its commits."
+        },
+        "state": {
+          "enum": [
+            "running",
+            "ended"
+          ],
+          "description": "running until its end is recorded."
+        },
+        "startedAt": {
+          "type": "string"
+        },
+        "endedAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "outcome": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "How it ended, as the writer said: done, not_done, failed, cancelled."
+        },
+        "by": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The principal the run worked for: the person who prompted it, or the service that asked."
+        },
+        "agent": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The agent session it ran as (ws-067)."
+        },
+        "harness": {
+          "type": "object",
+          "required": [
+            "name",
+            "version"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "version": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provider": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "unit": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "id",
+                "kind"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          ],
+          "description": "The work item it worked on."
+        },
+        "lease": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The fencing token of the work lease it worked under."
+        },
+        "records": {
+          "type": "array",
+          "description": "Other records it worked on, by kind name and id.",
+          "items": {
+            "type": "object",
+            "required": [
+              "kind",
+              "id"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "instruction": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/pin"
+            }
+          ]
+        },
+        "usage": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/usage"
+            }
+          ],
+          "description": "Its tokens, or null when it reported none."
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/modelUsage"
+          },
+          "description": "Each model's share, when the harness reported a breakdown."
+        },
+        "cost": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/cost"
+            }
+          ],
+          "description": "What it cost, or null when it reported no cost: never zero for unknown."
+        },
+        "transcript": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/pin"
+            }
+          ],
+          "description": "The transcript, pinned by hash; never stored."
+        },
+        "commits": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "sha",
+              "patchId",
+              "joinedBy"
+            ],
+            "properties": {
+              "sha": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40,64}$"
+              },
+              "patchId": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "git patch-id --stable, or null for a commit with no patch."
+              },
+              "joinedBy": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "enum": [
+                    "record",
+                    "trailer"
+                  ]
+                },
+                "description": "record: the run's end lists it. trailer: it carries Chant-Run with the run's id, on HEAD's history."
+              }
+            }
+          }
+        },
+        "decisions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The decisions it carried out, as <kind>/<id>: the ones its work item implements and the decision records it names."
+        },
+        "ledger": {
+          "type": "string",
+          "description": "Its file on chant/lifecycle."
+        }
+      }
+    },
+    "totals": {
+      "type": "object",
+      "required": [
+        "runs",
+        "running",
+        "tokens",
+        "cost",
+        "unpriced",
+        "unreported"
+      ],
+      "properties": {
+        "runs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "running": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tokens": {
+          "type": "object",
+          "required": [
+            "input",
+            "output",
+            "cacheRead",
+            "cacheWrite"
+          ],
+          "properties": {
+            "input": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "output": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "cacheRead": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "cacheWrite": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "cost": {
+          "type": "array",
+          "description": "One sum per currency.",
+          "items": {
+            "type": "object",
+            "required": [
+              "currency",
+              "amount"
+            ],
+            "properties": {
+              "currency": {
+                "type": "string"
+              },
+              "amount": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "unpriced": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The runs that report no cost, running ones included: left out of cost, never counted as zero."
+        },
+        "unreported": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The runs that report no usage: left out of tokens."
+        }
+      }
+    },
+    "cost": {
+      "type": "object",
+      "required": [
+        "amount",
+        "currency",
+        "source"
+      ],
+      "properties": {
+        "amount": {
+          "type": "number",
+          "minimum": 0
+        },
+        "currency": {
+          "type": "string",
+          "pattern": "^[A-Z]{3}$",
+          "description": "ISO 4217, such as USD."
+        },
+        "source": {
+          "type": "string",
+          "description": "What priced it, as the writer names it: a harness's own report (harness:claude-code), a proxy's price table (lobby:list-2026-09), a provider's bill."
+        }
+      }
+    },
+    "pin": {
+      "type": "object",
+      "description": "A file pinned by hash and never copied.",
+      "required": [
+        "sha256",
+        "bytes",
+        "ref"
+      ],
+      "properties": {
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "bytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Its size, when chant hashed the file itself; null when the writer gave the hash."
+        },
+        "ref": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Where the writer keeps it, as the writer named it. chant never reads it back."
+        }
+      }
+    },
+    "usage": {
+      "type": "object",
+      "required": [
+        "turns",
+        "inputTokens",
+        "outputTokens",
+        "cacheReadTokens",
+        "cacheWriteTokens"
+      ],
+      "properties": {
+        "turns": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "inputTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "outputTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "cacheReadTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "cacheWriteTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      }
+    },
+    "modelUsage": {
+      "type": "object",
+      "required": [
+        "model",
+        "provider",
+        "inputTokens",
+        "outputTokens",
+        "cacheReadTokens",
+        "cacheWriteTokens",
+        "cost"
+      ],
+      "properties": {
+        "model": {
+          "type": "string"
+        },
+        "provider": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "inputTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "outputTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "cacheReadTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "cacheWriteTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "cost": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/cost"
+            }
+          ]
+        }
+      }
+    }
+  }
+}
