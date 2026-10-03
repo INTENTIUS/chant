@@ -54,7 +54,7 @@ chant workspace records --kind work/work.kind.mjs --json
 chant workspace graph --intent design/screens/home.json
 ```
 
-[`decisions/points.json`](decisions/points.json) declares the workspace's decision points ([ws-058](../docs/design/decisions/ws-058-decision-points.md)): `finding-triage` and `needs-a-decision` over what `graph --intent` reports, `slice-tier` for a work item's builder tier, and `ship-skip`, taken from chud. Their answers are records in [`answers/`](answers), and `chant workspace points --open` lists the ones waiting on a person:
+[`decisions/points.json`](decisions/points.json) declares the workspace's decision points ([ws-058](../docs/design/decisions/ws-058-decision-points.md)): `finding-triage` and `needs-a-decision` over what `graph --intent` reports, `slice-tier` for a work item's builder tier, `ship-skip`, taken from chud, and `intent-origin`, `intent-judgment` and `intent-disposition`, the questions a person answers at each node while walking a region ([#3351](https://github.com/INTENTIUS/chant/issues/3351)). Their answers are records in [`answers/`](answers), and `chant workspace points --open` lists the ones waiting on a person:
 
 ```sh
 cd reference-workspace

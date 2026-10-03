@@ -155,6 +155,8 @@ export const REASONS = {
   "answer-not-candidate": "The people's answer is not one of the question's candidates.",
   "quorum-not-met": "Too few of the people who answered count toward the point's quorum: distinct, not holding the agent role, not the steward that asked, and holding one of its roles when it names any.",
   "answer-in-steward-turn": "The answer was given during a steward's turn, or by a process it started: a steward never answers a decision point, and a person answers it through hud or at a shell.",
+  "answer-not-answered": "points retract names a question that has no answer to retract: it is escalated or proposed, and people answer it instead (#3351).",
+  "answer-field-unsupported": "The answer kind's copy of point-answer.schema.json predates a field the write needs, a note or a retraction: copy the schema anew to turn it on (#3351).",
   // records --since that fails (#2673).
   "since-rev-unknown": "--since names no commit, or a session with no opening revision and no commit that added it.",
   "since-session-unknown": "--since has the shape of a session id and names no commit, and no session the kind or the declaration reads has that id.",

@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://intentius.io/chant/schemas/workspace/points-write/v1/points-write.schema.json",
-  "title": "chant workspace points ask and answer output",
-  "description": "What `chant workspace points ask` and `points answer` print (ws-058, #2739): the answer record asked for or written, as `points --json` lists a question. ask returns the record that is there when the same point, declaration and inputs were answered or proposed before (reused), and otherwise writes one: answered from a table, proposed from a model at or above its threshold, escalated to people below it. answer records people's answer to an open question once the point's quorum is met. Nothing is committed to the working branch, and nothing is written on a refusal or with --dry-run. In a steward's turn a new record goes on the lifecycle ledger instead of the working tree (#2786), as a commit on chant/lifecycle, and a record already held there is rewritten there. The error codes are a closed list, each in the one closed list of `reason-codes.ts`. Written at contract version 1 of the write documents.",
+  "title": "chant workspace points ask, answer and retract output",
+  "description": "What `chant workspace points ask`, `points answer` and `points retract` print (ws-058, #2739, #3351): the answer record asked for or written, as `points --json` lists a question. ask returns the record that is there when the same point, declaration and inputs were answered or proposed before (reused), and otherwise writes one: answered from a table, proposed from a model at or above its threshold, escalated to people below it. answer records people's answer to an open question once the point's quorum is met, with their note. retract takes an answer back once the quorum is met: the question is escalated to people again and the answer moves into its retractions (ws-084). Nothing is committed to the working branch, and nothing is written on a refusal or with --dry-run. In a steward's turn a new record goes on the lifecycle ledger instead of the working tree (#2786), as a commit on chant/lifecycle, and a record already held there is rewritten there. The error codes are a closed list, each in the one closed list of `reason-codes.ts`. Written at contract version 1 of the write documents.",
   "oneOf": [
     {
       "$ref": "#/$defs/result"
@@ -37,7 +37,8 @@
         "verb": {
           "enum": [
             "ask",
-            "answer"
+            "answer",
+            "retract"
           ]
         },
         "kind": {
@@ -409,6 +410,88 @@
             "null"
           ]
         },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "What the people who answered wrote with their answer (points answer --note, #3351). null when they wrote nothing, and from a chant before it."
+        },
+        "retractions": {
+          "type": "array",
+          "description": "Answers people took back, oldest first (points retract, #3351): each answer as it was and who retracted it, when and why. A retracted question is escalated to people again. Empty when none was, and absent from a chant before it.",
+          "items": {
+            "type": "object",
+            "required": [
+              "answer",
+              "decider",
+              "answeredBy",
+              "answeredOn",
+              "answerNote",
+              "by",
+              "on",
+              "note"
+            ],
+            "properties": {
+              "answer": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "decider": {
+                "type": "object",
+                "description": "Who gave the answer: the record's decider as it was."
+              },
+              "answeredBy": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "answeredOn": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "answerNote": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The note the answer carried."
+              },
+              "by": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Who retracted it."
+              },
+              "on": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "note": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Why it was retracted (points retract --note)."
+              }
+            }
+          }
+        },
         "valid": {
           "type": "boolean"
         },
@@ -463,7 +546,8 @@
         "verb": {
           "enum": [
             "ask",
-            "answer"
+            "answer",
+            "retract"
           ]
         },
         "error": {
@@ -492,6 +576,8 @@
                 "quorum-not-met",
                 "answer-in-steward-turn",
                 "principal-unidentified",
+                "answer-not-answered",
+                "answer-field-unsupported",
                 "record-not-found",
                 "record-closed",
                 "record-id-taken",

@@ -830,7 +830,7 @@ describe("decision points on the work graph (#2741, ws-058)", () => {
     const run = chant(fixture, "workspace", "points", "--json");
     expect(run.status, run.stderr).toBe(0);
     const doc = JSON.parse(run.stdout) as { points: { name: string }[]; sources: { reason: unknown }[] };
-    expect(doc.points.map((p) => p.name)).toEqual(["slice-tier", "ship-skip", "finding-triage", "needs-a-decision"]);
+    expect(doc.points.map((p) => p.name)).toEqual(["slice-tier", "ship-skip", "finding-triage", "needs-a-decision", "intent-origin", "intent-judgment", "intent-disposition"]);
     expect(doc.sources.map((s) => s.reason)).toEqual([null]);
   });
 

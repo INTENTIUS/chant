@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { runDeclarationChecks } from "./checks";
 import { cleanScratch, commitAll, contract, REPO, repo } from "./__fixtures__/contract-repo";
-import { answerPoint, askPoint, reasonFields, type PointsWriteDocument } from "./decide";
+import { answerFields, answerPoint, askPoint, reasonFields, retractAnswer, type PointsWriteDocument } from "./decide";
 import pointAnswerSchema from "./point-answer.schema.json";
 import { responseAsk, workspacePoints } from "./points-cli";
 import pointsSchema from "./points.schema.json";
@@ -134,7 +134,7 @@ describe("points ask (#2739)", () => {
     expect(q).toMatchObject({ state: "escalated", open: true, current: true, model: { answer: "medium", confidence: 0.175, threshold: 0.8, model: "bosun-v3.1-1.7b", observed: false } });
     expect(q.escalations.map((e) => e.reason)).toEqual(["no row matches these inputs", "not observed: confidence 0.175 is below the threshold 0.8"]);
     expect(listed.questions.every((x) => x.open)).toBe(true);
-    expect(listed.points.map((p) => p.name)).toEqual(["slice-tier", "ship-skip", "finding-triage", "needs-a-decision", "needs-decision"]);
+    expect(listed.points.map((p) => p.name)).toEqual(["slice-tier", "ship-skip", "finding-triage", "needs-a-decision", "intent-origin", "intent-judgment", "intent-disposition", "needs-decision"]);
     expect(listed.points[0].inputs[0]).toEqual({ name: "work-item.criteria", output: "work-item", description: "acceptance criteria in the work item" });
 
     // A later ask still escalating keeps the standing record; one a model answers rewrites it, as proposed.
@@ -232,6 +232,72 @@ describe("the model's reason (#3345)", () => {
     delete old.properties.reason;
     delete old.definitions.escalation.properties.model_reason;
     expect(reasonFields(old)).toEqual({ top: false, escalation: false });
+  });
+});
+
+describe("the intent walk's points, a note on an answer, and retracting it (#3351)", () => {
+  const walk = (node: string) => ({ "region.id": "region:app/server.mjs:1-1", "node.id": node });
+
+  test("the reference workspace declares the walk's three questions, each answered by the person walking", async () => {
+    const listed = await workspacePoints({ cwd: root });
+    read.expectValid(listed);
+    if ("error" in listed) throw new Error(listed.error.message);
+    const byName = Object.fromEntries(listed.points.map((p) => [p.name, p]));
+    expect(byName["intent-origin"]).toMatchObject({ candidates: ["carried-out-decision", "incidental", "unknown"], quorum: { count: 1 } });
+    expect(byName["intent-judgment"]).toMatchObject({ candidates: ["drift", "unwritten-supersession", "decision-wrong", "no-gap", "not-decidable"] });
+    expect(byName["intent-disposition"]).toMatchObject({ candidates: ["handled", "skipped", "needs-discussion"] });
+    for (const name of ["intent-origin", "intent-judgment", "intent-disposition"]) {
+      expect(byName[name].inputs.map((i: { name: string; output: string }) => [i.name, i.output])).toEqual([["region.id", "region"], ["node.id", "node"]]);
+      expect(byName[name].deciders.map((d: { kind: string }) => d.kind)).toEqual(["quorum"]);
+    }
+  });
+
+  test("an answer keeps its note; retracting it escalates the question again and keeps the answer, its note and why", async () => {
+    const asked = ok(await askPoint({ cwd: root, point: "intent-judgment", inputs: walk("decision:ref-001"), subject: "decision:ref-001", on }));
+    expect(asked.question).toMatchObject({ state: "escalated", open: true, note: null, retractions: [] });
+    expect(refused(await retractAnswer({ cwd: root, id: asked.id, by: ["alice"] }))).toBe("answer-not-answered");
+    const answered = ok(await answerPoint({ cwd: root, id: asked.id, answer: "drift", by: ["alice"], note: "  The port moved off 8080.  ", on }));
+    expect(answered.question).toMatchObject({ state: "answered", answer: "drift", note: "The port moved off 8080." });
+    expect(fm(answered.path)).toContain('note: "The port moved off 8080."');
+    expect(refused(await retractAnswer({ cwd: root, id: asked.id, by: ["bot"] }))).toBe("quorum-not-met");
+
+    const retracted = ok(await retractAnswer({ cwd: root, id: asked.id, by: ["alice"], note: "Wrong decision.", on: "2026-09-26" }));
+    expect(retracted.verb).toBe("retract");
+    expect(retracted.question).toMatchObject({ state: "escalated", open: true, answer: null, note: null, answeredBy: [], answeredOn: null, decider: { kind: "quorum", count: 1 } });
+    expect(retracted.question.retractions).toEqual([
+      { answer: "drift", decider: { kind: "quorum", count: 1, by: ["alice"] }, answeredBy: ["alice"], answeredOn: on, answerNote: "The port moved off 8080.", by: ["alice"], on: "2026-09-26", note: "Wrong decision." },
+    ]);
+    expect(retracted.question.title).toMatch(/: open for people$/);
+    // Asking again leaves it with people.
+    expect(ok(await askPoint({ cwd: root, point: "intent-judgment", inputs: walk("decision:ref-001"), on }))).toMatchObject({ reused: true, question: { state: "escalated" } });
+
+    const again = ok(await answerPoint({ cwd: root, id: asked.id, answer: "no-gap", by: ["bob"], on: "2026-09-27" }));
+    expect(again.question).toMatchObject({ state: "answered", answer: "no-gap", note: null, answeredBy: ["bob"] });
+    expect(again.question.retractions).toHaveLength(1);
+    const listed = await workspacePoints({ cwd: root });
+    read.expectValid(listed);
+    if ("error" in listed) throw new Error(listed.error.message);
+    expect(listed.questions.find((q) => q.id === asked.id)).toMatchObject({ answer: "no-gap", retractions: [{ answer: "drift", note: "Wrong decision." }] });
+  });
+
+  test("retracting a confirmed proposal puts the model's answer back among the escalations", async () => {
+    const asked = ok(await askPoint({ cwd: root, point: "slice-tier", inputs: { ...big, "work-item.criteria": 30 }, ask: stub({ ...confident, reason: "Many criteria." }), on }));
+    ok(await answerPoint({ cwd: root, id: asked.id, answer: "large", by: ["alice"], on }));
+    const dry = ok(await retractAnswer({ cwd: root, id: asked.id, by: ["alice"], dryRun: true }));
+    expect(dry).toMatchObject({ dryRun: true, written: false, question: { state: "escalated" } });
+    expect(fm(asked.path)).toMatch(/^state: "answered"$/m);
+    const doc = ok(await retractAnswer({ cwd: root, id: asked.id, by: ["alice"], on }));
+    expect(doc.question).toMatchObject({ state: "escalated", decider: { kind: "quorum" }, probabilities: null, confidence: null, reason: null });
+    expect(doc.question.retractions[0]).toMatchObject({ answer: "large", decider: { kind: "model", model: "bosun-v3.1-1.7b" } });
+    expect(doc.question.escalations.at(-1)).toMatchObject({ kind: "model", answer: "large", reason: "proposed large, which people confirmed and then retracted", model_reason: "Many criteria." });
+  });
+
+  test("a workspace whose answer schema predates notes and retractions refuses them, rather than dropping them", () => {
+    expect(answerFields(pointAnswerSchema)).toEqual({ note: true, retractions: true });
+    const old = JSON.parse(JSON.stringify(pointAnswerSchema));
+    delete old.properties.note;
+    delete old.properties.retractions;
+    expect(answerFields(old)).toEqual({ note: false, retractions: false });
   });
 });
 
