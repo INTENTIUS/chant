@@ -297,7 +297,7 @@ opens no PR.
 A lexicon that pins more than one upstream keeps `upstreamPin` as it is and
 lists the rest in `upstreamPins`, an array of the same descriptor with a
 required, unique `label`. Every lexicon with one pin is unchanged. The sql
-lexicon has six: `upstreamPin` is ClickHouse's (label `clickhouse`), and
+lexicon has six. `upstreamPin` is ClickHouse's (label `clickhouse`), and
 `upstreamPins` holds `postgres-14` to `postgres-18`, one per Postgres major,
 built by `postgresUpstreamPin(major)` in `src/spec/postgres-pin.ts`. Each has
 `alsoMoves` (the image digest sits beside the version) and `trackMajor`, so it
@@ -311,14 +311,14 @@ upstreamPins: POSTGRES_MAJORS.map(postgresUpstreamPin),
 `chant dev pinned-upgrade <dir>` checks `upstreamPin` first and then each
 `upstreamPins` entry in order, one report per pin (a JSON array with `-f json`),
 labelled `sql/postgres-17`. A failing pin is reported and the others still run.
-`chant dev pinned-upgrade <dir> <label>` checks one pin and queries only that
-pin's upstream. A label the plugin does not declare lists the labels it does.
+Pass a label to check one pin and query only its upstream; a label the plugin
+does not declare gets the list of labels it does.
 
-`LexiconUpgradeOp` checks every pin too, and takes an optional `pin` label. Its
-summary has one section per pin. A pin with `alsoMoves` is report-only. If a
-pin `replace` can rewrite has an upgrade, the Op acts on the first such pin:
-the branch is `lexicon-upgrade/<lexicon>-<label>`, the bump goes to that pin's
-line, and the summary says to run it again with `pin` set for any other.
+`LexiconUpgradeOp` checks every pin too, and takes an optional `pin` label.
+Its summary has one section per pin, and a pin with `alsoMoves` is report-only.
+When a pin that `replace` can rewrite has an upgrade, the Op works on the first
+such pin: the branch is `lexicon-upgrade/<lexicon>-<label>`, the bump goes to
+that pin's line, and the summary names the other pins to re-run with `pin`.
 
 ### Tags that are not versions
 

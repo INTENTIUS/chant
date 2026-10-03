@@ -559,9 +559,10 @@ export async function lexiconUpgrade(args: LexiconUpgradeArgs): Promise<LexiconU
       );
       const others = results.filter((r) => r !== result && rewritable(r));
       if (others.length > 0) {
+        const names = others.map((r) => r.pin).join(", ");
         sections.push(
-          `More than one pin has an upgrade this run can bump. This run acts on \`${result.pin}\`; ` +
-            `run it again with pin set to ${others.map((r) => `\`${r.pin}\``).join(", ")} for the others.`,
+          "More than one pin has an upgrade this run can bump. This run acts on " + result.pin +
+            "; run it again with pin set to each of the others (" + names + ").",
         );
       }
       summaryOverride = sections.join("\n\n");
