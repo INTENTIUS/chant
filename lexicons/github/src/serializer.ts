@@ -474,7 +474,18 @@ function emitYAMLDocument(doc: Record<string, unknown>): string {
     }
   }
 
-  return sections.join("\n\n") + "\n";
+  return unquotePinComments(sections.join("\n\n") + "\n");
+}
+
+/**
+ * A SHA-pinned `uses:` carries its version as a trailing comment
+ * (`actions/checkout@<sha> # v7.0.1`). The YAML emitter quotes any string with
+ * a `#`, which would make the comment part of the ref GitHub resolves. A ref
+ * holds no whitespace, so `<ref> # <label>` inside quotes is always this
+ * pattern, and writing it unquoted turns the label back into a comment.
+ */
+function unquotePinComments(yaml: string): string {
+  return yaml.replace(/^(\s*(?:- )?uses: )'([^\s']+) # ([^'\n]*)'$/gm, "$1$2 # $3");
 }
 
 function yamlScalar(value: string | number | boolean): string {

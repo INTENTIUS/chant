@@ -84,6 +84,10 @@ Two other shapes lose provenance the same way. A field wired to a sibling member
 
 A factory outside the interpretable subset gives up provenance for every field it emits, not only the hardcoded ones. `chant build --fold` interprets a body instead of calling it only while that body stays inside the evaluated subset, so a factory with an `if` or an array transform is invoked and the build records `unknown` for its properties. Unknown is a legal answer, and the return leg handles it by falling back to editing the declared value and saying that is what it did. It is still less than the factory could have given.
 
+### Fields a Tagged Template Builds
+
+A factory can build a member with a registered tagged template instead of `new Type({...})`, such as the sql lexicon's `` table`CREATE TABLE ${props.name} ... TTL ts + INTERVAL ${props.ttlDays} DAY` ``. There is no object literal to read field by field, because the tag parses its text into the entity's fields. The tag reports instead which fields each interpolation landed in, and the build joins that with the parameters each `${...}` reads. In the example `name` comes from `name`, `ttl` from `ttlDays`, and a clause written out in the text, such as the engine, is fixed by the composite. An interpolated sibling, `` view`... FROM ${events}` ``, is wiring inside the composite and governs nothing, the same as `role: role.arn`. A tag whose lexicon does not report its interpolations leaves the member's fields `unknown`.
+
 ## Kubernetes Composites
 
 The Kubernetes lexicon ships 27 production-ready composites across four categories. Here's a quick overview:

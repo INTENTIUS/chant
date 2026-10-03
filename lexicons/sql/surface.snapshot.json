@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-10-02T23:51:29.811Z",
+  "entries": {
+    "Database": {
+      "kind": "resource",
+      "resourceType": "ClickHouse::Database"
+    },
+    "MaterializedView": {
+      "kind": "resource",
+      "resourceType": "ClickHouse::MaterializedView"
+    },
+    "Table": {
+      "kind": "resource",
+      "resourceType": "ClickHouse::Table"
+    },
+    "View": {
+      "kind": "resource",
+      "resourceType": "ClickHouse::View"
+    }
+  }
+}

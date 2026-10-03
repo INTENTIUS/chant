@@ -202,7 +202,7 @@ describe("generateForgejoOpPipeline: setup steps and additive permissions (#2242
     const steps = doc.jobs!["app-apply"].steps;
     // The checkout is rewritten to the Forgejo mirror; an action with no
     // mapping in ../actions.ts passes through verbatim.
-    expect(steps[0].uses).toContain("actions/checkout@v4");
+    expect(steps[0].uses).toContain("actions/checkout@v7");
     expect(steps[1].uses).toBe("aws-actions/configure-aws-credentials@v6");
     expect((steps[1] as { with?: Record<string, string> }).with).toEqual({
       "role-to-assume": "${{ vars.AWS_ROLE_ARN }}",
@@ -320,7 +320,7 @@ describe("generateForgejoOpPipeline: a dropped deployment environment (#2257)", 
       "    runs-on: docker",
       "    container: node:22-slim",
       "    steps:",
-      "      - uses: https://code.forgejo.org/actions/checkout@v4",
+      "      - uses: https://code.forgejo.org/actions/checkout@v7",
       "      - run: chant run actions-audit",
       "        env:",
       "          GITHUB_TOKEN: '${{ github.token }}'",

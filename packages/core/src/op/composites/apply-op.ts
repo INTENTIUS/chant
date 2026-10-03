@@ -11,7 +11,8 @@
  * removed resources chant never applied), the ownership label on `gcp`
  * (chant #1449), the metadata marker (machines) and managed app
  * (volumes/ips/certs/secrets) on `fly` (chant #1449), the ownership labels on
- * `grafana` (chant #3011), and the stack itself on `cloudformation`, which a
+ * `grafana` (chant #3011), the comment marker on `clickhouse` (chant #3208),
+ * and the stack itself on `cloudformation`, which a
  * resource CFN did not create is not in. All of
  * them are owned-only. See {@link DeleteMode}.
  *
@@ -54,7 +55,8 @@ export interface ApplyOpConfig {
   /** Op name (kebab-case). */
   name: string;
   /** Environment — CFN stack name / ARM resource group / kube context env /
-   * the `grafana.profiles.<env>` entry on `grafana`; a log label on `gcp` and
+   * the `grafana.profiles.<env>` entry on `grafana` / the `sql.profiles.<env>`
+   * entry on `clickhouse`; a log label on `gcp` and
    * `fly`. */
   env: string;
   /** Native apply mechanism. Default: "kubectl". */
@@ -62,7 +64,7 @@ export interface ApplyOpConfig {
   /** Built manifest/template path. Default per target: `dist` (dir) for kubectl,
    * `template.json` (file) for CloudFormation/ARM, `dist/gcp.yaml` for gcp,
    * `dist/fly.json` for fly, `dist/grafana.json` (the build index) for
-   * grafana. Must match your build output. */
+   * grafana, `dist/schema.json` for clickhouse. Must match your build output. */
   output?: string;
   /** Project directory to build. Default: ".". */
   path?: string;

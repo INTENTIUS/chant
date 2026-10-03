@@ -60,7 +60,7 @@ This distinction once cost the repo three of its four emulators. azure and gcp
 both built the exact spec above in `src/op/activities/` and used it from their
 Ops without setting `plugin.emulator`, so `chant emulator up --all` booted Floci
 and nothing else while the local-testing docs presented all three clouds as
-equal local targets (chant #1345). All five capabilities are declared now. The
+equal local targets (chant #1345). All six capabilities are declared now. The
 lesson holds anyway. The wrapper is not the declaration.
 
 ## More than one
@@ -92,9 +92,10 @@ depend on getting it right:
   endpoint variable and asserted azure had none, while azure's own
   `describe-resources.ts` read `AZURE_ENDPOINT_URL` on every call.
 
-Each of the five declared capabilities names exactly one endpoint variable:
+Each of the six declared capabilities names exactly one endpoint variable:
 `AWS_ENDPOINT_URL`, `AZURE_ENDPOINT_URL`, `GCP_ENDPOINT_URL`,
-`FLY_FLAPS_BASE_URL` (mudflaps) and `SPRITES_BASE_URL` (spritzer). Return `{}`
+`FLY_FLAPS_BASE_URL` (mudflaps), `SPRITES_BASE_URL` (spritzer) and
+`CLICKHOUSE_URL` (sql). Return `{}`
 if your emulator is reached only through an explicit apply argument. That is a real answer, and a better one than naming a
 variable nothing reads.
 

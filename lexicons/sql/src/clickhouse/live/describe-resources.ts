@@ -8,9 +8,11 @@
  * server and name were asked. A server that cannot be reached, or refuses the
  * credentials, leaves every entity unobserved with that reason: never absent.
  *
- * Ownership is `unknown` on every row. chant stamps no marker on ClickHouse
- * objects yet, so there is nothing to read, and `unknown` is never escalated
- * to a delete.
+ * Ownership is read from chant's marker, the trailer the applier appends to
+ * the object's comment (`../ownership.ts`): `owned` when the comment carries
+ * it, `foreign` when it does not. With `owned: true` a foreign object is
+ * withheld as `filtered`, which says it exists and is not chant's, never that
+ * it is absent.
  */
 
 import {
@@ -23,6 +25,7 @@ import {
 import { bindClickHouse, classifyClickHouseFailure, type BindOptions, type ClickHouseTarget } from "./bind";
 import { readLiveSchema, type LiveObject } from "./catalog";
 import { CLICKHOUSE_ENTITY_TYPES } from "../entities";
+import { isChantManaged, readMarker, stripMarker } from "../ownership";
 
 interface Bound {
   target: ClickHouseTarget;
@@ -38,7 +41,7 @@ export function declaredAddress(entity: DeclaredEntity, defaultDatabase: string)
   return { database: typeof entity.props.database === "string" ? entity.props.database : defaultDatabase, name };
 }
 
-function adapter(options: BindOptions): ObserverAdapter<Bound> {
+function adapter(options: BindOptions & { owned?: boolean }): ObserverAdapter<Bound> {
   return {
     async bind() {
       const target = await bindClickHouse(options);
@@ -57,13 +60,20 @@ function adapter(options: BindOptions): ObserverAdapter<Bound> {
       const queried = `${target.endpoint.url} ${database ? `${database}.` : ""}${name}`;
       const live = byKey.get(keyOf(database, name));
       if (!live) return { absent: true, queried };
+      const owned = isChantManaged(live.comment);
+      if (options.owned && !owned) {
+        return { unobserved: { reason: "filtered", detail: "the object's comment carries no chant ownership marker and owned was requested" }, queried };
+      }
+      const marker = readMarker(live.comment);
+      const comment = live.comment ? stripMarker(live.comment) : "";
       return {
         present: {
           type: live.type,
           physicalId: live.uuid ?? (database ? `${database}.${name}` : name),
           status: live.engine,
-          attributes: { engine: live.engine, ...(live.uuid ? { uuid: live.uuid } : {}), ...(live.comment ? { comment: live.comment } : {}) },
-          ownership: "unknown",
+          attributes: { engine: live.engine, ...(live.uuid ? { uuid: live.uuid } : {}), ...(comment ? { comment } : {}) },
+          ownership: owned ? "owned" : "foreign",
+          ...(owned && marker?.stack ? { marker: { stack: marker.stack, ...(marker.env ? { env: marker.env } : {}) } } : {}),
         },
         queried,
       };
@@ -76,6 +86,8 @@ export async function describeResources(
     environment: string;
     entityNames: string[];
     entities: Map<string, { entityType: string; props: Record<string, unknown> }>;
+    /** Withhold objects that do not carry chant's ownership marker. */
+    owned?: boolean;
   } & Omit<BindOptions, "environment">,
 ): Promise<DescribeResourcesResult> {
   const declared: DeclaredEntity[] = options.entityNames.map((name) => {

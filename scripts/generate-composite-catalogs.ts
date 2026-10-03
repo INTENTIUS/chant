@@ -139,7 +139,8 @@ function classKind(symbol: ts.Symbol, checker: ts.TypeChecker): ClassKind | unde
 
 /**
  * What a composite constructs: every `new X(...)` reachable from its
- * definition whose `X` is a lexicon class, following the lexicon's own
+ * definition whose `X` is a lexicon class, and every lexicon tag that returns
+ * an entity, following the lexicon's own
  * helpers and nested composites (anything the definition references that is
  * declared in the lexicon's hand-written source). Resource classes when there
  * are any; a composite that only builds property objects (a GitHub `Step`)
@@ -167,6 +168,14 @@ function bundlesOf(start: ts.Node, checker: ts.TypeChecker, ownSrc: string): str
         const sym = resolve(n.expression);
         const kind = sym && classKind(sym, checker);
         if (sym && kind) found[kind].add(sym.getName());
+      } else if (ts.isTaggedTemplateExpression(n)) {
+        // A lexicon tag that builds an entity from its text (the sql lexicon's
+        // `table` and `view`) bundles the entity type it returns.
+        const decl = resolve(n.tag)?.valueDeclaration;
+        const sig = decl && ts.isFunctionDeclaration(decl) && isOwn(decl) ? checker.getSignatureFromDeclaration(decl) : undefined;
+        const returned = sig && checker.getReturnTypeOfSignature(sig);
+        const name = returned?.getProperty("entityType") ? (returned.aliasSymbol ?? returned.getSymbol())?.getName() : undefined;
+        if (name) found.resource.add(name);
       } else if (ts.isIdentifier(n)) {
         const decl = resolve(n)?.valueDeclaration;
         if (decl && isOwn(decl) && (ts.isVariableDeclaration(decl) || ts.isFunctionDeclaration(decl))) walk(decl);

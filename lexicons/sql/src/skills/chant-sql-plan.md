@@ -108,6 +108,16 @@ Resolve the gate with `chant approve approve-schema-plan`. The MCP server's `op-
 
 ## Applying
 
-State of the applier, as of this skill: planning is built; applying metadata-only and background-rewrite changes to a server is sub-issue "sql lexicon: the applier" under #3199 and is not built yet. Until it lands, take the statements a plan implies from the report and run them with your own tooling, and do not describe `chant apply` as available for ClickHouse. A rebuild is never applied in place: both commands refuse it. Check the lexicon's docs for the applier's page before writing against it.
+`ApplyOp` with `target: "clickhouse"` applies a build (`dist/schema.json`) to the server `sql.profiles.<env>` binds, through the sql lexicon's `clickhouseApply`. It makes the metadata-only and background-rewrite changes with `ALTER`, waits on `system.mutations` for a rewrite, and stamps chant's ownership marker on each object's comment. It reports a rebuild as not attempted (`unsupported-kind`, with the rule and the ALTER restriction in the detail) and sends nothing for that object, and withholds a column drop unless the Op may delete (`delete: "owned-only"` or `"gated"`). Prune drops only objects whose comment carries the project's marker.
+
+```typescript
+import { ApplyOp } from "@intentius/chant/op";
+
+const { op } = ApplyOp({ name: "schema-apply", env: "prod", target: "clickhouse", delete: "gated" });
+
+export default op;
+```
+
+Read the run's not-attempted count before calling a schema converged. A rebuild is never applied in place; it runs as the rebuild migration Op.
 
 `chant migrate` is not a schema migration runner. Schema changes go through plan, apply and the rebuild Op.

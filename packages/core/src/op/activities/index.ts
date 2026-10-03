@@ -71,6 +71,7 @@ export type {
   GcpApplier,
   FlyApplier,
   GrafanaApplier,
+  ClickHouseApplier,
   AwsApplier,
   AwsRollback,
 } from "./apply";

@@ -23,6 +23,9 @@
  * itself, and fly speaks the Machines API (flaps) directly, no flyctl.
  * `grafana` joined later (#3011): the grafana lexicon's `grafanaApply`, which
  * writes folders, library panels and dashboards over Grafana's HTTP API.
+ * `clickhouse` joined after it (#3208): the sql lexicon's `clickhouseApply`,
+ * which sends a ClickHouse server the CREATE and ALTER statements a build's
+ * classified changes need, over its HTTP interface.
  * **The dispatcher stayed here**, because "which
  * mechanism applies this target" is not any one product's knowledge — and
  * because the activity keeps its name, its arguments and its place in
@@ -42,7 +45,7 @@ import { importLexiconPackage } from "../../lexicon-module";
 const execAsync = promisify(exec);
 
 /** The native apply mechanism for a target. */
-export type ApplyTarget = "cloudformation" | "kubectl" | "arm" | "kustomize" | "gcp" | "fly" | "grafana";
+export type ApplyTarget = "cloudformation" | "kubectl" | "arm" | "kustomize" | "gcp" | "fly" | "grafana" | "clickhouse";
 
 /**
  * How apply treats resources no longer declared.
@@ -57,7 +60,10 @@ export type ApplyTarget = "cloudformation" | "kubectl" | "arm" | "kustomize" | "
  *   app-scoped under a managed app (via the fly lexicon's `flyApply`),
  *   `grafana` prunes dashboards and folders by the ownership labels (via the
  *   grafana lexicon's `grafanaApply`; library panels, Grafana 11 and a project
- *   with no ownership stack are reported not-prunable), and
+ *   with no ownership stack are reported not-prunable), `clickhouse` drops
+ *   tables, views and databases whose comment carries the project's marker
+ *   (via the sql lexicon's `clickhouseApply`; a project with no ownership
+ *   stack is reported not-prunable), and
  *   `cloudformation` is bounded by the stack — which holds, because a
  *   resource CFN did not create is not in the stack.
  * - `gated` — same delete scope as `owned-only`, but an approval gate precedes
@@ -72,7 +78,9 @@ export interface NativeApplyArgs {
   /** Environment. What it means is per target: the CFN stack name on
    * `cloudformation`, the ARM resource group on `arm`, the chant environment
    * on `kubectl`/`kustomize`, and on `grafana` the chant environment whose
-   * `grafana.profiles.<env>` names the Grafana to write to. On `gcp` and
+   * `grafana.profiles.<env>` names the Grafana to write to, and on
+   * `clickhouse` the chant environment whose `sql.profiles.<env>` names the
+   * server. On `gcp` and
    * `fly` it is a log label only — the
    * gcp applier resolves the project (`GOOGLE_CLOUD_PROJECT` env / CNRM
    * annotation) and endpoint (`GCP_ENDPOINT_URL` env) itself, and the fly
@@ -82,7 +90,8 @@ export interface NativeApplyArgs {
   /** Built manifest/template path. Default per target ({@link defaultOutput}):
    * `dist` (a dir) for kubectl, `template.json` (a file) for
    * CloudFormation/ARM, `dist/gcp.yaml` for gcp, `dist/fly.json` for fly,
-   * `dist/grafana.json` (the build index) for grafana. */
+   * `dist/grafana.json` (the build index) for grafana, `dist/schema.json`
+   * (the sql lexicon's build output) for clickhouse. */
   output?: string;
   /** Delete handling. Default: never. */
   deleteMode?: DeleteMode;
@@ -204,6 +213,25 @@ export type FlyApplier = (
 export type GrafanaApplier = (
   args: {
     indexPath: string;
+    environment?: string;
+    prune?: boolean;
+  },
+  signal?: AbortSignal,
+) => Promise<ApplyResult>;
+
+/**
+ * The sql lexicon's ClickHouse applier, as this module needs to call it
+ * (#3208): `clickhouseApply` composed with the lexicon's own `toApplyResult`
+ * projection, so what crosses this seam is core's versioned apply envelope
+ * (#1446). A rebuild-class change rides it as NOT-ATTEMPTED.
+ *
+ * `environment` selects `sql.profiles.<environment>` (else `CLICKHOUSE_URL`),
+ * the binding observe and import use. The ownership marker is not passed:
+ * `clickhouseApply` reads `ownership` from the project's `chant.config.ts`.
+ */
+export type ClickHouseApplier = (
+  args: {
+    buildPath: string;
     environment?: string;
     prune?: boolean;
   },
@@ -428,6 +456,36 @@ async function loadGrafanaApplier(): Promise<GrafanaApplier> {
 }
 
 /**
+ * Load the sql lexicon's `clickhouseApply` (#3208). Same variable-specifier
+ * trick as {@link loadK8sApplier}, for the same reason.
+ */
+async function loadClickHouseApplier(): Promise<ClickHouseApplier> {
+  const spec = "@intentius/chant-lexicon-sql/op/activities";
+  type SqlModule = {
+    clickhouseApply?: (args: Parameters<ClickHouseApplier>[0], signal?: AbortSignal) => Promise<unknown>;
+    toApplyResult?: (result: unknown) => ApplyResult;
+  };
+  let mod: SqlModule;
+  try {
+    mod = (await importLexiconPackage(spec)) as SqlModule;
+  } catch (err) {
+    throw new Error(
+      `apply target "clickhouse" needs @intentius/chant-lexicon-sql, which could not be loaded ` +
+        `(${err instanceof Error ? err.message : String(err)}). ClickHouse applies go through the sql ` +
+        `lexicon's applier (chant #3208); install the sql lexicon and list it in chant.config.ts.`,
+    );
+  }
+  const { clickhouseApply, toApplyResult } = mod;
+  if (typeof clickhouseApply !== "function") {
+    throw new Error("the installed @intentius/chant-lexicon-sql exports no clickhouseApply — it predates chant #3208");
+  }
+  if (typeof toApplyResult !== "function") {
+    throw new Error("the installed @intentius/chant-lexicon-sql exports no toApplyResult — it predates chant #3208");
+  }
+  return async (args, signal) => toApplyResult(await clickhouseApply(args, signal));
+}
+
+/**
  * Load the aws lexicon's `awsApply` (#1449). Same variable-specifier trick as
  * {@link loadK8sApplier}, for the same reason.
  */
@@ -484,7 +542,8 @@ async function loadAwsRollback(): Promise<AwsRollback> {
  * conventionally emits: `template.json` for CloudFormation/ARM, `dist/gcp.yaml`
  * (the CNRM manifest) for gcp, `dist/fly.json` (the serialized plan) for fly,
  * `dist/grafana.json` (the index the grafana serializer writes, with the
- * dashboard files beside it) for grafana. Pure — exported for testing.
+ * dashboard files beside it) for grafana, `dist/schema.json` (the sql
+ * lexicon's build output) for clickhouse. Pure — exported for testing.
  */
 export function defaultOutput(target: ApplyTarget): string {
   switch (target) {
@@ -497,6 +556,8 @@ export function defaultOutput(target: ApplyTarget): string {
       return "dist/fly.json";
     case "grafana":
       return "dist/grafana.json";
+    case "clickhouse":
+      return "dist/schema.json";
     default:
       return "template.json";
   }
@@ -557,6 +618,7 @@ export async function nativeApply(
   gcpApplier?: GcpApplier,
   flyApplier?: FlyApplier,
   grafanaApplier?: GrafanaApplier,
+  clickhouseApplier?: ClickHouseApplier,
 ): Promise<NativeApplyResult> {
   const output = args.output ?? defaultOutput(args.target);
   const deleteMode = args.deleteMode ?? "never";
@@ -650,6 +712,17 @@ export async function nativeApply(
     // No binding or a refused token rides the envelope as NOT-ATTEMPTED for
     // every resource, as do library panels and anything else prune could
     // not consider.
+    return collapseEnvelope(envelope, args.env);
+  }
+
+  if (args.target === "clickhouse") {
+    // clickhouse (#3208): the sql lexicon's applier. env selects
+    // `sql.profiles.<env>`, the server observe and import read; the marker
+    // comes from the project's chant.config.ts inside clickhouseApply.
+    const apply = clickhouseApplier ?? (await loadClickHouseApplier());
+    const envelope = await apply({ buildPath: output, environment: args.env, prune: deleteMode !== "never" }, signal);
+    // A refused rebuild and a column drop an additive apply withholds ride the
+    // envelope as NOT-ATTEMPTED, so an Op can gate on them.
     return collapseEnvelope(envelope, args.env);
   }
 

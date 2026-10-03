@@ -15,20 +15,30 @@ import { postSynthChecks as postSynthCheckList } from "./lint/post-synth";
 import { sqlAuditCatalog } from "./lint/audit-catalog";
 import { completions } from "./lsp/completions";
 import { hover } from "./lsp/hover";
+import { sqlMcpResources, sqlMcpTools } from "./mcp";
 import { sqlConfigSchema } from "./config";
 import { ClickHouseSqlParser } from "./clickhouse/import/parser";
 import { ClickHouseGenerator } from "./clickhouse/import/generator";
 import { sqlCommands } from "./clickhouse/plan/commands";
 import { sqlDeepNormalizationHooks } from "./clickhouse/plan/deep";
 import { versionFromReleaseTag } from "./spec/pin";
+import { SQL_OWNERSHIP_CHANNEL } from "./clickhouse/ownership";
+import { CLICKHOUSE_EMULATOR } from "./op/activities/clickhouse-emulator";
 import { sqlSkills } from "./skill-defs";
 import { detectTemplate } from "./detect";
 import { CDC_TEMPLATE, DEFAULT_TEMPLATE, EVENTS_TEMPLATE } from "./init-templates";
+import { compositeCatalog } from "./composites/catalog";
 
 export const sqlPlugin: LexiconPlugin = {
   name: "sql",
   serializer: sqlSerializer,
   configSchema: sqlConfigSchema,
+
+  /** The pinned clickhouse-server, for `chant emulator up` (#3208). */
+  emulator: CLICKHOUSE_EMULATOR,
+
+  /** chant's marker is a trailer on the object's comment (#3208, ./clickhouse/ownership.ts). */
+  ownershipChannel: SQL_OWNERSHIP_CHANNEL,
 
   async generate(options?: { verbose?: boolean }): Promise<void> {
     const { generate, writeGeneratedFiles } = await import("./codegen/generate");
@@ -93,6 +103,11 @@ export const sqlPlugin: LexiconPlugin = {
 
   skills: sqlSkills,
 
+  /** The ClickHouse composites (./composites), as the catalog generated from their exports. */
+  composites() {
+    return compositeCatalog;
+  },
+
   // `chant init --lexicon sql [--template events|cdc]`; see ./init-templates.ts.
   initTemplates(template?: string) {
     if (template === "events") return EVENTS_TEMPLATE;
@@ -110,6 +125,14 @@ export const sqlPlugin: LexiconPlugin = {
 
   hoverProvider(ctx: HoverContext) {
     return hover(ctx);
+  },
+
+  mcpTools() {
+    return sqlMcpTools();
+  },
+
+  mcpResources() {
+    return sqlMcpResources();
   },
 
   /** `chant import schema.sql`: a file of ClickHouse CREATE statements. */

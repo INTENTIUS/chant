@@ -24,6 +24,10 @@ export default defineConfig({
                   "label": "How-to guides",
                   "items": [
                         {
+                              "label": "Applying to a Server",
+                              "slug": "applying"
+                        },
+                        {
                               "label": "Declaring Tables and Views",
                               "slug": "clickhouse-ddl"
                         },

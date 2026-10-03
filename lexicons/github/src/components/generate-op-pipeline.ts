@@ -83,6 +83,7 @@ import type {
   PipelineMember,
   ScheduledOpSpec,
 } from "@intentius/chant/lexicon";
+import { actionRef } from "../action-pins";
 
 export type { GenerateGithubOpOptions, GenerateGithubOpResult };
 
@@ -709,7 +710,7 @@ export function buildGithubOpPipelineDocs(
       ? [...runParts, ...GATED_EXIT_FLAG, "--json"].join(" ")
       : runParts.join(" ");
 
-    const steps: Array<Record<string, unknown>> = [{ uses: "actions/checkout@v4" }];
+    const steps: Array<Record<string, unknown>> = [{ uses: actionRef("actions/checkout") }];
     for (const step of setup) steps.push(setupStepDoc(step));
     for (const line of beforeScript) steps.push({ run: line });
     steps.push(

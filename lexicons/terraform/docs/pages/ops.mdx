@@ -220,7 +220,7 @@ jobs:
       gate: '${{ steps.chant-run.outputs.gate }}'
       approve: '${{ steps.chant-run.outputs.approve }}'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: '${{ vars.AWS_APPLY_ROLE_ARN }}'

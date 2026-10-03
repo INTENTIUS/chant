@@ -110,7 +110,7 @@ describe("generateForgejoPipeline: dialect applied", () => {
       expect(ref).toContain("code.forgejo.org/actions/");
     }
     // checkout is present and mirrored.
-    expect(all.some((r) => r === "https://code.forgejo.org/actions/checkout@v4")).toBe(true);
+    expect(all.some((r) => r === "https://code.forgejo.org/actions/checkout@v7")).toBe(true);
   });
 });
 

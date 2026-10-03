@@ -1,0 +1,70 @@
+---
+title: "Applying to a Server"
+description: "clickhouseApply makes a ClickHouse server hold what a build declares: CREATE and ALTER for metadata and background-rewrite changes, a rebuild refused, a prune bounded by chant's comment marker"
+diataxis: how-to
+---
+
+`clickhouseApply` makes the server an environment is bound to hold what a `chant build` declares. It is what `ApplyOp` runs for `target: "clickhouse"`, and an Op step of its own for a hand-written Op. It sends the statements for the changes [the classifier](../change-classifier/) puts in the metadata-only and background-rewrite classes, and nothing for a rebuild.
+
+## Apply with ApplyOp
+
+Build to `dist/schema.json`, the target's default output, and bind the environment as for [importing](../importing/) (`sql.profiles.<env>` in `chant.config.ts`, else `CLICKHOUSE_URL`):
+
+```typescript
+// ops/schema-apply.op.ts
+import { ApplyOp } from "@intentius/chant/op";
+
+const { op } = ApplyOp({
+  name: "schema-apply",
+  env: "prod",                 // selects sql.profiles.prod
+  target: "clickhouse",
+  delete: "gated",             // prune owned orphans and allow column drops, behind an approval gate
+  gate: { gate: "approve-schema-apply" },
+});
+
+export default op;
+```
+
+`chant run schema-apply` stops at the gate before anything is written, and the next run after `chant approve schema-apply approve-schema-apply` applies. The run reports the counts every target reports: applied, pruned and not attempted.
+
+## What each object gets
+
+Every declared object comes back with one verdict.
+
+| Verdict | When |
+|---|---|
+| applied, `created` | the server does not have it; its declared `CREATE` runs, with chant's marker in its comment |
+| applied, `updated` | the server has it and the `ALTER`s for its changes ran |
+| applied, `unchanged` | nothing to change and the marker in place; nothing is sent |
+| not attempted, `unsupported-kind` | a change needs a rebuild (a sorting key, a partition key, an engine, a key column's type). Nothing is sent for the object. The detail names each rule, the `ALTER` restriction behind it and the ClickHouse page it is stated on, and points at the rebuild migration Op |
+| not attempted, `filtered` | the change drops a column, which destroys its data, and the apply may not delete (`delete: "never"`, the default) |
+| not attempted, `dependency-failed` | an object it references is not on the server because creating it failed or was not attempted |
+| not attempted, `no-binding` / `no-credentials` | there is no server to apply to, or it refused the credentials |
+
+A statement the server refuses fails the step. The objects after it are still applied, and the error lists what failed, what was applied and what was not attempted.
+
+The SQL is the declaration's own text: an added column is sent as it is written, at its declared place (`ADD COLUMN ... AFTER`), and appending new columns to the sorting key goes in one `ALTER` with their `ADD COLUMN`, which is the only way ClickHouse allows it.
+
+## Background rewrites
+
+A column type change and a TTL change are mutations: the server records the `ALTER` and rewrites existing parts afterwards. The applier waits until `system.mutations` lists none unfinished for the table before it reports the table applied, ten minutes by default (`mutationTimeoutMs`). A mutation still running at the deadline fails the apply with its id, and one the server reports failing fails it at once with the server's reason; both messages say how to `KILL MUTATION`.
+
+## The ownership marker
+
+ClickHouse objects carry no tags, so chant's marker is a trailer on the object's own comment:
+
+```sql
+COMMENT 'Raw events [chant managed-by=chant stack=shop env=prod]'
+```
+
+The declared comment is kept and the trailer goes after it. It is set in the `CREATE`, so no object is created unmarked, and taken off again wherever chant reads a definition: a plan, the deep diff and an import compare and write the declared comment alone. `stack` and `env` are the project's `ownership.stack` and `ownership.env`. An object whose comment someone rewrites by hand loses the trailer and reads as not chant's, so it is never pruned; the next apply of its declaration stamps it again.
+
+`chant lifecycle diff --live` reports a marked object `owned` and an unmarked one `foreign`, and `chant import --from <env> --owned` imports the marked ones.
+
+## Prune
+
+With `delete: "owned-only"` or `"gated"`, the apply drops the tables, views and databases in the declared databases that the build no longer declares, views before tables and databases last, but only those whose comment carries this project's marker, stack and env both. A table made by hand, or one another chant project stamped, is never touched. A database that still holds an object the prune does not drop is kept. A project with no `ownership.stack` cannot tell its objects from another project's, so a prune reports its candidates as `not-prunable` and drops nothing.
+
+## A local server
+
+`chant emulator up --lexicon sql` starts the pinned `clickhouse/clickhouse-server` (the image and digest the types come from) on port 8123; `--json` reports it as `CLICKHOUSE_URL`, which the binding reads when no profile names a server.

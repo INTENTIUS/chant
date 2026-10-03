@@ -621,7 +621,7 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     primitives: ["fetch"],
     phase: "apply",
     destination: "a ClickHouse server's HTTP interface: the one `sql.profiles.<env>` (or `CLICKHOUSE_URL`) binds the environment to, and on a ClickHouse pin move the pinned `clickhouse/clickhouse-server` container generation starts on a loopback port",
-    why: "The sql lexicon's only client. `describeResources` reads `system.databases` and `system.tables`, and `chant import --from` adds `SHOW CREATE` per object; all reads. Generation reads the pinned server's `system.*` catalog only when the pin moves or `npm run generate -- --force` asks; every other generate, bundle, validate and build reads the committed snapshot and reaches nothing.",
+    why: "The sql lexicon's only client. `describeResources` reads `system.databases` and `system.tables`, and `chant import --from` adds `SHOW CREATE` per object; all reads. `clickhouseApply` (the `clickhouse` ApplyOp target) writes: the `CREATE`, `ALTER` and, under a prune, `DROP` statements a build's classified changes need, and reads `system.mutations` while a background rewrite runs. Generation reads the pinned server's `system.*` catalog only when the pin moves or `npm run generate -- --force` asks; every other generate, bundle, validate and build reads the committed snapshot and reaches nothing.",
   },
   {
     file: "lexicons/azure/scripts/fetch-quickstart-templates.ts",
