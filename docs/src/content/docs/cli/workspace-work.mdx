@@ -11,6 +11,7 @@ chant workspace work claim <id> --holder <name> [--kind <kind file>] [--ttl <sec
 chant workspace work renew <id> --holder <name> [--kind <kind file>] [--ttl <seconds|duration>] [--token <token>] [--note <text>] [--json]
 chant workspace work release <id> --holder <name> [--kind <kind file>] [--token <token>] [--outcome <outcome>] [--note <text>] [--json]
 chant workspace work history <id> [--kind <kind file>] [--json]
+chant workspace work evidence <id> --holder <name> --token <token> --from <file|-> [--kind <kind file>]
 ```
 
 ## Description
@@ -64,6 +65,16 @@ A history written before the list was closed may hold other words. A reader take
 
 An Op that changes the checkout and ends `not_done` keeps the attempt's work at `refs/chant/kept/<item>/<token>`, or `refs/chant/kept/<member>/<item>/<token>` in a workspace member. The kept commit holds what the run committed on `chant/work/<item>` and what it left uncommitted. The branch goes back to where the run started ([Ops](/chant/guide/ops/#an-op-that-changes-the-checkout)). The refs are local, and `work history` lists them.
 
+### Evidence
+
+`work evidence` attaches one piece of evidence for an acceptance criterion while you hold the item's lease ([#3159](https://github.com/INTENTIUS/chant/issues/3159)). It is the `workEvidence` activity an Op runs under `workLease` ([#2772](https://github.com/INTENTIUS/chant/issues/2772)), as a command, so a writer that is not an Op, such as hud, writes evidence through chant too. `--holder` and `--token` are the lease's holder and the fencing token its claim printed. `--from` gives the entry as JSON:
+
+```json
+{ "criterion": "AC-1", "result": "pass", "title": "The unit test run", "url": "https://ci.example.com/runs/412" }
+```
+
+`criterion` names one of the item's acceptance criteria by id, and `result` is `pass` or `fail`. The entry links a `url`, or names a workspace `path` that chant pins by its sha256 now. `as_of` is optional and defaults to now. chant appends the entry to the item's pins field through `records amend`, with the criterion's verification and `by` set to the holder, and prints the [work-evidence document](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/workspace/work-evidence.schema.json) with the criteria counted. The record is written and never committed. When the holder or the token isn't the live lease's, chant refuses the entry and writes nothing, as it does for a criterion the item doesn't list. A `manual` criterion is refused too: the holder is the item's implementer, so a person records a manual verdict with `records amend` instead.
+
 ### Members
 
 The lease lives in the ledger of the member that owns the work kind file ([D7](https://github.com/INTENTIUS/chant/issues/2524)), whichever directory the command runs in. A work kind no member owns, such as the reference workspace's `work/work.kind.mjs`, uses the flat ledger: `refs/chant/lease/work/<id>` and `_leases/<id>.jsonl`. A kind inside member `api` uses `refs/chant/lease/_members/api/work/<id>` and `_members/api/_leases/<id>.jsonl`.
@@ -88,10 +99,11 @@ Each claim also has `attempt`, which says whether it counts toward the item's at
 | Option | Effect |
 |---|---|
 | `id` | The work item's id, such as `W-001`. Letters, digits, `.`, `_` and `-`. |
-| `--holder <name>` | Required for `claim`, `renew` and `release`. Who claims, renews or releases, recorded as given. |
+| `--holder <name>` | Required for `claim`, `renew`, `release` and `evidence`. Who claims, renews or releases, recorded as given. For `evidence`, the live lease's holder. |
 | `--kind <kind file>` | The work kind. Without it, the declared work kind that has the id. |
 | `--ttl <seconds\|duration>` | How long a claim or renew lasts: a whole number of seconds, or a duration such as `10m`. Default 10 minutes. |
 | `--token <token>` | For `renew` and `release`: the fencing token the caller holds. A lease with another token is refused with `lease-token-mismatch`. |
+| `--from <file\|->` | For `evidence`, required: the entry as JSON, from a file or stdin. See [Evidence](#evidence). |
 | `--outcome <outcome>` | For `release`: how the work ended, one of the [outcomes](#outcomes), written to the history line. |
 | `--note <text>` | Free text written to the history line. |
 | `--json` | Print the result as JSON. |
@@ -101,8 +113,8 @@ Each claim also has `attempt`, which says whether it counts toward the item's at
 | Code | Meaning |
 |---|---|
 | 0 | The lease was written. |
-| 1 | The command could not run: a usage error, an unreadable kind, an id no work record has, or a claim on a closed item. |
-| 2 | The lease was refused. `refused.code` says why. `history` never exits 2. |
+| 1 | The command could not run: a usage error, an unreadable kind, an id no work record has, or a claim on a closed item. For `evidence`, also any refusal, with its code in `error.code`. |
+| 2 | The lease was refused. `refused.code` says why. `history` and `evidence` never exit 2. |
 
 ## Output
 

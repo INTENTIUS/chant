@@ -2,8 +2,11 @@
  * The workspace reader conformance suite for vitest (#2657, #2679):
  * {@link describeWorkspaceReaderConformance} wraps the runner-neutral checks
  * of `./index` in `describe` and `it`, one test per listed command and one
- * for the workspace's files. This is the only module of the suite that
- * imports vitest; `@intentius/chant/workspace/conformance` imports no runner.
+ * for the workspace's files. {@link describeWorkspaceWriterConformance}
+ * (#3159) does the same for the writer suite: one test per step of the
+ * script, and one per check after it. This is the only module of the suite
+ * that imports vitest; `@intentius/chant/workspace/conformance` imports no
+ * runner.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -17,7 +20,12 @@ import {
   selectCommands,
   treeChanges,
   treeDigest,
+  runWorkspaceWriterConformance,
+  selectActions,
+  WRITER_SCRIPT,
   type WorkspaceReaderConformanceConfig,
+  type WorkspaceWriterConformanceConfig,
+  type WorkspaceWriterConformanceReport,
 } from "./index";
 
 export function describeWorkspaceReaderConformance(config: WorkspaceReaderConformanceConfig): void {
@@ -65,6 +73,40 @@ export function describeWorkspaceReaderConformance(config: WorkspaceReaderConfor
       expect(before, "no read ran").toBeDefined();
       expect(treeChanges(before!, treeDigest(target!.workspaceDir))).toEqual([]);
     });
+  });
+}
+
+/**
+ * The writer suite in vitest: the runner-neutral run happens once, before the
+ * tests, and each test reports its part of it. A step whose action the writer
+ * does not list is skipped, as not applicable; the suite still performed it.
+ */
+export function describeWorkspaceWriterConformance(config: WorkspaceWriterConformanceConfig): void {
+  const { checked } = selectActions(config.actions);
+  describe(`workspace writer conformance (#3159): ${config.name}`, () => {
+    let report: WorkspaceWriterConformanceReport | undefined;
+    beforeAll(async () => {
+      report = await runWorkspaceWriterConformance(config.writer, config);
+    }, 900_000);
+    const ran = () => {
+      expect(report, "the writer suite did not run").toBeDefined();
+      return report!;
+    };
+
+    for (const s of WRITER_SCRIPT) {
+      if (!checked.includes(s.action)) {
+        it.skip(`${s.id}: ${s.action} is not applicable, the writer does not list it in actions`, () => {});
+        continue;
+      }
+      it(`${s.id}: writes through chant workspace ${s.action} alone, and every change it made is one chant reports`, () => {
+        expect(ran().results.find((r) => r.id === s.id)?.problems).toEqual([]);
+      });
+    }
+    it("facts() reads only through the read contract and changes nothing", () => expect(ran().after.facts).toEqual([]));
+    it("the state directory holds only what privateState declares", () => expect(ran().after.state).toEqual([]));
+    it("amnesia: with its private state deleted, the writer shows the same facts", () => expect(ran().after.amnesia).toEqual([]));
+    it("everything the writer holds is in the repository, or one of ws-074's four exceptions", () => expect(ran().after.holds).toEqual([]));
+    it("every fact the script produced reads back through the read contract, uncommitted ones included", () => expect(ran().after.readBack).toEqual([]));
   });
 }
 

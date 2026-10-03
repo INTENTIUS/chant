@@ -4,6 +4,10 @@
  * workspace work history <id>` (#2785): the item's lease history, each claim
  * and how it ended, a read-contract output (`work-history.schema.json`).
  *
+ * And `chant workspace work evidence <id>` (#3159): the `workEvidence`
+ * activity as a command, so a writer outside an Op attaches evidence under
+ * the lease it holds.
+ *
  * The lease itself is `../lifecycle/work-lease.ts`, the operator lease under
  * the key `work/<id>`. This file finds the work item first: in the work kind
  * `--kind` names, or in the one work kind the declaration names that has a
@@ -63,6 +67,7 @@ export { WORK_LEASE_REFUSALS, WORK_LEASE_OUTCOMES } from "../lifecycle/work-leas
 const USAGE = [
   "chant workspace work claim|renew|release <id> --holder <name> [--kind <kind file>] [--ttl <seconds|duration>] [--token <token>] [--outcome <outcome>] [--note <text>] [--json]",
   "chant workspace work history <id> [--kind <kind file>] [--json]",
+  "chant workspace work evidence <id> --holder <name> --token <token> --from <file|-> [--kind <kind file>]",
 ].join("\n");
 
 /** Exit code when the lease was refused rather than the command failing. */
@@ -421,6 +426,65 @@ export function formatWorkHistory(doc: Extract<WorkHistoryDocument, { claims: un
   return lines.join("\n");
 }
 
+/**
+ * `chant workspace work evidence <id> --holder <name> --token <token> --from
+ * <file|->` (#3159): the `workEvidence` activity (#2772) as a command, so a
+ * writer that is not an Op, such as hud, attaches evidence through chant under
+ * the lease it holds. `--from` gives the entry as JSON: criterion, result,
+ * title, a url or a path, and optionally as_of. It always prints the
+ * work-evidence document; exit 0 when the entry was appended, 1 otherwise.
+ */
+async function runWorkEvidence(ctx: CommandContext): Promise<number> {
+  const { args } = ctx;
+  const { attachWorkEvidence, WORK_EVIDENCE_CONTRACT_VERSION, WORK_EVIDENCE_OUTPUT_SCHEMA_ID } = await import("./work-evidence");
+  const print = (doc: unknown, code: number): number => {
+    console.log(JSON.stringify(doc, null, 2));
+    return code;
+  };
+  const fail = (message: string): number =>
+    print({ $schema: WORK_EVIDENCE_OUTPUT_SCHEMA_ID, contract: WORK_EVIDENCE_CONTRACT_VERSION, error: { code: "write-usage-invalid", message: `${message}\n${USAGE}` } }, 1);
+  const id = args.extraPositional2;
+  if (!id) return fail("evidence needs a work item id");
+  if (!args.holder) return fail("evidence needs --holder <name>: the lease's holder");
+  if (!args.token) return fail("evidence needs --token <token>: the lease's fencing token, as its claim printed it");
+  if (args.migrateFrom === undefined) return fail("evidence needs --from <file|->: the entry as JSON, with criterion, result, title and a url or a path");
+  for (const [flag, v] of [["--ttl", args.ttl], ["--outcome", args.outcome], ["--note", args.note]] as const) {
+    if (v !== undefined) return fail(`evidence takes no ${flag}`);
+  }
+  let fields: Record<string, unknown>;
+  try {
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const text = readFileSync(args.migrateFrom === "-" ? 0 : resolve(process.cwd(), args.migrateFrom), "utf-8");
+    const parsed: unknown = JSON.parse(text);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error("the entry is not a JSON object");
+    fields = parsed as Record<string, unknown>;
+  } catch (err) {
+    return print(
+      { $schema: WORK_EVIDENCE_OUTPUT_SCHEMA_ID, contract: WORK_EVIDENCE_CONTRACT_VERSION, error: { code: "write-input-invalid", message: `--from ${args.migrateFrom} could not be read: ${err instanceof Error ? err.message : String(err)}` } },
+      1,
+    );
+  }
+  const known = ["criterion", "result", "title", "url", "path", "as_of"];
+  const unknown = Object.keys(fields).filter((k) => !known.includes(k));
+  if (unknown.length > 0) return fail(`the entry takes ${known.join(", ")}, not ${unknown.join(", ")}`);
+  const str = (k: string): string | undefined => (typeof fields[k] === "string" ? (fields[k] as string) : undefined);
+  const doc = await attachWorkEvidence({
+    cwd: process.cwd(),
+    item: id,
+    kind: args.kind,
+    holder: args.holder,
+    token: args.token,
+    criterion: str("criterion") ?? "",
+    result: fields.result as never,
+    title: str("title") ?? "",
+    url: str("url"),
+    path: str("path"),
+    asOf: str("as_of"),
+  });
+  return print(doc, "error" in doc ? 1 : 0);
+}
+
 async function runWorkHistory(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
   const id = args.extraPositional2;
@@ -445,13 +509,14 @@ export async function runWorkspaceWork(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
   const verb = args.extraPositional;
   if (verb === "history") return runWorkHistory(ctx);
+  if (verb === "evidence") return runWorkEvidence(ctx);
   const fail = (message: string): number => {
     if (args.json) console.log(JSON.stringify({ $schema: WORK_LEASE_OUTPUT_SCHEMA_ID, contract: WORK_LEASE_CONTRACT_VERSION, error: { code: "write-usage-invalid", message } }, null, 2));
     else console.error(formatError({ message, hint: USAGE }));
     return 1;
   };
   if (verb !== "claim" && verb !== "renew" && verb !== "release") {
-    return fail(verb ? `chant workspace work takes claim, renew, release or history, not ${verb}` : "chant workspace work needs claim, renew, release or history");
+    return fail(verb ? `chant workspace work takes claim, renew, release, history or evidence, not ${verb}` : "chant workspace work needs claim, renew, release, history or evidence");
   }
   const id = args.extraPositional2;
   if (!id) return fail(`${verb} needs a work item id`);
