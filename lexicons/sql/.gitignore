@@ -4,3 +4,4 @@ node_modules/
 src/generated/
 *.tgz
 .roundtrip-tmp-*
+.roundtrip-offline-tmp-*
