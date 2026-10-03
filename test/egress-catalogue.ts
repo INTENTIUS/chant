@@ -330,7 +330,9 @@ export type EgressPrimitive =
   | "node:net"
   | "node:tls"
   | "node:dns"
-  | "http-client-package";
+  | "http-client-package"
+  /** A database driver that opens its own sockets (`pg`). */
+  | "database-client-package";
 
 export interface EgressSite {
   /** Repo-relative path, forward slashes. */
@@ -624,6 +626,13 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     why: "The sql lexicon's only client. `describeResources` reads `system.databases` and `system.tables`, and `chant import --from` adds `SHOW CREATE` per object; all reads. `clickhouseApply` (the `clickhouse` ApplyOp target) writes: the `CREATE`, `ALTER` and, under a prune, `DROP` statements a build's classified changes need, and reads `system.mutations` while a background rewrite runs. Generation reads the pinned server's `system.*` catalog only when the pin moves or `npm run generate -- --force` asks; every other generate, bundle, validate and build reads the committed snapshot and reaches nothing.",
   },
   {
+    file: "lexicons/sql/src/postgres/live/client.ts",
+    primitives: ["database-client-package"],
+    phase: "apply",
+    destination: "a Postgres server: the one `sql.profiles.<env>` (a `postgres://` URL) or `POSTGRES_URL` binds the environment to",
+    why: "The Postgres dialect's client, node-postgres (`pg`), loaded only when a Postgres server is read. `describeResources`, `observeResourcesDeep` and `chant import --from` read the catalog (`pg_catalog`, and `pg_get_*def()` for each object's statement); all reads, in a session with an empty `search_path`. A ClickHouse-only project never loads it.",
+  },
+  {
     file: "lexicons/azure/scripts/fetch-quickstart-templates.ts",
     primitives: ["fetch"],
     phase: "codegen",
@@ -712,6 +721,9 @@ const BUILTIN_EGRESS_SYMBOLS: Record<string, { primitive: EgressPrimitive; symbo
 
 /** Third-party HTTP clients. None are dependencies today; importing one is the point of the check. */
 const HTTP_CLIENT_PACKAGES = new Set(["undici", "axios", "got", "node-fetch", "ky", "superagent", "phin", "needle"]);
+const DATABASE_CLIENT_PACKAGES = new Set(["pg"]);
+/** A dynamic `import("pkg")`, the way a lexicon loads a driver only when it is used. */
+const DYNAMIC_IMPORT = /\bimport\(\s*["']([^"']+)["']\s*\)/g;
 
 export interface ScannedSite {
   file: string;
@@ -796,9 +808,17 @@ export function egressPrimitivesIn(source: string): EgressPrimitive[] {
 
   if (GLOBAL_FETCH.test(code)) found.add("fetch");
 
+  for (const match of withStrings.matchAll(DYNAMIC_IMPORT)) {
+    if (DATABASE_CLIENT_PACKAGES.has(match[1]!)) found.add("database-client-package");
+  }
+
   for (const match of withStrings.matchAll(IMPORT_STATEMENT)) {
     const specifier = match[2] ?? match[3];
     if (!specifier) continue;
+    if (DATABASE_CLIENT_PACKAGES.has(specifier)) {
+      found.add("database-client-package");
+      continue;
+    }
 
     const bare = specifier.replace(/^node:/, "");
     if (HTTP_CLIENT_PACKAGES.has(bare) || HTTP_CLIENT_PACKAGES.has(specifier)) {

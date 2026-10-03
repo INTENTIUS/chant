@@ -39,7 +39,7 @@ type PgModule = typeof import("pg");
 let loaded: Promise<PgModule> | undefined;
 
 async function pgModule(): Promise<PgModule> {
-  loaded ??= import("pg").then((m) => ((m as { default?: PgModule }).default ?? m) as PgModule);
+  loaded ??= import("pg").then((m) => ((m as unknown as { default?: PgModule }).default ?? m) as PgModule);
   return loaded;
 }
 

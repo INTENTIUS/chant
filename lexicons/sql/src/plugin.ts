@@ -19,7 +19,7 @@ import { hover } from "./lsp/hover";
 import { sqlMcpResources, sqlMcpTools } from "./mcp";
 import { sqlConfigSchema } from "./config";
 import { ClickHouseSqlParser } from "./clickhouse/import/parser";
-import { ClickHouseGenerator } from "./clickhouse/import/generator";
+import { sqlTemplateGenerator } from "./import-generator";
 import { sqlCommands } from "./clickhouse/plan/commands";
 import { sqlDeepNormalizationHooks } from "./clickhouse/plan/deep";
 import { versionFromReleaseTag } from "./spec/pin";
@@ -150,24 +150,45 @@ export const sqlPlugin: LexiconPlugin = {
     return new ClickHouseSqlParser();
   },
 
+  /** One generator for both dialects: each IR resource's type says whose declarations it is. */
   templateGenerator() {
-    return new ClickHouseGenerator();
+    return sqlTemplateGenerator;
   },
 
-  /** Which declared objects exist on the environment's server (`sql.profiles.<env>`, else `CLICKHOUSE_URL`). */
+  /**
+   * Which declared objects exist on the environment's server
+   * (`sql.profiles.<env>`, else `CLICKHOUSE_URL` or `POSTGRES_URL`). The
+   * declarations' dialect picks the reader; node-postgres loads only for a
+   * Postgres one.
+   */
   async describeResources(options) {
+    const { dialectOfEntities } = await import("./live-dialect");
+    if (dialectOfEntities(options.entities) === "postgres") {
+      const { describeResources } = await import("./postgres/live/describe-resources");
+      return describeResources(options);
+    }
     const { describeResources } = await import("./clickhouse/live/describe-resources");
     return describeResources(options);
   },
 
-  /** `chant import --from <env>`: the server's schema, from `SHOW CREATE`, as declarations. */
+  /** `chant import --from <env>`: the server's schema as declarations, from `SHOW CREATE` or the Postgres catalog's printers. */
   async exportResources(options) {
+    const { resolveBindingDialect } = await import("./live-dialect");
+    if ((await resolveBindingDialect(options)) === "postgres") {
+      const { exportResources } = await import("./postgres/import/live-export");
+      return exportResources(options);
+    }
     const { exportResources } = await import("./clickhouse/import/live-export");
     return exportResources(options);
   },
 
   /** Each declared object's live definition, in the declaration's own shape. */
   async observeResourcesDeep(options) {
+    const { dialectOfEntities } = await import("./live-dialect");
+    if (dialectOfEntities(options.entities) === "postgres") {
+      const { observeResourcesDeep } = await import("./postgres/plan/deep");
+      return observeResourcesDeep(options);
+    }
     const { observeResourcesDeep } = await import("./clickhouse/plan/deep");
     return observeResourcesDeep(options);
   },
