@@ -146,6 +146,10 @@ export const workspaceReadTools: ToolDefinition[] = [
       properties: {
         kind: kindProp,
         current: { type: "boolean", description: "Leave out records a closed record supersedes (--current)." },
+        uncommitted: {
+          type: "boolean",
+          description: "Only the records the working tree holds modified or new against HEAD, with the checkout's branch, head and base (--uncommitted, #3160). Takes no at or since.",
+        },
         since: { type: "string", description: "A revision, or a review session id, to compare with (--since)." },
         id: { type: "string", description: "Keep only the record with this id in the document's records." },
         at: atProp,
@@ -393,11 +397,13 @@ export function readArgv(tool: string, params: Record<string, unknown>): string[
     case "workspace-records": {
       const kind = str(params, "kind");
       const since = str(params, "since");
+      if (bool(params, "uncommitted") && (at !== undefined || since !== undefined)) throw new ToolInputError("uncommitted reads the working tree against HEAD, and takes no at or since");
       return [
         "workspace",
         "records",
         ...(kind !== undefined ? ["--kind", kind] : []),
         ...(bool(params, "current") ? ["--current"] : []),
+        ...(bool(params, "uncommitted") ? ["--uncommitted"] : []),
         ...(since !== undefined ? ["--since", since] : []),
         ...atArgs,
         "--json",

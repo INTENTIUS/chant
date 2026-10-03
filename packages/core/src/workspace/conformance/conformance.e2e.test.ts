@@ -5,6 +5,7 @@
  * ships.
  */
 
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
@@ -12,6 +13,7 @@ import {
   checkReaderRead,
   CONFORMANCE_FIXTURE_DIR,
   createConformanceWorkspace,
+  UNCOMMITTED_DECISION,
   READ_CONTRACT_COMMANDS,
   REFERENCE_READS,
   runWorkspaceReaderConformance,
@@ -32,6 +34,7 @@ const JSON_FLAG: Record<ReadContractCommand, string[]> = {
   check: ["--format", "json"],
   status: ["--json"],
   records: ["--json"],
+  "records --uncommitted": ["--json"],
   "graph --intent": ["--json"],
   "graph --composites": ["--json"],
   runs: ["--json"],
@@ -49,7 +52,7 @@ function reader(twist: (doc: Record<string, unknown>, chant: ChantTransport) => 
 
 let ws: ConformanceWorkspace;
 beforeAll(() => {
-  ws = createConformanceWorkspace();
+  ws = createConformanceWorkspace({ uncommitted: true });
 }, 300_000);
 afterAll(() => ws?.dispose());
 
@@ -73,8 +76,24 @@ describe("the generated conformance workspace (#2679)", () => {
   test("the decision record and the region the intent read names are in the workspace", async () => {
     const docs: Record<string, unknown>[] = [];
     await runWorkspaceReaderConformance(reader((doc) => (docs.push(doc), doc)), { workspaceDir: ws.dir, commands: ["records", "graph --intent"] });
-    expect((docs[0].records as { id: string }[]).map((r) => r.id)).toEqual(["fix-001"]);
+    expect((docs[0].records as { id: string; worktree: string }[]).map((r) => [r.id, r.worktree])).toEqual([
+      ["fix-001", "committed"],
+      ["fix-002", "new"],
+    ]);
     expect(docs[1].region).toBe(`region:${REFERENCE_READS["graph --intent"][0]}`);
+  }, 300_000);
+
+  test("records --uncommitted lists the decision the workspace leaves uncommitted, with the branch, head and base (#3160)", async () => {
+    const docs: Record<string, unknown>[] = [];
+    const report = await runWorkspaceReaderConformance(reader((doc) => (docs.push(doc), doc)), { workspaceDir: ws.dir, commands: ["records --uncommitted"] });
+    expect(report.problems).toEqual([]);
+    const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: ws.dir, encoding: "utf-8" }).trim();
+    expect(docs[0]).toMatchObject({
+      uncommitted: true,
+      checkout: { branch: "main", head, base: head, baseFrom: "main", deleted: [] },
+      records: [{ id: "fix-002", path: UNCOMMITTED_DECISION.path, worktree: "new", state: "proposed", valid: true }],
+      summary: { total: 1, valid: 1, invalid: 0 },
+    });
   }, 300_000);
 });
 
@@ -100,7 +119,7 @@ describe("commands (#2679)", () => {
     expect(report.problems).toEqual([]);
     expect(read).toEqual(["ls", "status", "graph --composites"]);
     expect(report.checked).toEqual(["ls", "status", "graph --composites"]);
-    expect(report.skipped).toEqual(["graph", "check", "records", "graph --intent", "runs"]);
+    expect(report.skipped).toEqual(["graph", "check", "records", "records --uncommitted", "graph --intent", "runs"]);
   }, 300_000);
 
   test("a name that is not a contract command, or an empty list, is refused", () => {

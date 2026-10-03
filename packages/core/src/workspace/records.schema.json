@@ -124,6 +124,14 @@
         },
         "error": false,
         "current": { "type": "boolean", "description": "Whether superseded records were left out (--current)." },
+        "uncommitted": {
+          "type": "boolean",
+          "description": "Added in contract 1 by #3160. Whether only the records HEAD doesn't hold were listed (--uncommitted): each record's worktree is then modified or new, checkout is present, and summary's total, valid and invalid count the records listed. Absent from documents written before #3160, which read as false."
+        },
+        "checkout": {
+          "description": "Added in contract 1 by #3160, on a read of the working tree in a git repository; absent under --at and outside git. The branch, head and base the working tree is on, and the records of the kind it has deleted.",
+          "$ref": "#/$defs/checkout"
+        },
         "trust": { "$ref": "#/$defs/trust" },
         "records": {
           "description": "One entry per file the kind locates, sorted by path.",
@@ -144,6 +152,42 @@
           "description": "Added in contract 1 by #2683, for a work kind only. Every decision the kind file named in the work kind's work.decisions reads at the same revision, whether or not a work record names it, each with the work records implementing it. A decision with an empty implementedBy has no work item yet.",
           "type": "array",
           "items": { "$ref": "#/$defs/decisionWork" }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "uncommitted": { "const": true } }, "required": ["uncommitted"] },
+          "then": {
+            "required": ["checkout"],
+            "properties": {
+              "checkout": true,
+              "at": { "type": "null" },
+              "records": { "type": "array", "items": { "type": "object", "required": ["worktree"], "properties": { "worktree": { "enum": ["modified", "new"] } } } }
+            }
+          }
+        }
+      ]
+    },
+    "checkout": {
+      "type": "object",
+      "required": ["branch", "head", "base", "baseFrom", "deleted"],
+      "properties": {
+        "branch": { "type": ["string", "null"], "description": "The checked-out branch's short name, such as chant/work/w-12, or null when HEAD is detached." },
+        "head": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{40,64}$",
+          "description": "The full commit id HEAD names, or null before the first commit (every record is then new). Each record's worktree is judged against it."
+        },
+        "base": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{40,64}$",
+          "description": "The merge base of head and the target branch tip, the commit the branch forked from: what applying the branch would be measured against. The target is --base when given, else origin/HEAD, main or master, as for trust. Null without a head, a target, or common history."
+        },
+        "baseFrom": { "enum": ["flag", "origin/HEAD", "main", "master", null], "description": "Where the target branch was found; null when there is none." },
+        "deleted": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Record files of the kind that head holds and the working tree no longer has, staged or not, from the repository root with / separators, sorted. A renamed record is here under its old name and in records as new."
         }
       }
     },
@@ -242,6 +286,10 @@
         "acceptance": {
           "description": "Added in contract 1 by #2772, on every parsed record of a work kind whose work block names acceptance criteria. How many of the record's criteria passing evidence meets: evidence naming the criterion, with result pass and the criterion's verification, and for a manual criterion a by other than the implementer. Null when the record lists no criteria, so a record without them reads as before.",
           "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/workAcceptance" }]
+        },
+        "worktree": {
+          "enum": ["committed", "modified", "new"],
+          "description": "Added in contract 1 by #3160, on every record of a read of the working tree in a git repository; absent under --at and outside git. committed when the file is as HEAD holds it, modified when it differs from HEAD, new when HEAD doesn't hold it, staged or not. modified and new are the records a person has kept and not yet committed or applied."
         },
         "lease": {
           "description": "Added in contract 1 by #2732, on every record of a work kind with an id, read in the working tree (absent under --at). The item's active work lease (chant workspace work claim), or null when nobody holds one live. Read from the local lease refs, refs/chant/lease/[_members/<member>/]work/<id> and the remote's as last fetched, of the ledger owning the work kind file; records never fetches.",
