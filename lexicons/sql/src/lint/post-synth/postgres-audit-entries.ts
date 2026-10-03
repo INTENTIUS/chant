@@ -21,9 +21,9 @@ export const postgresPostSynthAuditEntries: Record<string, RuleMeta> = {
   SQLPG111: auditRule("SQLPG111", "report-only", "guidance", "A materialized view has no unique index, so it cannot refresh concurrently", "Add a unique index over plain columns.", { category: "correctness" }),
   SQLPG112: auditRule("SQLPG112", "report-only", "guidance", "A secret- or PII-named column with no comment on it or its table", "Add a COMMENT saying what it holds and how it is protected.", { category: "security" }),
   SQLPG113: auditRule("SQLPG113", "report-only", "guidance", "An object is in the public schema though the project declares schemas", "Qualify the object with a declared schema.", { category: "best-practice" }),
-  SQLPG114: auditRule("SQLPG114", "merge-worthy", "guidance", "A storage parameter the object's kind or the pinned major does not accept", "Fix the parameter name, or use one from the pinned major's catalog.", { category: "correctness" }),
-  SQLPG115: auditRule("SQLPG115", "report-only", "guidance", "A feature the oldest supported major lacks", "Avoid the feature, or drop support for the older major.", { category: "correctness" }),
-  SQLPG116: auditRule("SQLPG116", "merge-worthy", "guidance", "An extension the pinned major no longer ships", "Remove the extension, or pin an older major.", { category: "best-practice" }),
+  SQLPG114: auditRule("SQLPG114", "merge-worthy", "guidance", "A storage parameter the object's kind or the target major does not accept", "Fix the parameter name, or use one from the target major's catalog.", { category: "correctness" }),
+  SQLPG115: auditRule("SQLPG115", "report-only", "guidance", "A feature newer than the target major", "Avoid the feature, or raise sql.postgresMajor.", { category: "correctness" }),
+  SQLPG116: auditRule("SQLPG116", "merge-worthy", "guidance", "An extension the target major no longer ships", "Remove the extension, or set sql.postgresMajor to an older major.", { category: "best-practice" }),
   SQLPG117: auditRule("SQLPG117", "report-only", "guidance", "A view without security_invoker runs with its owner's privileges", "Set security_invoker = true in the view's WITH options.", { category: "security" }),
   SQLPG118: auditRule("SQLPG118", "report-only", "guidance", "A table uses INHERITS where declarative partitioning replaced it", "Use PARTITION BY and PARTITION OF.", { category: "best-practice" }),
 };

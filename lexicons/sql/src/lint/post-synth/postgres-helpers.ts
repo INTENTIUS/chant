@@ -9,7 +9,7 @@ import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@int
 import { POSTGRES_MAJORS, VERSION_RANGES } from "../../generated/postgres";
 import type { VersionRange } from "../../postgres/catalog-types";
 import type { ColumnDef, KeyDef } from "../../postgres/entities";
-import { postgresObjects, type OutputObject } from "./sql-helpers";
+import { postgresMajorOf, postgresObjects, type OutputObject } from "./sql-helpers";
 
 export interface PgTable extends OutputObject {
   sqlName: string;
@@ -56,6 +56,9 @@ export const isMaterializedView = (o: OutputObject): o is PgView => o.type === "
 
 export const tablesOf = (ctx: PostSynthContext): PgTable[] => postgresObjects(ctx).filter(isTable);
 export const indexesOf = (ctx: PostSynthContext): PgIndex[] => postgresObjects(ctx).filter(isIndex);
+
+/** The major the build targets (`postgresMajor` in the output), else the newest pinned. */
+export const targetMajor = (ctx: PostSynthContext): number => postgresMajorOf(ctx, PINNED_MAJOR);
 
 /** The newest and oldest majors the lexicon carries a catalog for. */
 export const PINNED_MAJOR: number = POSTGRES_MAJORS[POSTGRES_MAJORS.length - 1]!;

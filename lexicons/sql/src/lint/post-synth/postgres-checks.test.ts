@@ -10,9 +10,10 @@ import { postSynthChecks } from "./index";
 
 type Entities = Record<string, unknown>;
 
-function run(id: string, entities: Entities) {
+function run(id: string, entities: Entities, major?: number) {
   const check = postSynthChecks.find((c: PostSynthCheck) => c.id === id)!;
-  const out = sqlSerializer.serialize(new Map(Object.entries(entities)) as never) as SerializerResult;
+  const config = major === undefined ? undefined : { sql: { postgresMajor: major } };
+  const out = sqlSerializer.serialize(new Map(Object.entries(entities)) as never, undefined, { config }) as SerializerResult;
   return check.check(makePostSynthCtx("sql", out.primary));
 }
 
@@ -176,6 +177,9 @@ describe("SQLPG114: storage parameters", () => {
   test("flags an unknown parameter", () => {
     flagged("SQLPG114", { t: table`CREATE TABLE t (id int) WITH (fillfactr = 70)` }, /not a Postgres 18 storage parameter/);
   });
+  test("the message names the target major", () => {
+    expect(run("SQLPG114", { t: table`CREATE TABLE t (id int) WITH (fillfactr = 70)` }, 14)[0]!.message).toMatch(/not a Postgres 14 storage parameter/);
+  });
   test("flags a parameter for another relation kind", () => {
     const t = table`CREATE TABLE t (id int)`;
     const i = index`CREATE INDEX t_id ON ${t} (${t.columns.id}) WITH (fillfactor = 70, buffering = on)`;
@@ -188,17 +192,30 @@ describe("SQLPG114: storage parameters", () => {
   });
 });
 
-describe("SQLPG115: features newer than the oldest major", () => {
+describe("SQLPG115: features newer than the target major", () => {
   test("flags a storage parameter newer than 14, NULLS NOT DISTINCT (15) and a virtual column (18)", () => {
     const v = view`CREATE MATERIALIZED VIEW v WITH (autovacuum_vacuum_max_threshold = 10) AS SELECT 1 AS a`;
     const t = table`CREATE TABLE t (a int, b int GENERATED ALWAYS AS (a + 1) VIRTUAL, UNIQUE NULLS NOT DISTINCT (a))`;
-    const msgs = run("SQLPG115", { v, t }).map((d) => d.message).join("\n");
+    const msgs = run("SQLPG115", { v, t }, 14).map((d) => d.message).join("\n");
     expect(msgs).toMatch(/autovacuum_vacuum_max_threshold.*needs Postgres 18/);
     expect(msgs).toMatch(/virtual generated column b.*Postgres 18/);
     expect(msgs).toMatch(/NULLS NOT DISTINCT.*Postgres 15/);
   });
   test("flags NOT ENFORCED", () => {
-    flagged("SQLPG115", { t: table`CREATE TABLE t (a int, CONSTRAINT pos CHECK (a > 0) NOT ENFORCED)` }, /NOT ENFORCED.*18/);
+    const t = table`CREATE TABLE t (a int, CONSTRAINT pos CHECK (a > 0) NOT ENFORCED)`;
+    expect(run("SQLPG115", { t }, 14)[0]!.message).toMatch(/NOT ENFORCED.*Postgres 18; Postgres 14 refuses/);
+  });
+  test("a project targeting 18 (or with no target) is not flagged for 18 features", () => {
+    const v = view`CREATE MATERIALIZED VIEW v WITH (autovacuum_vacuum_max_threshold = 10) AS SELECT 1 AS a`;
+    const t = table`CREATE TABLE t (a int, b int GENERATED ALWAYS AS (a + 1) VIRTUAL, UNIQUE NULLS NOT DISTINCT (a), CONSTRAINT pos CHECK (a > 0) NOT ENFORCED)`;
+    expect(run("SQLPG115", { v, t }, 18)).toEqual([]);
+    expect(run("SQLPG115", { v, t })).toEqual([]);
+  });
+  test("at 16 only the 17 and 18 features are flagged, not NULLS NOT DISTINCT (15)", () => {
+    const t = table`CREATE TABLE t (a int, UNIQUE NULLS NOT DISTINCT (a), CONSTRAINT pos CHECK (a > 0) NOT ENFORCED)`;
+    const msgs = run("SQLPG115", { t }, 16).map((d) => d.message).join("\n");
+    expect(msgs).toMatch(/NOT ENFORCED/);
+    expect(msgs).not.toMatch(/NULLS NOT DISTINCT/);
   });
   test("features every major has are clean", () => {
     clean("SQLPG115", { t: table`CREATE TABLE t (a int, b int GENERATED ALWAYS AS (a + 1) STORED) WITH (fillfactor = 70)` });
@@ -210,6 +227,13 @@ describe("SQLPG116: removed extension", () => {
     flagged("SQLPG116", { e: extension`CREATE EXTENSION adminpack` }, /adminpack.*last in 16/);
   });
   test("a shipped extension is clean", () => clean("SQLPG116", { e: extension`CREATE EXTENSION pg_trgm` }));
+  test("an extension dropped after 16 is fine at 14 and 16, flagged at 17 and 18", () => {
+    const e = extension`CREATE EXTENSION adminpack`;
+    expect(run("SQLPG116", { e }, 14)).toEqual([]);
+    expect(run("SQLPG116", { e }, 16)).toEqual([]);
+    expect(run("SQLPG116", { e }, 17)[0]!.message).toMatch(/Postgres 17 does not ship/);
+    expect(run("SQLPG116", { e }, 18)[0]!.message).toMatch(/Postgres 18 does not ship/);
+  });
 });
 
 describe("SQLPG117: view without security_invoker", () => {

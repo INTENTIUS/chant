@@ -100,6 +100,14 @@ describe("sql serializer, Postgres", () => {
     expect(r.verbatimFiles).toEqual([POSTGRES_DDL_FILE]);
   });
 
+  test("a Postgres build records the target major: sql.postgresMajor, else the newest pinned", () => {
+    const entities = new Map<string, never>([["app", app as never]]);
+    const major = (config?: Record<string, unknown>) =>
+      (JSON.parse((sqlSerializer.serialize(entities, undefined, { config }) as SerializerResult).primary) as { postgresMajor?: number }).postgresMajor;
+    expect(major()).toBe(18);
+    expect(major({ sql: { postgresMajor: 14 } })).toBe(14);
+  });
+
   test("7. an index comes after its table, a table after what it references, comments stay with their object", () => {
     const r = run([["byUser", byUser], ["orders", orders], ["users", users], ["app", app]]);
     expect(doc(r).applyOrder).toEqual(["app", "users", "orders", "byUser"]);
