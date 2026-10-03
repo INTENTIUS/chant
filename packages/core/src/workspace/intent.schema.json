@@ -955,6 +955,9 @@
                   "work-done-gap-open",
                   "work-acceptance-unmet",
                   "work-acceptance-self-verified",
+                  "work-contract-unknown",
+                  "work-contract-undecided",
+                  "work-tier-unknown",
                   "answer-points-unreadable",
                   "answer-point-unknown",
                   "answer-point-changed"

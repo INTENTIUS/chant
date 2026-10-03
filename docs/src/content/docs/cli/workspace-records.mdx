@@ -84,10 +84,15 @@ work: {
   done: "done",
   closedOn: "closed_on",
   acceptance: { field: "acceptance", implementer: "owner" },
+  tier: { field: "tier", tiers: ["small", "medium", "large"] },
+  attempts: { field: "max_attempts", max: 3 },
+  answers: "../answers/answer.kind.mjs",
 },
 ```
 
 The `needs` and `implements` entries name the front-matter lists that hold work ids and decision ids. The `decisions` entry names the decision kind file those decision ids belong to, relative to the work kind's directory, and chant reads it at the same revision as the work records. The `open` entry is the state a ready record is in, `done` is the state that satisfies a need, and `closedOn` names the field that holds the closing date. Optionally, `acceptance` names the list of a record's [acceptance criteria](/chant/guide/work-items/#acceptance-criteria) and the field naming its implementer, whose own `manual` verdict never counts ([#2772](https://github.com/INTENTIUS/chant/issues/2772)). A kind with `acceptance` must have `pins`, since criteria are met by evidence. [Work items](#work-items) describes what the read adds for such a kind, and reading one takes chant `0.86.0` or newer. A chant older than this block refuses a kind file that has `acceptance`.
+
+Four more entries are optional ([#3147](https://github.com/INTENTIUS/chant/issues/3147)). With `contract: { field, kind }`, each item's contract id is looked up in that contract kind at the same revision. `tier: { field, tiers }` lists the builder tiers allowed, each once, and says which field an item gives its tier in. The attempt limit comes from `attempts: { field, max }`: an item's own field, or the default of at least 1 that [`work history`](/chant/cli/workspace-work/#history) counts against. Last, `answers` is the answer kind file whose answers about an item the read joins by its id. A chant from before #3147 refuses a kind file that has any of them.
 
 Answers to decision points are kept by an answer kind ([ws-058](https://github.com/INTENTIUS/chant/issues/2739)). `answers: { points: "../decisions/points.json" }` in `answers/answer.kind.mjs` names the points file its records answer, relative to the kind's directory. An answer kind is Markdown front matter with `idField: "id"` and `stateField: "state"`. Its states include `escalated`, `proposed` and `answered`, and `answered` is closed. [`chant workspace points`](/chant/cli/workspace-points/) writes its records and lists them as questions, and `records` warns about an answer whose point is gone or changed. [Decision Points](/chant/guide/decision-points/) describes it.
 
@@ -195,7 +200,7 @@ The chant repo's declaration names its decision kind, and the reference workspac
 
 ## Work items
 
-On a work kind the output has five more fields. The guide page [Work items](/chant/guide/work-items/) shows how an agent picks ready work from them.
+On a work kind the output has more fields. The guide page [Work items](/chant/guide/work-items/) shows how an agent picks ready work from them.
 
 | Field | On | Holds |
 |---|---|---|
@@ -205,6 +210,8 @@ On a work kind the output has five more fields. The guide page [Work items](/cha
 | `decisions` | the document | every decision the decision kind reads, with `implementedBy`, the work records naming it. An empty `implementedBy` means the decision has no work item yet |
 | `lease` | each record with an id, read in the working tree | the item's active [work lease](/chant/cli/workspace-work/) as `{ holder, token, acquiredAt, expiresAt }`, or `null` when nobody holds one live. It is read from the local lease refs and the remote's as last fetched, and is absent under `--at`, since a lease is not part of a revision |
 | `acceptance` | each parsed record, when the `work` block names `acceptance` | `{ met, total, criteria }`, each criterion as `{ id, verification, met }`. A criterion is met by evidence naming it, with `result: pass` and the criterion's `verification`, and a `manual` one only by a verdict whose `by` is not the implementer. `null` when the record lists no criteria |
+| `contract` | each parsed record, when the `work` block names `contract` | the contract the item builds as `{ id, state }`, with the contract record's state now, or `null` for an id no record has. `null` in place of the object when the item names no contract ([#3147](https://github.com/INTENTIUS/chant/issues/3147)) |
+| `answers` | each record with an id, when the `work` block names `answers` | each decision-point answer whose `constrains` names the item, as `{ id, point, state, answer, answeredBy }`, in path order. In the working tree it includes the answers a steward keeps on `chant/lifecycle`, and under `--at` only the tree's. Absent when the answer kind can't be read ([#3147](https://github.com/INTENTIUS/chant/issues/3147)) |
 
 A work record doesn't get `record-no-evidence`, because an open item has no proof yet. A done record with an empty evidence list gets `work-done-unpinned` instead. The text output adds a line under each work record, `ready` or `blocked by W-001 (in-progress)`, with the decisions it implements. A work record with a lease also shows `held by <holder> until <time>`.
 
@@ -816,6 +823,9 @@ A failed read prints `{ "$schema", "contract", "error": { "code", "message" } }`
 | `source-transcript-drift` | pins a transcript in its source block that can be read here and hashes to something else ([Where a proposal came from](#where-a-proposal-came-from)) |
 | `work-acceptance-unmet` | is a done work record with an acceptance criterion that no passing evidence of its verification meets. `check` fails on it as `WSP117` |
 | `work-acceptance-self-verified` | is a work record with a passing `manual` verdict by its implementer, which does not count |
+| `work-contract-unknown` | is a work record naming a contract that no record of the kind's contract kind has |
+| `work-contract-undecided` | is a work record naming a contract whose state is not approved, such as a draft |
+| `work-tier-unknown` | is a work record naming a builder tier its kind's `work.tier.tiers` doesn't list |
 | `work-done-gap-open` | is a done work record whose `source` names a finding that still fires on its region. `records` walks the region as `graph --intent` does, in a git repository with a workspace declaration ([#2686](https://github.com/INTENTIUS/chant/issues/2686)) |
 
 ### Error codes

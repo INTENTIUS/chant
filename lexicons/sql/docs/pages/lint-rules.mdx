@@ -1,17 +1,18 @@
 ---
 title: "Lint Rules and Checks"
-description: "Every SQLCH lint rule and post-synth check: what each one flags, why ClickHouse cares, and what to change"
+description: "Every SQLCH and SQLPG lint rule and post-synth check: what each one flags, why the database cares, and what to change"
 diataxis: reference
 order: 7
 ---
 
-The sql lexicon's rule ids all start with `SQL`. Rules that hold in every dialect would be `SQL` plus three digits; there are none yet. ClickHouse rules are `SQLCH` plus three digits, grouped by the hundreds digit:
+The sql lexicon's rule ids all start with `SQL`. Rules that hold in every dialect would be `SQL` plus three digits; there are none yet. ClickHouse rules are `SQLCH` plus three digits and Postgres rules `SQLPG` plus three digits, each grouped by the hundreds digit:
 
 | Ids | What they are | Where they run |
 |---|---|---|
 | SQLCH001 to SQLCH003 | lint rules over the TypeScript source | `chant lint`, the editor, and `chant serve lsp` |
 | SQLCH101 to SQLCH120 | post-synth checks over the build output | `chant build` and `chant lint` |
 | SQLCH200 to SQLCH250 | the change classifier's rules | `chant sql diff`, `chant sql plan`, `clickhouseApply`; see [Planning and the Change Classifier](../change-classifier/) |
+| SQLPG001 to SQLPG003 | Postgres lint rules over the TypeScript source | `chant lint`, the editor, and `chant serve lsp` |
 
 The [All Rules](../rules/) page is the generated list. This page says what each rule means. Every post-synth check has an entry in the lexicon's `auditCatalog()`, which is what `chant audit` reports it under.
 
@@ -22,6 +23,9 @@ The [All Rules](../rules/) page is the generated list. This page says what each 
 | SQLCH001 | error | The DDL in a `database`, `table` or `view` template does not parse, or the template holds a different statement than its tag (a `CREATE VIEW` in `table`). Reported at the token, as a line and column in the `.ts` file. Lint reads every interpolation as a reference, so an error inside text a string interpolation supplies is reported by the build instead | Fix the statement, or use the tag for the statement it holds |
 | SQLCH002 | error | A `Nullable` column, `LowCardinality(Nullable(...))` included, as a key part of `ORDER BY` or `PRIMARY KEY`. ClickHouse refuses the table ("Sorting key contains nullable columns") unless it sets `allow_nullable_key = 1`. A function of the column is not reported | Make the column non-nullable, or set `allow_nullable_key = 1` and accept that `NULL` sorts as a value of its own |
 | SQLCH003 | error | `${events.kind}` where `${events.columns.kind}` was meant, for an entity the file declares or imports from a project file. `kind`, `props`, `lexicon`, `entityType`, `sqlName` and `dependsOn` are the entity's own fields, so the tag would splice in their value as SQL text and the statement would mean something else | Reach the column through `.columns` |
+| SQLPG001 | error | The DDL in a Postgres template does not parse, the template holds another statement than its tag (a `CREATE INDEX` in `table`) or a second `CREATE`, or an index has no name. Reported at the token, as a line and column in the `.ts` file; a default that is not a `b_expr` (`DEFAULT 1 IN (1, 2)`) is reported at `IN`. An index's name is its identity on the server, so an unnamed one, which Postgres would name itself, is refused | Fix the statement, use the tag for the statement it holds, and name every index |
+| SQLPG002 | error | `${users.kind}` where `${users.columns.kind}` was meant, as SQLCH003 for Postgres templates | Reach the column through `.columns` |
+| SQLPG003 | warning | An object named in a string where Postgres reads a `regclass`: `nextval('app.ticket_seq')`, `currval`, `setval`, or `'app.t'::regclass`. A name in a string records no reference, so the build can create the table before the sequence | Interpolate the declared object: `nextval(${ticketSeq})` renders `nextval('app.ticket_seq'::regclass)`, as the catalog prints it, and keeps the dependency |
 
 ## Post-synth checks
 

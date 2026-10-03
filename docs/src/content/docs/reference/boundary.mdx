@@ -41,7 +41,7 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 |
 | intent node kind | the node kinds of `intent.schema.json` | 9 | 0 | 3 |
 | intent edge kind | the edge kinds of `intent.schema.json` | 10 | 0 | 3 |
-| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 161 | 0 | 0 |
+| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 164 | 0 | 0 |
 | finding code | the finding codes of `intent.schema.json` | 17 | 0 | 0 |
 | WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 50 | 0 | 0 |
 | hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 |
@@ -198,6 +198,9 @@ Each row follows, in the order of the table above.
 | reason code | `work-done-gap-open` | chant | intent.schema.json, records.schema.json | A work record is done, and the finding it came from still fires on its region. graph --intent raises it, and records does by walking that region. |
 | reason code | `work-acceptance-unmet` | chant | check.schema.json, intent.schema.json, records.schema.json | A work record is done, and one of its acceptance criteria has no passing evidence of the verification it expects. check fails on it (WSP117). |
 | reason code | `work-acceptance-self-verified` | chant | intent.schema.json, records.schema.json, work-evidence.schema.json | A passing manual verdict on a work record's criterion names the record's implementer, so it does not count: a manual verdict comes from someone else. |
+| reason code | `work-contract-unknown` | chant | intent.schema.json, records.schema.json | A work record names a contract that no record of its kind's contract kind has. |
+| reason code | `work-contract-undecided` | chant | intent.schema.json, records.schema.json | A work record names a contract whose state is not approved, such as a draft. |
+| reason code | `work-tier-unknown` | chant | intent.schema.json, records.schema.json | A work record names a builder tier that its kind's work.tier.tiers does not list. |
 | reason code | `review-decider` | chant | records.schema.json | The verdict is the decider's own, and the quorum counts verdicts besides the decider's. |
 | reason code | `review-agent` | chant | records.schema.json | The reviewer holds the agent role in the trust policy at base. |
 | reason code | `review-duplicate` | chant | records.schema.json | A later verdict by the same principal replaces this one. Names are compared after NFKC, trimming and lower-casing. |

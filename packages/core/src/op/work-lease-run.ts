@@ -24,9 +24,11 @@
  *   the lease is still this run's, with the same token. Refused, the run is
  *   recorded as failed with `lease-lost`, never as done.
  * - Release. When the run ends, the lease is given back with the run's
- *   outcome (`done`, `not_done`, `gated`, or the Op's own `outcome`), which
- *   lands on `_leases/<id>.jsonl`. A lost lease is not released: it isn't
- *   this run's to give back.
+ *   outcome (`done`, `not_done`, `gated`, `waiting`, or the Op's own
+ *   `outcome`), which lands on `_leases/<id>.jsonl`. Outcomes are a closed
+ *   list (`WORK_LEASE_OUTCOMES`, #3147): an Op's own outcome outside it is
+ *   released `not_done`, with a note naming it. A lost lease is not
+ *   released: it isn't this run's to give back.
  *
  * Steps read the lease through {@link workLeaseOutput}: its item, holder,
  * token and expiry, and for an Op that changes the checkout, the worktree and
@@ -42,6 +44,13 @@
  * worktree is removed when the run ends and the branch keeps whatever the
  * steps committed, for the runner to deliver. The checkout a coding agent is
  * editing, its index and its uncommitted files, are never touched.
+ *
+ * A run that ends `not_done` keeps its attempt aside (#3147): whatever the
+ * steps committed on the branch since the run started, and anything they
+ * left uncommitted in the worktree, is committed to
+ * `refs/chant/kept/[<member>/]<item>/<token>`, and the branch goes back to
+ * where the run started. The next attempt starts clean, and the earlier one
+ * stays readable by its lease token (`chant workspace work history`).
  */
 
 import { existsSync, rmSync } from "node:fs";
@@ -50,6 +59,8 @@ import { getRuntime } from "../runtime-adapter";
 import {
   claimWorkLease,
   DEFAULT_WORK_LEASE_TTL_MS,
+  isWorkLeaseOutcome,
+  keptAttemptRef,
   releaseWorkLease,
   renewWorkLease,
   workLeaseRef,
@@ -97,8 +108,10 @@ export interface WorkLeaseRunResult {
   branch: string | null;
   /** Whether the lease was given back. False when it was lost, or never claimed. */
   released: boolean;
-  /** The outcome the release recorded, or null when there was no release. */
+  /** The outcome the release recorded, one of `WORK_LEASE_OUTCOMES`, or null when there was no release. */
   outcome: string | null;
+  /** For an Op that changes the checkout and ended `not_done`: the ref that keeps the attempt's work, or null when there was nothing to keep. */
+  kept: string | null;
   /** Why the lease was lost, or null when it wasn't. */
   lost: string | null;
   /** Why nothing was claimed, or null when something was. */
@@ -159,6 +172,8 @@ export class RunWorkLease {
   attempted = false;
   lease: WorkLeaseOutput | undefined;
   refusal: string | undefined;
+  /** For an Op that changes the checkout: the branch's commit when the run started, and the members its branch is scoped by. */
+  private start: { base: string; members: readonly string[] } | undefined;
   lost: string | undefined;
 
   private readonly spec: NonNullable<OpConfig["workLease"]>;
@@ -277,6 +292,8 @@ export class RunWorkLease {
       ? await git(["worktree", "add", "--quiet", worktree, branch], cwd)
       : await git(["worktree", "add", "--quiet", "-b", branch, worktree, "HEAD"], cwd);
     if (!add.ok) throw new Error(`Op "${this.config.name}": could not make the worktree for ${id} on ${branch}: ${add.stderr}`);
+    const base = await git(["rev-parse", "HEAD"], worktree);
+    if (base.ok) this.start = { base: base.stdout, members };
     return { worktree, branch };
   }
 
@@ -365,28 +382,73 @@ export class RunWorkLease {
       branch: lease?.branch ?? null,
       released: false,
       outcome: null,
+      kept: null,
       lost: this.lost ?? null,
       refusal: this.refusal ?? null,
     };
     if (!lease) return base;
+    let outcome = status === "ok" ? "done" : status === "gated" || status === "waiting" ? status : "not_done";
+    let note = `op ${this.config.name}`;
+    if (status === "ok" && this.spec.outcome && isStepOutputRef(this.spec.outcome)) {
+      const declared = resolvePath(resultsById.get(this.spec.outcome.step), this.spec.outcome.path);
+      if (typeof declared === "string" && declared.trim() !== "") {
+        const word = declared.trim();
+        if (isWorkLeaseOutcome(word)) outcome = word;
+        else {
+          outcome = "not_done";
+          note = `op ${this.config.name}: its outcome ${JSON.stringify(word.slice(0, 80))} is not a work lease outcome`;
+        }
+      }
+    }
+    let kept: string | null = null;
+    if (lease.worktree && this.lost === undefined && outcome === "not_done") {
+      kept = await this.keepAttempt(lease).catch(() => null);
+    }
     if (lease.worktree) {
       await git(["worktree", "remove", "--force", lease.worktree], this.opts.cwd).catch(() => undefined);
       rmSync(lease.worktree, { recursive: true, force: true });
       await git(["worktree", "prune"], this.opts.cwd).catch(() => undefined);
     }
     if (this.lost !== undefined) return base;
-    let outcome = status === "ok" ? "done" : status === "gated" || status === "waiting" ? status : "not_done";
-    if (status === "ok" && this.spec.outcome && isStepOutputRef(this.spec.outcome)) {
-      const declared = resolvePath(resultsById.get(this.spec.outcome.step), this.spec.outcome.path);
-      if (typeof declared === "string" && declared.trim() !== "") outcome = declared.trim();
-    }
     const released = await releaseWorkLease(lease.item, this.holder, {
       cwd: this.ledgerCwd,
       token: lease.token,
       outcome,
-      note: `op ${this.config.name}`,
+      note,
     }).catch(() => undefined);
-    return { ...base, released: released?.ok === true, outcome: released?.ok ? outcome : null };
+    return { ...base, kept, released: released?.ok === true, outcome: released?.ok ? outcome : null };
+  }
+
+  /**
+   * Keep a `not_done` attempt aside (#3147): commit what the steps left in
+   * the worktree, committed or not, at `refs/chant/kept/.../<item>/<token>`,
+   * and move the branch back to where the run started. Returns the ref, or
+   * null when the attempt changed nothing.
+   */
+  private async keepAttempt(lease: WorkLeaseOutput): Promise<string | null> {
+    const dir = lease.worktree;
+    const start = this.start;
+    if (!dir || !start) return null;
+    const head = await git(["rev-parse", "HEAD"], dir);
+    if (!head.ok) return null;
+    if (!(await git(["add", "-A"], dir)).ok) return null;
+    const tree = await git(["write-tree"], dir);
+    const headTree = await git(["rev-parse", `${head.stdout}^{tree}`], dir);
+    if (!tree.ok || !headTree.ok) return null;
+    let commit = head.stdout;
+    if (tree.stdout !== headTree.stdout) {
+      // An identity only when git has none, so a configured one is kept.
+      const ident = (await git(["var", "GIT_COMMITTER_IDENT"], dir)).ok && (await git(["var", "GIT_AUTHOR_IDENT"], dir)).ok;
+      const who = ident ? [] : ["-c", "user.name=chant", "-c", "user.email=chant@localhost"];
+      const made = await git([...who, "commit-tree", tree.stdout, "-p", head.stdout, "-m", `${lease.item}: not done, kept (lease ${lease.token})`], dir);
+      if (!made.ok) return null;
+      commit = made.stdout;
+    }
+    if (commit === start.base) return null;
+    const ref = keptAttemptRef(lease.item, lease.token, start.members);
+    if (!(await git(["update-ref", ref, commit], dir)).ok) return null;
+    await git(["reset", "-q", "--hard", start.base], dir);
+    return ref;
   }
 }
 

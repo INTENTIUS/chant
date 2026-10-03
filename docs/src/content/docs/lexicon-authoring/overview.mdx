@@ -154,6 +154,7 @@ best-known readers.
 | `graphMeta(entities)` | `Record<string, unknown> \| undefined` | Whole-read facts for `chant graph --format ir` to put under `meta`. The otel lexicon answers `{ collector }`, the topology of the project's collector config, which `chant workspace graph` lists as `collectors` |
 | `configSchema` | `LexiconConfigSchema` (a `ZodObject`) | The shape of this lexicon's own `chant.config.ts` namespace — see [Owning a config namespace](#owning-a-config-namespace) |
 | `upstreamPin` | `UpstreamPin` | How this lexicon pins its upstream schema and where to look for a newer one, for self-upgrade tooling |
+| `upstreamPins` | `(UpstreamPin & { label: string })[]` | More pins, for a lexicon that pins several upstreams (sql: one Postgres server per major). Each needs a unique `label` |
 | `init()` | `void \| Promise<void>` | Called once when the plugin loads. No shipped lexicon uses this |
 
 ## Owning a config namespace

@@ -40,13 +40,15 @@ function tagBindings<Tag extends string>(source: ts.SourceFile, sources: readonl
   const out = new Map<string, { dialect: string; tag: Tag }>();
   for (const stmt of source.statements) {
     if (!ts.isImportDeclaration(stmt) || !ts.isStringLiteral(stmt.moduleSpecifier)) continue;
-    const from = sources.find((s) => s.modules.includes((stmt.moduleSpecifier as ts.StringLiteral).text));
-    if (!from) continue;
+    // A module may export several dialects' tags (the package root does): a tag is the first source's that names it.
+    const from = sources.filter((s) => s.modules.includes((stmt.moduleSpecifier as ts.StringLiteral).text));
+    if (from.length === 0) continue;
     const named = stmt.importClause?.namedBindings;
     if (!named || !ts.isNamedImports(named)) continue;
     for (const el of named.elements) {
       const imported = (el.propertyName ?? el.name).text;
-      if ((from.tags as readonly string[]).includes(imported)) out.set(el.name.text, { dialect: from.dialect, tag: imported as Tag });
+      const source = from.find((s) => (s.tags as readonly string[]).includes(imported));
+      if (source) out.set(el.name.text, { dialect: source.dialect, tag: imported as Tag });
     }
   }
   return out;
