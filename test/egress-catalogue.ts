@@ -681,6 +681,12 @@ export const EGRESS_SCAN_ROOTS = ["packages", "lexicons", "scripts", "ops"] as c
  * the `*.e2e.test.ts` files share (chant #2956: the grafana lexicon's
  * container helpers, which poll the containers they start on localhost), and
  * is skipped for the same reason as the test files themselves.
+ *
+ * Dot-directories are skipped too (chant #3176). Round-trip and init tests
+ * create throwaway projects such as `.roundtrip-tmp-*` and `.init-template-*`
+ * inside a package and delete them when done, and a scan that ran in parallel
+ * failed on a file deleted between listing and reading. No shipped code lives
+ * in a dot-directory under the scan roots.
  */
 export const EGRESS_SCAN_SKIP_DIRS = new Set([
   "node_modules",
@@ -722,7 +728,7 @@ function walk(dir: string, out: string[] = []): string[] {
   for (const entry of entries) {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (EGRESS_SCAN_SKIP_DIRS.has(entry.name)) continue;
+      if (entry.name.startsWith(".") || EGRESS_SCAN_SKIP_DIRS.has(entry.name)) continue;
       walk(full, out);
     } else if (/\.(m?ts|mjs)$/.test(entry.name) && !/\.d\.ts$/.test(entry.name) && !/\.test\.m?ts$/.test(entry.name)) {
       out.push(full);
@@ -834,7 +840,15 @@ export function scanEgressSites(repoRoot: string): ScannedSite[] {
   const sites: ScannedSite[] = [];
   for (const root of EGRESS_SCAN_ROOTS) {
     for (const file of walk(join(repoRoot, root))) {
-      const primitives = egressPrimitivesIn(readFileSync(file, "utf-8"));
+      let code: string;
+      try {
+        code = readFileSync(file, "utf-8");
+      } catch (error) {
+        // Deleted since the walk listed it, by a test cleaning up in parallel.
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw error;
+      }
+      const primitives = egressPrimitivesIn(code);
       if (primitives.length > 0) {
         sites.push({ file: relative(repoRoot, file).split(sep).join("/"), primitives });
       }
