@@ -37,7 +37,9 @@
  * backfill on another. Each read first waits for this replica to fetch what
  * the others wrote (`SYSTEM SYNC REPLICA ... LIGHTWEIGHT`). A separate
  * `chant_receipts` database would exist on the one replica the backfill
- * first ran on.
+ * first ran on. With a replica down (#3270) the CREATE goes on without it,
+ * and a read that cannot fetch a receipt only that replica has stops the
+ * backfill, naming it (`./replicas.ts`).
  */
 
 import { OWNERSHIP_MANAGED_BY_VALUE } from "@intentius/chant/ownership";
@@ -45,6 +47,7 @@ import type { EffectReceiptRef, ReceiptStore } from "@intentius/chant/op/receipt
 import { clickhouseQuery, type ClickHouseEndpoint } from "../http";
 import { ident, sqlString } from "../apply/statements";
 import { CLICKHOUSE_COMMENT_OWNERSHIP_KEYS, RECEIPTS_TRAILER_KEY } from "../ownership";
+import { DDL_SETTINGS, syncReplicaWithin } from "./replicas";
 
 /** The database the receipts live in. Its comment marks it as chant's, so schema reads leave it out. */
 export const RECEIPTS_DATABASE = "chant_receipts";
@@ -77,12 +80,13 @@ export interface ClickHouseReceiptStore extends ReceiptStore {
  * A receipt store on the server at `endpoint`. Creates the receipts database
  * and table on first write if they are not there. `identity` is the
  * project's ownership stack and env, which every address starts with.
- * `replicatedIn` names a Replicated database to keep them in instead.
+ * `replicatedIn` names a Replicated database to keep them in instead, and
+ * `replicaTimeoutMs` how long a read waits for this replica to catch up there.
  */
 export function clickhouseReceiptStore(
   endpoint: ClickHouseEndpoint,
   identity: { stack?: string; env?: string },
-  opts: { runId?: string; replicatedIn?: string } = {},
+  opts: { runId?: string; replicatedIn?: string; replicaTimeoutMs?: number } = {},
 ): ClickHouseReceiptStore {
   const where = receiptsTable(opts.replicatedIn);
   const TABLE = `${ident(where.database)}.${ident(where.name)}`;
@@ -94,6 +98,7 @@ export function clickhouseReceiptStore(
       endpoint,
       `CREATE TABLE IF NOT EXISTS ${TABLE} (address String, effect String, expectation String, run_id String, written_at DateTime64(3) DEFAULT now64(3)) ` +
         `ENGINE = ${opts.replicatedIn ? "ReplicatedReplacingMergeTree" : "ReplacingMergeTree"}(written_at) ORDER BY address COMMENT ${sqlString(COMMENT)}`,
+      { settings: DDL_SETTINGS },
     );
     ensured = true;
   };
@@ -107,7 +112,7 @@ export function clickhouseReceiptStore(
   /** Whether there is a table to read; in a Replicated database, after this replica has caught up with it. */
   const readable = async () => {
     if (!ensured && !(await exists())) return false;
-    if (opts.replicatedIn) await clickhouseQuery(endpoint, `SYSTEM SYNC REPLICA ${TABLE} LIGHTWEIGHT`);
+    if (opts.replicatedIn) await syncReplicaWithin(endpoint, where.database, where.name, opts.replicaTimeoutMs !== undefined ? { timeoutMs: opts.replicaTimeoutMs } : {});
     return true;
   };
   const address = (receipt: EffectReceiptRef) => receiptAddress(identity, receipt.effect);

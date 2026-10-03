@@ -13,6 +13,13 @@
  *   from the second, the partition it left half copied and the one killed
  *   before its receipt are cleared and copied again (not dropped as repeated
  *   blocks), and the verification finds every row once.
+ * - A replica down (#3270), last because it restarts a container: with a
+ *   part on the stopped replica alone, the backfill waits, then stops naming
+ *   it, and onFailure drops the new table without waiting for it; restarted,
+ *   the part reaches the other replica. Then stopped in the middle of a
+ *   backfill: the run goes on with the live replica through both gates, and
+ *   the restarted replica catches up from Keeper with every row and the
+ *   declaration, and plans no change.
  *
  * Runs the Op through core's local executor with an in-memory gate ledger.
  * Needs Docker; skips cleanly without it.
@@ -23,13 +30,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { normalizeApply } from "@intentius/chant/apply";
-import { memoryGateLedgerPort, runOpLocally, loadProfiles, type ActivityFn, type GateLedgerPort, type OpConfig, type OpRunResult } from "@intentius/chant/op";
+import { memoryGateLedgerPort, runOpLocally, loadProfiles, OpRunFailure, type ActivityFn, type GateLedgerPort, type OpConfig, type OpRunResult } from "@intentius/chant/op";
 import { dockerAvailable, startScratchCluster, type ScratchCluster } from "../container";
 import { clickhouseQuery, type ClickHouseEndpoint } from "../http";
 import { clickhouseImage } from "../../spec/pin";
 import { planAgainstServer } from "../plan/commands";
 import { clickhouseApply, toApplyResult } from "../../op/activities/clickhouse-apply";
 import * as rebuildActivities from "../../op/activities/clickhouse-rebuild";
+import type { ClickHouseRebuildDeps } from "../../op/activities/clickhouse-rebuild";
 import { ClickHouseRebuildOp, type ClickHouseRebuildOpConfig } from "./op";
 import { clickhouseReceiptStore, REPLICATED_RECEIPTS_TABLE, type ClickHouseReceiptStore } from "./receipts";
 
@@ -69,27 +77,45 @@ async function count(at: ClickHouseEndpoint, table: string, where = ""): Promise
   await q(at, `SYSTEM SYNC REPLICA ${table} LIGHTWEIGHT`);
   return Number((await q<{ n: string }>(at, `SELECT count() AS n FROM ${table}${where ? ` WHERE ${where}` : ""}`))[0]!.n);
 }
+/**
+ * A replica that has just started again: wait until it has replayed the
+ * database's log. It answers queries before it is back in Keeper as a
+ * database replica, and says it is read-only until then.
+ */
+async function catchUp(at: ClickHouseEndpoint, database: string): Promise<void> {
+  const deadline = Date.now() + 120_000;
+  for (;;) {
+    try {
+      await q(at, `SYSTEM SYNC DATABASE REPLICA ${database}`);
+      return;
+    } catch (err) {
+      console.log(`catchUp ${database}: ${(err as Error).message}`, JSON.stringify(await q(at, "SELECT * FROM system.database_replicas").catch((e: unknown) => String(e))));
+      if (Date.now() > deadline) throw err;
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+  }
+}
 async function exists(at: ClickHouseEndpoint, database: string, name: string): Promise<boolean> {
   await q(at, `SYSTEM SYNC DATABASE REPLICA ${database}`);
   return Number((await q<{ n: string }>(at, `SELECT count() AS n FROM system.tables WHERE database = '${database}' AND name = '${name}'`))[0]!.n) > 0;
 }
 const showCreate = async (at: ClickHouseEndpoint, name: string) => (await q<{ statement: string }>(at, `SHOW CREATE TABLE ${name}`))[0]!.statement;
 
-function activities(at: ClickHouseEndpoint): Map<string, ActivityFn> {
+function activities(at: ClickHouseEndpoint, extra: Partial<ClickHouseRebuildDeps> = {}): Map<string, ActivityFn> {
   const map = new Map<string, ActivityFn>();
   for (const [name, fn] of Object.entries(rebuildActivities)) {
     if (typeof fn !== "function" || !name.startsWith("clickhouseRebuild")) continue;
     map.set(name, ((args: Record<string, unknown>, signal?: AbortSignal) =>
-      (fn as (a: unknown, s?: AbortSignal, d?: unknown) => Promise<unknown>)(args, signal, deps(at))) as ActivityFn);
+      (fn as (a: unknown, s?: AbortSignal, d?: unknown) => Promise<unknown>)(args, signal, { ...deps(at), ...extra })) as ActivityFn);
   }
   return map;
 }
 
 /** One run of the Op against one replica. */
-async function runOp(at: ClickHouseEndpoint, config: ClickHouseRebuildOpConfig, gates: GateLedgerPort): Promise<OpRunResult> {
+async function runOp(at: ClickHouseEndpoint, config: ClickHouseRebuildOpConfig, gates: GateLedgerPort, extra: Partial<ClickHouseRebuildDeps> = {}): Promise<OpRunResult> {
   const { op } = ClickHouseRebuildOp(config);
   const props = (op as unknown as { props: OpConfig }).props;
-  return runOpLocally(props, activities(at), await loadProfiles(), undefined, { gates, now: new Date().toISOString() });
+  return runOpLocally(props, activities(at, extra), await loadProfiles(), undefined, { gates, now: new Date().toISOString() });
 }
 
 class Ledger {
@@ -358,4 +384,130 @@ describe.skipIf(!enabled)("a table that does not replicate its rows is refused",
     );
     expect(await exists(r1(), "shop", "plain__chant_new")).toBe(false);
   }, 120_000);
+});
+
+describe.skipIf(!enabled)("a replica down (#3270)", () => {
+  const clicksDdl = (orderBy: string) => `CREATE TABLE depot.clicks
+(
+  ts DateTime,
+  user_id UInt64,
+  page String
+)
+ENGINE = ReplicatedMergeTree
+PARTITION BY toYYYYMM(ts)
+ORDER BY ${orderBy}`;
+  const V1: Obj = { export: "clicks", type: "ClickHouse::Table", dependsOn: ["depot"], ddl: clicksDdl("(ts, user_id)") };
+  const V2: Obj = { ...V1, ddl: clicksDdl("(user_id, ts)") };
+  const PER_DAY: Obj = {
+    export: "clicksDaily",
+    type: "ClickHouse::Table",
+    dependsOn: ["depot"],
+    ddl: "CREATE TABLE depot.clicks_daily (day Date, n UInt64) ENGINE = ReplicatedSummingMergeTree ORDER BY day",
+  };
+  const PER_DAY_MV: Obj = {
+    export: "clicksDailyMv",
+    type: "ClickHouse::MaterializedView",
+    dependsOn: ["clicks", "clicksDaily"],
+    ddl: "CREATE MATERIALIZED VIEW depot.clicks_daily_mv TO depot.clicks_daily AS SELECT toDate(ts) AS day, count() AS n FROM depot.clicks GROUP BY day",
+  };
+  const config = (extra: Partial<ClickHouseRebuildOpConfig> = {}): ClickHouseRebuildOpConfig => ({
+    name: "rebuild-clicks",
+    env: "e2e",
+    table: "depot.clicks",
+    dualWrite: { mode: "materialized-view", cutoverColumn: "ts", cutoverDelay: "2s" },
+    build: false,
+    path: dir,
+    output: "clicks-v2.json",
+    retain: "0s",
+    stack: MARKER.stack,
+    ownershipEnv: MARKER.env,
+    ...extra,
+  });
+  const ledger = new Ledger();
+  // Its own database, so the plans below read only these tables.
+  const DEPOT_DDL = "CREATE DATABASE depot ENGINE = Replicated('/clickhouse/databases/depot', '{shard}', '{replica}')";
+  const DEPOT: Obj = { export: "depot", type: "ClickHouse::Database", ddl: DEPOT_DDL };
+  const stepError = (err: unknown, fn: string) => (err as OpRunFailure).result.records.find((r) => r.fn === fn && r.status === "fail")?.error ?? "";
+
+  test("a part on the stopped replica alone: the backfill waits, stops naming it, and onFailure goes on without it", async () => {
+    await clickhouseApply({ buildPath: join(dir, writeBuild("clicks-v1.json", [DEPOT, V1, PER_DAY, PER_DAY_MV])), environment: "e2e" }, undefined, deps(r1()));
+    await q(r2(), DEPOT_DDL.replace("CREATE DATABASE", "CREATE DATABASE IF NOT EXISTS"));
+    await q(r2(), "SYSTEM SYNC DATABASE REPLICA depot");
+    writeBuild("clicks-v2.json", [DEPOT, V2, PER_DAY, PER_DAY_MV]);
+    await q(r1(), "INSERT INTO depot.clicks SELECT toDateTime('2026-01-01 00:00:00') + number * 6480, number % 50, concat('/p/', toString(number % 7)) FROM numbers(1600)");
+    expect(await count(r2(), "depot.clicks")).toBe(1600);
+
+    // Forty rows written on r2 that r1 has not fetched when r2 stops.
+    await q(r1(), "SYSTEM STOP FETCHES depot.clicks");
+    await q(r2(), "INSERT INTO depot.clicks SELECT toDateTime('2026-02-10 00:00:00') + number * 60, 1000 + number, '/late' FROM numbers(40)");
+    await cluster!.stopReplica(1);
+    await q(r1(), "SYSTEM START FETCHES depot.clicks");
+
+    // Create and Dual write go on without r2 (it is skipped once Keeper sees it
+    // inactive); the backfill cannot read r2's part and stops; onFailure's
+    // drops go on without r2 too.
+    const failed = await runOp(r1(), config({ replicaTimeout: "3s" }), ledger.port).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(failed).toBeInstanceOf(OpRunFailure);
+    expect(stepError(failed, "clickhouseRebuildBackfill")).toMatch(
+      /depot\.clicks: waited \d+s for replica r1 to fetch what the other replicas wrote, and 1 part\(s\) are still to fetch: 202602_\S+ from r2.*Those rows are on r2 alone/,
+    );
+    expect((failed as OpRunFailure).result.records.find((r) => r.fn === "clickhouseRebuildCompensate")?.status).toBe("ok");
+    expect(await q(r1(), "SELECT name FROM system.tables WHERE database = 'depot' AND name LIKE 'clicks\\_\\_chant%'")).toEqual([]);
+    expect(Number((await q<{ n: string }>(r1(), "SELECT count() AS n FROM depot.clicks"))[0]!.n)).toBe(1600);
+
+    // Back up: r1 fetches the part, and r2 replays the create and the drops from the database's log.
+    await cluster!.startReplica(1);
+    expect(await count(r1(), "depot.clicks")).toBe(1640);
+    await catchUp(r2(), "depot");
+    expect(await q(r2(), "SELECT name FROM system.tables WHERE database = 'depot' AND name LIKE 'clicks\\_\\_chant%'")).toEqual([]);
+  }, 300_000);
+
+  test("stopped mid-backfill, the run goes on with the live replica through both gates, and the replica catches up when it is back", async () => {
+    let stopped = false;
+    const stopAfterFirst = {
+      backfill: {
+        afterPartition: async () => {
+          if (stopped) return;
+          stopped = true;
+          await cluster!.stopReplica(1);
+        },
+      },
+    };
+    const r = await runOp(r1(), config(), ledger.port, stopAfterFirst);
+    expect(stopped).toBe(true);
+    expect(r.status).toBe("gated");
+    expect(r.gate).toMatchObject({ gate: "approve-rebuild-clicks" });
+    expect(outcome(r, "VerifiedRows")).toBe(1640);
+    expect(outcome(r, "Copied")).toBe(4);
+
+    // Approved with r2 still down: EXCHANGE, the view's DETACH PERMANENTLY and ATTACH, the drop.
+    ledger.approveLast();
+    const swapped = await runOp(r1(), config(), ledger.port);
+    expect(swapped.status).toBe("gated");
+    expect(swapped.gate).toMatchObject({ gate: "approve-rebuild-clicks-drop" });
+    expect(outcome(swapped, "Dependents")).toEqual(["depot.clicks_daily_mv"]);
+    ledger.approveLast();
+    const dropped = await runOp(r1(), config(), ledger.port);
+    expect(dropped.status).toBe("ok");
+    expect(outcome(dropped, "Dropped")).toBe(true);
+
+    // Back up: r2 replays the database's log and fetches the new table's parts.
+    await cluster!.startReplica(1);
+    await catchUp(r2(), "depot");
+    for (const at of [r1(), r2()]) {
+      expect(await showCreate(at, "depot.clicks")).toMatch(/ORDER BY \(user_id, ts\)/);
+      expect(await count(at, "depot.clicks")).toBe(1640);
+      expect(await count(at, "depot.clicks", "page = '/late'")).toBe(40);
+      expect(await q(at, "SELECT name FROM system.tables WHERE database = 'depot' AND name LIKE 'clicks\\_\\_chant%'")).toEqual([]);
+      const plan = await planAgainstServer("e2e", join(dir, "clicks-v2.json"), { config: {}, env: { CLICKHOUSE_URL: at.url } });
+      expect(plan.changes).toEqual([]);
+    }
+    // The view, re-attached while r2 was down, counts an insert on r2.
+    await q(r2(), "INSERT INTO depot.clicks VALUES (now(), 1, '/after')");
+    await q(r1(), "SYSTEM SYNC REPLICA depot.clicks_daily LIGHTWEIGHT");
+    expect(Number((await q<{ n: string }>(r1(), "SELECT sum(n) AS n FROM depot.clicks_daily WHERE day = today()"))[0]!.n)).toBeGreaterThanOrEqual(1);
+  }, 300_000);
 });

@@ -26,7 +26,7 @@ export const { op } = ClickHouseRebuildOp({
 });
 ```
 
-Options: `name`, `env`, `table`, `dualWrite` (required); `output` (default `dist/schema.json`), `path`, `build` (default true runs `chant build` first), `retain` (default `7d`), `gate` (the swap gate: `gate`, `timeout`, `description`, `approval`), `dropGate`, `writesGate` (app mode), `backfillTimeout` (default `6h`), `mutationTimeout` (default `10m`), `stack`, `ownershipEnv`.
+Options: `name`, `env`, `table`, `dualWrite` (required); `output` (default `dist/schema.json`), `path`, `build` (default true runs `chant build` first), `retain` (default `7d`), `gate` (the swap gate: `gate`, `timeout`, `description`, `approval`), `dropGate`, `writesGate` (app mode), `backfillTimeout` (default `6h`), `mutationTimeout` (default `10m`), `replicaTimeout` (default `2m`, Replicated databases only), `stack`, `ownershipEnv`.
 
 Pick the dual-write mode:
 
@@ -58,6 +58,8 @@ The swap gate is bound to a digest of the plan and the verification (row counts 
 ## On a Replicated database
 
 The Op runs on a `Replicated` database (two replicas with Keeper are covered by the e2e test). Declare the tables `ENGINE = ReplicatedMergeTree` with no arguments, so each table, the new one included, gets its own Keeper path from its UUID; an explicit path without `{uuid}` is refused. `chant run` can reach any replica, and a different one on each run: the DDL reaches every replica through the database, the receipts live in `<db>.__chant_receipts` and replicate, each step that reads rows first waits for its replica to catch up (`SYSTEM SYNC REPLICA`), and a copy still running on another replica is killed with `KILL QUERY ON CLUSTER '<db>'`. A dependent view is detached `PERMANENTLY`, the only form the database takes, and attached again.
+
+A replica that is down does not stop the rebuild by itself. Every DDL statement runs with `distributed_ddl_output_mode = throw_only_active`: it goes on with the live replicas, and the down one runs the statements from the database's log in Keeper when it comes back, in order, then fetches the rows. Right after a replica goes down, Keeper still counts it active until its session expires (about 30s), so the next statement waits that long once. A step that reads rows stops only when the down replica holds parts that no live replica has fetched: it waits `replicaTimeout` per attempt for them, then fails with a message naming the replica and the parts, and onFailure drops the new table. Bring that replica back and run again. Point `chant run` at a live replica, and keep Keeper itself up: without Keeper nothing replicates.
 
 ## Checking it is done
 

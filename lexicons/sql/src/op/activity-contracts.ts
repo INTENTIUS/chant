@@ -28,6 +28,7 @@ const rebuildArgs = z.strictObject({
   dualWrite,
   retain: z.string().optional(),
   mutationTimeout: z.string().optional(),
+  replicaTimeout: z.string().optional(),
   stack: z.string().optional(),
   ownershipEnv: z.string().optional(),
   cwd: z.string().optional(),
