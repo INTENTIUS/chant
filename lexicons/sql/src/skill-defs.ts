@@ -50,4 +50,25 @@ export const sqlSkills = createSkillsLoader(import.meta.url, [
       { type: "context" as const, value: "clickhouse migration" },
     ],
   },
+  {
+    file: "chant-sql-postgres.md",
+    name: "chant-sql-postgres",
+    description:
+      "Declare Postgres schemas, tables, constraints, indexes, views, sequences, enum and domain types and extensions as SQL-shaped tagged templates, with references, lineage and the SQLPG lint rules",
+    triggers: [
+      { type: "context" as const, value: "postgres" },
+      { type: "context" as const, value: "postgres schema" },
+      { type: "context" as const, value: "postgresql" },
+    ],
+    examples: [
+      {
+        title: "A table with a foreign key and an index",
+        output:
+          'export const app = schema`CREATE SCHEMA app`;\n' +
+          "export const users = table`CREATE TABLE ${app}.users (id bigint PRIMARY KEY)`;\n" +
+          "export const orders = table`CREATE TABLE ${app}.orders (id bigint PRIMARY KEY, user_id bigint NOT NULL REFERENCES ${users} (${users.columns.id}))`;\n" +
+          "export const ordersUser = index`CREATE INDEX orders_user_id_idx ON ${orders} (${orders.columns.user_id})`;",
+      },
+    ],
+  },
 ]);
