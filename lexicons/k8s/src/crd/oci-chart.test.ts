@@ -114,7 +114,7 @@ describe("pullOciChart", () => {
         if (url.endsWith("/manifests/1.2.3")) {
           return json({ layers: [{ mediaType: HELM_CHART_LAYER, digest: layerDigest }] });
         }
-        if (url.endsWith(`/blobs/${layerDigest}`)) return new Response(blob, { status: 200 });
+        if (url.endsWith(`/blobs/${layerDigest}`)) return new Response(new Uint8Array(blob), { status: 200 });
         throw new Error(`unexpected ${url}`);
       },
     };
