@@ -35,6 +35,7 @@ import { boxServices } from "./box-services";
 import { spriteServiceList, spriteServiceStart, spriteServiceStop } from "./sprite-services";
 import type { SpritesHttp } from "./sprites";
 import { defaultSpritesHttp } from "./sprites";
+import { logProgress } from "./progress";
 
 const execFileAsync = promisify(execFile);
 
@@ -284,7 +285,7 @@ export async function spriteServiceRestart(
     if (!bin) throw new Error("no sprite-env on PATH or in /.sprite/bin, and no sprite id to reach the Sprites API with");
     await execFileAsync(bin, ["services", "restart", name], { signal, timeout: 120_000 });
   }
-  console.log(`restarted: ${name}`);
+  logProgress(`restarted: ${name}`);
   if (!health) return { name, healthy: null };
 
   const until = Date.now() + (args.waitMs ?? 60_000);

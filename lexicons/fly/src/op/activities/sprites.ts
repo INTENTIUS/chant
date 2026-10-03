@@ -35,6 +35,7 @@
 // every project that imports the lexicon and needs the run fallback (#2613).
 
 import { sleep } from "@intentius/chant/op";
+import { logProgress } from "./progress";
 
 export const DEFAULT_SPRITES_BASE_URL = "https://api.sprites.dev";
 
@@ -420,7 +421,7 @@ export async function spriteCreate(
   const res = await http("POST", spritesUrl(base), spriteCreateBody(args), undefined, signal);
   if (res.status >= 300) throw new Error(`sprite ${args.name} create failed (${res.status}): ${res.text}`);
   const result = parseCreateResponse(res.text, args.name);
-  console.log(`created: sprite/${result.id} (${base})`);
+  logProgress(`created: sprite/${result.id} (${base})`);
   return result;
 }
 
@@ -524,7 +525,7 @@ export async function spriteCheckpoint(
   const res = await http("POST", spriteCheckpointUrl(base, args.id), body, undefined, signal);
   if (res.status >= 300) throw new Error(`sprite ${args.id} checkpoint failed (${res.status}): ${res.text}`);
   const result = parseCheckpointNdjson(res.text);
-  console.log(`checkpoint: sprite/${args.id} @${result.checkpointId} (${base})`);
+  logProgress(`checkpoint: sprite/${args.id} @${result.checkpointId} (${base})`);
   return result;
 }
 
@@ -572,7 +573,7 @@ export async function spriteRestore(
   if (res.status >= 300) {
     throw new Error(`sprite ${args.id} restore to "${target}" failed (${res.status}): ${res.text}`);
   }
-  console.log(`restored: sprite/${args.id} to ${target} (${base})`);
+  logProgress(`restored: sprite/${args.id} to ${target} (${base})`);
   return {};
 }
 
@@ -587,7 +588,7 @@ export async function spriteDestroy(
   if (res.status >= 300 && res.status !== 404) {
     throw new Error(`sprite ${args.id} destroy failed (${res.status}): ${res.text}`);
   }
-  console.log(`destroyed: sprite/${args.id} (${base})`);
+  logProgress(`destroyed: sprite/${args.id} (${base})`);
   return {};
 }
 
@@ -656,7 +657,7 @@ export async function spriteUrl(
         const check = await http("GET", target, undefined, undefined, signal);
         const ok = args.status !== undefined ? check.status === args.status : check.status >= 200 && check.status < 300;
         if (ok) {
-          console.log(`url: sprite/${args.id} answers on ${target} (${check.status})`);
+          logProgress(`url: sprite/${args.id} answers on ${target} (${check.status})`);
           return { url };
         }
         lastErr = `status ${check.status} (want ${args.status ?? "2xx"})`;
