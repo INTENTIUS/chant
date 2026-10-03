@@ -589,6 +589,13 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     why: "The aws spec fetch follows redirects itself rather than going through the shared cache helper; run by `chant dev generate`, never by a build.",
   },
   {
+    file: "lexicons/k8s/src/crd/oci-chart.ts",
+    primitives: ["fetch"],
+    phase: "codegen",
+    destination: "the OCI registry of a `type: \"helm\"` CRD source (today `ghcr.io`, for the KubeMicroVM operator chart at its pinned version and layer digest)",
+    why: "Pulls a chart's content layer over the registry API so k8s generation reads chart-only CRDs without needing `helm` on PATH (chant #3300). The bare `fetch` is the anonymous-token probe, which expects a 401; the token, manifest and blob go through `fetchWithRetry`. Run by `npm run generate`, never by a build.",
+  },
+  {
     file: "lexicons/aws/scripts/refresh-enum-overlay.ts",
     primitives: ["fetch"],
     phase: "codegen",
