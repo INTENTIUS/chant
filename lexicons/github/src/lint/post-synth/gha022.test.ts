@@ -80,4 +80,19 @@ on:
     const diags = gha022.check(makeCtx(yaml));
     expect(diags).toHaveLength(0);
   });
+
+  test("flags a job whose id has capitals or underscores (#3201)", () => {
+    const yaml = `name: CI
+on: push
+jobs:
+  Build_App:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build
+        run: npm run build
+`;
+    const diags = gha022.check(makeCtx(yaml));
+    expect(diags).toHaveLength(1);
+    expect(diags[0].entity).toBe("Build_App");
+  });
 });
