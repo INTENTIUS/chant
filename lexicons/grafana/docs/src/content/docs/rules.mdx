@@ -6,7 +6,7 @@ description: "Every lint rule and post-synth check provided by the Grafana lexic
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-grafana` — DO NOT EDIT.
     Edit lexicons/grafana/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-The Grafana lexicon provides **19** rules: 2 lint rules and 17 post-synth checks.
+The Grafana lexicon provides **20** rules: 2 lint rules and 18 post-synth checks.
 
 ## Lint Rules
 
@@ -38,3 +38,4 @@ Post-synth checks validate the serialized output after the build pipeline comple
 | `GRAF115` | A panel unit Grafana doesn't know, which it shows as a literal suffix |
 | `GRAF116` | A query sent to Loki is not valid LogQL |
 | `GRAF117` | A query sent to Tempo is not valid TraceQL |
+| `GRAF118` | A panel reads a connector metric no collector in the build emits |
