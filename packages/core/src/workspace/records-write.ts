@@ -963,7 +963,10 @@ async function newContentAddressed(o: Opened, fields: Record<string, unknown>, o
   if (o.source.list(o.dirRel)?.includes(name)) throw new RecordWriteError("record-id-taken", `${path} already exists, with the same bytes: the record is already written`);
   const before = await readAll(o, o.source);
   const written = await validatedEntry(o, before, path, text);
-  if (!opts.dryRun) writeFileSync(abs(o, path), text, { flag: "wx" });
+  if (!opts.dryRun) {
+    writeFileSync(abs(o, path), text, { flag: "wx" });
+    noteWrites(o.root, [{ path, text }], writeWho("records new", opts));
+  }
   return {
     $schema: RECORDS_NEW_SCHEMA_ID,
     contract: RECORDS_WRITE_CONTRACT_VERSION,
@@ -972,6 +975,7 @@ async function newContentAddressed(o: Opened, fields: Record<string, unknown>, o
     id,
     dryRun: !!opts.dryRun,
     warnings: written.warnings,
+    digest: written.digest,
     ...(opts.dryRun ? { text } : {}),
   };
 }
