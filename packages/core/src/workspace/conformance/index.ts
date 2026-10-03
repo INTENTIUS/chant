@@ -35,6 +35,14 @@
  * app, and a chant member with one composite and one component), declared
  * by `chant workspace init --yes`, so {@link REFERENCE_READS} resolve in
  * both. `workspaceDir` names another workspace with the same files.
+ *
+ * The workspace the suite generates for a run also holds one decision,
+ * proposed and never committed ({@link UNCOMMITTED_DECISION}), so
+ * `records --uncommitted` (#3160) has a record to list with its `worktree`.
+ * {@link createConformanceWorkspace} called directly leaves it out unless
+ * asked, so a test that writes records there allocates the ids it always
+ * did. In the chant repository the reference workspace holds whatever the
+ * checkout does, often nothing uncommitted.
  */
 
 import { execFileSync, spawn } from "node:child_process";
@@ -48,7 +56,7 @@ import { isDeepStrictEqual } from "node:util";
 import { READ_CONTRACT_VERSION } from "../reason-codes";
 
 /** The read-contract commands, as a reader names them. */
-export const READ_CONTRACT_COMMANDS = ["ls", "graph", "check", "status", "records", "graph --intent", "graph --composites"] as const;
+export const READ_CONTRACT_COMMANDS = ["ls", "graph", "check", "status", "records", "records --uncommitted", "graph --intent", "graph --composites"] as const;
 export type ReadContractCommand = (typeof READ_CONTRACT_COMMANDS)[number];
 
 /**
@@ -62,6 +70,7 @@ export const READ_CONTRACT_SCHEMAS: Record<ReadContractCommand, string> = {
   check: "check.schema.json",
   status: "status.schema.json",
   records: "records.schema.json",
+  "records --uncommitted": "records.schema.json",
   "graph --intent": "intent.schema.json",
   "graph --composites": "composites.schema.json",
 };
@@ -73,6 +82,7 @@ export const READ_CONTRACT_JSON_FLAGS: Record<ReadContractCommand, readonly (rea
   check: [["--format", "json"]],
   status: [["--json"]],
   records: [["--json"]],
+  "records --uncommitted": [["--json"]],
   "graph --intent": [["--json"]],
   "graph --composites": [[], ["--json"]],
 };
@@ -84,6 +94,7 @@ export const REFERENCE_READS: Record<ReadContractCommand, string[]> = {
   check: [],
   status: ["dev"],
   records: ["--kind", "decisions/decision.kind.mjs"],
+  "records --uncommitted": ["--kind", "decisions/decision.kind.mjs"],
   "graph --intent": ["app/src/server.mjs:19", "--kind", "decisions/decision.kind.mjs"],
   "graph --composites": [],
 };
@@ -316,6 +327,7 @@ export const MCP_READ_TOOLS: Partial<Record<ReadContractCommand, string>> = {
   graph: "workspace-graph",
   status: "workspace-status",
   records: "workspace-records",
+  "records --uncommitted": "workspace-records",
   "graph --intent": "workspace-graph",
   "graph --composites": "workspace-graph",
 };
@@ -350,6 +362,7 @@ export function mcpToolCall(argv: readonly string[]): { name: string; arguments:
     else if (a === "--work") args.work = value();
     else if (a === "--severity") args.severity = value();
     else if (a === "--current") args.current = true;
+    else if (a === "--uncommitted") args.uncommitted = true;
     else if (a === "--composites") args.composites = true;
     else if (a.startsWith("-")) return undefined;
     else positional.push(a);
@@ -457,6 +470,47 @@ function git(cwd: string, ...args: string[]): void {
   });
 }
 
+/**
+ * The decision the generated workspace leaves uncommitted (#3160): proposed,
+ * about the delivery member only, so the app region the intent read walks
+ * is unchanged. Its path from the workspace root, and its text.
+ */
+export const UNCOMMITTED_DECISION = {
+  path: "decisions/fix-002-where-kept-records-wait.md",
+  text: `---
+schema: 1
+id: "fix-002"
+title: "Where kept records wait"
+state: "proposed"
+area: "delivery"
+source:
+  kind: "workspace"
+  member: "delivery"
+question: "Where does a record wait between being kept and being applied?"
+options:
+  - id: "a"
+    label: "uncommitted in the working tree"
+    how: "The record stays a file in the checkout until it is committed or applied."
+    tradeoff: "A reader lists it with records --uncommitted, and nothing else holds it."
+choice: null
+rejected: []
+supersedes: []
+evidence:
+  - title: "INTENTIUS/chant#3160, uncommitted records in the read contract"
+    url: "https://github.com/INTENTIUS/chant/issues/3160"
+decided_by: null
+decided_on: null
+reviews: []
+constrains:
+  - "member:delivery"
+---
+
+# Where kept records wait
+
+The reader conformance workspace leaves this decision uncommitted, so \`records --uncommitted\` has one record to list.
+`,
+} as const;
+
 /** A workspace generated for a conformance run, and how to remove it. */
 export interface ConformanceWorkspace {
   dir: string;
@@ -468,9 +522,10 @@ export interface ConformanceWorkspace {
  * `__fixture__/`, link this package in as `node_modules/@intentius/chant`
  * so the chant member resolves it, declare the workspace with
  * `chant workspace init --yes --name conformance` and commit it all to a new
- * git repository on `main`.
+ * git repository on `main`. With `uncommitted`, then write
+ * {@link UNCOMMITTED_DECISION} and leave it uncommitted (#3160).
  */
-export function createConformanceWorkspace(options: { chantCommand?: string[]; timeoutMs?: number } = {}): ConformanceWorkspace {
+export function createConformanceWorkspace(options: { chantCommand?: string[]; timeoutMs?: number; uncommitted?: boolean } = {}): ConformanceWorkspace {
   const chant = options.chantCommand ?? defaultChantCommand();
   const scratch = realpathSync(mkdtempSync(join(tmpdir(), "chant-reader-conformance-")));
   const dispose = () => rmSync(scratch, { recursive: true, force: true });
@@ -490,6 +545,7 @@ export function createConformanceWorkspace(options: { chantCommand?: string[]; t
     });
     git(dir, "add", "-A");
     git(dir, "commit", "--quiet", "-m", "the reader conformance workspace");
+    if (options.uncommitted) writeFileSync(join(dir, ...UNCOMMITTED_DECISION.path.split("/")), UNCOMMITTED_DECISION.text);
     return { dir, dispose };
   } catch (e) {
     dispose();
@@ -503,7 +559,7 @@ export function conformanceTarget(options: WorkspaceReaderConformanceOptions = {
   const chantCommand = options.chantCommand ?? defaultChantCommand();
   const given = options.workspaceDir ?? referenceWorkspaceDir();
   if (given) return { workspaceDir: given, chantCommand, dispose: () => {} };
-  const ws = createConformanceWorkspace({ chantCommand, timeoutMs: options.timeoutMs });
+  const ws = createConformanceWorkspace({ chantCommand, timeoutMs: options.timeoutMs, uncommitted: true });
   return { workspaceDir: ws.dir, chantCommand, dispose: ws.dispose };
 }
 

@@ -1,7 +1,7 @@
 /**
  * The sql lexicon's generation pipeline.
  *
- * One dialect today, ClickHouse. Its "schema" is the catalog a pinned
+ * Two dialects. ClickHouse's "schema" is the catalog a pinned
  * `clickhouse-server` reports from `system.*`, committed as
  * `src/spec/clickhouse-catalog.snapshot.json` (chant #3195). `fetchSchemas`
  * reads that snapshot, and starts the pinned server only on a pin move; see
@@ -31,6 +31,8 @@ import { CATALOG_KEY, fetchSchemas } from "../spec/fetch";
 import { parseCatalog, type ClickHouseCatalog } from "../spec/catalog";
 import { renderClickHouseModule } from "./clickhouse-module";
 import { buildRegistry } from "./registry";
+import { fetchCatalogs, type FetchCatalogsOptions } from "../spec/postgres-fetch";
+import { renderPostgresModule, type RenderedPostgresModule } from "./postgres-module";
 
 export type { GenerateResult };
 
@@ -94,8 +96,22 @@ export async function generate(opts: GenerateOptions = {}): Promise<GenerateResu
   return result;
 }
 
+export type PostgresGenerateOptions = Pick<FetchCatalogsOptions, "force" | "majors" | "log">;
+
+/**
+ * Generate the Postgres types: the union of the catalogs of every supported
+ * major (`src/spec/postgres-catalog-<major>.snapshot.json`), rendered with the
+ * overlays. A server is started only for a major whose pin moved, or with
+ * `force`; see `src/spec/postgres-fetch.ts`. The types stay internal to the
+ * package until the `/postgres` subpath has entities to export with them.
+ */
+export async function generatePostgres(opts: PostgresGenerateOptions = {}): Promise<RenderedPostgresModule> {
+  const catalogs = await fetchCatalogs(opts);
+  return renderPostgresModule(catalogs);
+}
+
 /** Write the generated files under `src/generated/`. */
-export function writeGeneratedFiles(result: GenerateResult, pkgDir?: string): void {
+export function writeGeneratedFiles(result: GenerateResult, pkgDir?: string, postgres?: RenderedPostgresModule): void {
   const baseDir = pkgDir ?? dirname(dirname(dirname(fileURLToPath(import.meta.url))));
   writeGeneratedArtifacts({
     baseDir,
@@ -104,6 +120,7 @@ export function writeGeneratedFiles(result: GenerateResult, pkgDir?: string): vo
       "index.d.ts": result.typesDTS,
       "clickhouse-types.ts": result.typesDTS,
       "clickhouse.ts": result.indexTS,
+      ...(postgres ? { "postgres-types.ts": postgres.declarations, "postgres.ts": postgres.tables } : {}),
     },
   });
 }

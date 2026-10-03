@@ -331,6 +331,8 @@ export interface ParsedArgs {
   severity?: string;
   /** `chant workspace records --current` (#2546): leave out records a closed record supersedes. */
   current?: boolean;
+  /** `chant workspace records --uncommitted` (#3160): only the records the working tree holds modified or new against HEAD. */
+  uncommitted?: boolean;
   /** `chant workspace records amend <id> --set <file|->` (#2670): the JSON fields to set. */
   set?: string;
   /** `chant workspace records review <id> --verdict <v>` (#2670): agree, dissent or abstain. */

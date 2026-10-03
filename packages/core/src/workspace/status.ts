@@ -41,6 +41,7 @@ import { readPathSha } from "../lifecycle/git";
 import { latestPerComponent, readReleaseLedger, type ReleaseRecord } from "../lifecycle/release-ledger";
 import { readReleasePlan, type ReleasePlan } from "../lifecycle/plan-ledger";
 import { listWorkLeases, type WorkLeaseState } from "../lifecycle/work-lease";
+import { readCheckoutHead, type CheckoutHead } from "./records-checkout";
 import { findWorkspaceRoot } from "../project-root";
 import { resolveBoxes, type ResolvedIsolation } from "./box-isolation";
 import { resolveBoxIntents, unresolvedIntent, type BoxIntent } from "./box-intent";
@@ -234,6 +235,8 @@ export type StatusDocument =
       env: string;
       compareTo: string | null;
       lifecycle: { ref: string; commit: string | null };
+      /** The branch, head and base of the checkout read (#3160). `records --uncommitted` lists the records it holds uncommitted. */
+      checkout: CheckoutHead;
       workspace: { name: string; root: string; file: string };
       members: StatusMember[];
       /** Every work lease in the workspace's ledgers, active and expired, by member then item (#2732). A released lease has no ref and is not listed. */
@@ -451,6 +454,7 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
       env: query.env,
       compareTo: query.compareTo ?? null,
       lifecycle: { ref: LIFECYCLE_REF, commit },
+      checkout: readCheckoutHead(top),
       workspace: { name: declaration.name, root: rootDir === "" ? "." : rootDir, file: declaration.file },
       members,
       leases,
