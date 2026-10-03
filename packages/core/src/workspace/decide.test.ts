@@ -10,9 +10,9 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { runDeclarationChecks } from "./checks";
 import { cleanScratch, commitAll, contract, REPO, repo } from "./__fixtures__/contract-repo";
-import { answerPoint, askPoint, type PointsWriteDocument } from "./decide";
+import { answerPoint, askPoint, reasonFields, type PointsWriteDocument } from "./decide";
 import pointAnswerSchema from "./point-answer.schema.json";
-import { workspacePoints } from "./points-cli";
+import { responseAsk, workspacePoints } from "./points-cli";
 import pointsSchema from "./points.schema.json";
 import pointsWriteSchema from "./points-write.schema.json";
 import type { ModelAsk, WireAnswer } from "./points";
@@ -192,6 +192,46 @@ describe("points answer (#2739)", () => {
   test("every record written follows point-answer.schema.json, and the reference workspace carries a copy of it", () => {
     expect(JSON.parse(readFileSync(join(REF, "answers", "answer.schema.json"), "utf-8"))).toEqual(pointAnswerSchema);
     expect(answers().length).toBeGreaterThan(3);
+  });
+});
+
+describe("the model's reason (#3345)", () => {
+  const why = "Nine acceptance criteria across three services: more than a medium slice holds.";
+
+  test("a proposal keeps the model's reason, from --response too; points --json returns it, and confirming keeps it", async () => {
+    const response = { model: "bosun-v3.1-1.7b", answers: { "slice-tier": { ...confident, reason: why } } };
+    const asked = ok(await askPoint({ cwd: root, point: "slice-tier", inputs: { ...big, "work-item.criteria": 20 }, ask: responseAsk(response), on }));
+    expect(asked.question).toMatchObject({ state: "proposed", reason: why, model: { answer: "large", observed: true, reason: why } });
+    expect(fm(asked.path)).toContain(`reason: ${JSON.stringify(why)}`);
+    const listed = await workspacePoints({ cwd: root });
+    read.expectValid(listed);
+    if ("error" in listed) throw new Error(listed.error.message);
+    expect(listed.questions.find((q) => q.id === asked.id)).toMatchObject({ reason: why, model: { reason: why } });
+    const confirmed = ok(await answerPoint({ cwd: root, id: asked.id, answer: "large", by: ["alice"], on }));
+    expect(confirmed.question).toMatchObject({ state: "answered", decider: { kind: "model" }, reason: why });
+  });
+
+  test("people answering otherwise move the reason into the escalation, as model_reason", async () => {
+    const asked = ok(await askPoint({ cwd: root, point: "slice-tier", inputs: { ...big, "work-item.criteria": 21 }, ask: stub({ ...confident, reason: why }), on }));
+    const doc = ok(await answerPoint({ cwd: root, id: asked.id, answer: "medium", by: ["bob"], on }));
+    expect(doc.question).toMatchObject({ decider: { kind: "quorum" }, reason: null });
+    expect(doc.question.escalations.at(-1)).toMatchObject({ kind: "model", answer: "large", reason: "proposed large, and people answered medium", model_reason: why });
+    expect(fm(doc.path)).not.toMatch(/^reason:/m);
+  });
+
+  test("an answer below the threshold keeps its reason in the escalation, and points --json shows it on the model's answer", async () => {
+    const asked = ok(await askPoint({ cwd: root, point: "slice-tier", inputs: { ...big, "work-item.criteria": 22 }, ask: stub({ ...unsure, reason: "Could be either." }), on }));
+    expect(asked.question).toMatchObject({ state: "escalated", reason: null, model: { answer: "medium", observed: false, reason: "Could be either." } });
+    expect(asked.question.escalations[1]).toMatchObject({ kind: "model", model_reason: "Could be either." });
+    expect(ok(await askPoint({ cwd: root, point: "slice-tier", inputs: { ...big, "work-item.criteria": 23 }, ask: stub(unsure), on })).question.model).toMatchObject({ reason: null });
+  });
+
+  test("a workspace whose answer schema predates the reason keeps none, rather than failing the write", () => {
+    expect(reasonFields(pointAnswerSchema)).toEqual({ top: true, escalation: true });
+    const old = JSON.parse(JSON.stringify(pointAnswerSchema));
+    delete old.properties.reason;
+    delete old.definitions.escalation.properties.model_reason;
+    expect(reasonFields(old)).toEqual({ top: false, escalation: false });
   });
 });
 

@@ -464,6 +464,13 @@
             }
           ]
         },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The model's own explanation of the recorded answer, a proposal or a confirmed proposal, when the backend gave one (#3345). null otherwise, and from a chant before it."
+        },
         "model": {
           "description": "Any model answer: the proposal (observed), or the last answer below a model decider's threshold (not observed). null when no model answered.",
           "oneOf": [
@@ -532,6 +539,13 @@
                 },
                 "observed": {
                   "type": "boolean"
+                },
+                "reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "The model's explanation of this answer, when the backend gave one (#3345)."
                 }
               }
             }
@@ -591,6 +605,10 @@
                 "type": "number",
                 "minimum": 0,
                 "maximum": 1
+              },
+              "model_reason": {
+                "type": "string",
+                "description": "A model decider's own explanation of the answer it gave, when the backend gave one (#3345). reason is why the decider did not answer."
               }
             }
           }

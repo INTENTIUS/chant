@@ -142,11 +142,17 @@ export interface QuestionView {
   confidence: number | null;
   threshold: number | null;
   /**
+   * The model's explanation of the recorded answer (#3345): a proposal's, or a
+   * confirmed proposal's. null when a model gave none, or did not decide.
+   */
+  reason: string | null;
+  /**
    * Any model answer: the proposal for a proposed question, or for an
    * escalated one the last model answer below its threshold. null when no
-   * model answered.
+   * model answered. `reason` is the model's explanation of that answer, or
+   * null when it gave none (#3345).
    */
-  model: { answer: string | boolean | null; confidence: number | null; threshold: number | null; model: string | null; backend: string | null; observed: boolean } | null;
+  model: { answer: string | boolean | null; confidence: number | null; threshold: number | null; model: string | null; backend: string | null; observed: boolean; reason: string | null } | null;
   escalations: Escalation[];
   answeredBy: string[];
   askedOn: string | null;
@@ -202,10 +208,20 @@ export function questionView(entry: RecordEntry, point: Point | undefined, ledge
   const answer = typeof d.answer === "string" || typeof d.answer === "boolean" ? d.answer : null;
   let model: QuestionView["model"] = null;
   if (decider.kind === "model") {
-    model = { answer, confidence: num(d.confidence), threshold: num(d.threshold), model: str(decider.model), backend: str(decider.backend), observed: true };
+    model = { answer, confidence: num(d.confidence), threshold: num(d.threshold), model: str(decider.model), backend: str(decider.backend), observed: true, reason: str(d.reason) };
   } else {
     const lean = [...escalations].reverse().find((e) => e.kind === "model" && e.answer !== undefined && e.answer !== null);
-    if (lean) model = { answer: lean.answer ?? null, confidence: lean.confidence ?? null, threshold: lean.threshold ?? null, model: lean.model ?? null, backend: lean.backend ?? null, observed: false };
+    if (lean) {
+      model = {
+        answer: lean.answer ?? null,
+        confidence: lean.confidence ?? null,
+        threshold: lean.threshold ?? null,
+        model: lean.model ?? null,
+        backend: lean.backend ?? null,
+        observed: false,
+        reason: typeof lean.model_reason === "string" ? lean.model_reason : null,
+      };
+    }
   }
   const constrains = Array.isArray(d.constrains) ? d.constrains.filter((c): c is string => typeof c === "string") : [];
   return {
@@ -227,6 +243,7 @@ export function questionView(entry: RecordEntry, point: Point | undefined, ledge
     probabilities: d.probabilities !== null && typeof d.probabilities === "object" ? (d.probabilities as Record<string, number>) : null,
     confidence: num(d.confidence),
     threshold: num(d.threshold),
+    reason: decider.kind === "model" ? str(d.reason) : null,
     model,
     escalations,
     answeredBy: Array.isArray(d.answered_by) ? d.answered_by.filter((b): b is string => typeof b === "string") : [],
@@ -433,10 +450,28 @@ function recordData(o: Opened, fields: Record<string, unknown>): Record<string, 
   return pick(clean, schemaOrder(clean, { properties: o.loaded.schema.properties }));
 }
 
-function resultFields(result: ChainResult): Record<string, unknown> {
-  const escalations = result.escalations.length > 0 ? result.escalations : undefined;
+/**
+ * Whether an answer kind's schema copy takes the model's reason (#3345): at
+ * the top level, and in an escalation entry as `model_reason`. A workspace
+ * whose copy of point-answer.schema.json predates them keeps no reason rather
+ * than failing the write; copying the schema anew turns them on.
+ */
+export function reasonFields(schema: Record<string, unknown>): { top: boolean; escalation: boolean } {
+  const has = (o: unknown, key: string): boolean => o !== null && typeof o === "object" && Object.prototype.hasOwnProperty.call(o, key);
+  const defs = (schema.definitions ?? schema.$defs) as Record<string, { properties?: unknown }> | undefined;
+  return { top: has(schema.properties, "reason"), escalation: has(defs?.escalation?.properties, "model_reason") };
+}
+
+/** Escalations without `model_reason` when the kind's schema does not take it. */
+function keepReasons(escalations: Escalation[], takes: { escalation: boolean }): Escalation[] {
+  return takes.escalation ? escalations : escalations.map(({ model_reason: _, ...e }) => e);
+}
+
+function resultFields(result: ChainResult, takes: { top: boolean; escalation: boolean }): Record<string, unknown> {
+  const escalations = result.escalations.length > 0 ? keepReasons(result.escalations, takes) : undefined;
   if (result.status === "proposed") {
-    return { state: "proposed", answer: result.answer, decider: result.decider, probabilities: result.probabilities, confidence: result.confidence, threshold: result.threshold, escalations };
+    const reason = takes.top ? result.reason : undefined;
+    return { state: "proposed", answer: result.answer, decider: result.decider, probabilities: result.probabilities, confidence: result.confidence, threshold: result.threshold, reason, escalations };
   }
   if (result.status === "answered") return { state: "answered", answer: result.answer, decider: result.decider, escalations };
   return { state: "escalated", decider: result.decider, escalations };
@@ -511,7 +546,7 @@ export async function askPoint(opts: AskPointOptions): Promise<PointsWriteDocume
       inputs,
       inputs_hash: hash,
       constrains: opts.subject !== undefined ? [opts.subject] : existing?.data?.constrains,
-      ...resultFields(result),
+      ...resultFields(result, reasonFields(o.loaded.schema)),
       asked_on: on,
       answered_on: state === "answered" ? on : undefined,
       source,
@@ -675,9 +710,11 @@ export async function answerPoint(opts: AnswerPointOptions): Promise<PointsWrite
           ...(typeof d.confidence === "number" ? { confidence: d.confidence } : {}),
           ...(typeof d.threshold === "number" ? { threshold: d.threshold } : {}),
           reason: `proposed ${show(d.answer as string | boolean, type)}, and people answered ${show(value, type)}`,
+          // The model's own reason moves with its proposal (#3345).
+          ...(typeof d.reason === "string" && reasonFields(o.loaded.schema).escalation ? { model_reason: d.reason } : {}),
         });
       }
-      const rest = Object.fromEntries(Object.entries(d).filter(([k]) => k !== "probabilities" && k !== "confidence" && k !== "threshold"));
+      const rest = Object.fromEntries(Object.entries(d).filter(([k]) => k !== "probabilities" && k !== "confidence" && k !== "threshold" && k !== "reason"));
       fields = {
         ...rest,
         state: "answered",
