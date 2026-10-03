@@ -27,7 +27,7 @@ import { SQL_OWNERSHIP_CHANNEL } from "./clickhouse/ownership";
 import { CLICKHOUSE_EMULATOR } from "./op/activities/clickhouse-emulator";
 import { sqlSkills } from "./skill-defs";
 import { detectTemplate } from "./detect";
-import { CDC_TEMPLATE, DEFAULT_TEMPLATE, EVENTS_TEMPLATE } from "./init-templates";
+import { CDC_TEMPLATE, DEFAULT_TEMPLATE, EVENTS_TEMPLATE, POSTGRES_EVENTS_TEMPLATE, POSTGRES_TEMPLATE, POSTGRES_TENANT_TEMPLATE } from "./init-templates";
 import { compositeCatalog } from "./composites/catalog";
 
 export const sqlPlugin: LexiconPlugin = {
@@ -117,10 +117,13 @@ export const sqlPlugin: LexiconPlugin = {
     return compositeCatalog;
   },
 
-  // `chant init --lexicon sql [--template events|cdc]`; see ./init-templates.ts.
+  // `chant init --lexicon sql [--template events|cdc|postgres|postgres-tenant|postgres-events]`; see ./init-templates.ts.
   initTemplates(template?: string) {
     if (template === "events") return EVENTS_TEMPLATE;
     if (template === "cdc") return CDC_TEMPLATE;
+    if (template === "postgres") return POSTGRES_TEMPLATE;
+    if (template === "postgres-tenant") return POSTGRES_TENANT_TEMPLATE;
+    if (template === "postgres-events") return POSTGRES_EVENTS_TEMPLATE;
     return DEFAULT_TEMPLATE;
   },
 
