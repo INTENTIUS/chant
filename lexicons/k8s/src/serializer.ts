@@ -9,6 +9,7 @@ import { createRequire } from "module";
 import type { Declarable } from "@intentius/chant/declarable";
 import { isPropertyDeclarable, isResourceDeclarable } from "@intentius/chant/declarable";
 import type { Serializer, SerializerResult, SerializeContext } from "@intentius/chant/serializer";
+import { mergeResourceAttributes, telemetryEnvironment, type TelemetryAttribution } from "@intentius/chant/telemetry-attribution";
 import { ownershipEntries, LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
 import {
   isEffectReceipt,
@@ -300,6 +301,76 @@ function toYAMLValue(value: unknown, entityNames: Map<Declarable, string>): unkn
 /**
  * Kubernetes YAML serializer implementation.
  */
+// ── Telemetry attribution (#2558, D22, #3059) ──────────────────────
+
+/** Where each workload kind keeps its pod spec. */
+const POD_SPEC_PATHS: Record<string, readonly string[]> = {
+  Pod: ["spec"],
+  Deployment: ["spec", "template", "spec"],
+  StatefulSet: ["spec", "template", "spec"],
+  DaemonSet: ["spec", "template", "spec"],
+  ReplicaSet: ["spec", "template", "spec"],
+  Job: ["spec", "template", "spec"],
+  CronJob: ["spec", "jobTemplate", "spec", "template", "spec"],
+};
+
+/** The core API groups those kinds live in; a CRD that reuses a kind name is not a workload. */
+const WORKLOAD_API_VERSIONS = new Set(["v1", "apps/v1", "batch/v1"]);
+
+/** The digest of an image reference pinned with `@sha256:...`, or undefined. */
+function imageDigest(image: unknown): string | undefined {
+  if (typeof image !== "string") return undefined;
+  const at = image.lastIndexOf("@");
+  return at === -1 ? undefined : image.slice(at + 1);
+}
+
+/**
+ * Stamp `OTEL_SERVICE_NAME` and `OTEL_RESOURCE_ATTRIBUTES` into the `env` of
+ * each container of a workload. `service.name` is the workload's
+ * `metadata.name`, `chant.decl` its declaration id (`decl`), and an image
+ * pinned by digest gives `service.version`. A variable the container already
+ * sets is kept: its own `OTEL_SERVICE_NAME` wins, and its own resource
+ * attributes keep their keys while the missing ones are appended. One set
+ * through `valueFrom` is left alone. Init containers are not stamped.
+ */
+function stampWorkloadTelemetry(manifest: Record<string, unknown>, decl: string, telemetry: TelemetryAttribution): void {
+  const path = POD_SPEC_PATHS[manifest.kind as string];
+  if (!path || !WORKLOAD_API_VERSIONS.has(manifest.apiVersion as string)) return;
+  let podSpec: unknown = manifest;
+  for (const key of path) {
+    if (!podSpec || typeof podSpec !== "object") return;
+    podSpec = (podSpec as Record<string, unknown>)[key];
+  }
+  const containers = (podSpec as Record<string, unknown> | undefined)?.containers;
+  if (!Array.isArray(containers)) return;
+  const service = String((manifest.metadata as Record<string, unknown> | undefined)?.name ?? decl);
+  for (const container of containers) {
+    if (!container || typeof container !== "object") continue;
+    const c = container as Record<string, unknown>;
+    const version = imageDigest(c.image);
+    const vars = telemetryEnvironment(telemetry, { service, decl, ...(version ? { version } : {}) });
+    if (c.env !== undefined && !Array.isArray(c.env) && typeof c.env === "object" && c.env !== null) {
+      // A map, as some composites and hand-written props give it before the API's list form.
+      const map: Record<string, unknown> = { ...(c.env as Record<string, unknown>) };
+      if (!("OTEL_SERVICE_NAME" in map)) map.OTEL_SERVICE_NAME = vars.OTEL_SERVICE_NAME;
+      const own = map.OTEL_RESOURCE_ATTRIBUTES;
+      if (own === undefined) map.OTEL_RESOURCE_ATTRIBUTES = vars.OTEL_RESOURCE_ATTRIBUTES;
+      else if (typeof own === "string") map.OTEL_RESOURCE_ATTRIBUTES = mergeResourceAttributes(own, vars.OTEL_RESOURCE_ATTRIBUTES);
+      c.env = map;
+      continue;
+    }
+    const env = Array.isArray(c.env) ? [...(c.env as Array<Record<string, unknown>>)] : [];
+    const at = (key: string) => env.findIndex((e) => e && typeof e === "object" && e.name === key);
+    if (at("OTEL_SERVICE_NAME") === -1) env.push({ name: "OTEL_SERVICE_NAME", value: vars.OTEL_SERVICE_NAME });
+    const i = at("OTEL_RESOURCE_ATTRIBUTES");
+    if (i === -1) env.push({ name: "OTEL_RESOURCE_ATTRIBUTES", value: vars.OTEL_RESOURCE_ATTRIBUTES });
+    else if (typeof env[i]!.value === "string") {
+      env[i] = { ...env[i]!, value: mergeResourceAttributes(env[i]!.value as string, vars.OTEL_RESOURCE_ATTRIBUTES) };
+    }
+    c.env = env;
+  }
+}
+
 export const k8sSerializer: Serializer = {
   name: "k8s",
   rulePrefix: "WK8",
@@ -488,6 +559,8 @@ export const k8sSerializer: Serializer = {
           manifest.spec = spec;
         }
       }
+
+      if (context?.telemetry) stampWorkloadTelemetry(manifest, name, context.telemetry);
 
       // Emit as YAML — sort Namespaces first so kubectl apply succeeds
       const yamlDoc = emitK8sManifest(manifest);
