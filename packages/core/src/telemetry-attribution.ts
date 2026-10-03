@@ -143,3 +143,54 @@ export function mergeResourceAttributes(existing: string, extra: string): string
   const added = extra.split(",").filter((kv) => kv !== "" && !have.has(kv.split("=")[0]!));
   return [existing, ...added].filter((s) => s !== "").join(",");
 }
+
+// ── Release attributes (#3061, ws-081) ─────────────────────────────
+
+/**
+ * The environment variable a deploy sets to the release attributes, as a
+ * suffix for `OTEL_RESOURCE_ATTRIBUTES`. A stamped workload's generated
+ * output appends it where the platform expands variables (Compose
+ * interpolation, a Kubernetes `$(VAR)` reference), so the committed files are
+ * the same bytes whatever is released.
+ */
+export const RELEASE_ATTRIBUTES_VARIABLE = "CHANT_RELEASE_ATTRIBUTES";
+
+/**
+ * The pod-template annotation a Kubernetes release writes the suffix to. A
+ * stamped container reads it into {@link RELEASE_ATTRIBUTES_VARIABLE} through
+ * the downward API; an absent annotation reads as empty.
+ */
+export const RELEASE_ATTRIBUTES_ANNOTATION = "chant.intentius.io/release-attributes";
+
+/** What the step that deploys a release knows: the artifact it promoted and the commit it came from. */
+export interface ReleaseIdentity {
+  /** `service.version`: the digest of the artifact the run promoted, the release record's `digest`. */
+  version?: string;
+  /** `vcs.ref.head.revision`: the commit, the release record's `gitSha`. */
+  revision?: string;
+}
+
+/**
+ * The release attributes as a suffix for `OTEL_RESOURCE_ATTRIBUTES`: each
+ * pair preceded by a comma and percent-encoded the way
+ * {@link telemetryEnvironment} encodes, or `""` when the release knows
+ * neither. The build-time list always has `chant.decl`, so the suffix never
+ * starts the list.
+ */
+export function releaseAttributesSuffix(release: ReleaseIdentity | undefined): string {
+  if (!release) return "";
+  const pairs: [string, string | undefined][] = [
+    ["service.version", release.version],
+    ["vcs.ref.head.revision", release.revision],
+  ];
+  return pairs
+    .filter((p): p is [string, string] => p[1] !== undefined && p[1] !== "")
+    .map(([k, v]) => `,${k}=${encodeURIComponent(v)}`)
+    .join("");
+}
+
+/** The variables a deploy step exports for a release: {@link RELEASE_ATTRIBUTES_VARIABLE}, or nothing. */
+export function releaseEnvironment(release: ReleaseIdentity | undefined): Record<string, string> {
+  const suffix = releaseAttributesSuffix(release);
+  return suffix === "" ? {} : { [RELEASE_ATTRIBUTES_VARIABLE]: suffix };
+}
