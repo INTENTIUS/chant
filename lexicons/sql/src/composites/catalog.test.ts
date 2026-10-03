@@ -19,13 +19,29 @@ const catalogued = compositeCatalog.map((entry) => entry.name).sort();
 
 describe("the sql composite catalog", () => {
   test("every exported composite has an entry, and every entry names an exported composite", () => {
-    expect(exported).toEqual(["CdcMirror", "EventsTable", "ReplacingTable", "RollupView", "ShardedTable"]);
+    expect(exported).toEqual([
+      "AuditLogTable",
+      "CdcMirror",
+      "EventsTable",
+      "JoinTable",
+      "RefreshedView",
+      "ReplacingTable",
+      "RollupView",
+      "ShardedTable",
+      "SoftDeleteTable",
+      "TenantTable",
+    ]);
     expect(catalogued, "regenerate with `npm run generate:composite-catalogs -- sql`").toEqual(exported);
   });
 
   test("every entry says what it is and what it bundles", () => {
     const bundles = Object.fromEntries(compositeCatalog.map((entry) => [entry.name, entry.bundles]));
     expect(bundles).toEqual({
+      AuditLogTable: ["PostgresIndex", "PostgresTable"],
+      JoinTable: ["PostgresIndex", "PostgresTable"],
+      RefreshedView: ["PostgresIndex", "PostgresView"],
+      SoftDeleteTable: ["PostgresIndex", "PostgresTable", "PostgresView"],
+      TenantTable: ["PostgresIndex", "PostgresTable"],
       CdcMirror: ["ClickHouseTable", "ClickHouseView"],
       EventsTable: ["ClickHouseTable"],
       ReplacingTable: ["ClickHouseTable"],
