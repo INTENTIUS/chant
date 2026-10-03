@@ -821,6 +821,9 @@ describe("decision points on the work graph (#2741, ws-058)", () => {
       ["ship-skip", "noul", "table>quorum"],
       ["finding-triage", "choice", "table>model>quorum"],
       ["needs-a-decision", "noul", "table>model>quorum"],
+      ["intent-origin", "choice", "quorum"],
+      ["intent-judgment", "choice", "quorum"],
+      ["intent-disposition", "choice", "quorum"],
     ]);
     expect(candidates(points["finding-triage"].question)).toEqual(["work-item", "needs-a-decision", "leave"]);
     // Every input names a read-contract output: the triage reads a finding and its region, the window its commits.
