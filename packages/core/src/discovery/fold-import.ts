@@ -300,7 +300,8 @@ export interface FoldSession {
   readonly executing: boolean;
   /**
    * chant #1023 — per-build memo for {@link readFactoryModule}, keyed by the
-   * resolved absolute path of a module that DEFINES a composite. A composite
+   * resolved absolute path of a module that DEFINES a composite (and, since
+   * chant#3247, the lexicon package root it was reached in, if any). A composite
    * defined once and called from a dozen sibling files is parsed, and its
    * imports resolved, exactly once per build — the same reason
    * {@link FoldSession.cache} exists for the files discovery folds directly.
@@ -1316,6 +1317,27 @@ async function resolveActiveLexiconExport(
   return { value };
 }
 
+/**
+ * chant#3247 — a plain data export of a lexicon package's own module, read off
+ * the real module (see the package-root branch of {@link buildExternals}).
+ * `undefined` for a missing export, a callable one, or a module that does not
+ * import.
+ */
+async function packageDataExport(
+  modulePath: string,
+  name: string,
+  session: FoldSession,
+): Promise<{ value: unknown } | undefined> {
+  let mod: Record<string, unknown>;
+  try {
+    mod = await importModuleMemoized(modulePath, session.importCache);
+  } catch {
+    return undefined;
+  }
+  if (!(name in mod) || typeof mod[name] === "function") return undefined;
+  return { value: mod[name] };
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // Resolution: given the scan + import map, compute the REAL runtime value
 // (Declarable | CompositeInstance) each foldable export would have had if
@@ -1434,6 +1456,14 @@ interface ResolveCtx {
    * innermost factory rather than the enclosing one.
    */
   compositeParams?: CompositeParamRecorder;
+  /**
+   * chant#3247 — set only inside the body of a composite an active lexicon
+   * PACKAGE publishes: that package's directory (see
+   * {@link FactoryModuleScope.packageRoot}). It is also in this context's
+   * {@link lexiconRoots}, which is what trusts the package's relative imports;
+   * this field is what confines a nested factory lookup to the package.
+   */
+  packageRoot?: string;
 }
 
 /** chant #2161 — what {@link stampCompositeOrigins} needs at one `new Type(...)` inside a factory body. */
@@ -1717,7 +1747,10 @@ async function invokeResolvedCallee(
   // A package factory still runs here, which is what `F-Host-Admission`
   // governs. A project-file callee that a `Composite` registered is
   // INTERPRETED at step 4 and never reaches this line; only one that
-  // interpretation declined does, and for that the verdict is `run`.
+  // interpretation declined does, and for that the verdict is `run`. Since
+  // chant#3247 a package's registered composite is interpreted at step 4 too,
+  // and reaches this line only when interpretation declined; it is a
+  // package's code, so it is still invoked.
   // "Project file" is the specifier's ORIGIN, not its syntax.
   // {@link isProjectFileSpecifier} is true of any absolute path, and chant's
   // own modules are imported by absolute path throughout the tests, so the
@@ -1770,7 +1803,10 @@ async function invokeResolvedCallee(
   }
 
   executionCounts.factoryInvocations += 1;
-  if (isProjectImport(binding.specifier, ctx.file)) executionCounts.projectFactoryInvocations += 1;
+  // chant#3247 — a relative import inside a lexicon package's own composite is
+  // the package's code, not the project's.
+  const packageInternal = ctx.packageRoot !== undefined && isUnderDirectory(modulePath, ctx.packageRoot);
+  if (isProjectImport(binding.specifier, ctx.file) && !packageInternal) executionCounts.projectFactoryInvocations += 1;
 
   return (Fn as (...fnArgs: unknown[]) => unknown)(...args);
 }
@@ -1807,11 +1843,12 @@ async function invokeImportedCallee(
  * the resolved argument values — which `fold()`'s envelope already folded
  * and {@link reviveFoldedValue} has already revived by the time this runs.
  *
- * Same two arms, same order, as the top-level path: interpret a project-file
- * registered `Composite` (chant #1023) when its body qualifies, otherwise
- * import and invoke for real — which is the arm every lexicon-package
- * composite (`Checkout`, `SetupNode`, …) always takes, exactly as it does
- * today for a top-level `export const x = Checkout({...})`. An unbound
+ * Same two arms, same order, as the top-level path: interpret a registered
+ * `Composite` (chant #1023; a lexicon package's own since chant#3247) when its
+ * body qualifies, otherwise import and invoke for real — the arm a
+ * lexicon-package composite whose body leaves the subset (`Checkout`,
+ * `SetupNode`, …) takes, exactly as it does for a top-level
+ * `export const x = Checkout({...})`. An unbound
  * callee name throws the same "function call as a value" message `fold()`
  * itself would have, for a caller with no `FoldedCompositeStepCall` special
  * case to fall into.
@@ -1895,15 +1932,30 @@ async function resolveCallArguments(
 // factory outside the subset costs a parse and nothing else:
 //
 //  1. **The callee is bound by an `import` from a PROJECT FILE** (a
-//     relative/absolute specifier). A lexicon-package composite is
-//     deliberately NOT interpreted, for two independent reasons: an installed
-//     lexicon ships compiled JS, so whether its factory bodies were
-//     interpretable would depend on whether the package happened to ship
-//     `.ts` — fold coverage must not vary with a dependency's build shape —
-//     and a lexicon package is on {@link isTrustedExecutableBinding}'s
-//     allowlist already, so calling it is exactly as safe under `--sandbox` as
-//     the `loadPlugins` import the CLI performed before discovery began. There
-//     is nothing to buy and a build-shape dependency to lose.
+//     relative/absolute specifier, or one a tsconfig `paths` entry maps), **or
+//     from an ACTIVE LEXICON PACKAGE of this build whose module is TypeScript
+//     source** (chant#3247). The package case is matched by text first — the
+//     specifier, or its package root for a subpath, against
+//     {@link FoldSession.lexiconPackages}, exactly as
+//     {@link isTrustedExecutableBinding}'s arm 1 matches it — and only then
+//     resolved; a module that resolves to compiled JavaScript or a declaration
+//     file is not interpreted, so a package that ships only `dist` keeps
+//     invoking. Every chant lexicon routes its exports at `./src/*.ts`
+//     (check-lexicon tier 1), so in practice the source is always there.
+//     Interpreting buys provenance: the run path cannot say which parameter
+//     fed a field, and interpretation can (#2161, #3246).
+//
+//     The trust boundary does not move. A package's composite is interpreted
+//     with that PACKAGE's directory ({@link FactoryModuleScope.packageRoot})
+//     as a trusted lexicon root for the length of its body and nothing else:
+//     the package's own relative imports are trusted under `--sandbox` the way
+//     a subpath of the same package already is, and they are never folded as
+//     project files. The package was imported and run by `loadPlugins` before
+//     discovery began, and every module of it is reachable as a subpath, so
+//     reading its source adds no trust. What it may NOT do is reach outside
+//     that directory: a relative import that leaves the package root is not
+//     followed. A lexicon this build did not load stays as out of scope as
+//     any other bare specifier.
 //  2. **The defining module declares that export as `Composite(<fn>, "<name>")`**
 //     — a top-level `export const <name> = Composite(...)`, where `Composite`
 //     is bound in THAT module to an import of chant's own
@@ -1911,8 +1963,12 @@ async function resolveCallArguments(
 //     asks of an authoring helper, and the same answer). This is #1023's
 //     "recognize the callee is a registered Composite": a bare call to
 //     anything else — a project helper function, a `withDefaults(...)`
-//     wrapper, a re-exported binding — is not recognized and is not
-//     interpreted.
+//     wrapper, an `import`-then-`export` alias — is not recognized and is not
+//     interpreted. The defining module may sit behind BARREL re-exports
+//     (chant#3247): `export { X } from "./x"`, `export { Y as X } from "./x"`
+//     and `export * from "./x"` are followed, relative specifiers only, at most
+//     {@link MAX_REEXPORT_HOPS} deep, and never out of a package's root. A
+//     module that declares the name itself is answered by that declaration.
 //  3. **`<fn>` is an arrow/function expression taking at most one parameter**,
 //     bound as a plain identifier or a simple object binding pattern (no
 //     default, rest, or nested pattern).
@@ -2027,6 +2083,15 @@ interface FactoryModuleScope {
   file: string;
   sourceFile: ts.SourceFile;
   /**
+   * chant#3247 — the directory of the active lexicon PACKAGE this module was
+   * reached in, when it was reached through one (see rule 1 of the contract).
+   * Interpreting a factory from it trusts that directory as a lexicon root —
+   * its files are not folded as project files and are on the `--sandbox`
+   * allowlist — and confines every further hop to it. `undefined` for a
+   * project file, whose imports are decided exactly as before.
+   */
+  packageRoot?: string;
+  /**
    * The module's top-level `const`s, MINUS every one that resolves to a
    * `new Type(...)` resource.
    *
@@ -2086,15 +2151,25 @@ interface InterpretableFactory {
  * module's own imports are not resolved yet — see
  * {@link FactoryModuleScope.resolved}.
  */
-function readFactoryModule(modulePath: string, session: FoldSession): Promise<FactoryModuleScope | undefined> {
-  const cached = session.factoryModules.get(modulePath);
+function readFactoryModule(
+  modulePath: string,
+  packageRoot: string | undefined,
+  session: FoldSession,
+): Promise<FactoryModuleScope | undefined> {
+  // chant#3247 — keyed by the package root as well: the same file read as a
+  // project file and as package code resolves its imports differently.
+  const key = packageRoot === undefined ? modulePath : `${packageRoot}\0${modulePath}`;
+  const cached = session.factoryModules.get(key);
   if (cached) return cached;
-  const promise = readFactoryModuleCore(modulePath);
-  session.factoryModules.set(modulePath, promise);
+  const promise = readFactoryModuleCore(modulePath, packageRoot);
+  session.factoryModules.set(key, promise);
   return promise;
 }
 
-async function readFactoryModuleCore(modulePath: string): Promise<FactoryModuleScope | undefined> {
+async function readFactoryModuleCore(
+  modulePath: string,
+  packageRoot: string | undefined,
+): Promise<FactoryModuleScope | undefined> {
   let sourceFile: ts.SourceFile;
   try {
     const source = await readFile(modulePath, "utf-8");
@@ -2114,6 +2189,7 @@ async function readFactoryModuleCore(modulePath: string): Promise<FactoryModuleS
   return {
     file: modulePath,
     sourceFile,
+    packageRoot,
     consts,
     imports: collected.named,
     namespaceImports: collected.namespaces,
@@ -2137,7 +2213,8 @@ function factoryModuleScopeResolved(
     return Promise.resolve({ externals: new Map(), failures: new Map() });
   }
   session.stack.push(scope.file);
-  scope.resolved = buildExternals(scope.file, scope.imports, scope.namespaceImports, session).finally(() => {
+  const roots = scope.packageRoot === undefined ? [] : [scope.packageRoot];
+  scope.resolved = buildExternals(scope.file, scope.imports, scope.namespaceImports, session, roots).finally(() => {
     const idx = session.stack.lastIndexOf(scope.file);
     if (idx !== -1) session.stack.splice(idx, 1);
   });
@@ -2199,6 +2276,218 @@ function findCompositeDefinition(
 }
 
 /**
+ * chant#3247 — how many barrel re-exports {@link findFactoryDefinition}
+ * follows from the imported module to the one that defines the composite. A
+ * lexicon's barrel reaches its composites in two (`src/index.ts` ->
+ * `src/composites/index.ts` -> the file), a dialect subpath in three; past
+ * this the lookup declines, and the composite is invoked as before.
+ */
+const MAX_REEXPORT_HOPS = 8;
+
+/** Where an import of a composite factory leads: the module, and the lexicon package it lies in, if any. */
+interface FactoryOrigin {
+  modulePath: string;
+  /** See {@link FactoryModuleScope.packageRoot}. */
+  packageRoot?: string;
+}
+
+/** A TypeScript source file, not compiled JavaScript and not a declaration file. */
+function isTypeScriptSource(path: string): boolean {
+  return /\.[cm]?tsx?$/.test(path) && !/\.d\.[cm]?ts$/.test(path);
+}
+
+/** Process-wide memo for {@link lexiconPackageDirectory}, keyed by package name and directory. */
+const lexiconPackageDirectoryCache = new Map<string, string | undefined>();
+
+/**
+ * chant#3247 — the directory of package `packageName` that holds the resolved
+ * `modulePath`: the nearest ancestor whose `package.json` names that package.
+ * `undefined` when none does before a `node_modules` directory or the
+ * filesystem root, which declines interpretation. Reads `package.json` files
+ * only; nothing is resolved or imported.
+ */
+function lexiconPackageDirectory(modulePath: string, packageName: string): string | undefined {
+  const start = dirname(modulePath);
+  const key = `${packageName}\0${start}`;
+  if (lexiconPackageDirectoryCache.has(key)) return lexiconPackageDirectoryCache.get(key);
+  let found: string | undefined;
+  for (let dir = start; basename(dir) !== "node_modules"; ) {
+    const pkgJson = join(dir, "package.json");
+    if (existsSync(pkgJson)) {
+      try {
+        if ((JSON.parse(readFileSync(pkgJson, "utf-8")) as { name?: unknown }).name === packageName) {
+          found = dir;
+          break;
+        }
+      } catch {
+        // An unreadable package.json is not the package's; keep walking.
+      }
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  lexiconPackageDirectoryCache.set(key, found);
+  return found;
+}
+
+/**
+ * Rule 1 of the contract: where an import of a composite leads, or `undefined`
+ * when the import is not one interpretation follows. No module is imported.
+ *
+ *  - A project import (relative, absolute, or `paths`-mapped) resolves to its
+ *    file. Inside a package composite's body ({@link ResolveCtx.packageRoot})
+ *    it must stay inside that package.
+ *  - A bare specifier naming an active lexicon package, root or subpath, by
+ *    text, resolves through `node_modules` to a TypeScript source file inside
+ *    that package.
+ *  - Anything else is not followed.
+ */
+function factoryOrigin(specifier: string, fromFile: string, ctx: ResolveCtx): FactoryOrigin | undefined {
+  if (isProjectImport(specifier, fromFile)) {
+    let modulePath: string;
+    try {
+      modulePath = resolveModulePathMemoized(specifier, fromFile, ctx.resolvePathCache);
+    } catch {
+      return undefined;
+    }
+    if (ctx.packageRoot === undefined) return { modulePath };
+    return isUnderDirectory(modulePath, ctx.packageRoot) ? { modulePath, packageRoot: ctx.packageRoot } : undefined;
+  }
+  // Text first, as {@link isTrustedExecutableBinding}'s arm 1 does: no bare
+  // specifier outside the build's own lexicons is ever resolved here.
+  const packageName =
+    activeLexiconPackage(specifier, ctx.lexiconPackages) ??
+    activeLexiconPackage(bareSpecifierPackageRoot(specifier) ?? "", ctx.lexiconPackages);
+  if (packageName === undefined) return undefined;
+  let modulePath: string;
+  try {
+    modulePath = resolveModulePathMemoized(specifier, fromFile, ctx.resolvePathCache);
+  } catch {
+    return undefined;
+  }
+  if (!isTypeScriptSource(modulePath)) return undefined;
+  const packageRoot = lexiconPackageDirectory(modulePath, packageName);
+  return packageRoot === undefined ? undefined : { modulePath, packageRoot };
+}
+
+/** One re-export {@link reExportsOf} found: where it leads, under which name, and whether it is an `export *`. */
+interface ReExport {
+  specifier: string;
+  imported: string;
+  star: boolean;
+}
+
+/**
+ * chant#3247 — the re-exports of `exportName` that `sourceFile` forwards, in the order they are worth
+ * trying. Empty when the module declares the name itself (its own
+ * declaration is the answer, interpretable or not) or forwards it from nowhere
+ * this follows. An explicit `export { ... } from` wins over `export *`, as it
+ * does in the language; a type-only re-export, an `export * as ns`, and a bare
+ * `export { X }` of an imported binding are not followed.
+ */
+function reExportsOf(sourceFile: ts.SourceFile, exportName: string): ReExport[] {
+  const stars: ReExport[] = [];
+  for (const statement of sourceFile.statements) {
+    if (ts.isExportDeclaration(statement)) {
+      if (statement.isTypeOnly) continue;
+      const spec =
+        statement.moduleSpecifier && ts.isStringLiteral(statement.moduleSpecifier)
+          ? statement.moduleSpecifier.text
+          : undefined;
+      const clause = statement.exportClause;
+      if (clause === undefined) {
+        if (spec !== undefined) stars.push({ specifier: spec, imported: exportName, star: true });
+        continue;
+      }
+      if (!ts.isNamedExports(clause)) {
+        if (clause.name.text === exportName) return [];
+        continue;
+      }
+      for (const el of clause.elements) {
+        if (el.name.text !== exportName) continue;
+        if (spec === undefined || el.isTypeOnly) return [];
+        return [{ specifier: spec, imported: (el.propertyName ?? el.name).text, star: false }];
+      }
+      continue;
+    }
+    if (!hasExportModifier(statement as { modifiers?: ts.NodeArray<ts.ModifierLike> })) continue;
+    if (ts.isVariableStatement(statement)) {
+      for (const decl of statement.declarationList.declarations) {
+        if (ts.isIdentifier(decl.name) && decl.name.text === exportName) return [];
+      }
+    } else if (
+      (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement) || ts.isEnumDeclaration(statement)) &&
+      statement.name?.text === exportName
+    ) {
+      return [];
+    }
+  }
+  return stars;
+}
+
+/** A text pre-check for an `export *` target: false only when the file cannot export `name`. */
+async function mayProvideExport(file: string, name: string): Promise<boolean> {
+  try {
+    const text = await readFile(file, "utf-8");
+    return text.includes(name) || /export\s*\*\s*from/.test(text);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Rule 2, through barrels: find `exportName`'s `Composite(...)` declaration
+ * starting at `origin` and following {@link reExportsOf} — relative
+ * specifiers only, confined to `origin.packageRoot` when there is one, cycle
+ * safe, and at most {@link MAX_REEXPORT_HOPS} deep. Reads and parses; imports
+ * nothing.
+ */
+async function findFactoryDefinition(
+  origin: FactoryOrigin,
+  exportName: string,
+  ctx: ResolveCtx,
+  seen: Set<string> = new Set(),
+  hops = 0,
+): Promise<
+  | { scope: FactoryModuleScope; definition: NonNullable<ReturnType<typeof findCompositeDefinition>> }
+  | undefined
+> {
+  seen.add(origin.modulePath);
+  const scope = await readFactoryModule(origin.modulePath, origin.packageRoot, ctx.session);
+  if (!scope) return undefined;
+  const definition = findCompositeDefinition(scope, exportName, ctx);
+  if (definition) return { scope, definition };
+  if (hops >= MAX_REEXPORT_HOPS) return undefined;
+
+  for (const { specifier, imported, star } of reExportsOf(scope.sourceFile, exportName)) {
+    if (!isProjectFileSpecifier(specifier)) continue;
+    let target: string;
+    try {
+      target = resolveModulePathMemoized(specifier, scope.file, ctx.resolvePathCache);
+    } catch {
+      continue;
+    }
+    if (seen.has(target) || !isTypeScriptSource(target)) continue;
+    if (origin.packageRoot !== undefined && !isUnderDirectory(target, origin.packageRoot)) continue;
+    // An `export *` target that neither names the export nor forwards a star
+    // of its own cannot provide it, so it is not parsed. That keeps a
+    // lexicon's generated barrel (megabytes, behind `export *` in most
+    // lexicons) from being parsed for every call through the package root.
+    if (star && !(await mayProvideExport(target, imported))) continue;
+    const found = await findFactoryDefinition(
+      { modulePath: target, packageRoot: origin.packageRoot },
+      imported,
+      ctx,
+      seen,
+      hops + 1,
+    );
+    if (found) return found;
+  }
+  return undefined;
+}
+
+/**
  * Decide whether `binding`'s callee is an interpretable composite — rules 1-5
  * of the contract above, in that order, with no evaluation and no import.
  * `undefined` means "not interpretable", never "broken".
@@ -2207,9 +2496,10 @@ async function resolveInterpretableFactory(
   binding: ImportBinding,
   ctx: ResolveCtx,
 ): Promise<InterpretableFactory | undefined> {
-  // Rule 1 — project files only. A text check; no resolution performed for a
-  // bare specifier, so this costs nothing for the (common) lexicon case.
-  if (!isProjectImport(binding.specifier, ctx.file)) return undefined;
+  // Rule 1 — a project file, or an active lexicon package's TypeScript source.
+  // A bare specifier outside the build's lexicons is refused on its text.
+  const origin = factoryOrigin(binding.specifier, ctx.file, ctx);
+  if (!origin) return undefined;
   // Not `undefined`: that answer means "not interpretable" and would invoke
   // the factory while still reporting the file folded. Giving up is a
   // different fact and falls the file back to run, naming the bound (#2370).
@@ -2223,19 +2513,10 @@ async function resolveInterpretableFactory(
     );
   }
 
-  let modulePath: string;
-  try {
-    modulePath = resolveModulePathMemoized(binding.specifier, ctx.file, ctx.resolvePathCache);
-  } catch {
-    return undefined;
-  }
-
-  const scope = await readFactoryModule(modulePath, ctx.session);
-  if (!scope) return undefined;
-
-  // Rule 2.
-  const definition = findCompositeDefinition(scope, binding.imported, ctx);
-  if (!definition) return undefined;
+  // Rule 2, following barrel re-exports to the defining module.
+  const found = await findFactoryDefinition(origin, binding.imported, ctx);
+  if (!found) return undefined;
+  const { scope, definition } = found;
 
   // Rules 3-5.
   if (findFactorySubsetViolation(definition.fn) !== undefined) return undefined;
@@ -2577,7 +2858,10 @@ async function interpretCompositeFactory(
     resolvePathCache: ctx.resolvePathCache,
     lexiconPackages: ctx.lexiconPackages,
     lexiconModules: ctx.lexiconModules,
-    lexiconRoots: ctx.lexiconRoots,
+    // chant#3247 — a package's composite trusts its own package directory for
+    // the length of its body, and nothing outside it.
+    lexiconRoots: scope.packageRoot === undefined ? ctx.lexiconRoots : [...ctx.lexiconRoots, scope.packageRoot],
+    packageRoot: scope.packageRoot,
     sandbox: ctx.sandbox,
     executing: ctx.executing,
     session: ctx.session,
@@ -3730,7 +4014,16 @@ async function buildExternals(
   imports: Map<string, ImportBinding>,
   namespaceImports: Map<string, NamespaceImportBinding>,
   session: FoldSession,
+  /**
+   * chant#3247 — trusted lexicon directories beyond the session's own
+   * {@link FoldSession.lexiconRoots}: the package root of a lexicon-package
+   * composite whose defining module this is. Files under one are treated as
+   * a path lexicon's are, never folded as project files.
+   */
+  extraLexiconRoots: readonly string[] = [],
 ): Promise<{ externals: Map<string, unknown>; failures: Map<string, string>; liveSources: Set<string> }> {
+  const lexiconRoots =
+    extraLexiconRoots.length === 0 ? session.lexiconRoots : [...session.lexiconRoots, ...extraLexiconRoots];
   const externals = new Map<string, unknown>();
   const failures = new Map<string, string>();
   // chant #1044 — see `FoldFileResult.liveSources`.
@@ -3853,7 +4146,20 @@ async function buildExternals(
     // subpath (see the bare-specifier branch above) its data exports are not
     // read as values. A constructor or composite from it resolves through the
     // import path, where `isTrustedExecutableBinding` admits it.
-    if (inPathLexiconRoot(targetPath, session.lexiconRoots)) continue;
+    //
+    // chant#3247 — a file of the lexicon PACKAGE whose composite is being
+    // interpreted is that package's own module, which `loadPlugins` already
+    // imported through the package's barrel. Its plain data exports (an
+    // action table, a policy constant) are read off the real module, so the
+    // value is the run path's own object, identity included. Callables stay
+    // out, as {@link resolveActiveLexiconExport} keeps them out: a
+    // constructor or composite resolves through the import path.
+    if (inPathLexiconRoot(targetPath, extraLexiconRoots)) {
+      const value = await packageDataExport(targetPath, binding.imported, session);
+      if (value) externals.set(localName, value.value);
+      continue;
+    }
+    if (inPathLexiconRoot(targetPath, lexiconRoots)) continue;
     const result = await foldFileMemoized(targetPath, session);
     if (!result.ok) {
       failures.set(localName, locatedMessage(binding.specifierNode, result.reason));
@@ -3881,7 +4187,7 @@ async function buildExternals(
     }
     // chant#2577 — a namespace import of a lexicon is left alone, as the
     // bare-specifier check above leaves a package's alone.
-    if (session.lexiconModules.has(targetPath) || inPathLexiconRoot(targetPath, session.lexiconRoots)) continue;
+    if (session.lexiconModules.has(targetPath) || inPathLexiconRoot(targetPath, lexiconRoots)) continue;
     const result = await foldFileMemoized(targetPath, session);
     if (!result.ok) {
       failures.set(localName, locatedMessage(binding.specifierNode, result.reason));

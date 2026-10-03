@@ -240,24 +240,23 @@ describe("the composites pass the lexicon's post-synth checks", () => {
 
 const thisDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(thisDir, "../../../..");
-const modulePath = (file: string) => JSON.stringify(resolve(thisDir, file));
 
 /**
- * A project that defines nothing itself and calls the composites. Core
- * interprets a composite only when it is imported from a project file (or a
- * path a tsconfig maps to source) and from the module that defines it, not
- * through a barrel's re-export, so the fixture imports each composite from its
- * own file by path.
+ * A project that defines nothing itself and calls the composites through the
+ * installed package's dialect subpath, as a user's project does. Core resolves
+ * the subpath through `node_modules` to the package's TypeScript source and
+ * follows `clickhouse.ts`'s `export * from "./composites"` and the composites
+ * barrel to `events-table.ts`, which it interprets (#3247).
  */
 const EVENTS = `
-  import { EventsTable } from ${modulePath("./events-table")};
+  import { EventsTable } from "@intentius/chant-lexicon-sql/clickhouse";
 
   export const events = EventsTable({ name: "events", columns: "user_id UUID, kind LowCardinality(String)", orderBy: "(kind, user_id, ts)", ttlDays: 30 });
 `;
 
 /** In its own file: a same-file reference to another composite call's member falls back to run. */
 const DAILY = `
-  import { RollupView } from ${modulePath("./rollup-view")};
+  import { RollupView } from "@intentius/chant-lexicon-sql/clickhouse";
   import { events } from "./events";
 
   export const daily = RollupView({
@@ -326,5 +325,15 @@ describe("each field keeps its provenance when the composite is interpreted", ()
     expect(ttl).toMatchObject({ kind: "propose-parameter", parameters: ["timestamp", "ttlDays"], instance: "events" });
     expect(ttl.sourceFile).toContain("events.ts");
     expect(drift("engine.name", "MergeTree", "ReplacingMergeTree").resolution.kind).toBe("refuse-fixed");
+
+    // Interpreting the package's composites writes what calling them writes.
+    const run = await build(join(dir, "src"), [sqlSerializer], undefined, {
+      fold: false,
+      lexicons: ["sql"],
+      intrinsics: sqlPlugin.intrinsics?.() ?? [],
+    });
+    expect(run.errors).toEqual([]);
+    expect(result.outputs.get("sql")).toBeDefined();
+    expect(result.outputs.get("sql")).toEqual(run.outputs.get("sql"));
   });
 });
