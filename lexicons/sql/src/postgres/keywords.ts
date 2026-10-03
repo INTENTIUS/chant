@@ -6,12 +6,13 @@
  * `ColId` does, and quoting reads the same table.
  */
 
-import { STANDIN_KEYWORDS } from "./catalog-standin";
+import { KEYWORDS as GENERATED_KEYWORDS } from "../generated/postgres";
 
 /** U unreserved, C column name, T type or function name, R reserved. */
 export type KeywordCategory = "U" | "C" | "T" | "R";
 
-const KEYWORDS: Readonly<Record<string, KeywordCategory>> = STANDIN_KEYWORDS;
+/** Generated from `pg_get_keywords()` at the latest pinned major (`src/spec/postgres-catalog-18.snapshot.json`). */
+const KEYWORDS: Readonly<Record<string, KeywordCategory>> = GENERATED_KEYWORDS;
 
 /** A word's key word category, case-insensitively; undefined when it is not a key word. */
 export function keywordCategory(word: string): KeywordCategory | undefined {
