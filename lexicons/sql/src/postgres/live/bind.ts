@@ -19,6 +19,8 @@ export interface PostgresTarget {
   defaultSchema: string;
   /** The managed service the server runs on (`sql.profiles.<env>.provider`, else `sql.provider`); its own objects read as foreign. */
   provider?: PostgresProvider;
+  /** The apply's timeouts the profile sets (`lockTimeoutMs`, `statementTimeoutMs`, `scanTimeoutMs`); the applier's defaults otherwise. */
+  timeouts?: { lockTimeoutMs?: number; statementTimeoutMs?: number; scanTimeoutMs?: number };
 }
 
 export interface UnresolvedTarget {
@@ -61,7 +63,16 @@ export function resolvePostgresTarget(input: {
       if (value === undefined) return { reason: "no-credentials", detail: `${source}.${key} names ${ref.env}, which is not set` };
       endpoint[key] = value;
     }
-    return withProvider({ endpoint, source, ...(profile.schemas ? { schemas: profile.schemas } : {}), defaultSchema: profile.defaultSchema ?? "public" });
+    const timeouts = Object.fromEntries(
+      (["lockTimeoutMs", "statementTimeoutMs", "scanTimeoutMs"] as const).filter((k) => profile[k] !== undefined).map((k) => [k, profile[k]]),
+    );
+    return withProvider({
+      endpoint,
+      source,
+      ...(profile.schemas ? { schemas: profile.schemas } : {}),
+      defaultSchema: profile.defaultSchema ?? "public",
+      ...(Object.keys(timeouts).length > 0 ? { timeouts } : {}),
+    });
   }
   const url = env.POSTGRES_URL;
   if (!url) {

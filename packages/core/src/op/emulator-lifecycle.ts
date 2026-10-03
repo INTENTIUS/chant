@@ -16,8 +16,25 @@ export interface EmulatorSpec {
   image: string;
   /** Port the emulator listens on inside the container (e.g. 4566, 4280). */
   containerPort: number;
-  /** Health path on the host port (e.g. `/_localstack/health`, `/_mudflaps/health`). */
-  healthPath: string;
+  /**
+   * Health path on the host port (e.g. `/_localstack/health`, `/_mudflaps/health`).
+   * Required unless {@link readyCommand} is set: an emulator is reached over
+   * HTTP or checks itself inside its container, one or the other.
+   */
+  healthPath?: string;
+  /**
+   * A command run inside the container (`docker exec <name> ...`) whose exit
+   * status 0 means ready, for an emulator with no HTTP health endpoint: a
+   * database server answers its own client (`pg_isready`), not a URL. When
+   * set, it replaces the HTTP poll of {@link healthPath}.
+   */
+  readyCommand?: readonly string[];
+  /**
+   * The endpoint a tool connects to, for an emulator that is not reached over
+   * HTTP, e.g. a `postgres://` URL for a database server.
+   * Default: `http://localhost:<port>`.
+   */
+  endpoint?: (port: number) => string;
   /** Readiness predicate over the health body. Default: any 200 response is ready. */
   ready?: (healthBody: string) => boolean;
   /** Extra `docker run` args inserted before the image (e.g. a socket mount). */
@@ -102,6 +119,8 @@ export interface EmulatorLifecycle {
   existsCommand(name: string): string;
   rmCommand(name: string): string;
   healthUrl(port: number): string;
+  /** `docker exec <name> <readyCommand...>`, or undefined for an emulator polled over HTTP. */
+  readyExecCommand(name: string): string | undefined;
   endpoint(port: number): string;
   up(args?: EmulatorUpArgs, signal?: AbortSignal): Promise<{ endpoint: string }>;
   down(args?: { name?: string }, signal?: AbortSignal): Promise<void>;
@@ -116,6 +135,9 @@ export interface EmulatorLifecycle {
  */
 export function emulatorLifecycle(spec: EmulatorSpec): EmulatorLifecycle {
   const ready = spec.ready ?? (() => true);
+  if (spec.healthPath === undefined && !spec.readyCommand?.length) {
+    throw new Error(`emulator "${spec.name}" declares neither a healthPath nor a readyCommand, so nothing can tell when it is ready`);
+  }
 
   const runCommand = (args: EmulatorUpArgs = {}): string => {
     const name = args.name ?? spec.name;
@@ -128,8 +150,30 @@ export function emulatorLifecycle(spec: EmulatorSpec): EmulatorLifecycle {
   };
   const existsCommand = (name: string): string => `docker ps -q -f name=${name}`;
   const rmCommand = (name: string): string => `docker rm -f ${name}`;
-  const healthUrl = (port: number): string => `http://localhost:${port}${spec.healthPath}`;
-  const endpoint = (port: number): string => `http://localhost:${port}`;
+  const healthUrl = (port: number): string => `http://localhost:${port}${spec.healthPath ?? ""}`;
+  const endpoint = (port: number): string => (spec.endpoint ? spec.endpoint(port) : `http://localhost:${port}`);
+  const readyExecCommand = (name: string): string | undefined =>
+    spec.readyCommand?.length ? ["docker", "exec", name, ...spec.readyCommand].join(" ") : undefined;
+
+  /** One readiness probe: the in-container command when declared, else the HTTP health path. */
+  async function probe(name: string, port: number, signal?: AbortSignal): Promise<boolean> {
+    const command = readyExecCommand(name);
+    if (command) {
+      try {
+        await execAsync(command, { signal });
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    try {
+      const res = await fetch(healthUrl(port), { signal });
+      return res.ok && ready(await res.text());
+    } catch {
+      // Not up yet (connection refused / non-2xx) — retry.
+      return false;
+    }
+  }
 
   async function up(args: EmulatorUpArgs = {}, signal?: AbortSignal): Promise<{ endpoint: string }> {
     const name = args.name ?? spec.name;
@@ -153,19 +197,13 @@ export function emulatorLifecycle(spec: EmulatorSpec): EmulatorLifecycle {
       await execAsync(runCommand({ ...args, name, port }), { signal });
     }
 
-    const url = healthUrl(port);
     const deadline = Date.now() + timeoutMs;
     let ok = false;
     while (Date.now() < deadline) {
       if (signal?.aborted) throw new Error(`emulator "${name}" wait aborted`);
-      try {
-        const res = await fetch(url, { signal });
-        if (res.ok && ready(await res.text())) {
-          ok = true;
-          break;
-        }
-      } catch {
-        // Not up yet (connection refused / non-2xx) — retry.
+      if (await probe(name, port, signal)) {
+        ok = true;
+        break;
       }
       await sleep(intervalMs, signal);
     }
@@ -187,5 +225,5 @@ export function emulatorLifecycle(spec: EmulatorSpec): EmulatorLifecycle {
     }
   }
 
-  return { runCommand, existsCommand, rmCommand, healthUrl, endpoint, up, down };
+  return { runCommand, existsCommand, rmCommand, healthUrl, readyExecCommand, endpoint, up, down };
 }

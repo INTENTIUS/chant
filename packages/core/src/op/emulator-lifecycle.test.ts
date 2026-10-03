@@ -39,3 +39,26 @@ describe("emulatorLifecycle command builders", () => {
     expect(emu.endpoint(4599)).toBe("http://localhost:4599");
   });
 });
+
+describe("an emulator reached by its own client, not over HTTP", () => {
+  const pg = emulatorLifecycle({
+    name: "chant-postgres",
+    image: "postgres:18",
+    containerPort: 5432,
+    readyCommand: ["pg_isready", "-h", "127.0.0.1"],
+    endpoint: (port) => `postgres://postgres@localhost:${port}/postgres`,
+  });
+
+  test("readiness is a command run in the container", () => {
+    expect(pg.readyExecCommand("chant-postgres")).toBe("docker exec chant-postgres pg_isready -h 127.0.0.1");
+    expect(emulatorLifecycle({ name: "x", image: "x:1", containerPort: 1, healthPath: "/h" }).readyExecCommand("x")).toBeUndefined();
+  });
+
+  test("the endpoint is the declared one, not an http URL", () => {
+    expect(pg.endpoint(55432)).toBe("postgres://postgres@localhost:55432/postgres");
+  });
+
+  test("a spec with neither a health path nor a ready command is refused", () => {
+    expect(() => emulatorLifecycle({ name: "x", image: "x:1", containerPort: 1 })).toThrow(/neither a healthPath nor a readyCommand/);
+  });
+});

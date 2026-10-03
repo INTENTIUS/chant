@@ -210,7 +210,7 @@ export async function readLiveSchema(client: PostgresClient, scope: SchemaScope 
     const s = scopeSql("n.nspname", scope);
     const rows = await client.query<Row>(
       `SELECT e.oid::text AS oid, e.extname AS name, n.nspname AS schema, e.extversion AS version, x.default_version,
-              NULLIF(pg_catalog.obj_description(e.oid, 'pg_extension'), x.comment) AS comment
+              pg_catalog.obj_description(e.oid, 'pg_extension') AS comment, x.comment AS default_comment
        FROM pg_catalog.pg_extension e JOIN pg_catalog.pg_namespace n ON n.oid = e.extnamespace
        LEFT JOIN pg_catalog.pg_available_extensions x ON x.name = e.extname
        WHERE e.extname <> 'plpgsql' AND (${s.sql} OR n.nspname = 'public')
@@ -221,12 +221,15 @@ export async function readLiveSchema(client: PostgresClient, scope: SchemaScope 
       const name = String(r.name);
       const version = str(r.version);
       const create = `CREATE EXTENSION ${quoteIdent(name)} WITH SCHEMA ${quoteIdent(String(r.schema))}${version && version !== str(r.default_version) ? ` VERSION ${literal(version)}` : ""}`;
+      // The comment the extension's control file sets is the extension's, not a
+      // declared one, also when chant's trailer follows it (`../apply/statements.ts`).
+      const own = str(r.comment) !== undefined && ownComment(r.comment) === str(r.default_comment) ? null : r.comment;
       out.push({
         type: POSTGRES_ENTITY_TYPES.extension,
         name,
         oid: String(r.oid),
-        ...(str(r.comment) ? { comment: str(r.comment) } : {}),
-        statement: [create, ...commentOn(`EXTENSION ${quoteIdent(name)}`, r.comment)].join(";\n"),
+        ...(str(r.comment) && str(r.comment) !== str(r.default_comment) ? { comment: str(r.comment) } : {}),
+        statement: [create, ...commentOn(`EXTENSION ${quoteIdent(name)}`, own)].join(";\n"),
       });
     }
   }

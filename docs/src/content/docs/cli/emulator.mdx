@@ -31,7 +31,7 @@ Every action is idempotent. `up` on an already-running emulator reports the
 existing endpoint rather than starting a second container.
 
 <Aside type="note" title="Which lexicons have one">
-An emulator is a lexicon capability. Five lexicons declare six between them —
+An emulator is a lexicon capability. Five lexicons declare seven between them —
 a lexicon can ship more than one (chant #1345). Running the command in a project
 whose lexicons have none is not an error: it warns and exits 0, so a script that
 calls `chant emulator up` unconditionally still works.
@@ -55,10 +55,11 @@ chant emulator up
 ✓ fly: chant-mudflaps up on http://localhost:4280
 ✓ fly: chant-spritzer up on http://localhost:4290
 ✓ sql: chant-clickhouse up on http://localhost:8123
+✓ sql: chant-postgres up on postgres://localhost:5432/postgres
 ```
 
-One line per emulator, not per lexicon: fly ships two, and `--lexicon fly` acts
-on both.
+One line per emulator, not per lexicon: fly and sql ship two each, and
+`--lexicon fly` acts on both of fly's.
 
 ### `emulator down`
 
@@ -148,6 +149,7 @@ programmatically.
 | fly | `chant-mudflaps` | `ghcr.io/intentius/mudflaps:0.4.1` | `4280` | `/_mudflaps/health` | `FLY_FLAPS_BASE_URL` |
 | fly | `chant-spritzer` | `ghcr.io/intentius/spritzer:0.4.1` | `4290` | `/_spritzer/health` | `SPRITES_BASE_URL` |
 | sql | `chant-clickhouse` | `clickhouse/clickhouse-server:26.8.15.10`, by digest | `8123` | `/ping` | `CLICKHOUSE_URL` |
+| sql | `chant-postgres` | `postgres:18.6`, by digest | `5432` | `pg_isready` in the container, over TCP | `POSTGRES_URL` (with `POSTGRES_USER` and `POSTGRES_PASSWORD`) |
 
 gcp has no endpoint variable because `gcpApply` takes the endpoint as an
 explicit argument rather than reading one — `chant emulator up --json` still

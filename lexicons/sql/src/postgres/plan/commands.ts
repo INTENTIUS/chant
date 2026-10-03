@@ -8,8 +8,9 @@
  * made as expand and contract, which a plan refuses, and 0 otherwise.
  */
 
-import { bindPostgres, loadSqlConfig, type BindOptions } from "../live/bind";
-import { markProviderOwned, readLiveSchema } from "../live/catalog";
+import { bindPostgres, loadSqlConfig, type BindOptions, type PostgresTarget } from "../live/bind";
+import type { PostgresClient } from "../live/client";
+import { markProviderOwned, readLiveSchema, type LivePgObject } from "../live/catalog";
 import { scopeFor } from "../live/describe-resources";
 import { diffPgSchemas, type PgSchemaDiff } from "./diff";
 import { renderPgDiff } from "./report";
@@ -49,32 +50,62 @@ async function serverMajor(client: { query<T>(sql: string): Promise<T[]> }): Pro
 const differs = (a: PgSchemaObject, b: PgSchemaObject) =>
   JSON.stringify([a.canonical.fields, a.canonical.columns, a.canonical.constraints]) !== JSON.stringify([b.canonical.fields, b.canonical.columns, b.canonical.constraints]);
 
+/** What {@link planAgainstClient} compares and finds: both sides keyed by qualified name, and the classified changes between them. */
+export interface PgServerPlan {
+  /** The declarations, keyed by qualified name, with what the server said about expressions the rules left different. */
+  declared: PgSchemaObject[];
+  /** What the server holds in scope, keyed by qualified name. */
+  live: PgSchemaObject[];
+  /** The same, as the catalog read returned it (comments with their trailers). */
+  liveObjects: LivePgObject[];
+  diff: PgSchemaDiff;
+  /** The major the changes were classified for: the server's, else the one asked for. */
+  major?: number;
+}
+
+/**
+ * The declared objects (a build's, keyed by export name) against what a
+ * connected server holds: read in the declarations' scope, the server asked
+ * about expressions the rules leave different, then diffed. The plan and the
+ * applier (`../apply/`) share it.
+ */
+export async function planAgainstClient(
+  client: PostgresClient,
+  target: PostgresTarget,
+  build: readonly PgSchemaObject[],
+  options: { major?: number; environment?: string; readLive?: typeof readLiveSchema; serverNormalize?: typeof serverNormalized } = {},
+): Promise<PgServerPlan> {
+  const declaredRaw = keyedByQualifiedName(build);
+  const scope = scopeFor(
+    target,
+    declaredRaw.map((o) => ({ type: POSTGRES_ENTITY_TYPES[o.canonical.kind], props: { name: o.canonical.name, ...(o.canonical.schema ? { schema: o.canonical.schema } : {}) } })),
+  );
+  const liveObjects = markProviderOwned(await (options.readLive ?? readLiveSchema)(client, { schemas: scope }), target.provider);
+  const live = pgSchemaFromLive(liveObjects, target.defaultSchema);
+  const liveByKey = new Map(live.map((o) => [o.key, o]));
+  const declared: PgSchemaObject[] = [];
+  for (const o of declaredRaw) {
+    const l = liveByKey.get(o.key);
+    if (l && differs(o, l) && (o.canonical.kind === "table" || o.canonical.kind === "view" || o.canonical.kind === "materializedView")) {
+      declared.push({ ...o, canonical: { ...o.canonical, ...(await (options.serverNormalize ?? serverNormalized)(client, o.canonical, target.defaultSchema)) } });
+    } else declared.push(o);
+  }
+  // The build's major, else the server's own when it differs, since the server is what takes the locks.
+  const running = await serverMajor(client).catch(() => undefined);
+  const major = running ?? options.major;
+  const diff = diffPgSchemas(live, declared, { major });
+  if (running !== undefined && options.major !== undefined && running !== options.major) {
+    diff.hints.push(`the build targets Postgres ${options.major} but ${options.environment ?? "the server"} runs Postgres ${running}; changes are classified for ${running}`);
+  }
+  return { declared, live, liveObjects, diff, ...(major !== undefined ? { major } : {}) };
+}
+
 /** The declared objects against the server, keys by qualified name and labels with the export name. */
 export async function planPgAgainstServer(environment: string, buildFile: string, options: Omit<BindOptions, "environment"> = {}): Promise<PgSchemaDiff> {
   const { target, client } = await bindPostgres({ ...options, environment });
   try {
-    const declared = keyedByQualifiedName(pgSchemaFromBuildFile(buildFile, target.defaultSchema));
-    const scope = scopeFor(
-      target,
-      declared.map((o) => ({ type: POSTGRES_ENTITY_TYPES[o.canonical.kind], props: { name: o.canonical.name, ...(o.canonical.schema ? { schema: o.canonical.schema } : {}) } })),
-    );
-    const live = pgSchemaFromLive(markProviderOwned(await readLiveSchema(client, { schemas: scope }), target.provider), target.defaultSchema);
-    const liveByKey = new Map(live.map((o) => [o.key, o]));
-    const normalized: PgSchemaObject[] = [];
-    for (const o of declared) {
-      const l = liveByKey.get(o.key);
-      if (l && differs(o, l) && (o.canonical.kind === "table" || o.canonical.kind === "view" || o.canonical.kind === "materializedView")) {
-        normalized.push({ ...o, canonical: { ...o.canonical, ...(await serverNormalized(client, o.canonical, target.defaultSchema)) } });
-      } else normalized.push(o);
-    }
-    // The build's recorded major, else the config's; the server's own when it differs, since the server is what takes the locks.
     const targeted = pgBuildFileMajor(buildFile) ?? (await projectMajor(options));
-    const running = await serverMajor(client);
-    const major = running ?? targeted;
-    const diff = diffPgSchemas(live, normalized, { major });
-    if (running !== undefined && targeted !== undefined && running !== targeted) {
-      diff.hints.push(`the build targets Postgres ${targeted} but ${environment} runs Postgres ${running}; changes are classified for ${running}`);
-    }
+    const { declared, diff } = await planAgainstClient(client, target, pgSchemaFromBuildFile(buildFile, target.defaultSchema), { ...(targeted !== undefined ? { major: targeted } : {}), environment });
     const label = new Map(declared.map((o) => [o.key, `${o.canonical.exportName} (${o.key.split(" ")[1]})`]));
     const changes = diff.changes.map((c) => ({ ...c, object: label.get(c.object) ?? c.object }));
     return { changes, hints: diff.hints, refused: changes.filter((c) => c.class === "expand") };

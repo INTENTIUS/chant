@@ -72,6 +72,7 @@ export type {
   FlyApplier,
   GrafanaApplier,
   ClickHouseApplier,
+  PostgresApplier,
   AwsApplier,
   AwsRollback,
 } from "./apply";
