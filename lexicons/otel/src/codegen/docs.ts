@@ -60,7 +60,9 @@ or in the config (OTEL120). Others report deprecated fields (OTEL119),
 credentials sent in plaintext (OTEL121), zpages or pprof off loopback
 (OTEL122), detailed debug output beside a backend (OTEL123), delivery and
 batching settings (OTEL124, OTEL125), and k8sattributes fields or
-resourcedetection detectors the collector doesn't know (OTEL126, OTEL127).
+resourcedetection detectors the collector doesn't know (OTEL126, OTEL127). In
+a build that stamps telemetry attribution, OTEL118 reports a processor that can
+drop or overwrite one of the attribution's resource attributes.
 `;
 
 const outputFormat = `The otel lexicon serializes every otel entity in a build into **one

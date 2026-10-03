@@ -7,9 +7,10 @@
  * otel lexicon's config checks never see a config that lives in the k8s output
  * (chant #2930). This check runs them there: every ConfigMap data value that
  * parses as a collector config (a `service.pipelines` map) goes through the
- * otel lexicon's `validateCollectorConfig`.
+ * otel lexicon's `validateCollectorConfig`, and through `attributionIssues`
+ * (OTEL118) when the build stamps telemetry attribution.
  *
- * Findings keep the otel rule ids (OTEL101-OTEL106, OTEL112-OTEL117, OTEL119-OTEL127, and any config
+ * Findings keep the otel rule ids (OTEL101-OTEL106, OTEL112-OTEL127, and any config
  * check the otel lexicon adds later), so `lint.rules` and suppressions name
  * one id wherever the config lives. Each message names the ConfigMap's
  * namespace, name and key. Needs only the k8s lexicon in the project.

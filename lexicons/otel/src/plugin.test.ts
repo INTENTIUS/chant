@@ -34,6 +34,7 @@ describe("otel plugin", () => {
       "OTEL115",
       "OTEL116",
       "OTEL117",
+      "OTEL118",
       "OTEL119",
       "OTEL120",
       "OTEL121",

@@ -67,6 +67,7 @@ export {
   type SemconvUsage,
 } from "./topology";
 export { semconvUsage, SEMCONV_VOCABULARIES, type SemconvVocabulary } from "./semconv";
+export { attributionIssues, isProtectedResourceAttribute, PROTECTED_RESOURCE_ATTRIBUTES } from "./attribution";
 
 // Composites
 export { NodeAgent, nodeAgentPropsProblem, type NodeAgentProps, type NodeAgentMembers, type NodeAgentInstance } from "./composites";

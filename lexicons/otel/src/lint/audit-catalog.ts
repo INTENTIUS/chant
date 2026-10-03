@@ -3,7 +3,8 @@
  * `otelPlugin.auditCatalog()` (#687, #1346).
  *
  * OTEL101-OTEL106, OTEL112-OTEL117 and OTEL119-OTEL127 read the emitted collector YAML, so they are
- * `yamlBased`.
+ * `yamlBased`. OTEL118 reads it too, but only in a build that stamps
+ * telemetry attribution, so it is not.
  * OTEL107-OTEL109 read the declared entities (a component's definition, its
  * schema pin), which a standalone YAML file does not carry, so they are
  * constructed with `yamlBased: false`. The two source-level lint rules are
@@ -148,6 +149,18 @@ export const otelAuditCatalog: Record<string, RuleMeta> = {
     "Give one of them another port, or a specific host that doesn't overlap the other's. The collector's own metrics listen on localhost:8888 unless service.telemetry.metrics sets a reader or level none.",
     { category: "correctness" },
   ),
+  // Runs only in a build that stamps telemetry attribution, which a standalone YAML file never is.
+  OTEL118: {
+    ...auditRule(
+      "OTEL118",
+      "report-only",
+      "guidance",
+      "Pipeline processor can remove or replace a telemetry attribution key",
+      "Leave service.name, service.version, deployment.environment.name, vcs.ref.head.revision and chant.* keys alone: use insert rather than upsert or update, keep them in keep_keys, and set override: false on resourcedetection.",
+      { category: "correctness" },
+    ),
+    yamlBased: false,
+  },
   OTEL119: auditRule(
     "OTEL119",
     "report-only",

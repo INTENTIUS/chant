@@ -85,6 +85,7 @@ It deletes prompt, completion, system-instruction and tool-call content from spa
 - Keep `zpages` and `pprof` on localhost (OTEL122). `health_check` may listen on 0.0.0.0 for probes.
 - Put `batch` in every pipeline that sends to a remote `otlp` or `otlphttp` exporter (OTEL125), and leave the exporter's `sending_queue` and `retry_on_failure` on (OTEL124).
 - Use a `drop` policy rather than `invert_match`, and `readers` rather than `service.telemetry.metrics.address` (OTEL119).
+- In a workspace, or with `telemetry.attribution: true`, leave `service.name`, `service.version`, `deployment.environment.name`, `vcs.ref.head.revision` and `chant.*` resource attributes alone: `insert` rather than `upsert`, and `override: false` on `resourcedetection` (OTEL118).
 - Declared extensions are enabled in declaration order unless a `Service` lists `extensions` itself.
 
 ## Starting from an existing config
