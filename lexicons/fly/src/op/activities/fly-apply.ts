@@ -26,6 +26,7 @@ import { readFileSync } from "node:fs";
 import { sleep } from "@intentius/chant/op";
 import { hasOwnershipMarker } from "@intentius/chant/ownership";
 import { FLY_METADATA_OWNERSHIP_KEYS } from "../../ownership";
+import { logProgress } from "./progress";
 import {
   applyResult,
   type ApplyResult,
@@ -57,13 +58,8 @@ export interface FlapsRequest {
   mustExist?: boolean;
 }
 
-/**
- * Progress lines go to stderr. An Op step's stdout is its output, so the
- * applier keeps stdout free for machine-readable results.
- */
-export function logProgress(line: string): void {
-  process.stderr.write(`${line}\n`);
-}
+// Progress lines go to stderr (#2516); the helper is shared with the Sprites activities.
+export { logProgress } from "./progress";
 
 /** The serializer's whole output: entity name → flaps create request. */
 export type FlyPlan = Record<string, FlapsRequest>;

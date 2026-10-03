@@ -27,6 +27,7 @@ import { promisify } from "node:util";
 import { expandServiceCommand, inStartOrder, boxServices, type BoxServiceDeclaration } from "./box-services";
 import { findSpriteEnv } from "./sprite-service-converge";
 import { resolveSpritesEndpoint, defaultSpritesHttp, type SpritesHttp } from "./sprites";
+import { logProgress } from "./progress";
 
 const execFileAsync = promisify(execFile);
 
@@ -101,13 +102,13 @@ export async function spriteApplyNetworkPolicy(
   if (cur.status >= 300) throw new Error(`sprite ${args.id} get policy failed (${cur.status}): ${cur.text}`);
   const live = (safeJson(cur.text) as { rules?: NetworkRule[] } | undefined)?.rules ?? [];
   if (networkRulesEqual(live, args.rules)) {
-    console.log(`policy: sprite/${args.id} already converged (${args.rules.length} rules)`);
+    logProgress(`policy: sprite/${args.id} already converged (${args.rules.length} rules)`);
     return { changed: false };
   }
 
   const res = await http("POST", url, { rules: args.rules }, undefined, signal);
   if (res.status >= 300) throw new Error(`sprite ${args.id} set policy failed (${res.status}): ${res.text}`);
-  console.log(`policy: sprite/${args.id} applied ${args.rules.length} rules (${base})`);
+  logProgress(`policy: sprite/${args.id} applied ${args.rules.length} rules (${base})`);
   return { changed: true };
 }
 
@@ -276,7 +277,7 @@ async function applyThroughApi(
     if (res.status >= 300) throw new Error(`sprite ${args.id} apply service ${s.name} failed (${res.status}): ${res.text}`);
     applied.push(s.name);
   }
-  console.log(`services: sprite/${args.id} applied ${applied.length}/${args.services.length} (${base})`);
+  logProgress(`services: sprite/${args.id} applied ${applied.length}/${args.services.length} (${base})`);
 
   const started: string[] = [];
   if (args.start) {
@@ -286,7 +287,7 @@ async function applyThroughApi(
       if (res.status >= 300) throw new Error(`sprite ${args.id} start service ${name} failed (${res.status}): ${res.text}`);
       started.push(name);
     }
-    console.log(`services: sprite/${args.id} started ${started.length} in dependency order`);
+    logProgress(`services: sprite/${args.id} started ${started.length} in dependency order`);
   }
 
   return { applied, started };
@@ -419,7 +420,7 @@ async function applyThroughSpriteEnv(args: SpriteApplyServicesArgs, signal?: Abo
     const cur = live.get(s.name);
     if (!cur) {
       await spriteEnv(spriteEnvCreateArgs(s, cmd));
-      console.log(`services: created ${s.name}`);
+      logProgress(`services: created ${s.name}`);
       services.push({ name: s.name, action: "created" });
       continue;
     }
@@ -427,13 +428,13 @@ async function applyThroughSpriteEnv(args: SpriteApplyServicesArgs, signal?: Abo
     if (why) {
       await spriteEnv(["services", "delete", s.name]);
       await spriteEnv(spriteEnvCreateArgs(s, cmd));
-      console.log(`services: replaced ${s.name} (${why})`);
+      logProgress(`services: replaced ${s.name} (${why})`);
       services.push({ name: s.name, action: "replaced" });
       continue;
     }
     if (args.restart) {
       await spriteEnv(["services", "restart", s.name]);
-      console.log(`services: restarted ${s.name}`);
+      logProgress(`services: restarted ${s.name}`);
       services.push({ name: s.name, action: "restarted" });
       continue;
     }
@@ -445,12 +446,12 @@ async function applyThroughSpriteEnv(args: SpriteApplyServicesArgs, signal?: Abo
     for (const entry of services) {
       if (entry.action !== "left" || UP.has(live.get(entry.name)?.status ?? "")) continue;
       await spriteEnv(["services", "start", entry.name]);
-      console.log(`services: started ${entry.name}`);
+      logProgress(`services: started ${entry.name}`);
       entry.action = "started";
       started.push(entry.name);
     }
   }
   const applied = services.filter((e) => e.action === "created" || e.action === "replaced").map((e) => e.name);
-  console.log(`services: applied ${applied.length}/${targets.length} through sprite-env, started ${started.length}`);
+  logProgress(`services: applied ${applied.length}/${targets.length} through sprite-env, started ${started.length}`);
   return { applied, started, services };
 }
