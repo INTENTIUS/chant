@@ -195,10 +195,16 @@ export const sqlPlugin: LexiconPlugin = {
 
   deepNormalizationHooks: sqlDeepNormalizationHooks,
 
-  /** What an update costs: metadata in-place, a background rewrite rolling, a rebuild replace. */
+  /**
+   * What an update costs. ClickHouse: metadata in-place, a background rewrite
+   * rolling, a rebuild replace. Postgres: metadata in-place, a validation, a
+   * CONCURRENTLY build or an ACCESS EXCLUSIVE rewrite rolling, expand and
+   * contract replace. Each dialect answers for its own types.
+   */
   async classifyDisruption(options) {
     const { classifyDisruption } = await import("./clickhouse/plan/disruption");
-    return classifyDisruption(options);
+    const { classifyPgDisruption } = await import("./postgres/plan/disruption");
+    return { ...classifyDisruption(options), ...classifyPgDisruption(options) };
   },
 
   /** `chant sql diff` and `chant sql plan`: schema changes, classified. */

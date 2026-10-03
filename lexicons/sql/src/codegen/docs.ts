@@ -8,6 +8,7 @@ import { fileURLToPath } from "url";
 import { writeFileSync } from "fs";
 import { docsPipeline, writeDocsSite, type DocsConfig } from "@intentius/chant/codegen/docs";
 import { renderClassifierPage } from "./classifier-page";
+import { renderPostgresClassifierPage } from "./postgres-classifier-page";
 
 const overview = `The sql lexicon declares database schema in TypeScript, one database dialect
 at a time. ClickHouse is the first dialect, at
@@ -121,6 +122,7 @@ export async function generateDocs(opts?: { verbose?: boolean }): Promise<void> 
   const pkgDir = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 
   writeFileSync(join(pkgDir, "docs", "pages", "change-classifier.mdx"), renderClassifierPage());
+  writeFileSync(join(pkgDir, "docs", "pages", "postgres-change-classifier.mdx"), renderPostgresClassifierPage());
 
   const config: DocsConfig = {
     name: "sql",
