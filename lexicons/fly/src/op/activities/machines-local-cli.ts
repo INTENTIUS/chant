@@ -51,6 +51,9 @@ async function main(): Promise<void> {
     console.error("usage: machines-local-cli.ts [--listen <port>] [--root <dir>] [--publish <port> | --publish <name>=<port>]... [--log <file>]");
     process.exit(2);
   }
+  // A standalone server, not an Op activity: its stdout is its output. The flaps URL and the
+  // event lines (which name each Machine's published port) stay there for the person or
+  // script that started it; errors and usage go to stderr.
   const served = await serveLocalMachines({ ...args, handleSignals: false, onEvent: (line) => console.log(`machines-local: ${line}`) });
   console.log(`machines-local: flaps on ${served.url}${args.root ? `, guest paths under ${args.root}` : ""}`);
   let closing = false;

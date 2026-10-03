@@ -17,6 +17,7 @@
  */
 
 import { resolveSpritesEndpoint, resolveSpritesToken } from "./sprites";
+import { logProgress } from "./progress";
 
 function safeJson(text: string): unknown {
   try {
@@ -166,7 +167,7 @@ export async function spriteWriteFile(
   if (res.status >= 300) {
     throw new Error(`sprite ${args.id} write ${args.path} failed (${res.status}): ${res.text}`);
   }
-  console.log(`wrote: sprite/${args.id}:${args.path} (${args.content.length}b)`);
+  logProgress(`wrote: sprite/${args.id}:${args.path} (${args.content.length}b)`);
   return {};
 }
 
@@ -221,6 +222,6 @@ export async function spriteRemove(
   if (res.status >= 300 && res.status !== 404) {
     throw new Error(`sprite ${args.id} remove ${args.path} failed (${res.status}): ${res.text}`);
   }
-  console.log(`removed: sprite/${args.id}:${args.path}`);
+  logProgress(`removed: sprite/${args.id}:${args.path}`);
   return {};
 }
