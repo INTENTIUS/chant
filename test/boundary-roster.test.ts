@@ -1,9 +1,9 @@
 /**
- * chant #2657 — the owner roster for the chant and hud boundary, held to the
- * code (ws-052).
+ * chant #2657 — the owner roster for the workspace boundary, held to the code
+ * (ws-052, superseded by ws-086 for #3161).
  *
  * `docs/data/boundary.yaml` has one row per concept, with its owner (chant,
- * hud or plugin) and what carries it. This file fails when the roster and
+ * hud, studio, behold or a pinned plugin) and what carries it. This file fails when the roster and
  * the code disagree in either direction:
  *
  * - a `chant workspace` command, member kind, member or record link kind,
@@ -13,7 +13,8 @@
  *
  * It also holds the rows to the boundary itself: everything in chant's
  * closed lists is owned by chant, the node kinds the intent schema joins from
- * a plugin are owned by a plugin, every hud row is carried by alecraso/hud,
+ * a plugin are owned by a plugin, every hud, studio and behold row is carried
+ * by that owner's repository, no row names chud,
  * each code's row names exactly the output schemas that carry it, and the
  * reference page is what the roster renders.
  *
@@ -30,7 +31,7 @@ import { BUILTIN_KIND_NAMES } from "../packages/core/src/workspace/kinds";
 import { LINK_KINDS } from "../packages/core/src/workspace/links";
 import { RECORD_LINK_KINDS } from "../packages/core/src/workspace/record-assets";
 import { REASON_CODES } from "../packages/core/src/workspace/reason-codes";
-import { BOUNDARY_PAGE, parseRoster, readRoster, renderBoundaryPage, type Category, type RosterRow } from "../scripts/boundary-roster";
+import { BOUNDARY_PAGE, OWNER_REPOS, OWNERS, parseRoster, readRoster, renderBoundaryPage, type Category, type RosterRow } from "../scripts/boundary-roster";
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const workspaceSrc = join(repoRoot, "packages", "core", "src", "workspace");
@@ -158,16 +159,26 @@ describe("the boundary roster (#2657)", () => {
     }
   });
 
-  test("the hud views are H1 to H11 of #2650, and every hud row is carried by alecraso/hud", () => {
+  test("the hud views are H1 to H11 of #2650, and every hud, studio and behold row is carried by that owner's repository", () => {
     const views = rows.filter((r) => r.category === "hud-view");
     expect(views.map((r) => r.concept)).toEqual(Array.from({ length: 11 }, (_, i) => `H${i + 1}`));
     for (const r of views) expect(r.reads, `${r.concept} names what it reads`).toBeTruthy();
-    const wrong = rows.filter((r) => (r.owner === "hud") !== (r.carrier === "alecraso/hud")).map((r) => `${r.category} ${r.concept}`);
-    expect(wrong).toEqual([]);
+    for (const [owner, repo] of Object.entries(OWNER_REPOS)) {
+      const wrong = rows.filter((r) => (r.owner === owner) !== (r.carrier === repo)).map((r) => `${r.category} ${r.concept}`);
+      expect(wrong, `${owner} rows and ${repo}`).toEqual([]);
+    }
   });
 
   test("the boundary table has a row in each column", () => {
-    for (const owner of ["chant", "hud", "plugin"]) expect(rows.some((r) => r.category === "area" && r.owner === owner), owner).toBe(true);
+    for (const owner of OWNERS) expect(rows.some((r) => r.category === "area" && r.owner === owner), owner).toBe(true);
+  });
+
+  test("chud owns nothing, and a plugin owns only the kinds a workspace pins and what their joins report (#3161, ws-086)", () => {
+    expect(rows.filter((r) => /chud/i.test(r.carrier) || /transitional owner/i.test(r.carrier)).map((r) => `${r.category} ${r.concept}`)).toEqual([]);
+    const plugin = rows.filter((r) => r.owner === "plugin");
+    expect(plugin.filter((r) => !["area", "record-kind", "intent-node-kind", "intent-edge-kind"].includes(r.category)).map((r) => `${r.category} ${r.concept}`)).toEqual([]);
+    expect(plugin.filter((r) => r.category === "area").map((r) => r.concept)).toEqual(["record kinds a workspace pins from a third party, and their `commitJoins`"]);
+    for (const r of plugin.filter((x) => x.category === "record-kind")) expect(r.carrier, r.concept).toMatch(/pins from a third party/);
   });
 
   test("each reason and finding code's row names exactly the output schemas that carry it", () => {
