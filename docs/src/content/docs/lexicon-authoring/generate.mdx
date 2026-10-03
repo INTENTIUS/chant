@@ -262,6 +262,7 @@ upstreamPin: {
 |---|---|
 | `file` | Source file holding the pinned version constant, relative to the package root |
 | `pattern` | Regex whose **first capture group** is the current version |
+| `label` | Optional on a lone `upstreamPin`, required on every `upstreamPins` entry. The short name (`clickhouse`, `postgres-17`) you pass to `pinned-upgrade` to check one pin |
 | `replace(v, line)` | Rebuild a matched line with the new version |
 | `upstream.kind` | `releases` for published releases, `tags` for every git tag |
 | `upstream.tagSuffix` | Only consider tags with this suffix — gitlab uses `-ee`, sql uses `-lts` |
@@ -290,6 +291,34 @@ rolling (aws, azure, github and fly are) is checked through its plugin's
 rewrite. A pin with `alsoMoves` stays report-only whatever the mode: the report
 names the newer version and the manual step, and the Op makes no branch and
 opens no PR.
+
+### Several pins: `upstreamPins`
+
+A lexicon that pins more than one upstream keeps `upstreamPin` as it is and
+lists the rest in `upstreamPins`, an array of the same descriptor with a
+required, unique `label`. Every lexicon with one pin is unchanged. The sql
+lexicon has six. `upstreamPin` is ClickHouse's (label `clickhouse`), and
+`upstreamPins` holds `postgres-14` to `postgres-18`, one per Postgres major,
+built by `postgresUpstreamPin(major)` in `src/spec/postgres-pin.ts`. Each has
+`alsoMoves` (the image digest sits beside the version) and `trackMajor`, so it
+reports only its own major.
+
+```typescript
+upstreamPin: { label: "clickhouse", /* ... */ },
+upstreamPins: POSTGRES_MAJORS.map(postgresUpstreamPin),
+```
+
+`chant dev pinned-upgrade <dir>` checks `upstreamPin` first and then each
+`upstreamPins` entry in order, one report per pin (a JSON array with `-f json`),
+labelled `sql/postgres-17`. A failing pin is reported and the others still run.
+Pass a label to check one pin and query only its upstream; a label the plugin
+does not declare gets the list of labels it does.
+
+`LexiconUpgradeOp` checks every pin too, and takes an optional `pin` label.
+Its summary has one section per pin, and a pin with `alsoMoves` is report-only.
+When a pin that `replace` can rewrite has an upgrade, the Op works on the first
+such pin: the branch is `lexicon-upgrade/<lexicon>-<label>`, the bump goes to
+that pin's line, and the summary names the other pins to re-run with `pin`.
 
 ### Tags that are not versions
 
