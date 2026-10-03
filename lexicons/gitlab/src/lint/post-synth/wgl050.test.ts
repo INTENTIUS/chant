@@ -55,3 +55,19 @@ describe("WGL050: merge-request job missing interruptible", () => {
     expect(wgl050.check(makeCtx(yaml))).toHaveLength(0);
   });
 });
+
+describe("WGL050: job ids and section boundaries (#3256)", () => {
+  test("flags a job whose id has a colon, with no blank line before it", () => {
+    const yaml = `build:
+  interruptible: true
+  script: make
+test:unit:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  script:
+    - npm test
+`;
+    const diags = wgl050.check(makeCtx(yaml));
+    expect(diags.map((d) => d.entity)).toEqual(["test:unit"]);
+  });
+});

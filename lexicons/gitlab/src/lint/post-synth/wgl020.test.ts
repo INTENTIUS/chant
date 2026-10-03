@@ -52,3 +52,29 @@ variables:
     expect(diags).toHaveLength(0);
   });
 });
+
+describe("WGL020: keys the old line parser skipped (#3256)", () => {
+  test("flags a duplicated job id that starts with a capital", () => {
+    const yaml = `Build_Docs:
+  script: a
+
+Build_Docs:
+  script: b
+`;
+    const diags = checkDuplicateJobNames(yaml);
+    expect(diags).toHaveLength(1);
+    expect(diags[0].entity).toBe("Build_Docs");
+  });
+
+  test("treats a quoted and a plain key as the same job, and skips global keywords", () => {
+    const yaml = `image: node:20
+build:
+  script: a
+"build":
+  script: b
+image: node:22
+`;
+    const diags = checkDuplicateJobNames(yaml);
+    expect(diags.map((d) => d.entity)).toEqual(["build"]);
+  });
+});
