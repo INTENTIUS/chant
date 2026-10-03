@@ -223,7 +223,7 @@ describe("protected paths in writeScope (#3146)", () => {
     expect(judgePath(d, writer, "chant.workspace.json", { before: () => before, after: () => alsoName })).toMatchObject({
       ok: false,
       code: "write-scope-protected",
-      message: expect.stringContaining("outside the top-level keys it allows (diagrams)"),
+      message: expect.stringContaining("outside what its except allows (diagrams)"),
     });
     // Without the change in hand, an except entry can't be satisfied.
     expect(judgePath(d, writer, "chant.workspace.json")).toMatchObject({ ok: false, code: "write-scope-protected" });
