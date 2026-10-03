@@ -164,13 +164,14 @@ async function serverColumns(client: PostgresClient, oid: string): Promise<Map<s
   );
 }
 
-/** What else on the server uses a column: indexes, constraints, views, rules, triggers, statistics. Its own default is not counted. */
+/** What else on the server uses a column: indexes, constraints, views, rules, triggers, statistics. Its own default and its NOT NULL (a constraint of its own from 18) are not counted. */
 export async function columnDependents(client: PostgresClient, oid: string, attnum: number): Promise<string[]> {
   const rows = await client.query<{ what: string }>(
     `SELECT DISTINCT pg_catalog.pg_describe_object(d.classid, d.objid, d.objsubid) AS what
      FROM pg_catalog.pg_depend d
      WHERE d.refclassid = 'pg_catalog.pg_class'::pg_catalog.regclass AND d.refobjid = $1::oid AND d.refobjsubid = $2
        AND d.classid <> 'pg_catalog.pg_attrdef'::pg_catalog.regclass AND d.deptype IN ('n', 'a', 'i')
+       AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint nn WHERE d.classid = 'pg_catalog.pg_constraint'::pg_catalog.regclass AND nn.oid = d.objid AND nn.contype = 'n')
      UNION
      SELECT pg_catalog.pg_describe_object('pg_catalog.pg_constraint'::pg_catalog.regclass, c.oid, 0)
      FROM pg_catalog.pg_constraint c WHERE c.confrelid = $1::oid AND $2 = ANY(c.confkey)
@@ -324,7 +325,9 @@ export async function observeMigration(input: ObserveInput): Promise<MigrationOb
     } else if (input.using !== undefined) {
       throw new MigrationRefusal(`${where}.${input.column} is a rename of ${sourceName}, which copies the value as it is; using is for a type change`);
     }
-    if (newColumn && newColumn.type !== (change === "type" ? column.type : source.type)) {
+    // The declared type as the classifier compared it: the server's spelling (character varying(10), not varchar(10)).
+    const expectedType = change === "type" ? String(typeChange?.after ?? column.type) : source.type;
+    if (newColumn && newColumn.type !== expectedType) {
       throw new MigrationRefusal(
         `${where}: ${newColumn.name} was made as ${newColumn.type}, from another declaration of ${input.column} (now ${column.type}). The run fails so onFailure drops it, and the next run starts again from the current declaration.`,
       );
