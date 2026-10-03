@@ -305,7 +305,7 @@ chant workspace records close S-0002
 
 ## Uncommitted records
 
-A record a person keeps in hud, or a factory writes on a work branch, stays an uncommitted file in that checkout until someone commits or applies it ([#3158](https://github.com/INTENTIUS/chant/issues/3158), [#3160](https://github.com/INTENTIUS/chant/issues/3160)). A read of the working tree in a git repository says which records those are, so a reader lists "kept, not yet applied" from chant and runs no git of its own. Each record carries `worktree`:
+A record a person keeps in hud, or a factory writes on a work branch, stays an uncommitted file in that checkout until someone commits or applies it ([#3158](https://github.com/INTENTIUS/chant/issues/3158), [#3160](https://github.com/INTENTIUS/chant/issues/3160)). A read of the working tree in a git repository says which records those are, so a reader lists "kept, not yet applied" from chant and runs no git of its own. Each record carries a `worktree` value from the table below.
 
 | `worktree` | The record's file |
 |---|---|
@@ -325,7 +325,7 @@ The document carries `checkout`, the checkout the working tree is on:
 }
 ```
 
-`branch` is the checked-out branch, or `null` when `HEAD` is detached. `head` is the commit `HEAD` names, the one each `worktree` is judged against, or `null` before the first commit, when every record is `new`. `base` is the merge base of `head` and the target branch, the commit the branch forked from, which is what applying the branch is measured against. The target is `--base` when given, else `origin/HEAD`, `main` or `master`, as for provenance, and `baseFrom` says which. `base` is `null` when there is no target or no common history. `deleted` lists the kind's record files that `head` holds and the working tree no longer has. A renamed record is `new` under its new name and in `deleted` under its old one.
+`branch` is the checked-out branch, or `null` when `HEAD` is detached. `head` is the commit `HEAD` names, the one each `worktree` is judged against, or `null` before the first commit, when every record is `new`. `base` is the merge base of `head` and the target branch, the commit the branch forked from, which is what applying the branch is measured against. The target branch is found as it is for provenance, and `baseFrom` names where it came from. `base` is `null` when there is no target or no common history. `deleted` lists the kind's record files that `head` holds and the working tree no longer has. A renamed record is `new` under its new name and in `deleted` under its old one.
 
 `--uncommitted` lists only the `modified` and `new` records. Every record is still read, so a link from an uncommitted record to a committed one resolves as before. The document has `uncommitted: true`, and `summary` counts the records listed. Without `--kind` each declared kind's document is filtered the same way, and the set has no `spec`.
 

@@ -71,7 +71,7 @@ Some of what `--at` reads still comes from the working tree, which is how it sta
 
 ### Uncommitted records
 
-Work in progress is a file in a work branch's working tree until someone commits or applies it ([#3158](https://github.com/INTENTIUS/chant/issues/3158)). A `records` read of the working tree in a git repository says which records those are, so hud's kept-records view and the studio's apply list read them from chant instead of diffing git ([#3160](https://github.com/INTENTIUS/chant/issues/3160)). These fields were added within contract 1, in the release after 0.101.0:
+Work in progress is a file in a work branch's working tree until someone commits or applies it ([#3158](https://github.com/INTENTIUS/chant/issues/3158)). A `records` read of the working tree in a git repository says which records those are, so hud's kept-records view and the studio's apply list read them from chant instead of diffing git ([#3160](https://github.com/INTENTIUS/chant/issues/3160)). Since the release after chant 0.101.0, contract 1 also carries the fields in the table below.
 
 | Field | On | Holds |
 |---|---|---|
@@ -80,7 +80,7 @@ Work in progress is a file in a work branch's working tree until someone commits
 | `uncommitted` | the `records` document | `true` under `records --uncommitted`, which lists only `modified` and `new` records. The schema then requires `checkout` and a `worktree` of `modified` or `new` on every record. |
 | `checkout` | the `status` document | `branch`, `head`, `base` and `baseFrom`, as above |
 
-Neither field is printed under `--at` or outside git. `records --uncommitted` takes no `--at` or `--since`, and outside git it fails with `not-a-git-repository`, an existing code. The target `base` is forked from is the one the trust policy is read at, `--base` included. A reader without a `worktree` field is reading an older chant and reads every record as committed. The read takes no index lock and refreshes nothing. The [records page](/chant/cli/workspace-records/#uncommitted-records) has an example.
+A read under `--at` or outside git prints no `checkout` and no `worktree`. `records --uncommitted` refuses `--at` and `--since`, and outside git it fails with the existing code `not-a-git-repository`. The target that `base` is forked from is the one the trust policy is read at, so `--base` moves both. Records without `worktree` come from a chant older than #3160; read them as committed. The read takes no index lock and leaves the index unrefreshed. The [records page](/chant/cli/workspace-records/#uncommitted-records) has an example.
 
 ## Member stamps
 
@@ -614,7 +614,7 @@ A reader such as hud reads only through this contract and writes only through ch
 | `@intentius/chant/workspace/conformance` | any test runner: `runWorkspaceReaderConformance` returns the problems, and `checkReaderRead` checks one read. It imports no runner and loads under plain `node` |
 | `@intentius/chant/workspace/conformance/vitest` | vitest: `describeWorkspaceReaderConformance` adds one test per command. Only this entry imports vitest |
 
-The commands are `ls`, `graph`, `check`, `status`, `records`, `records --uncommitted` ([#3160](https://github.com/INTENTIUS/chant/issues/3160)), `graph --intent` and `graph --composites`. A reader runs `records --uncommitted` as `workspace records --uncommitted <args> --json`, and the suite holds the document to the records schema, which for it requires `checkout` and a `worktree` on every record.
+`READ_CONTRACT_COMMANDS` lists the read commands covered, and since [#3160](https://github.com/INTENTIUS/chant/issues/3160) it includes `records --uncommitted`. A reader runs it as `workspace records --uncommitted <args> --json`. That document is held to the records schema, which requires `checkout` when `uncommitted` is true and a `worktree` on every record.
 
 The suite builds the reader from a function you pass, giving it a transport that runs chant in the workspace. The reader's `read(command, args)` runs one contract command through the transport and returns the parsed document. `commands` lists the commands the reader reads. The suite reads only those, and the report names the others in `skipped` as not applicable.
 
