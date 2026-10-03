@@ -61,19 +61,8 @@ export type { LineageEdge } from "../core/references";
 export { SqlLiteral, SqlTemplateError } from "../core/template";
 export { quoteIdent } from "./keywords";
 
-export const POSTGRES_ENTITY_TYPES = {
-  schema: "Postgres::Schema",
-  table: "Postgres::Table",
-  index: "Postgres::Index",
-  view: "Postgres::View",
-  materializedView: "Postgres::MaterializedView",
-  sequence: "Postgres::Sequence",
-  enum: "Postgres::Enum",
-  domain: "Postgres::Domain",
-  extension: "Postgres::Extension",
-} as const;
-
-export type PostgresEntityType = (typeof POSTGRES_ENTITY_TYPES)[keyof typeof POSTGRES_ENTITY_TYPES];
+export { POSTGRES_ENTITY_TYPES, type PostgresEntityType } from "./entity-types";
+import { POSTGRES_ENTITY_TYPES, type PostgresEntityType } from "./entity-types";
 
 // ── Values ─────────────────────────────────────────────────────────────
 

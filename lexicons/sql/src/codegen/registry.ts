@@ -10,7 +10,7 @@
  */
 
 import { CLICKHOUSE_ENTITY_TYPES } from "../clickhouse/entities";
-import { POSTGRES_ENTITY_TYPES } from "../postgres/entities";
+import { POSTGRES_ENTITY_TYPES } from "../postgres/entity-types";
 
 const KINDS: Record<string, string> = {
   Database: CLICKHOUSE_ENTITY_TYPES.database,
