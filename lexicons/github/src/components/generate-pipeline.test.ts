@@ -104,7 +104,7 @@ describe("generateGithubPipeline: structurally valid YAML", () => {
       expect(job.steps.length).toBeGreaterThan(0);
       // Every job starts with a checkout step — a job runs on a fresh runner
       // with no repo present, unlike GitLab's auto-cloned workspace.
-      expect(job.steps[0].uses).toBe("actions/checkout@v4");
+      expect(job.steps[0].uses).toBe("actions/checkout@v7");
     }
   });
 

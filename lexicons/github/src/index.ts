@@ -20,6 +20,10 @@ export { GitHub, Runner } from "./variables";
 // After running `chant generate`, this re-exports all entity classes
 export * from "./generated/index";
 
+// Action versions the composites emit, and their pinned commits
+export { ACTION_PINS, actionRef, actionPin } from "./action-pins";
+export type { ActionPin, ActionPinMode, PinnedAction } from "./action-pins";
+
 // Composites
 export {
   Checkout, SetupNode, SetupGo, SetupPython,

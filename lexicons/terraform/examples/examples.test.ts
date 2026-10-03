@@ -457,7 +457,7 @@ describe("plan-on-pr generates the pull_request plan and push apply pair (#2221)
       // gated-apply script (#2243) rather than a bare line — so it is matched
       // on the invocation it carries rather than on its first five characters.
       expect(steps.slice(0, 3).map((step) => step.uses ?? step.run?.slice(0, 5))).toEqual([
-        "actions/checkout@v4",
+        "actions/checkout@v7",
         AWS_CREDENTIALS_ACTION,
         "curl ",
       ]);

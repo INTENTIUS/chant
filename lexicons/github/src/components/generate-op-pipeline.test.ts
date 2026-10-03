@@ -72,7 +72,7 @@ describe("generateGithubOpPipeline: one file per scheduled Op", () => {
     const job = doc.jobs!["actions-audit"];
 
     expect(job["runs-on"]).toBe("ubuntu-latest");
-    expect(job.steps[0].uses).toBe("actions/checkout@v4");
+    expect(job.steps[0].uses).toBe("actions/checkout@v7");
     const runStep = job.steps.find((s) => typeof s.run === "string")!;
     expect(runStep.run).toBe("chant run actions-audit");
   });
@@ -327,7 +327,7 @@ describe("generateGithubOpPipeline: setup steps and additive permissions (#2242)
     const steps = doc.jobs!["app-apply"].steps;
 
     expect(steps.slice(0, 3).map((s) => s.uses ?? s.run)).toEqual([
-      "actions/checkout@v4",
+      "actions/checkout@v7",
       "aws-actions/configure-aws-credentials@v6",
       "install terraform",
     ]);
@@ -385,7 +385,7 @@ describe("generateGithubOpPipeline: setup steps and additive permissions (#2242)
     ];
     const steps = parseFile(generateGithubOpPipeline(specs).files[0].yaml).jobs!["app-apply"].steps;
     expect(steps.map((s) => s.uses).filter(Boolean)).toEqual([
-      "actions/checkout@v4",
+      "actions/checkout@v7",
       "github/codeql-action/upload-sarif@v4",
       "aws-actions/configure-aws-credentials@0e613a0980cbf65ed5b322eb7a1e075d28913a83",
     ]);
@@ -622,7 +622,7 @@ describe("generateGithubOpPipeline: a deployment environment on the Op's job (#2
       "    runs-on: ubuntu-latest",
       "    container: node:22-slim",
       "    steps:",
-      "      - uses: actions/checkout@v4",
+      "      - uses: actions/checkout@v7",
       "      - run: chant run actions-audit",
       "        env:",
       "          GITHUB_TOKEN: '${{ github.token }}'",

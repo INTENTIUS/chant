@@ -94,7 +94,7 @@ permissions:
 jobs:
   app-plan:
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: '${{ vars.AWS_PLAN_ROLE_ARN }}'
