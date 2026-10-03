@@ -15,8 +15,9 @@ chant provides the repository specification and nothing that faces a person. hud
 | declaration, kinds, members, links, lineage, migrations, `init --from`, `upgrade` | rendering | domain record kinds (contracts, units, evidence, drivers, sessions) |
 | records: schemas, states, seals, pins, supersession, attestation, provenance | review actions as UI (agree, dissent, propose, quorum meter, live sessions) | `commitJoins` and other joins from commits to records |
 | the read contract: versioned JSON of `ls`, `graph`, `check`, `records`, `status`, `graph --intent`, `graph --composites`, `points`, `work history`, `signers`, `evidence verify`, closed reason codes | identity, sessions, who is looking | agent prompts and context bundles |
-| reader conformance: a reader reads only through the read contract and writes nothing | the agent chat, the dev proxy, comment mode |  |
-| the writing and verifying commands: `approve`, `records pin`, `verify`, `check`, gates, ledgers | the question put to the person at each finding |  |
+| commit trailers: `Chant-Agent`, `Chant-Lease`, `Chant-Run`, `Chant-Record`, `Chant-Applied-By`, `Chant-Applied-At`, `Chant-Applied-Commit` | the agent chat, the dev proxy, comment mode |  |
+| reader conformance: a reader reads only through the read contract and writes nothing | the question put to the person at each finding |  |
+| the writing and verifying commands: `approve`, `records pin`, `verify`, `check`, gates, ledgers |  |  |
 | findings as data |  |  |
 
 ## Rules
@@ -32,14 +33,14 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 
 | Category | Where the code keeps it | chant | hud | plugin |
 |---|---|---|---|---|
-| boundary cell | the table of #2657, one row per cell | 6 | 5 | 3 |
+| boundary cell | the table of #2657, one row per cell | 7 | 5 | 3 |
 | workspace command | `commandRegistry` in `cli/main.ts`, and each sub-verb its help names | 39 | 0 | 0 |
 | member kind | `BUILTIN_KIND_NAMES` in `kinds.ts` | 5 | 0 | 0 |
 | record kind | none in core; `decision` and `session` are this repository's, the rest a plugin's | 4 | 0 | 4 |
 | member link kind | `LINK_KINDS` in `links.ts` | 2 | 0 | 0 |
 | record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 |
 | intent node kind | the node kinds of `intent.schema.json` | 9 | 0 | 3 |
-| intent edge kind | the edge kinds of `intent.schema.json` | 9 | 0 | 3 |
+| intent edge kind | the edge kinds of `intent.schema.json` | 10 | 0 | 3 |
 | reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 161 | 0 | 0 |
 | finding code | the finding codes of `intent.schema.json` | 17 | 0 | 0 |
 | WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 50 | 0 | 0 |
@@ -52,6 +53,7 @@ Each row follows, in the order of the table above.
 | boundary cell | declaration, kinds, members, links, lineage, migrations, `init --from`, `upgrade` | chant | declaration.schema.json, workspace-kinds.schema.json, .chant/workspace.lock.json | The repository specification itself: what a workspace declares, how each member is read, how members join, and where the files came from. |
 | boundary cell | records: schemas, states, seals, pins, supersession, attestation, provenance | chant | records.schema.json | How a record file is validated, sealed, pinned to the files it rests on, superseded and traced to a signed commit. |
 | boundary cell | the read contract: versioned JSON of `ls`, `graph`, `check`, `records`, `status`, `graph --intent`, `graph --composites`, `points`, `work history`, `signers`, `evidence verify`, closed reason codes | chant | ls.schema.json, graph.schema.json, check.schema.json, records.schema.json, status.schema.json, intent.schema.json, composites.schema.json, points.schema.json, work-history.schema.json, signers.schema.json, evidence.schema.json | The only way a reader sees a workspace: one JSON Schema per document, a contract version and a chant floor. |
+| boundary cell | commit trailers: `Chant-Agent`, `Chant-Lease`, `Chant-Run`, `Chant-Record`, `Chant-Applied-By`, `Chant-Applied-At`, `Chant-Applied-Commit` | chant | intent.schema.json, intent-record.schema.json | The names a commit uses to point at its agent session, work lease, agent run, records and apply; whoever makes the commit writes them, and chant reads them back (#3149, ws-075). |
 | boundary cell | reader conformance: a reader reads only through the read contract and writes nothing | chant | @intentius/chant/workspace/conformance, @intentius/chant/workspace/conformance/vitest | The suite a reader such as hud runs in its own CI, with any test runner, on a workspace it generates from the fixture that @intentius/chant ships. |
 | boundary cell | the writing and verifying commands: `approve`, `records pin`, `verify`, `check`, gates, ledgers | chant | chant approve, chant workspace records pin, chant workspace records new, amend, review and close, chant workspace verify, chant workspace check | Every change to the repository that carries weight is made or checked by a chant command, so a UI writes only by calling one. |
 | boundary cell | findings as data | chant | check.schema.json, intent.schema.json | A finding is a node or a row with a closed code, so a reader can draw it and a test can assert it. |
@@ -143,6 +145,7 @@ Each row follows, in the order of the table above.
 | intent edge kind | `implements` | chant | intent.schema.json | A work item carries out a decision (#2683). |
 | intent edge kind | `needs` | chant | intent.schema.json | A work item waits on another work item (#2683). |
 | intent edge kind | `addressed-by` | chant | intent.schema.json | A finding is being closed by a work item that came from it or implements the decision it concerns (#2683). |
+| intent edge kind | `carries` | chant | intent.schema.json | A commit carries a decision or work item its Chant-Record trailer names, or the work item its Chant-Lease was taken on (#3149). |
 | reason code | `declaration-missing` | chant | agent.schema.json, changes.schema.json, check.schema.json, composites.schema.json, graph.schema.json, intent-record.schema.json, intent.schema.json, ls.schema.json, patch.schema.json, points.schema.json, status.schema.json | No chant.workspace.json or .jsonc between the directory and the git root. |
 | reason code | `declaration-ambiguous` | chant | agent.schema.json, changes.schema.json, check.schema.json, composites.schema.json, graph.schema.json, intent-record.schema.json, intent.schema.json, ls.schema.json, patch.schema.json, points.schema.json, status.schema.json | Both chant.workspace.json and chant.workspace.jsonc exist. |
 | reason code | `declaration-unparseable` | chant | agent.schema.json, changes.schema.json, check.schema.json, composites.schema.json, graph.schema.json, intent-record.schema.json, intent.schema.json, ls.schema.json, patch.schema.json, points.schema.json, status.schema.json | The declaration is not valid JSON, or not valid JSONC for .jsonc. |
@@ -305,7 +308,7 @@ Each row follows, in the order of the table above.
 | reason code | `quorum-not-met` | chant | points-write.schema.json | Too few of the people who answered count toward the point's quorum: distinct, not holding the agent role, not the steward that asked, and holding one of its roles when it names any. |
 | reason code | `answer-in-steward-turn` | chant | points-write.schema.json | The answer was given during a steward's turn, or by a process it started: a steward never answers a decision point, and a person answers it through hud or at a shell. |
 | finding code | `intent-commit-undecided` | chant | intent.schema.json | A commit changed the region when no decision constrained it at path granularity. |
-| finding code | `intent-commit-bare` | chant | intent.schema.json | A commit names no unit, no pull request and no decision covering the region at its time. |
+| finding code | `intent-commit-bare` | chant | intent.schema.json | A commit names no unit, carries no record through its Chant-Record or Chant-Lease trailer, and has no pull request and no decision covering the region at its time. |
 | finding code | `intent-pin-drifted` | chant | intent.schema.json | A decision's pinned artifact no longer hashes to the pin. |
 | finding code | `intent-pin-missing` | chant | intent.schema.json | A decision's pinned artifact does not exist in the tree read. |
 | finding code | `intent-pin-stale` | chant | intent.schema.json | A current decision pins an artifact at the hash a record it supersedes pinned, and the artifact has not changed since: the decision moved on and the artifact did not. |

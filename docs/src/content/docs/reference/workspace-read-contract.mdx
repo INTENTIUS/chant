@@ -213,7 +213,7 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `intent-history-shallow` | reason, `graph --intent` | The repository is a shallow clone, so the region's history stops at the clone's boundary. |
 | `intent-plugin-failed` | reason, `graph --intent` | A kind file's `commitJoins` failed for a commit. |
 | `intent-commit-undecided` | finding, `graph --intent` | A commit changed the region when no decision constrained it at path granularity. |
-| `intent-commit-bare` | finding, `graph --intent` | A commit names no unit, no pull request and no decision covering the region at its time. |
+| `intent-commit-bare` | finding, `graph --intent` | A commit names no unit, carries no record through its Chant-Record or Chant-Lease trailer, and has no pull request and no decision covering the region at its time. |
 | `intent-pin-drifted` | finding, `graph --intent` | A decision's pinned artifact no longer hashes to the pin. |
 | `intent-pin-missing` | finding, `graph --intent` | A decision's pinned artifact does not exist in the tree read. |
 | `intent-pin-stale` | finding, `graph --intent` | A current decision constraining the region pins an artifact at the hash a record it supersedes pinned, and the artifact has not changed since. |
@@ -380,7 +380,7 @@ The walk runs in this order, and the nodes are listed in it:
 | `region` | `region:<path>` or `region:<path>:<start>-<end>` | `path` from the workspace root, `lines` or `null`, `member`, `at`, `type` (`file` or `dir`), `generated` for a file, and `node` when the region was given as a graph node id |
 | `file` | `file:<path>` | `path`, `member`, `generated` |
 | `member` | `member:<name>` | `name`, `dir`, `memberKind` |
-| `commit` | `commit:<sha>` | `sha`, `subject`, `author`, `date`, `trailers`, `pullRequest`, `signature` (the provenance level, judged by the signers at base as `records` judges a record), `lines`, the ranges it changed in a line-range region, and `state`: `decided`, `decided-by-window`, `undecided`, or `null` when no record kind was read |
+| `commit` | `commit:<sha>` | `sha`, `subject`, `author`, `date`, `trailers`, `pullRequest`, `signature` (the provenance level, judged by the signers at base as `records` judges a record), `lines`, the ranges it changed in a line-range region, `state`: `decided`, `decided-by-window`, `undecided`, or `null` when no record kind was read, and `joins`, what [chant's trailers](#commit-trailers) on it say |
 | `unit`, `contract`, `evidence` | `<kind>:<id>` | `ref`, the plugin's own id, `plugin`, the kind file that supplied it, and `data`, its other fields. A decision's URL evidence is an `evidence` node with `plugin: null` and `data` holding `title`, `url`, `as_of` and `sha256` |
 | `work` | `record:<kind>/<id>` | `recordKind`, `record`, `path`, `title`, `state`, `closed`, `valid`, `reasons`, `provenance`, `owner`, `ready`, `blockedBy`, `implements`, `needs`, `source` (the gap it came from as `{ finding, region, decision?, artifact? }`, or `null`), `supersededBy`, `constrains` and `warnings`, the `work-` warnings. Read only with a work kind passed as `--kind` |
 | `decision` | `record:<kind>/<id>` | `recordKind`, `record`, `path`, `title`, `state`, `closed`, `valid`, `reasons`, `provenance`, `decided_by`, `decided_on`, `decidedIn` (the commit that decided the record, as `{ sha, date, subject }`, or `null`), `reviews` (agree, dissent, abstain and open concerns, the dissents with neither `addressed_by` nor `withdrawn_on`), `supersededBy`, `supersedes`, and `constrains`, the entries that cover the region with their granularity |
@@ -402,6 +402,7 @@ The walk runs in this order, and the nodes are listed in it:
 | `implements` | work item to the decision it carries out | |
 | `needs` | work item to a work item it waits on | |
 | `addressed-by` | finding to a work item that addresses it | |
+| `carries` | commit to a decision or work item its `Chant-Record` trailer names, or to the work item its `Chant-Lease` was taken on | |
 
 A decision covers a commit from the commit that decided it until the window of the record superseding it opens. The commit that decided a record is the one that last moved it into an approved state and kept it there: a state its kind's `approval` ranks above 0, or one of its `closedStates` for a kind with no `approval`. For the decision kind that is `decided`, `ratified` or `superseded`. A record added in an approved state was decided by the commit that added it. A record not approved in the history read has none, and its window opens at the commit that added it. `records --json` gives the same commit as `decidedIn` on each record of a kind with `approval` ranks that is not a work kind. A commit outside every path-granularity window is `intent-commit-undecided`, and its `state` is `undecided`.
 
@@ -426,7 +427,7 @@ The document joins the others by the member name (`member` on region and file no
 | `commits[]` | the commits in the window, newest first by commit date |
 | `counts` | `commits`, a count for each bucket (`own`, `worked`, `withinOther`, `unexplained`), and `outsideWindow`, the commits that changed the region outside the window |
 
-A commit has `sha`, `subject`, `author`, `date`, `trailers` and `pullRequest` as a commit node has them. `unit` is the unit a commit join gave it, or `null`. `entries` names the constrains entries whose history lists it, and `files` the files it changed in the record's region, from the workspace root. For a merge, `files` is read against its first parent. The bucket is the first of these that holds:
+A commit has `sha`, `subject`, `author`, `date`, `trailers`, `pullRequest` and `joins` as a commit node has them. `unit` is the unit a commit join gave it, or `null`. `entries` names the constrains entries whose history lists it, and `files` the files it changed in the record's region, from the workspace root. For a merge, `files` is read against its first parent. The bucket is the first of these that holds:
 
 | `bucket` | The commit |
 |---|---|
@@ -436,6 +437,20 @@ A commit has `sha`, `subject`, `author`, `date`, `trailers` and `pullRequest` as
 | `unexplained` | matches none of these |
 
 `workedBy` and `alsoWithin` list every match as `{ recordKind, record, state }`, whatever the bucket. If the record can't be walked, the result is a failure whose `error.code` is the declaration's code, the record kind's, or `intent-record-unknown`.
+
+### Commit trailers
+
+chant reads seven trailers of its own on a commit ([#3149](https://github.com/INTENTIUS/chant/issues/3149), [ws-075](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-075-commit-trailers.md)). They point at facts kept by id elsewhere, so a commit that keeps its message through a rebase or a cherry-pick keeps its joins. chant never makes a commit; the writer adds these lines.
+
+| Trailer | Value | `joins` field |
+|---|---|---|
+| `Chant-Agent` | the agent session that wrote the commit ([ws-067](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-067-write-scope-and-agent-sessions.md)) | `agent` |
+| `Chant-Lease` | the fencing token of the work lease the commit was made under | `lease`: `{ token, item }`, where `item` is the work item a lease history on the local `chant/lifecycle` branch names for the token, or `null` |
+| `Chant-Run` | the id of the agent run that made the commit ([#3033](https://github.com/INTENTIUS/chant/issues/3033)) | `run` |
+| `Chant-Record` | `<kind>:<id>`: a record the commit carries out or changes, by its kind's name. Repeatable | `records`: `{ kind, id, node }` each, with `node` the record's node id when a kind read has it, else `null` |
+| `Chant-Applied-By`, `Chant-Applied-At`, `Chant-Applied-Commit` | on the commit that applied a leased branch: who, when (ISO 8601) and the branch tip applied | `applied`: `{ by, at, commit }`, or `null` without `Chant-Applied-By` |
+
+Keys compare without case, as git's do, and a malformed `Chant-Record` value is skipped. Every other trailer is a plugin's. A `carries` edge runs from the commit to each record and lease item a kind read has, and the commit is the own work of a decision it carries, or of a decision a work item it carries implements. Commits made before these trailers, or by tools that write their own, keep their plugin joins.
 
 ## The patch read
 

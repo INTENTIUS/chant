@@ -161,7 +161,7 @@ export const REASONS = {
   "intent-plugin-failed": "A kind file's commitJoins, which joins commits to units, contracts and evidence, failed for a commit.",
   // The intent graph: findings, each a node in the graph.
   "intent-commit-undecided": "A commit changed the region when no decision constrained it at path granularity.",
-  "intent-commit-bare": "A commit names no unit, no pull request and no decision covering the region at its time.",
+  "intent-commit-bare": "A commit names no unit, carries no record through its Chant-Record or Chant-Lease trailer, and has no pull request and no decision covering the region at its time.",
   "intent-pin-drifted": "A decision's pinned artifact no longer hashes to the pin.",
   "intent-pin-missing": "A decision's pinned artifact does not exist in the tree read.",
   "intent-pin-stale": "A current decision pins an artifact at the hash a record it supersedes pinned, and the artifact has not changed since: the decision moved on and the artifact did not.",
