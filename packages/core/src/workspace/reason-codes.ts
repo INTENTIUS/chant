@@ -92,6 +92,9 @@ export const REASONS = {
   "work-done-gap-open": "A work record is done, and the finding it came from still fires on its region. graph --intent raises it, and records does by walking that region.",
   "work-acceptance-unmet": "A work record is done, and one of its acceptance criteria has no passing evidence of the verification it expects. check fails on it (WSP117).",
   "work-acceptance-self-verified": "A passing manual verdict on a work record's criterion names the record's implementer, so it does not count: a manual verdict comes from someone else.",
+  "work-contract-unknown": "A work record names a contract that no record of its kind's contract kind has.",
+  "work-contract-undecided": "A work record names a contract whose state is not approved, such as a draft.",
+  "work-tier-unknown": "A work record names a builder tier that its kind's work.tier.tiers does not list.",
   // An answer to a decision point that is valid but warned about (records, points, ws-058, #2739).
   "answer-points-unreadable": "The points file the answer kind names can't be read, or is not valid.",
   "answer-point-unknown": "The answer's point is not declared in the points file the answer kind names.",

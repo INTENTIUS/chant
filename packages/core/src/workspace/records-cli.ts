@@ -55,7 +55,7 @@ import {
 } from "./records";
 import { readCheckoutHead, worktreeStates, type CheckoutView, type WorktreeState } from "./records-checkout";
 import { gitTree, workingTree, type WorkspaceTree } from "./tree";
-import type { DecisionWork } from "./work";
+import type { DecisionWork, WorkAnswer } from "./work";
 import { activeAttestors, type CommitAttestor, type ProvenanceLevel } from "./trust/attestor";
 import { policyAtBase, recordProvenance, resolveBase, type BaseSource, type RecordProvenance } from "./trust/provenance";
 import { returnedPolicy, type TrustPolicy } from "./trust/policy";
@@ -122,6 +122,14 @@ export type RecordView = RecordEntry & {
    * (`modified`), or not in it (`new`), staged or not. Absent under `--at`.
    */
   worktree?: WorktreeState;
+  /**
+   * For a work kind whose work block names an answer kind (#3147): the
+   * decision-point answers about the item, the answer records whose
+   * `constrains` names its id, joined by id and never copied onto the item.
+   * Read at the same revision; in the working tree, with the questions a
+   * steward keeps on the lifecycle ledger (#2786) laid over it.
+   */
+  answers?: WorkAnswer[];
 };
 
 /** The role in the trust policy whose holders' verdicts the quorum does not count (#2671). */
@@ -415,6 +423,24 @@ export async function queryRecords(query: RecordsQuery): Promise<RecordsDocument
       const { activeWorkLeases } = await import("../lifecycle/work-lease");
       const leases = await activeWorkLeases(loaded.file);
       for (const r of records) if (r.id !== null) r.lease = leases.get(r.id) ?? null;
+    }
+    if (loaded.kind.work?.answers) {
+      // The answers about each item, joined by id (#3147). An answer kind that can't be read leaves answers out rather than failing the work read.
+      const [{ workAnswers }, { readLedgerAnswers, withLedgerAnswers }] = await Promise.all([import("./work"), import("./answers-ledger")]);
+      const answersRead = await readRecordsFor({
+        kind: resolve(dirname(loaded.file), loaded.kind.work.answers),
+        cwd: query.cwd,
+        ...(query.at !== undefined ? { at: query.at } : {}),
+        overlay: async (base, { loaded: l, root: r }) =>
+          withLedgerAnswers(base, await readLedgerAnswers({ file: l.file, name: l.kind.name, dirRel: relative(r, l.dir).split(sep).join("/") || "." })),
+      }).catch((err: unknown) => {
+        if (err instanceof RecordReadError) return undefined;
+        throw err;
+      });
+      if (answersRead) {
+        const byItem = workAnswers(answersRead.result.records, records.flatMap((r) => (r.id !== null ? [r.id] : [])));
+        for (const r of records) if (r.id !== null) r.answers = byItem.get(r.id) ?? [];
+      }
     }
     // Which records the checkout holds uncommitted, judged after every record is read, so links still resolve across the whole set (#3160).
     let checkout: CheckoutView | undefined;

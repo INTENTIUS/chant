@@ -23,6 +23,7 @@ import { ClickHouseGenerator } from "./clickhouse/import/generator";
 import { sqlCommands } from "./clickhouse/plan/commands";
 import { sqlDeepNormalizationHooks } from "./clickhouse/plan/deep";
 import { versionFromReleaseTag } from "./spec/pin";
+import { POSTGRES_MAJORS, postgresUpstreamPin } from "./spec/postgres-pin";
 import { SQL_OWNERSHIP_CHANNEL } from "./clickhouse/ownership";
 import { CLICKHOUSE_EMULATOR } from "./op/activities/clickhouse-emulator";
 import { sqlSkills } from "./skill-defs";
@@ -199,6 +200,7 @@ export const sqlPlugin: LexiconPlugin = {
    * version is not the pin.
    */
   upstreamPin: {
+    label: "clickhouse",
     file: "src/spec/pin.ts",
     pattern: /export const CLICKHOUSE_VERSION\s*=\s*"([^"]+)"/,
     replace: (v: string, line: string) => line.replace(/= "[^"]+"/, `= "${versionFromReleaseTag(v)}"`),
@@ -206,4 +208,7 @@ export const sqlPlugin: LexiconPlugin = {
       "CLICKHOUSE_IMAGE_DIGEST in src/spec/pin.ts moves with the version: set CLICKHOUSE_VERSION to the new release, set the digest to that tag's image digest (docker buildx imagetools inspect clickhouse/clickhouse-server:<version>), then run `chant dev generate` and read the diff of src/spec/clickhouse-catalog.snapshot.json.",
     upstream: { owner: "ClickHouse", repo: "ClickHouse", kind: "releases", tagSuffix: "-lts" },
   },
+
+  /** The Postgres servers, one pin per major (`postgres-14` to `postgres-18`). */
+  upstreamPins: POSTGRES_MAJORS.map(postgresUpstreamPin),
 };

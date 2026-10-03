@@ -679,3 +679,63 @@ describe("lexiconUpgrade pull-request mode: package.json version bump", () => {
     }
   });
 });
+
+describe("a lexicon with several pins (#3288)", () => {
+  const manual = (pin: string, from: string, to: string): UpgradeCheckResult =>
+    pinnedResult({ pin, validation: null, from, to, manualPin: { file: "src/spec/postgres-pin.ts", instructions: `move the ${pin} digest too` } });
+  const current = (pin: string, v: string): UpgradeCheckResult => pinnedResult({ pin, validation: null, hasUpgrade: false, from: v, to: v });
+
+  test("every pin is reported; manual pins stay report-only in every mode", async () => {
+    const results = [current("clickhouse", "26.8.15.10"), manual("postgres-17", "17.11", "17.12"), manual("postgres-14", "14.24", "14.25")];
+    const applyBump = vi.fn();
+    const { gh, calls } = recordingGh();
+    for (const mode of ["report", "issue", "pull-request"] as const) {
+      const r = await lexiconUpgrade({ lexicon: "sql", mode, _checkPinned: vi.fn(async () => results), _applyBump: applyBump, _gh: gh });
+      expect(r.hasUpgrade).toBe(true);
+      expect(r.mode).toBe("report");
+      expect(r.summary).toContain("## Lexicon upgrade: sql (clickhouse)");
+      expect(r.summary).toContain("## Lexicon upgrade: sql (postgres-17)");
+      expect(r.summary).toContain("move the postgres-17 digest too");
+      expect(r.summary).toContain("move the postgres-14 digest too");
+    }
+    expect(applyBump).not.toHaveBeenCalled();
+    expect(calls).toHaveLength(0);
+  });
+
+  test("no pin has an upgrade: nothing to do", async () => {
+    const r = await lexiconUpgrade({
+      lexicon: "sql",
+      _checkPinned: vi.fn(async () => [current("clickhouse", "1.0"), current("postgres-18", "18.6")]),
+    });
+    expect(r.hasUpgrade).toBe(false);
+    expect(r.validationOk).toBe(true);
+  });
+
+  test("the pin label is forwarded to the check", async () => {
+    const check = vi.fn(async () => [current("postgres-16", "16.15")]);
+    await lexiconUpgrade({ lexicon: "sql", pin: "postgres-16", _checkPinned: check });
+    expect(check).toHaveBeenCalledWith(expect.objectContaining({ lexicon: "sql", pin: "postgres-16" }));
+  });
+
+  test("a rewritable pin leads: the PR branch, title and bump name the pin", async () => {
+    const results = [manual("clickhouse", "1.0", "2.0"), pinnedResult({ pin: "postgres-17", from: "17.11", to: "17.12" })];
+    const applyBump = vi.fn(async () => ({ filePath: "/x/pin.ts" }));
+    const { gh, calls } = recordingGh();
+    const dir = join(tmpdir(), `chant-3288-${process.pid}`);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ version: "0.1.0" }));
+    await lexiconUpgrade({
+      lexicon: "sql",
+      mode: "pull-request",
+      lexiconDir: dir,
+      _checkPinned: vi.fn(async () => results),
+      _applyBump: applyBump,
+      _bumpPackageVersion: vi.fn(() => "/x/package.json"),
+      _gh: gh,
+    });
+    expect(applyBump).toHaveBeenCalledWith("sql", dir, "17.12", "postgres-17");
+    expect(calls.some((c) => c.includes("lexicon-upgrade/sql-postgres-17"))).toBe(true);
+    expect(upgradeBranchName("sql", "postgres-17")).toBe("lexicon-upgrade/sql-postgres-17");
+    expect(upgradePrTitle("sql", "17.11", "17.12", "postgres-17")).toBe("feat(sql): upgrade postgres-17 17.11 to 17.12");
+  });
+});

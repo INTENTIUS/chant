@@ -91,8 +91,12 @@ export interface OpWorkLease {
   ttl?: string;
   /**
    * How the release records a run that ended `ok`: a reference to a step
-   * output holding a short string (`done`, `not_done`, ...). Default `done`;
-   * a failed run releases `not_done` and a gated one `gated`.
+   * output holding one of the closed list of lease outcomes
+   * (`WORK_LEASE_OUTCOMES` in `../lifecycle/work-lease.ts`, #3147: `done`,
+   * `not_done`, `abandoned`, `gated`, `waiting`, `dropped`, `redraft`,
+   * `ask`). Default `done`; a failed run releases `not_done`, a gated one
+   * `gated` and one waiting on a decision point `waiting`. A word outside
+   * the list is released `not_done`, with a note naming it.
    */
   outcome?: StepOutputRef;
 }

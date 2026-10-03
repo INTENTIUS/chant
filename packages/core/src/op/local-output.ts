@@ -66,7 +66,7 @@ export function renderHuman(result: OpRunResult, write: Writer = stderr): void {
       : work.released
         ? `released ${work.outcome}`
         : "not released; it runs out on its own";
-    write(`[work] ${work.item} held by ${work.holder}${work.branch ? ` on ${work.branch}` : ""}: ${end}`);
+    write(`[work] ${work.item} held by ${work.holder}${work.branch ? ` on ${work.branch}` : ""}: ${end}${work.kept ? `; the attempt is kept at ${work.kept}` : ""}`);
   } else if (work?.refusal) {
     write(`[work] nothing claimed: ${work.refusal}`);
   }
