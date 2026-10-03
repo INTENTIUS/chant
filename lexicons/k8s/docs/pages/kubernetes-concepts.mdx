@@ -107,3 +107,22 @@ export const labels = defaultLabels({
 Explicit labels on individual resources take precedence over defaults.
 
 > **Tip:** Avoid hardcoding `metadata.namespace` — the [WK8001 lint rule](/chant/lexicons/k8s/lint-rules/) will flag it. Use a config variable or pass namespace at deploy time instead.
+
+## Telemetry attribution
+
+Inside a workspace, the k8s lexicon adds two variables to the `env` of every container of a Deployment, StatefulSet, DaemonSet, ReplicaSet, Job, CronJob or Pod, so that its spans name the declaration that produced them ([#3059](https://github.com/INTENTIUS/chant/issues/3059), [ws-060](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-060-telemetry-attribution.md)).
+
+```yaml
+containers:
+  - name: api
+    image: nginx:1.27
+    env:
+      - name: OTEL_SERVICE_NAME
+        value: api
+      - name: OTEL_RESOURCE_ATTRIBUTES
+        value: chant.workspace=acme,chant.member=svc,chant.decl=api
+```
+
+`OTEL_SERVICE_NAME` is the workload's `metadata.name`. `OTEL_RESOURCE_ATTRIBUTES` lists `chant.workspace`, `chant.member`, `chant.decl` (the declaration's export name, which is its node id in `chant workspace graph` without the member prefix) and, when the build has an environment from `--env` or `ownership.env`, `deployment.environment.name`. A container whose image is pinned by digest (`image@sha256:...`) also gets `service.version`. A variable the container already sets is kept, and only the missing attributes are added; one set through `valueFrom` is left alone. Init containers are not stamped. The git revision and a digest the build can't know are set by what deploys the release.
+
+A project with no `chant.workspace.json` is unchanged. It can opt in with `telemetry.attribution: true` in `chant.config.ts`, which stamps the attributes that need no workspace, and inside a workspace `telemetry.attribution: false` turns it off.
