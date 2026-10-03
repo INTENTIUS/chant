@@ -42,6 +42,9 @@ const TOOLS = {
     capture: "captures/chant-build.cpuprofile",
     estate: resolve("chant-app"),
     role: "synthesizer",
+    // capture.sh writes the build's stderr here, and it already carries the
+    // `[fold:fold]` markers the capture asserts on.
+    log: "results/chant-build.log",
   },
   cdk: {
     capture: "captures/cdk-app.cpuprofile",
@@ -106,7 +109,29 @@ function analyze(name, cfg) {
       packages: pkgTable,
     },
     nodeInternalModulesObserved: nodeInternal,
+    // typescript-as-data#177 — the exact count beside the sampled bytes.
+    // `definitionLibraryBytes` comes off a CPU profile and a profile has a
+    // sampling floor, so 0 is everything the profiler could see rather than
+    // nothing having run. Revival does invoke the lexicon's constructors.
+    // L10.1's counters have no floor, and `chant build --verbose` prints them
+    // as `[fold:counts]`. Absent for a tool that has none to report, which is
+    // every tool but chant.
+    foldExecutionCounts: foldCounts(cfg.log),
   };
+}
+
+/** `[fold:counts] a=1 b=2 c=3` from a build log, or null when the tool prints none. */
+function foldCounts(log) {
+  if (!log) return null;
+  let text;
+  try {
+    text = readFileSync(log, "utf8");
+  } catch {
+    return null;
+  }
+  const m = /\[fold:counts\]\s+factoryInvocations=(\d+)\s+projectFactoryInvocations=(\d+)\s+factoryInterpretations=(\d+)/.exec(text);
+  if (!m) return null;
+  return { factoryInvocations: +m[1], projectFactoryInvocations: +m[2], factoryInterpretations: +m[3] };
 }
 
 const results = {};
