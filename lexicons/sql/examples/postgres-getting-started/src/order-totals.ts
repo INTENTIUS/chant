@@ -5,7 +5,7 @@ import { users } from "./users";
 
 // In a join, qualify each column reference: u.${users.columns.id}.
 export const orderTotals = view`
-  CREATE VIEW ${app}.order_totals AS
+  CREATE VIEW ${app}.order_totals WITH (security_invoker = true) AS
   SELECT u.${users.columns.id} AS user_id,
          u.${users.columns.email},
          count(o.${orders.columns.id}) AS order_count,
