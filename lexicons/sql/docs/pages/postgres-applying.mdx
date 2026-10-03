@@ -1,0 +1,126 @@
+---
+title: "Applying to a Postgres Server"
+label: "Applying to a Server"
+description: "postgresApply makes a Postgres server hold what a build declares: statements grouped into transactions by the lock they take, CONCURRENTLY outside them, lock and statement timeouts on every statement, ownership in the comment, and an owned-only prune"
+diataxis: how-to
+group: "Postgres"
+order: 3
+---
+
+`postgresApply` makes the Postgres server an environment is bound to hold what a `chant build` declares. It is what `ApplyOp` runs for `target: "postgres"`, and an Op step of its own for a hand-written Op. It sends the statements for every change [the classifier](../postgres-change-classifier/) does not put in the expand-and-contract class, and nothing for the objects that have one.
+
+## Apply with ApplyOp
+
+Build to `dist/schema.json`, the target's default output, and bind the environment as for [importing](../postgres-importing/) (`sql.profiles.<env>` in `chant.config.ts`, else `POSTGRES_URL`, `POSTGRES_USER` and `POSTGRES_PASSWORD`):
+
+```typescript
+// ops/schema-apply.op.ts
+import { ApplyOp } from "@intentius/chant/op";
+
+const { op } = ApplyOp({
+  name: "schema-apply",
+  env: "prod",                 // selects sql.profiles.prod
+  target: "postgres",
+  delete: "gated",             // prune owned orphans and allow column drops, behind an approval gate
+  gate: { gate: "approve-schema-apply" },
+});
+
+export default op;
+```
+
+`chant run schema-apply` builds, plans and stops at the gate before anything is written; the next run after `chant approve schema-apply approve-schema-apply` applies. `delete: "gated"` implies the gate; with the default `delete: "never"` and no `gate`, the Op runs straight through and drops nothing. The run prints every statement it sends and reports the counts every target reports: applied, pruned and not attempted.
+
+The Op passes the build, the environment and whether to prune. The timeouts and the ownership marker come from `chant.config.ts`. A hand-written Op that needs other timeouts for one step calls the activity with them:
+
+```typescript
+import { postgresApply } from "@intentius/chant-lexicon-sql/op/activities";
+
+await postgresApply({ buildPath: "dist/schema.json", environment: "prod", lockTimeoutMs: 2000, scanTimeoutMs: 3_600_000 });
+```
+
+It also takes `prune`, `stack`, `ownershipEnv` and `cwd`, and returns the outcome described below; `toApplyResult` from the same module projects it onto the envelope every applier returns.
+
+## What each object gets
+
+Every declared object comes back with one verdict.
+
+| Verdict | When |
+|---|---|
+| applied, `created` | the server does not have it; its declared statements run, with chant's marker in its comment |
+| applied, `updated` | the server has it and the statements for its changes ran and committed |
+| applied, `unchanged` | nothing to change and the marker in place; nothing is sent |
+| not attempted, `unsupported-kind` | a change needs expand and contract: a column rename, a type change across kinds, a `NOT NULL` column with no default, a view losing or reordering columns, a change of partitioning. Also a change no statement makes in place on the target major, such as a generated column changing kind. Nothing is sent for the object. The detail names each rule, its restriction and the Postgres 18 page, and for a column rename or a type change across kinds the `PostgresMigrationOp` that makes it (see [Migrating a Column](../postgres-migration/)) |
+| not attempted, `filtered` | the change drops a column, which destroys its data, and the apply may not delete (`delete: "never"`); or another tool keeps the object, such as an ORM's revision table or a managed provider's schema |
+| not attempted, `dependency-failed` | an object it references is not on the server, or its statements were in a transaction that rolled back because another object's statement failed; the detail names that statement and the server's message |
+| not attempted, `no-binding` / `no-credentials` | there is no server to apply to, or it refused the credentials |
+
+A statement the server refuses fails its object and rolls back its transaction. The apply goes on with the statements after it, then throws `PostgresApplyError`, which carries the outcome: what failed, what was applied and what was not attempted.
+
+## Transactions
+
+Statements run in the build's order, each object's in the order its changes need, grouped by what they do to the table:
+
+| Statements | How they run |
+|---|---|
+| catalog-only: creates, comments, defaults, `NOT VALID` constraints, `DROP NOT NULL`, drops | consecutive ones share one transaction, across objects, so they land together or not at all |
+| ones that read or rewrite a table: a type change with a rewrite, `SET NOT NULL`, a validated `CHECK`, `VALIDATE CONSTRAINT`, a foreign key added without `NOT VALID`, an index built without `CONCURRENTLY` | a transaction of their own object, so the long statement holds locks on that one table and what came before has committed |
+| `CREATE INDEX CONCURRENTLY`, `DROP INDEX CONCURRENTLY`, `ALTER TYPE ... ADD VALUE` | alone, outside any transaction |
+
+Postgres refuses `CONCURRENTLY` inside a transaction block, and a label `ADD VALUE` adds cannot be used in the transaction that added it, which is why those run alone. A dropped index is dropped `CONCURRENTLY`.
+
+A primary key or unique constraint added to a table that exists is two statements: its unique index built `CONCURRENTLY`, then `ADD CONSTRAINT ... USING INDEX`, which changes only the catalog (SQLPG221). A `CONCURRENTLY` build that fails leaves an `INVALID` index behind; the applier drops it, and only an invalid one.
+
+The major decides two statements: a STORED generated column's new expression is `SET EXPRESSION` from 17, and `SET STORAGE DEFAULT` exists from 16. The applier reads the major from the build output's `postgresMajor`, else `sql.postgresMajor`, else 18. On an older major, a change with no statement there is not attempted, `unsupported-kind`.
+
+## Timeouts
+
+Every statement runs with its own `lock_timeout` and `statement_timeout`, `SET LOCAL` inside a transaction and `SET` before a statement outside one. Most `ALTER TABLE` forms take `ACCESS EXCLUSIVE`, even the brief ones, and a statement waiting for that lock queues every later query on the table behind it. The lock timeout makes it fail instead.
+
+| Setting | Default | Applies to |
+|---|---|---|
+| `lockTimeoutMs` | 5000 | every statement |
+| `statementTimeoutMs` | 60000 | catalog-only statements |
+| `scanTimeoutMs` | 0 (no limit) | statements that read or rewrite rows, and `CONCURRENTLY` builds |
+
+Set them per environment on the profile:
+
+```ts
+sql: {
+  profiles: {
+    prod: {
+      url: "postgres://db.internal:5432/shop",
+      password: { env: "PG_PROD_PASSWORD" },
+      lockTimeoutMs: 2000,
+      scanTimeoutMs: 3_600_000,
+    },
+  },
+},
+```
+
+or pass them to `postgresApply`, which wins over the profile. A lock timeout fails the object with `lock_timeout 5000ms: another session holds a lock this statement needs; SQLSTATE 55P03` in its error, after its transaction has rolled back, and a statement timeout with `SQLSTATE 57014`. The outcome records the timeouts, every statement with the values it ran under and the transaction it was in, and how each transaction ended.
+
+## The ownership marker
+
+Postgres has a comment on every kind of object, so chant's marker is a trailer on the object's own comment, set with `COMMENT ON` in the transaction that runs the `CREATE` (right after it, for an index built `CONCURRENTLY`):
+
+```sql
+COMMENT ON TABLE app.users IS 'One row per account [chant managed-by=chant stack=shop env=prod]'
+```
+
+`stack` and `env` are the project's `ownership.stack` and `ownership.env`; without a stack the trailer is `[chant managed-by=chant]`. The declared `COMMENT ON` for the object is replaced by this one, so the declared comment and the trailer are one string; comments on columns and constraints are sent as written. An extension with no declared comment keeps the comment its control file sets, with the trailer after it. A plan, the deep diff and an import read the comment with the trailer taken off, so it is never reported as drift or written into a declaration. Someone who rewrites the comment by hand removes the trailer, and the object reads as not chant's until the next apply stamps it again.
+
+`chant lifecycle diff --live` reports a marked object `owned` and an unmarked one `foreign`, and `chant import --from <env> --owned` imports the marked ones.
+
+## Prune
+
+With `delete: "owned-only"` or `"gated"`, the apply also drops the objects in the declared schemas that the build no longer declares and whose comment carries this project's marker, stack and env both. It drops views and materialized views first, then indexes (`CONCURRENTLY`), tables, sequences, domains, types and extensions, and schemas last. It never uses `CASCADE`: an object something else still depends on is reported `not-prunable` with the server's message (SQLSTATE 2BP01) and kept. An object without the marker, another chant project's, or one another tool keeps is never touched. A project with no `ownership.stack` cannot tell its objects from another project's, so a prune reports its candidates `not-prunable` and drops nothing.
+
+The same switch allows column drops (SQLPG204); without it a dropped column is `filtered` and the column stays.
+
+## A local server
+
+```bash
+chant emulator up --lexicon sql
+```
+
+starts the pinned `postgres:18.6` by digest on port 5432, beside the lexicon's ClickHouse server on 8123. `--json` reports it with `POSTGRES_URL=postgres://localhost:5432/postgres`, `POSTGRES_USER=postgres` and `POSTGRES_PASSWORD=chant`, the variables the binding reads when no profile names a server. It is ready when `pg_isready` answers inside the container. `chant emulator down --lexicon sql` removes both. [Getting Started with Postgres](../postgres-getting-started/) applies the example schema to it.

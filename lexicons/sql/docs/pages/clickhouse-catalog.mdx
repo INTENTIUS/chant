@@ -1,8 +1,10 @@
 ---
-title: "Where the Types Come From"
+title: "Where the ClickHouse Types Come From"
 description: "The pinned ClickHouse server the dialect's types are read from, the committed catalog snapshot, the overlays, and how to move the pin"
 diataxis: explanation
-order: 8
+order: 1
+label: "Where the Types Come From"
+group: "ClickHouse"
 ---
 
 ClickHouse publishes no schema for its DDL. What it does publish, inside every server, is a set of `system.*` tables describing what that server accepts. The ClickHouse dialect's types are generated from those tables at one pinned server release, so a type here is a name the pinned server knows, not one a document claims it should.

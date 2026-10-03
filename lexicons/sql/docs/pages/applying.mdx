@@ -1,11 +1,13 @@
 ---
-title: "Applying to a Server"
-description: "clickhouseApply and postgresApply make a server hold what a build declares: the statements each classified change needs, a rebuild or an expand-and-contract change refused, a prune bounded by chant's comment marker"
+title: "Applying to a ClickHouse Server"
+description: "clickhouseApply makes a ClickHouse server hold what a build declares: the statements each classified change needs, a rebuild refused, a prune bounded by chant's comment marker"
 diataxis: how-to
-order: 5
+order: 3
+label: "Applying to a Server"
+group: "ClickHouse"
 ---
 
-`clickhouseApply` makes the ClickHouse server an environment is bound to hold what a `chant build` declares; `postgresApply` does the same for a Postgres server, and [Postgres](#postgres) below covers what differs. It is what `ApplyOp` runs for `target: "clickhouse"`, and an Op step of its own for a hand-written Op. It sends the statements for the changes [the classifier](../change-classifier/) puts in the metadata-only and background-rewrite classes, and nothing for a rebuild.
+`clickhouseApply` makes the ClickHouse server an environment is bound to hold what a `chant build` declares. It is what `ApplyOp` runs for `target: "clickhouse"`, and an Op step of its own for a hand-written Op. It sends the statements for the changes [the classifier](../change-classifier/) puts in the metadata-only and background-rewrite classes, and nothing for a rebuild.
 
 ## Apply with ApplyOp
 
@@ -68,66 +70,6 @@ With `delete: "owned-only"` or `"gated"`, the apply drops the tables, views and 
 
 ## A local server
 
-`chant emulator up --lexicon sql` starts the pinned `clickhouse/clickhouse-server` (the image and digest the types come from) on port 8123; `--json` reports it as `CLICKHOUSE_URL`, which the binding reads when no profile names a server.
+`chant emulator up --lexicon sql` starts the pinned `clickhouse/clickhouse-server` (the image and digest the types come from) on port 8123, and the pinned Postgres server beside it; `--json` reports the ClickHouse one as `CLICKHOUSE_URL`, which the binding reads when no profile names a server.
 
-## Postgres
-
-`postgresApply` is what `ApplyOp` runs for `target: "postgres"`. The build output and the binding are the same as for ClickHouse: `dist/schema.json`, and `sql.profiles.<env>` with a `postgres://` URL, else `POSTGRES_URL`, `POSTGRES_USER` and `POSTGRES_PASSWORD`. It sends the statements for every change [the Postgres classifier](../postgres-change-classifier/) does not refuse, and the verdicts are the ones in the table above, with three differences:
-
-- An expand-and-contract change (a column rename, a type change across kinds, a `NOT NULL` column with no default, a view losing a column) is not attempted, `unsupported-kind`. The detail names each rule, its restriction and the Postgres 18 page, and for a column rename or a type change across kinds the `PostgresMigrationOp` declaration that makes it instead (see [below](#a-column-rename-or-type-change)); the other expand-and-contract changes have no Op yet.
-- An object another tool keeps (an ORM's revision table, a managed provider's schema) is not attempted, `filtered`.
-- When a statement fails, its transaction rolls back. Its own object fails the apply, and every other object whose statements were in that transaction is not attempted, `dependency-failed`, with the failing statement and the server's message in the detail.
-
-### A column rename or type change
-
-`chant sql plan` and `chant sql diff` print a `PostgresMigrationOp` declaration for each column they refuse as a rename (SQLPG205) or a type change across kinds (SQLPG208), and `--json` carries them as `migrationOps`. Put it in an `*.op.ts` file and run it until it is done; each run goes as far as the next gate:
-
-```typescript
-import { PostgresMigrationOp } from "@intentius/chant-lexicon-sql/postgres";
-
-export const { op } = PostgresMigrationOp({ name: "migrate-app-users-login", env: "prod", table: "app.users", column: "login" });
-```
-
-The Op adds the new column, keeps it written with a trigger (both ways for a rename, from the old column for a type change, with `using` as the expression), fills the existing rows in batches of the primary key with a receipt per batch in `<schema>.__chant_receipts`, committed with the batch, and pauses while a replica in `pg_stat_replication` is behind. It verifies the new column against the old, stops at a gate bound to the plan and the verified column, then switches in one short transaction: a type change swaps the columns by name, and a rename sets the new column's `NOT NULL` and leaves both names written until the contract. The old column is kept for `retain` (default `7d`) and dropped at a second gate. A failed step runs onFailure, which drops what the Op added. A type change within a kind that would rewrite the table in place (SQLPG207) can run as the same Op. The Op refuses a table a logical replication publication sends the column of, a column an index, a constraint or a view uses, and a table without a primary key of one integer column.
-
-### Transactions
-
-Statements run in the build's order, each object's in the order its changes need, grouped like this:
-
-| Statements | How they run |
-|---|---|
-| catalog-only: creates, comments, defaults, `NOT VALID` constraints, drops | consecutive ones share one transaction, across objects |
-| ones that read or rewrite a table: a type change with a rewrite, `SET NOT NULL`, a validated `CHECK`, `VALIDATE CONSTRAINT`, an index built without `CONCURRENTLY` | a transaction of their own object, so the long statement holds locks on one table and what came before has committed |
-| `CREATE INDEX CONCURRENTLY`, `DROP INDEX CONCURRENTLY`, `ALTER TYPE ... ADD VALUE` | alone, outside any transaction |
-
-A primary key or unique constraint added to a table that exists is two statements: its unique index built `CONCURRENTLY`, then `ADD CONSTRAINT ... USING INDEX`, which changes only the catalog. A `CONCURRENTLY` build that fails leaves an `INVALID` index behind; the applier drops it, and only an invalid one.
-
-### Timeouts
-
-Every statement runs with its own `lock_timeout` and `statement_timeout`, so a statement waiting on another session's lock fails after the lock timeout instead of queueing every later query behind it.
-
-| Setting | Default | Applies to |
-|---|---|---|
-| `lockTimeoutMs` | 5000 | every statement |
-| `statementTimeoutMs` | 60000 | catalog-only statements |
-| `scanTimeoutMs` | 0 (no limit) | statements that read or rewrite rows, and `CONCURRENTLY` builds |
-
-Set them per environment on the profile (`sql.profiles.prod.lockTimeoutMs`), or pass them to `postgresApply`. The result records the timeouts, every statement with the values it ran under and the transaction it was in, and how each transaction ended. A lock timeout reads `lock_timeout 5000ms: another session holds a lock this statement needs; SQLSTATE 55P03` in the failed object's error.
-
-### The ownership marker
-
-Postgres has a comment on every kind of object, so the marker is the same trailer, set with `COMMENT ON` in the transaction that runs the `CREATE` (right after it, for an index built `CONCURRENTLY`):
-
-```sql
-COMMENT ON TABLE app.users IS 'One row per account [chant managed-by=chant stack=shop env=prod]'
-```
-
-The declared `COMMENT ON` for the object is replaced by this one; comments on columns and constraints are sent as written. An extension with no declared comment keeps the comment its control file sets, with the trailer after it. A plan, the deep diff and an import read the comment with the trailer taken off.
-
-### Prune
-
-Prune drops the objects in the declared schemas that the build no longer declares and whose comment carries this project's marker: views first, then indexes (`CONCURRENTLY`), tables, sequences, types and extensions, and schemas last. It never uses `CASCADE`. An object something else still depends on is reported `not-prunable` with the server's message, and an object without the marker, or kept by another tool, is never touched.
-
-### A local server
-
-`chant emulator up --lexicon sql` starts the pinned `postgres:18.6` by digest beside ClickHouse; `--json` reports it as `POSTGRES_URL` with `POSTGRES_USER` and `POSTGRES_PASSWORD`, which the binding reads when no profile names a server.
+For a Postgres server, see [Applying to a Postgres Server](../postgres-applying/).

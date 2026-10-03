@@ -2,7 +2,7 @@
 title: "References and Lineage"
 description: "How an interpolated table, view or column becomes a reference, and how references give the build its dependency order and a view its column-level lineage"
 diataxis: explanation
-order: 3
+order: 1
 ---
 
 An interpolation that holds a `database`, `table` or `view` entity, or one of a table's or view's `.columns`, is not spliced into the statement as text. It stays a reference. The statement still reads the object's name in the place the reference sits, and the build also knows which object that name belongs to. Everything on this page follows from that.

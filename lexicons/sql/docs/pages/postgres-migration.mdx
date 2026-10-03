@@ -1,0 +1,155 @@
+---
+title: "Migrating a Column"
+description: "PostgresMigrationOp runs a column rename or a type change across kinds as expand and contract in a gated Op: new column, dual-write trigger, batched backfill with receipts, verification, switch, retention, contract"
+diataxis: how-to
+group: "Postgres"
+order: 4
+---
+
+Some column changes Postgres can make in a moment and still break every reader. `ALTER TABLE ... RENAME COLUMN` is a catalog change, but every query that still names the old column fails from the instant it commits. A type change between kinds, such as `text` to `numeric`, needs a `USING` expression and breaks readers that expect the old type. [The classifier](../postgres-change-classifier/) puts these in the expand-and-contract class (SQLPG205 and SQLPG208), and both `chant sql plan` and the [applier](../postgres-applying/) refuse them in place. `PostgresMigrationOp` is what runs them.
+
+## Start from the plan
+
+Change the declaration in a pull request, saying on the column's line what it was called for a rename:
+
+```sql
+CREATE TABLE ${app}.users (
+  id           bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  email        text NOT NULL UNIQUE,
+  display_name text,   -- previously: nickname
+  created_at   timestamptz NOT NULL DEFAULT now()
+)
+```
+
+`chant sql plan <env> dist/schema.json` (or `chant sql diff` between the base and head builds) refuses the change, exits 2, and names the Op to run for each refused column:
+
+```
+users (app.users)
+  [EXPAND AND CONTRACT] columns.display_name: nickname -> display_name
+      SQLPG205 Rename a column. ...
+
+Refused: 1 change(s) keep no old reader working when made in place. ...
+
+Run it as the expand-and-contract migration Op, declared in an *.op.ts file (import { PostgresMigrationOp } from "@intentius/chant-lexicon-sql/postgres"), then `chant run <name>` until it is done:
+  export const { op } = PostgresMigrationOp({ name: "migrate-app-users-display-name", env: "dev", table: "app.users", column: "display_name" });
+```
+
+`--json` carries the same as `migrationOps`, one entry per column with its table, column, rule, name and declaration. Put the declaration in the pull request beside the schema change:
+
+```typescript
+// ops/rename-nickname.op.ts
+import { PostgresMigrationOp } from "@intentius/chant-lexicon-sql/postgres";
+
+export const { op } = PostgresMigrationOp({
+  name: "migrate-app-users-display-name",
+  env: "prod",                  // sql.profiles.prod
+  table: "app.users",
+  column: "display_name",       // the column as the build declares it: the new name for a rename
+  retain: "7d",
+});
+```
+
+The Op's own Plan phase classifies the column's change again, against the server, each time it runs. A change the applier can make in place is refused there with the rules that apply, and the applier is the way to make it. A type change within a kind that would rewrite the table under `ACCESS EXCLUSIVE` (SQLPG207, such as `integer` to `bigint`) is not refused by the plan, but it can run as this Op too, which fills the new column in batches instead of rewriting the table while every query waits.
+
+`lexicons/sql/examples/postgres-column-rename` declares such an Op for a rename of `app.users.username` to `login`.
+
+## The phases
+
+| Phase | What it does |
+|---|---|
+| Build | `chant build` (the project's `build` script); `build: false` skips it |
+| Plan | classifies the column's change against the server, refuses what the Op does not make, and reports how far the migration has got (`MigrationState`: `migrate`, `switched` or `done`) |
+| Expand | adds the new column, nullable and with no default, which is a catalog change: the declared name for a rename, `<column>__chant_new` for a type change |
+| Dual write | a `BEFORE INSERT OR UPDATE` trigger that keeps the new column written: both ways for a rename, so a writer naming either column fills both; from the old column through the `using` expression for a type change |
+| Backfill | fills the rows that were there before the trigger, one range of the primary key per batch, each batch and its receipt in one transaction |
+| Verify | one statement over the table: rows, rows where the new column differs from the expression over the old one, NULLs, and a checksum of each side. Any difference fails the run |
+| Approve | a gate bound to the plan and the verified new column |
+| Switch | a declared `NOT NULL` is proven first by a check added `NOT VALID` and then validated, so `SET NOT NULL` is a catalog change; then one short transaction. A type change renames the old column to `<column>__chant_old` and the new one to the declared name, sets the declared default and comment, and stops writing the old one. A rename has nothing to swap: readers move to the new name in the application while the trigger keeps both written |
+| Retain | the old column stays until `retain` (default `7d`) has passed, by the server's clock |
+| Approve contract | a gate bound to that old column |
+| Contract | drops the old column, and for a rename the trigger and its function, and the receipts table, once the retention date has passed |
+| onFailure | drops what the expand added and nothing else: the trigger, its function, the `NOT NULL` check, the new column, and this migration's receipts |
+
+Run it with `chant run migrate-app-users-display-name`. Each run goes as far as the next gate and exits 3 there. Every step reads the server again before it acts, so the next run, after an approval or a crash, carries on from where the last one stopped and repeats nothing that is done. After the switch, onFailure undoes nothing: the old column is kept, and the next run finishes the migration.
+
+The working objects carry chant's [ownership marker](../postgres-applying/#the-ownership-marker) in their comments, with `migration=<schema>.<table>.<column>` and their role (`new`, `old`, `dual`, `nn`). The catalog read leaves those columns and constraints out, so a plan, an import and a prune see the table as it was until the switch and as declared after it, and an `ApplyOp` running beside the migration neither drops nor reports them. A working object with the right name and without this project's marker is somebody else's, and the Op stops rather than touch it.
+
+## The gates
+
+A run against `postgres:18.6` with 2500 rows in `app.users` stops at the first gate with the verification on its record:
+
+```
+[phase] Backfill
+  ✓ postgresMigrationBackfill(...)
+    [outcome] Filled=3
+[phase] Verify
+  ✓ postgresMigrationVerify(...)
+    [outcome] Verification=app.users.display_name: 2500 row(s), display_name equal to nickname in every one (checksum 149987657045447354052)
+[phase] Approve
+  • gate:approve-migrate-app-users-display-name()   skipped
+...
+Op "migrate-app-users-display-name" is gated on "approve-migrate-app-users-display-name"
+```
+
+Between the runs, a writer that still inserts `nickname` gets `display_name` filled by the trigger, and `chant sql plan` still reports the rename as refused, since the switch has not run. Then:
+
+```bash
+chant approve migrate-app-users-display-name approve-migrate-app-users-display-name --actor alex
+chant run migrate-app-users-display-name          # switches; gated: approve-migrate-app-users-display-name-contract
+chant approve migrate-app-users-display-name approve-migrate-app-users-display-name-contract --actor alex
+chant run migrate-app-users-display-name          # drops nickname once retain has passed
+```
+
+The switch gate's approval is for one plan: its digest covers the change, both columns' definitions, the expression, the batch key and the verified counts and checksums. A run that verifies different numbers, because rows were written in between, needs a fresh approval. The run record carries `Verification` and `VerifiedRows`, which `chant run status` and `chant operator log` show. `gate.approval` takes a quorum, roles and a Cedar policy as any gate does; with a policy, `verifiedRows` and `mismatched` are added to its context.
+
+After the switch, `chant sql plan` reports no changes: the declaration holds. Writers naming either column fill both until the contract. The contract gate binds the old column and its retention date. Approving it early is allowed; the Contract phase drops nothing until the date has passed and says so. A run after the contract reports `MigrationState=done` and sends nothing.
+
+## Receipts and resuming
+
+Each batch is an effect with a receipt, in the [read, compare, run, write](/chant/concepts/effect-receipts/) cycle `effect()` uses. A batch is the key range `[b * batchSize, (b + 1) * batchSize)`, so it is the same rows on every run however many rows were written since. Its `UPDATE` and its receipt run in one transaction and commit together:
+
+```sql
+SELECT * FROM app.__chant_receipts
+```
+
+The receipts table lives in the migrated table's schema, so whoever can read the table can read its receipts, and a provider that limits `CREATE SCHEMA` does not stop the migration. Each receipt is bound to the table's oid and the new column's attribute number; a column dropped by onFailure and added again does not keep them, so an old receipt reads as stale.
+
+A run stopped during the backfill (Ctrl-C, a killed job, a lost machine) is not a failure: it runs no onFailure, and the next run resumes at the first batch without a receipt. A run killed between a batch's `UPDATE` and its `COMMIT` leaves neither the rows nor the receipt, so no batch is ever updated twice. A row an application transaction holds makes a batch give up at the lock timeout and try again, a few times, rather than queue behind it.
+
+## Replication
+
+A backfill writes every row of the table once more, and every standby and logical subscriber receives it. Before each batch the Op reads `pg_stat_replication` on the primary and waits while any replica's `replay_lag` is above `replicationLag.max` (default `10s`), for up to `replicationLag.wait` (default `30m`) at a time, then stops naming the replica. No rows means no WAL senders, a single server or a managed service whose replicas share storage, and the check passes at once. A role that is neither a superuser nor a member of `pg_monitor` sees the lag as NULL, so the backfill stops and names the grant to make (`GRANT pg_monitor TO <role>`) rather than go on blind. `replicationLag: false` turns the check off.
+
+A table a logical replication publication sends the column of is refused, naming each publication: a subscriber applies changes by column name and would fail at the first backfilled row. A publication with a column list (15 and later) that leaves the column out does not stop the migration.
+
+## Options
+
+| Option | Default | |
+|---|---|---|
+| `name`, `env`, `table`, `column` | | required; `table` is `schema.name` or the table's export name |
+| `using` | `CAST(<column> AS <declared type>)` | a type change's expression over the old row's columns, as `ALTER COLUMN ... TYPE ... USING` takes it; refused on a rename |
+| `batchSize` | `1000` | the width of one batch's key range |
+| `retain` | `7d` | how long the old column is kept after the switch |
+| `replicationLag` | `{ max: "10s", wait: "30m" }` | or `false` |
+| `lockTimeoutMs`, `statementTimeoutMs` | the profile's, else 5000 and 60000 | for every statement but the scans (validation, verification) |
+| `gate`, `contractGate` | `approve-<name>`, `approve-<name>-contract` | name, timeout, description; `gate.approval` for quorum and policy |
+| `backfillTimeout` | `6h` | one attempt of the backfill step |
+| `output`, `path`, `build` | `dist/schema.json`, `.`, `true` | |
+| `stack`, `ownershipEnv` | `ownership.stack`, `ownership.env` | the marker on the working objects |
+
+## What the Op refuses
+
+The Plan phase refuses, with what to do instead:
+
+- a table that is partitioned, a partition, or in an inheritance tree;
+- a table without a primary key of one `smallint`, `integer` or `bigint` column, which the batches are ranges of;
+- a rename and a type change of the same column in one declaration: migrate one, run the Op to its end, then the other;
+- a rename of a column with a default, since a writer naming one column would get the other's default, which the trigger cannot tell from a value it was given: drop the default first (the applier does), rename, then declare it again;
+- a generated or identity column, and a change to a column's collation, storage or generation;
+- a column an index, a constraint or a view uses: drop them, migrate the column, then declare them on the new column;
+- a column a logical replication publication sends;
+- an old column from the last migration still kept: run its contract first.
+
+A `UNIQUE` on the column counts as a constraint that uses it, so the `postgres-column-rename` example's `login text NOT NULL UNIQUE` is refused until the Op carries indexes and constraints over. [#3322](https://github.com/INTENTIUS/chant/issues/3322) extends the Op to the indexes, constraints and views on the column, other batch keys, renames with a default, generated and identity columns, and partitioned tables.
+
+The other expand-and-contract changes the classifier names (a `NOT NULL` column with no default, a view losing or reordering columns, partitioning, a table rename, enum labels removed) have no Op yet, and the applier's detail says so.

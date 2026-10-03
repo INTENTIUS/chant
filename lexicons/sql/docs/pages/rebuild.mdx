@@ -2,7 +2,8 @@
 title: "Rebuilding a Table"
 description: "ClickHouseRebuildOp runs a change ALTER cannot make (a sorting key, a partition key, an engine, a key column's type) as a gated Op: new table, dual write, backfill with receipts, verification, swap, retention"
 diataxis: how-to
-order: 6
+order: 4
+group: "ClickHouse"
 ---
 
 Some changes ClickHouse cannot make to the table it has. The sorting key is the on-disk order and, in a `ReplacingMergeTree`, the dedup identity, so changing it means writing every row again into a new table. [The classifier](../change-classifier/) puts these in the rebuild class, and both `chant sql plan` and the [applier](../applying/) refuse them in place. `ClickHouseRebuildOp` is what runs them.
