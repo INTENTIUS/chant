@@ -40,7 +40,7 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | boundary cell | the table of #2657, one row per cell | 11 | 5 | 3 |
 | workspace command | `commandRegistry` in `cli/main.ts`, and each sub-verb its help names | 47 | 0 | 0 |
 | member kind | `BUILTIN_KIND_NAMES` in `kinds.ts` | 5 | 0 | 0 |
-| record kind | none in core; `decision` and `session` are this repository's, the rest a plugin's | 4 | 0 | 4 |
+| record kind | none in core; `decision` and `session` are this repository's, the rest a plugin's | 7 | 0 | 1 |
 | member link kind | `LINK_KINDS` in `links.ts` | 2 | 0 | 0 |
 | record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 |
 | intent node kind | the node kinds of `intent.schema.json` | 10 | 0 | 3 |
@@ -128,11 +128,11 @@ Each row follows, in the order of the table above.
 | record kind | `decision` | chant | docs/design/decisions/decision.kind.mjs, decision.schema.json | The decision record chant's own design and the reference workspace use; the intent graph reads decisions as core nodes. reference/decision-kind specifies it, and a plugin carries a copy (ws-064). |
 | record kind | `work` | chant | reference-workspace/work/work.kind.mjs, work.schema.json | A work item: a record with needs and implements links that people and agents share as one queue with no server. records gives each one ready and blockedBy, and the intent graph reads work items as core nodes (#2683). jhgaylor/chud#78 makes units work items. |
 | record kind | `answer` | chant | reference-workspace/answers/answer.kind.mjs, answer.schema.json | An answer to a decision point: proposed when a model gave it, answered by a table or a quorum, escalated when people must; one per point, declaration and inputs (ws-058, #2739). |
-| record kind | `contract` | plugin | a record kind file and its schema, passed with --kind; jhgaylor/chud (transitional owner, jhgaylor/chud#78, #79, #80) | A unit of work's acceptance criteria, cited by the commits that serve it. |
+| record kind | `contract` | chant | reference-workspace/design/contracts/contract.kind.mjs, contract.schema.json | An acceptance criterion made formal: its criteria, and its check pinned by hash. Drafted, approved by its reviewers, retired; a work item names the contract it builds, and the commits that serve it cite it as Chant-Record: contract:&lt;id&gt; (#3148, ws-082). |
 | record kind | `unit` | plugin | a record kind file and its schema, passed with --kind; jhgaylor/chud (transitional owner, jhgaylor/chud#78, #79, #80) | A unit of work, joined to the commits it produced. |
-| record kind | `evidence` | plugin | a record kind file and its schema, passed with --kind; jhgaylor/chud (transitional owner, jhgaylor/chud#78, #79, #80) | The result of a check run on a tree, cited by a contract or unit. |
-| record kind | `driver` | plugin | a record kind file and its schema, passed with --kind; jhgaylor/chud (transitional owner, jhgaylor/chud#78, #79, #80) | A record that groups contracts under one intent, which a split unit serves in place of a contract. |
-| record kind | `session` | chant | reference-workspace/design/sessions/session.kind.mjs, session.schema.json | A review session with its agenda, attendance and the verdicts it produced, sealed on close; chud's numbered session files, such as sessions/S-0001.json, are the shape it started from (#2673). |
+| record kind | `evidence` | chant | reference-workspace/design/evidence/evidence.kind.mjs, evidence.schema.json | The result of one run of a contract's check on a tree, named for the SHA-256 of its bytes and written by records new; a work item cites it as evidence for a criterion (#3148, ws-082). |
+| record kind | `driver` | chant | reference-workspace/design/drivers/driver.kind.mjs, driver.schema.json | A record that groups contracts under one intent, with its design notes in the body (#3148, ws-082). |
+| record kind | `session` | chant | reference-workspace/design/sessions/session.kind.mjs, session.schema.json | A review session with its agenda, attendance and the verdicts it produced on decisions, contracts and drivers, sealed on close; chud's numbered session files, such as sessions/S-0001.json, are the shape it started from (#2673), and studio's design sessions converge on it (#3148, ws-082). |
 | member link kind | `output` | chant | graph.schema.json, check.schema.json | A consumer names a producer's output, matched exactly; the default member link kind. |
 | member link kind | `telemetry` | chant | graph.schema.json, check.schema.json | A consumer sends its telemetry to a pipeline or exporter of the producer's collector, with the protocol it states checked against the target (#2558). |
 | record link kind | `asset` | chant | graph.schema.json | A current record pins a file by hash. |
