@@ -1902,6 +1902,7 @@ async function resolveCallArguments(
   const args: unknown[] = [];
   for (const argNode of node.arguments) {
     const live = await resolveLiveValue(argNode, ctx);
+    if (live === undefined) await resolveSameFileCallReferences(argNode, ctx);
     // chant #1039 — a folded (non-live) argument may itself contain a
     // registered intrinsic tagged template; revive it into the real value
     // before the composite factory actually runs on it (see the "Intrinsic
@@ -1913,6 +1914,69 @@ async function resolveCallArguments(
     );
   }
   return args;
+}
+
+/**
+ * chant#3325 — a composite call's props can name a same-file `const` bound to
+ * another call (`left: notes.table`, with `export const notes =
+ * TenantTable({...})` earlier in the file). `fold()` cannot answer that name:
+ * it is synchronous, and the value is a composite instance only the live spine
+ * builds. So before the argument folds, each such name it mentions is resolved
+ * through {@link resolveMemoized}, the same promise the declarator and every
+ * other reference to it share, and the instance goes into `externals`, where
+ * `fold()`'s identifier branch reads it as it reads a pre-built `new` or tag
+ * const (#1169, #3196).
+ *
+ * Only a call `fold()` has no case for qualifies: an imported callee that is
+ * neither a registered authoring helper nor a registered intrinsic. For
+ * anything else the name is left alone and folds exactly as before. A
+ * resolution that fails, or gives anything but a Declarable or a composite
+ * instance, is left alone too, so the reference rejects with the message it
+ * always had. Inside a factory body `locals` is empty, so nothing here applies.
+ */
+async function resolveSameFileCallReferences(node: ts.Node, ctx: ResolveCtx): Promise<void> {
+  const names = new Set<string>();
+  const visit = (n: ts.Node): void => {
+    if (ts.isIdentifier(n)) {
+      if (isUnfoldableSameFileCall(n.text, ctx)) names.add(n.text);
+      return;
+    }
+    if (ts.isFunctionLike(n) || ts.isTypeNode(n)) return;
+    if (ts.isPropertyAccessExpression(n)) return visit(n.expression);
+    if (ts.isPropertyAssignment(n)) {
+      if (ts.isComputedPropertyName(n.name)) visit(n.name);
+      return visit(n.initializer);
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(node);
+  for (const name of names) {
+    let resolved: LiveResolution;
+    try {
+      resolved = await resolveMemoized(ctx.locals.get(name)!.source, ctx);
+    } catch {
+      continue;
+    }
+    if (resolved && (isDeclarable(resolved.value) || isCompositeInstance(resolved.value))) {
+      ctx.externals.set(name, resolved.value);
+    }
+  }
+}
+
+/** A same-file `const name = Callee(...)` that `fold()` would refuse as a function call used as a value. */
+function isUnfoldableSameFileCall(name: string, ctx: ResolveCtx): boolean {
+  if (ctx.externals.has(name)) return false;
+  const binding = ctx.locals.get(name);
+  if (!binding || binding.propKey !== undefined || ctx.consts.get(name) !== binding.source) return false;
+  const source = binding.source;
+  if (!ts.isCallExpression(source) || !ts.isIdentifier(source.expression)) return false;
+  const callee = source.expression.text;
+  return (
+    ctx.imports.has(callee) &&
+    !isFoldableHelperName(callee) &&
+    !ctx.intrinsics.some((i) => i.name === callee) &&
+    !isFoldableFunction(ctx.externals.get(callee))
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -4240,7 +4304,9 @@ function hasObjectIdentity(value: unknown): boolean {
  * back to run, exactly as before #1020.
  */
 async function resolveDeclaratorValue(node: ts.Expression, ctx: ResolveCtx): Promise<{ value: unknown }> {
-  const live = await resolveLiveValue(node, ctx);
+  // chant#3325 — memoized, so an exported `const x = Composite(...)` and a
+  // reference to `x` elsewhere in the file hold the one instance.
+  const live = await resolveMemoized(node, ctx);
   if (live !== undefined) return live;
   const folded = fold(node, ctx.consts, ctx.intrinsics, ctx.externals);
   return { value: await reviveFoldedValue(folded, ctx, false) };

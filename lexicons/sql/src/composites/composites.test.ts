@@ -256,7 +256,6 @@ const EVENTS = `
   export const events = EventsTable({ name: "events", columns: "user_id UUID, kind LowCardinality(String)", orderBy: "(kind, user_id, ts)", ttlDays: 30 });
 `;
 
-/** In its own file: a same-file reference to another composite call's member falls back to run. */
 const DAILY = `
   import { RollupView } from "@intentius/chant-lexicon-sql/clickhouse";
   import { events } from "./events";
@@ -555,7 +554,6 @@ describe("the Postgres composites", () => {
 
 // Provenance through the package import (#3246, #3268)
 
-/** The schema is in its own file: a same-file reference to a folded entity makes the call run. */
 const PG_APP = `
   import { schema } from "@intentius/chant-lexicon-sql/postgres";
 
@@ -570,7 +568,6 @@ const PG_ACCOUNTS = `
   export const notes = TenantTable({ name: "notes", schema: app, columns: "id bigint NOT NULL, body text", primaryKey: "id", indexOn: "id", tenant: "org_id" });
 `;
 
-/** In its own file: a same-file reference to another composite call's member falls back to run. */
 const PG_LINKS = `
   import { JoinTable } from "@intentius/chant-lexicon-sql/postgres";
   import { app } from "./app";
@@ -653,6 +650,64 @@ describe("each Postgres field keeps its provenance when the composite is interpr
       lexicons: ["sql"],
       intrinsics: sqlPlugin.intrinsics?.() ?? [],
     });
+    expect(run.errors).toEqual([]);
+    expect(result.outputs.get("sql")).toEqual(run.outputs.get("sql"));
+  });
+});
+
+// Same-file entities as composite arguments (#3325)
+
+/**
+ * The schema, two composite calls and a third call reading their members, all
+ * in one file: each call folds as it does with the arguments imported.
+ */
+const PG_ONE_FILE = `
+  import { schema, JoinTable, SoftDeleteTable, TenantTable } from "@intentius/chant-lexicon-sql/postgres";
+
+  export const app = schema\`CREATE SCHEMA app\`;
+  export const users = SoftDeleteTable({ name: "users", schema: app, columns: "id bigint PRIMARY KEY, email text NOT NULL", liveKey: "email", deletedAt: "gone_at" });
+  export const notes = TenantTable({ name: "notes", schema: app, columns: "id bigint NOT NULL, body text", primaryKey: "id", indexOn: "id", tenant: "org_id" });
+  export const links = JoinTable({ name: "note_users", schema: app, left: notes.table, leftColumn: "note_id", right: users.table, rightColumn: "user_id" });
+`;
+
+describe("a composite call whose argument is a same-file entity folds (#3325)", () => {
+  let dir: string;
+
+  beforeAll(async () => {
+    const path = join(repoRoot, ".cache", `sql-3325-composites-${process.pid}`);
+    await rm(path, { recursive: true, force: true });
+    await mkdir(join(path, "src"), { recursive: true });
+    dir = await realpath(path);
+    await writeFile(join(dir, "src", "app.ts"), PG_ONE_FILE);
+  });
+
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("each field keeps its parameter, and the output is what running writes", async () => {
+    const options = { lexicons: ["sql"], intrinsics: sqlPlugin.intrinsics?.() ?? [] };
+    const result = await build(join(dir, "src"), [sqlSerializer], undefined, { ...options, fold: true });
+    expect(result.errors).toEqual([]);
+    expect(result.foldDecisions.map((d) => [d.mode, d.reason])).toEqual([["fold", undefined]]);
+    const param = (composite: string, instance: string, ...parameters: string[]) => ({
+      kind: "composite-parameter",
+      composite,
+      instance,
+      parameters,
+    });
+
+    const u = result.foldProvenance.usersTable!.fields;
+    expect(u.name).toEqual(param("SoftDeleteTable", "users", "name"));
+    expect(u.columns).toEqual(param("SoftDeleteTable", "users", "columns", "createdAt", "deletedAt", "updatedAt"));
+    expect(result.foldProvenance.usersLiveIndex!.fields.where).toEqual(param("SoftDeleteTable", "users", "deletedAt"));
+    expect(result.foldProvenance.notesTable!.fields["primaryKey.columns"]).toEqual(param("TenantTable", "notes", "primaryKey", "tenant"));
+    const l = result.foldProvenance.linksTable!.fields;
+    expect(l.name).toEqual(param("JoinTable", "links", "name"));
+    expect(l.foreignKeys).toEqual(param("JoinTable", "links", "leftKey", "rightKey"));
+    expect(l["primaryKey.columns"]).toEqual(param("JoinTable", "links", "leftColumn", "rightColumn"));
+
+    const run = await build(join(dir, "src"), [sqlSerializer], undefined, { ...options, fold: false });
     expect(run.errors).toEqual([]);
     expect(result.outputs.get("sql")).toEqual(run.outputs.get("sql"));
   });
