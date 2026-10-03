@@ -282,7 +282,7 @@ The walk gathers three sources before it relates any of them:
 
 Each gap is a `finding` node with a closed code. For example, a commit made while no decision constrained the region by path is `intent-commit-undecided`, and a region constrained only through its member is `intent-constraint-coarse`.
 
-A decision's window opens at the commit that decided it. That is the commit that last moved its record into an approved state (for the decision kind, `decided`, `ratified` or `superseded`) and kept it there, and for a record added decided, the commit that added it. A record not approved in the history read has no such commit, and its window opens at the commit that added it. The decision node names the deciding commit in `decidedIn`, as `{ sha, date, subject }`, or `null`. The window closes where the window of the record superseding it opens. A commit made inside the window is not taken to carry the decision out ([#2656](https://github.com/INTENTIUS/chant/issues/2656)). It has a `within` edge to the decision and the state `decided-by-window`, unless it is the decision's own work, which is `decided`. A commit is a decision's own work when a [commit join](#commit-joins) gives it a unit, and either the unit or its contract names the decision in `decisions`, or the decision constrains that contract. The [read contract](/chant/reference/workspace-read-contract/#the-intent-graph) lists every node kind, edge kind and code.
+A decision's window opens at the commit that decided it. That is the commit that last moved its record into an approved state (for the decision kind, `decided`, `ratified` or `superseded`) and kept it there, and for a record added decided, the commit that added it. A record not approved in the history read has no such commit, and its window opens at the commit that added it. The decision node names the deciding commit in `decidedIn`, as `{ sha, date, subject }`, or `null`. The window closes where the window of the record superseding it opens. A commit made inside the window is not taken to carry the decision out ([#2656](https://github.com/INTENTIUS/chant/issues/2656)). It has a `within` edge to the decision and the state `decided-by-window`, unless it is the decision's own work, which is `decided`. A commit is a decision's own work when a [commit join](#commit-joins) gives it a unit, and either the unit or its contract names the decision in `decisions`, or the decision constrains that contract. It is also the decision's own work when its [own trailers](#chants-trailers) name the decision, or a work item that implements it. The [read contract](/chant/reference/workspace-read-contract/#the-intent-graph) lists every node kind, edge kind and code.
 
 Pass a work kind too, such as `--kind work/work.kind.mjs`, and the walk adds the work items whose `constrains` cover the region ([#2683](https://github.com/INTENTIUS/chant/issues/2683)). Each is a `work` node with its state, `ready` and `blockedBy`. An `implements` edge runs to each decision it carries out, and a `needs` edge to each item it waits on. Every change to the region made between the item's first commit and the one that marked it done or dropped (or the revision read, while it is open) has a `within` edge to the item with `state: "worked"`, and that change keeps the state the decisions give it. Each finding gets `addressed` and `addressedBy`, with an `addressed-by` edge to each work item closing it, and three findings are added: `intent-decision-unimplemented`, `intent-work-blocked` and `intent-work-open-decided-code`. [Work items](/chant/guide/work-items/) explains them.
 
@@ -339,6 +339,43 @@ within-other 3536c978 2026-09-27 Smoke the agents' Claude Code: ...; within stud
 27 commits in the window: 0 own, 0 worked, 27 within another record's window, 0 unexplained; 88 outside it
 ```
 
+### chant's trailers
+
+A commit can point at the lease, the agent run and the records behind it with chant's own trailers ([#3149](https://github.com/INTENTIUS/chant/issues/3149), [ws-075](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-075-commit-trailers.md)). chant never makes the commit: whoever does adds the lines, and the walk reads them back with no plugin.
+
+| Trailer | Value | What the walk does with it |
+|---|---|---|
+| `Chant-Agent` | an agent session the declaration names | reports it; [write scope](/chant/reference/workspace-declaration/#write-scope-and-agent-sessions) judges the commit as that session |
+| `Chant-Lease` | a work lease's fencing token | finds the work item in the lease histories on the local `chant/lifecycle` branch, and links the commit to it |
+| `Chant-Run` | an agent run's id | reports it ([#3033](https://github.com/INTENTIUS/chant/issues/3033)) |
+| `Chant-Record` | `<kind>:<id>`, such as `work:W-001` or `decision:ws-075`; repeatable | links the commit to the record when a kind read has it |
+| `Chant-Applied-By`, `Chant-Applied-At`, `Chant-Applied-Commit` | who applied a leased branch, when, and the tip that was applied | reports them on the commit that applied it |
+
+Each commit node has `joins` with what these say. A record or a lease's work item that a kind read has gets a `carries` edge from the commit, and the commit counts as the own work of the decision it names, or of each decision the work item implements. In the one-record walk, that commit's bucket is `own`. A `Chant-Record` whose kind isn't read stays in `joins.records` with `node: null`.
+
+A factory commit, and the commit that applies its branch, look like this:
+
+```
+W-012: build C-003 (claude-code)
+
+Chant-Agent: factory
+Chant-Lease: 6f1d0c2a-3b4e-4f6a-9d1e-0a2b3c4d5e6f
+Chant-Run: 20261003T061522Z-3f9a1c2e
+Chant-Record: work:W-012
+Chant-Record: contract:C-003
+Chant-Record: evidence:9c0f3e...
+```
+
+```
+W-012: apply chant/work/W-012
+
+Chant-Record: work:W-012
+Chant-Lease: 6f1d0c2a-3b4e-4f6a-9d1e-0a2b3c4d5e6f
+Chant-Applied-By: alice
+Chant-Applied-At: 2026-10-03T06:20:00Z
+Chant-Applied-Commit: 4b8e1f0c9a7d6e5f4c3b2a1908f7e6d5c4b3a291
+```
+
 ### Commit joins
 
 Units of work, contracts and evidence come from a plugin, because core has no model of them. A kind file given with `--kind` supplies them through its `commitJoins` export. The file may also export a `recordKind`, or only `commitJoins`.
@@ -379,7 +416,7 @@ export function commitJoins(commit, context) {
 }
 ```
 
-Core reads trailers as git parses them and gives no key a meaning of its own. A commit that carries an authorship trailer and is not `attested` is the finding `intent-trailer-unverified`. A join that throws leaves that commit without its unit, adds the reason `intent-plugin-failed`, and makes the command exit 1 with the document still printed. A finding code outside the kind's namespace counts as a throw.
+Apart from [chant's own trailers](#chants-trailers), core reads trailers as git parses them and gives no key a meaning of its own. A commit that carries an authorship trailer and is not `attested` is the finding `intent-trailer-unverified`. A join that throws leaves that commit without its unit, adds the reason `intent-plugin-failed`, and makes the command exit 1 with the document still printed. A finding code outside the kind's namespace counts as a throw.
 
 ## Options
 
