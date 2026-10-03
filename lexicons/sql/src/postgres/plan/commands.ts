@@ -9,7 +9,7 @@
  */
 
 import { bindPostgres, loadSqlConfig, type BindOptions } from "../live/bind";
-import { readLiveSchema } from "../live/catalog";
+import { markProviderOwned, readLiveSchema } from "../live/catalog";
 import { scopeFor } from "../live/describe-resources";
 import { diffPgSchemas, type PgSchemaDiff } from "./diff";
 import { renderPgDiff } from "./report";
@@ -44,7 +44,7 @@ export async function planPgAgainstServer(environment: string, buildFile: string
       target,
       declared.map((o) => ({ type: POSTGRES_ENTITY_TYPES[o.canonical.kind], props: { name: o.canonical.name, ...(o.canonical.schema ? { schema: o.canonical.schema } : {}) } })),
     );
-    const live = pgSchemaFromLive(await readLiveSchema(client, { schemas: scope }), target.defaultSchema);
+    const live = pgSchemaFromLive(markProviderOwned(await readLiveSchema(client, { schemas: scope }), target.provider), target.defaultSchema);
     const liveByKey = new Map(live.map((o) => [o.key, o]));
     const normalized: PgSchemaObject[] = [];
     for (const o of declared) {
