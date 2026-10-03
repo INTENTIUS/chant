@@ -18,12 +18,25 @@ import { renderDiff } from "../clickhouse/plan/report";
 import { rebuildOpSuggestions } from "../clickhouse/plan/rebuild-handoff";
 import { CLASSIFIER_RULES } from "../clickhouse/plan/rules";
 import { schemaFromBuildFile, schemaFromBuildOutput } from "../clickhouse/plan/schema";
+import { POSTGRES_KINDS, POSTGRES_TAGS, postgresLookup, postgresMcpResources, postgresParse, postgresSearch } from "./postgres";
 import { CLICKHOUSE_IMAGE_DIGEST, CLICKHOUSE_VERSION, clickhouseImage } from "../spec/pin";
 
 const KINDS = ["engine", "database-engine", "type", "codec", "index-type", "setting", "function", "format"] as const;
 type Kind = (typeof KINDS)[number];
 
-const kindProp = { type: "string", enum: [...KINDS], description: "Which part of the catalog: " + KINDS.join(", ") };
+const kindProp = {
+  type: "string",
+  enum: [...new Set([...KINDS, ...POSTGRES_KINDS])],
+  description: `Which part of the catalog. ClickHouse: ${KINDS.join(", ")}. Postgres: ${POSTGRES_KINDS.join(", ")}`,
+};
+const dialectProp = { type: "string", enum: ["clickhouse", "postgres"], description: "The dialect to answer for (default clickhouse)" };
+const majorProp = { type: "number", description: "Postgres only: answer for this major (14 to 18); omitted, every major, with since/until on names not in all" };
+
+function asDialect(value: unknown): "clickhouse" | "postgres" {
+  if (value === undefined || value === "clickhouse") return "clickhouse";
+  if (value === "postgres") return "postgres";
+  throw new Error("dialect must be clickhouse or postgres");
+}
 
 type Row = { name: string; summary?: string };
 
@@ -62,11 +75,12 @@ function asKind(value: unknown): Kind {
 const lookupTool: McpToolContribution = {
   name: "lookup",
   description:
-    "Look up a ClickHouse engine, type family, codec, skip index type, setting, function or format by name in the catalog of the pinned server (" +
+    "Look up a catalog entry by name. ClickHouse (default): engine, type family, codec, skip index type, setting, function or format, from the pinned server (" +
     CLICKHOUSE_VERSION +
-    "). Returns every catalog row with that name, or the closest names when there is none.",
-  inputSchema: { type: "object", properties: { kind: kindProp, name: { type: "string" } }, required: ["kind", "name"] },
+    "). Postgres (dialect postgres): type or alias, index or table access method, storage parameter, setting, function, key word or extension, from the pinned servers of majors 14 to 18, with since/until. Returns every catalog row with that name, or the closest names when there is none.",
+  inputSchema: { type: "object", properties: { dialect: dialectProp, kind: kindProp, name: { type: "string" }, major: majorProp }, required: ["kind", "name"] },
   async handler(params) {
+    if (asDialect(params.dialect) === "postgres") return postgresLookup(params);
     const kind = asKind(params.kind);
     const name = String(params.name ?? "");
     const all = rows(kind);
@@ -80,13 +94,14 @@ const lookupTool: McpToolContribution = {
 
 const searchTool: McpToolContribution = {
   name: "search",
-  description: "Search one part of the ClickHouse catalog by a name substring. Returns names with the first line of their description.",
+  description: "Search one part of a dialect's catalog by a name substring. Returns names with the first line of their description.",
   inputSchema: {
     type: "object",
-    properties: { kind: kindProp, query: { type: "string" }, limit: { type: "number", description: "At most this many results (default 25)" } },
+    properties: { dialect: dialectProp, kind: kindProp, query: { type: "string" }, major: majorProp, limit: { type: "number", description: "At most this many results (default 25)" } },
     required: ["kind", "query"],
   },
   async handler(params) {
+    if (asDialect(params.dialect) === "postgres") return postgresSearch(params);
     const kind = asKind(params.kind);
     const query = String(params.query ?? "").toLowerCase();
     const limit = Math.max(1, Math.min(200, Number(params.limit ?? 25)));
@@ -102,11 +117,12 @@ const searchTool: McpToolContribution = {
 const parseTool: McpToolContribution = {
   name: "parse-ddl",
   description:
-    "Parse one ClickHouse CREATE statement the way the table, view or database tag does, and return the entity it builds (columns, engine, keys, settings, and for a view its lineage). A statement that does not parse comes back as the error with its line and column, the same one SQLCH001 reports. The statement is plain DDL: there are no interpolations.",
+    "Parse one CREATE statement the way its tag does (dialect clickhouse, the default: table, view, database; dialect postgres: schema, table, index, view, sequence, type, domain, extension), and return the entity it builds (columns, engine, keys, settings, and for a view its lineage). A statement that does not parse comes back as the error with its line and column, the same one SQLCH001 (ClickHouse) or SQLPG001 (Postgres) reports. The statement is plain DDL: there are no interpolations.",
   inputSchema: {
     type: "object",
     properties: {
-      tag: { type: "string", enum: ["table", "view", "database"], description: "The tag the statement belongs in" },
+      dialect: dialectProp,
+      tag: { type: "string", enum: [...new Set(["table", "view", "database", ...POSTGRES_TAGS])], description: "The tag the statement belongs in (ClickHouse: table, view, database; Postgres: " + POSTGRES_TAGS.join(", ") + ")" },
       ddl: { type: "string", description: "The CREATE statement" },
     },
     required: ["tag", "ddl"],
@@ -114,6 +130,7 @@ const parseTool: McpToolContribution = {
   async handler(params) {
     const ddl = String(params.ddl ?? "");
     const tag = String(params.tag);
+    if (asDialect(params.dialect) === "postgres") return postgresParse(tag, ddl, position);
     const build = tag === "table" ? table : tag === "view" ? view : tag === "database" ? database : undefined;
     if (!build) throw new Error("tag must be table, view or database");
     const strings = Object.assign([ddl], { raw: [ddl] }) as unknown as TemplateStringsArray;
@@ -211,6 +228,7 @@ export function sqlMcpResources(): McpResourceContribution[] {
       "lexicon-sql.json",
       "sql",
     ),
+    ...postgresMcpResources(),
     catalogResource("clickhouse-pin", "ClickHouse Pin", "The pinned ClickHouse server the catalog was read from", () => ({
       version: CLICKHOUSE_VERSION,
       image: clickhouseImage(),

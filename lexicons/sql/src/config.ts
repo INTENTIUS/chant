@@ -42,6 +42,7 @@ import { z } from "zod";
 import type { ChantConfig } from "@intentius/chant/config";
 import { PLANNED_SQL_DIALECTS, SQL_DIALECTS } from "./dialects";
 import { POSTGRES_PROVIDERS } from "./postgres/providers/types";
+import { POSTGRES_MAJORS } from "./spec/postgres-pin";
 
 const envRef = z.strictObject({ env: z.string() });
 
@@ -94,6 +95,16 @@ export const sqlConfigSchema = z.strictObject({
    * extension the provider does not allow. Omit it for a self-hosted server.
    */
   provider: providerName.optional(),
+  /**
+   * The Postgres major the project targets. The editor completes and hovers
+   * only what that major has (a function added in 18 is not offered at 16);
+   * without it, the newest supported major is used.
+   */
+  postgresMajor: z
+    .number()
+    .int()
+    .refine((n) => POSTGRES_MAJORS.includes(n), { error: `expected a supported Postgres major (${POSTGRES_MAJORS.join(", ")})` })
+    .optional(),
   /** One server per chant environment. */
   profiles: z.record(z.string(), sqlProfileSchema).optional(),
 });

@@ -158,4 +158,4 @@ rm -rf ops dist
 - [Declaring Tables and Views](../clickhouse-ddl/) covers every kind of object and interpolation.
 - [Importing a Live Server](../importing/) starts from a server that already has a schema.
 - [Applying to a Server](../applying/) covers profiles, prune and the ownership marker.
-- `chant init --lexicon sql` scaffolds a project; `--template events` and `--template cdc` pick the events-and-rollup and CDC-mirror layouts.
+- `chant init --lexicon sql` scaffolds a project; `--template events` and `--template cdc` pick the events-and-rollup and CDC-mirror layouts. The Postgres dialect has `--template postgres` (a schema, two tables with a foreign key, an index and a view), `--template postgres-tenant` (tenant-keyed tables and indexes) and `--template postgres-events` (an events table partitioned by month).

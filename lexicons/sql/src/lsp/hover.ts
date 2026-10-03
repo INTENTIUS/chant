@@ -1,6 +1,7 @@
 import type { HoverContext, HoverInfo } from "@intentius/chant/lsp/types";
 import { lexiconHover, type LexiconEntry } from "@intentius/chant/lsp/lexicon-providers";
 import { catalogIndex } from "./catalog";
+import { postgresHover } from "./postgres";
 import { registryIndex } from "./registry";
 import { resolveReference } from "./refs";
 import { expectAfter, locate, offsetAt, tokensBefore, wordAround } from "./template";
@@ -15,6 +16,8 @@ import { expectAfter, locate, offsetAt, tokensBefore, wordAround } from "./templ
  * Anywhere else, the entity classes from the generated registry.
  */
 export function hover(ctx: HoverContext): HoverInfo | undefined {
+  const pg = postgresHover(ctx);
+  if (pg.handled) return pg.info;
   const at = offsetAt(ctx.content, ctx.position);
   const where = locate(ctx.content, at, fileName(ctx.uri));
   if (where) {
