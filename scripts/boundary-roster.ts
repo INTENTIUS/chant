@@ -133,6 +133,7 @@ export function renderBoundaryPage(rows: RosterRow[]): string {
     "",
     "- chant never listens on a port, never authenticates a person and never renders. `test/no-listener.test.ts` holds `packages/core` to the first and to importing no UI or agent-runtime package.",
     "- hud never parses a record file, never runs git for provenance and never computes drift. It reads only through the [read contract](/chant/reference/workspace-read-contract/) and writes only through chant commands. The suite a reader runs to show it ships in `@intentius/chant` as `@intentius/chant/workspace/conformance`, for any test runner.",
+    "- The repo is the database ([ws-074](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-074-the-repo-is-the-database.md), [#3158](https://github.com/INTENTIUS/chant/issues/3158)). Every durable fact about a workspace, anything a person or agent decided, answered, reviewed, approved, wrote or was attributed with and any configuration of a box or member, is a file in the repo. A tool writes it only through chant's write commands. Outside the repo a tool keeps only secrets in a broker or vault, telemetry, caches and indexes it can rebuild from the repo, and the substrate's own runtime state.",
     "- chud is the transitional owner of the plugin column (jhgaylor/chud#78, #79, #80).",
     "",
     "## The roster",

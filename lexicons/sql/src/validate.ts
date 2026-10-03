@@ -14,6 +14,8 @@ import { fileURLToPath } from "url";
 import { validateLexiconArtifacts, type ValidateCheck, type ValidateResult } from "@intentius/chant/codegen/validate";
 import { CLICKHOUSE_VERSION } from "./spec/pin";
 import { parseCatalog } from "./spec/catalog";
+import { POSTGRES_PINS } from "./spec/postgres-pin";
+import { parseCatalog as parsePostgresCatalog } from "./spec/postgres-catalog";
 
 export type { ValidateCheck, ValidateResult } from "@intentius/chant/codegen/validate";
 
@@ -127,6 +129,20 @@ export async function validate(opts?: { basePath?: string }): Promise<ValidateRe
       ok: false,
       error: err instanceof Error ? err.message : String(err),
     });
+  }
+
+  try {
+    const behind = POSTGRES_PINS.flatMap((pin) => {
+      const snapshot = parsePostgresCatalog(readFileSync(join(basePath, "src", "spec", `postgres-catalog-${pin.major}.snapshot.json`), "utf-8"));
+      return snapshot.version === pin.version ? [] : [`${pin.major}: snapshot ${snapshot.version}, pin ${pin.version}`];
+    });
+    checks.push(
+      behind.length === 0
+        ? { name: "postgres-snapshots-at-pins", ok: true }
+        : { name: "postgres-snapshots-at-pins", ok: false, error: `${behind.join("; ")}; run npm run generate to refresh` },
+    );
+  } catch (err) {
+    checks.push({ name: "postgres-snapshots-readable", ok: false, error: err instanceof Error ? err.message : String(err) });
   }
 
   return { success: checks.every((c) => c.ok), checks };

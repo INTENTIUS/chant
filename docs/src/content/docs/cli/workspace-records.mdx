@@ -11,7 +11,7 @@ This command is the first slice of workspace records ([#2546](https://github.com
 ## Synopsis
 
 ```
-chant workspace records [--kind <kind file>] [--current] [--at <rev>] [--base <rev>] [--require attested] [--json]
+chant workspace records [--kind <kind file>] [--current] [--uncommitted | --at <rev>] [--base <rev>] [--require attested] [--json]
 chant workspace records [--kind <kind file>] --since <rev|session id> [--at <rev>] [--json]
 chant workspace records pin <path>
 chant workspace records new [<kind file>] --from <file|-> [--prefix <prefix>] [--by <name>] [--sign [<key file>]] [--dry-run]
@@ -32,8 +32,9 @@ The command loads only when it runs. A project without workspace files never loa
 |---|---|
 | `--kind <kind file>` | The record kind to read through. The path is resolved against the current directory. Without it, every kind the declaration names (see [Declared kinds](#declared-kinds)). With neither, the command fails with `--kind <kind file> is required`. |
 | `--current` | Leave out records that a closed record supersedes. |
+| `--uncommitted` | List only the records the working tree holds modified or new against `HEAD` (see [Uncommitted records](#uncommitted-records)). Needs a git repository, and takes no `--at` or `--since`. |
 | `--at <rev>` | Read the records as they were at a commit, from the local git object store, and check their pins against the files at that commit. No checkout or network is needed. The kind file and its schema still come from the working tree. |
-| `--base <rev>` | The revision the trust policy is read from (see [Provenance](#provenance)). Defaults to the target branch: `origin/HEAD`, then `main`, then `master`. |
+| `--base <rev>` | The revision the trust policy is read from (see [Provenance](#provenance)), and the target the checkout's `base` is forked from (see [Uncommitted records](#uncommitted-records)). Defaults to the target branch: `origin/HEAD`, then `main`, then `master`. |
 | `--require attested` | Exit 2 unless every record printed is `attested`. |
 | `--since <rev>` | Compare the records at `<rev>` with the records at `--at`, or in the working tree without it, and print what changed (see [What changed between two revisions](#what-changed-between-two-revisions)). A review session's id in place of `<rev>` compares the commits the session opened and closed at (see [What a session changed](#what-a-session-changed)). It takes no `--current`, `--base` or `--require`. |
 | `--json` | Print the result as JSON (see [Output](#output)). Without it, one line per record and a summary. |
@@ -301,6 +302,39 @@ chant workspace records close S-0002
  A session already closed is refused with `record-closed`. One with a verdict naming a record the subjects lack is refused with `session-verdict-unknown-record`. The result names the fields it set in `changed`, and adds `seal: {field, digest}` and `closedRev`. It follows `records-close.schema.json`. As with every write, the caller commits the close.
 
 `amend` can't close a session, because the schema needs the seal. A closed session changes no more: `amend` refuses it with `record-closed`, and the message says to open a new session.
+
+## Uncommitted records
+
+A record a person keeps in hud, or a factory writes on a work branch, stays an uncommitted file in that checkout until someone commits or applies it ([#3158](https://github.com/INTENTIUS/chant/issues/3158), [#3160](https://github.com/INTENTIUS/chant/issues/3160)). A read of the working tree in a git repository says which records those are, so a reader lists "kept, not yet applied" from chant and runs no git of its own. Each record carries a `worktree` value from the table below.
+
+| `worktree` | The record's file |
+|---|---|
+| `committed` | is as `HEAD` holds it |
+| `modified` | differs from what `HEAD` holds, staged or not |
+| `new` | is not in `HEAD`, staged or not |
+
+The document carries `checkout`, the checkout the working tree is on:
+
+```json
+"checkout": {
+  "branch": "chant/work/w-12",
+  "head": "9c41e0d2...",
+  "base": "3f2a91c0...",
+  "baseFrom": "main",
+  "deleted": ["decisions/fix-003-old-choice.md"]
+}
+```
+
+`branch` is the checked-out branch, or `null` when `HEAD` is detached. `head` is the commit `HEAD` names, the one each `worktree` is judged against, or `null` before the first commit, when every record is `new`. `base` is the merge base of `head` and the target branch, the commit the branch forked from, which is what applying the branch is measured against. The target branch is found as it is for provenance, and `baseFrom` names where it came from. `base` is `null` when there is no target or no common history. `deleted` lists the kind's record files that `head` holds and the working tree no longer has. A renamed record is `new` under its new name and in `deleted` under its old one.
+
+`--uncommitted` lists only the `modified` and `new` records. Every record is still read, so a link from an uncommitted record to a committed one resolves as before. The document has `uncommitted: true`, and `summary` counts the records listed. Without `--kind` each declared kind's document is filtered the same way, and the set has no `spec`.
+
+```bash
+# What this checkout holds that HEAD doesn't, in every declared kind
+chant workspace records --uncommitted --json
+```
+
+Under `--at` there is no working tree, so the document has no `checkout` and no record has `worktree`. Outside git neither field is printed, and `--uncommitted` fails with `not-a-git-repository`. The read takes no lock and leaves the index as it was. `chant workspace status --json` names the same `branch`, `head`, `base` and `baseFrom` in its own `checkout`. `chant serve mcp` takes `uncommitted: true` on the `workspace-records` tool.
 
 ## What changed between two revisions
 
@@ -699,6 +733,8 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
   "at": null,
   "workspaceRoot": ".",
   "current": true,
+  "uncommitted": false,
+  "checkout": { "branch": "main", "head": "<full commit id>", "base": "<full commit id>", "baseFrom": "origin/HEAD", "deleted": [] },
   "trust": { "base": "<full commit id>", "baseFrom": "origin/HEAD", "active": false, "signersPath": ".chant/allowed_signers", "problems": [] },
   "records": [
     {
@@ -710,6 +746,7 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
       "supersededBy": null,
       "remediatedBy": [],
       "decidedIn": { "sha": "<full commit id>", "date": "2026-09-20T10:12:03-06:00", "subject": "decide the seal scope" },
+      "worktree": "committed",
       "data": { "id": "ws-003", "title": "Seal scope", "state": "decided" },
       "provenance": { "level": "unattested", "commit": null, "reason": "no signers file (.chant/allowed_signers) at base 5b30a8fb; attestation is off" },
       "assets": [],
@@ -740,7 +777,7 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
 }
 ```
 
-`data` holds the whole front matter, or the whole object for a JSON kind; the example shortens it. `at` is the full commit id when `--at` is given. `trust` and `provenance` were added within contract 1 by [#2547](https://github.com/INTENTIUS/chant/issues/2547), and `workspaceRoot`, `assets` and `warnings` by [#2549](https://github.com/INTENTIUS/chant/issues/2549). `digest` and `quorum` were added by [#2672](https://github.com/INTENTIUS/chant/issues/2672) and [#2671](https://github.com/INTENTIUS/chant/issues/2671), and only a kind with `reviews` has `quorum`. `citedBy`, on a session kind's records only, was added by [#2673](https://github.com/INTENTIUS/chant/issues/2673). `kind.format` was added by [#2664](https://github.com/INTENTIUS/chant/issues/2664), and `kind.spec` and the set's `spec` by [#2546](https://github.com/INTENTIUS/chant/issues/2546) ([The spec](#the-spec)). `ready`, `blockedBy`, `implements` and the document's `decisions` were added by [#2683](https://github.com/INTENTIUS/chant/issues/2683), on a work kind only, and `lease` by [#2732](https://github.com/INTENTIUS/chant/issues/2732). Records of a kind with `reviews` also carry `attested` and `attestation`, and may carry the warning `record-unattested`, since [#2688](https://github.com/INTENTIUS/chant/issues/2688). `remediatedBy` was added by [#2774](https://github.com/INTENTIUS/chant/issues/2774), holding the ids of records whose `remediates` link names this one; it is empty on a kind without `remediates`, and on a record nothing remediates. A record of a kind with `approval` ranks that is not a work kind carries `decidedIn` in a git repository: the commit that last moved it into an approved state and kept it there, as `{ sha, date, subject }`, or `null` when it is not approved in the history read. [The intent graph](/chant/reference/workspace-read-contract/#the-intent-graph) opens the record's window at that commit.
+`data` holds the whole front matter, or the whole object for a JSON kind; the example shortens it. `at` is the full commit id when `--at` is given. `trust` and `provenance` were added within contract 1 by [#2547](https://github.com/INTENTIUS/chant/issues/2547), and `workspaceRoot`, `assets` and `warnings` by [#2549](https://github.com/INTENTIUS/chant/issues/2549). `digest` and `quorum` were added by [#2672](https://github.com/INTENTIUS/chant/issues/2672) and [#2671](https://github.com/INTENTIUS/chant/issues/2671), and only a kind with `reviews` has `quorum`. `citedBy`, on a session kind's records only, was added by [#2673](https://github.com/INTENTIUS/chant/issues/2673). `kind.format` was added by [#2664](https://github.com/INTENTIUS/chant/issues/2664), and `kind.spec` and the set's `spec` by [#2546](https://github.com/INTENTIUS/chant/issues/2546) ([The spec](#the-spec)). `ready`, `blockedBy`, `implements` and the document's `decisions` were added by [#2683](https://github.com/INTENTIUS/chant/issues/2683), on a work kind only, and `lease` by [#2732](https://github.com/INTENTIUS/chant/issues/2732). Records of a kind with `reviews` also carry `attested` and `attestation`, and may carry the warning `record-unattested`, since [#2688](https://github.com/INTENTIUS/chant/issues/2688). `remediatedBy` was added by [#2774](https://github.com/INTENTIUS/chant/issues/2774), holding the ids of records whose `remediates` link names this one; it is empty on a kind without `remediates`, and on a record nothing remediates. A record of a kind with `approval` ranks that is not a work kind carries `decidedIn` in a git repository: the commit that last moved it into an approved state and kept it there, as `{ sha, date, subject }`, or `null` when it is not approved in the history read. [The intent graph](/chant/reference/workspace-read-contract/#the-intent-graph) opens the record's window at that commit. `uncommitted`, `checkout` and each record's `worktree` were added by [#3160](https://github.com/INTENTIUS/chant/issues/3160); a read at a revision or outside git has no `checkout` or `worktree` ([Uncommitted records](#uncommitted-records)).
 
 A failed read prints `{ "$schema", "contract", "error": { "code", "message" } }` instead. Without `--kind`, the output is the set of [Declared kinds](#declared-kinds), added within contract 1 by [#2680](https://github.com/INTENTIUS/chant/issues/2680).
 

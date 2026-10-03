@@ -69,6 +69,19 @@ Some of what `--at` reads still comes from the working tree, which is how it sta
 - Remote revisions and URLs are not read. Fetch first.
 - `status` has no `--at`. It reads the local `chant/lifecycle` branch and names the tip it read.
 
+### Uncommitted records
+
+Work in progress is a file in a work branch's working tree until someone commits or applies it ([#3158](https://github.com/INTENTIUS/chant/issues/3158)). A `records` read of the working tree in a git repository says which records those are, so hud's kept-records view and the studio's apply list read them from chant instead of diffing git ([#3160](https://github.com/INTENTIUS/chant/issues/3160)). Since the release after chant 0.101.0, contract 1 also carries the fields in the table below.
+
+| Field | On | Holds |
+|---|---|---|
+| `worktree` | each record | `committed` when the file is as `HEAD` holds it, `modified` when it differs, `new` when `HEAD` doesn't hold it. Staged and unstaged changes count alike. |
+| `checkout` | the `records` document | `branch` (`null` when detached), `head` (the commit each `worktree` is judged against, `null` before the first commit), `base` (the merge base of `head` and the target branch, `null` without one), `baseFrom` (`flag`, `origin/HEAD`, `main` or `master`) and `deleted` (the kind's record files `head` holds and the working tree doesn't) |
+| `uncommitted` | the `records` document | `true` under `records --uncommitted`, which lists only `modified` and `new` records. The schema then requires `checkout` and a `worktree` of `modified` or `new` on every record. |
+| `checkout` | the `status` document | `branch`, `head`, `base` and `baseFrom`, as above |
+
+A read under `--at` or outside git prints no `checkout` and no `worktree`. `records --uncommitted` refuses `--at` and `--since`, and outside git it fails with the existing code `not-a-git-repository`. The target that `base` is forked from is the one the trust policy is read at, so `--base` moves both. Records without `worktree` come from a chant older than #3160; read them as committed. The read takes no index lock and leaves the index unrefreshed. The [records page](/chant/cli/workspace-records/#uncommitted-records) has an example.
+
 ## Member stamps
 
 A composed member in the `graph` document carries a `stamp`, `sha256:` and 64 hex digits, which is what `chant workspace graph` keys its [member cache](/chant/cli/workspace-graph/#the-member-cache) on ([ws-059](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-059-graph-cache.md)). Two reads of a member with the same stamp read the same source, so a reader can compare stamps between documents to tell which members changed, without taking stamps of its own. The rule is stated here so that every reader means the same thing by it.
@@ -571,7 +584,7 @@ Where the service's telemetry goes is a [telemetry link](/chant/reference/worksp
 
 ## Writing records
 
-A reader writes only through chant commands ([ws-052](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-052-chant-hud-boundary.md)). For records those are [`records new`, `amend`, `review` and `close`](/chant/cli/workspace-records/#writing-records) ([#2670](https://github.com/INTENTIUS/chant/issues/2670), [#2693](https://github.com/INTENTIUS/chant/issues/2693)). Each validates the record it would write the way `records` reads it and then writes one file or none, leaving the commit to the caller. `review --session` is the one exception, and it writes the decision and the session together. The document each prints follows its own schema:
+A reader writes only through chant commands ([ws-052](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-052-chant-hud-boundary.md)), and so does every other tool, because the repo is the database ([ws-074](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-074-the-repo-is-the-database.md)). Every durable fact about a workspace is a file in the repo, work in progress is uncommitted files in the working tree of the active work branch, and a tool keeps only secrets, telemetry, rebuildable caches and its substrate's runtime state outside it. How a reader tells uncommitted records from committed ones is [#3160](https://github.com/INTENTIUS/chant/issues/3160), and the suite that holds a writer to this is [#3159](https://github.com/INTENTIUS/chant/issues/3159). For records those are [`records new`, `amend`, `review` and `close`](/chant/cli/workspace-records/#writing-records) ([#2670](https://github.com/INTENTIUS/chant/issues/2670), [#2693](https://github.com/INTENTIUS/chant/issues/2693)). Each validates the record it would write the way `records` reads it and then writes one file or none, leaving the commit to the caller. `review --session` is the one exception, and it writes the decision and the session together. The document each prints follows its own schema:
 
 | Command | Schema `$id` | Result |
 |---|---|---|
@@ -600,6 +613,8 @@ A reader such as hud reads only through this contract and writes only through ch
 |---|---|
 | `@intentius/chant/workspace/conformance` | any test runner: `runWorkspaceReaderConformance` returns the problems, and `checkReaderRead` checks one read. It imports no runner and loads under plain `node` |
 | `@intentius/chant/workspace/conformance/vitest` | vitest: `describeWorkspaceReaderConformance` adds one test per command. Only this entry imports vitest |
+
+`READ_CONTRACT_COMMANDS` lists the read commands covered, and since [#3160](https://github.com/INTENTIUS/chant/issues/3160) it includes `records --uncommitted`. A reader runs it as `workspace records --uncommitted <args> --json`. That document is held to the records schema, which requires `checkout` when `uncommitted` is true and a `worktree` on every record.
 
 The suite builds the reader from a function you pass, giving it a transport that runs chant in the workspace. The reader's `read(command, args)` runs one contract command through the transport and returns the parsed document. `commands` lists the commands the reader reads. The suite reads only those, and the report names the others in `skipped` as not applicable.
 
@@ -642,4 +657,4 @@ The reader never gets the workspace's path, so the transport is its only route t
 
 With `over: "mcp"`, the same reader's calls are answered by `chant serve mcp` ([#2707](https://github.com/INTENTIUS/chant/issues/2707)). The transport starts one server session in the workspace and turns each call into the workspace tool that answers it, such as `workspace-records` for `workspace records --kind <kind> --json`. It also runs the command itself, and the suite fails when the tool's document differs from the command's. `check` has no tool, so over MCP it is not applicable.
 
-Outside the chant repository the suite writes a workspace to a temporary directory and removes it afterwards. The workspace is copied from the fixture in `src/workspace/conformance/__fixture__/` of `@intentius/chant`. Its chant member declares one composite and the component that deploys it, and its `decisions/` directory holds one decision. `chant workspace init --yes` declares it, and git commits it. Inside the chant repository the suite reads `reference-workspace/`. Both have the files the suite's arguments name, such as `decisions/decision.kind.mjs` and `app/src/server.mjs:19`. `workspaceDir` names another workspace with those files. `chantCommand` names the chant to run. By default that is the first `node_modules/.bin/chant` above the current directory, then the chant the suite came with.
+Outside the chant repository the suite writes a workspace to a temporary directory and removes it afterwards. The workspace is copied from the fixture in `src/workspace/conformance/__fixture__/` of `@intentius/chant`. Its chant member declares one composite and the component that deploys it, and its `decisions/` directory holds one decision. `chant workspace init --yes` declares it, and git commits it on `main`. The suite then writes a second decision, `fix-002`, proposed, and leaves it uncommitted, so `records --uncommitted` lists one record. `createConformanceWorkspace()` called directly leaves it out unless given `uncommitted: true`, so a test that writes records there allocates the ids it did before. Inside the chant repository the suite reads `reference-workspace/`. Both have the files the suite's arguments name, such as `decisions/decision.kind.mjs` and `app/src/server.mjs:19`. `workspaceDir` names another workspace with those files. `chantCommand` names the chant to run. By default that is the first `node_modules/.bin/chant` above the current directory, then the chant the suite came with.

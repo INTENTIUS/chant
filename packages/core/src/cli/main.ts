@@ -102,6 +102,7 @@ const BOOLEAN_FLAGS = new Set([
   "--durable-requests",
   "--skip-mcp",
   "--current",
+  "--uncommitted",
   "--allow-code",
   "--root-only",
   "--generated",
@@ -415,6 +416,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       if (!result.severity || result.severity.startsWith("-")) throw new Error("--severity needs off, warn or fail");
     } else if (arg === "--current") {
       result.current = true;
+    } else if (arg === "--uncommitted") {
+      // `chant workspace records --uncommitted` (#3160)
+      result.uncommitted = true;
     } else if (arg === "--set") {
       // `chant workspace records amend <id> --set <file|->` (#2670)
       result.set = args[++i];
@@ -864,7 +868,7 @@ Workspace (level 1, #2524):
                         beside it and marks the members whose digests differ.
                         Read only; never fetches. --json prints the
                         read-contract document
-  workspace records [--kind <kind file>] [--current] [--at <rev>] [--base <rev>] [--require attested] [--json]
+  workspace records [--kind <kind file>] [--current] [--uncommitted | --at <rev>] [--base <rev>] [--require attested] [--json]
                         Without --kind, every record kind the declaration
                         names. Read the records a record kind locates, validated
                         against its schema, with reason codes for invalid
@@ -874,7 +878,10 @@ Workspace (level 1, #2524):
                         the signers at --base (default: the target branch);
                         --require attested exits 2 if any record is not
                         attested. A pinned file that changed is a warning,
-                        asset-drift or asset-missing
+                        asset-drift or asset-missing. In the working tree,
+                        each record says whether it is committed, modified
+                        or new against HEAD, with the branch and base;
+                        --uncommitted lists only the modified and new ones
   workspace records [--kind <kind file>] --since <rev|session id> [--at <rev>] [--json]
                         What changed in the records between <rev> and --at
                         (default: the working tree): new and removed records,
