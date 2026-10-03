@@ -86,7 +86,13 @@ The import builds and plans as no change against the server it came from, becaus
 
 ### Objects another tool keeps
 
-An ORM's or migration runner's revision table is read and marked with the tool's name: `_prisma_migrations`, `schema_migrations`, `ar_internal_metadata`, `django_migrations`, `alembic_version`, `__drizzle_migrations`, `flyway_schema_history`, `goose_db_version`, `knex_migrations`, `SequelizeMeta` and `pgmigrations`, with their sequences and indexes. Import leaves them out, since a declaration of them would have chant change what that tool owns. The exporter attaches a warning naming each one and its tool, but `chant import --from` does not print an exporter's warnings yet ([#3336](https://github.com/INTENTIUS/chant/issues/3336)), so the table is left out without a message. `chant lifecycle diff --live` reports such a table `foreign`, and a plan never proposes dropping it.
+An ORM's or migration runner's revision table is read and marked with the tool's name: `_prisma_migrations`, `schema_migrations`, `ar_internal_metadata`, `django_migrations`, `alembic_version`, `__drizzle_migrations`, `flyway_schema_history`, `goose_db_version`, `knex_migrations`, `SequelizeMeta` and `pgmigrations`, with their sequences and indexes. Import leaves them out, since a declaration of them would have chant change what that tool owns. The import says so on stderr, naming the table and its tool:
+
+```
+warning: public._prisma_migrations is kept by Prisma Migrate; left out, since declaring it would have chant change what that tool owns
+```
+
+`chant lifecycle diff --live` reports such a table `foreign`, and a plan never proposes dropping it.
 
 A managed provider's own objects read the same way when `sql.provider` (or the profile's `provider`) names it: the schemas it reserves and everything in them, and the extensions it installs itself. With `provider: "supabase"`, the `auth` schema and its tables are not imported. See [Managed Providers](../postgres-providers/) for each provider's lists.
 
