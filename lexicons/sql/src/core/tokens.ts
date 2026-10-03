@@ -13,9 +13,10 @@
  * Shared by every dialect. What differs at the character level (which quotes
  * make an identifier, whether a backslash escapes, the punctuation and
  * operator characters) is a dialect's {@link LexicalRules}; ClickHouse's are
- * `../clickhouse/tokens.ts`. The parser #3278 measured needs more rules than
- * ClickHouse does (dollar quotes, `E'...'` strings, nested comments); they
- * arrive with that dialect.
+ * `../clickhouse/tokens.ts`, Postgres's `../postgres/tokens.ts`. The rules
+ * Postgres adds (#3278: dollar quotes, `E'...'` strings, nested comments,
+ * `$1` parameters, its number syntax) are optional fields, off unless a
+ * dialect sets them, so ClickHouse tokenizes exactly as before.
  */
 
 export type TokenKind =
@@ -32,7 +33,9 @@ export type TokenKind =
   /** Any other run of operator characters. */
   | "op"
   /** An interpolation. */
-  | "ref";
+  | "ref"
+  /** A positional parameter, `$1` (Postgres). */
+  | "param";
 
 export interface Token {
   kind: TokenKind;
@@ -74,7 +77,37 @@ export interface LexicalRules {
   punct: string;
   /** The characters an operator run is made of. */
   opChars: RegExp;
+  /**
+   * Prefixed string constants (Postgres): `E'...'`, where a backslash escapes,
+   * `B'...'` and `X'...'` bit strings, `N'...'`, and `U&'...'` / `U&"..."`
+   * with Unicode escapes. Each is one token, its prefix included.
+   */
+  prefixedStrings?: boolean;
+  /** `$$...$$` and `$tag$...$tag$` strings, and `$1` parameters (Postgres). */
+  dollarQuotes?: boolean;
+  /** Block comments nest: a comment opened inside a block comment needs its own close (Postgres). */
+  nestedComments?: boolean;
+  /**
+   * How a number reads. `digit-names` (the default): a number may run into
+   * letters, so `00662_events` is one token, which the ClickHouse parser
+   * accepts as a name. `sql`: `42`, `3.5`, `.5`, `1e-3`, `0x1F`, `0o17`,
+   * `0b101` and `1_000_000`, and a number never runs into a name (Postgres).
+   */
+  numbers?: "digit-names" | "sql";
+  /** Identifiers may hold letters outside ASCII, as Postgres's do. */
+  unicodeIdentifiers?: boolean;
+  /**
+   * A multi-character operator cannot end in `+` or `-` unless it also holds
+   * one of `~ ! @ # % ^ & | \` ?` (Postgres, "Lexical Structure"), so
+   * `=-30` is `=` then `-30`.
+   */
+  operatorsEndWithoutSign?: boolean;
 }
+
+const IDENT_START_ASCII = /[A-Za-z_$]/;
+const IDENT_PART_ASCII = /[A-Za-z0-9_$]/;
+const IDENT_START_UNICODE = /[A-Za-z_\u0080-\uffff]/;
+const IDENT_PART_UNICODE = /[A-Za-z0-9_$\u0080-\uffff]/;
 
 /** Tokenize one string. `part` is the part index recorded on each token and on an error. */
 export function tokenizeText(src: string, part: number, rules: LexicalRules): Token[] {
@@ -82,6 +115,29 @@ export function tokenizeText(src: string, part: number, rules: LexicalRules): To
   let i = 0;
   const push = (kind: TokenKind, start: number, end: number) =>
     tokens.push({ kind, text: src.slice(start, end), part, start, end });
+  const identStart = rules.unicodeIdentifiers ? IDENT_START_UNICODE : IDENT_START_ASCII;
+  const identPart = rules.unicodeIdentifiers ? IDENT_PART_UNICODE : IDENT_PART_ASCII;
+
+  /** The index after the quote that closes the one at `at`. A doubled quote is an escaped quote. */
+  const quoted = (at: number, q: string, backslash: boolean): number => {
+    let j = at + 1;
+    for (;;) {
+      if (j >= src.length) throw new SqlSyntaxError(`unterminated ${q} quote`, part, at);
+      if (backslash && src[j] === "\\") {
+        j += 2;
+        continue;
+      }
+      if (src[j] === q) {
+        if (src[j + 1] === q) {
+          j += 2;
+          continue;
+        }
+        return j + 1;
+      }
+      j++;
+    }
+  };
+
   while (i < src.length) {
     const c = src[i]!;
     const start = i;
@@ -92,46 +148,86 @@ export function tokenizeText(src: string, part: number, rules: LexicalRules): To
       while (i < src.length && src[i] !== "\n") i++;
       push("comment", start, i);
     } else if (c === "/" && src[i + 1] === "*") {
-      const close = src.indexOf("*/", i + 2);
-      if (close < 0) throw new SqlSyntaxError("unterminated /* comment", part, start);
-      i = close + 2;
-      push("comment", start, i);
-    } else if (c === "'" || rules.identQuotes.includes(c)) {
-      i++;
-      for (;;) {
-        if (i >= src.length) throw new SqlSyntaxError(`unterminated ${c} quote`, part, start);
-        if (rules.backslashEscapes && src[i] === "\\") {
-          i += 2;
-          continue;
-        }
-        if (src[i] === c) {
-          // A doubled quote is an escaped quote.
-          if (src[i + 1] === c) {
+      if (rules.nestedComments) {
+        let depth = 1;
+        i += 2;
+        while (depth > 0) {
+          if (i >= src.length) throw new SqlSyntaxError("unterminated /* comment", part, start);
+          if (src[i] === "*" && src[i + 1] === "/") {
+            depth--;
             i += 2;
-            continue;
-          }
-          i++;
-          break;
+          } else if (src[i] === "/" && src[i + 1] === "*") {
+            depth++;
+            i += 2;
+          } else i++;
         }
-        i++;
+      } else {
+        const close = src.indexOf("*/", i + 2);
+        if (close < 0) throw new SqlSyntaxError("unterminated /* comment", part, start);
+        i = close + 2;
       }
+      push("comment", start, i);
+    } else if (rules.prefixedStrings && /[EeBbXxNn]/.test(c) && src[i + 1] === "'" && !(start > 0 && identPart.test(src[start - 1]!))) {
+      i = quoted(i + 1, "'", c === "E" || c === "e");
+      push("string", start, i);
+    } else if (rules.prefixedStrings && /[Uu]/.test(c) && src[i + 1] === "&" && (src[i + 2] === "'" || src[i + 2] === '"') && !(start > 0 && identPart.test(src[start - 1]!))) {
+      const q = src[i + 2]!;
+      i = quoted(i + 2, q, false);
+      push(q === "'" ? "string" : "qident", start, i);
+    } else if (c === "'" || rules.identQuotes.includes(c)) {
+      i = quoted(i, c, rules.backslashEscapes);
       push(c === "'" ? "string" : "qident", start, i);
-    } else if (/[0-9]/.test(c)) {
+    } else if (rules.dollarQuotes && c === "$" && /[0-9]/.test(src[i + 1] ?? "")) {
+      i++;
+      while (i < src.length && /[0-9]/.test(src[i]!)) i++;
+      push("param", start, i);
+    } else if (rules.dollarQuotes && c === "$" && /^\$([A-Za-z_\u0080-\uffff][A-Za-z0-9_\u0080-\uffff]*)?\$/.test(src.slice(i))) {
+      const delimiter = /^\$([A-Za-z_\u0080-\uffff][A-Za-z0-9_\u0080-\uffff]*)?\$/.exec(src.slice(i))![0];
+      const close = src.indexOf(delimiter, i + delimiter.length);
+      if (close < 0) throw new SqlSyntaxError(`unterminated ${delimiter} string`, part, start);
+      i = close + delimiter.length;
+      push("string", start, i);
+    } else if (rules.numbers === "sql" && (/[0-9]/.test(c) || (c === "." && /[0-9]/.test(src[i + 1] ?? "")))) {
+      if (/^0[xXoObB]/.test(src.slice(i, i + 2))) {
+        i += 2;
+        while (i < src.length && /[0-9A-Fa-f_]/.test(src[i]!)) i++;
+      } else {
+        while (i < src.length && /[0-9_]/.test(src[i]!)) i++;
+        if (src[i] === "." && src[i + 1] !== ".") {
+          i++;
+          while (i < src.length && /[0-9_]/.test(src[i]!)) i++;
+        }
+        if (/[eE]/.test(src[i] ?? "") && /^([0-9]|[+-][0-9])/.test(src.slice(i + 1, i + 3))) {
+          i += 2;
+          while (i < src.length && /[0-9]/.test(src[i]!)) i++;
+        }
+      }
+      push("number", start, i);
+    } else if (rules.numbers !== "sql" && /[0-9]/.test(c)) {
       // `1.5`, `1e3`, `0x1F`; and a name that starts with a digit (`00662_events`), which the parser accepts as a name.
       while (i < src.length && /[0-9a-zA-Z_.]/.test(src[i]!)) {
         if (src[i] === "." && !/[0-9]/.test(src[i + 1] ?? "")) break;
         i++;
       }
       push("number", start, i);
-    } else if (/[A-Za-z_$]/.test(c)) {
-      while (i < src.length && /[A-Za-z0-9_$]/.test(src[i]!)) i++;
+    } else if (identStart.test(c)) {
+      while (i < src.length && identPart.test(src[i]!)) i++;
       push("ident", start, i);
     } else if (rules.punct.includes(c)) {
       i++;
       push("punct", start, i);
     } else {
-      while (i < src.length && rules.opChars.test(src[i]!) && !(src[i] === "-" && src[i + 1] === "-")) i++;
+      while (
+        i < src.length &&
+        rules.opChars.test(src[i]!) &&
+        !(src[i] === "-" && src[i + 1] === "-") &&
+        !(rules.nestedComments && src[i] === "/" && src[i + 1] === "*")
+      )
+        i++;
       if (i === start) i++;
+      if (rules.operatorsEndWithoutSign && i - start > 1 && !/[~!@#%^&|`?]/.test(src.slice(start, i))) {
+        while (i - start > 1 && /[+-]/.test(src[i - 1]!)) i--;
+      }
       push("op", start, i);
     }
   }

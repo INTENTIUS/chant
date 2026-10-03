@@ -69,6 +69,29 @@ describeAllExamples(
         });
       },
     },
+    "postgres-getting-started": {
+      checks: (output) => {
+        const doc = JSON.parse(output) as Doc & { dialect: string };
+        expect(doc.dialect).toBe("postgres");
+        // The schema first; each table after what it references; the view after both tables; the index after its table.
+        expect(doc.applyOrder).toEqual(["app", "invoiceSeq", "orderStatus", "users", "orders", "orderTotals", "ordersUserId"]);
+        expect(objectOf(doc, "orders")).toMatchObject({
+          foreignKeys: [{ columns: ["user_id"], references: "users", refTable: "app.users", refColumns: ["id"], onDelete: "CASCADE" }],
+        });
+        // The sequence is interpolated, so it is a dependency, and it renders as the catalog prints it.
+        expect(objectOf(doc, "orders").dependsOn).toContain("invoiceSeq");
+        expect((objectOf(doc, "orders").columns as Array<{ name: string; default?: string }>).find((c) => c.name === "invoice_no")?.default).toBe(
+          "nextval('app.invoice_seq'::regclass)",
+        );
+        expect(objectOf(doc, "orderTotals").lineage).toEqual([
+          { output: "user_id", expr: "u.id", from: ["users.id"] },
+          { output: "email", expr: "u.email", from: ["users.email"] },
+          { output: "order_count", expr: "count(o.id)", from: ["orders.id"] },
+          { output: "total", expr: "coalesce(sum(o.amount), 0)", from: ["orders.amount"] },
+        ]);
+        expect(objectOf(doc, "users")).toMatchObject({ comment: "One row per account" });
+      },
+    },
     "rebuild-migration": {
       checks: (output) => {
         const doc = docOf(output);

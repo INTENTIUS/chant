@@ -1,0 +1,50 @@
+/**
+ * `@intentius/chant-lexicon-sql/postgres`: the Postgres dialect (#3289).
+ *
+ * Everything here is spec-true to Postgres, not a database-agnostic model:
+ * the statements are Postgres's own DDL, parsed at build time into entities,
+ * and the names fold and quote as Postgres folds and quotes them.
+ */
+
+export {
+  schema,
+  table,
+  index,
+  view,
+  sequence,
+  type,
+  domain,
+  extension,
+  literal,
+  SqlLiteral,
+  SqlTemplateError,
+  PostgresObject,
+  POSTGRES_ENTITY_TYPES,
+  isPostgresObject,
+  isColumnRef,
+  quoteIdent,
+  type PostgresEntityType,
+  type PostgresSchema,
+  type PostgresRelation,
+  type PostgresTable,
+  type PostgresView,
+  type PostgresIndex,
+  type PostgresSequence,
+  type PostgresEnum,
+  type PostgresDomain,
+  type PostgresExtension,
+  type ColumnDef,
+  type KeyDef,
+  type CheckDef,
+  type ForeignKeyDef,
+  type ExclusionDef,
+  type SchemaProps,
+  type TableProps,
+  type IndexProps,
+  type ViewProps,
+  type SequenceProps,
+  type EnumProps,
+  type DomainProps,
+  type ExtensionProps,
+  type LineageEdge,
+} from "./postgres/entities";

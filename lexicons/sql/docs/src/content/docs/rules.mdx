@@ -6,7 +6,7 @@ description: "Every lint rule and post-synth check provided by the SQL lexicon"
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-sql` — DO NOT EDIT.
     Edit lexicons/sql/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-The SQL lexicon provides **23** rules: 3 lint rules and 20 post-synth checks.
+The SQL lexicon provides **26** rules: 6 lint rules and 20 post-synth checks.
 
 ## Lint Rules
 
@@ -15,6 +15,9 @@ The SQL lexicon provides **23** rules: 3 lint rules and 20 post-synth checks.
 | `SQLCH001` | error | correctness | the DDL in a `database`, `table` or `view` template does not parse, or holds another statement than its tag. |
 | `SQLCH002` | error | correctness | a `Nullable` column in a table's sort key or primary key. |
 | `SQLCH003` | error | correctness | a column written as `$\{events.kind\}` instead of `$\{events.columns.kind\}`. |
+| `SQLPG001` | error | correctness | the DDL in a Postgres template does not parse, or does not hold |
+| `SQLPG002` | error | correctness | a column written as `$\{events.kind\}` instead of `$\{events.columns.kind\}`. |
+| `SQLPG003` | warning | correctness | an object named in a string where Postgres reads a `regclass`: |
 
 ## Post-Synth Checks
 

@@ -18,7 +18,21 @@ import { parseCatalog } from "./spec/catalog";
 export type { ValidateCheck, ValidateResult } from "@intentius/chant/codegen/validate";
 
 /** The entity kinds the registry must carry. */
-const REQUIRED_ENTITIES = ["Database", "Table", "View", "MaterializedView"];
+const REQUIRED_ENTITIES = [
+  "Database",
+  "Table",
+  "View",
+  "MaterializedView",
+  "PostgresSchema",
+  "PostgresTable",
+  "PostgresIndex",
+  "PostgresView",
+  "PostgresMaterializedView",
+  "PostgresSequence",
+  "PostgresEnum",
+  "PostgresDomain",
+  "PostgresExtension",
+];
 
 /** Engines a ClickHouse schema declares most: the MergeTree family and the engines beside it. */
 const REQUIRED_ENGINES = [

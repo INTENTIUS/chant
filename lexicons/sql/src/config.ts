@@ -27,10 +27,10 @@
  * their dialect in their own type (a ClickHouse table is `ClickHouse::Table`),
  * so the setting is for the things a declaration cannot answer: which dialect
  * a live environment is read as on import, and which dialect's checks run on
- * output that names none. It defaults to `clickhouse`, the only dialect so far.
- * A list (`dialect: ["clickhouse"]`) is accepted for a project with members
- * of more than one dialect (#3047 question 1); `postgres` is refused as not
- * implemented yet until its first slice lands (#3279).
+ * output that names none. It defaults to `clickhouse`, the first dialect.
+ * `postgres` is the second (#3289). A list (`dialect: ["clickhouse",
+ * "postgres"]`) is accepted for a workspace with members of more than one
+ * dialect (#3047 question 1); one build still holds one dialect.
  */
 
 import { z } from "zod";
@@ -63,7 +63,7 @@ function dialectError(input: unknown): string {
   const names = Array.isArray(input) ? input : [input];
   const planned = names.find((n): n is string => typeof n === "string" && (PLANNED_SQL_DIALECTS as readonly string[]).includes(n));
   if (planned !== undefined) {
-    return `the ${planned} dialect is not implemented yet (#3289); the implemented dialects are ${SQL_DIALECTS.join(", ")}`;
+    return `the ${planned} dialect is not implemented yet; the implemented dialects are ${SQL_DIALECTS.join(", ")}`;
   }
   return `expected a dialect (${SQL_DIALECTS.join(", ")}) or a non-empty list of them`;
 }
