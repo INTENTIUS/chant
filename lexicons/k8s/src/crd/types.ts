@@ -29,6 +29,11 @@ export interface CRDSource {
   /** Chart version for type="helm". Required: an unpinned source is not auditable. */
   version?: string;
   /**
+   * Digest of an `oci://` chart's content layer ("sha256:..."). Optional; when
+   * set, a re-pushed tag fails generation instead of changing its output.
+   */
+  digest?: string;
+  /**
    * Directory inside the chart holding the CRDs. Defaults to Helm's own
    * convention, "crds". Charts that instead template their CRDs need this
    * pointed at wherever they actually live.
