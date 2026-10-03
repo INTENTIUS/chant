@@ -104,12 +104,18 @@
     },
     "writeScope": {
       "type": "object",
-      "additionalProperties": false,
-      "description": "Who may write what (#2524 D5, #2548, ws-067): for each principal class, the members whose files it may write and the record kinds it may write, with which verbs. A class with no entry is not restricted. An agent is always bound to its session's member (agents); its entry can only narrow the record kinds and verbs. chant workspace records new, amend, review and close and the MCP record tools refuse a write outside the writer's scope with write-scope-member or write-scope-kind, and chant workspace check --changes reports each commit that writes outside its author's scope, read from the declaration and the trust policy at the range's base, and a write to a path the class's protected list covers with write-scope-protected (#3146). Added in schema 1 by chant 0.101.0, so a declaration that uses it sets minReader to 0.101.0 or newer.",
+      "propertyNames": {
+        "$ref": "#/$defs/className"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/classScope",
+        "description": "A domain class a pinned package supplies at its ./workspace-principals subpath (#3080, ws-079): principals holding the role the class names in the trust policy at base, and none of the agent, runner and service roles. A key no pinned package supplies fails chant workspace check with WSP003, and a writer judged human is refused with write-scope-class-unknown, since it may be in that class. Added in schema 1 by chant 0.102.0, so a declaration that uses one sets minReader to 0.102.0 or newer."
+      },
+      "description": "Who may write what (#2524 D5, #2548, ws-067): for each principal class, the members whose files it may write and the record kinds it may write, with which verbs. A class is human, agent, runner or service, or a domain class a pinned package supplies (#3080). A class with no entry is not restricted. An agent is always bound to its session's member (agents); its entry can only narrow the record kinds and verbs. chant workspace records new, amend, review and close and the MCP record tools refuse a write outside the writer's scope with write-scope-member or write-scope-kind, and chant workspace check --changes reports each commit that writes outside its author's scope, read from the declaration and the trust policy at the range's base, and a write to a path the class's protected list covers with write-scope-protected (#3146). Added in schema 1 by chant 0.101.0, so a declaration that uses it sets minReader to 0.101.0 or newer.",
       "properties": {
         "human": {
           "$ref": "#/$defs/classScope",
-          "description": "Principals holding none of the agent, runner and service roles in the trust policy at base."
+          "description": "Principals holding none of the agent, runner and service roles, and none of the roles a domain class names, in the trust policy at base."
         },
         "agent": {
           "$ref": "#/$defs/agentScope",
@@ -146,6 +152,11 @@
     "kindName": {
       "type": "string",
       "pattern": "^[a-z][a-z0-9-]{0,39}$"
+    },
+    "className": {
+      "type": "string",
+      "pattern": "^(?!x-)[a-z][a-z0-9-]{0,39}$",
+      "description": "A principal class: human, agent, runner, service, or a domain class a pinned package supplies (#3080)."
     },
     "version": {
       "type": "string",

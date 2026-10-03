@@ -201,7 +201,7 @@ Readers take the top-level list first. The members' lists follow in file order.
 }
 ```
 
-`writeScope` has an entry for each class it restricts: `human`, `agent`, `runner` or `service`. A class with no entry isn't restricted.
+`writeScope` has an entry for each class it restricts: `human`, `agent`, `runner`, `service`, or a domain class a pinned package supplies, such as `reviewer` ([#3080](https://github.com/INTENTIUS/chant/issues/3080), see [principal classes from a package](/chant/reference/workspace-kinds/#principal-classes-from-a-package)). A class with no entry isn't restricted. A declaration that names a domain class sets `minReader` to `0.102.0` or newer.
 
 | Field | Value |
 |---|---|
@@ -232,11 +232,11 @@ Each entry in `agents` is a session:
 | `member` | yes | The one member the session is bound to: a declared member, not an example group. |
 | `principals` | no | Principals that write only as this session. A commit attested by one, or a write whose `by` names one, is judged as the session. A principal is listed by one session at most. |
 
-A writer's class comes from the role grants in the trust policy at base. A principal holding the `agent` role is in the `agent` class. One holding `runner` is a runner and one holding `service` a service, tried in that order. Anyone else is `human`. A write that names a session is in the `agent` class. Naming a session only ever narrows what the writer may do, so chant honours a session name it can't verify.
+A writer's class comes from the role grants in the trust policy at base. A principal holding the `agent` role is in the `agent` class. One holding `runner` is a runner and one holding `service` a service, tried in that order. Then each domain class the pins supply is tried, in pin order, by the role it names. Anyone else is `human`. While `writeScope` names a class no pinned package supplies, a writer judged `human` might be in it, so its writes are refused with `write-scope-class-unknown`. A write that names a session is in the `agent` class. Naming a session only ever narrows what the writer may do, so chant honours a session name it can't verify.
 
 | Where | How the session is named | What happens outside scope |
 |---|---|---|
-| [`chant workspace records new`, `amend`, `review` and `close`](/chant/cli/workspace-records/#writing-records), and the MCP record tools | the `CHANT_AGENT` environment variable, set by whatever runs the agent | refused with `write-scope-member`, `write-scope-kind` or `agent-unknown`; nothing is written |
+| [`chant workspace records new`, `amend`, `review` and `close`](/chant/cli/workspace-records/#writing-records), and the MCP record tools | the `CHANT_AGENT` environment variable, set by whatever runs the agent | refused with `write-scope-member`, `write-scope-kind`, `write-scope-class-unknown` or `agent-unknown`; nothing is written |
 | [`chant workspace check --changes`](/chant/cli/workspace-check/#write-scope) | a `Chant-Agent: <name>` commit trailer, or an attested principal a session lists | a finding for each path, and the check fails |
 
 All three read `writeScope` and `agents` from the declaration at base (`origin/HEAD`, `main` or `master`, or the range's base for `check --changes`), with the trust policy read there too. An agent can't widen its own scope by editing its copy of the declaration, and an edit to the declaration by a writer restricted to members is itself out of scope. On a developer machine this detects; run in CI with an attestation policy at base, the principal is the signer the policy trusts ([ws-002](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-002-local-promise.md)).

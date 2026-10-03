@@ -44,6 +44,7 @@ import { declaredRecordKinds, readDeclaration, readerVersion, WORKSPACE_ERROR_CO
 import { declaredKindFile } from "./declared-kinds";
 import { isGeneratedPath } from "./generated-files";
 import { parseRegion } from "./intent";
+import { loadClassRegistry } from "./principal-classes";
 import { constraintCovers, isWorkspacePath, memberHolding } from "./record-assets";
 import { loadRecordKind, RecordReadError, type LoadedRecordKind, type RecordEntry } from "./records";
 import { readRecordsFor } from "./records-cli";
@@ -529,7 +530,9 @@ async function writeScopeAtBase(query: ChangesQuery, top: string, range: { base:
       format: kind.format,
     });
   }
-  return checkWriteScope({ top, base: range.base, head: range.head, prefix, declaration, kinds });
+  // The principal classes the pins supply, a path pin read at the base too (#3080).
+  const classes = loadClassRegistry(declaration.pins, located.rootOnDisk, { tree: located.tree }).registry;
+  return checkWriteScope({ top, base: range.base, head: range.head, prefix, declaration, kinds, classes });
 }
 
 function finding(code: ChangesFindingCode, p: ChangedPath, severity: "warn" | "fail", message: string, records: string[]): ChangeFinding {

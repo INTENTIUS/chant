@@ -79,7 +79,7 @@ export async function agentSession(q: { cwd: string; name: string }): Promise<Ag
       throw new WorkspaceReadError("declaration-missing", "no chant.workspace.json or .jsonc between this directory and the git root, so no agent session is declared");
     }
     const decl = source.declaration;
-    const writer = resolveWriter(decl, source.policy, { agent: q.name });
+    const writer = resolveWriter(decl, source.policy, { agent: q.name }, source.classes);
     const agent = writer.agent!;
     const member = decl.members.find((m) => m.name === agent.member)!;
     const scope = scopeOf(decl, writer)!;

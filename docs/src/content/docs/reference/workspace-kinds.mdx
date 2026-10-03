@@ -110,6 +110,38 @@ A pin that isn't installed, is installed at another version, or publishes a kind
 
 `chant workspace ls --at <rev>` reads kinds from the packages installed in the working tree, not from the revision.
 
+## Principal classes from a package
+
+A package can also name principal classes for the declaration's [`writeScope`](/chant/reference/workspace-declaration/#write-scope-and-agent-sessions) ([#2524](https://github.com/INTENTIUS/chant/issues/2524) D5, [#3080](https://github.com/INTENTIUS/chant/issues/3080), [ws-079](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-079-principal-classes-from-plugins.md)). The four core classes are `human`, `agent`, `runner` and `service`. A domain class, such as `reviewer` or `operator`, is the set of principals holding one role in the trust policy at base (`roles` in `.chant/trust.json`). The package exports the classes as a JSON file at its `./workspace-principals` subpath, beside or instead of `./workspace-kinds`. The subpath follows the rules for kinds above, so chant reads only that literal key and only a `.json` target inside the package, as data.
+
+```json
+{
+  "exports": { "./workspace-principals": "./workspace-principals.json" }
+}
+```
+
+```json
+{
+  "schema": 1,
+  "classes": [
+    { "name": "reviewer", "description": "people who review decisions", "role": "reviewer" }
+  ]
+}
+```
+
+| Field | Value |
+|---|---|
+| `schema` | `1`, the version of this format |
+| `classes[].name` | `^[a-z][a-z0-9-]{0,39}$`, not starting `x-`. It can't be a core class, and a package lists each name once |
+| `classes[].description` | One line saying who is in the class |
+| `classes[].role` | The role whose grant at base puts a principal in the class. It can't be `agent`, `runner` or `service`, which put a principal in the core class of that name, and one role belongs to one class |
+
+Its schema is `src/workspace/workspace-principals.schema.json` in `@intentius/chant` (`$id` `https://intentius.io/chant/schemas/workspace/principals/v1/workspace-principals.schema.json`), and `x-` fields are allowed on the file and on each class.
+
+Classes are read from the declaration's pins the way kinds are, with one difference: write scope reads a path-pinned package at the base revision, beside the declaration and the trust policy, so a change can't remap a class by editing its own copy of the plugin. A package pin is read from the installed package, which must be at the version the base pins. A file that doesn't validate is a `WSP002` error, and a class name or a role two pins both supply is an error that leaves every class involved out.
+
+The core roles are tried first, in the order `agent`, `runner`, `service`. The domain classes follow in pin order, and within a package in file order. The first class whose role the principal holds is the one write scope judges it by, and anyone else is `human`. A `writeScope` key no pinned package supplies fails `chant workspace check` with `WSP003`. Nothing then says who is in that class, so chant refuses every write judged `human` with `write-scope-class-unknown` until the package is installed or the entry removed.
+
 ## Terraform and choudoufu
 
 Two kinds ship from the terraform lexicon, since a choudoufu estate is a Terraform root that the lexicon's choudoufu mode reads. behold used to keep both in its closed list of member kinds ([#2545](https://github.com/INTENTIUS/chant/issues/2545)), and each keeps behold's probe, narrowed to the member's own directory, and behold's order: a chant project first, then choudoufu, then terraform.

@@ -46,6 +46,7 @@ import { readDeclaration, resolveGroups, WorkspaceReadError, type Declaration, t
 import type { ReasonCode } from "./reason-codes";
 import { parseJsonText, pointerToken, type TextLocation } from "./jsonc";
 import { loadKindRegistry, probeKind, resolveKind, type KindLoadProblem, type KindRegistry } from "./kinds";
+import { coreClassRegistry, loadClassRegistry, unknownScopeClasses, type ClassRegistry } from "./principal-classes";
 import { gitTop, workingTree, type WorkspaceTree } from "./tree";
 import { LINK_CHECKS, linkTable } from "./checks/links";
 import type { LinkRow, LinkTableRow } from "./links";
@@ -89,6 +90,10 @@ export interface WorkspaceCheckContext {
   kinds: KindRegistry;
   /** Why some pinned kinds could not be read. */
   kindProblems: KindLoadProblem[];
+  /** The principal classes: the core four and those the pins supply (#3080). Without it, the core four. */
+  classes?: ClassRegistry;
+  /** Why some pinned principal classes could not be read (#3080). */
+  classProblems?: KindLoadProblem[];
   /** The facts gathered before the checks ran. */
   facts?: WorkspaceFacts;
 }
@@ -182,23 +187,41 @@ export const WORKSPACE_CHECKS: readonly WorkspaceCheck[] = [
   {
     id: "WSP002",
     name: "kinds-unreadable",
-    description: "Every pinned package's kinds can be read: it is installed at the pinned version, and its ./workspace-kinds file is valid kind data.",
+    description: "Every pinned package's kinds and principal classes can be read: it is installed at the pinned version, its ./workspace-kinds file is valid kind data, and its ./workspace-principals file is valid class data.",
     severity: "error",
     configurable: false,
     check(ctx) {
-      return ctx.kindProblems.map((p) => ({ checkId: this.id, severity: this.severity, message: p.message, pointer: `/pins/${p.pin}` }));
+      // A pin that can't be read is a problem for both loaders; report it once.
+      const seen = new Set<string>();
+      return [...ctx.kindProblems, ...(ctx.classProblems ?? [])]
+        .filter((p) => {
+          const key = `${p.pin}\0${p.message}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        })
+        .map((p) => ({ checkId: this.id, severity: this.severity, message: p.message, pointer: `/pins/${p.pin}` }));
     },
   },
   {
     id: "WSP003",
     name: "kind-unknown",
-    description: "Every member's kind is built in or supplied by a pinned package. Unknown kinds fail closed.",
+    description: "Every member's kind is built in or supplied by a pinned package, and so is every principal class writeScope names (#3080). Unknown kinds and classes fail closed.",
     severity: "error",
     configurable: false,
     check(ctx) {
-      return ctx.declaration.members
+      const members = ctx.declaration.members
         .filter((m) => ctx.kinds.get(m.kind) === undefined)
         .map((m) => entryFinding(this, m, "kind", `member ${m.name} has kind ${m.kind}, which no built-in kind or pinned package supplies; known kinds: ${ctx.kinds.names().join(", ")}`));
+      const classes = ctx.classes ?? coreClassRegistry();
+      const scope = unknownScopeClasses(ctx.declaration.writeScope, classes).map((c) => ({
+        checkId: this.id,
+        severity: this.severity,
+        message: `writeScope names the principal class ${c}, which no core class or pinned package supplies, so a writer judged human is refused with write-scope-class-unknown; known classes: ${classes.names().join(", ")}`,
+        entity: c,
+        pointer: `/writeScope/${pointerToken(c)}`,
+      }));
+      return [...members, ...scope];
     },
   },
   {
@@ -484,6 +507,7 @@ export async function runDeclarationChecks(
     return { file: display(location.file), diagnostics: [diagnostic], suppressed: [], links: [], ok: false };
   }
   const { registry, problems } = loadKindRegistry(declaration.pins, root);
+  const classes = loadClassRegistry(declaration.pins, root, { tree });
   const gathered = options.gather === false || options.tree ? {} : await gatherWorkspaceFacts(root, declaration, options);
   // The declared record kinds load from the working tree; under --at only whether each exists at the revision is checked (#2680).
   // A declared work kind's acceptance criteria are counted in the working tree too (#2772).
@@ -497,7 +521,7 @@ export async function runDeclarationChecks(
     ...(boxIntents ? { boxIntents } : {}),
     ...(options.live && !options.tree ? { live: await gatherLiveLinkFacts(root, declaration, registry, options.live.env, options.live.onStderr) } : {}),
   };
-  const ctx: WorkspaceCheckContext = { declaration, tree, groups, kinds: registry, kindProblems: problems, facts };
+  const ctx: WorkspaceCheckContext = { declaration, tree, groups, kinds: registry, kindProblems: problems, classes: classes.registry, classProblems: classes.problems, facts };
   const findings = runWorkspaceChecks(ctx);
   const { active, suppressed } = applyCheckSettings(declaration, findings);
 

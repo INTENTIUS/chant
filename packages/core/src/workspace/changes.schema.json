@@ -498,14 +498,9 @@
         "restricted": {
           "type": "array",
           "items": {
-            "enum": [
-              "human",
-              "agent",
-              "runner",
-              "service"
-            ]
+            "$ref": "#/$defs/principalClass"
           },
-          "description": "The principal classes with a writeScope entry, and agent when any agent session is declared."
+          "description": "The principal classes with a writeScope entry, and agent when any agent session is declared: the core classes first, then domain classes in pin order, then any class writeScope names that no pinned package supplies."
         },
         "agents": {
           "type": "array",
@@ -527,6 +522,11 @@
           }
         }
       }
+    },
+    "principalClass": {
+      "type": "string",
+      "pattern": "^(?!x-)[a-z][a-z0-9-]{0,39}$",
+      "description": "A principal class: human, agent, runner or service, or a domain class a pinned package supplies at its ./workspace-principals subpath (#3080). A reader that knows only the core classes treats any other name as a domain class."
     },
     "scopeCommit": {
       "type": "object",
@@ -556,12 +556,7 @@
           "description": "Whether principal is an attested signer."
         },
         "class": {
-          "enum": [
-            "human",
-            "agent",
-            "runner",
-            "service"
-          ],
+          "$ref": "#/$defs/principalClass",
           "description": "agent for a commit naming a session with a Chant-Agent trailer or by a principal a session lists; otherwise the class the principal's role grants at base give."
         },
         "agent": {
@@ -599,6 +594,7 @@
           "enum": [
             "write-scope-member",
             "write-scope-kind",
+            "write-scope-class-unknown",
             "write-scope-protected",
             "agent-unknown"
           ]
@@ -612,18 +608,13 @@
             "string",
             "null"
           ],
-          "description": "From the workspace root; null for agent-unknown, a finding on the whole commit."
+          "description": "From the workspace root; null for agent-unknown and write-scope-class-unknown, findings on the whole commit."
         },
         "principal": {
           "type": "string"
         },
         "class": {
-          "enum": [
-            "human",
-            "agent",
-            "runner",
-            "service"
-          ]
+          "$ref": "#/$defs/principalClass"
         },
         "agent": {
           "type": [
