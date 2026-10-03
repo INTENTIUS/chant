@@ -207,8 +207,22 @@ Readers take the top-level list first. The members' lists follow in file order.
 |---|---|
 | `members` | The members whose files the class may write, by name, or `"*"` for every path. Without it, every path. A path in no member, such as `chant.workspace.json` at the root, is in scope only under `"*"`. The `agent` entry takes no `members`: a session writes only the member it is bound to. |
 | `records` | Kind names, as the kind file's `recordKind.name` or the name the declaration gives it, each with the verbs the class may write it with: `new`, `amend`, `review` and `close`. A kind left out can't be written at all. Without `records`, every kind in reach with every verb. |
+| `protected` | Paths the class may not write, even inside a member it may. Each entry is a glob from the workspace root, or `{ "path", "except" }` for a JSON file the class may change only in the top-level keys `except` names. An entry covers the files it matches and everything under a directory it matches, so `"box"` covers `box/ops/guard.mjs`. The `agent` entry takes it too. Added in chant 0.102.0 ([#3146](https://github.com/INTENTIUS/chant/issues/3146)). |
 
 A kind a member declares is in reach when that member is. The workspace's own kinds, from the top-level `records`, are in every writer's reach, so an agent bound to `app` can propose a decision that lives at the root. A record is never deleted under a restricted scope.
+
+`protected` is how a factory keeps a build away from what it must not change ([#3146](https://github.com/INTENTIUS/chant/issues/3146), [ws-077](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-077-factory-fields-on-the-box-block.md)). A builder bound to the root member could otherwise write the declaration, the box's own Ops and the release config:
+
+```json
+"writeScope": {
+  "agent": {
+    "records": { "work": ["new", "amend"], "proposal": ["new"] },
+    "protected": ["steward", "delivery/.chant", "delivery/chant.config.ts", { "path": "chant.workspace.json", "except": ["diagrams"] }]
+  }
+}
+```
+
+A record file is judged by `records`, never by `protected`: leave a record kind out of `records`, or narrow its verbs, to keep a builder off it. `check --changes` reports a write to a protected path with `write-scope-protected`. For an entry with `except`, it parses the file before and after the commit, and the change is in scope when the two differ only in those top-level keys. [`chant workspace agent --json`](/chant/cli/workspace-agent/) lists a session's protected paths, so a factory's guard can apply the same list to a build's diff before anything is committed.
 
 Each entry in `agents` is a session:
 
@@ -324,6 +338,8 @@ The member that holds the box's declarations carries a `box` block:
 | `capabilities` | no | Each capability the box reaches outside itself. None when omitted. |
 | `intent` | no | The id of the decision record that says what the box is for. See [Intent](#intent). |
 | `services` | no | The services the box runs under its supervisor. See [Services](#services). |
+| `factory` | no | What the box builds, how a build is checked, which member declares the builder agents and where a finished build is published. See [Factory](#factory). |
+| `listing` | no | What the box shows of itself on a home site that lists boxes. See [Listing](#listing). |
 | `capabilities[].name` | yes | The capability, in the kind-name grammar, such as `inference` or `fountain`. A box names each capability once. |
 | `capabilities[].broker` | no | What brokers it, such as `lobby` or `door`. It may be a member of this workspace or a runtime outside it, as a planted box's lobby is. Without it the capability is unbrokered, and `chant workspace check` fails with `WSP122`. |
 | `capabilities[].scope` | no | The parts of the box's own that the broker lets it reach. The broker enforces the words, and chant records them. For Fountain these are `agent` (start conversations with its own agent), `vault` (attach its own vault), and `conversations` and `sandboxes` (its own). |
@@ -335,7 +351,8 @@ The block goes in the workspace declaration and not in the box's TypeScript. `ch
 | Command | Uses the box block |
 |---|---|
 | [`chant workspace check`](/chant/cli/workspace-check/#boxes) | reads every file in the member's directory and fails with `WSP121` (`box-credential-declared`) on a literal secret. It fails with `WSP122` (`box-capability-unbrokered`) on a capability that names no broker, and with `WSP125` (`box-fountain-callback-undeclared`) when a member that builds a fountain `Box` doesn't declare `fountain-callback`. It fails with `WSP126` (`box-intent-unknown`) when the intent names no decision record, and warns with `WSP127` (`box-intent-unconstrained`) when that record's constrains names no member or path of this workspace at all |
-| [`chant workspace status --json`](/chant/cli/workspace-status/#boxes) | lists each member's `box`, with every capability's `name`, `broker` and `scope`, the box's `intent` and its `services` |
+| [`chant workspace status --json`](/chant/cli/workspace-status/#boxes) | lists each member's `box`, with every capability's `name`, `broker` and `scope`, the box's `intent`, its `services`, its `factory` and its `listing`, and whether the workspace is `plantable` |
+| [`chant workspace graph --json`](/chant/cli/workspace-graph/) | prints each member's `factory` and `listing` as `box`, and `plantable`, read at the revision `--at` names |
 
 Set `minReader` to `"0.91.0"` or newer when the file has a `box` block, so an older chant reports `reader-too-old` instead of an unknown field.
 
@@ -401,6 +418,61 @@ A box runs its processes as services under a supervisor: sprite-env on a sprite,
 The services also follow rules the schema can't state. Each `needs` entry names a service of the same block, and the `needs` form no cycle. A block gives each name once, and one service at most sets `httpPort`. A declaration that breaks one can't be read (`declaration-invalid`), so [`check`](/chant/cli/workspace-check/#boxes) fails with `WSP001`.
 
 The fly lexicon reads the list with `box: true`, from the box block of the member whose directory holds the working directory. `spriteServicesObserve({ box: true })` observes the services for a [`ConvergeOp`](/chant/guide/converging-lifecycle/), `spriteServiceRestart({ box: true })` restarts one and waits for its `health`, and `spriteApplyServices({ box: true })` creates and replaces them through `sprite-env services`. chant reads `services` from 0.95.0 on, so a declaration that has them sets `minReader` to `"0.95.0"` or newer.
+
+### Factory
+
+A box's factory turns a work item into a change: a builder agent edits the members the factory builds, a check gives the verdict, and a finished build is published as a pull request ([#3146](https://github.com/INTENTIUS/chant/issues/3146), [ws-077](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-077-factory-fields-on-the-box-block.md)). The `factory` block declares it, so any orchestrator, a studio or a fountain steward, reads the same facts from [`status --json`](/chant/reference/workspace-read-contract/#factory-listing-and-plantable):
+
+```json
+{
+  "name": "steward",
+  "dir": "steward",
+  "kind": "chant",
+  "box": {
+    "services": [{ "name": "app", "cmd": "node ${HOME}/box/app/steward/preview.mjs" }],
+    "factory": {
+      "builds": ["studio"],
+      "check": { "run": "npm run --silent check && npm test --silent", "kind": "test" },
+      "checks": "checks",
+      "builders": "steward",
+      "publish": { "repo": "arugula-salad/studio", "base": "main", "branchPrefix": "box/" }
+    }
+  }
+}
+```
+
+| Field | Required | Value |
+|---|---|---|
+| `builds` | yes | The members the factory builds, each a declared member of any kind: an app, a `chant` member, a Terraform estate. A work item a person asks for constrains `member:` and the first of them. |
+| `check` | no | The command whose exit code is a build's verdict, run from the workspace root after the work item's own checks: a string, or `{ "run", "kind" }`. `kind` says what the command is, one of `test`, `build`, `lint`, `plan` and `conformance`, and is `test` for a string. |
+| `checks` | no | The directory, from the workspace root, where a builder writes the check for its work item. Without it the orchestrator chooses. |
+| `builders` | no | The member that declares the builder agents. Which agent builds at which tier is [#3152](https://github.com/INTENTIUS/chant/issues/3152); the tiers are the work kind's `work.tier.tiers` ([work items](/chant/guide/work-items/)). |
+| `publish` | no | Where a finished build goes: `{ "repo", "base", "branchPrefix", "head", "forge" }`. The branch `<branchPrefix><work item id>` is pushed and a pull request opened on `repo` (`owner/name`) against `base`, the repository's default branch when omitted. `branchPrefix` is `chant/work/` when omitted, the work lease's own branch. `head` is a fork (`owner/name`) the branch is pushed to instead, so the pull request comes from `<head owner>:<branch>`; a runtime that publishes from each contributor's own fork supplies that per contributor. `forge` is `github`. |
+
+The factory is opt-in ([#3174](https://github.com/INTENTIUS/chant/issues/3174)): a workspace with no `factory` is held to nothing here. It needs no box services and no app, so an infra workspace can declare one whose `builds` names its estate members and whose `check` is a plan, and run it on a fountain steward. There is one factory per declaration, and its `builds` and `builders` name only declared members; a second factory or an unknown name stops the read with `declaration-invalid`, which [`check`](/chant/cli/workspace-check/#boxes) reports as `WSP001`. What a build may not change goes in [`writeScope.agent.protected`](#write-scope-and-agent-sessions).
+
+### Listing
+
+A box can show itself on a home site that lists boxes, with a title, a line and a cover picture. The listing is configuration of the box, so it lives in the declaration and a change to it is reviewed like any other ([#3154](https://github.com/INTENTIUS/chant/issues/3154), [ws-074](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-074-the-repo-is-the-database.md)):
+
+```json
+"box": {
+  "listing": { "published": true, "title": "Fern", "line": "A garden planner for a small allotment", "cover": "box/cover.png" }
+}
+```
+
+| Field | Required | Value |
+|---|---|---|
+| `published` | no | Whether the box is listed. `true` when omitted: a box is listed unless its owner takes it out. |
+| `title` | no | One line of at most 60 characters. `""` when omitted, and a reader then shows a name of its own. |
+| `line` | no | One line of at most 140 characters saying what the box is. `""` when omitted. |
+| `cover` | no | A PNG, JPEG or WebP picture of the box, as a file from the workspace root. `status` and `graph` print its sha256, so a reader can cache it by hash. |
+
+A title or line with a control character, such as a newline, can't be read. Since `factory` and `listing` are new in chant 0.102.0, a box block with either needs `minReader` at `"0.102.0"` or later.
+
+### Plantable
+
+A host that plants a repo as a box, such as a studio's planter, needs exactly one box to run. [`status --json`](/chant/reference/workspace-read-contract/#factory-listing-and-plantable) and `graph --json` say whether the workspace is `plantable`: exactly one member's box block declares `services`. `plantable.box` names that member, and `plantable.reason` says why not otherwise: `box-none` or `box-several`. Being plantable isn't a check. A records-only workspace, or an infra workspace with a factory and no box services, is a valid workspace that a planter declines.
 
 ### Isolation
 

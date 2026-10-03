@@ -60,6 +60,8 @@ export type AgentDocument =
         members: string[];
         /** Every declared kind in reach: the workspace's own and the member's. */
         records: AgentKindScope[];
+        /** The paths writeScope.agent.protected keeps the session from writing, with the JSON keys each still allows (#3146). */
+        protected: { path: string; except: string[] }[];
       };
       /** The spec, as records --current --json prints it. */
       spec: SpecView;
@@ -80,7 +82,8 @@ export async function agentSession(q: { cwd: string; name: string }): Promise<Ag
     const writer = resolveWriter(decl, source.policy, { agent: q.name });
     const agent = writer.agent!;
     const member = decl.members.find((m) => m.name === agent.member)!;
-    const rules = scopeOf(decl, writer)!.records;
+    const scope = scopeOf(decl, writer)!;
+    const rules = scope.records;
     // The spec query, over every declared kind in the working tree.
     const set = await queryDeclaredRecords(declaredKindFiles(q.cwd), { cwd: q.cwd, current: true });
     const loadedName = new Map(set.kinds.map((k) => [k.declared.path, "error" in k ? null : k.kind.name]));
@@ -94,7 +97,7 @@ export async function agentSession(q: { cwd: string; name: string }): Promise<Ag
       ...head,
       workspace: { name: decl.name, root: source.root ?? ".", scopeFrom: source.from },
       agent: { name: agent.name, member: { name: member.name, dir: member.dir, kind: member.kind }, principals: agent.principals },
-      scope: { members: [member.name], records },
+      scope: { members: [member.name], records, protected: scope.protected.map((p) => ({ path: p.path, except: [...p.except] })) },
       spec: set.spec ?? { kinds: [], records: [] },
       reload: [`chant workspace agent ${agent.name} --json`, "chant workspace records --current --json"],
     };
@@ -126,6 +129,7 @@ export async function runWorkspaceAgent(ctx: CommandContext): Promise<number> {
   const out: string[] = [];
   out.push(`agent     ${doc.agent.name}, bound to member ${doc.agent.member.name} (${doc.agent.member.dir}), scope read from ${doc.workspace.scopeFrom}`);
   for (const r of doc.scope.records) out.push(`records   ${r.name ?? r.kind ?? r.path} (${r.path}): ${r.verbs.length > 0 ? r.verbs.join(", ") : "not writable"}`);
+  for (const p of doc.scope.protected) out.push(`protected ${p.path}${p.except.length > 0 ? ` (except ${p.except.join(", ")})` : ""}`);
   out.push(`spec      ${doc.spec.records.length} current records of ${doc.spec.kinds.length} spec kinds`);
   for (const r of doc.spec.records) out.push(`          ${r.kind}/${r.id ?? "?"} ${r.state ?? ""} ${r.path}`);
   out.push(`reload    ${doc.reload.join("; ")}`);

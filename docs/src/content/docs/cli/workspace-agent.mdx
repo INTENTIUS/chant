@@ -17,7 +17,7 @@ An agent session is declared in the declaration's [`agents` list](/chant/referen
 | Part | What it holds |
 |---|---|
 | `agent` | The session, the member it is bound to and the principals it lists |
-| `scope` | The one member whose files the session writes. Each declared record kind in its reach is listed with the verbs (`new`, `amend`, `review`, `close`) the session may write the kind with |
+| `scope` | The one member whose files the session writes. Each declared record kind in its reach is listed with the verbs (`new`, `amend`, `review`, `close`) the session may write the kind with. `protected` lists the paths `writeScope.agent.protected` keeps it from writing, each `{ path, except }` ([#3146](https://github.com/INTENTIUS/chant/issues/3146)) |
 | `spec` | The `spec` block [`chant workspace records --current --json`](/chant/cli/workspace-records/#the-spec) prints: the current records of the kinds with `spec: true`, each with the files it pins |
 | `reload` | The two reads that rebuild the session's context |
 

@@ -109,8 +109,8 @@ describe("the declaration's writeScope and agents (#2548)", () => {
   test("are read with their defaults", () => {
     const d = parseDeclaration(declaration(), "chant.workspace.json");
     expect(d.writeScope).toEqual({
-      agent: { members: null, records: { decision: ["new", "review"] }, pointer: "/writeScope/agent" },
-      runner: { members: ["app"], records: { decision: ["review"] }, pointer: "/writeScope/runner" },
+      agent: { members: null, records: { decision: ["new", "review"] }, protected: [], pointer: "/writeScope/agent" },
+      runner: { members: ["app"], records: { decision: ["review"] }, protected: [], pointer: "/writeScope/runner" },
     });
     expect(d.agents.map((a) => [a.name, a.member, a.principals])).toEqual([
       ["app-agent", "app", ["bot@example.com"]],
@@ -326,6 +326,7 @@ describe("chant workspace agent: what a session reloads from (#2548)", () => {
         { path: KIND, kind: "decision", name: null, member: null, verbs: ["new", "review"] },
         { path: DESIGN_KIND, kind: "decision", name: "screen", member: "design", verbs: ["new", "review"] },
       ],
+      protected: [],
     });
     expect(doc.spec.kinds.map((k) => k.path)).toEqual([KIND, DESIGN_KIND]);
     expect(doc.spec.records.map((r) => `${r.kind}/${r.id}`)).toContain("decision/ws-001");

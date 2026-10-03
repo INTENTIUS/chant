@@ -32,6 +32,9 @@
 
 import { execFileSync } from "node:child_process";
 import { posix, relative, sep } from "node:path";
+import { isDeepStrictEqual } from "node:util";
+// @ts-ignore — picomatch has no types declaration
+import picomatch from "picomatch";
 import {
   PRINCIPAL_CLASSES,
   readDeclaration,
@@ -40,6 +43,7 @@ import {
   type ClassScope,
   type Declaration,
   type PrincipalClass,
+  type ProtectedPath,
   type WriteVerb,
 } from "./declaration";
 import type { ReasonCode } from "./reason-codes";
@@ -59,6 +63,13 @@ export const AGENT_TRAILER = "Chant-Agent";
 /** Why a write is outside its writer's scope. Closed. */
 export const WRITE_SCOPE_CODES = ["write-scope-member", "write-scope-kind", "agent-unknown"] as const satisfies readonly ReasonCode[];
 export type WriteScopeCode = (typeof WRITE_SCOPE_CODES)[number];
+
+/**
+ * What `check --changes` reports a path with: the record-write codes, and a
+ * write to a protected path (#3146), which a record write never is. Closed.
+ */
+export const SCOPE_FINDING_CODES = [...WRITE_SCOPE_CODES, "write-scope-protected"] as const satisfies readonly ReasonCode[];
+export type ScopeFindingCode = (typeof SCOPE_FINDING_CODES)[number];
 
 /** The classes a role grant puts a principal in, in the order they are tried. Human is the rest. */
 const ROLE_CLASSES = ["agent", "runner", "service"] as const satisfies readonly PrincipalClass[];
@@ -131,13 +142,16 @@ export function resolveWriter(declaration: Declaration | null, policy: TrustPoli
 /** The scope that applies to `writer`, or null when its class is not restricted. An agent is always restricted to its member. */
 export function scopeOf(declaration: Declaration | null, writer: Writer): ClassScope | null {
   const entry = declaration?.writeScope?.[writer.class];
-  if (writer.class === "agent") return { members: null, records: entry?.records ?? null, pointer: entry?.pointer ?? "/agents" };
+  if (writer.class === "agent") return { members: null, records: entry?.records ?? null, protected: entry?.protected ?? [], pointer: entry?.pointer ?? "/agents" };
   return entry ?? null;
 }
 
-export type ScopeVerdict = { ok: true } | { ok: false; code: Exclude<WriteScopeCode, "agent-unknown">; message: string };
+export type ScopeVerdict = { ok: true } | { ok: false; code: Exclude<ScopeFindingCode, "agent-unknown">; message: string };
 
-const OK: ScopeVerdict = { ok: true };
+/** A record write's verdict: never write-scope-protected, since protected paths judge files that aren't records. */
+export type RecordVerdict = { ok: true } | { ok: false; code: Exclude<WriteScopeCode, "agent-unknown">; message: string };
+
+const OK = { ok: true } as const;
 
 function who(writer: Writer): string {
   if (writer.agent) return `agent session ${writer.agent.name}, bound to member ${writer.agent.member},`;
@@ -164,7 +178,7 @@ export interface ScopedKind {
 }
 
 /** Whether `writer` may write a record of `kind` with `verb`. A delete is never in a restricted scope. */
-export function judgeRecord(declaration: Declaration | null, writer: Writer, kind: ScopedKind, verb: WriteVerb | "delete"): ScopeVerdict {
+export function judgeRecord(declaration: Declaration | null, writer: Writer, kind: ScopedKind, verb: WriteVerb | "delete"): RecordVerdict {
   const scope = scopeOf(declaration, writer);
   if (scope === null) return OK;
   // The workspace's own kinds are in every member's reach; a member's kinds only in its own.
@@ -194,17 +208,76 @@ export function judgeRecord(declaration: Declaration | null, writer: Writer, kin
   };
 }
 
-/** Whether `writer` may write the file at `path`, from the workspace root. */
-export function judgePath(declaration: Declaration | null, writer: Writer, path: string): ScopeVerdict {
+/**
+ * The protected entry of `entries` that covers `path` (#3146, ws-077): one
+ * whose glob matches the path or a directory above it. Null when none does.
+ */
+export function protectedEntry(entries: readonly ProtectedPath[], path: string): ProtectedPath | null {
+  if (entries.length === 0) return null;
+  const parts = path.split("/");
+  const prefixes = parts.map((_, i) => parts.slice(0, i + 1).join("/"));
+  for (const entry of entries) {
+    const match = picomatch(entry.path, { dot: true }) as (p: string) => boolean;
+    if (prefixes.some((p) => match(p))) return entry;
+  }
+  return null;
+}
+
+/**
+ * Whether JSON text `before` and `after` differ only in the top-level keys
+ * `except` names. False when either is missing or isn't a JSON object.
+ */
+export function onlyKeysChanged(before: string | null, after: string | null, except: readonly string[]): boolean {
+  if (before === null || after === null || except.length === 0) return false;
+  const strip = (text: string): Record<string, unknown> | null => {
+    try {
+      const value = JSON.parse(text) as unknown;
+      if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+      const copy = { ...(value as Record<string, unknown>) };
+      for (const key of except) delete copy[key];
+      return copy;
+    } catch {
+      return null;
+    }
+  };
+  const a = strip(before);
+  const b = strip(after);
+  return a !== null && b !== null && isDeepStrictEqual(a, b);
+}
+
+/** A file's text before and after a write, read only when a protected entry with `except` needs it. */
+export interface PathChange {
+  before(): string | null;
+  after(): string | null;
+}
+
+/**
+ * Whether `writer` may write the file at `path`, from the workspace root:
+ * the path is in a member the writer may write, and no protected entry of
+ * its scope covers it, unless the entry's `except` allows the change (#3146).
+ * Without `change`, a write to a path an `except` entry covers is judged as a
+ * change outside the allowed keys.
+ */
+export function judgePath(declaration: Declaration | null, writer: Writer, path: string, change?: PathChange): ScopeVerdict {
   const scope = scopeOf(declaration, writer);
   if (scope === null) return OK;
   const member = memberHolding(path, declaration?.members ?? []);
-  if (memberAllowed(writer, scope, member)) return OK;
-  const where = member === null ? "is in no member" : `is in member ${member}`;
+  if (!memberAllowed(writer, scope, member)) {
+    const where = member === null ? "is in no member" : `is in member ${member}`;
+    return {
+      ok: false,
+      code: "write-scope-member",
+      message: `${who(writer)} may not write ${path}, which ${where}: ${writer.class === "agent" ? "an agent session writes only its own member" : `writeScope.${writer.class}.members leaves it out`}`,
+    };
+  }
+  const guarded = protectedEntry(scope.protected, path);
+  if (guarded === null) return OK;
+  if (guarded.except.length > 0 && change && onlyKeysChanged(change.before(), change.after(), guarded.except)) return OK;
+  const allowance = guarded.except.length > 0 ? `, outside the top-level keys it allows (${guarded.except.join(", ")})` : "";
   return {
     ok: false,
-    code: "write-scope-member",
-    message: `${who(writer)} may not write ${path}, which ${where}: ${writer.class === "agent" ? "an agent session writes only its own member" : `writeScope.${writer.class}.members leaves it out`}`,
+    code: "write-scope-protected",
+    message: `${who(writer)} may not write ${path}${allowance}: writeScope.${writer.class}.protected lists ${guarded.path}`,
   };
 }
 
@@ -303,7 +376,7 @@ export interface ScopeCommit {
 export interface ScopeFinding {
   /** `finding:<code>:<commit>:<path>`, or `finding:agent-unknown:<commit>`. */
   id: string;
-  code: WriteScopeCode;
+  code: ScopeFindingCode;
   commit: string;
   /** From the workspace root, or null for a finding on the whole commit. */
   path: string | null;
@@ -428,7 +501,10 @@ export async function checkWriteScope(q: {
         verb = p.status === "A" ? "new" : p.status === "D" ? "delete" : modifiedVerb(top, commit, p.path, kind);
         verdict = judgeRecord(declaration, writer, kind.scoped, verb);
       } else {
-        verdict = judgePath(declaration, writer, inWorkspace);
+        verdict = judgePath(declaration, writer, inWorkspace, {
+          before: () => (p.status === "A" ? null : show(top, `${commit}^`, p.path)),
+          after: () => (p.status === "D" ? null : show(top, commit, p.path)),
+        });
       }
       if (verdict.ok) continue;
       report.findings.push({

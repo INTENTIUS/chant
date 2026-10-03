@@ -40,7 +40,7 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 |
 | intent node kind | the node kinds of `intent.schema.json` | 9 | 0 | 3 |
 | intent edge kind | the edge kinds of `intent.schema.json` | 9 | 0 | 3 |
-| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 164 | 0 | 0 |
+| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 167 | 0 | 0 |
 | finding code | the finding codes of `intent.schema.json` | 17 | 0 | 0 |
 | WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 50 | 0 | 0 |
 | hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 |
@@ -243,6 +243,7 @@ Each row follows, in the order of the table above.
 | reason code | `source-harvest-not-proposed` | chant | records-new.schema.json | A harvested record (source.via harvest) was written in a state other than the kind's first: a harvest proposes, and a person decides. |
 | reason code | `write-scope-member` | chant | changes.schema.json, records-amend.schema.json, records-close.schema.json, records-new.schema.json, records-review.schema.json, work-evidence.schema.json | The write is to a file, or to a record kind, of a member outside the writer's scope: an agent session writes only its own member, and writeScope.&lt;class&gt;.members leaves the member out. |
 | reason code | `write-scope-kind` | chant | changes.schema.json, records-amend.schema.json, records-close.schema.json, records-new.schema.json, records-review.schema.json, work-evidence.schema.json | The write is to a record kind writeScope.&lt;class&gt;.records does not list, with a verb it does not list for the kind, or deletes a record. |
+| reason code | `write-scope-protected` | chant | changes.schema.json | The write is to a file writeScope.&lt;class&gt;.protected lists, or one under a directory it lists, outside any top-level keys the entry's except allows (#3146). |
 | reason code | `agent-unknown` | chant | agent.schema.json, changes.schema.json, records-amend.schema.json, records-close.schema.json, records-new.schema.json, records-review.schema.json, work-evidence.schema.json | CHANT_AGENT, or a commit's Chant-Agent trailer, names an agent session the declaration at base does not declare. |
 | reason code | `session-unknown` | chant | records-review.schema.json | --session names no session of a session kind whose subjects are the record's kind. |
 | reason code | `session-not-open` | chant | records-review.schema.json | --session names a session in a closed state, which takes no more verdicts. |
@@ -264,6 +265,8 @@ Each row follows, in the order of the table above.
 | reason code | `box-fountain-callback-undeclared` | chant | check.schema.json | A box member builds a fountain Box, whose persistent sandbox fountain gives a callback token scoped to its owner, and the member's box block does not declare the fountain-callback capability brokered by fountain with scope owner. |
 | reason code | `box-intent-unknown` | chant | check.schema.json | A box block names an intent, and no record of a declared kind named decision has that id. |
 | reason code | `box-intent-unconstrained` | chant | check.schema.json | The decision record a box names as its intent constrains no member or path of this workspace: no member: entry for a declared member and no path: entry at, above or inside one's directory. |
+| reason code | `box-none` | chant | graph.schema.json, status.schema.json | No member's box block declares services, so the workspace has no box for a host to plant. |
+| reason code | `box-several` | chant | graph.schema.json, status.schema.json | More than one member's box block declares services, and a planted workspace runs one box. |
 | reason code | `rotation-unparseable` | chant | signers.schema.json | The rotation file beside the signers file is not JSON. |
 | reason code | `rotation-invalid` | chant | signers.schema.json | The rotation file does not match its shape: schema 1, a version, the previous set's digest, a threshold and signatures. |
 | reason code | `rotation-previous-mismatch` | chant | signers.schema.json | The rotation names a previous digest other than the set it replaces, as a rollback to an older set does. |

@@ -121,7 +121,20 @@ export interface ClassScope {
   members: string[] | null;
   /** Kind name to the verbs the class may write it with, or null for every kind in reach with every verb. */
   records: Record<string, WriteVerb[]> | null;
+  /** Paths the class may not write even inside a member it may (#3146, ws-077), in file order. Empty when the entry lists none. */
+  protected: ProtectedPath[];
   pointer: string;
+}
+
+/**
+ * A protected path in a write scope (#3146, ws-077): a glob from the
+ * workspace root. It protects the files it matches and everything under a
+ * directory it matches. `except` names top-level keys of a JSON file a write
+ * may still change; empty when the entry allows none.
+ */
+export interface ProtectedPath {
+  path: string;
+  except: string[];
 }
 
 /** The declaration's `writeScope` block: an entry per restricted class. A class with no entry is not restricted. */
@@ -254,8 +267,61 @@ export interface BoxDeclaration {
    * `spriteApplyServices` read them with `box: true`.
    */
   services: BoxService[];
+  /** What the box builds and how (#3146, ws-077), or null when the block declares no factory. */
+  factory: BoxFactory | null;
+  /** What the box shows of itself on a home site (#3146), or null when the block declares no listing. */
+  listing: BoxListing | null;
   /** The block's JSON Pointer in the file, for messages. */
   pointer: string;
+}
+
+/** What a check command is (#3146). */
+export const FACTORY_CHECK_KINDS = ["test", "build", "lint", "plan", "conformance"] as const;
+export type FactoryCheckKind = (typeof FACTORY_CHECK_KINDS)[number];
+
+/**
+ * A box's factory (#3146, ws-077): what it builds, how a build is checked,
+ * which member declares the builder agents and where a finished build is
+ * published. Defaults are filled in, so a reader never guesses one.
+ */
+export interface BoxFactory {
+  /** The members the factory builds, in file order; at least one. */
+  builds: string[];
+  /** The verdict command, run from the workspace root, or null when none is declared. */
+  check: { run: string; kind: FactoryCheckKind } | null;
+  /** Where a work item's builder writes its check, from the workspace root, or null for the orchestrator's choice. */
+  checks: string | null;
+  /** The member that declares the builder agents, or null when none is named. */
+  builders: string | null;
+  /** Where a finished build is published, or null when the factory doesn't publish past the box. */
+  publish: FactoryPublish | null;
+  /** The block's JSON Pointer in the file, for messages. */
+  pointer: string;
+}
+
+/** Where a finished build goes (#3146): its branch is pushed and a pull request opened against `repo`'s `base`. */
+export interface FactoryPublish {
+  forge: "github";
+  /** owner/name. */
+  repo: string;
+  /** The branch the pull request targets, or null for the repository's default branch. */
+  base: string | null;
+  /** What the published branch's name starts with, before the work item's id. */
+  branchPrefix: string;
+  /** The repository the branch is pushed to when it isn't `repo` (a fork), as owner/name, or null. */
+  head: string | null;
+}
+
+/** The branch prefix a publish target uses when it names none: the work lease's own branch. */
+export const DEFAULT_PUBLISH_BRANCH_PREFIX = "chant/work/";
+
+/** What a box shows of itself (#3146, #3154). */
+export interface BoxListing {
+  published: boolean;
+  title: string;
+  line: string;
+  /** The cover image, from the workspace root, or null. */
+  cover: string | null;
 }
 
 /** A service a box runs under its supervisor (#2880). */
@@ -699,6 +765,9 @@ export function parseDeclaration(text: string, file: string, reader: string = re
     const problem = m.box ? boxServicesProblem(m.name, m.box.services) : null;
     if (problem) throw new WorkspaceReadError("declaration-invalid", problem.message, at(problem.pointer));
   }
+  // One factory, building and naming declared members (#3146).
+  const factory = factoryProblem(members);
+  if (factory) throw new WorkspaceReadError("declaration-invalid", factory.message, at(factory.pointer));
 
   // A diagram name is given once across the declaration (#2764): a reader keys diagrams by name.
   const ownDiagrams = diagramsOf(obj.diagrams, null, "/diagrams");
@@ -748,7 +817,7 @@ export function parseDeclaration(text: string, file: string, reader: string = re
  */
 function writeScopeOf(raw: unknown, members: Member[], at: (pointer: string, key?: boolean) => ErrorLocation): WriteScope | null {
   if (raw === undefined) return null;
-  const block = raw as Partial<Record<PrincipalClass, { members?: "*" | string[]; records?: Record<string, WriteVerb[]> }>>;
+  const block = raw as Partial<Record<PrincipalClass, { members?: "*" | string[]; records?: Record<string, WriteVerb[]>; protected?: (string | { path: string; except?: string[] })[] }>>;
   const out: WriteScope = {};
   for (const cls of PRINCIPAL_CLASSES) {
     const entry = block[cls];
@@ -765,7 +834,8 @@ function writeScopeOf(raw: unknown, members: Member[], at: (pointer: string, key
       }
     }
     const records = entry.records === undefined ? null : Object.fromEntries(Object.entries(entry.records).map(([k, v]) => [k, [...v]]));
-    out[cls] = { members: list, records, pointer };
+    const guarded = (entry.protected ?? []).map((p) => (typeof p === "string" ? { path: p, except: [] } : { path: p.path, except: [...(p.except ?? [])] }));
+    out[cls] = { members: list, records, protected: guarded, pointer };
   }
   return out;
 }
@@ -856,7 +926,17 @@ function boxOf(raw: unknown, pointer: string): BoxDeclaration | null {
     cookies?: string[];
     intent?: string;
     services?: { name: string; cmd: string; needs?: string[]; httpPort?: number; duration?: string; health?: string; optional?: boolean }[];
+    factory?: {
+      builds: string[];
+      check?: string | { run: string; kind?: FactoryCheckKind };
+      checks?: string;
+      builders?: string;
+      publish?: { forge?: "github"; repo: string; base?: string; branchPrefix?: string; head?: string };
+    };
+    listing?: { published?: boolean; title?: string; line?: string; cover?: string };
   };
+  const f = b.factory;
+  const l = b.listing;
   return {
     capabilities: (b.capabilities ?? []).map((c, i) => ({ name: c.name, broker: c.broker ?? null, scope: [...(c.scope ?? [])], pointer: `${pointer}/capabilities/${i}` })),
     // The schema requires host and slot together, and host for ports, state and cookies.
@@ -875,8 +955,55 @@ function boxOf(raw: unknown, pointer: string): BoxDeclaration | null {
       optional: s.optional ?? false,
       pointer: `${pointer}/services/${i}`,
     })),
+    factory:
+      f === undefined
+        ? null
+        : {
+            builds: [...f.builds],
+            check: f.check === undefined ? null : typeof f.check === "string" ? { run: f.check, kind: "test" } : { run: f.check.run, kind: f.check.kind ?? "test" },
+            checks: f.checks ?? null,
+            builders: f.builders ?? null,
+            publish:
+              f.publish === undefined
+                ? null
+                : {
+                    forge: f.publish.forge ?? "github",
+                    repo: f.publish.repo,
+                    base: f.publish.base ?? null,
+                    branchPrefix: f.publish.branchPrefix ?? DEFAULT_PUBLISH_BRANCH_PREFIX,
+                    head: f.publish.head ?? null,
+                  },
+            pointer: `${pointer}/factory`,
+          },
+    listing: l === undefined ? null : { published: l.published ?? true, title: l.title ?? "", line: l.line ?? "", cover: l.cover ?? null },
     pointer,
   };
+}
+
+/**
+ * The rules the schema can't say about the factories (#3146, ws-077): at most
+ * one box block declares one, and the members its builds and builders name
+ * are declared members.
+ */
+function factoryProblem(members: readonly Member[]): { message: string; pointer: string } | null {
+  const declaring = members.filter((m) => m.box?.factory);
+  if (declaring.length > 1) {
+    return {
+      message: `members ${declaring[0].name} and ${declaring[1].name} both declare a factory in their box block; a workspace has one factory, so an orchestrator reads one`,
+      pointer: declaring[1].box!.factory!.pointer,
+    };
+  }
+  const factory = declaring[0]?.box?.factory;
+  if (!factory) return null;
+  const known = () => members.map((m) => m.name).join(", ");
+  const j = factory.builds.findIndex((name) => !members.some((m) => m.name === name));
+  if (j >= 0) {
+    return { message: `the factory builds ${JSON.stringify(factory.builds[j])}, which is not a declared member; declared members: ${known()}`, pointer: `${factory.pointer}/builds/${j}` };
+  }
+  if (factory.builders !== null && !members.some((m) => m.name === factory.builders)) {
+    return { message: `the factory's builders names ${JSON.stringify(factory.builders)}, which is not a declared member; declared members: ${known()}`, pointer: `${factory.pointer}/builders` };
+  }
+  return null;
 }
 
 /**

@@ -105,7 +105,7 @@
     "writeScope": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Who may write what (#2524 D5, #2548, ws-067): for each principal class, the members whose files it may write and the record kinds it may write, with which verbs. A class with no entry is not restricted. An agent is always bound to its session's member (agents); its entry can only narrow the record kinds and verbs. chant workspace records new, amend, review and close and the MCP record tools refuse a write outside the writer's scope with write-scope-member or write-scope-kind, and chant workspace check --changes reports each commit that writes outside its author's scope, read from the declaration and the trust policy at the range's base. Added in schema 1 by chant 0.101.0, so a declaration that uses it sets minReader to 0.101.0 or newer.",
+      "description": "Who may write what (#2524 D5, #2548, ws-067): for each principal class, the members whose files it may write and the record kinds it may write, with which verbs. A class with no entry is not restricted. An agent is always bound to its session's member (agents); its entry can only narrow the record kinds and verbs. chant workspace records new, amend, review and close and the MCP record tools refuse a write outside the writer's scope with write-scope-member or write-scope-kind, and chant workspace check --changes reports each commit that writes outside its author's scope, read from the declaration and the trust policy at the range's base, and a write to a path the class's protected list covers with write-scope-protected (#3146). Added in schema 1 by chant 0.101.0, so a declaration that uses it sets minReader to 0.101.0 or newer.",
       "properties": {
         "human": {
           "$ref": "#/$defs/classScope",
@@ -444,7 +444,7 @@
     },
     "box": {
       "type": "object",
-      "description": "The member is a box, or holds a box's declarations (#2726). A box holds no credential: each capability it needs outside itself is reached through a broker, a runtime such as a lobby or a door, which holds the credential and enforces the scope. chant workspace check fails when a file in the member's directory carries a literal secret (WSP121) and when a capability names no broker (WSP122). chant workspace status --json lists the capabilities, so a broker can read the scopes. Its host, slot, ports, state and cookies state the box's isolation (#2727): chant derives each value from the box's identity, its host, the member's name and its slot, and prints them in chant workspace status --json, so a runtime reads them instead of choosing its own. chant workspace check fails when two boxes on a host resolve to the same value (WSP123) and when a box hard-codes a machine path (WSP124). A member that builds the fountain lexicon's Box declares the callback token fountain gives its persistent sandbox as the capability fountain-callback, brokered by fountain, with scope owner, or chant workspace check fails (WSP125, #2780). Its intent names the decision record that says what the box is for (#2850): chant workspace status --json reports the record's state and answer, and chant workspace check fails when no decision record has the id (WSP126) and warns when the record constrains no member or path of this workspace (WSP127, #2857). Its services list what the box runs under its supervisor (#2880), which the fly lexicon observes, restarts and applies through sprite-env, and which chant workspace status --json prints. Added in schema 1 by chant 0.91.0, so a declaration that uses it sets minReader to 0.91.0 or newer.",
+      "description": "The member is a box, or holds a box's declarations (#2726). A box holds no credential: each capability it needs outside itself is reached through a broker, a runtime such as a lobby or a door, which holds the credential and enforces the scope. chant workspace check fails when a file in the member's directory carries a literal secret (WSP121) and when a capability names no broker (WSP122). chant workspace status --json lists the capabilities, so a broker can read the scopes. Its host, slot, ports, state and cookies state the box's isolation (#2727): chant derives each value from the box's identity, its host, the member's name and its slot, and prints them in chant workspace status --json, so a runtime reads them instead of choosing its own. chant workspace check fails when two boxes on a host resolve to the same value (WSP123) and when a box hard-codes a machine path (WSP124). A member that builds the fountain lexicon's Box declares the callback token fountain gives its persistent sandbox as the capability fountain-callback, brokered by fountain, with scope owner, or chant workspace check fails (WSP125, #2780). Its intent names the decision record that says what the box is for (#2850): chant workspace status --json reports the record's state and answer, and chant workspace check fails when no decision record has the id (WSP126) and warns when the record constrains no member or path of this workspace (WSP127, #2857). Its services list what the box runs under its supervisor (#2880), which the fly lexicon observes, restarts and applies through sprite-env, and which chant workspace status --json prints. Its factory declares what the box builds, how a build is checked, which member declares the builder agents and where a finished build is published (#3146, ws-077), and its listing what the box shows of itself (#3146). Added in schema 1 by chant 0.91.0, so a declaration that uses it sets minReader to 0.91.0 or newer.",
       "properties": {
         "intent": {
           "type": "string",
@@ -457,6 +457,12 @@
           "items": {
             "$ref": "#/$defs/boxService"
           }
+        },
+        "factory": {
+          "$ref": "#/$defs/boxFactory"
+        },
+        "listing": {
+          "$ref": "#/$defs/boxListing"
         },
         "capabilities": {
           "type": "array",
@@ -524,6 +530,142 @@
         "cookies": [
           "host"
         ]
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false
+    },
+    "boxFactory": {
+      "type": "object",
+      "description": "What the box builds and how (#3146, ws-077), replacing studio's x-factory. Opt-in: a box block without it declares no factory, and nothing here is required of a workspace that doesn't build with agents (#3174). At most one box block in a declaration declares a factory. builds and builders name declared members, or the declaration can't be read (declaration-invalid). chant workspace status --json and chant workspace graph --json print it under the member's box. The factory need not build an app: builds may name any member kind, such as chant or terraform, and the check may be a plan, a lint or a conformance run. Added in schema 1 by chant 0.102.0, so a declaration that uses it sets minReader to 0.102.0 or newer.",
+      "required": [
+        "builds"
+      ],
+      "properties": {
+        "builds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "The members the factory builds, each a declared member of any kind. A work item a person asks for here constrains member:<the first>.",
+          "items": {
+            "$ref": "#/$defs/name"
+          }
+        },
+        "check": {
+          "description": "The command whose exit code is a build's verdict, run from the workspace root after the work item's own checks: a command, or { run, kind } saying what it is. kind is test when omitted.",
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "object",
+              "required": [
+                "run"
+              ],
+              "properties": {
+                "run": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "The command, run from the workspace root."
+                },
+                "kind": {
+                  "enum": [
+                    "test",
+                    "build",
+                    "lint",
+                    "plan",
+                    "conformance"
+                  ],
+                  "description": "What the command is: an app's tests, a build, a lint, a lifecycle plan or a conformance run. test when omitted."
+                }
+              },
+              "patternProperties": {
+                "^x-": true
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "checks": {
+          "$ref": "#/$defs/path",
+          "description": "The directory, from the workspace root, where a work item's builder writes the check for its item. When omitted the orchestrator chooses, such as <the first member of builds>/checks."
+        },
+        "builders": {
+          "$ref": "#/$defs/name",
+          "description": "The member that declares the builder agents, such as the one whose agents/ holds them. Which agent builds at which tier is #3152; the tier vocabulary is the work kind's work.tier.tiers (#3147)."
+        },
+        "publish": {
+          "type": "object",
+          "description": "Where a finished build is published: its branch is pushed and a pull request opened against repo's base. The repo is the record, so an orchestrator reads this instead of being told the target in its environment.",
+          "required": [
+            "repo"
+          ],
+          "properties": {
+            "forge": {
+              "enum": [
+                "github"
+              ],
+              "description": "The forge repo is on. github when omitted."
+            },
+            "repo": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}$",
+              "description": "The repository the pull request is opened on, as owner/name."
+            },
+            "base": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The branch the pull request targets. The repository's default branch when omitted."
+            },
+            "branchPrefix": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._/-]+$",
+              "description": "What the published branch's name starts with; the work item's id follows, as in box/ and then box/work-012. chant/work/ when omitted, the work lease's own branch."
+            },
+            "head": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}$",
+              "description": "The repository the branch is pushed to when it isn't repo, as owner/name: a fork, so the pull request comes from <head owner>:<branch>. A runtime that publishes for one contributor's fork supplies that per contributor instead (arugula-salad/studio#242); this names a fork the whole workspace publishes from."
+            }
+          },
+          "patternProperties": {
+            "^x-": true
+          },
+          "additionalProperties": false
+        }
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false
+    },
+    "boxListing": {
+      "type": "object",
+      "description": "What the box shows of itself on a home site that lists boxes (#3146, #3154): whether it is listed, its title and one line, and a cover image kept as a file in the repo. A box's listing is configuration, so changing it is a reviewed change (ws-074). chant workspace status --json and chant workspace graph --json print it under the member's box, with the cover's sha256. Added in schema 1 by chant 0.102.0, so a declaration that uses it sets minReader to 0.102.0 or newer.",
+      "properties": {
+        "published": {
+          "type": "boolean",
+          "description": "Whether the box is listed. true when omitted: a box is listed unless its owner takes it out."
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 60,
+          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*$",
+          "description": "The box's title, one line of at most 60 characters. Empty when omitted, and a reader then shows a name of its own."
+        },
+        "line": {
+          "type": "string",
+          "maxLength": 140,
+          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*$",
+          "description": "One line saying what the box is, at most 140 characters. Empty when omitted."
+        },
+        "cover": {
+          "$ref": "#/$defs/path",
+          "description": "A PNG, JPEG or WebP picture of the box, as a file from the workspace root. None when omitted."
+        }
       },
       "patternProperties": {
         "^x-": true
@@ -920,6 +1062,39 @@
         }
       }
     },
+    "protectedPath": {
+      "description": "A protected path: a glob from the workspace root, or { path, except } for a JSON file whose listed top-level keys may still change.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/fileGlob"
+        },
+        {
+          "type": "object",
+          "required": [
+            "path"
+          ],
+          "properties": {
+            "path": {
+              "$ref": "#/$defs/fileGlob"
+            },
+            "except": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "description": "Top-level keys of the JSON file a write may change. A change anywhere else in the file, or to a file that doesn't parse as a JSON object before and after, is still outside the scope.",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "patternProperties": {
+            "^x-": true
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
     "classScope": {
       "type": "object",
       "description": "A principal class's write scope.",
@@ -939,6 +1114,13 @@
             }
           ]
         },
+        "protected": {
+          "type": "array",
+          "description": "Paths the class may not write, even inside a member it may (#3146, ws-077): each a glob from the workspace root, or { path, except } for a JSON file the class may change only in the top-level keys except names. An entry protects the files it matches and everything under a directory it matches. A record file is judged by records, not here. Added in schema 1 by chant 0.102.0, so a declaration that uses it sets minReader to 0.102.0 or newer.",
+          "items": {
+            "$ref": "#/$defs/protectedPath"
+          }
+        },
         "records": {
           "$ref": "#/$defs/recordScope",
           "description": "The record kinds the class may write, and how. Without it, every kind in reach, with every verb. A kind a member declares is in reach when that member is; the workspace's own kinds always are."
@@ -951,8 +1133,15 @@
     },
     "agentScope": {
       "type": "object",
-      "description": "The agent class's write scope. Its members are always its session's one member, so only the record kinds can be set.",
+      "description": "The agent class's write scope. Its members are always its session's one member, so only the record kinds and the protected paths can be set.",
       "properties": {
+        "protected": {
+          "type": "array",
+          "description": "Paths the class may not write, even inside a member it may (#3146, ws-077): each a glob from the workspace root, or { path, except } for a JSON file the class may change only in the top-level keys except names. An entry protects the files it matches and everything under a directory it matches. A record file is judged by records, not here. Added in schema 1 by chant 0.102.0, so a declaration that uses it sets minReader to 0.102.0 or newer.",
+          "items": {
+            "$ref": "#/$defs/protectedPath"
+          }
+        },
         "records": {
           "$ref": "#/$defs/recordScope",
           "description": "The record kinds an agent may write, and how. Without it, every kind in reach of its member, with every verb."

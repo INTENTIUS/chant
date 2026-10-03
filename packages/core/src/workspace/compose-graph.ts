@@ -29,6 +29,7 @@
  * `chant graph` itself is untouched: this is the only place members compose.
  */
 
+import type { FactoryView, ListingView } from "./box-factory";
 import type { Declaration } from "./declaration";
 import type { KindRegistry } from "./kinds";
 import { graphLinks, type LinkTableRow } from "./links";
@@ -93,6 +94,12 @@ export interface ComposedMember {
    * the outer `nodes` with `outer/inner/id` ids.
    */
   nested?: NestedWorkspace;
+  /**
+   * The factory and listing the member's box block declares (#3146, ws-077),
+   * read from the declaration at the revision read. Set by
+   * `chant workspace graph` on every member; null when the box declares neither.
+   */
+  box?: { factory: FactoryView | null; listing: ListingView | null } | null;
   /** Whole-read facts the member's IR carried (`meta`, `pipeline`), kept apart from the composed sections. */
   meta?: Record<string, unknown>;
   pipeline?: unknown;
