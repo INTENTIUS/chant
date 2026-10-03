@@ -6,8 +6,10 @@
  * `yamlBased: false`; they are listed for a reader who meets them in a report.
  */
 
-import { auditRule, type RuleMeta } from "@intentius/chant/audit/catalog";
+import { applyLineage, auditRule, type RuleMeta } from "@intentius/chant/audit/catalog";
 import { sqlPostSynthAuditEntries } from "./post-synth/audit-entries";
+import { postgresPostSynthAuditEntries } from "./post-synth/postgres-audit-entries";
+import { sqlAuditLineage } from "./audit-lineage";
 
 function sourceRule(id: string, category: RuleMeta["category"], title: string, remediation: string): RuleMeta {
   return { id, tier: "merge-worthy", fixKind: "guidance", category, title, remediation, yamlBased: false };
@@ -50,6 +52,12 @@ export const sqlAuditCatalog: Record<string, RuleMeta> = {
     "A sequence or relation named in a regclass string makes no reference",
     "Interpolate the declared object: nextval(${sequence}) or ${relation}::regclass.",
   ),
+  SQLPG004: sourceRule(
+    "SQLPG004",
+    "correctness",
+    "A declared extension the configured Postgres provider does not allow",
+    "Use an extension the provider lists, or set sql.provider to the service the project deploys to.",
+  ),
   SQLCH101: auditRule(
     "SQLCH101",
     "merge-worthy",
@@ -59,4 +67,7 @@ export const sqlAuditCatalog: Record<string, RuleMeta> = {
     { category: "correctness" },
   ),
   ...sqlPostSynthAuditEntries,
+  ...postgresPostSynthAuditEntries,
 };
+
+applyLineage(sqlAuditCatalog, sqlAuditLineage);

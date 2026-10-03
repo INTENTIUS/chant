@@ -23,7 +23,8 @@ import { canonicalObject, type CanonicalColumn, type CanonicalObject } from "./n
 
 type Props = Record<string, unknown>;
 
-const PRUNED = new Set(["ddl", "source", "lineage", "reads", "to", "orReplace", "ifNotExists"]);
+// `concurrently` is how a Postgres index is created, not a property of it.
+const PRUNED = new Set(["ddl", "source", "lineage", "reads", "to", "orReplace", "ifNotExists", "concurrently"]);
 
 export const sqlDeepNormalizationHooks: DeepNormalizationHooks = {
   prune: (node) => PRUNED.has(node.pattern.split(/[.[]/)[0]!),

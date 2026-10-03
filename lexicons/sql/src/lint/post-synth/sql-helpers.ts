@@ -25,3 +25,15 @@ export function clickhouseObjects(ctx: PostSynthContext): OutputObject[] {
   }
   return out;
 }
+
+/** Every schema object in the build's sql output, Postgres dialect. */
+export function postgresObjects(ctx: PostSynthContext): OutputObject[] {
+  const out: OutputObject[] = [];
+  for (const doc of ctx.docs ?? []) {
+    if (doc.error || doc.lexicon !== "sql" || doc.format !== "json") continue;
+    const value = doc.value as { dialect?: unknown; objects?: unknown };
+    if (value?.dialect !== "postgres" || !Array.isArray(value.objects)) continue;
+    out.push(...(value.objects as OutputObject[]));
+  }
+  return out;
+}
