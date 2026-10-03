@@ -2,7 +2,7 @@
  * The otel lexicon's chant audit catalog, contributed via
  * `otelPlugin.auditCatalog()` (#687, #1346).
  *
- * OTEL101-OTEL106 and OTEL112-OTEL117 read the emitted collector YAML, so they are
+ * OTEL101-OTEL106, OTEL112-OTEL117 and OTEL119-OTEL127 read the emitted collector YAML, so they are
  * `yamlBased`.
  * OTEL107-OTEL109 read the declared entities (a component's definition, its
  * schema pin), which a standalone YAML file does not carry, so they are
@@ -146,6 +146,78 @@ export const otelAuditCatalog: Record<string, RuleMeta> = {
     "guidance",
     "Two started components listen on the same address",
     "Give one of them another port, or a specific host that doesn't overlap the other's. The collector's own metrics listen on localhost:8888 unless service.telemetry.metrics sets a reader or level none.",
+    { category: "correctness" },
+  ),
+  OTEL119: auditRule(
+    "OTEL119",
+    "report-only",
+    "guidance",
+    "Collector config sets a field deprecated before the pinned release",
+    "Replace invert_match with a drop policy, service.telemetry.metrics.address with readers, and spanmetrics dimensions_cache_size with aggregation_cardinality_limit.",
+    { category: "best-practice" },
+  ),
+  OTEL120: auditRule(
+    "OTEL120",
+    "merge-worthy",
+    "guidance",
+    "Collector credential written as a literal in the config",
+    'Replace the value with `${env:NAME}` or `${file:/path}` so the collector reads it at start-up.',
+    { category: "security" },
+  ),
+  OTEL121: auditRule(
+    "OTEL121",
+    "merge-worthy",
+    "guidance",
+    "Exporter sends a credential over plaintext",
+    "Use an https:// endpoint, or drop tls.insecure, for an exporter that sends an authorization header or API key.",
+    { category: "security" },
+  ),
+  OTEL122: auditRule(
+    "OTEL122",
+    "merge-worthy",
+    "guidance",
+    "zpages or pprof listens on a non-loopback address",
+    "Bind zpages and pprof to localhost and reach them with a port-forward.",
+    { category: "security" },
+  ),
+  OTEL123: auditRule(
+    "OTEL123",
+    "report-only",
+    "guidance",
+    "debug exporter at verbosity detailed beside a real exporter",
+    "Set the debug exporter to verbosity basic, or keep detailed output to a pipeline that exports nowhere else.",
+    { category: "security" },
+  ),
+  OTEL124: auditRule(
+    "OTEL124",
+    "report-only",
+    "guidance",
+    "Remote exporter has its sending queue or retries turned off",
+    "Remove sending_queue.enabled: false and retry_on_failure.enabled: false from exporters that send over the network.",
+    { category: "best-practice" },
+  ),
+  OTEL125: auditRule(
+    "OTEL125",
+    "report-only",
+    "guidance",
+    "Pipeline sends to a remote otlp or otlphttp exporter without batching",
+    "Add a batch processor to the pipeline, or set sending_queue.batch on the exporter.",
+    { category: "best-practice" },
+  ),
+  OTEL126: auditRule(
+    "OTEL126",
+    "merge-worthy",
+    "guidance",
+    "k8sattributes extracts an unsupported metadata field",
+    "Use a field from the k8sattributes list at the pinned release, or extract it as a label or annotation.",
+    { category: "correctness" },
+  ),
+  OTEL127: auditRule(
+    "OTEL127",
+    "merge-worthy",
+    "guidance",
+    "resourcedetection lists an unknown detector",
+    "Name detectors as the processor registers them (elastic_beanstalk, not elasticbeanstalk), or remove the entry.",
     { category: "correctness" },
   ),
 };

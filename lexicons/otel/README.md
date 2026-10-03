@@ -58,7 +58,7 @@ Each connector supports fixed signal pairs (`spanmetrics`: traces to metrics). O
 
 ## Checks
 
-OTEL001 and OTEL002 run on source (id syntax, literal credentials). OTEL101 to OTEL109 and OTEL112 to OTEL117 run after a build: undeclared or unused components (a connector must be on both sides), empty pipelines, extension wiring, `memory_limiter` placement, id syntax, each component's own config rules, duplicate ids, missing schema pins, connector signal pairs, cycles through connectors, connector ids shared with a receiver or exporter, `routing` targets that don't receive from the connector, metrics split by a per-request GenAI id or content key, and two started components listening on the same address.
+OTEL001 and OTEL002 run on source (id syntax, literal credentials). OTEL101 to OTEL109, OTEL112 to OTEL117 and OTEL119 to OTEL127 run after a build: undeclared or unused components (a connector must be on both sides), empty pipelines, extension wiring, `memory_limiter` placement, id syntax, each component's own config rules, duplicate ids, missing schema pins, connector signal pairs, cycles through connectors, connector ids shared with a receiver or exporter, `routing` targets that don't receive from the connector, metrics split by a per-request GenAI id or content key, two started components listening on the same address, fields deprecated before the pinned release, literal credentials in the config, credentials sent in plaintext, zpages or pprof off loopback, detailed debug output beside a backend, an exporter's queue or retries turned off, a remote OTLP exporter with no batching, and k8sattributes fields or resourcedetection detectors the collector doesn't know.
 
 ## Plain-data API
 
