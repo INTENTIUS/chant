@@ -40,6 +40,7 @@ import {
   loadRecordKind,
   normalisePrincipal,
   readRecords,
+  readSessionSubjects,
   RECORD_SEAL_FIELD,
   RecordReadError,
   type LoadedRecordKind,
@@ -387,11 +388,7 @@ export async function readRecordsFor(
   if (at === null && query.overlay) source = await query.overlay(source, { loaded, root });
   const history = top ? gitHistory(top, at ?? "HEAD", workspaceRoot) : undefined;
   // A session kind's verdicts name records of another kind, read from the same tree (#2673).
-  let subjects: { records: RecordEntry[]; reviews: string } | undefined;
-  if (loaded.kind.session) {
-    const subjectKind = await loadRecordKind(resolve(dirname(loaded.file), loaded.kind.session.subjects.kind), cwd);
-    subjects = { records: (await readRecords(subjectKind, { root, source })).records, reviews: subjectKind.kind.reviews?.field ?? "reviews" };
-  }
+  const subjects = await readSessionSubjects(loaded, root, source);
   const result = await readRecords(loaded, { root, source, current: !!query.current, assets, workspaceRoot, ...(history ? { history } : {}), ...(subjects ? { subjects } : {}) });
   return { loaded, root, top, at, workspaceRoot, tree: assets, result };
 }

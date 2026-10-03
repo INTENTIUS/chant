@@ -48,8 +48,10 @@
  *
  * The workspace is generated for each run, from the reader suite's fixture
  * and the `__writer_fixture__/` overlay this package ships beside this module:
- * the reference workspace's work, answer and session kinds, its decision
- * points, and one open work item, W-001. Nothing is written anywhere else.
+ * the reference workspace's work, answer and session kinds (with the
+ * contract and driver kinds a session's verdicts may also name), its
+ * decision points, and one open work item, W-001. Nothing is written
+ * anywhere else.
  *
  * Actions a writer does not list in `actions` are not applicable to it. The
  * suite still performs those steps itself, directly through chant, so a later

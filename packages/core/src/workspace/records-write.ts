@@ -31,8 +31,15 @@
  * `review --sign` seals a verdict (#2687): see `trust/seal.ts`. A record of
  * a kind that declares `seal` gets its whole-file seal when `new` or `amend`
  * writes it into a closed state (#2546, ws-063).
+ *
+ * `new` also writes a record of a content-addressed JSON kind (`format:
+ * "json"`, `idFrom: "sha256"`, ws-053), such as the reference workspace's
+ * evidence (ws-082): the fields as JSON, in a file named for the SHA-256 of
+ * its bytes. Such a record never changes, so amend, review and close refuse
+ * the kind.
  */
 
+import { createHash } from "node:crypto";
 import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, posix, relative, resolve } from "node:path";
 import type { CommandContext } from "../cli/registry";
@@ -43,6 +50,7 @@ import {
   loadRecordKind,
   parseFrontMatter,
   readRecords,
+  readSessionSubjects,
   RECORD_REASON_CODES,
   RecordReadError,
   RECORD_SEAL_FIELD,
@@ -377,15 +385,26 @@ export interface Opened {
   dirRel: string;
 }
 
-export async function open(kind: string, cwd: string): Promise<Opened> {
+/** A kind `records new` writes as one JSON file named for the SHA-256 of its bytes (ws-053, ws-082). */
+export function isContentAddressed(kind: LoadedRecordKind["kind"]): boolean {
+  return kind.format === "json" && kind.idFrom === "sha256";
+}
+
+export async function open(kind: string, cwd: string, opts: { contentAddressed?: boolean } = {}): Promise<Opened> {
   const real = realpathOr(cwd);
   const root = gitRoot(real) ?? real;
   const loaded = await loadRecordKind(kind, real);
-  // The writers write Markdown front matter with an id field. A JSON or
-  // content-addressed kind (ws-053) is read by records, and written by its own tool.
-  if (loaded.kind.format !== "markdown-front-matter" || loaded.kind.idField === undefined) {
+  // The writers write Markdown front matter with an id field. `records new`
+  // also writes a content-addressed JSON kind (ws-082), whose record never
+  // changes once written, so amend, review and close never open one. A JSON
+  // kind with an id field is read by records, and written by its own tool.
+  const writable = (loaded.kind.format === "markdown-front-matter" && loaded.kind.idField !== undefined) || (!!opts.contentAddressed && isContentAddressed(loaded.kind));
+  if (!writable) {
     const what = loaded.kind.format !== "markdown-front-matter" ? `format ${loaded.kind.format}` : `ids from ${loaded.kind.idFrom}`;
-    throw new RecordWriteError("write-usage-invalid", `the ${loaded.kind.name} kind has ${what}, and records new, amend and review write only Markdown front matter records with an idField`);
+    const verbs = isContentAddressed(loaded.kind)
+      ? "a content-addressed record never changes once records new writes it, so amend, review and close never write one"
+      : "records new, amend and review write only Markdown front matter records with an idField, and records new a JSON record named for the sha256 of its bytes";
+    throw new RecordWriteError("write-usage-invalid", `the ${loaded.kind.name} kind has ${what}: ${verbs}`);
   }
   const dirRel = relative(root, loaded.dir).split("\\").join("/") || ".";
   return {
@@ -430,11 +449,7 @@ function refuseUnidentifiedAuthors(source: ScopeSource, kind: Opened["loaded"]["
  */
 export async function readAll(o: Opened, source: RecordSource): Promise<RecordEntry[]> {
   const assets = workingTree(o.workspaceRoot === "." ? o.root : join(o.root, ...o.workspaceRoot.split("/")));
-  let subjects: { records: RecordEntry[]; reviews: string } | undefined;
-  if (o.loaded.kind.session) {
-    const subjectKind = await loadRecordKind(resolve(dirname(o.loaded.file), o.loaded.kind.session.subjects.kind), o.root);
-    subjects = { records: (await readRecords(subjectKind, { root: o.root, source })).records, reviews: subjectKind.kind.reviews?.field ?? "reviews" };
-  }
+  const subjects = await readSessionSubjects(o.loaded, o.root, source);
   return (await readRecords(o.loaded, { root: o.root, source, assets, workspaceRoot: o.workspaceRoot, ...(subjects ? { subjects } : {}) })).records;
 }
 
@@ -868,13 +883,14 @@ async function newRecordLocked(opts: NewRecordOptions & ChannelOptions): Promise
     if (opts.prefix !== undefined && !/^[A-Za-z][A-Za-z0-9]*$/.test(opts.prefix)) {
       throw new RecordWriteError("write-usage-invalid", `--prefix takes letters and digits, starting with a letter, not ${JSON.stringify(opts.prefix)}`);
     }
-    const o = await open(opts.kind, opts.cwd);
+    const o = await open(opts.kind, opts.cwd, { contentAddressed: true });
     const scope = refuseOutOfScope(o, "new", opts.cwd, opts);
     const fields = applyChannel(o, parseFields(opts.fields, "--from"), opts, true, "--from");
     const { kind, schema } = o.loaded;
     refuseUnidentifiedAuthors(scope, kind, fields, "--from", opts.agent);
     refuseSealField(o, fields, "--from");
     refuseRevisionFields(kind, fields, {}, "--from");
+    if (isContentAddressed(kind)) return await newContentAddressed(o, fields, opts);
     const idField = kind.idField!;
     const before = await readAll(o, o.source);
     const given = fields[idField];
@@ -925,6 +941,39 @@ async function newRecordLocked(opts: NewRecordOptions & ChannelOptions): Promise
   } catch (err) {
     return failure<NewErrorCode>(RECORDS_NEW_SCHEMA_ID, err);
   }
+}
+
+/**
+ * `records new` on a content-addressed JSON kind (ws-053, ws-082), such as
+ * the reference workspace's evidence: the fields, in the schema's order, as
+ * JSON with two-space indents and a final newline, in a file named for the
+ * SHA-256 of those bytes. The id is that hash, so the fields give no id, and
+ * the record never changes afterwards.
+ */
+async function newContentAddressed(o: Opened, fields: Record<string, unknown>, opts: NewRecordOptions): Promise<NewDocument> {
+  const { kind, schema } = o.loaded;
+  if (opts.prefix !== undefined) throw new RecordWriteError("write-usage-invalid", `the ${kind.name} kind's ids are the sha256 of each record's bytes, so --prefix allocates nothing`);
+  if (opts.sign !== undefined) throw new RecordWriteError("write-usage-invalid", `the ${kind.name} kind names no author to seal: its records are named for the sha256 of their bytes`);
+  const data = pick(fields, schemaOrder(fields, schema));
+  const text = `${JSON.stringify(data, null, 2)}\n`;
+  const id = createHash("sha256").update(text, "utf-8").digest("hex");
+  const name = `${id}.json`;
+  if (!new RegExp(kind.location.match).test(name)) throw new RecordWriteError("record-path-unmatched", `the kind's location.match ${kind.location.match} does not match ${name}`);
+  const path = o.dirRel === "." ? name : `${o.dirRel}/${name}`;
+  if (o.source.list(o.dirRel)?.includes(name)) throw new RecordWriteError("record-id-taken", `${path} already exists, with the same bytes: the record is already written`);
+  const before = await readAll(o, o.source);
+  const written = await validatedEntry(o, before, path, text);
+  if (!opts.dryRun) writeFileSync(abs(o, path), text, { flag: "wx" });
+  return {
+    $schema: RECORDS_NEW_SCHEMA_ID,
+    contract: RECORDS_WRITE_CONTRACT_VERSION,
+    kind: o.view,
+    path,
+    id,
+    dryRun: !!opts.dryRun,
+    warnings: written.warnings,
+    ...(opts.dryRun ? { text } : {}),
+  };
 }
 
 // ── records amend ────────────────────────────────────────────────────────────
