@@ -230,21 +230,37 @@ describe("YAML -> TypeScript -> YAML", () => {
   }
 
   test.skipIf(!OTELCOL)("otelcol validate accepts every re-emitted config", async () => {
-    // Not the agent-observability agent: its k8s resolver needs a cluster to build (that example's own tests swap it for dns).
-    const yamls: Array<[string, string]> = [
-      ["gateway.yaml", read("gateway.yaml")],
-      ["signaltometrics.yaml", read("signaltometrics.yaml")],
-      ["agent-observability-gateway.yaml", read("agent-observability-gateway.yaml")],
-      ["genAiPipeline()", collectorYaml(genAiPipeline())],
-      ...UPSTREAM_BUILTIN_ONLY.map((f): [string, string] => [f, read("upstream", f)]),
-      // hostmetrics' root_path is accepted on linux only, which is where the node agent runs.
-      ...(await exampleOutputs()).filter(([n]) => n !== "k8s-node-agent" || process.platform === "linux"),
-    ];
-    for (const [name, yaml] of yamls) {
-      const { yaml: rebuilt } = await importAndBuild(yaml);
-      const { ok, output } = otelcolValidate(rebuilt);
-      expect(ok, `${name}: ${output}`).toBe(true);
+    // file_storage needs its directories to exist, so fault-tolerant-logs gets temp ones in place of /var/lib/otelcol.
+    const storage = mkdtempSync(join(tmpdir(), "chant-otelcol-storage-"));
+    try {
+      for (const d of ["receiver", "output"]) mkdirSync(join(storage, d));
+      // Not the agent-observability agent: its k8s resolver needs a cluster to build (that example's own tests swap it for dns).
+      const yamls: Array<[string, string]> = [
+        ["gateway.yaml", read("gateway.yaml")],
+        ["signaltometrics.yaml", read("signaltometrics.yaml")],
+        ["agent-observability-gateway.yaml", read("agent-observability-gateway.yaml")],
+        ["genAiPipeline()", collectorYaml(genAiPipeline())],
+        ...[...UPSTREAM_BUILTIN_ONLY, "loadbalancing-agent.yaml", "servicegraph-nop.yaml"].map((f): [string, string] => [f, read("upstream", f)]),
+        ["fault-tolerant-logs.yaml", read("upstream", "fault-tolerant-logs.yaml").replaceAll("/var/lib/otelcol/file_storage", storage)],
+        // hostmetrics' root_path is accepted on linux only, which is where the node agent runs.
+        ...(await exampleOutputs()).filter(([n]) => n !== "k8s-node-agent" || process.platform === "linux"),
+      ];
+      for (const [name, yaml] of yamls) {
+        const { yaml: rebuilt } = await importAndBuild(yaml);
+        const { ok, output } = otelcolValidate(rebuilt);
+        expect(ok, `${name}: ${output}`).toBe(true);
+      }
+    } finally {
+      rmSync(storage, { recursive: true, force: true });
     }
+  });
+
+  // couchbase fails validate upstream at the pinned release; a pin bump that fixes it shows here.
+  test.skipIf(!OTELCOL)("otelcol validate rejects couchbase.yaml as it does upstream", async () => {
+    const { yaml: rebuilt } = await importAndBuild(read("upstream", "couchbase.yaml"));
+    const { ok, output } = otelcolValidate(rebuilt);
+    expect(ok).toBe(false);
+    expect(output).toContain('undefined function "convert_gauge_to_sum"');
   });
 
 });
