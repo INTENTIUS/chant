@@ -36,7 +36,7 @@ A `CRDSource` is one of four shapes:
 | Shape | Fields | Use |
 |---|---|---|
 | `{ type: "url", url }` | a raw CRD YAML URL | the default — pin an operator release |
-| `{ type: "helm", chart, version, chartSubdir? }` | a chart reference | an operator that ships CRDs only in its chart |
+| `{ type: "helm", chart, version, digest?, chartSubdir? }` | a chart reference | an operator that ships CRDs only in its chart |
 | `{ type: "file", path }` | a local path | a CRD vendored into the repo |
 | `{ type: "cluster", context?, namespace? }` | a kubectl context | read CRDs already installed in a cluster |
 
@@ -55,13 +55,14 @@ Operators built with the Java and Go operator SDKs generate their CRDs at build 
   type: "helm",
   chart: "oci://ghcr.io/codriverlabs/helm/kube-microvm-operator",
   version: "1.0.11",
+  digest: "sha256:b15570736277f69bc69bc6bd1d6b89470404b8bbd45970b7dcb29ca9ab69170c",
   kinds: ["MicroVM", "MicroVMImage", "MicroVMNetwork", "MicroVMClass", "MicroVMReplicaSet"],
 }
 ```
 
 `version` is required, because an unpinned chart makes generated output depend on the day it was generated. `chartSubdir` overrides `crds` for charts that keep them somewhere else. The `kinds` allowlist works exactly as it does for a multi-doc URL bundle.
 
-This needs the `helm` binary on PATH at generation time, the same shape of dependency `type: "cluster"` has on `kubectl`. Prefer `url` when the operator publishes its CRDs — it is one fewer tool and one fewer network shape.
+An `oci://` chart is pulled over the registry's HTTP API with an anonymous token and unpacked in process, so generation does not need `helm` on PATH and produces the same surface on a fresh CI runner as on a workstation. `digest` pins the chart's content layer (the `sha256:` the registry manifest lists for the `application/vnd.cncf.helm.chart.content.v1.tar+gzip` layer); with it, a re-pushed tag fails generation instead of changing the output. A classic `https://` chart repository still needs the `helm` binary. Prefer `url` when the operator publishes its CRDs, since it is one fewer network shape.
 
 > The CRD YAML is fetched and baked in at generation time, not at build time. `chant build` stays offline and deterministic — see [Network Egress](/chant/reference/network-egress/) for the guard that keeps that true.
 

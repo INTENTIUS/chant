@@ -38,6 +38,7 @@
 import { z } from "zod";
 import type { ChantConfig } from "@intentius/chant/config";
 import { PLANNED_SQL_DIALECTS, SQL_DIALECTS } from "./dialects";
+import { POSTGRES_MAJORS } from "./spec/postgres-pin";
 
 const envRef = z.strictObject({ env: z.string() });
 
@@ -87,6 +88,16 @@ function dialectError(input: unknown): string {
 export const sqlConfigSchema = z.strictObject({
   /** The dialect, or the dialects, the project's schema is for. */
   dialect: z.union([dialectName, z.array(dialectName).min(1)], { error: (iss) => dialectError(iss.input) }).optional(),
+  /**
+   * The Postgres major the project targets. The editor completes and hovers
+   * only what that major has (a function added in 18 is not offered at 16);
+   * without it, the newest supported major is used.
+   */
+  postgresMajor: z
+    .number()
+    .int()
+    .refine((n) => POSTGRES_MAJORS.includes(n), { error: `expected a supported Postgres major (${POSTGRES_MAJORS.join(", ")})` })
+    .optional(),
   /** One server per chant environment. */
   profiles: z.record(z.string(), sqlProfileSchema).optional(),
 });
