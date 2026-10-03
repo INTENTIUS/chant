@@ -244,7 +244,7 @@ describe("GHA012: deprecated-action-version", () => {
   });
 
   test("does not flag current version", () => {
-    const ctx = createContext(`const s = "actions/checkout@v4";`);
+    const ctx = createContext(`const s = "actions/checkout@v7";`);
     const diags = deprecatedActionVersionRule.check(ctx);
     expect(diags).toHaveLength(0);
   });

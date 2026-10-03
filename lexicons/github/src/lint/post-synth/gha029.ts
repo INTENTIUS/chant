@@ -14,6 +14,7 @@
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
 import { getPrimaryOutput, extractActionRefs, parseActionUses } from "./yaml-helpers";
 import { TRUSTED_ACTION_OWNERS } from "../rules/data/trusted-action-owners";
+import { pinFixHint } from "../../action-pins";
 
 const SHA_RE = /^[0-9a-f]{40}$/;
 
@@ -52,11 +53,11 @@ export const gha029: PostSynthCheck = {
 
     for (const [, output] of ctx.outputs) {
       const yaml = getPrimaryOutput(output);
-      for (const { job, ref } of findUnpinnedActions(yaml)) {
+      for (const { job, ref, slug } of findUnpinnedActions(yaml)) {
         diagnostics.push({
           checkId: "GHA029",
           severity: "warning",
-          message: `Job "${job}" uses ${ref} pinned to a tag or branch — pin to a full commit SHA for supply-chain security.`,
+          message: `Job "${job}" uses ${ref} pinned to a tag or branch — pin to a full commit SHA for supply-chain security.${pinFixHint(slug)}`,
           entity: job,
           lexicon: "github",
         });

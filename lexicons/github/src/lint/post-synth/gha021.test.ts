@@ -79,4 +79,22 @@ jobs:
     const diags = gha021.check(makeCtx(yaml));
     expect(diags).toHaveLength(0);
   });
+
+  test("flags a checkout step that starts with name: (the composite shape)", () => {
+    const yaml = `name: CI
+on:
+  push:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Test
+        run: echo test
+`;
+    const diags = gha021.check(makeCtx(yaml));
+    expect(diags).toHaveLength(1);
+    expect(diags[0].message).toContain('Checkout({ pin: "sha" })');
+  });
 });

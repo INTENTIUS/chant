@@ -66,6 +66,7 @@ import type {
   ComponentPipelineResult as GenerateGithubResult,
   PipelineMember,
 } from "@intentius/chant/lexicon";
+import { actionRef } from "../action-pins";
 
 export type { GeneratedJob, GenerateGithubOptions, GenerateGithubResult };
 
@@ -232,7 +233,7 @@ export function buildGithubPipelineDoc(
       // One step per script line — mirrors gitlab's `script:` array of
       // discrete shell lines, rather than a single multi-line `run:` block, so
       // each line is independently inspectable (and machine-parseable).
-      const steps: Array<Record<string, unknown>> = [{ uses: "actions/checkout@v4" }];
+      const steps: Array<Record<string, unknown>> = [{ uses: actionRef("actions/checkout") }];
 
       for (const dep of component.dependsOn ?? []) {
         steps.push({
@@ -297,7 +298,7 @@ export function buildGithubPipelineDoc(
     for (const name of [...pinned].sort()) {
       command.push("--digest", `"${name}=\${{ needs.${jobNameByComponent.get(name)!}.outputs.digest }}"`);
     }
-    const steps: Array<Record<string, unknown>> = [{ uses: "actions/checkout@v4" }];
+    const steps: Array<Record<string, unknown>> = [{ uses: actionRef("actions/checkout") }];
     for (const [name, paths] of archives) {
       steps.push({
         name: `Download ${name} build archive`,

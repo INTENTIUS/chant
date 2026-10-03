@@ -80,7 +80,7 @@ describe("forgejo context tools", () => {
   test("forgejo:references reports the rewritten + unmapped refs", async () => {
     const refs = (await tool("forgejo:references").handler({ path: join(dir, "src") })) as Array<{ source: string }>;
     const sources = refs.map((r) => r.source);
-    expect(sources).toContain("https://code.forgejo.org/actions/checkout@v4");
+    expect(sources).toContain("https://code.forgejo.org/actions/checkout@v7");
     expect(sources).toContain("some-org/custom-action@v1");
   });
 

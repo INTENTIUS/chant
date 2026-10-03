@@ -1,5 +1,6 @@
 import { Composite, mergeDefaults } from "@intentius/chant";
 import { Job, Step } from "../generated/index";
+import { actionRef } from "../action-pins";
 
 export interface DeployEnvironmentProps {
   /** Environment name. Required. */
@@ -40,7 +41,7 @@ export const DeployEnvironment = Composite((props: DeployEnvironmentProps) => {
 
   // ── Deploy job ─────────────────────────────────────────────────────
   const deploySteps = [
-    new Step({ name: "Checkout", uses: "actions/checkout@v4" }),
+    new Step({ name: "Checkout", uses: actionRef("actions/checkout") }),
     ...deployScriptArr.map(
       (cmd: string) => new Step({ name: "Deploy", run: cmd }),
     ),
@@ -63,7 +64,7 @@ export const DeployEnvironment = Composite((props: DeployEnvironmentProps) => {
 
   // ── Cleanup job ────────────────────────────────────────────────────
   const cleanupSteps = [
-    new Step({ name: "Checkout", uses: "actions/checkout@v4" }),
+    new Step({ name: "Checkout", uses: actionRef("actions/checkout") }),
     ...cleanupScriptArr.map(
       (cmd: string) => new Step({ name: "Cleanup", run: cmd }),
     ),

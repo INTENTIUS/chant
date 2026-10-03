@@ -69,6 +69,9 @@ export async function validate(opts?: { basePath?: string }): Promise<ValidateRe
     lexiconJsonFilename: "lexicon-sql.json",
     requiredNames: REQUIRED_ENTITIES,
     basePath,
+    // Generation reads the committed catalog snapshot, so the surface is deterministic: a pin move that
+    // changes it fails here until `chant dev surface-diff lexicons/sql --update-snapshot --bump` accepts it.
+    checkSurfaceSnapshot: "always",
   });
   const checks: ValidateCheck[] = [...core.checks];
 
