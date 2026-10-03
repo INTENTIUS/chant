@@ -1,6 +1,6 @@
 ---
 title: "Ops"
-description: "fountainApply and fountainRun — the applier and the conversation runner."
+description: "fountainApply, fountainRun and fountainPrompt: the applier, the conversation runner and the next turn on a conversation."
 diataxis: reference
 ---
 
@@ -8,7 +8,7 @@ diataxis: reference
     Edit lexicons/fountain/docs/pages/ops.mdx instead; changes here are overwritten. */}
 
 
-Two op activities ship with the lexicon, resolvable by name via `loadActivities(["fountain"])`.
+Three op activities ship with the lexicon, resolvable by name via `loadActivities(["fountain"])`.
 
 ## fountainApply
 
@@ -47,10 +47,38 @@ An empty `prompt` counts as no prompt. The result also carries `sandboxId` and `
 | `sandboxApiAccess` | fountain's `sandbox_api_access`. `owner`, fountain's default, gives the sandbox a callback token (`FOUNTAIN_TOKEN`) scoped to the owner. `none` gives it none. fountain v0.21.0 accepts `none` only for a fresh ephemeral sandbox, so `fountainRun` refuses it for a persistent agent before starting anything ([managoat/fountain#2497](https://github.com/managoat/fountain/issues/2497)). |
 | `terminate` | What happens to the conversation's machine when the wait ends: `on-deadline` (the ephemeral default) terminates only a run whose turn never ended, `never` (the persistent default) leaves it, `always` terminates it either way. |
 
-Under `chant run` the executor calls both activities as `fn(args, signal)`. When the signal fires (the step's timeout, or Ctrl-C) `fountainRun` stops polling, applies the `terminate` policy as it does at its deadline, and the step fails.
+Under `chant run` the executor calls these activities as `fn(args, signal)`. When the signal fires (the step's timeout, or Ctrl-C) `fountainRun` stops polling, applies the `terminate` policy as it does at its deadline, and the step fails.
 
 ```typescript
 phase("Start", [activity("fountainRun", { agent: "studio-box", spriteName: "studio-box" })]);
 ```
 
-Multi-turn interaction, meaning follow-up prompts and interrupts, is fountain's own conversations API. The lexicon stays at the lifecycle edges.
+## fountainPrompt
+
+`fountainPrompt` adds a turn to a conversation that already exists, such as one `fountainRun` started, and waits for that turn to end ([#3356](https://github.com/INTENTIUS/chant/issues/3356)). It sends fountain's `POST /api/conversations/{id}/prompts` with a `client_request_id`, which puts the turn on the same runtime session, so the agent has the earlier turns in front of it. fountain wakes a conversation whose server has gone, on a fresh machine that resumes the session. The turn is found by that `client_request_id` on `GET .../turns` and polled until it is `completed`, `failed` or `interrupted`.
+
+```typescript
+const run = await fountainRun({ agent: "builder", prompt: build, terminate: "never" });
+const debrief = await fountainPrompt({ conversation: run.conversationId, prompt: ask, timeoutMs: 120_000, terminate: "always" });
+```
+
+| Arg | Effect |
+|---|---|
+| `conversation` | The conversation's id: `fountainRun`'s `conversationId`. |
+| `prompt` | The turn's prompt. A blank one is refused before anything is sent. |
+| `clientRequestId` | fountain's `client_request_id`, the name the turn is found by. Defaults to `chant-<uuid>`. fountain does not deduplicate on it, so keep it unique within the conversation. |
+| `timeoutMs` | The turn's cap. Past it the turn is interrupted (`POST .../interrupt`), which ends the turn and keeps the conversation. Default 10 minutes. |
+| `pollMs` | Poll interval. Default 5 seconds. |
+| `terminate` | What happens to the conversation when the wait ends: `never` (the default) leaves it up for another turn, `on-deadline` terminates it only when the turn was interrupted at its cap, `always` terminates it either way. |
+
+The result is `{ conversationId, clientRequestId, turnId, turnNumber, status, interruptedByDeadline, limitReason, terminated }`. `limitReason` is fountain's `limit_reason`, a service limit that ended the turn, which makes even a `completed` turn incomplete. When the signal fires, `fountainPrompt` interrupts the turn, applies `terminate` as at its cap, and the step fails.
+
+What fountain v0.21.0 does not allow decides what this activity leaves out:
+
+| Not possible | Why, and what to do instead |
+|---|---|
+| A turn on a terminated conversation | The prompts route answers 410 once a conversation is `terminated`, and `fountainPrompt` fails saying so. `fountainRun` terminates an ephemeral agent's conversation at its deadline by default, so run the earlier turn with `terminate: "never"` and end the conversation after the last turn, with `terminate: "always"` here. |
+| A tool allowlist for one turn | The prompts route takes the prompt, images and `client_request_id`, nothing else. The tools a conversation may use are its agent's `permission_policy`, narrowed once by the launch's, and no call narrows them for one turn. Narrow the agent's policy, or launch a conversation with the policy the turn needs. |
+| A cap on the agent loop's iterations | fountain has no per-turn iteration cap. The cap here is time, `timeoutMs`. |
+
+Interrupting a running turn on its own, answering a permission request, and reading the transcript stay with fountain's own conversations API.
