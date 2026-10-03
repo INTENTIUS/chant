@@ -79,6 +79,10 @@ COMMENT ON TABLE app.orders IS 'Placed [chant managed-by=chant stack=shop env=pr
     );
   });
 
+  test("serial spellings stay unqualified", () => {
+    expect(["serial", "SERIAL", "bigserial", "smallserial"].map((t) => canonicalType(t, "app"))).toEqual(["serial", "serial", "bigserial", "smallserial"]);
+  });
+
   test("serial, a collation, a generated column, identity options, an exclusion and storage parameters", () => {
     const d = pg.table`CREATE TABLE ${app}.events (
       id serial PRIMARY KEY, during tstzrange, k text COLLATE "C" DEFAULT 'x',

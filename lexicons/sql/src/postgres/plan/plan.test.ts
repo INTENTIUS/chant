@@ -64,6 +64,20 @@ describe("columns", () => {
     ]);
   });
 
+  test("serial is an integer column with an owned sequence: never qualified, classified by the integer types", () => {
+    const col = (t: string) => table(`CREATE TABLE app.orders (id ${t} PRIMARY KEY)`);
+    const d = diff([col("serial")], [col("bigserial")]);
+    expect(rules(d)).toEqual([["columns.id.type", "SQLPG207", "rewrite"]]);
+    expect(d.changes[0]!.before).toBe("serial");
+    expect(d.changes[0]!.after).toBe("bigserial");
+    expect(d.changes[0]!.note).toContain("sequence is widened to bigint");
+    expect(rules(diff([col("smallserial")], [col("serial")]))).toEqual([["columns.id.type", "SQLPG207", "rewrite"]]);
+    expect(rules(diff([col("serial")], [col("serial")]))).toEqual([]);
+    expect(rules(diff([col("serial")], [col("integer")]))).toEqual([["columns.id.default", "SQLPG209", "metadata"]]);
+    expect(rules(diff([col("integer")], [col("bigserial")]))).toEqual([["columns.id.type", "SQLPG207", "rewrite"]]);
+    expect(rules(diff([col("serial")], [col("text")]))).toEqual([["columns.id.type", "SQLPG208", "expand"]]);
+  });
+
   test("NOT NULL, defaults, comments, and a rename with and without the hint", () => {
     expect(rules(diff([table(ORDERS)], [table("CREATE TABLE app.orders (id bigint PRIMARY KEY, amount numeric(12,2) DEFAULT 0, note varchar(20) NOT NULL, status text)")]))).toEqual([
       ["columns.amount.default", "SQLPG209", "metadata"],

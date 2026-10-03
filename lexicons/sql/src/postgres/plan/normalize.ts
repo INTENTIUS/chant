@@ -82,8 +82,16 @@ const TYPE_SPELLING: ReadonlyMap<string, string> = (() => {
   return m;
 })();
 
-/** Whether a canonical type name is a built-in one (`pg_catalog`'s). */
-const isBuiltin = (name: string): boolean => TYPE_SPELLING.has(name) || ["serial", "bigserial", "smallserial", '"char"'].includes(name);
+/**
+ * `serial`, `bigserial` and `smallserial` are not types in the catalog: each
+ * is shorthand for an integer column with an owned sequence and a `nextval`
+ * default, so they are never schema-qualified. The live read prints such a
+ * column as the shorthand; `serialBase` gives the integer type underneath.
+ */
+const SERIAL_BASE: Readonly<Record<string, string>> = { serial: "integer", bigserial: "bigint", smallserial: "smallint" };
+
+/** The integer type a serial spelling stands for, or undefined for any other type. */
+export const serialBase = (type: string | undefined): string | undefined => (type === undefined ? undefined : SERIAL_BASE[type]);
 
 /** A qualified name in canonical form: each piece unquoted where it can be, the default schema added to a bare one. */
 export function canonicalName(text: string, defaultSchema?: string): string {
@@ -116,7 +124,9 @@ export function canonicalType(text: string | undefined, defaultSchema = "public"
   const lower = /"/.test(name) ? name : name.toLowerCase();
   let spelled: string;
   const builtin = TYPE_SPELLING.get(`${lower}${zone}`) ?? TYPE_SPELLING.get(lower);
-  if (builtin !== undefined) {
+  if (SERIAL_BASE[lower] !== undefined && modifiers === "" && !zone) {
+    spelled = lower;
+  } else if (builtin !== undefined) {
     spelled = builtin;
     // `timestamp(3) with time zone`: the modifier sits before the zone.
     if (modifiers && /^(timestamp|time) with(out)? time zone$/.test(spelled)) {

@@ -90,4 +90,28 @@ describe.skipIf(!enabled)("planning the getting-started example against a server
     await client.end();
     expect((await planPgAgainstServer("e2e", file, profile("star"))).changes.map((c) => `${c.field}: ${c.before} -> ${c.after}`)).toEqual([]);
   }, 600_000);
+
+  test("a serial table plans with no changes after apply; serial to bigserial is integer to bigint, unqualified", async () => {
+    const admin = await server!.connect();
+    await admin.query("CREATE DATABASE serials");
+    await admin.end();
+    const build = (type: string, name: string) => {
+      const items = pg.table`CREATE TABLE public.items (id serial PRIMARY KEY, n smallserial, v text)`;
+      const wide = pg.table`CREATE TABLE public.items (id bigserial PRIMARY KEY, n smallserial, v text)`;
+      const out = sqlSerializer.serialize(new Map<string, unknown>([["items", type === "serial" ? items : wide]]) as never) as SerializerResult;
+      const file = join(dir, name);
+      writeFileSync(file, out.primary);
+      return { file, ddl: out.files![POSTGRES_DDL_FILE]! };
+    };
+    const v1 = build("serial", "serial-v1.json");
+    const v2 = build("bigserial", "serial-v2.json");
+    const client = await server!.connect("serials");
+    await client.query(v1.ddl);
+    expect((await planPgAgainstServer("e2e", v1.file, profile("serials"))).changes).toEqual([]);
+
+    const plan = await planPgAgainstServer("e2e", v2.file, profile("serials"));
+    expect(plan.changes.map((c) => [c.field, c.rule, c.before, c.after])).toEqual([["columns.id.type", "SQLPG207", "serial", "bigserial"]]);
+    expect(plan.changes[0]!.note).toContain("sequence is widened to bigint");
+    await client.end();
+  }, 600_000);
 });
