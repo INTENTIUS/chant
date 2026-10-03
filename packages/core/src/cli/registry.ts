@@ -343,6 +343,8 @@ export interface ParsedArgs {
   cover?: string;
   /** `chant workspace box listing set <member> --cover <image> --cover-path <path>` (#3308): where the cover goes, from the workspace root. */
   coverPath?: string;
+  /** `chant workspace box publish <member> --records` (#3165): publish the records kept uncommitted instead of a work item. */
+  records?: boolean;
   /**
    * `chant workspace records review <id> --by <principal>` (#2670): the
    * reviewer, as the caller names them. Also `chant workspace records new

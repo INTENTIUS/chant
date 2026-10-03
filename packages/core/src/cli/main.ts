@@ -431,6 +431,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant workspace box listing set <member> --cover <image> --cover-path <path>` (#3308)
       result.coverPath = args[++i];
       if (!result.coverPath || result.coverPath.startsWith("-")) throw new Error("--cover-path needs a path from the workspace root: --cover-path <path>");
+    } else if (arg === "--records") {
+      // `chant workspace box publish <member> --records` (#3165): the records kept uncommitted, not a work item.
+      result.records = true;
     } else if (arg === "--verdict") {
       // `chant workspace records review <id> --verdict agree|dissent|abstain` (#2670)
       result.verdict = args[++i];
@@ -981,6 +984,13 @@ Workspace (level 1, #2524):
                         and comments; --cover copies a PNG, JPEG or WebP into
                         the repository. Judged by the write scope at base.
                         Prints the box-listing-write document; never commits
+  workspace box publish <member> (<item> | --records) [--by <principal>] [--head <owner/name>] [--dry-run]
+                        Publish a built work item, or the records kept
+                        uncommitted, through the publisher the box block names:
+                        run with a JSON request on stdin, its answer checked
+                        and its commit held to the apply record (ws-088).
+                        Prints the box-publish document; chant itself never
+                        commits, pushes or calls a forge
   workspace points [--open] [--kind <kind file>] [--at <rev>] [--json]
                         List the decision points the declared answer kinds'
                         points files declare, and the questions asked of them;

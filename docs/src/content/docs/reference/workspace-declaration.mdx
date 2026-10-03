@@ -379,6 +379,7 @@ The member that holds the box's declarations carries a `box` block:
 | `services` | no | The services the box runs under its supervisor. See [Services](#services). |
 | `factory` | no | What the box builds, how a build is checked, which member declares the builder agents and where a finished build is published. See [Factory](#factory). |
 | `listing` | no | What the box shows of itself on a home site that lists boxes. See [Listing](#listing). |
+| `publisher` | no | The command that publishes the box's work, which an orchestrator such as studio supplies. See [Publisher](#publisher). |
 | `capabilities[].name` | yes | The capability, in the kind-name grammar, such as `inference` or `fountain`. A box names each capability once. |
 | `capabilities[].broker` | no | What brokers it, such as `lobby` or `door`. It may be a member of this workspace or a runtime outside it, as a planted box's lobby is. Without it the capability is unbrokered, and `chant workspace check` fails with `WSP122`. |
 | `capabilities[].scope` | no | The parts of the box's own that the broker lets it reach. The broker enforces the words, and chant records them. For Fountain these are `agent` (start conversations with its own agent), `vault` (attach its own vault), and `conversations` and `sandboxes` (its own). |
@@ -390,7 +391,7 @@ The block goes in the workspace declaration and not in the box's TypeScript. `ch
 | Command | Uses the box block |
 |---|---|
 | [`chant workspace check`](/chant/cli/workspace-check/#boxes) | reads every file in the member's directory and fails with `WSP121` (`box-credential-declared`) on a literal secret. It fails with `WSP122` (`box-capability-unbrokered`) on a capability that names no broker, and with `WSP125` (`box-fountain-callback-undeclared`) when a member that builds a fountain `Box` doesn't declare `fountain-callback`. It fails with `WSP126` (`box-intent-unknown`) when the intent names no decision record, and warns with `WSP127` (`box-intent-unconstrained`) when that record's constrains names no member or path of this workspace at all |
-| [`chant workspace status --json`](/chant/cli/workspace-status/#boxes) | lists each member's `box`, with every capability's `name`, `broker` and `scope`, the box's `intent`, its `services`, its `factory` and its `listing`, and whether the workspace is `plantable` |
+| [`chant workspace status --json`](/chant/cli/workspace-status/#boxes) | lists each member's `box`, with every capability's `name`, `broker` and `scope`, the box's `intent`, its `services`, its `factory`, its `listing` and its `publisher`, and whether the workspace is `plantable` |
 | [`chant workspace graph --json`](/chant/cli/workspace-graph/) | prints each member's `factory` and `listing` as `box`, and `plantable`, read at the revision `--at` names |
 
 Set `minReader` to `"0.91.0"` or newer when the file has a `box` block, so an older chant reports `reader-too-old` instead of an unknown field.
@@ -510,6 +511,18 @@ A box can show itself on a home site that lists boxes, with a title, a line and 
 A title or line with a control character, such as a newline, can't be read. Since `factory` and `listing` are new in chant 0.102.0, a box block with either needs `minReader` at `"0.102.0"` or later.
 
 A tool such as hud changes the listing with [`chant workspace box listing set`](/chant/cli/workspace-box/), which edits only these fields and copies a cover picture in, rather than editing the declaration itself ([#3308](https://github.com/INTENTIUS/chant/issues/3308)).
+
+### Publisher
+
+A box's work leaves the box through its publisher. The publisher applies a built work item to the box's checkout and opens a pull request on `factory.publish`'s repo when one is named. It also sends the records a person kept uncommitted. The orchestrator does that work, so the box block names the command it supplies ([#3165](https://github.com/INTENTIUS/chant/issues/3165), [ws-088](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-088-a-box-publishes-through-one-chant-call-to-the-pu.md)):
+
+```json
+"box": {
+  "publisher": "node box/ops/factory/publish.mjs"
+}
+```
+
+chant splits the command into words as a shell splits plain words, where quotes group and a backslash escapes. No shell runs it, so `$HOME` and `~` reach the program as written. A surface calls [`chant workspace box publish`](/chant/cli/workspace-box/#publishing-a-boxs-work) rather than running the command. chant then runs it from the workspace root with a JSON request on stdin and checks the commit it made for the apply record of [ws-075](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-075-commit-trailers.md). `status --json` prints it under the member's `box`, or `null`. A chant older than 0.103.0 refuses the field, so set `minReader` to `"0.103.0"` when you add it.
 
 ### Plantable
 

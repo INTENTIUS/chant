@@ -196,6 +196,8 @@ export interface StatusBox {
   factory: FactoryView | null;
   /** What the box shows of itself on a home site, with the cover's sha256 (#3146), or null when the block declares no listing. */
   listing: ListingView | null;
+  /** The command that publishes the box's work, as declared (#3165, ws-088), or null when the block names none. */
+  publisher: string | null;
 }
 
 /** A declared box service as `status --json` prints it (#2880): every field present, null or false when not declared. */
@@ -449,6 +451,7 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
                 })),
                 factory: factoryView(m.box.factory),
                 listing: listingView(m.box.listing, coverBytes),
+                publisher: m.box.publisher,
               },
         stewards: stewards.stewards,
         stewardReasons: stewards.reasons,

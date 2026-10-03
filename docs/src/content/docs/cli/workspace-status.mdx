@@ -103,11 +103,12 @@ With `--json`, each member also lists its `box`: the [box block](/chant/referenc
     "builders": "delivery",
     "publish": { "forge": "github", "repo": "acme/fern", "base": null, "branchPrefix": "box/", "head": null }
   },
-  "listing": { "published": true, "title": "Fern", "line": "A review queue for the design team", "cover": { "path": "box/cover.png", "sha256": "9f2c..." } }
+  "listing": { "published": true, "title": "Fern", "line": "A review queue for the design team", "cover": { "path": "box/cover.png", "sha256": "9f2c..." } },
+  "publisher": "node box/ops/factory/publish.mjs"
 }
 ```
 
-`factory` and `listing` are the box's [factory](/chant/reference/workspace-declaration/#factory) and [listing](/chant/reference/workspace-declaration/#listing), with every default filled in, or `null` when the block declares none ([#3146](https://github.com/INTENTIUS/chant/issues/3146)). The document also has a top-level `plantable`, `{ "plantable": true, "box": "fern", "reason": null }` here: whether exactly one member's box block declares services, so a planter can run the workspace as one box. The [read contract](/chant/reference/workspace-read-contract/#factory-listing-and-plantable) describes the fields.
+`factory` and `listing` are the box's [factory](/chant/reference/workspace-declaration/#factory) and [listing](/chant/reference/workspace-declaration/#listing), with every default filled in, or `null` when the block declares none ([#3146](https://github.com/INTENTIUS/chant/issues/3146)). The document also has a top-level `plantable`, `{ "plantable": true, "box": "fern", "reason": null }` here: whether exactly one member's box block declares services, so a planter can run the workspace as one box. The [read contract](/chant/reference/workspace-read-contract/#factory-listing-and-plantable) describes the fields. `publisher` is the command the box block names to publish the box's work, or `null` ([#3165](https://github.com/INTENTIUS/chant/issues/3165)); a surface offers a publish when it is set and asks for one with [`chant workspace box publish`](/chant/cli/workspace-box/#publishing-a-boxs-work).
 
 `intent` is the decision record the box block names as the box's [intent](/chant/reference/workspace-declaration/#intent), or `null` when it names none ([#2850](https://github.com/INTENTIUS/chant/issues/2850)). It is read from the working tree, from the records of every declared kind named `decision`. `answer` is the label of the `options[]` entry `choice.option` names, or `null` while none is chosen ([#2855](https://github.com/INTENTIUS/chant/issues/2855)). While the record is `proposed`, `choice`, `answer`, `decided_by` and `decided_on` are `null`. When no decision record has the id, every field but `id` is `null` and `chant workspace check` fails with `WSP126`.
 

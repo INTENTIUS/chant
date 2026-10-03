@@ -497,6 +497,10 @@
           "description": "Added in contract 1 by #3146. What the box shows of itself on a home site, or null when the block declares no listing.",
           "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/listing" }]
         },
+        "publisher": {
+          "description": "Added in contract 1 by #3165. The command that publishes the box's work, as the box block declares it (ws-088), or null when it names none. A surface offers a publish only when it is set, and asks for one with chant workspace box publish rather than running it.",
+          "type": ["string", "null"]
+        },
         "services": {
           "description": "The services the box block declares (#2880), in declaration order, or empty when it declares none. A reader has them before any converge tick; a steward's ConvergeOp's lastTick carries each one's verdict. cmd is as declared: its ${VAR} references are left for the process that applies it to expand. Added by chant 0.95.0.",
           "type": "array",
