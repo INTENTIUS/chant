@@ -55,7 +55,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { z } from "zod";
-import { fetchLifecycleStatus, pushLifecycle, readBlobBySha, RefCASConflictError, writeLedgerFiles } from "../lifecycle/git";
+import { describeLifecyclePush, fetchLifecycleStatus, type LifecyclePushStatus, pushLifecycleStatus, readBlobBySha, RefCASConflictError, writeLedgerFiles } from "../lifecycle/git";
 import { resolveMemberLedger } from "../lifecycle/member-ledger";
 import { sortedJsonReplacer } from "../utils";
 import { followSquashes, type SquashFollow } from "./squash";
@@ -484,6 +484,8 @@ export interface RunLedgerWrite {
   commit: string;
   /** Whether chant/lifecycle reached the remote; false with no remote too. */
   pushed: boolean;
+  /** Why it did not, when `pushed` is false (#3391): no remote, a remote that moved on, or git's refusal. */
+  notPushed?: string;
 }
 
 export interface RunWriteResult {
@@ -521,8 +523,9 @@ async function appendRun(top: string, rootOnDisk: string, id: string, make: (exi
     }
   }
   if (commit === undefined) throw lastErr;
-  const pushed = await pushLifecycle({ cwd: top }).catch(() => false);
-  return { id, lines: written, ledger: { branch: LEDGER_BRANCH, path, commit, pushed } };
+  const push: LifecyclePushStatus = await pushLifecycleStatus({ cwd: top }).catch((err) => ({ status: "failed" as const, remote: "(unknown)", stderr: err instanceof Error ? err.message : String(err) }));
+  const notPushed = describeLifecyclePush(push);
+  return { id, lines: written, ledger: { branch: LEDGER_BRANCH, path, commit, pushed: push.status === "pushed", ...(notPushed ? { notPushed } : {}) } };
 }
 
 export interface RunWriteContext {
