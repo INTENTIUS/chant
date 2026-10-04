@@ -753,7 +753,7 @@ A batch holds the lock across calls. `chant workspace lock acquire --holder <nam
 
 ## Testing a reader
 
-A reader such as hud reads only through this contract and writes only through chant commands ([ws-052](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-052-chant-hud-boundary.md), the [chant and hud boundary](/chant/reference/boundary/)). `@intentius/chant` ships a conformance suite for that, so a reader can show it in its own CI with nothing else installed ([#2679](https://github.com/INTENTIUS/chant/issues/2679)).
+A reader such as hud or behold reads only through this contract and writes only through chant commands ([ws-086](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-086-the-workspace-boundary-without-chud-chant-hud-st.md), the [workspace boundary](/chant/reference/boundary/)). `@intentius/chant` ships a conformance suite for that, so a reader can show it in its own CI with nothing else installed ([#2679](https://github.com/INTENTIUS/chant/issues/2679)).
 
 | Import | For |
 |---|---|
