@@ -29,7 +29,7 @@ is named `-op.ts` rather than `.op.ts` on disk) so the page cannot drift from
 what the tests actually run.
 */}
 
-The Terraform lexicon ships one source-level lint rule and thirty-nine
+The Terraform lexicon ships one source-level lint rule and forty-four
 post-synth checks, plus TF023, which runs only in `chant audit` and is
 documented here beside the rest of the family. See [Lint
 Rules](/chant/lexicons/terraform/rules/) for the generated, always-current
@@ -2211,3 +2211,156 @@ resource "aws_s3_bucket" "b" {
 
 A root whose directory holds only this file triggers the rule. The test builds
 that directory in `tf040.test.ts`.
+
+## TF041: a Terragrunt dependency lets `mock_outputs` stand in for `apply`
+
+A `dependency` block that sets `mock_outputs` and either sets no
+`mock_outputs_allowed_terraform_commands` or lists `apply` in it. Severity
+`warning`. The rule reads `terragrunt.hcl` and `root.hcl`, in a build over
+`terraform.roots` and in `chant audit`.
+
+**Why it matters.** Terragrunt returns the mocks when the upstream unit has no
+outputs yet and the running command is allowed. A missing list and an empty
+list both mean every command (`shouldReturnMockOutputs` in Terragrunt
+v1.1.6). An `apply` that runs before the upstream unit is applied then writes
+the mock values to real state and reports success.
+
+**The fix.** Set `mock_outputs_allowed_terraform_commands = ["validate",
+"plan"]`. A list that is an expression, such as `local.mock_commands`, is not
+read and passes.
+
+**Prior art.** No tool in the survey covers this; see the lineage file.
+
+```hcl
+dependency "vpc" {
+  config_path = "../vpc"
+
+  mock_outputs = {
+    vpc_id = "vpc-00000000"
+  }
+}
+```
+
+From `fixtures/TF041/positive/terragrunt.hcl`. `positive-apply` lists `apply`.
+
+## TF042: a Terragrunt dependency sets `skip_outputs` with `mock_outputs`
+
+A `dependency` block with `skip_outputs = true` and `mock_outputs`. Severity
+`warning`.
+
+**Why it matters.** With `skip_outputs = true` Terragrunt never reads the
+upstream unit's outputs, so the mocks are the only values the dependency can
+return. Every plan and apply they are allowed for runs on mock data, however
+far the upstream unit has been applied. The pair is sometimes intended, to
+break a cycle; the values are then configuration.
+
+**The fix.** Drop `skip_outputs`, or pass the values as `inputs` where a
+reader of the unit can see them. A `skip_outputs` that is not a literal `true`
+is not read.
+
+**Prior art.** No tool in the survey covers this; see the lineage file.
+
+```hcl
+dependency "vpc" {
+  config_path = "../vpc"
+  skip_outputs = true
+
+  mock_outputs = {
+    vpc_id = "vpc-00000000"
+  }
+  mock_outputs_allowed_terraform_commands = ["validate", "plan"]
+}
+```
+
+From `fixtures/TF042/positive/terragrunt.hcl`.
+
+## TF043: a Terragrunt `terraform.source` names no version
+
+The `source` of a unit's `terraform` block is a git address with no `?ref=`, a
+`tfr://` address with no `?version=`, or an `oci://` address with no tag and
+no digest. Severity `warning`.
+
+**Why it matters.** A git source with no ref follows the default branch, a
+`tfr://` source follows the registry's latest release, and an `oci://` source
+pulls `latest`. A push or a release changes the unit with no diff to review.
+TF005 and TF038 cover `module` blocks; a unit has no `module` block.
+
+**The fix.** Add `?ref=` with a tag or commit SHA, `?version=` with an exact
+version, or `?digest=sha256:...` (or `?tag=`) for `oci://`. A local path and a
+source built from an expression (`${get_repo_root()}/modules/vpc`) are not
+read. The rule asks whether a version is named, not whether it is mutable, so
+`?ref=main` passes.
+
+**Prior art.** No tool in the survey covers this; TF005 and TF038 are the
+same check on `module` blocks.
+
+```hcl
+terraform {
+  source = "git::https://github.com/example/modules.git//vpc"
+}
+```
+
+From `fixtures/TF043/positive-git/terragrunt.hcl`. `positive-tfr` and
+`positive-oci` cover the other two schemes.
+
+## TF044: a Terragrunt config keeps state in a local backend
+
+A `remote_state` block with `backend = "local"`, or a `generate` block whose
+`contents` declare `backend "local"`. Severity `warning`.
+
+**Why it matters.** State on the runner's disk is gone when the job ends, a
+later job cannot read what an earlier one applied, and a git-range run, which
+checks out each side in a temporary directory, never sees it.
+
+**The fix.** Use a shared backend such as S3 or GCS. A throwaway sandbox can
+keep a local backend with `# chant-ignore TF044` above the block.
+
+**Prior art.** No tool in the survey covers this; see the lineage file.
+
+```hcl
+remote_state {
+  backend = "local"
+
+  config = {
+    path = "${get_parent_terragrunt_dir()}/.state/${path_relative_to_include()}/terraform.tfstate"
+  }
+}
+```
+
+From `fixtures/TF044/positive/terragrunt.hcl`. `positive-generate` writes the
+backend from a `generate` block.
+
+## TF045: no Terragrunt config sets `terragrunt_version_constraint`
+
+None of the `terragrunt.hcl` and `root.hcl` files in the scan sets
+`terragrunt_version_constraint`. Severity `warning`, and off by default.
+
+**Why it matters.** The attribute makes Terragrunt refuse a release outside
+the range. Without it each machine and CI image runs whatever it installed,
+and a behaviour change between releases reaches a plan with no diff.
+
+**The fix.** Set it once in the root config every unit includes:
+`terragrunt_version_constraint = ">= 1.1.0"`.
+
+**What the rule can know.** It reports once per scan, anchored on `root.hcl`
+when there is one, and only when the scan holds a config that includes no
+other file. A scan made only of units that include a parent it did not read
+(one unit directory passed alone) is not determined, since the parent may set
+the attribute. A file with another name, passed to Terragrunt with
+`--config`, is not read.
+
+**Off by default.** TF045 is a `report-only` rule, since many repos pin
+Terragrunt in the toolchain instead. Enable it with `lint.presets: {
+terraform: "all" }` or a `lint.rules` entry.
+
+**Prior art.** No tool in the survey covers this; see the lineage file.
+
+```hcl
+remote_state {
+  backend = "s3"
+  # ...
+}
+```
+
+From `fixtures/TF045/positive/root.hcl`, which sets no constraint. The fixture
+directory also holds a unit that includes it.
