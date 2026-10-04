@@ -50,6 +50,11 @@
       "default": "./src/cli/index.ts"
     },
     "./workspace/*.schema.json": "./src/workspace/*.schema.json",
+    "./workspace/factory-rules": {
+      "development": "./src/workspace/factory-rules.ts",
+      "types": "./dist/workspace/factory-rules.d.ts",
+      "default": "./src/workspace/factory-rules.ts"
+    },
     "./workspace/conformance": {
       "development": "./src/workspace/conformance/index.ts",
       "types": "./dist/workspace/conformance/index.d.ts",

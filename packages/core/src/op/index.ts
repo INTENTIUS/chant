@@ -152,7 +152,8 @@ export { takeProfileAndId } from "./builders";
 
 // The factory reference Op (#3406, ws-087).
 export { factoryOp, factoryOpConfig, factoryReady } from "./factory";
-// The factory's rules themselves (#3406), for an orchestrator's own tools, such as a retry command a UI runs.
-export { pickable, retryState, retryRequest, isAsk, understandOutcome, doneVerdict, proposeImplements, readyKey, FACTORY_HOLDS, UNDERSTAND_POINT, TIER_POINT } from "../workspace/factory-rules";
+// The factory's rules themselves (#3406) are values in workspace code, which no level 0 command may load (#2526), so only their
+// types are re-exported here. An orchestrator's own tools, such as a retry command a UI runs, import the values from
+// `@intentius/chant/workspace/factory-rules`.
 export type { FactoryItem, FactoryContext, FactoryClaim, FactoryHold, RetryState } from "../workspace/factory-rules";
 export type { FactoryOpOptions } from "./factory";
