@@ -350,10 +350,23 @@ export interface BoxFactory {
   checks: string | null;
   /** The member that declares the builder agents, or null when none is named. */
   builders: string | null;
+  /** Which builder agent builds at which tier, and for which member kinds (#3152, ws-094), in file order; empty when none is declared. */
+  tiers: FactoryTier[];
   /** Where a finished build is published, or null when the factory doesn't publish past the box. */
   publish: FactoryPublish | null;
   /** The block's JSON Pointer in the file, for messages. */
   pointer: string;
+}
+
+/** One builder agent at one tier (#3152): `kinds` null means every kind no other entry of the tier names. */
+export interface FactoryTier {
+  tier: string;
+  /** The agent's name, as the builders member declares it. */
+  agent: string;
+  /** The member kinds it builds at this tier, or null for the tier's default. */
+  kinds: string[] | null;
+  /** The declared agent session it writes as, or null for the orchestrator's choice. */
+  session: string | null;
 }
 
 /** Where a finished build goes (#3146): its branch is pushed and a pull request opened against `repo`'s `base`. */
@@ -854,6 +867,8 @@ export function parseDeclaration(text: string, file: string, reader: string = re
   const hosts = hostsOf(obj, members, at);
   const writeScope = writeScopeOf(obj.writeScope, members, at);
   const agents = agentsOf(obj.agents, members, at);
+  const tierSession = factoryTierSessionProblem(members, agents);
+  if (tierSession) throw new WorkspaceReadError("declaration-invalid", tierSession.message, at(tierSession.pointer));
 
   const pins = ((obj.pins as Record<string, string>[] | undefined) ?? []).map((p) => ({
     package: p.package ?? null,
@@ -1013,6 +1028,7 @@ function boxOf(raw: unknown, pointer: string): BoxDeclaration | null {
       check?: string | { run: string; kind?: FactoryCheckKind };
       checks?: string;
       builders?: string;
+      tiers?: { tier: string; agent: string; kinds?: string[]; session?: string }[];
       publish?: { forge?: "github"; repo: string; base?: string; branchPrefix?: string; head?: string };
     };
     listing?: { published?: boolean; title?: string; line?: string; cover?: string };
@@ -1048,6 +1064,7 @@ function boxOf(raw: unknown, pointer: string): BoxDeclaration | null {
             check: f.check === undefined ? null : typeof f.check === "string" ? { run: f.check, kind: "test" } : { run: f.check.run, kind: f.check.kind ?? "test" },
             checks: f.checks ?? null,
             builders: f.builders ?? null,
+            tiers: (f.tiers ?? []).map((t) => ({ tier: t.tier, agent: t.agent, kinds: t.kinds === undefined ? null : [...t.kinds], session: t.session ?? null })),
             publish:
               f.publish === undefined
                 ? null
@@ -1099,6 +1116,35 @@ function factoryProblem(members: readonly Member[]): { message: string; pointer:
   }
   if (factory.builders !== null && !members.some((m) => m.name === factory.builders)) {
     return { message: `the factory's builders names ${JSON.stringify(factory.builders)}, which is not a declared member; declared members: ${known()}`, pointer: `${factory.pointer}/builders` };
+  }
+  // Builder tiers (#3152): their agents are the builders member's, and one entry answers each tier and kind.
+  if (factory.tiers.length > 0 && factory.builders === null) {
+    return { message: "the factory declares tiers and no builders; tiers name agents the builders member declares, so name it", pointer: `${factory.pointer}/tiers` };
+  }
+  const answered = new Map<string, number>();
+  for (const [i, t] of factory.tiers.entries()) {
+    for (const kind of t.kinds ?? [null]) {
+      const key = `${t.tier}\0${kind ?? ""}`;
+      const first = answered.get(key);
+      if (first !== undefined) {
+        const which = kind === null ? "with no kinds" : `for kind ${kind}`;
+        return { message: `tiers/${first} and tiers/${i} both name a builder at tier ${t.tier} ${which}; a tier has one builder per kind, so one entry answers it`, pointer: `${factory.pointer}/tiers/${i}` };
+      }
+      answered.set(key, i);
+    }
+  }
+  return null;
+}
+
+/** The rule the schema can't say about the factory's tiers once the sessions are read (#3152): a session is a declared agent session. */
+function factoryTierSessionProblem(members: readonly Member[], agents: readonly AgentDeclaration[]): { message: string; pointer: string } | null {
+  const factory = members.find((m) => m.box?.factory)?.box?.factory;
+  if (!factory) return null;
+  for (const [i, t] of factory.tiers.entries()) {
+    if (t.session !== null && !agents.some((a) => a.name === t.session)) {
+      const known = agents.map((a) => a.name).join(", ") || "none";
+      return { message: `tiers/${i} names the session ${JSON.stringify(t.session)}, which is not a declared agent session; declared sessions: ${known}`, pointer: `${factory.pointer}/tiers/${i}/session` };
+    }
   }
   return null;
 }

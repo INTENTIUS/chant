@@ -487,10 +487,37 @@ A box's factory turns a work item into a change: a builder agent edits the membe
 | `builds` | yes | The members the factory builds, each a declared member of any kind: an app, a `chant` member, a Terraform estate. A work item a person asks for constrains `member:` and the first of them. |
 | `check` | no | The command whose exit code is a build's verdict, run from the workspace root after the work item's own checks: a string, or `{ "run", "kind" }`. `kind` says what the command is, one of `test`, `build`, `lint`, `plan` and `conformance`, and is `test` for a string. |
 | `checks` | no | The directory, from the workspace root, where a builder writes the check for its work item. Without it the orchestrator chooses. |
-| `builders` | no | The member that declares the builder agents. Which agent builds at which tier is [#3152](https://github.com/INTENTIUS/chant/issues/3152); the tiers are the work kind's `work.tier.tiers` ([work items](/chant/guide/work-items/)). |
+| `builders` | no | The member that declares the builder agents, such as the one whose `agents/` holds them. |
+| `tiers` | no | Which builder agent builds at which tier: a list of `{ "tier", "agent", "kinds", "session" }` ([#3152](https://github.com/INTENTIUS/chant/issues/3152), [ws-094](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-094-builder-agents-by-tier-and-member-kind.md)). See [Builder tiers](#builder-tiers). Added in chant 0.103.0. |
 | `publish` | no | Where a finished build goes: `{ "repo", "base", "branchPrefix", "head", "forge" }`. The branch `<branchPrefix><work item id>` is pushed and a pull request opened on `repo` (`owner/name`) against `base`, the repository's default branch when omitted. `branchPrefix` is `chant/work/` when omitted, the work lease's own branch. `head` is a fork (`owner/name`) the branch is pushed to instead, so the pull request comes from `<head owner>:<branch>`; a runtime that publishes from each contributor's own fork supplies that per contributor. `forge` is `github`. |
 
 The factory is opt-in ([#3174](https://github.com/INTENTIUS/chant/issues/3174)): a workspace with no `factory` is held to nothing here. It needs no box services and no app, so an infra workspace can declare one whose `builds` names its estate members and whose `check` is a plan, and run it on a fountain steward. There is one factory per declaration, and its `builds` and `builders` name only declared members; a second factory or an unknown name stops the read with `declaration-invalid`, which [`check`](/chant/cli/workspace-check/#boxes) reports as `WSP001`. What a build may not change goes in [`writeScope.agent.protected`](#write-scope-and-agent-sessions).
+
+#### Builder tiers
+
+A work item has a tier, from its own `tier` field or the `slice-tier` decision point's answer, in the vocabulary its work kind declares in `work.tier.tiers` ([work items](/chant/guide/work-items/)). The factory's `tiers` say which agent builds each tier, so an orchestrator resolves the tier from the spec instead of from metadata only it reads, such as studio's `studio/role` and `studio/tier` on its Agents ([#3152](https://github.com/INTENTIUS/chant/issues/3152)).
+
+```json
+"factory": {
+  "builds": ["app", "network"],
+  "builders": "delivery",
+  "tiers": [
+    { "tier": "small", "agent": "builder-small" },
+    { "tier": "medium", "agent": "builder-medium" },
+    { "tier": "large", "agent": "builder-large" },
+    { "tier": "small", "agent": "infra-small", "kinds": ["terraform"], "session": "infra" }
+  ]
+}
+```
+
+| Field | Required | Value |
+|---|---|---|
+| `tier` | yes | The tier, a word of the work kind's `work.tier.tiers`. |
+| `agent` | yes | The builder agent's name, as the `builders` member declares it, such as a fountain `Agent` in its `agents/`. |
+| `kinds` | no | The member kinds the agent builds at this tier, such as `app` or `terraform`. An entry without `kinds` builds the tier for every kind no other entry of the tier names. |
+| `session` | no | A declared [agent session](#write-scope-and-agent-sessions) the builder writes as, so its write scope is that session's. An infra builder bound to an estate member edits the estate and leaves applies to the gates. |
+
+A tier has at most one entry without `kinds` and at most one per kind, `tiers` needs `builders`, and a `session` names a declared session; otherwise the read stops with `declaration-invalid`. For each member in `builds` and each tier, [`status --json`](/chant/reference/workspace-read-contract/#factory-listing-and-plantable) prints the agent that builds it in `builderFor`. The entry for the member's kind wins over the tier's default.
 
 ### Listing
 

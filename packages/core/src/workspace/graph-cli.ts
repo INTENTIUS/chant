@@ -260,7 +260,7 @@ export async function workspaceGraph(query: GraphQuery): Promise<GraphResult> {
     // Links (#2539) resolve against the declaration that was read, the revision's for --at, and the kinds installed now.
     const graph = composeWorkspaceGraph({ name: declaration.name, root: located.root }, inputs, { declaration, kinds });
     // The box's factory and listing (#3146), from the declaration read, so --at gives them at that revision.
-    for (const member of graph.members) member.box = graphBox(declaration.members.find((m) => m.name === member.name)?.box ?? null, located.tree);
+    for (const member of graph.members) member.box = graphBox(declaration.members.find((m) => m.name === member.name)?.box ?? null, located.tree, declaration.members);
     // Nested workspaces (#2551, ws-071): read-only, through their own chant workspace graph.
     const nestedFailed = await expandNested(graph, declaration.members, query, located.rootOnDisk, located.at);
     let recordsFailed = false;
