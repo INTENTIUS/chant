@@ -942,6 +942,7 @@ describe("decision points on the work graph (#2741, ws-058)", () => {
     const points = parsePoints(pointsText(), "decisions/points.json");
     expect(Object.entries(points).map(([name, p]) => [name, p.question.type, p.deciders.map((d) => d.kind).join(">")])).toEqual([
       ["slice-tier", "choice", "table>model>quorum"],
+      ["understand", "choice", "table>quorum"],
       ["ship-skip", "noul", "table>quorum"],
       ["finding-triage", "choice", "table>model>quorum"],
       ["needs-a-decision", "noul", "table>model>quorum"],
@@ -958,7 +959,7 @@ describe("decision points on the work graph (#2741, ws-058)", () => {
     const run = chant(fixture, "workspace", "points", "--json");
     expect(run.status, run.stderr).toBe(0);
     const doc = JSON.parse(run.stdout) as { points: { name: string }[]; sources: { reason: unknown }[] };
-    expect(doc.points.map((p) => p.name)).toEqual(["slice-tier", "ship-skip", "finding-triage", "needs-a-decision", "intent-origin", "intent-judgment", "intent-disposition", "agent-question"]);
+    expect(doc.points.map((p) => p.name)).toEqual(["slice-tier", "understand", "ship-skip", "finding-triage", "needs-a-decision", "intent-origin", "intent-judgment", "intent-disposition", "agent-question"]);
     expect(doc.sources.map((s) => s.reason)).toEqual([null]);
   });
 

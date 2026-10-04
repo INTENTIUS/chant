@@ -57,7 +57,7 @@ The question has one of the three types of the `POST /v1/systemone` wire format 
 
 ### Inputs name read-contract outputs
 
-Each input is named for the output of the [read contract](/chant/reference/workspace-read-contract/#decision-points) it comes from, optionally followed by dotted field names. `work-item.fits_small` is a value the caller derives from a work item. `finding` alone is a whole finding.
+Each input is named for the output of the [read contract](/chant/reference/workspace-read-contract/#decision-points) it comes from, optionally followed by dotted field names. `work-item.title` is the title of a work item, and `finding` alone is a whole finding. A work item read by id also has its size, which chant measures for the `slice-tier` point (see [Sizing a work item](#sizing-a-work-item)).
 
 | Output | Where a reader finds it |
 |---|---|
@@ -251,13 +251,14 @@ The request is the wire format's: `POST <url>/v1/systemone` with `{ "model", "st
 
 ## The reference workspace's points
 
-The [reference workspace](https://github.com/INTENTIUS/chant/tree/main/reference-workspace) declares eight points in `decisions/points.json`. Four are about the work graph that `graph --intent` exposes ([#2741](https://github.com/INTENTIUS/chant/issues/2741)), three are the questions a person answers while walking a region ([#3351](https://github.com/INTENTIUS/chant/issues/3351)), and one is ad hoc, for an agent's question to the people working with it ([#3403](https://github.com/INTENTIUS/chant/issues/3403)).
+The [reference workspace](https://github.com/INTENTIUS/chant/tree/main/reference-workspace) declares nine points in `decisions/points.json`. One, `understand`, gates every build of a person's ask ([#3150](https://github.com/INTENTIUS/chant/issues/3150)). Four are about the work graph that `graph --intent` exposes ([#2741](https://github.com/INTENTIUS/chant/issues/2741)), and three are the questions a person answers while walking a region ([#3351](https://github.com/INTENTIUS/chant/issues/3351)). The last is ad hoc, for an agent's question to the people working with it ([#3403](https://github.com/INTENTIUS/chant/issues/3403)).
 
 | Point | Question | Reads | Deciders |
 |---|---|---|---|
 | `finding-triage` | a `choice` of `work-item`, `needs-a-decision` or `leave` for one finding | `finding.code`, `finding.message`, `finding.addressed`, `region.path`, `region.member`, `region.generated` | table, model, quorum |
 | `needs-a-decision` | a `noul`: does the change need a decision before it lands | the commits in the change's window (`commit.count`, `commit.undecided`, `commit.decided_by_window`), `region.path`, `region.generated`, `work-item.implements` | table, model, quorum |
 | `slice-tier` | a `choice` of builder tier for a work item ([ws-057](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-057-factory-fountain-builds.md)) | the work item's size and whether it fits each tier | table, model, quorum |
+| `understand` | a `choice` of `proceed`, `redraft`, `ask` or `refuse`: is a person's ask understood well enough to build ([#3150](https://github.com/INTENTIUS/chant/issues/3150)) | `work-item.state`, `title`, `source.ask.said`, `source.ask.by`, `source.ask.via`, `acceptance` | table, quorum |
 | `ship-skip` | a `noul`: may a release pass the ship gate without a person | what the release would change | table, quorum |
 | `intent-origin` | a `choice` of `carried-out-decision`, `incidental` or `unknown`: where a commit no decision's window holds came from | `region.id`, `node.id` | quorum |
 | `intent-judgment` | a `choice` of `drift`, `unwritten-supersession`, `decision-wrong`, `no-gap` or `not-decidable`: the gap at a decision, or at a commit in a decision's window that is not its own work | `region.id`, `node.id` | quorum |
@@ -265,6 +266,19 @@ The [reference workspace](https://github.com/INTENTIUS/chant/tree/main/reference
 | `agent-question` | an ad-hoc `choice`: the question and options an agent asked, which come with each ask | `ask.id`, `ask.by` | quorum |
 
 A finding that a work item already addresses is left by the triage table. `intent-decision-unimplemented` becomes a work item, while `intent-region-unconstrained`, `intent-decision-contested` and `intent-decision-superseded-live` go to a decision. So does `change-out-of-scope` from `check --changes`, because the change crossed a boundary that a record draws, and someone decides whether the boundary moves or the change goes. Any other finding goes to the model, then to people. That includes `change-uncovered`, since the right answer for an uncovered change depends on what the path is. For `needs-a-decision`, the table says no when nothing changed in the window, or when every commit in it is a decision's own work.
+
+### Sizing a work item
+
+`slice-tier` reads five sizes of a work item, and every orchestrator has to compute them the same way, so chant does ([#3150](https://github.com/INTENTIUS/chant/issues/3150)). When the decide activity reads a `work-item` by id, the item comes with them, and an Op passes no values of its own:
+
+| Input | How chant derives it |
+|---|---|
+| `work-item.criteria` | the number of acceptance criteria, in the field the work kind's `work.acceptance.field` names (`acceptance` otherwise) |
+| `work-item.files` | the distinct paths the item's text names in backticks: a token with a `/` between two parts, such as `app/server.ts`, or a file name with a one-to-five-letter extension, such as `README.md` |
+| `work-item.words` | the words in the item's text |
+| `work-item.fits_<tier>` | whether criteria, files and words are each within that tier's limits |
+
+The item's text starts with what the person asked: `source.ask.said`, or `source.intent.answer` for the box's first build. Then come the record's Markdown body without its heading lines and the text of each acceptance criterion. The limits are the work kind's `work.tier.limits`, or the defaults: `small` holds at most 10 criteria, 5 files and 150 words, and `medium` 20, 10 and 300. A tier without limits, such as `large`, has no `fits_` input. An item that fits neither table row goes on to the model. An item that names its own `tier` keeps it, and the factory asks this point only for an item without one. `measureWorkItem` and `sizeFields` in `workspace/work-size.ts` are the code.
 
 ### The intent walk's questions
 
