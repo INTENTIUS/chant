@@ -35,6 +35,7 @@ import {
   commitsByRunTrailer,
   endRun,
   foldRun,
+  joinPatchIdCommits,
   joinTrailerCommits,
   LEDGER_BRANCH,
   readRuns,
@@ -284,7 +285,10 @@ export async function workspaceRuns(query: RunsQuery): Promise<RunsDocument> {
     const { tip, dir, runs, malformed } = await readRuns(top, located.rootOnDisk);
     if (!tip) reasons.push({ code: "runs-no-ledger", message: `this checkout has no ${LEDGER_BRANCH} branch, so there are no agent runs to read; fetch it first if the remote has one` });
     if (malformed > 0) reasons.push({ code: "runs-ledger-malformed", message: `${malformed} ${malformed === 1 ? "line" : "lines"} of ${dir} on ${LEDGER_BRANCH} ${malformed === 1 ? "is" : "are"} not a run event and ${malformed === 1 ? "was" : "were"} left out` });
-    joinTrailerCommits(runs, commitsByRunTrailer(top), top);
+    const byTrailer = commitsByRunTrailer(top);
+    joinTrailerCommits(runs, byTrailer, top);
+    // A commit that lost its trailer joins by content (#3036).
+    joinPatchIdCommits(runs, byTrailer, top);
     const { policy, trust } = runsTrust(top, query.base);
     attestRuns(runs.values(), policy);
     const all = [...runs.values()];

@@ -51,7 +51,7 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | intent node kind | the node kinds of `intent.schema.json` | 10 | 0 | 0 | 0 | 3 |
 | intent edge kind | the edge kinds of `intent.schema.json` | 12 | 0 | 0 | 0 | 3 |
 | reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 206 | 0 | 0 | 0 | 0 |
-| finding code | the finding codes of `intent.schema.json` | 17 | 0 | 0 | 0 | 0 |
+| finding code | the finding codes of `intent.schema.json` | 18 | 0 | 0 | 0 | 0 |
 | WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 50 | 0 | 0 | 0 | 0 |
 | hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 | 0 | 0 |
 
@@ -409,6 +409,7 @@ Each row follows, in the order of the table above.
 | finding code | `intent-decision-unimplemented` | chant | intent.schema.json | A decided decision constrains the region, no work item that is not dropped implements it, and no commit falls in its window. |
 | finding code | `intent-work-blocked` | chant | intent.schema.json | A work item constraining the region has commits in its window while a work item it needs is not done. |
 | finding code | `intent-work-open-decided-code` | chant | intent.schema.json | Commits in the region are a decision's own work while the work item implementing that decision is still open. |
+| finding code | `intent-commit-join-conflict` | chant | intent.schema.json | A commit joined to an agent run by its Chant-Run trailer or the run's record has the patch-id of a commit another run recorded, so it is not joined to that run by content (#3036). |
 | WSP check | `WSP001` `declaration-unreadable` | chant | check.schema.json | The declaration can be read: it parses, matches the schema and keeps the placement rules. |
 | WSP check | `WSP002` `kinds-unreadable` | chant | check.schema.json | Every pinned package's kinds and principal classes can be read: it is installed at the pinned version, its ./workspace-kinds file is valid kind data, and its ./workspace-principals file is valid class data. |
 | WSP check | `WSP003` `kind-unknown` | chant | check.schema.json | Every member's kind is built in or supplied by a pinned package, and so is every principal class writeScope names (#3080). Unknown kinds and classes fail closed. |
