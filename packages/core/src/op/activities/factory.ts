@@ -370,7 +370,7 @@ async function commitAll(worktree: string, subject: string, item: string, kindNa
 
 // ── the activities ───────────────────────────────────────────────────────────
 
-/** Which work items are buildable now (#3406 rule 1). */
+/** Which work items are buildable now (#3406 rule 1): those that name a contract, asks and intent builds (#3503). */
 export async function factoryPick(args: FactoryPickArgs = {}): Promise<FactoryPickResult> {
   const cwd = args.cwd ?? process.cwd();
   const { pickable, readyKey } = await import("../../workspace/factory-rules");
