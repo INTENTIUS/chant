@@ -87,6 +87,10 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
       ...(args.waveGate
         ? { gatedWaves: { gate: args.waveGate, ...(args.canary?.length ? { canary: args.canary } : {}), ...(args.base ? { base: args.base } : {}) } }
         : {}),
+      // #3183: a plan job per pull request and an apply job per merge.
+      ...(args.prLoop
+        ? { prLoop: { ...(args.gate ? { gate: args.gate } : {}), ...(args.branch ? { branch: args.branch } : {}) } }
+        : {}),
     },
     args.sandbox,
     paramsResolution.provenance,

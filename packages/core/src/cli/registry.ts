@@ -253,6 +253,30 @@ export interface ParsedArgs {
   /** `chant components fan-out --canary <component>` (#3049), repeatable — components that form wave 1. */
   canary?: string[];
   /**
+   * `chant components pr-plan|pr-apply --pr <n>` (#3183) — the pull or merge
+   * request the plan belongs to. Its gate is recorded under op `pr-<n>`.
+   * pr-apply finds it from the commit through `--forge` when omitted.
+   */
+  pr?: number;
+  /**
+   * `chant components pr-plan|pr-apply --forge github|gitlab|forgejo` (#3183)
+   * — post the note and the commit status on this forge, with the client
+   * read from the CI job's environment.
+   */
+  forge?: string;
+  /**
+   * `chant components pr-apply --require-review` (#3183) — count an approval
+   * only when its approver has a standing approving review on the pull
+   * request. Needs `--forge`.
+   */
+  requireReview?: boolean;
+  /**
+   * `chant build --components --generate <lexicon> --pr-loop` (#3183) —
+   * generate the pull-request pipeline: plan on the pull request, apply on
+   * merge bound to the approved digest.
+   */
+  prLoop?: boolean;
+  /**
    * `chant components fan-out --resume <file>` (#2420) — the attempt record
    * this fan-out reads before it starts and writes when it finishes. Repeating
    * the identical command finishes what an interrupted attempt left, because

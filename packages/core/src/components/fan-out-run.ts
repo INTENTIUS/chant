@@ -118,6 +118,14 @@ export interface FanOutRunOptions {
   gate?: FanOutGate;
   /** One approval per wave, each bound to its wave's set digest (#3049). Not with `gate`. */
   waveGate?: FanOutWaveGate;
+  /**
+   * Plans made before the run, per component and then per member, handed to
+   * each component's steps as `DeployContext.plans` (#3183). A pull request's
+   * apply plans every member, decides its gate against the set, and passes
+   * the plans here so each step applies the plan that was approved. Not
+   * with `waveGate`, which plans each wave itself.
+   */
+  plans?: Record<string, Record<string, unknown>>;
   /** Called as each wave settles or stops at its gate, so a record survives a kill. */
   onWaveSettled?: (record: WaveRecord) => void;
   /** What an earlier attempt at this same plan already did. */
@@ -177,6 +185,9 @@ export async function runFanOut(
   if (options.gate && options.waveGate) {
     throw new Error("a fan-out takes one gate over the set or one gate per wave, not both");
   }
+  if (options.waveGate && options.plans) {
+    throw new Error("a gated-wave fan-out plans each wave itself, so it takes no plans made beforehand");
+  }
   if (options.waveGate) {
     return runGatedWaves(plan, active, components, registry, options, options.waveGate, gates, componentOutputs);
   }
@@ -233,9 +244,10 @@ export async function runFanOut(
     const waveResults = await Promise.all(
       runnable.map(async (name) => {
         options.onProgress?.({ type: "component-start", wave: waveNum, component: name });
+        const planned = options.plans?.[name];
         const result = await runComponentDeploy(
           byName.get(name)!,
-          deployContext(options, name),
+          { ...deployContext(options, name), ...(planned && Object.keys(planned).length > 0 ? { plans: planned } : {}) },
           registry,
           componentOutputs,
           options.onProgress,

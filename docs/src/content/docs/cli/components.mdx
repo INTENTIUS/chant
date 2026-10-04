@@ -18,6 +18,11 @@ chant components fan-out (--base <ref> [--head <ref>] [--include-dependents]
                                  [--canary <name>] [--wave <n>]] [--dry-run] [--json]
                                 [--resume <file>] [--seed-outputs <file>]
                                 [--dump-outputs <file>] [--progress-json]
+chant components pr-plan --base <ref> --pr <n> [--env <env>] [--gate <name>]
+                                [--forge github|gitlab|forgejo] [--output <dir>] [--json]
+chant components pr-apply --base <ref> [--pr <n>] [--env <env>] [--gate <name>]
+                                [--forge github|gitlab|forgejo] [--require-review]
+                                [--output <dir>] [--json]
 chant components promote --from <env> --to <env>
                                 [--component <name> [--digest <sha256:...>]
                                  | --digest <component>=<sha256:...> ...]
@@ -174,6 +179,8 @@ Either way the signal names stacks. A component claims a stack through its own d
 
 `--include-dependents` is handed to the diff and folded into the changed set before the join.
 
+A unit that is not chant source never shows in the artifact diff. The terraform lexicon answers for its roots from the changed paths instead. A root in `terraform.roots` is changed when a changed file sits in its directory, in a local module it calls, or is one of its var files. `--base` adds those roots to the signal.
+
 #### The printed derivation
 
 `--dry-run` prints the derivation and dispatches nothing. A dispatching run prints the same block first, so what ran always follows why it was picked.
@@ -292,6 +299,40 @@ A record whose digest does not match the fan-out derived now is refused with a w
 | `--seed-outputs <file>` | Load component outputs before the run. Repeatable; a later file wins on a key two files share. |
 | `--dump-outputs <file>` | Write the outputs the run holds to this file afterwards. |
 | `--progress-json` | Stream one NDJSON progress record per line to stdout while the waves execute. |
+
+### `components pr-plan` and `components pr-apply`
+
+The pull-request loop. `pr-plan` runs on a pull request. It plans the components the change reaches and the ones that depend on them, and shows the plan. `pr-apply` runs after the merge. It plans the same members again and applies them only if a reviewer approved that plan. [Generated CI for pull requests](/chant/guide/pull-request-ci/) writes the pipeline that runs both on GitHub, GitLab and Forgejo.
+
+```bash
+chant components pr-plan --base origin/main --pr 12 --env prod
+chant approve pr-12 pr-apply --plan jcs1-sha256:3e43... --approver github:alice --sign
+chant components pr-apply --base "$BEFORE_SHA" --pr 12 --env prod
+```
+
+Both measure the change from the merge base of `--base` and `HEAD`, and select components the way `fan-out --base` does. Every selected member is planned before anything applies. A member that reads another's output through `stackOutput()` is planned with the value that output has now.
+
+The gate is `pr-apply` under the op `pr-<n>`, so one pull request's approval never answers another's. It binds the [change-set](/chant/reference/change-set/) digest of every planned member. `pr-plan` reads the gate ledger to report where the approval stands and writes nothing to it. `pr-apply` decides the gate against the digest it plans. When an approval stands for another digest, the plan changed after review. Then it applies nothing and exits 3 with both digests named.
+
+```
+The plan changed after review, so nothing was applied. approved: jcs1-sha256:d181...; planned now: jcs1-sha256:cef9.... Read the new plan, and if it is right, approve it: chant approve pr-2 pr-apply --plan jcs1-sha256:cef9... --approver <you> --sign; then run the apply again.
+```
+
+Each run writes three files under `--output` (default `.chant/pr`). `pr-plan.json` or `pr-apply.json` is the report, under the `pr-report` schema. `change-set.json` is the change-set document, which [`chant change-set summary`](/chant/cli/change-set/) reads. `pr-note.md` is the note rendered from the report. It shows a row per member and the digest, then the approve command and the grouped summary.
+
+Pass `--forge` to post the note on the pull request and set the `chant/plan` or `chant/apply` commit status. The note carries a marker per environment, so every push and the apply update one note. When `pr-apply` has no `--pr`, it asks the forge which pull request merged `HEAD`. A forge that refuses a call is a warning, and the outcome stands.
+
+| Flag | Meaning |
+|---|---|
+| `--base <ref>` | The commit the change is measured from. On a pull request, the target branch's commit. After a merge, the commit the push replaced. Required. |
+| `--pr <n>` | The pull or merge request. Required for `pr-plan`. |
+| `--env <env>` | Environment each member deploys into. Defaults to `local`. |
+| `--gate <name>` | The gate's name. Defaults to `pr-apply`. |
+| `--forge <kind>` | `github`, `gitlab` or `forgejo`. Post the note and the status, with the client read from the CI job's environment. |
+| `--require-review` | `pr-apply` only. Count an approval only from someone with a standing approving review on the pull request, named the way the forge names them (`github:<login>`, `gitlab:<login>`, `forgejo@<host>:<login>`). Needs `--forge`. |
+| `--output <dir>` | Where the report, the change set and the note go. Defaults to `.chant/pr`. |
+| `--seed-outputs <file>` | Outputs to use instead of reading them, as on `fan-out`. |
+| `--json` | Print the report on stdout. |
 
 ### `components promote`
 
@@ -431,9 +472,9 @@ A redeploy that fails records nothing, like any other deploy, and can be run aga
 
 | Code | Meaning |
 |------|---------|
-| 0 | Success (for `fan-out`, every selected component applied) |
+| 0 | Success (for `fan-out` and `pr-apply`, every selected component applied; `pr-plan` exits 0 whenever every member planned) |
 | 1 | Error (missing required flags, unresolvable actor, concurrent ledger write, no manifest found, an export entry missing on disk; for `fan-out`, a component failed, or the change signal was unusable; for `promote`, `rollback` and `redeploy`, a digest missing from the ledger or not current, a composition that cannot be pinned, or a failed deploy) |
-| 3 | `fan-out`, `promote`, `rollback` and `redeploy`: stopped at a gate nobody has approved. For `fan-out` with `--gate` nothing ran, and with `--wave-gate` nothing in the gated wave or after it ran; for the others the steps before the gate ran, and only components that finished were recorded. |
+| 3 | `pr-apply`: refused, and nothing applied. No approval stands for the plan, the plan changed after review, the approver has not approved the pull request, or no pull request merged the commit. `fan-out`, `promote`, `rollback` and `redeploy`: stopped at a gate nobody has approved. For `fan-out` with `--gate` nothing ran, and with `--wave-gate` nothing in the gated wave or after it ran; for the others the steps before the gate ran, and only components that finished were recorded. |
 
 ## See Also
 

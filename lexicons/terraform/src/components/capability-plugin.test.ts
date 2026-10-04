@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 
 const calls: string[] = [];
 let applyResult: Record<string, unknown> = { applied: true };
+let changeSet: Record<string, unknown> | undefined;
 
 vi.mock("../op/activities/terraform", () => ({
   terraformInit: vi.fn(async (args: { root: string }) => {
@@ -15,7 +16,7 @@ vi.mock("../op/activities/terraform", () => ({
   }),
   terraformPlan: vi.fn(async (args: { root: string; vars?: Record<string, unknown> }) => {
     calls.push(`plan ${args.root} ${JSON.stringify(args.vars ?? {})}`);
-    return { planFile: "chant.tfplan", planDigest: `jcs1-sha256:${args.root}` };
+    return { planFile: "chant.tfplan", planDigest: `jcs1-sha256:${args.root}`, ...(changeSet ? { changeSet } : {}) };
   }),
   terraformApply: vi.fn(async (args: { root: string; planFile: string }) => {
     calls.push(`apply ${args.root} ${args.planFile}`);
@@ -32,6 +33,7 @@ const { terraformApplyCapability, terraformCapabilityPlugin } = await import("./
 beforeEach(() => {
   calls.length = 0;
   applyResult = { applied: true };
+  changeSet = undefined;
 });
 
 describe("terraform-apply", () => {
@@ -47,6 +49,18 @@ describe("terraform-apply", () => {
       artifact: { planFile: "chant.tfplan", planDigest: "jcs1-sha256:app" },
     });
     expect(calls).toEqual(["init app", 'plan app {"vpc":"v-1"}']);
+  });
+
+  test("plan hands on the root's change-set part, outside the artifact run receives (#3183)", async () => {
+    changeSet = { member: { member: "app" }, entries: [] };
+    const planned = await terraformApplyCapability.plan!({ env: "test", component: "app" }, { root: "app" });
+    expect(planned.changeSet).toEqual(changeSet);
+    expect(planned.artifact).toEqual({ planFile: "chant.tfplan", planDigest: "jcs1-sha256:app" });
+  });
+
+  test("outputs inits the root and reads what its state exposes, planning nothing (#3183)", async () => {
+    expect(await terraformApplyCapability.outputs!({ env: "test", component: "net" }, { root: "net" })).toEqual({ id: "net-id" });
+    expect(calls).toEqual(["init net", "output net"]);
   });
 
   test("run applies the wave's plan file without planning again, and returns the root's outputs", async () => {

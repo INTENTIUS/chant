@@ -13,6 +13,7 @@
  */
 
 import type { ReleaseIdentity } from "../telemetry-attribution";
+import type { ChangeSetPart } from "../change-set";
 
 /**
  * Ambient information a capability's `run`/`rollback` receives, independent of
@@ -39,9 +40,10 @@ export interface DeployContext {
   release?: ReleaseIdentity;
   /**
    * What this component's steps planned before its wave's gate was decided
-   * (#3049), keyed by {@link CapabilityPlan.member}. Set only by a gated-wave
-   * fan-out. A capability whose `run` finds its own member here applies that
-   * plan, the one the approver approved, instead of planning again.
+   * (#3049), keyed by {@link CapabilityPlan.member}. Set by a gated-wave
+   * fan-out and by a pull request's apply (#3183). A capability whose `run`
+   * finds its own member here applies that plan, the one the approver
+   * approved, instead of planning again.
    */
   plans?: Record<string, unknown>;
 }
@@ -57,6 +59,13 @@ export interface CapabilityPlan {
   planDigest: string;
   /** Handed back to `run` as `DeployContext.plans[member]`. Opaque to the runner. */
   artifact?: unknown;
+  /**
+   * The member's part of a change-set document (#3181): every change the
+   * plan proposes. A pull request's plan (#3183) composes the parts into the
+   * document whose grouped summary the PR note shows. Without it the member
+   * still counts toward the digest, with no entries.
+   */
+  changeSet?: ChangeSetPart;
 }
 
 /**
@@ -100,6 +109,13 @@ export interface Capability<In = unknown, Out = unknown> {
    * is covered by its component's composition digest instead.
    */
   plan?(ctx: DeployContext, input: In): Promise<CapabilityPlan>;
+  /**
+   * Optional: the outputs `run` exposed when it last ran, read without
+   * changing anything (#3183). A pull request's plan reads them for each
+   * component a planned one depends on, so a `stackOutput()` wiring resolves
+   * to the value standing now. The shape is `run`'s `outputs` field.
+   */
+  outputs?(ctx: DeployContext, input: In): Promise<Record<string, unknown>>;
   /**
    * How this verb relates to rollback, for the COMP003 composition check.
    * Usually derivable and left unset: a capability with a `rollback` method is
