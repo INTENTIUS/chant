@@ -660,44 +660,120 @@ export async function getRemoteLifecycleBranchSha(
 }
 
 /**
- * Push the state branch to remote with --force-with-lease.
+ * Why a push of the state branch did or did not reach the remote.
  *
- * If the remote chant/lifecycle ref has advanced past the local remote-tracking
- * SHA captured at the start of this push, the push is rejected and we throw
- * StaleLifecycleBranchError so the caller can surface a recovery hint.
- *
- * Returns false (without throwing) only when no remote is configured at all.
+ * - `pushed` — the remote now holds the local tip.
+ * - `no-remote` — nothing to push to; local is the whole ledger.
+ * - `stale` — the remote moved past the tip this checkout last saw (another
+ *   writer pushed); fetch, re-apply and retry.
+ * - `failed` — git refused for another reason (no network, no credentials,
+ *   a protected branch); `stderr` is git's first words on it.
  */
-export async function pushLifecycle(opts?: { cwd?: string }): Promise<boolean> {
-  const rt = getRuntime();
-  const remoteResult = await rt.spawn(["git", "remote"], { cwd: opts?.cwd });
-  if (remoteResult.exitCode !== 0 || !remoteResult.stdout.trim()) return false;
+export type LifecyclePushStatus =
+  | { status: "pushed"; remote: string; commit: string }
+  | { status: "no-remote" }
+  | { status: "stale"; remote: string; expected: string | null; stderr: string }
+  | { status: "failed"; remote: string; stderr: string };
 
-  const remote = remoteResult.stdout.trim().split("\n")[0];
+/**
+ * Point `refs/remotes/<remote>/chant/lifecycle` at `sha`, the remote tip this
+ * checkout has just seen (#3391).
+ *
+ * The push's lease is that ref, and git only keeps it up to date when the
+ * remote's configured fetch refspec covers `chant/lifecycle`. A single-branch
+ * clone (`git clone --single-branch`, a CI checkout of one ref, a shallow
+ * clone) has a refspec for its one branch only, so neither the explicit
+ * `chant/lifecycle:chant/lifecycle` fetch nor a successful push touches the
+ * tracking ref. The first push of a new branch then succeeds against an empty
+ * lease, and every later one is refused as stale against a remote that holds
+ * exactly what this checkout last pushed. Recording the tip ourselves, only at
+ * the two moments it is known (a fetch that fast-forwarded or found the local
+ * branch ahead, and a push that landed), keeps the lease honest without
+ * widening the clone's refspec. It is never set from a diverged fetch: that is
+ * the case the lease exists to refuse.
+ */
+async function trackRemoteLifecycle(remote: string, sha: string, cwd?: string): Promise<void> {
+  const rt = getRuntime();
+  await rt.spawn(["git", "update-ref", `refs/remotes/${remote}/${STATE_BRANCH}`, sha], { cwd, env: C_LOCALE_ENV });
+}
+
+/**
+ * Push the state branch to the ledger remote with --force-with-lease and say
+ * what happened (#3391). Never throws for a git refusal; {@link pushLifecycle}
+ * is the throwing form most callers use.
+ */
+export async function pushLifecycleStatus(opts?: { cwd?: string }): Promise<LifecyclePushStatus> {
+  const rt = getRuntime();
+  const cwd = opts?.cwd;
+  const found = await ledgerRemote(cwd);
+  if (found === null) return { status: "no-remote" };
+  if ("failed" in found) return { status: "failed", remote: "(unknown)", stderr: found.stderr };
+  const { remote } = found;
 
   // Capture the lease SHA — if null, the remote ref doesn't exist yet
   // (first-time push) and we send `--force-with-lease=ref:` (empty SHA),
   // which git interprets as "ref does not exist on remote".
   const expected = await getRemoteLifecycleBranchSha(remote, opts);
   const lease = `refs/heads/${STATE_BRANCH}:${expected ?? ""}`;
+  const tip = await getStateBranchTip(cwd);
 
   const pushResult = await rt.spawn(
     ["git", "push", `--force-with-lease=${lease}`, remote, `${STATE_BRANCH}:${STATE_BRANCH}`],
-    { cwd: opts?.cwd },
+    { cwd, env: C_LOCALE_ENV },
   );
 
   if (pushResult.exitCode !== 0) {
-    const stderr = pushResult.stderr ?? "";
+    const stderr = (pushResult.stderr ?? "").trim();
     if (
       stderr.includes("stale info") ||
       stderr.includes("rejected") ||
       stderr.includes("non-fast-forward")
     ) {
-      throw new StaleLifecycleBranchError(expected, stderr);
+      return { status: "stale", remote, expected, stderr };
     }
-    return false;
+    return { status: "failed", remote, stderr };
   }
-  return true;
+  if (tip) await trackRemoteLifecycle(remote, tip, cwd);
+  return { status: "pushed", remote, commit: tip ?? "" };
+}
+
+/**
+ * Push the state branch to remote with --force-with-lease.
+ *
+ * If the remote chant/lifecycle ref has advanced past the local remote-tracking
+ * SHA captured at the start of this push, the push is rejected and we throw
+ * StaleLifecycleBranchError so the caller can surface a recovery hint.
+ *
+ * Returns false (without throwing) when no remote is configured, or when git
+ * refused the push for a reason other than a stale lease.
+ *
+ * The remote is the ledger's ({@link ledgerRemote}: `origin` when there is one),
+ * the same one {@link fetchLifecycleStatus} reads, and a push that lands
+ * records the tip it pushed as the remote-tracking ref, so the next push's
+ * lease is right in a single-branch clone too (#3391).
+ */
+export async function pushLifecycle(opts?: { cwd?: string }): Promise<boolean> {
+  const result = await pushLifecycleStatus(opts);
+  if (result.status === "stale") throw new StaleLifecycleBranchError(result.expected, result.stderr);
+  return result.status === "pushed";
+}
+
+/**
+ * One line on why a push did not land, for a write document's `notPushed`
+ * (#3391), or null when it did.
+ */
+export function describeLifecyclePush(result: LifecyclePushStatus): string | null {
+  const said = (stderr: string) => (stderr ? `; git said: ${stderr.split("\n").find((l) => l.trim()) ?? stderr}` : "");
+  switch (result.status) {
+    case "pushed":
+      return null;
+    case "no-remote":
+      return `this repository has no remote, so ${STATE_BRANCH} stays local`;
+    case "stale":
+      return `"${result.remote}" holds ${STATE_BRANCH} commits this checkout has not fetched, so the push was refused; fetch ${STATE_BRANCH} and write again${said(result.stderr)}`;
+    case "failed":
+      return `the push of ${STATE_BRANCH} to "${result.remote}" failed${said(result.stderr)}`;
+  }
 }
 
 /**
@@ -814,7 +890,12 @@ export async function fetchLifecycleStatus(opts?: { cwd?: string }): Promise<Lif
     ["git", "fetch", remote, `${STATE_BRANCH}:${STATE_BRANCH}`],
     { cwd, env: C_LOCALE_ENV },
   );
-  if (fetchResult.exitCode === 0) return { status: "fetched" };
+  if (fetchResult.exitCode === 0) {
+    // The local branch is now the remote's tip; record it for the push's lease (#3391).
+    const tip = await getStateBranchTip(cwd);
+    if (tip) await trackRemoteLifecycle(remote, tip, cwd);
+    return { status: "fetched" };
+  }
 
   const stderr = (fetchResult.stderr ?? "").trim();
   if (NO_SUCH_REMOTE_REF_RE.test(stderr)) return { status: "absent", remote };
@@ -834,8 +915,13 @@ export async function fetchLifecycleStatus(opts?: { cwd?: string }): Promise<Lif
     ["git", "merge-base", "--is-ancestor", PROBE_REF, `refs/heads/${STATE_BRANCH}`],
     { cwd, env: C_LOCALE_ENV },
   );
+  const remoteTip = contains.exitCode === 0 ? (await rt.spawn(["git", "rev-parse", "--verify", PROBE_REF], { cwd, env: C_LOCALE_ENV })).stdout.trim() : "";
   await rt.spawn(["git", "update-ref", "-d", PROBE_REF], { cwd, env: C_LOCALE_ENV });
-  if (contains.exitCode === 0) return { status: "ahead", remote };
+  if (contains.exitCode === 0) {
+    // Ahead of the remote: its tip is in our history, so it is the right lease (#3391).
+    if (remoteTip) await trackRemoteLifecycle(remote, remoteTip, cwd);
+    return { status: "ahead", remote };
+  }
   return { status: "diverged", remote, stderr };
 }
 

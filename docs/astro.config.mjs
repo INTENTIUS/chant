@@ -130,12 +130,14 @@ export default defineConfig({
 								{ label: 'Reconciling Lifecycle', slug: 'guide/reconciling-lifecycle' },
 								{ label: 'Converging Lifecycle', slug: 'guide/converging-lifecycle' },
 								{ label: 'Operator', slug: 'guide/operator' },
+								{ label: 'Pinned Module Rollout', slug: 'guide/pinned-module-rollout' },
 							],
 						},
 						{
 							label: 'Components',
 							items: [
 								{ label: 'Wiring Components', slug: 'components/wiring-howto' },
+								{ label: 'Generated CI for Pull Requests', slug: 'guide/pull-request-ci' },
 							],
 						},
 						{

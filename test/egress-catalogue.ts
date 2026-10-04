@@ -43,7 +43,7 @@ import { join, relative, sep } from "node:path";
  * Which chant phase reaches a catalogued module. The phase, not the file, is
  * what an adopter asking "can I run this air-gapped" actually needs.
  */
-export type EgressPhaseId = "apply" | "emulator" | "codegen" | "template" | "upgrade" | "audit" | "maintenance";
+export type EgressPhaseId = "apply" | "emulator" | "codegen" | "template" | "upgrade" | "provenance" | "audit" | "maintenance";
 
 export interface EgressPhase {
   id: EgressPhaseId;
@@ -83,6 +83,12 @@ export const EGRESS_PHASES: readonly EgressPhase[] = [
     label: "Upgrading a project from its template",
     summary:
       "`chant workspace upgrade <scope>` fetches the target version of a git template, and the commit the scope was made from, to rebuild the merge base. Everything after the fetch runs offline in a local worktree. A vendor scope is read from its source as `chant vendor pull` reads it, and a scope made from a directory reads the `--to` directory from disk and reaches nothing. The `proposeWorkspaceUpgrade` activity stages the same upgrade, then pushes a proposal branch and opens or edits a pull request. `chant workspace adopt-lineage` and `chant workspace hash-index` list a template's tags and fetch the versions they compare, and `chant workspace versions --available` lists the tags of each git template. Every step is a `git` or `gh` child process, listed below as shell-outs.",
+  },
+  {
+    id: "provenance",
+    label: "Following a squash merge",
+    summary:
+      "`chant workspace graph --intent`, `graph --intent --record` and `chant workspace runs` read git history locally and reach nothing, unless `--follow-squash` is given. Then a squash commit's pull request head is fetched from `origin` when the clone lacks it, once per pull request, into `refs/chant/pull/<n>/head` where later reads find it (#3035). Its row is in the shell-out table below, since git does the fetching.",
   },
   {
     id: "audit",
@@ -251,6 +257,15 @@ export interface NetworkShellOut {
  * entry says.
  */
 export const NETWORK_SHELL_OUTS: readonly NetworkShellOut[] = [
+  {
+    binary: "git",
+    subcommand: "fetch",
+    command: "chant workspace graph --intent --follow-squash, chant workspace graph --intent --record --follow-squash and chant workspace runs --follow-squash",
+    file: "packages/core/src/workspace/squash.ts",
+    phase: "provenance",
+    destination: "the clone's `origin` remote, GitHub or Forgejo, which keeps each pull request's head at `refs/pull/<n>/head`. A local repository reaches nothing",
+    why: "`git fetch --no-tags origin +refs/pull/<n>/head:refs/chant/pull/<n>/head` for each squash whose pull request head the clone lacks, in one fetch, so the walk can read the pull request's original commits (#3035). Credentials are git's own, `GIT_TERMINAL_PROMPT=0` stops it asking for any, and the fetch times out after a minute. Without `--follow-squash` it never runs.",
+  },
   {
     binary: "git",
     subcommand: "fetch",

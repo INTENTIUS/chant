@@ -265,7 +265,7 @@ describe("the intent walk's points, a note on an answer, and retracting it (#335
     expect(retracted.verb).toBe("retract");
     expect(retracted.question).toMatchObject({ state: "escalated", open: true, answer: null, note: null, answeredBy: [], answeredOn: null, decider: { kind: "quorum", count: 1 } });
     expect(retracted.question.retractions).toEqual([
-      { answer: "drift", decider: { kind: "quorum", count: 1, by: ["alice"] }, answeredBy: ["alice"], answeredOn: on, answerNote: "The port moved off 8080.", by: ["alice"], on: "2026-09-26", note: "Wrong decision." },
+      { answer: "drift", decider: { kind: "quorum", count: 1, by: ["alice"] }, answeredBy: ["alice"], answeredOn: on, answerNote: "The port moved off 8080.", answerRelayedBy: null, by: ["alice"], on: "2026-09-26", note: "Wrong decision." },
     ]);
     expect(retracted.question.title).toMatch(/: open for people$/);
     // Asking again leaves it with people.
@@ -293,12 +293,24 @@ describe("the intent walk's points, a note on an answer, and retracting it (#335
   });
 
   test("a workspace whose answer schema predates notes and retractions refuses them, rather than dropping them", () => {
-    expect(answerFields(pointAnswerSchema)).toEqual({ note: true, retractions: true, asked: true });
+    expect(answerFields(pointAnswerSchema)).toEqual({ note: true, retractions: true, relayedBy: true, asked: true });
     const old = JSON.parse(JSON.stringify(pointAnswerSchema));
     delete old.properties.note;
     delete old.properties.retractions;
+    delete old.properties.relayed_by;
     delete old.properties.asked;
-    expect(answerFields(old)).toEqual({ note: false, retractions: false, asked: false });
+    expect(answerFields(old)).toEqual({ note: false, retractions: false, relayedBy: false, asked: false });
+  });
+
+  test("an answer relayed for a person records who relayed it, and a retraction keeps it (#3402)", async () => {
+    const asked = ok(await askPoint({ cwd: root, point: "intent-origin", inputs: walk("decision:ref-002"), on }));
+    expect(asked.question).toMatchObject({ relayedBy: null });
+    const answered = ok(await answerPoint({ cwd: root, id: asked.id, answer: "incidental", by: ["alice"], relayedBy: " follower:hud-player-7 ", on }));
+    expect(answered.question).toMatchObject({ state: "answered", answeredBy: ["alice"], relayedBy: "follower:hud-player-7" });
+    expect(fm(answered.path)).toContain('relayed_by: "follower:hud-player-7"');
+    const retracted = ok(await retractAnswer({ cwd: root, id: asked.id, by: ["alice"], on: "2026-09-26" }));
+    expect(retracted.question).toMatchObject({ relayedBy: null, retractions: [{ answer: "incidental", answeredBy: ["alice"], answerRelayedBy: "follower:hud-player-7" }] });
+    expect(fm(asked.path)).toContain('answer_relayed_by: "follower:hud-player-7"');
   });
 });
 

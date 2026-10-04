@@ -243,7 +243,6 @@
   "formatting/em-dash-density": 2
  },
  "docs/src/content/docs/cli/workspace-box.mdx": {
-  "formatting/em-dash-density": 2,
   "claude/colon-reveal": 2
  },
  "docs/src/content/docs/cli/workspace-build.mdx": {
@@ -717,6 +716,9 @@
   "anaphora/repeated-opening": 2,
   "repetition/near-duplicate": 2
  },
+ "docs/src/content/docs/guide/pinned-module-rollout.mdx": {
+  "claude/colon-reveal": 2
+ },
  "docs/src/content/docs/guide/presets.mdx": {
   "formatting/em-dash-density": 3,
   "discourse/punchy-fragments": 3,
@@ -905,7 +907,7 @@
   "formatting/bold-first-bullet": 1
  },
  "docs/src/content/docs/lint-rules/audit-rules.mdx": {
-  "formatting/em-dash-density": 395,
+  "formatting/em-dash-density": 398,
   "claude/sounds-like-claude": 1,
   "claude/colon-reveal": 6,
   "tricolon/comma-series": 1,
@@ -1074,7 +1076,6 @@
   "claude/colon-reveal": 3
  },
  "docs/src/content/docs/reference/workspace-writer-conformance.mdx": {
-  "formatting/em-dash-density": 2,
   "discourse/punchy-fragments": 1,
   "claude/colon-reveal": 3
  },

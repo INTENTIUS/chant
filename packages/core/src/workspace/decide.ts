@@ -126,7 +126,7 @@ export const POINTS_WRITE_ERROR_CODES = [
   "principal-unidentified",
   /** `points retract` names a question that has no answer: escalated or proposed (#3351). */
   "answer-not-answered",
-  /** The answer kind's schema copy has no `note`, `retractions` or `asked` field for what the write was given (#3351, #3403). */
+  /** The answer kind's schema copy has no `note`, `retractions`, `relayed_by` or `asked` field for what the write was given (#3351, #3402, #3403). */
   "answer-field-unsupported",
   /** An ad-hoc point was asked without its question and candidates, a declared point with them, or they don't fit the point's question type (#3403). */
   "point-candidates-invalid",
@@ -187,6 +187,8 @@ export interface QuestionView {
   answeredOn: string | null;
   /** What the people who answered wrote with their answer (`points answer --note`, #3351), or null. */
   note: string | null;
+  /** Who relayed the answer to chant for the people who gave it (`points answer --relayed-by`, #3402), or null. */
+  relayedBy: string | null;
   /** Answers people took back, oldest first (`points retract`, #3351). Empty when none was. */
   retractions: RetractionView[];
   /**
@@ -221,6 +223,8 @@ export interface RetractionView {
   answeredOn: string | null;
   /** The note the answer carried, or null. */
   answerNote: string | null;
+  /** Who relayed the answer (#3402), or null. */
+  answerRelayedBy: string | null;
   /** Who retracted it. */
   by: string[];
   on: string | null;
@@ -241,6 +245,7 @@ function retractionsOf(d: Record<string, unknown>): RetractionView[] {
       answeredBy: strs(r.answered_by),
       answeredOn: str(r.answered_on),
       answerNote: str(r.answer_note),
+      answerRelayedBy: str(r.answer_relayed_by),
       by: strs(r.by),
       on: str(r.on),
       note: str(r.note),
@@ -322,6 +327,7 @@ export function questionView(entry: RecordEntry, point: Point | undefined, ledge
     askedOn: str(d.asked_on),
     answeredOn: str(d.answered_on),
     note: str(d.note),
+    relayedBy: str(d.relayed_by),
     retractions: retractionsOf(d),
     asked: askedOf(d) ?? null,
     askedBy: askedByOf(d),
@@ -700,22 +706,28 @@ export interface AnswerPointOptions {
   by: string[];
   /** What the people who answered say with it, recorded as the record's `note` (#3351). */
   note?: string;
+  /**
+   * Who carried the answer to chant for the people in `by` (#3402), such as a
+   * follower relaying a person's answer through hud, recorded as the record's
+   * `relayed_by`. The relay does not count toward the quorum.
+   */
+  relayedBy?: string;
   kind?: string;
   on?: string;
   dryRun?: boolean;
 }
 
 /**
- * Whether an answer kind's schema copy takes the fields of #3351, `note` on an
- * answer and `retractions`, and of #3403, `asked`. A copy of
- * point-answer.schema.json from before them refuses a note, a retraction or an
- * ad-hoc ask with `answer-field-unsupported`, rather than dropping what a
- * person wrote or the question an agent asked.
+ * Whether an answer kind's schema copy takes the fields of #3351 (`note` on an
+ * answer, and `retractions`), of #3402 (`relayed_by`) and of #3403 (`asked`).
+ * A copy of point-answer.schema.json from before them refuses a note, a
+ * retraction, a relay or an ad-hoc ask with `answer-field-unsupported`, rather
+ * than dropping what a person wrote or the question an agent asked.
  */
-export function answerFields(schema: Record<string, unknown>): { note: boolean; retractions: boolean; asked: boolean } {
+export function answerFields(schema: Record<string, unknown>): { note: boolean; retractions: boolean; relayedBy: boolean; asked: boolean } {
   const props = schema.properties as Record<string, unknown> | undefined;
   const has = (key: string): boolean => props !== undefined && props !== null && typeof props === "object" && Object.prototype.hasOwnProperty.call(props, key);
-  return { note: has("note"), retractions: has("retractions"), asked: has("asked") };
+  return { note: has("note"), retractions: has("retractions"), relayedBy: has("relayed_by"), asked: has("asked") };
 }
 
 /** A note as given, trimmed, or undefined when it is empty. */
@@ -843,6 +855,9 @@ async function answerPointLocked(opts: AnswerPointOptions): Promise<PointsWriteD
     refuseStewardTurn(opts.id, "answers");
     // #3163: under identity.attribution "identified" at base, each answerer is a forge identity or a signer.
     refuseUnidentified(scopeSource(opts.cwd), opts.by, "--by");
+    // #3402: and so is whoever relayed the answer.
+    const relayedBy = noteOf(opts.relayedBy);
+    if (relayedBy !== undefined) refuseUnidentified(scopeSource(opts.cwd), [relayedBy], "--relayed-by");
     const found = await findQuestion(opts.cwd, opts.kind, opts.id);
     const { opened, before, target } = found;
     const ledger = found.read.ledger;
@@ -854,6 +869,9 @@ async function answerPointLocked(opts: AnswerPointOptions): Promise<PointsWriteD
     const note = noteOf(opts.note);
     if (note !== undefined && !answerFields(o.loaded.schema).note) {
       throw new PointsWriteError("answer-field-unsupported", `the ${o.loaded.kind.name} kind's schema has no note field, so ${opts.id} can't keep the note: copy point-answer.schema.json from @intentius/chant anew`);
+    }
+    if (relayedBy !== undefined && !answerFields(o.loaded.schema).relayedBy) {
+      throw new PointsWriteError("answer-field-unsupported", `the ${o.loaded.kind.name} kind's schema has no relayed_by field, so ${opts.id} can't record who relayed the answer: copy point-answer.schema.json from @intentius/chant anew`);
     }
     const name = String(d.point);
     const point = pointOf(opened.points, name);
@@ -874,7 +892,7 @@ async function answerPointLocked(opts: AnswerPointOptions): Promise<PointsWriteD
     const escalations = Array.isArray(d.escalations) ? [...(d.escalations as Escalation[])] : [];
     let fields: Record<string, unknown>;
     if (confirmed) {
-      fields = { ...d, state: "answered", answered_by: tally.counted, answered_on: on, note };
+      fields = { ...d, state: "answered", answered_by: tally.counted, answered_on: on, note, relayed_by: relayedBy };
     } else {
       if (target.state === "proposed" && decider.kind === "model") {
         escalations.push({
@@ -900,6 +918,7 @@ async function answerPointLocked(opts: AnswerPointOptions): Promise<PointsWriteD
         answered_by: tally.counted,
         answered_on: on,
         note,
+        relayed_by: relayedBy,
       };
     }
     const subject = Array.isArray(d.constrains) && typeof d.constrains[0] === "string" ? (d.constrains[0] as string) : undefined;
@@ -907,7 +926,7 @@ async function answerPointLocked(opts: AnswerPointOptions): Promise<PointsWriteD
     const data = recordData(o, fields);
     const text = renderRecord(data, body(point, String(fields.title), asked));
     const onLedger = ledger.byPath.has(target.path);
-    const message = `Decision point ${name}: answered ${show(value, type)} by ${tally.counted.join(", ")}`;
+    const message = `Decision point ${name}: answered ${show(value, type)} by ${tally.counted.join(", ")}${relayedBy ? `, relayed by ${relayedBy}` : ""}`;
     const wrote = await write(o, before, target.path, text, false, !!opts.dryRun, { source: found.read.source, ledger, onLedger, message, who: { verb: "points answer", by: tally.counted.join(", ") } });
     const entry: RecordEntry = { ...target, state: "answered", data, valid: true, reasons: [], warnings: wrote.warnings };
     return {
@@ -992,6 +1011,7 @@ async function retractAnswerLocked(opts: RetractAnswerOptions): Promise<PointsWr
       answered_by: Array.isArray(d.answered_by) && d.answered_by.length > 0 ? d.answered_by : undefined,
       answered_on: typeof d.answered_on === "string" ? d.answered_on : undefined,
       answer_note: typeof d.note === "string" ? d.note : undefined,
+      answer_relayed_by: typeof d.relayed_by === "string" ? d.relayed_by : undefined,
       by: tally.counted,
       on,
       note,
@@ -1011,7 +1031,7 @@ async function retractAnswerLocked(opts: RetractAnswerOptions): Promise<PointsWr
         ...(typeof d.reason === "string" && reasonFields(o.loaded.schema).escalation ? { model_reason: d.reason } : {}),
       });
     }
-    const gone = new Set(["answer", "answered_by", "answered_on", "note", "probabilities", "confidence", "threshold", "reason"]);
+    const gone = new Set(["answer", "answered_by", "answered_on", "note", "relayed_by", "probabilities", "confidence", "threshold", "reason"]);
     const rest = Object.fromEntries(Object.entries(d).filter(([k]) => !gone.has(k)));
     const prior = Array.isArray(d.retractions) ? (d.retractions as unknown[]) : [];
     const subject = Array.isArray(d.constrains) && typeof d.constrains[0] === "string" ? (d.constrains[0] as string) : undefined;
