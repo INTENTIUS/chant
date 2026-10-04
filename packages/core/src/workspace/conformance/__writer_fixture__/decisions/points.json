@@ -31,6 +31,36 @@
         { "kind": "quorum", "count": 1 }
       ]
     },
+    "understand": {
+      "title": "Is this ask understood well enough to build",
+      "question": {
+        "type": "choice",
+        "instructions": "A person asked for a change, and the ask is a work item whose source names what they said and who said it. The factory asks this before it builds the item. The state is the work item: its title and state, the person's words, who asked and where, and any acceptance criteria it has so far. Pick what happens next.",
+        "criteria": {
+          "proceed": "The ask is clear enough to build. The work item opens, and the factory builds it under its lease, writing its plan as acceptance criteria first.",
+          "redraft": "What the person wants is clear, but the work item does not say it well. Someone rewrites the item, which asks this point again, before anything is built.",
+          "ask": "The ask is unclear. Someone asks the person who made it what they mean before anything is built.",
+          "refuse": "The ask will not be built. The work item is dropped, with the reason."
+        }
+      },
+      "inputs": {
+        "work-item.state": "the work item's state: proposed for an ask nobody has kept yet",
+        "work-item.title": "the work item's title",
+        "work-item.source.ask.said": "what the person said, verbatim",
+        "work-item.source.ask.by": "who asked",
+        "work-item.source.ask.via": "where the ask came in, such as hud, shell or mcp",
+        "work-item.acceptance": "the acceptance criteria the item has so far"
+      },
+      "deciders": [
+        {
+          "kind": "table",
+          "rows": [
+            { "when": { "work-item.state": "open" }, "answer": "proceed", "note": "A person opened the item already, or it did not start as a proposal." }
+          ]
+        },
+        { "kind": "quorum", "count": 1 }
+      ]
+    },
     "ship-skip": {
       "title": "May this release skip the human gate",
       "question": {
