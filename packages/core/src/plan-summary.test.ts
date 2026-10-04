@@ -53,6 +53,33 @@ describe("the plan-summary schema", () => {
   });
 });
 
+describe("provisional members (#3416)", () => {
+  // Four roots take the same tag change; two of them were planned before what they read applied.
+  const parts = ["r1", "r2", "r3", "r4"].map((m) => part(m, [tagsUpdate(`aws_s3_bucket.b`, m)], m === "r3" || m === "r4" ? { provisional: true } : {}));
+  const s = groupChangeSet(composeChangeSet(parts));
+
+  test("group only with each other, after the real plans, and say so", () => {
+    expect(s.groups.map((g) => [g.units, g.provisional])).toEqual([
+      [["r1", "r2"], undefined],
+      [["r3", "r4"], true],
+    ]);
+    expect(s.groups[0]!.id).not.toBe(s.groups[1]!.id);
+    expect(s.groups[1]!.extends).toBeUndefined();
+    expectValid(s);
+  });
+
+  test("keep the id a group of real plans had before", () => {
+    const real = groupChangeSet(composeChangeSet(parts.slice(0, 2)));
+    expect(real.groups[0]!.id).toBe(s.groups[0]!.id);
+  });
+
+  test("are counted in the headline and marked in text and markdown", () => {
+    expect(planSummaryHeadline(s)).toBe("4 members: 2 groups, 1 provisional, 0 destroys or replacements.");
+    expect(renderPlanSummaryText(s)).toMatch(/Group [0-9a-f]{12}: 2 members \(provisional\), identical change/);
+    expect(renderPlanSummaryMarkdown(s)).toMatch(/Provisional: planned before what it reads applied/);
+  });
+});
+
 describe("what is never folded into a group", () => {
   // Thirty roots take the same tag change. Three of them also destroy or
   // replace something, one failed to plan and one has a hole.
