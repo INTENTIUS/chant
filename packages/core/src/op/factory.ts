@@ -36,7 +36,7 @@
  * person or a surface with `chant workspace box publish`; it is not a step.
  */
 
-import { Op, phase, activity } from "./builders";
+import { Op, phase, activity, shell, type NamedActivityStep } from "./builders";
 import { stepOutput } from "./step-output-ref";
 import { workLeaseOutput } from "./work-lease-run";
 import type { OpConfig } from "./types";
@@ -48,8 +48,12 @@ export interface FactoryOpOptions {
   builder: string;
   /** The context hook: what the builder receives as FACTORY_CONTEXT. */
   context?: string;
-  /** The check hook; the box's `factory.check` when left out. */
+  /** The check hook; the box's `factory.check` when left out. It may print `{ "criteria": { "<id>": "pass" | "fail" } }` as its last line to tick each criterion by its own result. */
   check?: string;
+  /** The prepare hook: a command run in the workspace before Pick, such as opening the first build's item once the box's intent is decided. */
+  prepare?: string;
+  /** The after hook: a command run in the worktree once the outcome is recorded, with FACTORY_OUTCOME and FACTORY_COMMIT, such as ending the build's run record. */
+  after?: string;
   /** The work kind file, when the declaration names several. */
   kind?: string;
   /** How long a lease is held without a renewal, such as 15m. The lease's default otherwise. */
@@ -83,6 +87,7 @@ export function factoryOpConfig(options: FactoryOpOptions): OpConfig {
     changesCheckout: true,
     ...(options.schedule ? { schedule: options.schedule } : {}),
     phases: [
+      ...(options.prepare !== undefined ? [phase("Prepare", [shell(options.prepare, { ...(options.cwd !== undefined ? { cwd: options.cwd } : {}), id: "prepare" })])] : []),
       phase("Pick", [activity("factoryPick", { ...kind, ...at }, { profile: "fastIdempotent", id: "pick" })]),
       phase("Ask", [activity("factoryAsk", { lease, ...kind, ...at, ...(options.backends ? { backends: options.backends } : {}) }, { profile: "fastIdempotent", id: "ask" })]),
       phase("Build", [
@@ -93,7 +98,7 @@ export function factoryOpConfig(options: FactoryOpOptions): OpConfig {
         ),
       ]),
       phase("Check", [activity("factoryCheck", { lease, ...at, build: stepOutput("build"), ...(options.check !== undefined ? { check: options.check } : {}) }, { profile: "atMostOnce", id: "check" })]),
-      phase("Record", [activity("factoryRecord", { lease, ...at, ask: stepOutput("ask"), build: stepOutput("build"), check: stepOutput("check") }, { profile: "atMostOnce", id: "record" })]),
+      phase("Record", [activity("factoryRecord", { lease, ...at, ask: stepOutput("ask"), build: stepOutput("build"), check: stepOutput("check"), ...(options.after !== undefined ? { after: options.after } : {}) }, { profile: "atMostOnce", id: "record" })]),
     ],
   } as OpConfig;
 }
@@ -101,4 +106,13 @@ export function factoryOpConfig(options: FactoryOpOptions): OpConfig {
 /** The factory reference Op, as an `*.op.ts` file exports it. */
 export function factoryOp(options: FactoryOpOptions): ReturnType<typeof Op> {
   return Op(factoryOpConfig(options));
+}
+
+/**
+ * The steward's ready step for the factory Op (#382): the keys of the work buildable now, for
+ * `declareSteward({ beside: [{ op: factory, ready: factoryReady({ cwd }) }] })`. `also` names a
+ * command printing a JSON list of more keys, for work the pick can't see yet.
+ */
+export function factoryReady(options: { cwd?: string; kind?: string; also?: string } = {}): NamedActivityStep {
+  return activity("factoryReady", { ...options }, { profile: "fastIdempotent" });
 }

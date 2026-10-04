@@ -78,8 +78,8 @@ function workspace(dir: string): void {
   git(["commit", "-q", "-m", "the workspace"], dir);
 }
 
-async function run(dir: string, work?: string): Promise<OpRunResult> {
-  const config = factoryOpConfig({ cwd: dir, backends: { systemone: { url: "http://127.0.0.1:9", timeoutMs: 200 } }, builder: `${process.execPath} hooks/builder.cjs`, check: `${process.execPath} hooks/check.cjs` });
+async function run(dir: string, work?: string, extra: Partial<Parameters<typeof factoryOpConfig>[0]> = {}): Promise<OpRunResult> {
+  const config = factoryOpConfig({ cwd: dir, backends: { systemone: { url: "http://127.0.0.1:9", timeoutMs: 200 } }, builder: `${process.execPath} hooks/builder.cjs`, check: `${process.execPath} hooks/check.cjs`, ...extra });
   const prev = process.env.FACTORY_FAIL_DIR;
   process.env.FACTORY_FAIL_DIR = dir;
   try {
@@ -151,3 +151,53 @@ describe("the factory reference Op (#3406)", () => {
     });
   }, 120_000);
 });
+
+describe("the factory Op's seams for an orchestrator (studio#382)", () => {
+  test("prepare runs before Pick, an uncommitted item is carried into the worktree, the reports pass through, the check ticks each criterion by its own result, and after sees the outcome", async () => {
+    await withTestDir(async (dir) => {
+      workspace(dir);
+      // A builder that reports a run and a check that reports per criterion.
+      writeFileSync(join(dir, "hooks", "builder2.cjs"), `${BUILDER}\nconsole.log(JSON.stringify({ ok: true, run: { id: "run-7" }, agent: "builder-small" }));\n`);
+      writeFileSync(join(dir, "hooks", "check2.cjs"), `console.log(JSON.stringify({ criteria: { "AC-1": "pass", "AC-2": "fail" }, built: JSON.parse(process.env.FACTORY_BUILD).agent }));`);
+      writeFileSync(join(dir, "hooks", "after.cjs"), `require("node:fs").writeFileSync(require("node:path").join(process.env.FACTORY_FAIL_DIR, "after.json"), JSON.stringify({ outcome: process.env.FACTORY_OUTCOME, commit: process.env.FACTORY_COMMIT, reason: process.env.FACTORY_REASON, check: JSON.parse(process.env.FACTORY_CHECK) }));`);
+      // The prepare hook writes W-110 in the checkout and leaves it uncommitted; the others are taken out of the way.
+      writeFileSync(
+        join(dir, "hooks", "prepare.cjs"),
+        `require("node:fs").writeFileSync("work/W-110-prepared.md", ${JSON.stringify(item("W-110", { acceptance: [{ id: "AC-1", text: "one", verification: "unit" }, { id: "AC-2", text: "two", verification: "unit" }] }))});`,
+      );
+      for (const id of ["W-101", "W-102"]) writeFileSync(join(dir, ".fail-" + id), "");
+      git(["add", "-A"], dir);
+      git(["commit", "-q", "-m", "hooks"], dir);
+      const result = await run(dir, "W-110", {
+        prepare: `${process.execPath} hooks/prepare.cjs`,
+        builder: `${process.execPath} hooks/builder2.cjs`,
+        check: `${process.execPath} hooks/check2.cjs`,
+        after: `${process.execPath} hooks/after.cjs`,
+      });
+      // AC-2 failed its own check, so the item is not done, though the check exited 0.
+      expect(result.workLease).toMatchObject({ item: "W-110", outcome: "not_done" });
+      const after = JSON.parse(readFileSync(join(dir, "after.json"), "utf-8"));
+      expect(after).toMatchObject({ outcome: "not_done", commit: "", check: { built: "builder-small" } });
+      // The kept attempt holds the carried item with AC-1 ticked and AC-2 failed.
+      const kept = git(["for-each-ref", "--format=%(refname)", "refs/chant/kept/"], dir).split("\n").find((r) => r.includes("W-110"))!;
+      const fm = parseFrontMatter(git(["show", `${kept}:work/W-110-prepared.md`], dir));
+      if (!fm.ok) throw new Error(fm.message);
+      const results = Object.fromEntries((fm.value.evidence as { criterion: string; result: string }[]).map((e) => [e.criterion, e.result]));
+      expect(results).toEqual({ "AC-1": "pass", "AC-2": "fail" });
+
+      // With both criteria passing, the item is done and its commit carries the builder's run.
+      writeFileSync(join(dir, "hooks", "check2.cjs"), `console.log(JSON.stringify({ criteria: { "AC-1": "pass", "AC-2": "pass" } }));`);
+      git(["add", "-A"], dir);
+      git(["commit", "-q", "-m", "a passing check"], dir);
+      const { readLeaseHistory } = await import("../lifecycle/work-lease");
+      const failed = (await readLeaseHistory("W-110", { cwd: dir })).records.filter((r) => r.event === "claim").at(-1) as { token: string };
+      const amended = await amendRecord({ kind: join(dir, "work", "work.kind.mjs"), id: "W-110", fields: JSON.stringify({ retry: { after: failed.token, by: "alice" } }), cwd: dir });
+      expect("error" in amended).toBe(false);
+      const done = await run(dir, "W-110", { builder: `${process.execPath} hooks/builder2.cjs`, check: `${process.execPath} hooks/check2.cjs`, after: `${process.execPath} hooks/after.cjs` });
+      expect(done.workLease).toMatchObject({ item: "W-110", outcome: "done" });
+      expect(git(["log", "-1", "--format=%B", "chant/work/W-110"], dir)).toContain("Chant-Run: run-7");
+      expect(JSON.parse(readFileSync(join(dir, "after.json"), "utf-8")).outcome).toBe("done");
+    });
+  }, 120_000);
+});
+

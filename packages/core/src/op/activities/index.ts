@@ -185,5 +185,5 @@ export { decide } from "./decide";
 export type { DecideArgs, DecideResult } from "./decide";
 
 // The factory reference Op's rules and hooks (#3406, ws-087): `factoryOp` in ../factory.ts declares them.
-export { factoryPick, factoryAsk, factoryBuild, factoryCheck, factoryRecord } from "./factory";
+export { factoryPick, factoryReady, factoryAsk, factoryBuild, factoryCheck, factoryRecord } from "./factory";
 export type { FactoryAskResult, FactoryBuildResult, FactoryCheckResult, FactoryRecordResult, FactoryPickResult, FactoryLease } from "./factory";

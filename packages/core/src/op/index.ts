@@ -151,5 +151,5 @@ export type { OpVerbClass } from "./op-verb-class";
 export { takeProfileAndId } from "./builders";
 
 // The factory reference Op (#3406, ws-087).
-export { factoryOp, factoryOpConfig } from "./factory";
+export { factoryOp, factoryOpConfig, factoryReady } from "./factory";
 export type { FactoryOpOptions } from "./factory";

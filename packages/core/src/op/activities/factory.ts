@@ -64,6 +64,8 @@ export interface FactoryBuildResult {
   /** Paths the guard put back; the reference Op applies no guard of its own, so this is empty unless a hook reports one. */
   reverted: string[];
   note: string;
+  /** The builder's last JSON line on stdout, as it printed it, or null: its own report (agent, model, session, run), which the check and after hooks get as FACTORY_BUILD. */
+  report: Record<string, unknown> | null;
 }
 
 export interface FactoryCheckResult {
@@ -73,6 +75,8 @@ export interface FactoryCheckResult {
   /** The criteria the check's evidence was attached to. */
   evidence: string[];
   log: string | null;
+  /** The check's last JSON line on stdout, as it printed it, or null. */
+  report: Record<string, unknown> | null;
 }
 
 export interface FactoryRecordResult {
@@ -249,6 +253,54 @@ function run(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv): Prom
   });
 }
 
+/** The last line of `stdout` that is a JSON object, or null. */
+function lastJson(stdout: string): Record<string, unknown> | null {
+  const lines = stdout.split("\n").map((l) => l.trim()).filter(Boolean);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      const v: unknown = JSON.parse(lines[i]);
+      if (v !== null && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;
+    } catch {
+      // Not this line.
+    }
+  }
+  return null;
+}
+
+/**
+ * Start the build from the checkout's HEAD (#382). A branch behind HEAD moves up to it; one with
+ * commits HEAD doesn't have, such as work an earlier run left under a lease it lost, has them kept
+ * at refs/chant/kept/<item>/earlier-<commit> first, so no attempt builds on another's work unasked.
+ */
+async function freshStart(cwd: string, worktree: string, id: string): Promise<void> {
+  const head = (await gitOut(["rev-parse", "HEAD"], await checkoutRoot(cwd))).out;
+  const tip = (await gitOut(["rev-parse", "HEAD"], worktree)).out;
+  if (!head || !tip || head === tip) return;
+  if (!(await gitOut(["merge-base", "--is-ancestor", tip, head], worktree)).ok) {
+    await gitOut(["update-ref", `refs/chant/kept/${id}/earlier-${tip.slice(0, 12)}`, tip], worktree);
+  }
+  await gitOut(["reset", "-q", "--hard", head], worktree);
+}
+
+/**
+ * The checkout's copy of the item, carried into the worktree when the worktree's differs or is missing
+ * (#382): an item written in the checkout and not committed yet, such as the box's first build, or an
+ * ask its author rewrote, is the one the run builds, as the points were asked about it.
+ */
+async function carryItem(cwd: string, worktree: string, id: string): Promise<void> {
+  const { copyFileSync, existsSync, readFileSync } = await import("node:fs");
+  const there = (await readWork(cwd)).items.get(id);
+  if (!there) return;
+  const checkout = await checkoutRoot(cwd);
+  const rel = await fromTop(cwd, there.path);
+  const from = join(checkout, ...rel.split("/"));
+  const to = join(worktree, ...rel.split("/"));
+  if (!existsSync(from)) return;
+  if (existsSync(to) && readFileSync(to).equals(readFileSync(from))) return;
+  mkdirSync(dirname(to), { recursive: true });
+  copyFileSync(from, to);
+}
+
 async function words(command: string): Promise<string[]> {
   const { splitCommand } = await import("../../workspace/box-publish");
   return splitCommand(command);
@@ -279,11 +331,11 @@ async function checkoutRoot(cwd: string): Promise<string> {
 }
 
 /** Commit everything in the worktree with chant's trailers (ws-075). Null when there was nothing to commit. */
-async function commitAll(worktree: string, subject: string, item: string, kindName: string, token: string): Promise<string | null> {
+async function commitAll(worktree: string, subject: string, item: string, kindName: string, token: string, runId?: string): Promise<string | null> {
   await gitOut(["add", "-A"], worktree);
   if ((await gitOut(["diff", "--cached", "--quiet"], worktree)).ok) return null;
   const { formatChantTrailers } = await import("../../workspace/trailers");
-  const trailers = formatChantTrailers({ lease: token, records: [{ kind: kindName, id: item }] });
+  const trailers = formatChantTrailers({ lease: token, ...(runId ? { run: runId } : {}), records: [{ kind: kindName, id: item }] });
   const r = await run(["git", "-c", "commit.gpgsign=false", "commit", "-q", "--no-verify", "-m", subject, "-m", trailers.join("\n")], worktree, {});
   if (r.code !== 0) throw new Error(`the factory could not commit ${item}: ${r.stderr.trim()}`);
   return (await gitOut(["rev-parse", "HEAD"], worktree)).out;
@@ -308,6 +360,36 @@ export async function factoryPick(args: FactoryPickArgs = {}): Promise<FactoryPi
     } else out.held.push({ item: item.id, hold: verdict.hold, message: verdict.message });
   }
   return out;
+}
+
+export interface FactoryReadyArgs {
+  cwd?: string;
+  kind?: string;
+  /** A command run in `cwd` that prints a JSON list of more keys, for work the factory's own pick can't see yet, such as a box whose intent was just decided and has no first build's item (#382). */
+  also?: string;
+}
+
+/**
+ * The steward's ready step for the factory Op (#382, `factoryReady` in ../factory.ts): one key per
+ * buildable item, naming the state it was read in, so a person's answer, a retry or a changed item
+ * starts a run and the same state does not start another. Only reads.
+ */
+export async function factoryReady(args: FactoryReadyArgs = {}): Promise<string[]> {
+  const cwd = args.cwd ?? process.cwd();
+  const keys = (await factoryPick({ cwd, ...(args.kind !== undefined ? { kind: args.kind } : {}) })).keys;
+  if (args.also) {
+    const r = await run(await words(args.also), cwd, {});
+    if (r.code !== 0) throw new Error(`factoryReady: ${args.also} exited ${r.code}: ${r.stderr.trim().split("\n").slice(-3).join(" ")}`);
+    let more: unknown;
+    try {
+      more = JSON.parse(r.stdout.trim().split("\n").pop() ?? "[]");
+    } catch {
+      throw new Error(`factoryReady: ${args.also} printed no JSON list on its last line`);
+    }
+    if (!Array.isArray(more)) throw new Error(`factoryReady: ${args.also} printed no JSON list on its last line`);
+    for (const k of more) keys.push(typeof k === "string" ? k : JSON.stringify(k));
+  }
+  return keys;
 }
 
 export interface FactoryAskArgs {
@@ -354,10 +436,12 @@ export interface FactoryBuildArgs {
 /** Run the builder hook in the worktree, unless understand said not to build (#3406). */
 export async function factoryBuild(args: FactoryBuildArgs): Promise<FactoryBuildResult> {
   const lease = leaseOf(args.lease, "factoryBuild");
-  if (args.ask.outcome !== null) return { ran: false, finished: false, exitCode: null, reverted: [], note: `understand answered ${args.ask.understand}: nothing is built` };
+  if (args.ask.outcome !== null) return { ran: false, finished: false, exitCode: null, reverted: [], note: `understand answered ${args.ask.understand}: nothing is built`, report: null };
   // A kept ask opens before it is built: chant writes the state in the worktree, so it goes with the build.
   const cwd = args.cwd ?? process.cwd();
-  const w = await readWork(cwd);
+  await freshStart(cwd, lease.worktree, lease.item);
+  await carryItem(cwd, lease.worktree, lease.item);
+  const w = await readWork(lease.worktree);
   const item = w.items.get(lease.item);
   if (item && item.proposedState !== null && item.state === item.proposedState) {
     await amend(lease.worktree, inWorktree(w.kindFile, await checkoutRoot(cwd), lease.worktree), lease.item, { [w.stateField]: item.openState });
@@ -370,15 +454,12 @@ export async function factoryBuild(args: FactoryBuildArgs): Promise<FactoryBuild
     FACTORY_WORKTREE: lease.worktree,
     ...(args.context ? { FACTORY_CONTEXT: args.context } : {}),
   });
-  let reverted: string[] = [];
-  try {
-    const last = r.stdout.trim().split("\n").pop() ?? "";
-    const parsed = JSON.parse(last) as { reverted?: unknown };
-    if (Array.isArray(parsed.reverted)) reverted = parsed.reverted.filter((x): x is string => typeof x === "string");
-  } catch {
-    // The builder printed no JSON line; nothing was reported put back.
-  }
-  return { ran: true, finished: r.code === 0, exitCode: r.code, reverted, note: r.code === 0 ? "the builder finished" : `the builder exited ${r.code}: ${r.stderr.trim().split("\n").slice(-3).join(" ")}` };
+  // The builder's report: `reverted` lists what its guard put back, and `ok: false` says it did not finish though it exited 0.
+  const report = lastJson(r.stdout);
+  const reverted = Array.isArray(report?.reverted) ? (report!.reverted as unknown[]).filter((x): x is string => typeof x === "string") : [];
+  const finished = r.code === 0 && report?.ok !== false;
+  const note = typeof report?.note === "string" ? report.note : finished ? "the builder finished" : r.code === 0 ? "the builder reported it did not finish" : `the builder exited ${r.code}: ${r.stderr.trim().split("\n").slice(-3).join(" ")}`;
+  return { ran: true, finished, exitCode: r.code, reverted, note, report };
 }
 
 export interface FactoryCheckArgs {
@@ -392,16 +473,26 @@ export interface FactoryCheckArgs {
 /** Run the check and attach its result as evidence to each criterion the factory ticks (#3406 rule 5). */
 export async function factoryCheck(args: FactoryCheckArgs): Promise<FactoryCheckResult> {
   const lease = leaseOf(args.lease, "factoryCheck");
-  if (!args.build.ran || !args.build.finished) return { ran: false, ok: false, command: null, evidence: [], log: null };
+  if (!args.build.ran || !args.build.finished) return { ran: false, ok: false, command: null, evidence: [], log: null, report: null };
   let command = args.check ?? null;
   if (command === null) {
     const { readDeclaration } = await import("../../workspace/declaration");
     const { locateWorkspace } = await import("../../workspace/which-chant");
     command = readDeclaration(locateWorkspace(lease.worktree).tree).members.find((m) => m.box?.factory?.check)?.box?.factory?.check?.run ?? null;
   }
-  if (command === null) return { ran: false, ok: false, command: null, evidence: [], log: null };
-  const r = await run(await words(command), lease.worktree, { FACTORY_ITEM: lease.item, FACTORY_TOKEN: lease.token });
-  const ok = r.code === 0;
+  if (command === null) return { ran: false, ok: false, command: null, evidence: [], log: null, report: null };
+  const r = await run(await words(command), lease.worktree, {
+    FACTORY_ITEM: lease.item,
+    FACTORY_TOKEN: lease.token,
+    FACTORY_HOLDER: lease.holder,
+    FACTORY_WORKTREE: lease.worktree,
+    FACTORY_BUILD: JSON.stringify(args.build.report ?? {}),
+  });
+  // A check may report each criterion's own result as its last JSON line, { "criteria": { "AC-1": "pass", ... } }:
+  // then each criterion is ticked by its own result, and one it names no result for gets none.
+  const report = lastJson(r.stdout);
+  const ok = r.code === 0 && report?.ok !== false;
+  const per = report?.criteria && typeof report.criteria === "object" ? (report.criteria as Record<string, unknown>) : null;
   const log = `.chant/factory/${lease.item}/check.log`;
   const abs = join(lease.worktree, ...log.split("/"));
   mkdirSync(dirname(abs), { recursive: true });
@@ -412,14 +503,19 @@ export async function factoryCheck(args: FactoryCheckArgs): Promise<FactoryCheck
   const { attachWorkEvidence } = await import("../../workspace/work-evidence");
   for (const c of item?.acceptance ?? []) {
     if (c.verification === "manual" || c.verification === "runtime") continue;
-    const out = await attachWorkEvidence({ cwd: lease.worktree, item: lease.item, holder: lease.holder, token: lease.token, criterion: c.id, result: ok ? "pass" : "fail", title: `factory check: ${command}`, path: log });
+    const own = per ? per[c.id] : undefined;
+    if (per && own !== "pass" && own !== "fail") continue;
+    const result = per ? (own as "pass" | "fail") : ok ? "pass" : "fail";
+    const out = await attachWorkEvidence({ cwd: lease.worktree, item: lease.item, holder: lease.holder, token: lease.token, criterion: c.id, result, title: `factory check: ${command}`, path: log });
     if (!("error" in out)) evidence.push(c.id);
   }
-  return { ran: true, ok, command, evidence, log };
+  return { ran: true, ok, command, evidence, log, report };
 }
 
 export interface FactoryRecordArgs {
   lease: FactoryLease;
+  /** The after hook: a command run in the worktree once the outcome is recorded, with FACTORY_OUTCOME, FACTORY_COMMIT, FACTORY_BUILD and FACTORY_CHECK set, such as ending the build's run record. A failure is reported and changes nothing. */
+  after?: string;
   ask: FactoryAskResult;
   build: FactoryBuildResult;
   check: FactoryCheckResult;
@@ -449,6 +545,34 @@ async function proposals(worktree: string, base: string, already: string[]): Pro
 
 /** Record the outcome on the item's branch and name it for the lease's release (#3406 rules 4 to 6, 8). */
 export async function factoryRecord(args: FactoryRecordArgs): Promise<FactoryRecordResult> {
+  const result = await recordOutcome(args);
+  if (args.after) {
+    const lease = leaseOf(args.lease, "factoryRecord");
+    const r = await run(await words(args.after), lease.worktree, {
+      FACTORY_ITEM: lease.item,
+      FACTORY_TOKEN: lease.token,
+      FACTORY_HOLDER: lease.holder,
+      FACTORY_WORKTREE: lease.worktree,
+      FACTORY_OUTCOME: result.outcome,
+      FACTORY_COMMIT: result.commit ?? "",
+      FACTORY_REASON: result.reason ?? "",
+      FACTORY_BUILD: JSON.stringify(args.build?.report ?? {}),
+      FACTORY_CHECK: JSON.stringify(args.check?.report ?? {}),
+    });
+    if (r.code !== 0) console.error(`factoryRecord: the after hook exited ${r.code}: ${r.stderr.trim().split("\n").slice(-3).join(" ")}`);
+  }
+  return result;
+}
+
+/** The run id a builder's report names for the Chant-Run trailer: `run.id` or `run`, or undefined. */
+function runIdOf(report: Record<string, unknown> | null | undefined): string | undefined {
+  const r = report?.run;
+  if (typeof r === "string" && r !== "") return r;
+  const id = r && typeof r === "object" ? (r as { id?: unknown }).id : undefined;
+  return typeof id === "string" && id !== "" ? id : undefined;
+}
+
+async function recordOutcome(args: FactoryRecordArgs): Promise<FactoryRecordResult> {
   const lease = leaseOf(args.lease, "factoryRecord");
   const cwd = args.cwd ?? process.cwd();
   const root = await checkoutRoot(cwd);
@@ -476,6 +600,6 @@ export async function factoryRecord(args: FactoryRecordArgs): Promise<FactoryRec
     ...(proposed.length > 0 ? { [w.work.implements]: [...already, ...proposed.map((p) => p.decision)], implements_proposed: proposed } : {}),
   });
   const title = typeof item.data?.title === "string" ? item.data.title : lease.item;
-  const commit = await commitAll(lease.worktree, `${lease.item}: ${title}`, lease.item, w.kindName, lease.token);
+  const commit = await commitAll(lease.worktree, `${lease.item}: ${title}`, lease.item, w.kindName, lease.token, runIdOf(args.build.report));
   return { outcome: "done", reason: null, commit, implementsProposed: proposed };
 }

@@ -399,6 +399,12 @@ export const factoryPickContract = activityContract(
   }),
 );
 
+export const factoryReadyContract = activityContract(
+  "factoryReady",
+  z.strictObject({ cwd: z.string().optional(), kind: z.string().optional(), also: z.string().optional() }),
+  z.array(z.string()),
+);
+
 export const factoryAskContract = activityContract(
   "factoryAsk",
   z.strictObject({ lease: factoryLease, cwd: z.string().optional(), kind: z.string().optional(), backends: factoryBackends }),
@@ -414,18 +420,18 @@ export const factoryAskContract = activityContract(
 export const factoryBuildContract = activityContract(
   "factoryBuild",
   z.strictObject({ lease: factoryLease, ask: z.unknown(), builder: z.string().min(1), context: z.string().optional(), cwd: z.string().optional() }),
-  z.strictObject({ ran: z.boolean(), finished: z.boolean(), exitCode: z.number().nullable(), reverted: z.array(z.string()), note: z.string() }),
+  z.strictObject({ ran: z.boolean(), finished: z.boolean(), exitCode: z.number().nullable(), reverted: z.array(z.string()), note: z.string(), report: z.record(z.string(), z.unknown()).nullable() }),
 );
 
 export const factoryCheckContract = activityContract(
   "factoryCheck",
   z.strictObject({ lease: factoryLease, build: z.unknown(), check: z.string().optional(), cwd: z.string().optional() }),
-  z.strictObject({ ran: z.boolean(), ok: z.boolean(), command: z.string().nullable(), evidence: z.array(z.string()), log: z.string().nullable() }),
+  z.strictObject({ ran: z.boolean(), ok: z.boolean(), command: z.string().nullable(), evidence: z.array(z.string()), log: z.string().nullable(), report: z.record(z.string(), z.unknown()).nullable() }),
 );
 
 export const factoryRecordContract = activityContract(
   "factoryRecord",
-  z.strictObject({ lease: factoryLease, ask: z.unknown(), build: z.unknown(), check: z.unknown(), cwd: z.string().optional() }),
+  z.strictObject({ lease: factoryLease, ask: z.unknown(), build: z.unknown(), check: z.unknown(), after: z.string().optional(), cwd: z.string().optional() }),
   z.strictObject({
     outcome: z.enum(["done", "not_done", "dropped", "redraft", "ask"]),
     reason: z.string().nullable(),
