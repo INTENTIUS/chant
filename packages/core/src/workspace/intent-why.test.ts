@@ -171,11 +171,11 @@ describe("why the region is like this", () => {
     const doc = await walk("app/server.ts#createApp");
     expect(doc.why.lines).toEqual({ start: 2, end: 4 });
     expect(doc.why.blame).toEqual([
-      { start: 2, end: 2, commit: `commit:${sha.c0}`, sha: sha.c0, runs: [], narrowedBy: null },
-      { start: 3, end: 3, commit: `commit:${sha.c1}`, sha: sha.c1, runs: ["run:run-a"], narrowedBy: null },
-      { start: 4, end: 4, commit: `commit:${sha.c0}`, sha: sha.c0, runs: [], narrowedBy: null },
+      { start: 2, end: 2, commit: `commit:${sha.c0}`, sha: sha.c0, runs: [], narrowedBy: null, joinedBy: [] },
+      { start: 3, end: 3, commit: `commit:${sha.c1}`, sha: sha.c1, runs: ["run:run-a"], narrowedBy: null, joinedBy: ["trailer"] },
+      { start: 4, end: 4, commit: `commit:${sha.c0}`, sha: sha.c0, runs: [], narrowedBy: null, joinedBy: [] },
     ]);
-    expect(doc.why.runs).toEqual([{ run: "run:run-a", lines: 1, commits: [`commit:${sha.c1}`], unit: { id: "W-001", kind: null, node: "record:work/W-001" }, decisions: ["record:decision/s-001"] }]);
+    expect(doc.why.runs).toEqual([{ run: "run:run-a", lines: 1, commits: [`commit:${sha.c1}`], unit: { id: "W-001", kind: null, node: "record:work/W-001" }, decisions: ["record:decision/s-001"], joinedBy: ["trailer"] }]);
     expect(doc.why.decisions.map((d) => [d.decision, d.relevance, d.lines])).toEqual([
       ["record:decision/s-001", "carried", 1],
       ["record:decision/s-003", "path", 0],
@@ -199,7 +199,7 @@ describe("why the region is like this", () => {
 
   test("without hunks, a commit several runs made is ambiguous, and says so", async () => {
     const doc = await walk("app/server.ts:1");
-    expect(doc.why.blame).toEqual([{ start: 1, end: 1, commit: `commit:${sha.c3}`, sha: sha.c3, runs: ["run:run-d", "run:run-e"], narrowedBy: null }]);
+    expect(doc.why.blame).toEqual([{ start: 1, end: 1, commit: `commit:${sha.c3}`, sha: sha.c3, runs: ["run:run-d", "run:run-e"], narrowedBy: null, joinedBy: ["record"] }]);
     expect(doc.why.gaps).toEqual([{ code: "intent-why-run-ambiguous", message: expect.any(String), lines: [{ start: 1, end: 1 }] }]);
   });
 

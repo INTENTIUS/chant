@@ -180,6 +180,19 @@
         "node.id": "the node of the walk the question is asked at, as graph --intent names it"
       },
       "deciders": [{ "kind": "quorum", "count": 1, "note": "The person walking the region answers. No table or model answers for them." }]
+    },
+    "agent-question": {
+      "title": "A question an agent asked the people working with it",
+      "adhoc": true,
+      "question": {
+        "type": "choice",
+        "instructions": "An agent asked the people working with it this question, with options of its own, and acts on the one they pick. The question and its options come with each ask, as hud's hud_ask and AskUserQuestion give them."
+      },
+      "inputs": {
+        "ask.id": "the asker's own id for this ask, such as hud's request id for the question, so each ask is a question of its own",
+        "ask.by": "who asked: the agent, or the session it asked in"
+      },
+      "deciders": [{ "kind": "quorum", "count": 1, "note": "A person in the room answers. No table or model answers an agent's question for them." }]
     }
   }
 }

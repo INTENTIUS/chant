@@ -56,6 +56,9 @@ export const DEPLOY_UNIT_RULES: readonly DeployUnitRule[] = [
   { kind: "argo-app", field: "stack", lexicon: "k8s" },
   { kind: "flux-reconcile", field: "stack", lexicon: "k8s" },
   { kind: "helm-upgrade", field: "release", lexicon: "helm" },
+  // A Terraform-family root (#3049). Its unit is the root's name in
+  // `terraform.roots`, which is also the member a gated wave's digest names.
+  { kind: "terraform-apply", field: "root", lexicon: "terraform" },
 ];
 
 /** One resolved unit a component's deploy composition targets. */

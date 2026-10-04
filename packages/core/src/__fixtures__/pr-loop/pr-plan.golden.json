@@ -1,0 +1,127 @@
+{
+  "$schema": "https://intentius.io/chant/schemas/workspace/pr-report/v1/pr-report.schema.json",
+  "contract": 1,
+  "stage": "plan",
+  "pr": 12,
+  "env": "prod",
+  "base": "1111111111111111111111111111111111111111",
+  "head": "2222222222222222222222222222222222222222",
+  "op": "pr-12",
+  "gate": "pr-apply",
+  "digest": "jcs1-sha256:46bff52773a158dffa5c895b98f8760d601a2f9dc6af7dc235dbf65496f7bf65",
+  "status": "planned",
+  "approval": {
+    "status": "pending"
+  },
+  "selection": {
+    "changed": [
+      "a"
+    ],
+    "dependents": [
+      "app"
+    ],
+    "unclaimed": [],
+    "indeterminate": [],
+    "waves": [
+      [
+        "a"
+      ],
+      [
+        "app"
+      ]
+    ]
+  },
+  "members": [
+    {
+      "member": "a",
+      "component": "a",
+      "planDigest": "jcs1-sha256:0000000000000000000000000000000000000000000000000000000000000001",
+      "status": "planned",
+      "counts": {
+        "create": 0,
+        "update": 1,
+        "replace": 0,
+        "delete": 0
+      }
+    },
+    {
+      "member": "app",
+      "component": "app",
+      "planDigest": "jcs1-sha256:0000000000000000000000000000000000000000000000000000000000000002",
+      "status": "planned",
+      "counts": {
+        "create": 0,
+        "update": 0,
+        "replace": 0,
+        "delete": 0
+      }
+    }
+  ],
+  "changeSet": {
+    "$schema": "https://intentius.io/chant/schemas/workspace/change-set/v1/change-set.schema.json",
+    "contract": 1,
+    "digest": "jcs1-sha256:46bff52773a158dffa5c895b98f8760d601a2f9dc6af7dc235dbf65496f7bf65",
+    "members": [
+      {
+        "member": "a",
+        "lexicon": "terraform",
+        "planner": "tofu",
+        "status": "planned",
+        "planDigest": "jcs1-sha256:0000000000000000000000000000000000000000000000000000000000000001",
+        "holes": []
+      },
+      {
+        "member": "app",
+        "lexicon": "terraform",
+        "planner": "tofu",
+        "status": "planned",
+        "planDigest": "jcs1-sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "holes": []
+      }
+    ],
+    "entries": [
+      {
+        "member": "a",
+        "lexicon": "terraform",
+        "planner": "tofu",
+        "address": "terraform_data.subnet",
+        "type": "terraform_data",
+        "action": "update",
+        "attributes": [
+          {
+            "path": "input",
+            "before": "v1",
+            "after": "v2"
+          }
+        ]
+      }
+    ],
+    "summary": {
+      "members": 2,
+      "entries": 1,
+      "actions": {
+        "create": 0,
+        "update": 1,
+        "replace": 0,
+        "delete": 0,
+        "read": 0,
+        "no-op": 0,
+        "forget": 0
+      },
+      "types": {
+        "terraform_data": {
+          "update": 1
+        }
+      },
+      "byMember": {
+        "a": {
+          "update": 1
+        }
+      },
+      "deletes": [],
+      "replacements": [],
+      "failed": [],
+      "holes": 0
+    }
+  }
+}

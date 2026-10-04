@@ -946,6 +946,7 @@ describe("decision points on the work graph (#2741, ws-058)", () => {
       ["intent-origin", "choice", "quorum"],
       ["intent-judgment", "choice", "quorum"],
       ["intent-disposition", "choice", "quorum"],
+      ["agent-question", "choice", "quorum"],
     ]);
     expect(candidates(points["finding-triage"].question)).toEqual(["work-item", "needs-a-decision", "leave"]);
     // Every input names a read-contract output: the triage reads a finding and its region, the window its commits.
@@ -955,8 +956,18 @@ describe("decision points on the work graph (#2741, ws-058)", () => {
     const run = chant(fixture, "workspace", "points", "--json");
     expect(run.status, run.stderr).toBe(0);
     const doc = JSON.parse(run.stdout) as { points: { name: string }[]; sources: { reason: unknown }[] };
-    expect(doc.points.map((p) => p.name)).toEqual(["slice-tier", "ship-skip", "finding-triage", "needs-a-decision", "intent-origin", "intent-judgment", "intent-disposition"]);
+    expect(doc.points.map((p) => p.name)).toEqual(["slice-tier", "ship-skip", "finding-triage", "needs-a-decision", "intent-origin", "intent-judgment", "intent-disposition", "agent-question"]);
     expect(doc.sources.map((s) => s.reason)).toEqual([null]);
+  });
+
+  test("agent-question is ad hoc: points ask takes its question and candidates with --candidates (#3403)", () => {
+    const points = parsePoints(pointsText(), "decisions/points.json");
+    expect(points["agent-question"]).toMatchObject({ adhoc: true, deciders: [{ kind: "quorum", count: 1 }] });
+    const asked = { question: "Ship the importer behind a flag?", criteria: { flag: "Behind a flag.", now: "On for everyone." } };
+    const run = chant(fixture, "workspace", "points", "ask", "agent-question", "--inputs", JSON.stringify({ "ask.id": "req-1", "ask.by": "hud" }), "--candidates", JSON.stringify(asked), "--dry-run");
+    expect(run.status, run.stdout + run.stderr).toBe(0);
+    const doc = JSON.parse(run.stdout) as { question: { state: string; candidates: string[]; asked: unknown } };
+    expect(doc.question).toMatchObject({ state: "escalated", candidates: ["flag", "now"], asked });
   });
 
   test("ship skip, moved from chud: its table says no to every release, no model answers it, and its quorum is the gate's", async () => {

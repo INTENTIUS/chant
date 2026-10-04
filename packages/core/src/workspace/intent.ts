@@ -31,7 +31,8 @@
  * record kind the declaration names (#2680), and each one's `commitJoins`
  * runs for every commit in that order. chant emits the
  * graph and hud renders it (#2524 D8, D15). Git is read through a local
- * `git` subprocess only: no fetch, no network.
+ * `git` subprocess only: no fetch, no network, except to follow a squash
+ * when asked (below).
  *
  * A region can name a symbol, `path#symbol`, which `symbols.ts` resolves to
  * its current lines (#3034). For a file region the document also carries
@@ -39,6 +40,21 @@
  * behind each (narrowed by the hunks a run recorded when several share a
  * commit), and the decisions governing the region, most relevant first, with
  * `explained: false` and closed gap codes when nothing accounts for it.
+ *
+ * A commit joins an agent run by its `Chant-Run` trailer or the run's own
+ * list of commits, and, failing both, by content (#3036): a commit whose
+ * `git patch-id --stable` equals one the run recorded, as after a rebase or a
+ * cherry-pick that dropped the trailer. Its `made-by` edge says `patch-id`,
+ * and a commit joined one way whose content matches another run's recorded
+ * commit is `intent-commit-join-conflict`.
+ *
+ * Asked to (`followSquash`, #3035), the walk follows a squash merge to its
+ * pull request's original commits (`squash.ts`): the squash commit node lists
+ * them with their trailers, joins and signatures, carries what their trailers
+ * and plugin joins carry, and joins their runs, marked `squash`. That is the
+ * one part of the walk that may reach the network, to fetch a pull request
+ * ref the clone lacks; a ref that can't be read is `squash-unfollowed` in
+ * `reasons`, and the walk keeps its answer without it.
  */
 
 import { execFileSync } from "node:child_process";
@@ -56,7 +72,8 @@ import type { DecidedIn } from "./record-decided";
 import { importKindModule, loadRecordKind, parseFrontMatter, RecordReadError, supersedesTargets, type LoadedRecordKind } from "./records";
 import { queryRecords, type RecordView } from "./records-cli";
 import { isPluginCode, type PluginCode, type ReasonCode } from "./reason-codes";
-import { runsForCommits, type RunCost, type RunPin, type RunUsage, type RunView } from "./runs";
+import { addSquashRuns, RUN_JOIN_ORDER, runsForCommits, type RunCost, type RunJoin, type RunPin, type RunUsage, type RunView } from "./runs";
+import { followSquashes, squashLineOrigins, type Forge, type SquashFollow } from "./squash";
 import { resolveSymbol } from "./symbols";
 import { readTrailerJoins, type CommitTrailerJoins } from "./trailer-joins";
 import { joinPath, skippedDir, type WorkspaceTree } from "./tree";
@@ -109,6 +126,8 @@ export const INTENT_FINDING_CODES = [
   "intent-work-blocked",
   /** Commits in the region are a decision's own work while the work item implementing it is still open: the code says done and the queue says not (#2683). */
   "intent-work-open-decided-code",
+  /** A commit joined to an agent run by its trailer or the run's record has the patch-id of a commit another run recorded; the content join is not made (#3036). */
+  "intent-commit-join-conflict",
 ] as const satisfies readonly ReasonCode[];
 export type IntentFindingCode = (typeof INTENT_FINDING_CODES)[number];
 
@@ -118,6 +137,8 @@ export const INTENT_REASON_CODES = [
   "intent-history-shallow",
   /** A plugin's commitJoins failed for a commit. */
   "intent-plugin-failed",
+  /** A squash commit's pull request ref could not be read or fetched, so its original commits are not followed (#3035). */
+  "squash-unfollowed",
 ] as const satisfies readonly ReasonCode[];
 export type IntentReasonCode = (typeof INTENT_REASON_CODES)[number];
 
@@ -234,6 +255,39 @@ export interface CommitNode {
    * records it names and the apply it records. A record or a lease item that
    * a kind read has is linked by a `carries` edge.
    */
+  joins: CommitTrailerJoins;
+  /**
+   * Set only when the walk follows squashes (#3035) and the commit squashes
+   * a pull request: its original commits, read from the forge's pull request
+   * ref. The commit carries what they carry and joins their runs.
+   */
+  squash?: SquashNode;
+}
+
+/** A squash commit's pull request, followed to its original commits (#3035). */
+export interface SquashNode {
+  pullRequest: number;
+  /** The forge `origin` points at, or null for one chant doesn't know. */
+  forge: Forge | null;
+  /** The local ref the pull request's head was read from, or null. */
+  ref: string | null;
+  /** The pull request's head commit, or null. */
+  head: string | null;
+  /** Whether this read fetched the ref. */
+  fetched: boolean;
+  /** Whether the original commits were read; when false, `squash-unfollowed` in `reasons` says why. */
+  followed: boolean;
+  /** The original commits, oldest first, each with what its own trailers join and its provenance level. */
+  commits: SquashedCommit[];
+}
+
+export interface SquashedCommit {
+  sha: string;
+  subject: string;
+  author: { name: string; email: string };
+  date: string;
+  trailers: Record<string, string[]>;
+  signature: { level: ProvenanceLevel; reason: string; principal?: string };
   joins: CommitTrailerJoins;
 }
 
@@ -408,7 +462,7 @@ export type IntentEdge =
   | { kind: "pins"; from: string; to: string; pinnedSha256: string | null; pinState: PinState }
   | { kind: "touched-by"; from: string; to: string; lines: LineRange[] | null }
   | { kind: "within"; from: string; to: string; state: "decided" | "decided-by-window" | "worked" }
-  | { kind: "made-by"; from: string; to: string; joinedBy: ("trailer" | "record")[] }
+  | { kind: "made-by"; from: string; to: string; joinedBy: RunJoin[]; recordedAs?: string; via?: string[] }
   | { kind: "produced-by" | "serves" | "cites-evidence" | "supersedes" | "links" | "implements" | "needs" | "addressed-by" | "carries" | "worked-on"; from: string; to: string };
 
 /** Lines of the region that one commit, and the same runs, last wrote (#3034). */
@@ -422,6 +476,16 @@ export interface WhySpan {
   runs: string[];
   /** `hunks` when a run's recorded hunks chose among the commit's runs; null when every run that made the commit is listed. */
   narrowedBy: "hunks" | null;
+  /** How the runs in `runs` join the commit, as their `made-by` edges say, without repeats (#3036). Empty with no runs. */
+  joinedBy: RunJoin[];
+  /**
+   * For lines of a followed squash (#3035): the sha of the original commit
+   * that last wrote them, one of the commit node's `squash.commits`, by blame
+   * at the pull request's head; `runs` keeps that commit's runs and the
+   * squash's own. Empty when the file at the head is not the squash's, so
+   * blame there can't say. Absent for any other commit.
+   */
+  via?: string[];
 }
 
 /** Why a decision is in `why`, most relevant first (#3034). */
@@ -454,6 +518,8 @@ export interface WhyRun {
   unit: { id: string; kind: string | null; node: string | null } | null;
   /** The decision nodes it carried out: through its work item's implements, and the decision records it names. */
   decisions: string[];
+  /** How it joins the commits in `commits`, as their `made-by` edges say, without repeats (#3036). */
+  joinedBy: RunJoin[];
 }
 
 export interface WhyGap {
@@ -510,6 +576,8 @@ export interface IntentQuery {
   /** `path`, `path:line`, `path:start-end` or `path#symbol`, or a graph node id `<member>/<id>`. */
   region: string;
   at?: string;
+  /** Follow squash merges to their pull requests' original commits, fetching a missing pull request ref from `origin` (#3035). */
+  followSquash?: boolean;
   /**
    * Kind files: record kinds, plugins with `commitJoins`, or both. Relative to
    * `cwd`. Left out, every record kind the declaration names, in its order
@@ -954,6 +1022,13 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
     if (!touched.some((t) => t.sha === sha)) touched.push({ sha, lines: null });
   }
   const details = commitDetails(top, touched.map((t) => t.sha));
+  // Squash merges, followed to the pull request's original commits when asked (#3035).
+  const follows = query.followSquash ? followSquashes(top, [...details.values()], { fetchMissing: true }) : new Map<string, SquashFollow>();
+  for (const f of follows.values()) {
+    if (f.problem) reasons.push({ code: "squash-unfollowed", message: `${f.sha.slice(0, 8)} squashes pull request #${f.pullRequest}, and ${f.problem}, so its original commits are not followed` });
+  }
+  const originalDetails = commitDetails(top, [...new Set([...follows.values()].flatMap((f) => f.commits))]);
+  const originalsOf = (sha: string): IntentCommit[] => (follows.get(sha)?.commits ?? []).map((o) => originalDetails.get(o)).filter((x): x is IntentCommit => x !== undefined);
 
   // Each commit's provenance, judged by the policy at base as records judges a record's (#2547).
   const policy = policyAtBase(top, resolveBase(top));
@@ -981,54 +1056,75 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
   }
   const joined = new Map<string, Joined>();
   // chant's own trailers on each commit (#3149), with the items their lease tokens name.
-  const trailerJoins = readTrailerJoins(top, [...details.values()]);
+  const trailerJoins = readTrailerJoins(top, [...details.values(), ...originalDetails.values()]);
   const pluginFindings: { commit: string; plugin: string; finding: PluginFinding }[] = [];
+  const signatureOf = (sha: string): CommitNode["signature"] => {
+    if (!policy.active) return { level: "unattested", reason: policy.problems.length ? policy.problems.join("; ") : `no signers file (${policy.signersPath}) at base; attestation is off` };
+    const p = commitProvenance(top, policy, sha, attestors);
+    return { level: p.level, reason: p.reason, ...(p.principal ? { principal: p.principal } : {}) };
+  };
   const failedPlugins = new Set<string>();
   for (const t of touched) {
     const c = details.get(t.sha);
     if (!c) continue;
-    const signature = policy.active
-      ? (() => {
-          const p = commitProvenance(top, policy, c.sha, attestors);
-          return { level: p.level, reason: p.reason, ...(p.principal ? { principal: p.principal } : {}) };
-        })()
-      : { level: "unattested" as const, reason: policy.problems.length ? policy.problems.join("; ") : `no signers file (${policy.signersPath}) at base; attestation is off` };
+    const signature = signatureOf(c.sha);
     const pr = c.subject.match(/\(#([0-9]+)\)\s*$/);
     const cid = `commit:${c.sha}`;
-    add<CommitNode>({ id: cid, kind: "commit", sha: c.sha, subject: c.subject, author: c.author, date: c.date, trailers: c.trailers, pullRequest: pr ? Number(pr[1]) : null, signature, lines: t.lines, state: null, joins: trailerJoins.get(c.sha)!.joins });
+    const f = follows.get(c.sha);
+    const squash: SquashNode | undefined = f
+      ? {
+          pullRequest: f.pullRequest,
+          forge: f.forge,
+          ref: f.ref,
+          head: f.head,
+          fetched: f.fetched,
+          followed: f.followed,
+          commits: originalsOf(c.sha).map((o) => ({ sha: o.sha, subject: o.subject, author: o.author, date: o.date, trailers: o.trailers, signature: signatureOf(o.sha), joins: trailerJoins.get(o.sha)!.joins })),
+        }
+      : undefined;
+    add<CommitNode>({ id: cid, kind: "commit", sha: c.sha, subject: c.subject, author: c.author, date: c.date, trailers: c.trailers, pullRequest: pr ? Number(pr[1]) : null, signature, lines: t.lines, state: null, joins: trailerJoins.get(c.sha)!.joins, ...(squash ? { squash } : {}) });
     edges.push({ kind: "touched-by", from: rid, to: cid, lines: t.lines });
 
-    // 2. Each commit's origin, from the plugins.
+    // 2. Each commit's origin, from the plugins. A followed squash also takes its original commits' (#3035).
     const entry: Joined = { contracts: [], authorship: [], decisions: [], carries: [] };
     joined.set(c.sha, entry);
+    const pushEdge = (e: IntentEdge) => {
+      if (!edges.some((x) => x.kind === e.kind && x.from === e.from && x.to === e.to)) edges.push(e);
+    };
+    const subjects: IntentCommit[] = [c, ...originalsOf(c.sha)];
     for (const k of kinds) {
       if (!k.joins) continue;
-      let result;
-      try {
-        result = await runCommitJoins(k.joins, c, { read: readAt, list: listAt, at: located.at }, k.name);
-      } catch (err) {
-        const message = `${k.display}: commitJoins failed for ${c.sha.slice(0, 8)}: ${err instanceof Error ? err.message : String(err)}`;
-        if (!failedPlugins.has(message)) reasons.push({ code: "intent-plugin-failed", message });
-        failedPlugins.add(message);
-        continue;
+      for (const subject of subjects) {
+        const original = subject !== c;
+        let result;
+        try {
+          result = await runCommitJoins(k.joins, subject, { read: readAt, list: listAt, at: located.at }, k.name);
+        } catch (err) {
+          const message = `${k.display}: commitJoins failed for ${subject.sha.slice(0, 8)}: ${err instanceof Error ? err.message : String(err)}`;
+          if (!failedPlugins.has(message)) reasons.push({ code: "intent-plugin-failed", message });
+          failedPlugins.add(message);
+          continue;
+        }
+        const joinedNode = (kind: JoinedNode["kind"], e: JoinedEntity): string => {
+          const { id, ...data } = e;
+          return add<JoinedNode>({ id: `${kind}:${id}`, kind, ref: id, plugin: k.display, data }).id;
+        };
+        const unitId = result.unit ? joinedNode("unit", result.unit) : undefined;
+        const contractId = result.contract ? joinedNode("contract", result.contract) : undefined;
+        if (unitId) {
+          if (original) entry.unit ??= unitId;
+          else entry.unit = unitId;
+          pushEdge({ kind: "produced-by", from: cid, to: unitId });
+          if (contractId) pushEdge({ kind: "serves", from: unitId, to: contractId });
+        }
+        if (contractId) entry.contracts.push(result.contract!.id);
+        if (unitId) entry.decisions.push(...entityDecisions(result.unit), ...entityDecisions(result.contract));
+        for (const f of result.findings ?? []) pluginFindings.push({ commit: cid, plugin: k.display, finding: f });
+        const evidence = result.evidence === undefined ? [] : Array.isArray(result.evidence) ? result.evidence : [result.evidence];
+        for (const e of evidence) pushEdge({ kind: "cites-evidence", from: unitId ?? contractId ?? cid, to: joinedNode("evidence", e) });
+        // Authorship is checked against the squash's own trailers, so only its own claims count.
+        if (!original) entry.authorship.push(...(result.authorship ?? []));
       }
-      const joinedNode = (kind: JoinedNode["kind"], e: JoinedEntity): string => {
-        const { id, ...data } = e;
-        return add<JoinedNode>({ id: `${kind}:${id}`, kind, ref: id, plugin: k.display, data }).id;
-      };
-      const unitId = result.unit ? joinedNode("unit", result.unit) : undefined;
-      const contractId = result.contract ? joinedNode("contract", result.contract) : undefined;
-      if (unitId) {
-        entry.unit = unitId;
-        edges.push({ kind: "produced-by", from: cid, to: unitId });
-        if (contractId) edges.push({ kind: "serves", from: unitId, to: contractId });
-      }
-      if (contractId) entry.contracts.push(result.contract!.id);
-      if (unitId) entry.decisions.push(...entityDecisions(result.unit), ...entityDecisions(result.contract));
-      for (const f of result.findings ?? []) pluginFindings.push({ commit: cid, plugin: k.display, finding: f });
-      const evidence = result.evidence === undefined ? [] : Array.isArray(result.evidence) ? result.evidence : [result.evidence];
-      for (const e of evidence) edges.push({ kind: "cites-evidence", from: unitId ?? contractId ?? cid, to: joinedNode("evidence", e) });
-      entry.authorship.push(...(result.authorship ?? []));
     }
   }
 
@@ -1036,8 +1132,10 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
   const runJoins = await runsForCommits(
     top,
     located.rootOnDisk,
-    touched.map((t) => ({ sha: t.sha, run: trailerJoins.get(t.sha)?.joins.run ?? null })),
+    [...new Set([...touched.map((t) => t.sha), ...originalDetails.keys()])].map((sha) => ({ sha, run: trailerJoins.get(sha)?.joins.run ?? null })),
   );
+  // A followed squash joins its original commits' runs (#3035).
+  addSquashRuns(runJoins.refs, follows);
   for (const t of touched) {
     if (!nodes.has(`commit:${t.sha}`)) continue;
     for (const ref of runJoins.refs.get(t.sha) ?? []) {
@@ -1063,8 +1161,14 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
         instruction: r?.instruction ?? null,
         lease: r?.lease ?? null,
       });
-      edges.push({ kind: "made-by", from: `commit:${t.sha}`, to: node.id, joinedBy: ref.joinedBy });
+      edges.push({ kind: "made-by", from: `commit:${t.sha}`, to: node.id, joinedBy: ref.joinedBy, ...(ref.recordedAs ? { recordedAs: ref.recordedAs } : {}), ...(ref.via ? { via: ref.via } : {}) });
     }
+  }
+  // A commit a trailer or a record joins to one run, with the content of a commit another run recorded (#3036).
+  for (const x of runJoins.conflicts) {
+    if (!nodes.has(`commit:${x.sha}`)) continue;
+    const others = x.content.map((m) => `${m.run} (${m.sha.slice(0, 8)})`).join(", ");
+    find("intent-commit-join-conflict", `${x.sha.slice(0, 8)} joins ${x.joined.join(", ")} by its trailer or the run's record, and has the patch-id of a commit ${others} recorded; it is not joined to ${x.content.length === 1 ? "that run" : "those runs"}`, [`commit:${x.sha}`, ...x.joined.map((id) => `run:${id}`)]);
   }
 
   // 3. The decisions whose constrains cover the region, and their chains.
@@ -1420,24 +1524,27 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
       j.decisions.push(...implementedIds(h).map((id) => id.slice("record:".length)));
       return node.id;
     };
-    for (const r of c.joins.records) {
-      const k = recordKinds.get(r.kind);
-      if (!k) continue;
-      if (k.records!.loaded.kind.work) {
-        const h = workByKey.get(`${r.kind}/${r.id}`);
-        if (h) r.node = carryWork(h);
-        continue;
+    // The commit's own trailers, and a followed squash's original commits' (#3035).
+    for (const joins of [c.joins, ...(c.squash?.commits ?? []).map((o) => o.joins)]) {
+      for (const r of joins.records) {
+        const k = recordKinds.get(r.kind);
+        if (!k) continue;
+        if (k.records!.loaded.kind.work) {
+          const h = workByKey.get(`${r.kind}/${r.id}`);
+          if (h) r.node = carryWork(h);
+          continue;
+        }
+        const hit = decisionById.get(`${r.kind}/${r.id}`);
+        if (!hit) continue;
+        r.node = decisionNode(hit.kind, hit.view).id;
+        carry(r.node);
+        j.decisions.push(`${r.kind}/${r.id}`);
       }
-      const hit = decisionById.get(`${r.kind}/${r.id}`);
-      if (!hit) continue;
-      r.node = decisionNode(hit.kind, hit.view).id;
-      carry(r.node);
-      j.decisions.push(`${r.kind}/${r.id}`);
-    }
-    const item = c.joins.lease?.item;
-    if (item) {
-      const hits = workKinds.map((k) => workByKey.get(`${k.records!.loaded.kind.name}/${item}`)).filter((h): h is WorkHit => h !== undefined);
-      if (hits.length === 1) carryWork(hits[0]);
+      const item = joins.lease?.item;
+      if (item) {
+        const hits = workKinds.map((k) => workByKey.get(`${k.records!.loaded.kind.name}/${item}`)).filter((h): h is WorkHit => h !== undefined);
+        if (hits.length === 1) carryWork(hits[0]);
+      }
     }
     // The runs that made the commit (#3034): its run's work item and the
     // records the run names are carried as a Chant-Lease and a Chant-Record are.
@@ -1679,25 +1786,43 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
   /** "Why is it like this" over the region (#3034): who made its current lines, and the decisions governing it, most relevant first. */
   function explain(): WhyAnswer {
     const hunksOf = (run: string, sha: string) => runJoins.runs.get(run)?.commits.find((c) => c.sha === sha)?.hunks ?? null;
+    const joinOf = (run: string, sha: string): RunJoin[] => (runJoins.refs.get(sha) ?? []).find((r) => r.id === run)?.joinedBy ?? [];
+    const joinsOf = (runs: string[], shas: string[]): RunJoin[] => {
+      const all = new Set(runs.flatMap((id) => shas.flatMap((sha) => joinOf(id, sha))));
+      return RUN_JOIN_ORDER.filter((j) => all.has(j));
+    };
+    // For a followed squash (#3035), the original commit behind each of its lines, by blame at the pull request's head.
+    const origins = new Map<string, Map<number, string> | undefined>();
+    const originOf = (sha: string, path: string, line: number): { squash: boolean; origin: string | undefined } => {
+      const f = follows.get(sha);
+      if (!f?.followed || !f.head) return { squash: false, origin: undefined };
+      const key = `${sha}\0${path}`;
+      if (!origins.has(key)) origins.set(key, squashLineOrigins(top!, sha, f.head, path, new Set(f.commits)));
+      return { squash: true, origin: origins.get(key)?.get(line) };
+    };
     // Each current line: its commit, and the runs that wrote it.
     const who = blamed.map((b) => {
-      if (b.sha === null) return { line: b.line, sha: null, runs: [] as string[], narrowedBy: null as "hunks" | null };
+      if (b.sha === null) return { line: b.line, sha: null, runs: [] as string[], narrowedBy: null as "hunks" | null, via: undefined as string[] | undefined };
       const sha = b.sha;
-      const refs = (runJoins.refs.get(sha) ?? []).map((r) => r.id);
+      const { squash, origin } = originOf(sha, b.origPath, b.origLine);
+      const via = squash ? (origin ? [origin] : []) : undefined;
+      // On a squash line blame at the head traced to one original, a run joined only through the other originals didn't write it.
+      const refs = (runJoins.refs.get(sha) ?? []).filter((r) => !origin || r.joinedBy.some((j) => j !== "squash") || (r.via ?? []).includes(origin)).map((r) => r.id);
       const withHunks = refs.filter((id) => hunksOf(id, sha) !== null);
-      if (withHunks.length === 0) return { line: b.line, sha, runs: refs, narrowedBy: null };
+      if (withHunks.length === 0) return { line: b.line, sha, runs: refs, narrowedBy: null, via };
       const wrote = withHunks.filter((id) => hunksOf(id, sha)!.some((h) => h.path === b.origPath && h.start <= b.origLine && b.origLine <= h.end));
       // A run that recorded its hunks and doesn't cover the line didn't write it; a run that recorded none may have.
-      return { line: b.line, sha, runs: wrote.length > 0 ? wrote : refs.filter((id) => !withHunks.includes(id)), narrowedBy: "hunks" as const };
+      return { line: b.line, sha, runs: wrote.length > 0 ? wrote : refs.filter((id) => !withHunks.includes(id)), narrowedBy: "hunks" as const, via };
     });
     const spans: WhySpan[] = [];
     for (const w of who) {
       const last = spans[spans.length - 1];
-      if (last && last.end === w.line - 1 && last.sha === w.sha && last.narrowedBy === w.narrowedBy && last.runs.join("\0") === w.runs.map((r) => `run:${r}`).join("\0")) {
+      const via = w.via;
+      if (last && last.end === w.line - 1 && last.sha === w.sha && last.narrowedBy === w.narrowedBy && last.runs.join("\0") === w.runs.map((r) => `run:${r}`).join("\0") && last.via?.join("\0") === via?.join("\0")) {
         last.end = w.line;
         continue;
       }
-      spans.push({ start: w.line, end: w.line, commit: w.sha ? `commit:${w.sha}` : null, sha: w.sha, runs: w.runs.map((r) => `run:${r}`), narrowedBy: w.narrowedBy });
+      spans.push({ start: w.line, end: w.line, commit: w.sha ? `commit:${w.sha}` : null, sha: w.sha, runs: w.runs.map((r) => `run:${r}`), narrowedBy: w.narrowedBy, joinedBy: w.sha ? joinsOf(w.runs, [w.sha]) : [], ...(via ? { via } : {}) });
     }
     const ranges = (lines: number[]): LineRange[] => {
       const out: LineRange[] = [];
@@ -1745,7 +1870,8 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
         if (t?.kind === "decision") carried.add(t.id);
         if (t?.kind === "work") for (const e of edges) if (e.kind === "implements" && e.from === t.id) carried.add(e.to);
       }
-      return { run: n.id, lines, commits, unit: r?.unit ? { id: r.unit.id, kind: r.unit.kind, node: work?.id ?? null } : null, decisions: [...carried] };
+      const shas = commits.map((c) => c.slice("commit:".length));
+      return { run: n.id, lines, commits, unit: r?.unit ? { id: r.unit.id, kind: r.unit.kind, node: work?.id ?? null } : null, decisions: [...carried], joinedBy: joinsOf([n.run], shas) };
     };
     let runs: WhyRun[];
     if (fileLines !== null) {

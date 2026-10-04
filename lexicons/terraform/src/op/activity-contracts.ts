@@ -76,6 +76,7 @@ export const terraformPlanContract = activityContract(
     ...rootArgs,
     planFile: z.string().optional(),
     destroy: z.boolean().optional(),
+    vars: z.record(z.string(), z.unknown()).optional(),
   }),
   z.object({
     ...planChangeCounts,
@@ -178,4 +179,43 @@ export const choudoufuAdoptContract = activityContract(
     dir: z.string(),
   }),
   rootEntity,
+);
+
+/** One root of a pin-bump rollout ({@link PinRoot} in `../pin/waves.ts`). */
+const pinRoot = z.strictObject({ root: z.string(), dependsOn: z.array(z.string()).optional(), tsSource: z.string().optional() });
+
+/**
+ * `terraformPinRollout` (#3189). It names no `terraform.roots` key: a rollout
+ * moves a module's pin across many roots, found by directory, so it carries no
+ * `rootEntity`. `status` and `summary` are the fields an Op reads: the run's
+ * outcome and a body for a report step.
+ */
+export const terraformPinRolloutContract = activityContract(
+  "terraformPinRollout",
+  z.strictObject({
+    module: z.string(),
+    from: z.string(),
+    to: z.string(),
+    roots: z.array(pinRoot).optional(),
+    canaries: z.array(z.string()).optional(),
+    wavesFrom: z.string().optional(),
+    wavesPrefix: z.string().optional(),
+    mode: z.enum(["report", "pull-request"]).optional(),
+    base: z.string().optional(),
+    remote: z.string().optional(),
+    appliedCheck: z.string().optional(),
+    cwd: z.string().optional(),
+  }),
+  z.object({
+    module: z.string(),
+    from: z.string(),
+    to: z.string(),
+    mode: z.enum(["report", "pull-request"]),
+    base: z.string(),
+    status: z.enum(["complete", "opened", "would-open", "waiting", "stopped"]),
+    roots: z.array(z.object({}).loose()),
+    waves: z.array(z.object({}).loose()),
+    stop: z.string().optional(),
+    summary: z.string(),
+  }),
 );

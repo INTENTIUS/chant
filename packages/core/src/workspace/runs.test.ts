@@ -151,6 +151,45 @@ describe("writing a run", () => {
   });
 });
 
+describe("pushing the ledger (#3391)", () => {
+  test("with no remote, a write says why it did not push", async () => {
+    const doc = await written("record", { harness: "x" });
+    expect(doc.ledger.pushed).toBe(false);
+    expect(doc.ledger.notPushed).toMatch(/no remote/);
+  });
+
+  test("a single-branch, shallow clone pushes every write, not only the first", async () => {
+    const remote = join(scratchDir("chant-runs-remote-"), "remote.git");
+    git(root, "clone", "-q", "--bare", root, remote);
+    const branch = git(root, "rev-parse", "--abbrev-ref", "HEAD");
+    const clone = join(scratchDir("chant-runs-clone-"), "box");
+    git(root, "clone", "-q", "--single-branch", "--branch", branch, "--depth", "1", `file://${remote}`, clone);
+    git(clone, "config", "user.email", "box@chant.dev");
+    git(clone, "config", "user.name", "box");
+    // The clone's refspec covers its one branch, so git never tracks chant/lifecycle on its own.
+    expect(git(clone, "config", "--get-all", "remote.origin.fetch")).not.toContain("chant/lifecycle");
+
+    const writes: Written[] = [];
+    const start = await runsWrite({ verb: "start", fields: JSON.stringify({ harness: "planter", startedAt: "2026-10-02T09:00:00Z" }), cwd: clone });
+    writeContract.expectValid(start);
+    if ("error" in start) throw new Error(start.error.message);
+    writes.push(start);
+    for (const doc of [
+      await runsWrite({ verb: "end", id: start.run.id, fields: JSON.stringify({ outcome: "done", endedAt: "2026-10-02T09:05:00Z" }), cwd: clone }),
+      await runsWrite({ verb: "record", fields: JSON.stringify({ harness: "planter", startedAt: "2026-10-02T10:00:00Z", endedAt: "2026-10-02T10:01:00Z" }), cwd: clone }),
+    ]) {
+      writeContract.expectValid(doc);
+      if ("error" in doc) throw new Error(doc.error.message);
+      writes.push(doc);
+    }
+    for (const w of writes) {
+      expect(w.ledger.pushed).toBe(true);
+      expect(w.ledger.notPushed).toBeUndefined();
+    }
+    expect(git(remote, "rev-parse", "chant/lifecycle")).toBe(writes[2].ledger.commit);
+  });
+});
+
 describe("runs --json", () => {
   test("folds each run and joins its commits by trailer and by its own list", async () => {
     const doc = await read();
