@@ -430,6 +430,8 @@ export interface Member {
   generated: GeneratedFile[];
   /** Outputs the entry lists as link targets, or null when it lists none (#2539). */
   outputs: string[] | null;
+  /** The values the entry sets for its kind's fields (#3151), as written, or null when it sets none. Checked against the kind by `resolveMemberFields`. */
+  fields: Record<string, unknown> | null;
   /** The links this member states as a consumer, in file order (#2539). */
   links: LinkDeclaration[];
   /** The record kinds this member declares, in file order (#2680). */
@@ -717,6 +719,7 @@ export function parseDeclaration(text: string, file: string, reader: string = re
       roles,
       generated,
       outputs: e.outputs === undefined ? null : [...(e.outputs as string[])],
+      fields: e.fields === undefined ? null : structuredClone(e.fields as Record<string, unknown>),
       links,
       records,
       diagrams,
