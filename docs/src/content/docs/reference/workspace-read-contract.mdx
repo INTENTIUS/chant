@@ -10,7 +10,7 @@ Tools that show a workspace read it through one contract ([#2536](https://github
 
 | Contract | chant floor | Declaration | Output schemas |
 |---|---|---|---|
-| 1 | 0.81.0 | schema 1 | `ls`, `graph`, `check`, `status`, `records`, `records-since`, `intent`, `intent-record`, `composites`, `points`, `changes`, `patch`, `work-history`, `agent`, `runs`, `wip` and `change-set`, each at `v1` |
+| 1 | 0.81.0 | schema 1 | `ls`, `graph`, `check`, `status`, `records`, `records-since`, `intent`, `intent-record`, `composites`, `points`, `changes`, `patch`, `work-history`, `agent`, `runs`, `wip`, `change-set` and `run-statement`, each at `v1` |
 
 Every document carries `contract`, the version it follows, and `$schema`, its schema's `$id`. Most also carry `chant`, the version of the chant that wrote it. A reader that knows contract 1 refuses a document with any other `contract` value. Given a chant older than the floor, the reader can say so and name the version to install, since that chant doesn't write the contract at all.
 
@@ -39,6 +39,7 @@ Each schema ships in `@intentius/chant` at `src/workspace/<command>.schema.json`
 | [`chant workspace work history`](/chant/cli/workspace-work/#reading-leases) | `--json` | `https://intentius.io/chant/schemas/workspace/work-history/v1/work-history.schema.json` |
 | [`chant workspace agent`](/chant/cli/workspace-agent/) | `--json` | `https://intentius.io/chant/schemas/workspace/agent/v1/agent.schema.json` |
 | [`chant workspace runs`](/chant/cli/workspace-runs/#reading-runs) | `--json` | `https://intentius.io/chant/schemas/workspace/runs/v1/runs.schema.json` |
+| [`chant workspace runs statement` and `runs verify`](/chant/cli/workspace-runs/#signed-statements) | always for `statement`, `--json` for `verify` | `https://intentius.io/chant/schemas/workspace/run-statement/v1/run-statement.schema.json` |
 | [`chant workspace wip`](/chant/cli/workspace-wip/#reading-work-in-progress) | `--json` | `https://intentius.io/chant/schemas/workspace/wip/v1/wip.schema.json` |
 | [`chant workspace signers`](/chant/cli/workspace-signers/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/signers/v1/signers.schema.json` |
 | [`chant workspace evidence verify`](/chant/cli/workspace-evidence/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/evidence/v1/evidence.schema.json` |
@@ -309,16 +310,16 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `rotation-previous-mismatch` | broken history, `signers`; rotation, `verify` | The rotation names a previous digest other than the set it replaces, as a rollback does. |
 | `rotation-threshold-unsatisfiable` | broken history, `signers`; rotation, `verify` | The new threshold is more than the new set's distinct signers, so no later rotation could meet it. |
 | `rotation-threshold-not-met` | broken history, `signers`; rotation, `verify` | Fewer distinct signers of the set before signed the rotation, in the `chant-signers` namespace, than its threshold. |
-| `trust-policy-unreadable` | error, `evidence` | The trust policy at base can't be read, or its signer history is broken, so no runner key is trusted. |
-| `envelope-unreadable` | error, `evidence verify` | The `--envelope` file can't be read, or is not JSON. |
-| `envelope-invalid` | error, `evidence verify` | The file is not a DSSE envelope: `payloadType`, `payload` in canonical base64, and signatures with `keyid` and `sig`. |
-| `envelope-untrusted` | error, `evidence verify` | No signature in the envelope verifies against a runner key the policy at base lists. |
+| `trust-policy-unreadable` | error, `evidence` and `runs sign` | The trust policy at base can't be read, or its signer history is broken, so no runner key is trusted. |
+| `envelope-unreadable` | error, `evidence verify` and `runs sign` | The `--envelope` file can't be read, or is not JSON. |
+| `envelope-invalid` | error, `evidence verify` and `runs sign`; statement verdict, `runs` and `runs verify` | The file is not a DSSE envelope: `payloadType`, `payload` in canonical base64, and signatures with `keyid` and `sig`. |
+| `envelope-untrusted` | error, `evidence verify` and `runs sign`; statement verdict, `runs` and `runs verify` | No signature in the envelope verifies against a runner key the policy at base lists. |
 | `evidence-payload-type` | error, `evidence verify` | The envelope's payload type is not `application/vnd.in-toto+json`. |
 | `evidence-statement-invalid` | error, `evidence verify` | The payload is not an in-toto Statement v1 with chant's runner-evidence predicate, or has a field the predicate does not define. |
 | `evidence-runner-mismatch` | error, `evidence verify` | The statement names a runner other than the one whose key signed it. |
-| `runner-key-invalid` | error, `evidence sign` | The key is not an Ed25519 private key in PEM. |
-| `runner-key-is-signer` | error, `evidence sign` | The key is a person's key in the signers file. Evidence is signed by a service or CI identity. |
-| `runner-key-unlisted` | error, `evidence sign` | The policy at base lists no runner with the key. |
+| `runner-key-invalid` | error, `evidence sign` and `runs sign` | The key is not an Ed25519 private key in PEM. |
+| `runner-key-is-signer` | error, `evidence sign` and `runs sign` | The key is a person's key in the signers file. Evidence and run statements are signed by a service or CI identity. |
+| `runner-key-unlisted` | error, `evidence sign` and `runs sign` | The policy at base lists no runner with the key. |
 | `lock-invalid` | finding, `check` | The lineage lock can't be read. |
 | `manual-step-open` | finding, `check` | A scope in the lineage lock has an open manual step. |
 | `work-kind-missing` | error, `work` | No work kind to find the item in: `--kind` names a kind with no work block, or the declaration names no work kind. |
@@ -332,8 +333,12 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `lease-race` | refusal, `work` | Another writer changed the lease between this command's read and its write. |
 | `lease-push-rejected` | refusal, `work` | The remote refused the lease push: another clone claimed the item first, or the remote could not be reached. |
 | `run-exists` | error, `runs start` and `runs record` | The fields give a run id the ledger already has. |
-| `run-unknown` | error, `runs end` | The ledger has no start for the run. |
+| `run-unknown` | error, `runs end`, `sign`, `statement` and `verify` | The ledger has no start for the run. |
 | `run-ended` | error, `runs end` | The run's end is already recorded. |
+| `run-not-ended` | error, `runs sign` and `runs statement` | The run has no end recorded. A statement is signed over the run's whole record ([#3192](https://github.com/INTENTIUS/chant/issues/3192)). |
+| `run-statement-invalid` | error, `runs sign`; statement verdict, `runs` and `runs verify` | The envelope's payload is not an in-toto Statement v1 with chant's agent-run predicate, or has a field the predicate does not define. |
+| `run-statement-signer-mismatch` | error, `runs sign`; statement verdict, `runs` and `runs verify` | The statement names a signer other than the runner whose key signed it. |
+| `run-statement-mismatch` | error, `runs sign`; statement verdict, `runs` and `runs verify` | A listed runner key signed the statement, and it does not match the run's record: another run, a record that hashes differently, or another unit, harness, model, provider or principal. |
 | `runs-no-ledger` | reason, `runs` | The checkout has no `chant/lifecycle` branch, so there are no agent runs to read. |
 | `runs-ledger-malformed` | reason, `runs` | Some lines of the agent run ledger aren't run events; the rest are read. |
 | `wip-no-branch` | error, `wip save` and `wip restore` | `HEAD` is detached, or names a branch with no commit yet, so there is no branch to keep work in progress for ([#3172](https://github.com/INTENTIUS/chant/issues/3172)). |
@@ -427,8 +432,11 @@ A work lease is written by [`chant workspace work claim|renew|release`](/chant/c
 | `commits` | `{ sha, patchId, joinedBy, hunks }`: `record` when its end lists the commit, `trailer` when the commit on `HEAD`'s history carries its `Chant-Run`. `hunks` lists `{ path, start, end }`, the lines the run wrote in that commit, when its end gave them, and is `null` otherwise ([#3034](https://github.com/INTENTIUS/chant/issues/3034)) |
 | `decisions` | `<kind>/<id>` of each decision its work item implements, and each decision record it names |
 | `ledger` | its file on the branch |
+| `record` | `{ sha256 }`, the hash a statement signs: SHA-256 of the canonical JSON of `[start line, end line]`. `null` while the run runs ([#3192](https://github.com/INTENTIUS/chant/issues/3192)) |
+| `statements` | the signed statements the ledger holds for the run, each `{ at, envelope }` with the DSSE envelope as stored |
+| `attestation` | the statements judged against the runner keys at base: `status` (`signed`, `unsigned`, `mismatch`, `untrusted`, `invalid`), `signer`, `class`, `keyid`, `code`, `reason`, the `commits` the verified statement names, and one verdict per statement in `statements` |
 
-`totals` holds `all`, `byUnit`, `byDecision` and `byPrincipal`, each with `runs`, `running`, `tokens`, `cost` (one sum per currency), `unpriced`, the runs that report no cost, and `unreported`, the runs that report no usage. A run without a cost is listed, never counted as zero. A metering reader sums `cost` per currency and shows `unpriced` beside it. `reasons` holds `runs-no-ledger` and `runs-ledger-malformed`, and `kind-unreadable` when a work kind can't be read to find what its items implement. `chant serve mcp` serves the document as `workspace-runs`.
+`totals` holds `all`, `byUnit`, `byDecision` and `byPrincipal`, each with `runs`, `running`, `tokens`, `cost` (one sum per currency), `unpriced`, the runs that report no cost, and `unreported`, the runs that report no usage. A run without a cost is listed, never counted as zero. A metering reader sums `cost` per currency and shows `unpriced` beside it, and a reader that trusts only signed figures counts the runs whose `attestation.status` is `signed`. `trust` names the base the statements were judged at (`--base`, else `origin/HEAD`, `main` or `master`), the runner principals listed there with their class, and any `problems` reading it, in which case nothing is signed. `reasons` holds `runs-no-ledger` and `runs-ledger-malformed`, and `kind-unreadable` when a work kind can't be read to find what its items implement. `chant serve mcp` serves the document as `workspace-runs`.
 
 ## Decision points
 
