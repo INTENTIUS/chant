@@ -256,7 +256,7 @@ One closed list covers every command. It lives in `packages/core/src/workspace/r
 | `since-session-open` | reason, `records --since` | `--since` names a session that is still open, so the comparison runs to the working tree. |
 | `intent-region-invalid` | error, `graph --intent` | The region's path, or its line range, does not exist in the tree read. |
 | `intent-record-unknown` | error, `graph --intent --record` | No record of a decision kind read has the id. |
-| `intent-symbol-unsupported` | error, `graph --intent` | The region names a symbol, `path#symbol`, in a file no symbol resolver reads. A line range still works for it. |
+| `intent-symbol-unsupported` | error, `graph --intent` | The region names a symbol, `path#symbol`, in a file no symbol resolver reads: not core's TypeScript and JavaScript resolver, and none a lexicon of the file's member contributes (#3313). A line range still works for it. |
 | `intent-symbol-unknown` | error, `graph --intent` | The file does not declare the symbol in the tree read. The message lists its top-level declarations. |
 | `intent-symbol-ambiguous` | error, `graph --intent` | The symbol matches more than one declaration in the file. The message lists their qualified names, and giving one picks it. |
 | `patch-path-invalid` | error, `patch` | A `--path` is not a relative path inside the workspace. |

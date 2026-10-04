@@ -7,7 +7,10 @@
  * walk follows those lines through history as it follows any line range
  * (`git log -L`). Resolvers are chosen by file extension. Core ships one for
  * TypeScript and JavaScript, parsed with the TypeScript compiler chant already
- * depends on; a file with no resolver is refused with
+ * depends on. A lexicon can contribute more through its plugin's
+ * `symbolResolvers()` (#3313), which the intent walk loads for a file in a
+ * member that configures the lexicon (`lexicon-symbols.ts`); core's resolver
+ * stays the one for `.ts` and `.js`. A file with no resolver is refused with
  * `intent-symbol-unsupported`, and a line range still works for it.
  *
  * A symbol is a name, or a dotted path through classes, namespaces,
@@ -143,17 +146,25 @@ const typescriptResolver: SymbolResolver = {
 /** The resolvers core ships, chosen by the file's extension. */
 export const SYMBOL_RESOLVERS: readonly SymbolResolver[] = [typescriptResolver];
 
-/** The resolver for a path, or undefined when none reads its language. */
-export function symbolResolverFor(path: string): SymbolResolver | undefined {
+/**
+ * The resolver for a path, or undefined when none reads its language. Core's
+ * resolvers come first, so a lexicon's never takes `.ts` or `.js` from them;
+ * among `extra`, the first that names the extension wins.
+ */
+export function symbolResolverFor(path: string, extra: readonly SymbolResolver[] = []): SymbolResolver | undefined {
   const lower = path.toLowerCase();
-  return SYMBOL_RESOLVERS.find((r) => r.extensions.some((e) => lower.endsWith(e)));
+  return [...SYMBOL_RESOLVERS, ...extra].find((r) => r.extensions.some((e) => lower.endsWith(e.toLowerCase())));
 }
 
-/** Resolve `symbol` in the file `path` holding `text`: its current lines, or why it can't be. */
-export function resolveSymbol(path: string, text: string, symbol: string): SymbolResolution {
-  const resolver = symbolResolverFor(path);
+/**
+ * Resolve `symbol` in the file `path` holding `text`: its current lines, or
+ * why it can't be. `extra` are the resolvers a lexicon contributed for the
+ * file's member (#3313).
+ */
+export function resolveSymbol(path: string, text: string, symbol: string, extra: readonly SymbolResolver[] = []): SymbolResolution {
+  const resolver = symbolResolverFor(path, extra);
   if (!resolver) {
-    const known = SYMBOL_RESOLVERS.flatMap((r) => r.extensions).join(", ");
+    const known = [...new Set([...SYMBOL_RESOLVERS, ...extra].flatMap((r) => r.extensions))].join(", ");
     return { ok: false, reason: "unsupported", message: `${path} has no symbol resolver: symbols resolve in ${known} files. Give a line range, ${path}:<start>-<end>, instead`, candidates: [] };
   }
   const all = resolver.declarations(path, text);
@@ -165,7 +176,7 @@ export function resolveSymbol(path: string, text: string, symbol: string): Symbo
     return { ok: true, declaration: { qualified: symbol, kind: exact[0].kind, lines: { start, end } } };
   }
   const nested = [...new Set(all.filter((d) => d.qualified.endsWith(`.${symbol}`)).map((d) => d.qualified))];
-  if (nested.length === 1) return resolveSymbol(path, text, nested[0]);
+  if (nested.length === 1) return resolveSymbol(path, text, nested[0], extra);
   if (nested.length > 1) {
     return { ok: false, reason: "ambiguous", message: `${symbol} names ${nested.length} declarations in ${path}: ${nested.join(", ")}. Give the qualified name`, candidates: nested };
   }

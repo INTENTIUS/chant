@@ -74,7 +74,8 @@ import { queryRecords, type RecordView } from "./records-cli";
 import { isPluginCode, type PluginCode, type ReasonCode } from "./reason-codes";
 import { addSquashRuns, RUN_JOIN_ORDER, runsForCommits, type RunCost, type RunJoin, type RunPin, type RunUsage, type RunView } from "./runs";
 import { followSquashes, squashLineOrigins, type Forge, type SquashFollow } from "./squash";
-import { resolveSymbol } from "./symbols";
+import { memberDirOnDisk, memberSymbolResolvers, type SymbolPluginLoader } from "./lexicon-symbols";
+import { resolveSymbol, symbolResolverFor, type SymbolResolver } from "./symbols";
 import { readTrailerJoins, type CommitTrailerJoins } from "./trailer-joins";
 import { joinPath, skippedDir, type WorkspaceTree } from "./tree";
 import { activeAttestors, type ProvenanceLevel } from "./trust/attestor";
@@ -590,6 +591,11 @@ export interface IntentQuery {
    * --member` does.
    */
   resolveNode?: (cwd: string, at: string | undefined, member: string, id: string) => Promise<{ file: string; line: number | null } | null | undefined>;
+  /**
+   * Load a lexicon plugin by name, for the symbol resolvers a member's
+   * lexicons contribute (#3313). The default is the CLI's `loadPlugin`.
+   */
+  loadLexicon?: SymbolPluginLoader;
 }
 
 export interface IntentResult {
@@ -918,8 +924,20 @@ async function resolveRegion(query: IntentQuery, located: LocatedWorkspace, decl
     const file = inWorkspace(query.region.slice(0, hash));
     if (file !== undefined && name !== "") {
       if (file === "." || located.tree.stat(file) !== "file") throw new IntentError("intent-region-invalid", `${file} is a directory, and a symbol needs a file`);
-      const r = resolveSymbol(file, located.tree.read(file), name);
-      if (!r.ok) throw new IntentError(r.reason === "unsupported" ? "intent-symbol-unsupported" : r.reason === "ambiguous" ? "intent-symbol-ambiguous" : "intent-symbol-unknown", `${r.message}${located.tree.label}`);
+      // A file core's resolver doesn't read may have one from its member's lexicons (#3313).
+      let extra: SymbolResolver[] = [];
+      let why = "";
+      if (!symbolResolverFor(file)) {
+        const holder = memberHolding(file, declaration.members);
+        const m = holder ? declaration.members.find((x) => x.name === holder) : undefined;
+        if (m && m.kind === "chant") {
+          const got = await memberSymbolResolvers(memberDirOnDisk(located.rootOnDisk, m.dir), query.loadLexicon);
+          extra = got.resolvers;
+          if (got.problems.length > 0) why = `; member ${m.name}: ${got.problems.join("; ")}`;
+        }
+      }
+      const r = resolveSymbol(file, located.tree.read(file), name, extra);
+      if (!r.ok) throw new IntentError(r.reason === "unsupported" ? "intent-symbol-unsupported" : r.reason === "ambiguous" ? "intent-symbol-ambiguous" : "intent-symbol-unknown", `${r.message}${r.reason === "unsupported" ? why : ""}${located.tree.label}`);
       return { path: file, lines: r.declaration.lines, node: null, symbol: { name, qualified: r.declaration.qualified, kind: r.declaration.kind } };
     }
   }

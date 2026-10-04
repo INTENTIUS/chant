@@ -28,6 +28,7 @@ import type { DescribeIdentityOptions, DescribeIdentityResult } from "./identity
 import type { DeepNormalizationHooks, DeepObservationResult } from "./deep-observation";
 import type { BehaviourResult, PredictBehaviourOptions } from "./behaviour";
 import type { BehaviourKinds } from "./behaviour-kinds";
+import type { SymbolResolver } from "./workspace/symbols";
 import type { DisruptionQuery, DisruptionVerdict } from "./lifecycle/disruption";
 import type { OwnerChainVerdict } from "./owner-chain";
 import type { CommandGroup } from "./cli/command-group";
@@ -1374,6 +1375,18 @@ export interface LexiconPlugin {
 
   /** Provide code actions for LSP */
   codeActionProvider?(ctx: CodeActionContext): CodeAction[];
+
+  /**
+   * Symbol resolvers for the languages this lexicon's members are written in
+   * (#3313), so `chant workspace graph --intent <path>#<symbol>` names a
+   * declaration in such a file: a table in a `.sql` file, a resource in a
+   * manifest. Each is `{ language, extensions, declarations(path, text) }`,
+   * returning every declaration's dotted name, kind and 1-based line range.
+   * The intent walk asks the lexicons a file's member configures, after
+   * core's TypeScript and JavaScript resolver, which keeps `.ts` and `.js`.
+   * Pure: no I/O, no network. Omit for a lexicon with no such language.
+   */
+  symbolResolvers?(): SymbolResolver[];
 
   // Docs
   /** Generate documentation pages */
