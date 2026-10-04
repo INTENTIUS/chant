@@ -110,6 +110,8 @@ After the script it fails when any of these is false:
 | everything `holds()` names is in the repository, or one of the four exceptions | each record read with `records`, each run with `runs`, each lease with `work history` |
 | every fact the script produced reads back through the read contract | `records --uncommitted` for each kind, `points --json` for the retraction, `work history W-001`, `runs`, the listing in `status dev --json`, and each snapshot in `wip --json` |
 
+When the writer performs `records amend`, the suite also holds it to the concurrent case ([#3173](https://github.com/INTENTIUS/chant/issues/3173)). It reads the script's decision's digest and has the writer make the three amendments in `CONCURRENT_AMENDS` at once, each with `expect` set to that digest, as two people and an agent answering one record would. `writeArgv` passes `expect` as `--expect`. Exactly one must be written. The other two must each be chant's `record-conflict` refusal naming the winner's digest. Each comes from one chant call and is returned unchanged. Retrying a conflict without `--expect` overwrites the other writer, and the one-call check catches it. The suite then has the writer retry each refused amendment from the digest its refusal named, and each retry must be written. The problems are listed in `after.concurrent`, each starting `concurrent:`.
+
 A writer that keeps a review only in its database passes the step and fails amnesia. A writer that writes a record file itself fails the step's file check. Writing it with `git commit` also moves `HEAD` and fails the step's ref check.
 
 ## The workspace

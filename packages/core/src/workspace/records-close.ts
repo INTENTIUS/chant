@@ -10,10 +10,11 @@
  * in place and writes only when the session comes back valid: a verdict
  * naming a record the subjects lack is refused with
  * `session-verdict-unknown-record`. A session already closed is
- * `record-closed`. It writes one file or none and never commits.
+ * `record-closed`. It writes one file or none and never commits. Like them
+ * it holds the working tree's write lock, and takes `--expect <digest>`
+ * (#3173).
  */
 
-import { writeFileSync } from "node:fs";
 import type { ReasonCode } from "./reason-codes";
 import { sessionSeal } from "./record-sessions";
 import { RECORD_REASON_CODES } from "./records";
@@ -28,12 +29,15 @@ import {
   RECORDS_WRITE_CONTRACT_VERSION,
   RecordWriteError,
   refuseOutOfScope,
+  refuseStale,
   replaceFields,
   stableJson,
-  validateWrite,
+  validatedEntry,
+  writeWho,
   type WriteFailure,
   type WriteResult,
 } from "./records-write";
+import { noteWrites, withWriteLock, writeFileAtomic, WRITE_LOCK_CODES } from "./write-lock";
 import { headCommit } from "./session-kinds";
 import { WRITE_SCOPE_CODES } from "./write-scope";
 
@@ -45,6 +49,8 @@ export const CLOSE_ERROR_CODES = [
   "write-usage-invalid",
   "record-not-found",
   "record-closed",
+  "record-conflict",
+  ...WRITE_LOCK_CODES,
   ...WRITE_SCOPE_CODES,
   ...RECORD_REASON_CODES,
 ] as const satisfies readonly ReasonCode[];
@@ -71,6 +77,8 @@ export interface CloseRecordOptions {
   now?: Date;
   /** The agent session the write is made in (#2548). */
   agent?: string;
+  /** The session's digest the caller last read (#3173): the close is refused with record-conflict when it has another. */
+  expect?: string;
 }
 
 /** An ISO 8601 time in UTC to the second, as the reference session schema's dateTime takes it. */
@@ -78,8 +86,19 @@ function isoSeconds(d: Date): string {
   return d.toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
-/** `records close`: close one open session and seal it. */
+/** `records close`: close one open session and seal it, holding the write lock (#3173). */
 export async function closeRecord(opts: CloseRecordOptions): Promise<CloseDocument> {
+  try {
+    if (opts.expect !== undefined && !/^[0-9a-f]{64}$/.test(opts.expect)) {
+      throw new RecordWriteError("write-usage-invalid", `--expect takes a record's digest, 64 lowercase hex digits as records --json prints it, not ${JSON.stringify(opts.expect)}`);
+    }
+    return await withWriteLock(opts.cwd, writeWho("records close", opts), opts.dryRun, () => closeRecordLocked(opts));
+  } catch (err) {
+    return failure<CloseErrorCode>(RECORDS_CLOSE_SCHEMA_ID, err);
+  }
+}
+
+async function closeRecordLocked(opts: CloseRecordOptions): Promise<CloseDocument> {
   try {
     const o = await open(opts.kind, opts.cwd);
     refuseOutOfScope(o, "close", opts.cwd, opts);
@@ -92,6 +111,7 @@ export async function closeRecord(opts: CloseRecordOptions): Promise<CloseDocume
     if (closedState === undefined) throw new RecordWriteError("write-usage-invalid", `the ${kind.name} kind lists no closed state, so a session of it can't close`);
     const before = await readAll(o, o.source);
     const target = findRecord(before, opts.id, kind.name);
+    refuseStale(o, target, opts.id, opts.expect);
     if (target.state !== null && (kind.closedStates ?? []).includes(target.state)) {
       throw new RecordWriteError("record-closed", `${opts.id} is already ${target.state}, and a closed session is sealed and stays as it is`);
     }
@@ -115,8 +135,11 @@ export async function closeRecord(opts: CloseRecordOptions): Promise<CloseDocume
     if (text === undefined || sessionSeal(text, decl.seal, kind.format) !== digest) {
       throw new RecordWriteError("record-unparseable", `${target.path}: the ${decl.seal} line can't be added without changing the text it seals`);
     }
-    const warnings = await validateWrite(o, before, target.path, text);
-    if (!opts.dryRun) writeFileSync(abs(o, target.path), text);
+    const entry = await validatedEntry(o, before, target.path, text);
+    if (!opts.dryRun) {
+      writeFileAtomic(abs(o, target.path), text);
+      noteWrites(o.root, [{ path: target.path, text }], writeWho("records close", opts));
+    }
     const written = { ...merged, [decl.seal]: digest };
     return {
       $schema: RECORDS_CLOSE_SCHEMA_ID,
@@ -128,7 +151,8 @@ export async function closeRecord(opts: CloseRecordOptions): Promise<CloseDocume
       seal: { field: decl.seal, digest },
       closedRev,
       dryRun: !!opts.dryRun,
-      warnings,
+      warnings: entry.warnings,
+      digest: entry.digest,
       ...(opts.dryRun ? { text } : {}),
     };
   } catch (err) {

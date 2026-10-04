@@ -431,6 +431,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant workspace box listing set <member> --cover <image> --cover-path <path>` (#3308)
       result.coverPath = args[++i];
       if (!result.coverPath || result.coverPath.startsWith("-")) throw new Error("--cover-path needs a path from the workspace root: --cover-path <path>");
+    } else if (arg === "--expect") {
+      // `chant workspace records amend|review|close <id> --expect <digest>` (#3173): the record's digest the caller last read.
+      result.expect = args[++i];
+      if (!result.expect || result.expect.startsWith("-")) throw new Error("--expect needs the record's digest, as records --json prints it: --expect <digest>");
     } else if (arg === "--label") {
       // `chant workspace wip save --label <text>` (#3172)
       result.label = args[++i];
@@ -926,7 +930,7 @@ Workspace (level 1, #2524):
                         the fields hold none. --sign seals the record's author
                         (decided_by for decisions) with an ssh key. Prints
                         {path, id} as JSON and never commits
-  workspace records amend <id> [--kind <kind file>] --set <file|-> [--sign [<key file>]] [--dry-run]
+  workspace records amend <id> [--kind <kind file>] --set <file|-> [--expect <digest>] [--sign [<key file>]] [--dry-run]
                         Set top-level fields of one record. A closed record
                         never changes, and an approved one changes only its
                         state (upward), pins and reviews; anything else is
@@ -935,21 +939,30 @@ Workspace (level 1, #2524):
                         decisions) is refused with ratify-quorum-not-met
                         until its quorum is met. --sign seals the author
                         again; without it an amendment removes the author
-                        seal and says so. Prints {path, id, changed}
-  workspace records review <id> [--kind <kind file>] --verdict agree|dissent|abstain --by <principal> [--note <text>] [--session <id>] [--sign [<key file>]] [--dry-run]
+                        seal and says so. --expect refuses the write with
+                        record-conflict when the record's digest has moved
+                        on. Prints {path, id, changed, digest}
+  workspace records review <id> [--kind <kind file>] --verdict agree|dissent|abstain --by <principal> [--note <text>] [--session <id>] [--expect <digest>] [--sign [<key file>]] [--dry-run]
                         Append a review to one record, dated and bound to
                         the digest of the record text. A dissent needs
                         --note. --sign seals it with an ssh key (git's
                         user.signingkey without a file); under a signers
                         file at base only a sealed verdict counts. With
                         --session, the session must be open, and the verdict
-                        is appended to its verdicts too. Prints
-                        {path, id, review}
-  workspace records close <session id> [--kind <session kind file>] [--dry-run]
+                        is appended to its verdicts too. --expect refuses a
+                        verdict on a record that moved on. Prints
+                        {path, id, review, digest}
+  workspace records close <session id> [--kind <session kind file>] [--expect <digest>] [--dry-run]
                         Close an open review session: its state, close time,
                         closing commit and seal, in one write. Without
                         --kind, the one session kind the declaration names.
                         Prints {path, id, changed, seal, closedRev}
+                        Every working-tree write holds the working tree's
+                        write lock (CHANT_WRITE_LOCK_WAIT_MS, default 15s)
+  workspace lock [acquire --holder <name> [--ttl <duration>] | release --token <token>] [--json]
+                        Who holds the working tree's write lock; take it for
+                        a batch of writes across chant calls, each run with
+                        CHANT_WRITE_LOCK=<token>, and give it back
   workspace work claim|renew|release <id> --holder <name> [--kind <kind file>] [--ttl <seconds|duration>] [--token <token>] [--outcome <outcome>] [--note <text>] [--json]
                         Take, heartbeat or give back the lease on a work item:
                         refs/chant/lease/work/<id>, a compare-and-set ref with a
@@ -1676,6 +1689,8 @@ export const commandRegistry: CommandDef[] = [
   { name: "workspace member-run", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/member-run")).runWorkspaceMemberRun(ctx, runCommandInProcess) },
   // #3308 — a box's listing, written through chant so a tool never edits the declaration itself (ws-074).
   { name: "workspace box", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/box-cli")).runWorkspaceBox(ctx) },
+  // #3173 — the working tree's write lock, held across chant calls for a batch of writes (ws-089).
+  { name: "workspace lock", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/write-lock-cli")).runWorkspaceLock(ctx) },
   // #3172 — work in progress under refs/chant/wip/<branch>, replicated under the box's policy (ws-085).
   { name: "workspace wip", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/wip-cli")).runWorkspaceWip(ctx) },
   { name: "workspace pin", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/pin-cli")).runWorkspacePin(ctx) },

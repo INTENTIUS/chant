@@ -2,7 +2,7 @@
  * The grafana lexicon's chant audit catalog, contributed via
  * `grafanaPlugin.auditCatalog()` (#687, #1346).
  *
- * GRAF101-GRAF110, GRAF111-GRAF114 and GRAF115-GRAF117 read the emitted dashboard
+ * GRAF101-GRAF110, GRAF111-GRAF114 and GRAF115-GRAF118 read the emitted dashboard
  * JSON and provisioning files (alerting included), so
  * they fire on an audit of files chant didn't build too, and are
  * `yamlBased`. GRAF001 and GRAF002 read TypeScript source, so they are
@@ -164,6 +164,14 @@ export const grafanaAuditCatalog: Record<string, RuleMeta> = {
     "guidance",
     "Query sent to Tempo is not valid TraceQL",
     "Fix the query at the offset the message names: an unclosed { } spanset or quote, an operator with no value, an unknown intrinsic. Grafana's TraceQL grammar can trail Tempo's, so check newer syntax against Tempo itself before changing a query that runs.",
+    { category: "correctness" },
+  ),
+  GRAF118: auditRule(
+    "GRAF118",
+    "merge-worthy",
+    "guidance",
+    "Panel reads a connector metric no collector in the build emits",
+    "Read the name spanMetricsNames(), serviceGraphNames() or genAiMetrics() gives for the declared connector, and group by its declared dimensions, or add the dimension to the connector.",
     { category: "correctness" },
   ),
 };

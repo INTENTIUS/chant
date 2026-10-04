@@ -40,6 +40,7 @@ import { AGENT_ERROR_CODES } from "./agent-cli";
 import { SCOPE_FINDING_CODES, WRITE_SCOPE_CODES } from "./write-scope";
 import { PLANTABLE_REASON_CODES } from "./box-factory";
 import { BOX_LISTING_ERROR_CODES } from "./box-listing";
+import { WRITE_LOCK_ERROR_CODES } from "./write-lock-cli";
 import { WIP_ERROR_CODES, WIP_WRITE_ERROR_CODES } from "./wip";
 import { ROTATION_REFUSAL_CODES } from "./trust/rotation";
 import { SIGNERS_ERROR_CODES } from "./trust/signers-cli";
@@ -102,6 +103,7 @@ const PER_COMMAND: Record<string, readonly string[]> = {
   SCOPE_FINDING_CODES,
   PLANTABLE_REASON_CODES,
   BOX_LISTING_ERROR_CODES,
+  WRITE_LOCK_ERROR_CODES,
   WIP_ERROR_CODES,
   WIP_WRITE_ERROR_CODES,
   ROTATION_REFUSAL_CODES,

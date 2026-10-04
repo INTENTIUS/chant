@@ -96,6 +96,11 @@
             "$ref": "#/$defs/warning"
           }
         },
+        "digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "Added in contract 1 by #3173. The record's digest after the write, as chant workspace records --json reports it (with --dry-run, the digest it would have). Pass it as --expect to the next amend, review or close of the record, so that write is refused with record-conflict if someone else wrote the record in between."
+        },
         "text": {
           "type": "string",
           "description": "With --dry-run only: the whole text of the file the command would write."
@@ -165,6 +170,8 @@
                 "source-harvest-not-proposed",
                 "record-state-not-initial",
                 "ratify-quorum-not-met",
+                "write-lock-timeout",
+                "write-lock-not-held",
                 "write-scope-member",
                 "write-scope-kind",
                 "write-scope-class-unknown",

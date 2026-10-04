@@ -136,6 +136,10 @@ export const REASONS = {
   "source-harvest-not-proposed": "A harvested record (source.via harvest) was written in a state other than the kind's first: a harvest proposes, and a person decides.",
   "ratify-quorum-not-met": "The write puts a record in its kind's ratified state (reviews.ratified), and the record's quorum is not met: too few agreeing verdicts count.",
   "record-sign-failed": "--sign was given and no author seal could be made: the record names no author, the key can't be read or used, git names no ssh signing key, or ssh-keygen is not installed.",
+  // Concurrent writers in one working tree (#3173, ws-089): a write that is refused rather than overwrite another's.
+  "record-conflict": "--expect named a digest the record no longer has: another write changed it after the caller read it. The refusal names the digest it has now; re-read the record and write again.",
+  "write-lock-timeout": "Another write held the working tree's write lock for longer than the write waits (CHANT_WRITE_LOCK_WAIT_MS); the refusal names the holder. Run the write again.",
+  "write-lock-not-held": "CHANT_WRITE_LOCK names a batch's lock token that no longer holds the working tree's write lock: the batch released it, or it expired and another writer took it.",
   // Write scope (#2548): a records write that is refused, and a commit check --changes reports, outside the writer's scope.
   "write-scope-member": "The write is to a file, or to a record kind, of a member outside the writer's scope: an agent session writes only its own member, and writeScope.<class>.members leaves the member out.",
   "write-scope-kind": "The write is to a record kind writeScope.<class>.records does not list, with a verb it does not list for the kind, or deletes a record.",

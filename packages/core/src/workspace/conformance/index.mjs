@@ -64,4 +64,7 @@ export const {
   selectActions,
   undeclaredState,
   runWorkspaceWriterConformance,
+  CONCURRENT_AMENDS,
+  concurrentAmendStep,
+  concurrentAmends,
 } = suite;
