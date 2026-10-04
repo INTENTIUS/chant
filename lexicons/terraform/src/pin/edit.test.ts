@@ -189,6 +189,7 @@ describe("readModulePin", () => {
     [REGISTRY, "~> 1.3", { module: REGISTRY, pin: null }],
     [REGISTRY, ">= 1.3", { module: REGISTRY, pin: null }],
     [REGISTRY, undefined, { module: REGISTRY, pin: null }],
+    [REGISTRY, "${var.vpc_version}", { module: REGISTRY, pin: null, unpinned: expect.stringContaining("is an expression") }],
     [GIT, undefined, { module: GIT, pin: null }],
     ["./modules/vpc", undefined, { module: "./modules/vpc", pin: null }],
     [`${OCI}?tag=1&digest=sha256:${"a".repeat(64)}`, undefined, { module: OCI, pin: null }],

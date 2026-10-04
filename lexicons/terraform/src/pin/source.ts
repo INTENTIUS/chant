@@ -122,8 +122,9 @@ function isGit(source: string): boolean {
 /** Read the pin a module call carries. `version` is the call's `version` argument, when it has one. */
 export function readModulePin(source: string, version?: string): ModuleCallPin {
   const call = readPin(source, version);
-  if (call.pin !== null && /[$%]\{/.test(call.pin)) {
-    return { ...call, pin: null, unpinned: `the pin "${call.pin}" is an expression, so there is no literal version to move` };
+  const written = call.at === "version" ? version! : call.pin;
+  if (written != null && /[$%]\{/.test(written)) {
+    return { ...call, pin: null, unpinned: `the pin "${written}" is an expression, so there is no literal version to move` };
   }
   return call;
 }
