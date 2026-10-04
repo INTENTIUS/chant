@@ -5,7 +5,7 @@ import { otelSerializer } from "../serializer";
 import { collectorYaml } from "../collector";
 import { collectorTopology } from "../topology";
 import { validateCollectorEntities } from "../validate-config";
-import { COLLECTOR_PIN } from "../define";
+import { COLLECTOR_PIN, SEMCONV_PIN } from "../define";
 import { DebugExporter } from "./exporters";
 import { K8sClusterReceiver, KubeletStatsReceiver } from "./k8s-receivers";
 import { Pipeline } from "../pipeline";
@@ -43,7 +43,10 @@ describe("k8s_cluster receiver", () => {
       metrics: { "k8s.pod.status_reason": { enabled: true } },
     });
     const out = primary(otelSerializer.serialize(new Map([["cluster", cluster as unknown as Declarable]])));
-    expect(out).toBe(`receivers:
+    // The `k8s.pod.status_reason` metric name is a k8s key, so the header names the pin.
+    expect(out).toBe(`# chant: semconv k8s ${SEMCONV_PIN.source}@${SEMCONV_PIN.version} (k8s_cluster)
+
+receivers:
   k8s_cluster:
     auth_type: serviceAccount
     collection_interval: 30s

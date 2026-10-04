@@ -31,6 +31,7 @@ interface RecordsDoc {
     warnings: Array<{ code: string; message: string }>;
     supersededBy: string | null;
     worktree?: string;
+    lastWrite?: unknown;
   }>;
   summary: { total: number; valid: number; invalid: number; superseded: number };
   error?: { code: string; message: string };
@@ -120,7 +121,8 @@ describe("chant #2546 — workspace records", () => {
       expect(b.at).toBe(head);
       // A working-tree read also says where each record stands against HEAD (#3160); a clean tree has every one committed.
       expect(a.records.every((r) => r.worktree === "committed")).toBe(true);
-      expect(b.records).toEqual(a.records.map(({ worktree: _worktree, ...r }) => r));
+      // worktree and lastWrite (#3173) describe the working tree, so a read at a revision has neither.
+      expect(b.records).toEqual(a.records.map(({ worktree: _worktree, lastWrite: _lastWrite, ...r }) => r));
 
       // The missing pin warns the same way whether it's read from the tree or
       // from the revision (#2745): the message names no revision either way.

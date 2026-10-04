@@ -5,7 +5,7 @@ diataxis: reference
 order: 5
 ---
 
-The prometheus lexicon's rules use the `PROM` prefix. `PROM0xx` rules read your TypeScript source during `chant lint`. `PROM101`-`PROM107` and `PROM211`-`PROM219` run after a build over every rule file in the output, the other `PROM2xx` over every `alertmanager.yml`. Documents are recognized by shape, so a rule file or Alertmanager config that reaches the output another way is checked too.
+The prometheus lexicon's rules use the `PROM` prefix. `PROM0xx` rules read your TypeScript source during `chant lint`. `PROM101`-`PROM107` and `PROM211`-`PROM219` run after a build over every rule file in the output, the other `PROM2xx` over every `alertmanager.yml`, and `PROM3xx` join the rule files with the rest of the build. Documents are recognized by shape, so a rule file or Alertmanager config that reaches the output another way is checked too.
 
 | Id | Severity | Catches |
 |---|---|---|
@@ -43,6 +43,7 @@ The prometheus lexicon's rules use the `PROM` prefix. `PROM0xx` rules read your 
 | PROM222 | warning | an integration sending a credential to an `http://` URL |
 | PROM223 | warning | a route whose `repeat_interval` is shorter than its `group_interval` |
 | PROM224 | warning | an inhibit rule with no `equal` whose source and target matchers can match the same alert |
+| PROM301 | warning | a rule reading a spanmetrics, servicegraph or GenAI metric no collector config in the build emits, or grouping one by a label that is not a declared dimension |
 
 ## PROM001: literal credential
 
@@ -159,6 +160,14 @@ Prometheus sets `alertname` to the rule's name after it applies the rule's label
 Alertmanager resends a group's notification only when it flushes the group, every `group_interval`, so a shorter `repeat_interval` never takes effect. PROM223 follows both timers down the routing tree from Alertmanager's defaults (5m and 4h) and reports the route that sets one of them.
 
 An inhibit rule with no `equal` mutes every target alert while any source alert fires. PROM224 reports one whose source and target matchers can both match the same alert, so alerts of that kind mute each other. Matchers that name values (`=`, or a regex of plain alternatives such as `page|ticket`) are compared; any other regex is taken to overlap.
+
+## PROM301: metrics the build's collectors emit
+
+PROM301 joins the rule files with the collector configs in the same build. `chant build` gives each lexicon's checks only its own output, but every entity, so the otel lexicon's config is rebuilt from the build's otel entities. A config found in the output, or in a Kubernetes ConfigMap, is read too. The names follow the otel lexicon's `spanMetricsNames()`, `serviceGraphNames()` and the GenAI preset's `sum` and `signaltometrics` connectors, with each config's `prometheus` exporter `namespace` and `add_metric_suffixes`. A connector under a renamed type (`span_metrics`, `service_graph`, `signal_to_metrics`) counts as the built-in it names.
+
+Each connector owns a namespace: a spanmetrics `namespace`, `traces_service_graph`, and the common prefix of a `sum` or `signaltometrics` connector's names (`genai.tokens`, `gen_ai.client`). The spanmetrics default, `traces_span_metrics`, and `traces_service_graph` are owned whenever the build has a collector config, so a rule reading `traces_span_metrics_calls_total` from a build whose connector is named `shop` is reported. For a selector under an owned namespace, PROM301 reports a name no config emits. For an aggregation over such metrics, it reports a `by (...)` label none of them carries. The allowed labels are the declared dimensions, `job`, `instance`, the `otel_scope_*` labels, and `le` on `_bucket` series. An aggregation over `label_replace` or `label_join` is not checked. An exporter with `resource_to_telemetry_conversion` turns the label check off for its config, since any resource attribute can become a label.
+
+PROM301 says nothing when the build has no collector config, and nothing about names outside the owned namespaces. The grafana lexicon's GRAF118 runs the same check, `collectorMetricIssues` in `collector-metrics.ts`, over dashboard queries.
 
 ## Using the checks outside a build
 

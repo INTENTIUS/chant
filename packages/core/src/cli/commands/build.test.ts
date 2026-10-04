@@ -1105,6 +1105,25 @@ export const x = { [Symbol.for("chant.declarable")]: true, entityType: "X", lexi
       };
     }
 
+    test("a lexicon's post-synth checks see the build's telemetry attribution (#3375)", async () => {
+      await writeTrivialEntity();
+      const plugin: LexiconPlugin = {
+        ...fakePostSynthPlugin("FAKE009", "warning"),
+        postSynthChecks: () => [
+          {
+            id: "FAKE009",
+            description: "reports ctx.telemetry",
+            check: (ctx) => [{ checkId: "FAKE009", severity: "warning", message: `telemetry=${JSON.stringify(ctx.telemetry ?? null)}` }],
+          },
+        ],
+      };
+      const run = () => buildCommand({ path: testDir, format: "json", serializers: [mockSerializer], plugins: [plugin] });
+
+      expect((await run()).warnings.join("\n")).toContain("telemetry=null");
+      await writeFile(join(testDir, "chant.config.ts"), `export default { telemetry: { attribution: true } };\n`);
+      expect((await run()).warnings.join("\n")).toContain("telemetry={}");
+    });
+
     test("lint.rules off suppresses a lexicon-shipped post-synth finding and reports a suppressed count", async () => {
       await writeTrivialEntity();
       await writeFile(

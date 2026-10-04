@@ -5,7 +5,7 @@ diataxis: reference
 order: 5
 ---
 
-The otel lexicon's rules use the `OTEL` prefix. `OTEL0xx` rules read your TypeScript source during `chant lint`. `OTEL1xx` checks run after a build: OTEL101 to OTEL106, OTEL112 to OTEL117 and OTEL119 to OTEL127 read the emitted collector YAML (and any other output document shaped like a collector config), OTEL107 to OTEL109 read the declared entities. OTEL110 and OTEL111 are unused: the tail sampling placement checks they were reserved for read Kubernetes manifests, so they ship in the k8s lexicon as [WK8601 to WK8603](/chant/lexicons/k8s/otel-placement-checks/).
+The otel lexicon's rules use the `OTEL` prefix. `OTEL0xx` rules read your TypeScript source during `chant lint`. `OTEL1xx` checks run after a build: OTEL101 to OTEL106 and OTEL112 to OTEL127 read the emitted collector YAML (and any other output document shaped like a collector config), OTEL107 to OTEL109 read the declared entities. OTEL110 and OTEL111 are unused: the tail sampling placement checks they were reserved for read Kubernetes manifests, so they ship in the k8s lexicon as [WK8601 to WK8603](/chant/lexicons/k8s/otel-placement-checks/).
 
 | Id | Severity | Catches |
 |---|---|---|
@@ -26,6 +26,7 @@ The otel lexicon's rules use the `OTEL` prefix. `OTEL0xx` rules read your TypeSc
 | OTEL115 | error | a `routing` connector route naming a pipeline that does not receive from it, see [OTEL115](#otel115-routing-targets) |
 | OTEL116 | warning | a connector splitting metrics by a GenAI id (`gen_ai.conversation.id`, `session.id` and others) or a content key, see [below](#otel116-high-cardinality-genai-attributes) |
 | OTEL117 | error | two components the collector starts listening on the same address, so it exits with "address already in use", see [below](#otel117-listen-address-collisions) |
+| OTEL118 | warning | in a build that stamps telemetry attribution, a pipeline processor that can remove or replace `service.name`, `service.version`, `deployment.environment.name`, `vcs.ref.head.revision` or a `chant.*` resource attribute, see [below](#otel118-telemetry-attribution-keys) |
 | OTEL119 | warning | a field deprecated at or before the pinned release: `invert_match`, `service.telemetry.metrics.address`, `spanmetrics` `dimensions_cache_size`, see [below](#otel119-deprecated-fields) |
 | OTEL120 | error | a literal credential in the collector config, OTEL002's check for emitted and imported YAML, see [below](#otel120-and-otel121-credentials-in-the-config) |
 | OTEL121 | warning | an exporter that sends a credential to an `http://` endpoint or with `tls.insecure: true` |
@@ -167,6 +168,28 @@ OTEL117 knows these listeners and their defaults at the pinned collector release
 
 Other components are not checked, since an `endpoint` can be a server the component connects to rather than one it serves (the `kubeletstats` receiver's is the kubelet). A component no pipeline lists, or an extension missing from `service.extensions`, never starts, so it can't collide.
 
+## OTEL118: telemetry attribution keys
+
+A workload built inside a workspace, or in a project with `telemetry.attribution: true`, carries resource attributes that join its spans to a member, a release and a declaration: `service.name`, `service.version`, `deployment.environment.name`, `vcs.ref.head.revision`, and `chant.workspace`, `chant.member` and `chant.decl` (decision ws-060). A collector between the workload and the backend can undo that. OTEL118 reports each processor a pipeline lists that can remove or replace one of these keys, or any other `chant.*` key:
+
+| Processor | Reported |
+|---|---|
+| `resource` | a `delete`, `update`, `upsert` or `hash` action on a protected `key`, or a `delete` or `hash` whose `pattern` matches one |
+| `transform` | a statement on the resource's attributes (`resource.attributes`, or `attributes` in a `context: resource` group) calling `set` or `delete_key` on a protected key, `delete_matching_keys` with a pattern that matches one, or `keep_keys` or `keep_matching_keys` that leaves one out |
+| `resourcedetection` | `override` on, which is the default at the pinned release, with the `env`, `dynatrace`, `heroku` or `elastic_beanstalk` detector. `env` is also the default detector list. |
+| `groupbyattrs` | a protected key in `keys`: a record attribute with that key is copied over the resource's value |
+| `redaction` | `allow_all_keys` off, its default, with a protected key missing from `allowed_keys` and `ignored_keys`, which deletes it. Also a `blocked_key_patterns` entry that matches a protected key, which masks it. |
+| `sumologic` | `translate_attributes`, on by default, which renames `service.name` to `service` on log and metric resources. Also `nest_attributes` over a protected key, or an `aggregate_attributes` prefix that matches one. |
+| `schema` | a target in the `https://opentelemetry.io/schemas/` family below 1.29.0, which renames `vcs.ref.head.revision` back to `vcs.repository.ref.revision`. Below 1.27.0 it also renames `deployment.environment.name` back to `deployment.environment`. |
+| `metricstransform` | a `group` transform whose `group_resource_labels` sets a protected key |
+| `logstransform` | an `add`, `remove`, `move` or `copy` operator on `resource["<key>"]` for a protected key, a `retain` that lists resource fields and leaves one out, or a parser with `parse_to: resource` |
+
+`insert` only adds a key the resource lacks, so it passes. `extract` writes the pattern's named groups, and a group name can't contain a dot, so it passes too. The `transform` case matches the statement's text rather than parsing OTTL, and the message says so. A `redaction` `blocked_values` pattern matches values, which the config doesn't show, so it isn't checked.
+
+Two processors that look relevant are not reported. `k8sattributes` can extract `service.name` and `service.version` from pod labels, but it writes pod metadata only where the key is absent or empty, so it never replaces the workload's value. `NodeAgent` therefore passes. The `attributes` processor changes span, log and metric attributes, not the resource's.
+
+The check runs only when the build stamps the attribution. A project outside a workspace without `telemetry.attribution: true` gets no OTEL118 findings. For `resourcedetection`, set `override: false` to keep the values the workload set.
+
 ## OTEL119: deprecated fields
 
 These fields still work at the pinned release, v0.130.0, and are deprecated there. A later release removes them, so a config that uses one breaks on the next pin bump.
@@ -213,4 +236,4 @@ OTEL127 compares each detector a started `resourcedetection` lists with the map 
 
 ## Using the checks outside a build
 
-The same logic is exported as plain functions. `validateCollectorConfig(config)` returns OTEL101 to OTEL106, OTEL112 to OTEL117 and OTEL119 to OTEL127 findings for any parsed collector config, and `validateCollectorEntities(entities)` returns OTEL107 to OTEL109 for declared entities. The k8s lexicon's `GkeOtelCollector` tests use the first to check the config the composite renders.
+The same logic is exported as plain functions. `validateCollectorConfig(config)` returns OTEL101 to OTEL106, OTEL112 to OTEL117 and OTEL119 to OTEL127 findings for any parsed collector config, `attributionIssues(config)` returns OTEL118 findings, and `validateCollectorEntities(entities)` returns OTEL107 to OTEL109 for declared entities. The k8s lexicon's `GkeOtelCollector` tests use the first to check the config the composite renders.

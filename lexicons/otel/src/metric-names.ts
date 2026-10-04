@@ -176,3 +176,66 @@ export function spanMetricsNames(
     errorStatus: SPAN_STATUS_ERROR,
   };
 }
+
+/** The prefix of every metric the `servicegraph` connector emits; the connector takes no namespace. */
+export const SERVICEGRAPH_NAMESPACE = "traces_service_graph";
+
+/** The parts of a servicegraph config the metric labels depend on. */
+export interface ServiceGraphNamingConfig {
+  dimensions?: string[];
+  virtual_node_extra_label?: boolean;
+}
+
+/** The metrics one `servicegraph` connector emits. */
+export interface ServiceGraphNames {
+  /** Requests per edge. */
+  requests: CollectorMetric;
+  /** Failed requests per edge. */
+  failed: CollectorMetric;
+  /** Server-side request duration histogram, in seconds. */
+  serverDuration: CollectorMetric;
+  /** Client-side request duration histogram, in seconds. */
+  clientDuration: CollectorMetric;
+}
+
+/**
+ * The Prometheus names of the metrics a `servicegraph` connector emits at
+ * `COLLECTOR_PIN`, with its default feature gates: latency in seconds, under
+ * `_request_server` and `_request_client`. Every metric carries `client`,
+ * `server`, `connection_type` and `failed`, `client_<d>` and `server_<d>` for
+ * each configured dimension, and `virtual_node` when
+ * `virtual_node_extra_label` is set (connector/servicegraphconnector/connector.go).
+ */
+export function serviceGraphNames(
+  connector: ServiceGraphNamingConfig | Declared,
+  exporter?: PrometheusNaming | { props?: PrometheusNaming },
+): ServiceGraphNames {
+  const d = connector as Declared;
+  if (typeof d.componentType === "string" && d.componentType !== "servicegraph") {
+    throw new Error(`serviceGraphNames: expected a servicegraph connector, got ${d.componentType}`);
+  }
+  const c = (typeof d.componentType === "string" ? (d.props ?? {}) : connector) as ServiceGraphNamingConfig;
+  const naming: PrometheusNaming =
+    exporter && "props" in exporter && typeof exporter.props === "object" ? (exporter.props as PrometheusNaming) : ((exporter ?? {}) as PrometheusNaming);
+  const dimensions = [
+    "client",
+    "server",
+    "connection_type",
+    "failed",
+    ...(c.dimensions ?? []).flatMap((dim) => [`client_${dim}`, `server_${dim}`]),
+    ...(c.virtual_node_extra_label ? ["virtual_node"] : []),
+  ];
+  const metric = (n: string, type: "sum" | "histogram", unit?: string): CollectorMetric => ({
+    name: `${SERVICEGRAPH_NAMESPACE}_${n}`,
+    prometheus: prometheusMetricName(`${SERVICEGRAPH_NAMESPACE}_${n}`, type, unit, naming),
+    type,
+    ...(unit ? { unit } : {}),
+    dimensions,
+  });
+  return {
+    requests: metric("request_total", "sum"),
+    failed: metric("request_failed_total", "sum"),
+    serverDuration: metric("request_server", "histogram", "s"),
+    clientDuration: metric("request_client", "histogram", "s"),
+  };
+}

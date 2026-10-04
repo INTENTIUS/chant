@@ -32,6 +32,7 @@ export {
   componentEntityType,
   isOTelComponent,
   COLLECTOR_PIN,
+  SEMCONV_PIN,
   GENAI_SEMCONV_PIN,
   type SchemaPin,
   type SafeParseSchema,
@@ -66,6 +67,7 @@ export {
   type SemconvUsage,
 } from "./topology";
 export { semconvUsage, SEMCONV_VOCABULARIES, type SemconvVocabulary } from "./semconv";
+export { attributionIssues, isProtectedResourceAttribute, PROTECTED_RESOURCE_ATTRIBUTES } from "./attribution";
 
 // Composites
 export { NodeAgent, nodeAgentPropsProblem, type NodeAgentProps, type NodeAgentMembers, type NodeAgentInstance } from "./composites";
@@ -122,6 +124,10 @@ export {
   SPANMETRICS_DEFAULT_DIMENSIONS,
   SPANMETRICS_DEFAULT_NAMESPACE,
   SPAN_STATUS_ERROR,
+  SERVICEGRAPH_NAMESPACE,
+  serviceGraphNames,
+  type ServiceGraphNames,
+  type ServiceGraphNamingConfig,
   type CollectorMetric,
   type SpanMetricsNames,
   type SpanMetricsNamingConfig,

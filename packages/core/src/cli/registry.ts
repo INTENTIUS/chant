@@ -337,6 +337,8 @@ export interface ParsedArgs {
   uncommitted?: boolean;
   /** `chant workspace records amend <id> --set <file|->` (#2670): the JSON fields to set. */
   set?: string;
+  /** `chant workspace records amend|review|close <id> --expect <digest>` (#3173): the record's digest the caller last read; the write is refused with record-conflict when it has moved on. */
+  expect?: string;
   /** `chant workspace records review <id> --verdict <v>` (#2670): agree, dissent or abstain. */
   verdict?: string;
   /** `chant workspace box listing set <member> --cover <image>` (#3308): a PNG, JPEG or WebP picture to copy in as the box's cover. */
