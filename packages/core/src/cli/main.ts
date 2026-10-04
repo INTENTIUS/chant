@@ -624,6 +624,11 @@ export function parseArgs(args: string[]): ParsedArgs {
       const value = args[++i];
       if (!value || value.startsWith("-")) throw new Error(`${arg} needs a value: ${arg} <${arg.slice(2)}>`);
       result[arg.slice(2) as "holder" | "ttl" | "token" | "outcome"] = value;
+    } else if (arg === "--signer") {
+      // `chant workspace runs statement <id> --signer <principal>` (#3192): the runner principal that will sign.
+      const value = args[++i];
+      if (!value || value.startsWith("-")) throw new Error("--signer needs a principal: --signer <principal>");
+      result.signer = value;
     } else if (arg === "--unit" || arg === "--decision") {
       // `chant workspace runs --unit <id> | --decision <id>` (#3033): the runs on one work item, or for one decision.
       const value = args[++i];
@@ -1031,6 +1036,17 @@ Workspace (level 1, #2524):
                         and the commits it made
   workspace runs record --from <file|->
                         Record a finished run, its start and end in one write
+  workspace runs sign <run id> (--key <runner.pem> | --envelope <file|->) [--base <rev>]
+                        Store a DSSE statement over an ended run (its record's
+                        hash, work item, harness, model and commits), signed
+                        with a runner or steward key .chant/trust.json lists
+                        at base, or signed elsewhere and checked here
+  workspace runs statement <run id> --signer <principal>
+                        Print the statement for a signer whose key is
+                        elsewhere, such as a lobby, with the payload to sign
+  workspace runs verify [<run id>] [--require signed] [--base <rev>] [--json]
+                        Judge each run's stored statements against the runner
+                        keys at base. Reports only, unless --require signed
   workspace box listing set <member> [--from <file|->] [--cover <image> [--cover-path <path>]] [--by <principal>] [--dry-run]
                         Change a box's listing (published, title, line, cover)
                         in the declaration, in place, keeping its formatting
@@ -1086,13 +1102,14 @@ Workspace (level 1, #2524):
                         member it is bound to, the record kinds and verbs its
                         write scope allows, and the spec records --current
                         prints. Without a name, the session CHANT_AGENT names
-  workspace verify [--base <rev>] [--head <rev>] [--require attested]
+  workspace verify [--base <rev>] [--head <rev>] [--require attested | attested-runs]
                         Check the commits in base..head against the signers
                         and roles read from base. A change to the signers file
                         or .chant/trust.json needs a signature by a signer
                         trusted at base, and a new signer set needs a
-                        threshold of the old one. Does nothing without a
-                        signers file
+                        threshold of the old one. A commit an agent run made
+                        is attested by the run's signed statement; with
+                        attested-runs, only those commits must be
   workspace signers [--json] [rotate [--threshold <n>] | sign --key <file>]
                         Show the signer history at base, or propose the next
                         signer set and sign it with a current signer's key
