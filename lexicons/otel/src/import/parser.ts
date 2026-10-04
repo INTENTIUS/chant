@@ -21,7 +21,8 @@
 
 import * as jsYaml from "js-yaml";
 import type { TemplateIR, TemplateParser } from "@intentius/chant/import/parser";
-import { GENAI_SEMCONV_PIN, type SchemaPin } from "../define";
+import type { SchemaPin } from "../define";
+import { SEMCONV_VOCABULARIES } from "../semconv";
 import {
   COMPONENT_KINDS,
   SECTION_OF,
@@ -105,10 +106,11 @@ function readHeader(content: string, warnings: string[]): { pins: HeaderPin[]; s
     if (sc) {
       const [, namespace, source, version, digest] = sc;
       semconv.push({ namespace, pin: digest ? { source, version, digest } : { source, version } });
-      if (namespace === "gen_ai" && (source !== GENAI_SEMCONV_PIN.source || version !== GENAI_SEMCONV_PIN.version)) {
+      const ours = SEMCONV_VOCABULARIES.find((v) => v.namespace === namespace)?.pin;
+      if (ours && (source !== ours.source || version !== ours.version)) {
         warnings.push(
           `the config was built against ${namespace} semantic conventions ${source}@${version}; ` +
-            `this lexicon follows ${GENAI_SEMCONV_PIN.source}@${GENAI_SEMCONV_PIN.version}, which the rebuilt config will name`,
+            `this lexicon follows ${ours.source}@${ours.version}, which the rebuilt config will name`,
         );
       }
       continue;
