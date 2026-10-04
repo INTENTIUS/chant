@@ -5,6 +5,7 @@
 
 import { describe, expect, test } from "vitest";
 import {
+  ProvisionalWaveMemberError,
   UnknownCanaryError,
   WaveCycleError,
   describeChangedWave,
@@ -70,6 +71,11 @@ describe("the set digest", () => {
 
   test("refuses a wave that names one root twice", () => {
     expect(() => waveSetDigest([members[0], members[0]])).toThrow(/twice/);
+  });
+
+  test("refuses a wave holding a provisional plan, by name", () => {
+    expect(() => waveSetDigest([members[0], { ...members[1], provisional: true }])).toThrow(ProvisionalWaveMemberError);
+    expect(() => waveSetDigest([members[0], { ...members[1], provisional: true }])).toThrow(/provisional plan: a planned/);
   });
 });
 

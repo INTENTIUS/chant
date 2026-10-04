@@ -67,3 +67,28 @@ describe("blocksToEntities: suppression attachment (chant #2111)", () => {
     expect(second.suppressions).toBeUndefined();
   });
 });
+
+describe("Terragrunt config files (#3417)", () => {
+  const files = [
+    {
+      name: "terragrunt.hcl",
+      source: 'terraform {\n  source = "../m"\n}\ndependency "vpc" {\n  config_path = "../vpc"\n}\nremote_state {\n  backend = "s3"\n}\n',
+    },
+  ];
+
+  test("terragrunt.hcl and root.hcl become Terragrunt entities, never module entities", async () => {
+    const entities = await blocksToEntities(files, "unit");
+    expect([...entities.values()].map((e) => e.entityType).sort()).toEqual([
+      "Terraform::TerragruntConfig",
+      "Terraform::TerragruntDependency",
+      "Terraform::TerragruntRemoteState",
+      "Terraform::TerragruntSource",
+    ]);
+    expect([...entities.keys()]).toContain("unit/dependency.vpc");
+  });
+
+  test("the same text under a .tf name is read as a Terraform terraform block", async () => {
+    const entities = await blocksToEntities([{ name: "main.tf", source: 'terraform {\n  required_version = ">= 1.5"\n}\n' }], "unit");
+    expect([...entities.values()].map((e) => e.entityType)).toEqual(["Terraform::Terraform"]);
+  });
+});

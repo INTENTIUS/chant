@@ -38,6 +38,11 @@
  * imports never groups with the same change without the import, and a triggered
  * action is part of its unit's change the same way.
  *
+ * A provisional member (one planned before what it reads applied, #3416)
+ * groups only with other provisional members, and its group says so: the
+ * flag is part of the group's id, so the same change planned for real and
+ * planned on stand-in values never share a group.
+ *
  * These are choudoufu's rules for `live-summary` (choudoufu#1753). The two
  * implementations are kept together by one table of test vectors both run
  * (`__fixtures__/plan-summary/normalization-vectors.json`), per the ruling
@@ -136,6 +141,8 @@ export interface PlanSummaryGroup {
   destroys: PlanSummaryDestroy[];
   /** Every triggered action any unit of the group runs. */
   sideEffects: PlanSummarySideEffect[];
+  /** Its units are provisional plans: previews no approval covers. Absent on a group of real plans. */
+  provisional?: true;
 }
 
 /** A member that failed to plan. It is never in a group. */
@@ -416,6 +423,7 @@ function canonical(v: unknown): string {
 interface Unit {
   name: string;
   family: string;
+  provisional: boolean;
   changes: Normalized[];
   destroys: PlanSummaryDestroy[];
   /** Normalized triggered actions, as canonical strings. */
@@ -456,7 +464,7 @@ function memberUnits(doc: ChangeSetDocument, failed: Set<string>): Unit[] {
     if (failed.has(m.member)) continue;
     const base = lastSegment(m.member);
     const id = identity(m.scope, [], base && base !== m.scope ? [base] : []);
-    const unit: Unit = { name: m.member, family: "", changes: [], destroys: [], effects: [], sideEffects: [] };
+    const unit: Unit = { name: m.member, family: "", provisional: m.provisional === true, changes: [], destroys: [], effects: [], sideEffects: [] };
     for (const se of doc.sideEffects ?? []) {
       if (se.member !== m.member) continue;
       unit.effects.push(effectKey(se, id));
@@ -475,6 +483,7 @@ function memberUnits(doc: ChangeSetDocument, failed: Set<string>): Unit[] {
 }
 
 function instanceUnits(doc: ChangeSetDocument, failed: Set<string>): Unit[] {
+  const provisional = new Set(doc.members.filter((m) => m.provisional === true).map((m) => m.member));
   const units: Unit[] = [];
   for (const e of doc.entries) {
     if (failed.has(e.member)) continue;
@@ -485,7 +494,7 @@ function instanceUnits(doc: ChangeSetDocument, failed: Set<string>): Unit[] {
     const d = destroyOf(e);
     const name = e.deposed !== undefined ? `${e.address} (deposed ${e.deposed})` : e.address;
     const own = (doc.sideEffects ?? []).filter((se) => se.member === e.member && se.trigger === e.address);
-    units.push({ name, family: bare, changes: [n], destroys: d ? [d] : [], effects: own.map((se) => effectKey(se, id)), sideEffects: own });
+    units.push({ name, family: bare, provisional: provisional.has(e.member), changes: [n], destroys: d ? [d] : [], effects: own.map((se) => effectKey(se, id)), sideEffects: own });
   }
   return units;
 }
@@ -535,6 +544,7 @@ function groupUnits(units: Unit[], perFamily: boolean): PlanSummaryGroup[] {
   interface Acc {
     id: string;
     family: string;
+    provisional: boolean;
     units: string[];
     destroys: PlanSummaryDestroy[];
     sideEffects: PlanSummarySideEffect[];
@@ -545,10 +555,15 @@ function groupUnits(units: Unit[], perFamily: boolean): PlanSummaryGroup[] {
   for (const u of units) {
     const keys = u.changes.map((c) => c.key).sort(byString);
     const effects = [...u.effects].sort(byString);
-    const id = computePlanDigest("plan-summary-group", { resource: u.family, changes: keys, ...(effects.length > 0 ? { effects } : {}) }).slice(PLAN_DIGEST_PREFIX.length, PLAN_DIGEST_PREFIX.length + 12);
+    const id = computePlanDigest("plan-summary-group", {
+      resource: u.family,
+      changes: keys,
+      ...(effects.length > 0 ? { effects } : {}),
+      ...(u.provisional ? { provisional: true } : {}),
+    }).slice(PLAN_DIGEST_PREFIX.length, PLAN_DIGEST_PREFIX.length + 12);
     let acc = byId.get(id);
     if (!acc) {
-      acc = { id, family: u.family, units: [], destroys: [], sideEffects: [], lines: changeLines(u.changes), noChanges: u.changes.length === 0 && u.effects.length === 0 };
+      acc = { id, family: u.family, provisional: u.provisional, units: [], destroys: [], sideEffects: [], lines: changeLines(u.changes), noChanges: u.changes.length === 0 && u.effects.length === 0 };
       byId.set(id, acc);
     }
     acc.units.push(u.name);
@@ -557,17 +572,26 @@ function groupUnits(units: Unit[], perFamily: boolean): PlanSummaryGroup[] {
   }
   const accs = [...byId.values()];
   for (const a of accs) a.units.sort(byString);
-  accs.sort((a, b) => (perFamily && a.family !== b.family ? byString(a.family, b.family) : 0) || b.units.length - a.units.length || byString(a.units[0], b.units[0]));
+  // Real plans first, provisional ones after them.
+  accs.sort(
+    (a, b) =>
+      Number(a.provisional) - Number(b.provisional) ||
+      (perFamily && a.family !== b.family ? byString(a.family, b.family) : 0) ||
+      b.units.length - a.units.length ||
+      byString(a.units[0], b.units[0]),
+  );
 
   // A family's baseline is its largest group that changes anything; the others are described against it.
+  // Provisional groups are a family of their own, never described against a real plan.
+  const familyOf = (a: Acc): string => (a.provisional ? `${a.family}\u0000provisional` : a.family);
   const baseline = new Map<string, Acc>();
   const familySize = new Map<string, number>();
   for (const a of accs) {
-    familySize.set(a.family, (familySize.get(a.family) ?? 0) + 1);
-    if (!baseline.has(a.family) && !a.noChanges) baseline.set(a.family, a);
+    familySize.set(familyOf(a), (familySize.get(familyOf(a)) ?? 0) + 1);
+    if (!baseline.has(familyOf(a)) && !a.noChanges) baseline.set(familyOf(a), a);
   }
   return accs.map((a) => {
-    const base = baseline.get(a.family);
+    const base = baseline.get(familyOf(a));
     let plus: Line[] | undefined;
     if (base && base !== a && !a.noChanges) {
       const extra = extraLines(base.lines, a.lines);
@@ -579,12 +603,13 @@ function groupUnits(units: Unit[], perFamily: boolean): PlanSummaryGroup[] {
       id: a.id,
       ...(a.family ? { resource: a.family } : {}),
       units: a.units,
-      outlier: a.units.length === 1 && (familySize.get(a.family) ?? 0) > 1,
+      outlier: a.units.length === 1 && (familySize.get(familyOf(a)) ?? 0) > 1,
       noChanges: a.noChanges,
       changes: a.lines.map(publicLine),
       ...(plus && base ? { extends: base.id, plus: plus.map(publicLine) } : {}),
       destroys: a.destroys.sort(byDestroy),
       sideEffects: a.sideEffects.sort(bySideEffect),
+      ...(a.provisional ? { provisional: true as const } : {}),
     };
   });
 }
@@ -648,6 +673,8 @@ function unitWord(s: PlanSummary, n: number): string {
 /** The first line: units, groups, failures, destroys and holes. */
 export function planSummaryHeadline(s: PlanSummary): string {
   const parts = [plural(s.groups.length, "group", "groups")];
+  const provisional = s.groups.filter((g) => g.provisional).length;
+  if (provisional > 0) parts.push(`${provisional} provisional`);
   if (s.failed.length > 0) parts.push(`${s.failed.length} failed`);
   parts.push(plural(s.destroys.length, "destroy or replacement", "destroys or replacements"));
   if (s.forgets.length > 0) parts.push(plural(s.forgets.length, "forget", "forgets"));
@@ -661,6 +688,7 @@ function groupTitle(s: PlanSummary, g: PlanSummaryGroup): string {
   let t = `Group ${g.id}: ${unitWord(s, g.units.length)}`;
   if (g.resource) t += ` of ${g.resource}`;
   if (g.outlier) t += " (outlier)";
+  if (g.provisional) t += " (provisional)";
   if (g.noChanges) t += ", no changes";
   else if (g.extends) t += `, group ${g.extends}'s change plus`;
   else if (g.units.length > 1) t += ", identical change";
@@ -684,6 +712,8 @@ const forgetText = (f: PlanSummaryForget): string => `${f.member}: ${f.address}$
 const importText = (i: PlanSummaryImport): string => `${i.member}: ${i.address} (${i.action === "no-op" ? "import, no other change" : `import, then ${i.action}`})`;
 const sideEffectText = (e: PlanSummarySideEffect): string =>
   `${e.member}: ${e.address}${e.trigger !== undefined ? `, triggered by ${e.trigger}${e.event !== undefined ? ` ${e.event}` : ""}` : ""}`;
+
+const PROVISIONAL_NOTE = "Provisional: planned before what it reads applied, so it may show stand-in values. No approval covers it; it is planned again in its own wave.";
 
 const oneLine = (s: string): string => s.split(/\s+/).filter(Boolean).join(" ");
 
@@ -720,6 +750,7 @@ export function renderPlanSummaryText(s: PlanSummary): string {
     out.push("", `${groupTitle(s, g)}:`);
     for (const l of shownChanges(g)) out.push(`    ${changeText(l)}`);
     out.push(`  ${s.unit === "instance" ? "instances" : "members"}: ${g.units.join(", ")}`);
+    if (g.provisional) out.push(`  ${PROVISIONAL_NOTE}`);
     if (g.destroys.length > 0) out.push(`  destroys and replacements: ${g.destroys.length}, listed above`);
     if (g.sideEffects.length > 0) out.push(`  triggered actions: ${g.sideEffects.length}, listed above`);
   }
@@ -780,6 +811,7 @@ export function renderPlanSummaryMarkdown(s: PlanSummary, options: RenderMarkdow
     const lines = shownChanges(g);
     if (lines.length > 0) t += "```\n" + lines.map(changeText).join("\n") + "\n```\n\n";
     t += `${s.unit === "instance" ? "Instances" : "Members"}: ${g.units.map(code).join(", ")}\n`;
+    if (g.provisional) t += `\n${PROVISIONAL_NOTE}\n`;
     if (g.destroys.length > 0) t += `\nDestroys and replacements: ${g.destroys.length}, listed above.\n`;
     if (g.sideEffects.length > 0) t += `\nTriggered actions: ${g.sideEffects.length}, listed above.\n`;
     blocks.push({ kind: "group", units: g.units.length, text: t });

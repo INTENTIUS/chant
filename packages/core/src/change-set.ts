@@ -114,6 +114,14 @@ export interface ChangeSetMember {
   error?: string;
   /** What a gate on this member alone binds. `null` when the member failed to plan. */
   planDigest: string | null;
+  /**
+   * Planned before what it reads applied, so it may hold stand-in values (a
+   * Terragrunt dependent planned on `mock_outputs` at PR time, #3416). A
+   * preview only: {@link changeSetDigest} leaves it out, so no approval of the
+   * document covers it, a wave's set digest refuses it, and the grouped
+   * summary never folds it into a group of real plans.
+   */
+  provisional?: true;
   /** The planner's own digest of the same plan, when it prints one (choudoufu's per-root digest). */
   nativeDigest?: string;
   holes: ChangeSetHole[];
@@ -189,9 +197,15 @@ function entryKey(e: ChangeSetEntry): string {
  * …)` over `{ member, planDigest }` sorted by member. Order-independent,
  * and different whenever one member's plan digest is. Refuses a set that
  * names a member twice, which has no single plan for that member.
+ *
+ * Provisional members are left out: their plans may stand on values that do
+ * not exist yet, so an approval of this digest never covers them.
  */
-export function changeSetDigest(members: ReadonlyArray<Pick<ChangeSetMember, "member" | "planDigest">>): string {
-  const pairs = members.map((m) => ({ member: m.member, planDigest: m.planDigest })).sort((a, b) => byString(a.member, b.member));
+export function changeSetDigest(members: ReadonlyArray<Pick<ChangeSetMember, "member" | "planDigest" | "provisional">>): string {
+  const pairs = members
+    .filter((m) => m.provisional !== true)
+    .map((m) => ({ member: m.member, planDigest: m.planDigest }))
+    .sort((a, b) => byString(a.member, b.member));
   for (let i = 1; i < pairs.length; i++) {
     if (pairs[i - 1].member === pairs[i].member) throw new Error(`the change set names member ${pairs[i].member} twice`);
   }

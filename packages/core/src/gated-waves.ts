@@ -103,14 +103,31 @@ export function layerWaves(nodes: readonly WaveNode[], options: LayerWavesOption
 export interface WaveMember {
   member: string;
   planDigest: string;
+  /** A provisional plan (`ChangeSetMember.provisional`, #3416). A wave refuses it. */
+  provisional?: true;
+}
+
+/** Thrown when a wave's members include a provisional plan, which no gate may bind. */
+export class ProvisionalWaveMemberError extends Error {
+  constructor(readonly members: string[]) {
+    super(
+      `a wave cannot be gated on a provisional plan: ${members.join(", ")} planned before what it reads applied. ` +
+        `Plan it again in its own wave, after its upstream applied`,
+    );
+    this.name = "ProvisionalWaveMemberError";
+  }
 }
 
 /**
  * A wave's set digest: {@link changeSetDigest} over its members. Order does
  * not matter, and it moves whenever one member's plan digest does. A wave
- * naming one member twice has no digest and is refused.
+ * naming one member twice has no digest and is refused, and so is a wave
+ * holding a provisional plan (#3416): a gate bound to it would approve
+ * values nobody has yet.
  */
 export function waveSetDigest(members: readonly WaveMember[]): string {
+  const provisional = members.filter((m) => m.provisional === true).map((m) => m.member);
+  if (provisional.length > 0) throw new ProvisionalWaveMemberError([...new Set(provisional)].sort());
   return changeSetDigest(members);
 }
 

@@ -33,8 +33,11 @@ The document is part of the [workspace read contract](/chant/reference/workspace
 | `planDigest` | what a gate on this member alone binds, or `null` when it failed |
 | `nativeDigest` | the planner's own hash of the same plan, such as choudoufu's per-root value |
 | `holes` | what the planner could not read, each `{ address, type, reason }` |
+| `provisional` | `true` for a preview planned before what it reads applied, such as a Terragrunt dependent planned on `mock_outputs`; absent otherwise |
 
 A member with holes has an incomplete plan. Its entries say nothing about the addresses listed there.
+
+A provisional member is left out of the document's digest, so approving the document never approves it. A wave's set digest refuses it, and the grouped summary never puts it in a group with real plans.
 
 ### Entries
 
@@ -78,7 +81,7 @@ Each member carries the value a gate on that member alone binds ([#2300](https:/
 | `chant` | `computePlanDigest("lifecycle-plan", plan)` over the `lifecycle plan --json` document |
 | `warden` | `computePlanDigest("reconcile-plan", …)` over each change set's org and entries, sorted |
 
-The document's `digest` is `computePlanDigest("change-set", pairs)`, where `pairs` is `{ member, planDigest }` for every member, sorted by member. It has the `jcs1-sha256` prefix plans carry since [#2547](https://github.com/INTENTIUS/chant/issues/2547). Member order makes no difference to it. It changes when any member's `planDigest` changes. A set that names a member twice is refused.
+The document's `digest` is `computePlanDigest("change-set", pairs)`, where `pairs` is `{ member, planDigest }` for every member that is not provisional, sorted by member. It has the `jcs1-sha256` prefix plans carry since [#2547](https://github.com/INTENTIUS/chant/issues/2547). Member order makes no difference to it. It changes when any member's `planDigest` changes. A set that names a member twice is refused.
 
 Entries and the summary are derived from the same plans and are not hashed again. A change to how chant projects a plan into entries does not expire an approval. `verifyChangeSetDigest(doc)` recomputes the value from `members`.
 

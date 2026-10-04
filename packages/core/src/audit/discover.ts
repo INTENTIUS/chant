@@ -151,7 +151,9 @@ function isDockerfileName(name: string): boolean {
 }
 
 function isTerraformFileName(name: string): boolean {
-  return /\.tf$/i.test(name);
+  // `terragrunt.hcl` and `root.hcl` ride in the terraform bundle (#3417): the
+  // terraform lexicon reads them into Terragrunt entities, apart from modules.
+  return /\.tf$/i.test(name) || name === "terragrunt.hcl" || name === "root.hcl";
 }
 
 /**
@@ -470,7 +472,10 @@ function calledAsLocalModule(byDir: Map<string, Record<string, string>>): Set<st
   const called = new Set<string>();
   for (const [dir, bundle] of byDir) {
     const targets = new Set<string>();
-    for (const source of Object.values(bundle)) {
+    for (const [name, source] of Object.entries(bundle)) {
+      // A Terragrunt unit's `terraform { source = "../modules/x" }` is not a
+      // `module` call: the directory it names stays a root of its own (#3417).
+      if (name === "terragrunt.hcl" || name === "root.hcl") continue;
       for (const match of source.matchAll(LOCAL_MODULE_SOURCE)) {
         const target = resolveRepoDir(dir, match[1]);
         if (target === undefined || target === dir || !byDir.has(target)) continue;
