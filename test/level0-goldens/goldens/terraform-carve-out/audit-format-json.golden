@@ -23,16 +23,16 @@ exit: 0
     "toolVersion": "<chant-version>"
   },
   "summary": {
-    "total": 2,
+    "total": 4,
     "quickWin": 0,
     "needsReview": 2,
-    "reportOnly": 0,
+    "reportOnly": 2,
     "errors": 2,
-    "warnings": 0,
+    "warnings": 2,
     "infos": 0,
     "security": 2,
     "correctness": 0,
-    "bestPractice": 0,
+    "bestPractice": 2,
     "efficiency": 0
   },
   "findings": [
@@ -91,6 +91,38 @@ exit: 0
         }
       ],
       "docUrl": "https://intentius.io/chant/lint-rules/audit-rules/#tf023"
+    },
+    {
+      "checkId": "TF040",
+      "severity": "warning",
+      "message": "Root module \"kubernetes\" uses provider \"kubernetes\" but has no .terraform.lock.hcl beside its .tf files. Run `terraform init` and commit the file, so every init selects the same provider versions.",
+      "file": "kubernetes",
+      "entity": "kubernetes/kubernetes_config_map.legacy",
+      "lexicon": "terraform",
+      "tier": "report-only",
+      "fixKind": "guidance",
+      "category": "best-practice",
+      "title": "Root has no committed .terraform.lock.hcl",
+      "remediation": "Run `terraform init` in the root and commit the `.terraform.lock.hcl` it writes. Off by default; checked only where the root's directory is known.",
+      "authority": [],
+      "lineage": [],
+      "docUrl": "https://intentius.io/chant/lint-rules/audit-rules/#tf040"
+    },
+    {
+      "checkId": "TF040",
+      "severity": "warning",
+      "message": "Root module \"terraform\" uses providers \"aws\", \"random\" but has no .terraform.lock.hcl beside its .tf files. Run `terraform init` and commit the file, so every init selects the same provider versions.",
+      "file": "terraform",
+      "entity": "terraform/aws_cloudwatch_log_group.api",
+      "lexicon": "terraform",
+      "tier": "report-only",
+      "fixKind": "guidance",
+      "category": "best-practice",
+      "title": "Root has no committed .terraform.lock.hcl",
+      "remediation": "Run `terraform init` in the root and commit the `.terraform.lock.hcl` it writes. Off by default; checked only where the root's directory is known.",
+      "authority": [],
+      "lineage": [],
+      "docUrl": "https://intentius.io/chant/lint-rules/audit-rules/#tf040"
     }
   ]
 }
