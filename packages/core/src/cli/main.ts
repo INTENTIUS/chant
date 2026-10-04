@@ -487,9 +487,13 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant workspace points --open` (#2739): only the questions still open.
       result.open = true;
     } else if (arg === "--inputs") {
-      // `chant workspace points ask <point> --inputs <file|->` (#2739)
+      // `chant workspace points ask <point> --inputs <file|-|json>` (#2739; JSON itself, #3403)
       result.inputs = args[++i];
-      if (!result.inputs || (result.inputs.startsWith("-") && result.inputs !== "-")) throw new Error("--inputs needs a JSON file, or - for standard input: --inputs <file|->");
+      if (!result.inputs || (result.inputs.startsWith("-") && result.inputs !== "-")) throw new Error("--inputs needs a JSON file, - for standard input, or the JSON itself: --inputs <file|-|json>");
+    } else if (arg === "--candidates") {
+      // `chant workspace points ask <point> --candidates <file|-|json>` (#3403): an ad-hoc point's question and candidates.
+      result.candidates = args[++i];
+      if (!result.candidates || (result.candidates.startsWith("-") && result.candidates !== "-")) throw new Error("--candidates needs a JSON file, - for standard input, or the JSON itself: --candidates <file|-|json>");
     } else if (arg === "--response") {
       // `chant workspace points ask <point> --response <file>` (#2739): a POST /v1/systemone response the caller got.
       result.response = args[++i];
@@ -1093,11 +1097,13 @@ Workspace (level 1, #2524):
                         List the decision points the declared answer kinds'
                         points files declare, and the questions asked of them;
                         --open keeps the escalated and proposed ones (ws-058)
-  workspace points ask <point> --inputs <file|-> [--response <file>] [--subject <id>] [--kind <kind file>] [--dry-run]
+  workspace points ask <point> --inputs <file|-|json> [--candidates <file|-|json>] [--response <file>] [--subject <id>] [--kind <kind file>] [--dry-run]
                         Ask a point's table, model and quorum deciders and
                         record the answer: proposed from a model, escalated to
                         people below its threshold. --response is a POST
-                        /v1/systemone response the caller got; chant calls no model
+                        /v1/systemone response the caller got; chant calls no model.
+                        --candidates gives an ad-hoc point's question and
+                        candidates, { question, criteria }
   workspace points answer <id> --answer <value> --by <name>... [--note <text>] [--relayed-by <principal>] [--kind <kind file>] [--dry-run]
                         Record people's answer to an open question, or confirm
                         a model's proposal, once the point's quorum is met,

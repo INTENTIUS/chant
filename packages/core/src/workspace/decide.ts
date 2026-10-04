@@ -22,6 +22,11 @@
  * escalated one is asked again, since a backend may answer now, and rewritten
  * only when the chain no longer escalates.
  *
+ * An ad-hoc point (#3403) has no candidates of its own: each ask gives the
+ * question's text and candidates, the record keeps them as `asked`, and they
+ * are part of the inputs hash, so a question asked with other options is
+ * another question. People's answer is checked against them.
+ *
  * An answer never changes in place. People may retract it (ws-084): the
  * question is escalated to them again, and the answer, who gave it, when, and
  * its note move into the record's `retractions` with who retracted it, when
@@ -59,15 +64,19 @@ import {
 } from "./records-write";
 import {
   answerId,
+  askedOf,
+  askedQuestion,
   candidates,
   DeciderFailed,
   inputsHash,
+  parseAsked,
   pointOf,
   pointsFileOf,
   pointVersion,
   quorumOf,
   readPointsThrough,
   runChain,
+  type Asked,
   type ChainResult,
   type Escalation,
   type ModelAsk,
@@ -117,8 +126,10 @@ export const POINTS_WRITE_ERROR_CODES = [
   "principal-unidentified",
   /** `points retract` names a question that has no answer: escalated or proposed (#3351). */
   "answer-not-answered",
-  /** The answer kind's schema copy has no `note`, `retractions` or `relayed_by` field for what the write was given (#3351, #3402). */
+  /** The answer kind's schema copy has no `note`, `retractions`, `relayed_by` or `asked` field for what the write was given (#3351, #3402, #3403). */
   "answer-field-unsupported",
+  /** An ad-hoc point was asked without its question and candidates, a declared point with them, or they don't fit the point's question type (#3403). */
+  "point-candidates-invalid",
   ...WRITE_LOCK_CODES,
   ...RECORD_REASON_CODES,
 ] as const satisfies readonly ReasonCode[];
@@ -180,6 +191,12 @@ export interface QuestionView {
   relayedBy: string | null;
   /** Answers people took back, oldest first (`points retract`, #3351). Empty when none was. */
   retractions: RetractionView[];
+  /**
+   * An ad-hoc point's question as its ask gave it (#3403): the question's text
+   * and its criteria, what each candidate means. null for a declared point's
+   * question, whose text and criteria are the point's.
+   */
+  asked: Asked | null;
   /**
    * The steward whose turn asked the question (#2749), and the run it was in,
    * or null when no steward asked it. The steward waits on the question and
@@ -312,6 +329,7 @@ export function questionView(entry: RecordEntry, point: Point | undefined, ledge
     note: str(d.note),
     relayedBy: str(d.relayed_by),
     retractions: retractionsOf(d),
+    asked: askedOf(d) ?? null,
     askedBy: askedByOf(d),
     ledger,
     valid: entry.valid,
@@ -396,6 +414,12 @@ export interface AskPointOptions {
   point: string;
   /** The inputs, keyed by the point's declared input names. */
   inputs: unknown;
+  /**
+   * An ad-hoc point's question and candidates (#3403), as `{ question,
+   * criteria }` in the point's question type's shape. Required for an ad-hoc
+   * point and refused for a declared one.
+   */
+  candidates?: unknown;
   /** What the question is about, such as a work item's id: written to `constrains`. */
   subject?: string;
   /** The answer kind file, or a declared kind's name. Without it, the declared answer kind whose points file declares the point. */
@@ -429,14 +453,15 @@ export interface AskPointOptions {
 const today = (): string => new Date().toISOString().slice(0, 10);
 const show = (answer: string | boolean, type: string): string => (type === "noul" ? (answer ? "yes" : "no") : String(answer));
 
-function titleFor(point: Point, subject: string | undefined, state: string, answer: string | boolean | undefined): string {
+/** A record's title: the point's title, or an ad-hoc question's own text (#3403), what it is about, and where it stands. */
+function titleFor(point: Point, subject: string | undefined, state: string, answer: string | boolean | undefined, asked?: Asked): string {
   const outcome = state === "escalated" ? "open for people" : state === "proposed" ? `${show(answer!, point.question.type)}, proposed` : show(answer!, point.question.type);
-  return `${point.title}${subject ? ` (${subject})` : ""}: ${outcome}`;
+  return `${asked ? asked.question : point.title}${subject ? ` (${subject})` : ""}: ${outcome}`;
 }
 
-function body(point: Point, title: string): string {
-  const q = point.question;
-  const describe = (c: string | boolean): string => (q.type === "score" ? "" : ((q.criteria as Record<string, string>)[String(c)] ?? ""));
+function body(point: Point, title: string, asked?: Asked): string {
+  const q = askedQuestion(point, asked);
+  const describe = (c: string | boolean): string => (q.type === "score" ? "" : ((q.criteria as Record<string, string> | undefined)?.[String(c)] ?? ""));
   const options = candidates(q).map((c) => `- ${show(c, q.type)}${describe(c) ? `: ${describe(c)}` : ""}`);
   return ["", `# ${title}`, "", q.instructions.trim(), "", ...options, ""].join("\n");
 }
@@ -452,6 +477,26 @@ async function findPoint(kinds: string[], name: string, cwd: string): Promise<Op
     declared.push(...Object.keys(opened.points));
   }
   throw new PointsWriteError("point-unknown", `no points file declares ${JSON.stringify(name)}${declared.length ? ` (the points are ${declared.join(", ")})` : ""}`);
+}
+
+/**
+ * An ad-hoc point's question and candidates from the ask (#3403), or
+ * undefined for a declared point. Refused when an ad-hoc point has none, a
+ * declared point is given them, they don't fit the question type, or the
+ * answer kind's schema copy has no `asked` field to keep them in.
+ */
+function checkAsked(name: string, point: Point, given: unknown, loaded: { kind: { name: string }; schema: Record<string, unknown> }): Asked | undefined {
+  if (!point.adhoc) {
+    if (given !== undefined) throw new PointsWriteError("point-candidates-invalid", `${name} declares its candidates, so the ask gives none: --candidates is for an ad-hoc point`);
+    return undefined;
+  }
+  if (given === undefined) throw new PointsWriteError("point-candidates-invalid", `${name} is an ad-hoc point, so each ask gives the question and its candidates: --candidates <file|-|json>`);
+  const parsed = parseAsked(point, given);
+  if ("problems" in parsed) throw new PointsWriteError("point-candidates-invalid", `the candidates for ${name}, a ${point.question.type} question: ${parsed.problems.join("; ")}`);
+  if (!answerFields(loaded.schema).asked) {
+    throw new PointsWriteError("answer-field-unsupported", `the ${loaded.kind.name} kind's schema has no asked field, so an ad-hoc question's text and candidates can't be kept: copy point-answer.schema.json from @intentius/chant anew`);
+  }
+  return parsed.asked;
 }
 
 function checkInputs(name: string, point: Point, inputs: unknown): Record<string, unknown> {
@@ -568,8 +613,9 @@ async function askPointLocked(opts: AskPointOptions): Promise<PointsWriteDocumen
     const kinds = await answerKindFiles(opts.cwd, opts.kind);
     const { o, point } = await findPoint(kinds, opts.point, opts.cwd);
     const inputs = checkInputs(opts.point, point, opts.inputs);
+    const asked = checkAsked(opts.point, point, opts.candidates, o.loaded);
     const version = pointVersion(point);
-    const hash = inputsHash(opts.point, version, inputs);
+    const hash = inputsHash(opts.point, version, inputs, asked);
     const id = answerId(opts.point, hash);
     if (toLedger && !opts.dryRun) await refreshLedger(o.loaded.file);
     const { ledger, source: read, before } = await readWithLedger(o);
@@ -594,7 +640,7 @@ async function askPointLocked(opts: AskPointOptions): Promise<PointsWriteDocumen
 
     let result: ChainResult;
     try {
-      result = await runChain(opts.point, point, inputs, opts.ask);
+      result = await runChain(opts.point, { ...point, question: askedQuestion(point, asked) }, inputs, opts.ask);
     } catch (err) {
       if (err instanceof DeciderFailed) throw new PointsWriteError("point-decider-failed", err.message);
       throw err;
@@ -605,7 +651,7 @@ async function askPointLocked(opts: AskPointOptions): Promise<PointsWriteDocumen
     const on = opts.on ?? today();
     const state = result.status;
     const answer = result.status === "escalated" ? undefined : result.answer;
-    const title = titleFor(point, opts.subject, state, answer);
+    const title = titleFor(point, opts.subject, state, answer, asked);
     const modelId = result.status === "proposed" ? result.decider.model : undefined;
     const client = steward ? { name: steward.name } : opts.client;
     const source = {
@@ -621,7 +667,8 @@ async function askPointLocked(opts: AskPointOptions): Promise<PointsWriteDocumen
       point: opts.point,
       point_version: version,
       question_type: point.question.type,
-      candidates: candidates(point.question),
+      candidates: candidates(askedQuestion(point, asked)),
+      asked,
       inputs,
       inputs_hash: hash,
       constrains: opts.subject !== undefined ? [opts.subject] : existing?.data?.constrains,
@@ -631,7 +678,7 @@ async function askPointLocked(opts: AskPointOptions): Promise<PointsWriteDocumen
       source,
     });
     const path = existing ? existing.path : o.dirRel === "." ? `${id}.md` : `${o.dirRel}/${id}.md`;
-    const text = renderRecord(data, body(point, title));
+    const text = renderRecord(data, body(point, title, asked));
     // A steward's question goes on the ledger, and one already held there stays there (#2786).
     const onLedger = toLedger || ledger.byPath.has(path);
     const message = `Decision point ${opts.point}: ${state}${opts.subject ? ` (${opts.subject})` : ""}${steward ? `, asked by ${steward.name}` : ""}`;
@@ -672,15 +719,15 @@ export interface AnswerPointOptions {
 
 /**
  * Whether an answer kind's schema copy takes the fields of #3351 (`note` on an
- * answer, and `retractions`) and of #3402 (`relayed_by`). A copy of
- * point-answer.schema.json from before them refuses a note, a retraction or a
- * relay with `answer-field-unsupported`, rather than dropping what a person
- * wrote.
+ * answer, and `retractions`), of #3402 (`relayed_by`) and of #3403 (`asked`).
+ * A copy of point-answer.schema.json from before them refuses a note, a
+ * retraction, a relay or an ad-hoc ask with `answer-field-unsupported`, rather
+ * than dropping what a person wrote or the question an agent asked.
  */
-export function answerFields(schema: Record<string, unknown>): { note: boolean; retractions: boolean; relayedBy: boolean } {
+export function answerFields(schema: Record<string, unknown>): { note: boolean; retractions: boolean; relayedBy: boolean; asked: boolean } {
   const props = schema.properties as Record<string, unknown> | undefined;
   const has = (key: string): boolean => props !== undefined && props !== null && typeof props === "object" && Object.prototype.hasOwnProperty.call(props, key);
-  return { note: has("note"), retractions: has("retractions"), relayedBy: has("relayed_by") };
+  return { note: has("note"), retractions: has("retractions"), relayedBy: has("relayed_by"), asked: has("asked") };
 }
 
 /** A note as given, trimmed, or undefined when it is empty. */
@@ -829,7 +876,9 @@ async function answerPointLocked(opts: AnswerPointOptions): Promise<PointsWriteD
     const name = String(d.point);
     const point = pointOf(opened.points, name);
     if (!point) throw new PointsWriteError("point-unknown", `${opts.id} answers ${name}, which ${opened.pointsFile} no longer declares`);
-    const allowed = Array.isArray(d.candidates) ? (d.candidates as (string | boolean)[]) : candidates(point.question);
+    // An ad-hoc question is answered from the candidates it was asked with (#3403).
+    const asked = askedOf(d);
+    const allowed = asked ? candidates(askedQuestion(point, asked)) : Array.isArray(d.candidates) ? (d.candidates as (string | boolean)[]) : candidates(point.question);
     const type = String(d.question_type);
     const value = type === "noul" && typeof opts.answer === "string" ? ({ true: true, yes: true, false: false, no: false } as Record<string, boolean>)[opts.answer.toLowerCase()] : opts.answer;
     if (value === undefined || !allowed.includes(value)) {
@@ -873,9 +922,9 @@ async function answerPointLocked(opts: AnswerPointOptions): Promise<PointsWriteD
       };
     }
     const subject = Array.isArray(d.constrains) && typeof d.constrains[0] === "string" ? (d.constrains[0] as string) : undefined;
-    fields.title = titleFor(point, subject, "answered", value);
+    fields.title = titleFor(point, subject, "answered", value, asked);
     const data = recordData(o, fields);
-    const text = renderRecord(data, body(point, String(fields.title)));
+    const text = renderRecord(data, body(point, String(fields.title), asked));
     const onLedger = ledger.byPath.has(target.path);
     const message = `Decision point ${name}: answered ${show(value, type)} by ${tally.counted.join(", ")}${relayedBy ? `, relayed by ${relayedBy}` : ""}`;
     const wrote = await write(o, before, target.path, text, false, !!opts.dryRun, { source: found.read.source, ledger, onLedger, message, who: { verb: "points answer", by: tally.counted.join(", ") } });
@@ -986,7 +1035,8 @@ async function retractAnswerLocked(opts: RetractAnswerOptions): Promise<PointsWr
     const rest = Object.fromEntries(Object.entries(d).filter(([k]) => !gone.has(k)));
     const prior = Array.isArray(d.retractions) ? (d.retractions as unknown[]) : [];
     const subject = Array.isArray(d.constrains) && typeof d.constrains[0] === "string" ? (d.constrains[0] as string) : undefined;
-    const title = titleFor(point, subject, "escalated", undefined);
+    const asked = askedOf(d);
+    const title = titleFor(point, subject, "escalated", undefined, asked);
     const data = recordData(o, {
       ...rest,
       title,
@@ -995,7 +1045,7 @@ async function retractAnswerLocked(opts: RetractAnswerOptions): Promise<PointsWr
       escalations: escalations.length > 0 ? escalations : undefined,
       retractions: [...prior, Object.fromEntries(Object.entries(retraction).filter(([, v]) => v !== undefined))],
     });
-    const text = renderRecord(data, body(point, title));
+    const text = renderRecord(data, body(point, title, asked));
     const onLedger = ledger.byPath.has(target.path);
     const message = `Decision point ${name}: ${show(answer, type)} retracted by ${tally.counted.join(", ")}`;
     const wrote = await write(o, before, target.path, text, false, !!opts.dryRun, { source: found.read.source, ledger, onLedger, message, who: { verb: "points retract", by: tally.counted.join(", ") } });

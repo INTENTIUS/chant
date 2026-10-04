@@ -72,8 +72,14 @@ export interface PointView {
   questionType: string;
   instructions: string;
   candidates: (string | boolean)[];
-  /** What each candidate means, as the points file declares it: an object of strings for noul and choice, an array for score. */
+  /**
+   * What each candidate means, as the points file declares it: an object of
+   * strings for noul and choice, an array for score. Empty for an ad-hoc point,
+   * whose candidates come with each ask (#3403).
+   */
   criteria: Record<string, string> | string[];
+  /** The question's text and candidates come with each ask (#3403): each question lists them as `asked`. */
+  adhoc: boolean;
   /** Each input: its name, the read-contract output it names, and its description. */
   inputs: { name: string; output: string; description: string }[];
   deciders: Decider[];
@@ -165,8 +171,9 @@ export async function workspacePoints(query: PointsQuery): Promise<PointsDocumen
           version: pointVersion(p),
           questionType: p.question.type,
           instructions: p.question.instructions,
-          candidates: candidates(p.question),
-          criteria: p.question.criteria,
+          candidates: p.adhoc ? [] : candidates(p.question),
+          criteria: p.question.criteria ?? (p.question.type === "score" ? [] : {}),
+          adhoc: !!p.adhoc,
           inputs: Object.entries(p.inputs).map(([n, description]) => ({ name: n, output: inputOutput(n), description })),
           deciders: p.deciders,
           quorum: quorumOf(p),
@@ -216,7 +223,7 @@ export async function readQuestionStates(cwd: string): Promise<Map<string, Quest
 export function formatPoints(doc: Extract<PointsDocument, { points: unknown }>): string {
   const lines: string[] = [];
   for (const s of doc.sources) if (s.reason) lines.push(`${s.kind}: ${s.reason.code}: ${s.reason.message}`);
-  for (const p of doc.points) lines.push(`${p.name}  ${p.questionType}  ${p.title}  (${p.deciders.map((d) => d.kind).join(", ")})`);
+  for (const p of doc.points) lines.push(`${p.name}  ${p.questionType}${p.adhoc ? ", ad hoc" : ""}  ${p.title}  (${p.deciders.map((d) => d.kind).join(", ")})`);
   if (doc.points.length === 0) lines.push("no decision points are declared");
   lines.push("");
   for (const q of doc.questions) {
@@ -242,7 +249,7 @@ export function responseAsk(response: unknown): ModelAsk {
 
 const USAGE = [
   "chant workspace points [--open] [--kind <kind file>] [--at <rev>] [--json]",
-  "chant workspace points ask <point> --inputs <file|-> [--response <file>] [--subject <id>] [--kind <kind file>] [--dry-run]",
+  "chant workspace points ask <point> --inputs <file|-|json> [--candidates <file|-|json>] [--response <file>] [--subject <id>] [--kind <kind file>] [--dry-run]",
   "chant workspace points answer <id> --answer <value> --by <name> [--by <name>...] [--note <text>] [--relayed-by <principal>] [--kind <kind file>] [--dry-run]",
   "chant workspace points retract <id> --by <name> [--by <name>...] [--note <text>] [--kind <kind file>] [--dry-run]",
 ].join("\n");
@@ -251,10 +258,14 @@ function usage(verb: PointsWriteVerb, message: string): PointsWriteDocument {
   return { $schema: POINTS_WRITE_SCHEMA_ID, contract: POINTS_WRITE_CONTRACT_VERSION, verb, error: { code: "write-usage-invalid", message } };
 }
 
+/** Whether a flag's value is the JSON itself rather than a file: it starts with { or [ (#3403). */
+const inlineJson = (value: string): boolean => /^\s*[[{]/.test(value);
+
+/** A flag's JSON: from standard input (-), the value itself when it starts with { or [, or a file. */
 function readJson(verb: PointsWriteVerb, flag: string, value: string, cwd: string): { value: unknown } | PointsWriteDocument {
   let text: string;
   try {
-    text = readFileSync(value === "-" ? 0 : resolve(cwd, value), "utf-8");
+    text = inlineJson(value) ? value : readFileSync(value === "-" ? 0 : resolve(cwd, value), "utf-8");
   } catch (err) {
     return { $schema: POINTS_WRITE_SCHEMA_ID, contract: POINTS_WRITE_CONTRACT_VERSION, verb, error: { code: "write-input-invalid", message: `${flag} ${value} could not be read: ${err instanceof Error ? err.message : String(err)}` } };
   }
@@ -277,16 +288,23 @@ export async function runWorkspacePoints(ctx: CommandContext): Promise<number> {
   if (verb === "ask") {
     const point = args.extraPositional2;
     if (!point) return print(usage("ask", "ask needs the point's name"));
-    if (args.inputs === undefined) return print(usage("ask", "--inputs <file|-> is required"));
+    if (args.inputs === undefined) return print(usage("ask", "--inputs <file|-|json> is required"));
+    if (args.inputs === "-" && args.candidates === "-") return print(usage("ask", "--inputs and --candidates can't both read standard input: give one as a file or as JSON"));
     const inputs = readJson("ask", "--inputs", args.inputs, cwd);
     if (!("value" in inputs)) return print(inputs);
+    let given: unknown;
+    if (args.candidates !== undefined) {
+      const read = readJson("ask", "--candidates", args.candidates, cwd);
+      if (!("value" in read)) return print(read);
+      given = read.value;
+    }
     let ask: ModelAsk | undefined;
     if (args.response !== undefined) {
       const response = readJson("ask", "--response", args.response, cwd);
       if (!("value" in response)) return print(response);
       ask = responseAsk(response.value);
     }
-    return print(await askPoint({ cwd, point, inputs: inputs.value, subject: args.subject, kind: args.kind, ask, dryRun: args.dryRun }));
+    return print(await askPoint({ cwd, point, inputs: inputs.value, candidates: given, subject: args.subject, kind: args.kind, ask, dryRun: args.dryRun }));
   }
   if (verb === "answer") {
     const id = args.extraPositional2;

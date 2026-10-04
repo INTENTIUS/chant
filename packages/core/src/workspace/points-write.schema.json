@@ -507,6 +507,42 @@
             }
           }
         },
+        "asked": {
+          "description": "An ad-hoc point's question as its ask gave it (points ask --candidates, #3403): the question's text, and its criteria, what each candidate means, in the point's question type's shape. People's answer is one of the candidates. null for a declared point's question, and absent from a chant before it.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "question",
+                "criteria"
+              ],
+              "properties": {
+                "question": {
+                  "type": "string"
+                },
+                "criteria": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
         "valid": {
           "type": "boolean"
         },
@@ -593,6 +629,7 @@
                 "principal-unidentified",
                 "answer-not-answered",
                 "answer-field-unsupported",
+                "point-candidates-invalid",
                 "write-lock-timeout",
                 "write-lock-not-held",
                 "record-not-found",
