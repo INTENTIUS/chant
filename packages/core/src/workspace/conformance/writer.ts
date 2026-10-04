@@ -80,6 +80,7 @@ export const WRITE_CONTRACT_ACTIONS = [
   "records close",
   "points ask",
   "points answer",
+  "points retract",
   "work claim",
   "work renew",
   "work evidence",
@@ -101,6 +102,7 @@ export const WRITE_CONTRACT_SCHEMAS: Record<WriteContractAction, string> = {
   "records close": "records-close.schema.json",
   "points ask": "points-write.schema.json",
   "points answer": "points-write.schema.json",
+  "points retract": "points-write.schema.json",
   "work claim": "work-lease.schema.json",
   "work renew": "work-lease.schema.json",
   "work evidence": "work-evidence.schema.json",
@@ -125,6 +127,7 @@ export const WRITE_CONTRACT_JSON_FLAGS: Record<WriteContractAction, readonly (re
   "records close": [[], ["--json"]],
   "points ask": [[], ["--json"]],
   "points answer": [[], ["--json"]],
+  "points retract": [[], ["--json"]],
   "work claim": [["--json"]],
   "work renew": [["--json"]],
   "work evidence": [[], ["--json"]],
@@ -145,7 +148,8 @@ export interface WriteParams {
   "records review": { id: string; kind: string; verdict: "agree" | "dissent" | "abstain"; by: string; note?: string };
   "records close": { id: string; kind: string };
   "points ask": { point: string; kind: string; inputs: Record<string, unknown>; subject?: string };
-  "points answer": { id: string; kind: string; answer: string; by: string };
+  "points answer": { id: string; kind: string; answer: string; by: string; note?: string };
+  "points retract": { id: string; kind: string; by: string; note?: string };
   "work claim": { id: string; kind: string; holder: string };
   "work renew": { id: string; kind: string; holder: string; token: string };
   "work evidence": { id: string; kind: string; holder: string; token: string; entry: Record<string, unknown> };
@@ -206,7 +210,11 @@ export function writeArgv<A extends WriteContractAction>(action: A, params: Writ
     }
     case "points answer": {
       const q = p as WriteParams["points answer"];
-      return { args: [q.id, "--answer", q.answer, "--by", q.by, "--kind", q.kind] };
+      return { args: [q.id, "--answer", q.answer, "--by", q.by, ...(q.note !== undefined ? ["--note", q.note] : []), "--kind", q.kind] };
+    }
+    case "points retract": {
+      const q = p as WriteParams["points retract"];
+      return { args: [q.id, "--by", q.by, ...(q.note !== undefined ? ["--note", q.note] : []), "--kind", q.kind] };
     }
     case "work claim": {
       const q = p as WriteParams["work claim"];
@@ -303,7 +311,8 @@ const RUN_STARTED = { harness: { name: "conformance", version: "1" }, model: "no
 /**
  * The writes the suite drives, in order, each action at least once: a
  * decision made, amended and reviewed; a review session opened and closed; a
- * decision point asked and answered; the work item's lease claimed, renewed,
+ * decision point asked, answered with a note, the answer retracted and the
+ * question answered again (#3351); the work item's lease claimed, renewed,
  * evidence attached under it and released; one run started and ended, and one
  * recorded whole; the box's listing set, with a cover image copied in; and a
  * snapshot of the working tree taken and restored (#3172).
@@ -362,7 +371,9 @@ export const WRITER_SCRIPT: readonly WriterScriptStep[] = [
     subject: "W-001",
     inputs: { "work-item.criteria": 1, "work-item.files": 1, "work-item.words": 40, "work-item.fits_small": false, "work-item.fits_medium": false },
   })),
-  step("answer", "points answer", (d) => ({ id: String(d.ask.id), kind: WRITER_KINDS.answer, answer: "medium", by: WRITER_PRINCIPALS.reviewer })),
+  step("answer", "points answer", (d) => ({ id: String(d.ask.id), kind: WRITER_KINDS.answer, answer: "medium", by: WRITER_PRINCIPALS.reviewer, note: "Two criteria and one file, but past the small limits." })),
+  step("retract", "points retract", (d) => ({ id: String(d.ask.id), kind: WRITER_KINDS.answer, by: WRITER_PRINCIPALS.reviewer, note: "Answered for the wrong work item." })),
+  step("reanswer", "points answer", (d) => ({ id: String(d.ask.id), kind: WRITER_KINDS.answer, answer: "large", by: WRITER_PRINCIPALS.reviewer })),
   step("claim", "work claim", () => ({ id: "W-001", kind: WRITER_KINDS.work, holder: WRITER_PRINCIPALS.holder })),
   step("renew", "work renew", (d) => ({ id: "W-001", kind: WRITER_KINDS.work, holder: WRITER_PRINCIPALS.holder, token: leaseToken(d) })),
   step("evidence", "work evidence", (d) => ({
@@ -586,7 +597,7 @@ export function isReadCall(argv: readonly string[]): boolean {
     case "runs":
       return !["start", "end", "record"].includes(sub ?? "");
     case "points":
-      return !["ask", "answer"].includes(sub ?? "");
+      return !["ask", "answer", "retract"].includes(sub ?? "");
     case "work":
       return sub === "history";
     case "wip":
@@ -993,12 +1004,14 @@ export async function runWorkspaceWriterConformance(writer: WorkspaceWriterFacto
     const wipDoc = await direct(["workspace", "wip", "--json"]);
     const snapshots = new Set(((wipDoc.branches ?? []) as { snapshots: { commit: string }[] }[]).flatMap((b) => b.snapshots.map((x) => x.commit)));
     const claims = (history.claims ?? []) as { token: string; ended: string | null; release?: { outcome?: string } | null }[];
+    const questions = new Map(((await direct(["workspace", "points", "--kind", WRITER_KINDS.answer, "--json"])).questions as { id: string; retractions?: unknown[] }[] | undefined ?? []).map((q) => [q.id, q]));
     for (const s of WRITER_SCRIPT) {
       const doc = done[s.id] ?? {};
       if (s.action.startsWith("records ") || s.action.startsWith("points ")) {
         const kind = String((doc.kind as { file?: unknown } | undefined)?.file ?? "");
         const id = String(doc.id ?? "");
         if (!uncommitted.get(kind)?.has(id)) after.readBack.push(`read back: ${s.id} (${s.action}) wrote ${id}, and records --uncommitted --kind ${kind} does not list it`);
+        else if (s.action === "points retract" && !(questions.get(id)?.retractions?.length ?? 0)) after.readBack.push(`read back: ${s.id} (${s.action}) retracted the answer to ${id}, and points --json lists no retraction for it`);
       } else if (s.action === "work evidence") {
         if (!uncommitted.get(WRITER_KINDS.work)?.has(String(doc.item ?? ""))) after.readBack.push(`read back: ${s.id} (${s.action}) amended ${String(doc.item)}, and records --uncommitted does not list it`);
       } else if (s.action.startsWith("work ")) {
