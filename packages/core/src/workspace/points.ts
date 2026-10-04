@@ -15,6 +15,12 @@
  *           proposal a person confirms; below it, the next decider is asked.
  *   quorum  people. Always last: the question escalates to them.
  *
+ * A point declared `adhoc` (#3403) has no candidates of its own: its
+ * question's text and candidates come with each ask, as an agent's question
+ * to the room does, and the answer record keeps them as `asked`, so people's
+ * answer is checked against the candidates the question was asked with. Only
+ * people decide it: its chain is one quorum.
+ *
  * chant never calls a model (ws-052). {@link runChain} takes the model call
  * as a function, {@link ModelAsk}, which the decide Op activity (#2740), a
  * runtime's decider or a test's stub supplies. Without one, a model decider is
@@ -52,6 +58,7 @@ export const POINT_INPUT_OUTPUTS = {
   region: { schema: "intent", def: "region", description: "the region an intent graph covers" },
   commit: { schema: "intent", def: "commit", description: "a commit in an intent graph's window" },
   node: { schema: "intent", def: "node", description: "any node of an intent graph, by its id and kind: a commit, decision, unit, artifact or the region itself, as an intent walk asks of it (#3351)" },
+  ask: { schema: "points", def: "question", description: "an ad-hoc question as its asker knows it (#3403): the asker's own id for the ask, such as hud's request id for an agent's question, and who asked" },
   member: { schema: "ls", def: "member", description: "a member, as ls lists it" },
   gate: { schema: "status", def: "gate", description: "a gate, as status lists it" },
   release: { schema: "status", def: "release", description: "a release, as status lists it; a release plan's fields until the lifecycle ledger lists plans (#2717)" },
@@ -74,7 +81,8 @@ export type QuestionType = "noul" | "choice" | "score";
 export interface Question {
   type: QuestionType;
   instructions: string;
-  criteria: Record<string, string> | string[];
+  /** The candidates and what each means. Absent only from an ad-hoc point's declaration, whose candidates come with each ask (#3403). */
+  criteria?: Record<string, string> | string[];
 }
 
 export type Scalar = string | number | boolean | null;
@@ -93,6 +101,8 @@ export type Decider =
 
 export interface Point {
   title: string;
+  /** The question's text and candidates come with each ask, not the declaration (#3403). */
+  adhoc?: boolean;
   question: Question;
   inputs: Record<string, string>;
   deciders: Decider[];
@@ -117,8 +127,8 @@ export class PointsError extends Error {
 /** A question's candidate answers: true and false, a choice's options, or a score's levels. */
 export function candidates(question: Question): (string | boolean)[] {
   if (question.type === "noul") return [true, false];
-  if (question.type === "choice") return Object.keys(question.criteria);
-  return [...(question.criteria as string[])];
+  if (question.type === "choice") return Object.keys(question.criteria ?? {});
+  return [...((question.criteria as string[] | undefined) ?? [])];
 }
 
 const ONLY: Record<Decider["kind"], string[]> = { table: ["rows"], model: ["backend", "model", "threshold", "unreachable"], quorum: ["count", "roles"] };
@@ -140,6 +150,12 @@ function pointProblems(points: Record<string, Point>): PointProblem[] {
           message: `names ${JSON.stringify(output)}, which is not a read-contract output; an input is one of ${POINT_INPUT_OUTPUT_NAMES.join(", ")}, optionally with dotted field names`,
         });
       }
+    }
+    if (point.adhoc && (point.deciders.length !== 1 || point.deciders[0].kind !== "quorum")) {
+      problems.push({
+        field: at("deciders"),
+        message: "is an ad-hoc point's chain, and an ad-hoc point is decided by people alone: its chain is one quorum, since no table row or model can know candidates that come with the ask",
+      });
     }
     const allowed = candidates(point.question);
     const last = point.deciders.length - 1;
@@ -211,7 +227,9 @@ export function schemaProblems(data: unknown): PointProblem[] {
           ? `is missing ${JSON.stringify(e.params.missingProperty)}`
           : e.keyword === "propertyNames"
             ? `has a name that is not allowed: ${JSON.stringify(e.params.propertyName)}`
-            : (e.message ?? "is invalid");
+            : e.keyword === "not"
+              ? "has criteria, and an ad-hoc point's candidates come with each ask (#3403): leave criteria out"
+              : (e.message ?? "is invalid");
     const key = `${field}\0${message}`;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -263,8 +281,71 @@ const sha256 = (text: string): string => createHash("sha256").update(text, "utf8
 /** The version of a point: the sha256 of its declaration. Editing the question or any decider changes it. */
 export const pointVersion = (point: Point): string => sha256(canonical(point));
 
-/** What is answered once: the point, its version and the inputs. */
-export const inputsHash = (name: string, version: string, inputs: Record<string, unknown>): string => sha256(canonical({ point: name, version, inputs }));
+/**
+ * What is answered once: the point, its version and the inputs, and for an
+ * ad-hoc point the question and candidates it was asked with (#3403).
+ */
+export const inputsHash = (name: string, version: string, inputs: Record<string, unknown>, asked?: Asked): string => sha256(canonical({ point: name, version, inputs, asked }));
+
+// ── Ad-hoc questions (#3403) ─────────────────────────────────────────────────
+
+/** An ad-hoc point's question as one ask gave it: its text and its candidates, in the point's question type's shape. */
+export interface Asked {
+  question: string;
+  criteria: Record<string, string> | string[];
+}
+
+/** The question an answer asks: the point's own, or for an ad-hoc point the one the ask gave. */
+export function askedQuestion(point: Point, asked: Asked | undefined): Question {
+  return asked ? { type: point.question.type, instructions: asked.question, criteria: asked.criteria } : point.question;
+}
+
+const nonEmpty = (v: unknown): v is string => typeof v === "string" && v.trim() !== "";
+
+/**
+ * An ad-hoc ask's question and candidates (`points ask --candidates`), checked
+ * against the point's question type as a declaration's criteria are: noul
+ * describes true and false, choice gives 2 to 255 options, each with what it
+ * means, and score 2 to 10 distinct ordered levels. Returns the problems, or
+ * the question.
+ */
+export function parseAsked(point: Point, value: unknown): { asked: Asked } | { problems: string[] } {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return { problems: ["the candidates must be a JSON object with question and criteria"] };
+  const v = value as Record<string, unknown>;
+  const problems: string[] = [];
+  const extra = Object.keys(v).filter((k) => k !== "question" && k !== "criteria");
+  if (extra.length > 0) problems.push(`the candidates take question and criteria, not ${extra.join(", ")}`);
+  if (!nonEmpty(v.question)) problems.push("question must be the question's text");
+  const c = v.criteria;
+  const type = point.question.type;
+  if (type === "score") {
+    if (!Array.isArray(c) || c.length < 2 || c.length > 10 || !c.every(nonEmpty) || new Set(c).size !== c.length) problems.push("criteria must be 2 to 10 distinct levels, in order, for a score question");
+  } else if (c === null || typeof c !== "object" || Array.isArray(c)) {
+    problems.push(`criteria must be an object of ${type === "noul" ? "true and false" : "options"}, each with what it means`);
+  } else {
+    const entries = Object.entries(c as Record<string, unknown>);
+    if (!entries.every(([k, d]) => k !== "" && typeof d === "string")) problems.push("each criterion must be a non-empty name with what it means as a string");
+    if (type === "noul") {
+      const keys = entries.map(([k]) => k).sort();
+      if (keys.length !== 2 || keys[0] !== "false" || keys[1] !== "true") problems.push("criteria must describe true and false, and nothing else, for a noul question");
+    } else if (entries.length < 2 || entries.length > 255) {
+      problems.push("criteria must give 2 to 255 options for a choice question");
+    }
+  }
+  if (problems.length > 0) return { problems };
+  const criteria = Array.isArray(c) ? [...(c as string[])] : { ...(c as Record<string, string>) };
+  return { asked: { question: (v.question as string).trim(), criteria } };
+}
+
+/** An answer record's `asked`, when it has one. */
+export function askedOf(data: Record<string, unknown>): Asked | undefined {
+  const a = data.asked as Record<string, unknown> | undefined;
+  if (a === null || typeof a !== "object" || Array.isArray(a) || typeof a.question !== "string") return undefined;
+  const c = a.criteria;
+  if (Array.isArray(c)) return { question: a.question, criteria: c.filter((x): x is string => typeof x === "string") };
+  if (c !== null && typeof c === "object") return { question: a.question, criteria: Object.fromEntries(Object.entries(c as Record<string, unknown>).filter(([, d]) => typeof d === "string")) as Record<string, string> };
+  return undefined;
+}
 
 /** The id of the answer to `name` for inputs hashing to `hash`: the name and the hash's first 12 hex digits. */
 export const answerId = (name: string, hash: string): string => `${name}-${hash.slice(0, 12)}`;
@@ -333,7 +414,7 @@ export function answerReason(answer: WireAnswer | undefined): string | undefined
 }
 
 export function wireQuestion(question: Question): WireQuestion {
-  return { type: question.type, instructions: question.instructions, criteria: question.criteria };
+  return { type: question.type, instructions: question.instructions, criteria: question.criteria ?? {} };
 }
 
 /** What a model decider is asked. */

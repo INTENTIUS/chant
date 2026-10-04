@@ -8,7 +8,7 @@ diataxis: reference
 
 ```
 chant workspace points [--open] [--kind <kind file>] [--at <rev>] [--json]
-chant workspace points ask <point> --inputs <file|-> [--response <file>] [--subject <id>] [--kind <kind file>] [--dry-run]
+chant workspace points ask <point> --inputs <file|-|json> [--candidates <file|-|json>] [--response <file>] [--subject <id>] [--kind <kind file>] [--dry-run]
 chant workspace points answer <id> --answer <value> --by <name> [--by <name>...] [--note <text>] [--kind <kind file>] [--dry-run]
 chant workspace points retract <id> --by <name> [--by <name>...] [--note <text>] [--kind <kind file>] [--dry-run]
 ```
@@ -32,7 +32,7 @@ It never writes and never calls a model.
 
 ## Asking a point
 
-`points ask <point> --inputs <file>` asks the point's deciders in order and records the answer in the answer kind's records directory. The inputs are a JSON object keyed by the point's declared input names. An input the point does not declare is refused with `point-inputs-invalid`.
+`points ask <point> --inputs <file>` asks the point's deciders in order and records the answer in the answer kind's records directory. The inputs are a JSON object keyed by the point's declared input names, read from a file, from standard input (`-`), or given as the JSON itself when the value starts with `{`. An input the point does not declare is refused with `point-inputs-invalid`.
 
 | Decider | What it does |
 |---|---|
@@ -47,6 +47,23 @@ The record's id is the point's name and the first 12 hex digits of the sha256 of
 In a steward's turn, including a `points ask` that an Op's step runs while `CHANT_STEWARD` is set, the record goes on the `chant/lifecycle` branch instead, under `_answers/<kind name>/<id>.md` in the ledger of the member that owns the answer kind ([#2786](https://github.com/INTENTIUS/chant/issues/2786)). The checkout's working tree is left alone, since it belongs to the coding agent. The question's `ledger` gives the place on the branch, such as `chant/lifecycle:_answers/answer/slice-tier-0c1d2e3f4a5b.md`, which `git show` reads. A question already on the ledger stays there when it is asked again, and `points answer` writes people's answer there too. Both push the branch when there is a remote, and neither fails when the push does.
 
 `--subject <id>` says what the question is about, such as a work item's id, and is written to the record's `constrains`. `--dry-run` prints the document with the text it would write, and writes nothing.
+
+## Asking an ad-hoc question
+
+A point declared `adhoc` has no candidates of its own ([#3403](https://github.com/INTENTIUS/chant/issues/3403)). Each ask brings the question's text and its candidates with `--candidates`, as an agent's question to the people working with it does. The value is a file, `-` for standard input, or the JSON itself:
+
+```
+chant workspace points ask agent-question \
+  --inputs '{"ask.id":"req-7f3a","ask.by":"hud:chat-12"}' \
+  --candidates - --subject hud:chat-12 <<'EOF'
+{ "question": "Which language should the importer be written in?",
+  "criteria": { "ts": "TypeScript: matches the rest of the repo.", "py": "Python: the parser library is better." } }
+EOF
+```
+
+`criteria` has the shape of the point's question type: `true` and `false` with what each means for a `noul`, 2 to 255 options with what each means for a `choice`, and 2 to 10 distinct ordered levels for a `score`. The record keeps them as `asked`, with the candidates they give, and its title is the question's text. They are part of the inputs hash, so the same ask returns the same question, and one with other options is another question. Only one of `--inputs` and `--candidates` reads standard input.
+
+An ad-hoc point is decided by people alone: its chain is one quorum. `points answer` checks the answer against the candidates the question was asked with, so an option the ask did not offer is `answer-not-candidate`, and `points retract` takes it back as it does any answer. An ad-hoc point asked without `--candidates`, a declared point given them, or candidates that don't fit the point's question type are `point-candidates-invalid`. A workspace whose `answer.schema.json` copy has no `asked` field refuses an ad-hoc ask with `answer-field-unsupported`.
 
 ## Answering a question
 
@@ -64,7 +81,7 @@ A workspace whose `answer.schema.json` copy predates `note` and `retractions` re
 
 ## Output
 
-`--json` prints the read-contract document of [`points.schema.json`](/chant/reference/workspace-read-contract/#decision-points). Its `sources` hold one entry per answer kind read, with a `reason` when that kind could not be read. `points` lists each declared point with its inputs and deciders, its `candidates`, and their `criteria`, what each candidate means, as the points file declares it: an object of strings for `noul` and `choice`, an array of ordered level descriptions for `score`. `questions` lists each answer record, including those held on the ledger, which carry `ledger`. A record on the ledger wins over a file of the same name in the tree. `--at` reads a commit of the working branch, so it lists the tree's records only.
+`--json` prints the read-contract document of [`points.schema.json`](/chant/reference/workspace-read-contract/#decision-points). Its `sources` hold one entry per answer kind read, with a `reason` when that kind could not be read. `points` lists each declared point with its inputs and deciders, its `candidates`, and their `criteria`, what each candidate means, as the points file declares it: an object of strings for `noul` and `choice`, an array of ordered level descriptions for `score`. An ad-hoc point lists `adhoc: true`, no candidates, and empty criteria, since its asks bring them. `questions` lists each answer record, including those held on the ledger, which carry `ledger`. A record on the ledger wins over a file of the same name in the tree. `--at` reads a commit of the working branch, so it lists the tree's records only.
 
 | Field | Meaning |
 |---|---|
@@ -75,6 +92,7 @@ A workspace whose `answer.schema.json` copy predates `note` and `retractions` re
 | `escalations` | Each decider asked before the one that answered, and why it did not (`reason`), with a model's own explanation as `model_reason`. |
 | `note` | What the people who answered wrote with their answer, or null. |
 | `retractions` | Each answer people took back, oldest first: `answer`, `decider`, `answeredBy`, `answeredOn`, `answerNote`, and the retraction's `by`, `on` and `note`. Empty when none was. |
+| `asked` | An ad-hoc question's text and criteria, as its ask gave them: `{ question, criteria }`. null for a declared point's question. |
 | `current` | The point is still declared as it was when asked. |
 | `warnings` | The `answer-` codes: the points file can't be read, the point is gone, or it changed. |
 
@@ -86,12 +104,13 @@ A workspace whose `answer.schema.json` copy predates `note` and `retractions` re
 | `points-invalid` | The points file can't be read or is not valid. |
 | `point-unknown` | No points file declares the point. |
 | `point-inputs-invalid` | The inputs are not an object of the declared inputs. |
+| `point-candidates-invalid` | An ad-hoc point was asked without `--candidates`, a declared point with them, or they don't fit the question type. |
 | `point-decider-failed` | A model decider declared `unreachable: "fail"` could not answer. |
 | `answer-not-candidate` | The answer is not a candidate. |
 | `quorum-not-met` | Too few people count toward the quorum. |
 | `answer-in-steward-turn` | The answer came from a steward's turn, which never answers a question. |
 | `record-closed` | The question is already answered. Retract the answer first. |
 | `answer-not-answered` | `retract` names a question with no answer. |
-| `answer-field-unsupported` | The kind's schema copy has no `note` or `retractions` field. |
+| `answer-field-unsupported` | The kind's schema copy has no `note`, `retractions` or `asked` field. |
 
 `chant serve mcp` serves the read as the `workspace-points` tool, the answer as `points-answer` and the retraction as `points-retract`.

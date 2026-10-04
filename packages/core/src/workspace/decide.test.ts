@@ -15,7 +15,7 @@ import pointAnswerSchema from "./point-answer.schema.json";
 import { responseAsk, workspacePoints } from "./points-cli";
 import pointsSchema from "./points.schema.json";
 import pointsWriteSchema from "./points-write.schema.json";
-import type { ModelAsk, WireAnswer } from "./points";
+import { parsePoints, type ModelAsk, type WireAnswer } from "./points";
 import { queryRecords } from "./records-cli";
 
 const REF = join(REPO, "reference-workspace");
@@ -134,7 +134,7 @@ describe("points ask (#2739)", () => {
     expect(q).toMatchObject({ state: "escalated", open: true, current: true, model: { answer: "medium", confidence: 0.175, threshold: 0.8, model: "bosun-v3.1-1.7b", observed: false } });
     expect(q.escalations.map((e) => e.reason)).toEqual(["no row matches these inputs", "not observed: confidence 0.175 is below the threshold 0.8"]);
     expect(listed.questions.every((x) => x.open)).toBe(true);
-    expect(listed.points.map((p) => p.name)).toEqual(["slice-tier", "ship-skip", "finding-triage", "needs-a-decision", "intent-origin", "intent-judgment", "intent-disposition", "needs-decision"]);
+    expect(listed.points.map((p) => p.name)).toEqual(["slice-tier", "ship-skip", "finding-triage", "needs-a-decision", "intent-origin", "intent-judgment", "intent-disposition", "agent-question", "needs-decision"]);
     expect(listed.points[0].inputs[0]).toEqual({ name: "work-item.criteria", output: "work-item", description: "acceptance criteria in the work item" });
 
     // A later ask still escalating keeps the standing record; one a model answers rewrites it, as proposed.
@@ -293,11 +293,97 @@ describe("the intent walk's points, a note on an answer, and retracting it (#335
   });
 
   test("a workspace whose answer schema predates notes and retractions refuses them, rather than dropping them", () => {
-    expect(answerFields(pointAnswerSchema)).toEqual({ note: true, retractions: true });
+    expect(answerFields(pointAnswerSchema)).toEqual({ note: true, retractions: true, asked: true });
     const old = JSON.parse(JSON.stringify(pointAnswerSchema));
     delete old.properties.note;
     delete old.properties.retractions;
-    expect(answerFields(old)).toEqual({ note: false, retractions: false });
+    delete old.properties.asked;
+    expect(answerFields(old)).toEqual({ note: false, retractions: false, asked: false });
+  });
+});
+
+describe("an ad-hoc question whose candidates come with the ask (#3403)", () => {
+  const room = {
+    question: "Which language should the importer be written in?",
+    criteria: { ts: "TypeScript: matches the rest of the repo.", py: "Python: the parser library is better." },
+  };
+
+  test("the reference workspace declares agent-question, ad hoc and decided by one person", async () => {
+    const listed = await workspacePoints({ cwd: root });
+    read.expectValid(listed);
+    if ("error" in listed) throw new Error(listed.error.message);
+    const p = listed.points.find((x) => x.name === "agent-question")!;
+    expect(p).toMatchObject({ adhoc: true, questionType: "choice", candidates: [], criteria: {}, quorum: { count: 1 } });
+    expect(p.inputs.map((i) => [i.name, i.output])).toEqual([["ask.id", "ask"], ["ask.by", "ask"]]);
+    expect(listed.points.find((x) => x.name === "slice-tier")).toMatchObject({ adhoc: false });
+  });
+
+  test("the ask keeps the question and candidates; the answer is checked against them, noted, retracted and answered again", async () => {
+    const inputs = { "ask.id": "req-1", "ask.by": "hud:session-7" };
+    const asked = ok(await askPoint({ cwd: root, point: "agent-question", inputs, candidates: room, subject: "hud:session-7", on }));
+    expect(asked.question).toMatchObject({
+      state: "escalated",
+      open: true,
+      point: "agent-question",
+      title: "Which language should the importer be written in? (hud:session-7): open for people",
+      candidates: ["ts", "py"],
+      asked: room,
+      decider: { kind: "quorum", count: 1 },
+    });
+    const text = fm(asked.path);
+    expect(text).toContain('asked:\n  question: "Which language should the importer be written in?"');
+    expect(text).toContain("- ts: TypeScript: matches the rest of the repo.");
+
+    // The same ask returns the same question; other options are another question.
+    expect(ok(await askPoint({ cwd: root, point: "agent-question", inputs, candidates: room, on }))).toMatchObject({ reused: true, id: asked.id });
+    const other = ok(await askPoint({ cwd: root, point: "agent-question", inputs, candidates: { ...room, criteria: { ...room.criteria, go: "Go." } }, on, dryRun: true }));
+    expect(other.id).not.toBe(asked.id);
+
+    expect(refused(await answerPoint({ cwd: root, id: asked.id, answer: "rust", by: ["alice"] }))).toBe("answer-not-candidate");
+    const answered = ok(await answerPoint({ cwd: root, id: asked.id, answer: "py", by: ["alice"], note: "The parser decides it.", on }));
+    expect(answered.question).toMatchObject({ state: "answered", answer: "py", answeredBy: ["alice"], note: "The parser decides it.", asked: room, title: "Which language should the importer be written in? (hud:session-7): py" });
+    const retracted = ok(await retractAnswer({ cwd: root, id: asked.id, by: ["alice"], note: "Asked too early.", on }));
+    expect(retracted.question).toMatchObject({ state: "escalated", asked: room, retractions: [{ answer: "py" }] });
+    ok(await answerPoint({ cwd: root, id: asked.id, answer: "ts", by: ["bob"], on }));
+
+    const listed = await workspacePoints({ cwd: root });
+    read.expectValid(listed);
+    if ("error" in listed) throw new Error(listed.error.message);
+    expect(listed.questions.find((q) => q.id === asked.id)).toMatchObject({ state: "answered", answer: "ts", answeredBy: ["bob"], asked: room, candidates: ["ts", "py"] });
+    expect(listed.questions.find((q) => q.point === "slice-tier")).toMatchObject({ asked: null });
+  });
+
+  test("refusals: no candidates for an ad-hoc point, candidates for a declared one, candidates that don't fit", async () => {
+    const inputs = { "ask.id": "req-2" };
+    expect(refused(await askPoint({ cwd: root, point: "agent-question", inputs }))).toBe("point-candidates-invalid");
+    expect(refused(await askPoint({ cwd: root, point: "slice-tier", inputs: { "work-item.fits_small": true }, candidates: room }))).toBe("point-candidates-invalid");
+    for (const bad of [[], { question: "Which?", criteria: { only: "One option." } }, { question: "", criteria: room.criteria }, { ...room, extra: 1 }, { question: "Which?", criteria: ["a", "b"] }]) {
+      const doc = await askPoint({ cwd: root, point: "agent-question", inputs, candidates: bad });
+      expect(refused(doc)).toBe("point-candidates-invalid");
+    }
+  });
+
+  test("an ad-hoc point leaves out criteria and is decided by one quorum", () => {
+    const base = { title: "Ad hoc", adhoc: true, question: { type: "choice", instructions: "Asked at runtime." }, inputs: { "ask.id": "the ask" } };
+    expect(() => parsePoints(JSON.stringify({ points: { a: { ...base, deciders: [{ kind: "quorum", count: 1 }] } } }), "points.json")).not.toThrow();
+    expect(() => parsePoints(JSON.stringify({ points: { a: { ...base, question: { ...base.question, criteria: { x: "X", y: "Y" } }, deciders: [{ kind: "quorum", count: 1 }] } } }), "points.json")).toThrow(/leave criteria out/);
+    expect(() =>
+      parsePoints(JSON.stringify({ points: { a: { ...base, deciders: [{ kind: "model", backend: "systemone", model: "jev-1.13.0", threshold: 0.8 }, { kind: "quorum", count: 1 }] } } }), "points.json"),
+    ).toThrow(/decided by people alone/);
+    expect(() => parsePoints(JSON.stringify({ points: { a: { ...base, adhoc: false, deciders: [{ kind: "quorum", count: 1 }] } } }), "points.json")).toThrow(/criteria/);
+  });
+
+  test("a workspace whose answer schema predates asked refuses an ad-hoc ask, rather than dropping the question", async () => {
+    const schemaFile = join(root, "answers", "answer.schema.json");
+    const original = readFileSync(schemaFile, "utf-8");
+    const old = JSON.parse(original);
+    delete old.properties.asked;
+    writeFileSync(schemaFile, JSON.stringify(old, null, 2));
+    try {
+      expect(refused(await askPoint({ cwd: root, point: "agent-question", inputs: { "ask.id": "req-3" }, candidates: room }))).toBe("answer-field-unsupported");
+    } finally {
+      writeFileSync(schemaFile, original);
+    }
   });
 });
 

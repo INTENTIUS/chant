@@ -28,6 +28,8 @@ The [reader suite](/chant/reference/workspace-read-contract/#testing-a-reader) h
 | `answer` | `points answer` | `workspace points answer <id> --answer medium --by <name> --note <text> --kind <kind>` | `points-write.schema.json` | the people's answer, with their note |
 | `retract` | `points retract` | `workspace points retract <id> --by <name> --note <text> --kind <kind>` | `points-write.schema.json` | the question escalated again, the answer kept in its `retractions` ([#3351](https://github.com/INTENTIUS/chant/issues/3351)) |
 | `reanswer` | `points answer` | `workspace points answer <id> --answer large --by <name> --kind <kind>` | `points-write.schema.json` | the people's new answer |
+| `adhoc` | `points ask` | `workspace points ask agent-question --inputs <json> --candidates - --subject W-001 --kind <kind>` | `points-write.schema.json` | an agent's question with its own text and options, kept as `asked`, escalated to people ([#3403](https://github.com/INTENTIUS/chant/issues/3403)) |
+| `adhoc-answer` | `points answer` | `workspace points answer <id> --answer flag --by <name> --kind <kind>` | `points-write.schema.json` | the people's pick among the options the question was asked with |
 | `claim` | `work claim` | `workspace work claim W-001 --holder <name> --kind <kind> --json` | `work-lease.schema.json` | the lease ref and a `chant/lifecycle` line |
 | `renew` | `work renew` | `workspace work renew W-001 --holder <name> --token <token> --kind <kind> --json` | `work-lease.schema.json` | the same |
 | `evidence` | `work evidence` | `workspace work evidence W-001 --holder <name> --token <token> --from - --kind <kind>` | `work-evidence.schema.json` | evidence for `AC-1` on the work item |
@@ -94,7 +96,7 @@ For each step the writer performs, the suite fails when any of these is false:
 
 | Check | How |
 |---|---|
-| the step made exactly one chant call: the action's command, with the step's arguments in order and its JSON flag, and the step's fields on stdin | the transport records every call and what it was given |
+| the step made exactly one chant call: the action's command, with the step's arguments in order and its JSON flag, and the step's fields on stdin. An argument that is JSON, such as an ad-hoc ask's `--inputs`, matches when it holds the same value in any key order or spacing | the transport records every call and what it was given |
 | the writer returned the document chant printed, unchanged | compared with the recorded output |
 | the document validates against the action's output schema, and chant wrote rather than refused | the schemas `@intentius/chant` ships, with its own ajv |
 | every file that changed is the path the document reports writing (for `box listing set` and `wip restore`, one of its `paths`) | every file outside `.git` is hashed before and after the step |
@@ -108,7 +110,7 @@ After the script it fails when any of these is false:
 | the state directory holds only what `privateState` declares | listed after the script |
 | amnesia: the writer shows the same facts with its private state deleted | `facts()` before; then `close()`, the state directory deleted, the writer built again with the same `stateDir`, and `facts()` again; the two must be equal |
 | everything `holds()` names is in the repository, or one of the four exceptions | each record read with `records`, each run with `runs`, each lease with `work history` |
-| every fact the script produced reads back through the read contract | `records --uncommitted` for each kind, `points --json` for the retraction, `work history W-001`, `runs`, the listing in `status dev --json`, and each snapshot in `wip --json` |
+| every fact the script produced reads back through the read contract | `records --uncommitted` for each kind, `points --json` for the retraction and the ad-hoc question's `asked`, `work history W-001`, `runs`, the listing in `status dev --json`, and each snapshot in `wip --json` |
 
 When the writer performs `records amend`, the suite also holds it to the concurrent case ([#3173](https://github.com/INTENTIUS/chant/issues/3173)). It reads the script's decision's digest and has the writer make the three amendments in `CONCURRENT_AMENDS` at once, each with `expect` set to that digest, as two people and an agent answering one record would. `writeArgv` passes `expect` as `--expect`. Exactly one must be written. The other two must each be chant's `record-conflict` refusal naming the winner's digest. Each comes from one chant call and is returned unchanged. Retrying a conflict without `--expect` overwrites the other writer, and the one-call check catches it. The suite then has the writer retry each refused amendment from the digest its refusal named, and each retry must be written. The problems are listed in `after.concurrent`, each starting `concurrent:`.
 

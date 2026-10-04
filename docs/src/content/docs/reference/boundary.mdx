@@ -45,7 +45,7 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 |
 | intent node kind | the node kinds of `intent.schema.json` | 10 | 0 | 3 |
 | intent edge kind | the edge kinds of `intent.schema.json` | 12 | 0 | 3 |
-| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 196 | 0 | 0 |
+| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 197 | 0 | 0 |
 | finding code | the finding codes of `intent.schema.json` | 17 | 0 | 0 |
 | WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 50 | 0 | 0 |
 | hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 |
@@ -103,7 +103,7 @@ Each row follows, in the order of the table above.
 | workspace command | `workspace records review` | chant | records-review.schema.json | Appends a dated review verdict to one record, bound to the digest of the record text, with a note required for a dissent, and with --sign an ssh seal by the reviewer. With --session, the session must exist and be open, and the verdict goes on its verdicts list in the same command. |
 | workspace command | `workspace records close` | chant | records-close.schema.json | Closes an open review session in one write: its state, close time and closing commit, and the seal computed by chant's rule (#2693). |
 | workspace command | `workspace points` | chant | points.schema.json | Lists the decision points each declared answer kind's points file declares, and the questions asked of them, with the open ones and any model's answer and confidence (ws-058, #2739). |
-| workspace command | `workspace points ask` | chant | points-write.schema.json | Asks a point's table, model and quorum deciders for one set of inputs and records the answer, proposed when a model gave it; chant calls no model, and a backend's response is handed in with --response. |
+| workspace command | `workspace points ask` | chant | points-write.schema.json | Asks a point's table, model and quorum deciders for one set of inputs and records the answer, proposed when a model gave it; chant calls no model, and a backend's response is handed in with --response. An ad-hoc point's question and candidates come with the ask, with --candidates, and the record keeps them as asked (#3403). |
 | workspace command | `workspace points answer` | chant | points-write.schema.json | Records people's answer to an open question, or their confirmation of a model's proposal, once the point's quorum is met, with their note (#3351). |
 | workspace command | `workspace points retract` | chant | points-write.schema.json | Takes people's answer back once the point's quorum is met: the question is escalated to people again, and the answer, its note, and who retracted it, when and why stay in the record's retractions (#3351, ws-084). |
 | workspace command | `workspace agent` | chant | agent.schema.json | Prints an agent session from the declaration at base: the one member it is bound to, the record kinds and verbs its write scope allows, and the spec records --current prints, so a session that resumes rebuilds its context from the repository alone (#2548, ws-067). |
@@ -361,12 +361,13 @@ Each row follows, in the order of the table above.
 | reason code | `points-invalid` | chant | points-write.schema.json, points.schema.json | The points file an answer kind names can't be read, or does not match decision-points.schema.json and the rules checked in code. |
 | reason code | `point-unknown` | chant | points-write.schema.json | No points file declares the point asked, or the one an answer names. |
 | reason code | `point-inputs-invalid` | chant | points-write.schema.json | The inputs given to an ask are not a JSON object of the point's declared inputs. |
+| reason code | `point-candidates-invalid` | chant | points-write.schema.json | An ad-hoc point was asked without --candidates, a declared point with them, or they are not a question and criteria of the point's question type (#3403). |
 | reason code | `point-decider-failed` | chant | points-write.schema.json | A model decider that fails closed (unreachable: fail) could not answer, so the ask wrote nothing. |
 | reason code | `answer-not-candidate` | chant | points-write.schema.json | The people's answer is not one of the question's candidates. |
 | reason code | `quorum-not-met` | chant | points-write.schema.json | Too few of the people who answered count toward the point's quorum: distinct, not holding the agent role, not the steward that asked, and holding one of its roles when it names any. |
 | reason code | `answer-in-steward-turn` | chant | points-write.schema.json | The answer was given during a steward's turn, or by a process it started: a steward never answers a decision point, and a person answers it through hud or at a shell. |
 | reason code | `answer-not-answered` | chant | points-write.schema.json | points retract names a question that has no answer to retract: it is escalated or proposed, and people answer it instead (#3351). |
-| reason code | `answer-field-unsupported` | chant | points-write.schema.json | The answer kind's copy of point-answer.schema.json predates a field the write needs, a note or a retraction, and chant refuses rather than drop it (#3351). |
+| reason code | `answer-field-unsupported` | chant | points-write.schema.json | The answer kind's copy of point-answer.schema.json predates a field the write needs, a note, a retraction or an ad-hoc question's asked, and chant refuses rather than drop it (#3351, #3403). |
 | finding code | `intent-commit-undecided` | chant | intent.schema.json | A commit changed the region when no decision constrained it at path granularity. |
 | finding code | `intent-commit-bare` | chant | intent.schema.json | A commit names no unit, carries no record through its Chant-Record or Chant-Lease trailer, and has no pull request and no decision covering the region at its time. |
 | finding code | `intent-pin-drifted` | chant | intent.schema.json | A decision's pinned artifact no longer hashes to the pin. |

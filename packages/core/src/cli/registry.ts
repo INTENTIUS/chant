@@ -305,8 +305,10 @@ export interface ParsedArgs {
   bys?: string[];
   /** `chant workspace points --open` (#2739): only the questions still open. */
   open?: boolean;
-  /** `chant workspace points ask <point> --inputs <file|->` (#2739): the inputs, as a JSON object. */
+  /** `chant workspace points ask <point> --inputs <file|-|json>` (#2739): the inputs, as a JSON object. */
   inputs?: string;
+  /** `chant workspace points ask <point> --candidates <file|-|json>` (#3403): an ad-hoc point's question and candidates. */
+  candidates?: string;
   /** `chant workspace points ask <point> --response <file>` (#2739): a POST /v1/systemone response the caller got from a backend. */
   response?: string;
   /** `chant workspace points ask <point> --subject <id>` (#2739): what the question is about. */
