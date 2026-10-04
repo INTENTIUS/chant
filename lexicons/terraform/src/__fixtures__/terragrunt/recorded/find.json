@@ -1,0 +1,67 @@
+[
+  {
+    "type": "unit",
+    "path": "live/dev/vpc",
+    "include": {
+      "root": "root.hcl"
+    },
+    "reading": [
+      "modules/thing/main.tf",
+      "root.hcl"
+    ]
+  },
+  {
+    "type": "unit",
+    "path": "live/prod/vpc",
+    "include": {
+      "root": "root.hcl"
+    },
+    "reading": [
+      "modules/thing/main.tf",
+      "root.hcl"
+    ]
+  },
+  {
+    "type": "unit",
+    "path": "live/dev/db",
+    "include": {
+      "root": "root.hcl"
+    },
+    "dependencies": [
+      "live/dev/vpc"
+    ],
+    "reading": [
+      "modules/thing/main.tf",
+      "root.hcl"
+    ]
+  },
+  {
+    "type": "unit",
+    "path": "live/prod/app",
+    "include": {
+      "root": "root.hcl"
+    },
+    "dependencies": [
+      "live/prod/vpc"
+    ],
+    "reading": [
+      "modules/thing/main.tf",
+      "root.hcl"
+    ]
+  },
+  {
+    "type": "unit",
+    "path": "live/dev/app",
+    "include": {
+      "root": "root.hcl"
+    },
+    "dependencies": [
+      "live/dev/db",
+      "live/dev/vpc"
+    ],
+    "reading": [
+      "modules/thing/main.tf",
+      "root.hcl"
+    ]
+  }
+]

@@ -1,0 +1,22 @@
+[
+  {
+    "Started": "2026-10-03T21:52:47.031211-06:00",
+    "Ended": "2026-10-03T21:52:47.180184-06:00",
+    "Name": "live/dev/db",
+    "Result": "succeeded",
+    "Cmd": "plan",
+    "Args": [
+      "-no-color"
+    ]
+  },
+  {
+    "Started": "2026-10-03T21:52:47.031218-06:00",
+    "Ended": "2026-10-03T21:52:47.199669-06:00",
+    "Name": "live/prod/app",
+    "Result": "succeeded",
+    "Cmd": "plan",
+    "Args": [
+      "-no-color"
+    ]
+  }
+]

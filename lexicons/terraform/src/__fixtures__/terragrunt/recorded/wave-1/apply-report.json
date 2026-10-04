@@ -1,0 +1,22 @@
+[
+  {
+    "Started": "2026-10-03T21:52:46.75567-06:00",
+    "Ended": "2026-10-03T21:52:46.8429-06:00",
+    "Name": "live/prod/vpc",
+    "Result": "succeeded",
+    "Cmd": "apply",
+    "Args": [
+      "-no-color"
+    ]
+  },
+  {
+    "Started": "2026-10-03T21:52:46.75727-06:00",
+    "Ended": "2026-10-03T21:52:46.843046-06:00",
+    "Name": "live/dev/vpc",
+    "Result": "succeeded",
+    "Cmd": "apply",
+    "Args": [
+      "-no-color"
+    ]
+  }
+]
