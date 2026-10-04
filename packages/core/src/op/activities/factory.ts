@@ -111,6 +111,12 @@ function sameKind(file: string, kind: string, cwd: string): boolean {
 }
 
 /** The work kind's items and the box's intent, read through the read contract. */
+/** The contract an item's own field names, when the kind links no contract kind: its state is unknown to chant. */
+function contractField(data: Record<string, unknown> | null, field: string | undefined): { id: string; state: string | null } | null {
+  const value = data?.[field ?? "contract"];
+  return typeof value === "string" && value.trim() !== "" ? { id: value.trim(), state: null } : null;
+}
+
 async function readWork(cwd: string, kind?: string): Promise<WorkRead> {
   const { declaredKindFiles, queryDeclaredRecords } = await import("../../workspace/records-cli");
   const { loadRecordKind } = await import("../../workspace/records");
@@ -142,7 +148,9 @@ async function readWork(cwd: string, kind?: string): Promise<WorkRead> {
         ready: r.ready ?? false,
         data,
         tier: typeof tier === "string" ? tier : null,
-        contract: r.contract ?? null,
+        // The kind's contract link, else the item's own contract field (#3503): a kind whose contracts aren't
+        // a chant record kind yet, such as studio's markdown contracts, still names the contract an item builds.
+        contract: r.contract ?? contractField(data, work.contract?.field),
         warnings: r.warnings.map((w) => w.code),
         answers: (r.answers ?? []).map((a) => ({ id: a.id, point: a.point, state: a.state, answer: a.answer })),
         leased: !!r.lease,
