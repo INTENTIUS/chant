@@ -41,6 +41,7 @@
  * (absent on the resolution lines written before #2119, which is why
  * `"resolution"` is the default reading).
  */
+import { FAN_OUT_GATE_OP } from "../op/gate-name";
 import { samePlanDigest } from "./plan-digest";
 import { sortedJsonReplacer } from "../utils";
 import { currentGateOrigin, type GateOrigin } from "./gate-origin";
@@ -271,6 +272,12 @@ export interface PendingGateRecord {
    */
   origin?: GateOrigin;
   /**
+   * The gate is never resolved over MCP or ACP (chant#3485), whichever channel
+   * reached it. The declaration travels on the record because an Op that MCP
+   * cannot discover, such as `fan-out`, has no config to read it from.
+   */
+  neverOverMcp?: true;
+  /**
    * The gate's quorum and policy (#2508), with its context resolved against
    * this run. `chant approve` reads it to evaluate the policy against the plan
    * the run produced, and `chant operator status` to show quorum progress.
@@ -334,6 +341,9 @@ export async function appendPendingGate(
     version: 1,
     kind: "pending",
     origin: currentGateOrigin(),
+    // chant#3485: an Op MCP cannot discover declares nothing, so the gate
+    // records the rule for it. Every fan-out gate is one.
+    ...(input.op === FAN_OUT_GATE_OP ? { neverOverMcp: true as const } : {}),
     ...input,
   };
   const commit = await appendGateLine(record, "Pending gate record", opts);

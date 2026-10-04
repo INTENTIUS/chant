@@ -32,6 +32,7 @@ vi.mock("../../op/runtimes/local", () => ({
   }),
 }));
 
+import { recordGateApproval } from "../handlers/operator";
 import { createOpApproveTool, createOpRunTool, createOpStatusTool, createOpReportTool } from "./op-tools";
 
 function git(args: string[], cwd: string): void {
@@ -97,5 +98,72 @@ describe("neverOverMcp (chant#3447)", () => {
   test("op-status and op-report still answer for a declared Op", async () => {
     await expect(createOpStatusTool().handler({ name: "tf-apply" })).resolves.toMatchObject({ op: "tf-apply" });
     await expect(createOpReportTool().handler({ name: "tf-apply" })).resolves.toContain("# tf-apply");
+  });
+
+  async function repoWithFanOutGate(dir: string): Promise<void> {
+    git(["init", "-q", "-b", "main"], dir);
+    git(["config", "user.email", "t@chant.dev"], dir);
+    git(["config", "user.name", "T"], dir);
+    writeFileSync(join(dir, "README.md"), "x\n");
+    git(["add", "."], dir);
+    git(["commit", "-q", "-m", "init"], dir);
+    // fan-out is not discovered, and its gate was reached at a shell.
+    await appendPendingGate(
+      {
+        op: "fan-out",
+        gate: "wave-2",
+        timestamp: "2026-01-01T00:00:00.000Z",
+        origin: "cli",
+        expiresAt: "2999-01-01T00:00:00.000Z",
+        planDigest: `sha256:${"b".repeat(64)}`,
+      },
+      { cwd: dir },
+    );
+  }
+
+  test("an undiscovered Op's gate carries the declaration (chant#3485)", async () => {
+    await withTestDir(async (dir) => {
+      await repoWithFanOutGate(dir);
+      const { pending } = await readGateLedger("fan-out", { cwd: dir });
+      expect(pending[0].neverOverMcp).toBe(true);
+    });
+  });
+
+  test("op-approve refuses an undiscovered Op's gate and the ledger is unchanged (chant#3485)", async () => {
+    await withTestDir(async (dir) => {
+      await repoWithFanOutGate(dir);
+      const before = await readGateLedger("fan-out", { cwd: dir });
+      process.chdir(dir);
+      await expect(createOpApproveTool().handler({ name: "fan-out", gate: "wave-2" })).rejects.toThrow(
+        /neverOverMcp.*whichever channel/s,
+      );
+      expect(await readGateLedger("fan-out", { cwd: dir })).toEqual(before);
+      expect(resolveGate).not.toHaveBeenCalled();
+    });
+  });
+
+  test("ACP refuses the same gate, even with the same-origin override (chant#3485)", async () => {
+    await withTestDir(async (dir) => {
+      await repoWithFanOutGate(dir);
+      const before = await readGateLedger("fan-out", { cwd: dir });
+      process.chdir(dir);
+      const outcome = await recordGateApproval("fan-out", "wave-2", {
+        origin: "acp",
+        actor: "agent",
+        allowSameOrigin: true,
+        cwd: dir,
+      });
+      expect(outcome.ok).toBe(false);
+      expect(await readGateLedger("fan-out", { cwd: dir })).toEqual(before);
+    });
+  });
+
+  test("a person at a shell can still approve the gate (chant#3485)", async () => {
+    await withTestDir(async (dir) => {
+      await repoWithFanOutGate(dir);
+      process.chdir(dir);
+      const outcome = await recordGateApproval("fan-out", "wave-2", { origin: "cli", actor: "alex", cwd: dir });
+      expect(outcome.ok).toBe(true);
+    });
   });
 });

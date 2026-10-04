@@ -21,6 +21,7 @@ import { createLocalOpRuntime } from "../../op/runtimes/local";
 import type { OpRuntimeProvider } from "../../op/runtime";
 import { loadChantConfig } from "../../config";
 import { loadPlugins } from "../plugins";
+import { readGateLedger, latestPendingGate } from "../../lifecycle/gate-ledger";
 import { recordGateApproval } from "../handlers/operator";
 import type { ToolRegistration } from "./lifecycle-tools";
 
@@ -59,9 +60,20 @@ async function runtimeFor(name: unknown): Promise<OpRuntimeProvider> {
  * shell. An Op that is not discovered is left to the caller's own not-found
  * handling.
  */
-async function neverOverMcpRefusal(name: string, action: "run" | "approve"): Promise<string | undefined> {
+async function neverOverMcpRefusal(
+  name: string,
+  action: "run" | "approve",
+  gate?: string,
+): Promise<string | undefined> {
   const { ops } = await discoverOps();
-  if (!ops.get(name)?.config.neverOverMcp) return undefined;
+  let declared = Boolean(ops.get(name)?.config.neverOverMcp);
+  // An Op that is not discovered (fan-out) declares nothing, so its gate
+  // records the rule itself (chant#3485).
+  if (!declared && action === "approve" && gate !== undefined) {
+    const { pending } = await readGateLedger(name).catch(() => ({ pending: [] }));
+    declared = Boolean(latestPendingGate(pending, gate)?.neverOverMcp);
+  }
+  if (!declared) return undefined;
   return action === "run"
     ? `Op "${name}" declares neverOverMcp, so it is not run over MCP. Run it at a shell with \`chant run ${name}\`; op-status and op-report still answer here.`
     : `Op "${name}" declares neverOverMcp, so its gates are not resolved over MCP, whichever channel reached them. ` +
@@ -225,7 +237,7 @@ export function createOpApproveTool(): ToolRegistration {
       const gate = params.gate as string;
       if (!name || !gate) throw new Error("op-approve needs both an Op name and a gate name");
 
-      const refusal = await neverOverMcpRefusal(name, "approve");
+      const refusal = await neverOverMcpRefusal(name, "approve", gate);
       if (refusal) throw new Error(refusal);
 
       const runtime = await runtimeFor(params.runtime);
