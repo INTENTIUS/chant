@@ -117,6 +117,13 @@ export interface GateResolutionRecord {
   gate: string;
   /** Who resolved it — an actor name, the same convention `components release --actor` and `run approve --approver` use. */
   resolvedBy: string;
+  /**
+   * Who carried this approval to chant for `resolvedBy` (#3402): `chant
+   * approve --relayed-by`, such as a follower program relaying a person's
+   * approval. The approver is still `resolvedBy`; a seal covers this field
+   * too. Absent when the approver recorded it themselves.
+   */
+  relayedBy?: string;
   /** ISO-8601 timestamp, caller-supplied (library code never calls `Date.now()` internally). */
   timestamp: string;
   /** Optional free-text context. Before #2028 this was also where a PR link went by convention; put the link in {@link GateResolutionRecord.url} instead and leave this for prose. */

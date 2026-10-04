@@ -33,6 +33,8 @@ export interface DeriveFanOutOptions {
   buildParams?: BuildParamProvenance[];
   /** Already-loaded project config, when the caller read it for its own reasons. */
   config?: ChantConfig;
+  /** Components that form wave 1 (#3049). See `FanOutRequest.canary`. */
+  canary?: string[];
 }
 
 export interface DerivedFanOut {
@@ -80,6 +82,7 @@ export async function deriveFanOut(options: DeriveFanOutOptions): Promise<Derive
     components,
     changed: signal.changed,
     ...(signal.indeterminate.length > 0 ? { indeterminate: signal.indeterminate } : {}),
+    ...(options.canary?.length ? { canary: options.canary } : {}),
   });
 
   return { success: true, components, signal, plan };

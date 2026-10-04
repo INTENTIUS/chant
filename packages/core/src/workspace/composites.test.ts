@@ -61,7 +61,7 @@ const componentIr = (components: { name: string; composites?: string[]; archetyp
 const local = (name: string) => ({ name: "local", lexicon: null, default: true, command: `chant run --components ${name}` });
 
 /** The default environment, named by nothing but chant itself. */
-const localEnv = (name: string) => ({ name: "local", default: true, source: "builtin", command: `chant run --components ${name}` });
+const localEnv = (name: string) => ({ name: "local", default: true, source: "builtin", site: null, command: `chant run --components ${name}` });
 
 /**
  * app declares three instances and exports ImageUri; delivery links to it and
@@ -381,11 +381,11 @@ describe("the environments each component may deploy to (#2695)", () => {
     const g = result((await workspaceComposites({ cwd: declared() })).doc);
     expectValid(g);
     expect(g.components.find((c) => c.id === "jobs/queue-runner")!.environments).toEqual([
-      { name: "local", default: true, source: "builtin", command: "chant run --components queue-runner" },
-      { name: "staging", default: false, source: "config", command: "chant run --components queue-runner --env staging" },
-      { name: "prod", default: false, source: "config", command: "chant run --components queue-runner --env prod" },
+      { name: "local", default: true, source: "builtin", site: null, command: "chant run --components queue-runner" },
+      { name: "staging", default: false, source: "config", site: null, command: "chant run --components queue-runner --env staging" },
+      { name: "prod", default: false, source: "config", site: null, command: "chant run --components queue-runner --env prod" },
       // The pattern pr-* is no environment by itself, and it covers the ledger's pr-42.
-      { name: "pr-42", default: false, source: "ledger", command: "chant run --components queue-runner --env pr-42" },
+      { name: "pr-42", default: false, source: "ledger", site: null, command: "chant run --components queue-runner --env pr-42" },
     ]);
     const jobs = g.members.find((m) => m.name === "jobs")!;
     expect(jobs.environmentReasons).toEqual([{ code: "environments-ledger-undeclared", message: expect.stringContaining("retired") }]);
@@ -397,7 +397,7 @@ describe("the environments each component may deploy to (#2695)", () => {
     // delivery has no _members/delivery, so the flat staging ledger is its; its config declares nothing, so anything goes.
     expect(g.components.find((c) => c.id === "delivery/edge")!.environments).toEqual([
       localEnv("edge"),
-      { name: "staging", default: false, source: "ledger", command: "chant run --components edge --env staging" },
+      { name: "staging", default: false, source: "ledger", site: null, command: "chant run --components edge --env staging" },
     ]);
     expect(g.members.find((m) => m.name === "delivery")!.environmentReasons.map((r) => r.code)).toEqual(["environments-none-declared"]);
     expect(g.members.find((m) => m.name === "docs")!.environmentReasons).toEqual([]);
@@ -409,8 +409,8 @@ describe("the environments each component may deploy to (#2695)", () => {
     const g = result((await workspaceComposites({ cwd: root })).doc);
     expectValid(g);
     expect(g.components.find((c) => c.id === "jobs/queue-runner")!.environments).toEqual([
-      { name: "local", default: true, source: "config", command: "chant run --components queue-runner" },
-      { name: "prod", default: false, source: "config", command: "chant run --components queue-runner --env prod" },
+      { name: "local", default: true, source: "config", site: null, command: "chant run --components queue-runner" },
+      { name: "prod", default: false, source: "config", site: null, command: "chant run --components queue-runner --env prod" },
     ]);
     expect(g.members.find((m) => m.name === "jobs")!.environmentReasons).toEqual([]);
   });

@@ -637,6 +637,9 @@ async function runComponentGraphView(
         // `chant workspace graph --composites` labels a component without
         // importing its source.
         ...(graph.archetypes?.[name] ? { archetype: graph.archetypes[name] } : {}),
+        // The environments the component declares (#3153), where each release goes, so
+        // `chant workspace graph --composites` lists them without importing its source.
+        ...(graph.environments?.[name] ? { environments: graph.environments[name] } : {}),
       },
       // Deep-link the node to its `*.component.ts` (behold's inspect panel).
       ...(graph.files?.[name] ? { sourceLoc: { file: graph.files[name] } } : {}),

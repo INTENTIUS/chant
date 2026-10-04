@@ -183,6 +183,31 @@ export interface Component {
    * default and nothing changes.
    */
   composites?: string[];
+  /**
+   * Optional: where a release of this component goes, by environment
+   * (#3153, ws-095). Each names an environment `--env` takes and, for that
+   * environment, the runtime that hosts the release, the URL its health
+   * answers on, a custom domain attached to it, and the git remote its
+   * approvals, effect receipts and ledger records are pushed to. `chant
+   * workspace graph --composites` lists them first among the component's
+   * environments, with source `component`. Omitted, the component's
+   * environments are its member's, as before.
+   */
+  environments?: ComponentEnvironmentDeclaration[];
+}
+
+/** One environment a component declares it deploys to (#3153). */
+export interface ComponentEnvironmentDeclaration {
+  /** The environment's name, as `--env` takes it. */
+  name: string;
+  /** The runtime that hosts a release here, such as `local` or a lexicon's runtime (`fly`). */
+  runtime?: string;
+  /** Where the released component answers, such as its health endpoint's origin. */
+  url?: string;
+  /** A custom domain the release attaches to it. */
+  domain?: string;
+  /** The git remote this environment's approvals, effect receipts and ledger records are pushed to. */
+  lifecycle?: string;
 }
 
 /** Author a named phase. `steps` may mix capability `Step`s, `Gate`s, and nested `Phase`s (fan-out). */

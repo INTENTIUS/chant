@@ -1,6 +1,6 @@
 ---
 title: "chant workspace box"
-description: Change a box's listing, its title, line, published flag and cover picture, through chant instead of editing the workspace declaration
+description: Change a box's listing through chant instead of editing the workspace declaration, and publish a box's work through the publisher its box block names
 diataxis: reference
 ---
 
@@ -8,9 +8,12 @@ diataxis: reference
 
 ```
 chant workspace box listing set <member> [--from <file|->] [--cover <image> [--cover-path <path>]] [--by <principal>] [--dry-run] [--json]
+chant workspace box publish <member> (<item> | --records) [--by <principal>] [--head <owner/name>] [--dry-run] [--json]
 ```
 
 ## Description
+
+The command has two verbs: `box listing set`, described first, and `box publish`, under [Publishing a box's work](#publishing-a-boxs-work).
 
 A box's listing is what a home site that lists boxes shows of it, such as its title and its cover picture. The listing lives on the member's [box block](/chant/reference/workspace-declaration/#listing) as `members[i].box.listing` in `chant.workspace.json` ([#3146](https://github.com/INTENTIUS/chant/issues/3146), [ws-077](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-077-factory-fields-on-the-box-block.md)). Under [ws-074](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-074-the-repo-is-the-database.md) a tool writes the repo only through chant. A tool such as hud therefore changes a listing with this command and never edits the declaration itself ([#3308](https://github.com/INTENTIUS/chant/issues/3308)).
 
@@ -105,9 +108,117 @@ EOF
 
 The [writer conformance suite](/chant/reference/workspace-writer-conformance/) drives this command as its `box listing set` action, and its amnesia test reads the listing back through `status --json`.
 
+## Publishing a box's work
+
+`box publish` is the one call a surface such as hud makes to publish a box's work ([#3165](https://github.com/INTENTIUS/chant/issues/3165), [ws-088](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-088-a-box-publishes-through-one-chant-call-to-the-pu.md)). It replaces the `HUD_APPLY_CMD` a box's run script used to set.
+
+```
+chant workspace box publish app W-12 --by github:alice
+chant workspace box publish app --records --dry-run
+chant workspace box publish app --records --by github:alice
+```
+
+The work is the orchestrator's. The box block names a `publisher`, a command an orchestrator such as studio supplies ([declaration](/chant/reference/workspace-declaration/#publisher)). The publisher applies a built work item to the box's checkout. When the box's [`factory.publish`](/chant/reference/workspace-declaration/#factory) names a target, the publisher also pushes the item's branch and opens the pull request. With `--records` it sends the records a person kept uncommitted instead. chant runs the publisher and checks what it did, and leaves git and the forge to it.
+
+What chant does, in order:
+
+1. Checks the command line. It needs an item or `--records` but not both, `--by` unless `--dry-run` is given, and a `--head` of the form `owner/name`. Anything else is `write-usage-invalid`.
+2. Reads the member's `box.publisher`: `publish-member-unknown` when the member isn't declared, `publish-none` when it names no publisher.
+3. Applies the identity rule to `--by`: a bare name under `identity.attribution: "identified"` is `principal-unidentified` ([ws-080](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-080-person-identity-forge-or-signer.md)).
+4. Runs the publisher from the workspace root, split into words as a shell splits plain words but with no shell, with `CHANT_PUBLISH_CONTRACT=1` in its environment and one JSON request on stdin. It is stopped after ten minutes.
+5. Reads its exit code and the last JSON object on its stdout, the answer.
+6. Unless `--dry-run`, checks the commit the answer names for the apply record of [ws-075](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-075-commit-trailers.md).
+
+### The publisher's protocol
+
+An orchestrator implements this. The request on stdin is `$defs.request` of `box-publish.schema.json`:
+
+```json
+{
+  "contract": 1,
+  "action": "item",
+  "member": "app",
+  "item": "W-12",
+  "by": "github:alice",
+  "head": null,
+  "dryRun": false,
+  "workspace": { "root": "/home/box/app" },
+  "factory": { "builds": ["app"], "check": null, "checks": null, "builders": null, "publish": { "forge": "github", "repo": "acme/fern", "base": "main", "branchPrefix": "box/", "head": null } }
+}
+```
+
+`action` is `item` or `records`. `item` is `null` for records. `head` is the fork `--head` named, which takes the place of `factory.publish.head`. `factory` is the workspace's factory as `status --json` prints it, so a publisher reads the target from the request rather than parsing the declaration.
+
+The publisher answers by exit code:
+
+| Exit | Meaning | chant's code |
+|---|---|---|
+| 0 | done, with the answer as the last JSON object on stdout | none, or `publish-answer-invalid` when the answer is missing or malformed |
+| 2 | refused, nothing published; stderr says why | `publish-refused` |
+| any other | failed, possibly after part of the work, such as applying an item and failing to push it; stderr says what | `publish-failed` |
+
+The answer is `$defs.answer`. Only `ok: true` is required, and `x-` fields are passed through:
+
+| Field | Holds |
+|---|---|
+| `commit` | the commit made in the box's checkout. Required unless `dryRun` |
+| `records` | the records sent, each `{ kind, id, path, title }`. With `dryRun` and `records`, the ones that would go |
+| `pullRequest` | `{ url, number, branch, base, head }`, the pull request opened or found open |
+| `pushed` | `{ branch, repo }` when the branch was pushed and no pull request could be opened |
+| `local` | why the work stayed in the box although `factory.publish` names a target |
+
+The commit carries the apply record. An item's commit has `Chant-Applied-By` naming the request's `by`, `Chant-Applied-At`, `Chant-Applied-Commit` with the applied branch's tip, and `Chant-Record: <kind>:<item>`. A records commit has one `Chant-Record` per record sent. When the commit is missing or lacks one of these trailers, chant refuses the result with `publish-unrecorded`. The document still holds the publisher's `answer`, so the caller can show the pull request.
+
+### What a surface reads instead of the environment
+
+| It needed | It reads, from [`status --json`](/chant/reference/workspace-read-contract/#factory-listing-and-plantable) |
+|---|---|
+| whether to offer Apply (`HUD_APPLY_CMD`) | the member's `box.publisher`: offer it when not `null`, and call `box publish` rather than running it |
+| where an applied item goes (`HUD_APPLY_TO`) | `box.factory.publish`: a pull request on its `repo` when set, the box's own checkout when `null`. The answer's `local` says when an orchestrator kept it in the box anyway |
+| what an ask constrains (`HUD_ASK_CONSTRAINS`) | `member:<box.factory.builds[0]>` ([ws-077](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-077-factory-fields-on-the-box-block.md)) |
+
+### The publish document
+
+`box publish` answers on stdout in the `https://intentius.io/chant/schemas/workspace/box-publish/v1/box-publish.schema.json` shape, whether or not `--json` is given.
+
+```json
+{
+  "$schema": "https://intentius.io/chant/schemas/workspace/box-publish/v1/box-publish.schema.json",
+  "contract": 1,
+  "chant": "0.103.0",
+  "member": "app",
+  "action": "item",
+  "item": "W-12",
+  "by": "github:alice",
+  "dryRun": false,
+  "publisher": "node box/ops/factory/publish.mjs",
+  "commit": "9f2c4e1a...",
+  "records": [],
+  "pullRequest": { "url": "https://github.com/acme/fern/pull/41", "number": 41, "branch": "box/W-12", "base": "main", "head": null },
+  "pushed": null,
+  "local": null,
+  "applied": { "by": "github:alice", "at": "2026-10-03T18:22:05Z", "commit": "5b1d07c3..." },
+  "answer": { "ok": true, "commit": "9f2c4e1a...", "pullRequest": { "url": "https://github.com/acme/fern/pull/41", "number": 41, "branch": "box/W-12", "base": "main" } }
+}
+```
+
+`applied` is the apply record read back from the commit's trailers, for an item; `null` for records and with `--dry-run`. When chant has no result to print, the exit code is 1 and `error` names one of the codes below. The publisher's `answer` is kept beside it whenever the publisher printed one.
+
+| Code | When |
+|---|---|
+| `publish-member-unknown` | the declaration names no such member |
+| `publish-none` | the member declares no box block, or its box block names no publisher |
+| `publish-refused` | the publisher exited 2 |
+| `publish-failed` | the publisher could not be run, exited with another nonzero code, or ran out of time |
+| `publish-answer-invalid` | the publisher exited 0 with no JSON object on stdout, or one the schema doesn't allow |
+| `publish-unrecorded` | the commit the publisher named is missing or lacks its apply record |
+| `write-usage-invalid` | the command line is missing a value or gives a conflicting one |
+| `principal-unidentified` | `--by` is a bare name under `identity.attribution: "identified"` |
+| a declaration code | the declaration can't be read, as for any workspace read |
+
 ## Exit codes
 
 | Code | Meaning |
 |---|---|
-| 0 | The listing was written, would be with `--dry-run`, or already held what was given |
-| 1 | Nothing was written: the document's `error` says why |
+| 0 | The listing was written, would be with `--dry-run`, or already held what was given; or the publisher published, or said with `--dry-run` what it would |
+| 1 | Nothing was written, or the publish printed no result: the document's `error` says why |

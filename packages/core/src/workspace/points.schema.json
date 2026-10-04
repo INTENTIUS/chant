@@ -238,7 +238,7 @@
           }
         },
         "criteria": {
-          "description": "What each candidate means, as the points file declares it: noul and choice give an object of strings keyed by candidate, score an array of ordered level descriptions.",
+          "description": "What each candidate means, as the points file declares it: noul and choice give an object of strings keyed by candidate, score an array of ordered level descriptions. Empty for an ad-hoc point (#3403).",
           "oneOf": [
             {
               "type": "object",
@@ -253,6 +253,10 @@
               }
             }
           ]
+        },
+        "adhoc": {
+          "type": "boolean",
+          "description": "An ad-hoc point (#3403): the question's text and candidates come with each ask, and each question lists them as asked. Its candidates are empty and its criteria an empty object, or an empty array for a score. Absent from a chant before it."
         },
         "inputs": {
           "type": "array",
@@ -269,7 +273,7 @@
               },
               "output": {
                 "type": "string",
-                "description": "The read-contract output the input names: record, decision, work-item, finding, region, commit, member, gate, release, environment or component."
+                "description": "The read-contract output the input names: record, decision, work-item, finding, region, commit, node, member, gate, release, environment, component or ask."
               },
               "description": {
                 "type": "string"
@@ -671,6 +675,13 @@
           ],
           "description": "What the people who answered wrote with their answer (points answer --note, #3351). null when they wrote nothing, and from a chant before it."
         },
+        "relayedBy": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Who relayed the answer to chant for the people who gave it (points answer --relayed-by, #3402), such as a follower relaying a person's answer through hud. null when nobody did, and from a chant before it."
+        },
         "retractions": {
           "type": "array",
           "description": "Answers people took back, oldest first (points retract, #3351): each answer as it was and who retracted it, when and why. A retracted question is escalated to people again. Empty when none was, and absent from a chant before it.",
@@ -682,6 +693,7 @@
               "answeredBy",
               "answeredOn",
               "answerNote",
+              "answerRelayedBy",
               "by",
               "on",
               "note"
@@ -723,6 +735,13 @@
                 ],
                 "description": "The note the answer carried."
               },
+              "answerRelayedBy": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Who relayed the answer (#3402)."
+              },
               "by": {
                 "type": "array",
                 "items": {
@@ -745,6 +764,42 @@
               }
             }
           }
+        },
+        "asked": {
+          "description": "An ad-hoc point's question as its ask gave it (points ask --candidates, #3403): the question's text, and its criteria, what each candidate means, in the point's question type's shape. People's answer is one of the candidates. null for a declared point's question, and absent from a chant before it.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "question",
+                "criteria"
+              ],
+              "properties": {
+                "question": {
+                  "type": "string"
+                },
+                "criteria": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          ]
         },
         "valid": {
           "type": "boolean"

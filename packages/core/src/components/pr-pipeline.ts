@@ -1,0 +1,91 @@
+/**
+ * The jobs of a generated pull-request pipeline (#3183): a plan job on every
+ * pull request and an apply job on every push to the target branch.
+ *
+ * Each forge's generator (the github, gitlab and forgejo lexicons) adds its
+ * own triggers, permissions and artifact handling; the commands and the
+ * values they read from the forge live here so the three cannot disagree.
+ *
+ * - The plan job runs `chant components pr-plan` against the pull request's
+ *   target commit. It posts the note and the `chant/plan` status and writes
+ *   nothing to `chant/lifecycle`, since it runs the pull request's code.
+ * - The apply job runs `chant components pr-apply` against the commit the
+ *   push replaced, finds the pull request that merged the pushed commit
+ *   through the forge, and applies only when an approval stands for the
+ *   digest it plans. With `requireReview` (the default) the approver must
+ *   also have approved the pull request on the forge. It needs write access
+ *   to `chant/lifecycle`, to record the pending fact when the gate stops it.
+ *   One apply runs at a time per environment.
+ *
+ * Measuring the push from the commit it replaced works for merge commits,
+ * squash merges and rebase merges alike, and every job measures from the
+ * merge base of that commit and its own head (`resolveMergeBase`).
+ */
+
+import type { ForgeKind } from "../pr-forge";
+import { PR_APPLY_GATE } from "../pr-loop";
+
+/** Where both jobs write their reports, kept as a CI artifact. */
+export const PR_LOOP_REPORT_DIR = ".chant/pr";
+
+/** The `prLoop` generator option (`ComponentPipelineOptions.prLoop`). */
+export interface PrLoopPipelineOptions {
+  /** The gate the apply waits on. Default `pr-apply`. */
+  gate?: string;
+  /**
+   * The branch pull requests target and merges land on. Default `main` on
+   * GitHub and Forgejo; on GitLab, the project's default branch.
+   */
+  branch?: string;
+  /** Count an approval only from someone who approved the pull request on the forge. Default true. */
+  requireReview?: boolean;
+  /**
+   * Which GitHub-shaped forge the workflow is for. Set by the forgejo
+   * generator, which reuses the github one; a caller never needs to.
+   */
+  forge?: "github" | "forgejo";
+}
+
+/** One job's command and the forge values it reads, as environment variables for its step. */
+export interface PrLoopJob {
+  /** `plan` or `apply`. */
+  jobName: "plan" | "apply";
+  /** The command line. Reads `$BASE_SHA` and, for the plan, `$PR_NUMBER`. */
+  command: string;
+  /**
+   * Values the command reads, by variable name, as the forge spells them:
+   * `${{ ... }}` expressions on GitHub and Forgejo, GitLab's predefined
+   * variables on GitLab.
+   */
+  env: Record<string, string>;
+}
+
+/** The two jobs for `forge`. */
+export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelineOptions = {}): PrLoopJob[] {
+  const gate = options.gate ?? PR_APPLY_GATE;
+  const common = ["--env", env, "--gate", gate, "--output", PR_LOOP_REPORT_DIR, "--forge", forge];
+  const github = forge !== "gitlab";
+  const token: Record<string, string> = github ? { GITHUB_TOKEN: "${{ github.token }}" } : {};
+  return [
+    {
+      jobName: "plan",
+      command: ["chant", "components", "pr-plan", "--base", '"$BASE_SHA"', "--pr", '"$PR_NUMBER"', ...common].join(" "),
+      env: github
+        ? { BASE_SHA: "${{ github.event.pull_request.base.sha }}", PR_NUMBER: "${{ github.event.pull_request.number }}", ...token }
+        : { BASE_SHA: "$CI_MERGE_REQUEST_DIFF_BASE_SHA", PR_NUMBER: "$CI_MERGE_REQUEST_IID" },
+    },
+    {
+      jobName: "apply",
+      command: [
+        "chant", "components", "pr-apply", "--base", '"$BASE_SHA"', ...common,
+        ...(options.requireReview === false ? [] : ["--require-review"]),
+      ].join(" "),
+      env: github ? { BASE_SHA: "${{ github.event.before }}", ...token } : { BASE_SHA: "$CI_COMMIT_BEFORE_SHA" },
+    },
+  ];
+}
+
+/** The concurrency group (GitHub, Forgejo) or resource group (GitLab) that keeps one apply at a time per environment. */
+export function prApplyGroup(env: string): string {
+  return `chant-apply-${env}`;
+}

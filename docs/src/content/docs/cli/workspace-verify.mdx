@@ -13,7 +13,7 @@ The same holds for a closed record's [seal](/chant/cli/workspace-records/#seals-
 ## Synopsis
 
 ```
-chant workspace verify [--base <rev>] [--head <rev>] [--require attested] [--json]
+chant workspace verify [--base <rev>] [--head <rev>] [--require attested | attested-runs] [--json]
 ```
 
 ## Description
@@ -63,7 +63,9 @@ Some signer lines are never used, and the command reports each one with the reas
 | Protected writes | A commit that changes the signers file, its rotation file or `.chant/trust.json` needs a signature from someone the base policy trusts. If an admin role is granted, only an admin's signature counts. Deleting the signers file is a protected write too. |
 | Rotation | A change to the signer set must be the next version, signed by a threshold of the set at base. In the `--json` report, `rotation` holds the version proposed and who signed it, or the version it had to follow with a [reason code](/chant/cli/workspace-signers/#reason-codes). See [`chant workspace signers`](/chant/cli/workspace-signers/). |
 | History | The signer history at base must be unbroken. Every version has to be signed by a threshold of the one before it. If it isn't, nothing verifies. |
-| `--require attested` | Every commit in the change must be `attested`. A merge with no changes of its own is skipped, and the commits it brings in are checked instead. |
+| Agent runs | A commit an agent run made, named by its `Chant-Run` trailer or listed by the run's end, is `attested` with the attestor `agent-run` when a [run statement](/chant/cli/workspace-runs/#signed-statements) that a runner or steward key at base signed names it ([#3192](https://github.com/INTENTIUS/chant/issues/3192)). The `principal` is the runner, so a reader tells a person's signed commit from a run's attested one by the attestor. The `runs` part of the report lists each commit of the change a run made, the runs that name it, and whether a statement covers it. |
+| `--require attested` | Every commit in the change must be `attested`, by a signer or by a run statement. A merge with no changes of its own is skipped, and the commits it brings in are checked instead. |
+| `--require attested-runs` | Every commit in the change that an agent run made must be covered by a verified run statement. A commit no run names needs nothing, so a person's commits pass unsigned. It needs runner keys in `.chant/trust.json` at base and no signers file. |
 
 The command doesn't call `git verify-commit`, because that reads its signing program and signers file from git config. It takes the signature and the signed bytes out of the commit object and passes them to `ssh-keygen -Y verify`, along with a signers file built from the base policy.
 
@@ -76,6 +78,7 @@ A signature this machine can't check is reported as `attested-unverifiable-here`
 | `--base <rev>` | The revision the policy is read from. Defaults to the target branch: `origin/HEAD`, then `main`, then `master`. Never `HEAD`. |
 | `--head <rev>` | The tip of the change. Defaults to `HEAD`. |
 | `--require attested` | Fail unless every commit in the change is attested. |
+| `--require attested-runs` | Fail unless every commit an agent run made is covered by a verified run statement. |
 | `--json` | Print the report as JSON. |
 
 ## Exit codes
@@ -93,6 +96,13 @@ A signature this machine can't check is reported as `attested-unverifiable-here`
 - run: npx chant workspace verify --base origin/${{ github.base_ref }} --require attested
 ```
 
+Without `--require` the report fails nothing over agent runs, so a workspace can see which agent commits are attested before it requires them (studio-035 d). Run statements live on `chant/lifecycle`, so a job that checks them fetches it first, `git fetch origin chant/lifecycle`; the command reads the local branch, then `origin/chant/lifecycle`, and never fetches.
+
+```yaml
+- run: git fetch origin chant/lifecycle
+- run: npx chant workspace verify --base origin/${{ github.base_ref }} --require attested-runs
+```
+
 The base has to be a revision the change can't move, which is the target branch tip. With squash merges, the commit that lands is signed by the forge rather than the author. Records then read as `attested-unverifiable-here` on the target branch, so merge commits or rebase merges keep attestation.
 
 ## In the chant repository
@@ -101,4 +111,4 @@ The chant repository uses this on its own pull requests ([#2547](https://github.
 
 ## See also
 
-[`chant workspace records`](/chant/cli/workspace-records/) reports each record's provenance level, and can require `attested` too. Beside it, a record's `attested` says whether its author sealed it, checked against the same signers file at base. [`chant workspace signers`](/chant/cli/workspace-signers/) rotates the signer set. [`chant workspace evidence`](/chant/cli/workspace-evidence/) signs and checks runner evidence.
+[`chant workspace records`](/chant/cli/workspace-records/) reports each record's provenance level, and can require `attested` too. Beside it, a record's `attested` says whether its author sealed it, checked against the same signers file at base. [`chant workspace signers`](/chant/cli/workspace-signers/) rotates the signer set. [`chant workspace evidence`](/chant/cli/workspace-evidence/) signs and checks runner evidence, and [`chant workspace runs sign`](/chant/cli/workspace-runs/#signed-statements) signs an agent run.

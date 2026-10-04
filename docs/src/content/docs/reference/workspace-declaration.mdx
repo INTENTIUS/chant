@@ -380,6 +380,7 @@ The member that holds the box's declarations carries a `box` block:
 | `services` | no | The services the box runs under its supervisor. See [Services](#services). |
 | `factory` | no | What the box builds, how a build is checked, which member declares the builder agents and where a finished build is published. See [Factory](#factory). |
 | `listing` | no | What the box shows of itself on a home site that lists boxes. See [Listing](#listing). |
+| `publisher` | no | The command that publishes the box's work, which an orchestrator such as studio supplies. See [Publisher](#publisher). |
 | `capabilities[].name` | yes | The capability, in the kind-name grammar, such as `inference` or `fountain`. A box names each capability once. |
 | `capabilities[].broker` | no | What brokers it, such as `lobby` or `door`. It may be a member of this workspace or a runtime outside it, as a planted box's lobby is. Without it the capability is unbrokered, and `chant workspace check` fails with `WSP122`. |
 | `capabilities[].scope` | no | The parts of the box's own that the broker lets it reach. The broker enforces the words, and chant records them. For Fountain these are `agent` (start conversations with its own agent), `vault` (attach its own vault), and `conversations` and `sandboxes` (its own). |
@@ -391,7 +392,7 @@ The block goes in the workspace declaration and not in the box's TypeScript. `ch
 | Command | Uses the box block |
 |---|---|
 | [`chant workspace check`](/chant/cli/workspace-check/#boxes) | reads every file in the member's directory and fails with `WSP121` (`box-credential-declared`) on a literal secret. It fails with `WSP122` (`box-capability-unbrokered`) on a capability that names no broker, and with `WSP125` (`box-fountain-callback-undeclared`) when a member that builds a fountain `Box` doesn't declare `fountain-callback`. It fails with `WSP126` (`box-intent-unknown`) when the intent names no decision record, and warns with `WSP127` (`box-intent-unconstrained`) when that record's constrains names no member or path of this workspace at all |
-| [`chant workspace status --json`](/chant/cli/workspace-status/#boxes) | lists each member's `box`, with every capability's `name`, `broker` and `scope`, the box's `intent`, its `services`, its `factory` and its `listing`, and whether the workspace is `plantable` |
+| [`chant workspace status --json`](/chant/cli/workspace-status/#boxes) | lists each member's `box`, with every capability's `name`, `broker` and `scope`, the box's `intent`, its `services`, its `factory`, its `listing` and its `publisher`, and whether the workspace is `plantable` |
 | [`chant workspace graph --json`](/chant/cli/workspace-graph/) | prints each member's `factory` and `listing` as `box`, and `plantable`, read at the revision `--at` names |
 
 Set `minReader` to `"0.91.0"` or newer when the file has a `box` block, so an older chant reports `reader-too-old` instead of an unknown field.
@@ -486,12 +487,39 @@ A box's factory turns a work item into a change: a builder agent edits the membe
 | `builds` | yes | The members the factory builds, each a declared member of any kind: an app, a `chant` member, a Terraform estate. A work item a person asks for constrains `member:` and the first of them. |
 | `check` | no | The command whose exit code is a build's verdict, run from the workspace root after the work item's own checks: a string, or `{ "run", "kind" }`. `kind` says what the command is, one of `test`, `build`, `lint`, `plan` and `conformance`, and is `test` for a string. |
 | `checks` | no | The directory, from the workspace root, where a builder writes the check for its work item. Without it the orchestrator chooses. |
-| `builders` | no | The member that declares the builder agents. Which agent builds at which tier is [#3152](https://github.com/INTENTIUS/chant/issues/3152); the tiers are the work kind's `work.tier.tiers` ([work items](/chant/guide/work-items/)). |
+| `builders` | no | The member that declares the builder agents, such as the one whose `agents/` holds them. |
+| `tiers` | no | Which builder agent builds at which tier: a list of `{ "tier", "agent", "kinds", "session" }` ([#3152](https://github.com/INTENTIUS/chant/issues/3152), [ws-094](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-094-builder-agents-by-tier-and-member-kind.md)). See [Builder tiers](#builder-tiers). Added in chant 0.103.0. |
 | `publish` | no | Where a finished build goes: `{ "repo", "base", "branchPrefix", "head", "forge" }`. The branch `<branchPrefix><work item id>` is pushed and a pull request opened on `repo` (`owner/name`) against `base`, the repository's default branch when omitted. `branchPrefix` is `chant/work/` when omitted, the work lease's own branch. `head` is a fork (`owner/name`) the branch is pushed to instead, so the pull request comes from `<head owner>:<branch>`; a runtime that publishes from each contributor's own fork supplies that per contributor. `forge` is `github`. |
 
 The factory is opt-in ([#3174](https://github.com/INTENTIUS/chant/issues/3174)): a workspace with no `factory` is held to nothing here. It needs no box services and no app, so an infra workspace can declare one whose `builds` names its estate members and whose `check` is a plan, and run it on a fountain steward. There is one factory per declaration, and its `builds` and `builders` name only declared members; a second factory or an unknown name stops the read with `declaration-invalid`, which [`check`](/chant/cli/workspace-check/#boxes) reports as `WSP001`. What a build may not change goes in [`writeScope.agent.protected`](#write-scope-and-agent-sessions).
 
 The reference workspace ships three [profiles](/chant/cli/workspace-init/#profiles) that show the opt-in at work: `ideation` declares records and a stub app with no factory, `app` declares the factory over an app member that runs as the box's service, and `infra` declares a factory over an estate member with no app and no box services. `chant workspace init --profile` copies one.
+
+#### Builder tiers
+
+A work item has a tier, from its own `tier` field or the `slice-tier` decision point's answer, in the vocabulary its work kind declares in `work.tier.tiers` ([work items](/chant/guide/work-items/)). The factory's `tiers` say which agent builds each tier, so an orchestrator resolves the tier from the spec instead of from metadata only it reads, such as studio's `studio/role` and `studio/tier` on its Agents ([#3152](https://github.com/INTENTIUS/chant/issues/3152)).
+
+```json
+"factory": {
+  "builds": ["app", "network"],
+  "builders": "delivery",
+  "tiers": [
+    { "tier": "small", "agent": "builder-small" },
+    { "tier": "medium", "agent": "builder-medium" },
+    { "tier": "large", "agent": "builder-large" },
+    { "tier": "small", "agent": "infra-small", "kinds": ["terraform"], "session": "infra" }
+  ]
+}
+```
+
+| Field | Required | Value |
+|---|---|---|
+| `tier` | yes | The tier, a word of the work kind's `work.tier.tiers`. |
+| `agent` | yes | The builder agent's name, as the `builders` member declares it, such as a fountain `Agent` in its `agents/`. |
+| `kinds` | no | The member kinds the agent builds at this tier, such as `app` or `terraform`. An entry without `kinds` builds the tier for every kind no other entry of the tier names. |
+| `session` | no | A declared [agent session](#write-scope-and-agent-sessions) the builder writes as, so its write scope is that session's. An infra builder bound to an estate member edits the estate and leaves applies to the gates. |
+
+A tier has at most one entry without `kinds` and at most one per kind, `tiers` needs `builders`, and a `session` names a declared session; otherwise the read stops with `declaration-invalid`. For each member in `builds` and each tier, [`status --json`](/chant/reference/workspace-read-contract/#factory-listing-and-plantable) prints the agent that builds it in `builderFor`. The entry for the member's kind wins over the tier's default.
 
 ### Listing
 
@@ -513,6 +541,18 @@ A box can show itself on a home site that lists boxes, with a title, a line and 
 A title or line with a control character, such as a newline, can't be read. Since `factory` and `listing` are new in chant 0.102.0, a box block with either needs `minReader` at `"0.102.0"` or later.
 
 A tool such as hud changes the listing with [`chant workspace box listing set`](/chant/cli/workspace-box/), which edits only these fields and copies a cover picture in, rather than editing the declaration itself ([#3308](https://github.com/INTENTIUS/chant/issues/3308)).
+
+### Publisher
+
+A box's work leaves the box through its publisher. The publisher applies a built work item to the box's checkout and opens a pull request on `factory.publish`'s repo when one is named. It also sends the records a person kept uncommitted. The orchestrator does that work, so the box block names the command it supplies ([#3165](https://github.com/INTENTIUS/chant/issues/3165), [ws-088](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-088-a-box-publishes-through-one-chant-call-to-the-pu.md)):
+
+```json
+"box": {
+  "publisher": "node box/ops/factory/publish.mjs"
+}
+```
+
+chant splits the command into words as a shell splits plain words, where quotes group and a backslash escapes. No shell runs it, so `$HOME` and `~` reach the program as written. A surface calls [`chant workspace box publish`](/chant/cli/workspace-box/#publishing-a-boxs-work) rather than running the command. chant then runs it from the workspace root with a JSON request on stdin and checks the commit it made for the apply record of [ws-075](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-075-commit-trailers.md). `status --json` prints it under the member's `box`, or `null`. A chant older than 0.103.0 refuses the field, so set `minReader` to `"0.103.0"` when you add it.
 
 ### Replicate
 

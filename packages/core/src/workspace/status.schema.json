@@ -549,6 +549,10 @@
           "description": "Added in contract 1 by #3146. What the box shows of itself on a home site, or null when the block declares no listing.",
           "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/listing" }]
         },
+        "publisher": {
+          "description": "Added in contract 1 by #3165. The command that publishes the box's work, as the box block declares it (ws-088), or null when it names none. A surface offers a publish only when it is set, and asks for one with chant workspace box publish rather than running it.",
+          "type": ["string", "null"]
+        },
         "replicate": {
           "description": "Added in contract 1 by #3172. Where the box's work in progress is replicated (ws-085), with every default filled in, or null when the block declares no policy. At most one member's box has one; the top-level replication says how far each ref is from the remote.",
           "oneOf": [
@@ -629,7 +633,7 @@
     },
     "factory": {
       "type": "object",
-      "required": ["builds", "check", "checks", "builders", "publish"],
+      "required": ["builds", "check", "checks", "builders", "tiers", "builderFor", "publish"],
       "properties": {
         "builds": { "type": "array", "minItems": 1, "items": { "type": "string" }, "description": "The members the factory builds, in declaration order. A work item a person asks for constrains member:<the first>." },
         "check": {
@@ -648,6 +652,8 @@
         },
         "checks": { "type": ["string", "null"], "description": "Where a work item's builder writes its check, from the workspace root, or null for the orchestrator's choice." },
         "builders": { "type": ["string", "null"], "description": "The member that declares the builder agents, or null." },
+        "tiers": {"type": "array", "items": {"type": "object", "required": ["tier", "agent", "kinds", "session"], "properties": {"tier": {"type": "string"}, "agent": {"type": "string"}, "kinds": {"oneOf": [{"type": "null"}, {"type": "array", "items": {"type": "string"}}]}, "session": {"type": ["string", "null"]}}}, "description": "Which builder agent builds at which tier, as declared (#3152, ws-094), each { tier, agent, kinds, session } with kinds and session null when not declared; empty when none is. Added in contract 1 by chant 0.103.0."},
+        "builderFor": {"type": "object", "additionalProperties": {"type": "object", "additionalProperties": {"type": "object", "required": ["agent", "session"], "properties": {"agent": {"type": "string"}, "session": {"type": ["string", "null"]}}}}, "description": "The builder for each member the factory builds, by tier (#3152): member name, then tier, then { agent, session }. For a member the entry naming its kind is used, else the tier's entry with no kinds; a tier with neither is left out. Added in contract 1 by chant 0.103.0."},
         "publish": {
           "description": "Where a finished build is published, or null when the factory doesn't publish past the box.",
           "oneOf": [
@@ -771,10 +777,11 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["principal", "channel", "at"],
+            "required": ["principal", "channel", "relayedBy", "at"],
             "properties": {
               "principal": { "type": "string", "description": "Who recorded it." },
               "channel": { "type": ["string", "null"], "description": "The channel it was recorded on, such as cli or mcp, or null for a record older than chant#2384." },
+              "relayedBy": { "type": ["string", "null"], "description": "Added in contract 1 by #3402. Who carried the approval to chant for principal (chant approve --relayed-by), such as a follower relaying a person's approval; a seal covers it. Null when nobody relayed it." },
               "at": { "type": "string" }
             }
           }
