@@ -67,6 +67,7 @@ export {
   choudoufuLiveLs,
   choudoufuLiveCheck,
   choudoufuAdopt,
+  terraformPinRollout,
 } from "./op/builders";
 
 // The adoption ledger over `live-plan -json`'s document (#2105). Pure, and
@@ -101,6 +102,11 @@ export type {
 // estate, and #2089's answer for this backend.
 export { TerraformAdoptOp } from "./composites/terraform-adopt-op";
 export type { TerraformAdoptOpConfig, TerraformAdoptOpResources } from "./composites/terraform-adopt-op";
+
+// One pin-bump PR per wave (#3189). The pin edit, wave plan and rollout run
+// are in the `@intentius/chant-lexicon-terraform/pin` subpath.
+export { TerraformPinRolloutOp } from "./composites/terraform-pin-rollout-op";
+export type { TerraformPinRolloutOpConfig, TerraformPinRolloutOpResources } from "./composites/terraform-pin-rollout-op";
 
 // Live observation over `terraform show -json` (#2087). The plugin reaches
 // `describeResources` through a dynamic import; the ownership keys are here

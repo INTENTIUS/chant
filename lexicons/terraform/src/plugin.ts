@@ -15,6 +15,7 @@ import { renderTerraformRoots } from "./hcl/roots";
 import { auditRootName, parseTerraformRootContent, RESOURCE_TYPE } from "./hcl/parse";
 import { descendModules } from "./hcl/descend";
 import { TERRAFORM_STATE_OWNERSHIP_KEYS } from "./state-ownership";
+import { terraformCommands } from "./commands";
 
 const loadSkills = createSkillsLoader(import.meta.url, [
   {
@@ -185,6 +186,11 @@ export const terraformPlugin: LexiconPlugin = {
       callModuleType: namespace?.callModuleType,
       moduleRoot: namespace?.moduleRoot,
     });
+  },
+
+  /** `chant terraform pin-rollout` (#3189). */
+  commands() {
+    return terraformCommands;
   },
 
   lintRules() {
