@@ -49,7 +49,7 @@ When the cover moves to another file, `cover.replaced` names the one the listing
 
 The write is judged as [`check --changes`](/chant/cli/workspace-check/#the-forward-coverage-check) judges the commit that will carry it, by the write scope in the declaration at base ([#2548](https://github.com/INTENTIUS/chant/issues/2548)), so a working-tree edit can't widen it. The writer is the agent session `CHANT_AGENT` names, the session listing the `--by` principal, or the class the principal's role grants give.
 
-- The declaration is at the workspace root, in no member. A class whose `writeScope.<class>.members` leaves out paths in no member is refused with `write-scope-member`, and so is every agent session, since a session writes only its own member.
+- The declaration is at the workspace root, in no member. A class whose `writeScope.<class>.members` leaves out paths in no member is refused with `write-scope-member`, and so is every agent session, since a session writes only the members it is bound to.
 - A `protected` entry covering the declaration refuses the write with `write-scope-protected`, unless its `except` allows the change. `{ "path": "chant.workspace.json", "except": ["/members/*/box/listing"] }` keeps the declaration protected and lets any box's listing change.
 - The cover's path is judged the same way, as a file in its member.
 - When the declaration at base sets `identity.attribution` to `identified`, a bare name in `--by` is refused with `principal-unidentified`. Pass a forge identity such as `github:alice`, or a signer ([ws-080](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-080-person-identity-forge-or-signer.md)).

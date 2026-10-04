@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://intentius.io/chant/schemas/workspace/agent/v1/agent.schema.json",
   "title": "chant workspace agent output",
-  "description": "What `chant workspace agent <name> --json` prints (#2524 D20, #2548, ws-067): an agent session, the one member it is bound to, its write scope and the spec, read from the repository alone, so a session that resumes rebuilds its context from this and nothing else. The session and its scope are read from the declaration at base, as the write paths and check --changes read them; the spec from the working tree. Readers ignore fields they do not know; a field is only ever added within a version. The error codes are a closed list, and every one is in the one closed list of `reason-codes.ts`. Contract version 1; this document was added to it by #2548.",
+  "description": "What `chant workspace agent <name> --json` prints (#2524 D20, #2548, ws-067): an agent session, the members it is bound to (one, or several since ws-101), its write scope and the spec, read from the repository alone, so a session that resumes rebuilds its context from this and nothing else. The session and its scope are read from the declaration at base, as the write paths and check --changes read them; the spec from the working tree. Readers ignore fields they do not know; a field is only ever added within a version. The error codes are a closed list, and every one is in the one closed list of `reason-codes.ts`. Contract version 1; this document was added to it by #2548.",
   "oneOf": [
     {
       "$ref": "#/$defs/result"
@@ -72,23 +72,16 @@
               "type": "string"
             },
             "member": {
-              "type": "object",
-              "required": [
-                "name",
-                "dir",
-                "kind"
-              ],
-              "properties": {
-                "name": {
-                  "type": "string"
-                },
-                "dir": {
-                  "type": "string"
-                },
-                "kind": {
-                  "type": "string"
-                }
-              }
+              "$ref": "#/$defs/member",
+              "description": "The first member the session is bound to, the only one for a session that names one member."
+            },
+            "members": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/member"
+              },
+              "description": "Added in contract 1 by #3505. Every member the session is bound to, in the order its declaration names them (ws-101); the first is member."
             },
             "principals": {
               "type": "array",
@@ -111,11 +104,11 @@
               "items": {
                 "type": "string"
               },
-              "description": "The one member whose files the session writes."
+              "description": "The members whose files the session writes: every member it is bound to, in the order its declaration names them."
             },
             "records": {
               "type": "array",
-              "description": "Every declared record kind in the session's reach: the workspace's own kinds, then the member's.",
+              "description": "Every declared record kind in the session's reach: the workspace's own kinds, then each member's, in the order of members.",
               "items": {
                 "type": "object",
                 "required": [
@@ -168,7 +161,7 @@
             },
             "protected": {
               "type": "array",
-              "description": "Added in contract 1 by #3146. The paths writeScope.agent.protected keeps the session from writing even inside its member, each a glob from the workspace root that also covers everything under a directory it matches, with the top-level keys of a JSON file a write may still change in except. Empty when none is listed. check --changes reports a write to one with write-scope-protected.",
+              "description": "Added in contract 1 by #3146. The paths writeScope.agent.protected keeps the session from writing even inside its members, each a glob from the workspace root that also covers everything under a directory it matches, with the top-level keys of a JSON file a write may still change in except. Empty when none is listed. check --changes reports a write to one with write-scope-protected.",
               "items": {
                 "type": "object",
                 "required": [
@@ -335,6 +328,25 @@
         },
         "agent": false,
         "scope": false
+      }
+    },
+    "member": {
+      "type": "object",
+      "required": [
+        "name",
+        "dir",
+        "kind"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "dir": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        }
       }
     },
     "asset": {

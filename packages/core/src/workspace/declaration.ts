@@ -119,7 +119,7 @@ export type WriteVerb = (typeof WRITE_VERBS)[number];
 
 /** One principal class's entry in the declaration's `writeScope` (#2548, ws-067). */
 export interface ClassScope {
-  /** The members whose files the class may write, or null for every path. Always null for the agent class: a session writes its own member. */
+  /** The members whose files the class may write, or null for every path. Always null for the agent class: a session writes the members it is bound to. */
   members: string[] | null;
   /** Kind name to the verbs the class may write it with, or null for every kind in reach with every verb. */
   records: Record<string, WriteVerb[]> | null;
@@ -164,9 +164,16 @@ export interface IdentityPolicy {
   gates: Record<string, SignedGate>;
 }
 
-/** An agent session the declaration names (#2524 D20, #2548): bound to one member. */
+/**
+ * An agent session the declaration names (#2524 D20, #2548): bound to the
+ * members it lists, one or more (ws-101). It writes the files of each, and
+ * the records of kinds any of them or the workspace declares.
+ */
 export interface AgentDeclaration {
   name: string;
+  /** The members the session is bound to, in file order: `members`, or the one `member` names. Never empty. */
+  members: string[];
+  /** The first of `members`, kept for readers of a one-member session. */
   member: string;
   /** Principals that write only as this session. */
   principals: string[];
@@ -952,8 +959,8 @@ function writeScopeOf(raw: unknown, members: Member[], at: (pointer: string, key
 
 /**
  * The `agents` list, already validated, with the rules the schema can't say
- * (#2548): names are unique, each names a declared member, and a principal
- * is listed by one session at most.
+ * (#2548, ws-101): names are unique, every member a session names is a
+ * declared member, and a principal is listed by one session at most.
  */
 /** The `identity` block, already validated by the schema (#3163). */
 function identityOf(raw: unknown): IdentityPolicy | null {
@@ -967,23 +974,30 @@ function identityOf(raw: unknown): IdentityPolicy | null {
 }
 
 function agentsOf(raw: unknown, members: Member[], at: (pointer: string, key?: boolean) => ErrorLocation): AgentDeclaration[] {
-  const agents = ((raw as { name: string; member: string; principals?: string[] }[] | undefined) ?? []).map((a, i) => ({
-    name: a.name,
-    member: a.member,
-    principals: [...(a.principals ?? [])],
-    pointer: `/agents/${i}`,
-  }));
+  const agents = ((raw as { name: string; member?: string; members?: string[]; principals?: string[] }[] | undefined) ?? []).map((a, i) => {
+    // The schema requires exactly one of member and members (ws-101).
+    const bound = a.members !== undefined ? [...a.members] : [a.member!];
+    return {
+      name: a.name,
+      members: bound,
+      member: bound[0],
+      principals: [...(a.principals ?? [])],
+      pointer: `/agents/${i}`,
+      listed: a.members !== undefined,
+    };
+  });
   const byName = new Map<string, AgentDeclaration>();
   const byPrincipal = new Map<string, AgentDeclaration>();
-  for (const a of agents) {
+  for (const { listed, ...a } of agents) {
     const first = byName.get(a.name);
     if (first) throw new WorkspaceReadError("declaration-invalid", `the agent name ${JSON.stringify(a.name)} is already used by the agent at ${first.pointer}`, at(`${a.pointer}/name`));
     byName.set(a.name, a);
-    if (!members.some((m) => m.name === a.member)) {
+    for (const [i, name] of a.members.entries()) {
+      if (members.some((m) => m.name === name)) continue;
       throw new WorkspaceReadError(
         "declaration-invalid",
-        `agent ${a.name} is bound to ${JSON.stringify(a.member)}, which is not a declared member; an agent session is bound to one member, not an example group`,
-        at(`${a.pointer}/member`),
+        `agent ${a.name} is bound to ${JSON.stringify(name)}, which is not a declared member; an agent session is bound to members, not an example group`,
+        at(listed ? `${a.pointer}/members/${i}` : `${a.pointer}/member`),
       );
     }
     for (const [i, p] of a.principals.entries()) {
@@ -992,7 +1006,7 @@ function agentsOf(raw: unknown, members: Member[], at: (pointer: string, key?: b
       byPrincipal.set(p, a);
     }
   }
-  return agents;
+  return [...byName.values()];
 }
 
 /** The `changes` block, already validated, with its defaults (#2773). */

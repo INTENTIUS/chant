@@ -59,7 +59,7 @@ chant finds the file by walking up from the current directory to the git root, t
 | `diagrams` | no | The workspace's own [diagram artifacts](#diagrams), each pinned to the renderer its render was made with. It was added in chant 0.91.0. |
 | `changes` | no | The [forward coverage check](/chant/cli/workspace-check/#the-forward-coverage-check) of `chant workspace check --changes`: `severity` (`off`, `warn` or `fail`, default `warn`) and `ignore`, globs over file paths from the workspace root whose changes need no record, such as lockfiles and generated output. It was added in chant 0.92.0. |
 | `writeScope` | no | Who may write what: for each principal class, the members whose files it may write and the record kinds it may write, with which verbs. See [Write scope and agent sessions](#write-scope-and-agent-sessions). It was added in chant 0.101.0. |
-| `agents` | no | The agent sessions, each bound to one member. See [Write scope and agent sessions](#write-scope-and-agent-sessions). It was added in chant 0.101.0. |
+| `agents` | no | The agent sessions, each bound to one member or several. See [Write scope and agent sessions](#write-scope-and-agent-sessions). It was added in chant 0.101.0, and a session's `members` in chant 0.105.0. |
 | `identity` | no | Who a person-attributed record or gate approval may name, and which gates pass only on a signed approval. See [Identity](#identity). It was added in chant 0.102.0. |
 | `quorum` | no | How many agree verdicts besides the decider's a record needs, as an integer from 0. [`chant workspace records`](/chant/cli/workspace-records/#reviews-and-quorum) reports each record's quorum against it, and it applies to every record kind with a reviews list. The default is 2. It was added in chant 0.86.0, so a declaration that sets it should set `minReader` to `"0.86.0"`. |
 | `$schema`, `$comment` | no | Editor hints and notes. chant ignores them. |
@@ -183,7 +183,7 @@ Readers take the top-level list first. The members' lists follow in file order.
 
 ## Write scope and agent sessions
 
-`writeScope` says who may write what, per member and per record kind, for each principal class ([#2548](https://github.com/INTENTIUS/chant/issues/2548), [ws-067](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-067-write-scope-and-agent-sessions.md)). `agents` names the agent sessions, each bound to one member. Without them nothing is restricted.
+`writeScope` says who may write what, per member and per record kind, for each principal class ([#2548](https://github.com/INTENTIUS/chant/issues/2548), [ws-067](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-067-write-scope-and-agent-sessions.md)). `agents` names the agent sessions, each bound to one member or several ([ws-101](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-101-an-agent-session-may-write-in-several-members.md)). Without them nothing is restricted.
 
 ```json
 {
@@ -207,7 +207,7 @@ Readers take the top-level list first. The members' lists follow in file order.
 
 | Field | Value |
 |---|---|
-| `members` | The members whose files the class may write, by name, or `"*"` for every path. Without it, every path. A path in no member, such as `chant.workspace.json` at the root, is in scope only under `"*"`. The `agent` entry takes no `members`: a session writes only the member it is bound to. |
+| `members` | The members whose files the class may write, by name, or `"*"` for every path. Without it, every path. A path in no member, such as `chant.workspace.json` at the root, is in scope only under `"*"`. The `agent` entry takes no `members`: a session writes only the members it is bound to. |
 | `records` | Kind names, as the kind file's `recordKind.name` or the name the declaration gives it, each with the verbs the class may write it with: `new`, `amend`, `review` and `close`. A kind left out can't be written at all. Without `records`, every kind in reach with every verb. |
 | `protected` | Paths the class may not write, even inside a member it may. Each entry is a glob from the workspace root, or `{ "path", "except" }` for a JSON file the class may change only in what `except` names: a top-level key, or a JSON Pointer starting with `/`, where a `*` token matches every key or array index at its level ([#3308](https://github.com/INTENTIUS/chant/issues/3308)). An entry covers the files it matches and everything under a directory it matches, so `"box"` covers `box/ops/guard.mjs`. The `agent` entry takes it too. Added in chant 0.102.0 ([#3146](https://github.com/INTENTIUS/chant/issues/3146)). |
 
@@ -231,7 +231,8 @@ Each entry in `agents` is a session:
 | Field | Required | Value |
 |---|---|---|
 | `name` | yes | The session's name, unique among agents, in the [name grammar](#names). |
-| `member` | yes | The one member the session is bound to: a declared member, not an example group. |
+| `member` | one of `member` and `members` | The one member the session is bound to: a declared member, not an example group. |
+| `members` | one of `member` and `members` | The members the session is bound to, when it writes in more than one, each a declared member. Added in chant 0.105.0 ([#3505](https://github.com/INTENTIUS/chant/issues/3505)). |
 | `principals` | no | Principals that write only as this session. A commit attested by one, or a write whose `by` names one, is judged as the session. A principal is listed by one session at most. |
 
 A writer's class comes from the role grants in the trust policy at base. A principal holding the `agent` role is in the `agent` class. One holding `runner` is a runner and one holding `service` a service, tried in that order. Then each domain class the pins supply is tried, in pin order, by the role it names. Anyone else is `human`. While `writeScope` names a class no pinned package supplies, a writer judged `human` might be in it, so its writes are refused with `write-scope-class-unknown`. A write that names a session is in the `agent` class. Naming a session only ever narrows what the writer may do, so chant honours a session name it can't verify.
@@ -243,7 +244,18 @@ A writer's class comes from the role grants in the trust policy at base. A princ
 
 All three read `writeScope` and `agents` from the declaration at base (`origin/HEAD`, `main` or `master`, or the range's base for `check --changes`), with the trust policy read there too. An agent can't widen its own scope by editing its copy of the declaration, and an edit to the declaration by a writer restricted to members is itself out of scope. On a developer machine this detects; run in CI with an attestation policy at base, the principal is the signer the policy trusts ([ws-002](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-002-local-promise.md)).
 
-[`chant workspace agent <name>`](/chant/cli/workspace-agent/) prints what a session reloads from: its member, its scope and the spec.
+A session bound to several members may write the files of any of them and the records of kinds any of them or the workspace declares; its scope is their union, and `writeScope.agent` applies to all of it. A factory whose builds write an app and also record their evidence in a design member declares one session over both ([arugula-salad/studio#402](https://github.com/arugula-salad/studio/issues/402)), where a session bound to `app` alone would fail every build with `write-scope-member`:
+
+```json
+"agents": [
+  { "name": "factory", "members": ["app", "design"] },
+  { "name": "planter-chat", "member": "app" }
+]
+```
+
+A declaration that uses `members` sets `minReader` to `0.105.0` or newer.
+
+[`chant workspace agent <name>`](/chant/cli/workspace-agent/) prints what a session reloads from: its members, its scope and the spec.
 
 ## Identity
 

@@ -414,9 +414,16 @@ export async function exportWorkspace(o: ExportOptions): Promise<ExportResult> {
           return keep.length > 0 ? { ...rest, links: keep } : rest;
         });
     } else if (key === "agents") {
-      const agents = value as { name: string; member: string }[];
-      for (const a of agents) if (!names.has(a.member)) dropped.agents.push(a.name);
-      outDecl.agents = agents.filter((a) => names.has(a.member));
+      // A session bound to several members (ws-101) keeps those that go, and is dropped when none does.
+      const agents = value as { name: string; member?: string; members?: string[] }[];
+      const kept: Record<string, unknown>[] = [];
+      for (const a of agents) {
+        const bound = a.members ?? (a.member !== undefined ? [a.member] : []);
+        const going = bound.filter((m) => names.has(m));
+        if (going.length === 0) dropped.agents.push(a.name);
+        else kept.push(a.members !== undefined ? { ...a, members: going } : a);
+      }
+      outDecl.agents = kept;
     } else if (key === "pins") {
       const pins = value as { path?: string; package?: string }[];
       for (const p of pins) if (p.path !== undefined) dropped.pins.push(p.path);

@@ -284,7 +284,7 @@ A commit with a `Chant-Agent: <name>` trailer is judged as that agent session, b
 $ chant workspace check --changes main..HEAD
 ...
 scope     3 commits judged against the declaration at 3f2a91c0; restricted: agent
-error     write-scope-member: 8b04d2e1 changes design/spec.md: agent session app, bound to member app, may not write design/spec.md, which is in member design: an agent session writes only its own member
+error     write-scope-member: 8b04d2e1 changes design/spec.md: agent session app, bound to member app, may not write design/spec.md, which is in member design: an agent session writes only the members it is bound to
 ```
 
 On a developer machine the trailer and the author are what the commit claims, so this detects. In CI with an attestation policy at base, the principal is the signer the policy trusts.

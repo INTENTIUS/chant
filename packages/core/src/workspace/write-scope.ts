@@ -1,14 +1,16 @@
 /**
  * Write scope per member and record kind, for each principal class, and the
- * agent sessions bound to one member (#2524 D5, D20; #2548; ws-067).
+ * agent sessions bound to the members they name (#2524 D5, D20; #2548;
+ * ws-067, ws-101).
  *
  * The declaration's `writeScope` block gives a restricted class the members
  * whose files it may write and the record kinds it may write, with which
  * verbs (`new`, `amend`, `review`, `close`). A class with no entry is not
  * restricted. The declaration's `agents` list names agent sessions, each
- * bound to one member: a session writes that member's files, and the records
- * of kinds that member or the workspace declares, as `writeScope.agent`
- * allows. An agent's members can't be widened.
+ * bound to one member or several (ws-101): a session writes the files of any
+ * of its members, and the records of kinds any of them or the workspace
+ * declares, as `writeScope.agent` allows. The scope is the union of its
+ * members, and `writeScope.agent` can't widen it.
  *
  * Two places apply it, both reading the scope from the base revision so a
  * change can't widen its own scope (#2524 threat model):
@@ -170,7 +172,7 @@ export function unknownClassVerdict(declaration: Declaration | null, writer: Wri
   };
 }
 
-/** The scope that applies to `writer`, or null when its class is not restricted. An agent is always restricted to its member. */
+/** The scope that applies to `writer`, or null when its class is not restricted. An agent is always restricted to its members. */
 export function scopeOf(declaration: Declaration | null, writer: Writer): ClassScope | null {
   const entry = declaration?.writeScope?.[writer.class];
   if (writer.class === "agent") return { members: null, records: entry?.records ?? null, protected: entry?.protected ?? [], pointer: entry?.pointer ?? "/agents" };
@@ -185,14 +187,17 @@ export type RecordVerdict = { ok: true } | { ok: false; code: Exclude<WriteScope
 const OK = { ok: true } as const;
 
 function who(writer: Writer): string {
-  if (writer.agent) return `agent session ${writer.agent.name}, bound to member ${writer.agent.member},`;
+  if (writer.agent) {
+    const bound = writer.agent.members;
+    return `agent session ${writer.agent.name}, bound to ${bound.length === 1 ? "member" : "members"} ${bound.join(", ")},`;
+  }
   const name = writer.principal !== null ? `${writer.principal} (${writer.class})` : `a ${writer.class} writer`;
   return writer.class === "agent" ? `${name}, which no agent session lists,` : name;
 }
 
-/** Whether `writer` may write in `member` (null: a path in no member). */
+/** Whether `writer` may write in `member` (null: a path in no member). An agent session may write in any member it is bound to (ws-101). */
 function memberAllowed(writer: Writer, scope: ClassScope, member: string | null): boolean {
-  if (writer.class === "agent") return member !== null && member === writer.agent?.member;
+  if (writer.class === "agent") return member !== null && (writer.agent?.members.includes(member) ?? false);
   return scope.members === null || (member !== null && scope.members.includes(member));
 }
 
@@ -219,7 +224,7 @@ export function judgeRecord(declaration: Declaration | null, writer: Writer, kin
     return {
       ok: false,
       code: "write-scope-member",
-      message: `${who(writer)} may not write ${kind.name} records, which are ${where}: ${writer.class === "agent" ? "an agent session writes only its own member" : `writeScope.${writer.class}.members leaves it out`}`,
+      message: `${who(writer)} may not write ${kind.name} records, which are ${where}: ${writer.class === "agent" ? "an agent session writes only the members it is bound to" : `writeScope.${writer.class}.members leaves it out`}`,
     };
   }
   if (verb === "delete") {
@@ -319,7 +324,7 @@ export function judgePath(declaration: Declaration | null, writer: Writer, path:
     return {
       ok: false,
       code: "write-scope-member",
-      message: `${who(writer)} may not write ${path}, which ${where}: ${writer.class === "agent" ? "an agent session writes only its own member" : `writeScope.${writer.class}.members leaves it out`}`,
+      message: `${who(writer)} may not write ${path}, which ${where}: ${writer.class === "agent" ? "an agent session writes only the members it is bound to" : `writeScope.${writer.class}.members leaves it out`}`,
     };
   }
   const guarded = protectedEntry(scope.protected, path);
