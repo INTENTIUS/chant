@@ -27,7 +27,7 @@ A transcript is never copied into the record. The record pins it by sha256, with
 | `end <run id>` | how a started run ended. Refused with `run-unknown` for a run with no start, and `run-ended` for one that already ended |
 | `record` | a finished run's start and end in one write, for a caller that reports a run only once it is over |
 
-Each write fetches `chant/lifecycle` when it fast-forwards, appends with a compare-and-set of the branch, and pushes it. The push is best-effort, and `ledger.pushed` says whether the remote took it; when it did not, `ledger.notPushed` says why (no remote, a remote holding commits this checkout has not fetched, or git's refusal). The push's lease is the remote-tracking ref `refs/remotes/origin/chant/lifecycle`, which chant sets itself after each fetch and push, so a single-branch or shallow clone whose fetch refspec covers only its own branch keeps pushing every write. Each prints one JSON document, `runs-write.schema.json`, and exits 0 when it wrote and 1 when nothing was written.
+Each write fetches `chant/lifecycle` when it fast-forwards, appends with a compare-and-set of the branch, and pushes it. The push is best-effort, and `ledger.pushed` says whether the remote took it; when it did not, `ledger.notPushed` says why. The push's lease is the remote-tracking ref `refs/remotes/origin/chant/lifecycle`. chant sets that ref itself whenever a fetch or a push tells it the remote's tip. So a single-branch clone keeps pushing every write, even though its fetch refspec covers only its own branch. Each prints one JSON document, `runs-write.schema.json`, and exits 0 when it wrote and 1 when nothing was written.
 
 ## The fields
 
