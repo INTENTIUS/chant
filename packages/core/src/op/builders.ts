@@ -18,6 +18,7 @@ import type { PolicyGateArgs } from "./activities/policy";
 import type { GuardValidateArgs } from "./activities/guard-validate";
 import type { WorkEvidenceArgs } from "./activities/work-evidence";
 import type { DecideArgs } from "./activities/decide";
+import type { ComposeChangeSetArgs, LifecyclePlanChangeSetArgs, ReadChangeSetPartArgs } from "./activities/change-set";
 import { isValidCronExpression, cronSyntaxMessage } from "./cron";
 
 /** An `activity()` result — the plain `ActivityStep` shape plus the `.out` reference sugar (#1290). */
@@ -396,6 +397,28 @@ export const sourceArchive = (
 export const releasePlan = (args: WithStepRefs<ReleasePlanArgs> & StepOpts): NamedActivityStep => {
   const { args: rest, profile, id } = takeProfileAndId(args as Record<string, unknown>);
   return activity("releasePlan", rest, { profile: profile ?? "fastIdempotent", ...(id ? { id } : {}) });
+};
+
+/**
+ * Join members' change-set parts into one document (#3181). Its `digest` is
+ * what a combined run's gate binds: `gate("approve", { plan:
+ * changeSet.out.digest })`. Defaults to the `fastIdempotent` profile.
+ */
+export const composeChangeSet = (args: WithStepRefs<ComposeChangeSetArgs> & StepOpts): NamedActivityStep => {
+  const { args: rest, profile, id } = takeProfileAndId(args as Record<string, unknown>);
+  return activity("composeChangeSet", rest, { profile: profile ?? "fastIdempotent", ...(id ? { id } : {}) });
+};
+
+/** A chant member's change-set part, from `chant lifecycle plan <env> --json` (#3181). Its `part` feeds {@link composeChangeSet}. */
+export const lifecyclePlanChangeSet = (args: WithStepRefs<LifecyclePlanChangeSetArgs> & StepOpts): NamedActivityStep => {
+  const { args: rest, profile, id } = takeProfileAndId(args as Record<string, unknown>);
+  return activity("lifecyclePlanChangeSet", rest, { profile: profile ?? "longInfra", ...(id ? { id } : {}) });
+};
+
+/** A member's change-set part from a plan file a chant or warden run wrote (#3181). Its `part` feeds {@link composeChangeSet}. */
+export const readChangeSetPart = (args: WithStepRefs<ReadChangeSetPartArgs> & StepOpts): NamedActivityStep => {
+  const { args: rest, profile, id } = takeProfileAndId(args as Record<string, unknown>);
+  return activity("readChangeSetPart", rest, { profile: profile ?? "fastIdempotent", ...(id ? { id } : {}) });
 };
 
 /**

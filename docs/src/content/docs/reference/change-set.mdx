@@ -1,0 +1,133 @@
+---
+title: Change-Set Document
+description: One typed document for what a run's planners will change, with a summary and the value a gate binds.
+diataxis: reference
+---
+
+A run that plans several members gets one change set ([#3181](https://github.com/INTENTIUS/chant/issues/3181)). Each planner's output becomes the same typed document: chant's `lifecycle plan`, `terraform`, `tofu` and `choudoufu` plans, and a warden's reconcile plan. A reader asks one question of all of them, and the run's gate approves the document as a whole.
+
+The document is part of the [workspace read contract](/chant/reference/workspace-read-contract/), version 1. Its schema ships in `@intentius/chant` at `src/workspace/change-set.schema.json`, exported as `@intentius/chant/workspace/change-set.schema.json`, with the `$id` `https://intentius.io/chant/schemas/workspace/change-set/v1/change-set.schema.json`. Within the version, fields are only added.
+
+## The document
+
+| Field | Holds |
+|---|---|
+| `$schema` | the schema's `$id` |
+| `contract` | `1` |
+| `chant` | the chant that composed it, when known |
+| `digest` | what a gate over the whole run binds, described [below](#the-digest) |
+| `members` | one per member, sorted by name |
+| `entries` | one per resource change, sorted by member, address, deposed key and action |
+| `summary` | counts and the named deletes and replacements |
+
+### Members
+
+| Field | Holds |
+|---|---|
+| `member` | the workspace member, or the root a choudoufu set plan names |
+| `lexicon` | the lexicon its entries belong to |
+| `planner` | `terraform`, `tofu`, `choudoufu`, `chant` or `warden` |
+| `scope` | the estate, environment or org it plans into |
+| `status` | `planned`, or `failed` with `error` |
+| `planDigest` | what a gate on this member alone binds, or `null` when it failed |
+| `nativeDigest` | the planner's own hash of the same plan, such as choudoufu's per-root value |
+| `holes` | what the planner could not read, each `{ address, type, reason }` |
+
+A member with holes has an incomplete plan. Its entries say nothing about the addresses listed there.
+
+### Entries
+
+| Field | Holds |
+|---|---|
+| `member`, `lexicon`, `planner` | as on the member |
+| `address` | the planner's address. With `deposed`, it is unique within the member |
+| `type` | the resource type |
+| `name`, `index`, `module` | the parts of a terraform address, so a reader need not parse it |
+| `deposed` | a deposed object's key |
+| `id` | the provider's id, when the planner reports one |
+| `action` | `create`, `update`, `replace`, `delete`, `read`, `no-op` or `forget` |
+| `disruption` | on `update`, `replace` and `delete`: `in-place`, `rolling`, `replace`, `destroy` or `unknown` |
+| `region`, `scope` | where the change lands |
+| `attributes` | the top-level attributes the change writes |
+
+Each attribute is `{ path, before, after }`. `unknown: true` replaces `after` when the value is known only after apply. `sensitive: true` replaces both values when the planner marked either side sensitive. `forcesReplacement: true` marks the attributes that force a replace. Redaction follows the planner's marks. A value the planner leaves unmarked is carried as the plan JSON carries it.
+
+### Summary
+
+| Field | Holds |
+|---|---|
+| `members`, `entries` | the counts |
+| `actions` | every action with its count, zero included |
+| `types` | per resource type, the count of each action it has |
+| `byMember` | per member, the count of each action it has |
+| `deletes`, `replacements` | every delete and every replace, each `{ member, address, type, deposed, disruption }` |
+| `failed` | the members that failed to plan |
+| `holes` | the number of holes across members |
+
+## The digest
+
+Each member carries the value a gate on that member alone binds ([#2300](https://github.com/INTENTIUS/chant/issues/2300)).
+
+| Planner | Member `planDigest` |
+|---|---|
+| `terraform`, `tofu`, `choudoufu` | `terraformPlanDigest` over the `show -json` plan, as `TerraformApplyOp` binds |
+| `chant` | `computePlanDigest("lifecycle-plan", plan)` over the `lifecycle plan --json` document |
+| `warden` | `computePlanDigest("reconcile-plan", …)` over each change set's org and entries, sorted |
+
+The document's `digest` is `computePlanDigest("change-set", pairs)`, where `pairs` is `{ member, planDigest }` for every member, sorted by member. It has the `jcs1-sha256` prefix plans carry since [#2547](https://github.com/INTENTIUS/chant/issues/2547). Member order makes no difference to it. It changes when any member's `planDigest` changes. A set that names a member twice is refused.
+
+Entries and the summary are derived from the same plans and are not hashed again. A change to how chant projects a plan into entries does not expire an approval. `verifyChangeSetDigest(doc)` recomputes the value from `members`.
+
+`changeSetDigest(members)` computes it. A wave of [gated waves](https://github.com/INTENTIUS/chant/issues/3049) is a subset of members, and the wave's gate value is the same function over that subset.
+
+## Adapters
+
+| Planner | Adapter | Reads |
+|---|---|---|
+| terraform, tofu, choudoufu | `terraformChangeSetPart` in `@intentius/chant-lexicon-terraform/change-set` | `show -json` of a saved plan |
+| choudoufu set plan | `choudoufuSetPlanParts` in the same module | `choudoufu live-plan-set -json`, one part per root |
+| chant | `lifecyclePlanPart` in `@intentius/chant/change-set` | `chant lifecycle plan <env> --json` |
+| warden | `reconcilePlanPart` in the same module | the reconcile `ChangeSet` from `@intentius/chant/reconcile`, or an array of them |
+
+Each adapter returns a part: `{ member, entries }`. `composeChangeSet(parts)` joins them. It refuses two parts for one member.
+
+The chant adapter maps `create`, `update`, `delete` and `noop` across. An `update` whose lexicon classifies it `replace` or `destroy` becomes a `replace`. An `effect` entry becomes the receipt write its effect step makes: a `create` when the receipt is absent, else an `update`. An `unobserved` entry becomes a hole. `adopt` and `runtime` entries propose nothing and are left out.
+
+A terraform plan that stock marks `errored` is a failed member that keeps its entries. A choudoufu set plan root that did not plan is a failed member with no entries and no plan digest.
+
+## In an Op
+
+A combined run plans each member in its own step, composes the parts and gates on the digest.
+
+```typescript
+import { Op, phase, gate, composeChangeSet, lifecyclePlanChangeSet, readChangeSetPart } from "@intentius/chant/op";
+import { terraformPlan, terraformApply } from "@intentius/chant-lexicon-terraform";
+
+const estate = terraformPlan("estate", { id: "estate" });
+const delivery = lifecyclePlanChangeSet({ member: "delivery", env: "prod", cwd: "delivery", id: "delivery" });
+const warden = readChangeSetPart({ member: "warden", planner: "warden", file: "warden.plan.json", id: "warden" });
+const changeSet = composeChangeSet({ parts: [estate.out.changeSet, delivery.out.part, warden.out.part], id: "change-set" });
+
+export default Op({
+  name: "release",
+  overview: "Plan every member, approve one change set, apply.",
+  phases: [
+    phase("Plan", [estate, delivery, warden, changeSet]),
+    phase("Approve", [gate("approve-release", { plan: changeSet.out.digest })]),
+    phase("Apply", [terraformApply("estate", { planFile: estate.out.planFile })]),
+  ],
+});
+```
+
+| Activity | Returns |
+|---|---|
+| `terraformPlan` | `changeSet`, the root's part, beside `planDigest`. The root's name is the member |
+| `lifecyclePlanChangeSet` | `part`, from `chant lifecycle plan <env> --json` in `cwd` |
+| `readChangeSetPart` | `part`, from a plan file a chant or warden run wrote |
+| `composeChangeSet` | `document`, `digest` and `summary` |
+
+All four only read. Approve with `chant approve release approve-release --plan <digest>`. When a re-run composes a document with another value, the run stops at the gate and names both values.
+
+## Bundling
+
+`@intentius/chant/change-set` and `@intentius/chant-lexicon-terraform/change-set` import chant's plan hashing code and nothing else. Bundled with esbuild for node, the two come to about 19 KB. `change-set-bundle.test.ts` lists every module in that bundle and fails when TypeScript or chant's lint code joins it. A tool that runs them in CI from one bundled file, such as terragucci, needs no TypeScript toolchain.
