@@ -42,7 +42,12 @@
  * recorded joins the run by content (#3036), marked `patch-id`. A content join
  * never overrides a trailer or a record join: it is tried only for a commit
  * that has neither. A squash of several commits has a patch-id of its own, so
- * it never joins this way; following a squash is #3035.
+ * it never joins this way.
+ *
+ * A squash merge's commit carries none of its pull request's trailers or
+ * SHAs. When a read is asked to follow squashes (#3035, `squash.ts`), the
+ * squash commit joins every run its pull request's original commits join,
+ * marked `squash` with the originals in `via`.
  */
 
 import { execFileSync } from "node:child_process";
@@ -53,6 +58,7 @@ import { z } from "zod";
 import { fetchLifecycleStatus, pushLifecycle, readBlobBySha, RefCASConflictError, writeLedgerFiles } from "../lifecycle/git";
 import { resolveMemberLedger } from "../lifecycle/member-ledger";
 import { sortedJsonReplacer } from "../utils";
+import { followSquashes, type SquashFollow } from "./squash";
 import { RUN_TRAILER, parseRecordRef, type RecordRef } from "./trailers";
 import type { DsseEnvelope } from "./trust/dsse";
 import { runRecordDigest, type RunAttestation } from "./trust/run-statement";
@@ -620,9 +626,14 @@ export async function appendRunStatement(id: string, envelope: DsseEnvelope, rec
  * How a commit joins a run: `trailer` when it carries `Chant-Run` with the
  * run's id, `record` when the run's end lists it, `patch-id` when it has
  * neither and its `git patch-id --stable` equals a commit's the run's end
- * recorded (#3036).
+ * recorded (#3036), `squash` when it squashes a pull request whose original
+ * commits join the run one of those ways, and the read was asked to follow
+ * squashes (#3035).
  */
-export type RunJoin = "trailer" | "record" | "patch-id";
+export type RunJoin = "trailer" | "record" | "patch-id" | "squash";
+
+/** The order a reader lists joins in: the commit's own trailer first, a squash's originals last. */
+export const RUN_JOIN_ORDER: readonly RunJoin[] = ["trailer", "record", "patch-id", "squash"];
 
 /** A commit a run made, as the read reports it. */
 export interface RunCommitView {
@@ -634,6 +645,8 @@ export interface RunCommitView {
   hunks: RunHunk[] | null;
   /** For a commit joined by patch-id (#3036): the commit the run's end recorded with the same patch-id, which this one rewrites. */
   recordedAs?: string;
+  /** For a squash joined to the run (#3035): the pull request's original commits through which it joins. */
+  via?: string[];
 }
 
 /** One run, its start and end folded together, as `runs --json` and `graph --intent` report it. */
@@ -805,6 +818,8 @@ export interface RunRef {
   joinedBy: RunJoin[];
   /** For a `patch-id` join: the commit the run's end recorded with the same patch-id (#3036). */
   recordedAs?: string;
+  /** For a `squash` join: the pull request's original commits that join the run (#3035). */
+  via?: string[];
 }
 
 /**
@@ -882,4 +897,71 @@ export async function runsForCommits(
     );
   }
   return { refs, runs, conflicts };
+}
+
+/**
+ * Give each followed squash commit the runs its original commits join
+ * (#3035): `refs` must hold the originals' runs. A run the squash already
+ * joins gets `squash` added; another is added with `joinedBy: ["squash"]`.
+ * `via` lists the originals that join it.
+ */
+export function addSquashRuns(refs: Map<string, RunRef[]>, follows: Map<string, SquashFollow>): void {
+  for (const f of follows.values()) {
+    if (!f.followed) continue;
+    const list = refs.get(f.sha) ?? refs.set(f.sha, []).get(f.sha)!;
+    for (const o of f.commits) {
+      for (const r of refs.get(o) ?? []) {
+        const have = list.find((x) => x.id === r.id);
+        if (have) {
+          if (!have.joinedBy.includes("squash")) have.joinedBy.push("squash");
+          have.via = [...new Set([...(have.via ?? []), o])];
+          continue;
+        }
+        const { recordedAs: _r, via: _v, ...rest } = r;
+        list.push({ ...rest, joinedBy: ["squash"], via: [o] });
+      }
+    }
+  }
+}
+
+/**
+ * Follow the squash merges on `rev`'s history made since the earliest run
+ * started (#3035), and add each to the runs its pull request's original
+ * commits join: a commit a run's end lists, or one whose `Chant-Run` names
+ * the run. Missing pull request refs are fetched from `origin`. Returns what
+ * each squash's follow found, for the read's reasons.
+ */
+export function joinSquashCommits(runs: Map<string, RunView>, top: string, rev = "HEAD"): SquashFollow[] {
+  const starts = [...runs.values()].map((r) => Date.parse(r.startedAt)).filter((t) => !Number.isNaN(t));
+  if (starts.length === 0 || !commitId(top, rev)) return [];
+  const since = new Date(Math.min(...starts) - CLOCK_SLACK_MS).toISOString();
+  const candidates: { sha: string; subject: string }[] = [];
+  for (const line of (git(top, ["log", rev, `--since=${since}`, "--no-merges", "--format=%H%x1f%s"]) ?? "").split("\n")) {
+    const [sha, subject] = line.split("\x1f");
+    if (sha && subject !== undefined) candidates.push({ sha: sha.trim(), subject });
+  }
+  const follows = followSquashes(top, candidates, { fetchMissing: true });
+  const originals = [...new Set([...follows.values()].flatMap((f) => f.commits))];
+  const trailerRun = new Map<string, string[]>();
+  if (originals.length > 0) {
+    const text = git(top, ["log", "--no-walk=unsorted", "--stdin", `--format=%x00%H%x1f%(trailers:key=${RUN_TRAILER},valueonly,separator=%x1e)`], `${originals.join("\n")}\n`) ?? "";
+    for (const record of text.split("\0")) {
+      if (!record.trim()) continue;
+      const [sha, values] = record.split("\x1f");
+      trailerRun.set(sha.trim(), (values ?? "").split("\x1e").map((x) => x.trim()).filter(Boolean));
+    }
+  }
+  for (const f of follows.values()) {
+    if (!f.followed) continue;
+    for (const r of runs.values()) {
+      const via = f.commits.filter((o) => r.commits.some((c) => c.sha === o && c.joinedBy.some((j) => j !== "squash")) || (trailerRun.get(o) ?? []).includes(r.id));
+      if (via.length === 0) continue;
+      const listed = r.commits.find((c) => c.sha === f.sha);
+      if (listed) {
+        if (!listed.joinedBy.includes("squash")) listed.joinedBy.push("squash");
+        listed.via = [...new Set([...(listed.via ?? []), ...via])];
+      } else r.commits.push({ sha: f.sha, patchId: patchIdOf(top, f.sha), joinedBy: ["squash"], hunks: null, via });
+    }
+  }
+  return [...follows.values()];
 }

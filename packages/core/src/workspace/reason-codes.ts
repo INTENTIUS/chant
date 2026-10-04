@@ -174,6 +174,7 @@ export const REASONS = {
   // The intent graph: part of the walk that can't be read. The document is still printed.
   "intent-history-shallow": "The repository is a shallow clone, so the region's history stops at the clone's boundary.",
   "intent-plugin-failed": "A kind file's commitJoins, which joins commits to units, contracts and evidence, failed for a commit.",
+  "squash-unfollowed": "A squash commit's pull request ref (refs/pull/<n>/head) is not in the clone and could not be fetched from origin, so its original commits are not followed; the read keeps its answer without them.",
   // The intent graph: findings, each a node in the graph.
   "intent-commit-undecided": "A commit changed the region when no decision constrained it at path granularity.",
   "intent-commit-bare": "A commit names no unit, carries no record through its Chant-Record or Chant-Lease trailer, and has no pull request and no decision covering the region at its time.",

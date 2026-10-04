@@ -18,7 +18,8 @@
  *   signed]` judges every stored statement (`run-statement.schema.json`).
  *
  * chant records runs and never starts one: whatever ran the agent writes the
- * record. Reads never fetch.
+ * record. Reads never fetch, except a pull request ref `--follow-squash`
+ * needs (#3035).
  */
 
 import { readFileSync } from "node:fs";
@@ -36,6 +37,7 @@ import {
   endRun,
   foldRun,
   joinPatchIdCommits,
+  joinSquashCommits,
   joinTrailerCommits,
   LEDGER_BRANCH,
   readRuns,
@@ -69,7 +71,7 @@ export const RUNS_WRITE_SCHEMA_ID = "https://intentius.io/chant/schemas/workspac
 export const RUN_STATEMENT_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/run-statement/v1/run-statement.schema.json";
 
 const USAGE = [
-  "chant workspace runs [--unit <id>] [--decision <id>] [--by <principal>] [--since <rev>] [--json]",
+  "chant workspace runs [--unit <id>] [--decision <id>] [--by <principal>] [--since <rev>] [--follow-squash] [--json]",
   "chant workspace runs start --from <file|->",
   "chant workspace runs end <run id> [--from <file|->]",
   "chant workspace runs record --from <file|->",
@@ -83,7 +85,7 @@ export const RUNS_ERROR_CODES = [...WORKSPACE_ERROR_CODES] as const satisfies re
 export type RunsErrorCode = (typeof RUNS_ERROR_CODES)[number];
 
 /** Why part of the read is missing. The read still succeeds. Closed. */
-export const RUNS_REASON_CODES = ["runs-no-ledger", "runs-ledger-malformed", "kind-unreadable"] as const satisfies readonly ReasonCode[];
+export const RUNS_REASON_CODES = ["runs-no-ledger", "runs-ledger-malformed", "kind-unreadable", "squash-unfollowed"] as const satisfies readonly ReasonCode[];
 export type RunsReasonCode = (typeof RUNS_REASON_CODES)[number];
 
 /** Why a run write was refused or could not run. Closed. */
@@ -173,6 +175,8 @@ export interface RunsQuery {
   since?: string;
   /** The revision whose trust policy judges the run statements (#3192). Default: origin/HEAD, then main, then master. */
   base?: string;
+  /** Follow squash merges on HEAD to their pull requests' original commits, fetching missing pull request refs (#3035). */
+  followSquash?: boolean;
 }
 
 export interface RunsReason {
@@ -213,7 +217,8 @@ export type RunsDocument =
       chant: string;
       workspace: { name: string; root: string };
       ledger: { branch: string; dir: string; commit: string | null };
-      filter: { unit: string | null; decision: string | null; by: string | null; since: string | null };
+      /** The options given. `followSquash` was added within contract 1 (#3035). */
+      filter: { unit: string | null; decision: string | null; by: string | null; since: string | null; followSquash?: boolean };
       /** The trust policy the run statements are judged by (#3192). */
       trust: RunsTrust;
       /** Newest first, by when each started. Each carries its `attestation`. */
@@ -289,6 +294,12 @@ export async function workspaceRuns(query: RunsQuery): Promise<RunsDocument> {
     joinTrailerCommits(runs, byTrailer, top);
     // A commit that lost its trailer joins by content (#3036).
     joinPatchIdCommits(runs, byTrailer, top);
+    // A squash merge joins the runs its pull request's commits join, when asked (#3035).
+    if (query.followSquash) {
+      for (const f of joinSquashCommits(runs, top)) {
+        if (f.problem) reasons.push({ code: "squash-unfollowed", message: `${f.sha.slice(0, 8)} squashes pull request #${f.pullRequest}, and ${f.problem}, so the runs of its original commits are not joined to it` });
+      }
+    }
     const { policy, trust } = runsTrust(top, query.base);
     attestRuns(runs.values(), policy);
     const all = [...runs.values()];
@@ -316,7 +327,7 @@ export async function workspaceRuns(query: RunsQuery): Promise<RunsDocument> {
       ...head,
       workspace: { name: declaration.name, root: located.root },
       ledger: { branch: LEDGER_BRANCH, dir, commit: tip },
-      filter: { unit: query.unit ?? null, decision: query.decision ?? null, by: query.by ?? null, since: query.since ?? null },
+      filter: { unit: query.unit ?? null, decision: query.decision ?? null, by: query.by ?? null, since: query.since ?? null, followSquash: query.followSquash === true },
       trust,
       runs: selected,
       totals: { all: totalRuns(selected), byUnit, byDecision, byPrincipal },
@@ -619,7 +630,7 @@ export async function runWorkspaceRuns(ctx: CommandContext): Promise<number> {
       return "error" in doc ? 1 : 0;
     };
     const usage = (message: string) => print({ $schema: RUNS_WRITE_SCHEMA_ID, contract: RUNS_CONTRACT_VERSION, verb, error: { code: "write-usage-invalid", message } });
-    for (const [flag, v] of [["--unit", args.unit], ["--decision", args.decision], ["--by", args.by], ["--since", args.since]] as const) {
+    for (const [flag, v] of [["--unit", args.unit], ["--decision", args.decision], ["--by", args.by], ["--since", args.since], ["--follow-squash", args.followSquash]] as const) {
       if (v !== undefined) return usage(`runs ${verb} takes its fields with --from, not ${flag}`);
     }
     if (verb === "end" && !args.extraPositional2) return usage("runs end needs the run id: runs end <run id>");
@@ -641,7 +652,7 @@ export async function runWorkspaceRuns(ctx: CommandContext): Promise<number> {
     console.error(formatError({ message: "runs is a read and takes no --from; write with runs start, end or record", hint: USAGE }));
     return 1;
   }
-  const doc = await workspaceRuns({ cwd, unit: args.unit, decision: args.decision, by: args.by, since: args.since, base: args.base });
+  const doc = await workspaceRuns({ cwd, unit: args.unit, decision: args.decision, by: args.by, since: args.since, base: args.base, followSquash: args.followSquash });
   if (args.json) console.log(JSON.stringify(doc, null, 2));
   else if ("error" in doc) console.error(formatError({ message: `${doc.error.code}: ${doc.error.message}`, hint: USAGE }));
   else console.log(formatRuns(doc));

@@ -413,6 +413,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       if (value !== undefined && !value.startsWith("-")) result.intent = args[++i];
       else if (args.includes("--record")) result.intent = "";
       else throw new Error("--intent needs a region: --intent <path[:start-end]|path#symbol>, or --intent --record <id>");
+    } else if (arg === "--follow-squash") {
+      // `chant workspace graph --intent ... --follow-squash` and `chant workspace runs --follow-squash` (#3035)
+      result.followSquash = true;
     } else if (arg === "--record") {
       // `chant workspace graph --intent --record <id>`
       result.record = args[++i];
@@ -1020,12 +1023,14 @@ Workspace (level 1, #2524):
                         a url or a path pinned by hash) is appended to the
                         item's pins through records amend. Prints the
                         work-evidence document and never commits
-  workspace runs [--unit <id>] [--decision <id>] [--by <principal>] [--since <rev>] [--json]
+  workspace runs [--unit <id>] [--decision <id>] [--by <principal>] [--since <rev>] [--follow-squash] [--json]
                         The agent runs in the run ledger on chant/lifecycle, each
                         with its model, tokens, cost and the commits it made,
                         and totals per work item, decision and principal; a run
                         that reports no cost is listed as unpriced, never zero.
-                        Read-only, never fetches
+                        Read-only, never fetches; --follow-squash joins each
+                        squash merge to its pull request's runs, fetching a
+                        missing refs/pull/<n>/head from origin
   workspace runs start --from <file|->
                         Record that an agent run started: who it worked for,
                         its harness, model, work item and lease. Prints the run
@@ -1217,12 +1222,14 @@ Workspace (level 1, #2524):
                         Each composite instance the members declare, with the
                         components whose contract can deploy it; an instance
                         with none lists an empty set
-  workspace graph --intent <path[:start-end]|path#symbol> [--at <rev>] [--kind <kind file>...] [--json]
+  workspace graph --intent <path[:start-end]|path#symbol> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--json]
                         The intent graph over one region: the commits that
                         touched it, the decisions whose constrains cover it,
                         the artifacts they pin, and findings with closed codes.
-                        Without --kind, every record kind the declaration names
-  workspace graph --intent --record <id> [--at <rev>] [--kind <kind file>...] [--json]
+                        Without --kind, every record kind the declaration names.
+                        --follow-squash follows a squash merge to its pull
+                        request's commits, fetching a missing ref from origin
+  workspace graph --intent --record <id> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--json]
                         One decision's intent walk over every path: and member:
                         entry it constrains: the commits in its window, each
                         own, worked, within-other or unexplained, with counts

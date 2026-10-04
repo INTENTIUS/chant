@@ -7,7 +7,7 @@ diataxis: reference
 ## Synopsis
 
 ```
-chant workspace runs [--unit <id>] [--decision <id>] [--by <principal>] [--since <rev>] [--json]
+chant workspace runs [--unit <id>] [--decision <id>] [--by <principal>] [--since <rev>] [--follow-squash] [--json]
 chant workspace runs start --from <file|->
 chant workspace runs end <run id> [--from <file|->]
 chant workspace runs record --from <file|->
@@ -91,7 +91,7 @@ A chat turn or a decide call that is over before anything is recorded goes in on
 
 ## Reading runs
 
-`chant workspace runs --json` prints every run in the ledger, newest first. Each entry folds a run's start and end together, and its `state` is `running` until the end is recorded. The document follows `runs.schema.json`, part of the [read contract](/chant/reference/workspace-read-contract/#agent-runs). It reads the local branch and never fetches.
+`chant workspace runs --json` prints every run in the ledger, newest first. Each entry folds a run's start and end together, and its `state` is `running` until the end is recorded. The document follows `runs.schema.json`, part of the [read contract](/chant/reference/workspace-read-contract/#agent-runs). It reads the local branch and never fetches, unless `--follow-squash` is given.
 
 Each run lists the `commits` it made. A commit the run's end lists has `joinedBy: ["record"]`, and a commit on `HEAD`'s history that carries the run's `Chant-Run` trailer has `"trailer"`. A commit can have both. One with neither joins by content when its `git patch-id --stable` equals the `patchId` of an entry the end lists. It has `joinedBy: ["patch-id"]`, and `recordedAs` names the listed entry it rewrites ([#3036](https://github.com/INTENTIUS/chant/issues/3036)). A rebase or a cherry-pick that dropped the trailer leaves such a rewrite. The read looks at history made since the earliest such run started, less a day for clocks. A trailer or a listing always wins over content. `hunks` holds the lines the run's end said it wrote, or `null`, as it always is for a content join. `decisions` lists, as `<kind>/<id>`, the decisions the run carried out: the ones its work item `implements`, read through the declared work kinds, and the decision records its `records` name.
 
@@ -111,6 +111,8 @@ Each run lists the `commits` it made. A commit the run's end lists has `joinedBy
 | `--decision <id>` | the runs that carried out that decision, by its id or `<kind>/<id>` |
 | `--by <principal>` | the runs made for that principal |
 | `--since <rev>` | the runs that made a commit in `<rev>..HEAD`, or started after `<rev>`'s commit date |
+
+With `--follow-squash`, a squash merge on `HEAD`'s history joins each run its pull request's original commits join ([#3035](https://github.com/INTENTIUS/chant/issues/3035), [ws-092](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-092-following-a-squash-merge.md)). The squash commit is added to the run's `commits` with `joinedBy: ["squash"]` and `via`, the original commits through which it joins: one the run's end lists, or one whose `Chant-Run` names the run. The read takes each pull request's head from `refs/pull/<n>/head`, the ref GitHub and Forgejo keep, fetching the ones the clone lacks from `origin` into `refs/chant/pull/<n>/head`, so a later read needs no network. Only squashes made since the earliest run started are followed. A ref that can't be read or fetched is named by the reason `squash-unfollowed`, and `filter.followSquash` says whether the option was given. Without it the read never fetches.
 
 A checkout with no `chant/lifecycle` branch reads no runs and says so with the reason `runs-no-ledger`. Lines in the ledger that aren't run events are counted in `malformed` and named by `runs-ledger-malformed`. Without `--json`, the read prints one line per run and the totals. `chant serve mcp` serves the same document as the `workspace-runs` tool.
 
