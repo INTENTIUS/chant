@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-otel",
-  "version": "0.104.3",
+  "version": "0.104.4",
   "description": "OpenTelemetry Collector lexicon for chant — typed receivers, processors, exporters, connectors, extensions and pipelines, serialized to collector YAML",
   "license": "Apache-2.0",
   "homepage": "https://intentius.io/chant",
@@ -68,7 +68,7 @@
     "typescript": "^5.9.3"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.104.3",
+    "@intentius/chant": "^0.104.4",
     "typescript": "^5.9.3"
   }
 }
