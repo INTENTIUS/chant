@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-terraform",
-  "version": "0.104.2",
+  "version": "0.104.3",
   "type": "module",
   "files": [
     "src/",
@@ -67,7 +67,7 @@
     "access": "public"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.104.2",
+    "@intentius/chant": "^0.104.3",
     "typescript": "^5.9.3",
     "zod": "^4.3.6"
   },
