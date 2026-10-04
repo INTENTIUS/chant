@@ -53,6 +53,21 @@ async function runtimeFor(name: unknown): Promise<OpRuntimeProvider> {
   return plugin.opRuntime;
 }
 
+/**
+ * The refusal for an Op that declares `neverOverMcp`, or `undefined` when MCP
+ * may act on it. It names the rule and the way through, which is a person at a
+ * shell. An Op that is not discovered is left to the caller's own not-found
+ * handling.
+ */
+async function neverOverMcpRefusal(name: string, action: "run" | "approve"): Promise<string | undefined> {
+  const { ops } = await discoverOps();
+  if (!ops.get(name)?.config.neverOverMcp) return undefined;
+  return action === "run"
+    ? `Op "${name}" declares neverOverMcp, so it is not run over MCP. Run it at a shell with \`chant run ${name}\`; op-status and op-report still answer here.`
+    : `Op "${name}" declares neverOverMcp, so its gates are not resolved over MCP, whichever channel reached them. ` +
+        `Approvals belong to people: approve at a shell with \`chant approve ${name} <gate>\`.`;
+}
+
 const RUNTIME_PARAM = {
   type: "string",
   description: 'Runtime to address: a lexicon name with an opRuntime, or "local" (the default)',
@@ -103,7 +118,8 @@ export function createOpRunTool(): ToolRegistration {
     definition: {
       name: "op-run",
       description:
-        "Run an Op on a runtime and return its result. Defaults to the built-in local runtime, which executes the Op in this process.",
+        "Run an Op on a runtime and return its result. Defaults to the built-in local runtime, which executes the Op in this process. " +
+        "Refuses an Op that declares neverOverMcp.",
       inputSchema: {
         type: "object",
         properties: {
@@ -117,6 +133,8 @@ export function createOpRunTool(): ToolRegistration {
       const name = params.name as string;
 
       const { ops } = await discoverOps();
+      const refusal = await neverOverMcpRefusal(name, "run");
+      if (refusal) throw new Error(refusal);
       if (!ops.has(name)) {
         const available = [...ops.keys()];
         return `Op "${name}" not found. Available: ${available.join(", ") || "none"}`;
@@ -185,7 +203,8 @@ export function createOpApproveTool(): ToolRegistration {
         "Record a gate's resolution on the gate ledger and wake the runtime hosting the gated run. " +
         "Refuses a gate this same channel reached: a run started with op-run must be approved from " +
         "somewhere else, normally `chant approve <op> <gate>` at a shell. The approver is recorded as " +
-        "unattested, because this channel cannot verify a name.",
+        "unattested, because this channel cannot verify a name. Also refuses every gate of an Op that " +
+        "declares neverOverMcp, whatever channel reached the gate.",
       inputSchema: {
         type: "object",
         properties: {
@@ -205,6 +224,9 @@ export function createOpApproveTool(): ToolRegistration {
       const name = params.name as string;
       const gate = params.gate as string;
       if (!name || !gate) throw new Error("op-approve needs both an Op name and a gate name");
+
+      const refusal = await neverOverMcpRefusal(name, "approve");
+      if (refusal) throw new Error(refusal);
 
       const runtime = await runtimeFor(params.runtime);
       const outcome = await recordGateApproval(name, gate, {

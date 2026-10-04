@@ -455,6 +455,27 @@ describe("runApprove", () => {
     vi.unstubAllEnvs();
   });
 
+  // #3402 — a relayed approval names who relayed it, typed, not in --note.
+  test("--relayed-by is recorded on the resolution line, and a blank one is refused", async () => {
+    seedPending("fountain-apply", "rollout-gate", PLAN_A);
+    appendGateResolutionMock.mockResolvedValue({
+      commit: "sha",
+      record: { version: 1, op: "fountain-apply", gate: "rollout-gate", resolvedBy: "github:alice", relayedBy: "github:hud-follower", timestamp: "2026-01-01T00:00:00.000Z" },
+    });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(await runApprove(ctx({ path: "fountain-apply", extraPositional: "rollout-gate", actor: "github:alice", relayedBy: "github:hud-follower" }))).toBe(0);
+    expect(appendGateResolutionMock).toHaveBeenCalledWith(
+      expect.objectContaining({ resolvedBy: "github:alice", relayedBy: "github:hud-follower" }),
+    );
+    expect(errSpy.mock.calls.flat().join("\n")).toMatch(/resolved by github:alice, relayed by github:hud-follower,/);
+
+    appendGateResolutionMock.mockClear();
+    expect(await runApprove(ctx({ path: "fountain-apply", extraPositional: "rollout-gate", actor: "github:alice", relayedBy: "a\nb" }))).toBe(1);
+    expect(appendGateResolutionMock).not.toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+
   test("without --url, the surrounding PR/MR job is itself the address", async () => {
     vi.stubEnv("GITHUB_SERVER_URL", "https://github.com");
     vi.stubEnv("GITHUB_REPOSITORY", "INTENTIUS/chant");

@@ -99,7 +99,11 @@ describe("the writer conformance suite (#3159)", () => {
     expect(report.facts.before).toMatchObject({
       decision: [["fix-001", "decided"], ["fix-002", "proposed"]],
       session: [["S-0001", "closed"]],
-      answer: [[expect.stringMatching(/^slice-tier-/), "answered"]],
+      // #3403: the ad-hoc question an agent asked, answered from the options it offered.
+      answer: [
+        [expect.stringMatching(/^agent-question-/), "answered"],
+        [expect.stringMatching(/^slice-tier-/), "answered"],
+      ],
       work: [["W-001", "open"]],
       runs: [["conformance-run", "ended"], ["writer-run-1", "ended"], ["writer-run-2", "ended"]],
       // #3308: the box's listing, set through chant with its cover copied in, survives amnesia.

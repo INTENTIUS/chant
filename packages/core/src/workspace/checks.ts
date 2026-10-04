@@ -45,7 +45,7 @@ import type { PostSynthDiagnostic } from "../lint/post-synth";
 import { readDeclaration, resolveGroups, WorkspaceReadError, type Declaration, type Entry, type ErrorLocation, type ResolvedGroup } from "./declaration";
 import type { ReasonCode } from "./reason-codes";
 import { parseJsonText, pointerToken, type TextLocation } from "./jsonc";
-import { loadKindRegistry, probeKind, resolveKind, type KindLoadProblem, type KindRegistry } from "./kinds";
+import { loadKindRegistry, probeKind, resolveKind, resolveMemberFields, type KindLoadProblem, type KindRegistry } from "./kinds";
 import { coreClassRegistry, loadClassRegistry, unknownScopeClasses, type ClassRegistry } from "./principal-classes";
 import { gitTop, workingTree, type WorkspaceTree } from "./tree";
 import { LINK_CHECKS, linkTable } from "./checks/links";
@@ -239,13 +239,20 @@ export const WORKSPACE_CHECKS: readonly WorkspaceCheck[] = [
   {
     id: "WSP005",
     name: "kind-probe-failed",
-    description: "Every member's directory is what its kind reads, such as a chant config for a chant member.",
+    description: "Every member's directory is what its kind reads, such as a chant config for a chant member, and its fields are ones its kind declares, of the declared types (#3151).",
     severity: "error",
     configurable: true,
     check(ctx) {
-      return readableMembers(ctx)
+      const probes = readableMembers(ctx)
         .filter((m) => !probeKind(ctx.kinds.get(m.kind)!, ctx.tree, memberDir(m.dir)))
         .map((m) => entryFinding(this, m, "kind", `member ${m.name} (${m.dir}) is not ${ctx.kinds.get(m.kind)!.description}`));
+      // A member's fields (#3151): checked whether or not its directory exists, since they are the entry's own.
+      const fields = ctx.declaration.members.flatMap((m) =>
+        resolveMemberFields(ctx.kinds.get(m.kind), m.fields).problems.map((p) =>
+          entryFinding(this, m, p.path === "" ? "fields" : `fields/${p.path.split("/").map(pointerToken).join("/")}`, `member ${m.name}: ${p.message}`),
+        ),
+      );
+      return [...probes, ...fields];
     },
   },
   {

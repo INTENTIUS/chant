@@ -7,10 +7,13 @@ diataxis: reference
 ## Synopsis
 
 ```
-chant workspace runs [--unit <id>] [--decision <id>] [--by <principal>] [--since <rev>] [--json]
+chant workspace runs [--unit <id>] [--decision <id>] [--by <principal>] [--since <rev>] [--follow-squash] [--json]
 chant workspace runs start --from <file|->
 chant workspace runs end <run id> [--from <file|->]
 chant workspace runs record --from <file|->
+chant workspace runs sign <run id> (--key <runner key.pem> | --envelope <file|->) [--base <rev>]
+chant workspace runs statement <run id> --signer <principal>
+chant workspace runs verify [<run id>] [--require signed] [--base <rev>] [--json]
 ```
 
 ## Description
@@ -27,7 +30,7 @@ A transcript is never copied into the record. The record pins it by sha256, with
 | `end <run id>` | how a started run ended. Refused with `run-unknown` for a run with no start, and `run-ended` for one that already ended |
 | `record` | a finished run's start and end in one write, for a caller that reports a run only once it is over |
 
-Each write fetches `chant/lifecycle` when it fast-forwards, appends with a compare-and-set of the branch, and pushes it. The push is best-effort, and `ledger.pushed` says whether the remote took it. Each prints one JSON document, `runs-write.schema.json`, and exits 0 when it wrote and 1 when nothing was written.
+Each write fetches `chant/lifecycle` when it fast-forwards, appends with a compare-and-set of the branch, and pushes it. The push is best-effort, and `ledger.pushed` says whether the remote took it; when it did not, `ledger.notPushed` says why. The push's lease is the remote-tracking ref `refs/remotes/origin/chant/lifecycle`. chant sets that ref itself whenever a fetch or a push tells it the remote's tip. So a single-branch clone keeps pushing every write, even though its fetch refspec covers only its own branch. Each prints one JSON document, `runs-write.schema.json`, and exits 0 when it wrote and 1 when nothing was written.
 
 ## The fields
 
@@ -88,9 +91,9 @@ A chat turn or a decide call that is over before anything is recorded goes in on
 
 ## Reading runs
 
-`chant workspace runs --json` prints every run in the ledger, newest first. Each entry folds a run's start and end together, and its `state` is `running` until the end is recorded. The document follows `runs.schema.json`, part of the [read contract](/chant/reference/workspace-read-contract/#agent-runs). It reads the local branch and never fetches.
+`chant workspace runs --json` prints every run in the ledger, newest first. Each entry folds a run's start and end together, and its `state` is `running` until the end is recorded. The document follows `runs.schema.json`, part of the [read contract](/chant/reference/workspace-read-contract/#agent-runs). It reads the local branch and never fetches, unless `--follow-squash` is given.
 
-Each run lists the `commits` it made. A commit the run's end lists has `joinedBy: ["record"]`, and a commit on `HEAD`'s history that carries the run's `Chant-Run` trailer has `"trailer"`. A commit can have both. `hunks` holds the lines the run's end said it wrote in the commit, or `null`. `decisions` lists, as `<kind>/<id>`, the decisions the run carried out: the ones its work item `implements`, read through the declared work kinds, and the decision records its `records` name.
+Each run lists the `commits` it made. A commit the run's end lists has `joinedBy: ["record"]`, and a commit on `HEAD`'s history that carries the run's `Chant-Run` trailer has `"trailer"`. A commit can have both. One with neither joins by content when its `git patch-id --stable` equals the `patchId` of an entry the end lists. It has `joinedBy: ["patch-id"]`, and `recordedAs` names the listed entry it rewrites ([#3036](https://github.com/INTENTIUS/chant/issues/3036)). A rebase or a cherry-pick that dropped the trailer leaves such a rewrite. The read looks at history made since the earliest such run started, less a day for clocks. A trailer or a listing always wins over content. `hunks` holds the lines the run's end said it wrote, or `null`, as it always is for a content join. `decisions` lists, as `<kind>/<id>`, the decisions the run carried out: the ones its work item `implements`, read through the declared work kinds, and the decision records its `records` name.
 
 `totals` sums the runs the filters keep, overall in `all` and per group in `byUnit`, `byDecision` and `byPrincipal`. A run with no work item counts under `unit: null`, and a run with no `by` under `principal: null`. A run carrying out two decisions counts under each.
 
@@ -109,13 +112,58 @@ Each run lists the `commits` it made. A commit the run's end lists has `joinedBy
 | `--by <principal>` | the runs made for that principal |
 | `--since <rev>` | the runs that made a commit in `<rev>..HEAD`, or started after `<rev>`'s commit date |
 
+With `--follow-squash`, a squash merge on `HEAD`'s history joins each run its pull request's original commits join ([#3035](https://github.com/INTENTIUS/chant/issues/3035), [ws-092](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-092-following-a-squash-merge.md)). The squash commit is added to the run's `commits` with `joinedBy: ["squash"]` and `via`, the original commits through which it joins: one the run's end lists, or one whose `Chant-Run` names the run. The read takes each pull request's head from `refs/pull/<n>/head`, the ref GitHub and Forgejo keep, fetching the ones the clone lacks from `origin` into `refs/chant/pull/<n>/head`, so a later read needs no network. Only squashes made since the earliest run started are followed. A ref that can't be read or fetched is named by the reason `squash-unfollowed`, and `filter.followSquash` says whether the option was given. Without it the read never fetches.
+
 A checkout with no `chant/lifecycle` branch reads no runs and says so with the reason `runs-no-ledger`. Lines in the ledger that aren't run events are counted in `malformed` and named by `runs-ledger-malformed`. Without `--json`, the read prints one line per run and the totals. `chant serve mcp` serves the same document as the `workspace-runs` tool.
 
 [`chant workspace graph --intent`](/chant/cli/workspace-graph/#chants-trailers) links each commit in a region to the run that made it, with the model and the cost.
+
+Each run also carries `record`, the hash a statement signs, `statements`, the signed statements its ledger file holds, and `attestation`, those statements judged against the runner keys at base. `trust` says which base that was and which runner principals it lists. The next section has the rest.
+
+## Signed statements
+
+A run's record is as trustworthy as whatever wrote it: a box that reports its own run can report anything. A statement is a runner's or a steward's signed word for it ([#3192](https://github.com/INTENTIUS/chant/issues/3192), [ws-090](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-090-the-agent-run-statement.md)). It is an [in-toto Statement v1](https://github.com/in-toto/attestation/blob/main/spec/v1/statement.md) in a [DSSE envelope](https://github.com/secure-systems-lab/dsse), the format of [runner evidence](/chant/cli/workspace-evidence/), with the predicate type `https://intentius.io/chant/agent-run/v1`.
+
+| Part | Holds |
+|---|---|
+| `subject` | each commit the run made, `{ name: <sha>, digest: { gitCommit: <sha> } }`, with `annotations.patchId` when the commit has a patch. The commits are the ones its end lists and the ones that carry its `Chant-Run` trailer |
+| `predicate.signer` | the runner principal whose key signs, as `.chant/trust.json` lists it |
+| `predicate.run` | `{ id, record: { sha256 } }`: the run and the hash of its record, the SHA-256 of the canonical JSON (keys sorted, no whitespace) of `[start line, end line]`. The record holds the cost, tokens and transcript hash, so the hash covers them |
+| `predicate.unit`, `harness`, `model`, `provider`, `by` | the work item, harness, model and provider, and the principal the run worked for, as the record has them, so a policy can read them without the record |
+
+The signing key is a runner key, listed at base under `runners` in `.chant/trust.json` with class `runner` for a CI job or `service` for a hosted signer such as a lobby or a steward. A key the signers file lists is refused: a person's key never signs for a run. Only an ended run can be signed, since the end is part of what the hash covers.
+
+| Command | Does |
+|---|---|
+| `runs sign <id> --key <pem>` | builds the statement from the ledger, signs it with the Ed25519 key, and appends it to the run's file as a `statement` line |
+| `runs statement <id> --signer <principal>` | prints the statement, the `payloadType` and the `payload` to sign, in base64, for a signer whose key is kept elsewhere. It writes nothing |
+| `runs sign <id> --envelope <file\|->` | takes an envelope signed elsewhere, checks it, and appends it |
+
+Studio's lobby keeps its key away from the box (studio-033, studio-034). The box sends it the statement. The lobby checks the fields it can vouch for, such as the model it proxied. It then signs the DSSE pre-authentication encoding of `payloadType` and the decoded payload. The envelope goes back to the box, and `runs sign <id> --envelope -` stores it.
+
+```sh
+chant workspace runs statement 20261003T061522Z-3f9a1c2e --signer lobby > statement.json
+# the lobby signs statement.json's payload and returns envelope.json
+chant workspace runs sign 20261003T061522Z-3f9a1c2e --envelope envelope.json
+```
+
+Either way `sign` checks the envelope before it writes. The signature must be by a runner key at base, and the statement must name that key's principal as its `signer`. It must also be for this run and match its record. A refusal writes nothing and names one of `runner-key-invalid`, `runner-key-is-signer`, `runner-key-unlisted`, `envelope-unreadable`, `envelope-invalid`, `envelope-untrusted`, `run-statement-invalid`, `run-statement-signer-mismatch`, `run-statement-mismatch`, `run-not-ended`, `run-unknown` or `trust-policy-unreadable`. A stored statement is a fact in the ledger and is never removed. `sign` prints the `runs-write.schema.json` document with `verb: "sign"` and `statement: { signer, class, keyid, envelope }`.
+
+A reader never trusts that a statement was checked when it was stored. `runs --json` and `runs verify` judge every stored statement again, against the runner keys at base, so removing a runner key from `.chant/trust.json` makes what it signed read as `untrusted` from then on.
+
+| `attestation.status` | Meaning |
+|---|---|
+| `signed` | a stored statement verifies. `signer`, `class` and `keyid` say whose, and `commits` lists the commits it names |
+| `unsigned` | the ledger holds no statement for the run |
+| `mismatch` | a listed key signed a statement that does not match the record, with the code `run-statement-mismatch` |
+| `untrusted` | no listed key signed it, `envelope-untrusted`: an unknown key, or one removed at base |
+| `invalid` | not a DSSE envelope, not an agent-run statement, or naming another signer |
+
+`runs verify [<run id>]` prints the verdicts for every run, or for one, as `run-statement.schema.json` with `--json`. It reports and exits 0. With `--require signed` it exits 1 when an ended run is not `signed`, and `failures` says why. A running run is never required. [`chant workspace verify --require attested-runs`](/chant/cli/workspace-verify/#what-passes) asks the same of each commit a pull request's runs made.
 
 ## Exit codes
 
 | Code | Meaning |
 |---|---|
 | 0 | The read succeeded, or the write was made |
-| 1 | The declaration could not be read, `--since` names no commit, the command line is wrong, or the write was refused |
+| 1 | The declaration could not be read, `--since` names no commit, the command line is wrong, the write was refused, or `runs verify --require signed` found a run that is not signed |

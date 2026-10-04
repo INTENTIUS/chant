@@ -369,6 +369,9 @@
             "$ref": "#/$defs/outputName"
           }
         },
+        "fields": {
+          "$ref": "#/$defs/memberFields"
+        },
         "links": {
           "type": "array",
           "description": "Member links (#2524 D6, #2539): the outputs of other members this member reads. A link is stated once, here on the consumer, and matched exactly against the producer's outputs. chant workspace check resolves it in source.",
@@ -438,6 +441,23 @@
         ]
       }
     },
+    "memberFields": {
+      "type": "object",
+      "description": "Values for the fields the member's kind declares (#3151), such as an app member's scripts, env and health. Each is a string, integer or boolean, or an object of those for a field the kind declares as an object. chant workspace check fails when the kind declares no such field or a value is of the wrong type (WSP005), and chant workspace status --json prints every field the kind declares with its defaults filled in. Added in schema 1 by chant 0.103.0, so a declaration that uses it sets minReader to 0.103.0 or newer.",
+      "propertyNames": { "pattern": "^[a-z][A-Za-z0-9]{0,39}$" },
+      "additionalProperties": {
+        "oneOf": [
+          { "type": "string" },
+          { "type": "integer" },
+          { "type": "boolean" },
+          {
+            "type": "object",
+            "propertyNames": { "pattern": "^[a-z][A-Za-z0-9]{0,39}$" },
+            "additionalProperties": { "oneOf": [{ "type": "string" }, { "type": "integer" }, { "type": "boolean" }] }
+          }
+        ]
+      }
+    },
     "group": {
       "type": "object",
       "description": "An example group (ws-051): every directory the glob matches that holds a chant project is built and linted. A group has no ledger, releases or links, and its matches are never members. A match may sit inside a member's directory; that member leaves it to the group.",
@@ -503,6 +523,12 @@
         },
         "listing": {
           "$ref": "#/$defs/boxListing"
+        },
+        "publisher": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S",
+          "description": "The command that publishes the box's work (#3165, ws-088): it applies a built work item to the box's checkout and, when factory.publish names a target, pushes it and opens the pull request, and it sends the records a person kept uncommitted. It is run from the workspace root by chant workspace box publish, split into words as a shell splits plain words (quotes group, a backslash escapes) but never given to a shell, with a JSON request on stdin; box-publish.schema.json says what it reads and prints. An orchestrator such as studio supplies it. chant workspace status --json prints it under the member's box, so a surface offers a publish only when a box names one. Added in schema 1 by chant 0.103.0, so a declaration that uses it sets minReader to 0.103.0 or newer."
         },
         "replicate": {
           "$ref": "#/$defs/boxReplicate"
@@ -637,7 +663,41 @@
         },
         "builders": {
           "$ref": "#/$defs/name",
-          "description": "The member that declares the builder agents, such as the one whose agents/ holds them. Which agent builds at which tier is #3152; the tier vocabulary is the work kind's work.tier.tiers (#3147)."
+          "description": "The member that declares the builder agents, such as the one whose agents/ holds them. tiers says which of them builds at which tier (#3152)."
+        },
+        "tiers": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Which builder agent builds at which tier (#3152, ws-094), replacing studio's studio/role and studio/tier Agent metadata. Each entry names a tier, in the vocabulary of the work kind's work.tier.tiers (#3147), and an agent the builders member declares, by its name. An entry with kinds builds only members of those kinds, so an infra builder and an app builder can share a tier; an entry without kinds builds the tier for every other kind. A tier has at most one entry without kinds and at most one per kind, tiers needs builders, and a session names a declared agent session, or the declaration can't be read (declaration-invalid). chant workspace status --json prints builderFor, the agent for each built member and tier. Added in schema 1 by chant 0.103.0, so a declaration that uses it sets minReader to 0.103.0 or newer.",
+          "items": {
+            "type": "object",
+            "required": ["tier", "agent"],
+            "properties": {
+              "tier": {
+                "$ref": "#/$defs/kindName",
+                "description": "The tier, such as small, medium or large: a word of the work kind's work.tier.tiers, which a work item's tier or the slice-tier decision point answers."
+              },
+              "agent": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[^\\u0000-\\u001f]+$",
+                "description": "The builder agent's name, as the builders member declares it (such as an Agent of the fountain lexicon in its agents/)."
+              },
+              "kinds": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": { "$ref": "#/$defs/kindName" },
+                "description": "The member kinds this agent builds at the tier, such as app or terraform. Without it, every kind no other entry of the tier names."
+              },
+              "session": {
+                "$ref": "#/$defs/name",
+                "description": "The declared agent session (agents) the builder writes as, so its write scope is that session's. Optional: without it the orchestrator chooses."
+              }
+            },
+            "patternProperties": { "^x-": true },
+            "additionalProperties": false
+          }
         },
         "publish": {
           "type": "object",

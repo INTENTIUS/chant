@@ -10,8 +10,8 @@ title: "chant workspace graph"
 chant workspace graph [dir] [--at <rev>] [-o <file>] [--member <name>] [--kind <kind file>] [--env <name>] [--no-cache] [--dry-run]
 chant workspace graph [dir] --live --env <name> [--overlay] [--traffic <level>] [-o <file>] [--member <name>] [--kind <kind file>]
 chant workspace graph [dir] --composites [--at <rev>] [-o <file>] [--member <name>] [--env <name>]
-chant workspace graph [dir] --intent <path[:start-end]|path#symbol> [--at <rev>] [--kind <kind file>...] [--json]
-chant workspace graph [dir] --intent --record <id> [--at <rev>] [--kind <kind file>...] [--json]
+chant workspace graph [dir] --intent <path[:start-end]|path#symbol> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--json]
+chant workspace graph [dir] --intent --record <id> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--json]
 ```
 
 ## Description
@@ -271,7 +271,7 @@ The reference workspace's `delivery` member declares the app with the docker lex
 
 ## The intent graph
 
-With `--intent <region>`, the command prints a different document: the intent graph over one region of the workspace ([#2651](https://github.com/INTENTIUS/chant/issues/2651)). A person looking at a piece of code asks how it got this way and who decided it should be this way. The document lays out what the workspace records about both and leaves the judgment to the person. No member runs, and git is read through a local `git` process, so the command needs no network.
+With `--intent <region>`, the command prints a different document: the intent graph over one region of the workspace ([#2651](https://github.com/INTENTIUS/chant/issues/2651)). A person looking at a piece of code asks how it got this way and who decided it should be this way. The document lays out what the workspace records about both and leaves the judgment to the person. No member runs, and git is read through a local `git` process, so the command needs no network unless `--follow-squash` has to fetch a pull request ref.
 
 The region is a path from `dir` (or the current directory): a file, a directory, `path:line` or `path:start-end`. A graph node id such as `delivery/appService` works too, when no path by that name exists. The region is then the file and line in the node's `sourceLoc`.
 
@@ -333,7 +333,17 @@ why       explained, lines 2-4
   lines     4 3f2b7d10; no run
 ```
 
-The [read contract](/chant/reference/workspace-read-contract/#why-the-region-is-like-this) lists the fields. Following a squash merge back to the pull request's commits ([#3035](https://github.com/INTENTIUS/chant/issues/3035)) and joining a commit to its run by patch-id when the trailer is gone ([#3036](https://github.com/INTENTIUS/chant/issues/3036)) are not part of the answer yet.
+A commit joins its run by its `Chant-Run` trailer or by the run's own list of commits. When it has neither, as after a rebase or a cherry-pick that dropped the trailer, it joins every run whose end recorded a commit with the same `git patch-id --stable` ([#3036](https://github.com/INTENTIUS/chant/issues/3036)). That join is by content: its `made-by` edge has `joinedBy: ["patch-id"]` and `recordedAs`, the commit the run recorded, and the span and the run in `why` carry `joinedBy` so a reader can show it apart from a trailer join. The run's recorded `hunks` don't narrow a content join, since the rewritten commit's line numbers may have moved. A trailer join comes first and a record join second. A patch-id join is made only when neither gives a run. When one run's trailer or record claims a commit whose content matches another run's recorded commit, the commit keeps its join and the walk reports `intent-commit-join-conflict`. A squash of several commits has a patch-id of its own, so it never joins this way. The text walk adds `joined by content` to such a run and span.
+
+The [read contract](/chant/reference/workspace-read-contract/#why-the-region-is-like-this) lists the fields.
+
+### Following a squash merge
+
+A squash merge folds a pull request's commits into one, and with them the trailers that joined each to its run and its work and the signatures that vouched for them. The forge keeps the originals: GitHub and Forgejo both keep a pull request's head at `refs/pull/<n>/head`. With `--follow-squash` the walk follows a squash to them ([#3035](https://github.com/INTENTIUS/chant/issues/3035), [ws-092](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-092-following-a-squash-merge.md)). A commit counts as a squash when its subject ends with `(#<n>)`, it has one parent, and the pull request's head is not already in its history. A merge commit or a rebase keeps the originals, so there is nothing to follow there. The original commits are the head's commits that the squash's parent doesn't have, oldest first.
+
+The head is read from `refs/chant/pull/<n>/head`, `refs/pull/<n>/head` or `refs/remotes/origin/pr/<n>`, whichever the clone has. The walk fetches the missing ones from `origin` in one fetch and keeps them under `refs/chant/pull/<n>/head`, so the next read needs no network. The commit node's `squash` names the forge `origin` points at (`github`, `forgejo` or `null`) and the ref read, and says whether this read fetched it. Its `commits` list the original commits, each with its trailers, `joins` and `signature`. The squash commit carries the records and lease items the originals' trailers name and the units their plugin joins give, so it can be a decision's own work. It also joins every run an original joins, with `joinedBy: ["squash"]` and `via` naming the originals on the `made-by` edge. In `why`, a squash line's span has `via`: the original commit that last wrote the line, by `git blame` at the head. The span then keeps only that commit's runs. When the file at the head differs from the squash's, `via` is empty and every run is listed. A ref that can't be read or fetched gives the reason `squash-unfollowed` and a `squash` with `followed: false`, and the walk keeps its answer without the originals.
+
+Without the flag nothing is fetched and no squash is followed. That is the default, since a read stays fast and needs no forge (studio-032 b); a reader offers to follow on a commit whose `pullRequest` is set.
 
 ### One record's walk
 
@@ -453,6 +463,7 @@ Apart from [chant's own trailers](#chants-trailers), core reads trailers as git 
 | `--composites` | Print the [composite instances and their components](#composites-and-components) instead of the composed graph. Takes neither `--kind` nor `--intent`. |
 | `--intent <region>` | Print the [intent graph](#the-intent-graph) over `path`, `path:line`, `path:start-end` or `path#symbol` instead of the composed graph. |
 | `--record <id>` | With `--intent` and no region, print [one record's walk](#one-records-walk) over every entry its `constrains` lists. |
+| `--follow-squash` | With `--intent`, [follow each squash merge](#following-a-squash-merge) to its pull request's original commits, fetching a pull request ref the clone lacks from `origin`. |
 | `--json` | With `--intent`, print the document as JSON instead of the text walk. |
 | `--env <name>` | Passed to each member's `chant graph`. |
 | `--no-cache` | Read every member, leaving the [member cache](#the-member-cache) unread and unwritten. |

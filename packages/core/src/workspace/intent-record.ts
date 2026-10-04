@@ -29,12 +29,16 @@
  * `workedBy` and `alsoWithin` list every work item and other decision that
  * matched, whatever the bucket. `issue` and `contract` entries are listed and
  * not walked: they name no path. Git is read through a local `git`
- * subprocess only: no fetch, no network.
+ * subprocess only: no fetch, no network, unless the walk is asked to follow
+ * squashes (#3035). Then a squash commit lists its pull request's original
+ * commits, joins their runs and counts as the record's own work when one of
+ * them carries it, and a pull request ref the clone lacks is fetched from
+ * `origin`.
  */
 
 import { declaredRecordKinds, readDeclaration, readerVersion, WorkspaceReadError } from "./declaration";
 import { declaredKindFile } from "./declared-kinds";
-import { entityDecisions, runCommitJoins } from "./intent-joins";
+import { entityDecisions, runCommitJoins, type IntentCommit } from "./intent-joins";
 import {
   addingCommit,
   closingCommit,
@@ -53,7 +57,8 @@ import { constraintCovers, isWorkspacePath, memberHolding } from "./record-asset
 import type { DecidedIn } from "./record-decided";
 import { RecordReadError } from "./records";
 import type { RecordView } from "./records-cli";
-import { runsForCommits, type RunRef } from "./runs";
+import { addSquashRuns, runsForCommits, type RunRef } from "./runs";
+import { followSquashes, type Forge, type SquashFollow } from "./squash";
 import { readTrailerJoins, type CommitTrailerJoins } from "./trailer-joins";
 import { joinPath } from "./tree";
 import { locateWorkspace } from "./which-chant";
@@ -98,6 +103,16 @@ export interface RecordCommit {
   joins: CommitTrailerJoins;
   /** The agent runs that made the commit (#3033): the one its Chant-Run names, and any whose record lists it. */
   runs: RunRef[];
+  /** Only when the walk follows squashes (#3035) and the commit squashes a pull request: its original commits and what their trailers join. */
+  squash?: {
+    pullRequest: number;
+    forge: Forge | null;
+    ref: string | null;
+    head: string | null;
+    fetched: boolean;
+    followed: boolean;
+    commits: { sha: string; subject: string; author: { name: string; email: string }; date: string; trailers: Record<string, string[]>; joins: CommitTrailerJoins }[];
+  };
   /** The record's constrains entries whose history listed the commit. */
   entries: string[];
   /** The files the commit changed in the record's region, from the workspace root. Empty when git lists none, as for a merge that changed nothing against its first parent there. */
@@ -146,6 +161,8 @@ export interface IntentRecordQuery {
   record: string;
   at?: string;
   kinds?: string[];
+  /** Follow squash merges to their pull requests' original commits, fetching a missing pull request ref from `origin` (#3035). */
+  followSquash?: boolean;
 }
 
 export interface IntentRecordResult {
@@ -248,6 +265,13 @@ async function walk(query: IntentRecordQuery, head: Head): Promise<IntentRecordR
   const own = decisionWindow(hit.kind, view);
   const shas = [...listed.keys()].filter((sha) => inWindow(own, sha));
   const details = commitDetails(top, shas);
+  // Squash merges, followed to the pull request's original commits when asked (#3035).
+  const follows = query.followSquash ? followSquashes(top, [...details.values()], { fetchMissing: true }) : new Map<string, SquashFollow>();
+  for (const f of follows.values()) {
+    if (f.problem) reasons.push({ code: "squash-unfollowed", message: `${f.sha.slice(0, 8)} squashes pull request #${f.pullRequest}, and ${f.problem}, so its original commits are not followed` });
+  }
+  const originalDetails = commitDetails(top, [...new Set([...follows.values()].flatMap((f) => f.commits))]);
+  const originalsOf = (sha: string): IntentCommit[] => (follows.get(sha)?.commits ?? []).map((o) => originalDetails.get(o)).filter((x): x is IntentCommit => x !== undefined);
   // Newest first by commit date, as git log lists them.
   const order = (shas.length > 0 ? tryGit(top, ["rev-list", "--no-walk=sorted", "--stdin"], `${shas.join("\n")}\n`) : "")?.split("\n").map((s) => s.trim()).filter(Boolean) ?? shas;
   shas.sort((a, b) => order.indexOf(a) - order.indexOf(b));
@@ -307,14 +331,15 @@ async function walk(query: IntentRecordQuery, head: Head): Promise<IntentRecordR
   const constrainedContracts = constrains.filter((c) => c.granularity === "contract").map((c) => c.entry);
   const commits: RecordCommit[] = [];
   // chant's own trailers (#3149): the record named outright, or a work item that implements it.
-  const trailerJoins = readTrailerJoins(top, [...details.values()]);
+  const trailerJoins = readTrailerJoins(top, [...details.values(), ...originalDetails.values()]);
   const recordKinds = new Map(kinds.filter((k) => k.records).map((k) => [k.records!.loaded.kind.name, k]));
   const workKinds = kinds.filter((k) => k.records?.loaded.kind.work);
   const runJoins = await runsForCommits(
     top,
     located.rootOnDisk,
-    shas.map((sha) => ({ sha, run: trailerJoins.get(sha)?.joins.run ?? null })),
+    [...new Set([...shas, ...originalDetails.keys()])].map((sha) => ({ sha, run: trailerJoins.get(sha)?.joins.run ?? null })),
   );
+  addSquashRuns(runJoins.refs, follows);
   const workImplements = (k: LoadedKind, id: string): boolean | undefined => {
     const v = k.records!.views.find((x) => x.id === id);
     return v ? idList(v.data, k.records!.loaded.kind.work!.implements).includes(view.id!) : undefined;
@@ -325,34 +350,42 @@ async function walk(query: IntentRecordQuery, head: Head): Promise<IntentRecordR
     let unit: string | null = null;
     let isOwn = false;
     const joins = trailerJoins.get(sha)!.joins;
-    for (const r of joins.records) {
-      const k = recordKinds.get(r.kind);
-      if (!k || !k.records!.views.some((v) => v.id === r.id)) continue;
-      r.node = `record:${r.kind}/${r.id}`;
-      if (k.records!.loaded.kind.work ? workImplements(k, r.id) : r.kind === kind.name && r.id === view.id) isOwn = true;
+    const originals = originalsOf(sha);
+    // The commit's own trailers, and a followed squash's original commits' (#3035).
+    for (const j of [joins, ...originals.map((o) => trailerJoins.get(o.sha)!.joins)]) {
+      for (const r of j.records) {
+        const k = recordKinds.get(r.kind);
+        if (!k || !k.records!.views.some((v) => v.id === r.id)) continue;
+        r.node = `record:${r.kind}/${r.id}`;
+        if (k.records!.loaded.kind.work ? workImplements(k, r.id) : r.kind === kind.name && r.id === view.id) isOwn = true;
+      }
+      const item = j.lease?.item;
+      if (item) {
+        const holding = workKinds.filter((k) => k.records!.views.some((v) => v.id === item));
+        if (holding.length === 1 && workImplements(holding[0], item)) isOwn = true;
+      }
     }
-    const item = joins.lease?.item;
-    if (item) {
-      const holding = workKinds.filter((k) => k.records!.views.some((v) => v.id === item));
-      if (holding.length === 1 && workImplements(holding[0], item)) isOwn = true;
-    }
+    const subjects: IntentCommit[] = [c, ...originals];
     for (const k of kinds) {
       if (!k.joins) continue;
-      let result;
-      try {
-        result = await runCommitJoins(k.joins, c, { read: readAt, list: listAt, at: located.at }, k.name);
-      } catch (err) {
-        const message = `${k.display}: commitJoins failed for ${sha.slice(0, 8)}: ${err instanceof Error ? err.message : String(err)}`;
-        if (!failedPlugins.has(message)) reasons.push({ code: "intent-plugin-failed", message });
-        failedPlugins.add(message);
-        continue;
+      for (const subject of subjects) {
+        let result;
+        try {
+          result = await runCommitJoins(k.joins, subject, { read: readAt, list: listAt, at: located.at }, k.name);
+        } catch (err) {
+          const message = `${k.display}: commitJoins failed for ${subject.sha.slice(0, 8)}: ${err instanceof Error ? err.message : String(err)}`;
+          if (!failedPlugins.has(message)) reasons.push({ code: "intent-plugin-failed", message });
+          failedPlugins.add(message);
+          continue;
+        }
+        if (!result.unit) continue;
+        unit ??= result.unit.id;
+        const named = [...entityDecisions(result.unit), ...entityDecisions(result.contract)];
+        if (named.some((x) => x === view.id || x === `${kind.name}/${view.id}`)) isOwn = true;
+        if (result.contract && constrainedContracts.includes(result.contract.id)) isOwn = true;
       }
-      if (!result.unit) continue;
-      unit ??= result.unit.id;
-      const named = [...entityDecisions(result.unit), ...entityDecisions(result.contract)];
-      if (named.some((x) => x === view.id || x === `${kind.name}/${view.id}`)) isOwn = true;
-      if (result.contract && constrainedContracts.includes(result.contract.id)) isOwn = true;
     }
+    const f = follows.get(sha);
     const changed = (files.get(sha) ?? []).map((f) => joinPath(workspacePrefix, f));
     const covers = (paths: string[]) => paths.some((p) => changed.some((f) => constraintCovers(p, f)));
     const workedBy = works.filter((w) => inWindow(w.window, sha) && (w.implementsRecord || covers(w.paths))).map((w) => w.ref);
@@ -368,6 +401,19 @@ async function walk(query: IntentRecordQuery, head: Head): Promise<IntentRecordR
       unit,
       joins,
       runs: runJoins.refs.get(sha) ?? [],
+      ...(f
+        ? {
+            squash: {
+              pullRequest: f.pullRequest,
+              forge: f.forge,
+              ref: f.ref,
+              head: f.head,
+              fetched: f.fetched,
+              followed: f.followed,
+              commits: originals.map((o) => ({ sha: o.sha, subject: o.subject, author: o.author, date: o.date, trailers: o.trailers, joins: trailerJoins.get(o.sha)!.joins })),
+            },
+          }
+        : {}),
       entries: listed.get(sha)!,
       files: files.get(sha) ?? [],
       bucket: isOwn ? "own" : workedBy.length > 0 ? "worked" : alsoWithin.length > 0 ? "within-other" : "unexplained",

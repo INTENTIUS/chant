@@ -43,6 +43,8 @@ export interface StatusGateApproval {
   principal: string;
   /** The channel it was recorded on (`cli`, `mcp`, `acp`), or null for a record older than chant#2384. */
   channel: string | null;
+  /** Who relayed it for `principal` (`chant approve --relayed-by`, #3402), or null when nobody did. */
+  relayedBy: string | null;
   at: string;
 }
 
@@ -124,7 +126,7 @@ export function approveCommand(component: string, gate: string, env: string | nu
   return `chant approve ${component} ${gate}${env !== null ? ` --env ${env}` : ""}${planDigest ? ` --plan ${planDigest}` : ""}${signed ? " --sign" : ""}`;
 }
 
-const approvalOf = (r: GateResolutionRecord): StatusGateApproval => ({ principal: r.resolvedBy, channel: r.origin ?? null, at: r.timestamp });
+const approvalOf = (r: GateResolutionRecord): StatusGateApproval => ({ principal: r.resolvedBy, channel: r.origin ?? null, relayedBy: r.relayedBy ?? null, at: r.timestamp });
 
 /** One gate in one environment, decided against its newest pending fact. */
 function decide(component: string, standing: PendingGateRecord, all: GateResolutionRecord[], now: string, rule: GateApprovalRule | null): StatusGate {

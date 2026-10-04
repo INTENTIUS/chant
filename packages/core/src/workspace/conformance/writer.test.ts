@@ -56,6 +56,14 @@ describe("the script (#3159)", () => {
     const listing = buildStep(WRITER_SCRIPT.find((s) => s.id === "listing")!, {}, { dir: "/in" });
     expect(listing.args).toEqual(["app", "--from", "-", "--cover", "/in/cover.png"]);
     expect(buildStep(WRITER_SCRIPT.find((s) => s.id === "listing")!, {}).args).toEqual(["app", "--from", "-"]);
+    // #3403: an ad-hoc ask reads its question and candidates on stdin, and takes the inputs as JSON.
+    const adhoc = buildStep(WRITER_SCRIPT.find((s) => s.id === "adhoc")!, {});
+    expect(adhoc.args).toEqual(["agent-question", "--inputs", '{"ask.id":"conformance-ask-1","ask.by":"conformance-writer"}', "--candidates", "-", "--subject", "W-001", "--kind", "answers/answer.kind.mjs"]);
+    expect(JSON.parse(adhoc.input!)).toMatchObject({ question: expect.any(String), criteria: { flag: expect.any(String), now: expect.any(String) } });
+    // The inputs may be spelled with other key order or spacing.
+    const respelled = ["workspace", "points", "ask", "agent-question", "--inputs", '{ "ask.by": "conformance-writer", "ask.id": "conformance-ask-1" }', "--candidates", "-", "--subject", "W-001", "--kind", "answers/answer.kind.mjs"];
+    expect(writerCallProblems(adhoc, [run(respelled, adhoc.input)])).toEqual([]);
+    expect(writerCallProblems(adhoc, [run(respelled.map((a) => (a.includes("ask.id") ? '{"ask.id":"other"}' : a)), adhoc.input)])).toHaveLength(1);
     // #3172: a snapshot takes no stdin, and the restore names the snapshot the save took.
     expect(writeArgv("wip save", { label: "turn:1", by: "p" })).toEqual({ args: ["--label", "turn:1", "--by", "p"] });
     expect(writeArgv("wip save", {})).toEqual({ args: [] });
