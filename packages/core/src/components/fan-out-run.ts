@@ -130,6 +130,17 @@ export interface FanOutRunOptions {
   onWaveSettled?: (record: WaveRecord) => void;
   /** What an earlier attempt at this same plan already did. */
   progress?: FanOutProgress;
+  /**
+   * What steps kept per member in an earlier attempt (#3459), handed to every
+   * step as `DeployContext.carried`. Read from the attempt record.
+   */
+  carried?: Record<string, unknown>;
+  /**
+   * Called when a step keeps a value for its member (`DeployContext.carry`),
+   * so the caller can write it into the attempt record at once. Without it,
+   * steps get no `carry`.
+   */
+  onCarry?: (member: string, value: unknown) => void;
   /** The release each component deploys (#3061), as `InterpretRunOptions.releaseIdentity`. */
   releaseIdentity?: (component: string) => ReleaseIdentity | undefined;
   /**
@@ -247,7 +258,7 @@ export async function runFanOut(
         const planned = options.plans?.[name];
         const result = await runComponentDeploy(
           byName.get(name)!,
-          { ...deployContext(options, name), ...(planned && Object.keys(planned).length > 0 ? { plans: planned } : {}) },
+          { ...fanOutContext(options, name), ...(planned && Object.keys(planned).length > 0 ? { plans: planned } : {}) },
           registry,
           componentOutputs,
           options.onProgress,
@@ -308,6 +319,15 @@ export async function runFanOut(
     blocked,
     componentOutputs,
     ...(gatedFact ? { gate: gatedFact } : {}),
+  };
+}
+
+/** The run's `deployContext`, with the carried state and the carry callback (#3459) when the caller gave them. */
+function fanOutContext(options: FanOutRunOptions, component: string): DeployContext {
+  return {
+    ...deployContext(options, component),
+    ...(options.carried && Object.keys(options.carried).length > 0 ? { carried: options.carried } : {}),
+    ...(options.onCarry ? { carry: options.onCarry } : {}),
   };
 }
 
@@ -381,7 +401,7 @@ async function runGatedWaves(
     if (runnable.length === 0) continue;
 
     const gateName = waveGateName(waveGate.gate, waveNum);
-    const contexts = new Map(runnable.map((name) => [name, deployContext(options, name)]));
+    const contexts = new Map(runnable.map((name) => [name, fanOutContext(options, name)]));
     const planned = await Promise.all(
       runnable.map((name) => planComponent(byName.get(name)!, contexts.get(name)!, componentOutputs)),
     );

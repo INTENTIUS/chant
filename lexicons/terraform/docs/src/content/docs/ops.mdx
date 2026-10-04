@@ -71,6 +71,8 @@ export const app: Component = {
 
 Roots written this way run as a [`chant components fan-out`](/chant/cli/components/#components-fan-out). With `--wave-gate <name>`, each wave of roots is planned once the wave before it has applied, and its gate binds the wave's set digest. The member is the root's name and its plan digest is the step's `planDigest`, so a wave's digest is the change-set digest of its roots. `run` applies the saved plan the wave approved. terraform and tofu refuse a saved plan whose state moved, and choudoufu refuses one whose live plan changed, so either way the approved plan is the one applied or nothing is.
 
+A live choudoufu root in a gated wave goes through choudoufu's own set commands, which need choudoufu v0.22.0 or later. `plan` runs `choudoufu live-plan-set -json` over the root, and the wave's gate binds the plan that document holds. `run` passes the document and choudoufu's set digest to `choudoufu live-wave-apply`, which plans the root again and applies nothing when the plan moved. choudoufu's resume file is kept in the fan-out's `--resume` record, so the next attempt hands it back to choudoufu. The files live under `.chant/choudoufu-waves/<root>/`. A choudoufu root whose step passes `vars`, or whose entry in `terraform.roots` has var files or backend config, keeps the `plan -out` and `apply` path, since `live-plan-set` takes none of them. An older choudoufu is refused on the wave path only; plain terraform and tofu roots do not need it.
+
 ## TerraformApplyOp
 
 The composite that phases the four activities into Init, Plan, an optional approval Gate, then Apply:
