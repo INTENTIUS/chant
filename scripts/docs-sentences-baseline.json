@@ -88,6 +88,9 @@
   "formatting/bold-first-bullet": 1,
   "tricolon/comma-series": 1
  },
+ "docs/src/content/docs/cli/change-set.mdx": {
+  "claude/colon-reveal": 2
+ },
  "docs/src/content/docs/cli/check-lexicon.mdx": {
   "formatting/em-dash-density": 13,
   "claude/colon-reveal": 2,

@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/plan-summary/v1/plan-summary.schema.json",
+  "title": "plan summary",
+  "description": "The grouped plan summary (#3188): a change-set document's members, or one member's instances, grouped by their normalized changes, with every destroy, replacement, failure and hole by name. Written by `chant change-set summary --format json` and by groupChangeSet in @intentius/chant/plan-summary. Reviewers read it; no gate binds it. Version 1 of the workspace read contract. Readers ignore fields they do not know; a field is only ever added within a version.",
+  "type": "object",
+  "required": ["$schema", "contract", "changeSet", "unit", "units", "groups", "failed", "destroys", "holes"],
+  "properties": {
+    "$schema": { "const": "https://intentius.io/chant/schemas/workspace/plan-summary/v1/plan-summary.schema.json" },
+    "contract": { "const": 1 },
+    "changeSet": {
+      "type": "string",
+      "pattern": "^(?:jcs1-)?sha256:[0-9a-f]{64}$",
+      "description": "The digest of the change-set document summarized."
+    },
+    "unit": {
+      "enum": ["member", "instance"],
+      "description": "member: each unit is a member of the document. instance: each unit is one resource instance of the document's one member."
+    },
+    "units": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Members, failed ones included, or the changing instances."
+    },
+    "groups": {
+      "type": "array",
+      "description": "Largest first. For instances, sorted by resource first.",
+      "items": { "$ref": "#/$defs/group" }
+    },
+    "failed": {
+      "type": "array",
+      "description": "Members that failed to plan. None is in a group.",
+      "items": {
+        "type": "object",
+        "required": ["member", "reason"],
+        "properties": {
+          "member": { "type": "string" },
+          "scope": { "type": "string" },
+          "reason": { "type": "string" }
+        }
+      }
+    },
+    "destroys": {
+      "type": "array",
+      "description": "Every delete and replace in the document, failed members' included, sorted by member and address.",
+      "items": { "$ref": "#/$defs/destroy" }
+    },
+    "holes": {
+      "type": "array",
+      "description": "Every address a member's planner could not read.",
+      "items": {
+        "type": "object",
+        "required": ["member", "address", "reason"],
+        "properties": {
+          "member": { "type": "string" },
+          "address": { "type": "string" },
+          "type": { "type": "string" },
+          "reason": { "type": "string" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "action": { "enum": ["create", "update", "replace", "delete", "read", "no-op", "forget"] },
+    "destroy": {
+      "type": "object",
+      "required": ["member", "address", "type", "action"],
+      "properties": {
+        "member": { "type": "string" },
+        "address": { "type": "string", "description": "The real address, never normalized." },
+        "type": { "type": "string" },
+        "action": { "enum": ["delete", "replace"] },
+        "deposed": { "type": "string" }
+      }
+    },
+    "change": {
+      "type": "object",
+      "required": ["line", "action", "count"],
+      "properties": {
+        "line": { "type": "string", "description": "The action's symbol, the normalized address and, for an update or replace, the attributes it writes. Values are never printed." },
+        "action": { "$ref": "#/$defs/action" },
+        "count": { "type": "integer", "minimum": 1, "description": "How many times one unit makes this change." },
+        "differsFrom": { "type": "string", "description": "The baseline group whose change at the same address and action this one differs from." },
+        "differsIn": { "type": "array", "items": { "type": "string" }, "description": "The attributes it differs in." }
+      }
+    },
+    "group": {
+      "type": "object",
+      "required": ["id", "units", "outlier", "noChanges", "changes", "destroys"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{12}$",
+          "description": "Twelve hex characters of computePlanDigest(\"plan-summary-group\", { resource, changes }) over the group's sorted normalized changes. The same change gets the same id in every run, so a report can link one group across commits. A change to the normalization rules can change it."
+        },
+        "resource": { "type": "string", "description": "For instance groups, the expansion: the address with its instance keys removed." },
+        "units": { "type": "array", "items": { "type": "string" }, "description": "Member names or instance addresses, sorted." },
+        "outlier": { "type": "boolean", "description": "A group of one beside other groups of the same expansion." },
+        "noChanges": { "type": "boolean" },
+        "changes": { "type": "array", "items": { "$ref": "#/$defs/change" } },
+        "extends": { "type": "string", "description": "The group whose whole change this one contains." },
+        "plus": { "type": "array", "items": { "$ref": "#/$defs/change" }, "description": "What it adds to that group's change." },
+        "destroys": { "type": "array", "items": { "$ref": "#/$defs/destroy" }, "description": "Every delete and replace a unit of this group makes. Each is also in the top-level destroys." }
+      }
+    }
+  }
+}
