@@ -127,7 +127,16 @@ A question is open while it is escalated or proposed. `chant workspace points --
 chant workspace points answer slice-tier-074b660bbaad --answer medium --by alice
 ```
 
-Giving the answer the model proposed confirms it. Any other answer is the quorum's, and the proposal is kept in the record's `escalations`. The quorum counts distinct people. It never counts anyone holding the `agent` role in the trust policy, and when it names roles it counts only their holders. An answered question never changes.
+Giving the answer the model proposed confirms it. Any other answer is the quorum's, and the proposal is kept in the record's `escalations`. The quorum counts distinct people. It never counts anyone holding the `agent` role in the trust policy, and when it names roles it counts only their holders. `--note` keeps what they say with the answer.
+
+An answered question never changes in place. People who want to change an answer retract it, and the question is open for them again ([#3351](https://github.com/INTENTIUS/chant/issues/3351)):
+
+```bash
+chant workspace points retract slice-tier-074b660bbaad --by alice --note "Sized against the wrong work item."
+chant workspace points answer slice-tier-074b660bbaad --answer large --by alice
+```
+
+The retracted answer stays in the record's `retractions` with who gave it, its note, and who took it back, when and why.
 
 ## Ask a point from an Op
 
@@ -225,7 +234,7 @@ The request is the wire format's: `POST <url>/v1/systemone` with `{ "model", "st
 
 ## The reference workspace's points
 
-The [reference workspace](https://github.com/INTENTIUS/chant/tree/main/reference-workspace) declares four points in `decisions/points.json`, each about the work graph that `graph --intent` exposes ([#2741](https://github.com/INTENTIUS/chant/issues/2741)).
+The [reference workspace](https://github.com/INTENTIUS/chant/tree/main/reference-workspace) declares seven points in `decisions/points.json`. Four are about the work graph that `graph --intent` exposes ([#2741](https://github.com/INTENTIUS/chant/issues/2741)), and three are the questions a person answers while walking a region ([#3351](https://github.com/INTENTIUS/chant/issues/3351)).
 
 | Point | Question | Reads | Deciders |
 |---|---|---|---|
@@ -233,8 +242,23 @@ The [reference workspace](https://github.com/INTENTIUS/chant/tree/main/reference
 | `needs-a-decision` | a `noul`: does the change need a decision before it lands | the commits in the change's window (`commit.count`, `commit.undecided`, `commit.decided_by_window`), `region.path`, `region.generated`, `work-item.implements` | table, model, quorum |
 | `slice-tier` | a `choice` of builder tier for a work item ([ws-057](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-057-factory-fountain-builds.md)) | the work item's size and whether it fits each tier | table, model, quorum |
 | `ship-skip` | a `noul`: may a release pass the ship gate without a person | what the release would change | table, quorum |
+| `intent-origin` | a `choice` of `carried-out-decision`, `incidental` or `unknown`: where a commit no decision's window holds came from | `region.id`, `node.id` | quorum |
+| `intent-judgment` | a `choice` of `drift`, `unwritten-supersession`, `decision-wrong`, `no-gap` or `not-decidable`: the gap at a decision, or at a commit in a decision's window that is not its own work | `region.id`, `node.id` | quorum |
+| `intent-disposition` | a `choice` of `handled`, `skipped` or `needs-discussion`: what was done at any other node of the walk | `region.id`, `node.id` | quorum |
 
 A finding that a work item already addresses is left by the triage table. `intent-decision-unimplemented` becomes a work item, while `intent-region-unconstrained`, `intent-decision-contested` and `intent-decision-superseded-live` go to a decision. So does `change-out-of-scope` from `check --changes`, because the change crossed a boundary that a record draws, and someone decides whether the boundary moves or the change goes. Any other finding goes to the model, then to people. That includes `change-uncovered`, since the right answer for an uncovered change depends on what the path is. For `needs-a-decision`, the table says no when nothing changed in the window, or when every commit in it is a decision's own work.
+
+### The intent walk's questions
+
+A reader such as hud walks a region with `graph --intent` and asks one question at each node, by node kind. A commit in a decision's window that is not the decision's own work (`decided-by-window`) and a decision get `intent-judgment`, any other commit gets `intent-origin`, and any other node gets `intent-disposition`. Each reads `region.id`, the region's id, and `node.id`, the node's, as the walk names them: `node` is any node of the intent graph. Only people answer, so each point is a quorum of one. The reader asks the point, then records the person's answer with their note:
+
+```bash
+echo '{"region.id":"region:app/server.mjs:1-20","node.id":"commit:4f1c2a9"}' \
+  | chant workspace points ask intent-origin --inputs - --subject commit:4f1c2a9
+chant workspace points answer intent-origin-<hash> --answer incidental --by github:alice --note "A rename."
+```
+
+The same region and node is one question, so asking again finds the record. Clearing an answer is `points retract`, which keeps it in the record's history. A workspace that wants other answer sets declares its own points with these inputs, and its reader asks those instead.
 
 `ship-skip` came from chud's `points.yaml`. Its table says no to every release until someone adds a row above the last one, and its quorum is the approver count a ship gate reads, as chud's release Op read it. It has no model decider, because a model's answer may route or report and never authorizes a release. chud's `contracts_changed` became `release.work_changed`, since chud's contracts are work items here.
 

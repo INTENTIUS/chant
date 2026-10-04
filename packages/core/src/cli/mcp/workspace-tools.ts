@@ -15,8 +15,9 @@
  *   read to the workspace root's pinned chant included (ws-021), and keeps
  *   anything a command prints away from the protocol on stdout.
  * - The writes (`records-new`, `records-amend`, `records-review`,
- *   `records-close`, `points-answer`) call the functions `chant workspace
- *   records new|amend|review|close` and `points answer` call, and return the
+ *   `records-close`, `points-answer`, `points-retract`) call the functions
+ *   `chant workspace records new|amend|review|close` and `points
+ *   answer|retract` call, and return the
  *   same JSON result. They keep every rule
  *   the CLI keeps: the kind's schema, a closed record never changing, an
  *   approved one changing only as its approval rule allows, a dissent needing
@@ -286,7 +287,7 @@ export const workspaceWriteTools: ToolDefinition[] = [
   {
     name: "points-answer",
     description:
-      "Record people's answer to an open decision point question, or confirm a model's proposal: chant workspace points answer. Refused unless the point's quorum is met: distinct people, none holding the agent role, each holding one of the quorum's roles when it names any. An answered question never changes. " +
+      "Record people's answer to an open decision point question, or confirm a model's proposal: chant workspace points answer. Refused unless the point's quorum is met: distinct people, none holding the agent role, each holding one of the quorum's roles when it names any. An answered question never changes in place: points-retract takes it back. " +
       PROTOCOL,
     inputSchema: {
       type: "object",
@@ -294,10 +295,28 @@ export const workspaceWriteTools: ToolDefinition[] = [
         id: { type: "string", description: "The question's id, as workspace-points lists it." },
         answer: { type: ["string", "boolean"], description: "One of the question's candidates; for a noul, true or false." },
         by: { type: "array", items: { type: "string" }, description: "Each person who answered (--by)." },
+        note: { type: "string", description: "What the people who answered say with it, kept on the answer (--note)." },
         kind: { type: "string", description: "The answer kind file. Without it, the declared answer kinds." },
         dryRun: dryRunProp,
       },
       required: ["id", "answer", "by"],
+    },
+  },
+  {
+    name: "points-retract",
+    description:
+      "Take back people's answer to a decision point question: chant workspace points retract. The question is escalated to people again, and the answer, who gave it and its note stay in the record's retractions with who retracted it, when and why. Refused unless the point's quorum is met, counted as for an answer. " +
+      PROTOCOL,
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "The question's id, as workspace-points lists it." },
+        by: { type: "array", items: { type: "string" }, description: "Each person who takes the answer back (--by)." },
+        note: { type: "string", description: "Why, kept on the retraction (--note)." },
+        kind: { type: "string", description: "The answer kind file. Without it, the declared answer kinds." },
+        dryRun: dryRunProp,
+      },
+      required: ["id", "by"],
     },
   },
 ];
@@ -547,7 +566,13 @@ export function createWorkspaceTools(options: WorkspaceToolsOptions): WorkspaceT
       if (typeof answer !== "string" && typeof answer !== "boolean") throw new ToolInputError("answer must be a string, or true or false");
       const by = params.by;
       if (!Array.isArray(by) || by.length === 0 || !by.every((b) => typeof b === "string" && b.trim() !== "")) throw new ToolInputError("by must list each person who answered");
-      return answerPoint({ cwd, id: str(params, "id", true)!, answer, by: by as string[], kind: str(params, "kind"), dryRun: bool(params, "dryRun") });
+      return answerPoint({ cwd, id: str(params, "id", true)!, answer, by: by as string[], note: str(params, "note"), kind: str(params, "kind"), dryRun: bool(params, "dryRun") });
+    },
+    "points-retract": async (params) => {
+      const { retractAnswer } = await import("../../workspace/decide");
+      const by = params.by;
+      if (!Array.isArray(by) || by.length === 0 || !by.every((b) => typeof b === "string" && b.trim() !== "")) throw new ToolInputError("by must list each person who takes the answer back");
+      return retractAnswer({ cwd, id: str(params, "id", true)!, by: by as string[], note: str(params, "note"), kind: str(params, "kind"), dryRun: bool(params, "dryRun") });
     },
     "records-close": async (params) => {
       const w = await write();

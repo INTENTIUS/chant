@@ -940,6 +940,9 @@ describe("decision points on the work graph (#2741, ws-058)", () => {
       ["ship-skip", "noul", "table>quorum"],
       ["finding-triage", "choice", "table>model>quorum"],
       ["needs-a-decision", "noul", "table>model>quorum"],
+      ["intent-origin", "choice", "quorum"],
+      ["intent-judgment", "choice", "quorum"],
+      ["intent-disposition", "choice", "quorum"],
     ]);
     expect(candidates(points["finding-triage"].question)).toEqual(["work-item", "needs-a-decision", "leave"]);
     // Every input names a read-contract output: the triage reads a finding and its region, the window its commits.
@@ -949,7 +952,7 @@ describe("decision points on the work graph (#2741, ws-058)", () => {
     const run = chant(fixture, "workspace", "points", "--json");
     expect(run.status, run.stderr).toBe(0);
     const doc = JSON.parse(run.stdout) as { points: { name: string }[]; sources: { reason: unknown }[] };
-    expect(doc.points.map((p) => p.name)).toEqual(["slice-tier", "ship-skip", "finding-triage", "needs-a-decision"]);
+    expect(doc.points.map((p) => p.name)).toEqual(["slice-tier", "ship-skip", "finding-triage", "needs-a-decision", "intent-origin", "intent-judgment", "intent-disposition"]);
     expect(doc.sources.map((s) => s.reason)).toEqual([null]);
   });
 

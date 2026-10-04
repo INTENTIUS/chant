@@ -1,0 +1,437 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/change-set/v1/change-set.schema.json",
+  "title": "change-set document",
+  "description": "One change set across planners (#3181): what a combined run's chant, terraform, tofu, choudoufu and warden members will change, a summary, and the digest a gate binds. Written by the composeChangeSet Op activity and by composeChangeSet in @intentius/chant/change-set. Version 1 of the workspace read contract. Readers ignore fields they do not know; a field is only ever added within a version.",
+  "type": "object",
+  "required": [
+    "$schema",
+    "contract",
+    "digest",
+    "members",
+    "entries",
+    "summary"
+  ],
+  "properties": {
+    "$schema": {
+      "const": "https://intentius.io/chant/schemas/workspace/change-set/v1/change-set.schema.json"
+    },
+    "contract": {
+      "const": 1
+    },
+    "chant": {
+      "type": "string",
+      "description": "The chant that composed the document."
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^(?:jcs1-)?sha256:[0-9a-f]{64}$",
+      "description": "computePlanDigest(\"change-set\", \u2026) over the members' { member, planDigest } pairs sorted by member. What a gate over the whole run binds."
+    },
+    "members": {
+      "type": "array",
+      "description": "Sorted by member. Each name appears once.",
+      "items": {
+        "$ref": "#/$defs/member"
+      }
+    },
+    "entries": {
+      "type": "array",
+      "description": "Sorted by member, address, deposed key and action.",
+      "items": {
+        "$ref": "#/$defs/entry"
+      }
+    },
+    "summary": {
+      "$ref": "#/$defs/summary"
+    }
+  },
+  "$defs": {
+    "member": {
+      "type": "object",
+      "required": [
+        "member",
+        "lexicon",
+        "planner",
+        "status",
+        "planDigest",
+        "holes"
+      ],
+      "properties": {
+        "member": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The workspace member, or the root a set plan names."
+        },
+        "lexicon": {
+          "type": "string"
+        },
+        "planner": {
+          "enum": [
+            "terraform",
+            "tofu",
+            "choudoufu",
+            "chant",
+            "warden"
+          ]
+        },
+        "scope": {
+          "type": "string",
+          "description": "The estate, environment or org the member plans into."
+        },
+        "status": {
+          "enum": [
+            "planned",
+            "failed"
+          ]
+        },
+        "error": {
+          "type": "string"
+        },
+        "planDigest": {
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": "^(?:jcs1-)?sha256:[0-9a-f]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What a gate on this member alone binds. null when it failed to plan."
+        },
+        "nativeDigest": {
+          "type": "string",
+          "description": "The planner's own digest of the same plan, such as choudoufu's per-root digest."
+        },
+        "holes": {
+          "type": "array",
+          "description": "What the planner could not read, so the plan says nothing about it.",
+          "items": {
+            "type": "object",
+            "required": [
+              "address",
+              "reason"
+            ],
+            "properties": {
+              "address": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "entry": {
+      "type": "object",
+      "required": [
+        "member",
+        "lexicon",
+        "planner",
+        "address",
+        "type",
+        "action",
+        "attributes"
+      ],
+      "properties": {
+        "member": {
+          "type": "string"
+        },
+        "lexicon": {
+          "type": "string"
+        },
+        "planner": {
+          "enum": [
+            "terraform",
+            "tofu",
+            "choudoufu",
+            "chant",
+            "warden"
+          ]
+        },
+        "address": {
+          "type": "string",
+          "description": "The planner's address, unique within the member with deposed."
+        },
+        "type": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string",
+          "description": "The resource name without module path or index."
+        },
+        "index": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "description": "A count or for_each index."
+        },
+        "module": {
+          "type": "string"
+        },
+        "deposed": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string",
+          "description": "The provider's id, when the planner reports one."
+        },
+        "action": {
+          "enum": [
+            "create",
+            "update",
+            "replace",
+            "delete",
+            "read",
+            "no-op",
+            "forget"
+          ]
+        },
+        "disruption": {
+          "enum": [
+            "in-place",
+            "rolling",
+            "replace",
+            "destroy",
+            "unknown"
+          ],
+          "description": "Set on update, replace and delete."
+        },
+        "region": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "attributes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/attribute"
+          }
+        }
+      }
+    },
+    "attribute": {
+      "type": "object",
+      "required": [
+        "path"
+      ],
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "before": {},
+        "after": {},
+        "unknown": {
+          "const": true,
+          "description": "The value is known only after apply."
+        },
+        "sensitive": {
+          "const": true,
+          "description": "Marked sensitive: neither value is carried."
+        },
+        "forcesReplacement": {
+          "const": true
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "required": [
+        "members",
+        "entries",
+        "actions",
+        "types",
+        "byMember",
+        "deletes",
+        "replacements",
+        "failed",
+        "holes"
+      ],
+      "properties": {
+        "members": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "entries": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "actions": {
+          "type": "object",
+          "required": [
+            "create",
+            "update",
+            "replace",
+            "delete",
+            "read",
+            "no-op",
+            "forget"
+          ],
+          "properties": {
+            "create": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "update": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "replace": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "delete": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "read": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "no-op": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "forget": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        },
+        "types": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "propertyNames": {
+              "enum": [
+                "create",
+                "update",
+                "replace",
+                "delete",
+                "read",
+                "no-op",
+                "forget"
+              ]
+            },
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "byMember": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "propertyNames": {
+              "enum": [
+                "create",
+                "update",
+                "replace",
+                "delete",
+                "read",
+                "no-op",
+                "forget"
+              ]
+            },
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "deletes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "member",
+              "address",
+              "type"
+            ],
+            "properties": {
+              "member": {
+                "type": "string"
+              },
+              "address": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "deposed": {
+                "type": "string"
+              },
+              "disruption": {
+                "enum": [
+                  "in-place",
+                  "rolling",
+                  "replace",
+                  "destroy",
+                  "unknown"
+                ]
+              }
+            }
+          }
+        },
+        "replacements": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "member",
+              "address",
+              "type"
+            ],
+            "properties": {
+              "member": {
+                "type": "string"
+              },
+              "address": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "deposed": {
+                "type": "string"
+              },
+              "disruption": {
+                "enum": [
+                  "in-place",
+                  "rolling",
+                  "replace",
+                  "destroy",
+                  "unknown"
+                ]
+              }
+            }
+          }
+        },
+        "failed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "holes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}
