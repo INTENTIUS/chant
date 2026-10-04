@@ -1007,6 +1007,51 @@
               }
             }
           }
+        },
+        "reviews": {
+          "description": "The review sessions whose comments led to this item (#3154, E21 in arugula-salad/hud#823): each record of a session kind read whose comments[].follow_ups, or its own follow_ups, name the item as <kind>:<id>. A commit that carries the item by its Chant-Record trailer joins back to the review through it. Absent when none does. Added within contract 1.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "recordKind",
+              "record",
+              "path",
+              "state",
+              "comments"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^record:"
+              },
+              "recordKind": {
+                "type": "string"
+              },
+              "record": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string",
+                "description": "The session record file, from the repository root."
+              },
+              "state": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "comments": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "description": "The comments whose follow_ups name the item, numbered from 1; empty when only the session's own follow_ups do."
+              }
+            }
+          }
         }
       }
     },
