@@ -199,6 +199,8 @@ export interface OpIR {
   workLease?: OpWorkLease;
   /** `OpConfig.changesCheckout` (#2748), present only when true. */
   changesCheckout?: true;
+  /** `OpConfig.neverOverMcp`, present only when true. */
+  neverOverMcp?: true;
   phases: OpIRPhase[];
   onFailure: OpIRPhase[];
   /** Every activity profile referenced by a step in this Op, keyed by profile name — from the registry passed to {@link buildOpIR}, empty when none was. */
@@ -365,6 +367,7 @@ export function buildOpIR(
     ...(config.schedule ? { schedule: config.schedule } : {}),
     ...(config.workLease ? { workLease: config.workLease } : {}),
     ...(config.changesCheckout ? { changesCheckout: true as const } : {}),
+    ...(config.neverOverMcp ? { neverOverMcp: true as const } : {}),
     phases: config.phases.map((p) => irPhase(p, contractRegistry)),
     onFailure: (config.onFailure ?? []).map((p) => irPhase(p, contractRegistry)),
     activityProfiles: sortedEntries(profiles),
@@ -446,5 +449,6 @@ export function opConfigFromIR(ir: OpIR): OpConfig {
     ...(ir.schedule ? { schedule: ir.schedule } : {}),
     ...(ir.workLease ? { workLease: ir.workLease } : {}),
     ...(ir.changesCheckout ? { changesCheckout: true } : {}),
+    ...(ir.neverOverMcp ? { neverOverMcp: true } : {}),
   };
 }

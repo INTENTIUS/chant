@@ -253,6 +253,30 @@ export interface ParsedArgs {
   /** `chant components fan-out --canary <component>` (#3049), repeatable — components that form wave 1. */
   canary?: string[];
   /**
+   * `chant components pr-plan|pr-apply --pr <n>` (#3183) — the pull or merge
+   * request the plan belongs to. Its gate is recorded under op `pr-<n>`.
+   * pr-apply finds it from the commit through `--forge` when omitted.
+   */
+  pr?: number;
+  /**
+   * `chant components pr-plan|pr-apply --forge github|gitlab|forgejo` (#3183)
+   * — post the note and the commit status on this forge, with the client
+   * read from the CI job's environment.
+   */
+  forge?: string;
+  /**
+   * `chant components pr-apply --require-review` (#3183) — count an approval
+   * only when its approver has a standing approving review on the pull
+   * request. Needs `--forge`.
+   */
+  requireReview?: boolean;
+  /**
+   * `chant build --components --generate <lexicon> --pr-loop` (#3183) —
+   * generate the pull-request pipeline: plan on the pull request, apply on
+   * merge bound to the approved digest.
+   */
+  prLoop?: boolean;
+  /**
    * `chant components fan-out --resume <file>` (#2420) — the attempt record
    * this fan-out reads before it starts and writes when it finishes. Repeating
    * the identical command finishes what an interrupted attempt left, because
@@ -317,8 +341,10 @@ export interface ParsedArgs {
   bys?: string[];
   /** `chant workspace points --open` (#2739): only the questions still open. */
   open?: boolean;
-  /** `chant workspace points ask <point> --inputs <file|->` (#2739): the inputs, as a JSON object. */
+  /** `chant workspace points ask <point> --inputs <file|-|json>` (#2739): the inputs, as a JSON object. */
   inputs?: string;
+  /** `chant workspace points ask <point> --candidates <file|-|json>` (#3403): an ad-hoc point's question and candidates. */
+  candidates?: string;
   /** `chant workspace points ask <point> --response <file>` (#2739): a POST /v1/systemone response the caller got from a backend. */
   response?: string;
   /** `chant workspace points ask <point> --subject <id>` (#2739): what the question is about. */
@@ -331,6 +357,8 @@ export interface ParsedArgs {
   composites?: boolean;
   /** `chant workspace graph --intent <path[:start-end]|path#symbol>` (#2651): the region the intent graph is over. Empty with `--record`. */
   intent?: string;
+  /** `chant workspace graph --intent` and `chant workspace runs` (#3035): follow squash merges to their pull requests' original commits, fetching missing pull request refs. */
+  followSquash?: boolean;
   /** `chant workspace graph --intent --record <id>`: walk one decision record over every entry its constrains lists. */
   record?: string;
   /** `chant workspace patch <range> --path <p>`: only these paths, from the workspace root. Repeatable. */
@@ -357,6 +385,8 @@ export interface ParsedArgs {
   cover?: string;
   /** `chant workspace box listing set <member> --cover <image> --cover-path <path>` (#3308): where the cover goes, from the workspace root. */
   coverPath?: string;
+  /** `chant workspace box publish <member> --records` (#3165): publish the records kept uncommitted instead of a work item. */
+  records?: boolean;
   /** `chant workspace wip save --label <text>` (#3172): what the caller calls the snapshot, such as a turn id. */
   label?: string;
   /** `chant workspace wip --branch <branch>` (#3172): list one branch's snapshots. */
@@ -375,6 +405,12 @@ export interface ParsedArgs {
    * On `chant approve` and `chant run approve`, the key that seals the gate approval (#3163).
    */
   sign?: string | true;
+  /**
+   * `chant approve <op> <gate> --relayed-by <principal>` and `chant workspace
+   * points answer <id> --relayed-by <principal>` (#3402): the principal that
+   * carried the approval or answer to chant on behalf of the person it names.
+   */
+  relayedBy?: string;
   /** `chant workspace records review <id> --session <id>` (#2670): the review session the verdict was given in. */
   session?: string;
   /** `chant workspace records new <kind> --prefix <prefix>` (#2670): the id prefix to allocate under. */
@@ -389,6 +425,8 @@ export interface ParsedArgs {
   claim?: string;
   /** `chant workspace evidence sign --environment <file>` (#2553): the runner environment, hashed into the evidence. */
   environment?: string;
+  /** `chant workspace runs statement <id> --signer <principal>` (#3192): the runner principal that will sign. */
+  signer?: string;
   /** `chant workspace evidence verify --envelope <file>` (#2553). */
   envelope?: string;
   /** `chant workspace signers rotate --threshold <n>` (#2553). */

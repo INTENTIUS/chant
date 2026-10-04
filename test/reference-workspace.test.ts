@@ -112,7 +112,7 @@ const declaration = JSON.parse(declarationText) as {
 
 /** The four members #2543 asks for, as `workspace ls --json` shows them. */
 const EXPECTED_MEMBERS = [
-  { name: "app", dir: "app", kind: "other", roles: [] },
+  { name: "app", dir: "app", kind: "app", roles: [] },
   { name: "delivery", dir: "delivery", kind: "chant", roles: [] },
   { name: "design-client", dir: "design-client", kind: "other", roles: [{ name: "design-app", path: null }] },
   { name: "design", dir: "design", kind: "design", roles: [] },
@@ -186,7 +186,8 @@ describe("reference workspace layout", () => {
     const parsed = parseDeclaration(declarationText, "chant.workspace.json");
     expect(parsed.name).toBe("reference");
     expect(parsed.schema).toBe(1);
-    expect(declaration.pins).toEqual([]);
+    // The app kind (#3151) comes from a copy of chant's data-only kinds file, pinned by path.
+    expect(declaration.pins).toEqual([{ path: "kinds/app" }]);
   });
 
   test("it declares the four members #2543 asks for", () => {
@@ -207,7 +208,8 @@ describe("reference workspace layout", () => {
 
   test("its declaration is the only one in it, and no draft is left", () => {
     const declarations = walk(fixture).filter((p) => /(^|\/)chant\.workspace(\.draft)?\.jsonc?$/.test(p));
-    expect(declarations).toEqual(["chant.workspace.json"]);
+    // Besides its own, the three profiles' declarations (#3174): template directories, not members.
+    expect(declarations.sort()).toEqual(["chant.workspace.json", "profiles/app/chant.workspace.json", "profiles/ideation/chant.workspace.json", "profiles/infra/chant.workspace.json"]);
   });
 
   test("the chant repo's own declaration holds it as a nested workspace", () => {
@@ -217,7 +219,8 @@ describe("reference workspace layout", () => {
 
   test("only delivery is a chant project", () => {
     const configs = walk(fixture).filter((p) => /(^|\/)chant\.config\.[a-z]+$/.test(p));
-    expect(configs).toEqual(["delivery/chant.config.ts"]);
+    // The infra profile's estate member is one too, inside its template directory (#3174).
+    expect(configs.sort()).toEqual(["delivery/chant.config.ts", "profiles/infra/network/chant.config.json"]);
   });
 });
 
@@ -673,7 +676,7 @@ describe("record-decisions skill and prompt (#2709)", () => {
 describe("workspace commands on the fixture", () => {
   test("workspace ls --json lists the four members with their kinds and roles", () => {
     const doc = lsJson(fixture);
-    expect(doc.workspace).toMatchObject({ name: "reference", root: "reference-workspace", file: "chant.workspace.json", pins: [] });
+    expect(doc.workspace).toMatchObject({ name: "reference", root: "reference-workspace", file: "chant.workspace.json", pins: [{ package: null, version: null, path: "kinds/app", integrity: null }] });
     expectTheFourMembers(doc.members);
     expect(doc.groups).toEqual([]);
     expect(doc.summary).toMatchObject({ members: 4, unreadable: 0 });
@@ -720,6 +723,8 @@ describe("the collector on the fixture (#2559)", () => {
     const doc = JSON.parse(run.stdout) as { links: Record<string, unknown>[] };
     expect(doc.links).toEqual([
       expect.objectContaining({ consumer: "app", producer: "delivery", output: "traces", kind: "telemetry", protocol: "http/protobuf", target: "pipeline", status: "resolved", reason: null }),
+      // Delivery builds the app's image from its source, an output the app kind exposes (#3151).
+      expect.objectContaining({ consumer: "delivery", producer: "app", output: "source", kind: "output", status: "resolved", reason: null }),
     ]);
   });
 
@@ -801,7 +806,7 @@ describe("the composite graph on the fixture (#2662)", () => {
         // #2674: delivery configures no lexicon that hosts component runs, so the app deploys locally only.
         runtimes: [{ name: "local", lexicon: null, default: true, command: "chant run --components app" }],
         // #2695: delivery's config declares no environments and chant's own ledger holds no release of it, so local only.
-        environments: [{ name: "local", default: true, source: "builtin", command: "chant run --components app" }],
+        environments: [{ name: "local", default: true, source: "builtin", site: null, command: "chant run --components app" }],
       },
     ]);
     expect(doc.members.find((m) => m.name === "delivery")!.runtimeReasons).toEqual([]);
@@ -943,6 +948,7 @@ describe("decision points on the work graph (#2741, ws-058)", () => {
       ["intent-origin", "choice", "quorum"],
       ["intent-judgment", "choice", "quorum"],
       ["intent-disposition", "choice", "quorum"],
+      ["agent-question", "choice", "quorum"],
     ]);
     expect(candidates(points["finding-triage"].question)).toEqual(["work-item", "needs-a-decision", "leave"]);
     // Every input names a read-contract output: the triage reads a finding and its region, the window its commits.
@@ -952,8 +958,18 @@ describe("decision points on the work graph (#2741, ws-058)", () => {
     const run = chant(fixture, "workspace", "points", "--json");
     expect(run.status, run.stderr).toBe(0);
     const doc = JSON.parse(run.stdout) as { points: { name: string }[]; sources: { reason: unknown }[] };
-    expect(doc.points.map((p) => p.name)).toEqual(["slice-tier", "ship-skip", "finding-triage", "needs-a-decision", "intent-origin", "intent-judgment", "intent-disposition"]);
+    expect(doc.points.map((p) => p.name)).toEqual(["slice-tier", "ship-skip", "finding-triage", "needs-a-decision", "intent-origin", "intent-judgment", "intent-disposition", "agent-question"]);
     expect(doc.sources.map((s) => s.reason)).toEqual([null]);
+  });
+
+  test("agent-question is ad hoc: points ask takes its question and candidates with --candidates (#3403)", () => {
+    const points = parsePoints(pointsText(), "decisions/points.json");
+    expect(points["agent-question"]).toMatchObject({ adhoc: true, deciders: [{ kind: "quorum", count: 1 }] });
+    const asked = { question: "Ship the importer behind a flag?", criteria: { flag: "Behind a flag.", now: "On for everyone." } };
+    const run = chant(fixture, "workspace", "points", "ask", "agent-question", "--inputs", JSON.stringify({ "ask.id": "req-1", "ask.by": "hud" }), "--candidates", JSON.stringify(asked), "--dry-run");
+    expect(run.status, run.stdout + run.stderr).toBe(0);
+    const doc = JSON.parse(run.stdout) as { question: { state: string; candidates: string[]; asked: unknown } };
+    expect(doc.question).toMatchObject({ state: "escalated", candidates: ["flag", "now"], asked });
   });
 
   test("ship skip, moved from chud: its table says no to every release, no model answers it, and its quorum is the gate's", async () => {

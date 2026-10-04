@@ -21,10 +21,18 @@
  *   never written.
  *
  * Nothing here runs project code: it reads file names and package.json files.
+ *
+ * `--profile ideation|app|infra` starts a workspace from one of the reference
+ * workspace's profiles instead (#3174, ws-096): records only with a stub app,
+ * an app with its factory, or an estate with a factory and no app. It is
+ * `chant init --from` on `reference-workspace/profiles/<profile>` of the chant
+ * repository at this chant's release tag, or of the repository or directory
+ * `--from` names, so the new workspace gets a lineage lock and can be upgraded
+ * like any template copy.
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { formatError, formatSuccess } from "../cli/format";
 import type { CommandContext } from "../cli/registry";
@@ -36,12 +44,34 @@ import {
   rootExclusions,
   WorkspaceReadError,
   isInside,
+  readerVersion,
 } from "./declaration";
 import { expandGlob } from "./glob";
+import { setProperty } from "./json-edit";
 import { holdsChantProject } from "./kinds";
 import { gitTop, skippedDir, workingTree, type WorkspaceTree } from "./tree";
 
-const USAGE = "chant workspace init [dir] [--name <name>] [--yes] [--verbose]";
+const USAGE = "chant workspace init [dir] [--name <name>] [--yes] [--verbose]\n       chant workspace init --profile ideation|app|infra [dir] [--name <name>] [--param name=<display name>] [--from <repo>@<ref>|<chant checkout>] [--yes]";
+
+/** The profiles `--profile` takes (#3174), each a directory under {@link PROFILES_DIR} in the chant repository. */
+export const PROFILES = ["ideation", "app", "infra"] as const;
+export type Profile = (typeof PROFILES)[number];
+
+/** Where the profiles live in the chant repository. */
+export const PROFILES_DIR = "reference-workspace/profiles";
+
+/** The repository the profiles are read from by default, at this chant's release tag. */
+export const PROFILES_REPO = "https://github.com/INTENTIUS/chant";
+
+/**
+ * The `chant init --from` source for a profile: `from` (a `<repo>@<ref>` or
+ * a directory holding a chant checkout) when given, else the chant repository
+ * at the tag of the chant reading, `chant-v<version>`.
+ */
+export function profileSource(profile: Profile, from: string | undefined, version: string): string {
+  const base = from ?? `${PROFILES_REPO}@chant-v${version}`;
+  return `${base}#${PROFILES_DIR}/${profile}`;
+}
 
 /** Directory names whose children are examples or test fixtures, not members. */
 const EXAMPLE_DIRS = new Map<string, "examples" | "fixtures">([
@@ -544,6 +574,8 @@ export async function runWorkspaceInit(ctx: CommandContext): Promise<number> {
     return 1;
   }
 
+  if (args.profile !== undefined) return initProfile(args, root);
+
   let proposal: Proposal;
   try {
     proposal = proposeWorkspace(root, { name: args.selectName });
@@ -581,5 +613,53 @@ export async function runWorkspaceInit(ctx: CommandContext): Promise<number> {
   }
   writeFileSync(target, text, { flag: "wx" });
   console.log(formatSuccess(`Wrote ${target}. chant workspace ls lists what it declares.`));
+  return 0;
+}
+
+/** `chant workspace init --profile <profile>` (#3174): copy a profile with `chant init --from`, then name the workspace. */
+async function initProfile(args: CommandContext["args"], root: string): Promise<number> {
+  const profile = args.profile as Profile;
+  if (!(PROFILES as readonly string[]).includes(profile)) {
+    console.error(formatError({ message: `--profile ${JSON.stringify(args.profile)} is not a profile; the profiles are ${PROFILES.join(", ")}`, hint: USAGE }));
+    return 1;
+  }
+  const { parseParamArgs } = await import("./template-manifest");
+  let params: Record<string, string>;
+  try {
+    params = parseParamArgs(args.param ?? []);
+  } catch (err) {
+    console.error(formatError({ message: (err as Error).message, hint: USAGE }));
+    return 1;
+  }
+  const from = profileSource(profile, args.migrateFrom, readerVersion());
+  console.log(`chant workspace init --profile ${profile} copies ${from} into ${root}, as chant init --from would, with a lineage lock.`);
+  if (args.selectName !== undefined) console.log(`The workspace is named ${args.selectName}.`);
+  console.log("");
+  let write = !!args.yes;
+  if (!write) {
+    if (!process.stdin.isTTY) {
+      console.log("Nothing written. Re-run with --yes to write it.");
+      return 0;
+    }
+    write = await confirm(`Make the ${profile} workspace? [y/N] `);
+  }
+  if (!write) {
+    console.log("Nothing written.");
+    return 0;
+  }
+  const { initFromCommand } = await import("./lineage-init");
+  const result = await initFromCommand({ from, path: root, params, force: args.force });
+  if (!result.success) {
+    console.error(formatError({ message: result.error ?? `the ${profile} profile could not be copied`, hint: USAGE }));
+    return 1;
+  }
+  if (args.selectName !== undefined) {
+    const file = join(root, "chant.workspace.json");
+    writeFileSync(file, setProperty(readFileSync(file, "utf-8"), false, "", "name", args.selectName));
+  }
+  console.log(formatSuccess(`Made a ${profile} workspace in ${root}:`));
+  for (const f of result.createdFiles) console.log(`  ${f}`);
+  console.log("");
+  console.log("chant workspace check checks it, and chant workspace upgrade takes a later version of the profile.");
   return 0;
 }

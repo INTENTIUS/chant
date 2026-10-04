@@ -137,6 +137,7 @@ export default defineConfig({
 							label: 'Components',
 							items: [
 								{ label: 'Wiring Components', slug: 'components/wiring-howto' },
+								{ label: 'Generated CI for Pull Requests', slug: 'guide/pull-request-ci' },
 							],
 						},
 						{

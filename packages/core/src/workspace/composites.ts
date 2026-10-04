@@ -49,6 +49,7 @@ import type { LinkRow } from "./links";
 import { emitDocument, type UnitResult } from "./member-commands";
 import { readerVersion, WORKSPACE_ERROR_CODES, type ErrorLocation, type WorkspaceErrorCode } from "./declaration";
 import type { ReasonCode } from "./reason-codes";
+import type { ComponentEnvironmentDeclaration } from "../components/component";
 import { componentEnvironments, ENVIRONMENT_REASON_CODES, memberEnvironments, readLedgerEnvironments, type ComponentEnvironment, type EnvironmentReason, type LedgerEnvironmentReader, type MemberEnvironments } from "./environments";
 import { componentRuntimes, readRuntimesIn, RUNTIME_REASON_CODES, type ComponentRuntime, type MemberRuntimes, type PluginLoader, type RuntimeReason } from "./runtimes";
 
@@ -109,7 +110,7 @@ export interface ComponentEntry {
   file: string | null;
   /** The runtimes it can deploy on: `local` first, then each hosting lexicon its member configures. */
   runtimes: ComponentRuntime[];
-  /** The environments it may deploy to: `local` first, then the config's, then the ledger's. */
+  /** The environments it may deploy to: `local` first, then the config's, then the ledger's, then the ones only the component declares, each with the site the component declares for it. */
   environments: ComponentEnvironment[];
 }
 
@@ -183,10 +184,20 @@ function readComponents(member: string, dir: string, run: UnitResult, runtimes: 
       composites: composites && composites.length > 0 ? composites : null,
       file: file ? (dir === "." ? file : `${dir}/${file}`) : null,
       runtimes: componentRuntimes(n.id, runtimes),
-      environments: componentEnvironments(n.id, environments, runtimes?.default),
+      // The component's own environments (#3153): their sites, and any the member doesn't list; a reason lands on the member.
+      environments: componentEnvironments(n.id, environments, runtimes?.default, declaredEnvironments(attrs.environments), runtimes?.lexicons ?? [], environments?.reasons ?? []),
     });
   }
   return { components };
+}
+
+/** A component's declared environments from its IR attrs (#3153), keeping only well-formed entries. */
+function declaredEnvironments(raw: unknown): ComponentEnvironmentDeclaration[] {
+  if (!Array.isArray(raw)) return [];
+  const text = (v: unknown) => (typeof v === "string" && v.length > 0 ? v : undefined);
+  return raw
+    .filter((e): e is Record<string, unknown> => e !== null && typeof e === "object" && typeof (e as Record<string, unknown>).name === "string")
+    .map((e) => ({ name: e.name as string, runtime: text(e.runtime), url: text(e.url), domain: text(e.domain), lifecycle: text(e.lifecycle) }));
 }
 
 /** The composite instances in a composed graph, without their components. */

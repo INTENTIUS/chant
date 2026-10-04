@@ -1,0 +1,33 @@
+{
+  "name": "app",
+  "schema": 1,
+  "members": [
+    {
+      "name": "app",
+      "dir": "app",
+      "kind": "app",
+      "box": {
+        "services": [
+          { "name": "app", "cmd": "npm --prefix app start", "health": "http://127.0.0.1:3000/health", "httpPort": 3000 }
+        ],
+        "factory": {
+          "builds": ["app"],
+          "check": { "run": "npm --prefix app test", "kind": "test" },
+          "checks": "app/checks"
+        }
+      }
+    }
+  ],
+  "records": [
+    { "kind": "decisions/decision.kind.mjs" },
+    { "kind": "work/work.kind.mjs" },
+    { "kind": "answers/answer.kind.mjs" }
+  ],
+  "pins": [{ "path": "kinds/app" }],
+  "writeScope": {
+    "agent": {
+      "records": { "decision": ["new"], "work": ["new", "amend"] },
+      "protected": [{ "path": "chant.workspace.json" }, "kinds", "decisions/points.json"]
+    }
+  }
+}

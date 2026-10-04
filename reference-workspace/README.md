@@ -28,16 +28,16 @@ The chant repo's own [`chant.workspace.json`](../chant.workspace.json) lists thi
 
 | Member | Directory | Kind | What it is |
 |---|---|---|---|
-| app | [`app/`](app) | `other` | a Node HTTP server with no dependencies, its own Dockerfile and one test. No app kind exists yet ([#2535](https://github.com/INTENTIUS/chant/issues/2535)) |
+| app | [`app/`](app) | `app` | a Node HTTP server with no dependencies, its own Dockerfile and one test. Its kind comes from [`kinds/app/`](kinds/app), and its entry sets `fields.health` to `/healthz`, the path the server answers on ([#3151](https://github.com/INTENTIUS/chant/issues/3151)) |
 | delivery | [`delivery/`](delivery) | `chant` | a chant project on the docker lexicon. It declares the app with the `DockerWebService` composite, and `chant build` writes a Compose file that builds the app's image from `app/Dockerfile` and runs it. Its `app` component deploys that composite |
 | design-client | [`design-client/`](design-client) | `other`, role `design-app` | a placeholder directory. It holds no hud client and has no lineage of its own, because no hud client package is published to vendor yet |
 | design | [`design/`](design) | `design` | the design data: a screen spec and a wireframe for the app's home page, review sessions, and the contracts, drivers and check evidence studio's factory builds against ([#3148](https://github.com/INTENTIUS/chant/issues/3148)). It is the data member of D18 ([#2549](https://github.com/INTENTIUS/chant/issues/2549), [ws-062](../docs/design/decisions/ws-062-live-links-and-design-kind.md)): chant reads its files, for the hash pins of decisions and for `graph --intent`, and builds nothing |
 
-The app does not embed the design client, so it declares no `depends-on` link to it (D18). Delivery builds the app's image from `../app`, and that build-context path is its only link to the app until member links land ([#2539](https://github.com/INTENTIUS/chant/issues/2539)). The design client has a lineage of its own: once there is a client to vendor, `design-client/` holds a lock of its own, and `chant workspace upgrade design-client` runs from that directory and writes only inside it. `test/reference-workspace.test.ts` makes such a member in a copy and checks that the upgrade resolves to it.
+The app does not embed the design client, so it declares no `depends-on` link to it (D18). Delivery builds the app's image from `../app`, and declares that as a link to the app's `source` output, one of the two outputs the app kind exposes ([#2539](https://github.com/INTENTIUS/chant/issues/2539), [#3151](https://github.com/INTENTIUS/chant/issues/3151)). The design client has a lineage of its own: once there is a client to vendor, `design-client/` holds a lock of its own, and `chant workspace upgrade design-client` runs from that directory and writes only inside it. `test/reference-workspace.test.ts` makes such a member in a copy and checks that the upgrade resolves to it.
 
 The root also holds [`chant.template.json`](chant.template.json), the template manifest for `chant init --from` ([#2627](https://github.com/INTENTIUS/chant/issues/2627)). It declares one parameter, `name`, with the default `Reference app`. In this directory the files it lists carry the placeholder `{{chant:name}}`, so the app run from here shows that text as its title. A copy made with `chant init --from` shows the value.
 
-The declaration has an empty `pins` list. Nothing here loads a kind plugin yet, so there is nothing to pin until kinds come from plugins ([#2535](https://github.com/INTENTIUS/chant/issues/2535)).
+The declaration pins one plugin by path: [`kinds/app/`](kinds/app), a copy of the app member kind that ships in `@intentius/chant` at `src/workspace/reference-kinds/app` ([#3151](https://github.com/INTENTIUS/chant/issues/3151), [ws-093](../docs/design/decisions/ws-093-an-app-member-kind-with-declared-fields.md)). It is data only: a `package.json` that exports `./workspace-kinds` and the kinds file, which chant reads and never runs. The kind's fields are the conventions an orchestrator relies on (the `start`, `dev`, `test` and `migrate` scripts, the `PORT`, `APP_DATA` and `APP_REVISION` variables, and the health path), each with a default, and `chant workspace status --json` prints them for the app member with the defaults filled in. A copy made with `chant init --from` carries the kind with it.
 
 The root holds the declaration, this README and [`decisions/`](decisions), the workspace's own decision records in the format of [`docs/design/decisions/`](../docs/design/decisions/README.md), with ids `ref-001` onwards. The kind file and schema beside them are copies of chant's, so a workspace made from this one can read them on its own:
 
@@ -54,7 +54,7 @@ chant workspace records --kind work/work.kind.mjs --json
 chant workspace graph --intent design/screens/home.json
 ```
 
-[`decisions/points.json`](decisions/points.json) declares the workspace's decision points ([ws-058](../docs/design/decisions/ws-058-decision-points.md)): `finding-triage` and `needs-a-decision` over what `graph --intent` reports, `slice-tier` for a work item's builder tier, `ship-skip`, taken from chud, and `intent-origin`, `intent-judgment` and `intent-disposition`, the questions a person answers at each node while walking a region ([#3351](https://github.com/INTENTIUS/chant/issues/3351)). Their answers are records in [`answers/`](answers), and `chant workspace points --open` lists the ones waiting on a person:
+[`decisions/points.json`](decisions/points.json) declares the workspace's decision points ([ws-058](../docs/design/decisions/ws-058-decision-points.md)): `finding-triage` and `needs-a-decision` over what `graph --intent` reports, `slice-tier` for a work item's builder tier, `ship-skip`, taken from chud, `intent-origin`, `intent-judgment` and `intent-disposition`, the questions a person answers at each node while walking a region ([#3351](https://github.com/INTENTIUS/chant/issues/3351)), and `agent-question`, an ad-hoc point whose question and options come with each ask, as an agent's question to the people working with it does ([#3403](https://github.com/INTENTIUS/chant/issues/3403)). Their answers are records in [`answers/`](answers), and `chant workspace points --open` lists the ones waiting on a person:
 
 ```sh
 cd reference-workspace
@@ -83,12 +83,16 @@ for duplicates and contests, show the list, and write only what's kept with
 `chant workspace records new`. See [Recording Decisions by Hand](https://intentius.io/chant/guide/recording-decisions-by-hand/)
 for the loop end to end.
 
+## Profiles
+
+[`profiles/`](profiles) holds three smaller workspaces to start from, one per kind of user ([#3174](https://github.com/INTENTIUS/chant/issues/3174), [ws-096](../docs/design/decisions/ws-096-opt-in-factory-fields-and-three-profiles.md)). [`ideation`](profiles/ideation) is records only, with a stub app of the app kind and no factory. [`app`](profiles/app) adds a box block that runs the app as a service and a factory that builds it. [`infra`](profiles/infra) has an estate member and a factory that builds it, with no app member and no box services. Each carries copies of this workspace's decision, work and answer kinds and, for the two with an app, of `kinds/app`, so a copy reads on its own. `chant workspace init --profile <name>` copies one with `chant init --from`, and `test/reference-workspace.test.ts` and `packages/core/src/workspace/profiles.test.ts` check that each copy passes `chant workspace check` and that its kinds match the ones here.
+
 ## What switches on here, and when
 
 | Issue | What it adds to this workspace |
 |---|---|
 | [#2534](https://github.com/INTENTIUS/chant/issues/2534) | landed: `chant.workspace.json` declares the members, and `chant workspace ls` lists them |
-| [#2535](https://github.com/INTENTIUS/chant/issues/2535) | kinds are checked; `other` members need `because`, and an app kind can replace `other` for the app |
+| [#2535](https://github.com/INTENTIUS/chant/issues/2535) | kinds are checked; `other` members need `because`. The app is of the app kind since [#3151](https://github.com/INTENTIUS/chant/issues/3151) |
 | [#2536](https://github.com/INTENTIUS/chant/issues/2536) | the read contract and its output schemas are tested against this workspace |
 | [#2537](https://github.com/INTENTIUS/chant/issues/2537) | `chant workspace build`, `lint`, `audit` and `graph` run per member |
 | [#2538](https://github.com/INTENTIUS/chant/issues/2538) | delivery gets a per-member ledger |

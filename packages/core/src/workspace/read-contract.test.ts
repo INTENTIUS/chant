@@ -215,7 +215,7 @@ describe("every schema against the reference workspace (#2543)", () => {
         expect(doc.components[0].runtimes).toEqual([{ name: "local", lexicon: null, default: true, command: "chant run --components app" }]);
         expect(doc.members.find((m) => m.name === "delivery")!.runtimeReasons).toEqual([]);
         // #2695: the reference config declares no environments, so the app deploys to local only.
-        expect(doc.components[0].environments).toEqual([{ name: "local", default: true, source: "builtin", command: "chant run --components app" }]);
+        expect(doc.components[0].environments).toEqual([{ name: "local", default: true, source: "builtin", site: null, command: "chant run --components app" }]);
         expect(doc.members.find((m) => m.name === "delivery")!.environmentReasons.map((r) => r.code)).toEqual(["environments-none-declared"]);
         expect(doc.reasons).toEqual([]);
       }
@@ -244,7 +244,7 @@ describe("every schema against the reference workspace (#2543)", () => {
       const doc = await workspacePoints({ cwd: FIXTURE, at });
       expectValid(doc);
       if ("error" in doc) throw new Error(doc.error.message);
-      expect(doc.points.map((p) => p.name)).toEqual(["slice-tier", "ship-skip", "finding-triage", "needs-a-decision", "intent-origin", "intent-judgment", "intent-disposition"]);
+      expect(doc.points.map((p) => p.name)).toEqual(["slice-tier", "ship-skip", "finding-triage", "needs-a-decision", "intent-origin", "intent-judgment", "intent-disposition", "agent-question"]);
       const sliceTier = doc.points.find((p) => p.name === "slice-tier")!;
       expect(sliceTier.criteria).toEqual({
         small: "A haiku-class builder. The work item fits the small limits.",

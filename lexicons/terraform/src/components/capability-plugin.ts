@@ -28,6 +28,7 @@
  */
 
 import type { Capability, DeployContext, CapabilityPlan } from "@intentius/chant/components/capability";
+import type { ChangeSetPart } from "@intentius/chant/change-set";
 import { ownPackageVersion, type CapabilityPlugin } from "@intentius/chant/components/capability-plugin";
 import { terraformApply, terraformInit, terraformOutputs, terraformPlan } from "../op/activities/terraform";
 
@@ -59,13 +60,21 @@ interface PlannedRoot {
 
 const rootArgs = (input: TerraformApplyStepInput) => ({ root: input.root, ...(input.cwd ? { cwd: input.cwd } : {}) });
 
-async function planRoot(input: TerraformApplyStepInput): Promise<PlannedRoot> {
+function requireRoot(input: TerraformApplyStepInput): void {
   if (typeof input.root !== "string" || input.root === "") {
     throw new Error('terraform-apply: "root" is required and names an entry in terraform.roots');
   }
+}
+
+async function planRoot(input: TerraformApplyStepInput): Promise<PlannedRoot & { changeSet?: ChangeSetPart }> {
+  requireRoot(input);
   await terraformInit(rootArgs(input));
   const planned = await terraformPlan({ ...rootArgs(input), ...(input.vars ? { vars: input.vars } : {}) });
-  return { planFile: planned.planFile, planDigest: planned.planDigest };
+  return {
+    planFile: planned.planFile,
+    planDigest: planned.planDigest,
+    ...(planned.changeSet ? { changeSet: planned.changeSet } : {}),
+  };
 }
 
 function isPlannedRoot(value: unknown): value is PlannedRoot {
@@ -79,12 +88,19 @@ export const terraformApplyCapability: Capability<TerraformApplyStepInput, Terra
   // which is a change of its own. COMP003 asks the component to say so.
   rollbackPolicy: "needs-opt-out",
   async plan(_ctx: DeployContext, input: TerraformApplyStepInput): Promise<CapabilityPlan> {
-    const planned = await planRoot(input);
-    return { member: input.root, planDigest: planned.planDigest, artifact: planned };
+    const { changeSet, ...planned } = await planRoot(input);
+    return { member: input.root, planDigest: planned.planDigest, artifact: planned, ...(changeSet ? { changeSet } : {}) };
+  },
+  // The root's outputs as its state holds them now (#3183): what a dependent
+  // planned before this root applies reads through `stackOutput()`.
+  async outputs(_ctx: DeployContext, input: TerraformApplyStepInput): Promise<Record<string, unknown>> {
+    requireRoot(input);
+    await terraformInit(rootArgs(input));
+    return terraformOutputs(rootArgs(input));
   },
   async run(ctx: DeployContext, input: TerraformApplyStepInput): Promise<TerraformApplyStepOutput> {
     const fromWave = ctx.plans?.[input.root];
-    const planned = isPlannedRoot(fromWave) ? fromWave : await planRoot(input);
+    const planned: PlannedRoot = isPlannedRoot(fromWave) ? fromWave : await planRoot(input);
     const applied = await terraformApply({ ...rootArgs(input), planFile: planned.planFile });
     if (!applied.applied) {
       throw new Error(

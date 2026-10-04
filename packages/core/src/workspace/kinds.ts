@@ -45,7 +45,33 @@ export interface FileProbe {
    * `live {` block is found without parsing HCL (#2545).
    */
   anyBlock?: { in: string[]; blocks: string[] };
+  /**
+   * A file directly in the directory whose name matches one of `in` parses
+   * as JSON and has a value at one of `pointers`, each a JSON Pointer. This
+   * is how an app member's `package.json` with a `start` script is found
+   * without claiming every Node package (#3151).
+   */
+  anyJsonKey?: { in: string[]; pointers: string[] };
 }
+
+/** A string, integer or boolean field a kind declares for its members (#3151). */
+export interface ScalarKindField {
+  type: "string" | "integer" | "boolean";
+  description: string;
+  /** The value a member that doesn't set the field gets; null when the kind gives none. */
+  default?: string | number | boolean;
+  /** For a string field, a regular expression the value must match. */
+  pattern?: string;
+}
+
+/** An object field: named scalar fields, each with its own default (#3151). */
+export interface ObjectKindField {
+  type: "object";
+  description: string;
+  properties: Record<string, ScalarKindField>;
+}
+
+export type KindField = ScalarKindField | ObjectKindField;
 
 /** What a kind's probe checks in a directory. */
 export type KindProbe =
@@ -99,6 +125,8 @@ export interface MemberKind {
   packageDir?: string;
   /** How `workspace graph` reads a member of this kind (#2874); unset, the member is `kind-not-run`. */
   graph?: KindGraph;
+  /** The fields a member entry of this kind may set, with their defaults (#3151); unset, the kind declares none. */
+  fields?: Record<string, KindField>;
 }
 
 export interface KindRegistry {
@@ -187,8 +215,18 @@ export function builtinKindRegistry(): KindRegistry {
 export function probeKind(kind: MemberKind, tree: WorkspaceTree, dir: string): boolean {
   if ("directory" in kind.probe) return true;
   if ("chantProject" in kind.probe) return holdsChantProject(tree, dir);
-  const { anyFile, anyBlock } = kind.probe;
+  const { anyFile, anyBlock, anyJsonKey } = kind.probe;
   if (anyFile && filesMatching(tree, dir, anyFile).length > 0) return true;
+  if (anyJsonKey) {
+    for (const file of filesMatching(tree, dir, anyJsonKey.in)) {
+      try {
+        const json = JSON.parse(tree.read(file)) as unknown;
+        if (anyJsonKey.pointers.some((p) => atPointer(json, p) !== undefined)) return true;
+      } catch {
+        // A file that isn't JSON is no evidence either way.
+      }
+    }
+  }
   if (anyBlock) {
     const opener = new RegExp(`^\\s*(?:${anyBlock.blocks.map(escapeRegExp).join("|")})\\s*\\{`, "m");
     for (const file of filesMatching(tree, dir, anyBlock.in)) {
@@ -225,6 +263,17 @@ function filesMatching(tree: WorkspaceTree, dir: string, names: readonly string[
     }
   }
   return out.sort();
+}
+
+/** The value at JSON Pointer `pointer` in `json`, or undefined when there is none. */
+function atPointer(json: unknown, pointer: string): unknown {
+  let at: unknown = json;
+  for (const raw of pointer.split("/").slice(1)) {
+    const token = raw.replace(/~1/g, "/").replace(/~0/g, "~");
+    if (at === null || typeof at !== "object" || !Object.prototype.hasOwnProperty.call(at, token)) return undefined;
+    at = (at as Record<string, unknown>)[token];
+  }
+  return at;
 }
 
 function escapeRegExp(text: string): string {
@@ -337,7 +386,7 @@ export function parseKindData(text: string, source: string): KindData {
   const problems: string[] = [];
   const kinds: MemberKind[] = [];
   const seen = new Set<string>();
-  for (const k of (raw as { kinds: { name: string; description: string; precedence: number; probe: FileProbe; outputs?: string[]; graph?: KindGraph }[] }).kinds) {
+  for (const k of (raw as { kinds: { name: string; description: string; precedence: number; probe: FileProbe; outputs?: string[]; graph?: KindGraph; fields?: Record<string, KindField> }[] }).kinds) {
     if (BUILTIN_KIND_NAMES.includes(k.name)) {
       problems.push(`${source}: kind ${k.name} is built in and can't be supplied by a package`);
       continue;
@@ -353,13 +402,16 @@ export function parseKindData(text: string, source: string): KindData {
       probe: {
         ...(k.probe.anyFile ? { anyFile: [...k.probe.anyFile] } : {}),
         ...(k.probe.anyBlock ? { anyBlock: { in: [...k.probe.anyBlock.in], blocks: [...k.probe.anyBlock.blocks] } } : {}),
+        ...(k.probe.anyJsonKey ? { anyJsonKey: { in: [...k.probe.anyJsonKey.in], pointers: [...k.probe.anyJsonKey.pointers] } } : {}),
       },
       precedence: k.precedence,
       shape: "member",
       outputs: { from: "declared", names: [...(k.outputs ?? [])] },
       source,
       ...(k.graph ? { graph: { lexicon: k.graph.lexicon, config: structuredClone(k.graph.config) } } : {}),
+      ...(k.fields ? { fields: structuredClone(k.fields) } : {}),
     });
+    for (const problem of fieldDefaultProblems(k.fields ?? {})) problems.push(`${source}: kind ${k.name} ${problem}`);
   }
   return { kinds, problems };
 }
@@ -589,4 +641,107 @@ export function kindsFileShips(packageDir: string, file: string): boolean {
     const e = entry.replace(/^\.\//, "").replace(/\/+$/, "");
     return rel === e || rel.startsWith(`${e}/`);
   });
+}
+
+// ── Member fields (#3151) ────────────────────────────────────────────────────
+
+/** A value a member sets, or a kind's default: what a scalar field holds. */
+export type FieldValue = string | number | boolean;
+
+/** Why a value doesn't fit `field`, phrased to follow "the value", or undefined when it fits. */
+function scalarProblem(field: ScalarKindField, value: unknown): string | undefined {
+  const ok = field.type === "integer" ? typeof value === "number" && Number.isInteger(value) : typeof value === field.type;
+  if (!ok) return `is ${JSON.stringify(value)}, and the field is ${field.type === "integer" ? "an integer" : `a ${field.type}`}`;
+  if (field.pattern !== undefined && typeof value === "string") {
+    let re: RegExp;
+    try {
+      re = new RegExp(field.pattern, "u");
+    } catch {
+      return undefined; // Reported once, against the kind, by fieldDefaultProblems.
+    }
+    if (!re.test(value)) return `is ${JSON.stringify(value)}, which does not match ${field.pattern}`;
+  }
+  return undefined;
+}
+
+/** What is wrong with a kind's own field declarations: a pattern that isn't a regular expression, or a default of the wrong type. */
+function fieldDefaultProblems(fields: Record<string, KindField>): string[] {
+  const out: string[] = [];
+  const scalar = (name: string, f: ScalarKindField) => {
+    if (f.pattern !== undefined) {
+      try {
+        new RegExp(f.pattern, "u");
+      } catch {
+        out.push(`declares field ${name} with pattern ${f.pattern}, which is not a regular expression`);
+        return;
+      }
+    }
+    if (f.default === undefined) return;
+    const problem = scalarProblem(f, f.default);
+    if (problem) out.push(`declares field ${name} whose default ${problem}`);
+  };
+  for (const [name, f] of Object.entries(fields)) {
+    if (f.type === "object") for (const [inner, g] of Object.entries(f.properties)) scalar(`${name}.${inner}`, g);
+    else scalar(name, f);
+  }
+  return out;
+}
+
+/** One problem with a member's fields: the field's path under `fields` (`scripts/start`), and why. */
+export interface MemberFieldProblem {
+  path: string;
+  message: string;
+}
+
+export interface MemberFields {
+  /** Every field the kind declares, set from the entry or its default (null when it has none); null when the kind declares no fields. */
+  fields: Record<string, FieldValue | null | Record<string, FieldValue | null>> | null;
+  problems: MemberFieldProblem[];
+}
+
+/**
+ * A member's fields (#3151): the ones its entry sets, checked against what
+ * its kind declares, with every other declared field at its default. A field
+ * the kind doesn't declare, or a value of the wrong type, is a problem, and
+ * the field reads as its default. A kind no registry knows has no fields to
+ * check against, so it reads as null with no problem (WSP003 reports it).
+ */
+export function resolveMemberFields(kind: MemberKind | undefined, given: Record<string, unknown> | null): MemberFields {
+  if (kind === undefined) return { fields: null, problems: [] };
+  const declared = kind.fields;
+  const problems: MemberFieldProblem[] = [];
+  if (declared === undefined) {
+    if (given !== null) problems.push({ path: "", message: `kind ${kind.name} declares no fields, and the entry sets ${Object.keys(given).join(", ") || "an empty fields block"}` });
+    return { fields: null, problems };
+  }
+  const set = given ?? {};
+  for (const name of Object.keys(set)) {
+    if (!(name in declared)) problems.push({ path: name, message: `kind ${kind.name} declares no field ${name}; its fields are ${Object.keys(declared).join(", ")}` });
+  }
+  const scalar = (path: string, field: ScalarKindField, value: unknown): FieldValue | null => {
+    if (value !== undefined) {
+      const problem = scalarProblem(field, value);
+      if (!problem) return value as FieldValue;
+      problems.push({ path, message: `field ${path.replace("/", ".")} ${problem}` });
+    }
+    return field.default ?? null;
+  };
+  const fields: NonNullable<MemberFields["fields"]> = {};
+  for (const [name, field] of Object.entries(declared)) {
+    if (field.type !== "object") {
+      fields[name] = scalar(name, field, set[name]);
+      continue;
+    }
+    const raw = set[name];
+    let inner: Record<string, unknown> = {};
+    if (raw !== undefined) {
+      if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) inner = raw as Record<string, unknown>;
+      else problems.push({ path: name, message: `field ${name} is ${JSON.stringify(raw)}, and the field is an object` });
+    }
+    for (const key of Object.keys(inner)) {
+      if (!(key in field.properties)) problems.push({ path: `${name}/${key}`, message: `kind ${kind.name} declares no field ${name}.${key}; ${name} has ${Object.keys(field.properties).join(", ")}` });
+    }
+    fields[name] = Object.fromEntries(Object.entries(field.properties).map(([key, f]) => [key, scalar(`${name}/${key}`, f, inner[key])]));
+  }
+  return { fields, problems };
 }

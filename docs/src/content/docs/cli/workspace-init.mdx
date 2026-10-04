@@ -8,6 +8,7 @@ diataxis: reference
 
 ```
 chant workspace init [dir] [--name <name>] [--yes] [--verbose]
+chant workspace init --profile ideation|app|infra [dir] [--name <name>] [--param name=<display name>] [--from <repo>@<ref>|<chant checkout>] [--yes]
 ```
 
 ## Description
@@ -51,6 +52,18 @@ Before it asks, init prints every member directory and example-group match that 
 
 Once the file is written, root-level `chant build`, `lint`, `run` and `audit` stop reading these directories ([#2527](https://github.com/INTENTIUS/chant/issues/2527)). [`chant workspace build`](/chant/cli/workspace-build/) and its siblings cover them, each member with its own chant ([#2537](https://github.com/INTENTIUS/chant/issues/2537)).
 
+## Profiles
+
+`--profile` starts a workspace from one of the reference workspace's three profiles instead of proposing one from what is there ([#3174](https://github.com/INTENTIUS/chant/issues/3174), [ws-096](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-096-opt-in-factory-fields-and-three-profiles.md)). Each declares only what its kind of user needs, so nothing about a factory or an app is asked of a workspace that doesn't build one.
+
+| Profile | What it declares |
+|---|---|
+| `ideation` | The decision, work and answer record kinds, and a stub `app` member of the [app kind](/chant/reference/workspace-kinds/#the-app-kind) that answers `/health` and shows the workspace's name. No box and no factory |
+| `app` | The same records, and an `app` member whose box block runs it as a service and declares the [factory](/chant/reference/workspace-declaration/#factory): it builds `app`, and the app's tests are the verdict |
+| `infra` | The same records, and an estate member, `network`, a chant project on the terraform lexicon. Its box block declares only the factory, checked by a lint and a build, with no app member and no box services, so the factory runs on a fountain steward |
+
+[`chant init --from`](/chant/cli/init/) copies the profile from `reference-workspace/profiles/<profile>` in the chant repository at the tag of the chant you run (`chant-v<version>`). The copy has a lineage lock, so [`chant workspace upgrade`](/chant/cli/workspace-upgrade/) takes later versions of it. `--from` reads the profiles from another `<repo>@<ref>`, or from a chant checkout on disk. `--param name=<display name>` sets the name the stub app shows, and `--name` sets the declaration's `name`. Each profile passes [`chant workspace check`](/chant/cli/workspace-check/) as it is copied.
+
 ## Ownership stacks
 
 Each `chant` member needs an `ownership.stack` of its own ([#2538](https://github.com/INTENTIUS/chant/issues/2538), ws-037). Ownership markers carry no member name, so the stack is what tells two members' resources and receipts apart, and the `WSP071` check fails when two members share one (see [Ledgers](/chant/reference/workspace-declaration/#ledgers)). Init prints one distinct stack per member after the directories that leave the root project:
@@ -74,13 +87,16 @@ The stack stays in the member's config and the declaration gains no marker key, 
 | `--name <name>` | The workspace's name, in the [name grammar](/chant/reference/workspace-declaration/#names). |
 | `--yes` | Write the file without asking. |
 | `--verbose` | List every directory and file leaving the root project. |
+| `--profile <profile>` | Copy the `ideation`, `app` or `infra` profile instead of proposing a declaration. See [Profiles](#profiles). |
+| `--from <source>` | With `--profile`, where the profiles are read: a `<repo>@<ref>`, or a chant checkout on disk. Defaults to the chant repository at this chant's release tag. |
+| `--param name=<value>` | With `--profile`, the display name the profile's stub app shows. |
 
 ## Exit codes
 
 | Code | Meaning |
 |---|---|
 | 0 | The proposal was shown, and written if confirmed. Declining writes nothing and still exits 0. |
-| 1 | A declaration already exists, `--name` is invalid, or `dir` doesn't exist. |
+| 1 | A declaration already exists, `--name` is invalid, `dir` doesn't exist, or the profile is unknown or couldn't be copied. |
 
 ## Examples
 
@@ -90,4 +106,7 @@ chant workspace init
 
 # Write it without a prompt, for a script
 chant workspace init --yes --name acme
+
+# Start an infra workspace whose factory builds its estate
+chant workspace init estate --profile infra --name estate --yes
 ```

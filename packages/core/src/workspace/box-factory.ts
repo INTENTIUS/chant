@@ -11,7 +11,7 @@
  */
 
 import { createHash } from "node:crypto";
-import type { BoxFactory, BoxListing, Declaration, FactoryCheckKind } from "./declaration";
+import type { BoxFactory, BoxListing, Declaration, FactoryCheckKind, FactoryTier } from "./declaration";
 import type { ReasonCode } from "./reason-codes";
 import type { WorkspaceTree } from "./tree";
 
@@ -36,6 +36,15 @@ export interface FactoryView {
   check: { run: string; kind: FactoryCheckKind } | null;
   checks: string | null;
   builders: string | null;
+  /** Which builder agent builds at which tier, as declared (#3152, ws-094); empty when none is. */
+  tiers: FactoryTier[];
+  /**
+   * The builder for each member the factory builds, by tier (#3152): the
+   * entry for the tier that names the member's kind, else the tier's entry
+   * with no kinds. A tier with no entry for the member is left out, so a
+   * reader resolves a work item's tier with one lookup, without studio.
+   */
+  builderFor: Record<string, Record<string, { agent: string; session: string | null }>>;
   publish: { forge: "github"; repo: string; base: string | null; branchPrefix: string; head: string | null } | null;
 }
 
@@ -62,15 +71,35 @@ export function plantability(declaration: Declaration): Plantable {
   };
 }
 
-export function factoryView(f: BoxFactory | null): FactoryView | null {
+/** A box's factory as the read contract prints it. `members` gives each built member's kind, for `builderFor`. */
+export function factoryView(f: BoxFactory | null, members: readonly { name: string; kind: string }[] = []): FactoryView | null {
   if (f === null) return null;
   return {
     builds: [...f.builds],
     check: f.check === null ? null : { ...f.check },
     checks: f.checks,
     builders: f.builders,
+    tiers: f.tiers.map((t) => ({ ...t, kinds: t.kinds === null ? null : [...t.kinds] })),
+    builderFor: builderTable(f, members),
     publish: f.publish === null ? null : { ...f.publish },
   };
+}
+
+/** The builder table (#3152): for each built member, each tier's agent, by the member's kind first and the tier's default second. */
+export function builderTable(f: BoxFactory, members: readonly { name: string; kind: string }[]): FactoryView["builderFor"] {
+  const tiers = [...new Set(f.tiers.map((t) => t.tier))];
+  const out: FactoryView["builderFor"] = {};
+  for (const name of f.builds) {
+    const kind = members.find((m) => m.name === name)?.kind;
+    const row: Record<string, { agent: string; session: string | null }> = {};
+    for (const tier of tiers) {
+      const entry =
+        f.tiers.find((t) => t.tier === tier && kind !== undefined && t.kinds?.includes(kind)) ?? f.tiers.find((t) => t.tier === tier && t.kinds === null);
+      if (entry) row[tier] = { agent: entry.agent, session: entry.session };
+    }
+    out[name] = row;
+  }
+  return out;
 }
 
 /** The listing, hashing the cover through `read` (bytes, or null when the file can't be read). */
@@ -97,7 +126,11 @@ export function treeBytes(tree: WorkspaceTree): (path: string) => Uint8Array | n
 }
 
 /** The box fields the graph prints on a member (#3146): its factory and listing, or null when the member's box declares neither. */
-export function graphBox(box: { factory: BoxFactory | null; listing: BoxListing | null } | null, tree: WorkspaceTree): { factory: FactoryView | null; listing: ListingView | null } | null {
+export function graphBox(
+  box: { factory: BoxFactory | null; listing: BoxListing | null } | null,
+  tree: WorkspaceTree,
+  members: readonly { name: string; kind: string }[] = [],
+): { factory: FactoryView | null; listing: ListingView | null } | null {
   if (box === null || (box.factory === null && box.listing === null)) return null;
-  return { factory: factoryView(box.factory), listing: listingView(box.listing, treeBytes(tree)) };
+  return { factory: factoryView(box.factory, members), listing: listingView(box.listing, treeBytes(tree)) };
 }

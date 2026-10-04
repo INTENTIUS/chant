@@ -79,6 +79,7 @@ describe("the factory on a box block (#3146)", () => {
       check: { run: "npm run --silent check && npm test --silent", kind: "test" },
       checks: "checks",
       builders: "steward",
+      tiers: [],
       publish: { forge: "github", repo: "arugula-salad/studio", base: null, branchPrefix: "box/", head: null },
       pointer: "/members/1/box/factory",
     });
@@ -262,6 +263,8 @@ describe("the read contract: status, graph, agent and check --changes (#3146)", 
       check: { run: "npm run --silent check && npm test --silent", kind: "test" },
       checks: "checks",
       builders: "steward",
+      tiers: [],
+      builderFor: { studio: {} },
       publish: { forge: "github", repo: "arugula-salad/studio", base: null, branchPrefix: "box/", head: null },
     });
     expect(box.listing).toEqual({

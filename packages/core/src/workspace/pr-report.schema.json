@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/pr-report/v1/pr-report.schema.json",
+  "title": "pull-request report",
+  "description": "What one stage of the pull-request loop (#3183) planned or applied: the members a change reaches, the digest the gate binds, where the approval stands and how the stage ended. Written by `chant components pr-plan` (pr-plan.json) and `chant components pr-apply` (pr-apply.json), and built by prReport in @intentius/chant/components/pr-run. The pull-request note is rendered from it by renderPrNote in @intentius/chant/pr-loop. Version 1 of the workspace read contract. Readers ignore fields they do not know; a field is only ever added within a version.",
+  "type": "object",
+  "required": ["$schema", "contract", "stage", "pr", "env", "base", "head", "op", "gate", "digest", "status", "approval", "selection", "members", "changeSet"],
+  "properties": {
+    "$schema": { "const": "https://intentius.io/chant/schemas/workspace/pr-report/v1/pr-report.schema.json" },
+    "contract": { "const": 1 },
+    "stage": { "enum": ["plan", "apply"] },
+    "pr": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "description": "The pull or merge request number. null when an apply found no pull request that merged its commit."
+    },
+    "env": { "type": "string" },
+    "base": { "type": "string", "pattern": "^[0-9a-f]{40,64}$", "description": "The commit the change is measured from: the merge base of the given base and head." },
+    "head": { "type": "string", "pattern": "^[0-9a-f]{40,64}$" },
+    "op": {
+      "type": "string",
+      "description": "The gate's op, pr-<number>. Its ledger is _gates/<op>.jsonl on chant/lifecycle. pr-unknown when no pull request was found."
+    },
+    "gate": { "type": "string", "description": "The gate the apply waits on, pr-apply unless the pipeline names another." },
+    "digest": {
+      "type": "string",
+      "pattern": "^(?:jcs1-)?sha256:[0-9a-f]{64}$",
+      "description": "The change-set digest of what this stage planned: computePlanDigest(\"change-set\", ...) over every member's { member, planDigest }. What the gate binds."
+    },
+    "status": {
+      "enum": ["planned", "plan-failed", "nothing", "applied", "failed", "refused"],
+      "description": "planned: every member planned (plan stage). plan-failed: a member failed to plan, so nothing can apply. nothing: no component deploys what the change touches. applied: every member applied. failed: a member failed to apply and its dependents did not run. refused: nothing applied, see refusal."
+    },
+    "refusal": {
+      "enum": ["not-approved", "plan-changed", "not-a-reviewer", "no-pull-request"],
+      "description": "Why an apply refused. plan-changed: an approval stands for another digest, so the plan changed after review."
+    },
+    "message": { "type": "string", "description": "The refusal or failure as printed." },
+    "approval": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": { "enum": ["approved", "changed", "pending"], "description": "approved: an approval stands for digest. changed: one stands for another digest. pending: none stands." },
+        "approvedBy": { "type": "array", "items": { "type": "string" }, "description": "Who approved digest, as the approval names them (github:<login>, gitlab:<login>, <forge>@<host>:<login>, or a signer)." },
+        "approved": { "type": "string", "pattern": "^(?:jcs1-)?sha256:[0-9a-f]{64}$", "description": "With changed: the digest that was approved." }
+      }
+    },
+    "selection": {
+      "type": "object",
+      "required": ["changed", "dependents", "unclaimed", "indeterminate", "waves"],
+      "description": "Component names. The fan-out derivation the change gives (#2417).",
+      "properties": {
+        "changed": { "type": "array", "items": { "type": "string" }, "description": "Components deploying a unit the change touched, in dependency order." },
+        "dependents": { "type": "array", "items": { "type": "string" }, "description": "Components selected because they depend on a changed one, in dependency order." },
+        "unclaimed": { "type": "array", "items": { "type": "string" }, "description": "Units the change touched that no component deploys." },
+        "indeterminate": { "type": "array", "items": { "type": "string" }, "description": "Components a source diff cannot judge that the walk did not reach." },
+        "waves": { "type": "array", "items": { "type": "array", "items": { "type": "string" } }, "description": "The selected components in parallel-safe waves, in apply order." }
+      }
+    },
+    "members": {
+      "type": "array",
+      "description": "One entry per change-set member, sorted by member.",
+      "items": {
+        "type": "object",
+        "required": ["member", "component", "planDigest", "status", "counts"],
+        "properties": {
+          "member": { "type": "string", "description": "The member's name in the change set: the root, for a terraform-family step." },
+          "component": { "type": "string" },
+          "planDigest": { "type": ["string", "null"], "description": "What a gate on this member alone binds. null when it failed to plan." },
+          "status": { "enum": ["planned", "plan-failed", "applied", "failed", "blocked"] },
+          "counts": {
+            "type": "object",
+            "required": ["create", "update", "replace", "delete"],
+            "properties": {
+              "create": { "type": "integer", "minimum": 0 },
+              "update": { "type": "integer", "minimum": 0 },
+              "replace": { "type": "integer", "minimum": 0 },
+              "delete": { "type": "integer", "minimum": 0 }
+            }
+          },
+          "error": { "type": "string" },
+          "inputsMoved": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Apply stage: components this one depends on whose outputs changed when they applied. It applied the plan it was approved with; the next run plans it against the new values."
+          }
+        }
+      }
+    },
+    "changeSet": {
+      "type": "object",
+      "description": "The change-set document over every member (change-set.schema.json). Its digest equals digest."
+    }
+  }
+}

@@ -23,6 +23,7 @@ interface Component {
 
   liveNames?: string[];       // optional: live entity/resource name(s), when they differ from `name`
   composites?: string[];      // optional: composite kind(s) this component deploys, when a consumer can't infer it from `name`
+  environments?: ComponentEnvironmentDeclaration[]; // optional: where a release goes, by environment
 }
 ```
 
@@ -112,6 +113,24 @@ chant list --components                    # inventory: name, archetype, depends
 chant describe search-service --components  # one component's full JSON projection
 chant graph --components                    # dependency order + parallel-safe waves
 ```
+
+## Environments
+
+A component may say where a release of it goes in each environment ([#3153](https://github.com/INTENTIUS/chant/issues/3153), [ws-095](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-095-release-sites-on-the-component.md)). Each entry names an environment `--env` takes. Its other fields are optional and describe the site there: the `runtime` that hosts the release and the `url` it answers on. A `domain` names a custom domain attached to the release. A `lifecycle` names the git remote that its approval and ledger records are pushed to.
+
+```ts
+export const app: Component = {
+  name: "app",
+  dependsOn: [],
+  environments: [
+    { name: "prod", runtime: "local" },
+    { name: "fly", runtime: "fly", lifecycle: "origin", url: "https://shop.fly.dev", domain: "shop.example.com" },
+  ],
+  deploy: [/* ... */],
+};
+```
+
+A release Op that imports the component reads its environments directly. [`chant workspace graph --composites`](/chant/cli/workspace-graph/#composites-and-components) lists each one with its `site`, so a reader such as a deploy button needs no config key of its own. The member's `chant.config.ts` `environments` still decide which names `chant run --env` accepts.
 
 ## Read next
 

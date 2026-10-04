@@ -10,6 +10,15 @@
  *
  * Attestation is opt-in (#2525 rule 6). Without a signers file at base the
  * check passes and says so, unless `--require attested` asks for more.
+ *
+ * Agent runs (#3192): a commit an agent run made, by its `Chant-Run` trailer
+ * or its run's end, is attested by a run statement that a runner or steward
+ * key at base signed and that names the commit. Such a commit counts as
+ * `attested` with the attestor `agent-run`, so `--require attested` tells a
+ * person's signed commit from a run's attested one by the attestor.
+ * `--require attested-runs` asks only that every commit a run made be
+ * covered, and needs runner keys at base but no signers file. Without
+ * `--require`, `runs` reports and nothing fails (studio-035 d).
  */
 
 import { execFileSync } from "node:child_process";
@@ -17,6 +26,10 @@ import { type CommitAttestor, type ProvenanceLevel } from "./attestor";
 import { policyAtBase, commitProvenance, resolveBase, type BaseSource, type RecordProvenance } from "./provenance";
 import { policyWriters, protectedPaths, type ExcludedSigner, type TrustPolicy } from "./policy";
 import { fileAt, nextVersion, rotationPath, signerHistory, type RotationRefusalCode } from "./rotation";
+import { changeRuns, type ChangeRuns } from "./run-commits";
+
+/** What `--require` takes: a provenance level, or `attested-runs` (#3192). */
+export type VerifyRequirement = ProvenanceLevel | "attested-runs";
 
 export interface CommitVerdict extends RecordProvenance {
   commit: string;
@@ -46,8 +59,10 @@ export interface ChangeReport {
     writers: string[];
     problems: string[];
   };
-  require: ProvenanceLevel | null;
+  require: VerifyRequirement | null;
   commits: CommitVerdict[];
+  /** The change's commits that agent runs made, and which a signed run statement covers (#3192). */
+  runs: ChangeRuns;
   protectedPaths: string[];
   /** Protected paths whose content differs between the merge base and head. */
   protectedChanged: string[];
@@ -67,7 +82,7 @@ export interface VerifyOptions {
   repo: string;
   base?: string;
   head?: string;
-  require?: ProvenanceLevel;
+  require?: VerifyRequirement;
   attestors: readonly CommitAttestor[];
 }
 
@@ -115,6 +130,7 @@ export function verifyChange(opts: VerifyOptions): ChangeReport {
     },
     require: opts.require ?? null,
     commits: [],
+    runs: { ledger: null, runners: [], commits: [] },
     protectedPaths: protectedPaths(policy),
     protectedChanged: [],
     protectedWrites: [],
@@ -139,6 +155,20 @@ export function verifyChange(opts: VerifyOptions): ChangeReport {
     return report;
   }
 
+  // Every commit in the change, oldest first, with its parents.
+  const listing = git(repo, ["rev-list", "--reverse", "--parents", `${base.commit}..${head}`]).split("\n").filter(Boolean);
+  const parentsOf = new Map(listing.map((l) => { const [c, ...p] = l.split(" "); return [c, p.length] as const; }));
+  report.runs = changeRuns(repo, [...parentsOf.keys()], policy.runners);
+  if (opts.require === "attested-runs") {
+    if (policy.runners.length === 0 && report.runs.commits.length > 0) {
+      report.notes.push(`.chant/trust.json at base lists no runner keys, so no run statement can verify`);
+    }
+    for (const r of report.runs.commits) {
+      if (r.attested || r.runs.length === 0 || mergeWithoutOwnChanges(repo, r.commit, parentsOf.get(r.commit) ?? 0)) continue;
+      report.failures.push(`${r.commit.slice(0, 8)} was made by agent run ${r.runs.join(", ")}, and --require attested-runs was given: ${r.reason}`);
+    }
+  }
+
   const mergeBase = git(repo, ["merge-base", base.commit, head]).trim();
   const changedPaths = git(repo, ["--literal-pathspecs", "diff", "--name-only", "--no-renames", mergeBase, head, "--", ...report.protectedPaths])
     .split("\n")
@@ -150,18 +180,21 @@ export function verifyChange(opts: VerifyOptions): ChangeReport {
     if (changedPaths.includes(policy.signersPath)) {
       report.notes.push(`this change adds ${policy.signersPath}; it applies to changes made after it is merged, never to this one`);
     }
-    if (opts.require) report.failures.push(`--require ${opts.require} was given, and there is no signers file at base to attest anything`);
+    if (opts.require && opts.require !== "attested-runs") report.failures.push(`--require ${opts.require} was given, and there is no signers file at base to attest anything`);
     report.ok = report.failures.length === 0;
     return report;
   }
 
   // Every commit in the change, judged by the policy at base.
-  const listing = git(repo, ["rev-list", "--reverse", "--parents", `${base.commit}..${head}`]).split("\n").filter(Boolean);
+  const runCover = new Map(report.runs.commits.filter((r) => r.attested).map((r) => [r.commit, r]));
   const verdicts = new Map<string, CommitVerdict>();
   for (const line of listing) {
     const [commit, ...parents] = line.split(" ");
     const subject = git(repo, ["log", "-1", "--format=%s", commit]).trim();
-    const p = commitProvenance(repo, policy, commit, opts.attestors);
+    let p = commitProvenance(repo, policy, commit, opts.attestors);
+    const cover = runCover.get(commit);
+    // A commit no signer attests, made by a run a runner key at base vouches for (#3192).
+    if (p.level !== "attested" && cover) p = { level: "attested", commit, attestor: "agent-run", principal: cover.signer, reason: cover.reason };
     const v: CommitVerdict = { ...p, commit, subject };
     if (p.level !== "attested" && mergeWithoutOwnChanges(repo, commit, parents.length)) {
       v.skipped = "a merge with no changes of its own; the commits it brings are checked instead";
@@ -205,7 +238,7 @@ export function verifyChange(opts: VerifyOptions): ChangeReport {
     }
   }
 
-  if (opts.require) {
+  if (opts.require && opts.require !== "attested-runs") {
     for (const v of report.commits) {
       if (v.skipped || v.level === opts.require) continue;
       report.failures.push(`${v.commit.slice(0, 8)} is ${v.level}, and --require ${opts.require} was given: ${v.reason}`);

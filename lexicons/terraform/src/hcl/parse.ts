@@ -83,6 +83,13 @@ export interface TerraformEntity extends Declarable {
     readonly mode?: TerraformRootMode;
     /** The declared estate name. Present only when `mode` is `"live"`. */
     readonly estate?: string;
+    /**
+     * Whether `.terraform.lock.hcl` sits beside the root's `.tf` files (#3190,
+     * TF040). Stamped on every entity of a root parsed from a directory, and
+     * absent when the parse had no directory to look in (a fetched
+     * repository, inline source), which reads as "not determined".
+     */
+    readonly lockFile?: boolean;
     /** `terraform.roots.<name>.workspace`, recorded so TF025 can flag a non-default one on a live root. */
     readonly workspace?: string;
     /**
@@ -313,7 +320,12 @@ export interface TerraformRootModeOptions {
    * declaration silently overrides.
    */
   configEstate?: string;
+  /** Stamp `props.lockFile` on every entity (#3190). Set by the two directory-backed parses only. */
+  lockFile?: boolean;
 }
+
+/** The lock file `terraform init` writes beside a root's `.tf` files. */
+export const LOCK_FILENAME = ".terraform.lock.hcl";
 
 /**
  * Parse a set of files into entities keyed `<root>/<address>`. Two blocks that
@@ -450,7 +462,12 @@ export async function blocksToEntities(
     const te = entity as TerraformEntity;
     const stamped: TerraformEntity = {
       ...te,
-      props: { ...te.props, mode, ...(mode === "live" ? { estate } : {}) },
+      props: {
+        ...te.props,
+        mode,
+        ...(mode === "live" ? { estate } : {}),
+        ...(modeOptions?.lockFile !== undefined ? { lockFile: modeOptions.lockFile } : {}),
+      },
     };
     entities.set(key, stamped);
   }
@@ -479,7 +496,9 @@ export async function parseTerraformRootDir(
   // estate a ROOT runs against, and choudoufu reads it from the root's own
   // directory only. See `./descend.ts`.
   const sidecar = callers.length === 0 ? readLiveSidecarFile(dir) : undefined;
-  return blocksToEntities(files, root, hcl2json, modeOptions, sidecar, callers);
+  // Only the root's own directory carries a lock file that matters (#3190).
+  const opts = callers.length === 0 ? { ...modeOptions, lockFile: existsSync(join(dir, LOCK_FILENAME)) } : modeOptions;
+  return blocksToEntities(files, root, hcl2json, opts, sidecar, callers);
 }
 
 /**
