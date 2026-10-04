@@ -190,6 +190,7 @@ export const REASONS = {
   "intent-decision-unimplemented": "A decided decision constrains the region, no work item that is not dropped implements it, and no commit falls in its window.",
   "intent-work-blocked": "A work item constraining the region has commits in its window while a work item it needs is not done.",
   "intent-work-open-decided-code": "Commits in the region are a decision's own work while the work item implementing that decision is still open.",
+  "intent-commit-join-conflict": "A commit joined to an agent run by its Chant-Run trailer or the run's record has the patch-id of a commit another run recorded, so it is not joined to that run by content.",
   // The intent graph's answer to why the region is like this (#3034): what it can't account for.
   "intent-why-no-decision": "No current decision governs the region at any granularity, and none is carried out by the commits or runs that made its current lines.",
   "intent-why-no-run": "None of the region's current lines was made by a commit an agent run is joined to.",

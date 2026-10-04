@@ -114,7 +114,8 @@ function commitLine(doc: Result, c: CommitNode): string[] {
     const r = doc.nodes.find((n): n is RunNode => n.kind === "run" && n.id === e.to);
     if (!r) continue;
     const what = r.recorded ? `${[r.harness?.name, r.model].filter(Boolean).join("/") || "no model recorded"}${r.by ? ` for ${r.by}` : ""}${r.cost ? `, ${r.cost.amount} ${r.cost.currency}` : ", unpriced"}` : "not in the run ledger";
-    out.push(`  run       ${r.run}: ${what}`);
+    const content = e.kind === "made-by" && e.joinedBy.includes("patch-id") ? `; joined by content${e.recordedAs ? `, as ${short(e.recordedAs)}` : ""}` : "";
+    out.push(`  run       ${r.run}: ${what}${content}`);
   }
   return out;
 }
@@ -139,7 +140,7 @@ export function whyLines(doc: Result, why: WhyAnswer): string[] {
     out.push(`  decision  ${record(d.decision)} ${d.relevance}${d.lines > 0 ? `, ${d.lines} ${d.lines === 1 ? "line" : "lines"}` : ""}${d.current ? "" : ", superseded"}${d.closed ? ", closed" : ""}`);
   }
   for (const b of why.blame) {
-    const by = b.runs.length > 0 ? `; ${b.runs.map(runLabel).join(", ")}${b.narrowedBy ? " (by its hunks)" : ""}` : b.sha ? "; no run" : "";
+    const by = b.runs.length > 0 ? `; ${b.runs.map(runLabel).join(", ")}${b.narrowedBy ? " (by its hunks)" : ""}${b.joinedBy?.includes("patch-id") ? " (joined by content)" : ""}` : b.sha ? "; no run" : "";
     out.push(`  lines     ${span(b)} ${b.sha ? short(b.sha) : "uncommitted"}${by}`);
   }
   for (const g of why.gaps) out.push(`  gap       ${g.code}: ${g.message}${g.lines ? ` (lines ${g.lines.map(span).join(", ")})` : ""}`);

@@ -332,7 +332,9 @@ why       explained, lines 2-4
   lines     4 3f2b7d10; no run
 ```
 
-The [read contract](/chant/reference/workspace-read-contract/#why-the-region-is-like-this) lists the fields. Following a squash merge back to the pull request's commits ([#3035](https://github.com/INTENTIUS/chant/issues/3035)) and joining a commit to its run by patch-id when the trailer is gone ([#3036](https://github.com/INTENTIUS/chant/issues/3036)) are not part of the answer yet.
+A commit joins its run by its `Chant-Run` trailer or by the run's own list of commits. When it has neither, as after a rebase or a cherry-pick that dropped the trailer, it joins every run whose end recorded a commit with the same `git patch-id --stable` ([#3036](https://github.com/INTENTIUS/chant/issues/3036)). That join is by content: its `made-by` edge has `joinedBy: ["patch-id"]` and `recordedAs`, the commit the run recorded, and the span and the run in `why` carry `joinedBy` so a reader can show it apart from a trailer join. The run's recorded `hunks` don't narrow a content join, since the rewritten commit's line numbers may have moved. The join order is the trailer first, then the run's record, then the patch-id, and a patch-id join is made only when the others give nothing. A commit that one run's trailer or record claims, and whose content matches a commit another run recorded, keeps its join and gets the finding `intent-commit-join-conflict`. A squash of several commits has a patch-id of its own, so it never joins this way. The text walk adds `joined by content` to such a run and span.
+
+The [read contract](/chant/reference/workspace-read-contract/#why-the-region-is-like-this) lists the fields. Following a squash merge back to the pull request's commits ([#3035](https://github.com/INTENTIUS/chant/issues/3035)) is not part of the answer yet.
 
 ### One record's walk
 
