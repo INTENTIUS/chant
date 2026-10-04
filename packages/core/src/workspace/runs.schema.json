@@ -21,6 +21,7 @@
         "workspace",
         "ledger",
         "filter",
+        "trust",
         "runs",
         "totals",
         "malformed",
@@ -106,8 +107,15 @@
                 "string",
                 "null"
               ]
+            },
+            "followSquash": {
+              "type": "boolean",
+              "description": "Whether --follow-squash was given (#3035). Added within version 1."
             }
           }
+        },
+        "trust": {
+          "$ref": "#/$defs/trust"
         },
         "runs": {
           "type": "array",
@@ -216,7 +224,8 @@
                 "enum": [
                   "runs-no-ledger",
                   "runs-ledger-malformed",
-                  "kind-unreadable"
+                  "kind-unreadable",
+                  "squash-unfollowed"
                 ]
               },
               "message": {
@@ -297,7 +306,10 @@
         "transcript",
         "commits",
         "decisions",
-        "ledger"
+        "ledger",
+        "record",
+        "statements",
+        "attestation"
       ],
       "properties": {
         "id": {
@@ -500,10 +512,12 @@
                 "items": {
                   "enum": [
                     "record",
-                    "trailer"
+                    "trailer",
+                    "patch-id",
+                    "squash"
                   ]
                 },
-                "description": "record: the run's end lists it. trailer: it carries Chant-Run with the run's id, on HEAD's history."
+                "description": "record: the run's end lists it. trailer: it carries Chant-Run with the run's id, on HEAD's history. patch-id: neither holds, and the commit on HEAD's history has the git patch-id --stable of a commit the run's end lists, as after a rebase or a cherry-pick that dropped the trailer (#3036); never alongside the others, and its hunks are null. Added within version 1. squash: with --follow-squash, a squash merge on HEAD whose pull request's original commits join the run one of the other ways (#3035); via names them, and hunks is null. Added within version 1."
               },
               "hunks": {
                 "oneOf": [
@@ -519,6 +533,19 @@
                   }
                 ],
                 "description": "The hunks of the commit the run's end says it wrote, or null when it gives none, and the run is then taken to have made the whole commit (#3034). graph --intent uses them to name which of several runs sharing a commit wrote a line. Added within version 1, so an older document may lack it."
+              },
+              "recordedAs": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40,64}$",
+                "description": "For a patch-id join (#3036): the commit the run's end recorded with the same patch-id, which this one rewrites. Added within version 1."
+              },
+              "via": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40,64}$"
+                },
+                "description": "For a squash join (#3035): the pull request's original commits through which the commit joins the run, oldest first. Added within version 1."
               }
             }
           }
@@ -533,6 +560,49 @@
         "ledger": {
           "type": "string",
           "description": "Its file on chant/lifecycle."
+        },
+        "record": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "sha256"
+              ],
+              "properties": {
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              }
+            }
+          ],
+          "description": "The SHA-256 a statement signs: of the canonical JSON of [start line, end line]. Null until the run ends (#3192)."
+        },
+        "statements": {
+          "type": "array",
+          "description": "The signed statements the ledger holds for the run, oldest first (#3192).",
+          "items": {
+            "type": "object",
+            "required": [
+              "at",
+              "envelope"
+            ],
+            "properties": {
+              "at": {
+                "type": "string"
+              },
+              "envelope": {
+                "$ref": "#/$defs/envelope"
+              }
+            }
+          }
+        },
+        "attestation": {
+          "$ref": "#/$defs/attestation",
+          "description": "Its statements judged against the runner keys at base."
         }
       }
     },
@@ -803,6 +873,383 @@
         "end": {
           "type": "integer",
           "minimum": 1
+        }
+      }
+    },
+    "envelope": {
+      "type": "object",
+      "description": "A DSSE v1 envelope (https://github.com/secure-systems-lab/dsse).",
+      "required": [
+        "payloadType",
+        "payload",
+        "signatures"
+      ],
+      "properties": {
+        "payloadType": {
+          "type": "string"
+        },
+        "payload": {
+          "type": "string",
+          "description": "Base64 of the payload bytes."
+        },
+        "signatures": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "keyid",
+              "sig"
+            ],
+            "properties": {
+              "keyid": {
+                "type": "string",
+                "description": "The signing key's ssh fingerprint, SHA256:..."
+              },
+              "sig": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "statement": {
+      "type": "object",
+      "description": "An in-toto Statement v1 with chant's agent-run predicate (#3192, ws-090).",
+      "required": [
+        "_type",
+        "subject",
+        "predicateType",
+        "predicate"
+      ],
+      "properties": {
+        "_type": {
+          "const": "https://in-toto.io/Statement/v1"
+        },
+        "subject": {
+          "type": "array",
+          "description": "The commits the run made, sorted by id.",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "digest"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "The commit id."
+              },
+              "digest": {
+                "type": "object",
+                "required": [
+                  "gitCommit"
+                ],
+                "properties": {
+                  "gitCommit": {
+                    "type": "string"
+                  }
+                }
+              },
+              "annotations": {
+                "type": "object",
+                "properties": {
+                  "patchId": {
+                    "type": "string",
+                    "description": "git patch-id --stable of the commit."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "predicateType": {
+          "const": "https://intentius.io/chant/agent-run/v1"
+        },
+        "predicate": {
+          "type": "object",
+          "required": [
+            "signer",
+            "run",
+            "unit",
+            "harness",
+            "model",
+            "provider",
+            "by"
+          ],
+          "properties": {
+            "signer": {
+              "type": "string",
+              "description": "The runner principal whose key signs: the one .chant/trust.json lists for that key."
+            },
+            "run": {
+              "type": "object",
+              "required": [
+                "id",
+                "record"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "record": {
+                  "type": "object",
+                  "required": [
+                    "sha256"
+                  ],
+                  "properties": {
+                    "sha256": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    }
+                  }
+                }
+              }
+            },
+            "unit": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "kind"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "harness": {
+              "type": "object",
+              "required": [
+                "name",
+                "version"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "version": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            },
+            "model": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "provider": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "by": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "statementVerdict": {
+      "type": "object",
+      "description": "One stored statement, judged against the runner keys at base and the run's record.",
+      "required": [
+        "status",
+        "reason"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "verified",
+            "mismatch",
+            "untrusted",
+            "invalid"
+          ],
+          "description": "verified: a listed runner key signed it and it matches the record. mismatch: a listed key signed it and it does not match. untrusted: no listed key signed it. invalid: not a DSSE envelope, not an agent-run statement, or naming another signer."
+        },
+        "code": {
+          "enum": [
+            "envelope-invalid",
+            "envelope-untrusted",
+            "run-statement-invalid",
+            "run-statement-signer-mismatch",
+            "run-statement-mismatch"
+          ],
+          "description": "Why it does not verify. Absent when verified."
+        },
+        "reason": {
+          "type": "string"
+        },
+        "signer": {
+          "type": "string"
+        },
+        "class": {
+          "enum": [
+            "runner",
+            "service"
+          ]
+        },
+        "keyid": {
+          "type": "string"
+        },
+        "statement": {
+          "$ref": "#/$defs/statement",
+          "description": "The statement, when verified."
+        }
+      }
+    },
+    "attestation": {
+      "type": "object",
+      "description": "The run's statements judged against the runner keys at base (#3192).",
+      "required": [
+        "status",
+        "signer",
+        "class",
+        "keyid",
+        "code",
+        "reason",
+        "commits",
+        "statements"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "signed",
+            "unsigned",
+            "mismatch",
+            "untrusted",
+            "invalid"
+          ],
+          "description": "signed: a stored statement verifies. unsigned: the ledger holds none. Otherwise the best failure, mismatch before untrusted before invalid."
+        },
+        "signer": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "class": {
+          "enum": [
+            "runner",
+            "service",
+            null
+          ]
+        },
+        "keyid": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "code": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "enum": [
+                "envelope-invalid",
+                "envelope-untrusted",
+                "run-statement-invalid",
+                "run-statement-signer-mismatch",
+                "run-statement-mismatch"
+              ]
+            }
+          ],
+          "description": "The code of the failure status reports, or null when signed or unsigned."
+        },
+        "reason": {
+          "type": "string"
+        },
+        "commits": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The commits the verified statement names. Empty unless signed."
+        },
+        "statements": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/statementVerdict"
+          },
+          "description": "One verdict per stored statement, in ledger order."
+        }
+      }
+    },
+    "trust": {
+      "type": "object",
+      "description": "The trust policy the run statements are judged by, read at base.",
+      "required": [
+        "base",
+        "baseFrom",
+        "runners",
+        "problems"
+      ],
+      "properties": {
+        "base": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "baseFrom": {
+          "enum": [
+            "flag",
+            "origin/HEAD",
+            "main",
+            "master",
+            null
+          ]
+        },
+        "runners": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "principal",
+              "class"
+            ],
+            "properties": {
+              "principal": {
+                "type": "string"
+              },
+              "class": {
+                "enum": [
+                  "runner",
+                  "service"
+                ]
+              }
+            }
+          }
+        },
+        "problems": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Why the policy at base can't be read. Nothing verifies then."
         }
       }
     }

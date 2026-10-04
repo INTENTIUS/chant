@@ -1,5 +1,5 @@
 /**
- * `chant workspace verify [--base <rev>] [--head <rev>] [--require attested] [--json]`
+ * `chant workspace verify [--base <rev>] [--head <rev>] [--require attested | attested-runs] [--json]`
  * (#2547): check a change against the trust policy at its base. See ./verify.ts.
  *
  * Exit 0 when the change passes, 1 when it does not or cannot be checked.
@@ -11,12 +11,12 @@ import { gitRoot } from "../record-source";
 import { activeAttestors } from "./attestor";
 import { verifyChange, type ChangeReport } from "./verify";
 
-const USAGE = "chant workspace verify [--base <rev>] [--head <rev>] [--require attested] [--json]";
+const USAGE = "chant workspace verify [--base <rev>] [--head <rev>] [--require attested | attested-runs] [--json]";
 
 export async function runWorkspaceVerify(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
-  if (args.require !== undefined && args.require !== "attested") {
-    console.error(formatError({ message: `--require takes one level, attested, not ${JSON.stringify(args.require)}`, hint: USAGE }));
+  if (args.require !== undefined && args.require !== "attested" && args.require !== "attested-runs") {
+    console.error(formatError({ message: `--require takes attested or attested-runs, not ${JSON.stringify(args.require)}`, hint: USAGE }));
     return 1;
   }
   const repo = gitRoot(process.cwd());
@@ -28,7 +28,7 @@ export async function runWorkspaceVerify(ctx: CommandContext): Promise<number> {
     repo,
     base: args.base,
     head: args.head,
-    require: args.require === "attested" ? "attested" : undefined,
+    require: args.require === "attested" || args.require === "attested-runs" ? args.require : undefined,
     attestors: await activeAttestors(),
   });
   if (args.json) console.log(JSON.stringify(report, null, 2));
@@ -48,6 +48,7 @@ function printReport(r: ChangeReport): void {
     const note = c.skipped ? ` (${c.skipped})` : c.level === "attested" ? "" : ` (${c.reason})`;
     lines.push(`  ${c.commit.slice(0, 8)}  ${c.level}${who}  ${c.subject}${note}`);
   }
+  for (const c of r.runs.commits) lines.push(`  ${c.commit.slice(0, 8)}  agent run ${c.runs.join(", ") || c.run}: ${c.attested ? "attested" : "not attested"}, ${c.reason}`);
   for (const w of r.protectedWrites) lines.push(`  protected write ${w.commit.slice(0, 8)} ${w.paths.join(", ")}: ${w.allowed ? "allowed" : "refused"}, ${w.reason}`);
   if (r.rotation && "to" in r.rotation) lines.push(`  signer set: version ${r.rotation.from} to ${r.rotation.to}, signed by ${r.rotation.signedBy.join(", ")}`);
   for (const n of r.notes) lines.push(n);

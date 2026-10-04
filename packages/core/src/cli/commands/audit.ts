@@ -24,7 +24,8 @@ import type { ProveOptions } from "../../audit/proof";
 import type { Severity } from "../../lint/rule";
 import { formatWarning } from "../format";
 import { lexiconPackagesToInstall, lexiconSourceLabel, pathLexiconMap, recordedLexiconModules } from "../../lexicon-module";
-import { readLexiconDeclarationsStatically, unknownPathLexiconsNotice } from "../../config-static";
+import { readConfigFieldsStatically, readLexiconDeclarationsStatically, unknownPathLexiconsNotice } from "../../config-static";
+import { findProjectConfigPastFragments } from "../../config";
 
 export type AuditFormat = "stylish" | "json" | "sarif" | "markdown" | "html";
 export type AuditTier = "merge-worthy" | "all";
@@ -138,6 +139,28 @@ function missingLexiconRemedy(names: readonly string[], paths: ReadonlyMap<strin
     if (paths.has(name)) parts.push(`${name} is declared by path: ${lexiconSourceLabel(name, process.cwd(), paths)}`);
   }
   return parts.join("; ");
+}
+
+/**
+ * The rule ids the audited project enables with `lint.rules` (anything but
+ * `"off"`), read from its config without running it, the way the audit reads
+ * its lexicon paths. Only a check marked `auditOptIn` consults this (#3190).
+ * A config that cannot be read statically enables nothing.
+ */
+export function readEnabledRules(path: string): Set<string> {
+  const enabled = new Set<string>();
+  try {
+    const read = readConfigFieldsStatically(findProjectConfigPastFragments(path).dir, ["lint"]);
+    const rules = read.status === "read" ? (read.fields.lint as { rules?: unknown } | undefined)?.rules : undefined;
+    if (typeof rules !== "object" || rules === null) return enabled;
+    for (const [id, value] of Object.entries(rules)) {
+      const severity = Array.isArray(value) ? value[0] : value;
+      if (severity !== "off") enabled.add(id);
+    }
+  } catch {
+    // an unreadable config enables nothing
+  }
+  return enabled;
 }
 
 /**
@@ -560,7 +583,11 @@ export async function auditCommand(options: AuditCommandOptions): Promise<AuditC
   const suppressionStats: SuppressionStats = { count: 0 };
   if (inputs.length > 0) {
     try {
-      findings = await auditFiles(inputs, { checksProvider: options.checksProvider, suppressionStats });
+      findings = await auditFiles(inputs, {
+        checksProvider: options.checksProvider,
+        suppressionStats,
+        ...(isUrl ? {} : { enabledRules: readEnabledRules(options.path) }),
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return { success: false, output: "", findings: [], scanned, exitCode: 1, error: msg };

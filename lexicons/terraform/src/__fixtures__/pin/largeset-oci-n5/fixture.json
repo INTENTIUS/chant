@@ -1,0 +1,77 @@
+{
+  "schema": 1,
+  "issue": "#1750",
+  "source": "oci",
+  "prefix": "ls",
+  "module_version": "A",
+  "registry": "localhost:4890",
+  "estates": [
+    {
+      "name": "e01",
+      "dir": "estates/e01",
+      "estate": "ls-e01",
+      "role": "producer",
+      "module_version": "A",
+      "module_source": "oci://localhost:4890/largeset/shared?tag=1.0.0"
+    },
+    {
+      "name": "e02",
+      "dir": "estates/e02",
+      "estate": "ls-e02",
+      "role": "middle",
+      "reads": [
+        "e01"
+      ],
+      "module_version": "A",
+      "module_source": "oci://localhost:4890/largeset/shared?tag=1.0.0"
+    },
+    {
+      "name": "e03",
+      "dir": "estates/e03",
+      "estate": "ls-e03",
+      "role": "leaf",
+      "reads": [
+        "e02"
+      ],
+      "module_version": "A",
+      "module_source": "oci://localhost:4890/largeset/shared?tag=1.0.0"
+    },
+    {
+      "name": "e04",
+      "dir": "estates/e04",
+      "estate": "ls-e04",
+      "role": "outlier",
+      "module_version": "A",
+      "module_source": "oci://localhost:4890/largeset/shared?tag=1.0.0"
+    },
+    {
+      "name": "e05",
+      "dir": "estates/e05",
+      "estate": "ls-e05",
+      "role": "plain",
+      "module_version": "A",
+      "module_source": "oci://localhost:4890/largeset/shared?tag=1.0.0"
+    }
+  ],
+  "apply_order": [
+    "estates/e01",
+    "estates/e02",
+    "estates/e03",
+    "estates/e04",
+    "estates/e05"
+  ],
+  "files": [
+    "apply-order.txt",
+    "estates/e01/estate.chdf.hcl",
+    "estates/e01/main.tf",
+    "estates/e02/estate.chdf.hcl",
+    "estates/e02/main.tf",
+    "estates/e03/estate.chdf.hcl",
+    "estates/e03/main.tf",
+    "estates/e04/estate.chdf.hcl",
+    "estates/e04/main.tf",
+    "estates/e05/estate.chdf.hcl",
+    "estates/e05/main.tf",
+    "fixture.json"
+  ]
+}

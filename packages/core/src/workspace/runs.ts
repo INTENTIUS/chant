@@ -23,6 +23,9 @@
  *   the source of its prices, the transcript pinned by hash, and the commits
  *   the run made, each with its `git patch-id --stable` (#3036) and, when
  *   the writer knows them, the hunks of it the run wrote (#3034).
+ * - `statement`: after the end, a DSSE envelope a runner or steward key
+ *   signed over the run (#3192, ./trust/run-statement.ts). A run may have
+ *   several, such as one per signer; none changes the record they sign.
  *
  * The file name is `_agent-runs`, not `runs`, because an Op run already has
  * `<env>/runs__<op>.jsonl` (`../lifecycle/run-ledger.ts`).
@@ -33,6 +36,18 @@
  * run's end can also list commits, which joins a commit that carries no
  * trailer. `workspace runs` reports both, and `graph --intent` links each
  * commit to its run.
+ *
+ * When neither holds, as after a rebase or a cherry-pick that dropped the
+ * trailer, a commit whose `git patch-id --stable` equals one the run's end
+ * recorded joins the run by content (#3036), marked `patch-id`. A content join
+ * never overrides a trailer or a record join: it is tried only for a commit
+ * that has neither. A squash of several commits has a patch-id of its own, so
+ * it never joins this way.
+ *
+ * A squash merge's commit carries none of its pull request's trailers or
+ * SHAs. When a read is asked to follow squashes (#3035, `squash.ts`), the
+ * squash commit joins every run its pull request's original commits join,
+ * marked `squash` with the originals in `via`.
  */
 
 import { execFileSync } from "node:child_process";
@@ -43,7 +58,10 @@ import { z } from "zod";
 import { describeLifecyclePush, fetchLifecycleStatus, type LifecyclePushStatus, pushLifecycleStatus, readBlobBySha, RefCASConflictError, writeLedgerFiles } from "../lifecycle/git";
 import { resolveMemberLedger } from "../lifecycle/member-ledger";
 import { sortedJsonReplacer } from "../utils";
+import { followSquashes, type SquashFollow } from "./squash";
 import { RUN_TRAILER, parseRecordRef, type RecordRef } from "./trailers";
+import type { DsseEnvelope } from "./trust/dsse";
+import { runRecordDigest, type RunAttestation } from "./trust/run-statement";
 
 /** The directory on `chant/lifecycle` that holds the agent runs, under the workspace root's ledger prefix. */
 export const AGENT_RUNS_DIR = "_agent-runs";
@@ -162,7 +180,16 @@ export interface RunEndLine {
   commits: RunCommit[];
 }
 
-export type RunLine = RunStartLine | RunEndLine;
+/** A `statement` line of `_agent-runs/<id>.jsonl`: a signed statement over the run (#3192). */
+export interface RunStatementLine {
+  version: 1;
+  event: "statement";
+  run: string;
+  at: string;
+  envelope: DsseEnvelope;
+}
+
+export type RunLine = RunStartLine | RunEndLine | RunStatementLine;
 
 // ── The caller's fields ──────────────────────────────────────────────────────
 
@@ -231,7 +258,7 @@ export type RunRecordInput = z.infer<typeof runRecordInputSchema>;
 // ── Errors ───────────────────────────────────────────────────────────────────
 
 /** Why a run write was refused. */
-export type RunWriteRefusal = "run-exists" | "run-unknown" | "run-ended" | "write-input-invalid" | "not-a-git-repository";
+export type RunWriteRefusal = "run-exists" | "run-unknown" | "run-ended" | "run-not-ended" | "run-statement-mismatch" | "write-input-invalid" | "not-a-git-repository";
 
 export class RunWriteError extends Error {
   constructor(
@@ -264,6 +291,40 @@ export function patchIdOf(top: string, sha: string): string | null {
   if (!patch || patch.trim() === "") return null;
   const out = git(top, ["patch-id", "--stable"], patch);
   return out?.trim().split(/\s+/)[0] || null;
+}
+
+/** Parse `git patch-id` output, `<patch-id> <commit>` per line, into commit to patch-id. */
+function parsePatchIds(out: string | undefined): Map<string, string> {
+  const ids = new Map<string, string>();
+  for (const line of (out ?? "").split("\n")) {
+    const [patchId, sha] = line.trim().split(/\s+/);
+    if (patchId && sha && !ids.has(sha)) ids.set(sha, patchId);
+  }
+  return ids;
+}
+
+/**
+ * `git patch-id --stable` of each commit, in two git calls however many there
+ * are (#3036). A commit with no patch, such as a merge, is left out.
+ */
+export function patchIdsOf(top: string, shas: string[]): Map<string, string> {
+  if (shas.length === 0) return new Map();
+  const patches = git(top, ["log", "--no-walk=unsorted", "--stdin", "--no-merges", "--format=commit %H", "--patch", "--no-color", "--no-ext-diff"], `${shas.join("\n")}\n`);
+  if (!patches?.trim()) return new Map();
+  return parsePatchIds(git(top, ["patch-id", "--stable"], patches));
+}
+
+/**
+ * `git patch-id --stable` of each commit reachable from `rev` and committed
+ * after `since` (ISO 8601), merges left out (#3036). A rebase or a
+ * cherry-pick commits anew, so a rewritten commit is never older than the
+ * one it was rewritten from.
+ */
+export function patchIdsSince(top: string, rev: string, since: string): Map<string, string> {
+  if (!commitId(top, rev)) return new Map();
+  const patches = git(top, ["log", rev, `--since=${since}`, "--no-merges", "--format=commit %H", "--patch", "--no-color", "--no-ext-diff"]);
+  if (!patches?.trim()) return new Map();
+  return parsePatchIds(git(top, ["patch-id", "--stable"], patches));
 }
 
 function hashFile(path: string): RunPin {
@@ -366,7 +427,8 @@ export function parseRunFile(content: string, id: string): { lines: RunLine[]; m
   for (const raw of content.split("\n").map((l) => l.trim()).filter(Boolean)) {
     try {
       const v = JSON.parse(raw) as Partial<RunLine>;
-      const ok = v.version === 1 && (v.event === "start" || v.event === "end") && v.run === id && typeof v.at === "string";
+      const statement = v.event === "statement" && typeof (v as Partial<RunStatementLine>).envelope === "object" && (v as Partial<RunStatementLine>).envelope !== null;
+      const ok = v.version === 1 && (v.event === "start" || v.event === "end" || statement) && v.run === id && typeof v.at === "string";
       if (ok) lines.push(v as RunLine);
       else malformed++;
     } catch {
@@ -382,10 +444,10 @@ export async function runsDir(rootOnDisk: string): Promise<string> {
   return `${prefix}${AGENT_RUNS_DIR}`;
 }
 
-/** Every run file in `dir` on the local branch, by run id, and the branch tip read. Never fetches. */
-export function readRunFiles(top: string, dir: string): { tip: string | null; files: Map<string, { path: string; content: string }> } {
+/** Every run file in `dir` on the local branch, or on `ref` when given, by run id, and the branch tip read. Never fetches. */
+export function readRunFiles(top: string, dir: string, ref = `refs/heads/${LEDGER_BRANCH}`): { tip: string | null; files: Map<string, { path: string; content: string }> } {
   const files = new Map<string, { path: string; content: string }>();
-  const tip = commitId(top, `refs/heads/${LEDGER_BRANCH}`) ?? null;
+  const tip = commitId(top, ref) ?? null;
   if (!tip) return { tip, files };
   const listing = git(top, ["ls-tree", "-z", `${tip}:${dir}`]);
   if (!listing) return { tip, files };
@@ -537,16 +599,57 @@ export async function recordRun(fields: unknown, ctx: RunWriteContext): Promise<
   );
 }
 
+/**
+ * `runs sign <id>`: append a statement over an ended run (#3192). The caller
+ * has built or checked the envelope against the record whose hash is
+ * `recordSha256`; the append refuses if the ledger's record is not that one.
+ */
+export async function appendRunStatement(id: string, envelope: DsseEnvelope, recordSha256: string, ctx: RunWriteContext): Promise<RunWriteResult> {
+  if (!RUN_ID_PATTERN.test(id)) throw new RunWriteError("run-unknown", `${JSON.stringify(id)} is not a run id`);
+  const at = (ctx.now?.() ?? new Date()).toISOString();
+  return appendRun(
+    ctx.top,
+    ctx.rootOnDisk,
+    id,
+    (existing) => {
+      const start = existing.find((l): l is RunStartLine => l.event === "start");
+      const end = existing.find((l): l is RunEndLine => l.event === "end");
+      if (!start) throw new RunWriteError("run-unknown", `the ledger has no agent run ${id}`);
+      if (!end) throw new RunWriteError("run-not-ended", `agent run ${id} has not ended; a statement is signed over a run's whole record, so record its end first`);
+      if (runRecordDigest(start, end) !== recordSha256) throw new RunWriteError("run-statement-mismatch", `agent run ${id}'s record changed while it was being signed; sign it again`);
+      return [{ version: 1, event: "statement", run: id, at, envelope }];
+    },
+    `Agent run statement: ${id}`,
+  );
+}
+
 // ── Folding a run ────────────────────────────────────────────────────────────
+
+/**
+ * How a commit joins a run: `trailer` when it carries `Chant-Run` with the
+ * run's id, `record` when the run's end lists it, `patch-id` when it has
+ * neither and its `git patch-id --stable` equals a commit's the run's end
+ * recorded (#3036), `squash` when it squashes a pull request whose original
+ * commits join the run one of those ways, and the read was asked to follow
+ * squashes (#3035).
+ */
+export type RunJoin = "trailer" | "record" | "patch-id" | "squash";
+
+/** The order a reader lists joins in: the commit's own trailer first, a squash's originals last. */
+export const RUN_JOIN_ORDER: readonly RunJoin[] = ["trailer", "record", "patch-id", "squash"];
 
 /** A commit a run made, as the read reports it. */
 export interface RunCommitView {
   sha: string;
   patchId: string | null;
-  /** How the commit joins the run: `trailer` when it carries `Chant-Run`, `record` when the run's end lists it. */
-  joinedBy: ("trailer" | "record")[];
-  /** The hunks of the commit the run's end says it wrote, or null when it gives none (#3034). */
+  /** How the commit joins the run. */
+  joinedBy: RunJoin[];
+  /** The hunks of the commit the run's end says it wrote, or null when it gives none (#3034). Null for a commit joined by patch-id, whose lines may have moved. */
   hunks: RunHunk[] | null;
+  /** For a commit joined by patch-id (#3036): the commit the run's end recorded with the same patch-id, which this one rewrites. */
+  recordedAs?: string;
+  /** For a squash joined to the run (#3035): the pull request's original commits through which it joins. */
+  via?: string[];
 }
 
 /** One run, its start and end folded together, as `runs --json` and `graph --intent` report it. */
@@ -575,6 +678,12 @@ export interface RunView {
   decisions: string[];
   /** Its file on the branch. */
   ledger: string;
+  /** The SHA-256 a statement signs: of the start and end lines (#3192). Null until the run ends. */
+  record: { sha256: string } | null;
+  /** The signed statements the ledger holds for the run, oldest first (#3192). */
+  statements: { at: string; envelope: DsseEnvelope }[];
+  /** The statements judged against the runner keys at base. Set by the `runs` read and `runs verify`, never by a write. */
+  attestation?: RunAttestation;
 }
 
 /** Fold a run's lines into one view, or undefined when it has no start. */
@@ -604,6 +713,8 @@ export function foldRun(id: string, path: string, lines: RunLine[]): RunView | u
     commits: (end?.commits ?? []).map((c) => ({ sha: c.sha, patchId: c.patchId, joinedBy: ["record" as const], hunks: Array.isArray(c.hunks) && c.hunks.length > 0 ? c.hunks : null })),
     decisions: [],
     ledger: path,
+    record: end ? { sha256: runRecordDigest(start, end) } : null,
+    statements: lines.filter((l): l is RunStatementLine => l.event === "statement").map((l) => ({ at: l.at, envelope: l.envelope })),
   };
 }
 
@@ -653,6 +764,45 @@ export function joinTrailerCommits(runs: Map<string, RunView>, byTrailer: Map<st
   }
 }
 
+/** A day, the slack {@link joinPatchIdCommits} gives a run's start against clocks that disagree. */
+const CLOCK_SLACK_MS = 24 * 60 * 60 * 1000;
+
+/** Each recorded patch-id, to the runs whose end listed a commit with it and that commit. */
+export function recordedPatchIds(runs: Iterable<RunView>): Map<string, { run: string; sha: string }[]> {
+  const out = new Map<string, { run: string; sha: string }[]>();
+  for (const r of runs) {
+    for (const c of r.commits) {
+      if (!c.patchId || !c.joinedBy.includes("record")) continue;
+      const list = out.get(c.patchId) ?? out.set(c.patchId, []).get(c.patchId)!;
+      if (!list.some((x) => x.run === r.id && x.sha === c.sha)) list.push({ run: r.id, sha: c.sha });
+    }
+  }
+  return out;
+}
+
+/**
+ * Add to each run the commits on `rev`'s history that join it by content
+ * (#3036): a commit that no run lists, that carries no `Chant-Run`, and whose
+ * patch-id equals one the run's end recorded. Only commits made since the
+ * earliest such run started are read, less a day for clocks.
+ */
+export function joinPatchIdCommits(runs: Map<string, RunView>, byTrailer: Map<string, string[]>, top: string, rev = "HEAD"): void {
+  const recorded = recordedPatchIds(runs.values());
+  if (recorded.size === 0) return;
+  const starts = [...new Set([...recorded.values()].flat().map((x) => x.run))].map((id) => Date.parse(runs.get(id)!.startedAt)).filter((t) => !Number.isNaN(t));
+  if (starts.length === 0) return;
+  const since = new Date(Math.min(...starts) - CLOCK_SLACK_MS).toISOString();
+  const joined = new Set<string>([...byTrailer.values()].flat());
+  for (const r of runs.values()) for (const c of r.commits) joined.add(c.sha);
+  for (const [sha, patchId] of patchIdsSince(top, rev, since)) {
+    if (joined.has(sha)) continue;
+    for (const hit of recorded.get(patchId) ?? []) {
+      const run = runs.get(hit.run)!;
+      if (!run.commits.some((c) => c.sha === sha)) run.commits.push({ sha, patchId, joinedBy: ["patch-id"], hunks: null, recordedAs: hit.sha });
+    }
+  }
+}
+
 // ── Joining commits to runs, for the intent walks ────────────────────────────
 
 /** A run as a commit in the intent walks names it: enough to say which model and harness made the change, and for whom. */
@@ -667,16 +817,39 @@ export interface RunRef {
   by: string | null;
   agent: string | null;
   unit: string | null;
-  /** `trailer`: the commit carries `Chant-Run` with the id. `record`: the run's end lists the commit. */
-  joinedBy: ("trailer" | "record")[];
+  /** `trailer`: the commit carries `Chant-Run` with the id. `record`: the run's end lists the commit. `patch-id`: neither, and the commit's patch-id equals one the run recorded (#3036). */
+  joinedBy: RunJoin[];
+  /** For a `patch-id` join: the commit the run's end recorded with the same patch-id (#3036). */
+  recordedAs?: string;
+  /** For a `squash` join: the pull request's original commits that join the run (#3035). */
+  via?: string[];
+}
+
+/**
+ * A commit joined to one run by its trailer or the run's record whose content
+ * matches a commit another run recorded (#3036). The content join is not made,
+ * since a patch-id join never overrides the others; the intent walk reports it
+ * as a finding.
+ */
+export interface RunJoinConflict {
+  sha: string;
+  /** The runs the commit's trailer or the runs' records join it to. */
+  joined: string[];
+  /** The other runs whose end recorded a commit with the same patch-id, and that commit. */
+  content: { run: string; sha: string }[];
 }
 
 /**
  * For each commit, the runs that made it: the run its `Chant-Run` trailer
- * names, and every run whose end lists it. Reads the run ledger once from the
- * local branch; never fetches.
+ * names, and every run whose end lists it. A commit with neither joins every
+ * run whose end recorded its patch-id (#3036). Reads the run ledger once from
+ * the local branch; never fetches.
  */
-export async function runsForCommits(top: string, rootOnDisk: string, commits: { sha: string; run: string | null }[]): Promise<{ refs: Map<string, RunRef[]>; runs: Map<string, RunView> }> {
+export async function runsForCommits(
+  top: string,
+  rootOnDisk: string,
+  commits: { sha: string; run: string | null }[],
+): Promise<{ refs: Map<string, RunRef[]>; runs: Map<string, RunView>; conflicts: RunJoinConflict[] }> {
   let runs = new Map<string, RunView>();
   try {
     runs = (await readRuns(top, rootOnDisk)).runs;
@@ -685,28 +858,113 @@ export async function runsForCommits(top: string, rootOnDisk: string, commits: {
   }
   const listing = new Map<string, string[]>();
   for (const r of runs.values()) for (const c of r.commits) (listing.get(c.sha) ?? listing.set(c.sha, []).get(c.sha)!).push(r.id);
+  // The content join (#3036): only when some run recorded a patch-id, and only for the commits read.
+  const recorded = recordedPatchIds(runs.values());
+  const patchIds = recorded.size > 0 ? patchIdsOf(top, commits.map((c) => c.sha)) : new Map<string, string>();
   const refs = new Map<string, RunRef[]>();
+  const conflicts: RunJoinConflict[] = [];
+  const refOf = (id: string, joinedBy: RunJoin[], recordedAs?: string): RunRef => {
+    const r = runs.get(id);
+    return {
+      id,
+      recorded: r !== undefined,
+      state: r?.state ?? null,
+      harness: r?.harness.name ?? null,
+      model: r?.model ?? null,
+      provider: r?.provider ?? null,
+      by: r?.by ?? null,
+      agent: r?.agent ?? null,
+      unit: r?.unit?.id ?? null,
+      joinedBy,
+      ...(recordedAs ? { recordedAs } : {}),
+    };
+  };
   for (const c of commits) {
-    const ids = [...new Set([...(c.run ? [c.run] : []), ...(listing.get(c.sha) ?? [])])];
+    const listed = listing.get(c.sha) ?? [];
+    const ids = [...new Set([...(c.run ? [c.run] : []), ...listed])];
+    const matches = (recorded.get(patchIds.get(c.sha) ?? "") ?? []).filter((m) => m.sha !== c.sha);
+    if (ids.length > 0) {
+      const others = matches.filter((m) => !ids.includes(m.run));
+      if (others.length > 0) conflicts.push({ sha: c.sha, joined: ids, content: others });
+      refs.set(
+        c.sha,
+        ids.map((id) => refOf(id, [...(c.run === id ? ["trailer" as const] : []), ...(listed.includes(id) ? ["record" as const] : [])])),
+      );
+      continue;
+    }
+    const byRun = new Map<string, string>();
+    for (const m of matches) if (!byRun.has(m.run)) byRun.set(m.run, m.sha);
     refs.set(
       c.sha,
-      ids.map((id) => {
-        const r = runs.get(id);
-        const joinedBy: ("trailer" | "record")[] = [...(c.run === id ? ["trailer" as const] : []), ...((listing.get(c.sha) ?? []).includes(id) ? ["record" as const] : [])];
-        return {
-          id,
-          recorded: r !== undefined,
-          state: r?.state ?? null,
-          harness: r?.harness.name ?? null,
-          model: r?.model ?? null,
-          provider: r?.provider ?? null,
-          by: r?.by ?? null,
-          agent: r?.agent ?? null,
-          unit: r?.unit?.id ?? null,
-          joinedBy,
-        };
-      }),
+      [...byRun].map(([id, recordedAs]) => refOf(id, ["patch-id"], recordedAs)),
     );
   }
-  return { refs, runs };
+  return { refs, runs, conflicts };
+}
+
+/**
+ * Give each followed squash commit the runs its original commits join
+ * (#3035): `refs` must hold the originals' runs. A run the squash already
+ * joins gets `squash` added; another is added with `joinedBy: ["squash"]`.
+ * `via` lists the originals that join it.
+ */
+export function addSquashRuns(refs: Map<string, RunRef[]>, follows: Map<string, SquashFollow>): void {
+  for (const f of follows.values()) {
+    if (!f.followed) continue;
+    const list = refs.get(f.sha) ?? refs.set(f.sha, []).get(f.sha)!;
+    for (const o of f.commits) {
+      for (const r of refs.get(o) ?? []) {
+        const have = list.find((x) => x.id === r.id);
+        if (have) {
+          if (!have.joinedBy.includes("squash")) have.joinedBy.push("squash");
+          have.via = [...new Set([...(have.via ?? []), o])];
+          continue;
+        }
+        const { recordedAs: _r, via: _v, ...rest } = r;
+        list.push({ ...rest, joinedBy: ["squash"], via: [o] });
+      }
+    }
+  }
+}
+
+/**
+ * Follow the squash merges on `rev`'s history made since the earliest run
+ * started (#3035), and add each to the runs its pull request's original
+ * commits join: a commit a run's end lists, or one whose `Chant-Run` names
+ * the run. Missing pull request refs are fetched from `origin`. Returns what
+ * each squash's follow found, for the read's reasons.
+ */
+export function joinSquashCommits(runs: Map<string, RunView>, top: string, rev = "HEAD"): SquashFollow[] {
+  const starts = [...runs.values()].map((r) => Date.parse(r.startedAt)).filter((t) => !Number.isNaN(t));
+  if (starts.length === 0 || !commitId(top, rev)) return [];
+  const since = new Date(Math.min(...starts) - CLOCK_SLACK_MS).toISOString();
+  const candidates: { sha: string; subject: string }[] = [];
+  for (const line of (git(top, ["log", rev, `--since=${since}`, "--no-merges", "--format=%H%x1f%s"]) ?? "").split("\n")) {
+    const [sha, subject] = line.split("\x1f");
+    if (sha && subject !== undefined) candidates.push({ sha: sha.trim(), subject });
+  }
+  const follows = followSquashes(top, candidates, { fetchMissing: true });
+  const originals = [...new Set([...follows.values()].flatMap((f) => f.commits))];
+  const trailerRun = new Map<string, string[]>();
+  if (originals.length > 0) {
+    const text = git(top, ["log", "--no-walk=unsorted", "--stdin", `--format=%x00%H%x1f%(trailers:key=${RUN_TRAILER},valueonly,separator=%x1e)`], `${originals.join("\n")}\n`) ?? "";
+    for (const record of text.split("\0")) {
+      if (!record.trim()) continue;
+      const [sha, values] = record.split("\x1f");
+      trailerRun.set(sha.trim(), (values ?? "").split("\x1e").map((x) => x.trim()).filter(Boolean));
+    }
+  }
+  for (const f of follows.values()) {
+    if (!f.followed) continue;
+    for (const r of runs.values()) {
+      const via = f.commits.filter((o) => r.commits.some((c) => c.sha === o && c.joinedBy.some((j) => j !== "squash")) || (trailerRun.get(o) ?? []).includes(r.id));
+      if (via.length === 0) continue;
+      const listed = r.commits.find((c) => c.sha === f.sha);
+      if (listed) {
+        if (!listed.joinedBy.includes("squash")) listed.joinedBy.push("squash");
+        listed.via = [...new Set([...(listed.via ?? []), ...via])];
+      } else r.commits.push({ sha: f.sha, patchId: patchIdOf(top, f.sha), joinedBy: ["squash"], hunks: null, via });
+    }
+  }
+  return [...follows.values()];
 }

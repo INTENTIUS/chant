@@ -59,6 +59,14 @@ export interface OpConfig {
    * coding agent is editing.
    */
   changesCheckout?: boolean;
+  /**
+   * Approvals for this Op belong to people, so an agent never resolves its
+   * gates or runs it over MCP. `op-approve` refuses any gate of this Op and
+   * `op-run` refuses the Op, whatever channel the gate was reached on.
+   * `op-list`, `op-status` and `op-report` still answer. The shell commands
+   * `chant run` and `chant approve` are unchanged.
+   */
+  neverOverMcp?: boolean;
 }
 
 /**

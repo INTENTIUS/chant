@@ -134,6 +134,9 @@ async function collectOperatorSubscribers(
   }
 }
 
+/** A pull request's gate op, `pr-<number>` (#3183, `prOp` in ../../pr-loop.ts). */
+const PR_GATE_OP = /^pr-\d+$/;
+
 // ── chant operator ──────────────────────────────────────────────────────────
 
 /**
@@ -882,7 +885,9 @@ export async function runApprove(ctx: CommandContext): Promise<number> {
     console.error(formatInfo(
       opName === FAN_OUT_GATE_OP
         ? `The next \`chant components fan-out\` decides this gate from scratch and records a fresh pending fact.`
-        : opName === WORKSPACE_UPGRADE_GATE_OP
+        : PR_GATE_OP.test(opName)
+          ? `The next \`chant components pr-apply\` decides this gate from scratch and records a fresh pending fact.`
+          : opName === WORKSPACE_UPGRADE_GATE_OP
           ? `The next \`chant workspace upgrade ${gate}\` decides this gate from scratch and records a fresh pending fact.`
           : `The next \`chant run ${opName}\` decides this gate from scratch and records a fresh pending fact.`,
     ));
@@ -910,7 +915,9 @@ export async function runApprove(ctx: CommandContext): Promise<number> {
     `This records the resolution as a fact; it does not itself re-run anything. ` +
       (opName === FAN_OUT_GATE_OP
         ? `Repeat the \`chant components fan-out\` command and it walks through gate "${gate}".`
-        : opName === WORKSPACE_UPGRADE_GATE_OP
+        : PR_GATE_OP.test(opName)
+          ? `The pull request's apply (\`chant components pr-apply\`) walks through gate "${gate}" when it plans this same digest.`
+          : opName === WORKSPACE_UPGRADE_GATE_OP
           ? `Repeat \`chant workspace upgrade ${gate}\` with the same target, and it applies the patch this approval names.`
           : `Run \`chant run ${opName}\` and it walks through gate "${gate}".`),
   ));

@@ -1,0 +1,146 @@
+---
+title: Generated CI for Pull Requests
+description: "Plan the components a pull request reaches, show the plan on the pull request, and apply it on merge only when a reviewer approved that plan, on GitHub, GitLab and Forgejo"
+diataxis: how-to
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+chant can generate a pull-request pipeline for a project whose components deploy Terraform roots, or anything else a capability can plan. It does four things:
+
+- On a pull request, it plans the components the change touches and the components that depend on them, and nothing else.
+- It posts that plan on the pull request as one note, with a commit status.
+- A reviewer approves the plan's digest.
+- On merge, it plans the same components again and applies them only if the digest is the one the reviewer approved. If the plan moved, it refuses with both digests named and applies nothing.
+
+The pipeline runs two commands, [`chant components pr-plan` and `pr-apply`](/chant/cli/components/#components-pr-plan-and-components-pr-apply). This page sets it up on each forge.
+
+## A project to run it on
+
+Each Terraform root is a component with one `terraform-apply` step. A root that reads another root's output names that component in `dependsOn` and reads the output through `stackOutput()`.
+
+```json
+// chant.config.json
+{
+  "lexicons": ["terraform"],
+  "terraform": {
+    "binary": "tofu",
+    "roots": {
+      "net": { "dir": "roots/net" },
+      "a": { "dir": "roots/a" },
+      "app": { "dir": "roots/app" }
+    }
+  }
+}
+```
+
+```typescript
+// estate.component.ts
+import { phase, stackOutput, type Component } from "@intentius/chant/components";
+
+export const net: Component = {
+  name: "net",
+  dependsOn: [],
+  deploy: [phase("Apply", [{ kind: "terraform-apply", root: "net" }])],
+};
+
+export const a: Component = {
+  name: "a",
+  dependsOn: ["net"],
+  deploy: [phase("Apply", [{ kind: "terraform-apply", root: "a", vars: { cidr: stackOutput("net", "cidr") } }])],
+};
+
+export const app: Component = {
+  name: "app",
+  dependsOn: ["a"],
+  deploy: [phase("Apply", [{ kind: "terraform-apply", root: "app", vars: { subnet: stackOutput("a", "id") } }])],
+};
+```
+
+A root is changed when a changed file sits in its directory, in a local module it calls, or is one of its var files. A pull request that edits `roots/a` plans `a` and `app`. It does not plan `net`.
+
+## Generate the pipeline
+
+```bash
+# GitHub
+chant build --components --generate github --pr-loop --env prod --output .github/workflows/chant-pr.yml
+# Forgejo
+chant build --components --generate forgejo --pr-loop --env prod --output .forgejo/workflows/chant-pr.yml
+# GitLab
+chant build --components --generate gitlab --pr-loop --env prod --output .gitlab-ci.yml
+```
+
+`--gate <name>` renames the gate from `pr-apply`. `--branch <name>` names the branch pull requests target, `main` by default on GitHub and Forgejo and the project's default branch on GitLab.
+
+Both commands measure the change with git, so the pipeline checks out the full history. The default image is `node:22-slim`, which has no git and no Terraform. Pick an image that has git, chant and your Terraform binary, or install them in the generator's `beforeScript`.
+
+### GitHub
+
+The workflow runs on `pull_request` and on `push` to the target branch.
+
+- The `plan` job measures from `github.event.pull_request.base.sha`. It may comment and set statuses, and it cannot push, since it runs the pull request's code.
+- The `apply` job measures from `github.event.before`, the commit the push replaced. That works for merge commits, squash merges and rebase merges. It may push, to record a pending approval on `chant/lifecycle`. One apply runs at a time per environment, through `concurrency`.
+
+Both use the job's own `github.token`. On a pull request from a fork that token is read-only, so the note and the status are not posted. The run says so and its outcome stands.
+
+### Forgejo
+
+The workflow is the GitHub one with the Forgejo dialect applied: the runner label, action references by URL, and no `permissions` block, which the Forgejo runner ignores. Its commands pass `--forge forgejo`, and Forgejo Actions supplies `GITHUB_SERVER_URL`, `GITHUB_API_URL` and `GITHUB_TOKEN`.
+
+### GitLab
+
+The pipeline runs `plan` in each merge request pipeline, measured from `CI_MERGE_REQUEST_DIFF_BASE_SHA`. It runs `apply` on each push to the target branch, measured from `CI_COMMIT_BEFORE_SHA`, one at a time per environment through `resource_group`. `GIT_DEPTH` is `0`.
+
+A CI job token cannot write merge request notes. Create a project access token with the `api` scope and set it as a masked CI/CD variable named `CHANT_FORGE_TOKEN`.
+
+## Approve a plan
+
+The note on the pull request lists each member with its creates, updates, replaces and deletes. The plan digest and the grouped plan summary follow, with every destroy named. The last block is the command that approves this plan:
+
+```bash
+chant approve pr-12 pr-apply --plan jcs1-sha256:3e43... --approver github:alice --sign
+```
+
+`chant approve` records it on `chant/lifecycle` under the op `pr-12`, so it answers this pull request and no other. It names one digest. A push that changes the plan changes the digest, and the note shows the new one.
+
+By default the apply also asks the forge who approved the pull request. It counts a ledger record only when the person it names has a standing approving review there, named the way the [workspace names a forge identity](/chant/reference/workspace-declaration/#identity): `github:<login>`, `gitlab:<login>`, or `forgejo@<host>:<login>`. The generator option `requireReview: false` drops the check.
+
+To count only signed approvals, list the gate in the workspace declaration. An approval then has to be sealed with `--sign` by a key the signers file at base lists for its approver:
+
+```json
+"identity": {
+  "gates": { "pr-apply": { "class": "human" } }
+}
+```
+
+<Aside type="caution">
+The apply job can push to `chant/lifecycle`, and so can anyone with write access to the repository. Protect the branch so that only the apply job's identity pushes to it, and list `pr-apply` under `identity.gates`, so a ledger line that claims to be a person counts only with that person's signature.
+</Aside>
+
+## When the plan changed after review
+
+The apply plans every member before it applies any. When the digest is the approved one, it applies each member's plan in dependency order and updates the note and the `chant/apply` status. When an approval stands for another digest, something moved between review and merge. A later commit, a merge to the target branch that touched the same root, or a change in the live state each does it. Then the apply stops with exit 3:
+
+```
+The plan changed after review, so nothing was applied. approved: jcs1-sha256:d181...; planned now: jcs1-sha256:cef9.... Read the new plan, and if it is right, approve it: chant approve pr-2 pr-apply --plan jcs1-sha256:cef9... --approver <you> --sign; then run the apply again.
+```
+
+The note and the report carry the same message. Read the new plan in `.chant/pr/pr-apply.json`, which the job keeps as an artifact. If it is right, approve it and re-run the job.
+
+## What each run keeps
+
+Both jobs keep `.chant/pr` as an artifact:
+
+| File | Holds |
+|---|---|
+| `pr-plan.json`, `pr-apply.json` | The report: the selection, every member's plan digest and counts, the digest the gate binds, where the approval stands and how the run ended. It follows the `pr-report` schema in the [workspace read contract](/chant/reference/workspace-read-contract/). |
+| `change-set.json` | The [change-set document](/chant/reference/change-set/) over every member. [`chant change-set summary`](/chant/cli/change-set/) prints its grouped summary. |
+| `pr-note.md` | The note as posted. |
+
+## Limits
+
+A dependent is planned against the outputs its upstream has now. When the change moves an output a dependent reads, the dependent applies the plan it was approved with, which carries the old value. The apply marks it `inputsMoved`, and the next run plans it against the new value. To carry a moved output through every dependent in one rollout, use [gated waves](/chant/cli/components/#one-gate-per-wave), which plan each wave after the one before it applied.
+
+An apply that fails partway leaves the members it applied in place. Re-running it plans those members again, which changes the digest, so it needs a fresh approval.
+
+The pipeline is not generated inside a workspace member yet.

@@ -113,6 +113,7 @@ export const workspaceReadTools: ToolDefinition[] = [
           description: "Record kind files whose records join the graph (--kind). The plain graph takes one; intent takes several.",
         },
         intent: { type: "string", description: "The region for the intent graph: a workspace path, path:line, path:start-end, or path#symbol for a TypeScript or JavaScript declaration such as src/server.ts#createApp (--intent). The document's why answers why the region is like this." },
+        followSquash: { type: "boolean", description: "With intent: follow squash merges to their pull requests' original commits (--follow-squash, #3035), fetching a pull request ref the clone lacks from origin. Off by default, so a read never reaches the network." },
         composites: { type: "boolean", description: "The composites document instead (--composites). Takes no kind or intent." },
         at: atProp,
       },
@@ -205,6 +206,7 @@ export const workspaceReadTools: ToolDefinition[] = [
         decision: { type: "string", description: "Only the runs that carried out this decision, by id or <kind>/<id> (--decision)." },
         by: { type: "string", description: "Only the runs made for this principal (--by)." },
         since: { type: "string", description: "Only the runs that made a commit after this revision, or started after it (--since)." },
+        followSquash: { type: "boolean", description: "Join each squash merge on HEAD to the runs its pull request's original commits joined (--follow-squash, #3035), fetching a pull request ref the clone lacks from origin." },
       },
     },
   },
@@ -374,7 +376,7 @@ export function readArgv(tool: string, params: Record<string, unknown>): string[
       const composites = bool(params, "composites");
       const kindArgs = kinds(params).flatMap((k) => ["--kind", k]);
       if (composites) return ["workspace", "graph", "--composites", ...kindArgs, ...(intent !== undefined ? ["--intent", intent] : []), ...atArgs, "--json"];
-      if (intent !== undefined) return ["workspace", "graph", "--intent", intent, ...kindArgs, ...atArgs, "--json"];
+      if (intent !== undefined) return ["workspace", "graph", "--intent", intent, ...kindArgs, ...atArgs, ...(bool(params, "followSquash") ? ["--follow-squash"] : []), "--json"];
       return ["workspace", "graph", ...kindArgs, ...atArgs, "--json"];
     }
     case "workspace-changes": {
@@ -407,7 +409,7 @@ export function readArgv(tool: string, params: Record<string, unknown>): string[
         const v = str(params, f);
         return v !== undefined ? [`--${f}`, v] : [];
       });
-      return ["workspace", "runs", ...flags, "--json"];
+      return ["workspace", "runs", ...flags, ...(bool(params, "followSquash") ? ["--follow-squash"] : []), "--json"];
     }
     case "workspace-points": {
       const kind = str(params, "kind");

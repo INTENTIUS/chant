@@ -1,6 +1,6 @@
 {
   "name": "@intentius/chant-lexicon-terraform",
-  "version": "0.102.0",
+  "version": "0.103.0",
   "type": "module",
   "files": [
     "src/",
@@ -28,6 +28,11 @@
       "development": "./src/op/activity-contracts.ts",
       "types": "./dist/op/activity-contracts.d.ts",
       "default": "./src/op/activity-contracts.ts"
+    },
+    "./pin": {
+      "development": "./src/pin/index.ts",
+      "types": "./dist/pin/index.d.ts",
+      "default": "./src/pin/index.ts"
     },
     "./lint/post-synth": {
       "development": "./src/lint/post-synth/index.ts",
@@ -57,7 +62,7 @@
     "access": "public"
   },
   "peerDependencies": {
-    "@intentius/chant": "^0.102.0",
+    "@intentius/chant": "^0.103.0",
     "typescript": "^5.9.3",
     "zod": "^4.3.6"
   },

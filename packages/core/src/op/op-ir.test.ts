@@ -325,3 +325,12 @@ describe("op.json IR", () => {
     expect("path" in (deployStep.args.context as object)).toBe(false);
   });
 });
+
+describe("neverOverMcp (chant#3447)", () => {
+  it("survives the IR round trip, and is absent when not declared", () => {
+    const base = { name: "tf-apply", overview: "apply", phases: [] };
+    expect(buildOpIR({ ...base, neverOverMcp: true }).neverOverMcp).toBe(true);
+    expect(buildOpIR(base)).not.toHaveProperty("neverOverMcp");
+    expect(opConfigFromIR(buildOpIR({ ...base, neverOverMcp: true })).neverOverMcp).toBe(true);
+  });
+});
