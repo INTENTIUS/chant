@@ -1,0 +1,4 @@
+resource "terraform_data" "instance" {
+  count = 2
+  input = "app-${count.index}"
+}
