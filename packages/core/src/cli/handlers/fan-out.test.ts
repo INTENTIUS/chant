@@ -10,6 +10,7 @@
 
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Component } from "../../components/component";
@@ -75,6 +76,12 @@ const ESTATE = [
 
 let ran: string[] = [];
 let failing: string[] = [];
+/** What each component's step was handed, after wiring resolved. */
+let inputs: Record<string, Record<string, unknown>> = {};
+/** Stack outputs a component's step returns, as cfn-deploy's `outputs` does. */
+let stepOutputs: Record<string, Record<string, unknown>> = {};
+/** Called as a component's step starts, before it applies. */
+let onStart: (component: string) => void = () => {};
 
 function makeArgs(overrides: Partial<ParsedArgs>): ParsedArgs {
   return {
@@ -101,6 +108,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   ran = [];
   failing = [];
+  inputs = {};
+  stepOutputs = {};
+  onStart = () => {};
   gateLedger = memoryGateLedgerPort();
   stderrLines = [];
   stdoutLines = [];
@@ -129,10 +139,12 @@ beforeEach(() => {
     const registry = new CapabilityRegistry();
     registry.register({
       kind: "cfn-deploy",
-      async run(runCtx: { component: string }) {
+      async run(runCtx: { component: string }, input: Record<string, unknown>) {
+        onStart(runCtx.component);
         ran.push(runCtx.component);
+        inputs[runCtx.component] = input;
         if (failing.includes(runCtx.component)) throw new Error(`${runCtx.component} failed`);
-        return { ok: true };
+        return { ok: true, ...(stepOutputs[runCtx.component] ? { outputs: stepOutputs[runCtx.component] } : {}) };
       },
     } as never);
     return Promise.resolve(registry);
@@ -320,6 +332,76 @@ describe("proof: the re-run prints already-applied for what it skips, and finish
       expect(stderr()).toContain("records a different fan-out");
       // Its progress was not applied: `net` ran.
       expect(ran).toContain("net");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("proof: killed mid-fan-out, a re-run finishes without hand repair", () => {
+  test("the record keeps what applied before the kill, and the repeated command runs only the rest", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "fan-out-"));
+    try {
+      const resume = join(dir, "attempt.json");
+      // The process dies as app-one starts. Whatever the record says at that
+      // instant is all a killed process leaves behind, so that is what the
+      // second run is handed.
+      let atKill: string | undefined;
+      onStart = (name) => {
+        if (name === "app-one") atKill = readFileSync(resume, "utf8");
+      };
+      await runComponentsFanOut(ctx({ base: "main", env: "test", resume }));
+      expect(atKill).toBeDefined();
+      expect(JSON.parse(atKill!).completed).toEqual(["cluster-a", "cluster-b", "net"]);
+
+      await writeFile(resume, atKill!);
+      ran = [];
+      onStart = () => {};
+      stderrLines = [];
+      expect(await runComponentsFanOut(ctx({ base: "main", env: "test", resume }))).toBe(0);
+      expect([...ran].sort()).toEqual(["app-one", "app-three", "app-two"]);
+      expect(stderr()).toMatch(/net +already-applied/);
+      expect(stderr()).toContain("fan-out completed: 3 applied, 0 failed, 0 blocked");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a component left to run reads a completed dependency's outputs from the record", async () => {
+    const wired: Component = {
+      name: "cluster-a",
+      dependsOn: ["net"],
+      deploy: [
+        {
+          phase: "Apply",
+          steps: [{ kind: "cfn-deploy", stack: "cluster-a-stack", inputs: { topic: { stackOutput: { stack: "net", name: "TopicArn" } } } }],
+        },
+      ],
+    };
+    const estate = ESTATE.map((c) => (c.name === "cluster-a" ? wired : c));
+    discoverComponentsMock.mockResolvedValue({
+      components: new Map(estate.map((c) => [c.name, { component: c, exportName: c.name, filePath: `${c.name}.component.ts` }])),
+      sourceFiles: [],
+      errors: [],
+    });
+    stepOutputs = { net: { TopicArn: "arn:aws:sns:us-east-1:000000000000:net" } };
+
+    const dir = await mkdtemp(join(tmpdir(), "fan-out-"));
+    try {
+      const resume = join(dir, "attempt.json");
+      failing = ["cluster-a"];
+      expect(await runComponentsFanOut(ctx({ base: "main", env: "test", resume }))).toBe(1);
+      expect(JSON.parse(await readFile(resume, "utf8")).outputs.net).toEqual(stepOutputs.net);
+
+      // net does not run again, and nobody passes --seed-outputs.
+      ran = [];
+      failing = [];
+      inputs = {};
+      expect(await runComponentsFanOut(ctx({ base: "main", env: "test", resume }))).toBe(0);
+      expect(ran).not.toContain("net");
+      expect(inputs["cluster-a"]).toEqual(
+        expect.objectContaining({ inputs: { topic: "arn:aws:sns:us-east-1:000000000000:net" } }),
+      );
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

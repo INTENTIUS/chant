@@ -36,7 +36,7 @@
  */
 
 import { resolve, dirname } from "node:path";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { loadChantConfig, resolveAutoReleaseDisabled, type ChantConfig } from "../../config";
 import { samePlanDigest } from "../../lifecycle/plan-digest";
 import { affectedStacks } from "../../lifecycle/affected";
@@ -64,26 +64,46 @@ import type { CommandContext } from "../registry";
  * meaningful for the plan it was made against. A fan-out derived from different
  * source is a different fan-out, and carrying "cluster-a already applied" into
  * it would be a claim about work nobody did.
+ *
+ * `outputs` holds what each completed component exposed. A component left to
+ * run may read one of them through `stackOutput()`, and without the record the
+ * re-run would resolve that reference to nothing unless somebody supplied the
+ * value by hand with `--seed-outputs`.
  */
 interface FanOutAttempt {
   digest: string;
   completed: string[];
   failed: string[];
+  outputs: Record<string, Record<string, unknown>>;
 }
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
 
 function readAttempt(path: string): FanOutAttempt | undefined {
   if (!existsSync(path)) return undefined;
   const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<FanOutAttempt>;
+  const outputs: Record<string, Record<string, unknown>> = {};
+  if (isRecord(parsed.outputs)) {
+    for (const [name, value] of Object.entries(parsed.outputs)) if (isRecord(value)) outputs[name] = value;
+  }
   return {
     digest: typeof parsed.digest === "string" ? parsed.digest : "",
     completed: Array.isArray(parsed.completed) ? parsed.completed.filter((n): n is string => typeof n === "string") : [],
     failed: Array.isArray(parsed.failed) ? parsed.failed.filter((n): n is string => typeof n === "string") : [],
+    outputs,
   };
 }
 
+/**
+ * Written through a temporary file and a rename, so a process killed during the
+ * write leaves the previous record whole rather than half a JSON document.
+ */
 function writeAttempt(path: string, attempt: FanOutAttempt): void {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(attempt, null, 2) + "\n");
+  const temporary = `${path}.${process.pid}.tmp`;
+  writeFileSync(temporary, JSON.stringify(attempt, null, 2) + "\n");
+  renameSync(temporary, path);
 }
 
 /**
@@ -235,6 +255,7 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
   // approval survives the resume rather than being re-asked for.
   const resumePath = args.resume ? resolve(args.resume) : undefined;
   let priorCompleted: string[] = [];
+  let priorOutputs: Record<string, Record<string, unknown>> = {};
   let progress: FanOutProgress | undefined;
   if (resumePath) {
     let attempt: FanOutAttempt | undefined;
@@ -256,6 +277,9 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
       // exists to retry them — the operator repeated the command precisely
       // because the thing that failed is now expected to work.
       priorCompleted = attempt.completed;
+      priorOutputs = Object.fromEntries(
+        Object.entries(attempt.outputs).filter(([name]) => attempt.completed.includes(name)),
+      );
       progress = { completed: attempt.completed };
     }
   }
@@ -282,13 +306,47 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
   const registry = await fanOutRegistry(projectPath, config);
   // #3061: the commit this run deploys, for the workloads' vcs.ref.head.revision.
   const revision = await getHeadCommit().catch(() => undefined);
+
+  // The record is rewritten as each component settles, not only once the run
+  // returns. A fan-out killed in its third wave (a cancelled CI job, a lost
+  // runner, ctrl-c) then still knows that the first two applied, and the
+  // repeated command picks up from there instead of redoing them.
+  const completedSoFar = new Set(priorCompleted);
+  const failedSoFar: string[] = [];
+  const outputsSoFar = { ...priorOutputs };
+  const recordAttempt = (): void => {
+    if (!resumePath) return;
+    writeAttempt(resumePath, {
+      digest: derived.plan.digest,
+      completed: [...completedSoFar].sort(),
+      failed: [...failedSoFar].sort(),
+      outputs: outputsSoFar,
+    });
+  };
+
   const result = await runFanOut(derived.plan, derived.components, registry, {
     env: args.env ?? "local",
     releaseIdentity: () => (revision ? { revision } : {}),
-    componentOutputs: seededOutputs,
+    // A completed component's recorded outputs win over a `--seed-outputs`
+    // entry for the same name, as a fresh apply's outputs merge over a seed in
+    // the driver: the record holds what this fan-out itself applied.
+    componentOutputs: { ...seededOutputs, ...priorOutputs },
     ...(gate ? { gate } : {}),
     ...(progress ? { progress } : {}),
     ...(args.progressJson ? { onProgress: ndjsonProgressSink() } : {}),
+    ...(resumePath
+      ? {
+          onComponentSettled: (settled, outputs) => {
+            if (settled.status === "ok") {
+              completedSoFar.add(settled.component);
+              if (outputs) outputsSoFar[settled.component] = outputs;
+            } else if (settled.status === "fail") {
+              failedSoFar.push(settled.component);
+            }
+            recordAttempt();
+          },
+        }
+      : {}),
   });
 
   if (args.dumpOutputs) {
@@ -297,16 +355,10 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
     writeFileSync(dumpPath, JSON.stringify(result.componentOutputs, null, 2));
   }
 
-  // Written even on a failure and even on a gate: the next attempt needs to
-  // know what this one got through, and a gated attempt got through nothing,
-  // which is itself worth recording against this plan's digest.
-  if (resumePath) {
-    writeAttempt(resumePath, {
-      digest: result.plan.digest,
-      completed: [...new Set([...priorCompleted, ...result.completed])].sort(),
-      failed: result.failed,
-    });
-  }
+  // Written again at the end, even on a failure and even on a gate: a gated
+  // attempt got through nothing, which is itself worth recording against this
+  // plan's digest.
+  recordAttempt();
 
   if (args.json) renderFanOutJson(result);
   else renderFanOutHuman(result, { ...(gate ? { gate } : {}) });
