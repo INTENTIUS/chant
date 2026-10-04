@@ -44,6 +44,7 @@
     },
     "answered_by": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 }, "description": "The people who answered or confirmed it." },
     "note": { "type": "string", "minLength": 1, "description": "What the people who answered wrote with their answer (`points answer --note`, #3351). Moved into the retraction when the answer is retracted." },
+    "relayed_by": { "type": "string", "minLength": 1, "description": "Who carried the answer to chant for the people in answered_by (`points answer --relayed-by`, #3402), such as a follower relaying a person's answer through hud. It does not count toward the quorum. Moved into the retraction as answer_relayed_by when the answer is retracted." },
     "retractions": {
       "type": "array",
       "description": "Answers people took back, oldest first (`points retract`, #3351): each answer as it was, and who retracted it, when and why. A retracted question is escalated to people again.",
@@ -92,6 +93,7 @@
         "answered_by": { "type": "array", "items": { "type": "string", "minLength": 1 } },
         "answered_on": { "$ref": "#/definitions/date" },
         "answer_note": { "type": "string", "minLength": 1, "description": "The note the answer carried." },
+        "answer_relayed_by": { "type": "string", "minLength": 1, "description": "Who relayed the answer (#3402)." },
         "by": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 }, "description": "Who retracted it." },
         "on": { "$ref": "#/definitions/date" },
         "note": { "type": "string", "minLength": 1, "description": "Why it was retracted (`points retract --note`)." }

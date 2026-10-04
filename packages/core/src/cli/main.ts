@@ -1035,10 +1035,10 @@ Workspace (level 1, #2524):
                         record the answer: proposed from a model, escalated to
                         people below its threshold. --response is a POST
                         /v1/systemone response the caller got; chant calls no model
-  workspace points answer <id> --answer <value> --by <name>... [--note <text>] [--kind <kind file>] [--dry-run]
+  workspace points answer <id> --answer <value> --by <name>... [--note <text>] [--relayed-by <principal>] [--kind <kind file>] [--dry-run]
                         Record people's answer to an open question, or confirm
                         a model's proposal, once the point's quorum is met,
-                        with their note
+                        with their note and who relayed it
   workspace points retract <id> --by <name>... [--note <text>] [--kind <kind file>] [--dry-run]
                         Take an answer back: the question is open for people
                         again, and the answer stays in its retractions

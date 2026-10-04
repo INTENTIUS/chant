@@ -296,6 +296,7 @@ export const workspaceWriteTools: ToolDefinition[] = [
         answer: { type: ["string", "boolean"], description: "One of the question's candidates; for a noul, true or false." },
         by: { type: "array", items: { type: "string" }, description: "Each person who answered (--by)." },
         note: { type: "string", description: "What the people who answered say with it, kept on the answer (--note)." },
+        relayedBy: { type: "string", description: "Who relayed the answer for the people in by, such as a follower; recorded as relayed_by and not counted toward the quorum (--relayed-by)." },
         kind: { type: "string", description: "The answer kind file. Without it, the declared answer kinds." },
         dryRun: dryRunProp,
       },
@@ -566,7 +567,7 @@ export function createWorkspaceTools(options: WorkspaceToolsOptions): WorkspaceT
       if (typeof answer !== "string" && typeof answer !== "boolean") throw new ToolInputError("answer must be a string, or true or false");
       const by = params.by;
       if (!Array.isArray(by) || by.length === 0 || !by.every((b) => typeof b === "string" && b.trim() !== "")) throw new ToolInputError("by must list each person who answered");
-      return answerPoint({ cwd, id: str(params, "id", true)!, answer, by: by as string[], note: str(params, "note"), kind: str(params, "kind"), dryRun: bool(params, "dryRun") });
+      return answerPoint({ cwd, id: str(params, "id", true)!, answer, by: by as string[], note: str(params, "note"), relayedBy: str(params, "relayedBy"), kind: str(params, "kind"), dryRun: bool(params, "dryRun") });
     },
     "points-retract": async (params) => {
       const { retractAnswer } = await import("../../workspace/decide");

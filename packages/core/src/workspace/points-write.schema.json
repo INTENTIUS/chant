@@ -417,6 +417,13 @@
           ],
           "description": "What the people who answered wrote with their answer (points answer --note, #3351). null when they wrote nothing, and from a chant before it."
         },
+        "relayedBy": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Who relayed the answer to chant for the people who gave it (points answer --relayed-by, #3402), such as a follower relaying a person's answer through hud. null when nobody did, and from a chant before it."
+        },
         "retractions": {
           "type": "array",
           "description": "Answers people took back, oldest first (points retract, #3351): each answer as it was and who retracted it, when and why. A retracted question is escalated to people again. Empty when none was, and absent from a chant before it.",
@@ -428,6 +435,7 @@
               "answeredBy",
               "answeredOn",
               "answerNote",
+              "answerRelayedBy",
               "by",
               "on",
               "note"
@@ -468,6 +476,13 @@
                   "null"
                 ],
                 "description": "The note the answer carried."
+              },
+              "answerRelayedBy": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Who relayed the answer (#3402)."
               },
               "by": {
                 "type": "array",
