@@ -9,6 +9,7 @@ import type { EmbeddedContentImporter } from "./import/embedded";
 import type { AgentConfigImporter } from "./agents/importer";
 import type { ArtifactIntegrity } from "./lexicon-integrity";
 import type { GatedWavePipelineOptions } from "./components/gated-wave-pipeline";
+import type { PrLoopPipelineOptions } from "./components/pr-pipeline";
 import type { OkfFile } from "./okf";
 import type { CompletionContext, CompletionItem, HoverContext, HoverInfo, CodeActionContext, CodeAction } from "./lsp/types";
 import type { McpToolContribution, McpResourceContribution } from "./mcp/types";
@@ -545,6 +546,13 @@ export interface ComponentPipelineOptions {
    */
   gatedWaves?: GatedWavePipelineOptions;
   /**
+   * The pull-request loop (#3183): a plan job on each pull request and an
+   * apply job on each push to the target branch, bound to the digest a
+   * reviewer approved, instead of one job per component. See
+   * `components/pr-pipeline.ts`. Unset, the pipeline is unchanged.
+   */
+  prLoop?: PrLoopPipelineOptions;
+  /**
    * The workspace member this pipeline belongs to (#2542, #2524 D19). Core
    * sets it when the project sits in a member of a `chant.workspace.json`;
    * a caller never needs to. Unset, every generator's output is unchanged.
@@ -898,6 +906,16 @@ export interface StackStatusObservation {
 /**
  * Context for a lexicon's {@link LexiconPlugin.buildRoots} hook (#1548).
  */
+/** What {@link LexiconPlugin.changedUnits} reads (#3183). */
+export interface ChangedUnitsContext {
+  /** The directory `chant.config.*` lives in. Config paths resolve against it. */
+  projectRoot: string;
+  /** The resolved project configuration, for the lexicon's own namespace. */
+  config: Record<string, unknown>;
+  /** Files the change added, modified or deleted, relative to `projectRoot`, with `/` separators. */
+  changedFiles: string[];
+}
+
 export interface BuildRootContext {
   /**
    * The directory the project configuration was loaded from (where
@@ -1318,6 +1336,18 @@ export interface LexiconPlugin {
    * trace. Omit for lexicons with no non-source build-root concept.
    */
   buildRoots?(ctx: BuildRootContext): Promise<BuildRootContribution>;
+
+  /**
+   * The units this lexicon owns that a change touched, judged from the
+   * changed files alone (#3183). A unit is a name a component's deploy step
+   * targets (`deploy-units.ts`): the terraform lexicon answers with the
+   * `terraform.roots` entries whose directory, local modules or var files a
+   * changed file sits in. `chant components fan-out --base` and `chant
+   * components pr-plan` add these to the stacks `lifecycle affected` finds,
+   * since a root that is not chant source never shows in an artifact diff.
+   * Omit for lexicons whose units are chant source.
+   */
+  changedUnits?(ctx: ChangedUnitsContext): Promise<string[]>;
 
   /**
    * Facts about the whole read that this lexicon's entities imply, for the

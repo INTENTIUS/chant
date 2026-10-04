@@ -195,6 +195,18 @@ export const terraformPlugin: LexiconPlugin = {
     return terraformCommands;
   },
 
+  /**
+   * The `terraform.roots` a change touched (#3183): a changed file in the
+   * root's directory, in a local module it calls, or one of its var files.
+   * See `./changed-roots.ts`.
+   */
+  async changedUnits(ctx) {
+    const roots = (ctx.config as { terraform?: TerraformConfig }).terraform?.roots ?? {};
+    if (Object.keys(roots).length === 0) return [];
+    const { changedRoots } = await import("./changed-roots");
+    return changedRoots(ctx.projectRoot, roots, ctx.changedFiles);
+  },
+
   lintRules() {
     return rules;
   },

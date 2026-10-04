@@ -53,7 +53,11 @@ export function generateForgejoPipeline(
   options: ComponentPipelineOptions = {},
   dialectOptions: ForgejoDialectOptions = {},
 ): ComponentPipelineResult {
-  const doc = buildGithubPipelineDoc(components, options);
+  // The pull-request loop (#3183) talks to the forge, so its commands name Forgejo.
+  const doc = buildGithubPipelineDoc(
+    components,
+    options.prLoop ? { ...options, prLoop: { ...options.prLoop, forge: "forgejo" } } : options,
+  );
 
   const forgejoDoc: GithubPipelineDoc = {
     // The environment identity (#2046) is dialect-neutral: name, environment,

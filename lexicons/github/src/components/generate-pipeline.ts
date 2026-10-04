@@ -60,6 +60,7 @@ import { emitYAML, emitYAMLEntry } from "@intentius/chant/yaml";
 import { resolveComponentGraph, type DriverComponent } from "@intentius/chant/components/driver";
 import { hasPublishStep, promoteArchivePaths } from "@intentius/chant/components/promote";
 import { GATED_WAVE_RECORD, gatedWaveJobs } from "@intentius/chant/components/gated-wave-pipeline";
+import { PR_LOOP_REPORT_DIR, prApplyGroup, prLoopJobs } from "@intentius/chant/components/pr-pipeline";
 import { memberRepoPath } from "@intentius/chant/lexicon";
 import type {
   ComponentPipelineJob as GeneratedJob,
@@ -175,6 +176,67 @@ function gatedWaveGithubDoc(
   return options.member ? scopeToMember(doc, options.member) : doc;
 }
 
+/**
+ * The pull-request workflow (#3183): `plan` on each pull request into the
+ * target branch, `apply` on each push to it. The plan job can comment and set
+ * statuses but cannot push, since it runs the pull request's code; the apply
+ * job can push, to record a pending fact on `chant/lifecycle`, and runs one
+ * at a time per environment. Both keep their report as an artifact, and both
+ * check out the full history, since each measures the change with git.
+ */
+function prLoopGithubDoc(
+  env: string,
+  image: string,
+  beforeScript: string[],
+  extraScript: string[],
+  options: GenerateGithubOptions,
+): GithubPipelineDoc {
+  const loop = options.prLoop!;
+  const branch = loop.branch ?? "main";
+  const [plan, apply] = prLoopJobs(loop.forge ?? "github", env, loop);
+  const steps = (job: typeof plan, name: string): Array<Record<string, unknown>> => [
+    { uses: actionRef("actions/checkout"), with: { "fetch-depth": 0 } },
+    ...beforeScript.map((line) => ({ run: line })),
+    { name, env: job.env, run: job.command },
+    ...extraScript.map((line) => ({ run: line })),
+    {
+      name: `Keep the ${job.jobName} report`,
+      if: "always()",
+      uses: "actions/upload-artifact@v4",
+      with: { name: `chant-pr-${job.jobName}`, path: PR_LOOP_REPORT_DIR, "if-no-files-found": "ignore", "include-hidden-files": true },
+    },
+  ];
+  const jobsDoc: Record<string, unknown> = {
+    plan: {
+      if: "github.event_name == 'pull_request'",
+      "runs-on": "ubuntu-latest",
+      container: image,
+      permissions: { contents: "read", "pull-requests": "write", statuses: "write" },
+      steps: steps(plan, "Plan the members this pull request reaches"),
+    },
+    apply: {
+      if: "github.event_name == 'push'",
+      "runs-on": "ubuntu-latest",
+      container: image,
+      concurrency: { group: prApplyGroup(env), "cancel-in-progress": false },
+      permissions: { contents: "write", "pull-requests": "write", statuses: "write" },
+      steps: steps(apply, "Apply the plan a reviewer approved"),
+    },
+  };
+  return {
+    name: `chant-pr-${env}`,
+    environment: env,
+    on: { pull_request: { branches: [branch] }, push: { branches: [branch] } },
+    env: { ...options.variables, CHANT_ENV: env },
+    jobsDoc,
+    stages: ["plan", "apply"],
+    jobs: [
+      { jobName: "plan", component: "pull request plan", stage: "plan", needs: [] },
+      { jobName: "apply", component: "pull request apply", stage: "apply", needs: [] },
+    ],
+  };
+}
+
 /** The directory part of a relative path, `.` when there is none. */
 function dirnameOf(path: string): string {
   const i = path.lastIndexOf("/");
@@ -247,6 +309,14 @@ export function buildGithubPipelineDoc(
 
   const { waves } = resolveComponentGraph(components);
   const byName = new Map(components.map((c) => [c.name, c]));
+
+  if (options.prLoop) {
+    if (options.gatedWaves || options.promoteTo !== undefined) {
+      throw new Error("a pull-request pipeline has no wave or promote jobs; drop --wave-gate and --promote-to, or --pr-loop");
+    }
+    if (options.member) throw new Error("a pull-request pipeline is not generated for a workspace member yet; generate it from the project outside the workspace");
+    return prLoopGithubDoc(env, image, beforeScript, extraScript, options);
+  }
 
   if (options.gatedWaves) {
     if (options.promoteTo !== undefined) throw new Error("a gated-wave pipeline has no promote job; drop --promote-to or --wave-gate");
