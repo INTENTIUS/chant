@@ -1,0 +1,68 @@
+name: chant-pr-prod
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+env:
+  CHANT_ENV: prod
+
+jobs:
+  plan:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    container: node:22-slim
+    permissions:
+      contents: read
+      pull-requests: write
+      statuses: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Plan the members this pull request reaches
+        env:
+          BASE_SHA: '${{ github.event.pull_request.base.sha }}'
+          PR_NUMBER: '${{ github.event.pull_request.number }}'
+          GITHUB_TOKEN: '${{ github.token }}'
+        run: chant components pr-plan --base "$BASE_SHA" --pr "$PR_NUMBER" --env prod --gate pr-apply --output .chant/pr --forge github
+      - name: Keep the plan report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chant-pr-plan
+          path: .chant/pr
+          if-no-files-found: ignore
+          include-hidden-files: true
+  apply:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    container: node:22-slim
+    concurrency:
+      group: chant-apply-prod
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      pull-requests: write
+      statuses: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Apply the plan a reviewer approved
+        env:
+          BASE_SHA: '${{ github.event.before }}'
+          GITHUB_TOKEN: '${{ github.token }}'
+        run: chant components pr-apply --base "$BASE_SHA" --env prod --gate pr-apply --output .chant/pr --forge github --require-review
+      - name: Keep the apply report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chant-pr-apply
+          path: .chant/pr
+          if-no-files-found: ignore
+          include-hidden-files: true

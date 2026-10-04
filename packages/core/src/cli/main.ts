@@ -347,6 +347,30 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.fromAffected = args[++i];
     } else if (arg === "--gate") {
       result.gate = args[++i];
+    } else if (arg === "--wave-gate") {
+      result.waveGate = args[++i];
+      if (!result.waveGate || result.waveGate.startsWith("-")) throw new Error("--wave-gate needs a gate name: --wave-gate <name>");
+    } else if (arg === "--wave") {
+      const raw = args[++i];
+      const wave = Number(raw);
+      if (!Number.isInteger(wave) || wave < 1) throw new Error(`--wave needs a wave number from 1: got "${raw ?? ""}"`);
+      result.wave = wave;
+    } else if (arg === "--canary") {
+      const raw = args[++i];
+      if (!raw || raw.startsWith("-")) throw new Error("--canary needs a component name: --canary <name>[,<name>...]");
+      (result.canary ??= []).push(...raw.split(",").map((n) => n.trim()).filter(Boolean));
+    } else if (arg === "--pr") {
+      const raw = args[++i];
+      const pr = Number(raw);
+      if (!Number.isInteger(pr) || pr < 1) throw new Error(`--pr needs a pull or merge request number: got "${raw ?? ""}"`);
+      result.pr = pr;
+    } else if (arg === "--forge") {
+      result.forge = args[++i];
+      if (!result.forge || result.forge.startsWith("-")) throw new Error("--forge needs a forge: --forge github|gitlab|forgejo");
+    } else if (arg === "--require-review") {
+      result.requireReview = true;
+    } else if (arg === "--pr-loop") {
+      result.prLoop = true;
     } else if (arg === "--resume") {
       result.resume = args[++i];
     } else if (arg === "--local") {
@@ -389,6 +413,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       if (value !== undefined && !value.startsWith("-")) result.intent = args[++i];
       else if (args.includes("--record")) result.intent = "";
       else throw new Error("--intent needs a region: --intent <path[:start-end]|path#symbol>, or --intent --record <id>");
+    } else if (arg === "--follow-squash") {
+      // `chant workspace graph --intent ... --follow-squash` and `chant workspace runs --follow-squash` (#3035)
+      result.followSquash = true;
     } else if (arg === "--record") {
       // `chant workspace graph --intent --record <id>`
       result.record = args[++i];
@@ -431,6 +458,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant workspace box listing set <member> --cover <image> --cover-path <path>` (#3308)
       result.coverPath = args[++i];
       if (!result.coverPath || result.coverPath.startsWith("-")) throw new Error("--cover-path needs a path from the workspace root: --cover-path <path>");
+    } else if (arg === "--records") {
+      // `chant workspace box publish <member> --records` (#3165): the records kept uncommitted, not a work item.
+      result.records = true;
     } else if (arg === "--expect") {
       // `chant workspace records amend|review|close <id> --expect <digest>` (#3173): the record's digest the caller last read.
       result.expect = args[++i];
@@ -457,9 +487,13 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant workspace points --open` (#2739): only the questions still open.
       result.open = true;
     } else if (arg === "--inputs") {
-      // `chant workspace points ask <point> --inputs <file|->` (#2739)
+      // `chant workspace points ask <point> --inputs <file|-|json>` (#2739; JSON itself, #3403)
       result.inputs = args[++i];
-      if (!result.inputs || (result.inputs.startsWith("-") && result.inputs !== "-")) throw new Error("--inputs needs a JSON file, or - for standard input: --inputs <file|->");
+      if (!result.inputs || (result.inputs.startsWith("-") && result.inputs !== "-")) throw new Error("--inputs needs a JSON file, - for standard input, or the JSON itself: --inputs <file|-|json>");
+    } else if (arg === "--candidates") {
+      // `chant workspace points ask <point> --candidates <file|-|json>` (#3403): an ad-hoc point's question and candidates.
+      result.candidates = args[++i];
+      if (!result.candidates || (result.candidates.startsWith("-") && result.candidates !== "-")) throw new Error("--candidates needs a JSON file, - for standard input, or the JSON itself: --candidates <file|-|json>");
     } else if (arg === "--response") {
       // `chant workspace points ask <point> --response <file>` (#2739): a POST /v1/systemone response the caller got.
       result.response = args[++i];
@@ -528,6 +562,11 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.actor = args[++i];
     } else if (arg === "--approver") {
       result.approver = args[++i];
+    } else if (arg === "--relayed-by") {
+      // `chant approve <op> <gate> --relayed-by <principal>` and `workspace points answer <id> --relayed-by <principal>` (#3402):
+      // who carried the approval or answer to chant for the person it names.
+      result.relayedBy = args[++i];
+      if (!result.relayedBy || result.relayedBy.startsWith("-")) throw new Error("--relayed-by needs the principal that relayed it: --relayed-by <principal>");
     } else if (arg === "--on") {
       // `chant run ... --on <lexicon>` (#2121) — which runtime hosts the run.
       result.on = args[++i];
@@ -597,6 +636,11 @@ export function parseArgs(args: string[]): ParsedArgs {
       const value = args[++i];
       if (!value || value.startsWith("-")) throw new Error(`${arg} needs a value: ${arg} <${arg.slice(2)}>`);
       result[arg.slice(2) as "holder" | "ttl" | "token" | "outcome"] = value;
+    } else if (arg === "--signer") {
+      // `chant workspace runs statement <id> --signer <principal>` (#3192): the runner principal that will sign.
+      const value = args[++i];
+      if (!value || value.startsWith("-")) throw new Error("--signer needs a principal: --signer <principal>");
+      result.signer = value;
     } else if (arg === "--unit" || arg === "--decision") {
       // `chant workspace runs --unit <id> | --decision <id>` (#3033): the runs on one work item, or for one decision.
       const value = args[++i];
@@ -798,6 +842,14 @@ Commands:
                         (--json)          its target, stage (planned/emitted/bridged/
                                           applied) and path. Read-only.
 
+Change sets:
+  change-set summary <file>  The grouped plan summary of a change-set
+                        [--format text|json|markdown]  document: members taking
+                        [--limit <chars>]  the same change grouped, every destroy,
+                                          replacement, failure and hole named.
+                                          markdown fits an MR/PR note of --limit
+                                          characters (default 65536). Read-only.
+
 Ops:
   run <name>            Run an Op on the resolved runtime (--on; local by default)
                         [--work <id>] [--holder <name>]: the work item an Op
@@ -859,7 +911,9 @@ Ops:
                         --sign [<key file>] seals the approval with an ssh
                         key; a gate the workspace's identity.gates names
                         counts only an approval sealed by a key the signers
-                        file at base lists for --actor
+                        file at base lists for --actor. --relayed-by
+                        <principal> records who carried the approval to chant
+                        for --actor (a follower, a bot); --sign covers it
 
   graph                 Show Op dependency graph (--stacks for cross-stack order,
                         --format ir|mermaid|dot|layout for the lint-gated graph IR,
@@ -980,12 +1034,14 @@ Workspace (level 1, #2524):
                         a url or a path pinned by hash) is appended to the
                         item's pins through records amend. Prints the
                         work-evidence document and never commits
-  workspace runs [--unit <id>] [--decision <id>] [--by <principal>] [--since <rev>] [--json]
+  workspace runs [--unit <id>] [--decision <id>] [--by <principal>] [--since <rev>] [--follow-squash] [--json]
                         The agent runs in the run ledger on chant/lifecycle, each
                         with its model, tokens, cost and the commits it made,
                         and totals per work item, decision and principal; a run
                         that reports no cost is listed as unpriced, never zero.
-                        Read-only, never fetches
+                        Read-only, never fetches; --follow-squash joins each
+                        squash merge to its pull request's runs, fetching a
+                        missing refs/pull/<n>/head from origin
   workspace runs start --from <file|->
                         Record that an agent run started: who it worked for,
                         its harness, model, work item and lease. Prints the run
@@ -996,12 +1052,30 @@ Workspace (level 1, #2524):
                         and the commits it made
   workspace runs record --from <file|->
                         Record a finished run, its start and end in one write
+  workspace runs sign <run id> (--key <runner.pem> | --envelope <file|->) [--base <rev>]
+                        Store a DSSE statement over an ended run (its record's
+                        hash, work item, harness, model and commits), signed
+                        with a runner or steward key .chant/trust.json lists
+                        at base, or signed elsewhere and checked here
+  workspace runs statement <run id> --signer <principal>
+                        Print the statement for a signer whose key is
+                        elsewhere, such as a lobby, with the payload to sign
+  workspace runs verify [<run id>] [--require signed] [--base <rev>] [--json]
+                        Judge each run's stored statements against the runner
+                        keys at base. Reports only, unless --require signed
   workspace box listing set <member> [--from <file|->] [--cover <image> [--cover-path <path>]] [--by <principal>] [--dry-run]
                         Change a box's listing (published, title, line, cover)
                         in the declaration, in place, keeping its formatting
                         and comments; --cover copies a PNG, JPEG or WebP into
                         the repository. Judged by the write scope at base.
                         Prints the box-listing-write document; never commits
+  workspace box publish <member> (<item> | --records) [--by <principal>] [--head <owner/name>] [--dry-run]
+                        Publish a built work item, or the records kept
+                        uncommitted, through the publisher the box block names:
+                        run with a JSON request on stdin, its answer checked
+                        and its commit held to the apply record (ws-088).
+                        Prints the box-publish document; chant itself never
+                        commits, pushes or calls a forge
   workspace wip [--branch <branch>] [--json]
                         List the work-in-progress snapshots under
                         refs/chant/wip/<branch>, newest first, and how far each
@@ -1023,15 +1097,17 @@ Workspace (level 1, #2524):
                         List the decision points the declared answer kinds'
                         points files declare, and the questions asked of them;
                         --open keeps the escalated and proposed ones (ws-058)
-  workspace points ask <point> --inputs <file|-> [--response <file>] [--subject <id>] [--kind <kind file>] [--dry-run]
+  workspace points ask <point> --inputs <file|-|json> [--candidates <file|-|json>] [--response <file>] [--subject <id>] [--kind <kind file>] [--dry-run]
                         Ask a point's table, model and quorum deciders and
                         record the answer: proposed from a model, escalated to
                         people below its threshold. --response is a POST
-                        /v1/systemone response the caller got; chant calls no model
-  workspace points answer <id> --answer <value> --by <name>... [--note <text>] [--kind <kind file>] [--dry-run]
+                        /v1/systemone response the caller got; chant calls no model.
+                        --candidates gives an ad-hoc point's question and
+                        candidates, { question, criteria }
+  workspace points answer <id> --answer <value> --by <name>... [--note <text>] [--relayed-by <principal>] [--kind <kind file>] [--dry-run]
                         Record people's answer to an open question, or confirm
                         a model's proposal, once the point's quorum is met,
-                        with their note
+                        with their note and who relayed it
   workspace points retract <id> --by <name>... [--note <text>] [--kind <kind file>] [--dry-run]
                         Take an answer back: the question is open for people
                         again, and the answer stays in its retractions
@@ -1044,13 +1120,14 @@ Workspace (level 1, #2524):
                         member it is bound to, the record kinds and verbs its
                         write scope allows, and the spec records --current
                         prints. Without a name, the session CHANT_AGENT names
-  workspace verify [--base <rev>] [--head <rev>] [--require attested]
+  workspace verify [--base <rev>] [--head <rev>] [--require attested | attested-runs]
                         Check the commits in base..head against the signers
                         and roles read from base. A change to the signers file
                         or .chant/trust.json needs a signature by a signer
                         trusted at base, and a new signer set needs a
-                        threshold of the old one. Does nothing without a
-                        signers file
+                        threshold of the old one. A commit an agent run made
+                        is attested by the run's signed statement; with
+                        attested-runs, only those commits must be
   workspace signers [--json] [rotate [--threshold <n>] | sign --key <file>]
                         Show the signer history at base, or propose the next
                         signer set and sign it with a current signer's key
@@ -1158,12 +1235,14 @@ Workspace (level 1, #2524):
                         Each composite instance the members declare, with the
                         components whose contract can deploy it; an instance
                         with none lists an empty set
-  workspace graph --intent <path[:start-end]|path#symbol> [--at <rev>] [--kind <kind file>...] [--json]
+  workspace graph --intent <path[:start-end]|path#symbol> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--json]
                         The intent graph over one region: the commits that
                         touched it, the decisions whose constrains cover it,
                         the artifacts they pin, and findings with closed codes.
-                        Without --kind, every record kind the declaration names
-  workspace graph --intent --record <id> [--at <rev>] [--kind <kind file>...] [--json]
+                        Without --kind, every record kind the declaration names.
+                        --follow-squash follows a squash merge to its pull
+                        request's commits, fetching a missing ref from origin
+  workspace graph --intent --record <id> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--json]
                         One decision's intent walk over every path: and member:
                         entry it constrains: the commits in its window, each
                         own, worked, within-other or unexplained, with counts
@@ -1213,8 +1292,23 @@ Component release ledger + status:
                             (--base <ref> [--head <ref>] [--include-dependents],
                              or --from-affected <file>; --dry-run prints the
                              derivation and dispatches nothing; --gate <name>
-                             puts one approval over the whole set; --resume
-                             <file> finishes an attempt that stopped)
+                             puts one approval over the whole set;
+                             --wave-gate <name> puts one on each wave, planned
+                             when the wave is reached, with --canary <name>
+                             for wave 1 and --wave <n> for one wave per CI
+                             job; --resume <file> finishes an attempt that
+                             stopped)
+  components pr-plan       Plan the components a pull request reaches and
+                            the ones that depend on them, and write the
+                            report and note (--base <ref> --pr <n>
+                            [--forge github|gitlab|forgejo] posts them);
+                            applies nothing
+  components pr-apply      On merge: plan the same members again and apply
+                            them only if an approval stands for that digest
+                            (chant approve pr-<n> pr-apply --plan <digest>);
+                            a moved plan refuses with exit 3
+                            (--require-review: the approver must have
+                            approved the pull request on the forge)
   components release <env> Append one immutable release record
                             (--component <name> --digest <sha256:...>
                              [--git-sha <sha>] [--run-id <id>] [--actor <name>]);
@@ -1621,6 +1715,8 @@ export const commandRegistry: CommandDef[] = [
   // Status read over a tree of carve manifests (#2038): the contract a
   // renderer replaces its own walk-and-guess discovery with. Read-only.
   { name: "carve status", handler: runCarveStatus },
+  // #3188 — the grouped plan summary of a change-set document. Reads one file; imported on first use.
+  { name: "change-set summary", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/change-set")).runChangeSetSummary(ctx) },
   { name: "init", handler: runInit, runsNoConfig: true },
   { name: "init lexicon", handler: runInitLexicon },
 { name: "update", handler: runUpdate },
@@ -1718,6 +1814,9 @@ export const commandRegistry: CommandDef[] = [
 
   // Component release ledger + status surface (#568, epic #551)
   { name: "components fan-out", requiresPlugins: true, handler: runComponentsFanOut },
+  // #3183 — the pull-request loop the generated CI runs. Imported on first use.
+  { name: "components pr-plan", requiresPlugins: true, handler: async (ctx) => (await import("./handlers/pr")).runComponentsPrPlan(ctx) },
+  { name: "components pr-apply", requiresPlugins: true, handler: async (ctx) => (await import("./handlers/pr")).runComponentsPrApply(ctx) },
   { name: "components status", requiresPlugins: true, handler: runComponentsStatus },
   { name: "components release", handler: runComponentsReleaseRecord },
   { name: "components export", handler: runComponentsExport },

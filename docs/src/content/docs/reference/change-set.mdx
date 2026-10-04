@@ -64,6 +64,8 @@ Each attribute is `{ path, before, after }`. `unknown: true` replaces `after` wh
 | `failed` | the members that failed to plan |
 | `holes` | the number of holes across members |
 
+A reviewer reads a large document through [`chant change-set summary`](/chant/cli/change-set/), which groups the members that take the same change and names every destroy.
+
 ## The digest
 
 Each member carries the value a gate on that member alone binds ([#2300](https://github.com/INTENTIUS/chant/issues/2300)).

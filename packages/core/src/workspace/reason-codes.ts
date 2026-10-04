@@ -160,7 +160,8 @@ export const REASONS = {
   "quorum-not-met": "Too few of the people who answered count toward the point's quorum: distinct, not holding the agent role, not the steward that asked, and holding one of its roles when it names any.",
   "answer-in-steward-turn": "The answer was given during a steward's turn, or by a process it started: a steward never answers a decision point, and a person answers it through hud or at a shell.",
   "answer-not-answered": "points retract names a question that has no answer to retract: it is escalated or proposed, and people answer it instead (#3351).",
-  "answer-field-unsupported": "The answer kind's copy of point-answer.schema.json predates a field the write needs, a note or a retraction: copy the schema anew to turn it on (#3351).",
+  "answer-field-unsupported": "The answer kind's copy of point-answer.schema.json predates a field the write needs, a note, a relay, a retraction or an ad-hoc question's asked: copy the schema anew to turn it on (#3351, #3402, #3403).",
+  "point-candidates-invalid": "points ask names an ad-hoc point without --candidates, a declared point with them, or candidates that are not a question and criteria of the point's question type (#3403).",
   // records --since that fails (#2673).
   "since-rev-unknown": "--since names no commit, or a session with no opening revision and no commit that added it.",
   "since-session-unknown": "--since has the shape of a session id and names no commit, and no session the kind or the declaration reads has that id.",
@@ -174,6 +175,7 @@ export const REASONS = {
   // The intent graph: part of the walk that can't be read. The document is still printed.
   "intent-history-shallow": "The repository is a shallow clone, so the region's history stops at the clone's boundary.",
   "intent-plugin-failed": "A kind file's commitJoins, which joins commits to units, contracts and evidence, failed for a commit.",
+  "squash-unfollowed": "A squash commit's pull request ref (refs/pull/<n>/head) is not in the clone and could not be fetched from origin, so its original commits are not followed; the read keeps its answer without them.",
   // The intent graph: findings, each a node in the graph.
   "intent-commit-undecided": "A commit changed the region when no decision constrained it at path granularity.",
   "intent-commit-bare": "A commit names no unit, carries no record through its Chant-Record or Chant-Lease trailer, and has no pull request and no decision covering the region at its time.",
@@ -192,6 +194,7 @@ export const REASONS = {
   "intent-decision-unimplemented": "A decided decision constrains the region, no work item that is not dropped implements it, and no commit falls in its window.",
   "intent-work-blocked": "A work item constraining the region has commits in its window while a work item it needs is not done.",
   "intent-work-open-decided-code": "Commits in the region are a decision's own work while the work item implementing that decision is still open.",
+  "intent-commit-join-conflict": "A commit joined to an agent run by its Chant-Run trailer or the run's record has the patch-id of a commit another run recorded, so it is not joined to that run by content.",
   // The intent graph's answer to why the region is like this (#3034): what it can't account for.
   "intent-why-no-decision": "No current decision governs the region at any granularity, and none is carried out by the commits or runs that made its current lines.",
   "intent-why-no-run": "None of the region's current lines was made by a commit an agent run is joined to.",
@@ -247,10 +250,22 @@ export const REASONS = {
   "run-ended": "runs end names a run whose end is already recorded.",
   "runs-no-ledger": "The checkout has no chant/lifecycle branch, so there are no agent runs to read.",
   "runs-ledger-malformed": "Some lines of the agent run ledger aren't run events; the rest are read.",
+  // The agent-run statement (runs sign, statement and verify, #3192): why a statement is refused or does not verify.
+  "run-not-ended": "runs sign or runs statement names a run with no end recorded. A statement is signed over the run's whole record.",
+  "run-statement-invalid": "The envelope's payload is not an in-toto Statement v1 with chant's agent-run predicate, or has a field the predicate does not define.",
+  "run-statement-signer-mismatch": "The statement names a signer other than the runner whose key signed it.",
+  "run-statement-mismatch": "A listed runner key signed the statement, and it does not match the run's record: another run, a record that hashes differently, or another unit, harness, model, provider or principal.",
   // A box's listing written through chant (box listing set, #3308): why the write was refused. Nothing is written.
   "listing-member-unknown": "box listing set names a member the declaration does not declare.",
   "listing-box-missing": "box listing set names a member whose entry declares no box block, so it has no listing.",
   "listing-cover-invalid": "The cover can't be read, is not a PNG, JPEG or WebP picture, is larger than 5 MiB, has a path outside the workspace, or has an extension other than its picture format's.",
+  // A box's work published through chant (box publish, #3165, ws-088): why the call printed no result.
+  "publish-member-unknown": "box publish names a member the declaration does not declare.",
+  "publish-none": "box publish names a member whose box block names no publisher, or which declares no box block.",
+  "publish-refused": "The box's publisher refused (it exited 2): nothing was published, and its message says why.",
+  "publish-failed": "The box's publisher could not be run, failed (a nonzero exit other than 2) or ran out of time; its message says what it had done.",
+  "publish-answer-invalid": "The box's publisher exited 0 and printed no JSON object, or one box-publish.schema.json does not allow.",
+  "publish-unrecorded": "The commit the publisher named is not in the repository, or lacks the apply record of ws-075: Chant-Applied-By naming --by, Chant-Applied-At, Chant-Applied-Commit and a Chant-Record for the item, or a Chant-Record for each record sent.",
   // Work in progress under refs/chant/wip/<branch> and its replication (wip save|restore|push|fetch, #3172): why the write was refused. Nothing is written.
   "wip-no-branch": "HEAD is detached, or names a branch with no commit yet, so there is no branch to keep work in progress for.",
   "wip-none": "wip restore was given no snapshot, and the branch has none under refs/chant/wip/<branch>.",
@@ -281,9 +296,9 @@ export const REASONS = {
   "evidence-payload-type": "The envelope's payload type is not application/vnd.in-toto+json.",
   "evidence-statement-invalid": "The payload is not an in-toto Statement v1 with chant's runner-evidence predicate, or has a field the predicate does not define.",
   "evidence-runner-mismatch": "The statement names a runner other than the one whose key signed it.",
-  "runner-key-invalid": "The key given to evidence sign is not an Ed25519 private key in PEM.",
-  "runner-key-is-signer": "The key given to evidence sign is a person's key in the signers file. Evidence is signed by a service or CI identity.",
-  "runner-key-unlisted": "The policy at base lists no runner with the key given to evidence sign.",
+  "runner-key-invalid": "The key given to evidence sign or runs sign is not an Ed25519 private key in PEM.",
+  "runner-key-is-signer": "The key given to evidence sign or runs sign is a person's key in the signers file. Evidence and run statements are signed by a service or CI identity.",
+  "runner-key-unlisted": "The policy at base lists no runner with the key given to evidence sign or runs sign.",
   // The lineage lock (check).
   "lock-invalid": "The lineage lock can't be read.",
   "manual-step-open": "A scope in the lineage lock has an open manual step.",

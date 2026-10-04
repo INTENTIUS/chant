@@ -94,6 +94,8 @@ export interface SealedGateApproval {
   environment?: string;
   planDigest?: string;
   resolvedBy: string;
+  /** Who relayed the approval for `resolvedBy` (#3402), when someone did. */
+  relayedBy?: string;
   timestamp: string;
   seal?: unknown;
 }
@@ -102,10 +104,14 @@ export interface SealedGateApproval {
  * The bytes a gate approval's seal signs (#3163): the op (or component), the
  * gate, the environment, the plan digest, the approver and the time, joined
  * by LF with no final newline. An approval that binds no environment or plan
- * signs an empty line for it.
+ * signs an empty line for it. A relayed approval (#3402) signs a seventh line,
+ * `relayed-by <principal>`, so the relay can't be added, changed or removed
+ * after sealing; an approval nobody relayed signs the six lines it always did,
+ * so seals made before #3402 still verify.
  */
 export function gateSealPayload(a: SealedGateApproval): Buffer {
-  return Buffer.from(`${a.op}\n${a.gate}\n${a.environment ?? ""}\n${a.planDigest ?? ""}\n${a.resolvedBy}\n${a.timestamp}`, "utf-8");
+  const relay = a.relayedBy !== undefined ? `\nrelayed-by ${a.relayedBy}` : "";
+  return Buffer.from(`${a.op}\n${a.gate}\n${a.environment ?? ""}\n${a.planDigest ?? ""}\n${a.resolvedBy}\n${a.timestamp}${relay}`, "utf-8");
 }
 
 /** The record an author seal covers (#2688). */

@@ -10,9 +10,16 @@
  * - `runs start --from <file|->`, `runs end <id> --from <file|->` and `runs
  *   record --from <file|->` append a run's start, its end, or both, to
  *   `_agent-runs/<id>.jsonl` on `chant/lifecycle` (`runs-write.schema.json`).
+ * - `runs sign <id> --key <runner key.pem> | --envelope <file|->` appends a
+ *   statement over an ended run, signed by a runner or steward key the trust
+ *   policy at base lists, or signed elsewhere and checked here (#3192).
+ *   `runs statement <id> --signer <principal>` prints the statement for a
+ *   signer that holds its key elsewhere, and `runs verify [<id>] [--require
+ *   signed]` judges every stored statement (`run-statement.schema.json`).
  *
  * chant records runs and never starts one: whatever ran the agent writes the
- * record. Reads never fetch.
+ * record. Reads never fetch, except a pull request ref `--follow-squash`
+ * needs (#3035).
  */
 
 import { readFileSync } from "node:fs";
@@ -25,9 +32,12 @@ import type { ReasonCode } from "./reason-codes";
 import { loadRecordKind, RecordReadError } from "./records";
 import { queryRecords } from "./records-cli";
 import {
+  appendRunStatement,
   commitsByRunTrailer,
   endRun,
   foldRun,
+  joinPatchIdCommits,
+  joinSquashCommits,
   joinTrailerCommits,
   LEDGER_BRANCH,
   readRuns,
@@ -43,6 +53,10 @@ import { locateWorkspace } from "./which-chant";
 import { idList } from "./work";
 import { AGENT_ENV } from "./write-scope";
 import { execFileSync } from "node:child_process";
+import { IN_TOTO_PAYLOAD_TYPE, loadRunnerKey, type DsseEnvelope } from "./trust/dsse";
+import { policyAtBase, resolveBase, type BaseSource } from "./trust/provenance";
+import type { TrustPolicy } from "./trust/policy";
+import { attestRun, buildRunStatement, runStatementPayload, signRunStatement, verifyRunStatement, type RunAttestation, type RunStatement } from "./trust/run-statement";
 
 /** The version of the `runs` documents this chant writes: read contract 1. */
 export const RUNS_CONTRACT_VERSION = 1;
@@ -50,14 +64,20 @@ export const RUNS_CONTRACT_VERSION = 1;
 /** `$id` of the JSON Schema for `runs --json`, shipped beside this file. */
 export const RUNS_OUTPUT_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/runs/v1/runs.schema.json";
 
-/** `$id` of the JSON Schema for what `runs start|end|record` print. */
+/** `$id` of the JSON Schema for what `runs start|end|record|sign` print. */
 export const RUNS_WRITE_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/runs-write/v1/runs-write.schema.json";
 
+/** `$id` of the JSON Schema for what `runs statement` and `runs verify` print (#3192). */
+export const RUN_STATEMENT_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/run-statement/v1/run-statement.schema.json";
+
 const USAGE = [
-  "chant workspace runs [--unit <id>] [--decision <id>] [--by <principal>] [--since <rev>] [--json]",
+  "chant workspace runs [--unit <id>] [--decision <id>] [--by <principal>] [--since <rev>] [--follow-squash] [--json]",
   "chant workspace runs start --from <file|->",
   "chant workspace runs end <run id> [--from <file|->]",
   "chant workspace runs record --from <file|->",
+  "chant workspace runs sign <run id> (--key <runner key.pem> | --envelope <file|->) [--base <rev>]",
+  "chant workspace runs statement <run id> --signer <principal>",
+  "chant workspace runs verify [<run id>] [--require signed] [--base <rev>] [--json]",
 ].join("\n");
 
 /** Why `runs` read nothing. Closed. */
@@ -65,12 +85,35 @@ export const RUNS_ERROR_CODES = [...WORKSPACE_ERROR_CODES] as const satisfies re
 export type RunsErrorCode = (typeof RUNS_ERROR_CODES)[number];
 
 /** Why part of the read is missing. The read still succeeds. Closed. */
-export const RUNS_REASON_CODES = ["runs-no-ledger", "runs-ledger-malformed", "kind-unreadable"] as const satisfies readonly ReasonCode[];
+export const RUNS_REASON_CODES = ["runs-no-ledger", "runs-ledger-malformed", "kind-unreadable", "squash-unfollowed"] as const satisfies readonly ReasonCode[];
 export type RunsReasonCode = (typeof RUNS_REASON_CODES)[number];
 
 /** Why a run write was refused or could not run. Closed. */
-export const RUNS_WRITE_ERROR_CODES = [...WORKSPACE_ERROR_CODES, "write-usage-invalid", "write-input-invalid", "run-exists", "run-unknown", "run-ended"] as const satisfies readonly ReasonCode[];
+export const RUNS_WRITE_ERROR_CODES = [
+  ...WORKSPACE_ERROR_CODES,
+  "write-usage-invalid",
+  "write-input-invalid",
+  "run-exists",
+  "run-unknown",
+  "run-ended",
+  // runs sign (#3192)
+  "run-not-ended",
+  "trust-policy-unreadable",
+  "runner-key-invalid",
+  "runner-key-is-signer",
+  "runner-key-unlisted",
+  "envelope-unreadable",
+  "envelope-invalid",
+  "envelope-untrusted",
+  "run-statement-invalid",
+  "run-statement-signer-mismatch",
+  "run-statement-mismatch",
+] as const satisfies readonly ReasonCode[];
 export type RunsWriteErrorCode = (typeof RUNS_WRITE_ERROR_CODES)[number];
+
+/** Why `runs statement` or `runs verify` printed nothing to judge. Closed. */
+export const RUN_STATEMENT_ERROR_CODES = [...WORKSPACE_ERROR_CODES, "write-usage-invalid", "run-unknown", "run-not-ended"] as const satisfies readonly ReasonCode[];
+export type RunStatementErrorCode = (typeof RUN_STATEMENT_ERROR_CODES)[number];
 
 // ── Totals ───────────────────────────────────────────────────────────────────
 
@@ -130,11 +173,40 @@ export interface RunsQuery {
   by?: string;
   /** Only the runs that made a commit after `since` on HEAD, or started after its commit date. */
   since?: string;
+  /** The revision whose trust policy judges the run statements (#3192). Default: origin/HEAD, then main, then master. */
+  base?: string;
+  /** Follow squash merges on HEAD to their pull requests' original commits, fetching missing pull request refs (#3035). */
+  followSquash?: boolean;
 }
 
 export interface RunsReason {
   code: RunsReasonCode;
   message: string;
+}
+
+/** The trust policy at base, as far as run statements need it (#3192). */
+export interface RunsTrust {
+  base: string | null;
+  baseFrom: BaseSource | null;
+  /** The runner and steward keys at base, by principal and class. */
+  runners: { principal: string; class: "runner" | "service" }[];
+  /** Why the policy at base can't be read. Nothing verifies then. */
+  problems: string[];
+}
+
+/** The policy at base for run statements, and its summary. */
+export function runsTrust(top: string, base?: string): { policy: TrustPolicy; trust: RunsTrust } {
+  const resolved = resolveBase(top, base);
+  const policy = policyAtBase(top, resolved);
+  return {
+    policy,
+    trust: { base: resolved.commit, baseFrom: resolved.from, runners: policy.runners.map((r) => ({ principal: r.principal, class: r.class })), problems: policy.problems },
+  };
+}
+
+/** Judge each run's statements in place against the runners at base. */
+export function attestRuns(runs: Iterable<RunView>, policy: TrustPolicy): void {
+  for (const r of runs) r.attestation = attestRun(r, policy.problems.length > 0 ? [] : policy.runners);
 }
 
 /** What `runs --json` prints. */
@@ -145,8 +217,11 @@ export type RunsDocument =
       chant: string;
       workspace: { name: string; root: string };
       ledger: { branch: string; dir: string; commit: string | null };
-      filter: { unit: string | null; decision: string | null; by: string | null; since: string | null };
-      /** Newest first, by when each started. */
+      /** The options given. `followSquash` was added within contract 1 (#3035). */
+      filter: { unit: string | null; decision: string | null; by: string | null; since: string | null; followSquash?: boolean };
+      /** The trust policy the run statements are judged by (#3192). */
+      trust: RunsTrust;
+      /** Newest first, by when each started. Each carries its `attestation`. */
       runs: RunView[];
       totals: {
         all: RunTotals;
@@ -215,7 +290,18 @@ export async function workspaceRuns(query: RunsQuery): Promise<RunsDocument> {
     const { tip, dir, runs, malformed } = await readRuns(top, located.rootOnDisk);
     if (!tip) reasons.push({ code: "runs-no-ledger", message: `this checkout has no ${LEDGER_BRANCH} branch, so there are no agent runs to read; fetch it first if the remote has one` });
     if (malformed > 0) reasons.push({ code: "runs-ledger-malformed", message: `${malformed} ${malformed === 1 ? "line" : "lines"} of ${dir} on ${LEDGER_BRANCH} ${malformed === 1 ? "is" : "are"} not a run event and ${malformed === 1 ? "was" : "were"} left out` });
-    joinTrailerCommits(runs, commitsByRunTrailer(top), top);
+    const byTrailer = commitsByRunTrailer(top);
+    joinTrailerCommits(runs, byTrailer, top);
+    // A commit that lost its trailer joins by content (#3036).
+    joinPatchIdCommits(runs, byTrailer, top);
+    // A squash merge joins the runs its pull request's commits join, when asked (#3035).
+    if (query.followSquash) {
+      for (const f of joinSquashCommits(runs, top)) {
+        if (f.problem) reasons.push({ code: "squash-unfollowed", message: `${f.sha.slice(0, 8)} squashes pull request #${f.pullRequest}, and ${f.problem}, so the runs of its original commits are not joined to it` });
+      }
+    }
+    const { policy, trust } = runsTrust(top, query.base);
+    attestRuns(runs.values(), policy);
     const all = [...runs.values()];
     await resolveRunDecisions(all, located.rootOnDisk, declaredRecordKinds(declaration).map((d) => declaredKindFile(d, located.rootOnDisk)), reasons);
 
@@ -241,7 +327,8 @@ export async function workspaceRuns(query: RunsQuery): Promise<RunsDocument> {
       ...head,
       workspace: { name: declaration.name, root: located.root },
       ledger: { branch: LEDGER_BRANCH, dir, commit: tip },
-      filter: { unit: query.unit ?? null, decision: query.decision ?? null, by: query.by ?? null, since: query.since ?? null },
+      filter: { unit: query.unit ?? null, decision: query.decision ?? null, by: query.by ?? null, since: query.since ?? null, followSquash: query.followSquash === true },
+      trust,
       runs: selected,
       totals: { all: totalRuns(selected), byUnit, byDecision, byPrincipal },
       malformed,
@@ -255,7 +342,7 @@ export async function workspaceRuns(query: RunsQuery): Promise<RunsDocument> {
 
 // ── The writes ───────────────────────────────────────────────────────────────
 
-export type RunsVerb = "start" | "end" | "record";
+export type RunsVerb = "start" | "end" | "record" | "sign";
 
 /** What `runs start|end|record` print. */
 export type RunsWriteDocument =
@@ -268,6 +355,8 @@ export type RunsWriteDocument =
       /** The line a commit the run makes carries, `Chant-Run: <id>` (#3149). */
       trailer: string;
       ledger: RunLedgerWrite;
+      /** For `sign`: who signed the statement it stored, and the envelope (#3192). */
+      statement?: { signer: string; class: "runner" | "service"; keyid: string; envelope: DsseEnvelope };
     }
   | { $schema: string; contract: number; verb: RunsVerb | null; error: { code: RunsWriteErrorCode; message: string } };
 
@@ -311,6 +400,194 @@ export async function runsWrite(req: RunsWriteRequest): Promise<RunsWriteDocumen
   }
 }
 
+// ── Run statements (#3192) ──────────────────────────────────────────────────
+
+/** A run as the ledger holds it now, with the commits its trailer joins. */
+async function currentRun(top: string, rootOnDisk: string, id: string): Promise<RunView | undefined> {
+  const { runs } = await readRuns(top, rootOnDisk);
+  joinTrailerCommits(runs, commitsByRunTrailer(top), top);
+  return runs.get(id);
+}
+
+export interface RunsSignRequest {
+  id: string;
+  cwd: string;
+  /** A runner key in PEM: chant builds the statement and signs it. */
+  keyPem?: string;
+  /** An envelope signed elsewhere, as text: chant checks it and stores it. */
+  envelope?: string;
+  base?: string;
+  now?: () => Date;
+}
+
+/**
+ * `runs sign <id>`: store a statement over an ended run, signed here with
+ * `keyPem` or signed elsewhere and given as `envelope`. Either way it must
+ * verify against a runner key at base and agree with the run's record before
+ * anything is written.
+ */
+export async function runsSign(req: RunsSignRequest): Promise<RunsWriteDocument> {
+  const head = { $schema: RUNS_WRITE_SCHEMA_ID, contract: RUNS_CONTRACT_VERSION };
+  const fail = (code: RunsWriteErrorCode, message: string): RunsWriteDocument => ({ ...head, verb: "sign", error: { code, message } });
+  try {
+    const located = locateWorkspace(req.cwd);
+    const declaration = readDeclaration(located.tree, "", { rootChant: true });
+    const top = located.top;
+    if (!top) return fail("not-a-git-repository", "agent runs are kept on the chant/lifecycle branch, and this directory is not in a git repository");
+    const run = await currentRun(top, located.rootOnDisk, req.id);
+    if (!run) return fail("run-unknown", `the ledger has no agent run ${req.id}`);
+    if (!run.record) return fail("run-not-ended", `agent run ${req.id} has not ended; a statement is signed over a run's whole record, so record its end first`);
+    const { policy } = runsTrust(top, req.base);
+    if (policy.problems.length > 0) return fail("trust-policy-unreadable", `the policy at base cannot be read: ${policy.problems.join("; ")}`);
+
+    let envelope: DsseEnvelope;
+    if (req.keyPem !== undefined) {
+      let runner;
+      try {
+        runner = loadRunnerKey(req.keyPem);
+      } catch (err) {
+        return fail("runner-key-invalid", `the key is not an Ed25519 private key in PEM: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      if (policy.signers.some((s) => s.key === runner.publicKey)) {
+        return fail("runner-key-is-signer", `this is a signer's key in ${policy.signersPath}. A run statement is signed by a runner or steward identity, never by a person's key`);
+      }
+      const listed = policy.runners.find((r) => r.key === runner.publicKey);
+      if (!listed) return fail("runner-key-unlisted", `the policy at base lists no runner with this key. Add it to .chant/trust.json "runners" first:\n  ${runner.publicKey}`);
+      envelope = signRunStatement(buildRunStatement(run, listed.principal), runner.key, runner.publicKey);
+    } else {
+      try {
+        envelope = JSON.parse(req.envelope ?? "") as DsseEnvelope;
+      } catch (err) {
+        return fail("envelope-unreadable", `--envelope could not be read as JSON: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    const verdict = verifyRunStatement(envelope, policy.runners, run);
+    if (verdict.status !== "verified") return fail(verdict.code, verdict.reason);
+
+    const ctx: RunWriteContext = { top, rootOnDisk: located.rootOnDisk, cwd: req.cwd, now: req.now };
+    const result = await appendRunStatement(run.id, envelope, run.record.sha256, ctx);
+    const view = foldRun(result.id, result.ledger.path, result.lines)!;
+    const joined = new Map([[view.id, view]]);
+    joinTrailerCommits(joined, commitsByRunTrailer(top), top);
+    await resolveRunDecisions([view], located.rootOnDisk, declaredRecordKinds(declaration).map((d) => declaredKindFile(d, located.rootOnDisk)), []);
+    attestRuns([view], policy);
+    return {
+      ...head,
+      verb: "sign",
+      run: view,
+      trailer: `${RUN_TRAILER}: ${view.id}`,
+      ledger: result.ledger,
+      statement: { signer: verdict.signer, class: verdict.class, keyid: verdict.keyid, envelope },
+    };
+  } catch (err) {
+    if (err instanceof RunWriteError) return fail(err.code, err.message);
+    if (err instanceof WorkspaceReadError) return fail(err.code as RunsWriteErrorCode, err.describe());
+    throw err;
+  }
+}
+
+/** What `runs statement` and `runs verify` print. */
+export type RunStatementDocument =
+  | {
+      $schema: string;
+      contract: number;
+      chant: string;
+      verb: "statement";
+      run: string;
+      /** The DSSE payload type to sign under. */
+      payloadType: string;
+      /** Base64 of the payload bytes to sign: the statement's canonical JSON. */
+      payload: string;
+      statement: RunStatement;
+    }
+  | {
+      $schema: string;
+      contract: number;
+      chant: string;
+      verb: "verify";
+      trust: RunsTrust;
+      require: "signed" | null;
+      runs: { id: string; state: "running" | "ended"; record: { sha256: string } | null; attestation: RunAttestation }[];
+      summary: { runs: number; signed: number; unsigned: number; failed: number; running: number };
+      /** Why `--require signed` fails. Empty without it: the report alone never fails (studio-035 d). */
+      failures: string[];
+      ok: boolean;
+    }
+  | { $schema: string; contract: number; chant: string; verb: "statement" | "verify" | null; error: { code: RunStatementErrorCode; message: string } };
+
+function statementHead() {
+  return { $schema: RUN_STATEMENT_SCHEMA_ID, contract: RUNS_CONTRACT_VERSION, chant: readerVersion() };
+}
+
+/** `runs statement <id> --signer <principal>`: the statement a signer holding its key elsewhere signs. */
+export async function runStatement(id: string, signer: string, cwd: string): Promise<RunStatementDocument> {
+  const fail = (code: RunStatementErrorCode, message: string): RunStatementDocument => ({ ...statementHead(), verb: "statement", error: { code, message } });
+  try {
+    const located = locateWorkspace(cwd);
+    readDeclaration(located.tree, "", { rootChant: true });
+    if (!located.top) return fail("not-a-git-repository", "agent runs are kept on the chant/lifecycle branch, and this directory is not in a git repository");
+    const run = await currentRun(located.top, located.rootOnDisk, id);
+    if (!run) return fail("run-unknown", `the ledger has no agent run ${id}`);
+    if (!run.record) return fail("run-not-ended", `agent run ${id} has not ended; a statement is signed over a run's whole record`);
+    const statement = buildRunStatement(run, signer);
+    return { ...statementHead(), verb: "statement", run: id, payloadType: IN_TOTO_PAYLOAD_TYPE, payload: runStatementPayload(statement).toString("base64"), statement };
+  } catch (err) {
+    if (err instanceof WorkspaceReadError) return fail(err.code as RunStatementErrorCode, err.describe());
+    throw err;
+  }
+}
+
+/**
+ * `runs verify [<id>] [--require signed]`: judge each run's statements
+ * against the runner keys at base. Report only unless `--require signed`
+ * asks every ended run, or the one named, to be signed.
+ */
+export async function runsVerify(query: { cwd: string; id?: string; require?: "signed"; base?: string }): Promise<RunStatementDocument> {
+  const fail = (code: RunStatementErrorCode, message: string): RunStatementDocument => ({ ...statementHead(), verb: "verify", error: { code, message } });
+  try {
+    const located = locateWorkspace(query.cwd);
+    readDeclaration(located.tree, "", { rootChant: true });
+    const top = located.top;
+    if (!top) return fail("not-a-git-repository", "agent runs are kept on the chant/lifecycle branch, and this directory is not in a git repository");
+    const { runs } = await readRuns(top, located.rootOnDisk);
+    joinTrailerCommits(runs, commitsByRunTrailer(top), top);
+    if (query.id !== undefined && !runs.has(query.id)) return fail("run-unknown", `the ledger has no agent run ${query.id}`);
+    const { policy, trust } = runsTrust(top, query.base);
+    const selected = [...runs.values()]
+      .filter((r) => query.id === undefined || r.id === query.id)
+      .sort((a, b) => (a.startedAt < b.startedAt ? 1 : a.startedAt > b.startedAt ? -1 : a.id < b.id ? 1 : -1));
+    attestRuns(selected, policy);
+    const out = selected.map((r) => ({ id: r.id, state: r.state, record: r.record, attestation: r.attestation! }));
+    const failures: string[] = [];
+    if (query.require === "signed") {
+      for (const r of out) {
+        if (r.state === "running" || r.attestation.status === "signed") continue;
+        failures.push(`${r.id} is ${r.attestation.status}, and --require signed was given: ${r.attestation.reason}`);
+      }
+    }
+    const count = (f: (r: (typeof out)[number]) => boolean) => out.filter(f).length;
+    return {
+      ...statementHead(),
+      verb: "verify",
+      trust,
+      require: query.require ?? null,
+      runs: out,
+      summary: {
+        runs: out.length,
+        signed: count((r) => r.attestation.status === "signed"),
+        unsigned: count((r) => r.attestation.status === "unsigned"),
+        failed: count((r) => r.attestation.status !== "signed" && r.attestation.status !== "unsigned"),
+        running: count((r) => r.state === "running"),
+      },
+      failures,
+      ok: failures.length === 0,
+    };
+  } catch (err) {
+    if (err instanceof WorkspaceReadError) return fail(err.code as RunStatementErrorCode, err.describe());
+    throw err;
+  }
+}
+
 // ── Text ─────────────────────────────────────────────────────────────────────
 
 function money(t: RunTotals): string {
@@ -325,7 +602,8 @@ export function formatRuns(doc: Extract<RunsDocument, { runs: unknown }>): strin
     const model = [r.harness.name, r.model].filter(Boolean).join("/");
     const tokens = r.usage ? `${r.usage.inputTokens ?? "?"} in, ${r.usage.outputTokens ?? "?"} out` : "no usage";
     const cost = r.cost ? `${r.cost.amount} ${r.cost.currency} (${r.cost.source})` : "unpriced";
-    out.push(`${r.id}  ${r.state}${r.outcome ? ` ${r.outcome}` : ""}  ${r.startedAt}  ${model}${r.by ? ` for ${r.by}` : ""}${r.unit ? `  on ${r.unit.id}` : ""}  ${tokens}  ${cost}  ${r.commits.length} commit${r.commits.length === 1 ? "" : "s"}`);
+    const signed = r.attestation ? (r.attestation.status === "signed" ? `  signed by ${r.attestation.signer}` : r.attestation.status === "unsigned" ? "" : `  statement ${r.attestation.status}`) : "";
+    out.push(`${r.id}  ${r.state}${r.outcome ? ` ${r.outcome}` : ""}  ${r.startedAt}  ${model}${r.by ? ` for ${r.by}` : ""}${r.unit ? `  on ${r.unit.id}` : ""}  ${tokens}  ${cost}  ${r.commits.length} commit${r.commits.length === 1 ? "" : "s"}${signed}`);
   }
   if (doc.runs.length === 0) out.push("no agent runs");
   const t = doc.totals.all;
@@ -345,13 +623,14 @@ export async function runWorkspaceRuns(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
   const cwd = process.cwd();
   const verb = args.extraPositional;
+  if (verb === "sign" || verb === "statement" || verb === "verify") return runStatementVerb(ctx, verb, cwd);
   if (verb === "start" || verb === "end" || verb === "record") {
     const print = (doc: RunsWriteDocument): number => {
       console.log(JSON.stringify(doc, null, 2));
       return "error" in doc ? 1 : 0;
     };
     const usage = (message: string) => print({ $schema: RUNS_WRITE_SCHEMA_ID, contract: RUNS_CONTRACT_VERSION, verb, error: { code: "write-usage-invalid", message } });
-    for (const [flag, v] of [["--unit", args.unit], ["--decision", args.decision], ["--by", args.by], ["--since", args.since]] as const) {
+    for (const [flag, v] of [["--unit", args.unit], ["--decision", args.decision], ["--by", args.by], ["--since", args.since], ["--follow-squash", args.followSquash]] as const) {
       if (v !== undefined) return usage(`runs ${verb} takes its fields with --from, not ${flag}`);
     }
     if (verb === "end" && !args.extraPositional2) return usage("runs end needs the run id: runs end <run id>");
@@ -366,16 +645,66 @@ export async function runWorkspaceRuns(ctx: CommandContext): Promise<number> {
     return print(await runsWrite({ verb, id: args.extraPositional2, fields, cwd, agent: process.env[AGENT_ENV] || undefined }));
   }
   if (verb !== undefined) {
-    console.error(formatError({ message: `chant workspace runs takes start, end or record, or no verb to read, not ${verb}`, hint: USAGE }));
+    console.error(formatError({ message: `chant workspace runs takes start, end, record, sign, statement or verify, or no verb to read, not ${verb}`, hint: USAGE }));
     return 1;
   }
   if (args.migrateFrom !== undefined) {
     console.error(formatError({ message: "runs is a read and takes no --from; write with runs start, end or record", hint: USAGE }));
     return 1;
   }
-  const doc = await workspaceRuns({ cwd, unit: args.unit, decision: args.decision, by: args.by, since: args.since });
+  const doc = await workspaceRuns({ cwd, unit: args.unit, decision: args.decision, by: args.by, since: args.since, base: args.base, followSquash: args.followSquash });
   if (args.json) console.log(JSON.stringify(doc, null, 2));
   else if ("error" in doc) console.error(formatError({ message: `${doc.error.code}: ${doc.error.message}`, hint: USAGE }));
   else console.log(formatRuns(doc));
   return "error" in doc ? 1 : 0;
+}
+
+async function runStatementVerb(ctx: CommandContext, verb: "sign" | "statement" | "verify", cwd: string): Promise<number> {
+  const { args } = ctx;
+  const id = args.extraPositional2;
+  if (verb === "sign") {
+    const print = (doc: RunsWriteDocument): number => {
+      console.log(JSON.stringify(doc, null, 2));
+      return "error" in doc ? 1 : 0;
+    };
+    const usage = (message: string) => print({ $schema: RUNS_WRITE_SCHEMA_ID, contract: RUNS_CONTRACT_VERSION, verb, error: { code: "write-usage-invalid", message } });
+    if (!id) return usage("runs sign needs the run id: runs sign <run id> --key <runner key.pem>");
+    if ((args.key === undefined) === (args.envelope === undefined)) return usage("runs sign takes --key <runner key.pem> to sign here, or --envelope <file|-> for a statement signed elsewhere, not both");
+    let keyPem: string | undefined;
+    let envelope: string | undefined;
+    try {
+      if (args.key !== undefined) keyPem = readFileSync(resolve(cwd, args.key), "utf-8");
+      else envelope = readFields(args.envelope, cwd);
+    } catch (err) {
+      const which = args.key !== undefined ? "runner-key-invalid" : "envelope-unreadable";
+      return print({ $schema: RUNS_WRITE_SCHEMA_ID, contract: RUNS_CONTRACT_VERSION, verb, error: { code: which, message: `${args.key ?? args.envelope} could not be read: ${err instanceof Error ? err.message : String(err)}` } });
+    }
+    return print(await runsSign({ id, cwd, keyPem, envelope, base: args.base }));
+  }
+  const print = (doc: RunStatementDocument): number => {
+    if (args.json || verb === "statement" || "error" in doc) console.log(JSON.stringify(doc, null, 2));
+    else console.log(formatRunsVerify(doc as Extract<RunStatementDocument, { verb: "verify"; runs: unknown }>));
+    return "error" in doc || ("ok" in doc && !doc.ok) ? 1 : 0;
+  };
+  const usage = (message: string) => print({ ...statementHead(), verb, error: { code: "write-usage-invalid", message } });
+  if (verb === "statement") {
+    if (!id) return usage("runs statement needs the run id: runs statement <run id> --signer <principal>");
+    if (!args.signer) return usage("runs statement needs --signer <principal>: the runner principal whose key will sign it, as .chant/trust.json lists it");
+    return print(await runStatement(id, args.signer, cwd));
+  }
+  if (args.require !== undefined && args.require !== "signed") return usage(`runs verify --require takes one level, signed, not ${JSON.stringify(args.require)}`);
+  return print(await runsVerify({ cwd, id, require: args.require === "signed" ? "signed" : undefined, base: args.base }));
+}
+
+/** `runs verify` as lines for a person. */
+export function formatRunsVerify(doc: Extract<RunStatementDocument, { verb: "verify"; runs: unknown }>): string {
+  const out: string[] = [];
+  const t = doc.trust;
+  out.push(`trust at base ${t.base?.slice(0, 8) ?? "none"}: ${t.runners.length} runner key${t.runners.length === 1 ? "" : "s"}${t.runners.length ? ` (${t.runners.map((r) => `${r.principal} ${r.class}`).join(", ")})` : ""}`);
+  for (const p of t.problems) out.push(`  ${p}`);
+  for (const r of doc.runs) out.push(`  ${r.id}  ${r.state === "running" ? "running" : r.attestation.status}${r.attestation.signer ? ` by ${r.attestation.signer}` : ""}  ${r.attestation.reason}`);
+  const s = doc.summary;
+  out.push(`${s.runs} run${s.runs === 1 ? "" : "s"}: ${s.signed} signed, ${s.unsigned} unsigned, ${s.failed} with a statement that does not verify, ${s.running} running`);
+  for (const f of doc.failures) out.push(`failure  ${f}`);
+  return out.join("\n");
 }
