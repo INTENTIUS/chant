@@ -416,6 +416,9 @@ export class RunWorkLease {
       outcome,
       note,
     }).catch(() => undefined);
+    // #3172: the box's replicate policy may push the kept attempt and the work branch now. Best effort.
+    // Loaded only here, so an Op run outside a workspace never loads workspace modules (#2526).
+    if (released?.ok) (await import("../workspace/wip")).replicateAfter("release", this.opts.cwd);
     return { ...base, kept, released: released?.ok === true, outcome: released?.ok ? outcome : null };
   }
 

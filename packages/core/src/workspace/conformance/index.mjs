@@ -46,6 +46,7 @@ export const {
   WRITER_INPUTS,
   writeWriterInputs,
   readListing,
+  readWip,
   PRIVATE_STATE_CATEGORIES,
   writeArgv,
   writeContractSchema,

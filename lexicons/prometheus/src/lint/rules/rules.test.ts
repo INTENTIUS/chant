@@ -45,6 +45,22 @@ describe("PROM001 literal credential", () => {
     expect(diags).toEqual([]);
   });
 
+  test("accepts Slack's bot endpoint as api_url, which update_message needs", () => {
+    const diags = literalCredentialRule.check(
+      ctx(`
+        new Receiver({
+          name: "chat",
+          slack_configs: [{
+            api_url: "https://slack.com/api/chat.postMessage",
+            update_message: true,
+            http_config: { authorization: { credentials_file: "/etc/slack-bot-token" } },
+          }],
+        });
+      `),
+    );
+    expect(diags).toEqual([]);
+  });
+
   test("follows values lifted into named consts, shorthand props and spreads", () => {
     const diags = literalCredentialRule.check(
       ctx(`

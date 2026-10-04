@@ -308,6 +308,9 @@
   "formatting/em-dash-density": 2,
   "claude/colon-reveal": 2
  },
+ "docs/src/content/docs/cli/workspace-wip.mdx": {
+  "claude/colon-reveal": 2
+ },
  "docs/src/content/docs/cli/workspace-work.mdx": {
   "claude/colon-reveal": 2
  },

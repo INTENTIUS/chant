@@ -17,6 +17,7 @@ import { looksLikeAlertmanagerConfig, looksLikeRuleFile, type AlertmanagerConfig
 import {
   validateAlertmanagerConfig,
   validateRuleFile,
+  validateRunbookUrls,
   validateSeverityRouting,
   type PrometheusIssue,
   type PrometheusIssueCode,
@@ -62,7 +63,7 @@ function toDiagnostic(issue: PrometheusIssue, source: string): PostSynthDiagnost
   };
 }
 
-/** Diagnostics for one rule-file code (PROM101-PROM107) across every rule file in the output. */
+/** Diagnostics for one rule-file code (PROM101-PROM107, PROM211, PROM213-PROM219) across every rule file in the output. */
 export function ruleFileDiagnostics(ctx: PostSynthContext, code: PrometheusIssueCode): PostSynthDiagnostic[] {
   return prometheusDocs(ctx).ruleFiles.flatMap(({ source, config }) =>
     validateRuleFile(config)
@@ -71,13 +72,18 @@ export function ruleFileDiagnostics(ctx: PostSynthContext, code: PrometheusIssue
   );
 }
 
-/** Diagnostics for one Alertmanager code (PROM201, PROM203-PROM210) across every `alertmanager.yml` in the output. */
+/** Diagnostics for one Alertmanager code (PROM201, PROM203-PROM210, PROM220-PROM224) across every `alertmanager.yml` in the output. */
 export function alertmanagerDiagnostics(ctx: PostSynthContext, code: PrometheusIssueCode): PostSynthDiagnostic[] {
   return prometheusDocs(ctx).alertmanager.flatMap(({ source, config }) =>
     validateAlertmanagerConfig(config)
       .filter((i) => i.code === code)
       .map((i) => toDiagnostic(i, source)),
   );
+}
+
+/** PROM212 across every rule file in the output. Opt-in: the lexicon's `recommended` lint preset leaves it out (see ../../plugin.ts). */
+export function runbookDiagnostics(ctx: PostSynthContext): PostSynthDiagnostic[] {
+  return prometheusDocs(ctx).ruleFiles.flatMap(({ source, config }) => validateRunbookUrls(config).map((i) => toDiagnostic(i, source)));
 }
 
 /** PROM202: joins every rule file in the output against every Alertmanager config in it. Silent when either is absent. */

@@ -34,7 +34,7 @@
 
 import { createResource } from "@intentius/chant/runtime";
 import type { Declarable } from "@intentius/chant/declarable";
-import { componentId, type ComponentKind, type ConnectorSignalPair } from "./model";
+import { canonicalComponentType, componentId, type ComponentKind, type ConnectorSignalPair } from "./model";
 
 /** Where a component's config schema comes from, and which version of it the type follows. */
 export interface SchemaPin {
@@ -177,9 +177,14 @@ export function definitionFor(entityType: string): ComponentDefinition | undefin
   return registry().get(entityType);
 }
 
-/** The definition for a collector `kind` + `type`, e.g. the built-in `exporter` `otlp`. */
+/**
+ * The definition for a collector `kind` + `type`, e.g. the built-in
+ * `exporter` `otlp`. A renamed built-in's new name (`otlp_grpc`) finds the
+ * built-in unless a component is registered under the new name itself.
+ */
 export function definitionOf(kind: ComponentKind, type: string): ComponentDefinition | undefined {
-  return registry().get(componentEntityType(kind, type));
+  const reg = registry();
+  return reg.get(componentEntityType(kind, type)) ?? reg.get(componentEntityType(kind, canonicalComponentType(kind, type)));
 }
 
 /** Every registered definition, built-ins first in registration order. */

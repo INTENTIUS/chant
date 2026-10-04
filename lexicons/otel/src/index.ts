@@ -54,6 +54,7 @@ export {
   type CollectorIssue,
   type CollectorIssueCode,
 } from "./validate-config";
+export { K8S_ATTRIBUTES_METADATA, RESOURCE_DETECTORS } from "./config-hygiene";
 export {
   collectorTopology,
   collectorTopologyOf,

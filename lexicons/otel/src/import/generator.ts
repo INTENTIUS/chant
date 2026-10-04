@@ -25,6 +25,7 @@ import { COLLECTOR_PIN, type ComponentClass, type SchemaPin } from "../define";
 import {
   COMPONENT_KINDS,
   SECTION_OF,
+  canonicalComponentType,
   SIGNALS,
   parseComponentId,
   pipelineSignal,
@@ -58,9 +59,13 @@ const BUILTIN_CLASSES: ReadonlyMap<string, string> = (() => {
   return map;
 })();
 
-/** The class name of the built-in for `kind` + `type`, if chant ships one. */
+/**
+ * The class name of the built-in for `kind` + `type`, if chant ships one.
+ * A renamed built-in's new name (`span_metrics`) gives the class for the old
+ * one, which emits the old name.
+ */
 export function builtinClassName(kind: ComponentKind, type: string): string | undefined {
-  return BUILTIN_CLASSES.get(`${kind}:${type}`);
+  return BUILTIN_CLASSES.get(`${kind}:${type}`) ?? BUILTIN_CLASSES.get(`${kind}:${canonicalComponentType(kind, type)}`);
 }
 
 const RESERVED = new Set(

@@ -35,7 +35,10 @@ describe("init templates", () => {
       expect(runPostSynthChecks(postSynthChecks, result)).toEqual([]);
       const other = name === "k8s-pods" ? k8sPlugin : name === "slo" ? prometheusPlugin : undefined;
       if (other) {
-        expect(runPostSynthChecks(other.postSynthChecks!(), result)).toEqual([]);
+        // Through the lexicon's default preset, as `chant build` reports them (prometheus leaves PROM212 out).
+        const recommended = other.lintPresets?.().recommended;
+        const reported = runPostSynthChecks(other.postSynthChecks!(), result).filter((d) => !recommended || recommended.includes(d.checkId));
+        expect(reported).toEqual([]);
       }
 
       const lint = await lintCommand({ path: join(dir, "src"), format: "stylish", fix: false });

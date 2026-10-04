@@ -184,12 +184,9 @@ describe("the rules an Slo builds", () => {
     expect(sloMetrics(direct).burnRates).toEqual([]);
   });
 
-  test("the same Slo renders inside the rule file promtool accepts", () => {
+  test.skipIf(!hasPromtool)("the same Slo renders inside the rule file promtool accepts", () => {
     const r = promtoolCheckRules(ruleFileYaml([slo.rules]), PROMTOOL);
-    if (!hasPromtool) {
-      expect(r.ran).toBe(false);
-      return;
-    }
+    expect(r.ran).toBe(true);
     expect(r.output).toContain("SUCCESS");
     expect(r.ok).toBe(true);
   });

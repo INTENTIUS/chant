@@ -175,7 +175,7 @@ export type ResourceDetector =
   | "ec2"
   | "ecs"
   | "eks"
-  | "elasticbeanstalk"
+  | "elastic_beanstalk"
   | "lambda"
   | "azure"
   | "aks"
