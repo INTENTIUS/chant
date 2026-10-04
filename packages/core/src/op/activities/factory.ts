@@ -259,7 +259,11 @@ function run(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv): Prom
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (b: Buffer) => (stdout += b.toString("utf8")));
-    child.stderr.on("data", (b: Buffer) => (stderr += b.toString("utf8")));
+    // A hook's stderr is its log: it goes to the run's log as it comes, as a shell step's does.
+    child.stderr.on("data", (b: Buffer) => {
+      stderr += b.toString("utf8");
+      process.stderr.write(b);
+    });
     child.on("error", (err) => settle({ code: null, stdout, stderr: `${stderr}${err.message}` }));
     child.on("close", (code) => settle({ code, stdout, stderr }));
   });
@@ -353,13 +357,13 @@ async function checkoutRoot(cwd: string): Promise<string> {
 }
 
 /** Commit everything in the worktree with chant's trailers (ws-075). Null when there was nothing to commit. */
-async function commitAll(worktree: string, subject: string, item: string, kindName: string, token: string, runId?: string, extra: { agent?: string; records?: string[] } = {}): Promise<string | null> {
+async function commitAll(worktree: string, subject: string, item: string, kindName: string, token: string, runId?: string, extra: { agent?: string; records?: string[]; body?: string } = {}): Promise<string | null> {
   await gitOut(["add", "-A"], worktree);
   if ((await gitOut(["diff", "--cached", "--quiet"], worktree)).ok) return null;
   const { formatChantTrailers } = await import("../../workspace/trailers");
   const records = [`${kindName}:${item}`, ...(extra.records ?? []).filter((r) => r !== `${kindName}:${item}`)];
   const trailers = formatChantTrailers({ ...(extra.agent ? { agent: extra.agent } : {}), lease: token, ...(runId ? { run: runId } : {}), records });
-  const r = await run(["git", "-c", "commit.gpgsign=false", "commit", "-q", "--no-verify", "-m", subject, "-m", trailers.join("\n")], worktree, {});
+  const r = await run(["git", "-c", "commit.gpgsign=false", "commit", "-q", "--no-verify", "-m", subject, ...(extra.body ? ["-m", extra.body] : []), "-m", trailers.join("\n")], worktree, {});
   if (r.code !== 0) throw new Error(`the factory could not commit ${item}: ${r.stderr.trim()}`);
   return (await gitOut(["rev-parse", "HEAD"], worktree)).out;
 }
@@ -473,6 +477,14 @@ export async function factoryBuild(args: FactoryBuildArgs): Promise<FactoryBuild
   if (item && item.proposedState !== null && item.state === item.proposedState) {
     await amend(lease.worktree, inWorktree(w.kindFile, await checkoutRoot(cwd), lease.worktree), lease.item, { [w.stateField]: item.openState });
   }
+  // An ask's builder writes its plan as the item's acceptance criteria and changes nothing else in it
+  // (#3406, studio#382): the item is kept as it was before the builder ran, and put back if it changed.
+  const { isAsk } = await import("../../workspace/factory-rules");
+  const opened = (await readWork(lease.worktree)).items.get(lease.item);
+  const acceptance = w.work.acceptance?.field ?? "acceptance";
+  const guarded = opened && isAsk(opened.data) ? { path: join(lease.worktree, ...(await fromTop(lease.worktree, opened.path)).split("/")), rel: await fromTop(lease.worktree, opened.path), data: opened.data } : null;
+  const { readFileSync, writeFileSync: write } = await import("node:fs");
+  const bytes = guarded ? readFileSync(guarded.path) : null;
   const r = await run(await words(args.builder), lease.worktree, {
     FACTORY_ITEM: lease.item,
     FACTORY_TIER: args.ask.tier,
@@ -484,6 +496,17 @@ export async function factoryBuild(args: FactoryBuildArgs): Promise<FactoryBuild
   // The builder's report: `reverted` lists what its guard put back, and `ok: false` says it did not finish though it exited 0.
   const report = lastJson(r.stdout);
   const reverted = Array.isArray(report?.reverted) ? (report!.reverted as unknown[]).filter((x): x is string => typeof x === "string") : [];
+  if (guarded && bytes) {
+    const now = (await readWork(lease.worktree)).items.get(lease.item);
+    const rest = (data: Record<string, unknown> | null | undefined) => Object.fromEntries(Object.entries(data ?? {}).filter(([k]) => k !== acceptance).sort(([a], [b]) => a.localeCompare(b)));
+    const before = rest(guarded.data);
+    const after = now ? rest(now.data) : null;
+    if (!after || JSON.stringify(after) !== JSON.stringify(before)) {
+      const changed = after ? [...new Set([...Object.keys(before), ...Object.keys(after)])].filter((k) => JSON.stringify(before[k]) !== JSON.stringify(after[k])) : [];
+      write(guarded.path, bytes);
+      reverted.push(`${guarded.rel} (${after ? `it changed ${changed.join(", ")}, and only ${acceptance} is the builder's` : "chant no longer reads it"})`);
+    }
+  }
   const finished = r.code === 0 && report?.ok !== false;
   const note = typeof report?.note === "string" ? report.note : finished ? "the builder finished" : r.code === 0 ? "the builder reported it did not finish" : `the builder exited ${r.code}: ${r.stderr.trim().split("\n").slice(-3).join(" ")}`;
   return { ran: true, finished, exitCode: r.code, reverted, note, report };
@@ -628,7 +651,15 @@ async function recordOutcome(args: FactoryRecordArgs): Promise<FactoryRecordResu
   }
   const { doneVerdict } = await import("../../workspace/factory-rules");
   const verdict = doneVerdict(args.build, args.check, item.acceptance);
-  if (!verdict.done) return { outcome: "not_done", reason: verdict.reason, ...none };
+  if (!verdict.done) {
+    // The attempt is committed with why it is not done and chant's trailers, so the kept attempt the run
+    // makes of it (refs/chant/kept/<item>/<token>) says so and joins to the item and the lease.
+    const kept = await commitAll(lease.worktree, `${lease.item}: not done`, lease.item, w.kindName, lease.token, runIdOf(args.build.report), {
+      ...trailerExtras(args.build.report, args.check.report),
+      body: `Not done: ${verdict.reason}`,
+    }).catch(() => null);
+    return { outcome: "not_done", reason: verdict.reason, commit: kept, implementsProposed: [] };
+  }
   const base = (await gitOut(["merge-base", "HEAD", (await gitOut(["rev-parse", "HEAD"], root)).out], lease.worktree)).out;
   const already = Array.isArray(item.data?.[w.work.implements]) ? (item.data![w.work.implements] as unknown[]).filter((x): x is string => typeof x === "string") : [];
   const proposed = base ? await proposals(lease.worktree, base, already) : [];

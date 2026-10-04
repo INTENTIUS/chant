@@ -178,9 +178,13 @@ describe("the factory Op's seams for an orchestrator (studio#382)", () => {
       // AC-2 failed its own check, so the item is not done, though the check exited 0.
       expect(result.workLease).toMatchObject({ item: "W-110", outcome: "not_done" });
       const after = JSON.parse(readFileSync(join(dir, "after.json"), "utf-8"));
-      expect(after).toMatchObject({ outcome: "not_done", commit: "", check: { built: "builder-small" } });
+      expect(after).toMatchObject({ outcome: "not_done", reason: "criteria AC-2 have no passing evidence", check: { built: "builder-small" } });
+      // The attempt was committed with why, and the run kept that commit.
+      expect(after.commit).toMatch(/^[0-9a-f]{40}$/);
       // The kept attempt holds the carried item with AC-1 ticked and AC-2 failed.
       const kept = git(["for-each-ref", "--format=%(refname)", "refs/chant/kept/"], dir).split("\n").find((r) => r.includes("W-110"))!;
+      expect(git(["rev-parse", kept], dir)).toBe(after.commit);
+      expect(git(["log", "-1", "--format=%B", kept], dir)).toMatch(/^W-110: not done\n\nNot done: criteria AC-2 have no passing evidence\n\nChant-Agent: factory\nChant-Lease: /);
       const fm = parseFrontMatter(git(["show", `${kept}:work/W-110-prepared.md`], dir));
       if (!fm.ok) throw new Error(fm.message);
       const results = Object.fromEntries((fm.value.evidence as { criterion: string; result: string }[]).map((e) => [e.criterion, e.result]));
@@ -201,6 +205,27 @@ describe("the factory Op's seams for an orchestrator (studio#382)", () => {
       expect(body).toContain("Chant-Agent: factory");
       expect(body).toContain("Chant-Record: work:W-110\nChant-Record: contract:C-1");
       expect(JSON.parse(readFileSync(join(dir, "after.json"), "utf-8")).outcome).toBe("done");
+    });
+  }, 120_000);
+});
+
+describe("an ask's item is the builder's only for its plan (studio#382)", () => {
+  test("a builder that changes an open ask beyond its acceptance criteria has the item put back, and the build is not done", async () => {
+    await withTestDir(async (dir) => {
+      workspace(dir);
+      for (const id of ["W-101", "W-102"]) writeFileSync(join(dir, ".fail-" + id), "");
+      writeFileSync(join(dir, "work", "W-120-an-open-ask.md"), item("W-120", { source: { ask: { said: "Add a page.", by: "alice", via: "hud" } } }));
+      writeFileSync(
+        join(dir, "hooks", "rewrite.cjs"),
+        `const fs = require("node:fs"); const f = "work/W-120-an-open-ask.md"; fs.writeFileSync(f, fs.readFileSync(f, "utf8").replace('"title": "Item W-120"', '"title": "Renamed"')); fs.writeFileSync("app/W-120.txt", "the page\\n");`,
+      );
+      git(["add", "-A"], dir);
+      git(["commit", "-q", "-m", "an open ask"], dir);
+      const result = await run(dir, "W-120", { builder: `${process.execPath} hooks/rewrite.cjs` });
+      expect(result.workLease).toMatchObject({ item: "W-120", outcome: "not_done" });
+      const kept = git(["for-each-ref", "--format=%(refname)", "refs/chant/kept/W-120/"], dir);
+      expect(git(["show", `${kept}:work/W-120-an-open-ask.md`], dir)).toContain('"title": "Item W-120"');
+      expect(git(["log", "-1", "--format=%B", kept], dir)).toContain("the guard put back what the builder changed out of scope: work/W-120-an-open-ask.md (it changed title, and only acceptance is the builder's)");
     });
   }, 120_000);
 });
