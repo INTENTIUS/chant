@@ -1,8 +1,9 @@
-# The owner roster for the chant and hud boundary (#2657, ws-052).
+# The owner roster for the workspace boundary (#2657, ws-052; #3161, ws-086).
 #
-# One row per concept: who owns it (chant, hud or plugin), what carries it (a
-# read-contract schema, a command, or the repository that owns it), and one
-# sentence. test/boundary-roster.test.ts fails when a workspace command, reason
+# One row per concept: who owns it (chant, hud, studio, behold or plugin), what
+# carries it (a read-contract schema, a command, or the repository that owns
+# it), and one sentence. A plugin owns only a record kind a workspace pins from
+# a third party, and its joins. test/boundary-roster.test.ts fails when a workspace command, reason
 # code, finding code, link or edge kind, intent node kind, member kind or WSP id
 # exists in code with no row here, or when a row names one that does not exist.
 # scripts/generate-boundary-doc.ts renders this file into
@@ -12,7 +13,7 @@
 #   area              the boundary table of #2657, one row per cell
 #   command           every `chant workspace` command and sub-verb
 #   member-kind       the built-in member kinds (kinds.ts)
-#   record-kind       record kinds: decision, session, work and answer in this repository, the rest from a plugin
+#   record-kind       record kinds: the reference workspace's and this repository's, or one a workspace pins from a third party
 #   member-link-kind  LINK_KINDS in links.ts
 #   record-link-kind  RECORD_LINK_KINDS in record-assets.ts
 #   intent-node-kind  node kinds of intent.schema.json
@@ -103,20 +104,45 @@ rows:
     carrier: "alecraso/hud"
     what: "hud asks and never answers; the finding it asks about comes from chant as data."
   - category: "area"
-    concept: "domain record kinds (contracts, units, evidence, drivers, sessions)"
-    owner: "plugin"
-    carrier: "a record kind file and its schema, named in chant.workspace.json records or passed with --kind; jhgaylor/chud (transitional owner, jhgaylor/chud#78, #79, #80)"
-    what: "The record kinds a development model defines; core ships none of them, and the declaration names the ones a workspace holds."
+    concept: "domain record kinds (contract, evidence, review session, driver, proposal, notes)"
+    owner: "chant"
+    carrier: "the reference workspace's kind files and schemas, named in chant.workspace.json records"
+    what: "The record kinds a development model works in, shipped by chant as data and upgraded through lineage; core still ships no kind of its own, and the declaration names the ones a workspace holds (#3148, ws-082, ws-086)."
   - category: "area"
-    concept: "`commitJoins` and other joins from commits to records"
-    owner: "plugin"
-    carrier: "a record kind file's commitJoins export (intent-joins.ts reads it)"
-    what: "How a commit is tied to a unit, contract or evidence; core calls the join and never parses a plugin's trailers."
+    concept: "decision-point standards: the `understand` point and the `slice-tier` inputs"
+    owner: "chant"
+    carrier: "the reference workspace's decisions/points.json, points.schema.json"
+    what: "The points every factory asks and the inputs each reads, declared once so two orchestrators ask the same question (#3150, ws-086)."
   - category: "area"
-    concept: "agent prompts and context bundles"
+    concept: "the factory's rules: readiness, attempts, outcomes, done"
+    owner: "chant"
+    carrier: "the factory reference Op (#3406)"
+    what: "Which work items are ready, which lease outcomes count as attempts, what done means and what happens to an unfinished attempt, as declared and tested behaviour; an orchestrator supplies only execution (#3162, ws-087)."
+  - category: "area"
+    concept: "record kinds a workspace pins from a third party, and their `commitJoins`"
     owner: "plugin"
-    carrier: "jhgaylor/chud (transitional owner, jhgaylor/chud#78, #79, #80)"
-    what: "What an agent is told and given; chant hands out data and no prompts."
+    carrier: "a pinned package's record kind file, its schema and its commitJoins export (intent-joins.ts reads it)"
+    what: "A kind chant does not ship, and how a commit is tied to its records; core calls the join and never parses the package's own trailers, while chant's trailers join a commit to chant's kinds (ws-075)."
+  - category: "area"
+    concept: "agent prompts, context bundles, how a builder is run"
+    owner: "studio"
+    carrier: "arugula-salad/studio"
+    what: "What an agent is told and given, and the builder's harness (Claude Code in the box, fountainRun); chant hands out data and no prompts (ws-086)."
+  - category: "area"
+    concept: "hosting and provisioning: boxes, the lobby, the door, the planter and beds"
+    owner: "studio"
+    carrier: "arugula-salad/studio"
+    what: "Where a box runs and how it is reached and credentialed; the box's configuration it reads from the declaration through the read contract (ws-074, ws-086)."
+  - category: "area"
+    concept: "publishing a box's work: the merge, the push and the pull request"
+    owner: "studio"
+    carrier: "arugula-salad/studio"
+    what: "The work behind a publish, run as the publisher a box block names; chant runs no push and calls no forge (#3165, ws-086)."
+  - category: "area"
+    concept: "reading a workspace for the infra plane"
+    owner: "behold"
+    carrier: "INTENTIUS/behold"
+    what: "behold reads a workspace only through the read contract and writes only through chant, under hud's rules (ws-086)."
   - category: "command"
     concept: "workspace init"
     owner: "chant"
@@ -425,7 +451,7 @@ rows:
   - category: "record-kind"
     concept: "unit"
     owner: "plugin"
-    carrier: "a record kind file and its schema, passed with --kind; jhgaylor/chud (transitional owner, jhgaylor/chud#78, #79, #80)"
+    carrier: "a record kind file and its schema that a workspace pins from a third party, passed with --kind"
     what: "A unit of work, joined to the commits it produced."
   - category: "record-kind"
     concept: "evidence"
