@@ -169,6 +169,7 @@ describe("the factory Op's seams for an orchestrator (studio#382)", () => {
       git(["add", "-A"], dir);
       git(["commit", "-q", "-m", "hooks"], dir);
       const result = await run(dir, "W-110", {
+        kind: "./work/work.kind.mjs",
         prepare: `${process.execPath} hooks/prepare.cjs`,
         builder: `${process.execPath} hooks/builder2.cjs`,
         check: `${process.execPath} hooks/check2.cjs`,
