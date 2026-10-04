@@ -38,12 +38,33 @@ describe("prometheus plugin", () => {
       "PROM208",
       "PROM209",
       "PROM210",
+      "PROM211",
+      "PROM212",
+      "PROM213",
+      "PROM214",
+      "PROM215",
+      "PROM216",
+      "PROM217",
+      "PROM218",
+      "PROM219",
+      "PROM220",
+      "PROM221",
+      "PROM222",
+      "PROM223",
+      "PROM224",
     ]);
   });
 
   it("catalogues every rule and post-synth check for chant audit, and nothing else", () => {
     const ids = [...prometheusPlugin.lintRules!().map((r) => r.id), ...prometheusPlugin.postSynthChecks!().map((c) => c.id)];
     expect(Object.keys(prometheusAuditCatalog).sort()).toEqual([...ids].sort());
+  });
+
+  it("leaves PROM212 out of the recommended preset, and has it in all (#3363)", () => {
+    const presets = prometheusPlugin.lintPresets!();
+    expect(presets.all).toContain("PROM212");
+    expect(presets.recommended).not.toContain("PROM212");
+    expect(presets.all.filter((id) => !presets.recommended.includes(id))).toEqual(["PROM212"]);
   });
 
   it("detects a rule file and an alertmanager.yml, and nothing else", () => {

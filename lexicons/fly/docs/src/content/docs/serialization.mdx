@@ -28,6 +28,22 @@ Each declared resource becomes a single flaps request keyed by its logical name:
 
 Every serialized machine carries the `managed-by: chant` ownership marker in `config.metadata`, which the owned-only prune reads back.
 
+## Telemetry attribution
+
+Inside a workspace, the fly lexicon adds two variables to each Machine's `config.env`, so that its spans name the declaration that produced them ([#3060](https://github.com/INTENTIUS/chant/issues/3060), [ws-060](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-060-telemetry-attribution.md)).
+
+```json
+"env": {
+  "PORT": "8080",
+  "OTEL_SERVICE_NAME": "notes",
+  "OTEL_RESOURCE_ATTRIBUTES": "chant.workspace=acme,chant.member=svc,chant.decl=web"
+}
+```
+
+`OTEL_SERVICE_NAME` is the name of the Machine's app on Fly, or the Machine's export name when the build can't tell which app owns it. `chant.decl` is the Machine's export name. `deployment.environment.name` is added when the build has an environment (`--env` or `ownership.env`), and an image pinned by digest adds `service.version`. A value the Machine already sets is kept, and only the missing attributes are added. An `App` has no env, so only Machines are stamped. A project with no `chant.workspace.json` builds the same plan as before unless `telemetry.attribution: true` opts it in, and `telemetry.attribution: false` turns stamping off inside a workspace.
+
+A Machine's env values are literal strings, so the plan carries no reference to `CHANT_RELEASE_ATTRIBUTES` ([ws-081](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-081-release-attributes-at-deploy.md)). The `fly-release` step writes the release into the Machine it serves instead: on a stamped Machine, `OTEL_RESOURCE_ATTRIBUTES` gets `service.version` (the release's digest) and `vcs.ref.head.revision` (its commit), the same release its metadata names. A plain apply of the plan carries no release.
+
 ## Applying
 
 The output is applied against flaps directly (or the mudflaps emulator offline). Endpoint and auth come from `FLY_FLAPS_BASE_URL` and `FLY_API_TOKEN`.

@@ -345,6 +345,10 @@ export interface ParsedArgs {
   coverPath?: string;
   /** `chant workspace box publish <member> --records` (#3165): publish the records kept uncommitted instead of a work item. */
   records?: boolean;
+  /** `chant workspace wip save --label <text>` (#3172): what the caller calls the snapshot, such as a turn id. */
+  label?: string;
+  /** `chant workspace wip --branch <branch>` (#3172): list one branch's snapshots. */
+  branch?: string;
   /**
    * `chant workspace records review <id> --by <principal>` (#2670): the
    * reviewer, as the caller names them. Also `chant workspace records new

@@ -524,6 +524,25 @@ A box's work leaves the box through its publisher. The publisher applies a built
 
 chant splits the command into words as a shell splits plain words, where quotes group and a backslash escapes. No shell runs it, so `$HOME` and `~` reach the program as written. A surface calls [`chant workspace box publish`](/chant/cli/workspace-box/#publishing-a-boxs-work) rather than running the command. chant then runs it from the workspace root with a JSON request on stdin and checks the commit it made for the apply record of [ws-075](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-075-commit-trailers.md). `status --json` prints it under the member's `box`, or `null`. A chant older than 0.103.0 refuses the field, so set `minReader` to `"0.103.0"` when you add it.
 
+### Replicate
+
+Uncommitted records, work branches and kept attempts sit on a box's disk until someone commits and pushes. `replicate` names where chant pushes it, so a box that is lost or reclaimed loses none of it ([#3172](https://github.com/INTENTIUS/chant/issues/3172), [ws-085](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-085-work-in-progress-refs-and-replication.md)):
+
+```json
+"box": {
+  "replicate": { "remote": "mirror", "refs": ["work", "kept", "wip", "ledger"], "on": ["save", "release"], "every": "10m" }
+}
+```
+
+| Field | Required | Value |
+|---|---|---|
+| `remote` | no | The git remote to push to, by name. `origin` when omitted. A box holds no credential, so the host adds the remote, such as a bare mirror on the machine, with the credential it brokers. |
+| `refs` | no | What goes: `work` (the branches under `chant/work/`), `kept` (`refs/chant/kept/...`), `wip` (the snapshots under `refs/chant/wip/<branch>`, uncommitted records included) and `ledger` (`chant/lifecycle`). All four when omitted. |
+| `on` | no | When chant pushes on its own: `save`, after each [`chant workspace wip save`](/chant/cli/workspace-wip/), and `release`, after a work lease is released. Both when omitted. `[]` leaves every push to `wip push`. A record write never pushes, because chant's record writes never run git. |
+| `every` | no | How often the host runs `chant workspace wip push` on a schedule of its own, such as `10m`. chant runs no scheduler. |
+
+At most one box block declares `replicate`, since a checkout's work in progress goes to one remote. chant pushes each ref under its own name and never forces a push. `status --json` prints the policy under the member's `box`, and its top-level `replication` says how far each ref is from the remote. A declaration that uses `replicate` sets `minReader` to `"0.103.0"` or later, the first chant that reads it.
+
 ### Plantable
 
 A host that plants a repo as a box, such as a studio's planter, needs exactly one box to run. [`status --json`](/chant/reference/workspace-read-contract/#factory-listing-and-plantable) and `graph --json` say whether the workspace is `plantable`: exactly one member's box block declares `services`. `plantable.box` names that member, and `plantable.reason` says why not otherwise: `box-none` or `box-several`. Being plantable isn't a check. A records-only workspace, or an infra workspace with a factory and no box services, is a valid workspace that a planter declines.

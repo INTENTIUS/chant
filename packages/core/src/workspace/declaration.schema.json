@@ -484,7 +484,7 @@
     },
     "box": {
       "type": "object",
-      "description": "The member is a box, or holds a box's declarations (#2726). A box holds no credential: each capability it needs outside itself is reached through a broker, a runtime such as a lobby or a door, which holds the credential and enforces the scope. chant workspace check fails when a file in the member's directory carries a literal secret (WSP121) and when a capability names no broker (WSP122). chant workspace status --json lists the capabilities, so a broker can read the scopes. Its host, slot, ports, state and cookies state the box's isolation (#2727): chant derives each value from the box's identity, its host, the member's name and its slot, and prints them in chant workspace status --json, so a runtime reads them instead of choosing its own. chant workspace check fails when two boxes on a host resolve to the same value (WSP123) and when a box hard-codes a machine path (WSP124). A member that builds the fountain lexicon's Box declares the callback token fountain gives its persistent sandbox as the capability fountain-callback, brokered by fountain, with scope owner, or chant workspace check fails (WSP125, #2780). Its intent names the decision record that says what the box is for (#2850): chant workspace status --json reports the record's state and answer, and chant workspace check fails when no decision record has the id (WSP126) and warns when the record constrains no member or path of this workspace (WSP127, #2857). Its services list what the box runs under its supervisor (#2880), which the fly lexicon observes, restarts and applies through sprite-env, and which chant workspace status --json prints. Its factory declares what the box builds, how a build is checked, which member declares the builder agents and where a finished build is published (#3146, ws-077), and its listing what the box shows of itself (#3146). Added in schema 1 by chant 0.91.0, so a declaration that uses it sets minReader to 0.91.0 or newer.",
+      "description": "The member is a box, or holds a box's declarations (#2726). A box holds no credential: each capability it needs outside itself is reached through a broker, a runtime such as a lobby or a door, which holds the credential and enforces the scope. chant workspace check fails when a file in the member's directory carries a literal secret (WSP121) and when a capability names no broker (WSP122). chant workspace status --json lists the capabilities, so a broker can read the scopes. Its host, slot, ports, state and cookies state the box's isolation (#2727): chant derives each value from the box's identity, its host, the member's name and its slot, and prints them in chant workspace status --json, so a runtime reads them instead of choosing its own. chant workspace check fails when two boxes on a host resolve to the same value (WSP123) and when a box hard-codes a machine path (WSP124). A member that builds the fountain lexicon's Box declares the callback token fountain gives its persistent sandbox as the capability fountain-callback, brokered by fountain, with scope owner, or chant workspace check fails (WSP125, #2780). Its intent names the decision record that says what the box is for (#2850): chant workspace status --json reports the record's state and answer, and chant workspace check fails when no decision record has the id (WSP126) and warns when the record constrains no member or path of this workspace (WSP127, #2857). Its services list what the box runs under its supervisor (#2880), which the fly lexicon observes, restarts and applies through sprite-env, and which chant workspace status --json prints. Its factory declares what the box builds, how a build is checked, which member declares the builder agents and where a finished build is published (#3146, ws-077), its listing what the box shows of itself (#3146), and its replicate where the box's work in progress is pushed so a lost box loses none of it (#3172, ws-085). Added in schema 1 by chant 0.91.0, so a declaration that uses it sets minReader to 0.91.0 or newer.",
       "properties": {
         "intent": {
           "type": "string",
@@ -509,6 +509,9 @@
           "minLength": 1,
           "pattern": "\\S",
           "description": "The command that publishes the box's work (#3165, ws-088): it applies a built work item to the box's checkout and, when factory.publish names a target, pushes it and opens the pull request, and it sends the records a person kept uncommitted. It is run from the workspace root by chant workspace box publish, split into words as a shell splits plain words (quotes group, a backslash escapes) but never given to a shell, with a JSON request on stdin; box-publish.schema.json says what it reads and prints. An orchestrator such as studio supplies it. chant workspace status --json prints it under the member's box, so a surface offers a publish only when a box names one. Added in schema 1 by chant 0.103.0, so a declaration that uses it sets minReader to 0.103.0 or newer."
+        },
+        "replicate": {
+          "$ref": "#/$defs/boxReplicate"
         },
         "capabilities": {
           "type": "array",
@@ -711,6 +714,51 @@
         "cover": {
           "$ref": "#/$defs/path",
           "description": "A PNG, JPEG or WebP picture of the box, as a file from the workspace root. None when omitted."
+        }
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false
+    },
+    "boxReplicate": {
+      "type": "object",
+      "description": "Where the box's work in progress is replicated, so a box that is lost, reclaimed or corrupted before anyone commits loses nothing (#3172, ws-085). Work in progress is the work branches (chant/work/...), the kept attempts (refs/chant/kept/..., #3147), the snapshots chant workspace wip save takes of each branch's working tree, uncommitted records included (refs/chant/wip/<branch>), and the ledger branch, chant/lifecycle. chant pushes them to remote under their own names and never forces a push. Opt-in: a box block without it replicates nothing. At most one box block in a declaration declares one, or the declaration can't be read (declaration-invalid). chant workspace status --json prints it under the member's box, with every default filled in, and reports in replication how far each ref is from the remote. Added in schema 1 by chant 0.103.0, so a declaration that uses it sets minReader to 0.103.0 or newer.",
+      "properties": {
+        "remote": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+          "description": "The git remote to push to, by name: the repository's own remote, such as origin, or a mirror the host adds to the box's checkout with its credential, since a box holds none (#2726). origin when omitted."
+        },
+        "refs": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "What is replicated: work (the branches under chant/work/), kept (the kept attempts under refs/chant/kept/), wip (the snapshots under refs/chant/wip/) and ledger (the chant/lifecycle branch). All four when omitted.",
+          "items": {
+            "enum": [
+              "work",
+              "kept",
+              "wip",
+              "ledger"
+            ]
+          }
+        },
+        "on": {
+          "type": "array",
+          "uniqueItems": true,
+          "description": "When chant pushes on its own: save, after each chant workspace wip save, and release, after a work lease is released (chant workspace work release, or a run of an Op under a work lease ending, which is when a kept attempt is written). Both when omitted; an empty list leaves every push to chant workspace wip push. A record write never pushes, because chant's record writes never run git (ws-074).",
+          "items": {
+            "enum": [
+              "save",
+              "release"
+            ]
+          }
+        },
+        "every": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*(s|m|h)$",
+          "description": "How often the host runs chant workspace wip push on a schedule of its own, such as 10m, beside the pushes on save and release. chant runs no scheduler; it only states the interval. None when omitted."
         }
       },
       "patternProperties": {

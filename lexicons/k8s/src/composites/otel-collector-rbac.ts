@@ -16,6 +16,7 @@
 
 import { mergeDefaults } from "@intentius/chant";
 import type { CollectorConfig } from "@intentius/chant-lexicon-otel";
+import { canonicalTypeOf, type ComponentKind } from "@intentius/chant-lexicon-otel/model";
 import { Role, RoleBinding } from "../generated";
 
 /** One RBAC rule, as a Role or ClusterRole lists it. */
@@ -28,9 +29,10 @@ export interface CollectorPolicyRule {
 
 const READ = ["get", "list", "watch"];
 
-function componentsOfType(section: Record<string, unknown> | undefined, type: string): Array<Record<string, unknown>> {
+/** The configs of the components of `kind` whose type is `type`, under its old or new name (`k8s_attributes`). */
+function componentsOfType(kind: ComponentKind, section: Record<string, unknown> | undefined, type: string): Array<Record<string, unknown>> {
   return Object.entries(section ?? {})
-    .filter(([id]) => id === type || id.startsWith(`${type}/`))
+    .filter(([id]) => canonicalTypeOf(kind, id) === type)
     .map(([, cfg]) => (cfg && typeof cfg === "object" ? (cfg as Record<string, unknown>) : {}));
 }
 
@@ -58,7 +60,7 @@ function componentsOfType(section: Record<string, unknown> | undefined, type: st
  */
 export function agentClusterRules(config: CollectorConfig): CollectorPolicyRule[] {
   const apps = ["replicasets"];
-  const k8sattributes = componentsOfType(config.processors as Record<string, unknown> | undefined, "k8sattributes");
+  const k8sattributes = componentsOfType("processor", config.processors as Record<string, unknown> | undefined, "k8sattributes");
   const fromDeployment = k8sattributes.some((p) => {
     const extract = p.extract as { labels?: Array<{ from?: string }>; annotations?: Array<{ from?: string }> } | undefined;
     return [...(extract?.labels ?? []), ...(extract?.annotations ?? [])].some((f) => f?.from === "deployment");
@@ -70,7 +72,7 @@ export function agentClusterRules(config: CollectorConfig): CollectorPolicyRule[
     { apiGroups: ["apps"], resources: apps, verbs: READ },
   ];
 
-  const kubeletstats = componentsOfType(config.receivers as Record<string, unknown> | undefined, "kubeletstats");
+  const kubeletstats = componentsOfType("receiver", config.receivers as Record<string, unknown> | undefined, "kubeletstats");
   if (kubeletstats.length) {
     const nodeSubresources = ["nodes/stats"];
     const needsProxy = kubeletstats.some((r) => {

@@ -345,31 +345,83 @@ jobs:
             echo "${message}" >> "$GITHUB_STEP_SUMMARY"
           fi
 
+  # The unit tests that check output with the real otelcol-contrib, promtool
+  # and amtool (#3359). They skip where a binary is missing and no other job
+  # installs one, so this job installs the pinned builds and fails on a skip.
+  # The versions are the lexicons' pins (COLLECTOR_PIN, PROMETHEUS_PIN); the
+  # digests sit beside the script. A job of its own rather than a step in each
+  # shard, since the archives are about 240 MB.
+  test-binaries:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Cache lexicon schemas
+        uses: actions/cache@v5
+        with:
+          path: ~/.chant
+          key: lexicon-schemas-${{ hashFiles('lexicons/*/src/**/fetch.ts', 'lexicons/*/src/**/versions.ts') }}
+          restore-keys: |
+            lexicon-schemas-
+
+      - name: Generate lexicon artifacts
+        run: scripts/ci-lexicon-artifacts.sh
+
+      - name: Read the binary pins
+        id: pins
+        run: echo "key=$(scripts/ci-observability-binaries.sh key)" >> "$GITHUB_OUTPUT"
+
+      # The archives; the install step checks their digests after a restore too.
+      - name: Cache the binary archives
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/chant-observability-binaries
+          key: observability-binaries-${{ steps.pins.outputs.key }}
+
+      - name: Install otelcol-contrib, promtool and amtool (pinned)
+        run: scripts/ci-observability-binaries.sh install ~/.cache/chant-observability-binaries
+
+      - name: Run the tests that need the binaries
+        run: scripts/ci-observability-binaries.sh test
+
   # The required status check. Branch protection requires a check named
-  # `test`; this job reports it and passes only when every unit shard and
-  # the e2e job passed, so test-e2e is required without a change to branch
-  # protection (#2817). It runs with always() so a failed or cancelled job
-  # still produces a red `test` rather than a skipped one.
+  # `test`; this job reports it and passes only when every unit shard, the
+  # e2e job and the binary tests passed, so those are required without a
+  # change to branch protection (#2817). It runs with always() so a failed or
+  # cancelled job still produces a red `test` rather than a skipped one.
   test:
-    needs: [test-shard, test-e2e]
+    needs: [test-shard, test-e2e, test-binaries]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Require every test shard and the e2e tests to pass
+      - name: Require every test shard, the e2e tests and the binary tests to pass
         env:
           SHARDS: ${{ needs.test-shard.result }}
           E2E: ${{ needs.test-e2e.result }}
+          BINARIES: ${{ needs.test-binaries.result }}
         run: |
           echo "test-shard result: ${SHARDS}"
           echo "test-e2e result: ${E2E}"
+          echo "test-binaries result: ${BINARIES}"
           if [ "${SHARDS}" != "success" ]; then
             echo "::error::One or more test shards did not succeed (result: ${SHARDS})."
           fi
           if [ "${E2E}" != "success" ]; then
             echo "::error::The end-to-end tests did not succeed (result: ${E2E})."
           fi
-          [ "${SHARDS}" = "success" ] && [ "${E2E}" = "success" ]
+          if [ "${BINARIES}" != "success" ]; then
+            echo "::error::The tests against otelcol-contrib, promtool and amtool did not succeed (result: ${BINARIES})."
+          fi
+          [ "${SHARDS}" = "success" ] && [ "${E2E}" = "success" ] && [ "${BINARIES}" = "success" ]
 
   # chant#2547 — the trust policy is read from the base branch, so this job
   # judges a pull request by the signers main already has. A commit that

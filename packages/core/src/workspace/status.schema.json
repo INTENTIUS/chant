@@ -46,6 +46,10 @@
             "baseFrom": { "enum": ["origin/HEAD", "main", "master", null], "description": "Where the target branch was found; null when there is none." }
           }
         },
+        "replication": {
+          "description": "Added in contract 1 by #3172. When a box block declares replicate (ws-085), where each ref it names (work branches, kept attempts, work-in-progress snapshots, the ledger branch) stands against the remote: replicated, or how many commits ahead. Read from the local refs and what chant recorded at its last push or fetch under refs/chant/replica/<remote>/; the command never fetches. chant workspace wip --json prints the same, with each branch's snapshots. null when no box declares replicate.",
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/replication" }]
+        },
         "plantable": {
           "description": "Added in contract 1 by #3146. Whether a host such as a studio's planter can plant the workspace as one box: exactly one member's box block declares services. Not a check: a records-only or infra workspace is valid and simply not plantable.",
           "$ref": "#/$defs/plantable"
@@ -485,6 +489,41 @@
         "decided_on": { "type": ["string", "null"], "description": "The day it was decided, or null while it is proposed." }
       }
     },
+    "replication": {
+      "type": "object",
+      "required": ["policy", "remoteConfigured", "replicated", "refs"],
+      "properties": {
+        "policy": {
+          "type": "object",
+          "required": ["box", "remote", "refs", "on", "every"],
+          "properties": {
+            "box": { "type": "string", "description": "The member whose box block declares the policy." },
+            "remote": { "type": "string" },
+            "refs": { "type": "array", "items": { "enum": ["work", "kept", "wip", "ledger"] } },
+            "on": { "type": "array", "items": { "enum": ["save", "release"] } },
+            "every": { "type": ["string", "null"] }
+          }
+        },
+        "remoteConfigured": { "type": "boolean", "description": "Whether the checkout has a git remote of the policy's name." },
+        "replicated": { "type": "boolean", "description": "True when every ref listed is on the remote as it is locally." },
+        "refs": {
+          "type": "array",
+          "description": "Every local ref the policy names, sorted by ref.",
+          "items": {
+            "type": "object",
+            "required": ["ref", "class", "commit", "replica", "replicated", "ahead"],
+            "properties": {
+              "ref": { "type": "string", "description": "Such as refs/heads/chant/work/W-001, refs/chant/kept/W-001/<token>, refs/chant/wip/chant/work/W-001 or refs/heads/chant/lifecycle." },
+              "class": { "enum": ["work", "kept", "wip", "ledger"] },
+              "commit": { "type": "string", "pattern": "^[0-9a-f]{40,64}$" },
+              "replica": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40,64}$", "description": "What the remote held of the ref as chant last saw it (or, for a branch, git's remote-tracking ref), or null when unknown." },
+              "replicated": { "type": "boolean" },
+              "ahead": { "type": "integer", "minimum": 0, "description": "Commits reachable from commit that nothing known to be on the remote reaches; 0 when replicated." }
+            }
+          }
+        }
+      }
+    },
     "box": {
       "type": "object",
       "required": ["capabilities", "isolation", "intent", "services"],
@@ -500,6 +539,22 @@
         "publisher": {
           "description": "Added in contract 1 by #3165. The command that publishes the box's work, as the box block declares it (ws-088), or null when it names none. A surface offers a publish only when it is set, and asks for one with chant workspace box publish rather than running it.",
           "type": ["string", "null"]
+        },
+        "replicate": {
+          "description": "Added in contract 1 by #3172. Where the box's work in progress is replicated (ws-085), with every default filled in, or null when the block declares no policy. At most one member's box has one; the top-level replication says how far each ref is from the remote.",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["remote", "refs", "on", "every"],
+              "properties": {
+                "remote": { "type": "string", "description": "The git remote, by name; origin when the block names none." },
+                "refs": { "type": "array", "items": { "enum": ["work", "kept", "wip", "ledger"] }, "description": "What is replicated, in this order; all four when the block names none." },
+                "on": { "type": "array", "items": { "enum": ["save", "release"] }, "description": "When chant pushes on its own; both when the block names none." },
+                "every": { "type": ["string", "null"], "description": "The interval at which the host runs chant workspace wip push, or null." }
+              }
+            }
+          ]
         },
         "services": {
           "description": "The services the box block declares (#2880), in declaration order, or empty when it declares none. A reader has them before any converge tick; a steward's ConvergeOp's lastTick carries each one's verdict. cmd is as declared: its ${VAR} references are left for the process that applies it to expand. Added by chant 0.95.0.",

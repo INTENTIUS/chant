@@ -221,7 +221,8 @@ describe("gatewayExporter", () => {
     const agent = agentOf(exporter, { name: "agent" });
     expect(config(agent).exporters?.["otlphttp/gateway"]).toEqual({ endpoint: "http://otel-gateway.observability.svc:4318" });
     expect(p(agent.configMap).metadata.annotations[A.gateways]).toBe("observability/otel-gateway=service");
-    expect(validateCollectorConfig(config(agent))).toEqual([]);
+    // agentOf's pipeline has no batch processor, which OTEL125 reports for an otlphttp exporter.
+    expect(validateCollectorConfig(config(agent)).filter((i) => i.code !== "OTEL125")).toEqual([]);
   });
 
   test("with protocol http and TLS, https and the TLS settings without insecure", () => {

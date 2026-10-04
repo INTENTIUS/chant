@@ -252,6 +252,14 @@ export const REASONS = {
   "publish-failed": "The box's publisher could not be run, failed (a nonzero exit other than 2) or ran out of time; its message says what it had done.",
   "publish-answer-invalid": "The box's publisher exited 0 and printed no JSON object, or one box-publish.schema.json does not allow.",
   "publish-unrecorded": "The commit the publisher named is not in the repository, or lacks the apply record of ws-075: Chant-Applied-By naming --by, Chant-Applied-At, Chant-Applied-Commit and a Chant-Record for the item, or a Chant-Record for each record sent.",
+  // Work in progress under refs/chant/wip/<branch> and its replication (wip save|restore|push|fetch, #3172): why the write was refused. Nothing is written.
+  "wip-no-branch": "HEAD is detached, or names a branch with no commit yet, so there is no branch to keep work in progress for.",
+  "wip-none": "wip restore was given no snapshot, and the branch has none under refs/chant/wip/<branch>.",
+  "wip-snapshot-unknown": "wip restore names something that is not a work-in-progress snapshot chant took.",
+  "wip-branch-other": "wip restore names a snapshot taken on another branch than the one checked out.",
+  "wip-race": "Another writer moved refs/chant/wip/<branch> between this command's read and its write.",
+  "wip-policy-none": "wip push or wip fetch was run, and no box block declares replicate, so there is no remote.",
+  "wip-remote-unknown": "The replicate policy names a git remote the checkout does not have; the host adds it, with its credential, before chant pushes.",
   // A box whose isolation fails (check, #2727). Each is also a WSP finding.
   "box-isolation-collision": "Two boxes on one host resolve to the same port, state path or cookie name, or two ports in one box share an offset.",
   "box-isolation-literal": "A host's stateRoot or a box's state entry is a literal machine path instead of one derived from an environment reference and the box's name.",

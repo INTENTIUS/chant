@@ -5,7 +5,7 @@ diataxis: reference
 order: 5
 ---
 
-The otel lexicon's rules use the `OTEL` prefix. `OTEL0xx` rules read your TypeScript source during `chant lint`. `OTEL1xx` checks run after a build: OTEL101 to OTEL106 and OTEL112 to OTEL117 read the emitted collector YAML (and any other output document shaped like a collector config), OTEL107 to OTEL109 read the declared entities. OTEL110 and OTEL111 are unused: the tail sampling placement checks they were reserved for read Kubernetes manifests, so they ship in the k8s lexicon as [WK8601 to WK8603](/chant/lexicons/k8s/otel-placement-checks/).
+The otel lexicon's rules use the `OTEL` prefix. `OTEL0xx` rules read your TypeScript source during `chant lint`. `OTEL1xx` checks run after a build: OTEL101 to OTEL106, OTEL112 to OTEL117 and OTEL119 to OTEL127 read the emitted collector YAML (and any other output document shaped like a collector config), OTEL107 to OTEL109 read the declared entities. OTEL110 and OTEL111 are unused: the tail sampling placement checks they were reserved for read Kubernetes manifests, so they ship in the k8s lexicon as [WK8601 to WK8603](/chant/lexicons/k8s/otel-placement-checks/).
 
 | Id | Severity | Catches |
 |---|---|---|
@@ -26,6 +26,15 @@ The otel lexicon's rules use the `OTEL` prefix. `OTEL0xx` rules read your TypeSc
 | OTEL115 | error | a `routing` connector route naming a pipeline that does not receive from it, see [OTEL115](#otel115-routing-targets) |
 | OTEL116 | warning | a connector splitting metrics by a GenAI id (`gen_ai.conversation.id`, `session.id` and others) or a content key, see [below](#otel116-high-cardinality-genai-attributes) |
 | OTEL117 | error | two components the collector starts listening on the same address, so it exits with "address already in use", see [below](#otel117-listen-address-collisions) |
+| OTEL119 | warning | a field deprecated at or before the pinned release: `invert_match`, `service.telemetry.metrics.address`, `spanmetrics` `dimensions_cache_size`, see [below](#otel119-deprecated-fields) |
+| OTEL120 | error | a literal credential in the collector config, OTEL002's check for emitted and imported YAML, see [below](#otel120-and-otel121-credentials-in-the-config) |
+| OTEL121 | warning | an exporter that sends a credential to an `http://` endpoint or with `tls.insecure: true` |
+| OTEL122 | warning | `zpages` or `pprof` listening on an address other than loopback, see [below](#otel122-zpages-and-pprof) |
+| OTEL123 | warning | a `debug` exporter at `verbosity: detailed` in a pipeline that also sends to another exporter, see [below](#otel123-detailed-debug-output) |
+| OTEL124 | warning | an exporter with a remote endpoint and `sending_queue.enabled: false` or `retry_on_failure.enabled: false`, see [below](#otel124-and-otel125-delivery) |
+| OTEL125 | warning | a pipeline sending to a remote `otlp` or `otlphttp` exporter with no `batch` processor and no `sending_queue.batch` |
+| OTEL126 | error | a `k8sattributes` `extract.metadata` field the processor doesn't support, see [below](#otel126-and-otel127-names-from-a-fixed-list) |
+| OTEL127 | error | a `resourcedetection` detector the processor doesn't have |
 
 ## Configs in Kubernetes ConfigMaps
 
@@ -158,6 +167,50 @@ OTEL117 knows these listeners and their defaults at the pinned collector release
 
 Other components are not checked, since an `endpoint` can be a server the component connects to rather than one it serves (the `kubeletstats` receiver's is the kubelet). A component no pipeline lists, or an extension missing from `service.extensions`, never starts, so it can't collide.
 
+## OTEL119: deprecated fields
+
+These fields still work at the pinned release, v0.130.0, and are deprecated there. A later release removes them, so a config that uses one breaks on the next pin bump.
+
+| Field | Deprecated in | Use instead |
+|---|---|---|
+| `invert_match: true` in a `tail_sampling` policy or sub-policy | collector-contrib v0.126.0 (#39833): "The invert decisions (InvertSampled and InvertNotSampled) have been deprecated" | a `drop` policy |
+| `service.telemetry.metrics.address` | collector v0.111.0 (#11205) | `service.telemetry.metrics.readers` |
+| `dimensions_cache_size` on `spanmetrics` | collector-contrib v0.125.0 (#39646), marked `Deprecated [v0.130.0]` in `connector/spanmetricsconnector/config.go` (#41101) | `aggregation_cardinality_limit` |
+
+The versions come from each repository's `CHANGELOG.md` at the v0.130.0 tag. `invert_match: false` is not reported, since it asks for no inverted decision. The `invert_match` fields of the lexicon's policy types carry `@deprecated`. Renames and removals after the pin are left to the pin bump.
+
+## OTEL120 and OTEL121: credentials in the config
+
+OTEL002 reads TypeScript, so a config brought in with `chant import`, or one inside a ConfigMap, never reaches it. OTEL120 runs the same check over the collector config: the same key pattern, `${` values treated as references, `_file` keys treated as paths, and list items not inheriting their parent's key. It reports every receiver, processor, exporter, extension and connector, with the key path, such as `headers.authorization`. A literal written in TypeScript is reported twice, once by each check.
+
+OTEL121 looks at what an exporter sends, not how it is written. It reports a started exporter whose endpoint is not loopback, that sends a header matching the credential pattern or has a top-level credential key (`api_key`, `token`), and that sends in plaintext. Plaintext is an `http://` endpoint, or `tls.insecure: true` on an endpoint that isn't `https://`. An HTTP exporter takes TLS from the scheme, and a gRPC exporter from `tls.insecure`. An `${env:...}` reference counts here, since the value still crosses the network. A credential an `auth` extension adds is not checked.
+
+## OTEL122: zpages and pprof
+
+`zpages` serves span samples and pipeline internals, and `pprof` serves heap and goroutine profiles and runs CPU profiles on request. Neither has authentication. OTEL122 reports either one, when `service.extensions` starts it, on any host but `localhost`, `127.0.0.0/8` or `::1`. That includes `0.0.0.0`, an empty host, and an `${env:POD_IP}` host. The default addresses are loopback, so `zpages: {}` passes. Bind them to localhost and reach them with `kubectl port-forward`.
+
+`health_check` is not reported, although OTEL117 knows its address too. It serves only a status, and a kubelet probe reaches it on the pod IP, so it has to listen there. `otlpCollector()`, `genAiPipeline()`, `NodeAgent` and the init templates bind it on `0.0.0.0:13133` for that reason, and so do the k8s `OtelCollector` and `OtelCollectorGateway`, whose default config is `otlpCollector()`.
+
+## OTEL123: detailed debug output
+
+`verbosity: detailed` makes the `debug` exporter write every span, metric point and log record to the collector's log, with all attributes and bodies. In a pipeline that also sends to a backend, that copies the backend's data to the log, and the log often goes to a different store with different access. OTEL123 reports this case only. A pipeline whose only exporters are `debug` is a test setup and passes, as does `verbosity: basic` or `normal`.
+
+## OTEL124 and OTEL125: delivery
+
+Both look at exporters with a remote endpoint: an `endpoint` (or `traces_endpoint`, `metrics_endpoint`, `logs_endpoint`) whose host is not loopback. An `${env:...}` endpoint counts as remote. The `prometheus` exporter serves rather than sends and is skipped.
+
+OTEL124 reports `sending_queue.enabled: false`, which makes a slow backend block the pipeline, and `retry_on_failure.enabled: false`, which drops a failed request's data.
+
+OTEL125 reports a pipeline with no `batch` processor (any `batch/name` counts) that sends to a remote `otlp` or `otlphttp` exporter with no `sending_queue.batch`. At v0.130.0 those two exporters do not batch by default: `NewDefaultQueueConfig` in `exporter/exporterhelper/internal/queue_sender.go` sets no `batch`. Other exporters may batch on their own, so OTEL125 leaves them alone and covers only these two.
+
+## OTEL126 and OTEL127: names from a fixed list
+
+The collector rejects an unknown name at start-up. These two checks catch it without a collector binary.
+
+OTEL126 compares each `k8sattributes` `extract.metadata` entry with the fields `Config.Validate` accepts in `processor/k8sattributesprocessor/config.go` at collector-contrib v0.130.0. The list is `K8S_ATTRIBUTES_METADATA`: the `k8s.namespace`, `k8s.pod`, `k8s.deployment`, `k8s.replicaset`, `k8s.daemonset`, `k8s.statefulset`, `k8s.job`, `k8s.cronjob`, `k8s.node` and `k8s.container` names and ids, `k8s.pod.hostname`, `k8s.pod.start_time`, `k8s.pod.ip`, `k8s.cluster.uid`, `container.id`, `container.image.name`, `container.image.tag`, `container.image.repo_digests`, and `service.namespace`, `service.name`, `service.version`, `service.instance.id`. Any other name makes the collector refuse the config. Labels and annotations are extracted with `extract.labels` and `extract.annotations`.
+
+OTEL127 compares each detector a started `resourcedetection` lists with the map `NewFactory` registers in `processor/resourcedetectionprocessor/factory.go` at v0.130.0, `RESOURCE_DETECTORS`: `aks`, `azure`, `consul`, `docker`, `dynatrace`, `ec2`, `ecs`, `eks`, `elastic_beanstalk`, `env`, `gcp`, `heroku`, `k8snode`, `kubeadm`, `lambda`, `openshift` and `system`. An unknown name fails the processor's build with "invalid detector key" and the collector exits. The Elastic Beanstalk detector is spelled `elastic_beanstalk`, and the message says so for `elasticbeanstalk`. An `${env:...}` entry is not checked.
+
 ## Using the checks outside a build
 
-The same logic is exported as plain functions. `validateCollectorConfig(config)` returns OTEL101 to OTEL106 and OTEL112 to OTEL117 findings for any parsed collector config, and `validateCollectorEntities(entities)` returns OTEL107 to OTEL109 for declared entities. The k8s lexicon's `GkeOtelCollector` tests use the first to check the config the composite renders.
+The same logic is exported as plain functions. `validateCollectorConfig(config)` returns OTEL101 to OTEL106, OTEL112 to OTEL117 and OTEL119 to OTEL127 findings for any parsed collector config, and `validateCollectorEntities(entities)` returns OTEL107 to OTEL109 for declared entities. The k8s lexicon's `GkeOtelCollector` tests use the first to check the config the composite renders.
