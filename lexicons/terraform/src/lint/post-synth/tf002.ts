@@ -51,7 +51,7 @@ function providerNameFromType(type: string): string {
 }
 
 /** One implied provider name to the entity key that first implied it in file order. */
-function impliedProviders(entities: PostSynthContext["entities"], root: string): Map<string, string> {
+export function impliedProviders(entities: PostSynthContext["entities"], root: string): Map<string, string> {
   const implied = new Map<string, string>();
   const fromProviderBlock = new Set<string>();
 
