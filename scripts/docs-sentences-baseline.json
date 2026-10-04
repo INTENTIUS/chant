@@ -259,7 +259,6 @@
   "claude/colon-reveal": 2
  },
  "docs/src/content/docs/cli/workspace-init.mdx": {
-  "formatting/em-dash-density": 2,
   "claude/colon-reveal": 2
  },
  "docs/src/content/docs/cli/workspace-lineage.mdx": {
@@ -289,7 +288,6 @@
   "claude/colon-reveal": 2
  },
  "docs/src/content/docs/cli/workspace-runs.mdx": {
-  "formatting/em-dash-density": 2,
   "claude/colon-reveal": 2
  },
  "docs/src/content/docs/cli/workspace-signers.mdx": {
@@ -303,7 +301,6 @@
   "claude/colon-reveal": 2
  },
  "docs/src/content/docs/cli/workspace-verify.mdx": {
-  "formatting/em-dash-density": 2,
   "claude/colon-reveal": 2
  },
  "docs/src/content/docs/cli/workspace-versions.mdx": {

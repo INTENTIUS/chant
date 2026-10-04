@@ -154,7 +154,7 @@ Run an Op on a runtime and return its result.
 
 A finished run comes back as `{ op, runId, state, startedAt, endedAt }`, plus `records` and `gate` when the run produced them.
 
-An Op that declares `neverOverMcp: true` is refused here, and nothing starts. See [Ops that are never run or approved over MCP](#ops-that-are-never-run-or-approved-over-mcp).
+An Op that declares `neverOverMcp: true` is refused here, and nothing starts. See [Ops kept from agents](#ops-kept-from-agents).
 
 ### `op-status`
 
@@ -191,7 +191,7 @@ There is no `approver` parameter, and the resolution records `resolvedBy` as `un
 
 The approval is for the plan the gated run recorded, so a gate with no pending fact standing has nothing for this tool to approve and the call fails. Naming a plan digest by hand is a shell-only affordance, `chant approve --plan <digest>`.
 
-#### Ops that are never run or approved over MCP
+#### Ops kept from agents
 
 An Op can declare `neverOverMcp: true`. Approvals for such an Op belong to people, so an agent on this server neither runs it nor resolves its gates.
 
