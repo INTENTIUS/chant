@@ -8,8 +8,8 @@ diataxis: reference
 
 ```
 chant workspace points [--open] [--kind <kind file>] [--at <rev>] [--json]
-chant workspace points ask <point> --inputs <file|-> [--response <file>] [--subject <id>] [--kind <kind file>] [--dry-run]
-chant workspace points answer <id> --answer <value> --by <name> [--by <name>...] [--note <text>] [--kind <kind file>] [--dry-run]
+chant workspace points ask <point> --inputs <file|-|json> [--candidates <file|-|json>] [--response <file>] [--subject <id>] [--kind <kind file>] [--dry-run]
+chant workspace points answer <id> --answer <value> --by <name> [--by <name>...] [--note <text>] [--relayed-by <principal>] [--kind <kind file>] [--dry-run]
 chant workspace points retract <id> --by <name> [--by <name>...] [--note <text>] [--kind <kind file>] [--dry-run]
 ```
 
@@ -32,7 +32,7 @@ It never writes and never calls a model.
 
 ## Asking a point
 
-`points ask <point> --inputs <file>` asks the point's deciders in order and records the answer in the answer kind's records directory. The inputs are a JSON object keyed by the point's declared input names. An input the point does not declare is refused with `point-inputs-invalid`.
+`points ask <point> --inputs <file>` asks the point's deciders in order and records the answer in the answer kind's records directory. The inputs are a JSON object keyed by the point's declared input names, read from a file, from standard input (`-`), or given as the JSON itself when the value starts with `{`. An input the point does not declare is refused with `point-inputs-invalid`.
 
 | Decider | What it does |
 |---|---|
@@ -48,23 +48,40 @@ In a steward's turn, including a `points ask` that an Op's step runs while `CHAN
 
 `--subject <id>` says what the question is about, such as a work item's id, and is written to the record's `constrains`. `--dry-run` prints the document with the text it would write, and writes nothing.
 
+## Asking an ad-hoc question
+
+A point declared `adhoc` has no candidates of its own ([#3403](https://github.com/INTENTIUS/chant/issues/3403)). Each ask brings the question's text and its candidates with `--candidates`, as an agent's question to the people working with it does. The value is a file, `-` for standard input, or the JSON itself:
+
+```
+chant workspace points ask agent-question \
+  --inputs '{"ask.id":"req-7f3a","ask.by":"hud:chat-12"}' \
+  --candidates - --subject hud:chat-12 <<'EOF'
+{ "question": "Which language should the importer be written in?",
+  "criteria": { "ts": "TypeScript: matches the rest of the repo.", "py": "Python: the parser library is better." } }
+EOF
+```
+
+`criteria` has the shape of the point's question type: `true` and `false` with what each means for a `noul`, 2 to 255 options with what each means for a `choice`, and 2 to 10 distinct ordered levels for a `score`. The record keeps them as `asked`, with the candidates they give, and its title is the question's text. They are part of the inputs hash, so the same ask returns the same question, and one with other options is another question. Only one of `--inputs` and `--candidates` reads standard input.
+
+An ad-hoc point is decided by people alone: its chain is one quorum. `points answer` checks the answer against the candidates the question was asked with, so an option the ask did not offer is `answer-not-candidate`, and `points retract` takes it back as it does any answer. An ad-hoc point asked without `--candidates`, a declared point given them, or candidates that don't fit the point's question type are `point-candidates-invalid`. A workspace whose `answer.schema.json` copy has no `asked` field refuses an ad-hoc ask with `answer-field-unsupported`.
+
 ## Answering a question
 
 `points answer <id> --answer <value> --by <name>` records people's answer to an open question. The answer is one of the question's candidates, and for a `noul` it is `true`, `false`, `yes` or `no`. Each `--by` names one person who answered. The point's quorum counts distinct people, after trimming and lower-casing. It leaves out anyone holding the `agent` role in the trust policy at base, the steward that asked the question, and when the quorum names roles, anyone holding none of them. Too few is `quorum-not-met`, and nothing is written. An answer given during a steward's turn, or by a process the turn started, is refused with `answer-in-steward-turn`: a steward waits on a question and never answers it ([Steward](/chant/lexicons/fountain/steward/)).
 
-People who give the answer a model proposed confirm it, and the model stays the record's decider. Any other answer is the quorum's, and the model's proposal moves into the record's `escalations`, its `reason` as `model_reason`. Either way the record becomes `answered`, with `answered_by` and `answered_on`. `--note <text>` is kept as the record's `note` ([#3351](https://github.com/INTENTIUS/chant/issues/3351)). Once given, the record does not change in place. A second `points answer` is refused with `record-closed`, so people who want to change it retract it first.
+People who give the answer a model proposed confirm it, and the model stays the record's decider. Any other answer is the quorum's, and the model's proposal moves into the record's `escalations`, its `reason` as `model_reason`. Either way the record becomes `answered`, with `answered_by` and `answered_on`. `--note <text>` is kept as the record's `note` ([#3351](https://github.com/INTENTIUS/chant/issues/3351)). `--relayed-by <principal>` names who carried the answer to chant for the people in `--by`, such as a follower relaying a person's answer through hud, and is kept as `relayed_by` ([#3402](https://github.com/INTENTIUS/chant/issues/3402)). The relay never counts toward the quorum, and under `identity.attribution: "identified"` it must be a checkable principal, as each `--by` must. Once given, the record does not change in place. A second `points answer` is refused with `record-closed`, so people who want to change it retract it first.
 
 ## Retracting an answer
 
-`points retract <id> --by <name>` takes people's answer back ([ws-084](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-084-retracting-a-decision-point-answer.md)). The question is `escalated` to the point's quorum again, open for people, and the record keeps the answer in `retractions`: its value, its decider, `answered_by`, `answered_on` and its note as `answer_note`, with `by`, `on` and `note`, who retracted it, when and why (`--note`). A model's confirmed proposal goes back into `escalations`. People then answer it again with `points answer`, and each retraction stays in the record, oldest first. Asking a retracted question again returns it as it stands, with `reused: true`, since people took it back from the deciders.
+`points retract <id> --by <name>` takes people's answer back ([ws-084](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-084-retracting-a-decision-point-answer.md)). The question is `escalated` to the point's quorum again, open for people, and the record keeps the answer in `retractions`: its value, its decider, `answered_by`, `answered_on` and its note as `answer_note`, with `by`, `on` and `note`, who retracted it, when and why (`--note`). A relayed answer's `relayed_by` moves into its retraction as `answer_relayed_by`. A model's confirmed proposal goes back into `escalations`. People then answer it again with `points answer`, and each retraction stays in the record, oldest first. Asking a retracted question again returns it as it stands, with `reused: true`, since people took it back from the deciders.
 
 Retracting counts `--by` toward the point's quorum as an answer does, and a steward's turn is refused with `answer-in-steward-turn`. A question that has no answer is `answer-not-answered`. `--dry-run` prints what would be written.
 
-A workspace whose `answer.schema.json` copy predates `note` and `retractions` refuses `--note` on an answer, and any retraction, with `answer-field-unsupported`, rather than drop what a person wrote. Copying `point-answer.schema.json` anew turns them on.
+A workspace whose `answer.schema.json` copy predates `note` and `retractions` refuses `--note` on an answer, and any retraction, with `answer-field-unsupported`, rather than drop what a person wrote. A copy that predates `relayed_by` refuses `--relayed-by` the same way. Copying `point-answer.schema.json` anew turns them on.
 
 ## Output
 
-`--json` prints the read-contract document of [`points.schema.json`](/chant/reference/workspace-read-contract/#decision-points). Its `sources` hold one entry per answer kind read, with a `reason` when that kind could not be read. `points` lists each declared point with its inputs and deciders, its `candidates`, and their `criteria`, what each candidate means, as the points file declares it: an object of strings for `noul` and `choice`, an array of ordered level descriptions for `score`. `questions` lists each answer record, including those held on the ledger, which carry `ledger`. A record on the ledger wins over a file of the same name in the tree. `--at` reads a commit of the working branch, so it lists the tree's records only.
+`--json` prints the read-contract document of [`points.schema.json`](/chant/reference/workspace-read-contract/#decision-points). Its `sources` hold one entry per answer kind read, with a `reason` when that kind could not be read. `points` lists each declared point with its inputs and deciders, its `candidates`, and their `criteria`, what each candidate means, as the points file declares it: an object of strings for `noul` and `choice`, an array of ordered level descriptions for `score`. An ad-hoc point lists `adhoc: true`, no candidates, and empty criteria, since its asks bring them. `questions` lists each answer record, including those held on the ledger, which carry `ledger`. A record on the ledger wins over a file of the same name in the tree. `--at` reads a commit of the working branch, so it lists the tree's records only.
 
 | Field | Meaning |
 |---|---|
@@ -74,7 +91,9 @@ A workspace whose `answer.schema.json` copy predates `note` and `retractions` re
 | `model` | Any model's answer, with `confidence`, `threshold`, `model`, `observed` and `reason`. It is observed for a proposal. For an escalated question it is the last answer below a threshold. |
 | `escalations` | Each decider asked before the one that answered, and why it did not (`reason`), with a model's own explanation as `model_reason`. |
 | `note` | What the people who answered wrote with their answer, or null. |
-| `retractions` | Each answer people took back, oldest first: `answer`, `decider`, `answeredBy`, `answeredOn`, `answerNote`, and the retraction's `by`, `on` and `note`. Empty when none was. |
+| `relayedBy` | Who relayed the answer for the people who gave it (`--relayed-by`), or null. |
+| `retractions` | Each answer people took back, oldest first: `answer`, `decider`, `answeredBy`, `answeredOn`, `answerNote`, `answerRelayedBy`, and the retraction's `by`, `on` and `note`. Empty when none was. |
+| `asked` | An ad-hoc question's text and criteria, as its ask gave them: `{ question, criteria }`. null for a declared point's question. |
 | `current` | The point is still declared as it was when asked. |
 | `warnings` | The `answer-` codes: the points file can't be read, the point is gone, or it changed. |
 
@@ -86,12 +105,13 @@ A workspace whose `answer.schema.json` copy predates `note` and `retractions` re
 | `points-invalid` | The points file can't be read or is not valid. |
 | `point-unknown` | No points file declares the point. |
 | `point-inputs-invalid` | The inputs are not an object of the declared inputs. |
+| `point-candidates-invalid` | An ad-hoc point was asked without `--candidates`, a declared point with them, or they don't fit the question type. |
 | `point-decider-failed` | A model decider declared `unreachable: "fail"` could not answer. |
 | `answer-not-candidate` | The answer is not a candidate. |
 | `quorum-not-met` | Too few people count toward the quorum. |
 | `answer-in-steward-turn` | The answer came from a steward's turn, which never answers a question. |
 | `record-closed` | The question is already answered. Retract the answer first. |
 | `answer-not-answered` | `retract` names a question with no answer. |
-| `answer-field-unsupported` | The kind's schema copy has no `note` or `retractions` field. |
+| `answer-field-unsupported` | The kind's schema copy has no `note`, `retractions`, `relayed_by` or `asked` field. |
 
 `chant serve mcp` serves the read as the `workspace-points` tool, the answer as `points-answer` and the retraction as `points-retract`.

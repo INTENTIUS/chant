@@ -126,12 +126,14 @@ Record a gate's out-of-band resolution — the durable counterpart to a converge
 chant approve fountain-apply rollout-gate
 chant approve fountain-apply rollout-gate --actor alex --url "https://github.com/org/repo/pull/123"
 chant approve fountain-apply rollout-gate --note "paged on-call first; see the incident channel"
+chant approve fountain-apply rollout-gate --actor github:alice --relayed-by github:hud-follower --sign
 ```
 
 | Flag | Default | Meaning |
 |---|---|---|
 | `--actor <name>` | `$GITHUB_ACTOR` / `$GITLAB_USER_LOGIN` / `$USER` | Who resolved the gate, recorded on the resolution fact. A surface that signs people in (hud, studio) passes the person's forge identity, such as `github:alice`, or a principal the signers file lists. Under a workspace's `identity.attribution: "identified"` any other name is refused ([Identity](/chant/reference/workspace-declaration/#identity)) |
 | `--sign [<key file>]` | — | Seal the approval with an ssh key, or with git's `user.signingkey` when no file is given. The seal attests `--actor` when the signers file at base lists the key for them. A gate the workspace's `identity.gates` names counts only a sealed approval, from its class when it names one, and without `--sign` `chant approve` refuses it ([#3163](https://github.com/INTENTIUS/chant/issues/3163)) |
+| `--relayed-by <principal>` | — | Who carried the approval to chant for `--actor`, such as a follower program relaying a person's approval through hud. Recorded as `relayedBy` on the resolution line, covered by `--sign` (the seal signs it as a seventh line, `relayed-by <principal>`), and listed with the approval in `chant workspace status --json`. The approver is still `--actor`, and the seal is still theirs. Under `identity.attribution: "identified"` the relay must be a checkable principal too ([#3402](https://github.com/INTENTIUS/chant/issues/3402)) |
 | `--url <url>` | the surrounding CI job's PR/MR, when there is one | The address this resolution happened at, typically the PR or MR that carried the change. Recorded typed on the resolution fact so a reader is not sniffing free text for a link. Must be an absolute http or https URL |
 | `--note <text>` | — | Free-text context recorded alongside the resolution. The link belongs in `--url`; this is for everything else |
 | `--env <env>` | the newest pending fact's environment | For a component gate: which environment's pending fact to approve. The resolution records that environment and its plan digest ([#2574](https://github.com/INTENTIUS/chant/issues/2574)). Ignored for an Op gate |

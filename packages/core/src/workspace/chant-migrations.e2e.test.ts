@@ -105,14 +105,15 @@ function ledger(): GateLedgerPort & { approve(digest: string): void } {
 const passing: ChantRunner = async () => ({ exitCode: 0, output: "" });
 
 /** Stage, approve and apply the upgrade, and commit it. */
-async function upgrade(): Promise<void> {
+async function upgrade(runChant: ChantRunner = passing): Promise<NonNullable<Awaited<ReturnType<typeof upgradeCommand>>["staged"]>> {
   const l = ledger();
-  const first = await upgradeCommand({ root: proj, to: target(), runChant: passing, ledger: l, now: "2026-09-25T00:00:00Z" });
+  const first = await upgradeCommand({ root: proj, to: target(), runChant, ledger: l, now: "2026-09-25T00:00:00Z" });
   expect(first.outcome).toBe("gated");
   l.approve(first.staged!.digest);
-  const second = await upgradeCommand({ root: proj, to: target(), runChant: passing, ledger: l, now: "2026-09-25T00:00:00Z" });
+  const second = await upgradeCommand({ root: proj, to: target(), runChant, ledger: l, now: "2026-09-25T00:00:00Z" });
   expect(second.outcome).toBe("applied");
   commit("chud-lexicon-exit");
+  return second.staged!;
 }
 
 async function makeProject(from: "dir" | "git"): Promise<void> {
@@ -763,10 +764,21 @@ describe("the migrated delivery project, with this checkout's chant", () => {
   });
 
   test("builds, lints, rebuilds its CI, stops at the ship gate, ships each approved plan to Fly and records it once, and rolls back to the previous release", { timeout: 1_800_000 }, async () => {
-    await upgrade();
     const delivery = join(proj, "delivery");
-    symlinkSync(join(repoRoot, "node_modules"), join(delivery, "node_modules"));
     writeFileSync(join(proj, ".git/info/exclude"), "node_modules\n");
+    symlinkSync(join(repoRoot, "node_modules"), join(delivery, "node_modules"));
+    // The template's ci.yml was built by the chant of 84c8b21 (actions/checkout@v4). The upgrade rebuilds it with
+    // this chant (#3244), so its ci:check passes without anyone running ci:build: build and lint stay stubbed,
+    // and the workflow rebuild runs this checkout's chant.
+    expect(read(proj, ".github/workflows/ci.yml")).toContain("actions/checkout@v4");
+    const rebuilding: ChantRunner = async (command, cwd, args) => {
+      if (!args?.length) return passing(command, cwd);
+      const r = await chant(cwd, {}, command, ...args);
+      return { exitCode: r.status ?? 1, output: r.out };
+    };
+    const staged = await upgrade(rebuilding);
+    expect(staged.workflows).toEqual([expect.objectContaining({ member: "delivery", script: "ci:build", path: ".github/workflows/ci.yml", status: "rebuilt" })]);
+    expect(read(proj, ".github/workflows/ci.yml")).not.toContain("actions/checkout@v4");
     const fly = await flaps(join(root, "fly"));
     const env = { FLY_FLAPS_BASE_URL: fly.endpoint, FLY_API_TOKEN: "test", CHUD_FLY_APP_SECRET: "s3cret", GITHUB_ACTOR: "releaser" };
     /** The Machine's app over HTTP, on the host port its service is published on. */

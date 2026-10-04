@@ -147,7 +147,8 @@ export interface WriteParams {
   "records amend": { id: string; kind: string; fields: Record<string, unknown>; expect?: string };
   "records review": { id: string; kind: string; verdict: "agree" | "dissent" | "abstain"; by: string; note?: string };
   "records close": { id: string; kind: string };
-  "points ask": { point: string; kind: string; inputs: Record<string, unknown>; subject?: string };
+  /** `candidates` is an ad-hoc point's question and candidates (#3403), `{ question, criteria }`: they go on stdin, and the inputs as JSON on the command line. */
+  "points ask": { point: string; kind: string; inputs: Record<string, unknown>; subject?: string; candidates?: { question: string; criteria: Record<string, string> | string[] } };
   "points answer": { id: string; kind: string; answer: string; by: string; note?: string };
   "points retract": { id: string; kind: string; by: string; note?: string };
   "work claim": { id: string; kind: string; holder: string };
@@ -174,7 +175,7 @@ export type WriteStep = {
     params: WriteParams[A];
     /** The arguments after `chant workspace <action>`, as {@link writeArgv} builds them from `params`. */
     args: string[];
-    /** What the command reads on stdin (`--from -`, `--set -`, `--inputs -`), when it reads anything. */
+    /** What the command reads on stdin (`--from -`, `--set -`, `--inputs -`, `--candidates -`), when it reads anything. */
     input?: string;
   };
 }[WriteContractAction];
@@ -206,7 +207,10 @@ export function writeArgv<A extends WriteContractAction>(action: A, params: Writ
     }
     case "points ask": {
       const q = p as WriteParams["points ask"];
-      return { args: [q.point, "--inputs", "-", ...(q.subject !== undefined ? ["--subject", q.subject] : []), "--kind", q.kind], input: json(q.inputs) };
+      const subject = q.subject !== undefined ? ["--subject", q.subject] : [];
+      // An ad-hoc ask (#3403): the question and candidates read from stdin, and the inputs given as JSON.
+      if (q.candidates !== undefined) return { args: [q.point, "--inputs", json(q.inputs), "--candidates", "-", ...subject, "--kind", q.kind], input: json(q.candidates) };
+      return { args: [q.point, "--inputs", "-", ...subject, "--kind", q.kind], input: json(q.inputs) };
     }
     case "points answer": {
       const q = p as WriteParams["points answer"];
@@ -312,7 +316,8 @@ const RUN_STARTED = { harness: { name: "conformance", version: "1" }, model: "no
  * The writes the suite drives, in order, each action at least once: a
  * decision made, amended and reviewed; a review session opened and closed; a
  * decision point asked, answered with a note, the answer retracted and the
- * question answered again (#3351); the work item's lease claimed, renewed,
+ * question answered again (#3351); an ad-hoc question asked with its own
+ * question and candidates, as an agent asks the room, and answered (#3403); the work item's lease claimed, renewed,
  * evidence attached under it and released; one run started and ended, and one
  * recorded whole; the box's listing set, with a cover image copied in; and a
  * snapshot of the working tree taken and restored (#3172).
@@ -374,6 +379,18 @@ export const WRITER_SCRIPT: readonly WriterScriptStep[] = [
   step("answer", "points answer", (d) => ({ id: String(d.ask.id), kind: WRITER_KINDS.answer, answer: "medium", by: WRITER_PRINCIPALS.reviewer, note: "Two criteria and one file, but past the small limits." })),
   step("retract", "points retract", (d) => ({ id: String(d.ask.id), kind: WRITER_KINDS.answer, by: WRITER_PRINCIPALS.reviewer, note: "Answered for the wrong work item." })),
   step("reanswer", "points answer", (d) => ({ id: String(d.ask.id), kind: WRITER_KINDS.answer, answer: "large", by: WRITER_PRINCIPALS.reviewer })),
+  // #3403: an agent's question to the room, its text and options arriving with the ask.
+  step("adhoc", "points ask", () => ({
+    point: "agent-question",
+    kind: WRITER_KINDS.answer,
+    subject: "W-001",
+    inputs: { "ask.id": "conformance-ask-1", "ask.by": WRITER_PRINCIPALS.holder },
+    candidates: {
+      question: "Should the writer suite's item ship behind a flag?",
+      criteria: { flag: "Behind a flag, off by default.", now: "On for everyone at once." },
+    },
+  })),
+  step("adhoc-answer", "points answer", (d) => ({ id: String(d.adhoc.id), kind: WRITER_KINDS.answer, answer: "flag", by: WRITER_PRINCIPALS.reviewer })),
   step("claim", "work claim", () => ({ id: "W-001", kind: WRITER_KINDS.work, holder: WRITER_PRINCIPALS.holder })),
   step("renew", "work renew", (d) => ({ id: "W-001", kind: WRITER_KINDS.work, holder: WRITER_PRINCIPALS.holder, token: leaseToken(d) })),
   step("evidence", "work evidence", (d) => ({
@@ -608,6 +625,21 @@ export function isReadCall(argv: readonly string[]): boolean {
 }
 
 /**
+ * Whether an argument a writer passed is the step's: the same text, or for a
+ * step argument that is JSON (an ad-hoc ask's inputs, #3403) the same value,
+ * whatever its key order or spacing.
+ */
+function sameArg(given: string | undefined, want: string): boolean {
+  if (given === want) return true;
+  if (given === undefined || !/^[[{]/.test(want)) return false;
+  try {
+    return isDeepStrictEqual(JSON.parse(given), JSON.parse(want));
+  } catch {
+    return false;
+  }
+}
+
+/**
  * What is wrong with the chant calls one step made: anything but exactly
  * one call, of `workspace <action>` with the step's arguments in order and
  * the action's JSON flag, given the step's fields on stdin. Empty when the
@@ -620,7 +652,7 @@ export function writerCallProblems(step: WriteStep, calls: readonly ChantRun[]):
   const prefix = ["workspace", ...step.action.split(" ")];
   if (prefix.some((t, i) => argv[i] !== t)) return [`${name}: ran chant ${argv.join(" ")}, which is not workspace ${step.action}`];
   const rest = argv.slice(prefix.length);
-  const at = rest.findIndex((_, i) => step.args.every((a, j) => rest[i + j] === a));
+  const at = rest.findIndex((_, i) => step.args.every((a, j) => sameArg(rest[i + j], a)));
   if (step.args.length > 0 && at === -1) return [`${name}: ran chant ${argv.join(" ")}, which does not pass ${step.args.join(" ")} in order`];
   const extra = step.args.length > 0 ? [...rest.slice(0, at), ...rest.slice(at + step.args.length)] : rest;
   const allowed = WRITE_CONTRACT_JSON_FLAGS[step.action];
@@ -1004,7 +1036,7 @@ export async function runWorkspaceWriterConformance(writer: WorkspaceWriterFacto
     const wipDoc = await direct(["workspace", "wip", "--json"]);
     const snapshots = new Set(((wipDoc.branches ?? []) as { snapshots: { commit: string }[] }[]).flatMap((b) => b.snapshots.map((x) => x.commit)));
     const claims = (history.claims ?? []) as { token: string; ended: string | null; release?: { outcome?: string } | null }[];
-    const questions = new Map(((await direct(["workspace", "points", "--kind", WRITER_KINDS.answer, "--json"])).questions as { id: string; retractions?: unknown[] }[] | undefined ?? []).map((q) => [q.id, q]));
+    const questions = new Map(((await direct(["workspace", "points", "--kind", WRITER_KINDS.answer, "--json"])).questions as { id: string; retractions?: unknown[]; asked?: unknown }[] | undefined ?? []).map((q) => [q.id, q]));
     for (const s of WRITER_SCRIPT) {
       const doc = done[s.id] ?? {};
       if (s.action.startsWith("records ") || s.action.startsWith("points ")) {
@@ -1012,6 +1044,10 @@ export async function runWorkspaceWriterConformance(writer: WorkspaceWriterFacto
         const id = String(doc.id ?? "");
         if (!uncommitted.get(kind)?.has(id)) after.readBack.push(`read back: ${s.id} (${s.action}) wrote ${id}, and records --uncommitted --kind ${kind} does not list it`);
         else if (s.action === "points retract" && !(questions.get(id)?.retractions?.length ?? 0)) after.readBack.push(`read back: ${s.id} (${s.action}) retracted the answer to ${id}, and points --json lists no retraction for it`);
+        else if (s.action === "points ask") {
+          const asked = (doc.question as { asked?: unknown } | undefined)?.asked;
+          if (asked && !isDeepStrictEqual(questions.get(id)?.asked, asked)) after.readBack.push(`read back: ${s.id} (${s.action}) asked ${id} with its own question and candidates, and points --json does not list them as asked`);
+        }
       } else if (s.action === "work evidence") {
         if (!uncommitted.get(WRITER_KINDS.work)?.has(String(doc.item ?? ""))) after.readBack.push(`read back: ${s.id} (${s.action}) amended ${String(doc.item)}, and records --uncommitted does not list it`);
       } else if (s.action.startsWith("work ")) {

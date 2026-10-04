@@ -1,8 +1,8 @@
 /**
- * The owner roster for the chant and hud boundary (#2657, ws-052).
+ * The owner roster for the workspace boundary (#2657, ws-052; #3161, ws-086).
  *
  * `docs/data/boundary.yaml` names, for each workspace concept, who owns it
- * (chant, hud or a plugin) and what carries it. This module reads and checks
+ * (chant, hud, studio, behold or a pinned plugin) and what carries it. This module reads and checks
  * the file's shape and renders it into the reference page. Whether the rows
  * match the code is `test/boundary-roster.test.ts`'s job; the page is
  * written by `scripts/generate-boundary-doc.ts`, and the same test fails when
@@ -13,15 +13,18 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import yaml from "js-yaml";
 
-export const OWNERS = ["chant", "hud", "plugin"] as const;
+export const OWNERS = ["chant", "hud", "studio", "behold", "plugin"] as const;
 export type Owner = (typeof OWNERS)[number];
+
+/** The repository that carries each owner's rows outside chant (ws-086): a row owned by one of these names it as its carrier. */
+export const OWNER_REPOS: Partial<Record<Owner, string>> = { hud: "alecraso/hud", studio: "arugula-salad/studio", behold: "INTENTIUS/behold" };
 
 /** The categories, in page order, with the label the page uses and where the code keeps each closed list. */
 export const CATEGORIES = {
   area: { label: "boundary cell", source: "the table of #2657, one row per cell" },
   command: { label: "workspace command", source: "`commandRegistry` in `cli/main.ts`, and each sub-verb its help names" },
   "member-kind": { label: "member kind", source: "`BUILTIN_KIND_NAMES` in `kinds.ts`" },
-  "record-kind": { label: "record kind", source: "none in core; `decision` and `session` are this repository's, the rest a plugin's" },
+  "record-kind": { label: "record kind", source: "none in core; the reference workspace's and this repository's kind files, or a kind a workspace pins from a third party" },
   "member-link-kind": { label: "member link kind", source: "`LINK_KINDS` in `links.ts`" },
   "record-link-kind": { label: "record link kind", source: "`RECORD_LINK_KINDS` in `record-assets.ts`" },
   "intent-node-kind": { label: "intent node kind", source: "the node kinds of `intent.schema.json`" },
@@ -94,7 +97,7 @@ const code = (s: string) => "`" + s + "`";
 function boundaryTable(rows: RosterRow[]): string[] {
   const cols = OWNERS.map((o) => rows.filter((r) => r.category === "area" && r.owner === o));
   const height = Math.max(...cols.map((c) => c.length));
-  const out = ["| chant | hud | plugin |", "|---|---|---|"];
+  const out = [`| ${OWNERS.join(" | ")} |`, `|${OWNERS.map(() => "---|").join("")}`];
   for (let i = 0; i < height; i++) out.push(`| ${cols.map((c) => (c[i] ? cell(c[i].concept) : "")).join(" | ")} |`);
   return out;
 }
@@ -116,14 +119,14 @@ export function renderBoundaryPage(rows: RosterRow[]): string {
   const count = (c: Category, o: Owner) => rows.filter((r) => r.category === c && r.owner === o).length;
   const lines: string[] = [
     "---",
-    "title: chant and hud Boundary",
+    "title: Owners of the Workspace Boundary",
     "description: The owner of each workspace concept, and the schema or command that carries it.",
     "diataxis: reference",
     "---",
     "",
     "{/* Generated from docs/data/boundary.yaml by scripts/generate-boundary-doc.ts, so edit the roster and run the script. */}",
     "",
-    "chant provides the repository specification and nothing that faces a person. hud renders and interacts. Domain record kinds and the joins from commits to them belong to a plugin. The decision is [ws-052](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-052-chant-hud-boundary.md), from [#2657](https://github.com/INTENTIUS/chant/issues/2657).",
+    "chant provides the repository specification, which now takes in the domain record kinds and the factory's rules, and nothing that faces a person. hud renders what chant reads and acts on it for the person in front of it, and behold reads a workspace the same way for the infra plane. studio orchestrates and hosts, which covers running builders with their prompts and publishing a box's work. A plugin owns only the record kinds a workspace pins from a third party, with their joins. The decision is [ws-086](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-086-the-workspace-boundary-without-chud-chant-hud-st.md) ([#3161](https://github.com/INTENTIUS/chant/issues/3161)), which supersedes [ws-052](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-052-chant-hud-boundary.md) ([#2657](https://github.com/INTENTIUS/chant/issues/2657)).",
     "",
     "## The boundary",
     "",
@@ -134,14 +137,15 @@ export function renderBoundaryPage(rows: RosterRow[]): string {
     "- chant never listens on a port, never authenticates a person and never renders. `test/no-listener.test.ts` holds `packages/core` to the first and to importing no UI or agent-runtime package.",
     "- hud never parses a record file, never runs git for provenance and never computes drift. It reads only through the [read contract](/chant/reference/workspace-read-contract/) and writes only through chant commands. The suite a reader runs to show it ships in `@intentius/chant` as `@intentius/chant/workspace/conformance`, for any test runner.",
     "- The repo is the database ([ws-074](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-074-the-repo-is-the-database.md), [#3158](https://github.com/INTENTIUS/chant/issues/3158)). Every durable fact about a workspace, anything a person or agent decided, answered, reviewed, approved, wrote or was attributed with and any configuration of a box or member, is a file in the repo. A tool writes it only through chant's write commands. Outside the repo a tool keeps only secrets in a broker or vault, telemetry, caches and indexes it can rebuild from the repo, and the substrate's own runtime state.",
-    "- chud is the transitional owner of the plugin column (jhgaylor/chud#78, #79, #80).",
+    "- studio defines no record field and keeps no fact outside the repo (ws-074). Its CI runs the reader and writer conformance suites, the same proof asked of hud ([#3159](https://github.com/INTENTIUS/chant/issues/3159), arugula-salad/studio#338). behold is held to hud's rules.",
+    "- chant reads a pinned kind's `commitJoins`, and the intent graph reports what they join as `unit`, `contract` and `evidence` nodes. chant's own kinds need no join, because the commit trailers tie a commit to them ([ws-075](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-075-commit-trailers.md)).",
     "",
     "## The roster",
     "",
-    "This page is generated from `docs/data/boundary.yaml`, which has one row for each concept. `test/boundary-roster.test.ts` compares the roster with the closed lists in the code. It fails the build when something in one of those lists has no row, or when a row names something that is not there. A row for a cell of the table above uses the cell's text as #2657 words it, and a row owned by hud is carried by alecraso/hud.",
+    "This page is generated from `docs/data/boundary.yaml`, which has one row for each concept. `test/boundary-roster.test.ts` compares the roster with the closed lists in the code. It fails the build when something in one of those lists has no row, or when a row names something that is not there. A row for a cell of the table above uses the cell's text as #2657 or #3161 words it. Each hud, studio or behold row names its owner's repository as the carrier: alecraso/hud, arugula-salad/studio or INTENTIUS/behold.",
     "",
-    "| Category | Where the code keeps it | chant | hud | plugin |",
-    "|---|---|---|---|---|",
+    `| Category | Where the code keeps it | ${OWNERS.join(" | ")} |`,
+    `|---|---|${OWNERS.map(() => "---|").join("")}`,
   ];
   for (const c of categories) lines.push(`| ${CATEGORIES[c].label} | ${CATEGORIES[c].source} | ${OWNERS.map((o) => count(c, o)).join(" | ")} |`);
   lines.push("", "Each row follows, in the order of the table above.", "", "| Category | Concept | Owner | Carried by | What |", "|---|---|---|---|---|");

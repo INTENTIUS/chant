@@ -1,0 +1,108 @@
+---
+title: Pinned Module Rollout
+description: Roll a module version out across Terraform and Terragrunt roots as one pin-bump pull request per wave
+diataxis: how-to
+---
+
+This guide is for a monorepo of Terraform, OpenTofu or Terragrunt units that share modules. A change under `modules/` gives the CI no way to tell which units need applying. The answer here has two halves, and they work together:
+
+- Each unit pins an exact version of each module it calls. A change to a module then moves no unit. The units to apply are the ones whose pin moved, which a plain path diff answers.
+- Taking a new module version is a series of pin bumps, one pull request per wave. Each PR moves the pin for a subset of units, so a cautious rollout is a choice of which units move first.
+
+`chant terraform pin-rollout` and the `TerraformPinRolloutOp` composite do the second half. For a rollout inside one run, with a gate per wave and no PRs, see [#3049](https://github.com/INTENTIUS/chant/issues/3049).
+
+## Pin each module call
+
+A pin is one exact version, written where the source kind keeps it.
+
+| Source | Pinned form |
+|---|---|
+| OpenTofu OCI | `source = "oci://registry.example.com/modules/vpc?tag=1.4.0"` or `?digest=sha256:...` |
+| Registry | `source = "app.terraform.io/acme/vpc/aws"` with `version = "1.4.0"` (or `"= 1.4.0"`) |
+| Git | `source = "git::https://github.com/acme/modules.git//vpc?ref=v1.4.0"` |
+| Terragrunt | `terraform { source = "..." }` in `terragrunt.hcl`, in any of the forms above, or `tfr:///acme/vpc/aws?version=1.4.0` |
+
+OpenTofu takes an OCI tag or digest as a query argument, and that is the form chant reads.
+
+A rollout refuses a call it cannot move, and says why. A `version` constraint such as `~> 1.4` or `>= 1.4, < 2` is refused: an upstream release changes what the root runs with no diff to review, and there is no one version to move. A source with no pin, and a pin built from an expression (`?ref=${local.ref}`), are refused the same way. A refused unit stays out of every wave and is named on every run.
+
+Publishing the modules to a registry with versions is outside chant. terragucci's `tf-publish` stage is one way to do it ([#3353](https://github.com/INTENTIUS/chant/issues/3353)).
+
+## See where a rollout would start
+
+Name the module by its source without the pin, and the move:
+
+```sh
+chant terraform pin-rollout \
+  --module oci://registry.example.com/modules/vpc --from 1.3.0 --to 1.4.0 \
+  --canary live/dev/vpc
+```
+
+Without `--pull-request` the command opens nothing. It checks the default branch out in a temporary worktree. Every directory there with a `.tf` file or a `terragrunt.hcl` that calls the module joins the rollout. The command then prints the waves:
+
+```text
+oci://registry.example.com/modules/vpc pin 1.3.0 -> 1.4.0 on main: would-open
+  wave 1 (canaries): next; would open its PR
+    roots: live/dev/vpc
+    files: live/dev/vpc/terragrunt.hcl
+  wave 2: not opened
+    roots: live/prod/vpc, live/stage/vpc
+```
+
+`--root <dir>` limits the rollout to the directories named. `--json` prints the whole result.
+
+## Choose the waves
+
+The canaries form wave 1. Every other unit lands in the earliest wave after everything it depends on, the order `chant components fan-out` uses. A Terragrunt unit's `dependency` and `dependencies` blocks are read for you. For plain `.tf` roots, name each edge with `--depends-on <root>=<dependency>`. A canary that depends on a unit outside the canaries is refused, since wave 1 would apply before what it reads.
+
+On choudoufu estates, choudoufu's planner reads cross-estate references from the estates themselves. Pass its document instead of canaries:
+
+```sh
+choudoufu live-waves -json -canary=estates/e04 estates/* > waves.json
+chant terraform pin-rollout --module oci://registry.example.com/modules/shared \
+  --from 1.0.0 --to 1.1.0 --waves-from waves.json
+```
+
+`--waves-prefix <dir>` places choudoufu's paths when it ran in a subdirectory of the repository.
+
+## Open the waves
+
+Add `--pull-request` to open the next wave's PR when it is due. Each run does at most one thing, decided by the state of the next wave's PR.
+
+When there is no PR yet, the run builds a branch from the default branch in its own worktree and moves the pin there for that wave's units only. It pushes the branch as `chant/pin/<module>/<version>/wave-<n>` and opens a PR against the default branch.
+
+While that PR is open, the run reports the wave as waiting for merge and opens nothing.
+
+Once the PR has merged, the run reads the checks on the merge commit. Each unit's apply reports a check named `apply/<root>` by default, and `--applied-check` sets another name, with `{root}` for the directory. When every unit's check has passed, the wave is done and the run moves to the next one.
+
+Nothing blocks between waves ([#2119](https://github.com/INTENTIUS/chant/issues/2119)). Each run reads the forge, so run the command again, or put the Op on a schedule, and the rollout moves on once the merge and the applies have happened.
+
+A failed apply check stops the rollout. No later wave opens, and the run names the unit. A PR closed without merging stops it the same way. The command exits 0 when the rollout is complete or a PR opened, 3 when it is waiting on a merge or an apply, and 1 when it stopped.
+
+The rollout never writes the default branch or the checkout it runs in. Each PR changes only its wave's files, so GitLab's `rules: changes:` and other path-diff selections plan exactly the wave's units. The PR body names the wave and the move (`pin 1.3.0 -> 1.4.0`). It lists each unit with the calls it moved, and each unit left out with its reason.
+
+## Run it as an Op
+
+```typescript
+import { TerraformPinRolloutOp } from "@intentius/chant-lexicon-terraform";
+
+export const { op } = TerraformPinRolloutOp({
+  name: "vpc-1-4",
+  module: "oci://registry.example.com/modules/vpc",
+  from: "1.3.0",
+  to: "1.4.0",
+  canaries: ["live/dev/vpc"],
+  mode: "pull-request",
+  schedule: "*/30 * * * *",
+});
+```
+
+The run's `Rollout` outcome is the status. A stopped rollout fails the run, with the unit or PR named in its error.
+
+## Roots chant generates
+
+A root built from TypeScript keeps its module declaration there, so the pin moves in that file. Name the file with `--ts-source <root>=<file>`, or `tsSource` on the root in the Op. Any object literal whose `source` is a string naming the module counts, with a `version` string beside it for a registry source.
+
+## From another tool
+
+The rollout's code is in the `@intentius/chant-lexicon-terraform/pin` subpath. It bundles without the TypeScript compiler, so terragucci's `tf-rollout` stage can run it from one file. The caller passes the HCL parser (`loadHcl2json()`), and a forge client when it is not `gh`.

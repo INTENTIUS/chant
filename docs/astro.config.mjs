@@ -130,12 +130,14 @@ export default defineConfig({
 								{ label: 'Reconciling Lifecycle', slug: 'guide/reconciling-lifecycle' },
 								{ label: 'Converging Lifecycle', slug: 'guide/converging-lifecycle' },
 								{ label: 'Operator', slug: 'guide/operator' },
+								{ label: 'Pinned Module Rollout', slug: 'guide/pinned-module-rollout' },
 							],
 						},
 						{
 							label: 'Components',
 							items: [
 								{ label: 'Wiring Components', slug: 'components/wiring-howto' },
+								{ label: 'Generated CI for Pull Requests', slug: 'guide/pull-request-ci' },
 							],
 						},
 						{
@@ -216,7 +218,7 @@ export default defineConfig({
 						{ label: 'Workspace Writer Conformance', slug: 'reference/workspace-writer-conformance' },
 						{ label: 'Decision Record Kind', slug: 'reference/decision-kind' },
 						{ label: 'Decision Review Views', slug: 'reference/decision-review-views' },
-						{ label: 'chant and hud Boundary', slug: 'reference/boundary' },
+						{ label: 'Owners of the Workspace Boundary', slug: 'reference/boundary' },
 						{
 							label: 'CLI',
 							items: [

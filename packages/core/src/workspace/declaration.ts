@@ -295,6 +295,12 @@ export interface BoxDeclaration {
   factory: BoxFactory | null;
   /** What the box shows of itself on a home site (#3146), or null when the block declares no listing. */
   listing: BoxListing | null;
+  /**
+   * The command that publishes the box's work (#3165, ws-088), as declared,
+   * or null when the block names none. `chant workspace box publish` runs it
+   * (`box-publish.ts`).
+   */
+  publisher: string | null;
   /** Where the box's work in progress is replicated (#3172, ws-085), or null when the block declares no policy. */
   replicate: BoxReplicate | null;
   /** The block's JSON Pointer in the file, for messages. */
@@ -443,6 +449,8 @@ export interface Member {
   generated: GeneratedFile[];
   /** Outputs the entry lists as link targets, or null when it lists none (#2539). */
   outputs: string[] | null;
+  /** The values the entry sets for its kind's fields (#3151), as written, or null when it sets none. Checked against the kind by `resolveMemberFields`. */
+  fields: Record<string, unknown> | null;
   /** The links this member states as a consumer, in file order (#2539). */
   links: LinkDeclaration[];
   /** The record kinds this member declares, in file order (#2680). */
@@ -730,6 +738,7 @@ export function parseDeclaration(text: string, file: string, reader: string = re
       roles,
       generated,
       outputs: e.outputs === undefined ? null : [...(e.outputs as string[])],
+      fields: e.fields === undefined ? null : structuredClone(e.fields as Record<string, unknown>),
       links,
       records,
       diagrams,
@@ -1023,6 +1032,7 @@ function boxOf(raw: unknown, pointer: string): BoxDeclaration | null {
       publish?: { forge?: "github"; repo: string; base?: string; branchPrefix?: string; head?: string };
     };
     listing?: { published?: boolean; title?: string; line?: string; cover?: string };
+    publisher?: string;
     replicate?: { remote?: string; refs?: ReplicateRefClass[]; on?: ReplicateTrigger[]; every?: string };
   };
   const f = b.factory;
@@ -1068,6 +1078,7 @@ function boxOf(raw: unknown, pointer: string): BoxDeclaration | null {
             pointer: `${pointer}/factory`,
           },
     listing: l === undefined ? null : { published: l.published ?? true, title: l.title ?? "", line: l.line ?? "", cover: l.cover ?? null },
+    publisher: b.publisher ?? null,
     replicate:
       r === undefined
         ? null

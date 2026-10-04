@@ -126,11 +126,24 @@
     },
     "member": {
       "type": "object",
-      "required": ["name", "dir", "kind", "environments", "compare", "readable", "gateLedger", "gates", "box", "stewards", "stewardReasons"],
+      "required": ["name", "dir", "kind", "fields", "environments", "compare", "readable", "gateLedger", "gates", "box", "stewards", "stewardReasons"],
       "properties": {
         "name": { "type": "string" },
         "dir": { "type": "string", "description": "Relative to the workspace root, with / separators; \".\" is the root member." },
         "kind": { "type": "string" },
+        "fields": {
+          "description": "The fields the member's kind declares (#3151), each set from the entry or its default, null when it has neither. Null when the kind declares no fields or no pinned package supplies it. A value of the wrong type reads as the default, and chant workspace check reports it (WSP005). Added in contract 1 by chant 0.103.0.",
+          "type": ["object", "null"],
+          "additionalProperties": {
+            "oneOf": [
+              { "type": "string" },
+              { "type": "integer" },
+              { "type": "boolean" },
+              { "type": "null" },
+              { "type": "object", "additionalProperties": { "oneOf": [{ "type": "string" }, { "type": "integer" }, { "type": "boolean" }, { "type": "null" }] } }
+            ]
+          }
+        },
         "environments": {
           "description": "env first, then compareTo when it is given and differs from env.",
           "type": "array",
@@ -536,6 +549,10 @@
           "description": "Added in contract 1 by #3146. What the box shows of itself on a home site, or null when the block declares no listing.",
           "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/listing" }]
         },
+        "publisher": {
+          "description": "Added in contract 1 by #3165. The command that publishes the box's work, as the box block declares it (ws-088), or null when it names none. A surface offers a publish only when it is set, and asks for one with chant workspace box publish rather than running it.",
+          "type": ["string", "null"]
+        },
         "replicate": {
           "description": "Added in contract 1 by #3172. Where the box's work in progress is replicated (ws-085), with every default filled in, or null when the block declares no policy. At most one member's box has one; the top-level replication says how far each ref is from the remote.",
           "oneOf": [
@@ -760,10 +777,11 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["principal", "channel", "at"],
+            "required": ["principal", "channel", "relayedBy", "at"],
             "properties": {
               "principal": { "type": "string", "description": "Who recorded it." },
               "channel": { "type": ["string", "null"], "description": "The channel it was recorded on, such as cli or mcp, or null for a record older than chant#2384." },
+              "relayedBy": { "type": ["string", "null"], "description": "Added in contract 1 by #3402. Who carried the approval to chant for principal (chant approve --relayed-by), such as a follower relaying a person's approval; a seal covers it. Null when nobody relayed it." },
               "at": { "type": "string" }
             }
           }

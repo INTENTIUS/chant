@@ -161,6 +161,29 @@ describe.skipIf(!hasSshKeygen)("identity.gates", () => {
     expect(unknown.refuses(signed(alice, approval("github:alice")))).toMatch(/no pinned package supplies/);
   });
 
+  test("a relayed approval: the seal covers relayedBy, and status lists it (#3402)", () => {
+    const { alice } = keys();
+    const policy = policyWith([{ principal: "github:alice", key: alice.pub }]);
+    const rule = gateAdmissionFrom({ declaration: decl({ gates: { ship: {} } }), policy, classes: coreClassRegistry() }, "ship")!;
+    const relayed = signed(alice, approval("github:alice", { relayedBy: "github:hud-follower" }));
+    expect(rule.refuses(relayed)).toBeNull();
+    // The relay can't be changed, dropped or added after sealing.
+    expect(rule.refuses({ ...relayed, relayedBy: "github:mallory" })).toMatch(/does not verify/);
+    const { relayedBy: _dropped, ...unrelayed } = relayed;
+    expect(rule.refuses(unrelayed)).toMatch(/does not verify/);
+    expect(rule.refuses({ ...signed(alice, approval("github:alice")), relayedBy: "github:hud-follower" })).toMatch(/does not verify/);
+    // A seal made before #3402, with no relay, still verifies.
+    expect(rule.refuses(signed(alice, approval("github:alice")))).toBeNull();
+
+    const pending: PendingGateRecord = { version: 1, kind: "pending", op: "web", gate: "ship", environment: "prod", planDigest: "sha256:" + "a".repeat(64), timestamp: "2026-10-03T11:00:00.000Z", expiresAt: "2026-10-10T11:00:00.000Z" };
+    const ledger = [pending, relayed, approval("bob")].map((l) => JSON.stringify(l)).join("\n");
+    const gate = gatesInLedger("web", ledger, ["prod"], "2026-10-03T13:00:00.000Z").gates[0];
+    expect(gate.approvals).toEqual([
+      { principal: "github:alice", channel: null, relayedBy: "github:hud-follower", at: "2026-10-03T12:00:00.000Z" },
+      { principal: "bob", channel: null, relayedBy: null, at: "2026-10-03T12:00:00.000Z" },
+    ]);
+  });
+
   test("a run and workspace status leave out approvals the rule refuses", async () => {
     const { alice } = keys();
     const policy = policyWith([{ principal: "github:alice", key: alice.pub }]);

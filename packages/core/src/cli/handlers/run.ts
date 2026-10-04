@@ -454,6 +454,7 @@ export async function runOpApprove(ctx: CommandContext): Promise<number> {
     url: ctx.args.url,
     plan: ctx.args.plan,
     ...(ctx.args.sign !== undefined ? { sign: ctx.args.sign } : {}),
+    ...(ctx.args.relayedBy !== undefined ? { relayedBy: ctx.args.relayedBy } : {}),
   });
   if (!outcome.ok) return 1;
 

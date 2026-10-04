@@ -6,7 +6,7 @@ description: "Every lint rule and post-synth check provided by the Terraform lex
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-terraform` — DO NOT EDIT.
     Edit lexicons/terraform/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-The Terraform lexicon provides **37** rules: 1 lint rule and 36 post-synth checks.
+The Terraform lexicon provides **40** rules: 1 lint rule and 39 post-synth checks.
 
 ## Lint Rules
 
@@ -56,3 +56,6 @@ Post-synth checks validate the serialized output after the build pipeline comple
 | `TF035` | SQS queue turns server-side encryption off |
 | `TF036` | EBS volume does not ask for encryption |
 | `TF037` | ECR repository allows mutable image tags |
+| `TF038` | OCI module source has no tag or digest, or a mutable tag |
+| `TF039` | Registry module version is a range, not an exact version |
+| `TF040` | Root has no committed .terraform.lock.hcl |

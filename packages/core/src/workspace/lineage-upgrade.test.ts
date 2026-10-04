@@ -194,6 +194,69 @@ describe("chant workspace upgrade", () => {
     expect(git(proj, ["status", "--porcelain"])).toBe("");
   });
 
+  describe("a CI workflow a chant member builds is rebuilt with this chant (#3244)", () => {
+    const WS = JSON.stringify({ name: "proj", schema: 1, members: [{ name: "delivery", dir: "delivery", kind: "chant" }] }, null, 2) + "\n";
+    const PKG = JSON.stringify({ name: "delivery", scripts: { "ci:build": "chant build ci --lexicon github -o ../.github/workflows/ci.yml", "ci:check": "npm run ci:build && git diff --exit-code ../.github/workflows/ci.yml", "agents": "chant build agents --lexicon fountain -o ../.studio/agents.yaml" } }, null, 2) + "\n";
+    const OLD = "steps:\n  - uses: actions/checkout@v4\n";
+    const NEW = "steps:\n  - uses: actions/checkout@v7\n";
+    /** A chant whose github lexicon now emits @v7: `build` writes NEW where -o points. */
+    const builds = (calls: Array<{ command: string; cwd: string; args?: readonly string[] }>, output = NEW): ChantRunner => async (command, cwd, args) => {
+      calls.push({ command, cwd, args });
+      const o = args?.indexOf("-o") ?? -1;
+      if (o >= 0) put(cwd, args![o + 1], output);
+      return { exitCode: 0, output: "" };
+    };
+
+    beforeEach(() => {
+      release("v2.0.0", { "chant.workspace.json": WS, "delivery/chant.config.ts": "export default {};\n", "delivery/package.json": PKG, ".github/workflows/ci.yml": OLD });
+    });
+
+    test("an upgrade to the same version puts the rebuilt workflow in the patch, and only the CI workflow", async () => {
+      // A box planted at v2.0.0 with the chant of then.
+      const port = ledger();
+      const staged0 = await upgradeCommand({ root: proj, to: "v2.0.0", runChant: passing, ledger: port, now: "2026-10-03T00:00:00.000Z" });
+      port.approve(staged0.staged!.digest, "2026-10-03T00:01:00.000Z");
+      expect((await upgradeCommand({ root: proj, to: "v2.0.0", runChant: passing, ledger: port, now: "2026-10-03T00:02:00.000Z" })).outcome).toBe("applied");
+      commitProject("at v2");
+      expect(read(proj, ".github/workflows/ci.yml")).toBe(OLD);
+
+      // chant is upgraded; the template is not. The workflow ci.ts builds now differs.
+      const calls: Array<{ command: string; cwd: string; args?: readonly string[] }> = [];
+      const staged = await stageUpgrade({ root: proj, to: "v2.0.0", runChant: builds(calls) });
+      try {
+        expect(staged.workflows).toEqual([{ member: "delivery", script: "ci:build", path: ".github/workflows/ci.yml", command: "chant build ci --lexicon github -o ../.github/workflows/ci.yml", status: "rebuilt" }]);
+        expect(calls[0]).toEqual({ command: "build", cwd: join(staged.worktreeProject, "delivery"), args: ["ci", "--lexicon", "github", "-o", "../.github/workflows/ci.yml"] });
+        // The agents script writes no CI workflow, so it is not run.
+        expect(calls.some((c) => c.args?.includes("agents"))).toBe(false);
+        expect(staged.changed).toBe(true);
+        expect(staged.changedPaths).toEqual([".github/workflows/ci.yml"]);
+        expect(staged.governance?.paths).toEqual([".github/workflows/ci.yml"]);
+        expect(read(proj, ".github/workflows/ci.yml")).toBe(OLD);
+      } finally {
+        staged.dispose();
+      }
+
+      // Once it is committed as built, the next upgrade finds nothing to do.
+      put(proj, ".github/workflows/ci.yml", NEW);
+      commitProject("ci:build");
+      const again = await stageUpgrade({ root: proj, to: "v2.0.0", runChant: builds([]) });
+      try {
+        expect(again.workflows.map((w) => w.status)).toEqual(["unchanged"]);
+        expect(again.changed).toBe(false);
+      } finally {
+        again.dispose();
+      }
+    });
+
+    test("a workflow that does not build fails the build check and stays as it was", async () => {
+      const failing: ChantRunner = async (_command, _cwd, args) => (args?.length ? { exitCode: 1, output: "cannot find @intentius/chant-lexicon-github\n" } : { exitCode: 0, output: "" });
+      const result = await upgradeCommand({ root: proj, to: "v2.0.0", runChant: failing });
+      expect(result.outcome).toBe("checks-failed");
+      expect(result.staged!.workflows.map((w) => w.status)).toEqual(["failed"]);
+      expect(result.staged!.checks).toEqual(expect.arrayContaining([expect.objectContaining({ name: "build", status: "failed", member: "delivery", detail: expect.stringMatching(/\.github\/workflows\/ci\.yml could not be rebuilt[\s\S]*cannot find/) })]));
+    });
+  });
+
   test("gates on the patch digest, then applies exactly the approved patch", async () => {
     release("v2.0.0", { "README.md": "starter v2\n" });
     const port = ledger();

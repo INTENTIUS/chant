@@ -474,3 +474,140 @@ describe("proof: one approval covers the set, and the printed digest is what app
     expect(ran).toEqual([]);
   });
 });
+
+describe("gated waves (#3049): one gate per wave, bound to the wave's set digest", () => {
+  /** What each root's plan would write. Change one to change a root. */
+  let versions: Record<string, string> = {};
+
+  beforeEach(() => {
+    versions = {};
+    buildCapabilityRegistryMock.mockImplementation(() => {
+      const registry = new CapabilityRegistry();
+      registry.register({
+        kind: "cfn-deploy",
+        async plan(_ctx: unknown, input: { stack: string }) {
+          const v = versions[input.stack] ?? "v1";
+          return { member: input.stack, planDigest: "jcs1-sha256:" + (v === "v1" ? "1" : "2").repeat(64) };
+        },
+        async run(runCtx: { component: string }) {
+          ran.push(runCtx.component);
+          return { ok: true };
+        },
+      } as never);
+      return Promise.resolve(registry);
+    });
+  });
+
+  test("wave 1 stops at its own gate, and the record names its digest", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "fan-out-waves-"));
+    try {
+      const record = join(dir, "fan-out.json");
+      const exit = await runComponentsFanOut(ctx({ base: "main", env: "test", waveGate: "release", resume: record }));
+      expect(exit).toBe(3);
+      expect(ran).toEqual([]);
+      const pending = gateLedger.appended[0];
+      expect(pending.gate).toBe("release-wave-1");
+      expect(stderr()).toContain(`approve : chant approve fan-out release-wave-1 --plan ${pending.planDigest}`);
+      const saved = JSON.parse(readFileSync(record, "utf8"));
+      expect(saved.waves).toMatchObject([{ wave: 1, gate: "release-wave-1", status: "gated", digest: pending.planDigest }]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("approve wave 1, change a root, re-run: it stops naming both digests and applies nothing", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "fan-out-waves-"));
+    try {
+      const record = join(dir, "fan-out.json");
+      const run = () => runComponentsFanOut(ctx({ base: "main", env: "test", waveGate: "release", resume: record }));
+      await run();
+      const approved = gateLedger.appended[0].planDigest!;
+      gateLedger = memoryGateLedgerPort({
+        pending: [gateLedger.appended[0]],
+        resolutions: [
+          {
+            version: 1,
+            kind: "resolution",
+            op: "fan-out",
+            gate: "release-wave-1",
+            resolvedBy: "operator",
+            timestamp: new Date(Date.parse(gateLedger.appended[0].timestamp) + 1000).toISOString(),
+            planDigest: approved,
+          },
+        ],
+      });
+
+      versions["net-stack"] = "v2";
+      stderrLines = [];
+      expect(await run()).toBe(3);
+      expect(ran).toEqual([]);
+      const planned = gateLedger.appended[0].planDigest!;
+      expect(planned).not.toBe(approved);
+      expect(stderr()).toContain(`approved: ${approved}; planned now: ${planned}`);
+      expect(stderr()).toContain("nothing in it was applied");
+      const saved = JSON.parse(readFileSync(record, "utf8"));
+      expect(saved.waves[0]).toMatchObject({ status: "gated", approved, digest: planned });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("an approved wave applies, the run stops at the next wave, and the record carries both", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "fan-out-waves-"));
+    try {
+      const record = join(dir, "fan-out.json");
+      const run = () => runComponentsFanOut(ctx({ base: "main", env: "test", waveGate: "release", resume: record }));
+      await run();
+      const first = gateLedger.appended[0];
+      gateLedger = memoryGateLedgerPort({
+        pending: [first],
+        resolutions: [
+          {
+            version: 1,
+            kind: "resolution",
+            op: "fan-out",
+            gate: "release-wave-1",
+            resolvedBy: "operator",
+            timestamp: new Date(Date.parse(first.timestamp) + 1000).toISOString(),
+            planDigest: first.planDigest,
+          },
+        ],
+      });
+      expect(await run()).toBe(3);
+      expect(ran).toEqual(["net"]);
+      const saved = JSON.parse(readFileSync(record, "utf8"));
+      expect(saved.completed).toEqual(["net"]);
+      expect(saved.waves.map((w: { wave: number; status: string }) => [w.wave, w.status])).toEqual([
+        [1, "applied"],
+        [2, "gated"],
+      ]);
+
+      // The same command again: wave 1 is not applied a second time.
+      ran = [];
+      expect(await run()).toBe(3);
+      expect(ran).toEqual([]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("--canary puts a component in wave 1, and the dry run names each wave's gate", async () => {
+    const exit = await runComponentsFanOut(ctx({ base: "main", dryRun: true, waveGate: "release", canary: ["cluster-b"] }));
+    expect(exit).toBe(0);
+    expect(stderr()).toContain("wave 1: cluster-b  (gate release-wave-1)");
+    expect(stderr()).toContain("wave 2: app-three, net  (gate release-wave-2)");
+  });
+
+  test("--wave 2 refuses while wave 1 has not applied", async () => {
+    const exit = await runComponentsFanOut(ctx({ base: "main", env: "test", waveGate: "release", wave: 2 }));
+    expect(exit).toBe(1);
+    expect(stderr()).toContain("wave 2 cannot run yet: wave 1 has not applied (net)");
+  });
+
+  test("--gate and --wave-gate together are refused, and --wave needs --wave-gate", async () => {
+    expect(await runComponentsFanOut(ctx({ base: "main", gate: "release", waveGate: "release" }))).toBe(1);
+    expect(stderr()).toContain("--gate and --wave-gate both name a gate");
+    expect(await runComponentsFanOut(ctx({ base: "main", wave: 1 }))).toBe(1);
+    expect(stderr()).toContain("--wave runs one wave");
+  });
+});
