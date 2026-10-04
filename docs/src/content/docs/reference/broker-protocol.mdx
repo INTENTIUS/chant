@@ -69,6 +69,16 @@ The broker says it in two places. One is `payer` on the answer to `POST /api/box
 
 A surface on the box uses it to bound what is spent on someone else's credential. hud lifts its guest prompt limit while the payer is `visitor` ([hud#416](https://github.com/arugula-salad/hud/issues/416)). `payerOf(body)`, `parsePayerHeader(value)` and `formatPayerHeader(payer)` in `@intentius/chant/workspace/broker-protocol` read and write it.
 
+### Whose turn
+
+A box is shared. Its owner, a visitor and the people they invite all prompt one agent, so a broker that keeps a visitor's own credential needs to know which requests are that visitor's turns ([#3477](https://github.com/INTENTIUS/chant/issues/3477), [ws-099](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-099-a-broker-grant-names-whose-turn.md)). The box cannot vouch for that, since its agent's code could vouch too. The broker can.
+
+The broker issues a grant to a person for one box, through whatever surface signs that person in at the broker. The person's browser carries it to the box's surface, such as hud, which sends it on that person's turns only, as the `chant-grant` request header on `/llm/anthropic` and `/decide`. The grant is opaque to chant and to the box. It is printable ASCII with no spaces, at most 2048 characters (`isGrantValue`).
+
+Checking a grant is the broker's job, against its own records. It must have issued the grant for the box whose token the request carries, and the grant must not have expired or been revoked. The person must still hold a credential there. If all of that holds, that credential pays for the request and the answer says `chant-payer: visitor <principal>`. A grant that fails the check is ignored, not refused: the request is paid as it would have been without one, and the payer header says so. Where no grants are issued, the header is ignored.
+
+A grant reaches the agent's process for the length of the person's turn, and code the agent runs on that turn can read it. It is bounded by its box, its expiry and the broker's revocation, not by the turn. A broker keeps grants short.
+
 ### Refusals
 
 A refusal is JSON with an `error`, either the message or an object holding `message` and optionally `type`:
