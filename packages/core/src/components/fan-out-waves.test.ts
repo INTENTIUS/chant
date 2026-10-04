@@ -373,3 +373,53 @@ describe("both modes", () => {
     expect(result.waves?.[0]?.members[0]?.planDigest).toMatch(/^jcs1-sha256:/);
   });
 });
+
+describe("carried state (#3459): what a step keeps for its member reaches the next attempt", () => {
+  function carryingRegistry(seen: Array<unknown>, failing: Set<string>) {
+    const registry = new CapabilityRegistry();
+    registry.register({
+      kind: "fake-root",
+      async plan(_ctx: DeployContext, input: RootInput) {
+        return { member: input.root, planDigest: `d-${input.root}`, artifact: {} };
+      },
+      async run(ctx: DeployContext, input: RootInput) {
+        seen.push(ctx.carried?.[input.root]);
+        ctx.carry?.(input.root, { attempt: (ctx.carried?.[input.root] as { attempt?: number } | undefined)?.attempt ?? 0 });
+        if (failing.has(input.root)) throw new Error(`${input.root} failed`);
+        return { outputs: {} };
+      },
+    } as never);
+    return registry;
+  }
+
+  /** Wave 1 over `net` alone, approved for the digest it plans to. */
+  async function approvedNet() {
+    const components = [root("net")];
+    const plan = planFanOut({ components, changed: ["net"] });
+    const first = await runFanOut(plan, components, carryingRegistry([], new Set()), waveOptions(ledger()));
+    expect(first.status).toBe("gated");
+    const gates = () => ledger([first.gate!], [{ planDigest: first.gate!.planDigest! }]);
+    return { components, plan, gates };
+  }
+
+  test("a failed root's carried value is kept, and handed back on the next attempt", async () => {
+    const { components, plan, gates } = await approvedNet();
+    const seen: unknown[] = [];
+    const kept: Record<string, unknown> = {};
+
+    const failed = await runFanOut(plan, components, carryingRegistry(seen, new Set(["net"])), waveOptions(gates(), { onCarry: (m, v) => (kept[m] = v) }));
+    expect(failed.status).toBe("fail");
+    expect(seen).toEqual([undefined]);
+    expect(kept).toEqual({ net: { attempt: 0 } });
+
+    const retried = await runFanOut(plan, components, carryingRegistry(seen, new Set()), waveOptions(gates(), { carried: { net: { attempt: 1 } } }));
+    expect(retried.status).toBe("ok");
+    expect(seen).toEqual([undefined, { attempt: 1 }]);
+  });
+
+  test("without onCarry a step gets no carry, and runs as before", async () => {
+    const { components, plan, gates } = await approvedNet();
+    const result = await runFanOut(plan, components, carryingRegistry([], new Set()), waveOptions(gates()));
+    expect(result.status).toBe("ok");
+  });
+});

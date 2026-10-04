@@ -25,12 +25,42 @@
  * Run without a wave plan (`chant run --components`, or a fan-out with no
  * wave gate), `run` plans and applies in one go, which is what `terraform
  * apply` with no plan file does too.
+ *
+ * ## choudoufu roots in a gated wave (#3459)
+ *
+ * A live choudoufu root that `live-plan-set` can plan as chant would (no
+ * `vars`, no var files, no backend config; see `choudoufuWaveRoot`) goes
+ * through choudoufu's own set commands (choudoufu#1754), which need
+ * choudoufu v0.22.0 (`MIN_CHOUDOUFU_WAVES_VERSION`):
+ *
+ * - `plan` runs `live-plan-set -json` over the root as a one-root set. The
+ *   wave gate still binds chant's `terraformPlanDigest` of the plan the
+ *   document embeds, the same string a single-root gate binds. choudoufu's
+ *   set digest is kept for the apply, and its root digest is the change-set
+ *   part's `nativeDigest`.
+ * - `run` hands that document and choudoufu's set digest to
+ *   `live-wave-apply`, which plans the root again and applies nothing when
+ *   the plan moved (exit 3).
+ * - choudoufu's resume file is kept in the fan-out's attempt record
+ *   (`DeployContext.carry`) after every apply, landed or not, and written
+ *   back on the next attempt when it was written for the same set digest.
+ *
+ * chant's waves stay the order. Each root is its own one-root set, so
+ * choudoufu's wave over it is always wave 1.
  */
 
 import type { Capability, DeployContext, CapabilityPlan } from "@intentius/chant/components/capability";
 import type { ChangeSetPart } from "@intentius/chant/change-set";
 import { ownPackageVersion, type CapabilityPlugin } from "@intentius/chant/components/capability-plugin";
-import { terraformApply, terraformInit, terraformOutputs, terraformPlan } from "../op/activities/terraform";
+import {
+  choudoufuPlanSet,
+  choudoufuWaveApply,
+  choudoufuWaveRoot,
+  terraformApply,
+  terraformInit,
+  terraformOutputs,
+  terraformPlan,
+} from "../op/activities/terraform";
 
 /** The `terraform-apply` step's input. */
 export interface TerraformApplyStepInput {
@@ -82,12 +112,57 @@ function isPlannedRoot(value: unknown): value is PlannedRoot {
   return typeof v?.planFile === "string" && typeof v.planDigest === "string";
 }
 
+/** What `plan` hands `run` for a choudoufu root planned as a one-root set (#3459). */
+interface ChoudoufuWavePlannedRoot {
+  planDigest: string;
+  choudoufu: { planSetFile: string; setDigest: string };
+}
+
+function isChoudoufuWavePlan(value: unknown): value is ChoudoufuWavePlannedRoot {
+  const v = value as Partial<ChoudoufuWavePlannedRoot> | undefined;
+  return (
+    typeof v?.planDigest === "string" &&
+    typeof v.choudoufu?.planSetFile === "string" &&
+    typeof v.choudoufu.setDigest === "string"
+  );
+}
+
+/** Apply a choudoufu root through `live-wave-apply`, carrying its resume file either way. */
+async function runChoudoufuWave(
+  ctx: DeployContext,
+  input: TerraformApplyStepInput,
+  planned: ChoudoufuWavePlannedRoot,
+): Promise<TerraformApplyStepOutput> {
+  const applied = await choudoufuWaveApply({
+    ...rootArgs(input),
+    planSetFile: planned.choudoufu.planSetFile,
+    setDigest: planned.choudoufu.setDigest,
+    ...(ctx.carried?.[input.root] !== undefined ? { carried: ctx.carried[input.root] } : {}),
+  });
+  if (applied.carry) ctx.carry?.(input.root, applied.carry);
+  if (!applied.landed) {
+    throw new Error(`terraform-apply: root "${input.root}": ${applied.message}`);
+  }
+  const outputs = await terraformOutputs(rootArgs(input));
+  return { root: input.root, planDigest: planned.planDigest, fromWavePlan: true, outputs };
+}
+
 export const terraformApplyCapability: Capability<TerraformApplyStepInput, TerraformApplyStepOutput> = {
   kind: "terraform-apply",
   // A root's apply has no undo short of applying the previous configuration,
   // which is a change of its own. COMP003 asks the component to say so.
   rollbackPolicy: "needs-opt-out",
   async plan(_ctx: DeployContext, input: TerraformApplyStepInput): Promise<CapabilityPlan> {
+    requireRoot(input);
+    const wave = await choudoufuWaveRoot({ ...rootArgs(input), ...(input.vars ? { vars: input.vars } : {}) });
+    if (wave.wave) {
+      const set = await choudoufuPlanSet(rootArgs(input));
+      const artifact: ChoudoufuWavePlannedRoot = {
+        planDigest: set.planDigest,
+        choudoufu: { planSetFile: set.planSetFile, setDigest: set.setDigest },
+      };
+      return { member: input.root, planDigest: set.planDigest, artifact, changeSet: set.changeSet };
+    }
     const { changeSet, ...planned } = await planRoot(input);
     return { member: input.root, planDigest: planned.planDigest, artifact: planned, ...(changeSet ? { changeSet } : {}) };
   },
@@ -100,6 +175,7 @@ export const terraformApplyCapability: Capability<TerraformApplyStepInput, Terra
   },
   async run(ctx: DeployContext, input: TerraformApplyStepInput): Promise<TerraformApplyStepOutput> {
     const fromWave = ctx.plans?.[input.root];
+    if (isChoudoufuWavePlan(fromWave)) return runChoudoufuWave(ctx, input, fromWave);
     const planned: PlannedRoot = isPlannedRoot(fromWave) ? fromWave : await planRoot(input);
     const applied = await terraformApply({ ...rootArgs(input), planFile: planned.planFile });
     if (!applied.applied) {

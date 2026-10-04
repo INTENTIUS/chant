@@ -46,6 +46,21 @@ export interface DeployContext {
    * approved, instead of planning again.
    */
   plans?: Record<string, unknown>;
+  /**
+   * What a step kept for a member in an earlier attempt at this same fan-out
+   * (#3459), keyed by member: the value it last passed to {@link carry}. A
+   * choudoufu root keeps choudoufu's wave resume file here, so the next
+   * attempt hands choudoufu the file it wrote. Set by `chant components
+   * fan-out --resume`; absent otherwise.
+   */
+  carried?: Record<string, unknown>;
+  /**
+   * Keep `value` for `member` in the fan-out's attempt record, replacing what
+   * was kept before. The next attempt finds it in {@link carried}. Call it
+   * before throwing, too: a failed root's state is what a retry needs most.
+   * Absent outside a fan-out that writes a record.
+   */
+  carry?: (member: string, value: unknown) => void;
 }
 
 /**

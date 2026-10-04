@@ -21,6 +21,10 @@
  * a wave afresh rather than trusting this, since the point of the gate is the
  * plan now. The entries are for whoever reads the record, the plan report
  * (#3349) among them.
+ *
+ * `carried` holds what a step asked to keep for its member (#3459). It rides
+ * in the record rather than beside it because the record is the one file a
+ * per-wave CI job hands to the next.
  */
 
 import { dirname } from "node:path";
@@ -34,6 +38,12 @@ export interface FanOutAttempt {
   outputs: Record<string, Record<string, unknown>>;
   /** Gated-wave fan-outs only (#3049). */
   waves?: WaveRecord[];
+  /**
+   * What steps kept per member through `DeployContext.carry` (#3459), handed
+   * back as `DeployContext.carried` on the next attempt. For a choudoufu
+   * root, choudoufu's wave resume file.
+   */
+  carried?: Record<string, unknown>;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -54,6 +64,7 @@ export function readFanOutAttempt(path: string): FanOutAttempt | undefined {
     failed: Array.isArray(parsed.failed) ? parsed.failed.filter((n): n is string => typeof n === "string") : [],
     outputs,
     ...(waves.length > 0 ? { waves } : {}),
+    ...(isRecord(parsed.carried) && Object.keys(parsed.carried).length > 0 ? { carried: parsed.carried } : {}),
   };
 }
 

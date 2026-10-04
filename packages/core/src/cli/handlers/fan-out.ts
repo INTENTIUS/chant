@@ -254,6 +254,7 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
   let priorCompleted: string[] = [];
   let priorOutputs: Record<string, Record<string, unknown>> = {};
   let priorWaves: WaveRecord[] = [];
+  let priorCarried: Record<string, unknown> = {};
   let progress: FanOutProgress | undefined;
   if (resumePath) {
     let attempt: FanOutAttempt | undefined;
@@ -280,6 +281,9 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
       );
       progress = { completed: attempt.completed };
       priorWaves = attempt.waves ?? [];
+      // What steps kept per member (#3459), such as a choudoufu root's wave
+      // resume file. Each step decides whether what it kept still applies.
+      priorCarried = attempt.carried ?? {};
     }
   }
 
@@ -316,6 +320,7 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
   const failedSoFar: string[] = [];
   const outputsSoFar = { ...priorOutputs };
   let wavesSoFar = priorWaves;
+  const carriedSoFar: Record<string, unknown> = { ...priorCarried };
   const recordAttempt = (): void => {
     if (!resumePath) return;
     const attempt: FanOutAttempt = {
@@ -324,6 +329,7 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
       failed: [...failedSoFar].sort(),
       outputs: outputsSoFar,
       ...(wavesSoFar.length > 0 ? { waves: wavesSoFar } : {}),
+      ...(Object.keys(carriedSoFar).length > 0 ? { carried: carriedSoFar } : {}),
     };
     writeFanOutAttempt(resumePath, attempt);
   };
@@ -348,6 +354,15 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
           }
         : {}),
       ...(progress ? { progress } : {}),
+      ...(Object.keys(priorCarried).length > 0 ? { carried: priorCarried } : {}),
+      ...(resumePath
+        ? {
+            onCarry: (member: string, value: unknown) => {
+              carriedSoFar[member] = value;
+              recordAttempt();
+            },
+          }
+        : {}),
       ...(args.progressJson ? { onProgress: ndjsonProgressSink() } : {}),
       ...(resumePath
         ? {

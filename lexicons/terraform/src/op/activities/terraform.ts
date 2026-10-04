@@ -40,13 +40,13 @@
  */
 
 import { exec } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { promisify } from "node:util";
-import { resolve, dirname, join } from "node:path";
+import { resolve, dirname, join, relative, sep } from "node:path";
 import { loadChantConfigUpward } from "@intentius/chant/config";
 import { liveReadKey, memoLiveRead } from "@intentius/chant/live-read-session";
 import { terraformPlanDigest } from "../../plan-digest";
-import { plannerForBinary, terraformChangeSetPart } from "../../change-set";
+import { choudoufuSetPlanParts, plannerForBinary, terraformChangeSetPart } from "../../change-set";
 import type { ChangeSetPart } from "@intentius/chant/change-set";
 import type { TerraformConfig, TerraformRootConfig } from "../../config";
 import { detectLiveEstate } from "./live-detect";
@@ -99,6 +99,32 @@ export const DEFAULT_LIVE_PLAN_DOCUMENT_FILE = "chant.live-plan.json";
  * shipped the last of the three.
  */
 export const MIN_CHOUDOUFU_VERSION = "0.15.0";
+
+/**
+ * The choudoufu release a gated wave needs for a choudoufu root (#3459):
+ * the set digest on `live-plan-set -json`, and `live-wave-apply` with its
+ * resume file (choudoufu#1754, merged as choudoufu PR 1816 after v0.21.0).
+ * choudoufu's changelog lists both under `v0.22.0 (Unreleased)`, so this is
+ * the version main releases as.
+ *
+ * Only the wave path checks it, so plain `terraform` and `tofu` roots, and a
+ * choudoufu root run any other way, do not wait on it. A dev build prints no
+ * release version. For one, the check is the capability itself: a set plan
+ * document without a top-level `digest` came from a choudoufu older than
+ * choudoufu#1754, and {@link choudoufuPlanSet} refuses it.
+ */
+export const MIN_CHOUDOUFU_WAVES_VERSION = "0.22.0";
+
+/**
+ * Where a choudoufu root's wave files live, relative to the project root:
+ * `<root>/plan-set.json` (the set plan document chant planned and the
+ * approver approved), `<root>/resume-<digest>.json` (choudoufu's resume
+ * file) and `<root>/out/` (plan files and logs).
+ */
+export const CHOUDOUFU_WAVES_DIR = ".chant/choudoufu-waves";
+
+/** `live-wave-apply`'s exit statuses (choudoufu#1754). */
+export const CHOUDOUFU_WAVE_EXIT = { landed: 0, error: 1, setMoved: 3, rootFailed: 4 } as const;
 
 /**
  * choudoufu's own refusal summary for `-out` on the `live-plan -estate`
@@ -745,6 +771,36 @@ async function ensureChoudoufuVersion(binary: string, signal?: AbortSignal): Pro
 /** Test-only: clear the cached version check so a test can simulate a fresh module load. */
 export function __resetChoudoufuVersionCheckForTests(): void {
   choudoufuVersionCheck = undefined;
+  choudoufuWavesVersionCheck = undefined;
+}
+
+/**
+ * Why `choudoufu version`'s output cannot drive a gated wave, or `undefined`
+ * when it can (#3459). A release older than
+ * {@link MIN_CHOUDOUFU_WAVES_VERSION} is refused. A dev build names no
+ * release and passes here; {@link parseChoudoufuPlanSet} then refuses a set
+ * plan document with no digest, which is what an older dev build prints.
+ */
+export function choudoufuWavesVersionRefusal(versionOutput: string): string | undefined {
+  const version = parseChoudoufuVersion(versionOutput);
+  if (version === undefined || !isOlderVersion(version, MIN_CHOUDOUFU_WAVES_VERSION)) return undefined;
+  return (
+    `choudoufu ${version} is older than v${MIN_CHOUDOUFU_WAVES_VERSION}, the first release with the set digest and ` +
+    "live-wave-apply (choudoufu#1754) that a gated wave uses for a choudoufu root. Upgrade choudoufu, or run the " +
+    "fan-out without --wave-gate."
+  );
+}
+
+/** Cached like {@link choudoufuVersionCheck}, and only ever run on the wave path. */
+let choudoufuWavesVersionCheck: Promise<void> | undefined;
+
+async function ensureChoudoufuWavesVersion(binary: string, signal?: AbortSignal): Promise<void> {
+  choudoufuWavesVersionCheck ??= (async () => {
+    const { stdout } = await execAsync(`${binary} version`, { env: process.env, signal });
+    const refusal = choudoufuWavesVersionRefusal(stdout);
+    if (refusal) throw new Error(refusal);
+  })();
+  return choudoufuWavesVersionCheck;
 }
 
 // ── Root resolution ─────────────────────────────────────────────────────────
@@ -759,6 +815,8 @@ interface ResolvedRoot {
   estate?: string;
   /** `true` exactly when this root is live: `binary` is `"choudoufu"` and `estate` is set. */
   live: boolean;
+  /** The directory the project's `chant.config.*` lives in, which `root.dir` resolves against. */
+  projectRoot: string;
 }
 
 /**
@@ -802,6 +860,7 @@ async function resolveRoot(args: TerraformRootArgs, signal?: AbortSignal): Promi
     dir,
     ...(estate !== undefined ? { estate } : {}),
     live: estate !== undefined || configEstate !== undefined,
+    projectRoot,
   };
 }
 
@@ -1027,6 +1086,352 @@ export async function terraformOutputs(
   const { stdout } = await run(`${binary} output -json`, dir, terraformEnvironment(root), signal);
   const parsed = JSON.parse(stdout || "{}") as Record<string, { value?: unknown }>;
   return Object.fromEntries(Object.entries(parsed).map(([name, entry]) => [name, entry?.value]));
+}
+
+// ── choudoufu gated waves (#3459) ───────────────────────────────────────────
+
+/**
+ * `live-plan-set -json` over one root, from the project root, so the
+ * document names the root by its path from there, which is what
+ * `live-wave-apply` resolves it against.
+ */
+export function choudoufuPlanSetCommand(opts: { binary: string; root: string; outDir: string }): string {
+  return [opts.binary, "live-plan-set", "-json", `-out-dir=${quoteArg(opts.outDir)}`, quoteArg(opts.root)].join(" ");
+}
+
+/**
+ * `live-wave-apply` over a one-root set. The set chant hands choudoufu is
+ * one root, so choudoufu's waves over it are a single wave and `-wave=1` is
+ * always that root's. chant's waves are the order; choudoufu's command is
+ * the apply, with its set check and its resume file.
+ */
+export function choudoufuWaveApplyCommand(opts: {
+  binary: string;
+  planSet: string;
+  digest: string;
+  resume: string;
+  outDir: string;
+}): string {
+  return [
+    opts.binary,
+    "live-wave-apply",
+    `-plan-set=${quoteArg(opts.planSet)}`,
+    `-digest=${quoteArg(opts.digest)}`,
+    "-wave=1",
+    `-resume=${quoteArg(opts.resume)}`,
+    `-out-dir=${quoteArg(opts.outDir)}`,
+    "-json",
+  ].join(" ");
+}
+
+/**
+ * The root's directory as a set plan document names it: its path from the
+ * project root, with forward slashes. `undefined` when the root is the
+ * project root itself or outside it, since choudoufu takes only roots inside
+ * the working directory.
+ */
+export function choudoufuSetRootPath(projectRoot: string, dir: string): string | undefined {
+  const rel = relative(projectRoot, dir);
+  if (rel === "" || rel === ".." || rel.startsWith(`..${sep}`) || resolve(projectRoot, rel) !== resolve(dir)) return undefined;
+  return rel.split(sep).join("/");
+}
+
+/** A root that a gated wave runs through `live-plan-set` and `live-wave-apply`. */
+export interface ChoudoufuWaveRootArgs extends TerraformRootArgs {
+  /** The step's `-var` values. A root given any is not a wave root: see {@link choudoufuWaveRoot}. */
+  vars?: Record<string, unknown>;
+}
+
+/**
+ * Whether a gated wave runs this root through choudoufu's own set commands
+ * (#3459), and if not, why not. It does for a live choudoufu root that
+ * `live-plan-set` can plan as chant would: those commands run plain `init`
+ * and `plan` in each root, with no `-var-file`, no `-var` and no
+ * `-backend-config`, so a root that needs any of them goes the `plan -out`
+ * and `apply PLANFILE` way instead, where choudoufu's per-root refusal
+ * (choudoufu #878) still stands in front of the apply.
+ */
+export async function choudoufuWaveRoot(
+  args: ChoudoufuWaveRootArgs,
+  signal?: AbortSignal,
+): Promise<{ wave: true; root: string } | { wave: false; reason: string }> {
+  const resolved = await resolveRoot(args, signal);
+  if (resolved.binary !== "choudoufu") return { wave: false, reason: `the root runs ${resolved.binary}` };
+  if (!resolved.live) return { wave: false, reason: "the root declares no live estate" };
+  if (args.vars && Object.values(args.vars).some((v) => v !== undefined)) {
+    return { wave: false, reason: "the step passes -var values, which live-plan-set does not take" };
+  }
+  if (resolved.root.varFiles && resolved.root.varFiles.length > 0) {
+    return { wave: false, reason: "the root has var files, which live-plan-set does not take" };
+  }
+  if (resolved.root.backendConfig && Object.keys(resolved.root.backendConfig).length > 0) {
+    return { wave: false, reason: "the root has backend config, which live-plan-set does not take" };
+  }
+  const root = choudoufuSetRootPath(resolved.projectRoot, resolved.dir);
+  if (root === undefined) return { wave: false, reason: "the root's directory is not inside the project" };
+  return { wave: true, root };
+}
+
+/** What {@link parseChoudoufuPlanSet} read out of a one-root set plan document. */
+export interface ChoudoufuPlanSet {
+  /** choudoufu's set digest: what `live-wave-apply -digest` takes. */
+  setDigest: string;
+  /** choudoufu's digest of the one root. */
+  rootDigest: string;
+  /** chant's {@link terraformPlanDigest} over the root's embedded plan: what the wave gate binds. */
+  planDigest: string;
+  changed: boolean;
+  /** The root's `show -json` plan, as the document embeds it. */
+  json: unknown;
+  /** The member's change-set part, with choudoufu's root digest as `nativeDigest`. */
+  changeSet: ChangeSetPart;
+}
+
+const isObjectValue = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/**
+ * Read `live-plan-set -json`'s document for one root (#3459). Refuses a
+ * document with no set digest: that choudoufu predates choudoufu#1754, and
+ * this is how a dev build, which names no release, is held to
+ * {@link MIN_CHOUDOUFU_WAVES_VERSION}. Refuses a root that did not plan,
+ * with choudoufu's own error.
+ */
+export function parseChoudoufuPlanSet(stdout: string, opts: { member: string; root: string }): ChoudoufuPlanSet {
+  let doc: unknown;
+  try {
+    doc = JSON.parse(stdout);
+  } catch {
+    throw new Error(`choudoufu live-plan-set printed no JSON document for root "${opts.member}"`);
+  }
+  if (!isObjectValue(doc) || !Array.isArray(doc.roots)) {
+    throw new Error(`choudoufu live-plan-set printed no set plan document for root "${opts.member}"`);
+  }
+  if (typeof doc.digest !== "string" || doc.digest === "") {
+    throw new Error(
+      `choudoufu's set plan document for root "${opts.member}" carries no set digest, so this choudoufu predates ` +
+        `choudoufu#1754. A gated wave over a choudoufu root needs v${MIN_CHOUDOUFU_WAVES_VERSION} or later.`,
+    );
+  }
+  const roots = doc.roots.filter(isObjectValue);
+  const entry = roots.find((r) => r.root === opts.root);
+  if (roots.length !== 1 || !entry) {
+    throw new Error(
+      `choudoufu's set plan document for root "${opts.member}" names ${roots.map((r) => String(r.root)).join(", ") || "no root"}, ` +
+        `not only "${opts.root}"`,
+    );
+  }
+  if (entry.status !== "planned" || !isObjectValue(entry.plan)) {
+    const stage = typeof entry.stage === "string" && entry.stage ? ` at ${entry.stage}` : "";
+    const error = typeof entry.error === "string" && entry.error ? `: ${entry.error}` : "";
+    throw new Error(`choudoufu could not plan root "${opts.member}"${stage}${error}`);
+  }
+  if (typeof entry.digest !== "string" || entry.digest === "") {
+    throw new Error(`choudoufu's set plan document gives root "${opts.member}" no digest`);
+  }
+  const [changeSet] = choudoufuSetPlanParts({ document: doc, memberFor: () => opts.member });
+  return {
+    setDigest: doc.digest,
+    rootDigest: entry.digest,
+    planDigest: terraformPlanDigest(entry.plan),
+    changed: entry.changes === true,
+    json: entry.plan,
+    changeSet: changeSet!,
+  };
+}
+
+/** The directory a root's wave files go in, absolute. */
+function choudoufuWavesDir(projectRoot: string, root: string): string {
+  return join(projectRoot, CHOUDOUFU_WAVES_DIR, root.replace(/[^A-Za-z0-9._-]/g, "_"));
+}
+
+/** A path under the project root as choudoufu, run from there, should be given it. */
+function fromProject(projectRoot: string, path: string): string {
+  return relative(projectRoot, path).split(sep).join("/");
+}
+
+/** What {@link choudoufuPlanSet} planned. */
+export interface ChoudoufuPlanSetResult extends ChoudoufuPlanSet {
+  /** The set plan document, written as choudoufu printed it. `live-wave-apply -plan-set` reads this file. */
+  planSetFile: string;
+  /** The root's path as the document names it. */
+  root: string;
+}
+
+/**
+ * Plan one live choudoufu root as a one-root set: `live-plan-set -json` from
+ * the project root (#3459). The document goes to
+ * `<CHOUDOUFU_WAVES_DIR>/<root>/plan-set.json`, the file a later
+ * `live-wave-apply` hands back to choudoufu with the set digest.
+ */
+export async function choudoufuPlanSet(args: TerraformRootArgs, signal?: AbortSignal): Promise<ChoudoufuPlanSetResult> {
+  const resolved = await resolveRoot(args, signal);
+  const { binary, root, dir, projectRoot } = resolved;
+  if (binary !== "choudoufu") throw new Error(`choudoufuPlanSet: root "${args.root}" runs ${binary}, not choudoufu`);
+  await ensureChoudoufuWavesVersion(binary, signal);
+  const rootPath = choudoufuSetRootPath(projectRoot, dir);
+  if (rootPath === undefined) throw new Error(`choudoufuPlanSet: root "${args.root}" (${dir}) is not inside ${projectRoot}`);
+  const wavesDir = choudoufuWavesDir(projectRoot, args.root);
+  mkdirSync(wavesDir, { recursive: true });
+  const cmd = choudoufuPlanSetCommand({ binary, root: rootPath, outDir: fromProject(projectRoot, join(wavesDir, "out")) });
+
+  let stdout: string;
+  try {
+    const out = await run(cmd, projectRoot, terraformEnvironment(root), signal);
+    report("", out.stderr);
+    stdout = out.stdout;
+  } catch (err) {
+    // 2 is "planned, with changes" and 4 is "a root failed", which the
+    // document itself explains. Anything else is the command not running.
+    const failure = err as ExecFailure;
+    if (failure.code !== 2 && failure.code !== 4) throw err;
+    report("", failure.stderr ?? "");
+    stdout = failure.stdout ?? "";
+  }
+
+  const parsed = parseChoudoufuPlanSet(stdout, { member: args.root, root: rootPath });
+  const planSetFile = join(wavesDir, "plan-set.json");
+  writeFileSync(planSetFile, stdout);
+  return { ...parsed, planSetFile, root: rootPath };
+}
+
+/**
+ * What a choudoufu root keeps in the fan-out's attempt record (#3459):
+ * choudoufu's resume file, under the set digest it was written for.
+ */
+export interface ChoudoufuCarriedResume {
+  kind: "choudoufu-wave-resume";
+  setDigest: string;
+  resume: unknown;
+}
+
+/**
+ * The resume file to hand choudoufu for `setDigest`, from what an earlier
+ * attempt carried, or `undefined`. choudoufu refuses a resume file written
+ * for another digest, and a re-planned root with a moved plan has another
+ * digest, so only a file for this same set comes back.
+ */
+export function carriedChoudoufuResume(carried: unknown, setDigest: string): unknown {
+  if (!isObjectValue(carried) || carried.kind !== "choudoufu-wave-resume") return undefined;
+  if (carried.setDigest !== setDigest || !isObjectValue(carried.resume)) return undefined;
+  return carried.resume.set_digest === setDigest ? carried.resume : undefined;
+}
+
+export interface ChoudoufuWaveApplyArgs extends TerraformRootArgs {
+  /** {@link ChoudoufuPlanSetResult.planSetFile}: the approved document. */
+  planSetFile: string;
+  /** {@link ChoudoufuPlanSetResult.setDigest}: choudoufu's digest of that document. */
+  setDigest: string;
+  /** What the root carried from an earlier attempt (`DeployContext.carried[root]`). */
+  carried?: unknown;
+}
+
+export interface ChoudoufuWaveApplyResult {
+  /** `live-wave-apply`'s exit status. See {@link CHOUDOUFU_WAVE_EXIT}. */
+  exitCode: number;
+  /** Exit 0: the root landed. */
+  landed: boolean;
+  /** `-json`'s result document, when it printed one. */
+  result?: unknown;
+  /** choudoufu's resume file after the run, to carry. Absent when choudoufu wrote none. */
+  carry?: ChoudoufuCarriedResume;
+  /** One line for a person: what happened, in choudoufu's words where it gave some. */
+  message: string;
+}
+
+/** One line for each of `live-wave-apply`'s exit statuses, with choudoufu's own error when it gave one. */
+export function describeChoudoufuWaveExit(exitCode: number, result: unknown, stderr: string): string {
+  const error = isObjectValue(result) && typeof result.error === "string" && result.error ? result.error : "";
+  const moved =
+    isObjectValue(result) && Array.isArray(result.moved)
+      ? result.moved
+          .filter(isObjectValue)
+          .map((m) => `${String(m.root)} moved: approved ${String(m.approved_digest)}, now ${String(m.fresh_digest)}`)
+      : [];
+  const detail = error || moved.join("; ") || stderr.trim().split("\n").find((l) => l.trim() !== "")?.trim() || "";
+  const suffix = detail ? ` (${detail})` : "";
+  switch (exitCode) {
+    case CHOUDOUFU_WAVE_EXIT.landed:
+      return "landed";
+    case CHOUDOUFU_WAVE_EXIT.setMoved:
+      return `choudoufu refused the approved set: the root's plan moved since it was approved, and nothing was applied${suffix}`;
+    case CHOUDOUFU_WAVE_EXIT.rootFailed:
+      return `choudoufu could not land the root; its resume file records why${suffix}`;
+    default:
+      return `choudoufu live-wave-apply could not run (exit ${exitCode})${suffix}`;
+  }
+}
+
+/**
+ * Apply one live choudoufu root through `live-wave-apply` (#3459), with the
+ * set plan document and set digest {@link choudoufuPlanSet} produced. When
+ * the root carried a resume file for this same digest from an earlier
+ * attempt, it is written back first, so choudoufu sees what it already
+ * recorded. Its resume file after the run comes back as `carry`, landed or
+ * not.
+ *
+ * Never throws for a choudoufu answer: exit 3 (the set moved) and exit 4 (the
+ * root failed) come back with `landed: false`, and so does exit 1. An abort
+ * or a spawn failure propagates.
+ */
+export async function choudoufuWaveApply(args: ChoudoufuWaveApplyArgs, signal?: AbortSignal): Promise<ChoudoufuWaveApplyResult> {
+  const resolved = await resolveRoot(args, signal);
+  const { binary, root, projectRoot } = resolved;
+  if (binary !== "choudoufu") throw new Error(`choudoufuWaveApply: root "${args.root}" runs ${binary}, not choudoufu`);
+  await ensureChoudoufuWavesVersion(binary, signal);
+  const wavesDir = choudoufuWavesDir(projectRoot, args.root);
+  mkdirSync(wavesDir, { recursive: true });
+  // One file per digest: choudoufu refuses a resume file written for
+  // another, and a file left by an earlier set must not block this one.
+  const resumeFile = join(wavesDir, `resume-${args.setDigest.replace(/^sha256:/, "").slice(0, 16)}.json`);
+  const carried = carriedChoudoufuResume(args.carried, args.setDigest);
+  if (carried !== undefined) writeFileSync(resumeFile, JSON.stringify(carried, null, 2) + "\n");
+
+  const cmd = choudoufuWaveApplyCommand({
+    binary,
+    planSet: fromProject(projectRoot, args.planSetFile),
+    digest: args.setDigest,
+    resume: fromProject(projectRoot, resumeFile),
+    outDir: fromProject(projectRoot, join(wavesDir, "out")),
+  });
+
+  let exitCode = 0;
+  let stdout = "";
+  let stderr = "";
+  try {
+    const out = await run(cmd, projectRoot, terraformEnvironment(root), signal);
+    stdout = out.stdout;
+    stderr = out.stderr;
+  } catch (err) {
+    const failure = err as ExecFailure;
+    if (typeof failure.code !== "number") throw err;
+    exitCode = failure.code;
+    stdout = failure.stdout ?? "";
+    stderr = failure.stderr ?? "";
+  }
+  report(stdout, stderr);
+
+  let result: unknown;
+  try {
+    result = stdout.trim() ? JSON.parse(stdout) : undefined;
+  } catch {
+    result = undefined;
+  }
+  let carry: ChoudoufuCarriedResume | undefined;
+  if (existsSync(resumeFile)) {
+    try {
+      carry = { kind: "choudoufu-wave-resume", setDigest: args.setDigest, resume: JSON.parse(readFileSync(resumeFile, "utf8")) };
+    } catch {
+      carry = undefined;
+    }
+  }
+  return {
+    exitCode,
+    landed: exitCode === CHOUDOUFU_WAVE_EXIT.landed,
+    ...(result !== undefined ? { result } : {}),
+    ...(carry ? { carry } : {}),
+    message: describeChoudoufuWaveExit(exitCode, result, stderr),
+  };
 }
 
 /**
