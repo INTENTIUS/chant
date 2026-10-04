@@ -12,6 +12,7 @@ import {
   parsePayerHeader,
   payerOf,
   refusalMessage,
+  spendFromRuns,
   STANDARD_CAPABILITIES,
 } from "./broker-protocol";
 
@@ -118,5 +119,49 @@ describe("a grant (#3477)", () => {
   test("is printable ASCII without spaces, bounded in length", () => {
     expect(isGrantValue("lobbyg1.eyJ0.abc_-")).toBe(true);
     for (const bad of ["", "has space", "line\nbreak", "x".repeat(GRANT_MAX_LENGTH + 1), 42, null]) expect(isGrantValue(bad), String(bad).slice(0, 20)).toBe(false);
+  });
+});
+
+describe("a report's listing and spend (#3508)", () => {
+  const spend = { month: "2026-10", usd: 1.84, runs: 3, unpriced: 1, byPrincipal: [{ principal: "github:octo", usd: 1.84, runs: 2, unpriced: 0 }, { principal: null, usd: 0, runs: 1, unpriced: 1 }] };
+
+  test("are kept when well formed, with published defaulting to true, and left out when absent", () => {
+    expect(parseDeclarationReport({ capabilities: [], listing: { title: "Salad", line: "a salad app" }, spend }, "lobby")).toEqual({
+      capabilities: [],
+      listing: { published: true, title: "Salad", line: "a salad app" },
+      spend,
+    });
+    expect(parseDeclarationReport({ capabilities: [] }, "lobby")).toEqual({ capabilities: [] });
+  });
+
+  test("a malformed listing or spend refuses the report", () => {
+    for (const listing of [[], { title: "x".repeat(61) }, { title: "a\nb" }, { line: "x".repeat(141) }, { published: "yes" }]) {
+      expect(parseDeclarationReport({ capabilities: [], listing }, "lobby"), JSON.stringify(listing)).toHaveProperty("error");
+    }
+    for (const bad of [{ ...spend, month: "2026-13" }, { ...spend, usd: -1 }, { ...spend, runs: 1.5 }, { ...spend, byPrincipal: [{ principal: "", usd: 0, runs: 0, unpriced: 0 }] }]) {
+      expect(parseDeclarationReport({ capabilities: [], spend: bad }, "lobby"), JSON.stringify(bad)).toHaveProperty("error");
+    }
+  });
+
+  test("spend sums a month's runs per principal, with a run that has no USD cost unpriced, never zero", () => {
+    const runs = [
+      { startedAt: "2026-10-02T10:00:00Z", by: "github:octo", cost: { amount: 1.5, currency: "USD", source: "x" } },
+      { startedAt: "2026-10-03T10:00:00Z", by: "github:octo", cost: { amount: 0.34, currency: "USD", source: "x" } },
+      { startedAt: "2026-10-03T11:00:00Z", by: null, cost: null },
+      { startedAt: "2026-10-04T11:00:00Z", by: "github:ada", cost: { amount: 2, currency: "EUR", source: "x" } },
+      { startedAt: "2026-09-30T23:00:00Z", by: "github:octo", cost: { amount: 9, currency: "USD", source: "x" } },
+    ];
+    expect(spendFromRuns({ runs }, "2026-10")).toEqual({
+      month: "2026-10",
+      usd: 1.84,
+      runs: 4,
+      unpriced: 2,
+      byPrincipal: [
+        { principal: "github:octo", usd: 1.84, runs: 2, unpriced: 0 },
+        { principal: null, usd: 0, runs: 1, unpriced: 1 },
+        { principal: "github:ada", usd: 0, runs: 1, unpriced: 1 },
+      ],
+    });
+    expect(spendFromRuns({ error: { code: "x" } }, "2026-10")).toBeNull();
   });
 });

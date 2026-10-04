@@ -35,14 +35,16 @@
     },
     "declarationReport": {
       "type": "object",
-      "description": "POST /api/box/declaration: the capabilities chant workspace status --json lists for the box's block, sent by the box's steward with the box's own token. At most 32 KB. Each report replaces the last.",
+      "description": "POST /api/box/declaration: the capabilities chant workspace status --json lists for the box's block, sent by the box's steward with the box's own token, and, optionally, the box's listing and this month's spend (#3508, ws-102). At most 32 KB. Each report replaces the last.",
       "required": ["capabilities"],
       "properties": {
         "capabilities": {
           "type": "array",
           "maxItems": 20,
           "items": { "$ref": "#/$defs/capability" }
-        }
+        },
+        "listing": { "$ref": "#/$defs/listing" },
+        "spend": { "$ref": "#/$defs/spend" }
       }
     },
     "declarationKept": {
@@ -63,9 +65,49 @@
           }
         },
         "at": { "type": "string", "minLength": 1, "description": "An ISO 8601 time." },
-        "payer": { "$ref": "#/$defs/payer" }
+        "payer": { "$ref": "#/$defs/payer" },
+        "listing": { "$ref": "#/$defs/listing", "description": "The report's listing, when the broker keeps one." },
+        "spend": { "$ref": "#/$defs/spend", "description": "The report's spend, when the broker keeps one." }
       }
     },
+    "listing": {
+      "type": "object",
+      "description": "Optional in a report, added within version 1 by #3508 (ws-102). The box block's listing (ws-077) as chant workspace status --json prints it, less the cover: what a broker that lists boxes lists this one under. The bounds are the ones chant workspace box listing set writes with. A broker that lists no boxes ignores it.",
+      "required": ["title", "line"],
+      "properties": {
+        "published": { "type": "boolean", "description": "Whether the box is listed for people other than its owner. Absent means true." },
+        "title": { "type": "string", "maxLength": 60, "pattern": "^[^\\u0000-\\u001f\\u007f]*$" },
+        "line": { "type": "string", "maxLength": 140, "pattern": "^[^\\u0000-\\u001f\\u007f]*$" }
+      }
+    },
+    "spend": {
+      "type": "object",
+      "description": "Optional in a report, added within version 1 by #3508 (ws-102). What the box's run records (chant workspace runs --json, ws-076) say it spent in one calendar month, by each run's startedAt: the month's totals, and the same per principal the runs worked for. Only USD costs are summed: a run with no USD cost is counted in unpriced, never as zero. spendFromRuns in broker-protocol.ts computes it. A broker that reports no spend ignores it.",
+      "required": ["month", "usd", "runs", "unpriced", "byPrincipal"],
+      "properties": {
+        "month": { "type": "string", "pattern": "^\\d{4}-(0[1-9]|1[0-2])$", "description": "The month, YYYY-MM, in UTC." },
+        "usd": { "$ref": "#/$defs/spendUsd" },
+        "runs": { "$ref": "#/$defs/spendCount" },
+        "unpriced": { "$ref": "#/$defs/spendCount" },
+        "byPrincipal": {
+          "type": "array",
+          "maxItems": 50,
+          "description": "Per principal, as the run records' by names them (ws-080's form), at most 50; principal is null for the runs that name none.",
+          "items": {
+            "type": "object",
+            "required": ["principal", "usd", "runs", "unpriced"],
+            "properties": {
+              "principal": { "type": ["string", "null"], "minLength": 1, "maxLength": 200 },
+              "usd": { "$ref": "#/$defs/spendUsd" },
+              "runs": { "$ref": "#/$defs/spendCount" },
+              "unpriced": { "$ref": "#/$defs/spendCount" }
+            }
+          }
+        }
+      }
+    },
+    "spendUsd": { "type": "number", "minimum": 0, "exclusiveMaximum": 1000000000, "description": "The sum of the priced runs' USD costs." },
+    "spendCount": { "type": "integer", "minimum": 0, "exclusiveMaximum": 1000000000, "description": "A count of runs: all of them under runs, those with no USD cost under unpriced." },
     "payer": {
       "type": "object",
       "description": "Whose credential pays for the box's model calls (#3474, ws-098), when the broker says. shared: a credential neither the box's owner nor its visitor owns, such as a house or operator key. owner: the box owner's own. visitor: the credential a person brought for this box. principal is the payer in ws-080's form (github:<login>) when the broker knows them, else null. Optional: a broker that does not say leaves it out, and a box treats that as unknown. The same fact rides on each answer from /llm/anthropic and /decide as the chant-payer header.",

@@ -39,6 +39,15 @@ Any other path under a capability's prefix is a 404, and reaches no upstream.
 
 The box's steward reads its box block from `chant workspace status --json` and posts the capabilities to `POST /api/box/declaration` with the box's token. The body is `{ "capabilities": [{ "name", "broker", "scope" }] }`. It may hold up to 20 capabilities of up to 50 scope words each, in at most 32 KB. The broker keeps the entries whose `broker` is its word and answers 200 with what it kept and when: `{ "capabilities": [...], "at": "<ISO time>" }`. Each report replaces the last. A body that is not a report is a 400, and a token that is no box's is a 401 or 403.
 
+A report may also carry two optional fields ([#3508](https://github.com/INTENTIUS/chant/issues/3508), [ws-102](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-102-a-broker-report-names-a-box-s-listing-and-spend.md)), which studio's steward has sent since [studio#369](https://github.com/arugula-salad/studio/issues/369) and [studio#384](https://github.com/arugula-salad/studio/issues/384):
+
+| Field | Holds |
+|---|---|
+| `listing` | The box block's [listing](/chant/reference/workspace-declaration/#listing) as `chant workspace status --json` prints it, less the cover: `{ "published", "title", "line" }`. `published` defaults to true, `title` is at most 60 characters and `line` at most 140, with no control characters, the bounds `chant workspace box listing set` writes with. A broker that lists boxes lists this one under it. |
+| `spend` | What the box's [run records](/chant/cli/workspace-runs/) say it spent in one calendar month: `{ "month": "YYYY-MM", "usd", "runs", "unpriced", "byPrincipal": [{ "principal", "usd", "runs", "unpriced" }] }`. A run counts in the month its `startedAt` falls in and under the principal its `by` names (`null` when it names none), at most 50 principals. Only USD costs are summed. A run with no USD cost is counted in `unpriced` and never as zero. |
+
+A broker that has no use for either ignores it. One that keeps them answers with them on `declarationKept`, unchanged, and refuses a malformed one with a 400, as studio's lobby does. The repository holds both facts and the broker keeps only a cache, so the next report brings them back. `spendFromRuns(doc, month)` in `@intentius/chant/workspace/broker-protocol` computes `spend` from what `chant workspace runs --json` prints.
+
 The report is what the broker enforces. The box's own agent can edit the box block, as it can edit anything in its repo, so the report does not protect the broker from that agent. It decides what the box asked for. What the owner's credential and secrets may be spent on, such as a paused agent or a secret's host, stays the broker's to refuse.
 
 ### inference
@@ -87,7 +96,7 @@ A refusal is JSON with an `error`, either the message or an object holding `mess
 { "type": "error", "error": { "type": "permission_error", "message": "This box's inference capability does not list decide in its scope (it lists agent). Add \"decide\" to that scope in the box block of its chant.workspace.json." } }
 ```
 
-`declaredRefusal(declared, broker, capability, word)` in `@intentius/chant/workspace/broker-protocol` returns that message, or null when the declaration allows the word. `parseDeclarationReport(body, broker)` checks a report the same way studio's lobby does.
+`declaredRefusal(declared, broker, capability, word)` in `@intentius/chant/workspace/broker-protocol` returns that message, or null when the declaration allows the word. `parseDeclarationReport(body, broker)` checks a report the same way studio's lobby does, its `listing` and `spend` included.
 
 ## Adding a capability
 
@@ -119,6 +128,7 @@ The suite starts the upstreams itself: a stand-in for the Anthropic API that ans
 | `declaration-kept` | a report is answered 200 with the entries naming this broker, and none naming another broker or none |
 | `declaration-unknown-token` | a report with no token, or one that is no box's, is a 401 or 403 |
 | `declaration-malformed` | a body that is not a report is a 400 |
+| `declaration-listing-spend` | a report that also carries a `listing` and a `spend` is answered 200, and an answer that echoes them echoes them unchanged |
 | `unreported-refused` | a box that never reported is refused every served capability, and nothing reaches an upstream |
 | `inference-hello` | `HEAD /llm/anthropic/api/hello` is 200 with no token |
 | `inference-forwards` | with `agent`, a Messages call reaches the upstream with its path, query and body unchanged and the credential in place of the token, and the upstream's answer comes back |
