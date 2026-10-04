@@ -27,7 +27,11 @@ describeBrokerConformance({ name: "the reference broker", start: startReferenceB
  * The reference broker behind a proxy that changes each request with
  * `rewrite` on the way in, so a test makes a broker that breaks one rule.
  */
-async function behind(env: BrokerConformanceEnv, rewrite: (path: string, headers: Record<string, string>, body: string) => { headers: Record<string, string>; body: string }): Promise<StartedBroker> {
+async function behind(
+  env: BrokerConformanceEnv,
+  rewrite: (path: string, headers: Record<string, string>, body: string) => { headers: Record<string, string>; body: string },
+  answered: (path: string, headers: Record<string, string>) => void = () => {},
+): Promise<StartedBroker> {
   const inner = await startReferenceBroker(env);
   const server = createServer(async (req, res) => {
     let body = "";
@@ -40,6 +44,7 @@ async function behind(env: BrokerConformanceEnv, rewrite: (path: string, headers
     answer.headers.forEach((v, k) => {
       if (!["content-length", "content-encoding", "transfer-encoding", "connection", "keep-alive"].includes(k)) out[k] = v;
     });
+    answered(req.url ?? "/", out);
     res.writeHead(answer.status, out);
     res.end(Buffer.from(await answer.arrayBuffer()));
   });
@@ -85,6 +90,18 @@ describe("the broker suite catches a broker that breaks the protocol", () => {
     const isolation = report.results.find((r) => r.id === "token-isolation");
     expect(isolation?.problems.length).toBeGreaterThan(0);
     expect(report.problems.every((p) => p.startsWith("token-isolation:"))).toBe(true);
+  }, 60_000);
+
+  test("a broker whose payer differs between the report's answer and a Messages answer, or is said on one only, fails payer-consistent (#3474)", async () => {
+    for (const change of [(h: Record<string, string>) => (h["chant-payer"] = "visitor github:someone"), (h: Record<string, string>) => delete h["chant-payer"]]) {
+      const report = await runBrokerConformance({
+        name: "payer disagrees",
+        listen,
+        start: (env) => behind(env, (_path, headers, body) => ({ headers, body }), (path, headers) => path.startsWith(BROKER_ROUTES.inference) && change(headers)),
+      });
+      expect(report.problems.length).toBeGreaterThan(0);
+      expect(report.problems.every((p) => p.startsWith("payer-consistent:"))).toBe(true);
+    }
   }, 60_000);
 
   test("the default capabilities are the lobby's, and fountain's checks are skipped", async () => {

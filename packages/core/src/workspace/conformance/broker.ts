@@ -32,7 +32,7 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
-import { BROKER_PROTOCOL_SCHEMA, BROKER_ROUTES, refusalMessage, type BrokerCapabilitySpec } from "../broker-protocol";
+import { BROKER_PROTOCOL_SCHEMA, BROKER_ROUTES, formatPayerHeader, PAYER_HEADER, parsePayerHeader, payerOf, refusalMessage, type BrokerCapabilitySpec } from "../broker-protocol";
 
 /** The capabilities the suite knows how to exercise, in the order it runs them. */
 export const BROKER_CONFORMANCE_CAPABILITIES = ["inference", "egress", "feedback", "fountain"] as const;
@@ -599,6 +599,29 @@ export const BROKER_CHECKS: readonly BrokerCheck[] = [
       const before = ctx.upstream.length;
       const r = await ctx.call(A, "GET", `${BROKER_ROUTES.fountain}/api/sandboxes`);
       return [...problems, ...refusalProblems(r, ["fountain", "sandboxes"]), ...untouched(ctx, before, "sandboxes is not declared")];
+    },
+  },
+  {
+    id: "payer-consistent",
+    capability: "inference",
+    title: "a payer, when the broker says one (#3474), is well formed and the same on the declaration's answer and on a Messages answer's chant-payer header",
+    async run(ctx) {
+      const r = await declare(ctx, [["inference", ["agent"]]]);
+      if (r.status !== 200) return [`reporting the declaration failed with ${r.status}: ${r.text.slice(0, 200)}`];
+      const problems: string[] = [];
+      const raw = (r.json as { payer?: unknown } | null)?.payer;
+      const kept = payerOf(r.json);
+      if (raw !== undefined && !kept) problems.push(`the declaration's answer carries a payer the protocol does not know: ${JSON.stringify(raw)}`);
+      const m = await ctx.call(A, "POST", `${BROKER_ROUTES.inference}/v1/messages`, { body: MESSAGE, auth: "x-api-key", headers: { "anthropic-version": "2023-06-01" } });
+      if (m.status !== 200) return [...problems, `expected 200 from a Messages call, got ${m.status}: ${m.text.slice(0, 200)}`];
+      const header = m.headers[PAYER_HEADER];
+      const relayed = parsePayerHeader(header);
+      if (header !== undefined && !relayed) problems.push(`the ${PAYER_HEADER} header names no payer the protocol knows: ${JSON.stringify(header)}`);
+      if ((raw === undefined) !== (header === undefined)) problems.push(`the payer is said on ${raw === undefined ? `the ${PAYER_HEADER} header` : "the declaration's answer"} only; a broker that says it says it on both`);
+      else if (kept && relayed && (kept.kind !== relayed.kind || (kept.principal ?? null) !== (relayed.principal ?? null))) {
+        problems.push(`the declaration's answer says ${formatPayerHeader(kept)} and the Messages answer says ${formatPayerHeader(relayed)}`);
+      }
+      return problems;
     },
   },
 ];

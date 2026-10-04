@@ -3,9 +3,12 @@ import {
   declaredRefusal,
   EGRESS_CAPABILITY,
   FEEDBACK_CAPABILITY,
+  formatPayerHeader,
   FOUNTAIN_CAPABILITY,
   INFERENCE_CAPABILITY,
   parseDeclarationReport,
+  parsePayerHeader,
+  payerOf,
   refusalMessage,
   STANDARD_CAPABILITIES,
 } from "./broker-protocol";
@@ -89,5 +92,22 @@ describe("a declaration report", () => {
     expect(refusalMessage({ error: "no" })).toBe("no");
     expect(refusalMessage({ type: "error", error: { type: "permission_error", message: "no" } })).toBe("no");
     expect(refusalMessage({ error: {} })).toBeUndefined();
+  });
+});
+
+describe("the payer (#3474)", () => {
+  test("the header carries a kind and, when known, the principal, and reads back the same", () => {
+    expect(formatPayerHeader({ kind: "shared" })).toBe("shared");
+    expect(formatPayerHeader({ kind: "visitor", principal: "github:ada" })).toBe("visitor github:ada");
+    expect(parsePayerHeader("visitor github:ada")).toEqual({ kind: "visitor", principal: "github:ada" });
+    expect(parsePayerHeader(" owner ")).toEqual({ kind: "owner", principal: null });
+    for (const bad of [undefined, null, "", "house", "owner a b", "visitor\tx y"]) expect(parsePayerHeader(bad), String(bad)).toBeUndefined();
+  });
+  test("payerOf reads the declaration's answer, and takes a malformed payer as none", () => {
+    expect(payerOf({ capabilities: [], at: "t", payer: { kind: "owner", principal: "github:bo" } })).toEqual({ kind: "owner", principal: "github:bo" });
+    expect(payerOf({ capabilities: [], at: "t", payer: { kind: "shared" } })).toEqual({ kind: "shared", principal: null });
+    expect(payerOf({ capabilities: [], at: "t" })).toBeUndefined();
+    expect(payerOf({ payer: { kind: "house" } })).toBeUndefined();
+    expect(payerOf({ payer: { kind: "visitor", principal: "has space" } })).toBeUndefined();
   });
 });

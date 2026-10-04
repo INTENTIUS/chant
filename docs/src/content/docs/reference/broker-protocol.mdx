@@ -61,6 +61,14 @@ The owner saves a secret at the broker with the one host it may be sent to. The 
 
 `fountain-callback` is different. It is the callback token fountain gives every persistent sandbox ([#2780](https://github.com/INTENTIUS/chant/issues/2780)), which fountain brokers itself, and it has no route here.
 
+### Who pays
+
+A broker may tell the box whose credential pays for its model calls ([#3474](https://github.com/INTENTIUS/chant/issues/3474), [ws-098](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-098-a-broker-says-whose-credential-pays.md)). The payer is `{ "kind", "principal" }`. `shared` is a credential that neither the box's owner nor its visitor owns, such as a house or operator key. `owner` is the box owner's own credential. `visitor` is the credential a person brought for this box. `principal` is null when the broker does not know who pays. Otherwise it names them as [ws-080](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-080-person-identity-forge-or-signer.md) does, as in `github:<login>`.
+
+The broker says it in two places. One is `payer` on the answer to `POST /api/box/declaration`. The other is the `chant-payer` header on each answer from `/llm/anthropic` and `/decide`, as `<kind>` or `<kind> <principal>`. The header lets a box learn of a change at its next model call. A broker that says the payer says it in both places, and the two agree. Saying it is optional in version 1. A box reads a missing payer as unknown, and never as `owner` or `visitor`.
+
+A surface on the box uses it to bound what is spent on someone else's credential. hud lifts its guest prompt limit while the payer is `visitor` ([hud#416](https://github.com/arugula-salad/hud/issues/416)). `payerOf(body)`, `parsePayerHeader(value)` and `formatPayerHeader(payer)` in `@intentius/chant/workspace/broker-protocol` read and write it.
+
 ### Refusals
 
 A refusal is JSON with an `error`, either the message or an object holding `message` and optionally `type`:
@@ -120,6 +128,7 @@ The suite starts the upstreams itself: a stand-in for the Anthropic API that ans
 | `feedback-empty` | a batch with neither is a 400 |
 | `fountain-forwards` | with `conversations`, a request reaches Fountain with the operator's key as the bearer |
 | `fountain-refused` | without `sandboxes`, a 403 naming `fountain` and `sandboxes` |
+| `payer-consistent` | a payer, when the broker says one, is well formed, said on the declaration's answer and on a Messages answer's `chant-payer` header, and the same on both |
 | `token-isolation` | over the whole run, no upstream received a box's token, and no answer to a box carried a credential or a secret's value |
 
 Every check that expects a refusal also checks that nothing reached an upstream. A check of a capability the broker does not serve is skipped.

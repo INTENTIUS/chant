@@ -62,7 +62,17 @@
             }
           }
         },
-        "at": { "type": "string", "minLength": 1, "description": "An ISO 8601 time." }
+        "at": { "type": "string", "minLength": 1, "description": "An ISO 8601 time." },
+        "payer": { "$ref": "#/$defs/payer" }
+      }
+    },
+    "payer": {
+      "type": "object",
+      "description": "Whose credential pays for the box's model calls (#3474, ws-098), when the broker says. shared: a credential neither the box's owner nor its visitor owns, such as a house or operator key. owner: the box owner's own. visitor: the credential a person brought for this box. principal is the payer in ws-080's form (github:<login>) when the broker knows them, else null. Optional: a broker that does not say leaves it out, and a box treats that as unknown. The same fact rides on each answer from /llm/anthropic and /decide as the chant-payer header.",
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["shared", "owner", "visitor"] },
+        "principal": { "type": ["string", "null"], "minLength": 1, "maxLength": 200, "pattern": "^[^\\s]+$" }
       }
     },
     "refusal": {
