@@ -241,6 +241,11 @@ export const REASONS = {
   "run-ended": "runs end names a run whose end is already recorded.",
   "runs-no-ledger": "The checkout has no chant/lifecycle branch, so there are no agent runs to read.",
   "runs-ledger-malformed": "Some lines of the agent run ledger aren't run events; the rest are read.",
+  // The agent-run statement (runs sign, statement and verify, #3192): why a statement is refused or does not verify.
+  "run-not-ended": "runs sign or runs statement names a run with no end recorded. A statement is signed over the run's whole record.",
+  "run-statement-invalid": "The envelope's payload is not an in-toto Statement v1 with chant's agent-run predicate, or has a field the predicate does not define.",
+  "run-statement-signer-mismatch": "The statement names a signer other than the runner whose key signed it.",
+  "run-statement-mismatch": "A listed runner key signed the statement, and it does not match the run's record: another run, a record that hashes differently, or another unit, harness, model, provider or principal.",
   // A box's listing written through chant (box listing set, #3308): why the write was refused. Nothing is written.
   "listing-member-unknown": "box listing set names a member the declaration does not declare.",
   "listing-box-missing": "box listing set names a member whose entry declares no box block, so it has no listing.",
@@ -267,9 +272,9 @@ export const REASONS = {
   "evidence-payload-type": "The envelope's payload type is not application/vnd.in-toto+json.",
   "evidence-statement-invalid": "The payload is not an in-toto Statement v1 with chant's runner-evidence predicate, or has a field the predicate does not define.",
   "evidence-runner-mismatch": "The statement names a runner other than the one whose key signed it.",
-  "runner-key-invalid": "The key given to evidence sign is not an Ed25519 private key in PEM.",
-  "runner-key-is-signer": "The key given to evidence sign is a person's key in the signers file. Evidence is signed by a service or CI identity.",
-  "runner-key-unlisted": "The policy at base lists no runner with the key given to evidence sign.",
+  "runner-key-invalid": "The key given to evidence sign or runs sign is not an Ed25519 private key in PEM.",
+  "runner-key-is-signer": "The key given to evidence sign or runs sign is a person's key in the signers file. Evidence and run statements are signed by a service or CI identity.",
+  "runner-key-unlisted": "The policy at base lists no runner with the key given to evidence sign or runs sign.",
   // The lineage lock (check).
   "lock-invalid": "The lineage lock can't be read.",
   "manual-step-open": "A scope in the lineage lock has an open manual step.",

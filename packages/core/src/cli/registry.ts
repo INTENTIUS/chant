@@ -371,6 +371,8 @@ export interface ParsedArgs {
   claim?: string;
   /** `chant workspace evidence sign --environment <file>` (#2553): the runner environment, hashed into the evidence. */
   environment?: string;
+  /** `chant workspace runs statement <id> --signer <principal>` (#3192): the runner principal that will sign. */
+  signer?: string;
   /** `chant workspace evidence verify --envelope <file>` (#2553). */
   envelope?: string;
   /** `chant workspace signers rotate --threshold <n>` (#2553). */
