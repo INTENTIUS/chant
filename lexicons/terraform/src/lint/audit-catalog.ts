@@ -500,6 +500,57 @@ export const terraformAuditCatalog: Record<string, RuleMeta> = {
       "checked only where the root's directory is known.",
     yamlBased: false,
   },
+  TF041: {
+    id: "TF041",
+    tier: "merge-worthy",
+    fixKind: "guidance",
+    category: "correctness",
+    title: "Terragrunt dependency lets mock_outputs stand in for apply",
+    remediation:
+      'Set `mock_outputs_allowed_terraform_commands = ["validate", "plan"]` on every `dependency` that sets `mock_outputs`. ' +
+      "Terragrunt reads a missing or empty list as every command, apply included.",
+    yamlBased: false,
+  },
+  TF042: {
+    id: "TF042",
+    tier: "merge-worthy",
+    fixKind: "guidance",
+    category: "correctness",
+    title: "Terragrunt dependency sets skip_outputs together with mock_outputs",
+    remediation:
+      "Drop `skip_outputs`, or pass the values as `inputs`. With `skip_outputs = true` the upstream outputs are never read, so every run uses the mocks.",
+    yamlBased: false,
+  },
+  TF043: {
+    id: "TF043",
+    tier: "merge-worthy",
+    fixKind: "guidance",
+    category: "correctness",
+    title: "Terragrunt terraform.source names no version (git ref, tfr version or oci tag)",
+    remediation:
+      "Pin the source: `?ref=` for git, `?version=` for `tfr://`, `?digest=` or `?tag=` for `oci://`.",
+    yamlBased: false,
+  },
+  TF044: {
+    id: "TF044",
+    tier: "merge-worthy",
+    fixKind: "guidance",
+    category: "correctness",
+    title: "Terragrunt config keeps state in a local backend",
+    remediation:
+      'Use a shared backend (S3, GCS) in `remote_state`. State written by `backend = "local"` stays on the runner and is lost with it.',
+    yamlBased: false,
+  },
+  TF045: {
+    id: "TF045",
+    tier: "report-only",
+    fixKind: "guidance",
+    category: "best-practice",
+    title: "No Terragrunt config sets terragrunt_version_constraint",
+    remediation:
+      'Set `terragrunt_version_constraint = ">= 1.1.0"` in the root config. Off by default; judged only across the configs scanned.',
+    yamlBased: false,
+  },
 };
 
 // Prior art credits, if any, live beside the rules in ./audit-lineage.ts (see

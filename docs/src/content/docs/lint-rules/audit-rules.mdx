@@ -3117,6 +3117,36 @@ Set an exact `version` (`version = "1.4.0"`) for projects that pin modules. Off 
 
 Run `terraform init` in the root and commit the `.terraform.lock.hcl` it writes. Off by default; checked only where the root's directory is known.
 
+### TF041
+
+**Terragrunt dependency lets mock_outputs stand in for apply** — merge-worthy · guidance
+
+Set `mock_outputs_allowed_terraform_commands = ["validate", "plan"]` on every `dependency` that sets `mock_outputs`. Terragrunt reads a missing or empty list as every command, apply included.
+
+### TF042
+
+**Terragrunt dependency sets skip_outputs together with mock_outputs** — merge-worthy · guidance
+
+Drop `skip_outputs`, or pass the values as `inputs`. With `skip_outputs = true` the upstream outputs are never read, so every run uses the mocks.
+
+### TF043
+
+**Terragrunt terraform.source names no version (git ref, tfr version or oci tag)** — merge-worthy · guidance
+
+Pin the source: `?ref=` for git, `?version=` for `tfr://`, `?digest=` or `?tag=` for `oci://`.
+
+### TF044
+
+**Terragrunt config keeps state in a local backend** — merge-worthy · guidance
+
+Use a shared backend (S3, GCS) in `remote_state`. State written by `backend = "local"` stays on the runner and is lost with it.
+
+### TF045
+
+**No Terragrunt config sets terragrunt_version_constraint** — report-only · guidance
+
+Set `terragrunt_version_constraint = ">= 1.1.0"` in the root config. Off by default; judged only across the configs scanned.
+
 ## Secrets & credentials (SEC)
 
 Lexicon-independent — scans the raw text of every scanned file for likely credentials, regardless of which audit lexicons are installed. Matched values are always redacted; see [suppressing false positives](/chant/cli/audit/#suppressing-a-secrets-finding).

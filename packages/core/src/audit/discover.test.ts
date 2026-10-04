@@ -126,6 +126,17 @@ describe("discoverByDetection (unified, detectTemplate-driven)", () => {
       expect(found.some((i) => i.path.includes(".terraform"))).toBe(false);
     });
 
+    test("terragrunt.hcl and root.hcl join the terraform bundle, and a unit's source path does not make a module of its target (#3417)", () => {
+      const files = [
+        { path: "live/app/terragrunt.hcl", content: 'terraform {\n  source = "../../modules/app"\n}\n' },
+        { path: "root.hcl", content: "remote_state {\n}\n" },
+        { path: "modules/app/main.tf", content: 'resource "x" "y" {}\n' },
+      ];
+      const found = classifyFiles(files, [terraform], { baseDir: "/repo" });
+      expect(targets(found)).toEqual(["terraform:.", "terraform:live/app", "terraform:modules/app"]);
+      expect(found.find((i) => i.path === "live/app")!.content).toContain("# file: terragrunt.hcl");
+    });
+
     test("without the terraform plugin, .tf files are classified into nothing (skipped, same as an unloaded helm)", () => {
       const found = discoverByDetection(fixture("audit-terraform"), []);
       expect(found).toEqual([]);

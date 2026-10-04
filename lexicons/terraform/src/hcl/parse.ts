@@ -173,6 +173,26 @@ export const LOCALS_TYPE = "Terraform::Locals";
 /** A `live { estate = "..." }` block, or an `estate.chdf.hcl` sidecar's content (#2103). */
 export const LIVE_TYPE = "Terraform::Live";
 
+/**
+ * Terragrunt config entities (#3417). A `terragrunt.hcl` or `root.hcl` is not
+ * a Terraform module, so its blocks are read into these types and never into
+ * `TERRAFORM_TYPE`: TF001's `required_version` check and the rest of the
+ * module rules keep to the `.tf` files.
+ */
+export const TERRAGRUNT_CONFIG_TYPE = "Terraform::TerragruntConfig";
+export const TERRAGRUNT_SOURCE_TYPE = "Terraform::TerragruntSource";
+export const TERRAGRUNT_DEPENDENCY_TYPE = "Terraform::TerragruntDependency";
+export const TERRAGRUNT_REMOTE_STATE_TYPE = "Terraform::TerragruntRemoteState";
+export const TERRAGRUNT_GENERATE_TYPE = "Terraform::TerragruntGenerate";
+
+/** The Terragrunt config files read, by their default names. A `--config` rename is not followed. */
+export const TERRAGRUNT_FILENAMES: readonly string[] = ["root.hcl", "terragrunt.hcl"];
+
+/** Whether `name` (a bare filename) is a Terragrunt config file this lexicon reads. */
+export function isTerragruntFileName(name: string): boolean {
+  return TERRAGRUNT_FILENAMES.includes(name);
+}
+
 /** The sidecar filename choudoufu reads an estate declaration from when no in-block `live { }` is used. */
 export const LIVE_SIDECAR_FILENAME = "estate.chdf.hcl";
 
@@ -265,6 +285,11 @@ export function listTerraformFiles(dir: string): string[] {
   return readdirSync(dir)
     .filter((f) => f.endsWith(".tf"))
     .sort();
+}
+
+/** The Terragrunt config files directly under `dir` (`root.hcl`, `terragrunt.hcl`), in filename order like the audit's bundle. */
+export function listTerragruntFiles(dir: string): string[] {
+  return TERRAGRUNT_FILENAMES.filter((name) => existsSync(join(dir, name)));
 }
 
 /**
@@ -363,8 +388,15 @@ export async function blocksToEntities(
   const entities = new Map<string, Declarable>();
   const prefix = callers.length > 0 ? `${root}/${callers.join("/")}` : root;
 
-  const add = (entityType: string, address: string, body: unknown, file: TerraformFile, scan: FileScan): void => {
-    const { line, suppressions } = directivesFor(scan, address);
+  const add = (
+    entityType: string,
+    address: string,
+    body: unknown,
+    file: TerraformFile,
+    scan: FileScan,
+    scanAddress: string = address,
+  ): void => {
+    const { line, suppressions } = directivesFor(scan, scanAddress);
     const entity = terraformEntity(
       entityType,
       address,
@@ -430,6 +462,10 @@ export async function blocksToEntities(
   for (const file of files) {
     const tree = (await parser.parse(file.name, file.source)) as Record<string, unknown>;
     const scan = scanSuppressions(file.name, file.source);
+    if (isTerragruntFileName(file.name)) {
+      terragruntBlocks(tree, file, scan, add);
+      continue;
+    }
     unlabelled(tree, "terraform", TERRAFORM_TYPE, file, scan);
     for (const liveBody of liveBlocksIn(tree)) add(LIVE_TYPE, "live", liveBody, file, scan);
     unlabelled(tree, "locals", LOCALS_TYPE, file, scan);
@@ -476,6 +512,34 @@ export async function blocksToEntities(
 }
 
 /**
+ * One Terragrunt config file's blocks, as entities (#3417): the file's own
+ * settings (`terragrunt_version_constraint` and the `include` labels), the
+ * `terraform` block that names the unit's source, `remote_state`, each
+ * `dependency` and each `generate`. Everything else in the file (`inputs`,
+ * `locals`, `iam_role`) is left unread.
+ */
+function terragruntBlocks(
+  tree: Record<string, unknown>,
+  file: TerraformFile,
+  scan: FileScan,
+  add: (entityType: string, address: string, body: unknown, file: TerraformFile, scan: FileScan, scanAddress?: string) => void,
+): void {
+  const config: BlockBody = { includes: Object.keys(asRecord(tree["include"])) };
+  if (typeof tree["terragrunt_version_constraint"] === "string") {
+    config["terragrunt_version_constraint"] = tree["terragrunt_version_constraint"];
+  }
+  add(TERRAGRUNT_CONFIG_TYPE, "terragrunt", config, file, scan, "");
+  for (const body of asArray(tree["terraform"])) add(TERRAGRUNT_SOURCE_TYPE, "terragrunt.terraform", body, file, scan, "terraform");
+  for (const body of asArray(tree["remote_state"])) add(TERRAGRUNT_REMOTE_STATE_TYPE, "remote_state", body, file, scan);
+  for (const [name, bodies] of Object.entries(asRecord(tree["dependency"]))) {
+    for (const body of asArray(bodies)) add(TERRAGRUNT_DEPENDENCY_TYPE, `dependency.${name}`, body, file, scan);
+  }
+  for (const [name, bodies] of Object.entries(asRecord(tree["generate"]))) {
+    for (const body of asArray(bodies)) add(TERRAGRUNT_GENERATE_TYPE, `generate.${name}`, body, file, scan);
+  }
+}
+
+/**
  * Parse a root module directory. Reads every `.tf` directly under `dir`, plus
  * the `estate.chdf.hcl` sidecar beside them when present. Throws whatever the
  * parser throws for malformed HCL; `buildRoots()` is where that becomes a
@@ -488,7 +552,9 @@ export async function parseTerraformRootDir(
   modeOptions?: TerraformRootModeOptions,
   callers: readonly string[] = [],
 ): Promise<Map<string, Declarable>> {
-  const files = listTerraformFiles(dir).map((name) => ({
+  // A child module is a Terraform module, never a Terragrunt unit (#3417).
+  const names = [...listTerraformFiles(dir), ...(callers.length === 0 ? listTerragruntFiles(dir) : [])];
+  const files = names.map((name) => ({
     name,
     source: readFileSync(join(dir, name), "utf-8"),
   }));
