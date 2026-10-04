@@ -359,6 +359,18 @@ export function parseArgs(args: string[]): ParsedArgs {
       const raw = args[++i];
       if (!raw || raw.startsWith("-")) throw new Error("--canary needs a component name: --canary <name>[,<name>...]");
       (result.canary ??= []).push(...raw.split(",").map((n) => n.trim()).filter(Boolean));
+    } else if (arg === "--pr") {
+      const raw = args[++i];
+      const pr = Number(raw);
+      if (!Number.isInteger(pr) || pr < 1) throw new Error(`--pr needs a pull or merge request number: got "${raw ?? ""}"`);
+      result.pr = pr;
+    } else if (arg === "--forge") {
+      result.forge = args[++i];
+      if (!result.forge || result.forge.startsWith("-")) throw new Error("--forge needs a forge: --forge github|gitlab|forgejo");
+    } else if (arg === "--require-review") {
+      result.requireReview = true;
+    } else if (arg === "--pr-loop") {
+      result.prLoop = true;
     } else if (arg === "--resume") {
       result.resume = args[++i];
     } else if (arg === "--local") {
@@ -1266,6 +1278,17 @@ Component release ledger + status:
                              for wave 1 and --wave <n> for one wave per CI
                              job; --resume <file> finishes an attempt that
                              stopped)
+  components pr-plan       Plan the components a pull request reaches and
+                            the ones that depend on them, and write the
+                            report and note (--base <ref> --pr <n>
+                            [--forge github|gitlab|forgejo] posts them);
+                            applies nothing
+  components pr-apply      On merge: plan the same members again and apply
+                            them only if an approval stands for that digest
+                            (chant approve pr-<n> pr-apply --plan <digest>);
+                            a moved plan refuses with exit 3
+                            (--require-review: the approver must have
+                            approved the pull request on the forge)
   components release <env> Append one immutable release record
                             (--component <name> --digest <sha256:...>
                              [--git-sha <sha>] [--run-id <id>] [--actor <name>]);
@@ -1771,6 +1794,9 @@ export const commandRegistry: CommandDef[] = [
 
   // Component release ledger + status surface (#568, epic #551)
   { name: "components fan-out", requiresPlugins: true, handler: runComponentsFanOut },
+  // #3183 — the pull-request loop the generated CI runs. Imported on first use.
+  { name: "components pr-plan", requiresPlugins: true, handler: async (ctx) => (await import("./handlers/pr")).runComponentsPrPlan(ctx) },
+  { name: "components pr-apply", requiresPlugins: true, handler: async (ctx) => (await import("./handlers/pr")).runComponentsPrApply(ctx) },
   { name: "components status", requiresPlugins: true, handler: runComponentsStatus },
   { name: "components release", handler: runComponentsReleaseRecord },
   { name: "components export", handler: runComponentsExport },

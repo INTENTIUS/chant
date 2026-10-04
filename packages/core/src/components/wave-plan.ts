@@ -23,11 +23,25 @@ import { resolveStepInput, type DriverComponent, type DriverPhase, type DriverSt
 import { componentPlanDigest } from "./gate-plan";
 import type { CapabilityRegistry, DeployContext } from "./capability";
 import type { WaveMember } from "../gated-waves";
+import type { ChangeSetPart } from "../change-set";
 
-/** What planning one component produced: its members and what its steps hand to `run`, or why it could not plan. */
+/**
+ * What planning one component produced: its members, what its steps hand to
+ * `run`, and each member's change-set part (#3183), or why it could not plan.
+ * A member whose capability returns no part gets one with no entries, so the
+ * parts always cover the members.
+ */
 export type WaveComponentPlan =
-  | { component: string; members: WaveMember[]; plans: Record<string, unknown> }
+  | { component: string; members: WaveMember[]; plans: Record<string, unknown>; parts: ChangeSetPart[] }
   | { component: string; error: string };
+
+/** A part with no entries, for a member whose planner describes no changes. */
+function emptyPart(member: WaveMember): ChangeSetPart {
+  return {
+    member: { member: member.member, lexicon: "chant", planner: "chant", status: "planned", planDigest: member.planDigest, holes: [] },
+    entries: [],
+  };
+}
 
 /** Every capability step in a composition, nested phases included, gates left out. */
 function capabilitySteps(phases: readonly DriverPhase[]): DriverStep[] {
@@ -56,27 +70,55 @@ export async function planWaveComponent(
   try {
     const members: WaveMember[] = [];
     const plans: Record<string, unknown> = {};
+    const parts: ChangeSetPart[] = [];
     for (const step of capabilitySteps(component.deploy)) {
       const capability = registry.resolve(step.kind);
       if (!capability.plan) continue;
       const { kind: _kind, ...rest } = step;
       const input = resolveStepInput(rest, {}, componentOutputs);
       const planned = await capability.plan(ctx, input as never);
-      members.push({ member: planned.member, planDigest: planned.planDigest });
+      const member = { member: planned.member, planDigest: planned.planDigest };
+      members.push(member);
+      parts.push(planned.changeSet ?? emptyPart(member));
       if (planned.artifact !== undefined) plans[planned.member] = planned.artifact;
     }
     if (members.length === 0) {
-      members.push({
+      const member = {
         member: component.name,
         planDigest: componentPlanDigest({
           environment: ctx.env,
           component,
           ...(ctx.vars ? { vars: ctx.vars } : {}),
         }),
-      });
+      };
+      members.push(member);
+      parts.push(emptyPart(member));
     }
-    return { component: component.name, members, plans };
+    return { component: component.name, members, plans, parts };
   } catch (err) {
     return { component: component.name, error: err instanceof Error ? err.message : String(err) };
   }
+}
+
+/**
+ * The outputs `component` exposes now, read from each step whose capability
+ * has `outputs` (#3183), merged the way the driver merges a run's outputs.
+ * `undefined` when no step can say. A pull request's plan reads these for
+ * the components a planned one depends on, before anything has applied.
+ */
+export async function readComponentOutputs(
+  component: DriverComponent,
+  registry: CapabilityRegistry,
+  ctx: DeployContext,
+  componentOutputs: Record<string, Record<string, unknown>>,
+): Promise<Record<string, unknown> | undefined> {
+  let found: Record<string, unknown> | undefined;
+  for (const step of capabilitySteps(component.deploy)) {
+    const capability = registry.resolve(step.kind);
+    if (!capability.outputs) continue;
+    const { kind: _kind, ...rest } = step;
+    const input = resolveStepInput(rest, {}, componentOutputs);
+    found = { ...found, ...(await capability.outputs(ctx, input as never)) };
+  }
+  return found;
 }

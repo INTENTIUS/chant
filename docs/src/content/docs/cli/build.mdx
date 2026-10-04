@@ -149,6 +149,16 @@ Without `--promote-to` the generated pipeline has no promote job. It uploads no 
 chant build --components --generate github --env staging --promote-to prod --output .github/workflows/components.yml
 ```
 
+### Pull-request pipeline
+
+`--pr-loop` generates a pipeline with two jobs instead of one per component. `plan` runs on each pull request and posts the plan of the components the change reaches. `apply` runs on each push to the target branch and applies that plan once a reviewer approved it. `--gate <name>` renames the gate from `pr-apply`, and `--branch <name>` names the target branch (default `main`, or the project's default branch on GitLab). [Generated CI for pull requests](/chant/guide/pull-request-ci/) walks through it on each forge.
+
+```bash
+chant build --components --generate github --pr-loop --env prod --output .github/workflows/chant-pr.yml
+```
+
+`--pr-loop` is refused beside `--wave-gate` or `--promote-to`, and inside a workspace member.
+
 ### Inside a workspace member
 
 When the project sits in a member of a [workspace](/chant/cli/workspace-init/), the pipeline belongs to that member. chant finds the member from the `chant.workspace.json` above the project. The pipeline keeps the triggers it has outside a workspace, and a deploy pipeline never gains a `push` or `pull_request` trigger. What changes is where its jobs run and what they are called:

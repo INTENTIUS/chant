@@ -45,6 +45,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { loadChantConfig, resolveAutoReleaseDisabled, type ChantConfig } from "../../config";
 import { samePlanDigest } from "../../lifecycle/plan-digest";
 import { affectedStacks } from "../../lifecycle/affected";
+import { changedFilesBetween, lexiconChangedUnits } from "../../components/changed-files";
 import { deriveFanOut, fanOutRegistry } from "../../components/fan-out-support";
 import { EarlierWaveNotAppliedError, runFanOut } from "../../components/fan-out-run";
 import { readFanOutAttempt, writeFanOutAttempt, type FanOutAttempt } from "../../components/fan-out-record";
@@ -77,13 +78,20 @@ import type { CommandContext } from "../registry";
  * consumes a changed export is affected at stack granularity in the same way a
  * changed component is at component granularity.
  */
-async function resolveChangedUnits(
+export async function resolveChangedUnits(
   ctx: CommandContext,
   config: ChantConfig,
+  opts: {
+    /** Measure from this commit instead of `--base` (a pull request's merge base, #3183). */
+    base?: string;
+    /** Build both refs for `lifecycle affected` only when the project declares `stacks`. */
+    stacksOnly?: boolean;
+  } = {},
 ): Promise<{ units: ChangedUnits } | { error: string; hint?: string }> {
   const { args } = ctx;
+  const base = opts.base ?? args.base;
   const fromFile = args.fromAffected;
-  if (args.base && fromFile) {
+  if (base && fromFile) {
     return {
       error: "--base and --from-affected both name a change signal",
       hint: "Pass --base <ref> to derive it here, or --from-affected <file> to read one `chant lifecycle affected --json` already wrote.",
@@ -113,7 +121,7 @@ async function resolveChangedUnits(
     };
   }
 
-  if (!args.base) {
+  if (!base) {
     return {
       error: "A change signal is required: chant components fan-out --base <ref> [--head <ref>]",
       hint: "Or pass --from-affected <file> with the JSON `chant lifecycle affected --base <ref> --json` wrote.",
@@ -121,23 +129,37 @@ async function resolveChangedUnits(
   }
 
   try {
-    const result = await affectedStacks({
-      // Components are discovered from the current directory, the convention
-      // every component command follows. In a multi-stack project the diff
-      // reads the same root, because `stacks[].src` is written relative to it.
-      projectPath: config.stacks?.length ? resolve(".") : resolveBuildRoot(args, config),
-      serializers: ctx.plugins.map((p) => p.serializer),
-      baseRef: args.base,
-      headRef: args.head,
-      includeDependents: args.includeDependents,
-      // A project that declares its stacks gets an answer keyed by stack name,
-      // which is the name a component's deploy step uses. Without this the diff
-      // answers by lexicon partition and the join below claims none of it.
-      ...(config.stacks ? { stacks: config.stacks } : {}),
-    });
+    // A unit that is not chant source, such as a Terraform root, never shows
+    // in the artifact diff below; the lexicon that owns it answers from the
+    // changed paths (#3183).
+    const projectRoot = resolve(".");
+    const lexiconUnits = ctx.plugins.some((p) => p.changedUnits)
+      ? await lexiconChangedUnits(ctx.plugins, {
+          projectRoot,
+          config: config as Record<string, unknown>,
+          changedFiles: await changedFilesBetween(projectRoot, base, args.head ?? "HEAD"),
+        })
+      : [];
+    const result =
+      opts.stacksOnly && !config.stacks?.length
+        ? { changed: [], dependents: [], indeterminate: [] }
+        : await affectedStacks({
+            // Components are discovered from the current directory, the convention
+            // every component command follows. In a multi-stack project the diff
+            // reads the same root, because `stacks[].src` is written relative to it.
+            projectPath: config.stacks?.length ? resolve(".") : resolveBuildRoot(args, config),
+            serializers: ctx.plugins.map((p) => p.serializer),
+            baseRef: base,
+            headRef: args.head,
+            includeDependents: args.includeDependents,
+            // A project that declares its stacks gets an answer keyed by stack name,
+            // which is the name a component's deploy step uses. Without this the diff
+            // answers by lexicon partition and the join below claims none of it.
+            ...(config.stacks ? { stacks: config.stacks } : {}),
+          });
     return {
       units: {
-        changed: [...new Set([...result.changed, ...result.dependents])].sort(),
+        changed: [...new Set([...result.changed, ...result.dependents, ...lexiconUnits])].sort(),
         indeterminate: result.indeterminate,
       },
     };

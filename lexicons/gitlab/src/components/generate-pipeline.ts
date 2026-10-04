@@ -36,6 +36,7 @@ import { emitYAMLEntry } from "@intentius/chant/yaml";
 import { resolveComponentGraph, type DriverComponent } from "@intentius/chant/components/driver";
 import { hasPublishStep, promoteArchivePaths } from "@intentius/chant/components/promote";
 import { GATED_WAVE_RECORD, gatedWaveJobs } from "@intentius/chant/components/gated-wave-pipeline";
+import { PR_LOOP_REPORT_DIR, prApplyGroup, prLoopJobs } from "@intentius/chant/components/pr-pipeline";
 import { memberGitlabChanges, memberRepoPath, memberShellDir } from "@intentius/chant/lexicon";
 import type {
   ComponentPipelineJob as GeneratedJob,
@@ -73,6 +74,14 @@ export function generateGitlabPipeline(
 
   const { waves } = resolveComponentGraph(components);
   const byName = new Map(components.map((c) => [c.name, c]));
+
+  if (options.prLoop) {
+    if (options.gatedWaves || options.promoteTo !== undefined) {
+      throw new Error("a pull-request pipeline has no wave or promote jobs; drop --wave-gate and --promote-to, or --pr-loop");
+    }
+    if (options.member) throw new Error("a pull-request pipeline is not generated for a workspace member yet; generate it from the project outside the workspace");
+    return prLoopGitlabPipeline(env, image, beforeScript, extraScript, options);
+  }
 
   if (options.gatedWaves) {
     if (options.promoteTo !== undefined) throw new Error("a gated-wave pipeline has no promote job; drop --promote-to or --wave-gate");
@@ -249,6 +258,58 @@ function gatedWaveGitlabPipeline(
     emitYAMLEntry("variables", doc.variables),
     ...jobs.map((job) => emitYAMLEntry(job.jobName, doc[job.jobName])),
   ];
+  return { yaml: sections.join("\n\n") + "\n", stages, jobs, env };
+}
+
+/**
+ * The merge-request pipeline (#3183): `plan` in each merge request pipeline,
+ * `apply` on each push to the target branch, one apply at a time per
+ * environment (`resource_group`). `GIT_DEPTH: "0"` gives both the history
+ * they measure the change with. The jobs talk to GitLab with
+ * `CHANT_FORGE_TOKEN`, a project or group access token with the `api` scope
+ * set as a masked CI/CD variable, since a job token cannot write notes.
+ */
+function prLoopGitlabPipeline(
+  env: string,
+  image: string,
+  beforeScript: string[],
+  extraScript: string[],
+  options: GenerateGitlabOptions,
+): GenerateGitlabResult {
+  const loop = options.prLoop!;
+  const [plan, apply] = prLoopJobs("gitlab", env, loop);
+  const onMergeRequest = '$CI_PIPELINE_SOURCE == "merge_request_event"';
+  const target = loop.branch ? JSON.stringify(loop.branch) : "$CI_DEFAULT_BRANCH";
+  const onMerge = `$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == ${target}`;
+  const script = (job: typeof plan): string[] => [...beforeScript, job.command, ...extraScript];
+  const stages = ["plan", "apply"];
+  const doc: Record<string, unknown> = {
+    workflow: { name: `chant-pr-${env}`, rules: [{ if: onMergeRequest }, { if: onMerge }] },
+    stages,
+    variables: { ...options.variables, CHANT_ENV: env, GIT_DEPTH: "0" },
+    plan: {
+      stage: "plan",
+      image,
+      rules: [{ if: onMergeRequest }],
+      variables: plan.env,
+      script: script(plan),
+      artifacts: { when: "always", paths: [PR_LOOP_REPORT_DIR] },
+    },
+    apply: {
+      stage: "apply",
+      image,
+      resource_group: prApplyGroup(env),
+      rules: [{ if: onMerge }],
+      variables: apply.env,
+      script: script(apply),
+      artifacts: { when: "always", paths: [PR_LOOP_REPORT_DIR] },
+    },
+  };
+  const jobs: GeneratedJob[] = [
+    { jobName: "plan", component: "merge request plan", stage: "plan", needs: [] },
+    { jobName: "apply", component: "merge request apply", stage: "apply", needs: [] },
+  ];
+  const sections = ["workflow", "stages", "variables", "plan", "apply"].map((key) => emitYAMLEntry(key, doc[key]));
   return { yaml: sections.join("\n\n") + "\n", stages, jobs, env };
 }
 
