@@ -150,6 +150,14 @@ export interface TerraformPlanArgs extends TerraformRootArgs {
   planFile?: string;
   /** `-destroy`: plan the removal of everything the root manages. */
   destroy?: boolean;
+  /**
+   * Input variables, passed as `-var` after the root's `-var-file`s, so they
+   * win over a var file that sets the same name (#3049). A string goes as it
+   * is; anything else as JSON, which terraform reads as HCL for a list, a map
+   * or an object. This is how a value another root produced, wired with
+   * `stackOutput()`, reaches the plan.
+   */
+  vars?: Record<string, unknown>;
 }
 
 export interface TerraformApplyArgs extends TerraformRootArgs {
@@ -521,11 +529,16 @@ export function terraformPlanCommand(opts: {
   binary: string;
   planFile: string;
   varFiles?: string[];
+  vars?: Record<string, unknown>;
   destroy?: boolean;
 }): string {
   const parts = [opts.binary, "plan", "-input=false", "-detailed-exitcode"];
   if (opts.destroy) parts.push("-destroy");
   for (const varFile of opts.varFiles ?? []) parts.push(`-var-file=${quoteArg(varFile)}`);
+  for (const [name, value] of Object.entries(opts.vars ?? {}).sort(([a], [b]) => a.localeCompare(b))) {
+    if (value === undefined) continue;
+    parts.push(`-var=${quoteArg(`${name}=${typeof value === "string" ? value : JSON.stringify(value)}`)}`);
+  }
   parts.push(`-out=${quoteArg(opts.planFile)}`);
   return parts.join(" ");
 }
@@ -882,6 +895,7 @@ export async function terraformPlan(
     binary,
     planFile,
     ...(root.varFiles ? { varFiles: root.varFiles } : {}),
+    ...(args.vars ? { vars: args.vars } : {}),
     ...(args.destroy ? { destroy: true } : {}),
   });
 
@@ -998,6 +1012,21 @@ export async function terraformApply(
       refusal: (failure.stderr ?? "").trim() || (failure.stdout ?? "").trim(),
     };
   }
+}
+
+/**
+ * `terraform output -json` in the named root, as `{ name: value }` (#3049).
+ * A sensitive output's value comes back like any other, since the caller
+ * asked for the values to hand them on.
+ */
+export async function terraformOutputs(
+  args: TerraformRootArgs,
+  signal?: AbortSignal,
+): Promise<Record<string, unknown>> {
+  const { binary, root, dir } = await resolveRoot(args, signal);
+  const { stdout } = await run(`${binary} output -json`, dir, terraformEnvironment(root), signal);
+  const parsed = JSON.parse(stdout || "{}") as Record<string, { value?: unknown }>;
+  return Object.fromEntries(Object.entries(parsed).map(([name, entry]) => [name, entry?.value]));
 }
 
 /**

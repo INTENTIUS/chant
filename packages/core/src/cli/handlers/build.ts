@@ -79,7 +79,15 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
   const result = await generateComponentsPipeline(
     args.path,
     lexicon,
-    { env: args.env, ...(args.promoteTo ? { promoteTo: args.promoteTo } : {}), ...(plan ? { member: plan.member } : {}) },
+    {
+      env: args.env,
+      ...(args.promoteTo ? { promoteTo: args.promoteTo } : {}),
+      ...(plan ? { member: plan.member } : {}),
+      // #3049: one job per wave of a gated-wave fan-out instead of one per component.
+      ...(args.waveGate
+        ? { gatedWaves: { gate: args.waveGate, ...(args.canary?.length ? { canary: args.canary } : {}), ...(args.base ? { base: args.base } : {}) } }
+        : {}),
+    },
     args.sandbox,
     paramsResolution.provenance,
   );

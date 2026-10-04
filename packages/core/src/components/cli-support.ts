@@ -22,6 +22,7 @@
  *    executor, the CLI entrypoint the driver (#556) never had.
  */
 
+import { UnknownCanaryError } from "../gated-waves";
 import { lexiconModulePath, lexiconNames, importLexiconPackage } from "../lexicon-module";
 import { discoverComponents } from "./discover";
 import type { BuildParamProvenance } from "../provenance";
@@ -305,7 +306,7 @@ export async function generateComponentsPipeline(
     const { yaml, stages, jobs, env } = plugin.generateComponentPipeline(driverComponents, options);
     return { success: true, yaml, stages, jobs, ...(env ? { env } : {}), buildParams };
   } catch (err) {
-    if (err instanceof UnknownDependencyError || err instanceof DependencyCycleError) {
+    if (err instanceof UnknownDependencyError || err instanceof DependencyCycleError || err instanceof UnknownCanaryError) {
       return { success: false, error: err.message };
     }
     throw err;

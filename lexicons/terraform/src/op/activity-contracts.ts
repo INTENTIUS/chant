@@ -76,6 +76,7 @@ export const terraformPlanContract = activityContract(
     ...rootArgs,
     planFile: z.string().optional(),
     destroy: z.boolean().optional(),
+    vars: z.record(z.string(), z.unknown()).optional(),
   }),
   z.object({
     ...planChangeCounts,

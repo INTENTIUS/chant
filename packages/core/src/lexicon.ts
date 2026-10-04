@@ -8,6 +8,7 @@ import type { TypeScriptGenerator } from "./import/generator";
 import type { EmbeddedContentImporter } from "./import/embedded";
 import type { AgentConfigImporter } from "./agents/importer";
 import type { ArtifactIntegrity } from "./lexicon-integrity";
+import type { GatedWavePipelineOptions } from "./components/gated-wave-pipeline";
 import type { OkfFile } from "./okf";
 import type { CompletionContext, CompletionItem, HoverContext, HoverInfo, CodeActionContext, CodeAction } from "./lsp/types";
 import type { McpToolContribution, McpResourceContribution } from "./mcp/types";
@@ -536,6 +537,13 @@ export interface ComponentPipelineOptions {
    * `["chant", "components", "promote", "--from", <env>, "--to", <promoteTo>]`.
    */
   promoteCommand?: string[];
+  /**
+   * Gated waves (#3049): one job per wave instead of one per component. Job
+   * `wave-<k>` runs `chant components fan-out --wave-gate <gate> --wave <k>`
+   * and hands the attempt record to the next job. See
+   * `components/gated-wave-pipeline.ts`. Unset, the pipeline is unchanged.
+   */
+  gatedWaves?: GatedWavePipelineOptions;
   /**
    * The workspace member this pipeline belongs to (#2542, #2524 D19). Core
    * sets it when the project sits in a member of a `chant.workspace.json`;
