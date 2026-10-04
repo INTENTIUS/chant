@@ -10,7 +10,9 @@
  *
  * Read by id or name here:
  *
- *   record, decision, work-item   a record, by id, from the declared record kinds (`records --json`)
+ *   record, decision, work-item   a record, by id, from the declared record kinds (`records --json`);
+ *                                 a work item also has its size, `criteria`, `files`, `words` and
+ *                                 `fits_<tier>`, for the slice-tier point (`../workspace/work-size.ts`, #3150)
  *   member                        a member, by name (`ls --json`)
  *
  * The other outputs a point may name (finding, region, commit, node, gate, release,
@@ -22,6 +24,11 @@
 import { declaredKindFiles, queryDeclaredRecords } from "../workspace/records-cli";
 import { listWorkspace } from "../workspace/ls";
 import { inputOutput } from "../workspace/points";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { bodyText, loadRecordKind } from "../workspace/records";
+import { locateWorkspace } from "../workspace/which-chant";
+import { DEFAULT_TIER_LIMITS, measureWorkItem, sizeFields } from "../workspace/work-size";
 
 /** The outputs {@link readInputs} reads by id or name. */
 export const READABLE_OUTPUTS = ["record", "decision", "work-item", "member"] as const;
@@ -45,17 +52,38 @@ export function fieldOf(value: unknown, path: string): unknown {
 }
 
 async function readRecord(id: string, cwd: string, output: string): Promise<Record<string, unknown>> {
-  const set = await queryDeclaredRecords(declaredKindFiles(cwd), { cwd });
+  const files = declaredKindFiles(cwd);
+  const set = await queryDeclaredRecords(files, { cwd });
   const unread: string[] = [];
-  for (const doc of set.kinds) {
+  for (const [i, doc] of set.kinds.entries()) {
     if ("error" in doc) {
       unread.push(`${doc.declared.path}: ${doc.error.code}`);
       continue;
     }
     const found = doc.records.find((r) => r.id === id);
-    if (found) return found as unknown as Record<string, unknown>;
+    if (found) {
+      const record = found as unknown as Record<string, unknown>;
+      // A work item's size, for the slice-tier point (#3150): criteria, files, words and fits_<tier>.
+      return output === "work-item" ? { ...record, ...(await workItemSizeFields(files[i].file, found.path, found.data, cwd)) } : record;
+    }
   }
   throw new InputReadError(`no declared record kind holds a record with id ${id} (read for ${output})${unread.length ? `; not read: ${unread.join(", ")}` : ""}`);
+}
+
+/** The size fields of a work item of the kind at `kindFile`, measured from its record file. Empty for a kind with no work block. */
+async function workItemSizeFields(kindFile: string, path: string, data: Record<string, unknown> | null, cwd: string): Promise<Record<string, unknown>> {
+  const loaded = await loadRecordKind(kindFile, cwd);
+  const work = loaded.kind.work;
+  if (!work) return {};
+  const located = locateWorkspace(cwd);
+  let body = "";
+  try {
+    body = bodyText(readFileSync(join(located.top ?? located.rootOnDisk, ...path.split("/")), "utf-8"));
+  } catch {
+    // A record that can't be read again is measured from its front matter alone.
+  }
+  const size = measureWorkItem(data, body, work.acceptance?.field ?? "acceptance");
+  return sizeFields(size, work.tier?.limits ?? DEFAULT_TIER_LIMITS);
 }
 
 function readMember(name: string, cwd: string): Record<string, unknown> {

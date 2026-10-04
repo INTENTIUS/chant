@@ -244,7 +244,7 @@ describe("every schema against the reference workspace (#2543)", () => {
       const doc = await workspacePoints({ cwd: FIXTURE, at });
       expectValid(doc);
       if ("error" in doc) throw new Error(doc.error.message);
-      expect(doc.points.map((p) => p.name)).toEqual(["slice-tier", "ship-skip", "finding-triage", "needs-a-decision", "intent-origin", "intent-judgment", "intent-disposition", "agent-question"]);
+      expect(doc.points.map((p) => p.name)).toEqual(["slice-tier", "understand", "ship-skip", "finding-triage", "needs-a-decision", "intent-origin", "intent-judgment", "intent-disposition", "agent-question"]);
       const sliceTier = doc.points.find((p) => p.name === "slice-tier")!;
       expect(sliceTier.criteria).toEqual({
         small: "A haiku-class builder. The work item fits the small limits.",
