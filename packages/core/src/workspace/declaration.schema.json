@@ -504,6 +504,12 @@
         "listing": {
           "$ref": "#/$defs/boxListing"
         },
+        "publisher": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S",
+          "description": "The command that publishes the box's work (#3165, ws-088): it applies a built work item to the box's checkout and, when factory.publish names a target, pushes it and opens the pull request, and it sends the records a person kept uncommitted. It is run from the workspace root by chant workspace box publish, split into words as a shell splits plain words (quotes group, a backslash escapes) but never given to a shell, with a JSON request on stdin; box-publish.schema.json says what it reads and prints. An orchestrator such as studio supplies it. chant workspace status --json prints it under the member's box, so a surface offers a publish only when a box names one. Added in schema 1 by chant 0.103.0, so a declaration that uses it sets minReader to 0.103.0 or newer."
+        },
         "replicate": {
           "$ref": "#/$defs/boxReplicate"
         },

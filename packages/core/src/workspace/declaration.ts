@@ -295,6 +295,12 @@ export interface BoxDeclaration {
   factory: BoxFactory | null;
   /** What the box shows of itself on a home site (#3146), or null when the block declares no listing. */
   listing: BoxListing | null;
+  /**
+   * The command that publishes the box's work (#3165, ws-088), as declared,
+   * or null when the block names none. `chant workspace box publish` runs it
+   * (`box-publish.ts`).
+   */
+  publisher: string | null;
   /** Where the box's work in progress is replicated (#3172, ws-085), or null when the block declares no policy. */
   replicate: BoxReplicate | null;
   /** The block's JSON Pointer in the file, for messages. */
@@ -1007,6 +1013,7 @@ function boxOf(raw: unknown, pointer: string): BoxDeclaration | null {
       publish?: { forge?: "github"; repo: string; base?: string; branchPrefix?: string; head?: string };
     };
     listing?: { published?: boolean; title?: string; line?: string; cover?: string };
+    publisher?: string;
     replicate?: { remote?: string; refs?: ReplicateRefClass[]; on?: ReplicateTrigger[]; every?: string };
   };
   const f = b.factory;
@@ -1051,6 +1058,7 @@ function boxOf(raw: unknown, pointer: string): BoxDeclaration | null {
             pointer: `${pointer}/factory`,
           },
     listing: l === undefined ? null : { published: l.published ?? true, title: l.title ?? "", line: l.line ?? "", cover: l.cover ?? null },
+    publisher: b.publisher ?? null,
     replicate:
       r === undefined
         ? null

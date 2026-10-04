@@ -536,6 +536,10 @@
           "description": "Added in contract 1 by #3146. What the box shows of itself on a home site, or null when the block declares no listing.",
           "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/listing" }]
         },
+        "publisher": {
+          "description": "Added in contract 1 by #3165. The command that publishes the box's work, as the box block declares it (ws-088), or null when it names none. A surface offers a publish only when it is set, and asks for one with chant workspace box publish rather than running it.",
+          "type": ["string", "null"]
+        },
         "replicate": {
           "description": "Added in contract 1 by #3172. Where the box's work in progress is replicated (ws-085), with every default filled in, or null when the block declares no policy. At most one member's box has one; the top-level replication says how far each ref is from the remote.",
           "oneOf": [
