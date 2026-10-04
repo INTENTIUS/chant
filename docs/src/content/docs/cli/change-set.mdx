@@ -70,7 +70,7 @@ chant and choudoufu's `live-summary` follow the same rules. Each keeps its own c
 | `changeSet` | the digest of the change-set document summarized |
 | `unit` | `member`, or `instance` for a one-member document |
 | `units` | the number of members, failed ones included, or of changing instances |
-| `groups` | largest first, each `{ id, resource, units, outlier, noChanges, changes, extends, plus, destroys, sideEffects }` |
+| `groups` | largest first, each `{ id, resource, units, outlier, noChanges, changes, extends, plus, destroys, sideEffects, provisional }`; provisional groups come after the real ones |
 | `failed` | `{ member, scope, reason }` for each member that failed |
 | `destroys` | `{ member, address, type, action, deposed }` for each delete and replace |
 | `forgets` | `{ member, address, type, deposed }` for each forget |
@@ -79,6 +79,8 @@ chant and choudoufu's `live-summary` follow the same rules. Each keeps its own c
 | `holes` | `{ member, address, type, reason }` |
 
 A group's `id` is twelve hex characters of a hash over its normalized changes. The same change gets the same id in every run and on every commit, so a report can link one group across commits. `changes` lists each distinct change once, with `count` for a change one member makes several times. When a group holds the whole of the largest group's change and more, `extends` names that group and `plus` lists the rest. Sometimes a change has the same address and action as one in the largest group but other values. It then carries `differsFrom`, naming that group, and `differsIn`, naming the attributes. Values are never printed.
+
+A group of provisional members, planned before what they read applied, has `provisional: true`. The flag is part of its id, so the same change planned for real and planned as a preview never share a group, and a provisional group is never described against a real one.
 
 `--format markdown` prints a note for a merge request or pull request, of at most `--limit` characters counted as Unicode code points. The default is 65,536, the most a GitHub issue or pull request comment may hold; the API refuses a longer one. A GitLab note may hold 1,000,000 characters ([GitLab Notes API](https://docs.gitlab.com/api/notes/)), so `--limit 1000000` suits a GitLab-only pipeline.
 

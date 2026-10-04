@@ -187,6 +187,16 @@ describe("the digest", () => {
     expect(changeSetDigest([lifecycle().member])).toBe(composeChangeSet([lifecycle()]).digest);
   });
 
+  test("leaves provisional members out, so approving the document never covers them", () => {
+    const provisional = tofu();
+    provisional.member = { ...provisional.member, provisional: true };
+    const doc = composeChangeSet([lifecycle(), warden(), provisional]);
+    expect(doc.members.find((m) => m.provisional)?.member).toBe(provisional.member.member);
+    expect(doc.digest).toBe(composeChangeSet([lifecycle(), warden()]).digest);
+    expect(verifyChangeSetDigest(doc)).toBe(true);
+    expectValid(doc);
+  });
+
   test("refuses two parts for one member, and an entry naming another member", () => {
     expect(() => composeChangeSet([warden(), warden()])).toThrow(/names member warden twice/);
     const stray = warden();

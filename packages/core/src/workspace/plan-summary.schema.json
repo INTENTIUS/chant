@@ -147,7 +147,8 @@
         "extends": { "type": "string", "description": "The group whose whole change this one contains." },
         "plus": { "type": "array", "items": { "$ref": "#/$defs/change" }, "description": "What it adds to that group's change." },
         "destroys": { "type": "array", "items": { "$ref": "#/$defs/destroy" }, "description": "Every delete and replace a unit of this group makes. Each is also in the top-level destroys." },
-        "sideEffects": { "type": "array", "items": { "$ref": "#/$defs/sideEffect" }, "description": "Every triggered action a unit of this group runs." }
+        "sideEffects": { "type": "array", "items": { "$ref": "#/$defs/sideEffect" }, "description": "Every triggered action a unit of this group runs." },
+        "provisional": { "const": true, "description": "Its units are provisional plans, planned before what they read applied. Part of the id, so they never share a group with real plans. Absent on a group of real plans." }
       }
     }
   }

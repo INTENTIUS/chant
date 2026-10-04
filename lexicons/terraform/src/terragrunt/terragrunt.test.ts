@@ -279,6 +279,8 @@ describe("the run report reaches the change set", () => {
 describe("a wave's plan and apply, with Terragrunt stubbed", () => {
   /** A stub that writes what Terragrunt wrote for wave 1 into the directories the args name. */
   const stub = (seen: string[][]): TerragruntExec => async (_f, args) => {
+    // The wave's units read no dependency, so the mock check renders nothing to follow.
+    if (args[0] === "render") return { code: 0, stdout: '{"dependency":null}', stderr: "" };
     seen.push([...args]);
     const at = (flag: string): string | undefined => (args.includes(flag) ? args[args.indexOf(flag) + 1] : undefined);
     const report = at("--report-file")!;
