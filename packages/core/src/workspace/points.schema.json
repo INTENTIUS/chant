@@ -664,6 +664,88 @@
             "null"
           ]
         },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "What the people who answered wrote with their answer (points answer --note, #3351). null when they wrote nothing, and from a chant before it."
+        },
+        "retractions": {
+          "type": "array",
+          "description": "Answers people took back, oldest first (points retract, #3351): each answer as it was and who retracted it, when and why. A retracted question is escalated to people again. Empty when none was, and absent from a chant before it.",
+          "items": {
+            "type": "object",
+            "required": [
+              "answer",
+              "decider",
+              "answeredBy",
+              "answeredOn",
+              "answerNote",
+              "by",
+              "on",
+              "note"
+            ],
+            "properties": {
+              "answer": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "decider": {
+                "type": "object",
+                "description": "Who gave the answer: the record's decider as it was."
+              },
+              "answeredBy": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "answeredOn": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "answerNote": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The note the answer carried."
+              },
+              "by": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Who retracted it."
+              },
+              "on": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "note": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Why it was retracted (points retract --note)."
+              }
+            }
+          }
+        },
         "valid": {
           "type": "boolean"
         },

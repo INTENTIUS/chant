@@ -11,7 +11,8 @@
  * can see it. With `--open`, only open questions are listed. It never writes
  * and never calls a model.
  *
- * `points ask` and `points answer` are the writes, in `decide.ts`.
+ * `points ask`, `points answer` and `points retract` are the writes, in
+ * `decide.ts`.
  */
 
 import { readFileSync } from "node:fs";
@@ -20,7 +21,7 @@ import { formatError } from "../cli/format";
 import type { CommandContext } from "../cli/registry";
 import { declaredRecordKinds, readDeclaration, readerVersion, WorkspaceReadError, type ErrorLocation, type WorkspaceErrorCode } from "./declaration";
 import { declaredKindFile } from "./declared-kinds";
-import { answerPoint, askPoint, questionView, POINTS_WRITE_CONTRACT_VERSION, POINTS_WRITE_SCHEMA_ID, type PointsWriteDocument, type QuestionView } from "./decide";
+import { answerPoint, askPoint, questionView, retractAnswer, POINTS_WRITE_CONTRACT_VERSION, POINTS_WRITE_SCHEMA_ID, type PointsWriteDocument, type PointsWriteVerb, type QuestionView } from "./decide";
 import { candidates, inputOutput, pointsFileOf, pointVersion, quorumOf, readPointsThrough, type Decider, type ModelAsk, type WireAnswer } from "./points";
 import type { ReasonCode } from "./reason-codes";
 import { gitRevisionSource, workingTreeSource } from "./record-source";
@@ -242,14 +243,15 @@ export function responseAsk(response: unknown): ModelAsk {
 const USAGE = [
   "chant workspace points [--open] [--kind <kind file>] [--at <rev>] [--json]",
   "chant workspace points ask <point> --inputs <file|-> [--response <file>] [--subject <id>] [--kind <kind file>] [--dry-run]",
-  "chant workspace points answer <id> --answer <value> --by <name> [--by <name>...] [--kind <kind file>] [--dry-run]",
+  "chant workspace points answer <id> --answer <value> --by <name> [--by <name>...] [--note <text>] [--kind <kind file>] [--dry-run]",
+  "chant workspace points retract <id> --by <name> [--by <name>...] [--note <text>] [--kind <kind file>] [--dry-run]",
 ].join("\n");
 
-function usage(verb: "ask" | "answer", message: string): PointsWriteDocument {
+function usage(verb: PointsWriteVerb, message: string): PointsWriteDocument {
   return { $schema: POINTS_WRITE_SCHEMA_ID, contract: POINTS_WRITE_CONTRACT_VERSION, verb, error: { code: "write-usage-invalid", message } };
 }
 
-function readJson(verb: "ask" | "answer", flag: string, value: string, cwd: string): { value: unknown } | PointsWriteDocument {
+function readJson(verb: PointsWriteVerb, flag: string, value: string, cwd: string): { value: unknown } | PointsWriteDocument {
   let text: string;
   try {
     text = readFileSync(value === "-" ? 0 : resolve(cwd, value), "utf-8");
@@ -263,7 +265,7 @@ function readJson(verb: "ask" | "answer", flag: string, value: string, cwd: stri
   }
 }
 
-/** `chant workspace points`, and its `ask` and `answer` verbs. */
+/** `chant workspace points`, and its `ask`, `answer` and `retract` verbs. */
 export async function runWorkspacePoints(ctx: CommandContext): Promise<number> {
   const { args } = ctx;
   const cwd = process.cwd();
@@ -291,10 +293,16 @@ export async function runWorkspacePoints(ctx: CommandContext): Promise<number> {
     if (!id) return print(usage("answer", "answer needs the question's id"));
     if (args.answer === undefined) return print(usage("answer", "--answer <value> is required"));
     if (!args.bys || args.bys.length === 0) return print(usage("answer", "--by <name> is required, once for each person who answered"));
-    return print(await answerPoint({ cwd, id, answer: args.answer, by: args.bys, kind: args.kind, dryRun: args.dryRun }));
+    return print(await answerPoint({ cwd, id, answer: args.answer, by: args.bys, note: args.note, kind: args.kind, dryRun: args.dryRun }));
+  }
+  if (verb === "retract") {
+    const id = args.extraPositional2;
+    if (!id) return print(usage("retract", "retract needs the question's id"));
+    if (!args.bys || args.bys.length === 0) return print(usage("retract", "--by <name> is required, once for each person who takes the answer back"));
+    return print(await retractAnswer({ cwd, id, by: args.bys, note: args.note, kind: args.kind, dryRun: args.dryRun }));
   }
   if (verb !== undefined) {
-    console.error(formatError({ message: `chant workspace points takes no argument but ask or answer (got ${verb})`, hint: USAGE }));
+    console.error(formatError({ message: `chant workspace points takes no argument but ask, answer or retract (got ${verb})`, hint: USAGE }));
     return 1;
   }
   const doc = await workspacePoints({ cwd, at: args.at, open: args.open, kind: args.kind });

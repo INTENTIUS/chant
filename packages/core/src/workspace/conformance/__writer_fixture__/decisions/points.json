@@ -127,6 +127,59 @@
         { "kind": "model", "backend": "systemone", "model": "jev-1.13.0", "threshold": 0.8 },
         { "kind": "quorum", "count": 1 }
       ]
+    },
+    "intent-origin": {
+      "title": "Where this change came from",
+      "question": {
+        "type": "choice",
+        "instructions": "An intent walk (chant workspace graph --intent) asks this at a commit no decision's window holds: was the change meant to carry out a decision? The state is the region walked and the commit's node.",
+        "criteria": {
+          "carried-out-decision": "The change carried out a decision, written down or not.",
+          "incidental": "The change was incidental: a fix, a rename or upkeep that no decision is about.",
+          "unknown": "The person walking the region does not know."
+        }
+      },
+      "inputs": {
+        "region.id": "the region walked, as graph --intent names it: region:<path>, with :<start>-<end> or #<symbol>",
+        "node.id": "the node of the walk the question is asked at, as graph --intent names it"
+      },
+      "deciders": [{ "kind": "quorum", "count": 1, "note": "The person walking the region answers. No table or model answers for them." }]
+    },
+    "intent-judgment": {
+      "title": "What the gap between this decision and the code is",
+      "question": {
+        "type": "choice",
+        "instructions": "An intent walk asks this at a decision, or at a commit made inside a decision's window that is not the decision's own work: does the code do what the decision says, and if not, why? The state is the region walked and the node.",
+        "criteria": {
+          "drift": "Drift: the code moved away from a decision that still holds.",
+          "unwritten-supersession": "A decision nobody wrote down superseded it.",
+          "decision-wrong": "The decision was wrong, and is reopened.",
+          "no-gap": "There is no gap: the code does what the decision says.",
+          "not-decidable": "It can't be decided from this walk."
+        }
+      },
+      "inputs": {
+        "region.id": "the region walked, as graph --intent names it: region:<path>, with :<start>-<end> or #<symbol>",
+        "node.id": "the node of the walk the question is asked at, as graph --intent names it"
+      },
+      "deciders": [{ "kind": "quorum", "count": 1, "note": "The person walking the region answers. No table or model answers for them." }]
+    },
+    "intent-disposition": {
+      "title": "What happens about this node",
+      "question": {
+        "type": "choice",
+        "instructions": "An intent walk asks this at any other node, such as a unit, contract, evidence, artifact or the region itself: what was done about the question the walk asks there? The state is the region walked and the node.",
+        "criteria": {
+          "handled": "Handled: it is done, or nothing needed doing.",
+          "skipped": "Skipped, and the note says why.",
+          "needs-discussion": "It needs a discussion or a decision first."
+        }
+      },
+      "inputs": {
+        "region.id": "the region walked, as graph --intent names it: region:<path>, with :<start>-<end> or #<symbol>",
+        "node.id": "the node of the walk the question is asked at, as graph --intent names it"
+      },
+      "deciders": [{ "kind": "quorum", "count": 1, "note": "The person walking the region answers. No table or model answers for them." }]
     }
   }
 }
