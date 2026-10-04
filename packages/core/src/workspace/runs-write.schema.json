@@ -66,6 +66,10 @@
             "pushed": {
               "type": "boolean",
               "description": "Whether chant/lifecycle reached the remote; false with no remote too."
+            },
+            "notPushed": {
+              "type": "string",
+              "description": "Why chant/lifecycle did not reach the remote, present only when pushed is false (#3391): the repository has no remote, the remote holds commits this checkout has not fetched, or git refused the push (its first line follows)."
             }
           }
         }
