@@ -14,9 +14,15 @@ chant components export <env> --component <name> [--digest <manifestDigest>]
                                 -o <dir> [--json]
 chant components fan-out (--base <ref> [--head <ref>] [--include-dependents]
                           | --from-affected <file>)
-                                [--env <env>] [--gate <name>] [--dry-run] [--json]
+                                [--env <env>] [--gate <name> | --wave-gate <name>
+                                 [--canary <name>] [--wave <n>]] [--dry-run] [--json]
                                 [--resume <file>] [--seed-outputs <file>]
                                 [--dump-outputs <file>] [--progress-json]
+chant components pr-plan --base <ref> --pr <n> [--env <env>] [--gate <name>]
+                                [--forge github|gitlab|forgejo] [--output <dir>] [--json]
+chant components pr-apply --base <ref> [--pr <n>] [--env <env>] [--gate <name>]
+                                [--forge github|gitlab|forgejo] [--require-review]
+                                [--output <dir>] [--json]
 chant components promote --from <env> --to <env>
                                 [--component <name> [--digest <sha256:...>]
                                  | --digest <component>=<sha256:...> ...]
@@ -173,6 +179,8 @@ Either way the signal names stacks. A component claims a stack through its own d
 
 `--include-dependents` is handed to the diff and folded into the changed set before the join.
 
+A unit that is not chant source never shows in the artifact diff. The terraform lexicon answers for its roots from the changed paths instead. A root in `terraform.roots` is changed when a changed file sits in its directory, in a local module it calls, or is one of its var files. `--base` adds those roots to the signal.
+
 #### The printed derivation
 
 `--dry-run` prints the derivation and dispatches nothing. A dispatching run prints the same block first, so what ran always follows why it was picked.
@@ -215,6 +223,33 @@ approve : chant approve fan-out release --plan jcs1-sha256:9fae3d7c...
 
 The digest identifies the derivation. It covers the ordered selection and the waves, plus the seeds and the edges each component came from. It does not cover what each component would apply, so editing a template without changing the graph leaves the digest, and a standing approval, where they were. `planFanOut` takes per-component input digests when a caller has them, and this command does not supply any yet. A resolution recorded against a different digest does not let this fan-out through, since a fan-out that derives differently is a different change. Each component's own authored gates still decide per component. This adds a gate over the set without removing the ones inside it.
 
+#### One gate per wave
+
+With `--wave-gate <name>`, each wave gets a gate of its own instead of one gate over the set. For wave `n` it is `<name>-wave-<n>` under the op `fan-out`, bound to that wave's set digest. Use it when a change is too large or too risky to approve in one read. A module bump across many [Terraform roots](/chant/lexicons/terraform/ops/#roots-as-components-in-gated-waves) is the usual case. A canary goes first, and the rest wait until it lands.
+
+```bash
+chant components fan-out --base origin/main --env prod --wave-gate release --canary app-dev --resume .chant/fan-out.json
+chant approve fan-out release-wave-1 --plan jcs1-sha256:4c1e...
+chant components fan-out --base origin/main --env prod --wave-gate release --canary app-dev --resume .chant/fan-out.json
+chant approve fan-out release-wave-2 --plan jcs1-sha256:b07a...
+```
+
+A wave is planned only when it is reached, after the wave before it applied. Each component in the wave is asked what it would change: every step whose capability can plan (`terraform-apply` can) is planned with its wiring resolved against the outputs the earlier waves wrote. A later wave planned up front would read outputs that do not exist yet, and its digest would describe values nobody will deploy. The member for a planned step is what it planned, the root for `terraform-apply`, and its digest is the one a gate on that root alone binds. A component with no step that can plan is a member under its own name, with the composition digest its own gates bind. The wave's digest is the [change-set](/chant/reference/change-set/) digest of its members. The apply then uses the plan that was approved.
+
+The run stops at the first wave nobody approved, exits 3 and prints the approve line. Earlier waves in the same run have applied by then. An approval names a digest. One recorded with no digest, or with another wave's digest, does not let a wave through. If the set changed after someone approved it, the run stops at that wave and applies nothing in it. The message names both digests.
+
+```
+wave 1 changed after it was approved, so nothing in it was applied. approved: jcs1-sha256:4c1e...; planned now: jcs1-sha256:e93d.... Read the new plan, then approve it: chant approve fan-out release-wave-1 --plan jcs1-sha256:e93d...
+```
+
+`--canary <name>` (repeatable, or comma-separated) puts components in wave 1 whatever the graph order. The remaining waves follow the graph. A canary the change does not select has nothing to apply and is left out.
+
+Wave numbers come from the derivation, so on a resumed attempt wave 3 is still wave 3 and its approval still applies. With `--resume`, the record keeps one entry per wave it reached. An entry names the wave's gate and its set digest. It lists each member's plan digest and says whether the wave applied, failed or is waiting. The re-run plans each remaining wave afresh, since the gate is about the plan now, and never applies a component the record says applied. A failed component blocks its dependents, as in the whole-set mode. Its retry is planned again and needs a fresh approval, because what is left is a different set from the one approved.
+
+`--wave <n>` runs wave `n` and no other, which is the shape for CI with one job per wave. It refuses while an earlier wave has work left, and a wave past the last one the change has exits 0. `chant build --components --generate gitlab|github|forgejo --wave-gate <name>` writes that pipeline. Job `wave-k` runs `--wave k` and needs `wave-(k-1)`. It hands the `--resume` record on as an artifact, even when it stops at a gate. Approve, then re-run the job that stopped. The pipeline measures the change from `HEAD~1`. Pass `--base <ref>` to the build command to measure it from somewhere else; every job must use the same ref, so it is a fixed one.
+
+`--gate` and `--wave-gate` are refused together. Use `--gate` when one person reads the whole change once, the fan-out is small, and its components do not read each other's fresh outputs at plan time. Use `--wave-gate` when the change should land in stages, when a later root's plan depends on what an earlier one writes, or when the set is too large to review as one.
+
 #### Failure semantics
 
 A failed component stops its own subtree and nothing else. Components beneath it record as `blocked` naming the failure rather than as `failed`, because nothing about them failed, and that distinction is what makes the next attempt readable. Branches sharing no edge with the failure run to completion.
@@ -231,7 +266,9 @@ This is where a fan-out departs from [`chant run --components all`](/chant/cli/r
 
 #### Finishing an attempt that stopped
 
-`--resume <file>` names an attempt record. The run reads it before it starts and writes it when it finishes, including after a failure and after a gate, because the next attempt needs to know what this one got through.
+`--resume <file>` names an attempt record. The run reads it before it starts. It rewrites the record as each component settles and once more when it finishes, including after a failure and after a gate, because the next attempt needs to know what this one got through. A fan-out killed partway through, by a cancelled CI job or ctrl-c, leaves a record naming every component that had applied by then. The record is replaced through a rename, so a kill during the write leaves the previous record intact.
+
+Each completed component's outputs are saved alongside its name. A component still to run that reads one of them through `stackOutput()` gets the saved value, so the re-run needs no `--seed-outputs` for work this fan-out already did. A saved output wins over a `--seed-outputs` entry for the same component. Stack outputs end up in this file, so keep it wherever `--dump-outputs` files are kept.
 
 Repeating the identical command finishes the work. The record narrows the plan before the gate is decided, and the digest is carried rather than recomputed, so an approval already given still stands. The re-run prints what it is skipping as `already-applied` and dispatches only the rest.
 
@@ -253,12 +290,49 @@ A record whose digest does not match the fan-out derived now is refused with a w
 | `--from-affected <file>` | Read the change signal from JSON `chant lifecycle affected --json` already wrote. Required unless `--base` is given. |
 | `--env <env>` | Environment each selected component deploys into. Defaults to `local`. |
 | `--gate <name>` | One approval over the whole derived set, answered by `chant approve fan-out <name> --plan <digest>`. |
+| `--wave-gate <name>` | One approval per wave, each bound to its wave's set digest and answered by `chant approve fan-out <name>-wave-<n> --plan <digest>`. Not with `--gate`. |
+| `--canary <name>` | With `--wave-gate`, components that form wave 1. Repeatable, or comma-separated. |
+| `--wave <n>` | With `--wave-gate`, run wave `n` and no other: one CI job per wave. |
 | `--dry-run` | Print the derivation and dispatch nothing. |
 | `--json` | Emit the plan (with `--dry-run`) or the run result on stdout, and nothing else on stdout. |
 | `--resume <file>` | Attempt record read before the run and written after it, so repeating the command finishes what stopped. |
 | `--seed-outputs <file>` | Load component outputs before the run. Repeatable; a later file wins on a key two files share. |
 | `--dump-outputs <file>` | Write the outputs the run holds to this file afterwards. |
 | `--progress-json` | Stream one NDJSON progress record per line to stdout while the waves execute. |
+
+### `components pr-plan` and `components pr-apply`
+
+The pull-request loop. `pr-plan` runs on a pull request. It plans the components the change reaches and the ones that depend on them, and shows the plan. `pr-apply` runs after the merge. It plans the same members again and applies them only if a reviewer approved that plan. [Generated CI for pull requests](/chant/guide/pull-request-ci/) writes the pipeline that runs both on GitHub, GitLab and Forgejo.
+
+```bash
+chant components pr-plan --base origin/main --pr 12 --env prod
+chant approve pr-12 pr-apply --plan jcs1-sha256:3e43... --approver github:alice --sign
+chant components pr-apply --base "$BEFORE_SHA" --pr 12 --env prod
+```
+
+Both measure the change from the merge base of `--base` and `HEAD`, and select components the way `fan-out --base` does. Every selected member is planned before anything applies. A member that reads another's output through `stackOutput()` is planned with the value that output has now.
+
+The gate is `pr-apply` under the op `pr-<n>`, so one pull request's approval never answers another's. It binds the [change-set](/chant/reference/change-set/) digest of every planned member. `pr-plan` reads the gate ledger to report where the approval stands and writes nothing to it. `pr-apply` decides the gate against the digest it plans. When an approval stands for another digest, the plan changed after review. Then it applies nothing and exits 3 with both digests named.
+
+```
+The plan changed after review, so nothing was applied. approved: jcs1-sha256:d181...; planned now: jcs1-sha256:cef9.... Read the new plan, and if it is right, approve it: chant approve pr-2 pr-apply --plan jcs1-sha256:cef9... --approver <you> --sign; then run the apply again.
+```
+
+Each run writes three files under `--output` (default `.chant/pr`). `pr-plan.json` or `pr-apply.json` is the report, under the `pr-report` schema. `change-set.json` is the change-set document, which [`chant change-set summary`](/chant/cli/change-set/) reads. `pr-note.md` is the note rendered from the report. It shows a row per member and the digest, then the approve command and the grouped summary.
+
+Pass `--forge` to post the note on the pull request and set the `chant/plan` or `chant/apply` commit status. The note carries a marker per environment, so every push and the apply update one note. When `pr-apply` has no `--pr`, it asks the forge which pull request merged `HEAD`. A forge that refuses a call is a warning, and the outcome stands.
+
+| Flag | Meaning |
+|---|---|
+| `--base <ref>` | The commit the change is measured from. On a pull request, the target branch's commit. After a merge, the commit the push replaced. Required. |
+| `--pr <n>` | The pull or merge request. Required for `pr-plan`. |
+| `--env <env>` | Environment each member deploys into. Defaults to `local`. |
+| `--gate <name>` | The gate's name. Defaults to `pr-apply`. |
+| `--forge <kind>` | `github`, `gitlab` or `forgejo`. Post the note and the status, with the client read from the CI job's environment. |
+| `--require-review` | `pr-apply` only. Count an approval only from someone with a standing approving review on the pull request, named the way the forge names them (`github:<login>`, `gitlab:<login>`, `forgejo@<host>:<login>`). Needs `--forge`. |
+| `--output <dir>` | Where the report, the change set and the note go. Defaults to `.chant/pr`. |
+| `--seed-outputs <file>` | Outputs to use instead of reading them, as on `fan-out`. |
+| `--json` | Print the report on stdout. |
 
 ### `components promote`
 
@@ -398,9 +472,9 @@ A redeploy that fails records nothing, like any other deploy, and can be run aga
 
 | Code | Meaning |
 |------|---------|
-| 0 | Success (for `fan-out`, every selected component applied) |
+| 0 | Success (for `fan-out` and `pr-apply`, every selected component applied; `pr-plan` exits 0 whenever every member planned) |
 | 1 | Error (missing required flags, unresolvable actor, concurrent ledger write, no manifest found, an export entry missing on disk; for `fan-out`, a component failed, or the change signal was unusable; for `promote`, `rollback` and `redeploy`, a digest missing from the ledger or not current, a composition that cannot be pinned, or a failed deploy) |
-| 3 | `fan-out`, `promote`, `rollback` and `redeploy`: stopped at a gate nobody has approved. For `fan-out` nothing ran; for the others the steps before the gate ran, and only components that finished were recorded. |
+| 3 | `pr-apply`: refused, and nothing applied. No approval stands for the plan, the plan changed after review, the approver has not approved the pull request, or no pull request merged the commit. `fan-out`, `promote`, `rollback` and `redeploy`: stopped at a gate nobody has approved. For `fan-out` with `--gate` nothing ran, and with `--wave-gate` nothing in the gated wave or after it ran; for the others the steps before the gate ran, and only components that finished were recorded. |
 
 ## See Also
 

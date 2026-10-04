@@ -2,7 +2,7 @@
 schema: 1
 id: "ws-052"
 title: "The chant and hud boundary"
-state: "decided"
+state: "superseded"
 area: "D15"
 source:
   issue: "INTENTIUS/chant#2657"
@@ -65,6 +65,7 @@ constrains:
   - "member:core"
   - "member:test-utils"
   - "path:docs/data/boundary.yaml"
+closed_digest: "sha256:342aec6da98765b197100b68420ed04c8b559167e5bdae00735322ab93bd9cac"
 ---
 
 # The chant and hud boundary

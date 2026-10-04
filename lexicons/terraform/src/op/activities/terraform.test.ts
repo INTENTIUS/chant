@@ -205,6 +205,19 @@ describe("terraformPlanCommand (#2086)", () => {
   test("-destroy is opt-in", () => {
     expect(terraformPlanCommand({ binary: "tofu", planFile: "p", destroy: true })).toContain(" -destroy ");
   });
+
+  test("vars become -var flags after the var files, sorted, non-strings as JSON (#3049)", () => {
+    expect(
+      terraformPlanCommand({
+        binary: "tofu",
+        planFile: "p",
+        varFiles: ["prod.tfvars"],
+        vars: { zones: ["a", "b"], vpc_id: "vpc-1 x" },
+      }),
+    ).toBe(
+      `tofu plan -input=false -detailed-exitcode -var-file=prod.tfvars -var='vpc_id=vpc-1 x' -var='zones=["a","b"]' -out=p`,
+    );
+  });
 });
 
 describe("terraformApplyCommand (#2086)", () => {

@@ -469,6 +469,37 @@ export const terraformAuditCatalog: Record<string, RuleMeta> = {
     authority: [AWS_ECR_TAG_IMMUTABILITY],
     yamlBased: false,
   },
+  TF038: {
+    id: "TF038",
+    tier: "merge-worthy",
+    fixKind: "guidance",
+    category: "correctness",
+    title: "OCI module source has no tag or digest, or a mutable tag",
+    remediation:
+      "Pin the `oci://` source with `?digest=sha256:...` (a digest cannot move) or an exact version tag " +
+      "(`?tag=1.4.0`). A source with no tag pulls `latest`.",
+    yamlBased: false,
+  },
+  TF039: {
+    id: "TF039",
+    tier: "report-only",
+    fixKind: "guidance",
+    category: "best-practice",
+    title: "Registry module version is a range, not an exact version",
+    remediation: 'Set an exact `version` (`version = "1.4.0"`) for projects that pin modules. Off by default.',
+    yamlBased: false,
+  },
+  TF040: {
+    id: "TF040",
+    tier: "report-only",
+    fixKind: "guidance",
+    category: "best-practice",
+    title: "Root has no committed .terraform.lock.hcl",
+    remediation:
+      "Run `terraform init` in the root and commit the `.terraform.lock.hcl` it writes. Off by default; " +
+      "checked only where the root's directory is known.",
+    yamlBased: false,
+  },
 };
 
 // Prior art credits, if any, live beside the rules in ./audit-lineage.ts (see

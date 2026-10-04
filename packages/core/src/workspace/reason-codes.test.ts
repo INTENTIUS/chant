@@ -29,7 +29,8 @@ import { WORK_WARNING_CODES } from "./work";
 import { BOX_FINDING_CODES } from "./checks/boxes";
 import { DIAGRAM_FINDING_CODES } from "./checks/diagrams";
 import { WORK_ERROR_CODES, WORK_HISTORY_ERROR_CODES, WORK_LEASE_REFUSALS } from "./work-cli";
-import { RUNS_ERROR_CODES, RUNS_REASON_CODES, RUNS_WRITE_ERROR_CODES } from "./runs-cli";
+import { RUN_STATEMENT_ERROR_CODES, RUNS_ERROR_CODES, RUNS_REASON_CODES, RUNS_WRITE_ERROR_CODES } from "./runs-cli";
+import { RUN_STATEMENT_FAILURE_CODES } from "./trust/run-statement";
 import { WORK_EVIDENCE_ERROR_CODES } from "./work-evidence";
 import { RECORD_FINDING_CODES } from "./checks/records";
 import { ANSWER_WARNING_CODES } from "./points";
@@ -40,6 +41,7 @@ import { AGENT_ERROR_CODES } from "./agent-cli";
 import { SCOPE_FINDING_CODES, WRITE_SCOPE_CODES } from "./write-scope";
 import { PLANTABLE_REASON_CODES } from "./box-factory";
 import { BOX_LISTING_ERROR_CODES } from "./box-listing";
+import { BOX_PUBLISH_ERROR_CODES } from "./box-publish";
 import { WRITE_LOCK_ERROR_CODES } from "./write-lock-cli";
 import { WIP_ERROR_CODES, WIP_WRITE_ERROR_CODES } from "./wip";
 import { ROTATION_REFUSAL_CODES } from "./trust/rotation";
@@ -91,6 +93,8 @@ const PER_COMMAND: Record<string, readonly string[]> = {
   RUNS_ERROR_CODES,
   RUNS_REASON_CODES,
   RUNS_WRITE_ERROR_CODES,
+  RUN_STATEMENT_ERROR_CODES,
+  RUN_STATEMENT_FAILURE_CODES,
   WORK_EVIDENCE_ERROR_CODES,
   RECORD_FINDING_CODES,
   ANSWER_WARNING_CODES,
@@ -103,6 +107,7 @@ const PER_COMMAND: Record<string, readonly string[]> = {
   SCOPE_FINDING_CODES,
   PLANTABLE_REASON_CODES,
   BOX_LISTING_ERROR_CODES,
+  BOX_PUBLISH_ERROR_CODES,
   WRITE_LOCK_ERROR_CODES,
   WIP_ERROR_CODES,
   WIP_WRITE_ERROR_CODES,
