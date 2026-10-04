@@ -25,6 +25,8 @@ export type { ReleaseRollbackPlanArgs, ReleaseRollbackPlanResult, ReleaseRollbac
 export type { HttpCheckArgs, HttpFetch } from "./http-check";
 
 export { lifecycleSnapshot, lifecycleDiff } from "./lifecycle";
+export { composeChangeSet, lifecyclePlanChangeSet, readChangeSetPart } from "./change-set";
+export type { ComposeChangeSetArgs, ComposeChangeSetResult, LifecyclePlanChangeSetArgs, ReadChangeSetPartArgs, ChangeSetPartResult } from "./change-set";
 export type { LifecycleSnapshotArgs, LifecycleDiffArgs, LifecycleDiffResult } from "./lifecycle";
 
 export { chantTeardown } from "./teardown";

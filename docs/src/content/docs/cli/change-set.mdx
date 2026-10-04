@@ -1,0 +1,91 @@
+---
+title: "chant change-set summary"
+description: Group the members of a change set that take the same change, and name every destroy
+diataxis: reference
+---
+
+## Synopsis
+
+```
+chant change-set summary <change-set.json> [--format text|json|markdown] [--limit <chars>]
+```
+
+## Description
+
+`chant change-set summary` reads a [change-set document](/chant/reference/change-set/) and groups its members by the change each one plans ([#3188](https://github.com/INTENTIUS/chant/issues/3188)). A module bump across two hundred roots reads as a few groups. Every destroy, replacement, failed member and hole is listed by name, outside any group. Reviewers read the summary. No gate binds it; a gate binds the document's `digest`.
+
+The document is usually the `document` a `composeChangeSet` step returned. The command reads that one file. It needs no project, no plugins and no network.
+
+```
+$ chant change-set summary change-set.json
+5 members: 2 groups, 0 destroys or replacements.
+
+Group 79cd3ea7ffaf: 4 members, identical change:
+    + module.shared.aws_sqs_queue.events
+    ~ module.shared.aws_iam_role.app: tags, tags_all
+    ~ module.shared.aws_s3_bucket.data: replication_configuration, tags, tags_all
+    ~ module.shared.aws_sqs_queue.work: tags, tags_all, visibility_timeout_seconds
+  members: estates/e01, estates/e02, estates/e03, estates/e05
+
+Group 36dca470b879: 1 member (outlier), group 79cd3ea7ffaf's change plus:
+    ~ module.shared.aws_sqs_queue.extra: tags, tags_all
+  members: estates/e04
+```
+
+That is choudoufu's real plan of a shared-module bump over five estates, where `e04` owns one more queue.
+
+A document with one member is grouped by instance instead. Instances group only with instances of the same `for_each` or `count` expansion.
+
+## What groups together
+
+Two members group when their normalized changes are equal as multisets. A normalized change keeps its action, its address and the attributes it writes, with these parts taken out:
+
+- every instance key in the address, so `logs[0]` and `logs["eu"]` are both `logs`
+- the member's own names wherever they stand as a whole word: its scope (the estate or environment) and the last segment of its name, each also with `-` and `_` swapped
+- for an instance, its own instance keys, under the same whole-word rule
+- choudoufu's `tofu-estate` marker when it holds the member's own estate, and its `tofu-address` marker when it holds the resource's own address
+
+A name is stripped from module call names and the resource name, and never from the resource type. A name shorter than three characters must also touch a `-` or `_`, so the key `1` is stripped from `web-1` and kept in `10.1.0.0/16`. Nothing else is stripped. Two instance sizes are two changes. So are two CIDR blocks, two policy documents, and two tag values that do not carry the member's name. `no-op` entries are dropped. A sensitive attribute is compared by its path only, because the document carries no value for it.
+
+chant and choudoufu's `live-summary` follow the same rules. Each keeps its own code, and both run one table of test vectors in CI: `packages/core/src/__fixtures__/plan-summary/normalization-vectors.json` in this repository. A change to the rules changes that file first.
+
+## What is never grouped
+
+- A member that failed to plan is listed with its reason and is in no group.
+- Every `delete` and `replace` in the document is listed by member and real address, failed members' included. A destroy is also part of its member's change, so a member that destroys something never groups with one that does not.
+- Every hole is listed with its member and the planner's reason. A hole is an address the planner could not read.
+
+## Output
+
+`--format text` is the default. It prints the named lists first and the groups after them.
+
+`--format json` (or `--json`) prints the summary document. It follows `https://intentius.io/chant/schemas/workspace/plan-summary/v1/plan-summary.schema.json`, shipped at `src/workspace/plan-summary.schema.json` in `@intentius/chant`.
+
+| Field | Holds |
+|---|---|
+| `$schema`, `contract` | the schema's `$id`, and `1` |
+| `changeSet` | the digest of the change-set document summarized |
+| `unit` | `member`, or `instance` for a one-member document |
+| `units` | the number of members, failed ones included, or of changing instances |
+| `groups` | largest first, each `{ id, resource, units, outlier, noChanges, changes, extends, plus, destroys }` |
+| `failed` | `{ member, scope, reason }` for each member that failed |
+| `destroys` | `{ member, address, type, action, deposed }` for each delete and replace |
+| `holes` | `{ member, address, type, reason }` |
+
+A group's `id` is twelve hex characters of a hash over its normalized changes. The same change gets the same id in every run and on every commit, so a report can link one group across commits. `changes` lists each distinct change once, with `count` for a change one member makes several times. When a group holds the whole of the largest group's change and more, `extends` names that group and `plus` lists the rest. Sometimes a change has the same address and action as one in the largest group but other values. It then carries `differsFrom`, naming that group, and `differsIn`, naming the attributes. Values are never printed.
+
+`--format markdown` prints a note for a merge request or pull request, of at most `--limit` characters counted as Unicode code points. The default is 65,536, the most a GitHub issue or pull request comment may hold; the API refuses a longer one. A GitLab note may hold 1,000,000 characters ([GitLab Notes API](https://docs.gitlab.com/api/notes/)), so `--limit 1000000` suits a GitLab-only pipeline.
+
+Its blocks keep the text order. When they do not fit, whole groups are dropped from the end. A last line then says how many groups and members it left out. The destroy, failure and hole lines are dropped only when they alone exceed the limit, from the end, and the last line counts them too.
+
+## Options
+
+| Option | Meaning |
+|---|---|
+| `--format text\|json\|markdown` | the output, `text` by default |
+| `--json` | the same as `--format json` |
+| `--limit <chars>` | the markdown note's size, at least 200; 65,536 by default |
+
+## In a bundle
+
+The grouping is `groupChangeSet` in `@intentius/chant/plan-summary`, with `renderPlanSummaryText` and `renderPlanSummaryMarkdown`. It imports chant's plan hashing code and nothing else, so a tool that runs it in CI from one bundled file needs no TypeScript toolchain. `change-set-bundle.test.ts` holds that.

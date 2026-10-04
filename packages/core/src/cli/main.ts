@@ -798,6 +798,14 @@ Commands:
                         (--json)          its target, stage (planned/emitted/bridged/
                                           applied) and path. Read-only.
 
+Change sets:
+  change-set summary <file>  The grouped plan summary of a change-set
+                        [--format text|json|markdown]  document: members taking
+                        [--limit <chars>]  the same change grouped, every destroy,
+                                          replacement, failure and hole named.
+                                          markdown fits an MR/PR note of --limit
+                                          characters (default 65536). Read-only.
+
 Ops:
   run <name>            Run an Op on the resolved runtime (--on; local by default)
                         [--work <id>] [--holder <name>]: the work item an Op
@@ -1028,9 +1036,13 @@ Workspace (level 1, #2524):
                         record the answer: proposed from a model, escalated to
                         people below its threshold. --response is a POST
                         /v1/systemone response the caller got; chant calls no model
-  workspace points answer <id> --answer <value> --by <name>... [--kind <kind file>] [--dry-run]
+  workspace points answer <id> --answer <value> --by <name>... [--note <text>] [--kind <kind file>] [--dry-run]
                         Record people's answer to an open question, or confirm
-                        a model's proposal, once the point's quorum is met
+                        a model's proposal, once the point's quorum is met,
+                        with their note
+  workspace points retract <id> --by <name>... [--note <text>] [--kind <kind file>] [--dry-run]
+                        Take an answer back: the question is open for people
+                        again, and the answer stays in its retractions
   workspace pin <path> [--json]
                         Print the integrity value that pins the plugin at
                         <path>, to put in a path pin of chant.workspace.json.
@@ -1617,6 +1629,8 @@ export const commandRegistry: CommandDef[] = [
   // Status read over a tree of carve manifests (#2038): the contract a
   // renderer replaces its own walk-and-guess discovery with. Read-only.
   { name: "carve status", handler: runCarveStatus },
+  // #3188 — the grouped plan summary of a change-set document. Reads one file; imported on first use.
+  { name: "change-set summary", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/change-set")).runChangeSetSummary(ctx) },
   { name: "init", handler: runInit, runsNoConfig: true },
   { name: "init lexicon", handler: runInitLexicon },
 { name: "update", handler: runUpdate },

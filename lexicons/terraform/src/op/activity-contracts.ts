@@ -85,6 +85,8 @@ export const terraformPlanContract = activityContract(
     json: z.unknown(),
     text: z.string(),
     planDigest: z.string(),
+    /** The root's change-set part (#3181); its shape is `@intentius/chant/change-set`'s `ChangeSetPart`. */
+    changeSet: z.object({ member: z.object({ member: z.string(), planDigest: z.string().nullable() }).passthrough(), entries: z.array(z.unknown()) }),
   }),
   rootEntity,
 );

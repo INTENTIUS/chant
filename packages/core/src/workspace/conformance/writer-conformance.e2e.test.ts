@@ -71,7 +71,7 @@ const leakyWriter: WorkspaceWriterFactory = (chant, { stateDir }) => {
         writeFileSync(join(stateDir, "notes.txt"), "kept and not declared");
         return doc;
       }
-      if (step.id === "answer") return perform(chant, step, ["--dry-run"]);
+      if (step.id === "reanswer") return perform(chant, step, ["--dry-run"]);
       return perform(chant, step);
     },
     async facts() {
@@ -133,7 +133,10 @@ describe("the writer conformance suite (#3159)", () => {
     expect(by.amend.problems[0]).toMatch(/^amend \(records amend\): made 2 chant calls .* expected exactly one$/);
     expect(by.amend.problems[1]).toMatch(/^amend \(records amend\): files changed that chant did not report writing: decisions\/fix-003-a-decision-nobody-asked-for\.md \(added\)$/);
     expect(by.review.problems).toEqual([]);
-    expect(by.answer.problems).toEqual([expect.stringMatching(/^answer \(points answer\): .* it may add only nothing or --json, and it added --dry-run$/)]);
+    expect(by.answer.problems).toEqual([]);
+    expect(by.retract.by).toBe("suite");
+    expect(by.retract.problems).toEqual([]);
+    expect(by.reanswer.problems).toEqual([expect.stringMatching(/^reanswer \(points answer\): .* it may add only nothing or --json, and it added --dry-run$/)]);
     expect(report.after.facts).toEqual([
       "facts: before amnesia, facts() made calls outside the read contract: workspace runs start --from -",
       "facts: after amnesia, facts() made calls outside the read contract: workspace runs start --from -",

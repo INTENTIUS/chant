@@ -1,54 +1,58 @@
 ---
-title: chant and hud Boundary
+title: Owners of the Workspace Boundary
 description: The owner of each workspace concept, and the schema or command that carries it.
 diataxis: reference
 ---
 
 {/* Generated from docs/data/boundary.yaml by scripts/generate-boundary-doc.ts, so edit the roster and run the script. */}
 
-chant provides the repository specification and nothing that faces a person. hud renders and interacts. Domain record kinds and the joins from commits to them belong to a plugin. The decision is [ws-052](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-052-chant-hud-boundary.md), from [#2657](https://github.com/INTENTIUS/chant/issues/2657).
+chant provides the repository specification, which now takes in the domain record kinds and the factory's rules, and nothing that faces a person. hud renders what chant reads and acts on it for the person in front of it, and behold reads a workspace the same way for the infra plane. studio orchestrates and hosts, which covers running builders with their prompts and publishing a box's work. A plugin owns only the record kinds a workspace pins from a third party, with their joins. The decision is [ws-086](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-086-the-workspace-boundary-without-chud-chant-hud-st.md) ([#3161](https://github.com/INTENTIUS/chant/issues/3161)), which supersedes [ws-052](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-052-chant-hud-boundary.md) ([#2657](https://github.com/INTENTIUS/chant/issues/2657)).
 
 ## The boundary
 
-| chant | hud | plugin |
-|---|---|---|
-| declaration, kinds, members, links, lineage, migrations, `init --from`, `upgrade` | rendering | domain record kinds (contracts, units, evidence, drivers, sessions) |
-| records: schemas, states, seals, pins, supersession, attestation, provenance | review actions as UI (agree, dissent, propose, quorum meter, live sessions) | `commitJoins` and other joins from commits to records |
-| the read contract: versioned JSON of `ls`, `graph`, `check`, `records`, `status`, `graph --intent`, `graph --composites`, `points`, `work history`, `signers`, `evidence verify`, closed reason codes | identity, sessions, who is looking | agent prompts and context bundles |
-| commit trailers: `Chant-Agent`, `Chant-Lease`, `Chant-Run`, `Chant-Record`, `Chant-Applied-By`, `Chant-Applied-At`, `Chant-Applied-Commit` | the agent chat, the dev proxy, comment mode |  |
-| the agent run record: `workspace runs`, `runs start`, `end` and `record`, the run ledger on chant/lifecycle | the question put to the person at each finding |  |
-| reader conformance: a reader reads only through the read contract and writes nothing |  |  |
-| writer conformance: a writer writes only through the write contract, and keeps no fact outside the repo |  |  |
-| work in progress that survives the box: snapshots under refs/chant/wip/&lt;branch&gt;, kept attempts, work branches and their replication |  |  |
-| the writing and verifying commands: `approve`, `records pin`, `verify`, `check`, gates, ledgers |  |  |
-| findings as data |  |  |
-| who a person-attributed record or gate approval names: forge identities, signer principals, identity.attribution, signed gates |  |  |
+| chant | hud | studio | behold | plugin |
+|---|---|---|---|---|
+| declaration, kinds, members, links, lineage, migrations, `init --from`, `upgrade` | rendering | agent prompts, context bundles, how a builder is run | reading a workspace for the infra plane | record kinds a workspace pins from a third party, and their `commitJoins` |
+| records: schemas, states, seals, pins, supersession, attestation, provenance | review actions as UI (agree, dissent, propose, quorum meter, live sessions) | hosting and provisioning: boxes, the lobby, the door, the planter and beds |  |  |
+| the read contract: versioned JSON of `ls`, `graph`, `check`, `records`, `status`, `graph --intent`, `graph --composites`, `points`, `work history`, `signers`, `evidence verify`, closed reason codes | identity, sessions, who is looking | publishing a box's work: the merge, the push and the pull request |  |  |
+| commit trailers: `Chant-Agent`, `Chant-Lease`, `Chant-Run`, `Chant-Record`, `Chant-Applied-By`, `Chant-Applied-At`, `Chant-Applied-Commit` | the agent chat, the dev proxy, comment mode |  |  |  |
+| the agent run record: `workspace runs`, `runs start`, `end` and `record`, the run ledger on chant/lifecycle | the question put to the person at each finding |  |  |  |
+| reader conformance: a reader reads only through the read contract and writes nothing |  |  |  |  |
+| writer conformance: a writer writes only through the write contract, and keeps no fact outside the repo |  |  |  |  |
+| work in progress that survives the box: snapshots under refs/chant/wip/&lt;branch&gt;, kept attempts, work branches and their replication |  |  |  |  |
+| the writing and verifying commands: `approve`, `records pin`, `verify`, `check`, gates, ledgers |  |  |  |  |
+| findings as data |  |  |  |  |
+| who a person-attributed record or gate approval names: forge identities, signer principals, identity.attribution, signed gates |  |  |  |  |
+| domain record kinds (contract, evidence, review session, driver, proposal, notes) |  |  |  |  |
+| decision-point standards: the `understand` point and the `slice-tier` inputs |  |  |  |  |
+| the factory's rules: readiness, attempts, outcomes, done |  |  |  |  |
 
 ## Rules
 
 - chant never listens on a port, never authenticates a person and never renders. `test/no-listener.test.ts` holds `packages/core` to the first and to importing no UI or agent-runtime package.
 - hud never parses a record file, never runs git for provenance and never computes drift. It reads only through the [read contract](/chant/reference/workspace-read-contract/) and writes only through chant commands. The suite a reader runs to show it ships in `@intentius/chant` as `@intentius/chant/workspace/conformance`, for any test runner.
 - The repo is the database ([ws-074](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-074-the-repo-is-the-database.md), [#3158](https://github.com/INTENTIUS/chant/issues/3158)). Every durable fact about a workspace, anything a person or agent decided, answered, reviewed, approved, wrote or was attributed with and any configuration of a box or member, is a file in the repo. A tool writes it only through chant's write commands. Outside the repo a tool keeps only secrets in a broker or vault, telemetry, caches and indexes it can rebuild from the repo, and the substrate's own runtime state.
-- chud is the transitional owner of the plugin column (jhgaylor/chud#78, #79, #80).
+- studio defines no record field and keeps no fact outside the repo (ws-074). Its CI runs the reader and writer conformance suites, the same proof asked of hud ([#3159](https://github.com/INTENTIUS/chant/issues/3159), arugula-salad/studio#338). behold is held to hud's rules.
+- chant reads a pinned kind's `commitJoins`, and the intent graph reports what they join as `unit`, `contract` and `evidence` nodes. chant's own kinds need no join, because the commit trailers tie a commit to them ([ws-075](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-075-commit-trailers.md)).
 
 ## The roster
 
-This page is generated from `docs/data/boundary.yaml`, which has one row for each concept. `test/boundary-roster.test.ts` compares the roster with the closed lists in the code. It fails the build when something in one of those lists has no row, or when a row names something that is not there. A row for a cell of the table above uses the cell's text as #2657 words it, and a row owned by hud is carried by alecraso/hud.
+This page is generated from `docs/data/boundary.yaml`, which has one row for each concept. `test/boundary-roster.test.ts` compares the roster with the closed lists in the code. It fails the build when something in one of those lists has no row, or when a row names something that is not there. A row for a cell of the table above uses the cell's text as #2657 or #3161 words it. Each hud, studio or behold row names its owner's repository as the carrier: alecraso/hud, arugula-salad/studio or INTENTIUS/behold.
 
-| Category | Where the code keeps it | chant | hud | plugin |
-|---|---|---|---|---|
-| boundary cell | the table of #2657, one row per cell | 11 | 5 | 3 |
-| workspace command | `commandRegistry` in `cli/main.ts`, and each sub-verb its help names | 52 | 0 | 0 |
-| member kind | `BUILTIN_KIND_NAMES` in `kinds.ts` | 5 | 0 | 0 |
-| record kind | none in core; `decision` and `session` are this repository's, the rest a plugin's | 7 | 0 | 1 |
-| member link kind | `LINK_KINDS` in `links.ts` | 2 | 0 | 0 |
-| record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 |
-| intent node kind | the node kinds of `intent.schema.json` | 10 | 0 | 3 |
-| intent edge kind | the edge kinds of `intent.schema.json` | 12 | 0 | 3 |
-| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 194 | 0 | 0 |
-| finding code | the finding codes of `intent.schema.json` | 17 | 0 | 0 |
-| WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 50 | 0 | 0 |
-| hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 |
+| Category | Where the code keeps it | chant | hud | studio | behold | plugin |
+|---|---|---|---|---|---|---|
+| boundary cell | the table of #2657, one row per cell | 14 | 5 | 3 | 1 | 1 |
+| workspace command | `commandRegistry` in `cli/main.ts`, and each sub-verb its help names | 53 | 0 | 0 | 0 | 0 |
+| member kind | `BUILTIN_KIND_NAMES` in `kinds.ts` | 5 | 0 | 0 | 0 | 0 |
+| record kind | none in core; the reference workspace's and this repository's kind files, or a kind a workspace pins from a third party | 7 | 0 | 0 | 0 | 1 |
+| member link kind | `LINK_KINDS` in `links.ts` | 2 | 0 | 0 | 0 | 0 |
+| record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 | 0 | 0 |
+| intent node kind | the node kinds of `intent.schema.json` | 10 | 0 | 0 | 0 | 3 |
+| intent edge kind | the edge kinds of `intent.schema.json` | 12 | 0 | 0 | 0 | 3 |
+| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 196 | 0 | 0 | 0 | 0 |
+| finding code | the finding codes of `intent.schema.json` | 17 | 0 | 0 | 0 | 0 |
+| WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 50 | 0 | 0 | 0 | 0 |
+| hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 | 0 | 0 |
 
 Each row follows, in the order of the table above.
 
@@ -70,9 +74,14 @@ Each row follows, in the order of the table above.
 | boundary cell | who a person-attributed record or gate approval names: forge identities, signer principals, identity.attribution, signed gates | chant | declaration.schema.json, status.schema.json | The forms a person is named by, the declaration's identity block read at base, and the seal that attests an approval against the signers at base (#3163, ws-080). |
 | boundary cell | the agent chat, the dev proxy, comment mode | hud | alecraso/hud | The interactive surfaces around a workspace, none of which chant serves. |
 | boundary cell | the question put to the person at each finding | hud | alecraso/hud | hud asks and never answers; the finding it asks about comes from chant as data. |
-| boundary cell | domain record kinds (contracts, units, evidence, drivers, sessions) | plugin | a record kind file and its schema, named in chant.workspace.json records or passed with --kind; jhgaylor/chud (transitional owner, jhgaylor/chud#78, #79, #80) | The record kinds a development model defines; core ships none of them, and the declaration names the ones a workspace holds. |
-| boundary cell | `commitJoins` and other joins from commits to records | plugin | a record kind file's commitJoins export (intent-joins.ts reads it) | How a commit is tied to a unit, contract or evidence; core calls the join and never parses a plugin's trailers. |
-| boundary cell | agent prompts and context bundles | plugin | jhgaylor/chud (transitional owner, jhgaylor/chud#78, #79, #80) | What an agent is told and given; chant hands out data and no prompts. |
+| boundary cell | domain record kinds (contract, evidence, review session, driver, proposal, notes) | chant | the reference workspace's kind files and schemas, named in chant.workspace.json records | The record kinds a development model works in, shipped by chant as data and upgraded through lineage; core still ships no kind of its own, and the declaration names the ones a workspace holds (#3148, ws-082, ws-086). |
+| boundary cell | decision-point standards: the `understand` point and the `slice-tier` inputs | chant | the reference workspace's decisions/points.json, points.schema.json | The points every factory asks and the inputs each reads, declared once so two orchestrators ask the same question (#3150, ws-086). |
+| boundary cell | the factory's rules: readiness, attempts, outcomes, done | chant | the factory reference Op (#3406) | Which work items are ready, which lease outcomes count as attempts, what done means and what happens to an unfinished attempt, as declared and tested behaviour; an orchestrator supplies only execution (#3162, ws-087). |
+| boundary cell | record kinds a workspace pins from a third party, and their `commitJoins` | plugin | a pinned package's record kind file, its schema and its commitJoins export (intent-joins.ts reads it) | A kind chant does not ship, and how a commit is tied to its records; core calls the join and never parses the package's own trailers, while chant's trailers join a commit to chant's kinds (ws-075). |
+| boundary cell | agent prompts, context bundles, how a builder is run | studio | arugula-salad/studio | What an agent is told and given, and the builder's harness (Claude Code in the box, fountainRun); chant hands out data and no prompts (ws-086). |
+| boundary cell | hosting and provisioning: boxes, the lobby, the door, the planter and beds | studio | arugula-salad/studio | Where a box runs and how it is reached and credentialed; the box's configuration it reads from the declaration through the read contract (ws-074, ws-086). |
+| boundary cell | publishing a box's work: the merge, the push and the pull request | studio | arugula-salad/studio | The work behind a publish, run as the publisher a box block names; chant runs no push and calls no forge (#3165, ws-086). |
+| boundary cell | reading a workspace for the infra plane | behold | INTENTIUS/behold | behold reads a workspace only through the read contract and writes only through chant, under hud's rules (ws-086). |
 | workspace command | `workspace init` | chant | declaration.schema.json | Proposes a chant.workspace.json from the projects under a directory. |
 | workspace command | `workspace ls` | chant | ls.schema.json | Lists the declaration's members, the record kinds it names and its example groups, with a reason code for each one that can't be read. |
 | workspace command | `workspace graph` | chant | graph.schema.json | Prints the composed IR of every member, with member links and, given --kind, the records and their links. A member whose stamp, toolchain, command line and environment are unchanged is served from the per-member cache in the user's cache directory, never written into the workspace (ws-059). |
@@ -104,7 +113,8 @@ Each row follows, in the order of the table above.
 | workspace command | `workspace records close` | chant | records-close.schema.json | Closes an open review session in one write: its state, close time and closing commit, and the seal computed by chant's rule (#2693). |
 | workspace command | `workspace points` | chant | points.schema.json | Lists the decision points each declared answer kind's points file declares, and the questions asked of them, with the open ones and any model's answer and confidence (ws-058, #2739). |
 | workspace command | `workspace points ask` | chant | points-write.schema.json | Asks a point's table, model and quorum deciders for one set of inputs and records the answer, proposed when a model gave it; chant calls no model, and a backend's response is handed in with --response. |
-| workspace command | `workspace points answer` | chant | points-write.schema.json | Records people's answer to an open question, or their confirmation of a model's proposal, once the point's quorum is met. |
+| workspace command | `workspace points answer` | chant | points-write.schema.json | Records people's answer to an open question, or their confirmation of a model's proposal, once the point's quorum is met, with their note (#3351). |
+| workspace command | `workspace points retract` | chant | points-write.schema.json | Takes people's answer back once the point's quorum is met: the question is escalated to people again, and the answer, its note, and who retracted it, when and why stay in the record's retractions (#3351, ws-084). |
 | workspace command | `workspace agent` | chant | agent.schema.json | Prints an agent session from the declaration at base: the one member it is bound to, the record kinds and verbs its write scope allows, and the spec records --current prints, so a session that resumes rebuilds its context from the repository alone (#2548, ws-067). |
 | workspace command | `workspace verify` | chant | chant workspace verify | Checks the commits in base..head against the signers and roles read from base. |
 | workspace command | `workspace signers` | chant | signers.schema.json | Shows the signer set's versions along the base's first-parent line, each signed by a threshold of the one before, and writes and signs the rotation file for the next version. |
@@ -134,7 +144,7 @@ Each row follows, in the order of the table above.
 | record kind | `work` | chant | reference-workspace/work/work.kind.mjs, work.schema.json | A work item: a record with needs and implements links that people and agents share as one queue with no server. records gives each one ready and blockedBy, and the intent graph reads work items as core nodes (#2683). jhgaylor/chud#78 makes units work items. |
 | record kind | `answer` | chant | reference-workspace/answers/answer.kind.mjs, answer.schema.json | An answer to a decision point: proposed when a model gave it, answered by a table or a quorum, escalated when people must; one per point, declaration and inputs (ws-058, #2739). |
 | record kind | `contract` | chant | reference-workspace/design/contracts/contract.kind.mjs, contract.schema.json | An acceptance criterion made formal: its criteria, and its check pinned by hash. Drafted, approved by its reviewers, retired; a work item names the contract it builds, and the commits that serve it cite it as Chant-Record: contract:&lt;id&gt; (#3148, ws-082). |
-| record kind | `unit` | plugin | a record kind file and its schema, passed with --kind; jhgaylor/chud (transitional owner, jhgaylor/chud#78, #79, #80) | A unit of work, joined to the commits it produced. |
+| record kind | `unit` | plugin | a record kind file and its schema that a workspace pins from a third party, passed with --kind | A unit of work, joined to the commits it produced. |
 | record kind | `evidence` | chant | reference-workspace/design/evidence/evidence.kind.mjs, evidence.schema.json | The result of one run of a contract's check on a tree, named for the SHA-256 of its bytes and written by records new; a work item cites it as evidence for a criterion (#3148, ws-082). |
 | record kind | `driver` | chant | reference-workspace/design/drivers/driver.kind.mjs, driver.schema.json | A record that groups contracts under one intent, with its design notes in the body (#3148, ws-082). |
 | record kind | `session` | chant | reference-workspace/design/sessions/session.kind.mjs, session.schema.json | A review session with its agenda, attendance and the verdicts it produced on decisions, contracts and drivers, sealed on close; chud's numbered session files, such as sessions/S-0001.json, are the shape it started from (#2673), and studio's design sessions converge on it (#3148, ws-082). |
@@ -364,6 +374,8 @@ Each row follows, in the order of the table above.
 | reason code | `answer-not-candidate` | chant | points-write.schema.json | The people's answer is not one of the question's candidates. |
 | reason code | `quorum-not-met` | chant | points-write.schema.json | Too few of the people who answered count toward the point's quorum: distinct, not holding the agent role, not the steward that asked, and holding one of its roles when it names any. |
 | reason code | `answer-in-steward-turn` | chant | points-write.schema.json | The answer was given during a steward's turn, or by a process it started: a steward never answers a decision point, and a person answers it through hud or at a shell. |
+| reason code | `answer-not-answered` | chant | points-write.schema.json | points retract names a question that has no answer to retract: it is escalated or proposed, and people answer it instead (#3351). |
+| reason code | `answer-field-unsupported` | chant | points-write.schema.json | The answer kind's copy of point-answer.schema.json predates a field the write needs, a note or a retraction, and chant refuses rather than drop it (#3351). |
 | finding code | `intent-commit-undecided` | chant | intent.schema.json | A commit changed the region when no decision constrained it at path granularity. |
 | finding code | `intent-commit-bare` | chant | intent.schema.json | A commit names no unit, carries no record through its Chant-Record or Chant-Lease trailer, and has no pull request and no decision covering the region at its time. |
 | finding code | `intent-pin-drifted` | chant | intent.schema.json | A decision's pinned artifact no longer hashes to the pin. |

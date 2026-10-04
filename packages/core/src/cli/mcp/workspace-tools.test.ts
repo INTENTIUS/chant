@@ -85,7 +85,7 @@ describe("which servers have the workspace tools", () => {
       const { tools } = (await rpc(server(cwd), "tools/list")) as { tools: { name: string }[] };
       expect(tools.map((t) => t.name)).toEqual(expect.arrayContaining(names));
     }
-    expect(names).toEqual(["workspace-ls", "workspace-status", "workspace-graph", "workspace-changes", "workspace-records", "workspace-points", "workspace-agent", "workspace-work-history", "workspace-runs", "records-new", "records-amend", "records-review", "records-close", "points-answer"]);
+    expect(names).toEqual(["workspace-ls", "workspace-status", "workspace-graph", "workspace-changes", "workspace-records", "workspace-points", "workspace-agent", "workspace-work-history", "workspace-runs", "records-new", "records-amend", "records-review", "records-close", "points-answer", "points-retract"]);
   });
 
   test("a server outside any workspace, or given none, does not", async () => {

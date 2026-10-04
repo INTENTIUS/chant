@@ -88,6 +88,9 @@
   "formatting/bold-first-bullet": 1,
   "tricolon/comma-series": 1
  },
+ "docs/src/content/docs/cli/change-set.mdx": {
+  "claude/colon-reveal": 2
+ },
  "docs/src/content/docs/cli/check-lexicon.mdx": {
   "formatting/em-dash-density": 13,
   "claude/colon-reveal": 2,
@@ -1020,6 +1023,11 @@
  "docs/src/content/docs/reference/boundary.mdx": {
   "formatting/em-dash-density": 2,
   "claude/colon-reveal": 2
+ },
+ "docs/src/content/docs/reference/change-set.mdx": {
+  "formatting/em-dash-density": 2,
+  "discourse/punchy-fragments": 1,
+  "claude/colon-reveal": 3
  },
  "docs/src/content/docs/reference/decision-kind.mdx": {
   "formatting/em-dash-density": 2,
