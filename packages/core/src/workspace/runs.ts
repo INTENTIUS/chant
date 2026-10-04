@@ -23,6 +23,9 @@
  *   the source of its prices, the transcript pinned by hash, and the commits
  *   the run made, each with its `git patch-id --stable` (#3036) and, when
  *   the writer knows them, the hunks of it the run wrote (#3034).
+ * - `statement`: after the end, a DSSE envelope a runner or steward key
+ *   signed over the run (#3192, ./trust/run-statement.ts). A run may have
+ *   several, such as one per signer; none changes the record they sign.
  *
  * The file name is `_agent-runs`, not `runs`, because an Op run already has
  * `<env>/runs__<op>.jsonl` (`../lifecycle/run-ledger.ts`).
@@ -57,6 +60,8 @@ import { resolveMemberLedger } from "../lifecycle/member-ledger";
 import { sortedJsonReplacer } from "../utils";
 import { followSquashes, type SquashFollow } from "./squash";
 import { RUN_TRAILER, parseRecordRef, type RecordRef } from "./trailers";
+import type { DsseEnvelope } from "./trust/dsse";
+import { runRecordDigest, type RunAttestation } from "./trust/run-statement";
 
 /** The directory on `chant/lifecycle` that holds the agent runs, under the workspace root's ledger prefix. */
 export const AGENT_RUNS_DIR = "_agent-runs";
@@ -175,7 +180,16 @@ export interface RunEndLine {
   commits: RunCommit[];
 }
 
-export type RunLine = RunStartLine | RunEndLine;
+/** A `statement` line of `_agent-runs/<id>.jsonl`: a signed statement over the run (#3192). */
+export interface RunStatementLine {
+  version: 1;
+  event: "statement";
+  run: string;
+  at: string;
+  envelope: DsseEnvelope;
+}
+
+export type RunLine = RunStartLine | RunEndLine | RunStatementLine;
 
 // ── The caller's fields ──────────────────────────────────────────────────────
 
@@ -244,7 +258,7 @@ export type RunRecordInput = z.infer<typeof runRecordInputSchema>;
 // ── Errors ───────────────────────────────────────────────────────────────────
 
 /** Why a run write was refused. */
-export type RunWriteRefusal = "run-exists" | "run-unknown" | "run-ended" | "write-input-invalid" | "not-a-git-repository";
+export type RunWriteRefusal = "run-exists" | "run-unknown" | "run-ended" | "run-not-ended" | "run-statement-mismatch" | "write-input-invalid" | "not-a-git-repository";
 
 export class RunWriteError extends Error {
   constructor(
@@ -413,7 +427,8 @@ export function parseRunFile(content: string, id: string): { lines: RunLine[]; m
   for (const raw of content.split("\n").map((l) => l.trim()).filter(Boolean)) {
     try {
       const v = JSON.parse(raw) as Partial<RunLine>;
-      const ok = v.version === 1 && (v.event === "start" || v.event === "end") && v.run === id && typeof v.at === "string";
+      const statement = v.event === "statement" && typeof (v as Partial<RunStatementLine>).envelope === "object" && (v as Partial<RunStatementLine>).envelope !== null;
+      const ok = v.version === 1 && (v.event === "start" || v.event === "end" || statement) && v.run === id && typeof v.at === "string";
       if (ok) lines.push(v as RunLine);
       else malformed++;
     } catch {
@@ -429,10 +444,10 @@ export async function runsDir(rootOnDisk: string): Promise<string> {
   return `${prefix}${AGENT_RUNS_DIR}`;
 }
 
-/** Every run file in `dir` on the local branch, by run id, and the branch tip read. Never fetches. */
-export function readRunFiles(top: string, dir: string): { tip: string | null; files: Map<string, { path: string; content: string }> } {
+/** Every run file in `dir` on the local branch, or on `ref` when given, by run id, and the branch tip read. Never fetches. */
+export function readRunFiles(top: string, dir: string, ref = `refs/heads/${LEDGER_BRANCH}`): { tip: string | null; files: Map<string, { path: string; content: string }> } {
   const files = new Map<string, { path: string; content: string }>();
-  const tip = commitId(top, `refs/heads/${LEDGER_BRANCH}`) ?? null;
+  const tip = commitId(top, ref) ?? null;
   if (!tip) return { tip, files };
   const listing = git(top, ["ls-tree", "-z", `${tip}:${dir}`]);
   if (!listing) return { tip, files };
@@ -581,6 +596,30 @@ export async function recordRun(fields: unknown, ctx: RunWriteContext): Promise<
   );
 }
 
+/**
+ * `runs sign <id>`: append a statement over an ended run (#3192). The caller
+ * has built or checked the envelope against the record whose hash is
+ * `recordSha256`; the append refuses if the ledger's record is not that one.
+ */
+export async function appendRunStatement(id: string, envelope: DsseEnvelope, recordSha256: string, ctx: RunWriteContext): Promise<RunWriteResult> {
+  if (!RUN_ID_PATTERN.test(id)) throw new RunWriteError("run-unknown", `${JSON.stringify(id)} is not a run id`);
+  const at = (ctx.now?.() ?? new Date()).toISOString();
+  return appendRun(
+    ctx.top,
+    ctx.rootOnDisk,
+    id,
+    (existing) => {
+      const start = existing.find((l): l is RunStartLine => l.event === "start");
+      const end = existing.find((l): l is RunEndLine => l.event === "end");
+      if (!start) throw new RunWriteError("run-unknown", `the ledger has no agent run ${id}`);
+      if (!end) throw new RunWriteError("run-not-ended", `agent run ${id} has not ended; a statement is signed over a run's whole record, so record its end first`);
+      if (runRecordDigest(start, end) !== recordSha256) throw new RunWriteError("run-statement-mismatch", `agent run ${id}'s record changed while it was being signed; sign it again`);
+      return [{ version: 1, event: "statement", run: id, at, envelope }];
+    },
+    `Agent run statement: ${id}`,
+  );
+}
+
 // ── Folding a run ────────────────────────────────────────────────────────────
 
 /**
@@ -636,6 +675,12 @@ export interface RunView {
   decisions: string[];
   /** Its file on the branch. */
   ledger: string;
+  /** The SHA-256 a statement signs: of the start and end lines (#3192). Null until the run ends. */
+  record: { sha256: string } | null;
+  /** The signed statements the ledger holds for the run, oldest first (#3192). */
+  statements: { at: string; envelope: DsseEnvelope }[];
+  /** The statements judged against the runner keys at base. Set by the `runs` read and `runs verify`, never by a write. */
+  attestation?: RunAttestation;
 }
 
 /** Fold a run's lines into one view, or undefined when it has no start. */
@@ -665,6 +710,8 @@ export function foldRun(id: string, path: string, lines: RunLine[]): RunView | u
     commits: (end?.commits ?? []).map((c) => ({ sha: c.sha, patchId: c.patchId, joinedBy: ["record" as const], hunks: Array.isArray(c.hunks) && c.hunks.length > 0 ? c.hunks : null })),
     decisions: [],
     ledger: path,
+    record: end ? { sha256: runRecordDigest(start, end) } : null,
+    statements: lines.filter((l): l is RunStatementLine => l.event === "statement").map((l) => ({ at: l.at, envelope: l.envelope })),
   };
 }
 

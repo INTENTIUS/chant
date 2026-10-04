@@ -231,7 +231,13 @@ export interface SuppressionStats {
  */
 export async function auditFiles(
   inputs: AuditInput[],
-  opts: { checksProvider?: ChecksProvider; entitiesProvider?: EntitiesProvider; suppressionStats?: SuppressionStats } = {},
+  opts: {
+    checksProvider?: ChecksProvider;
+    entitiesProvider?: EntitiesProvider;
+    suppressionStats?: SuppressionStats;
+    /** Check ids the project enabled with `lint.rules`; a check marked `auditOptIn` runs only when listed here (#3190). */
+    enabledRules?: ReadonlySet<string>;
+  } = {},
 ): Promise<AuditFinding[]> {
   const provider = opts.checksProvider ?? defaultChecksProvider;
   const entitiesProvider = opts.entitiesProvider ?? defaultEntitiesProvider;
@@ -246,7 +252,7 @@ export async function auditFiles(
   }
 
   for (const [lexicon, files] of byLexicon) {
-    const checks = await provider(lexicon);
+    const checks = (await provider(lexicon)).filter((c) => !c.auditOptIn || opts.enabledRules?.has(c.id));
     if (checks.length === 0) continue;
     const parseEntities = await entitiesProvider(lexicon);
     findings.push(...(await auditLexicon(lexicon, files, checks, parseEntities, opts.suppressionStats)));

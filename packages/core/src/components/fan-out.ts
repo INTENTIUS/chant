@@ -36,6 +36,7 @@
 import { resolveComponentGraph, type DriverComponent } from "./driver";
 import { deployUnits } from "./deploy-units";
 import { computePlanDigest } from "../lifecycle/plan-digest";
+import { layerWaves } from "../gated-waves";
 
 /** Thrown when `changed` or `indeterminate` names a component the project does not have. */
 export class UnknownComponentError extends Error {
@@ -90,6 +91,12 @@ export interface FanOutRequest {
    * the derivation — the selection, the order and the edges it came from.
    */
   inputDigests?: Record<string, string>;
+  /**
+   * Components that form wave 1 whatever the graph order (#3049), so a change
+   * lands on them first. Only selected ones are placed: a canary the change
+   * does not reach has nothing to apply. The remaining waves follow the graph.
+   */
+  canary?: string[];
 }
 
 export interface FanOutPlan {
@@ -137,7 +144,7 @@ function consumersOf(components: DriverComponent[]): Map<string, string[]> {
  * through a fan-out is worse than finding out before it starts.
  */
 export function planFanOut(request: FanOutRequest): FanOutPlan {
-  const { components, changed, indeterminate = [], inputDigests } = request;
+  const { components, changed, indeterminate = [], inputDigests, canary = [] } = request;
 
   // Refuses DependencyCycleError / UnknownDependencyError over the whole graph.
   // Its `order` is deliberately not used: `topoSort` walks in declaration
@@ -169,24 +176,18 @@ export function planFanOut(request: FanOutRequest): FanOutPlan {
   }
 
   // Waves over the selected subgraph only. An unselected dependency is already
-  // applied, so it is not a reason for its dependents to wait.
-  const remaining = new Set(selected);
-  const selectedDeps = new Map(
-    [...selected].map((name) => [name, new Set((byName.get(name)!.dependsOn ?? []).filter((d) => selected.has(d)))]),
+  // applied, so it is not a reason for its dependents to wait. The layering is
+  // the one terragucci calls without components (../gated-waves.ts).
+  // resolveComponentGraph already refused every cycle in the full graph, and a
+  // subgraph of an acyclic graph is acyclic, so it cannot stall.
+  const waves = layerWaves(
+    [...selected].map((name) => ({ name, dependsOn: byName.get(name)!.dependsOn ?? [] })),
+    { canary, known: [...byName.keys()] },
   );
-  const waves: string[][] = [];
-  while (remaining.size > 0) {
-    const wave = [...remaining]
-      .filter((n) => [...selectedDeps.get(n)!].every((d) => !remaining.has(d)))
-      .sort();
-    // resolveComponentGraph already refused every cycle in the full graph, and
-    // a subgraph of an acyclic graph is acyclic, so this cannot stall.
-    for (const n of wave) remaining.delete(n);
-    waves.push(wave);
-  }
 
-  // Every dependency lands in an earlier wave than its dependents, so the
-  // flattening is a topological order, and a sorted one.
+  // Every dependency lands in an earlier wave than its dependents, except
+  // where a canary list put a dependent first on purpose, so the flattening is
+  // a topological order, and a sorted one.
   const order = waves.flat();
 
   const seeds = [

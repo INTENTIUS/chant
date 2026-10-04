@@ -1,0 +1,43 @@
+workflow:
+  name: chant-pr-prod
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+stages:
+  - plan
+  - apply
+
+variables:
+  CHANT_ENV: prod
+  GIT_DEPTH: '0'
+
+plan:
+  stage: plan
+  image: node:22-slim
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  variables:
+    BASE_SHA: '$CI_MERGE_REQUEST_DIFF_BASE_SHA'
+    PR_NUMBER: '$CI_MERGE_REQUEST_IID'
+  script:
+    - chant components pr-plan --base "$BASE_SHA" --pr "$PR_NUMBER" --env prod --gate pr-apply --output .chant/pr --forge gitlab
+  artifacts:
+    when: always
+    paths:
+      - .chant/pr
+
+apply:
+  stage: apply
+  image: node:22-slim
+  resource_group: chant-apply-prod
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  variables:
+    BASE_SHA: '$CI_COMMIT_BEFORE_SHA'
+  script:
+    - chant components pr-apply --base "$BASE_SHA" --env prod --gate pr-apply --output .chant/pr --forge gitlab --require-review
+  artifacts:
+    when: always
+    paths:
+      - .chant/pr

@@ -1,0 +1,12 @@
+5 members: 2 groups, 0 destroys or replacements.
+
+Group 79cd3ea7ffaf: 4 members, identical change:
+    + module.shared.aws_sqs_queue.events
+    ~ module.shared.aws_iam_role.app: tags, tags_all
+    ~ module.shared.aws_s3_bucket.data: replication_configuration, tags, tags_all
+    ~ module.shared.aws_sqs_queue.work: tags, tags_all, visibility_timeout_seconds
+  members: estates/e01, estates/e02, estates/e03, estates/e05
+
+Group 36dca470b879: 1 member (outlier), group 79cd3ea7ffaf's change plus:
+    ~ module.shared.aws_sqs_queue.extra: tags, tags_all
+  members: estates/e04

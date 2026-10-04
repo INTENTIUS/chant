@@ -116,6 +116,23 @@ describe("resuming", () => {
     expect(ran.sort()).toEqual(["app-one", "app-two", "cluster-a"]);
     expect(second.plan.skipped).toContainEqual({ component: "net", reason: "already-applied" });
   });
+
+  test("each component is reported as it settles, so progress survives a run that never returns", async () => {
+    const plan = planFanOut({ components: ESTATE, changed: ["net"] });
+    const settled: string[] = [];
+    const { registry, ran } = registryWith(["cluster-a"]);
+    const result = await runFanOut(plan, ESTATE, registry, {
+      ...opts(),
+      onComponentSettled: (r) => {
+        settled.push(`${r.component}:${r.status}`);
+        // Every report lands before any later wave starts.
+        if (r.component === "net") expect(ran).toEqual(["net"]);
+      },
+    });
+
+    expect(result.status).toBe("fail");
+    expect(settled.sort()).toEqual(["app-three:ok", "cluster-a:fail", "cluster-b:ok", "net:ok"]);
+  });
 });
 
 describe("one approval over the whole set", () => {

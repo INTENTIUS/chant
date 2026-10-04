@@ -249,10 +249,22 @@ export const REASONS = {
   "run-ended": "runs end names a run whose end is already recorded.",
   "runs-no-ledger": "The checkout has no chant/lifecycle branch, so there are no agent runs to read.",
   "runs-ledger-malformed": "Some lines of the agent run ledger aren't run events; the rest are read.",
+  // The agent-run statement (runs sign, statement and verify, #3192): why a statement is refused or does not verify.
+  "run-not-ended": "runs sign or runs statement names a run with no end recorded. A statement is signed over the run's whole record.",
+  "run-statement-invalid": "The envelope's payload is not an in-toto Statement v1 with chant's agent-run predicate, or has a field the predicate does not define.",
+  "run-statement-signer-mismatch": "The statement names a signer other than the runner whose key signed it.",
+  "run-statement-mismatch": "A listed runner key signed the statement, and it does not match the run's record: another run, a record that hashes differently, or another unit, harness, model, provider or principal.",
   // A box's listing written through chant (box listing set, #3308): why the write was refused. Nothing is written.
   "listing-member-unknown": "box listing set names a member the declaration does not declare.",
   "listing-box-missing": "box listing set names a member whose entry declares no box block, so it has no listing.",
   "listing-cover-invalid": "The cover can't be read, is not a PNG, JPEG or WebP picture, is larger than 5 MiB, has a path outside the workspace, or has an extension other than its picture format's.",
+  // A box's work published through chant (box publish, #3165, ws-088): why the call printed no result.
+  "publish-member-unknown": "box publish names a member the declaration does not declare.",
+  "publish-none": "box publish names a member whose box block names no publisher, or which declares no box block.",
+  "publish-refused": "The box's publisher refused (it exited 2): nothing was published, and its message says why.",
+  "publish-failed": "The box's publisher could not be run, failed (a nonzero exit other than 2) or ran out of time; its message says what it had done.",
+  "publish-answer-invalid": "The box's publisher exited 0 and printed no JSON object, or one box-publish.schema.json does not allow.",
+  "publish-unrecorded": "The commit the publisher named is not in the repository, or lacks the apply record of ws-075: Chant-Applied-By naming --by, Chant-Applied-At, Chant-Applied-Commit and a Chant-Record for the item, or a Chant-Record for each record sent.",
   // Work in progress under refs/chant/wip/<branch> and its replication (wip save|restore|push|fetch, #3172): why the write was refused. Nothing is written.
   "wip-no-branch": "HEAD is detached, or names a branch with no commit yet, so there is no branch to keep work in progress for.",
   "wip-none": "wip restore was given no snapshot, and the branch has none under refs/chant/wip/<branch>.",
@@ -283,9 +295,9 @@ export const REASONS = {
   "evidence-payload-type": "The envelope's payload type is not application/vnd.in-toto+json.",
   "evidence-statement-invalid": "The payload is not an in-toto Statement v1 with chant's runner-evidence predicate, or has a field the predicate does not define.",
   "evidence-runner-mismatch": "The statement names a runner other than the one whose key signed it.",
-  "runner-key-invalid": "The key given to evidence sign is not an Ed25519 private key in PEM.",
-  "runner-key-is-signer": "The key given to evidence sign is a person's key in the signers file. Evidence is signed by a service or CI identity.",
-  "runner-key-unlisted": "The policy at base lists no runner with the key given to evidence sign.",
+  "runner-key-invalid": "The key given to evidence sign or runs sign is not an Ed25519 private key in PEM.",
+  "runner-key-is-signer": "The key given to evidence sign or runs sign is a person's key in the signers file. Evidence and run statements are signed by a service or CI identity.",
+  "runner-key-unlisted": "The policy at base lists no runner with the key given to evidence sign or runs sign.",
   // The lineage lock (check).
   "lock-invalid": "The lineage lock can't be read.",
   "manual-step-open": "A scope in the lineage lock has an open manual step.",

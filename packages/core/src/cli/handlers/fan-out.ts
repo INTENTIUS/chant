@@ -33,15 +33,23 @@
  * `--resume` carries the earlier attempt's progress, `remainingFanOut` narrows
  * the plan before the gate is decided, and the digest is carried rather than
  * recomputed, so the approval still stands.
+ *
+ * `--wave-gate <name>` (#3049) swaps the one gate for one per wave: the same
+ * repeated command stops at each wave's gate in turn, each planned after the
+ * wave before it applied, and `chant approve fan-out <name>-wave-<n>` answers
+ * it. `--wave <n>` runs one wave, for a CI job per wave.
  */
 
 import { resolve, dirname } from "node:path";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { loadChantConfig, resolveAutoReleaseDisabled, type ChantConfig } from "../../config";
 import { samePlanDigest } from "../../lifecycle/plan-digest";
 import { affectedStacks } from "../../lifecycle/affected";
+import { changedFilesBetween, lexiconChangedUnits } from "../../components/changed-files";
 import { deriveFanOut, fanOutRegistry } from "../../components/fan-out-support";
-import { runFanOut } from "../../components/fan-out-run";
+import { EarlierWaveNotAppliedError, runFanOut } from "../../components/fan-out-run";
+import { readFanOutAttempt, writeFanOutAttempt, type FanOutAttempt } from "../../components/fan-out-record";
+import { describeChangedWave, withWaveRecord, type WaveRecord } from "../../gated-waves";
 import { renderFanOutHuman, renderFanOutJson, renderFanOutPlan } from "../../components/fan-out-output";
 import { ndjsonProgressSink } from "../../components/run-progress";
 import { summaryLedgerPrefix, writeGatedRunSummary } from "../../op/gate-summary";
@@ -54,37 +62,6 @@ import { FAN_OUT_GATE_OP } from "../../op/gate-name";
 import { resolveBuildRoot } from "./lifecycle";
 import { GATED_EXIT_CODE, recordAutoReleasesForRun } from "./run";
 import type { CommandContext } from "../registry";
-
-
-
-/**
- * What an attempt left behind, and what the next one reads (`--resume`).
- *
- * The digest is stored alongside the progress because progress is only
- * meaningful for the plan it was made against. A fan-out derived from different
- * source is a different fan-out, and carrying "cluster-a already applied" into
- * it would be a claim about work nobody did.
- */
-interface FanOutAttempt {
-  digest: string;
-  completed: string[];
-  failed: string[];
-}
-
-function readAttempt(path: string): FanOutAttempt | undefined {
-  if (!existsSync(path)) return undefined;
-  const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<FanOutAttempt>;
-  return {
-    digest: typeof parsed.digest === "string" ? parsed.digest : "",
-    completed: Array.isArray(parsed.completed) ? parsed.completed.filter((n): n is string => typeof n === "string") : [],
-    failed: Array.isArray(parsed.failed) ? parsed.failed.filter((n): n is string => typeof n === "string") : [],
-  };
-}
-
-function writeAttempt(path: string, attempt: FanOutAttempt): void {
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(attempt, null, 2) + "\n");
-}
 
 /**
  * The stack-level change signal, from whichever end the invocation supplied.
@@ -101,13 +78,20 @@ function writeAttempt(path: string, attempt: FanOutAttempt): void {
  * consumes a changed export is affected at stack granularity in the same way a
  * changed component is at component granularity.
  */
-async function resolveChangedUnits(
+export async function resolveChangedUnits(
   ctx: CommandContext,
   config: ChantConfig,
+  opts: {
+    /** Measure from this commit instead of `--base` (a pull request's merge base, #3183). */
+    base?: string;
+    /** Build both refs for `lifecycle affected` only when the project declares `stacks`. */
+    stacksOnly?: boolean;
+  } = {},
 ): Promise<{ units: ChangedUnits } | { error: string; hint?: string }> {
   const { args } = ctx;
+  const base = opts.base ?? args.base;
   const fromFile = args.fromAffected;
-  if (args.base && fromFile) {
+  if (base && fromFile) {
     return {
       error: "--base and --from-affected both name a change signal",
       hint: "Pass --base <ref> to derive it here, or --from-affected <file> to read one `chant lifecycle affected --json` already wrote.",
@@ -137,7 +121,7 @@ async function resolveChangedUnits(
     };
   }
 
-  if (!args.base) {
+  if (!base) {
     return {
       error: "A change signal is required: chant components fan-out --base <ref> [--head <ref>]",
       hint: "Or pass --from-affected <file> with the JSON `chant lifecycle affected --base <ref> --json` wrote.",
@@ -145,23 +129,37 @@ async function resolveChangedUnits(
   }
 
   try {
-    const result = await affectedStacks({
-      // Components are discovered from the current directory, the convention
-      // every component command follows. In a multi-stack project the diff
-      // reads the same root, because `stacks[].src` is written relative to it.
-      projectPath: config.stacks?.length ? resolve(".") : resolveBuildRoot(args, config),
-      serializers: ctx.plugins.map((p) => p.serializer),
-      baseRef: args.base,
-      headRef: args.head,
-      includeDependents: args.includeDependents,
-      // A project that declares its stacks gets an answer keyed by stack name,
-      // which is the name a component's deploy step uses. Without this the diff
-      // answers by lexicon partition and the join below claims none of it.
-      ...(config.stacks ? { stacks: config.stacks } : {}),
-    });
+    // A unit that is not chant source, such as a Terraform root, never shows
+    // in the artifact diff below; the lexicon that owns it answers from the
+    // changed paths (#3183).
+    const projectRoot = resolve(".");
+    const lexiconUnits = ctx.plugins.some((p) => p.changedUnits)
+      ? await lexiconChangedUnits(ctx.plugins, {
+          projectRoot,
+          config: config as Record<string, unknown>,
+          changedFiles: await changedFilesBetween(projectRoot, base, args.head ?? "HEAD"),
+        })
+      : [];
+    const result =
+      opts.stacksOnly && !config.stacks?.length
+        ? { changed: [], dependents: [], indeterminate: [] }
+        : await affectedStacks({
+            // Components are discovered from the current directory, the convention
+            // every component command follows. In a multi-stack project the diff
+            // reads the same root, because `stacks[].src` is written relative to it.
+            projectPath: config.stacks?.length ? resolve(".") : resolveBuildRoot(args, config),
+            serializers: ctx.plugins.map((p) => p.serializer),
+            baseRef: base,
+            headRef: args.head,
+            includeDependents: args.includeDependents,
+            // A project that declares its stacks gets an answer keyed by stack name,
+            // which is the name a component's deploy step uses. Without this the diff
+            // answers by lexicon partition and the join below claims none of it.
+            ...(config.stacks ? { stacks: config.stacks } : {}),
+          });
     return {
       units: {
-        changed: [...new Set([...result.changed, ...result.dependents])].sort(),
+        changed: [...new Set([...result.changed, ...result.dependents, ...lexiconUnits])].sort(),
         indeterminate: result.indeterminate,
       },
     };
@@ -191,6 +189,21 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
     return 1;
   }
 
+  // The two gate modes (#3049). `--gate` approves the whole set once, as
+  // #2417 decided; `--wave-gate` approves each wave once the waves before it
+  // applied. They answer different questions, so one run takes one of them.
+  if (args.gate && args.waveGate) {
+    console.error(formatError({
+      message: "--gate and --wave-gate both name a gate",
+      hint: "Pass --gate <name> for one approval over the whole set, or --wave-gate <name> for one per wave.",
+    }));
+    return 1;
+  }
+  if (args.wave !== undefined && !args.waveGate) {
+    console.error(formatError({ message: "--wave runs one wave of a gated-wave fan-out, so it needs --wave-gate <name>" }));
+    return 1;
+  }
+
   const signal = await resolveChangedUnits(ctx, config);
   if ("error" in signal) {
     console.error(formatError({ message: signal.error, ...(signal.hint ? { hint: signal.hint } : {}) }));
@@ -205,6 +218,7 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
       sandbox: args.sandbox,
       buildParams: paramsResolution.provenance,
       config,
+      ...(args.canary?.length ? { canary: args.canary } : {}),
     });
   } catch (err) {
     // A cycle or an unknown `dependsOn` refuses here, over the whole graph and
@@ -227,6 +241,9 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
   }
 
   const gate = args.gate ? { op: FAN_OUT_GATE_OP, gate: args.gate } : undefined;
+  const waveGate = args.waveGate
+    ? { op: FAN_OUT_GATE_OP, gate: args.waveGate, ...(args.wave !== undefined ? { only: args.wave } : {}) }
+    : undefined;
 
   // `--resume`: what an earlier attempt at this same plan finished. Read before
   // the dry-run branch so a plan-only invocation shows what is actually left
@@ -235,11 +252,13 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
   // approval survives the resume rather than being re-asked for.
   const resumePath = args.resume ? resolve(args.resume) : undefined;
   let priorCompleted: string[] = [];
+  let priorOutputs: Record<string, Record<string, unknown>> = {};
+  let priorWaves: WaveRecord[] = [];
   let progress: FanOutProgress | undefined;
   if (resumePath) {
     let attempt: FanOutAttempt | undefined;
     try {
-      attempt = readAttempt(resumePath);
+      attempt = readFanOutAttempt(resumePath);
     } catch (err) {
       console.error(formatError({ message: `--resume: could not read "${args.resume}": ${err instanceof Error ? err.message : String(err)}` }));
       return 1;
@@ -256,16 +275,22 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
       // exists to retry them — the operator repeated the command precisely
       // because the thing that failed is now expected to work.
       priorCompleted = attempt.completed;
+      priorOutputs = Object.fromEntries(
+        Object.entries(attempt.outputs).filter(([name]) => attempt.completed.includes(name)),
+      );
       progress = { completed: attempt.completed };
+      priorWaves = attempt.waves ?? [];
     }
   }
 
   if (args.dryRun) {
     // `remainingFanOut` carries the digest rather than minting a new one, so
     // the digest printed here is the same string that approves the real run.
-    const plan = progress ? remainingFanOut(derived.plan, derived.components, progress) : derived.plan;
+    // A gated-wave fan-out keeps the derivation's wave numbers, since they
+    // name the gates, so its plan is printed whole.
+    const plan = progress && !waveGate ? remainingFanOut(derived.plan, derived.components, progress) : derived.plan;
     if (args.json) renderFanOutJson(plan);
-    else renderFanOutPlan(plan, { ...(gate ? { gate } : {}) });
+    else renderFanOutPlan(plan, { ...(gate ? { gate } : {}), ...(waveGate ? { waveGate } : {}) });
     return 0;
   }
 
@@ -282,14 +307,70 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
   const registry = await fanOutRegistry(projectPath, config);
   // #3061: the commit this run deploys, for the workloads' vcs.ref.head.revision.
   const revision = await getHeadCommit().catch(() => undefined);
-  const result = await runFanOut(derived.plan, derived.components, registry, {
-    env: args.env ?? "local",
-    releaseIdentity: () => (revision ? { revision } : {}),
-    componentOutputs: seededOutputs,
-    ...(gate ? { gate } : {}),
-    ...(progress ? { progress } : {}),
-    ...(args.progressJson ? { onProgress: ndjsonProgressSink() } : {}),
-  });
+
+  // The record is rewritten as each component settles, not only once the run
+  // returns. A fan-out killed in its third wave (a cancelled CI job, a lost
+  // runner, ctrl-c) then still knows that the first two applied, and the
+  // repeated command picks up from there instead of redoing them.
+  const completedSoFar = new Set(priorCompleted);
+  const failedSoFar: string[] = [];
+  const outputsSoFar = { ...priorOutputs };
+  let wavesSoFar = priorWaves;
+  const recordAttempt = (): void => {
+    if (!resumePath) return;
+    const attempt: FanOutAttempt = {
+      digest: derived.plan.digest,
+      completed: [...completedSoFar].sort(),
+      failed: [...failedSoFar].sort(),
+      outputs: outputsSoFar,
+      ...(wavesSoFar.length > 0 ? { waves: wavesSoFar } : {}),
+    };
+    writeFanOutAttempt(resumePath, attempt);
+  };
+
+  let result;
+  try {
+    result = await runFanOut(derived.plan, derived.components, registry, {
+      env: args.env ?? "local",
+      releaseIdentity: () => (revision ? { revision } : {}),
+      // A completed component's recorded outputs win over a `--seed-outputs`
+      // entry for the same name, as a fresh apply's outputs merge over a seed in
+      // the driver: the record holds what this fan-out itself applied.
+      componentOutputs: { ...seededOutputs, ...priorOutputs },
+      ...(gate ? { gate } : {}),
+      ...(waveGate ? { waveGate } : {}),
+      ...(waveGate
+        ? {
+            onWaveSettled: (record: WaveRecord) => {
+              wavesSoFar = withWaveRecord(wavesSoFar, record);
+              recordAttempt();
+            },
+          }
+        : {}),
+      ...(progress ? { progress } : {}),
+      ...(args.progressJson ? { onProgress: ndjsonProgressSink() } : {}),
+      ...(resumePath
+        ? {
+            onComponentSettled: (settled, outputs) => {
+              if (settled.status === "ok") {
+                completedSoFar.add(settled.component);
+                if (outputs) outputsSoFar[settled.component] = outputs;
+              } else if (settled.status === "fail") {
+                failedSoFar.push(settled.component);
+              }
+              recordAttempt();
+            },
+          }
+        : {}),
+    });
+  } catch (err) {
+    // `--wave <n>` reached before an earlier wave applied: nothing ran.
+    if (err instanceof EarlierWaveNotAppliedError) {
+      console.error(formatError({ message: err.message }));
+      return 1;
+    }
+    throw err;
+  }
 
   if (args.dumpOutputs) {
     const dumpPath = resolve(args.dumpOutputs);
@@ -297,25 +378,28 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
     writeFileSync(dumpPath, JSON.stringify(result.componentOutputs, null, 2));
   }
 
-  // Written even on a failure and even on a gate: the next attempt needs to
-  // know what this one got through, and a gated attempt got through nothing,
-  // which is itself worth recording against this plan's digest.
-  if (resumePath) {
-    writeAttempt(resumePath, {
-      digest: result.plan.digest,
-      completed: [...new Set([...priorCompleted, ...result.completed])].sort(),
-      failed: result.failed,
-    });
-  }
+  // Written again at the end, even on a failure and even on a gate: a gated
+  // attempt got through nothing, which is itself worth recording against this
+  // plan's digest.
+  recordAttempt();
 
   if (args.json) renderFanOutJson(result);
-  else renderFanOutHuman(result, { ...(gate ? { gate } : {}) });
+  else renderFanOutHuman(result, { ...(gate ? { gate } : {}), ...(waveGate ? { waveGate } : {}) });
+
+  // A wave whose set moved after its approval stops with both digests named
+  // (#3049), the #2300 refusal on a set. Printed on stderr even under --json,
+  // since it is the line a CI log reader is looking for.
+  for (const wave of result.waves ?? []) {
+    if (wave.status === "gated" && wave.approved) console.error(formatWarning({ message: describeChangedWave(wave) }));
+  }
 
   // The same durable trace `chant run --components` leaves (#597), for the
   // components this fan-out actually applied. A partial fan-out records the
   // branches that finished and nothing else, which is the whole reason the
   // runner reports `completed` separately from `failed`.
-  if (result.status !== "gated") {
+  // A gated-wave run can stop at a later wave's gate after earlier waves
+  // applied, and those applies are recorded like any other.
+  if (result.status !== "gated" || result.completed.length > 0) {
     await recordAutoReleasesForRun(
       result.results,
       args.env ?? "local",
@@ -324,7 +408,9 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
     );
   }
 
-  if (result.status === "gated" && result.gate) {
+  // A failed root outranks a gate in the status, but a gated-wave run that
+  // stopped at a wave's gate still prints how to approve it.
+  if (result.gate && (result.status === "gated" || waveGate)) {
     const pending = result.gate;
     // The pending fact's own plan: the fan-out's digest for the gate over the
     // set, or a component's plan and environment for a gate inside one (#2574).
@@ -341,7 +427,7 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
       ...(await summaryLedgerPrefix()),
       ...(pending.environment ? { environment: pending.environment } : {}),
     });
-    return GATED_EXIT_CODE;
+    return result.status === "gated" ? GATED_EXIT_CODE : 1;
   }
 
   return result.status === "ok" ? 0 : 1;
