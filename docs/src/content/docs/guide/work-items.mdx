@@ -264,8 +264,8 @@ The hooks talk to the Op through their environment and their last line of output
 | Hook | Runs | Gets | May print as its last line |
 |---|---|---|---|
 | `prepare` | in the workspace, before Pick | nothing | nothing read |
-| `builder` | in the worktree | `FACTORY_ITEM`, `FACTORY_TIER`, `FACTORY_TOKEN`, `FACTORY_HOLDER`, `FACTORY_WORKTREE`, `FACTORY_CONTEXT` | its report: `ok: false` when it did not finish, `reverted` for what its guard put back, `run` naming its [run record](/chant/cli/workspace-runs/) for the `Chant-Run` trailer, and anything else the later hooks read |
-| `check` | in the worktree | the same, and `FACTORY_BUILD`, the builder's report | `{ "criteria": { "<id>": "pass" or "fail" } }`, so each criterion is ticked by its own result |
+| `builder` | in the worktree | `FACTORY_ITEM`, `FACTORY_TIER`, `FACTORY_TOKEN`, `FACTORY_HOLDER`, `FACTORY_WORKTREE`, `FACTORY_CONTEXT` | its report: `ok: false` when it did not finish, `reverted` for what its guard put back, `run` naming its [run record](/chant/cli/workspace-runs/) for the `Chant-Run` trailer, `chantAgent` for `Chant-Agent`, `records` for more `Chant-Record` trailers, and anything else the later hooks read |
+| `check` | in the worktree | the same, and `FACTORY_BUILD`, the builder's report | `{ "criteria": { "<id>": "pass" or "fail" } }`, so each criterion is ticked by its own result, and `records` such as the evidence it wrote |
 | `after` | in the worktree, after Record | `FACTORY_OUTCOME`, `FACTORY_COMMIT`, `FACTORY_REASON`, `FACTORY_BUILD`, `FACTORY_CHECK` | nothing read |
 
 Before the builder runs, the worktree starts from the checkout's `HEAD`. Commits the branch held that `HEAD` doesn't are kept under `refs/chant/kept/<item>/earlier-<commit>` first. An item the checkout holds uncommitted, or has changed since `HEAD`, is copied into the worktree, because that copy is the one the points were asked about. A steward runs the Op beside its turns with `factoryReady`, whose keys name each buildable item in the state it was read in:

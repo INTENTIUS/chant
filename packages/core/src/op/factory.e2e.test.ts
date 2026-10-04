@@ -157,7 +157,7 @@ describe("the factory Op's seams for an orchestrator (studio#382)", () => {
     await withTestDir(async (dir) => {
       workspace(dir);
       // A builder that reports a run and a check that reports per criterion.
-      writeFileSync(join(dir, "hooks", "builder2.cjs"), `${BUILDER}\nconsole.log(JSON.stringify({ ok: true, run: { id: "run-7" }, agent: "builder-small" }));\n`);
+      writeFileSync(join(dir, "hooks", "builder2.cjs"), `${BUILDER}\nconsole.log(JSON.stringify({ ok: true, run: { id: "run-7" }, agent: "builder-small", chantAgent: "factory", records: ["contract:C-1"] }));\n`);
       writeFileSync(join(dir, "hooks", "check2.cjs"), `console.log(JSON.stringify({ criteria: { "AC-1": "pass", "AC-2": "fail" }, built: JSON.parse(process.env.FACTORY_BUILD).agent }));`);
       writeFileSync(join(dir, "hooks", "after.cjs"), `require("node:fs").writeFileSync(require("node:path").join(process.env.FACTORY_FAIL_DIR, "after.json"), JSON.stringify({ outcome: process.env.FACTORY_OUTCOME, commit: process.env.FACTORY_COMMIT, reason: process.env.FACTORY_REASON, check: JSON.parse(process.env.FACTORY_CHECK) }));`);
       // The prepare hook writes W-110 in the checkout and leaves it uncommitted; the others are taken out of the way.
@@ -196,7 +196,10 @@ describe("the factory Op's seams for an orchestrator (studio#382)", () => {
       expect("error" in amended).toBe(false);
       const done = await run(dir, "W-110", { builder: `${process.execPath} hooks/builder2.cjs`, check: `${process.execPath} hooks/check2.cjs`, after: `${process.execPath} hooks/after.cjs` });
       expect(done.workLease).toMatchObject({ item: "W-110", outcome: "done" });
-      expect(git(["log", "-1", "--format=%B", "chant/work/W-110"], dir)).toContain("Chant-Run: run-7");
+      const body = git(["log", "-1", "--format=%B", "chant/work/W-110"], dir);
+      expect(body).toContain("Chant-Run: run-7");
+      expect(body).toContain("Chant-Agent: factory");
+      expect(body).toContain("Chant-Record: work:W-110\nChant-Record: contract:C-1");
       expect(JSON.parse(readFileSync(join(dir, "after.json"), "utf-8")).outcome).toBe("done");
     });
   }, 120_000);
