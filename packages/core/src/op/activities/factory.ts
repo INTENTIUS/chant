@@ -343,11 +343,12 @@ async function checkoutRoot(cwd: string): Promise<string> {
 }
 
 /** Commit everything in the worktree with chant's trailers (ws-075). Null when there was nothing to commit. */
-async function commitAll(worktree: string, subject: string, item: string, kindName: string, token: string, runId?: string): Promise<string | null> {
+async function commitAll(worktree: string, subject: string, item: string, kindName: string, token: string, runId?: string, extra: { agent?: string; records?: string[] } = {}): Promise<string | null> {
   await gitOut(["add", "-A"], worktree);
   if ((await gitOut(["diff", "--cached", "--quiet"], worktree)).ok) return null;
   const { formatChantTrailers } = await import("../../workspace/trailers");
-  const trailers = formatChantTrailers({ lease: token, ...(runId ? { run: runId } : {}), records: [{ kind: kindName, id: item }] });
+  const records = [`${kindName}:${item}`, ...(extra.records ?? []).filter((r) => r !== `${kindName}:${item}`)];
+  const trailers = formatChantTrailers({ ...(extra.agent ? { agent: extra.agent } : {}), lease: token, ...(runId ? { run: runId } : {}), records });
   const r = await run(["git", "-c", "commit.gpgsign=false", "commit", "-q", "--no-verify", "-m", subject, "-m", trailers.join("\n")], worktree, {});
   if (r.code !== 0) throw new Error(`the factory could not commit ${item}: ${r.stderr.trim()}`);
   return (await gitOut(["rev-parse", "HEAD"], worktree)).out;
@@ -576,6 +577,18 @@ export async function factoryRecord(args: FactoryRecordArgs): Promise<FactoryRec
   return result;
 }
 
+/**
+ * What the hooks' reports add to the done commit's trailers (ws-075): `chantAgent`, the agent session
+ * a builder ran as, for Chant-Agent, and `records`, more `<kind>:<id>` records the build carries, such
+ * as the contract it built and the evidence its check wrote, from the builder's and the check's reports.
+ */
+function trailerExtras(build: Record<string, unknown> | null | undefined, check: Record<string, unknown> | null | undefined): { agent?: string; records: string[] } {
+  const records: string[] = [];
+  for (const r of [build?.records, check?.records]) if (Array.isArray(r)) for (const x of r) if (typeof x === "string" && /^[a-z][a-z0-9-]*:[A-Za-z0-9][A-Za-z0-9._-]*$/.test(x) && !records.includes(x)) records.push(x);
+  const agent = typeof build?.chantAgent === "string" && build.chantAgent.trim() !== "" ? build.chantAgent.trim() : undefined;
+  return { ...(agent ? { agent } : {}), records };
+}
+
 /** The run id a builder's report names for the Chant-Run trailer: `run.id` or `run`, or undefined. */
 function runIdOf(report: Record<string, unknown> | null | undefined): string | undefined {
   const r = report?.run;
@@ -612,6 +625,6 @@ async function recordOutcome(args: FactoryRecordArgs): Promise<FactoryRecordResu
     ...(proposed.length > 0 ? { [w.work.implements]: [...already, ...proposed.map((p) => p.decision)], implements_proposed: proposed } : {}),
   });
   const title = typeof item.data?.title === "string" ? item.data.title : lease.item;
-  const commit = await commitAll(lease.worktree, `${lease.item}: ${title}`, lease.item, w.kindName, lease.token, runIdOf(args.build.report));
+  const commit = await commitAll(lease.worktree, `${lease.item}: ${title}`, lease.item, w.kindName, lease.token, runIdOf(args.build.report), trailerExtras(args.build.report, args.check.report));
   return { outcome: "done", reason: null, commit, implementsProposed: proposed };
 }
