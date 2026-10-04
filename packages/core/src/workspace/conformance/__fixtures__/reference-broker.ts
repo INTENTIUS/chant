@@ -108,7 +108,9 @@ export async function startReferenceBroker(env: BrokerConformanceEnv): Promise<S
         }
         const parsed = parseDeclarationReport(body, env.broker);
         if ("error" in parsed) return refuse(res, 400, parsed.error);
-        const kept: KeptDeclaration = { capabilities: parsed.capabilities, at: new Date().toISOString() };
+        // It keeps the listing and spend a report carries (#3508) and answers with them, as studio's lobby does.
+        const { capabilities, listing, spend } = parsed;
+        const kept: KeptDeclaration = { capabilities, at: new Date().toISOString(), ...(listing ? { listing } : {}), ...(spend ? { spend } : {}) };
         reports.set(box, kept);
         return send(res, 200, { ...kept, payer });
       }

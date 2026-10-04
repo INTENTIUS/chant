@@ -351,6 +351,28 @@ export const BROKER_CHECKS: readonly BrokerCheck[] = [
     },
   },
   {
+    id: "declaration-listing-spend",
+    capability: "declaration",
+    title: "a report that also carries the box's listing and this month's spend (#3508) is answered 200, and an answer that echoes them echoes them unchanged",
+    async run(ctx) {
+      const body = {
+        capabilities: [{ name: "inference", broker: ctx.env.broker, scope: ["agent", "decide"] }],
+        listing: { published: true, title: "Conformance", line: "a box the broker conformance suite reports" },
+        spend: { month: "2026-10", usd: 1.25, runs: 3, unpriced: 1, byPrincipal: [{ principal: "github:conformance", usd: 1.25, runs: 2, unpriced: 0 }, { principal: null, usd: 0, runs: 1, unpriced: 1 }] },
+      };
+      const problems = ctx.validate("declarationReport", body).map((p) => `the suite's own report: ${p}`);
+      const r = await ctx.call(A, "POST", BROKER_ROUTES.declaration, { body });
+      if (r.status !== 200) return [...problems, `expected 200, got ${r.status}: ${r.text.slice(0, 200)}`];
+      problems.push(...ctx.validate("declarationKept", r.json));
+      const answer = r.json as { capabilities?: { name: string }[]; listing?: unknown; spend?: unknown };
+      if (!(answer.capabilities ?? []).some((c) => c.name === "inference")) problems.push("it did not keep the report's inference entry");
+      for (const key of ["listing", "spend"] as const) {
+        if (answer[key] !== undefined && !isDeepStrictEqual(answer[key], body[key])) problems.push(`the answer's ${key} is ${JSON.stringify(answer[key])}, not the ${key} reported`);
+      }
+      return problems;
+    },
+  },
+  {
     id: "unreported-refused",
     capability: "declaration",
     title: "a box that has never reported is refused every capability with a 403",

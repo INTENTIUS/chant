@@ -30,6 +30,10 @@
  * decide answer ({@link BrokerPayer}). It is optional within version 1.
  * A box names whose turn a request is with a `chant-grant` header the broker
  * issued (#3477, ws-099); the broker then may spend that person's credential.
+ * A report may carry the box's listing and this month's spend from its run
+ * records (#3508, ws-102), {@link BoxListing} and {@link BoxSpend}; both are
+ * optional within version 1, and a broker that has no use for them ignores
+ * them.
  *
  * The rule every broker keeps: a request that needs scope word `w` of
  * capability `c` is refused with a 403 unless the box's last report holds an
@@ -266,14 +270,132 @@ export interface KeptDeclaration {
   capabilities: KeptCapability[];
   at: string;
   payer?: BrokerPayer;
+  /** The report's listing, when the broker keeps it (#3508). */
+  listing?: BoxListing;
+  /** The report's spend, when the broker keeps it (#3508). */
+  spend?: BoxSpend;
 }
 
 /**
- * A report's body, checked, kept to the entries that name `broker`; or the
- * reason it is refused with a 400. The same rules as studio's lobby
- * (`lobby/capabilities.mjs`).
+ * The box block's listing (ws-077) as a report carries it (#3508, ws-102):
+ * what `chant workspace status --json` prints under the box member's
+ * `box.listing`, less the cover. A broker that lists boxes lists the box
+ * under it; the repository keeps it, and the broker only a cache.
  */
-export function parseDeclarationReport(body: unknown, broker: string): { capabilities: KeptCapability[] } | { error: string } {
+export interface BoxListing {
+  /** Whether people other than the owner see the box listed. Absent in a report means true. */
+  published: boolean;
+  title: string;
+  line: string;
+}
+
+/** The bounds on a reported listing: the ones `chant workspace box listing set` writes with. */
+export const LISTING_LIMITS = { title: 60, line: 140 } as const;
+
+/** One principal's share of a month's spend, or the month's totals without `principal`. */
+export interface SpendFigures {
+  /** The sum of the priced runs' USD costs, rounded to 1/10000 of a dollar. */
+  usd: number;
+  runs: number;
+  /** Runs with no USD cost: left out of `usd`, never counted as zero. */
+  unpriced: number;
+}
+
+/**
+ * What the box's run records (ws-076) say it spent in one month (#3508,
+ * ws-102), as a report carries it: the month's totals and the same per
+ * principal the runs worked for. {@link spendFromRuns} computes it.
+ */
+export interface BoxSpend extends SpendFigures {
+  /** `YYYY-MM`, in UTC, matched against each run's `startedAt`. */
+  month: string;
+  /** At most {@link SPEND_LIMITS.principals}, in the order the runs first name them; `principal` null for runs that name none. */
+  byPrincipal: (SpendFigures & { principal: string | null })[];
+}
+
+/** The bounds on a reported spend. */
+export const SPEND_LIMITS = { principals: 50, principalLength: 200, figure: 1e9 } as const;
+
+const SPEND_MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
+// eslint-disable-next-line no-control-regex
+const CONTROL = /[\u0000-\u001f\u007f]/;
+const roundUsd = (usd: number) => Math.round(usd * 1e4) / 1e4;
+
+/**
+ * A box's spend in `month` (`YYYY-MM`) from the runs `chant workspace runs
+ * --json` prints (`doc.runs`): every run whose `startedAt` falls in the
+ * month, summed per the principal in its `by`. Only a USD `cost` is summed; a
+ * run with none, or with another currency, is unpriced. Null when `doc` holds
+ * no runs list.
+ */
+export function spendFromRuns(doc: unknown, month: string): BoxSpend | null {
+  const runs = (doc as { runs?: unknown } | null)?.runs;
+  if (!Array.isArray(runs)) return null;
+  const total: SpendFigures = { usd: 0, runs: 0, unpriced: 0 };
+  const people = new Map<string | null, SpendFigures & { principal: string | null }>();
+  for (const r of runs as { startedAt?: unknown; by?: unknown; cost?: { currency?: unknown; amount?: unknown } | null }[]) {
+    if (!String(r?.startedAt ?? "").startsWith(month)) continue;
+    const principal = typeof r.by === "string" && r.by.length > 0 ? r.by.slice(0, SPEND_LIMITS.principalLength) : null;
+    let p = people.get(principal);
+    if (!p) {
+      p = { principal, usd: 0, runs: 0, unpriced: 0 };
+      people.set(principal, p);
+    }
+    const amount = r.cost?.amount;
+    const usd = r.cost?.currency === "USD" && typeof amount === "number" && Number.isFinite(amount) && amount >= 0 ? amount : null;
+    for (const o of [total, p]) {
+      o.runs++;
+      if (usd === null) o.unpriced++;
+      else o.usd += usd;
+    }
+  }
+  const byPrincipal = [...people.values()].slice(0, SPEND_LIMITS.principals).map((p) => ({ ...p, usd: roundUsd(p.usd) }));
+  return { month, usd: roundUsd(total.usd), runs: total.runs, unpriced: total.unpriced, byPrincipal };
+}
+
+/** A reported listing, checked as studio's lobby checks it: undefined when none was reported, or the reason it is refused. */
+function parseListing(raw: unknown): { listing?: BoxListing } | { error: string } {
+  if (raw === undefined || raw === null) return {};
+  if (typeof raw !== "object" || Array.isArray(raw)) return { error: 'The listing is { "published", "title", "line" }.' };
+  const { published, title = "", line = "" } = raw as { published?: unknown; title?: unknown; line?: unknown };
+  if (typeof title !== "string" || title.length > LISTING_LIMITS.title || CONTROL.test(title)) return { error: `The listing's title is a string of at most ${LISTING_LIMITS.title} characters with no control character.` };
+  if (typeof line !== "string" || line.length > LISTING_LIMITS.line || CONTROL.test(line)) return { error: `The listing's line is a string of at most ${LISTING_LIMITS.line} characters with no control character.` };
+  if (published !== undefined && typeof published !== "boolean") return { error: "The listing's published is true or false." };
+  return { listing: { published: published !== false, title, line } };
+}
+
+/** A reported spend, checked as studio's lobby checks it: undefined when none was reported, or the reason it is refused. */
+function parseSpend(raw: unknown): { spend?: BoxSpend } | { error: string } {
+  if (raw === undefined || raw === null) return {};
+  const bad = { error: 'The spend is { "month", "usd", "runs", "unpriced", "byPrincipal": [{ "principal", "usd", "runs", "unpriced" }] }, from chant workspace runs --json.' };
+  const money = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0 && v < SPEND_LIMITS.figure;
+  const count = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 0 && (v as number) < SPEND_LIMITS.figure;
+  const figures = (o: { usd?: unknown; runs?: unknown; unpriced?: unknown }): SpendFigures | null =>
+    money(o.usd) && count(o.runs) && count(o.unpriced) ? { usd: roundUsd(o.usd), runs: o.runs, unpriced: o.unpriced } : null;
+  if (typeof raw !== "object" || Array.isArray(raw)) return bad;
+  const r = raw as { month?: unknown; byPrincipal?: unknown };
+  const total = figures(raw as object);
+  if (!SPEND_MONTH.test(String(r.month)) || total === null) return bad;
+  const list = r.byPrincipal ?? [];
+  if (!Array.isArray(list) || list.length > SPEND_LIMITS.principals) return bad;
+  const byPrincipal: BoxSpend["byPrincipal"] = [];
+  for (const one of list as { principal?: unknown; usd?: unknown; runs?: unknown; unpriced?: unknown }[]) {
+    if (!one || typeof one !== "object") return bad;
+    const principal = one.principal;
+    if (principal !== null && (typeof principal !== "string" || principal.length === 0 || principal.length > SPEND_LIMITS.principalLength)) return bad;
+    const f = figures(one);
+    if (f === null) return bad;
+    byPrincipal.push({ principal, ...f });
+  }
+  return { spend: { month: r.month as string, ...total, byPrincipal } };
+}
+
+/**
+ * A report's body, checked, kept to the entries that name `broker`, with its
+ * listing and spend when it carries them (#3508); or the reason it is refused
+ * with a 400. The same rules as studio's lobby (`lobby/capabilities.mjs`).
+ */
+export function parseDeclarationReport(body: unknown, broker: string): { capabilities: KeptCapability[]; listing?: BoxListing; spend?: BoxSpend } | { error: string } {
   const list = (body as { capabilities?: unknown } | null)?.capabilities;
   if (!Array.isArray(list)) return { error: 'The body is { "capabilities": [{ "name", "broker", "scope" }] }.' };
   if (list.length > DECLARATION_LIMITS.capabilities) return { error: `At most ${DECLARATION_LIMITS.capabilities} capabilities.` };
@@ -289,7 +411,11 @@ export function parseDeclarationReport(body: unknown, broker: string): { capabil
     for (const w of scope as string[]) if (!seen.scope.includes(w)) seen.scope.push(w);
     kept.set(c.name, seen);
   }
-  return { capabilities: [...kept.values()] };
+  const listed = parseListing((body as { listing?: unknown }).listing);
+  if ("error" in listed) return listed;
+  const spent = parseSpend((body as { spend?: unknown }).spend);
+  if ("error" in spent) return spent;
+  return { capabilities: [...kept.values()], ...listed, ...spent };
 }
 
 /**
