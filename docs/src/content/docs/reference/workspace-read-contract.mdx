@@ -10,7 +10,7 @@ Tools that show a workspace read it through one contract ([#2536](https://github
 
 | Contract | chant floor | Declaration | Output schemas |
 |---|---|---|---|
-| 1 | 0.81.0 | schema 1 | `ls`, `graph`, `check`, `status`, `records`, `records-since`, `intent`, `intent-record`, `composites`, `points`, `changes`, `patch`, `work-history`, `agent`, `runs`, `wip` and `change-set`, each at `v1` |
+| 1 | 0.81.0 | schema 1 | `ls`, `graph`, `check`, `status`, `records`, `records-since`, `intent`, `intent-record`, `composites`, `points`, `changes`, `patch`, `work-history`, `agent`, `runs`, `wip`, `change-set` and `plan-summary`, each at `v1` |
 
 Every document carries `contract`, the version it follows, and `$schema`, its schema's `$id`. Most also carry `chant`, the version of the chant that wrote it. A reader that knows contract 1 refuses a document with any other `contract` value. Given a chant older than the floor, the reader can say so and name the version to install, since that chant doesn't write the contract at all.
 
@@ -36,6 +36,7 @@ Each schema ships in `@intentius/chant` at `src/workspace/<command>.schema.json`
 | [`chant workspace points`](/chant/cli/workspace-points/#output) | `--json` | `https://intentius.io/chant/schemas/workspace/points/v1/points.schema.json` |
 | the [`workEvidence`](/chant/guide/work-items/#acceptance-criteria) Op activity | its result, or the refusal it fails with | `https://intentius.io/chant/schemas/workspace/work-evidence/v1/work-evidence.schema.json` |
 | the [change-set document](/chant/reference/change-set/), from the `composeChangeSet` Op activity | its `document` | `https://intentius.io/chant/schemas/workspace/change-set/v1/change-set.schema.json` |
+| [`chant change-set summary`](/chant/cli/change-set/#output) | `--format json` | `https://intentius.io/chant/schemas/workspace/plan-summary/v1/plan-summary.schema.json` |
 | [`chant workspace work history`](/chant/cli/workspace-work/#reading-leases) | `--json` | `https://intentius.io/chant/schemas/workspace/work-history/v1/work-history.schema.json` |
 | [`chant workspace agent`](/chant/cli/workspace-agent/) | `--json` | `https://intentius.io/chant/schemas/workspace/agent/v1/agent.schema.json` |
 | [`chant workspace runs`](/chant/cli/workspace-runs/#reading-runs) | `--json` | `https://intentius.io/chant/schemas/workspace/runs/v1/runs.schema.json` |
@@ -750,7 +751,7 @@ A batch holds the lock across calls. `chant workspace lock acquire --holder <nam
 
 ## Testing a reader
 
-A reader such as hud reads only through this contract and writes only through chant commands ([ws-052](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-052-chant-hud-boundary.md), the [chant and hud boundary](/chant/reference/boundary/)). `@intentius/chant` ships a conformance suite for that, so a reader can show it in its own CI with nothing else installed ([#2679](https://github.com/INTENTIUS/chant/issues/2679)).
+A reader such as hud or behold reads only through this contract and writes only through chant commands ([ws-086](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-086-the-workspace-boundary-without-chud-chant-hud-st.md), the [workspace boundary](/chant/reference/boundary/)). `@intentius/chant` ships a conformance suite for that, so a reader can show it in its own CI with nothing else installed ([#2679](https://github.com/INTENTIUS/chant/issues/2679)).
 
 | Import | For |
 |---|---|
