@@ -15,8 +15,13 @@
  *   (`../cli/handlers/run.ts`), when neither the config nor the ledger names
  *   it.
  *
- * The component contract declares no environments, so every component of a
- * member lists the member's environments.
+ * A component may also declare environments of its own (#3153, ws-095),
+ * each with the site a release goes to there: the runtime that hosts it, its
+ * URL, a custom domain and the git remote its lifecycle records are pushed
+ * to. Each declared environment the member already lists carries that site,
+ * and one it doesn't is added with source `component` when `chant run --env`
+ * would take it, or left out with `environments-component-undeclared` when
+ * the config's environments don't cover it.
  *
  * `chant run --env` refuses a name the config's `environments` doesn't cover
  * whenever it declares any (`unknownEnvError` in `../env.ts`), so a ledger
@@ -31,7 +36,8 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { environmentName, isEnvironmentPattern, matchesDeclaredEnvironment } from "../config";
+import { environmentName, isEnvironmentPattern, matchesDeclaredEnvironment, type EnvironmentDeclaration } from "../config";
+import type { ComponentEnvironmentDeclaration } from "../components/component";
 import type { ReasonCode } from "./reason-codes";
 import { LOCAL_RUNTIME, type MemberRuntimes } from "./runtimes";
 import { ENV_PATTERN, LIFECYCLE_REF, MEMBERS_DIR } from "./status";
@@ -49,6 +55,8 @@ export const ENVIRONMENT_REASON_CODES = [
   "environments-ledger-undeclared",
   /** The chant/lifecycle branch exists and the member's ledger directories could not be listed. */
   "environments-ledger-unreadable",
+  /** A component declares an environment the config's environments don't cover, so chant run --env would refuse it (#3153). */
+  "environments-component-undeclared",
 ] as const satisfies readonly ReasonCode[];
 export type EnvironmentReasonCode = (typeof ENVIRONMENT_REASON_CODES)[number];
 
@@ -63,10 +71,20 @@ export interface ComponentEnvironment {
   name: string;
   /** True for the environment `chant run --components` deploys to without `--env`. */
   default: boolean;
-  /** Where the name came from; the first of config, ledger and builtin that names it. */
-  source: "config" | "ledger" | "builtin";
-  /** The command that deploys the component there on the default runtime, run in the member's directory. */
+  /** Where the name came from; the first of config, ledger, builtin and the component's own environments that names it. */
+  source: "config" | "ledger" | "builtin" | "component";
+  /** Where a release of the component goes in this environment, as the component declares it (#3153), or null when it declares nothing for it. */
+  site: ComponentSite | null;
+  /** The command that deploys the component there, on the site's runtime when the member hosts it and else the default runtime, run in the member's directory. */
   command: string;
+}
+
+/** A component's declared site in one environment (#3153): every field present, null when not declared. */
+export interface ComponentSite {
+  runtime: string | null;
+  url: string | null;
+  domain: string | null;
+  lifecycle: string | null;
 }
 
 /** The environments a member's ledger has, or why they couldn't be listed. */
@@ -80,9 +98,11 @@ export type LedgerEnvironmentReader = (member: { name: string; dir: string }, cw
 
 /** What one member's config and ledger say about environments. */
 export interface MemberEnvironments {
-  /** Each environment in list order, without the per-component command. */
-  environments: Omit<ComponentEnvironment, "command">[];
+  /** Each environment in list order, without the per-component site and command. */
+  environments: Omit<ComponentEnvironment, "command" | "site">[];
   reasons: EnvironmentReason[];
+  /** The config's environments, for whether `chant run --env` takes a name: null when the config couldn't be read, `[]` when it declares none. */
+  declared?: EnvironmentDeclaration[] | null;
 }
 
 function git(cwd: string, args: string[], input?: string): string {
@@ -154,12 +174,44 @@ export function memberEnvironments(runtimes: MemberRuntimes | undefined, ledger:
   add(LOCAL_ENVIRONMENT, literals.includes(LOCAL_ENVIRONMENT) ? "config" : ledgerEnvs.includes(LOCAL_ENVIRONMENT) ? "ledger" : "builtin");
   for (const name of literals) add(name, "config");
   for (const name of ledgerEnvs) if (covered(name)) add(name, "ledger");
-  return { environments: out, reasons };
+  return { environments: out, reasons, declared };
 }
 
-/** The environments one component may deploy to, each with its command line on the member's default runtime. */
-export function componentEnvironments(component: string, member: MemberEnvironments | undefined, runtime = LOCAL_RUNTIME): ComponentEnvironment[] {
-  const list = member?.environments ?? [{ name: LOCAL_ENVIRONMENT, default: true, source: "builtin" as const }];
-  const on = runtime === LOCAL_RUNTIME ? "" : ` --on ${runtime}`;
-  return list.map((e) => ({ ...e, command: `chant run --components ${component}${on}${e.default ? "" : ` --env ${e.name}`}` }));
+/**
+ * The environments one component may deploy to, each with its command line.
+ * `declared` is what the component's contract says (#3153): an environment
+ * the member lists takes its site, and one it doesn't is added after the
+ * member's when `chant run --env` takes it. `reasons` collects the declared
+ * environments left out because the config's environments don't cover them.
+ * `hosts` are the runtimes the member configures; a site's runtime is used
+ * for the command only when it is one of them.
+ */
+export function componentEnvironments(
+  component: string,
+  member: MemberEnvironments | undefined,
+  runtime = LOCAL_RUNTIME,
+  declared: readonly ComponentEnvironmentDeclaration[] = [],
+  hosts: readonly string[] = [],
+  reasons: EnvironmentReason[] = [],
+): ComponentEnvironment[] {
+  const list: Omit<ComponentEnvironment, "command" | "site">[] = [...(member?.environments ?? [{ name: LOCAL_ENVIRONMENT, default: true, source: "builtin" as const }])];
+  const config = member?.declared;
+  const takes = (env: string): boolean => !config || config.length === 0 || matchesDeclaredEnvironment(config, env);
+  const sites = new Map<string, ComponentSite>();
+  for (const d of declared) {
+    sites.set(d.name, { runtime: d.runtime ?? null, url: d.url ?? null, domain: d.domain ?? null, lifecycle: d.lifecycle ?? null });
+    if (list.some((e) => e.name === d.name)) continue;
+    if (takes(d.name)) list.push({ name: d.name, default: false, source: "component" });
+    else {
+      reasons.push({
+        code: "environments-component-undeclared",
+        message: `component ${component} declares environment ${d.name}, which chant.config.ts's environments don't cover, so chant run --env refuses it`,
+      });
+    }
+  }
+  return list.map((e) => {
+    const site = sites.get(e.name) ?? null;
+    const on = site?.runtime && (site.runtime === LOCAL_RUNTIME || hosts.includes(site.runtime)) ? site.runtime : runtime;
+    return { ...e, site, command: `chant run --components ${component}${on === LOCAL_RUNTIME ? "" : ` --on ${on}`}${e.default ? "" : ` --env ${e.name}`}` };
+  });
 }

@@ -60,6 +60,23 @@
       "description": "Optional: the composite kind name(s) this component's deployed resources come from, when a consumer cannot infer it from `name` (#1492). Without this, a consumer joining a composite graph to the component DAG guesses by kebab-casing each composite's kind and matching it against this component's `name`, which only holds when a component maps 1:1 to a composite named for it. Omitted entirely (the default), the naming convention stays in effect with no behavior change. A component built from several composites may list them all.",
       "items": { "type": "string", "minLength": 1 },
       "minItems": 1
+    },
+    "environments": {
+      "type": "array",
+      "description": "Optional: where a release of this component goes, by environment (#3153). Each names an environment --env takes and, for it, the runtime that hosts the release, the URL it answers on, a custom domain attached to it, and the git remote its lifecycle records are pushed to. chant workspace graph --composites lists them first among the component's environments, with source component. Omitted, the component's environments are its member's.",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$", "description": "The environment's name, as --env takes it." },
+          "runtime": { "type": "string", "minLength": 1, "description": "The runtime that hosts a release here, such as local or fly." },
+          "url": { "type": "string", "pattern": "^https?://", "description": "Where the released component answers." },
+          "domain": { "type": "string", "minLength": 1, "description": "A custom domain the release attaches to it." },
+          "lifecycle": { "type": "string", "minLength": 1, "description": "The git remote this environment's approvals, effect receipts and ledger records are pushed to." }
+        }
+      }
     }
   },
   "$defs": {

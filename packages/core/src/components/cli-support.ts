@@ -25,7 +25,7 @@
 import { lexiconModulePath, lexiconNames, importLexiconPackage } from "../lexicon-module";
 import { discoverComponents } from "./discover";
 import type { BuildParamProvenance } from "../provenance";
-import { inferArchetype, projectToJson, type Archetype } from "./component";
+import { inferArchetype, projectToJson, type Archetype, type ComponentEnvironmentDeclaration } from "./component";
 import {
   deployContext,
   resolveComponentGraph,
@@ -159,6 +159,8 @@ export interface ComponentGraphResult {
    * (`inferArchetype`), so a reader can label a component without its source
    * (#2662). */
   archetypes?: Record<string, Archetype>;
+  /** Component name → the environments it declares (#3153), present only for components that declared them. */
+  environments?: Record<string, ComponentEnvironmentDeclaration[]>;
   error?: string;
 }
 
@@ -195,7 +197,10 @@ export async function computeComponentGraph(
   // that declared them — no identity fallback (see ComponentGraphResult doc).
   const composites: Record<string, string[]> = {};
   const archetypes: Record<string, Archetype> = {};
+  const environments: Record<string, ComponentEnvironmentDeclaration[]> = {};
   for (const [name, discovered] of result.components) {
+    const declaredEnvironments = discovered.component.environments;
+    if (declaredEnvironments && declaredEnvironments.length > 0) environments[name] = declaredEnvironments.map((e) => ({ ...e }));
     archetypes[name] = discovered.component.archetype ?? inferArchetype(discovered.component);
     files[name] = relative(path, discovered.filePath);
     const declared = discovered.component.liveNames;
@@ -210,7 +215,7 @@ export async function computeComponentGraph(
     for (const c of driverComponents) {
       for (const dep of c.dependsOn ?? []) edges.push({ from: c.name, to: dep });
     }
-    return { success: true, order, waves, edges, files, liveNames, composites, archetypes };
+    return { success: true, order, waves, edges, files, liveNames, composites, archetypes, environments };
   } catch (err) {
     if (err instanceof UnknownDependencyError || err instanceof DependencyCycleError) {
       return { success: false, order: [], waves: [], edges: [], error: err.message };
