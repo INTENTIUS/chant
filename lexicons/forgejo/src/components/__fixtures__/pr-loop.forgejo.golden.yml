@@ -16,6 +16,10 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: docker
     container: node:22-slim
+    permissions:
+      contents: read
+      pull-requests: write
+      statuses: write
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v7
         with:
@@ -41,6 +45,10 @@ jobs:
     concurrency:
       group: chant-apply-prod
       cancel-in-progress: false
+    permissions:
+      contents: write
+      pull-requests: write
+      statuses: write
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v7
         with:

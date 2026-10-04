@@ -47,12 +47,12 @@ describe("forgejoSerializer — github-style source roundtrip", () => {
     expect(primary).toContain("npm run build");
   });
 
-  test("drops permissions and continue-on-error, warning on each", () => {
+  test("keeps permissions, drops continue-on-error with a warning on each", () => {
     const result = asResult(forgejoSerializer.serialize(buildSource()));
-    expect(result.primary).not.toContain("permissions");
+    expect(result.primary).toContain("permissions");
     expect(result.primary).not.toContain("continue-on-error");
-    // workflow permissions + job continue-on-error + step continue-on-error
-    expect((result.warnings ?? []).filter((w) => w.includes("permissions"))).toHaveLength(1);
+    // job continue-on-error + step continue-on-error
+    expect((result.warnings ?? []).filter((w) => w.includes("permissions"))).toHaveLength(0);
     expect((result.warnings ?? []).filter((w) => w.includes("continue-on-error"))).toHaveLength(2);
   });
 
@@ -162,9 +162,9 @@ describe("forgejoSerializer — inherits PrPlanReport from github (#1983)", () =
     const result = asResult(out);
     expect(result.primary).toContain("runs-on: docker");
     expect(result.primary).not.toContain("ubuntu-latest");
-    // The job carries `permissions` — dropped by the dialect, warned once.
-    expect(result.primary).not.toContain("permissions:");
-    expect((result.warnings ?? []).filter((w) => w.includes("permissions"))).toHaveLength(1);
+    // The job carries `permissions`, which the dialect keeps.
+    expect(result.primary).toContain("permissions:");
+    expect((result.warnings ?? []).filter((w) => w.includes("permissions"))).toHaveLength(0);
     // The sticky-comment mechanism is a raw script, nothing to remap or drop.
     expect(result.primary).toContain("Post or update PR comment");
     expect(result.primary).toContain("gh api");

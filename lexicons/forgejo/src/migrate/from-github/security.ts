@@ -78,12 +78,12 @@ export function analyzeForgejoSecurity(
         records.push({
           sourceKey: childPath,
           sourceFile: file,
-          category: "skipped",
+          category: "needs-review",
           rule: "MIG-FJ-PERMISSIONS",
-          note: `permissions: is ignored by the Forgejo runner — the least-privilege control is lost. Re-establish it through your Forgejo/runner and repository token settings.`,
-          security: { property: "Least-privilege permissions", fate: "lost", severity: "warning", reestablish: "Forgejo runner/token settings" },
+          note: `permissions: is kept, but only a Forgejo version that honours it enforces it (15 and later may). An older runner ignores it, so confirm the token scope in your Forgejo/runner and repository settings.`,
+          security: { property: "Least-privilege permissions", fate: "needs-review", severity: "warning", reestablish: "Forgejo runner/token settings on a version that ignores permissions" },
         });
-        continue; // don't descend into a dropped subtree
+        continue;
       }
 
       if (kebab === "continue-on-error") {

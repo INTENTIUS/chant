@@ -23,7 +23,7 @@ describe("github → forgejo transform", () => {
   test("emits forgejo YAML with the dialect applied", async () => {
     const { output } = await transform(GHA_WORKFLOW, { sourceFile: "ci.yml" });
     expect(output).toContain("runs-on: docker");
-    expect(output).not.toContain("permissions");
+    expect(output).toContain("permissions");
     expect(output).not.toContain("continue-on-error");
     expect(output).toContain("https://code.forgejo.org/actions/checkout@v4");
     // unmapped ref still present (passed through), surfaced in the compare
@@ -36,7 +36,7 @@ describe("github → forgejo transform", () => {
     expect(rules).toContain("MIG-FJ-PERMISSIONS");
     expect(rules).toContain("MIG-FJ-CONTINUE-ON-ERROR");
     expect(rules).toContain("MIG-FJ-ACTION-UNRESOLVED");
-    expect(provenance.find((r) => r.rule === "MIG-FJ-PERMISSIONS")?.security.fate).toBe("lost");
+    expect(provenance.find((r) => r.rule === "MIG-FJ-PERMISSIONS")?.security.fate).toBe("needs-review");
     expect(securityPosture).toContain("## Security posture");
     expect(diagnostics.length).toBe(provenance.length);
   });

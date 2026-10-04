@@ -6,8 +6,11 @@
  * the right shape. The dialect differs in three small ways, all handled here as
  * a pre-pass over the resolved entity graph before the github serializer runs:
  *
- *  1. `permissions` and `continue-on-error` are silently ignored by the Forgejo
- *     runner — we drop them from the output and warn per occurrence.
+ *  1. `continue-on-error` is silently ignored by the Forgejo runner — we drop
+ *     it from the output and warn per occurrence. `permissions` is kept: a
+ *     Forgejo version that honours it (15 and later may) needs `id-token: write`
+ *     on a job to request an OIDC token, and an older runner ignores the key.
+ *     There is no version setting in the dialect, so the key always passes.
  *  2. GitHub-hosted runner labels (`ubuntu-latest`, …) have no fixed meaning on
  *     Forgejo — we map them to a default Forgejo label, overridable per project.
  *  3. Anything we can't place (an unmapped runner label) passes through with a
@@ -25,11 +28,11 @@ import { isDeclarable, isResourceDeclarable, type Declarable } from "@intentius/
 import { resolveActionRef } from "./actions";
 
 /**
- * Keys the Forgejo runner ignores. Emitting them is misleading (they look
+ * Keys the Forgejo runner ignores. `permissions` is not among them: see above. Emitting them is misleading (they look
  * enforced but aren't), so the dialect drops them. Compared in kebab-case so
  * both `continueOnError` and `continue-on-error` spellings are caught.
  */
-const DROPPED_KEYS = new Set(["permissions", "continue-on-error"]);
+const DROPPED_KEYS = new Set(["continue-on-error"]);
 
 /** Property key whose value is a runner-label selector. */
 const RUNS_ON_KEY = "runs-on";

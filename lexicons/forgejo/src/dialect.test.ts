@@ -31,13 +31,26 @@ function entityMap(...pairs: Array<[string, Declarable]>): Map<string, Declarabl
 }
 
 describe("applyForgejoDialect — dropped keys", () => {
-  test("drops workflow-level permissions and warns", () => {
+  test("keeps workflow-level permissions without warning", () => {
     const wf = new MockWorkflow({ name: "CI", permissions: { contents: "read" } });
     const { entities, warnings } = applyForgejoDialect(entityMap(["workflow", wf]));
     const props = (entities.get("workflow") as MockWorkflow).props;
-    expect(props.permissions).toBeUndefined();
+    expect(props.permissions).toEqual({ contents: "read" });
     expect(props.name).toBe("CI");
-    expect(warnings.filter((w) => w.includes("permissions"))).toHaveLength(1);
+    expect(warnings.filter((w) => w.includes("permissions"))).toHaveLength(0);
+  });
+
+  test("keeps job permissions, so a job can request an OIDC token", () => {
+    const job = new MockJob({
+      "runs-on": "ubuntu-latest",
+      permissions: { "id-token": "write", contents: "read" },
+      steps: [{ name: "a", run: "echo a" }],
+    });
+    const { entities, warnings } = applyForgejoDialect(entityMap(["job", job]));
+    const props = (entities.get("job") as MockJob).props;
+    expect(props.permissions).toEqual({ "id-token": "write", contents: "read" });
+    expect(props["runs-on"]).toBe("docker");
+    expect(warnings.filter((w) => w.includes("permissions"))).toHaveLength(0);
   });
 
   test("drops job and step continue-on-error, one warning each", () => {
