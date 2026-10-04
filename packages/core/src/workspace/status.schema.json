@@ -126,11 +126,24 @@
     },
     "member": {
       "type": "object",
-      "required": ["name", "dir", "kind", "environments", "compare", "readable", "gateLedger", "gates", "box", "stewards", "stewardReasons"],
+      "required": ["name", "dir", "kind", "fields", "environments", "compare", "readable", "gateLedger", "gates", "box", "stewards", "stewardReasons"],
       "properties": {
         "name": { "type": "string" },
         "dir": { "type": "string", "description": "Relative to the workspace root, with / separators; \".\" is the root member." },
         "kind": { "type": "string" },
+        "fields": {
+          "description": "The fields the member's kind declares (#3151), each set from the entry or its default, null when it has neither. Null when the kind declares no fields or no pinned package supplies it. A value of the wrong type reads as the default, and chant workspace check reports it (WSP005). Added in contract 1 by chant 0.103.0.",
+          "type": ["object", "null"],
+          "additionalProperties": {
+            "oneOf": [
+              { "type": "string" },
+              { "type": "integer" },
+              { "type": "boolean" },
+              { "type": "null" },
+              { "type": "object", "additionalProperties": { "oneOf": [{ "type": "string" }, { "type": "integer" }, { "type": "boolean" }, { "type": "null" }] } }
+            ]
+          }
+        },
         "environments": {
           "description": "env first, then compareTo when it is given and differs from env.",
           "type": "array",

@@ -75,6 +75,9 @@
         },
         "graph": {
           "$ref": "#/$defs/graph"
+        },
+        "fields": {
+          "$ref": "#/$defs/fields"
         }
       },
       "patternProperties": {
@@ -123,6 +126,34 @@
             }
           },
           "additionalProperties": false
+        },
+        "anyJsonKey": {
+          "type": "object",
+          "description": "The directory passes when a file directly in it, whose name matches one of in, parses as JSON and has a value at one of pointers, each a JSON Pointer such as /scripts/start (#3151). A file that is not JSON is no evidence either way. Added by chant 0.103.0.",
+          "required": [
+            "in",
+            "pointers"
+          ],
+          "properties": {
+            "in": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/fileName"
+              }
+            },
+            "pointers": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "pattern": "^(/[^/]+)+$"
+              }
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
@@ -152,6 +183,97 @@
       },
       "patternProperties": {
         "^x-": true
+      },
+      "additionalProperties": false
+    },
+    "fields": {
+      "type": "object",
+      "description": "The fields a member entry of this kind may set under its own fields block, each with a type and, optionally, a default (#3151). chant workspace check fails a member whose fields name one the kind doesn't declare or give a value of the wrong type (WSP005), and chant workspace status --json prints every declared field with the defaults filled in. Added by chant 0.103.0; an older chant can't read a kinds file that uses it.",
+      "minProperties": 1,
+      "propertyNames": {
+        "$ref": "#/$defs/fieldName"
+      },
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "$ref": "#/$defs/scalarField"
+          },
+          {
+            "$ref": "#/$defs/objectField"
+          }
+        ]
+      }
+    },
+    "fieldName": {
+      "type": "string",
+      "pattern": "^[a-z][A-Za-z0-9]{0,39}$"
+    },
+    "scalarField": {
+      "type": "object",
+      "required": [
+        "type",
+        "description"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "string",
+            "integer",
+            "boolean"
+          ]
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        },
+        "default": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "boolean"
+            }
+          ],
+          "description": "The value a member that doesn't set the field gets. Its type is the field's. Without it the field reads as null when unset."
+        },
+        "pattern": {
+          "type": "string",
+          "minLength": 1,
+          "description": "For a string field: a regular expression the value must match."
+        }
+      },
+      "additionalProperties": false
+    },
+    "objectField": {
+      "type": "object",
+      "required": [
+        "type",
+        "description",
+        "properties"
+      ],
+      "properties": {
+        "type": {
+          "const": "object"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        },
+        "properties": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "$ref": "#/$defs/fieldName"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/scalarField"
+          },
+          "description": "The object's own fields, each a string, integer or boolean field. A member sets any of them; the rest take their defaults."
+        }
       },
       "additionalProperties": false
     }

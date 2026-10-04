@@ -1817,7 +1817,7 @@ rows:
     name: "kind-probe-failed"
     owner: "chant"
     carrier: "check.schema.json"
-    what: "Every member's directory is what its kind reads, such as a chant config for a chant member."
+    what: "Every member's directory is what its kind reads, such as a chant config for a chant member, and its fields are ones its kind declares, of the declared types (#3151)."
   - category: "wsp-check"
     concept: "WSP006"
     name: "kind-probe-tie"

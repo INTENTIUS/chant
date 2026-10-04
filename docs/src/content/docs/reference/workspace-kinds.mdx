@@ -66,12 +66,43 @@ chant reads the key `./workspace-kinds` literally. A `./*` pattern in `exports` 
 | `kinds[].precedence` | An integer from 1 to 999 |
 | `kinds[].probe.anyFile` | File names. The probe passes when a file matching one of them sits directly in the member's directory. A `*` matches any run of characters in a name, so `*.tf` matches every `.tf` file |
 | `kinds[].probe.anyBlock` | `in`, file names as in `anyFile`, and `blocks`, block names. The probe passes when a file directly in the directory whose name matches `in` has a line that opens one of those blocks with no label, such as `live {`. Leading space is allowed, and no file is parsed |
+| `kinds[].probe.anyJsonKey` | `in`, file names as in `anyFile`, and `pointers`, JSON Pointers such as `/scripts/start`. The probe passes when a file directly in the directory whose name matches `in` parses as JSON and has a value at one of the pointers. A file that isn't JSON is no evidence either way. Added in chant 0.103.0 ([#3151](https://github.com/INTENTIUS/chant/issues/3151)) |
 | `kinds[].outputs` | Optional. Output names every member of the kind exposes to [member links](/chant/reference/workspace-declaration/#member-links). A member entry of the kind can list more in its own `outputs` |
 | `kinds[].graph` | Optional. How [`chant workspace graph`](/chant/cli/workspace-graph/) reads a member of the kind. See [below](#reading-a-member-in-the-graph) |
+| `kinds[].fields` | Optional. The fields a member of the kind may set, each with a type and a default. See [Fields](#fields). Added in chant 0.103.0 |
 
-A probe needs at least one of `anyFile` and `anyBlock`, and it passes when either one does. Both only look at files directly in the directory, never below it.
+A probe needs at least one of `anyFile`, `anyBlock` and `anyJsonKey`, and it passes when any one does. All three only look at files directly in the directory, never below it.
 
 Fields whose names start with `x-` are allowed on the file and on each kind. Anything else is refused. The JSON Schema ships in `@intentius/chant` at `src/workspace/workspace-kinds.schema.json`, with the `$id` `https://intentius.io/chant/schemas/workspace/kinds/v1/workspace-kinds.schema.json`.
+
+### Fields
+
+A kind can declare the conventions its members follow as fields, each with a default, so a member states only where it differs and a reader such as an orchestrator gets every value from the read contract ([#3151](https://github.com/INTENTIUS/chant/issues/3151), [ws-093](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-093-an-app-member-kind-with-declared-fields.md)).
+
+```json
+{
+  "name": "svc",
+  "fields": {
+    "port": { "type": "integer", "description": "The port it listens on", "default": 8080 },
+    "env": {
+      "type": "object",
+      "description": "The variables it reads",
+      "properties": { "data": { "type": "string", "description": "Its data directory", "default": "DATA_DIR", "pattern": "^[A-Z_][A-Z0-9_]*$" } }
+    }
+  }
+}
+```
+
+| Field | Value |
+|---|---|
+| `fields.<name>` | A name matching `^[a-z][A-Za-z0-9]{0,39}$` |
+| `fields.<name>.type` | `string`, `integer`, `boolean` or `object` |
+| `fields.<name>.description` | One line saying what the field holds |
+| `fields.<name>.default` | Optional, for a string, integer or boolean field. The value a member that doesn't set the field gets; without it the field reads as `null` |
+| `fields.<name>.pattern` | Optional, for a string field. A regular expression the value must match |
+| `fields.<name>.properties` | For an object field, its own string, integer or boolean fields, each declared the same way |
+
+A default of the wrong type, or a pattern that isn't a regular expression, is a `WSP002` problem. A member entry sets values under [`fields`](/chant/reference/workspace-declaration/#members), and `chant workspace check` fails a field the kind doesn't declare, or a value of the wrong type or pattern, with `WSP005`. [`chant workspace status --json`](/chant/cli/workspace-status/) prints `members[].fields` with every declared field, the entry's value or the default, and `null` for a member whose kind declares no fields.
 
 ### Reading a member in the graph
 
@@ -141,6 +172,31 @@ Its schema is `src/workspace/workspace-principals.schema.json` in `@intentius/ch
 Classes are read from the declaration's pins the way kinds are, with one difference: write scope reads a path-pinned package at the base revision, beside the declaration and the trust policy, so a change can't remap a class by editing its own copy of the plugin. A package pin is read from the installed package, which must be at the version the base pins. A file that doesn't validate is a `WSP002` error, and a class name or a role two pins both supply is an error that leaves every class involved out.
 
 The core roles are tried first, in the order `agent`, `runner`, `service`. The domain classes follow in pin order, and within a package in file order. The first class whose role the principal holds is the one write scope judges it by, and anyone else is `human`. A `writeScope` key no pinned package supplies fails `chant workspace check` with `WSP003`. Nothing then says who is in that class, so chant refuses every write judged `human` with `write-scope-class-unknown` until the package is installed or the entry removed.
+
+## The app kind
+
+chant ships an `app` member kind as a data-only kinds file in `@intentius/chant`, at `src/workspace/reference-kinds/app` ([#3151](https://github.com/INTENTIUS/chant/issues/3151), [ws-093](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-093-an-app-member-kind-with-declared-fields.md)). It is a directory with a `package.json` that exports `./workspace-kinds` and the kinds file. A workspace copies the directory and pins the copy by path, as the [reference workspace](https://github.com/INTENTIUS/chant/tree/main/reference-workspace) does at `kinds/app`, so only a workspace that asks for apps has the kind.
+
+```json
+{
+  "pins": [{ "path": "kinds/app" }],
+  "members": [
+    { "name": "app", "dir": "app", "kind": "app", "fields": { "health": "/healthz" } },
+    { "name": "delivery", "dir": "delivery", "kind": "chant", "links": [{ "member": "app", "output": "source" }] }
+  ]
+}
+```
+
+| Part | Value |
+|---|---|
+| Precedence | 100, below `chant`, so a chant project with a start script stays `chant` |
+| Probe | `anyJsonKey` for `/scripts/start` in `package.json`: a Node package with a start script. A package with scripts but no `start`, such as a repository root, is not claimed |
+| Outputs | `source`, the directory a delivery member builds from, and `url`, where the running app answers |
+| `fields.scripts` | Which `package.json` script plays each part: `start` (default `start`), `dev` (`dev`), `test` (`test`) and `migrate` (`migrate`). A script that doesn't exist means the app has none, such as no migrations |
+| `fields.env` | The variables the app reads, by name: `port` (`PORT`), `data` (`APP_DATA`) and `revision` (`APP_REVISION`) |
+| `fields.health` | The path the running app answers on once it is up, default `/health` |
+
+An orchestrator reads these from `status --json` rather than assuming them: it runs `npm run <scripts.start>` with the port in the variable `env.port` names and waits for `health` to answer. Once a workspace pins the kind, `WSP008` fails any `other` member that is a Node package with a start script. Declare that member as an app.
 
 ## Terraform and choudoufu
 

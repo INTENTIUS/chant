@@ -112,7 +112,7 @@ const declaration = JSON.parse(declarationText) as {
 
 /** The four members #2543 asks for, as `workspace ls --json` shows them. */
 const EXPECTED_MEMBERS = [
-  { name: "app", dir: "app", kind: "other", roles: [] },
+  { name: "app", dir: "app", kind: "app", roles: [] },
   { name: "delivery", dir: "delivery", kind: "chant", roles: [] },
   { name: "design-client", dir: "design-client", kind: "other", roles: [{ name: "design-app", path: null }] },
   { name: "design", dir: "design", kind: "design", roles: [] },
@@ -186,7 +186,8 @@ describe("reference workspace layout", () => {
     const parsed = parseDeclaration(declarationText, "chant.workspace.json");
     expect(parsed.name).toBe("reference");
     expect(parsed.schema).toBe(1);
-    expect(declaration.pins).toEqual([]);
+    // The app kind (#3151) comes from a copy of chant's data-only kinds file, pinned by path.
+    expect(declaration.pins).toEqual([{ path: "kinds/app" }]);
   });
 
   test("it declares the four members #2543 asks for", () => {
@@ -673,7 +674,7 @@ describe("record-decisions skill and prompt (#2709)", () => {
 describe("workspace commands on the fixture", () => {
   test("workspace ls --json lists the four members with their kinds and roles", () => {
     const doc = lsJson(fixture);
-    expect(doc.workspace).toMatchObject({ name: "reference", root: "reference-workspace", file: "chant.workspace.json", pins: [] });
+    expect(doc.workspace).toMatchObject({ name: "reference", root: "reference-workspace", file: "chant.workspace.json", pins: [{ package: null, version: null, path: "kinds/app", integrity: null }] });
     expectTheFourMembers(doc.members);
     expect(doc.groups).toEqual([]);
     expect(doc.summary).toMatchObject({ members: 4, unreadable: 0 });
@@ -720,6 +721,8 @@ describe("the collector on the fixture (#2559)", () => {
     const doc = JSON.parse(run.stdout) as { links: Record<string, unknown>[] };
     expect(doc.links).toEqual([
       expect.objectContaining({ consumer: "app", producer: "delivery", output: "traces", kind: "telemetry", protocol: "http/protobuf", target: "pipeline", status: "resolved", reason: null }),
+      // Delivery builds the app's image from its source, an output the app kind exposes (#3151).
+      expect.objectContaining({ consumer: "delivery", producer: "app", output: "source", kind: "output", status: "resolved", reason: null }),
     ]);
   });
 

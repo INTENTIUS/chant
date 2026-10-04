@@ -661,6 +661,10 @@ A gate the declaration at base names in [`identity.gates`](/chant/reference/work
 
 `gateLedger` names the directory the gates were read from. Its `reason` holds a code from the closed list when there is no ledger branch, no gate ledger for the member, or a gate ledger that can't be read.
 
+## Member fields
+
+`chant workspace status --json` prints each member's `fields`: every field its [kind declares](/chant/reference/workspace-kinds/#fields), set from the entry or the kind's default (`null` when it has neither), or `null` when the kind declares none or no pinned package supplies it ([#3151](https://github.com/INTENTIUS/chant/issues/3151)). An object field is an object of its own fields. When the entry gives a value of the wrong type, `status` prints the default and `chant workspace check` fails with `WSP005`. chant 0.103.0 added the field to contract version 1. For an [app member](/chant/reference/workspace-kinds/#the-app-kind) it holds the scripts, the variable names and the health path an orchestrator runs the app by.
+
 ## Boxes
 
 `chant workspace status --json` lists each member's `box`, the capabilities its [box block](/chant/reference/workspace-declaration/#boxes) declares, each with `name`, `broker` and `scope` ([#2726](https://github.com/INTENTIUS/chant/issues/2726)). It is `null` for a member with no block. A broker reads the scope it enforces for a box here. `chant workspace check` reports a box that holds a literal secret with `box-credential-declared` and a capability with no broker with `box-capability-unbrokered`, each carried as `code` on its `WSP` finding.

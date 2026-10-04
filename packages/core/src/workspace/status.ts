@@ -46,6 +46,7 @@ import { policyView, replicationState, type ReplicationState } from "./wip";
 import { findWorkspaceRoot } from "../project-root";
 import { resolveBoxes, type ResolvedIsolation } from "./box-isolation";
 import { resolveBoxIntents, unresolvedIntent, type BoxIntent } from "./box-intent";
+import { loadKindRegistry, resolveMemberFields, type MemberFields } from "./kinds";
 import { factoryView, listingView, plantability, treeBytes, type FactoryView, type ListingView, type Plantable } from "./box-factory";
 import { declaredRecordKinds, readDeclaration, readerVersion, WorkspaceReadError, type Declaration, type ErrorLocation, type Member } from "./declaration";
 import type { ReasonCode } from "./reason-codes";
@@ -161,6 +162,13 @@ export interface StatusMember {
   name: string;
   dir: string;
   kind: string;
+  /**
+   * The fields the member's kind declares (#3151), each set from the entry or
+   * its default (null when it has none), or null when the kind declares no
+   * fields or no pinned package supplies it. A value of the wrong type reads
+   * as the default; `chant workspace check` reports it (WSP005).
+   */
+  fields: MemberFields["fields"];
   /** The environment asked for first, then the one compared to, if any. */
   environments: StatusEnvironment[];
   /** Null without `--compare-to`. */
@@ -419,6 +427,8 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
     const isolation = new Map(resolveBoxes(declaration).map((b) => [b.member.name, b.isolation]));
     const intents = new Map((await resolveBoxIntents(declaration, found.dir)).map((i) => [i.member, i.record?.intent ?? unresolvedIntent(i.id)]));
     const coverBytes = treeBytes(workingTree(found.dir));
+    // The kinds the pins supply (#3151), for each member's fields. A pin that can't be read is check's to report (WSP002).
+    const kinds = loadKindRegistry(declaration.pins, found.dir).registry;
     // #3163: the declaration's identity.gates at base, read once for every member's gates.
     const ruleSource = scopeSource(found.dir);
     const rules = (gate: string) => gateAdmissionFrom(ruleSource, gate);
@@ -433,6 +443,7 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
         name: m.name,
         dir: m.dir,
         kind: m.kind,
+        fields: resolveMemberFields(kinds.get(m.kind), m.fields).fields,
         environments,
         compare: query.compareTo === undefined ? null : compareEnvironments(environments[0], environments[environments.length - 1]),
         readable: environments.every((e) => e.reason === null),
