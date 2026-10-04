@@ -53,9 +53,9 @@ chant and choudoufu's `live-summary` follow the same rules. Each keeps its own c
 
 - A member that failed to plan is listed with its reason and is in no group.
 - Every `delete` and `replace` in the document is listed by member and real address, failed members' included. A destroy is also part of its member's change, so a member that destroys something never groups with one that does not.
-- A forget is the plan action `forget`: a `removed` block, or `lifecycle { destroy = false }`, stops tracking an object and leaves it running. Forgets are listed on their own and are never counted as destroys; a destroy is never listed as a forget. A member that forgets something never groups with one that destroys it.
+- A forget is the plan action `forget`. It happens when a `removed` block or `destroy = false` stops tracking an object that keeps running. It has its own list and never counts as a destroy. A member that forgets an object does not group with one that destroys it.
 - An import (an `import` block) is listed on its own with what else the plan does to the object, which is nothing when the import changes nothing. An import is part of its entry's change, so it never groups with the same change made without one.
-- A triggered action (a Terraform `action` block, in the plan's `action_invocations`) is listed as a side effect of apply, with the resource and event that trigger it. Members that run different actions do not group.
+- A triggered action comes from a Terraform `action` block, in the plan's `action_invocations`. It is listed as a side effect of apply and names its trigger. Members that run different actions do not group.
 - Every hole is listed with its member and the planner's reason. A hole is an address the planner could not read.
 
 ## Output
