@@ -231,7 +231,9 @@ This is where a fan-out departs from [`chant run --components all`](/chant/cli/r
 
 #### Finishing an attempt that stopped
 
-`--resume <file>` names an attempt record. The run reads it before it starts and writes it when it finishes, including after a failure and after a gate, because the next attempt needs to know what this one got through.
+`--resume <file>` names an attempt record. The run reads it before it starts. It rewrites the record as each component settles and once more when it finishes, including after a failure and after a gate, because the next attempt needs to know what this one got through. A fan-out killed partway through, by a cancelled CI job or ctrl-c, leaves a record naming every component that had applied by then. The record is replaced through a rename, so a kill during the write leaves the previous record intact.
+
+Each completed component's outputs are saved alongside its name. A component still to run that reads one of them through `stackOutput()` gets the saved value, so the re-run needs no `--seed-outputs` for work this fan-out already did. A saved output wins over a `--seed-outputs` entry for the same component. Stack outputs end up in this file, so keep it wherever `--dump-outputs` files are kept.
 
 Repeating the identical command finishes the work. The record narrows the plan before the gate is decided, and the digest is carried rather than recomputed, so an approval already given still stands. The re-run prints what it is skipping as `already-applied` and dispatches only the rest.
 
