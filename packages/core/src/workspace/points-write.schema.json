@@ -492,6 +492,8 @@
                 "quorum-not-met",
                 "answer-in-steward-turn",
                 "principal-unidentified",
+                "write-lock-timeout",
+                "write-lock-not-held",
                 "record-not-found",
                 "record-closed",
                 "record-id-taken",
