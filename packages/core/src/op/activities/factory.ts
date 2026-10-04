@@ -467,9 +467,14 @@ export interface FactoryBuildArgs {
 /** Run the builder hook in the worktree, unless understand said not to build (#3406). */
 export async function factoryBuild(args: FactoryBuildArgs): Promise<FactoryBuildResult> {
   const lease = leaseOf(args.lease, "factoryBuild");
-  if (args.ask.outcome !== null) return { ran: false, finished: false, exitCode: null, reverted: [], note: `understand answered ${args.ask.understand}: nothing is built`, report: null };
-  // A kept ask opens before it is built: chant writes the state in the worktree, so it goes with the build.
   const cwd = args.cwd ?? process.cwd();
+  if (args.ask.outcome !== null) {
+    // Nothing is built, but Record still writes the item's outcome (dropped) in the worktree, so an ask
+    // that lives only in the checkout, as every ask written from a surface does, is carried there first.
+    await carryItem(cwd, lease.worktree, lease.item);
+    return { ran: false, finished: false, exitCode: null, reverted: [], note: `understand answered ${args.ask.understand}: nothing is built`, report: null };
+  }
+  // A kept ask opens before it is built: chant writes the state in the worktree, so it goes with the build.
   await freshStart(cwd, lease.worktree, lease.item);
   await carryItem(cwd, lease.worktree, lease.item);
   const w = await readWork(lease.worktree);
