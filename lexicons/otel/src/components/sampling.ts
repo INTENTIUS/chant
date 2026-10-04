@@ -24,6 +24,7 @@ export interface NumericAttributePolicyConfig {
   key: string;
   min_value?: number;
   max_value?: number;
+  /** @deprecated Inverted decisions are deprecated since collector-contrib v0.126.0; use a `drop` policy (OTEL119). */
   invert_match?: boolean;
 }
 
@@ -46,6 +47,7 @@ export interface StringAttributePolicyConfig {
   values: string[];
   enabled_regex_matching?: boolean;
   cache_max_size?: number;
+  /** @deprecated Inverted decisions are deprecated since collector-contrib v0.126.0; use a `drop` policy (OTEL119). */
   invert_match?: boolean;
 }
 
@@ -70,6 +72,7 @@ export interface TraceStatePolicyConfig {
 export interface BooleanAttributePolicyConfig {
   key: string;
   value: boolean;
+  /** @deprecated Inverted decisions are deprecated since collector-contrib v0.126.0; use a `drop` policy (OTEL119). */
   invert_match?: boolean;
 }
 
