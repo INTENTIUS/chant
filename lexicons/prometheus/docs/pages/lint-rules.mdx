@@ -32,7 +32,7 @@ The prometheus lexicon's rules use the `PROM` prefix. `PROM0xx` rules read your 
 
 ## PROM001: literal credential
 
-Alertmanager does not expand `${ENV}` in its config, so the only way to keep a secret out of the file is its `*_file` field, pointing at a mounted secret. Replace `routing_key: "..."` with `routing_key_file: "/etc/alertmanager/secrets/pagerduty-key"`.
+Alertmanager does not expand `${ENV}` in its config, so the only way to keep a secret out of the file is its `*_file` field, pointing at a mounted secret. Replace `routing_key: "..."` with `routing_key_file: "/etc/alertmanager/secrets/pagerduty-key"`. A Slack `api_url` of `https://slack.com/api/chat.postMessage` is not flagged. That is the bot endpoint, the bot token goes in `http_config.authorization`, and `update_message` needs that URL.
 
 ## PROM002 and PROM104: PromQL syntax
 

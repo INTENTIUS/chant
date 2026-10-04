@@ -1,5 +1,6 @@
 import * as ts from "typescript";
 import type { LintRule, LintDiagnostic, LintContext } from "@intentius/chant/lint/rule";
+import { SLACK_APP_URL } from "../../validate-integrations";
 import { calleeName, constInitializers, CREDENTIAL_CLASS, literalText, position, propertyName, resolveConst } from "./prom-ast";
 
 /**
@@ -89,6 +90,9 @@ export const literalCredentialRule: LintRule = {
       if (only && integration !== undefined && integration !== only) return;
       const text = literalText(init);
       if (text === undefined || text === "") return;
+      // A Slack bot posts to the public chat.postMessage endpoint with its token
+      // in http_config, and update_message needs exactly that api_url (PROM210).
+      if (key === "api_url" && text === SLACK_APP_URL) return;
       diagnostics.push({
         ruleId: "PROM001",
         severity: "error",
