@@ -1,0 +1,176 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/broker-protocol/v1/broker-protocol.schema.json",
+  "title": "chant broker protocol, version 1",
+  "description": "The bodies a box and its broker exchange (#3164, ws-097). A box holds no credential: each capability its box block declares is reached through a broker, which holds the credential, swaps the box's own token for it, and refuses what the box's declaration does not allow. Each $def is one body; broker-protocol.ts names the routes, and the broker conformance suite in @intentius/chant/workspace/conformance checks an implementation. Unknown fields are ignored by readers and a field is only ever added within a version.",
+  "$defs": {
+    "capabilityName": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,62}$",
+      "description": "A capability's name, as the box block gives it: inference, egress, feedback, fountain, or one a lexicon or runtime adds."
+    },
+    "scopeWord": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[^\\u0000-\\u001f]+$",
+      "description": "One word of a capability's scope. The broker reads it; chant records it."
+    },
+    "capability": {
+      "type": "object",
+      "description": "One entry of a box block's capabilities, as chant workspace status --json lists it.",
+      "required": ["name"],
+      "properties": {
+        "name": { "$ref": "#/$defs/capabilityName" },
+        "broker": {
+          "type": ["string", "null"],
+          "description": "The broker the box block names for the capability. A broker keeps only the entries that name it."
+        },
+        "scope": {
+          "type": "array",
+          "maxItems": 50,
+          "items": { "$ref": "#/$defs/scopeWord" }
+        }
+      }
+    },
+    "declarationReport": {
+      "type": "object",
+      "description": "POST /api/box/declaration: the capabilities chant workspace status --json lists for the box's block, sent by the box's steward with the box's own token. At most 32 KB. Each report replaces the last.",
+      "required": ["capabilities"],
+      "properties": {
+        "capabilities": {
+          "type": "array",
+          "maxItems": 20,
+          "items": { "$ref": "#/$defs/capability" }
+        }
+      }
+    },
+    "declarationKept": {
+      "type": "object",
+      "description": "The 200 answer to a report: the entries the broker keeps, those that name it, each name once, and when it took them.",
+      "required": ["capabilities", "at"],
+      "properties": {
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "broker", "scope"],
+            "properties": {
+              "name": { "$ref": "#/$defs/capabilityName" },
+              "broker": { "type": "string", "minLength": 1 },
+              "scope": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/scopeWord" } }
+            }
+          }
+        },
+        "at": { "type": "string", "minLength": 1, "description": "An ISO 8601 time." }
+      }
+    },
+    "refusal": {
+      "type": "object",
+      "description": "The body of every refusal: error is the message, or an object holding it. A refusal by declaration is a 403 whose message names the capability and the scope word the box would have to declare.",
+      "required": ["error"],
+      "properties": {
+        "type": { "type": "string" },
+        "error": {
+          "oneOf": [
+            { "type": "string", "minLength": 1 },
+            {
+              "type": "object",
+              "required": ["message"],
+              "properties": {
+                "type": { "type": "string" },
+                "message": { "type": "string", "minLength": 1 }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "decideRequest": {
+      "type": "object",
+      "description": "POST /decide/v1/systemone: chant's decide wire format (#2491, op/decide-backend.ts), asked with the box's token as the bearer.",
+      "required": ["model", "state", "questions"],
+      "properties": {
+        "model": { "type": "string", "minLength": 1 },
+        "state": {},
+        "questions": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "object",
+            "required": ["type", "instructions", "criteria"],
+            "properties": {
+              "type": { "enum": ["noul", "choice", "score"] },
+              "instructions": { "type": "string" },
+              "criteria": { "type": ["object", "array"] }
+            }
+          }
+        }
+      }
+    },
+    "decideAnswer": {
+      "description": "One answer. reason is the model's own explanation (#3345); chant keeps it in the answer record.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["type", "noul"],
+          "properties": {
+            "type": { "const": "noul" },
+            "noul": { "type": "number", "minimum": 0, "maximum": 1 },
+            "reason": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["type", "choice"],
+          "properties": {
+            "type": { "const": "choice" },
+            "choice": { "type": "string" },
+            "probabilities": { "type": "object", "additionalProperties": { "type": "number", "minimum": 0, "maximum": 1 } },
+            "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+            "reason": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["type"],
+          "properties": {
+            "type": { "const": "score" },
+            "score": { "type": "number" },
+            "legend": {},
+            "probabilities": { "type": "object", "additionalProperties": { "type": "number" } },
+            "confidence": { "type": "number" },
+            "reason": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["type"],
+          "properties": { "type": { "const": "unsupported" } }
+        }
+      ]
+    },
+    "decideResponse": {
+      "type": "object",
+      "description": "The 200 answer: the model that answered, as the request pinned it, and one answer per question asked.",
+      "required": ["model", "answers"],
+      "properties": {
+        "model": { "type": "string", "minLength": 1 },
+        "answers": { "type": "object", "additionalProperties": { "$ref": "#/$defs/decideAnswer" } },
+        "usage": { "type": "object" }
+      }
+    },
+    "feedbackBatch": {
+      "type": "object",
+      "description": "POST /api/feedback: a box's agents' feedback (studio#257). entries needs feedback scope agent, counts needs passive; a batch carries at least one. What an entry holds is the receiver's wire format, not this protocol's.",
+      "properties": {
+        "entries": { "type": "array" },
+        "counts": { "type": "object" }
+      },
+      "anyOf": [
+        { "required": ["entries"] },
+        { "required": ["counts"] }
+      ]
+    }
+  }
+}

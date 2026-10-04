@@ -216,6 +216,7 @@ export default defineConfig({
 						{ label: 'Workspace Kinds', slug: 'reference/workspace-kinds' },
 						{ label: 'Workspace Read Contract', slug: 'reference/workspace-read-contract' },
 						{ label: 'Workspace Writer Conformance', slug: 'reference/workspace-writer-conformance' },
+						{ label: 'Broker Protocol', slug: 'reference/broker-protocol' },
 						{ label: 'Decision Record Kind', slug: 'reference/decision-kind' },
 						{ label: 'Decision Review Views', slug: 'reference/decision-review-views' },
 						{ label: 'Owners of the Workspace Boundary', slug: 'reference/boundary' },

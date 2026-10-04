@@ -1,0 +1,185 @@
+---
+title: Broker Protocol
+description: The routes a broker of box capabilities serves, and the conformance suite that checks a broker such as studio's lobby.
+diataxis: reference
+---
+
+A box holds no credential ([#2726](https://github.com/INTENTIUS/chant/issues/2726)). Each capability in its [box block](/chant/reference/workspace-declaration/#boxes) names a broker and a scope. The broker holds the credential and swaps the box's own token for it. It refuses what the scope does not allow. chant never runs a broker ([ws-086](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-086-the-workspace-boundary-without-chud-chant-hud-st.md)). This page is what one must answer, so that studio's lobby, fountain's broker or a broker a platform team runs itself can each serve the same box ([#3164](https://github.com/INTENTIUS/chant/issues/3164), [ws-097](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-097-a-broker-protocol-for-box-capabilities.md)).
+
+This is version 1. Its request and answer bodies are the `$defs` of `broker-protocol.schema.json`, which `@intentius/chant` ships at `@intentius/chant/workspace/broker-protocol.schema.json`. The routes and the scope words are in `@intentius/chant/workspace/broker-protocol`, which a broker written for Node can import.
+
+## The rule
+
+A request that needs scope word `w` of capability `c` is refused with a 403 unless the box's last report holds an entry named `c`, brokered by this broker, whose scope lists `w`. The refusal's message names `c` and `w`, so whoever reads it knows which entry to add to the box block. A box that has never reported is refused everything.
+
+Beside the rule, a broker keeps two promises. No upstream ever receives the box's token, and no answer to the box carries the credential or a secret's value.
+
+The `broker` word in a box block names the broker the box reaches, not a product. An implementation is configured with the word it answers for: studio's lobby answers for `lobby`. A box moves from one implementation to another by where its broker URL points, and its declaration does not change.
+
+## Routes
+
+Every route is relative to the broker's base URL, which the box is given (studio gives it as `STUDIO_URL`, and as `ANTHROPIC_BASE_URL=<broker>/llm/anthropic` for the agent). Every request carries the box's own token: `Authorization: Bearer <token>`, or `x-api-key: <token>` on the Anthropic routes as the Anthropic SDK sends it. On an egress route the token goes wherever the API expects its key. How a box gets its token is the broker's own: studio's door claims one when the box is enrolled, and fountain gives a sandbox its callback token.
+
+| Route | Capability | Scope word | Body |
+|---|---|---|---|
+| `POST /api/box/declaration` | none | none | `declarationReport`, answered with `declarationKept` |
+| `HEAD` or `GET /llm/anthropic/api/hello` | `inference` | none, and no token | none |
+| `POST /llm/anthropic/v1/messages`, `POST .../v1/messages/count_tokens`, `GET .../v1/models[/<id>]` | `inference` | `agent` | the Anthropic API's own |
+| `POST /decide/v1/systemone` | `inference` | `decide` | `decideRequest`, answered with `decideResponse` |
+| `/egress/<NAME>/<path>` | `egress` | `<NAME>` | the API's own |
+| `POST /api/feedback` | `feedback` | `agent` for `entries`, `passive` for `counts` | `feedbackBatch` |
+| `POST /fountain/api/conversations` | `fountain` | `agent` | Fountain's API's own |
+| `/fountain/api/conversations/...` | `fountain` | `conversations` | Fountain's API's own |
+| `/fountain/api/sandboxes...` | `fountain` | `sandboxes` | Fountain's API's own |
+| `/fountain/api/vaults...` | `fountain` | `vault` | Fountain's API's own |
+
+Any other path under a capability's prefix is a 404, and reaches no upstream.
+
+### Reporting the declaration
+
+The box's steward reads its box block from `chant workspace status --json` and posts the capabilities to `POST /api/box/declaration` with the box's token. The body is `{ "capabilities": [{ "name", "broker", "scope" }] }`. It may hold up to 20 capabilities of up to 50 scope words each, in at most 32 KB. The broker keeps the entries whose `broker` is its word and answers 200 with what it kept and when: `{ "capabilities": [...], "at": "<ISO time>" }`. Each report replaces the last. A body that is not a report is a 400, and a token that is no box's is a 401 or 403.
+
+The report is what the broker enforces. The box's own agent can edit the box block, as it can edit anything in its repo, so the report does not protect the broker from that agent. It decides what the box asked for. What the owner's credential and secrets may be spent on, such as a paused agent or a secret's host, stays the broker's to refuse.
+
+### inference
+
+`/llm/anthropic` is an Anthropic API base URL. The broker forwards `POST /v1/messages`, `POST /v1/messages/count_tokens` and `GET /v1/models` with the query unchanged. It puts the payer's credential where the box's token was, as `x-api-key` for an API key, or as a bearer with the `oauth-2025-04-20` beta for a setup token. The body passes through unchanged, and the answer streams back unchanged. `HEAD /api/hello` is answered 200 with no token, as Claude Code probes it. Every refusal on these routes is a 403, never a 401: Claude Code retries a 401 eleven times with backoff and shows a 403's message at once.
+
+`POST /decide/v1/systemone` is chant's decide wire format ([#2491](https://github.com/INTENTIUS/chant/issues/2491)): the request names a `model`, the `state` and the `questions`, and the answer names the same `model` and one answer per question. Each answer may carry `reason`, the model's own explanation, which chant keeps in the answer record ([#3345](https://github.com/INTENTIUS/chant/issues/3345)). A question type the broker does not answer is `{ "type": "unsupported" }`. A request that is not in the format is a 422. Anything that stops an answer is a non-2xx status, which chant reads as the backend being unreachable, and the point's `unreachable` setting decides what happens. A box names the broker as its decide backend with a brokered key in `chant.config.ts`, so the steward holds no key either.
+
+### egress
+
+The owner saves a secret at the broker with the one host it may be sent to. The box is given a stand-in instead: `<NAME>_KEY=<the box's token>` and `<NAME>_BASE_URL=<broker>/egress/<NAME>`. The app's SDK sends the stand-in wherever it would send the key, in a header or in the query. The broker swaps it for the value and sends the request to the secret's host and nowhere else. Any response header that repeats the value gets the stand-in back in its place. A secret name is `^[A-Z][A-Z0-9_]{0,39}$`. A secret the scope does not list is a 403 naming `egress` and the secret, and a declared secret the broker holds no value for is a 403 too. A broker may supply a value itself rather than from the owner, as studio's lobby does for a planted box's `GITHUB` and `GITHUB_API` (studio-017). Such a value is outside the declaration and limited by the broker's own rules.
+
+### feedback
+
+`POST /api/feedback` takes a box's agents' feedback ([studio#257](https://github.com/arugula-salad/studio/issues/257)): `entries` need `agent`, `counts` need `passive`, and a batch with neither is a 400. What an entry holds is the receiver's format (hud's RFC-009), not this protocol's. A batch that passes the declaration may still be withheld by the broker's own policy, such as an owner who has not consented, with a 403 that says so. A broker that keeps no feedback answers 501, and the box keeps the batch to send later.
+
+### fountain
+
+`/fountain/api/...` is Fountain's API, with the operator's Fountain key sent as the bearer. The scope words are the ones the declaration already documents for Fountain. With `agent` the box starts a conversation with its own agent. `conversations` lets it read and continue its own conversations. `sandboxes` and `vault` reach its own sandboxes and its own vault. The broker checks that what the box names is its own.
+
+`fountain-callback` is different. It is the callback token fountain gives every persistent sandbox ([#2780](https://github.com/INTENTIUS/chant/issues/2780)), which fountain brokers itself, and it has no route here.
+
+### Refusals
+
+A refusal is JSON with an `error`, either the message or an object holding `message` and optionally `type`:
+
+```json
+{ "type": "error", "error": { "type": "permission_error", "message": "This box's inference capability does not list decide in its scope (it lists agent). Add \"decide\" to that scope in the box block of its chant.workspace.json." } }
+```
+
+`declaredRefusal(declared, broker, capability, word)` in `@intentius/chant/workspace/broker-protocol` returns that message, or null when the declaration allows the word. `parseDeclarationReport(body, broker)` checks a report the same way studio's lobby does.
+
+## Adding a capability
+
+A capability's name is a free string, so a lexicon or a runtime can add one without a chant change, as studio added `feedback`. To make it part of the protocol, give it a `BrokerCapabilitySpec` with its own route prefix and the scope words it knows. Its `scopes(request)` returns the words a request needs. It returns `[]` when a request needs none, and null for a path the capability does not serve. The broker then applies the same rule. Pass the spec to the conformance suite in `extra` with a probe for each word, and the suite holds the broker to the rule for it.
+
+## Testing a broker
+
+The suite ships in `@intentius/chant` beside the [reader and writer suites](/chant/reference/workspace-writer-conformance/):
+
+| Import | For |
+|---|---|
+| `@intentius/chant/workspace/conformance` | any test runner: `runBrokerConformance(config)` returns a report. It imports no runner and loads under plain `node` |
+| `@intentius/chant/workspace/conformance/vitest` | vitest: `describeBrokerConformance(config)` makes one test per check |
+
+The suite starts the upstreams itself: a stand-in for the Anthropic API that answers a structured-output request from its schema, one for Fountain's API, and an echo host for egress that repeats the authorization it received in a response header. It records every request they receive. chant never listens on a port ([ws-086](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-086-the-workspace-boundary-without-chud-chant-hud-st.md)), so your test serves them: the config's `listen(handler)` serves one request handler on a loopback port and resolves `{ url, close }`. The suite then calls your `start(env)`, which starts the broker pointed at the upstreams:
+
+| `env` field | Holds |
+|---|---|
+| `broker` | the broker word the boxes' reports name (`lobby` unless the config's `broker` says otherwise) |
+| `boxes` | `conformance-a`, which reports before each check, and `conformance-b`, which never reports |
+| `anthropic` | `{ url, credential }`: the upstream for `/llm/anthropic` and `/decide`, and the API key to spend there |
+| `fountain` | `{ url, credential }`: the upstream for `/fountain`, and the bearer to send |
+| `secrets` | `[{ box, name, host, value }]`: the secret `CONFORMANCE` for `conformance-a`, sent only to the echo host |
+
+`start` returns `{ url, tokens, close }`. `url` is the broker's base URL, `tokens` holds each box's token by name, and `close` stops the broker. The config also takes `name`, `listen`, `capabilities` (the standard ones the broker serves, by default `inference`, `egress` and `feedback`, as studio's lobby does), `extra` and `timeoutMs`.
+
+| Check | Holds the broker to |
+|---|---|
+| `declaration-kept` | a report is answered 200 with the entries naming this broker, and none naming another broker or none |
+| `declaration-unknown-token` | a report with no token, or one that is no box's, is a 401 or 403 |
+| `declaration-malformed` | a body that is not a report is a 400 |
+| `unreported-refused` | a box that never reported is refused every served capability, and nothing reaches an upstream |
+| `inference-hello` | `HEAD /llm/anthropic/api/hello` is 200 with no token |
+| `inference-forwards` | with `agent`, a Messages call reaches the upstream with its path, query and body unchanged and the credential in place of the token, and the upstream's answer comes back |
+| `inference-unknown-route` | a path the proxy does not forward is a 404 |
+| `inference-unknown-token` | an unknown token is a 403, not a 401 |
+| `inference-agent-refused` | without `agent`, a 403 naming `inference` and `agent` |
+| `decide-answers` | with `decide`, an answer per question that validates against `decideResponse`, naming the model asked, asked upstream on the credential |
+| `decide-refused` | without `decide`, a 403 naming `inference` and `decide` |
+| `decide-invalid` | a request with no question is a 422 |
+| `decide-unknown-token` | an unknown token is a 401 or 403 |
+| `egress-forwards` | with the secret declared, the request reaches only the secret's host with the value in place of the token, and the repeated value comes back as the token |
+| `egress-refused` | an undeclared secret is a 403 naming `egress` and the secret |
+| `egress-unheld` | a declared secret the broker holds no value for is a 403 |
+| `egress-bad-name` | a path whose name is not a secret's name is a 404 |
+| `feedback-taken` | with `agent`, a batch of entries is not refused by the declaration |
+| `feedback-refused` | counts without `passive` are a 403 naming `feedback` and `passive` |
+| `feedback-empty` | a batch with neither is a 400 |
+| `fountain-forwards` | with `conversations`, a request reaches Fountain with the operator's key as the bearer |
+| `fountain-refused` | without `sandboxes`, a 403 naming `fountain` and `sandboxes` |
+| `token-isolation` | over the whole run, no upstream received a box's token, and no answer to a box carried a credential or a secret's value |
+
+Every check that expects a refusal also checks that nothing reached an upstream. A check of a capability the broker does not serve is skipped.
+
+Studio's local lobby, run through its own `boxSideHandler`, tested with `node:test`:
+
+```js
+// broker-conformance.test.mjs, run with: node --test
+import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
+import { createServer } from "node:http";
+import { test } from "node:test";
+import { runBrokerConformance } from "@intentius/chant/workspace/conformance";
+import { boxSideHandler } from "./kit/lobby/box-side.mjs";
+import { credentialOf, hashToken } from "./lobby/llm-proxy.mjs";
+
+const listen = (handler) => new Promise((resolve) => {
+  const server = createServer(handler);
+  server.listen(0, "127.0.0.1", () => resolve({
+    url: `http://127.0.0.1:${server.address().port}`,
+    close: () => new Promise((r) => server.close(() => r())),
+  }));
+});
+
+async function startLobby(env) {
+  const tokens = Object.fromEntries(env.boxes.map((b) => [b, `studio_${randomBytes(32).toString("hex")}`]));
+  const byHash = new Map(Object.entries(tokens).map(([name, t]) => [hashToken(t), { name }]));
+  const declarations = new Map();
+  const served = await listen(boxSideHandler({
+    enroll: async () => [404, {}],
+    boxByToken: (hash) => byHash.get(hash),
+    declared: (name) => declarations.get(name),
+    saveDeclared: (name, d) => declarations.set(name, d),
+    owner: "conformance",
+    credential: credentialOf(env.anthropic.credential),
+    lobbyUrl: "http://lobby.invalid",
+    upstream: new URL(env.anthropic.url),
+    secret: (box, name) => {
+      const s = env.secrets.find((x) => x.box === box && x.name === name);
+      return s ? { which: "value", host: s.host, allow: [], value: s.value } : null;
+    },
+    feedback: { receive: async () => [202, { taken: true }] },
+  }));
+  return { ...served, tokens };
+}
+
+test("the lobby serves the broker protocol", { timeout: 120_000 }, async () => {
+  const report = await runBrokerConformance({ name: "studio's lobby", start: startLobby, listen });
+  assert.deepEqual(report.problems, []);
+});
+```
+
+The hosted studio lets a box made before its steward reported keep its `/llm` and `/egress` access ([studio#206](https://github.com/arugula-salad/studio/issues/206)). That is a compatibility allowance outside the protocol, and the suite runs the lobby without it.
+
+The smallest broker that passes is a test fixture in chant's repository, `packages/core/src/workspace/conformance/__fixtures__/reference-broker.ts`, serving all four capabilities from memory. chant's own tests run the suite against it. They also run it against two brokers that each break a rule, one granting every scope and one passing a token upstream, and the suite must fail both.
+
+## Where each broker stands
+
+| Broker | Serves | Conformance |
+|---|---|---|
+| studio's lobby (`lobby/`, the kit's `kit/lobby/box-side.mjs`) | `inference`, `egress`, `feedback` | passes every check it serves, on studio's integration/next as of 2026-10-03 |
+| fountain's egress broker (ADR 0019) | inference and egress for a brokered conversation, as an `HTTPS_PROXY` that attaches the credential by host | not yet: it has no declaration report and no path routes, so it needs a front that speaks this protocol |
+| the reference broker | all four | passes, in chant's CI |
