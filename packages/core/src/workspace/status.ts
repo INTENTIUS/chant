@@ -452,7 +452,7 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
                   health: s.health,
                   optional: s.optional,
                 })),
-                factory: factoryView(m.box.factory),
+                factory: factoryView(m.box.factory, declaration.members),
                 listing: listingView(m.box.listing, coverBytes),
                 replicate: m.box.replicate === null ? null : (({ box: _box, ...rest }) => rest)(policyView(m.name, m.box.replicate)),
               },

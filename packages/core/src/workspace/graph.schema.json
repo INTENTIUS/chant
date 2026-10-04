@@ -1114,6 +1114,8 @@
         "check",
         "checks",
         "builders",
+        "tiers",
+        "builderFor",
         "publish"
       ],
       "properties": {
@@ -1167,6 +1169,71 @@
             "null"
           ],
           "description": "The member that declares the builder agents, or null."
+        },
+        "tiers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "tier",
+              "agent",
+              "kinds",
+              "session"
+            ],
+            "properties": {
+              "tier": {
+                "type": "string"
+              },
+              "agent": {
+                "type": "string"
+              },
+              "kinds": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                ]
+              },
+              "session": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          },
+          "description": "Which builder agent builds at which tier, as declared (#3152, ws-094), each { tier, agent, kinds, session } with kinds and session null when not declared; empty when none is. Added in contract 1 by chant 0.103.0."
+        },
+        "builderFor": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "required": [
+                "agent",
+                "session"
+              ],
+              "properties": {
+                "agent": {
+                  "type": "string"
+                },
+                "session": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          },
+          "description": "The builder for each member the factory builds, by tier (#3152): member name, then tier, then { agent, session }. For a member the entry naming its kind is used, else the tier's entry with no kinds; a tier with neither is left out. Added in contract 1 by chant 0.103.0."
         },
         "publish": {
           "description": "Where a finished build is published, or null when the factory doesn't publish past the box.",

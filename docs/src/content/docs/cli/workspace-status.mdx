@@ -101,6 +101,8 @@ With `--json`, each member also lists its `box`: the [box block](/chant/referenc
     "check": { "run": "npm test --silent", "kind": "test" },
     "checks": null,
     "builders": "delivery",
+    "tiers": [{ "tier": "small", "agent": "builder-small", "kinds": null, "session": null }],
+    "builderFor": { "app": { "small": { "agent": "builder-small", "session": null } } },
     "publish": { "forge": "github", "repo": "acme/fern", "base": null, "branchPrefix": "box/", "head": null }
   },
   "listing": { "published": true, "title": "Fern", "line": "A review queue for the design team", "cover": { "path": "box/cover.png", "sha256": "9f2c..." } }
