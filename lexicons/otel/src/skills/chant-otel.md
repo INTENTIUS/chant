@@ -78,10 +78,14 @@ It deletes prompt, completion, system-instruction and tool-call content from spa
 
 - Reference components by entity where you can. A string id (`"otlp/backend"`) is allowed for a component declared elsewhere, and OTEL101 fails the build if nothing declares it.
 - Put `memory_limiter` first in `processors` (OTEL105).
-- Never write a credential literally. Use `"${env:NAME}"` and the collector reads it at start-up (OTEL002).
+- Never write a credential literally. Use `"${env:NAME}"` and the collector reads it at start-up (OTEL002 in source, OTEL120 in the config). Don't send one over `http://` or `tls.insecure: true` (OTEL121).
 - Every pipeline needs at least one receiver and one exporter (OTEL102). A declared component no pipeline uses is a warning (OTEL103).
 - Don't split metrics by a per-request id (`gen_ai.conversation.id`, `gen_ai.response.id`, `gen_ai.tool.call.id`, `session.id`, `user.id`, `enduser.id`) or a content key: each value starts new time series (OTEL116).
 - Give every listener its own port. The collector's own metrics already use localhost:8888, so a `prometheus` exporter there makes it exit with "address already in use" (OTEL117).
+- Keep `zpages` and `pprof` on localhost (OTEL122). `health_check` may listen on 0.0.0.0 for probes.
+- Put `batch` in every pipeline that sends to a remote `otlp` or `otlphttp` exporter (OTEL125), and leave the exporter's `sending_queue` and `retry_on_failure` on (OTEL124).
+- Use a `drop` policy rather than `invert_match`, and `readers` rather than `service.telemetry.metrics.address` (OTEL119).
+- In a workspace, or with `telemetry.attribution: true`, leave `service.name`, `service.version`, `deployment.environment.name`, `vcs.ref.head.revision` and `chant.*` resource attributes alone: `insert` rather than `upsert`, and `override: false` on `resourcedetection` (OTEL118).
 - Declared extensions are enabled in declaration order unless a `Service` lists `extensions` itself.
 
 ## Starting from an existing config
@@ -97,4 +101,4 @@ The importer writes `receivers.ts`, `processors.ts`, `exporters.ts`, `connectors
 
 ## Reading the result
 
-`collectorTopologyOf(entities)` returns the pipelines, each component's endpoints and schema pin, for each exporter the signals it carries, the connector `edges` between pipelines, and under `semconv` the semantic-conventions version (`GENAI_SEMCONV_PIN`) the config's `gen_ai.` keys follow, as plain data.
+`collectorTopologyOf(entities)` returns the pipelines, each component's endpoints and schema pin, for each exporter the signals it carries, the connector `edges` between pipelines, and under `semconv` the semantic-conventions version the config's `gen_ai.` keys (`GENAI_SEMCONV_PIN`) and `k8s.` keys (`SEMCONV_PIN`) follow, as plain data.

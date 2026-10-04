@@ -5,7 +5,7 @@ diataxis: reference
 order: 5
 ---
 
-The prometheus lexicon's rules use the `PROM` prefix. `PROM0xx` rules read your TypeScript source during `chant lint`. `PROM1xx` checks run after a build over every rule file in the output, `PROM2xx` over every `alertmanager.yml`. Documents are recognized by shape, so a rule file or Alertmanager config that reaches the output another way is checked too.
+The prometheus lexicon's rules use the `PROM` prefix. `PROM0xx` rules read your TypeScript source during `chant lint`. `PROM101`-`PROM107` and `PROM211`-`PROM219` run after a build over every rule file in the output, the other `PROM2xx` over every `alertmanager.yml`. Documents are recognized by shape, so a rule file or Alertmanager config that reaches the output another way is checked too.
 
 | Id | Severity | Catches |
 |---|---|---|
@@ -29,10 +29,24 @@ The prometheus lexicon's rules use the `PROM` prefix. `PROM0xx` rules read your 
 | PROM208 | error | an Alertmanager duration that does not parse: `group_wait`, `group_interval`, `repeat_interval`, `resolve_timeout` and Jira `reopen_duration` as Prometheus durations, and the webhook, Slack, PagerDuty and incident.io `timeout` and Pushover `retry`, `expire` and `ttl` as Go durations |
 | PROM209 | error | a receiver integration missing a destination, credential or required field that Alertmanager asks for, after its `global` default |
 | PROM210 | error | an integration or `global` setting Alertmanager rejects: a value and its `*_file` both set, settings that exclude each other, or a value outside the allowed set |
+| PROM211 | warning | an alerting rule with no `for`, or `for: 0s` |
+| PROM212 | warning | an alerting rule with no `runbook_url` annotation (opt-in) |
+| PROM213 | warning | an alert expression with no comparison, so it fires for every series it returns |
+| PROM214 | warning | an alert template reading `$labels.x` where the expression's `by` or `without` drops `x` |
+| PROM215 | warning | `rate`, `irate` or `increase` over a name not ending in `_total`, `_count`, `_sum` or `_bucket` |
+| PROM216 | warning | `histogram_quantile` over a series without `_bucket` in its name, or an aggregation that drops `le` |
+| PROM217 | warning | a recording rule not named `level:metric:operations` |
+| PROM218 | warning | a `=~` or `!~` matcher with no regex metacharacters, or with `^` or `$` anchors |
+| PROM219 | warning | an alerting rule, or its group, setting the `alertname` label |
+| PROM220 | warning | `tls_config.insecure_skip_verify: true` on a receiver or in `global` |
+| PROM221 | warning | an email receiver sending SMTP credentials with `require_tls: false` |
+| PROM222 | warning | an integration sending a credential to an `http://` URL |
+| PROM223 | warning | a route whose `repeat_interval` is shorter than its `group_interval` |
+| PROM224 | warning | an inhibit rule with no `equal` whose source and target matchers can match the same alert |
 
 ## PROM001: literal credential
 
-Alertmanager does not expand `${ENV}` in its config, so the only way to keep a secret out of the file is its `*_file` field, pointing at a mounted secret. Replace `routing_key: "..."` with `routing_key_file: "/etc/alertmanager/secrets/pagerduty-key"`.
+Alertmanager does not expand `${ENV}` in its config, so the only way to keep a secret out of the file is its `*_file` field, pointing at a mounted secret. Replace `routing_key: "..."` with `routing_key_file: "/etc/alertmanager/secrets/pagerduty-key"`. A Slack `api_url` of `https://slack.com/api/chat.postMessage` is not flagged. That is the bot endpoint, the bot token goes in `http_config.authorization`, and `update_message` needs that URL.
 
 ## PROM002 and PROM104: PromQL syntax
 
@@ -99,6 +113,52 @@ PROM210, a setting Alertmanager rejects:
 - Mattermost: a field, on the message or an attachment, without `title` and `value`.
 
 The `http_config` block's own rules (one of `basic_auth`, `oauth2` and `authorization`, and so on) come from prometheus/common and are not checked here; `amtool check-config` catches them.
+
+## PROM211: alerts without `for`
+
+An alert with no `for` fires on the first evaluation that matches, so one bad scrape can page. Set `for` to how long the condition must hold. Three kinds of alert are left alone. An expression that reads no series, such as `vector(1)`, is a deliberate always-firing alert. An expression that reads every series through a `*_over_time` function already spans a window, as `GenAiRules`' budget alerts do. Two conditions joined by `and` are the multi-window burn-rate form `Slo` builds, where the short window does what `for` would.
+
+## PROM212: runbook_url, opt-in
+
+PROM212 is off by default: the lexicon's `recommended` lint preset, the one `chant build` uses, leaves it out. Turn it on in `chant.config.ts` with the `all` preset, or by naming it, which keeps it whatever the preset:
+
+```ts
+import type { ChantConfig } from "@intentius/chant";
+
+export default {
+  lexicons: ["prometheus"],
+  lint: {
+    presets: { prometheus: "all" },
+    // or: rules: { PROM212: "warning" },
+  },
+} satisfies ChantConfig;
+```
+
+`Slo` and `GenAiRules` take `annotations` on each alert for the `runbook_url`. `validateRunbookUrls(file)` returns the same findings for a parsed file.
+
+## PROM213 and PROM214: what an alert's expression returns
+
+Every series an alert's expression returns is an alert. PROM213 reports an expression with nothing that filters it: no comparison (a comparison with `bool` returns every series too), no `absent()` and no `unless`. With `or`, both sides need a condition. An expression that reads no series is left alone, as for PROM211.
+
+PROM214 follows the labels through the expression. `sum by (job)` keeps only `job`, `sum without (instance)` drops `instance`, `histogram_quantile` drops `le`, and one-to-one matching with `on (...)` keeps only the matching labels. A template that reads a dropped label renders it empty. A label the rule or its group sets is not reported. Prometheus fills `$labels` from the series alone (`rules/alerting.go`), so read such a label without `$labels`.
+
+## PROM215 and PROM216: counters and histograms by name
+
+Both go by the metric's name, since the type is only known to a running Prometheus. PROM215 reads `rate`, `irate` and `increase` taken straight from a selector. PROM216 assumes classic histograms. A native histogram has no `_bucket` series, so `histogram_quantile` over one is reported; leave PROM216 off with `lint.rules: { PROM216: "off" }` if you use native histograms.
+
+## PROM219: alertname
+
+Prometheus sets `alertname` to the rule's name after it applies the rule's labels (`rules/alerting.go`), so an `alertname` label is overwritten. `promtool check rules` accepts it.
+
+## PROM220 to PROM222: receiver transport
+
+`amtool check-config` accepts all three. PROM220 reports `insecure_skip_verify: true` in any `tls_config` of a receiver, or of `global`. PROM221 reports an email receiver with SMTP auth (`auth_password`, `auth_secret` or their `*_file`, its own or `global`'s) whose `require_tls` is false, its own or `global.smtp_require_tls`; `force_implicit_tls` is left alone. PROM222 reports an integration whose `url`, `api_url` or `webhook_url`, or the `global` URL it falls back to, is `http://` while the request carries a credential: user info in the URL, `http_config` auth (its own, else `global`'s), or a key or token field.
+
+## PROM223 and PROM224: notification timing and inhibition
+
+Alertmanager resends a group's notification only when it flushes the group, every `group_interval`, so a shorter `repeat_interval` never takes effect. PROM223 follows both timers down the routing tree from Alertmanager's defaults (5m and 4h) and reports the route that sets one of them.
+
+An inhibit rule with no `equal` mutes every target alert while any source alert fires. PROM224 reports one whose source and target matchers can both match the same alert, so alerts of that kind mute each other. Matchers that name values (`=`, or a regex of plain alternatives such as `page|ticket`) are compared; any other regex is taken to overlap.
 
 ## Using the checks outside a build
 

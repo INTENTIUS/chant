@@ -89,7 +89,7 @@ The marker carries **stack identity**, not just `managed=true`, so one stack nev
 
 ### `telemetry`
 
-Telemetry attribution ([#2558](https://github.com/INTENTIUS/chant/issues/2558)). A lexicon that declares workloads stamps the attributes that name the declaration (`chant.workspace`, `chant.member`, `chant.decl`, `service.name` and `deployment.environment.name`) as `OTEL_SERVICE_NAME` and `OTEL_RESOURCE_ATTRIBUTES` in each workload's environment. The docker and k8s lexicons do so today.
+Telemetry attribution ([#2558](https://github.com/INTENTIUS/chant/issues/2558)). A lexicon that declares workloads stamps the attributes that name the declaration (`chant.workspace`, `chant.member`, `chant.decl`, `service.name` and `deployment.environment.name`) as `OTEL_SERVICE_NAME` and `OTEL_RESOURCE_ATTRIBUTES` in each workload's environment. The docker, k8s and fly lexicons do so today.
 
 ```typescript
 telemetry: { attribution: true },

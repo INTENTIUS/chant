@@ -25,7 +25,7 @@
  *   non-built-in component was checked against. The collector ignores it.
  * - OTEL109 fails a build whose custom component has no usable pin.
  *
- * Semantic-convention pins (`GENAI_SEMCONV_PIN`) record which version of an
+ * Semantic-convention pins (`SEMCONV_PIN`, `GENAI_SEMCONV_PIN`) record which version of an
  * attribute vocabulary a preset's keys follow. They are not tied to a
  * component type, so `collectorTopology()` reports them under `semconv` for
  * each component whose config uses that vocabulary, and the serializer writes
@@ -34,7 +34,7 @@
 
 import { createResource } from "@intentius/chant/runtime";
 import type { Declarable } from "@intentius/chant/declarable";
-import { componentId, type ComponentKind, type ConnectorSignalPair } from "./model";
+import { canonicalComponentType, componentId, type ComponentKind, type ConnectorSignalPair } from "./model";
 
 /** Where a component's config schema comes from, and which version of it the type follows. */
 export interface SchemaPin {
@@ -53,6 +53,22 @@ export interface SchemaPin {
 export const COLLECTOR_PIN: SchemaPin = Object.freeze({
   source: "github.com/open-telemetry/opentelemetry-collector-contrib",
   version: "v0.130.0",
+});
+
+/**
+ * The semantic-conventions release this package's other attribute keys
+ * follow, today the `k8s.*` keys `NodeAgent` writes. v1.27.0 is the newest
+ * release the Kubernetes components of contrib v0.130.0 import:
+ * `go.opentelemetry.io/otel/semconv/v1.27.0` in the kubeletstats, k8sobjects
+ * and k8sevents receivers. The k8sattributes processor still imports v1.6.1
+ * and v1.8.0, and v1.27.0 keeps the `k8s.*` keys it writes. Like
+ * `COLLECTOR_PIN`, it moves only when this package does, and
+ * `collectorTopology()` reports it for every component whose config names a
+ * `k8s.` attribute.
+ */
+export const SEMCONV_PIN: SchemaPin = Object.freeze({
+  source: "github.com/open-telemetry/semantic-conventions",
+  version: "v1.27.0",
 });
 
 /**
@@ -177,9 +193,14 @@ export function definitionFor(entityType: string): ComponentDefinition | undefin
   return registry().get(entityType);
 }
 
-/** The definition for a collector `kind` + `type`, e.g. the built-in `exporter` `otlp`. */
+/**
+ * The definition for a collector `kind` + `type`, e.g. the built-in
+ * `exporter` `otlp`. A renamed built-in's new name (`otlp_grpc`) finds the
+ * built-in unless a component is registered under the new name itself.
+ */
 export function definitionOf(kind: ComponentKind, type: string): ComponentDefinition | undefined {
-  return registry().get(componentEntityType(kind, type));
+  const reg = registry();
+  return reg.get(componentEntityType(kind, type)) ?? reg.get(componentEntityType(kind, canonicalComponentType(kind, type)));
 }
 
 /** Every registered definition, built-ins first in registration order. */

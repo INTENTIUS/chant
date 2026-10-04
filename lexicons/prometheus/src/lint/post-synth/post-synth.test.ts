@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { makePostSynthCtx, makePostSynthCtxFromFiles } from "@intentius/chant-test-utils";
 import { postSynthChecks } from "./index";
+import { OPT_IN_CHECKS } from "../audit-catalog";
 import { RECEIVER_INTEGRATION_TYPES } from "../../integrations";
 import { INTEGRATION_CASES, SLACK_APP_URL, amWith } from "../../testdata/integration-cases";
 import { prom101 } from "./prom101";
@@ -76,7 +77,8 @@ const rulesOnly = (rules: string) => makePostSynthCtx("prometheus", rules);
 const amOnly = (am: string) => makePostSynthCtx("prometheus", am);
 
 describe("a clean rule file and alertmanager.yml", () => {
-  test.each(postSynthChecks.map((c) => [c.id, c] as const))("%s finds nothing", (_id, check) => {
+  // PROM212 (no runbook_url) is opt-in and RULES carries none; see checks.test.ts.
+  test.each(postSynthChecks.filter((c) => !OPT_IN_CHECKS.has(c.id)).map((c) => [c.id, c] as const))("%s finds nothing", (_id, check) => {
     expect(check.check(both())).toEqual([]);
   });
 });

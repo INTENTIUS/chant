@@ -310,6 +310,7 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   // Run the build. #2002 — every option comes from the shared assembler
   // (../build-options.ts), which `evaluateProjectPolicies` calls too, so the
   // `policyGate` step decides on the same project this command builds.
+  const telemetry = await resolveTelemetryAttribution(configDir, config as unknown as Record<string, unknown>, env);
   const result = await build(
     infraPath,
     options.serializers,
@@ -321,7 +322,7 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
       modes,
       ownership,
       buildParams: paramsResolution.provenance,
-      telemetry: await resolveTelemetryAttribution(configDir, config as unknown as Record<string, unknown>, env),
+      telemetry,
     }),
   );
 
@@ -546,7 +547,7 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
       }
 
       const scopedResult = { ...result, outputs: scopedOutputs };
-      const postDiags = runPostSynthChecks(checks, scopedResult, env, { activityContracts });
+      const postDiags = runPostSynthChecks(checks, scopedResult, env, { activityContracts, telemetry });
       // `lint.presets` (chant #2113) filters WHICH check ids are reported at
       // all, before `lint.rules`/inline suppression act on the reported
       // ones. It's a no-op for a lexicon that ships no `lintPresets()` (the

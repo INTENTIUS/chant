@@ -66,6 +66,7 @@ export { parseMatchers, matcherMatches, matcher, type Matcher, type MatchOp, typ
 export { checkPromql, PROMQL_GRAMMAR, type PromqlCheck } from "./promql";
 export {
   validateRuleFile,
+  validateRunbookUrls,
   validateAlertmanagerConfig,
   validateSeverityRouting,
   alertSeverities,

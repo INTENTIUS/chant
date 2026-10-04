@@ -32,6 +32,7 @@ export {
   componentEntityType,
   isOTelComponent,
   COLLECTOR_PIN,
+  SEMCONV_PIN,
   GENAI_SEMCONV_PIN,
   type SchemaPin,
   type SafeParseSchema,
@@ -54,6 +55,7 @@ export {
   type CollectorIssue,
   type CollectorIssueCode,
 } from "./validate-config";
+export { K8S_ATTRIBUTES_METADATA, RESOURCE_DETECTORS } from "./config-hygiene";
 export {
   collectorTopology,
   collectorTopologyOf,
@@ -65,6 +67,7 @@ export {
   type SemconvUsage,
 } from "./topology";
 export { semconvUsage, SEMCONV_VOCABULARIES, type SemconvVocabulary } from "./semconv";
+export { attributionIssues, isProtectedResourceAttribute, PROTECTED_RESOURCE_ATTRIBUTES } from "./attribution";
 
 // Composites
 export { NodeAgent, nodeAgentPropsProblem, type NodeAgentProps, type NodeAgentMembers, type NodeAgentInstance } from "./composites";

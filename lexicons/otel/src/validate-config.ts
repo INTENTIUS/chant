@@ -11,11 +11,12 @@
 import type { Declarable } from "@intentius/chant/declarable";
 import { definitionFor, definitionOf, isOTelComponent, isUsablePin, runValidator } from "./define";
 import { componentConfig } from "./collector";
-import { isComponentId, parseComponentId, pipelineSignal, SIGNALS, type CollectorConfig, type ConnectorSignalPair } from "./model";
+import { canonicalComponentType, isComponentId, parseComponentId, pipelineSignal, SIGNALS, type CollectorConfig, type ConnectorSignalPair } from "./model";
 import { isPipelineEntity } from "./pipeline";
 import { signalToMetricsEntries, type SignalToMetricsConnectorConfig } from "./components/connectors";
 import { genAiCardinalityRisk } from "./genai";
 import { collectorTopology, type TopologyEdge } from "./topology";
+import { configHygieneIssues } from "./config-hygiene";
 // OTEL112 reads the built-in connectors' signal pairs from the registry.
 import "./components/connectors";
 
@@ -34,7 +35,17 @@ export type CollectorIssueCode =
   | "OTEL114"
   | "OTEL115"
   | "OTEL116"
-  | "OTEL117";
+  | "OTEL117"
+  | "OTEL118"
+  | "OTEL119"
+  | "OTEL120"
+  | "OTEL121"
+  | "OTEL122"
+  | "OTEL123"
+  | "OTEL124"
+  | "OTEL125"
+  | "OTEL126"
+  | "OTEL127";
 
 export interface CollectorIssue {
   code: CollectorIssueCode;
@@ -67,8 +78,9 @@ function describePairs(pairs: ReadonlyArray<ConnectorSignalPair>): string {
  * each connector's signals against its definition (OTEL112), cycles through
  * connectors (OTEL113), connector ids shared with a receiver or exporter
  * (OTEL114), `routing` connector targets (OTEL115), the attributes
- * connectors split metrics by (OTEL116), and started components that listen
- * on the same address (OTEL117).
+ * connectors split metrics by (OTEL116), started components that listen
+ * on the same address (OTEL117), and the deprecation, exposure, delivery and
+ * name-list checks in `config-hygiene.ts` (OTEL119-OTEL127).
  */
 export function validateCollectorConfig(config: CollectorConfig): CollectorIssue[] {
   const issues: CollectorIssue[] = [];
@@ -229,6 +241,7 @@ export function validateCollectorConfig(config: CollectorConfig): CollectorIssue
     ...routingTargetIssues(config),
     ...metricAttributeIssues(config),
     ...listenerIssues(config),
+    ...configHygieneIssues(config),
   );
 
   return issues;
@@ -449,7 +462,7 @@ function metricAttributeUses(type: string, config: Record<string, unknown>): Met
 function metricAttributeIssues(config: CollectorConfig): CollectorIssue[] {
   const issues: CollectorIssue[] = [];
   for (const [id, raw] of Object.entries(config.connectors ?? {})) {
-    const type = parseComponentId(id)?.type ?? id;
+    const type = canonicalComponentType("connector", parseComponentId(id)?.type ?? id);
     const body = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
     for (const { key, field } of metricAttributeUses(type, body)) {
       const risk = genAiCardinalityRisk(key);
@@ -470,7 +483,7 @@ function metricAttributeIssues(config: CollectorConfig): CollectorIssue[] {
 }
 
 /** One address a started component listens on. */
-interface Listener {
+export interface Listener {
   /** Who listens: `receiver "otlp" (protocols.grpc.endpoint)`. */
   owner: string;
   component?: string;
@@ -602,7 +615,8 @@ function at(value: unknown, path: string[]): { found: boolean; value: unknown } 
   return { found: true, value: cur };
 }
 
-function componentListeners(kind: "receiver" | "exporter" | "extension", id: string, body: unknown): Listener[] {
+/** The addresses a component of this kind listens on, from the OTEL117 table and its defaults. */
+export function componentListeners(kind: "receiver" | "exporter" | "extension", id: string, body: unknown): Listener[] {
   const type = parseComponentId(id)?.type ?? id;
   const out: Listener[] = [];
   for (const spec of LISTENERS[kind][type] ?? []) {

@@ -10,6 +10,8 @@ import { OtlpExporter, PrometheusExporter } from "../components/exporters";
 import { collectorYaml } from "../collector";
 import { validateCollectorConfig } from "../validate-config";
 import type { CollectorConfig } from "../model";
+import { SEMCONV_PIN } from "../define";
+import { semconvUsage } from "../semconv";
 
 const gateway = new OtlpExporter({ name: "gateway", endpoint: "otel-gateway.observability.svc:4317", tls: { insecure: true } });
 const base: NodeAgentProps = { exporters: [gateway] };
@@ -134,5 +136,19 @@ describe("NodeAgent options", () => {
     const config = configOf({ ...base, hostMetrics: { interval: "1m", rootPath: "/host" }, containerLogs: { selfContainer: "agent" } });
     expect(config.receivers?.hostmetrics).toMatchObject({ collection_interval: "1m", root_path: "/host" });
     expect((config.receivers?.filelog as Loose).exclude).toEqual(["/var/log/pods/*/agent/*.log"]);
+  });
+});
+
+describe("NodeAgent semconv", () => {
+  test("the YAML names the k8s semantic conventions its keys follow", () => {
+    const yaml = collectorYaml(Object.values(NodeAgent({ ...base, clusterName: "prod-eu-1" }).members) as Declarable[]);
+    expect(yaml.split("\n")[0]).toBe(`# chant: semconv k8s ${SEMCONV_PIN.source}@${SEMCONV_PIN.version} (k8sattributes, resource)`);
+  });
+
+  test("k8s_cluster and k8sattributes as names are not k8s keys", () => {
+    expect(semconvUsage({ receivers: { k8s_cluster: {} }, processors: { k8sattributes: {}, "resource/k8s": {} } })).toEqual([]);
+    expect(semconvUsage({ processors: { "transform/x": { statements: ['delete_matching_keys(resource.attributes, "^k8s\\\\.pod\\\\..*")'] } } })).toEqual([
+      { namespace: "k8s", ...SEMCONV_PIN, components: ["transform/x"] },
+    ]);
   });
 });

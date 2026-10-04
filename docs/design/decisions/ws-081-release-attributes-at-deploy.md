@@ -63,7 +63,9 @@ ws-060 has the build stamp what it knows and leaves `service.version` and `vcs.r
 |---|---|---|
 | Docker Compose | `OTEL_RESOURCE_ATTRIBUTES` ends with `${CHANT_RELEASE_ATTRIBUTES:-}` | the environment of `docker compose up`: `shell` passes it with `env`, `remote-exec` exports it on the host |
 | Kubernetes | an env entry `CHANT_RELEASE_ATTRIBUTES` from `fieldRef: metadata.annotations['chant.intentius.io/release-attributes']`, before `OTEL_RESOURCE_ATTRIBUTES`, which ends with `$(CHANT_RELEASE_ATTRIBUTES)` | `kubectl-apply`, which sets the annotation on the pod template (or the Pod) of each workload whose containers read it, in what it applies |
-| Fly | not yet | follows #3060, which stamps fly apps |
+| Fly | nothing: a Machine's `config.env` values are literal strings, with no expansion to reference a variable from | `fly-release`, which writes the full value into the Machine it serves: the stamped `OTEL_RESOURCE_ATTRIBUTES` with the release's `service.version` and `vcs.ref.head.revision` in place of any the build wrote (#3060) |
+
+On Fly the release step does the merge itself, which option b rejected for Compose and Kubernetes. It costs little there: `fly-release` already writes the Machine's env (`APP_REVISION`), it is the one step that deploys a release, and `fly-rollback` restores a release's whole recorded config, attributes included. A plain apply of the plan carries no release, as a hand-run `kubectl apply` does. The step uses its own `digest` and `gitSha` inputs, which are the release its Machine metadata records.
 
 A Kubernetes `$(VAR)` reference expands only to a variable defined earlier in the container's list, so the entry goes just before `OTEL_RESOURCE_ATTRIBUTES`. A container that defines `CHANT_RELEASE_ATTRIBUTES` itself keeps its own. An `env` given as a map has no order, so it gets no reference.
 

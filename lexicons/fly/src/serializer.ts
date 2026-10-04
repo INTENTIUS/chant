@@ -36,6 +36,7 @@ import type { LexiconOutput } from "@intentius/chant/lexicon-output";
 import { ownershipEntries, OWNERSHIP_MANAGED_BY_VALUE } from "@intentius/chant/ownership";
 import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-walker";
 import { INTRINSIC_MARKER } from "@intentius/chant/intrinsic";
+import { mergeResourceAttributes, telemetryEnvironment, type TelemetryAttribution } from "@intentius/chant/telemetry-attribution";
 import { FLY_METADATA_OWNERSHIP_KEYS } from "./ownership";
 
 const APP_ENTITY_TYPE = "Fly::Machines::App";
@@ -151,6 +152,39 @@ function appName(entity: Declarable, entityName: string): string {
   return typeof name === "string" ? name : entityName;
 }
 
+// ── Telemetry attribution (#3060, D22) ────────────────────────────
+
+/** The digest of an image reference pinned with `@sha256:...`, or undefined. */
+function imageDigest(image: unknown): string | undefined {
+  if (typeof image !== "string") return undefined;
+  const at = image.lastIndexOf("@");
+  return at === -1 ? undefined : image.slice(at + 1);
+}
+
+/**
+ * Stamp one Machine's attributes as `OTEL_SERVICE_NAME` and
+ * `OTEL_RESOURCE_ATTRIBUTES` in its `config.env`, the env the Machine's
+ * process gets. `service` is the owning app's name on Fly, `decl` the
+ * Machine's declaration id. A value the Machine already sets is kept: its own
+ * `OTEL_SERVICE_NAME` wins, and its own resource attributes keep their keys
+ * while the missing ones are appended.
+ *
+ * Machine env values are literal strings, so there is no reference to the
+ * release attributes here: `fly-release` writes them into the value it
+ * deploys (#3061, ws-081).
+ */
+function stampTelemetry(config: Record<string, unknown>, service: string, decl: string, telemetry: TelemetryAttribution): void {
+  const version = imageDigest(config.image);
+  const vars = telemetryEnvironment(telemetry, { service, decl, ...(version ? { version } : {}) });
+  const env: Record<string, unknown> =
+    config.env && typeof config.env === "object" && !Array.isArray(config.env) ? { ...(config.env as Record<string, unknown>) } : {};
+  if (!("OTEL_SERVICE_NAME" in env)) env.OTEL_SERVICE_NAME = vars.OTEL_SERVICE_NAME;
+  const own = env.OTEL_RESOURCE_ATTRIBUTES;
+  if (own === undefined) env.OTEL_RESOURCE_ATTRIBUTES = vars.OTEL_RESOURCE_ATTRIBUTES;
+  else if (typeof own === "string") env.OTEL_RESOURCE_ATTRIBUTES = mergeResourceAttributes(own, vars.OTEL_RESOURCE_ATTRIBUTES);
+  config.env = env;
+}
+
 /**
  * fly flaps serializer.
  */
@@ -242,8 +276,15 @@ export const flySerializer: Serializer = {
         }
         body.config = config;
 
+        // Telemetry attribution (#3060): service.name is the app's name on
+        // Fly, or the Machine's export name when no app is resolved.
+        const owningApp = resolveOwningApp(entity);
+        if (context?.telemetry) {
+          stampTelemetry(config, owningApp === "{app}" ? name : owningApp, name, context.telemetry);
+        }
+
         requests[name] = {
-          endpoint: `/v1/apps/${resolveOwningApp(entity)}/machines`,
+          endpoint: `/v1/apps/${owningApp}/machines`,
           method: "POST",
           body,
         };

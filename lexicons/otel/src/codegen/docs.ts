@@ -55,7 +55,14 @@ connector id shared with a receiver or exporter (OTEL114), a \`routing\` route
 to a pipeline that doesn't receive from it (OTEL115), a connector
 splitting metrics by a per-request GenAI attribute such as
 \`gen_ai.conversation.id\` (OTEL116), two started components listening
-on the same address (OTEL117), and a literal credential in source (OTEL002).
+on the same address (OTEL117), and a literal credential in source (OTEL002)
+or in the config (OTEL120). Others report deprecated fields (OTEL119),
+credentials sent in plaintext (OTEL121), zpages or pprof off loopback
+(OTEL122), detailed debug output beside a backend (OTEL123), delivery and
+batching settings (OTEL124, OTEL125), and k8sattributes fields or
+resourcedetection detectors the collector doesn't know (OTEL126, OTEL127). In
+a build that stamps telemetry attribution, OTEL118 reports a processor that can
+drop or overwrite one of the attribution's resource attributes.
 `;
 
 const outputFormat = `The otel lexicon serializes every otel entity in a build into **one
