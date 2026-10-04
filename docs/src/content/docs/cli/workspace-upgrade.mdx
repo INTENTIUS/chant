@@ -21,7 +21,7 @@ The upgrade is a core command. A template never ships its own upgrader, so an up
 | 1. Fetch | For a git scope, one `git fetch` of the `--to` ref, and one of the commit the scope was made from. For a vendor scope, the source is read again. For a scope made from a directory, the `--to` directory is read from disk. This is the command's only network step (see [Network Egress](/chant/reference/network-egress/)). |
 | 2. Merge base | Rebuilt offline. Each recorded file's content at the old commit is kept when it has the hash the lock recorded. A file the project never edited serves as its own base. |
 | 3. Migrate | A git worktree is checked out at HEAD under `.chant/upgrade/`. The template's [migrations](/chant/reference/template-migrations/) run there, in version order. A gap in the chain refuses the upgrade. Then each [migration chant ships](#migrations-chant-ships) that finds something to move runs there too. |
-| 4. Merge | Each file follows the [update rules](/chant/reference/lineage-lock/#update-rules). An edited file that the template also changed takes the change only when every hunk merges cleanly. Otherwise it stays as it was, and the lock records one manual step for it. |
+| 4. Merge | Each file follows the [update rules](/chant/reference/lineage-lock/#update-rules). An edited file that the template also changed takes the change only when every hunk merges cleanly. Otherwise it stays as it was, and the lock records one manual step for it. Then each [CI workflow a chant member builds](#ci-workflows-a-member-builds) is rebuilt with the chant doing the upgrade. |
 | 5. Check | In the worktree: `chant build` and `chant lint` when the project has a `chant.config`, and the lineage checks of [`chant workspace check`](/chant/cli/workspace-check/). A failure stops the upgrade before its gate. |
 | 6. Gate | The gate `workspace-upgrade` / `<scope>` (or `<member>` for a member scope) on the gate ledger binds the digest of the patch the steps produced. |
 
@@ -62,6 +62,14 @@ A file that did not merge is left whole, and the lock gains a manual step for it
 ### File classes
 
 An upgrade updates or merges `owned` files only. It never touches a `seed` file again, and it leaves each `generated` file for its command to rebuild, naming that command in its output.
+
+### CI workflows a member builds
+
+A chant member can build its repository's CI workflow from TypeScript and commit the result. The studio kit's template does this in `delivery/`: its `ci:build` script is `chant build ci --lexicon github -o ../.github/workflows/ci.yml`, and its CI fails when the committed `ci.yml` differs from what `ci/ci.ts` builds. The workflow depends on the lexicon's composites as well as on `ci.ts`. Upgrading chant can therefore change it with no change to the project ([#2621](https://github.com/INTENTIUS/chant/issues/2621) moved `Checkout` and `SetupNode` from `@v4` to `@v7`), and the committed copy goes stale.
+
+So after the merge, the upgrade looks at each `chant` member's `package.json` for a script that is one `chant build ... -o <file>` command whose output is a committed CI workflow inside the scope (`.github/workflows/`, `.forgejo/workflows/`, `.gitea/workflows/` or `.gitlab-ci.yml`). A script that chains commands, such as `ci:check`, is not one. The upgrade runs each such command in the member's directory of the staging worktree, with the member's `node_modules` linked in, using the chant doing the upgrade ([#3244](https://github.com/INTENTIUS/chant/issues/3244)). A workflow that changed goes into the patch, and the gate approves it with the rest. A CI workflow is a governance file, so that takes a human approval. The output lists it as `workflow rebuilt: <path>`, and `--json` lists every such workflow in `workflows` with its `member`, `script`, `path`, `command` and `status` (`rebuilt`, `unchanged` or `failed`).
+
+This runs on every upgrade of a template scope, including one to the version the scope is already at. To bring an already-planted repo's workflow up to a new chant, install that chant in the member and run `chant workspace upgrade` to the version the scope is at: no `--to` for a git scope, or `--to` the same directory for one made from a directory. A build that fails leaves the workflow as it was and fails the upgrade's `build` check with its output.
 
 ### Scopes made from a directory
 
