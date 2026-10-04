@@ -491,6 +491,8 @@ A box's factory turns a work item into a change: a builder agent edits the membe
 
 The factory is opt-in ([#3174](https://github.com/INTENTIUS/chant/issues/3174)): a workspace with no `factory` is held to nothing here. It needs no box services and no app, so an infra workspace can declare one whose `builds` names its estate members and whose `check` is a plan, and run it on a fountain steward. There is one factory per declaration, and its `builds` and `builders` name only declared members; a second factory or an unknown name stops the read with `declaration-invalid`, which [`check`](/chant/cli/workspace-check/#boxes) reports as `WSP001`. What a build may not change goes in [`writeScope.agent.protected`](#write-scope-and-agent-sessions).
 
+The reference workspace ships three [profiles](/chant/cli/workspace-init/#profiles) that show the opt-in at work: `ideation` declares records and a stub app with no factory, `app` declares the factory over an app member that runs as the box's service, and `infra` declares a factory over an estate member with no app and no box services. `chant workspace init --profile` copies one.
+
 ### Listing
 
 A box can show itself on a home site that lists boxes, with a title, a line and a cover picture. The listing is configuration of the box, so it lives in the declaration and a change to it is reviewed like any other ([#3154](https://github.com/INTENTIUS/chant/issues/3154), [ws-074](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-074-the-repo-is-the-database.md)):
