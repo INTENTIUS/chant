@@ -111,6 +111,8 @@ describe("the writer conformance suite (#3159)", () => {
           cover: { path: "app/listing/cover.png", sha256: createHash("sha256").update(WRITER_INPUTS.cover.bytes).digest("hex") },
         },
       },
+      // #3172: the checkpoint of the uncommitted work; restoring it to the same tree takes no second one.
+      wip: { main: [["save", "turn:1"]] },
     });
   }, 900_000);
 
@@ -123,6 +125,8 @@ describe("the writer conformance suite (#3159)", () => {
     const by = Object.fromEntries(report.results.map((r) => [r.id, r]));
     expect(by.claim.by).toBe("suite");
     expect(by.listing).toMatchObject({ by: "suite", problems: [] });
+    expect(by.checkpoint).toMatchObject({ by: "suite", problems: [] });
+    expect(by.undo).toMatchObject({ by: "suite", problems: [] });
     expect(by.session.problems).toEqual([]);
     expect(by.decision.problems).toEqual(["decision (records new): the writer must return the document chant printed, unchanged, and it returned something else"]);
     expect(by.amend.problems).toHaveLength(2);

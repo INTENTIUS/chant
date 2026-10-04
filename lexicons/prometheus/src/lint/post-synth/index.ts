@@ -17,6 +17,20 @@ import { prom207 } from "./prom207";
 import { prom208 } from "./prom208";
 import { prom209 } from "./prom209";
 import { prom210 } from "./prom210";
+import { prom211 } from "./prom211";
+import { prom212 } from "./prom212";
+import { prom213 } from "./prom213";
+import { prom214 } from "./prom214";
+import { prom215 } from "./prom215";
+import { prom216 } from "./prom216";
+import { prom217 } from "./prom217";
+import { prom218 } from "./prom218";
+import { prom219 } from "./prom219";
+import { prom220 } from "./prom220";
+import { prom221 } from "./prom221";
+import { prom222 } from "./prom222";
+import { prom223 } from "./prom223";
+import { prom224 } from "./prom224";
 
 export const postSynthChecks: PostSynthCheck[] = [
   prom101,
@@ -36,4 +50,18 @@ export const postSynthChecks: PostSynthCheck[] = [
   prom208,
   prom209,
   prom210,
+  prom211,
+  prom212,
+  prom213,
+  prom214,
+  prom215,
+  prom216,
+  prom217,
+  prom218,
+  prom219,
+  prom220,
+  prom221,
+  prom222,
+  prom223,
+  prom224,
 ];

@@ -4,6 +4,12 @@ import { genAiComponents, genAiMetrics } from "./genai";
 import { prometheusLabel, prometheusMetricName, spanMetricsNames } from "./metric-names";
 
 describe("spanMetricsNames", () => {
+  test("takes a span_metrics declaration, the collector's newer name, as a spanmetrics one", () => {
+    const declared = { componentType: "span_metrics", props: { namespace: "spans" } } as never;
+    expect(spanMetricsNames(declared).namespace).toBe("spans");
+    expect(() => spanMetricsNames({ componentType: "count", props: {} } as never)).toThrow("expected a spanmetrics connector");
+  });
+
   test("defaults: the traces.span.metrics namespace and a millisecond histogram", () => {
     const n = spanMetricsNames(new SpanMetricsConnector({}));
     expect(n.namespace).toBe("traces.span.metrics");

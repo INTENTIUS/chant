@@ -50,6 +50,25 @@ describe("collectorNodeAccess", () => {
     expect(access.env).toEqual([{ name: "KUBE_NODE_NAME", valueFrom: { fieldRef: { fieldPath: "spec.nodeName" } } }]);
   });
 
+  test("the collector's newer names read the node the same as the old ones", () => {
+    const old = collectorNodeAccess(
+      cfg(
+        { kubeletstats: { node: "${env:K8S_NODE_NAME}" }, hostmetrics: { root_path: "/hostfs" }, filelog: { include: ["/var/log/pods/*/*/*.log"] } },
+        { k8sattributes: { filter: { node_from_env_var: "KUBE_NODE_NAME" } } },
+      ),
+    );
+    const renamed = collectorNodeAccess(
+      cfg(
+        { kubelet_stats: { node: "${env:K8S_NODE_NAME}" }, host_metrics: { root_path: "/hostfs" }, file_log: { include: ["/var/log/pods/*/*/*.log"] } },
+        { k8s_attributes: { filter: { node_from_env_var: "KUBE_NODE_NAME" } } },
+      ),
+    );
+    expect(renamed.env).toEqual(old.env);
+    expect(renamed.mounts.map(({ component: _, ...m }) => m)).toEqual(old.mounts.map(({ component: _, ...m }) => m));
+    expect(renamed.readsLogs).toBe(true);
+    expect(renamed.mounts).toHaveLength(2);
+  });
+
   test("kubeletstats: node and a NODE_NAME endpoint get the node name, a NODE_IP endpoint the host IP", () => {
     expect(collectorNodeAccess(cfg({ kubeletstats: { endpoint: "https://${env:K8S_NODE_NAME}:10250", node: "${env:K8S_NODE_NAME}" } })).env).toEqual([NODE_NAME]);
     expect(collectorNodeAccess(cfg({ kubeletstats: { endpoint: "https://${env:K8S_NODE_IP}:10250" } })).env).toEqual([

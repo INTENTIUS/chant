@@ -19,6 +19,8 @@
  * builds queries from it does not load the collector components.
  */
 
+import { canonicalComponentType } from "./model";
+
 /** A metric a collector component emits, as the collector names it and as Prometheus exposes it. */
 export interface CollectorMetric {
   /** The OTLP metric name. */
@@ -114,7 +116,7 @@ type Declared = { componentType?: unknown; props?: unknown };
 function configOf(connector: SpanMetricsNamingConfig | Declared): SpanMetricsNamingConfig {
   const d = connector as Declared;
   if (typeof d.componentType === "string") {
-    if (d.componentType !== "spanmetrics") throw new Error(`spanMetricsNames: expected a spanmetrics connector, got ${d.componentType}`);
+    if (canonicalComponentType("connector", d.componentType) !== "spanmetrics") throw new Error(`spanMetricsNames: expected a spanmetrics connector, got ${d.componentType}`);
     return (d.props ?? {}) as SpanMetricsNamingConfig;
   }
   return connector as SpanMetricsNamingConfig;

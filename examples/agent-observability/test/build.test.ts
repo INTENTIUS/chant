@@ -2,8 +2,8 @@
  * The agent-observability example builds into the stack #2904 describes, and
  * each rendered config says what the example claims it does. Always runs:
  * no cluster and no network. The real tools run when they are installed
- * (`otelcol-contrib` or `OTELCOL_BIN`, `promtool`, `amtool`) and each check
- * says it skipped otherwise; the on-demand e2e (stack.e2e.test.ts) runs all
+ * (`otelcol-contrib` or `OTELCOL_BIN`, `promtool` or `PROMTOOL`, `amtool` or
+ * `AMTOOL`) and each check skips otherwise; the on-demand e2e (stack.e2e.test.ts) runs all
  * three from their images against the same output, then runs the stack.
  */
 import { spawnSync } from "node:child_process";
@@ -17,6 +17,7 @@ import { GENAI_CONTENT_ATTRIBUTES, genAiMetrics, spanMetricsNames } from "@inten
 import { wk8604 } from "@intentius/chant-lexicon-k8s/lint/post-synth/wk8604";
 import {
   amtoolCheckConfig,
+  hasTool,
   promtoolCheckRules,
   sloMetrics,
   validateAlertmanagerConfig,
@@ -196,15 +197,15 @@ describe("rules and routing", () => {
     expect(built.gatewayConfig.exporters?.prometheus).toEqual(expect.objectContaining({ endpoint: "0.0.0.0:8889" }));
   });
 
-  test("promtool check rules", () => {
+  test.skipIf(!hasTool(process.env.PROMTOOL ?? "promtool"))("promtool check rules", () => {
     const r = promtoolCheckRules(built.rulesYaml);
-    if (!r.ran) return console.log("promtool is not installed; skipped `promtool check rules`");
+    expect(r.ran).toBe(true);
     expect(r.ok, r.output).toBe(true);
   });
 
-  test("amtool check-config", () => {
+  test.skipIf(!hasTool(process.env.AMTOOL ?? "amtool"))("amtool check-config", () => {
     const r = amtoolCheckConfig(built.alertmanagerYaml);
-    if (!r.ran) return console.log("amtool is not installed; skipped `amtool check-config`");
+    expect(r.ran).toBe(true);
     expect(r.ok, r.output).toBe(true);
   });
 });

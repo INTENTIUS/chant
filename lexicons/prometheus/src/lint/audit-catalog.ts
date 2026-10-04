@@ -128,7 +128,102 @@ export const prometheusAuditCatalog: Record<string, RuleMeta> = {
     "Integration or global setting Alertmanager rejects",
     "Set one of each value and its *_file, and use a value Alertmanager allows (e.g. message_type text or markdown, parse_mode Markdown, MarkdownV2 or HTML).",
   ),
+  PROM211: outputRule(
+    "PROM211",
+    "report-only",
+    "best-practice",
+    "Alerting rule has no for, or for: 0s",
+    "Set for to how long the condition must hold before the alert fires, e.g. 5m.",
+  ),
+  PROM212: outputRule(
+    "PROM212",
+    "report-only",
+    "best-practice",
+    "Alerting rule has no runbook_url annotation (opt-in)",
+    "Add a runbook_url annotation linking to what the responder should do.",
+  ),
+  PROM213: outputRule(
+    "PROM213",
+    "merge-worthy",
+    "correctness",
+    "Alert expression has no comparison",
+    "Add the condition the alert fires on, e.g. > 0.05, or use absent() for a missing series.",
+  ),
+  PROM214: outputRule(
+    "PROM214",
+    "merge-worthy",
+    "correctness",
+    "Alert template reads a label the expression aggregates away",
+    "Keep the label in the aggregation's by (...), or stop reading it in the template.",
+  ),
+  PROM215: outputRule(
+    "PROM215",
+    "merge-worthy",
+    "correctness",
+    "rate, irate or increase over a name that is not a counter's",
+    "Read a counter (a name ending in _total, _count, _sum or _bucket), or use delta() or deriv() for a gauge.",
+  ),
+  PROM216: outputRule(
+    "PROM216",
+    "merge-worthy",
+    "correctness",
+    "histogram_quantile over a series without _bucket, or without le",
+    "Pass the histogram's _bucket series, and keep le in the aggregation: sum by (le, ...) (rate(x_bucket[5m])).",
+  ),
+  PROM217: outputRule(
+    "PROM217",
+    "report-only",
+    "best-practice",
+    "Recording rule name is not level:metric:operations",
+    "Name the recorded series level:metric:operations, e.g. job:http_requests:rate5m.",
+  ),
+  PROM218: outputRule(
+    "PROM218",
+    "report-only",
+    "best-practice",
+    "Regex matcher needs no regex, or is anchored",
+    'Use = or != for a plain value, and drop ^ and $ from a regex, which Prometheus anchors already (job=~"api|web").',
+  ),
+  PROM219: outputRule("PROM219", "merge-worthy", "correctness", "Alerting rule sets the alertname label", "Remove the alertname label; rename the rule instead."),
+  PROM220: outputRule(
+    "PROM220",
+    "merge-worthy",
+    "security",
+    "Receiver turns off TLS certificate verification",
+    "Remove insecure_skip_verify, and set ca_file to the CA that signed the endpoint's certificate.",
+  ),
+  PROM221: outputRule(
+    "PROM221",
+    "merge-worthy",
+    "security",
+    "SMTP credentials sent with require_tls false",
+    "Set require_tls (or global.smtp_require_tls) to true, or use force_implicit_tls with an SMTPS port.",
+  ),
+  PROM222: outputRule(
+    "PROM222",
+    "merge-worthy",
+    "security",
+    "Credentials sent to an http:// receiver URL",
+    "Point the integration at an https:// URL.",
+  ),
+  PROM223: outputRule(
+    "PROM223",
+    "merge-worthy",
+    "correctness",
+    "repeat_interval is shorter than group_interval",
+    "Set repeat_interval to a multiple of group_interval, or lower group_interval.",
+  ),
+  PROM224: outputRule(
+    "PROM224",
+    "merge-worthy",
+    "correctness",
+    "Inhibit rule matches one alert as source and target, with no equal",
+    "List the labels source and target must share under equal (e.g. alertname, cluster), or make the matchers exclusive.",
+  ),
 };
+
+/** Post-synth checks the `recommended` lint preset leaves out (#3363); see `prometheusPlugin.lintPresets()`. */
+export const OPT_IN_CHECKS: ReadonlySet<string> = new Set(["PROM212"]);
 
 // Prior art credits live beside the rules in ./audit-lineage.ts (see core audit/prior-art.ts).
 applyLineage(prometheusAuditCatalog, prometheusAuditLineage);

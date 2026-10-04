@@ -77,7 +77,7 @@ function isHostPort(v: unknown): boolean {
   return m !== null && m[1] !== "";
 }
 
-const SLACK_APP_URL = "https://slack.com/api/chat.postMessage";
+export const SLACK_APP_URL = "https://slack.com/api/chat.postMessage";
 
 class Reporter {
   readonly issues: PrometheusIssue[] = [];

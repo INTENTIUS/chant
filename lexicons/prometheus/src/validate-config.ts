@@ -7,7 +7,7 @@
  * `PrometheusRule`'s groups, or on a file parsed by some other tool.
  */
 
-import { isValidDuration } from "./duration";
+import { durationMs, formatDuration, isValidDuration } from "./duration";
 import { matcherMatches, parseMatchers, type Matcher } from "./matchers";
 import {
   isAlertingRuleConfig,
@@ -20,7 +20,20 @@ import {
   type RuleGroupConfig,
 } from "./model";
 import { checkPromql } from "./promql";
+import {
+  hasCondition,
+  histogramProblems,
+  isMultiWindow,
+  keepsLabel,
+  nonCounterRates,
+  parsePromql,
+  readsOnlyOverTime,
+  regexProblems,
+  resultLabels,
+  selectors,
+} from "./promql-analysis";
 import { validateGlobalSettings, validateReceiverIntegrations } from "./validate-integrations";
+import { validateGlobalSecurity, validateReceiverSecurity } from "./validate-security";
 
 export type PrometheusIssueCode =
   | "PROM101"
@@ -39,7 +52,21 @@ export type PrometheusIssueCode =
   | "PROM207"
   | "PROM208"
   | "PROM209"
-  | "PROM210";
+  | "PROM210"
+  | "PROM211"
+  | "PROM212"
+  | "PROM213"
+  | "PROM214"
+  | "PROM215"
+  | "PROM216"
+  | "PROM217"
+  | "PROM218"
+  | "PROM219"
+  | "PROM220"
+  | "PROM221"
+  | "PROM222"
+  | "PROM223"
+  | "PROM224";
 
 export interface PrometheusIssue {
   code: PrometheusIssueCode;
@@ -66,7 +93,124 @@ function alertLabels(group: RuleGroupConfig, rule: AlertingRuleConfig): LabelSet
   return { ...(group.labels ?? {}), ...(rule.labels ?? {}) };
 }
 
-/** Check a rule file (PROM101-PROM107). */
+/** The `$labels.x`, `.Labels.x` and `index $labels "x"` references in a template. */
+function templateLabels(template: string): string[] {
+  const out = new Set<string>();
+  for (const re of [/\$labels\.([A-Za-z_][A-Za-z0-9_]*)/g, /\.Labels\.([A-Za-z_][A-Za-z0-9_]*)/g, /index\s+\$labels\s+"([^"]+)"/g]) {
+    for (const m of template.matchAll(re)) out.add(m[1]);
+  }
+  return [...out];
+}
+
+/** `level:metric:operations`: three or more non-empty parts separated by colons. */
+const RECORD_NAME = /^[a-zA-Z_][a-zA-Z0-9_]*(?::[a-zA-Z0-9_]+){2,}$/;
+
+/** PROM215, PROM216 and PROM218: what any rule's expression can get wrong. */
+function exprIssues(expr: string, subject: string): PrometheusIssue[] {
+  const issues: PrometheusIssue[] = [];
+  for (const { fn, name } of nonCounterRates(expr)) {
+    issues.push({
+      code: "PROM215",
+      severity: "warning",
+      subject,
+      message: `rule ${subject} takes ${fn}() of ${name}, whose name does not end in _total, _count, _sum or _bucket; ${fn}() reads only counters, so use delta() or deriv() for a gauge`,
+    });
+  }
+  for (const { call, problem } of histogramProblems(expr)) {
+    issues.push({
+      code: "PROM216",
+      severity: "warning",
+      subject,
+      message:
+        problem === "no-bucket"
+          ? `rule ${subject} ${call} reads a series without _bucket in its name; a classic histogram's quantile needs its _bucket series`
+          : `rule ${subject} ${call} aggregates away the le label; keep le in by (...), or out of without (...)`,
+    });
+  }
+  for (const { matcher, problem } of regexProblems(expr)) {
+    issues.push({
+      code: "PROM218",
+      severity: "warning",
+      subject,
+      message:
+        problem === "literal"
+          ? `rule ${subject} matcher ${matcher} has no regex metacharacters; use = or != instead`
+          : `rule ${subject} matcher ${matcher} is anchored; Prometheus anchors every regex, so drop the ^ and $`,
+    });
+  }
+  return issues;
+}
+
+/** PROM211, PROM213, PROM214 and PROM219: alerting rules. */
+function alertIssues(group: RuleGroupConfig, rule: AlertingRuleConfig, subject: string): PrometheusIssue[] {
+  const issues: PrometheusIssue[] = [];
+  const expr = typeof rule.expr === "string" ? rule.expr : "";
+  // An expression that reads no series (`vector(1)`) is a deliberate always-firing
+  // alert, a dead man's switch; PROM211 and PROM213 leave it alone.
+  const heartbeat = parsePromql(expr) !== undefined && selectors(expr).length === 0;
+
+  // PROM211: no for, or for: 0s. An expression that already spans a window
+  // (every selector read through *_over_time, or the multi-window `and` of two
+  // conditions, where the short window does what for would) is left alone. A
+  // for that is not a duration is PROM103's.
+  const forMs = rule.for === undefined ? 0 : durationMs(str(rule.for));
+  if (forMs === 0 && !heartbeat && !readsOnlyOverTime(expr) && !isMultiWindow(expr)) {
+    issues.push({
+      code: "PROM211",
+      severity: "warning",
+      subject,
+      message: `alert ${subject} has ${rule.for === undefined ? "no for" : `for: ${str(rule.for)}`}, so one evaluation that matches fires it; set for to how long the condition must hold`,
+    });
+  }
+
+  // PROM213: no condition
+  if (!heartbeat && hasCondition(expr) === false) {
+    issues.push({
+      code: "PROM213",
+      severity: "warning",
+      subject,
+      message: `alert ${subject} expression has no comparison, so it fires for every series it returns; add a condition such as > 0`,
+    });
+  }
+
+  // PROM214: a template reads a label the expression aggregates away. A label
+  // the rule or its group sets is left alone.
+  const scope = resultLabels(expr);
+  if (scope) {
+    const fixed = alertLabels(group, rule);
+    const reported = new Set<string>();
+    for (const [key, value] of [...Object.entries(rule.annotations ?? {}), ...Object.entries(rule.labels ?? {})]) {
+      for (const label of templateLabels(str(value))) {
+        if (keepsLabel(scope, label) || label in fixed || reported.has(label)) continue;
+        reported.add(label);
+        issues.push({
+          code: "PROM214",
+          severity: "warning",
+          subject,
+          message: `alert ${subject} ${key} reads $labels.${label}, which the expression's by or without drops, so it renders empty`,
+        });
+      }
+    }
+  }
+
+  // PROM219: alertname set by hand
+  for (const [where, labels] of [
+    ["labels", rule.labels],
+    ["group labels", group.labels],
+  ] as const) {
+    if (labels && Object.prototype.hasOwnProperty.call(labels, "alertname")) {
+      issues.push({
+        code: "PROM219",
+        severity: "warning",
+        subject,
+        message: `alert ${subject} ${where} set alertname; Prometheus sets alertname to the rule's name and overwrites it`,
+      });
+    }
+  }
+  return issues;
+}
+
+/** Check a rule file (PROM101-PROM107, PROM211 and PROM213-PROM219). PROM212 is opt-in; see {@link validateRunbookUrls}. */
 export function validateRuleFile(file: RuleFileConfig): PrometheusIssue[] {
   const issues: PrometheusIssue[] = [];
   const groups = Array.isArray(file?.groups) ? file.groups : [];
@@ -181,7 +325,37 @@ export function validateRuleFile(file: RuleFileConfig): PrometheusIssue[] {
             message: `alert ${subject} has no summary or description annotation; a notification carries only its labels`,
           });
         }
+        issues.push(...alertIssues(group, rule as AlertingRuleConfig, subject));
       }
+
+      // PROM217: recording rule name
+      if (recording && !alerting && rule.record.trim() !== "" && !RECORD_NAME.test(rule.record)) {
+        issues.push({
+          code: "PROM217",
+          severity: "warning",
+          subject,
+          message: `recording rule ${subject} is not named level:metric:operations (e.g. job:http_requests:rate5m)`,
+        });
+      }
+
+      if (checked.ok) issues.push(...exprIssues(expr as string, subject));
+    });
+  }
+  return issues;
+}
+
+/**
+ * PROM212: alerts without a `runbook_url` annotation. Not part of
+ * {@link validateRuleFile}, because the check is opt-in: the lint preset
+ * `all`, or a `lint.rules` entry for PROM212, turns it on.
+ */
+export function validateRunbookUrls(file: RuleFileConfig): PrometheusIssue[] {
+  const issues: PrometheusIssue[] = [];
+  for (const group of Array.isArray(file?.groups) ? file.groups : []) {
+    (Array.isArray(group?.rules) ? group.rules : []).forEach((rule, i) => {
+      if (!isAlertingRuleConfig(rule) || rule.annotations?.runbook_url) return;
+      const subject = ruleLabel(group, i, rule);
+      issues.push({ code: "PROM212", severity: "warning", subject, message: `alert ${subject} has no runbook_url annotation` });
     });
   }
   return issues;
@@ -223,7 +397,83 @@ function visitRoutes(root: RouteConfig | undefined): RouteVisit[] {
 
 const AM_DURATIONS = ["group_wait", "group_interval", "repeat_interval"] as const;
 
-/** Check an `alertmanager.yml` on its own (PROM201, PROM203-PROM210). */
+/** Alertmanager's defaults for a root route that sets neither (config/config.go). */
+const DEFAULT_GROUP_INTERVAL_MS = 5 * 60_000;
+const DEFAULT_REPEAT_INTERVAL_MS = 4 * 3_600_000;
+
+/**
+ * PROM223: routes whose repeat_interval, as set or inherited, is shorter
+ * than their group_interval. Alertmanager only resends when a group is
+ * flushed, every group_interval, so the shorter repeat_interval never takes
+ * effect. Reported on the route that sets one of the two.
+ */
+function repeatIntervalIssues(root: RouteConfig | undefined): PrometheusIssue[] {
+  const issues: PrometheusIssue[] = [];
+  const walk = (route: RouteConfig, path: string, groupMs: number, repeatMs: number) => {
+    const ownGroup = route.group_interval !== undefined ? durationMs(str(route.group_interval)) : groupMs;
+    const ownRepeat = route.repeat_interval !== undefined ? durationMs(str(route.repeat_interval)) : repeatMs;
+    if (ownGroup === undefined || ownRepeat === undefined) return; // PROM208
+    if ((route.group_interval !== undefined || route.repeat_interval !== undefined) && ownRepeat < ownGroup) {
+      issues.push({
+        code: "PROM223",
+        severity: "warning",
+        subject: path,
+        message: `${path} repeat_interval (${formatDuration(ownRepeat)}) is shorter than its group_interval (${formatDuration(ownGroup)}); notifications repeat no faster than group_interval`,
+      });
+    }
+    (Array.isArray(route.routes) ? route.routes : []).forEach((child, i) => walk(child, `${path}.routes[${i}]`, ownGroup, ownRepeat));
+  };
+  if (root && typeof root === "object") walk(root, "route", DEFAULT_GROUP_INTERVAL_MS, DEFAULT_REPEAT_INTERVAL_MS);
+  return issues;
+}
+
+function parsedList(entries: unknown): Matcher[] | undefined {
+  const out: Matcher[] = [];
+  for (const m of Array.isArray(entries) ? entries : []) {
+    const parsed = parseMatchers(str(m));
+    if (!parsed.ok) return undefined; // PROM206
+    out.push(...parsed.matchers);
+  }
+  return out;
+}
+
+/** A regex's alternatives when every one is a plain string, e.g. `a|b` gives `["a", "b"]`. */
+function literalAlternatives(regex: string): string[] | undefined {
+  const parts = regex.split("|");
+  return parts.every((p) => !/[.+*?()[\]{}\\^$]/.test(p)) ? parts : undefined;
+}
+
+/**
+ * Whether some label set matches every matcher. A label whose matchers
+ * name values (`=`, or a regex of plain alternatives) is tried with those
+ * values; one with only negative or open-ended matchers is taken to have a
+ * value that passes.
+ */
+function satisfiable(matchers: Matcher[]): boolean {
+  const byLabel = new Map<string, Matcher[]>();
+  for (const m of matchers) byLabel.set(m.name, [...(byLabel.get(m.name) ?? []), m]);
+  for (const [name, ms] of byLabel) {
+    const candidates = new Set<string>();
+    let bounded = false;
+    for (const m of ms) {
+      if (m.op === "=") {
+        candidates.add(m.value);
+        bounded = true;
+      } else if (m.op === "=~") {
+        const alts = literalAlternatives(m.value);
+        if (alts) {
+          alts.forEach((a) => candidates.add(a));
+          bounded = true;
+        }
+      }
+    }
+    if (!bounded) continue;
+    if (![...candidates].some((v) => ms.every((m) => matcherMatches(m, { [name]: v })))) return false;
+  }
+  return true;
+}
+
+/** Check an `alertmanager.yml` on its own (PROM201, PROM203-PROM210, PROM220-PROM224). */
 export function validateAlertmanagerConfig(config: AlertmanagerConfig): PrometheusIssue[] {
   const issues: PrometheusIssue[] = [];
   const receivers = Array.isArray(config?.receivers) ? config.receivers : [];
@@ -309,8 +559,26 @@ export function validateAlertmanagerConfig(config: AlertmanagerConfig): Promethe
     }
   });
 
-  // PROM208, PROM210: global settings
+  // PROM223: repeat_interval under group_interval
+  issues.push(...repeatIntervalIssues(root));
+
+  // PROM224: an inhibit rule an alert can be both source and target of, with no equal
+  (Array.isArray(config?.inhibit_rules) ? config.inhibit_rules : []).forEach((rule, i) => {
+    if (Array.isArray(rule?.equal) && rule.equal.length > 0) return;
+    const source = parsedList(rule?.source_matchers);
+    const target = parsedList(rule?.target_matchers);
+    if (!source || !target || !satisfiable([...source, ...target])) return;
+    issues.push({
+      code: "PROM224",
+      severity: "warning",
+      subject: `inhibit_rules[${i}]`,
+      message: `inhibit_rules[${i}]: one alert can match both source_matchers and target_matchers, and there is no equal, so any such alert firing mutes every other; list the labels the two must share under equal`,
+    });
+  });
+
+  // PROM208, PROM210: global settings; PROM220: global TLS
   issues.push(...validateGlobalSettings(global));
+  issues.push(...validateGlobalSecurity(global));
 
   // PROM207: unused receivers; PROM208-PROM210: integrations (./validate-integrations.ts)
   for (const r of receivers) {
@@ -319,6 +587,7 @@ export function validateAlertmanagerConfig(config: AlertmanagerConfig): Promethe
       issues.push({ code: "PROM207", severity: "warning", subject: name, message: `receiver "${name}" is declared but no route sends to it` });
     }
     issues.push(...validateReceiverIntegrations(r, global));
+    issues.push(...validateReceiverSecurity(r, global));
     // A receiver with no integrations at all is valid: it is how Alertmanager drops alerts.
   }
 

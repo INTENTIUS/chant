@@ -435,6 +435,14 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant workspace records amend|review|close <id> --expect <digest>` (#3173): the record's digest the caller last read.
       result.expect = args[++i];
       if (!result.expect || result.expect.startsWith("-")) throw new Error("--expect needs the record's digest, as records --json prints it: --expect <digest>");
+    } else if (arg === "--label") {
+      // `chant workspace wip save --label <text>` (#3172)
+      result.label = args[++i];
+      if (!result.label || result.label.startsWith("-")) throw new Error("--label needs the snapshot's name, such as a turn id: --label <text>");
+    } else if (arg === "--branch") {
+      // `chant workspace wip --branch <branch>` (#3172)
+      result.branch = args[++i];
+      if (!result.branch || result.branch.startsWith("-")) throw new Error("--branch needs a branch name: --branch <branch>");
     } else if (arg === "--verdict") {
       // `chant workspace records review <id> --verdict agree|dissent|abstain` (#2670)
       result.verdict = args[++i];
@@ -994,6 +1002,23 @@ Workspace (level 1, #2524):
                         and comments; --cover copies a PNG, JPEG or WebP into
                         the repository. Judged by the write scope at base.
                         Prints the box-listing-write document; never commits
+  workspace wip [--branch <branch>] [--json]
+                        List the work-in-progress snapshots under
+                        refs/chant/wip/<branch>, newest first, and how far each
+                        ref the box's replicate policy names is from its remote.
+                        Reads locally; never fetches (#3172)
+  workspace wip save [--label <text>] [--by <principal>]
+                        Snapshot the whole working tree, uncommitted records
+                        included, onto refs/chant/wip/<branch> without touching
+                        the index or the branch; pushes when the policy says so
+  workspace wip restore [<snapshot>] [--by <principal>]
+                        Put the working tree back as the snapshot (the branch's
+                        latest by default) holds it, after a snapshot of how it
+                        is now; HEAD never moves
+  workspace wip push    Push the refs the box's replicate policy names to its
+                        remote, never forced, for the host's schedule
+  workspace wip fetch   On a replacement box, bring back what was replicated:
+                        create or fast-forward the local refs, then wip restore
   workspace points [--open] [--kind <kind file>] [--at <rev>] [--json]
                         List the decision points the declared answer kinds'
                         points files declare, and the questions asked of them;
@@ -1662,6 +1687,8 @@ export const commandRegistry: CommandDef[] = [
   { name: "workspace box", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/box-cli")).runWorkspaceBox(ctx) },
   // #3173 — the working tree's write lock, held across chant calls for a batch of writes (ws-089).
   { name: "workspace lock", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/write-lock-cli")).runWorkspaceLock(ctx) },
+  // #3172 — work in progress under refs/chant/wip/<branch>, replicated under the box's policy (ws-085).
+  { name: "workspace wip", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/wip-cli")).runWorkspaceWip(ctx) },
   { name: "workspace pin", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/pin-cli")).runWorkspacePin(ctx) },
   // #2548 — an agent session's member, write scope and spec, for a session that resumes.
   { name: "workspace agent", runsNoConfig: true, handler: async (ctx) => (await import("../workspace/agent-cli")).runWorkspaceAgent(ctx) },
