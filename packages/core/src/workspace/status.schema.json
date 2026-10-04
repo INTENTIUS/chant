@@ -762,10 +762,11 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["principal", "channel", "at"],
+            "required": ["principal", "channel", "relayedBy", "at"],
             "properties": {
               "principal": { "type": "string", "description": "Who recorded it." },
               "channel": { "type": ["string", "null"], "description": "The channel it was recorded on, such as cli or mcp, or null for a record older than chant#2384." },
+              "relayedBy": { "type": ["string", "null"], "description": "Added in contract 1 by #3402. Who carried the approval to chant for principal (chant approve --relayed-by), such as a follower relaying a person's approval; a seal covers it. Null when nobody relayed it." },
               "at": { "type": "string" }
             }
           }

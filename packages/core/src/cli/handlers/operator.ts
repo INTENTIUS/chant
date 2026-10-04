@@ -908,6 +908,7 @@ export async function runApprove(ctx: CommandContext): Promise<number> {
     ...(ctx.args.roles ? { roles: ctx.args.roles } : {}),
     ...(ctx.args.agent ? { agent: true } : {}),
     ...(ctx.args.sign !== undefined ? { sign: ctx.args.sign } : {}),
+    ...(ctx.args.relayedBy !== undefined ? { relayedBy: ctx.args.relayedBy } : {}),
   });
   if (!outcome.ok) return 1;
 
@@ -945,6 +946,13 @@ export interface GateApprovalOptions {
   actor?: string;
   /** `--note` — free-text prose. */
   note?: string;
+  /**
+   * `--relayed-by <principal>` (#3402): who carried this approval to chant for
+   * the approver, such as a follower program relaying a person's approval.
+   * Recorded as `relayedBy` on the resolution line and covered by `--sign`.
+   * The approver is still `--actor`; the relay is not an approver.
+   */
+  relayedBy?: string;
   /** `--url` — the approval surface, validated as absolute http/https. */
   url?: string;
   /**
@@ -1108,6 +1116,16 @@ export async function recordGateApproval(
     return { ok: false };
   }
 
+  // #3402: the relay is a principal, on one line (the seal's payload is LF-joined).
+  const relayedBy = opts.relayedBy?.trim();
+  if (opts.relayedBy !== undefined && (!relayedBy || /[\r\n]/.test(relayedBy))) {
+    console.error(formatError({
+      message: `--relayed-by needs one principal on one line (got ${JSON.stringify(opts.relayedBy)})`,
+      hint: "Name who relayed the approval, such as --relayed-by github:<login> or a principal the signers file lists.",
+    }));
+    return { ok: false };
+  }
+
   const resolvedBy = opts.actor
     ?? (isModelAuthored(origin)
       // A channel that cannot attest to a name does not get to write one down.
@@ -1133,6 +1151,7 @@ export async function recordGateApproval(
   const scope = scopeSource(cwd);
   try {
     identity.refuseUnidentified(scope, [resolvedBy], opts.actor !== undefined ? "--actor" : "the approver");
+    if (relayedBy) identity.refuseUnidentified(scope, [relayedBy], "--relayed-by");
   } catch (err) {
     if (!(err instanceof identity.IdentityError)) throw err;
     console.error(formatError({
@@ -1165,6 +1184,7 @@ export async function recordGateApproval(
           ...(environment !== undefined ? { environment } : {}),
           ...(planDigest !== undefined ? { planDigest } : {}),
           resolvedBy,
+          ...(relayedBy ? { relayedBy } : {}),
           timestamp,
         });
       } finally {
@@ -1183,6 +1203,7 @@ export async function recordGateApproval(
       ...(environment !== undefined ? { environment } : {}),
       ...(planDigest !== undefined ? { planDigest } : {}),
       resolvedBy,
+      ...(relayedBy ? { relayedBy } : {}),
       timestamp,
       seal,
     });
@@ -1237,6 +1258,7 @@ export async function recordGateApproval(
     op: opName,
     gate,
     resolvedBy,
+    ...(relayedBy ? { relayedBy } : {}),
     timestamp,
     ...(seal ? { seal } : {}),
     approver,
@@ -1254,7 +1276,9 @@ export async function recordGateApproval(
   );
 
   console.error(formatSuccess(
-    `Gate "${gate}" on "${opName}" resolved by ${record.resolvedBy} at ${record.timestamp}` +
+    `Gate "${gate}" on "${opName}" resolved by ${record.resolvedBy}` +
+      (record.relayedBy ? `, relayed by ${record.relayedBy},` : "") +
+      ` at ${record.timestamp}` +
       (record.url ? ` (${record.url})` : "") +
       (record.seal ? `, signed with ${record.seal.key}` : "") +
       (pushed ? "" : " (local only — the push did not land)"),

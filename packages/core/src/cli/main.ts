@@ -558,6 +558,11 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.actor = args[++i];
     } else if (arg === "--approver") {
       result.approver = args[++i];
+    } else if (arg === "--relayed-by") {
+      // `chant approve <op> <gate> --relayed-by <principal>` and `workspace points answer <id> --relayed-by <principal>` (#3402):
+      // who carried the approval or answer to chant for the person it names.
+      result.relayedBy = args[++i];
+      if (!result.relayedBy || result.relayedBy.startsWith("-")) throw new Error("--relayed-by needs the principal that relayed it: --relayed-by <principal>");
     } else if (arg === "--on") {
       // `chant run ... --on <lexicon>` (#2121) — which runtime hosts the run.
       result.on = args[++i];
@@ -902,7 +907,9 @@ Ops:
                         --sign [<key file>] seals the approval with an ssh
                         key; a gate the workspace's identity.gates names
                         counts only an approval sealed by a key the signers
-                        file at base lists for --actor
+                        file at base lists for --actor. --relayed-by
+                        <principal> records who carried the approval to chant
+                        for --actor (a follower, a bot); --sign covers it
 
   graph                 Show Op dependency graph (--stacks for cross-stack order,
                         --format ir|mermaid|dot|layout for the lint-gated graph IR,
@@ -1091,10 +1098,10 @@ Workspace (level 1, #2524):
                         record the answer: proposed from a model, escalated to
                         people below its threshold. --response is a POST
                         /v1/systemone response the caller got; chant calls no model
-  workspace points answer <id> --answer <value> --by <name>... [--note <text>] [--kind <kind file>] [--dry-run]
+  workspace points answer <id> --answer <value> --by <name>... [--note <text>] [--relayed-by <principal>] [--kind <kind file>] [--dry-run]
                         Record people's answer to an open question, or confirm
                         a model's proposal, once the point's quorum is met,
-                        with their note
+                        with their note and who relayed it
   workspace points retract <id> --by <name>... [--note <text>] [--kind <kind file>] [--dry-run]
                         Take an answer back: the question is open for people
                         again, and the answer stays in its retractions

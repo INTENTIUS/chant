@@ -60,6 +60,8 @@ A gate is listed for each environment the command shows, once a run has reached 
 | `expired` | Not approved, and the pending fact is past `expiresAt`. The next run records a fresh one. |
 | `superseded` | Not approved, and an approval recorded since the gate was reached names a different plan, so it doesn't count. |
 
+Each approval names its `principal` (the approver), the `channel` it was recorded on, and `relayedBy`: who carried it to chant for the approver (`chant approve --relayed-by`, [#3402](https://github.com/INTENTIUS/chant/issues/3402)), or `null` when the approver recorded it themselves.
+
 Each gate carries `approve`, the exact command that approves it, to run in the member's directory: `chant approve <component> <gate> --env <env>`, without `--env` for a gate that records no environment.
 
 ### Boxes
@@ -229,7 +231,7 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
           "state": "pending",
           "recordedAt": "2026-09-21T09:00:00.000Z",
           "expiresAt": "2026-09-23T09:00:00.000Z",
-          "approvals": [{ "principal": "alice", "channel": "cli", "at": "2026-09-21T09:30:00.000Z" }],
+          "approvals": [{ "principal": "alice", "channel": "cli", "relayedBy": null, "at": "2026-09-21T09:30:00.000Z" }],
           "needed": 2,
           "approve": "chant approve api deploy --env prod"
         }

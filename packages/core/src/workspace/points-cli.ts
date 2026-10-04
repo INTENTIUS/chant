@@ -243,7 +243,7 @@ export function responseAsk(response: unknown): ModelAsk {
 const USAGE = [
   "chant workspace points [--open] [--kind <kind file>] [--at <rev>] [--json]",
   "chant workspace points ask <point> --inputs <file|-> [--response <file>] [--subject <id>] [--kind <kind file>] [--dry-run]",
-  "chant workspace points answer <id> --answer <value> --by <name> [--by <name>...] [--note <text>] [--kind <kind file>] [--dry-run]",
+  "chant workspace points answer <id> --answer <value> --by <name> [--by <name>...] [--note <text>] [--relayed-by <principal>] [--kind <kind file>] [--dry-run]",
   "chant workspace points retract <id> --by <name> [--by <name>...] [--note <text>] [--kind <kind file>] [--dry-run]",
 ].join("\n");
 
@@ -293,7 +293,7 @@ export async function runWorkspacePoints(ctx: CommandContext): Promise<number> {
     if (!id) return print(usage("answer", "answer needs the question's id"));
     if (args.answer === undefined) return print(usage("answer", "--answer <value> is required"));
     if (!args.bys || args.bys.length === 0) return print(usage("answer", "--by <name> is required, once for each person who answered"));
-    return print(await answerPoint({ cwd, id, answer: args.answer, by: args.bys, note: args.note, kind: args.kind, dryRun: args.dryRun }));
+    return print(await answerPoint({ cwd, id, answer: args.answer, by: args.bys, note: args.note, relayedBy: args.relayedBy, kind: args.kind, dryRun: args.dryRun }));
   }
   if (verb === "retract") {
     const id = args.extraPositional2;
