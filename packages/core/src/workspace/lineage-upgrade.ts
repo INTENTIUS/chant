@@ -21,6 +21,9 @@
  * 4. Merge per file (ws-005): an edited file takes the new version only when
  *    every hunk merges cleanly. Otherwise it stays as it was, with one manual
  *    step. The worktree never holds conflict markers.
+ *    Then rebuild each CI workflow a chant member's package.json builds with
+ *    `chant build ... -o <workflow>` (#3244), with the chant doing the
+ *    upgrade, so the committed workflow follows that chant's composites.
  * 5. Check the worktree: `chant build` and `chant lint` when the project is a
  *    chant project, and the lineage checks of `chant workspace check`.
  * 6. Bind the gate to the digest of the resulting patch: the pending fact and
@@ -34,7 +37,7 @@
  */
 
 import { execFileSync, spawn } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { computePlanDigest } from "../lifecycle/plan-digest";
@@ -64,6 +67,7 @@ import { pathsInsideNested } from "./nesting";
 import { carryParameters, readManifest, substituteParameters } from "./template-manifest";
 import { repinSubstituted, type RepinnedRecord } from "./template-pins";
 import { workingTree } from "./tree";
+import { splitCommandLine } from "./checks/generated";
 
 /** The kind the patch digest is taken under, so it never collides with another kind of plan. */
 export const UPGRADE_PLAN_KIND = "workspace-upgrade";
@@ -86,22 +90,26 @@ export interface UpgradeCheck {
   member?: string;
 }
 
-/** Runs `chant build` or `chant lint` in a directory. */
-export type ChantRunner = (command: "build" | "lint", cwd: string) => Promise<{ exitCode: number; output: string }>;
+/**
+ * Runs `chant build` or `chant lint` in a directory, with `args` after the
+ * command when given (a workflow rebuild's `ci --lexicon github -o <file>`,
+ * #3244).
+ */
+export type ChantRunner = (command: "build" | "lint", cwd: string, args?: readonly string[]) => Promise<{ exitCode: number; output: string }>;
 
 /**
  * The default runner: this same chant, in a child process. The child sees the
  * worktree's sources and resolves packages the way the project does, since the
  * worktree sits inside the project.
  */
-export const spawnChant: ChantRunner = (command, cwd) =>
+export const spawnChant: ChantRunner = (command, cwd, args = []) =>
   new Promise((resolvePromise, reject) => {
     const entry = process.argv[1];
     if (!entry) {
       reject(new UpgradeError("cannot find the chant entry point to run build and lint in the worktree"));
       return;
     }
-    const child = spawn(process.execPath, [...process.execArgv, entry, command], { cwd, stdio: ["ignore", "pipe", "pipe"], env: process.env });
+    const child = spawn(process.execPath, [...process.execArgv, entry, command, ...args], { cwd, stdio: ["ignore", "pipe", "pipe"], env: process.env });
     const out: Buffer[] = [];
     child.stdout.on("data", (c: Buffer) => out.push(c));
     child.stderr.on("data", (c: Buffer) => out.push(c));
@@ -139,6 +147,121 @@ export interface UpgradeOptions {
   runChant?: ChantRunner;
 }
 
+/**
+ * A CI workflow a chant member's package.json builds, and what rebuilding it
+ * did (#3244). `rebuilt`: the workflow chant builds now differs from the one
+ * committed, and the patch carries the new one. `unchanged`: it is the same.
+ * `failed`: the build failed, the file is left as the merge left it, and the
+ * upgrade's `build` check fails with the output.
+ */
+export interface RebuiltWorkflow {
+  /** The chant member whose package.json script builds it. */
+  member: string;
+  /** The script's name, such as `ci:build`. */
+  script: string;
+  /** The workflow, relative to the repository root. */
+  path: string;
+  /** The command line, as the script has it. */
+  command: string;
+  status: "rebuilt" | "unchanged" | "failed";
+  /** The tail of the build's output, when it failed. */
+  detail?: string;
+}
+
+/** A CI workflow path a forge reads, relative to the repository root. The governance list's pipeline entries. */
+const CI_WORKFLOW = [/(^|\/)\.github\/workflows\/[^/]+\.ya?ml$/, /(^|\/)\.forgejo\/workflows\/[^/]+\.ya?ml$/, /(^|\/)\.gitea\/workflows\/[^/]+\.ya?ml$/, /(^|\/)\.gitlab-ci\.ya?ml$/];
+
+/**
+ * The CI workflows the chant members under `worktreeProject` build: each
+ * package.json script that is one `chant build ... -o <file>` command (no
+ * shell, no `&&`), whose output is a committed CI workflow inside the scope.
+ * The studio kit's template has `"ci:build": "chant build ci --lexicon github
+ * -o ../.github/workflows/ci.yml"` in delivery/, and its CI fails when the
+ * committed workflow differs from what ci/ci.ts builds.
+ */
+function workflowBuilds(worktree: string, worktreeProject: string, scopeRepoPath: string): Array<{ member: string; script: string; command: string; args: string[]; abs: string; path: string }> {
+  const out: Array<{ member: string; script: string; command: string; args: string[]; abs: string; path: string }> = [];
+  for (const member of chantMemberDirs(worktreeProject)) {
+    const dir = member === "." ? worktreeProject : join(worktreeProject, member);
+    let scripts: Record<string, unknown>;
+    try {
+      scripts = (JSON.parse(readFileSync(join(dir, "package.json"), "utf-8")) as { scripts?: Record<string, unknown> }).scripts ?? {};
+    } catch {
+      continue;
+    }
+    for (const [script, line] of Object.entries(scripts)) {
+      if (typeof line !== "string") continue;
+      const words = splitCommandLine(line);
+      if (!words || words[0] !== "chant" || words[1] !== "build") continue;
+      const flag = words.findIndex((w) => w === "-o" || w === "--output");
+      const target = flag >= 0 ? words[flag + 1] : words.find((w) => w.startsWith("--output="))?.slice("--output=".length);
+      if (!target) continue;
+      const abs = resolve(dir, target);
+      const path = relative(worktree, abs).split(sep).join("/");
+      if (path.startsWith("../") || !CI_WORKFLOW.some((re) => re.test(path))) continue;
+      if (scopeRepoPath !== "." && !path.startsWith(`${scopeRepoPath}/`)) continue;
+      if (!existsSync(abs)) continue;
+      out.push({ member, script, command: line, args: words.slice(2), abs, path });
+    }
+  }
+  return out;
+}
+
+/**
+ * Rebuild the CI workflows {@link workflowBuilds} finds (#3244), each in its
+ * member's directory of the staging worktree with that member's node_modules
+ * linked in from the project. A workflow is built from the member's sources
+ * through the lexicon's composites, so upgrading chant can change it with no
+ * change to the sources (#2621 moved Checkout and SetupNode from v4 to v7),
+ * and a committed copy then fails the project's own ci:check. Rebuilding it
+ * here puts the new workflow in the patch the gate approves. The links are
+ * removed before the patch is taken. A build that fails leaves the file as
+ * the merge left it.
+ */
+async function rebuildWorkflows(root: string, worktree: string, worktreeProject: string, scopeRepoPath: string, run: ChantRunner): Promise<RebuiltWorkflow[]> {
+  const builds = workflowBuilds(worktree, worktreeProject, scopeRepoPath);
+  if (builds.length === 0) return [];
+  const linked: string[] = [];
+  const results: RebuiltWorkflow[] = [];
+  try {
+    for (const member of new Set(builds.map((b) => b.member))) {
+      if (member === ".") continue;
+      const from = join(root, member, "node_modules");
+      const to = join(worktreeProject, member, "node_modules");
+      if (existsSync(from) && !existsSync(to) && existsSync(dirname(to))) {
+        symlinkSync(from, to, "dir");
+        linked.push(to);
+      }
+    }
+    for (const b of builds) {
+      const before = readFileSync(b.abs);
+      const r = await run("build", b.member === "." ? worktreeProject : join(worktreeProject, b.member), b.args);
+      const base = { member: b.member, script: b.script, path: b.path, command: b.command };
+      if (r.exitCode !== 0) {
+        writeFileSync(b.abs, before);
+        results.push({ ...base, status: "failed", detail: tail(r.output) });
+        continue;
+      }
+      const after = existsSync(b.abs) ? readFileSync(b.abs) : null;
+      if (after === null) {
+        writeFileSync(b.abs, before);
+        results.push({ ...base, status: "failed", detail: `\`${b.command}\` exited 0 and wrote no ${b.path}` });
+        continue;
+      }
+      results.push({ ...base, status: after.equals(before) ? "unchanged" : "rebuilt" });
+    }
+  } finally {
+    for (const l of linked) {
+      try {
+        if (lstatSync(l).isSymbolicLink()) unlinkSync(l);
+      } catch {
+        // Already gone.
+      }
+    }
+  }
+  return results;
+}
+
 export interface GovernanceChange {
   /** Changed governance paths, relative to the repository root. */
   paths: string[];
@@ -166,6 +289,8 @@ export interface StagedUpgrade {
   migrations: string[];
   /** The migrations chant ships (./chant-migrations.ts) that found something to move, applied or not. */
   chantMigrations: ChantMigrationReport[];
+  /** The CI workflows a chant member builds, rebuilt with this chant before the patch was taken (#3244). */
+  workflows: RebuiltWorkflow[];
   written: string[];
   merged: string[];
   removed: string[];
@@ -694,6 +819,10 @@ export async function stageUpgrade(options: UpgradeOptions): Promise<StagedUpgra
     writeLock(worktreeProject, next);
     const lockText = renderLock(next);
 
+    // The CI workflows a chant member builds, rebuilt with this chant (#3244),
+    // before the patch is taken so the gate approves them with the rest.
+    const workflows = lineage.kind === "template" ? await rebuildWorkflows(root, worktree, worktreeProject, scopeRepoPath, options.runChant ?? spawnChant) : [];
+
     // The patch, taken before anything else runs in the worktree.
     gitOut(worktree, ["add", "-A"]);
     if (!lockTracked) gitOut(worktree, ["rm", "--cached", "-q", "--ignore-unmatch", "--", lockRepoPath]);
@@ -730,6 +859,14 @@ export async function stageUpgrade(options: UpgradeOptions): Promise<StagedUpgra
 
     // 5. Checks.
     const checks: UpgradeCheck[] = [];
+    for (const w of workflows.filter((w) => w.status === "failed")) {
+      checks.push({
+        name: "build",
+        status: "failed",
+        member: w.member,
+        detail: `${w.path} could not be rebuilt with \`${w.command}\` (the ${w.script} script), so it may differ from what this chant builds:\n${w.detail ?? ""}`,
+      });
+    }
     for (const m of chantMigrations.filter((m) => !m.applied)) {
       checks.push({
         name: "migration",
@@ -783,6 +920,7 @@ export async function stageUpgrade(options: UpgradeOptions): Promise<StagedUpgra
       ...(upstream.commit ? { commit: { ...(lineage.address?.commit ? { from: lineage.address.commit } : {}), to: upstream.commit } } : {}),
       migrations: [...plan.chain.map((m) => m.migration.id), ...chantMigrations.filter((m) => m.applied).map((m) => m.id)],
       chantMigrations,
+      workflows,
       written: result.written,
       merged: result.merged,
       removed: result.removed,
@@ -884,6 +1022,9 @@ export function describeStaged(staged: StagedUpgrade): string[] {
     for (const c of m.changes) lines.push(`    ${c.action === "delete" ? "delete" : "write"}: ${at(c.path)} (${c.why}${c.edited ? "; it was edited since the template, and the edit stays in git history" : ""})`);
     for (const n of m.notMoved) lines.push(`    not moved: ${n.what} -> ${n.where}`);
     for (const c of m.conflicts) lines.push(`    conflict: ${at(c.path)}: ${c.reason}`);
+  }
+  for (const w of staged.workflows) {
+    if (w.status !== "unchanged") lines.push(`  workflow ${w.status === "rebuilt" ? "rebuilt" : "not rebuilt"}: ${w.path} (${w.script}: ${w.command})`);
   }
   for (const p of staged.written) lines.push(`  updated: ${at(p)}`);
   for (const p of staged.merged) lines.push(`  merged: ${at(p)}`);
