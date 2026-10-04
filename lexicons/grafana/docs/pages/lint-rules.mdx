@@ -28,6 +28,7 @@ The grafana lexicon's rules use the `GRAF` prefix. `GRAF0xx` rules read your Typ
 | GRAF115 | warning | a panel unit that is neither a Grafana unit id nor a custom unit |
 | GRAF116 | error | a panel query, query variable stream selector, annotation query or alert rule query sent to a Loki datasource that is not valid LogQL |
 | GRAF117 | warning | a panel query sent to a Tempo datasource that is not valid TraceQL |
+| GRAF118 | warning | a panel query reading a spanmetrics, servicegraph or GenAI metric no collector config in the build emits, or grouping one by a label that is not a declared dimension |
 
 ## GRAF001
 
@@ -141,3 +142,7 @@ It is a syntax check: `{app="x"` (an unclosed selector), `rate({app="x"}[1]m)` a
 Every panel query whose datasource resolves to a `tempo` one and whose `queryType` is `traceql` is parsed with the grammar behind Grafana's Tempo query editor (`@grafana/lezer-traceql`). A query with no `queryType` is parsed unless it is a trace id; search, service graph and trace id queries hold no TraceQL. Template variables are substituted as for GRAF108, and an error at a variable is not reported.
 
 GRAF117 is a warning because Grafana's TraceQL grammar trails Tempo's own parser: syntax newer than the grammar (query hints such as `{ } with (sample=true)`) is flagged though Tempo runs it. Check such a query against Tempo before changing it.
+
+## GRAF118
+
+The prometheus lexicon's PROM301, run over dashboards. Every panel query and query variable that reaches a `prometheus` datasource, with template variables substituted as for GRAF108, is read against the collector configs in the build: the otel lexicon's own, rebuilt from the build's otel entities, and any config in the output or in a ConfigMap. A selector whose name falls under a namespace a `spanmetrics`, `servicegraph`, or GenAI `sum` or `signaltometrics` connector owns, or under the spanmetrics and servicegraph defaults, must be a name a config emits. A `by (...)` label over such metrics must be a declared dimension, `job`, `instance`, an `otel_scope_*` label, or `le` on a `_bucket` series. GRAF118 is silent when the build has no collector config, and for names outside those namespaces. See the prometheus lexicon's lint rules for what it reads.

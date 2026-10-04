@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
-import { PrometheusExporter, SpanMetricsConnector } from "./components";
+import { PrometheusExporter, ServiceGraphConnector, SpanMetricsConnector } from "./components";
 import { genAiComponents, genAiMetrics } from "./genai";
-import { prometheusLabel, prometheusMetricName, spanMetricsNames } from "./metric-names";
+import { prometheusLabel, prometheusMetricName, serviceGraphNames, spanMetricsNames } from "./metric-names";
 
 describe("spanMetricsNames", () => {
   test("takes a span_metrics declaration, the collector's newer name, as a spanmetrics one", () => {
@@ -82,5 +82,21 @@ describe("prometheus naming", () => {
     expect(prometheusMetricName("requests_total", "sum")).toBe("requests_total");
     expect(prometheusMetricName("latency.seconds", "histogram", "s")).toBe("latency_seconds");
     expect(prometheusMetricName("calls", "sum", "{call}")).toBe("calls_total");
+  });
+});
+
+describe("serviceGraphNames", () => {
+  test("the fixed names, in seconds, with the edge labels and the client_/server_ dimensions", () => {
+    const n = serviceGraphNames(new ServiceGraphConnector({ dimensions: ["http.method"], virtual_node_extra_label: true }));
+    expect(n.requests.prometheus).toBe("traces_service_graph_request_total");
+    expect(n.failed.prometheus).toBe("traces_service_graph_request_failed_total");
+    expect(n.serverDuration.prometheus).toBe("traces_service_graph_request_server_seconds");
+    expect(n.clientDuration.prometheus).toBe("traces_service_graph_request_client_seconds");
+    expect(n.requests.dimensions).toEqual(["client", "server", "connection_type", "failed", "client_http.method", "server_http.method", "virtual_node"]);
+  });
+
+  test("the exporter's namespace prefixes the names", () => {
+    expect(serviceGraphNames({}, new PrometheusExporter({ endpoint: "0.0.0.0:8889", namespace: "otel" })).requests.prometheus).toBe("otel_traces_service_graph_request_total");
+    expect(() => serviceGraphNames(new SpanMetricsConnector({}))).toThrow(/expected a servicegraph connector/);
   });
 });

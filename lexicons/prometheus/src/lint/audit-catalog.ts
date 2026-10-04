@@ -220,6 +220,13 @@ export const prometheusAuditCatalog: Record<string, RuleMeta> = {
     "Inhibit rule matches one alert as source and target, with no equal",
     "List the labels source and target must share under equal (e.g. alertname, cluster), or make the matchers exclusive.",
   ),
+  PROM301: outputRule(
+    "PROM301",
+    "merge-worthy",
+    "correctness",
+    "Rule reads a connector metric no collector in the build emits",
+    "Read the name spanMetricsNames(), serviceGraphNames() or genAiMetrics() gives for the declared connector, and group by its declared dimensions, or add the dimension to the connector.",
+  ),
 };
 
 /** Post-synth checks the `recommended` lint preset leaves out (#3363); see `prometheusPlugin.lintPresets()`. */
