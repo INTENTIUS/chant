@@ -95,6 +95,29 @@ const FileStorageExtension = defineComponent<Record<string, unknown>>()({
 
 When the file was built by chant, its `# chant:` header names each custom component's schema pin, and the importer uses that pin instead of `COLLECTOR_PIN`. To get type checking back, give the definition a config interface, as [Custom Components](../custom-components/) describes.
 
+## Renamed component types
+
+Newer collector releases renamed twelve of the built-in types and kept the old names as deprecated aliases. A config written for a current collector may use either name. The importer maps both to the same class, so `span_metrics` imports as `SpanMetricsConnector` just as `spanmetrics` does.
+
+The class writes the old name, which the pinned collector (v0.130.0) knows and newer ones still accept. Each component that used a new name gets an import warning saying so, and its id changes with it: `span_metrics/genai` comes back as `spanmetrics/genai`, in the pipelines too.
+
+| New name | Built-in | Renamed in |
+|----------|----------|------------|
+| `otlp_grpc` exporter | `otlp` | core v0.148.0 |
+| `otlp_http` exporter | `otlphttp` | core v0.148.0 |
+| `k8s_attributes` processor | `k8sattributes` | contrib v0.148.0 |
+| `signal_to_metrics` connector | `signaltometrics` | contrib v0.148.0 |
+| `file_log` receiver | `filelog` | contrib v0.149.0 |
+| `span_metrics` connector | `spanmetrics` | contrib v0.151.0 |
+| `service_graph` connector | `servicegraph` | contrib v0.151.0 |
+| `host_metrics` receiver | `hostmetrics` | contrib v0.151.0 |
+| `kubelet_stats` receiver | `kubeletstats` | contrib v0.152.0 |
+| `resource_detection` processor | `resourcedetection` | contrib v0.153.0 |
+| `load_balancing` exporter | `loadbalancing` | contrib v0.153.0 |
+| `delta_to_cumulative` processor | `deltatocumulative` | contrib v0.158.0 |
+
+The `otlp` receiver kept its name. The config checks read both names too. The table is exported as `COMPONENT_TYPE_ALIASES`, with `canonicalComponentType()` for code that reads collector configs.
+
 ## Service block
 
 Without a `Service`, chant enables every declared extension in declaration order. The importer writes a `Service` only when the config differs from that: a different order, an extension declared but not enabled, or a `telemetry` block, which is carried as written.

@@ -11,7 +11,7 @@
 import type { Declarable } from "@intentius/chant/declarable";
 import { definitionFor, definitionOf, isOTelComponent, isUsablePin, runValidator } from "./define";
 import { componentConfig } from "./collector";
-import { isComponentId, parseComponentId, pipelineSignal, SIGNALS, type CollectorConfig, type ConnectorSignalPair } from "./model";
+import { canonicalComponentType, isComponentId, parseComponentId, pipelineSignal, SIGNALS, type CollectorConfig, type ConnectorSignalPair } from "./model";
 import { isPipelineEntity } from "./pipeline";
 import { signalToMetricsEntries, type SignalToMetricsConnectorConfig } from "./components/connectors";
 import { genAiCardinalityRisk } from "./genai";
@@ -449,7 +449,7 @@ function metricAttributeUses(type: string, config: Record<string, unknown>): Met
 function metricAttributeIssues(config: CollectorConfig): CollectorIssue[] {
   const issues: CollectorIssue[] = [];
   for (const [id, raw] of Object.entries(config.connectors ?? {})) {
-    const type = parseComponentId(id)?.type ?? id;
+    const type = canonicalComponentType("connector", parseComponentId(id)?.type ?? id);
     const body = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
     for (const { key, field } of metricAttributeUses(type, body)) {
       const risk = genAiCardinalityRisk(key);

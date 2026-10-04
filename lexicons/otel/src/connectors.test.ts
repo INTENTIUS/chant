@@ -235,6 +235,9 @@ service:
     expect(diags.every((d) => d.severity === "error" && d.checkId === "OTEL112")).toBe(true);
     // One-sided use is OTEL101's, not this rule's.
     expect(otel101.check(ctxFor(yaml))).toEqual([]);
+    // span_metrics, the collector's newer name, is checked the same.
+    const renamed = otel112.check(ctxFor(yaml.replace(/spanmetrics/g, "span_metrics")));
+    expect(renamed.map((d) => d.message)).toEqual(diags.map((d) => d.message.replace(/spanmetrics/g, "span_metrics")));
   });
 
   test("flags only the pipeline that pairs with nothing", () => {

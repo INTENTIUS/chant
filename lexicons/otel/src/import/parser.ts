@@ -26,6 +26,7 @@ import {
   COMPONENT_KINDS,
   SECTION_OF,
   SIGNALS,
+  canonicalComponentType,
   parseComponentId,
   pipelineSignal,
   type CollectorConfig,
@@ -141,7 +142,16 @@ export function parseCollectorYaml(content: string): ParsedCollector {
     if (key === "service") continue;
     const section: Record<string, Record<string, unknown> | null> = {};
     for (const [id, cfg] of Object.entries(value)) {
-      if (!parseComponentId(id)) warnings.push(`${key}: "${id}" is not a type[/name] component id`);
+      const parsed = parseComponentId(id);
+      if (!parsed) warnings.push(`${key}: "${id}" is not a type[/name] component id`);
+      const builtin = parsed && canonicalComponentType(KIND_OF_SECTION[key], parsed.type);
+      if (parsed && builtin && builtin !== parsed.type) {
+        warnings.push(
+          `${key}.${id} uses "${parsed.type}", the collector's newer name for "${builtin}"; it imports as the built-in, which writes "${builtin}"`,
+        );
+        const renamed = parsed.name === undefined ? builtin : `${builtin}/${parsed.name}`;
+        if (renamed in value) warnings.push(`${key}.${id} and ${key}.${renamed} become the same id "${renamed}"; rename one of them`);
+      }
       if (cfg !== null && cfg !== undefined && !isPlainObject(cfg)) {
         warnings.push(`${key}.${id} is not a mapping; it is carried as an empty config`);
         section[id] = null;

@@ -49,6 +49,17 @@ describe("agentClusterRules", () => {
     expect(rules[2].resources).toEqual(["nodes/stats"]);
   });
 
+  test("k8s_attributes and kubelet_stats, the collector's newer names, get the same rules as the old ones", () => {
+    const kubelet = { extra_metadata_labels: ["container.id"], k8s_api_config: { auth_type: "serviceAccount" } };
+    const extract = { extract: { labels: [{ key: "team", from: "deployment" }] } };
+    const old = agentClusterRules(cfg({ processors: { "k8sattributes/x": extract }, receivers: { kubeletstats: kubelet } } as any));
+    const renamed = agentClusterRules(cfg({ processors: { "k8s_attributes/x": extract }, receivers: { kubelet_stats: kubelet } } as any));
+    expect(renamed).toEqual(old);
+    expect(renamed.flatMap((r) => r.resources)).toEqual(
+      expect.arrayContaining(["deployments", "nodes/stats", "nodes/proxy", "persistentvolumes"]),
+    );
+  });
+
   test("kubeletstats with k8s_api_config reads persistent volumes and claims", () => {
     const rules = agentClusterRules(cfg({ receivers: { kubeletstats: { k8s_api_config: { auth_type: "serviceAccount" } } } as any }));
     expect(rules.at(-1)).toEqual({ apiGroups: [""], resources: ["persistentvolumeclaims", "persistentvolumes"], verbs: ["get"] });
