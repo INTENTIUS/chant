@@ -26,7 +26,7 @@
         "question": { "$ref": "#/$defs/question" },
         "inputs": {
           "type": "object",
-          "description": "The state the deciders see, input name to description. A name is a read-contract output (record, decision, work-item, finding, region, commit, member, gate, release, environment, component), optionally followed by dotted field names, such as work-item.fits_small: a field of that output, or a value the caller derives from it. The caller supplies the values; a table row can only test these names.",
+          "description": "The state the deciders see, input name to description. A name is a read-contract output (record, decision, work-item, finding, region, commit, node, member, gate, release, environment, component), optionally followed by dotted field names, such as work-item.fits_small: a field of that output, or a value the caller derives from it. The caller supplies the values; a table row can only test these names.",
           "minProperties": 1,
           "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_-]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$" },
           "additionalProperties": { "type": "string" }

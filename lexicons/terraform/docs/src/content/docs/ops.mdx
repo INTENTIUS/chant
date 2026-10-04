@@ -17,7 +17,7 @@ Every call resolves the named root out of `terraform.roots` (walking up from `cw
 | Activity | Runs | Notes |
 |---|---|---|
 | `terraformInit` | `terraform init` | `-backend-config` flags come from the root's `backendConfig`. `upgrade` adds `-upgrade`; `reconfigure` adds `-reconfigure`. |
-| `terraformPlan` | `terraform plan -detailed-exitcode -out=<planFile>` | Exit 0 means no changes, exit 2 means changes — both are success, everything else throws with the CLI's own stderr attached. Returns the plan's add/change/destroy counts and both a `-json` and a `-no-color` render, so a gate or a report downstream never re-plans. |
+| `terraformPlan` | `terraform plan -detailed-exitcode -out=<planFile>` | Exit 0 means no changes, exit 2 means changes — both are success, everything else throws with the CLI's own stderr attached. Returns the plan's add/change/destroy counts and both a `-json` and a `-no-color` render, so a gate or a report downstream never re-plans. Also returns `planDigest` and `changeSet`, the root's part of a [change-set document](/chant/reference/change-set/). |
 | `terraformApply` | `terraform apply <planFile>` | A saved plan, on either kind of root: there is no bare-apply mode here, and a missing `planFile` is refused before the CLI ever runs, naming the Plan step's own output as the fix. On a live root (see "choudoufu" below) that file is the approval artifact, and an apply that disagrees with it comes back as a named refusal rather than a thrown error. |
 | `terraformShow` | `terraform show` | Over a saved plan (`planFile` given) or over current state (omitted). `terraform show` takes no `-input` flag, so this one carries `TF_IN_AUTOMATION` alone. |
 
@@ -34,6 +34,12 @@ const plan = terraformPlan("app", { id: "plan" }); // an id is what makes `.out`
 Give a Plan step an `id` when a later step applies its plan: `plan.out.planFile` builds a reference to that step's own saved output, instead of a literal path a rename could silently orphan. That reference is exactly what TF101 enforces — see [Lint Rules](../lint-rules/).
 
 Default profiles: `terraformInit`/`terraformPlan`/`terraformApply` run on `longInfra` (they call providers or download them); `terraformShow` runs on `fastIdempotent` (it reads an artifact and calls no provider).
+
+## Change sets
+
+`terraformPlan` returns `changeSet`, the root's part of a [change-set document](/chant/reference/change-set/). The root's name is the member, and the member's plan digest is the step's own `planDigest`. A run over several roots, or over roots and chant members, hands its parts to core's `composeChangeSet` and binds one gate to the document's digest.
+
+Two adapters live in the `@intentius/chant-lexicon-terraform/change-set` subpath. `terraformChangeSetPart` reads a `show -json` plan from terraform, tofu or choudoufu. `choudoufuSetPlanParts` reads `choudoufu live-plan-set -json` and returns one part per root, with choudoufu's root digest as `nativeDigest`. The subpath imports no lint rules and no TypeScript, so it bundles on its own.
 
 ## TerraformApplyOp
 
