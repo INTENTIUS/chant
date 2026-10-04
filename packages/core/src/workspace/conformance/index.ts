@@ -56,7 +56,7 @@ import { isDeepStrictEqual } from "node:util";
 import { READ_CONTRACT_VERSION } from "../reason-codes";
 
 /** The read-contract commands, as a reader names them. */
-export const READ_CONTRACT_COMMANDS = ["ls", "graph", "check", "status", "records", "records --uncommitted", "graph --intent", "graph --composites", "runs"] as const;
+export const READ_CONTRACT_COMMANDS = ["ls", "graph", "check", "status", "records", "records --uncommitted", "graph --intent", "graph --composites", "runs", "wip"] as const;
 export type ReadContractCommand = (typeof READ_CONTRACT_COMMANDS)[number];
 
 /**
@@ -74,6 +74,7 @@ export const READ_CONTRACT_SCHEMAS: Record<ReadContractCommand, string> = {
   "graph --intent": "intent.schema.json",
   "graph --composites": "composites.schema.json",
   runs: "runs.schema.json",
+  wip: "wip.schema.json",
 };
 
 /** The flags that ask each command for its JSON document. A reader adds one of these and nothing else. */
@@ -87,6 +88,7 @@ export const READ_CONTRACT_JSON_FLAGS: Record<ReadContractCommand, readonly (rea
   "graph --intent": [["--json"]],
   "graph --composites": [[], ["--json"]],
   runs: [["--json"]],
+  wip: [["--json"]],
 };
 
 /** The arguments the suite passes each read, on the reference workspace or the generated one. */
@@ -100,6 +102,7 @@ export const REFERENCE_READS: Record<ReadContractCommand, string[]> = {
   "graph --intent": ["app/src/server.mjs:19", "--kind", "decisions/decision.kind.mjs"],
   "graph --composites": [],
   runs: [],
+  wip: [],
 };
 
 /** One chant run: the arguments after `chant`, what it was given on stdin, and what it printed. */

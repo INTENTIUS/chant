@@ -262,6 +262,16 @@ describe("parseArgs", () => {
     expect(() => parseArgs(["workspace", "box", "listing", "set", "app", "--cover"])).toThrow(/--cover needs/);
   });
 
+  test("workspace wip takes --label and --branch, with its verb and snapshot as positionals (#3172)", () => {
+    const save = parseArgs(["workspace", "wip", "save", "--label", "turn:3", "--by", "github:alex", "--json"]);
+    expect(save).toMatchObject({ positionals: ["wip", "save"], label: "turn:3", by: "github:alex", json: true });
+    expect(resolveCommand(save, commandRegistry)?.def.name).toBe("workspace wip");
+    expect(parseArgs(["workspace", "wip", "restore", "abc123"]).positionals).toEqual(["wip", "restore", "abc123"]);
+    expect(parseArgs(["workspace", "wip", "--branch", "chant/work/W-1", "--json"])).toMatchObject({ branch: "chant/work/W-1", json: true });
+    expect(() => parseArgs(["workspace", "wip", "save", "--label"])).toThrow(/--label needs/);
+    expect(() => parseArgs(["workspace", "wip", "--branch"])).toThrow(/--branch needs/);
+  });
+
   // ── components release/status flags (#568) ──────────────────────────────
 
   test("parses --component, --digest, --git-sha, --run-id, --actor for components release", () => {
@@ -781,6 +791,7 @@ describe("workspace init and ls (#2534)", () => {
       "workspace upgrade",
       "workspace verify",
       "workspace versions",
+      "workspace wip",
       "workspace work",
     ]);
   });
