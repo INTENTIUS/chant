@@ -456,7 +456,12 @@ export const recordKindSchema = z
         acceptance: z.object({ field: z.string().min(1), implementer: z.string().min(1) }).strict().optional(),
         contract: z.object({ field: z.string().min(1), kind: z.string().min(1) }).strict().optional(),
         tier: z
-          .object({ field: z.string().min(1), tiers: z.array(z.string().min(1)).min(1) })
+          .object({
+            field: z.string().min(1),
+            tiers: z.array(z.string().min(1)).min(1),
+            // What each tier may hold, for the slice-tier point's fits_<tier> inputs (#3150, work-size.ts).
+            limits: z.record(z.string().min(1), z.object({ criteria: z.number().int().min(0).optional(), files: z.number().int().min(0).optional(), words: z.number().int().min(0).optional() }).strict()).optional(),
+          })
           .strict()
           .refine((t) => new Set(t.tiers).size === t.tiers.length, { message: "work.tier.tiers lists each tier once", path: ["tiers"] })
           .optional(),
