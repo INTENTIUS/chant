@@ -21,12 +21,17 @@
  * escalated one is asked again, since a backend may answer now, and rewritten
  * only when the chain no longer escalates.
  *
+ * Both hold the working tree's write lock (#3173, ws-089) from the first read
+ * to the write, so two answers to one question are never both taken from the
+ * same reading of it.
+ *
  * chant never calls a model (ws-052): the model call is the caller's
  * {@link ModelAsk}, such as the decide Op activity (#2740), or a backend's
  * response the caller already has (`points ask --response`).
  */
 
 import { writeFileSync } from "node:fs";
+import { noteWrites, withWriteLock, WriteLockError, WRITE_LOCK_CODES, type WriteLockWho } from "./write-lock";
 import type { ReasonCode } from "./reason-codes";
 import { gitRoot } from "./record-source";
 import { loadRecordKind, normalisePrincipal, RECORD_REASON_CODES, RecordReadError, type RecordEntry, type RecordWarning } from "./records";
@@ -103,6 +108,7 @@ export const POINTS_WRITE_ERROR_CODES = [
   "answer-in-steward-turn",
   /** An answerer is named by a bare name, and identity.attribution at base is identified (#3163). */
   "principal-unidentified",
+  ...WRITE_LOCK_CODES,
   ...RECORD_REASON_CODES,
 ] as const satisfies readonly ReasonCode[];
 export type PointsWriteErrorCode = (typeof POINTS_WRITE_ERROR_CODES)[number];
@@ -277,7 +283,7 @@ export type PointsWriteDocument =
   | { $schema: string; contract: number; verb: "ask" | "answer"; error: { code: PointsWriteErrorCode; message: string } };
 
 function failure(verb: "ask" | "answer", err: unknown): PointsWriteDocument {
-  if (err instanceof PointsWriteError || err instanceof RecordWriteError || err instanceof RecordReadError || err instanceof IdentityError) {
+  if (err instanceof PointsWriteError || err instanceof RecordWriteError || err instanceof RecordReadError || err instanceof IdentityError || err instanceof WriteLockError) {
     return { $schema: POINTS_WRITE_SCHEMA_ID, contract: POINTS_WRITE_CONTRACT_VERSION, verb, error: { code: err.code as PointsWriteErrorCode, message: err.message } };
   }
   if (err instanceof WorkspaceReadError) {
@@ -406,6 +412,8 @@ interface WriteTarget {
   /** Write to the ledger rather than the tree. */
   onLedger: boolean;
   message: string;
+  /** Who writes, for the write journal (#3173). */
+  who: WriteLockWho;
 }
 
 /**
@@ -429,6 +437,7 @@ async function write(o: Opened, before: RecordEntry[], path: string, text: strin
   if (!dryRun) {
     try {
       writeFileSync(abs(o, path), text, create ? { flag: "wx" } : undefined);
+      noteWrites(o.root, [{ path, text }], target.who);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "EEXIST") throw new PointsWriteError("record-id-taken", `${path} was written by another ask at the same time: ask again to read it`);
       throw err;
@@ -483,6 +492,14 @@ function resultFields(result: ChainResult, takes: { top: boolean; escalation: bo
  * answered or proposed before.
  */
 export async function askPoint(opts: AskPointOptions): Promise<PointsWriteDocument> {
+  try {
+    return await withWriteLock(opts.cwd, { verb: "points ask", by: opts.steward?.name ?? null }, opts.dryRun, () => askPointLocked(opts));
+  } catch (err) {
+    return failure("ask", err);
+  }
+}
+
+async function askPointLocked(opts: AskPointOptions): Promise<PointsWriteDocument> {
   try {
     // A steward's turn (#2749): named by the caller, or this process's, as when an Op shells out to `points ask`.
     const turn = opts.steward ? undefined : currentStewardTurn();
@@ -556,7 +573,7 @@ export async function askPoint(opts: AskPointOptions): Promise<PointsWriteDocume
     // A steward's question goes on the ledger, and one already held there stays there (#2786).
     const onLedger = toLedger || ledger.byPath.has(path);
     const message = `Decision point ${opts.point}: ${state}${opts.subject ? ` (${opts.subject})` : ""}${steward ? `, asked by ${steward.name}` : ""}`;
-    const wrote = await write(o, before, path, text, !existing, !!opts.dryRun, { source: read, ledger, onLedger, message });
+    const wrote = await write(o, before, path, text, !existing, !!opts.dryRun, { source: read, ledger, onLedger, message, who: { verb: "points ask", by: steward?.name ?? null } });
     const entry: RecordEntry = { ...(existing ?? emptyEntry(path)), id, path, state, data, valid: true, reasons: [], warnings: wrote.warnings };
     return done(entry, { reused: false, written: !opts.dryRun, ledger: wrote.ledger, ...(opts.dryRun ? { text } : {}) });
   } catch (err) {
@@ -639,6 +656,14 @@ export function tallyQuorum(
  * the escalations. The question becomes `answered`.
  */
 export async function answerPoint(opts: AnswerPointOptions): Promise<PointsWriteDocument> {
+  try {
+    return await withWriteLock(opts.cwd, { verb: "points answer", by: (opts.by ?? []).join(", ") || null }, opts.dryRun, () => answerPointLocked(opts));
+  } catch (err) {
+    return failure("answer", err);
+  }
+}
+
+async function answerPointLocked(opts: AnswerPointOptions): Promise<PointsWriteDocument> {
   try {
     // A steward waits on a question and never answers one (#2749), as it never
     // clears a gate: the answer has to come from a person, through hud or a
@@ -731,7 +756,7 @@ export async function answerPoint(opts: AnswerPointOptions): Promise<PointsWrite
     const text = renderRecord(data, body(point, String(fields.title)));
     const onLedger = ledger.byPath.has(target.path);
     const message = `Decision point ${name}: answered ${show(value, type)} by ${tally.counted.join(", ")}`;
-    const wrote = await write(o, before, target.path, text, false, !!opts.dryRun, { source: found.read.source, ledger, onLedger, message });
+    const wrote = await write(o, before, target.path, text, false, !!opts.dryRun, { source: found.read.source, ledger, onLedger, message, who: { verb: "points answer", by: tally.counted.join(", ") } });
     const entry: RecordEntry = { ...target, state: "answered", data, valid: true, reasons: [], warnings: wrote.warnings };
     return {
       $schema: POINTS_WRITE_SCHEMA_ID,

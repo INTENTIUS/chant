@@ -155,6 +155,8 @@ export const metrics = new Pipeline({ signal: "metrics", name: "genai", receiver
 
 `spanMetricsNames(connector, exporter?)` returns the names Prometheus serves a `spanmetrics` connector's metrics under, read from its `namespace`, dimensions and histogram unit, and from the `prometheus` exporter's `namespace` and `add_metric_suffixes` when you pass it. The connector above gives `traces_span_metrics_calls_total` and `traces_span_metrics_duration_milliseconds`, with labels `service_name`, `span_name`, `span_kind` and `status_code`. A query, an SLO or a dashboard built from those names follows a renamed namespace; the grafana lexicon's `RedDashboard` reads them this way.
 
+`serviceGraphNames(connector, exporter?)` does the same for a `servicegraph` connector. Its names are fixed: `traces_service_graph_request_total`, `traces_service_graph_request_failed_total`, and the `traces_service_graph_request_server_seconds` and `traces_service_graph_request_client_seconds` histograms. Each carries `client`, `server`, `connection_type` and `failed`, plus `client_<d>` and `server_<d>` for each configured dimension. The prometheus lexicon's PROM301 and the grafana lexicon's GRAF118 read these names and the GenAI ones to check queries against the collector configs in the build.
+
 `routing` names its target pipelines by id string (`pipelines: ["traces/tenant-a"]`), since those pipelines also list the connector and a const can't refer to one declared after it.
 
 ## Extensions

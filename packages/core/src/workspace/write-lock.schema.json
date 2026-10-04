@@ -1,0 +1,172 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/write-lock/v1/write-lock.schema.json",
+  "title": "chant workspace lock output",
+  "description": "What `chant workspace lock [acquire --holder <name> [--ttl <duration>] | release --token <token>]` prints (#3173, ws-089): who holds the working tree's write lock, the token of a batch that took it, or the reason the command did nothing. Every chant write to the working tree (records new, amend, review and close, points ask and answer, box listing set) holds this lock from its first read to its last write. A batch holds it across chant calls: each call runs with CHANT_WRITE_LOCK=<token> and goes ahead without waiting while the token holds it. Readers ignore fields they do not know; a field is only ever added within a version. The error codes are a closed list, each in the one closed list of `reason-codes.ts`.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/result"
+    },
+    {
+      "$ref": "#/$defs/failure"
+    }
+  ],
+  "$defs": {
+    "result": {
+      "type": "object",
+      "description": "Exit code 0.",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "verb",
+        "path",
+        "holder"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/write-lock/v1/write-lock.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string",
+          "description": "The chant version that printed it."
+        },
+        "verb": {
+          "enum": [
+            "status",
+            "acquire",
+            "release"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "description": "The lock directory: chant-write.lock in the working tree's git directory, or a directory under the system's temporary directory outside git."
+        },
+        "holder": {
+          "$ref": "#/$defs/holder"
+        },
+        "token": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$",
+          "description": "acquire only: the token each write of the batch runs with, as CHANT_WRITE_LOCK, and lock release takes. Never printed by status."
+        },
+        "error": false
+      }
+    },
+    "failure": {
+      "type": "object",
+      "description": "Nothing was done. Exit code 1.",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "verb",
+        "error",
+        "holder"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/write-lock/v1/write-lock.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "verb": {
+          "enum": [
+            "status",
+            "acquire",
+            "release"
+          ]
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "enum": [
+                "write-usage-invalid",
+                "write-lock-timeout",
+                "write-lock-not-held"
+              ]
+            },
+            "message": {
+              "type": "string"
+            }
+          }
+        },
+        "holder": {
+          "$ref": "#/$defs/holder"
+        },
+        "token": false
+      }
+    },
+    "holder": {
+      "description": "Who holds the lock: everything owner.json in the lock directory says but the token.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "pid",
+            "host",
+            "verb",
+            "by",
+            "agent",
+            "acquiredAt",
+            "expiresAt"
+          ],
+          "properties": {
+            "pid": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "description": "The process holding it, or null for a batch held across chant calls."
+            },
+            "host": {
+              "type": "string",
+              "description": "The host the holder runs on."
+            },
+            "verb": {
+              "type": "string",
+              "description": "What holds it: a write command, such as records amend, or batch."
+            },
+            "by": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Who the write or batch names: --by, or lock acquire's --holder."
+            },
+            "agent": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "The agent session (CHANT_AGENT), or null."
+            },
+            "acquiredAt": {
+              "type": "string",
+              "description": "When it was taken, as an ISO 8601 time."
+            },
+            "expiresAt": {
+              "type": "string",
+              "description": "When any writer may break it, as an ISO 8601 time."
+            }
+          }
+        }
+      ]
+    }
+  }
+}
