@@ -80,6 +80,7 @@ A member is an object with `name`, `dir` and `kind`.
 | `generated` | no | The files a command writes in the member, with the command that writes each (see [Generated files](#generated-files)). |
 | `links` | no | The [member links](#member-links) this member reads, each `{ "member": "...", "output": "..." }`. |
 | `outputs` | no | For a member of kind `other`, `design` or a kind from a package, the outputs it exposes to [links](#member-links). A `chant` member's outputs are read from its source instead. |
+| `fields` | no | Values for the [fields its kind declares](/chant/reference/workspace-kinds/#fields), such as an `app` member's `health` path ([#3151](https://github.com/INTENTIUS/chant/issues/3151)). Each is a string, integer or boolean, or an object of those for a field the kind declares as an object. A field left out takes the kind's default. `chant workspace check` fails a field the kind doesn't declare, or a value of the wrong type, with `WSP005`. It was added in chant 0.103.0. |
 | `records` | no | The [record kinds](#record-kinds) the member holds, each `{ "kind": "<path>" }` with the path from the member's directory. It was added in chant 0.86.0. |
 | `diagrams` | no | The [diagram artifacts](#diagrams) this member holds. It was added in chant 0.91.0. |
 | `box` | no | The member is a [box](#boxes), or holds a box's declarations: the capabilities it reaches through a broker, each with its broker and scope. It was added in chant 0.91.0. |

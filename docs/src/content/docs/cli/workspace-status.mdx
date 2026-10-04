@@ -109,6 +109,8 @@ With `--json`, each member also lists its `box`: the [box block](/chant/referenc
 
 `factory` and `listing` are the box's [factory](/chant/reference/workspace-declaration/#factory) and [listing](/chant/reference/workspace-declaration/#listing), with every default filled in, or `null` when the block declares none ([#3146](https://github.com/INTENTIUS/chant/issues/3146)). The document also has a top-level `plantable`, `{ "plantable": true, "box": "fern", "reason": null }` here: whether exactly one member's box block declares services, so a planter can run the workspace as one box. The [read contract](/chant/reference/workspace-read-contract/#factory-listing-and-plantable) describes the fields.
 
+Each member also has `fields`, the [fields its kind declares](/chant/reference/workspace-kinds/#fields) with the entry's values and the kind's defaults filled in, or `null` when its kind declares none, as for the `chant` member above ([#3151](https://github.com/INTENTIUS/chant/issues/3151)). An [`app` member](/chant/reference/workspace-kinds/#the-app-kind) prints its scripts, variable names and health path there.
+
 A box block that declares [`replicate`](/chant/reference/workspace-declaration/#replicate) has it under the member's `box`, with every default filled in, and the document then has a top-level `replication` ([#3172](https://github.com/INTENTIUS/chant/issues/3172)). It lists each work branch, kept attempt, work-in-progress snapshot ref and the ledger branch, each with `replicated` and `ahead`, the commits the remote doesn't have yet. Like the rest of `status`, it reads local refs and never fetches. [`chant workspace wip`](/chant/cli/workspace-wip/) prints the same with each branch's snapshots.
 
 `intent` is the decision record the box block names as the box's [intent](/chant/reference/workspace-declaration/#intent), or `null` when it names none ([#2850](https://github.com/INTENTIUS/chant/issues/2850)). It is read from the working tree, from the records of every declared kind named `decision`. `answer` is the label of the `options[]` entry `choice.option` names, or `null` while none is chosen ([#2855](https://github.com/INTENTIUS/chant/issues/2855)). While the record is `proposed`, `choice`, `answer`, `decided_by` and `decided_on` are `null`. When no decision record has the id, every field but `id` is `null` and `chant workspace check` fails with `WSP126`.
@@ -188,6 +190,7 @@ The output is part of the workspace [read contract](/chant/reference/workspace-r
       "name": "api",
       "dir": "apps/api",
       "kind": "chant",
+      "fields": null,
       "environments": [
         {
           "env": "staging",

@@ -369,6 +369,9 @@
             "$ref": "#/$defs/outputName"
           }
         },
+        "fields": {
+          "$ref": "#/$defs/memberFields"
+        },
         "links": {
           "type": "array",
           "description": "Member links (#2524 D6, #2539): the outputs of other members this member reads. A link is stated once, here on the consumer, and matched exactly against the producer's outputs. chant workspace check resolves it in source.",
@@ -435,6 +438,23 @@
         },
         "required": [
           "because"
+        ]
+      }
+    },
+    "memberFields": {
+      "type": "object",
+      "description": "Values for the fields the member's kind declares (#3151), such as an app member's scripts, env and health. Each is a string, integer or boolean, or an object of those for a field the kind declares as an object. chant workspace check fails when the kind declares no such field or a value is of the wrong type (WSP005), and chant workspace status --json prints every field the kind declares with its defaults filled in. Added in schema 1 by chant 0.103.0, so a declaration that uses it sets minReader to 0.103.0 or newer.",
+      "propertyNames": { "pattern": "^[a-z][A-Za-z0-9]{0,39}$" },
+      "additionalProperties": {
+        "oneOf": [
+          { "type": "string" },
+          { "type": "integer" },
+          { "type": "boolean" },
+          {
+            "type": "object",
+            "propertyNames": { "pattern": "^[a-z][A-Za-z0-9]{0,39}$" },
+            "additionalProperties": { "oneOf": [{ "type": "string" }, { "type": "integer" }, { "type": "boolean" }] }
+          }
         ]
       }
     },

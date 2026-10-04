@@ -1,0 +1,45 @@
+{
+  "$comment": "The app member kind (#3151, ws-093). A workspace pins a copy of this directory by path, as the reference workspace does at kinds/app, and chant reads it as data. The fields are the conventions an orchestrator relies on to run, migrate, test and check an app: the scripts in its package.json, the environment variables it reads, and the path it answers health on. The canonical copy ships in @intentius/chant at src/workspace/reference-kinds/app.",
+  "schema": 1,
+  "kinds": [
+    {
+      "name": "app",
+      "description": "an app: a Node package with a start script in the package.json directly in its directory",
+      "precedence": 100,
+      "probe": {
+        "anyJsonKey": {
+          "in": ["package.json"],
+          "pointers": ["/scripts/start"]
+        }
+      },
+      "outputs": ["source", "url"],
+      "fields": {
+        "scripts": {
+          "type": "object",
+          "description": "Which package.json script plays each part, run with npm run from the member's directory",
+          "properties": {
+            "start": { "type": "string", "description": "Runs a release of the app; it listens on the port env.port names", "default": "start" },
+            "dev": { "type": "string", "description": "Runs the app in development", "default": "dev" },
+            "test": { "type": "string", "description": "The app's own tests, run before a release", "default": "test" },
+            "migrate": { "type": "string", "description": "Applies the app's migrations to the data directory env.data names; a missing script means there are none", "default": "migrate" }
+          }
+        },
+        "env": {
+          "type": "object",
+          "description": "The environment variables the app reads, by name",
+          "properties": {
+            "port": { "type": "string", "description": "The port the app listens on", "default": "PORT", "pattern": "^[A-Z_][A-Z0-9_]*$" },
+            "data": { "type": "string", "description": "The directory the app keeps its data in", "default": "APP_DATA", "pattern": "^[A-Z_][A-Z0-9_]*$" },
+            "revision": { "type": "string", "description": "The revision the running app reports, such as the release's commit", "default": "APP_REVISION", "pattern": "^[A-Z_][A-Z0-9_]*$" }
+          }
+        },
+        "health": {
+          "type": "string",
+          "description": "The path the running app answers on with a status below 500 once it is up",
+          "default": "/health",
+          "pattern": "^/"
+        }
+      }
+    }
+  ]
+}

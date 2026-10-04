@@ -47,7 +47,7 @@ chant.workspace.json
 | `WSP002` | kinds-unreadable | error | no | A pinned package isn't installed, is installed at another version, publishes kind data or [principal class data](/chant/reference/workspace-kinds/#principal-classes-from-a-package) that doesn't validate, or is a path pin whose directory doesn't hash to its `integrity` ([pins](/chant/reference/workspace-declaration/#integrity-of-a-plugin-pinned-by-path), [kinds](/chant/reference/workspace-kinds/#which-packages-are-read)) |
 | `WSP003` | kind-unknown | error | no | A member's kind is neither built in nor supplied by a pinned package, or `writeScope` names a principal class that is neither core nor supplied by a pinned package ([#3080](https://github.com/INTENTIUS/chant/issues/3080)). The message lists the known kinds or classes |
 | `WSP004` | member-dir-missing | error | yes | A member's directory does not exist |
-| `WSP005` | kind-probe-failed | error | yes | A member's directory is not what its kind reads, such as a `chant` member with no chant config |
+| `WSP005` | kind-probe-failed | error | yes | A member's directory is not what its kind reads, such as a `chant` member with no chant config, or its entry sets a [field](/chant/reference/workspace-kinds/#fields) its kind doesn't declare, or a value of the wrong type ([#3151](https://github.com/INTENTIUS/chant/issues/3151)) |
 | `WSP006` | kind-probe-tie | error | no | Two kinds with the same highest precedence both claim a member's directory |
 | `WSP007` | kind-outranked | error | yes | A kind of higher precedence than the declared one claims the member's directory |
 | `WSP008` | other-claimed | error | no | A registered kind's probe claims the directory of an `other` member |
