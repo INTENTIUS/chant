@@ -34,6 +34,11 @@
       "types": "./dist/pin/index.d.ts",
       "default": "./src/pin/index.ts"
     },
+    "./terragrunt": {
+      "development": "./src/terragrunt/index.ts",
+      "types": "./dist/terragrunt/index.d.ts",
+      "default": "./src/terragrunt/index.ts"
+    },
     "./lint/post-synth": {
       "development": "./src/lint/post-synth/index.ts",
       "types": "./dist/lint/post-synth/index.d.ts",

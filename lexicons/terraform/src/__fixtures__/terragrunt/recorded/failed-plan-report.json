@@ -1,0 +1,36 @@
+[
+  {
+    "Started": "2026-10-03T21:49:02.34817-06:00",
+    "Ended": "2026-10-03T21:49:02.502195-06:00",
+    "Reason": "run error",
+    "Cause": "error occurred:\n\n* Failed to execute \"false\" in ./live/dev/db/.terragrunt-cache/LAwNEq4aOTzWWv43O_15pH6E0Tk/zc-bcd5wSzLXJhJ1nHeK3mim74w\n  \n  exit status 1\n",
+    "Name": "live/dev/db",
+    "Result": "failed",
+    "Cmd": "plan",
+    "Args": [
+      "-detailed-exitcode"
+    ]
+  },
+  {
+    "Started": "2026-10-03T21:49:02.349044-06:00",
+    "Ended": "2026-10-03T21:49:02.439947-06:00",
+    "Name": "live/prod/app",
+    "Result": "succeeded",
+    "Cmd": "plan",
+    "Args": [
+      "-detailed-exitcode"
+    ]
+  },
+  {
+    "Started": "2026-10-03T21:49:02.502206-06:00",
+    "Ended": "2026-10-03T21:49:02.502207-06:00",
+    "Reason": "ancestor error",
+    "Cause": "db",
+    "Name": "live/dev/app",
+    "Result": "early exit",
+    "Cmd": "plan",
+    "Args": [
+      "-detailed-exitcode"
+    ]
+  }
+]
