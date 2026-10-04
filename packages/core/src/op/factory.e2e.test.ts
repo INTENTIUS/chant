@@ -148,6 +148,20 @@ describe("the factory reference Op (#3406)", () => {
       expect(onBranch(dir, "W-103", "work/W-103-an-ask.md")).toMatchObject({ state: "dropped" });
       expect(existsSync(join(dir, "app", "W-103.txt"))).toBe(false);
       expect(readFileSync(join(dir, "work", "W-101-the-feature.md"), "utf-8")).toContain('"state": "open"');
+
+      // An ask written from a surface lives only in the checkout until it is built; refused, it is still dropped.
+      writeFileSync(join(dir, "work", "W-104-an-uncommitted-ask.md"), item("W-104", { state: "proposed", source: { ask: { said: "Make the page green.", by: "alice", via: "hud" } } }));
+      await run(dir, "W-104");
+      const asked = await workspacePoints({ cwd: dir });
+      if ("error" in asked) throw new Error(asked.error.message);
+      const q = asked.questions.find((x) => x.point === "understand" && x.open && JSON.stringify(x).includes("W-104"));
+      expect(q).toBeDefined();
+      expect("error" in (await answerPoint({ cwd: dir, id: q!.id, answer: "refuse", by: ["alice"] }))).toBe(false);
+      git(["add", "answers"], dir);
+      git(["commit", "-q", "-m", "refuse W-104"], dir);
+      const sixth = await run(dir, "W-104");
+      expect(sixth.workLease).toMatchObject({ item: "W-104", outcome: "dropped" });
+      expect(onBranch(dir, "W-104", "work/W-104-an-uncommitted-ask.md")).toMatchObject({ state: "dropped" });
     });
   }, 120_000);
 });
