@@ -1021,6 +1021,11 @@
   "formatting/em-dash-density": 2,
   "claude/colon-reveal": 2
  },
+ "docs/src/content/docs/reference/change-set.mdx": {
+  "formatting/em-dash-density": 2,
+  "discourse/punchy-fragments": 1,
+  "claude/colon-reveal": 3
+ },
  "docs/src/content/docs/reference/decision-kind.mdx": {
   "formatting/em-dash-density": 2,
   "discourse/punchy-fragments": 2,

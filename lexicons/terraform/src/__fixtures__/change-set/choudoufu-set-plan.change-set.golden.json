@@ -1,0 +1,95 @@
+{
+  "$schema": "https://intentius.io/chant/schemas/workspace/change-set/v1/change-set.schema.json",
+  "contract": 1,
+  "digest": "jcs1-sha256:5724486f4166eb1db89bba1d5807aaf1dc592726af2ecaf47da782e8d246cafb",
+  "members": [
+    {
+      "member": "estates/e01",
+      "lexicon": "terraform",
+      "planner": "choudoufu",
+      "scope": "est-e01",
+      "status": "planned",
+      "planDigest": "jcs1-sha256:31049a9763b3c11a83416e1f5cde08b23d9ce14caff09ad6aa5770dab95dfaf1",
+      "nativeDigest": "sha256:bbe048fb0f7df99fcd65f00351d8b3c3be9b8a2a25a99a706b1c16d81277bb97",
+      "holes": []
+    },
+    {
+      "member": "estates/e02",
+      "lexicon": "terraform",
+      "planner": "choudoufu",
+      "scope": "est-e02",
+      "status": "planned",
+      "planDigest": "jcs1-sha256:5aaf171a0523f7ee14ee9b144c170ac7aea0820080d17708fcc6aa6d0467496b",
+      "nativeDigest": "sha256:be83b6c9faebeaf63391a7f45dafa02f87f58a01de31f9a0649b1898218b2127",
+      "holes": []
+    },
+    {
+      "member": "estates/e03",
+      "lexicon": "terraform",
+      "planner": "choudoufu",
+      "scope": "est-e03",
+      "status": "failed",
+      "error": "e03 broke at init on purpose",
+      "planDigest": null,
+      "nativeDigest": "sha256:b1f431ac6f4c9c24d0744f4cecb7581149918ece30e4ad22f4c3982c62c90874",
+      "holes": []
+    }
+  ],
+  "entries": [
+    {
+      "member": "estates/e01",
+      "lexicon": "terraform",
+      "planner": "choudoufu",
+      "address": "terraform_data.x",
+      "type": "terraform_data",
+      "name": "x",
+      "action": "create",
+      "scope": "est-e01",
+      "attributes": []
+    },
+    {
+      "member": "estates/e02",
+      "lexicon": "terraform",
+      "planner": "choudoufu",
+      "address": "terraform_data.x",
+      "type": "terraform_data",
+      "name": "x",
+      "action": "no-op",
+      "scope": "est-e02",
+      "attributes": []
+    }
+  ],
+  "summary": {
+    "members": 3,
+    "entries": 2,
+    "actions": {
+      "create": 1,
+      "update": 0,
+      "replace": 0,
+      "delete": 0,
+      "read": 0,
+      "no-op": 1,
+      "forget": 0
+    },
+    "types": {
+      "terraform_data": {
+        "create": 1,
+        "no-op": 1
+      }
+    },
+    "byMember": {
+      "estates/e01": {
+        "create": 1
+      },
+      "estates/e02": {
+        "no-op": 1
+      }
+    },
+    "deletes": [],
+    "replacements": [],
+    "failed": [
+      "estates/e03"
+    ],
+    "holes": 0
+  }
+}

@@ -1,0 +1,4 @@
+import { Queue } from "@intentius/chant-lexicon-aws";
+export const jobs = new Queue({ QueueName: "cs-jobs", VisibilityTimeout: 60 });
+export const events = new Queue({ QueueName: "cs-events-v2", VisibilityTimeout: 30 });
+export const dlq = new Queue({ QueueName: "cs-dlq" });

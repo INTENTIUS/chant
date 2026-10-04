@@ -1,0 +1,59 @@
+{
+  "env": "dev",
+  "entries": [
+    {
+      "name": "alerts",
+      "type": "AWS::SNS::Topic",
+      "lexicon": "aws",
+      "physicalId": "arn:aws:sns:us-east-1:000000000000:cs-alerts",
+      "action": "noop",
+      "evidence": {
+        "declared": false,
+        "inSnapshot": true,
+        "live": false,
+        "observed": true
+      },
+      "ownership": "unknown"
+    },
+    {
+      "name": "dlq",
+      "lexicon": "aws",
+      "action": "create",
+      "evidence": {
+        "declared": true,
+        "inSnapshot": false,
+        "live": false,
+        "observed": true
+      },
+      "ownership": "unknown"
+    },
+    {
+      "name": "events",
+      "type": "AWS::SQS::Queue",
+      "lexicon": "aws",
+      "physicalId": "http://localhost:4566/000000000000/cs-events",
+      "action": "noop",
+      "evidence": {
+        "declared": true,
+        "inSnapshot": true,
+        "live": true,
+        "observed": true
+      },
+      "ownership": "foreign"
+    },
+    {
+      "name": "jobs",
+      "type": "AWS::SQS::Queue",
+      "lexicon": "aws",
+      "physicalId": "http://localhost:4566/000000000000/cs-jobs",
+      "action": "noop",
+      "evidence": {
+        "declared": true,
+        "inSnapshot": true,
+        "live": true,
+        "observed": true
+      },
+      "ownership": "foreign"
+    }
+  ]
+}

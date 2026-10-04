@@ -207,6 +207,7 @@ export default defineConfig({
 						{ label: 'Network Egress', slug: 'reference/network-egress' },
 						{ label: 'Behaviour Coverage', slug: 'reference/behaviour-coverage' },
 						{ label: 'Level-0 Exceptions', slug: 'reference/level-0-exceptions' },
+						{ label: 'Change-Set Document', slug: 'reference/change-set' },
 						{ label: 'Lineage Lock', slug: 'reference/lineage-lock' },
 						{ label: 'Template Migrations', slug: 'reference/template-migrations' },
 						{ label: 'Workspace Declaration', slug: 'reference/workspace-declaration' },
