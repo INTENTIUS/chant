@@ -1,0 +1,21 @@
+resource "terraform_data" "keep" {
+  input = "unchanged"
+}
+resource "terraform_data" "config" {
+  input = { size = "large", tags = { team = "core" } }
+}
+resource "terraform_data" "worker" {
+  input            = "v1"
+  triggers_replace = ["build-2"]
+}
+variable "secret" {
+  type      = string
+  sensitive = true
+  default   = "s3cr3t-2"
+}
+resource "terraform_data" "secret" {
+  input = var.secret
+}
+module "app" {
+  source = "./modules/app"
+}

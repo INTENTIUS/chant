@@ -45,7 +45,9 @@ import { promisify } from "node:util";
 import { resolve, dirname, join } from "node:path";
 import { loadChantConfigUpward } from "@intentius/chant/config";
 import { liveReadKey, memoLiveRead } from "@intentius/chant/live-read-session";
-import { computePlanDigest } from "@intentius/chant/op";
+import { terraformPlanDigest } from "../../plan-digest";
+import { plannerForBinary, terraformChangeSetPart } from "../../change-set";
+import type { ChangeSetPart } from "@intentius/chant/change-set";
 import type { TerraformConfig, TerraformRootConfig } from "../../config";
 import { detectLiveEstate } from "./live-detect";
 import {
@@ -148,6 +150,14 @@ export interface TerraformPlanArgs extends TerraformRootArgs {
   planFile?: string;
   /** `-destroy`: plan the removal of everything the root manages. */
   destroy?: boolean;
+  /**
+   * Input variables, passed as `-var` after the root's `-var-file`s, so they
+   * win over a var file that sets the same name (#3049). A string goes as it
+   * is; anything else as JSON, which terraform reads as HCL for a list, a map
+   * or an object. This is how a value another root produced, wired with
+   * `stackOutput()`, reaches the plan.
+   */
+  vars?: Record<string, unknown>;
 }
 
 export interface TerraformApplyArgs extends TerraformRootArgs {
@@ -249,91 +259,7 @@ export interface PlanChangeCounts {
   destroys: number;
 }
 
-/**
- * One resource's proposed change, as a plan digest sees it (#2300) — the
- * projection of a `terraform show -json` `resource_changes` entry that
- * survives into {@link terraformPlanDigest}.
- */
-export interface TerraformPlannedChange {
-  address: unknown;
-  mode: unknown;
-  type: unknown;
-  name: unknown;
-  index: unknown;
-  provider_name: unknown;
-  deposed: unknown;
-  actions: unknown;
-  before: unknown;
-  after: unknown;
-  after_unknown: unknown;
-  replace_paths: unknown;
-  importing: unknown;
-}
-
-/**
- * The change set a `terraform show -json` plan describes, canonicalised
- * (#2300): every proposed change, at its address, with the values that would
- * be written, sorted so two renderings of the same plan project identically.
- *
- * Everything else in the document is dropped, and the drops are the point —
- * see `packages/core/src/lifecycle/plan-digest.ts` for the general rule. Here
- * that means `timestamp` and `terraform_version` (when the plan was taken and
- * by which binary), `format_version` (how it was rendered), `prior_state` and
- * `planned_values` (restatements of the same change set from another angle),
- * `configuration` (the source that produced it, which can be refactored
- * without changing a single proposed action) and `checks` / `relevant_
- * attributes` (diagnostics about the plan, not the plan). What is left is
- * what applying it would do.
- */
-export function terraformPlanChangeSet(planJson: unknown): {
-  resourceChanges: TerraformPlannedChange[];
-  outputChanges: unknown;
-} {
-  const doc = planJson as { resource_changes?: unknown; output_changes?: unknown } | null | undefined;
-  const raw = Array.isArray(doc?.resource_changes) ? doc.resource_changes : [];
-  const resourceChanges = raw.map((entry): TerraformPlannedChange => {
-    const e = (entry ?? {}) as Record<string, unknown>;
-    const change = (e.change ?? {}) as Record<string, unknown>;
-    return {
-      address: e.address,
-      mode: e.mode,
-      type: e.type,
-      name: e.name,
-      index: e.index,
-      provider_name: e.provider_name,
-      deposed: e.deposed,
-      actions: change.actions,
-      before: change.before,
-      after: change.after,
-      after_unknown: change.after_unknown,
-      replace_paths: change.replace_paths,
-      importing: change.importing,
-    };
-  });
-  // terraform already emits these in address order, but nothing in the format
-  // promises it, and a digest that depends on the emitter's iteration order
-  // would refuse a plan that is identical in every way that matters.
-  resourceChanges.sort((a, b) =>
-    `${String(a.address)}\u0000${String(a.deposed ?? "")}`.localeCompare(
-      `${String(b.address)}\u0000${String(b.deposed ?? "")}`,
-    ),
-  );
-  return { resourceChanges, outputChanges: doc?.output_changes ?? {} };
-}
-
-/**
- * The identity of a terraform plan (#2300): {@link terraformPlanChangeSet}
- * hashed. This is what a `TerraformApplyOp` gate binds its approval to, and
- * what a later run recomputes and compares.
- *
- * Taken over the `show -json` rendering rather than the plan file's bytes on
- * purpose: the file is an opaque, version-stamped archive, and two runs of
- * `plan -out` over an unchanged root produce different bytes. The rendering
- * is the same plan both times.
- */
-export function terraformPlanDigest(planJson: unknown): string {
-  return computePlanDigest("terraform-plan", terraformPlanChangeSet(planJson));
-}
+export { terraformPlanChangeSet, terraformPlanDigest, type TerraformPlannedChange } from "../../plan-digest";
 
 /** What {@link terraformPlan} resolved. Carries the plan itself, so no later step re-plans. */
 export interface TerraformPlanResult extends PlanChangeCounts {
@@ -354,6 +280,13 @@ export interface TerraformPlanResult extends PlanChangeCounts {
    * plan.out.planDigest })`.
    */
   planDigest: string;
+  /**
+   * This root's part of a change-set document (#3181): every proposed change
+   * as an entry, the root's name as the member, and {@link planDigest} as the
+   * member's plan digest. Hand the parts of a run's roots to
+   * `composeChangeSet` and bind the run's gate to the document's digest.
+   */
+  changeSet: ChangeSetPart;
 }
 
 /**
@@ -596,11 +529,16 @@ export function terraformPlanCommand(opts: {
   binary: string;
   planFile: string;
   varFiles?: string[];
+  vars?: Record<string, unknown>;
   destroy?: boolean;
 }): string {
   const parts = [opts.binary, "plan", "-input=false", "-detailed-exitcode"];
   if (opts.destroy) parts.push("-destroy");
   for (const varFile of opts.varFiles ?? []) parts.push(`-var-file=${quoteArg(varFile)}`);
+  for (const [name, value] of Object.entries(opts.vars ?? {}).sort(([a], [b]) => a.localeCompare(b))) {
+    if (value === undefined) continue;
+    parts.push(`-var=${quoteArg(`${name}=${typeof value === "string" ? value : JSON.stringify(value)}`)}`);
+  }
   parts.push(`-out=${quoteArg(opts.planFile)}`);
   return parts.join(" ");
 }
@@ -957,6 +895,7 @@ export async function terraformPlan(
     binary,
     planFile,
     ...(root.varFiles ? { varFiles: root.varFiles } : {}),
+    ...(args.vars ? { vars: args.vars } : {}),
     ...(args.destroy ? { destroy: true } : {}),
   });
 
@@ -991,6 +930,12 @@ export async function terraformPlan(
     json,
     text: textRun.stdout,
     planDigest: terraformPlanDigest(json),
+    changeSet: terraformChangeSetPart({
+      member: args.root,
+      plan: json,
+      planner: plannerForBinary(binary),
+      ...((root.estate ?? root.workspace) ? { scope: root.estate ?? root.workspace } : {}),
+    }),
     ...countPlanChanges(json),
   };
 }
@@ -1067,6 +1012,21 @@ export async function terraformApply(
       refusal: (failure.stderr ?? "").trim() || (failure.stdout ?? "").trim(),
     };
   }
+}
+
+/**
+ * `terraform output -json` in the named root, as `{ name: value }` (#3049).
+ * A sensitive output's value comes back like any other, since the caller
+ * asked for the values to hand them on.
+ */
+export async function terraformOutputs(
+  args: TerraformRootArgs,
+  signal?: AbortSignal,
+): Promise<Record<string, unknown>> {
+  const { binary, root, dir } = await resolveRoot(args, signal);
+  const { stdout } = await run(`${binary} output -json`, dir, terraformEnvironment(root), signal);
+  const parsed = JSON.parse(stdout || "{}") as Record<string, { value?: unknown }>;
+  return Object.fromEntries(Object.entries(parsed).map(([name, entry]) => [name, entry?.value]));
 }
 
 /**
