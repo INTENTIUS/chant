@@ -303,6 +303,30 @@ export interface BoxDeclaration {
   publisher: string | null;
   /** Where the box's work in progress is replicated (#3172, ws-085), or null when the block declares no policy. */
   replicate: BoxReplicate | null;
+  /** How the box ships its staged work to its own site (ws-100), or null when the block declares none. */
+  ship: BoxShip | null;
+  /** The block's JSON Pointer in the file, for messages. */
+  pointer: string;
+}
+
+/** The gate a ship Op stops at when the block names none (ws-100). */
+export const DEFAULT_SHIP_GATE = "ship";
+/** The environment a ship Op records its releases in when the block names none (ws-100). */
+export const DEFAULT_SHIP_ENV = "box";
+
+/**
+ * How a box ships its staged work (ws-100): the Op in the box member that
+ * commits the staged tree and releases it to the box's own site, the gate
+ * it stops at, the environment whose release ledger it records each
+ * release in, and the paths that are bookkeeping rather than the app (left
+ * out of what is pending). Defaults are filled in.
+ */
+export interface BoxShip {
+  op: string;
+  gate: string;
+  env: string;
+  /** Path prefixes from the workspace root, in file order, whose changes never count as waiting to ship. */
+  bookkeeping: string[];
   /** The block's JSON Pointer in the file, for messages. */
   pointer: string;
 }
@@ -1034,6 +1058,7 @@ function boxOf(raw: unknown, pointer: string): BoxDeclaration | null {
     listing?: { published?: boolean; title?: string; line?: string; cover?: string };
     publisher?: string;
     replicate?: { remote?: string; refs?: ReplicateRefClass[]; on?: ReplicateTrigger[]; every?: string };
+    ship?: { op: string; gate?: string; env?: string; bookkeeping?: string[] };
   };
   const f = b.factory;
   const l = b.listing;
@@ -1079,6 +1104,16 @@ function boxOf(raw: unknown, pointer: string): BoxDeclaration | null {
           },
     listing: l === undefined ? null : { published: l.published ?? true, title: l.title ?? "", line: l.line ?? "", cover: l.cover ?? null },
     publisher: b.publisher ?? null,
+    ship:
+      b.ship === undefined
+        ? null
+        : {
+            op: b.ship.op,
+            gate: b.ship.gate ?? DEFAULT_SHIP_GATE,
+            env: b.ship.env ?? DEFAULT_SHIP_ENV,
+            bookkeeping: (b.ship.bookkeeping ?? []).map((p) => p.replace(/^\.\//, "").replace(/\/+$/, "")),
+            pointer: `${pointer}/ship`,
+          },
     replicate:
       r === undefined
         ? null

@@ -533,6 +533,9 @@
         "replicate": {
           "$ref": "#/$defs/boxReplicate"
         },
+        "ship": {
+          "$ref": "#/$defs/boxShip"
+        },
         "capabilities": {
           "type": "array",
           "description": "Each capability the box reaches outside itself, named once. None when omitted.",
@@ -813,6 +816,44 @@
           "type": "string",
           "pattern": "^[1-9][0-9]*(s|m|h)$",
           "description": "How often the host runs chant workspace wip push on a schedule of its own, such as 10m, beside the pushes on save and release. chant runs no scheduler; it only states the interval. None when omitted."
+        }
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false
+    },
+    "boxShip": {
+      "type": "object",
+      "description": "How the box ships its staged work to its own site (ws-100): the people working on a box see the working tree at once, everyone else sees the last release, and a person ships. op is the Op in the box member that does it: its own steps commit the staged tree as one commit by the person shipping (named to it in CHANT_SHIP_BY) with a Chant-Record trailer for each work item it lands, then release that commit to the box's site, stopping at gate, and record the release in env's release ledger. chant runs none of it; a surface runs chant run <op> in the member's directory and approves the gate as for any Op. chant workspace status --json prints it under the member's box with the commit the site serves (the latest release in env's ledger) and what is waiting to ship (the files changed between that commit and the working tree, bookkeeping left out). Added in schema 1 by chant 0.104.0, so a declaration that uses it sets minReader to 0.104.0 or newer.",
+      "required": [
+        "op"
+      ],
+      "properties": {
+        "op": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+          "description": "The name of the Op in the box member that ships, as chant run takes it."
+        },
+        "gate": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+          "description": "The gate the Op stops at for a person's approval. ship when omitted."
+        },
+        "env": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+          "description": "The environment whose release ledger, under the box member, the Op records each release in. box when omitted."
+        },
+        "bookkeeping": {
+          "type": "array",
+          "uniqueItems": true,
+          "description": "Path prefixes from the workspace root whose changes are bookkeeping, such as the record directories, and never count as waiting to ship. None when omitted.",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*(^|/)\\.\\.(/|$))[^\\n]+$"
+          }
         }
       },
       "patternProperties": {

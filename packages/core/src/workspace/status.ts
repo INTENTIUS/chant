@@ -187,6 +187,31 @@ export interface StatusMember {
   stewardReasons: { code: StewardReasonCode; message: string }[];
 }
 
+/** The most paths `ship.pending.paths` lists; `files` still counts them all. */
+export const SHIP_PENDING_PATHS_MAX = 200;
+
+/**
+ * A box's ship (ws-100): the Op, gate and environment it declares, the
+ * release its site serves (the latest in that environment's release ledger
+ * under the box member), and what is waiting to ship.
+ */
+export interface StatusBoxShip {
+  op: string;
+  gate: string;
+  env: string;
+  bookkeeping: string[];
+  /** The latest release in `env`'s ledger: the commit the box's site serves. Null when nothing has shipped, or the ledger can't be read. */
+  serving: { commit: string; digest: string; component: string; at: string; actor: string | null } | null;
+  /**
+   * The files that differ between `serving.commit` and the working tree
+   * (tracked changes, committed or not, and untracked files git does not
+   * ignore), bookkeeping left out; `paths` sorted, at most
+   * SHIP_PENDING_PATHS_MAX of them. Null when nothing has shipped or the
+   * serving commit isn't in this checkout.
+   */
+  pending: { files: number; paths: string[] } | null;
+}
+
 /** A box's brokered capabilities, from the declaration (#2726). */
 export interface StatusBox {
   capabilities: { name: string; broker: string | null; scope: string[] }[];
@@ -207,6 +232,8 @@ export interface StatusBox {
   listing: ListingView | null;
   /** The command that publishes the box's work, as declared (#3165, ws-088), or null when the block names none. */
   publisher: string | null;
+  /** How the box ships its staged work, what its site serves and what is waiting (ws-100), or null when the block declares no ship. */
+  ship: StatusBoxShip | null;
   /** Where the box's work in progress is replicated, with defaults filled in (#3172, ws-085), or null when the block declares no policy. */
   replicate: { remote: string; refs: string[]; on: string[]; every: string | null } | null;
 }
@@ -334,6 +361,40 @@ async function ledgerFor(member: Member, env: string, cwd: string): Promise<Omit
     return { layout: "members", path: `${MEMBERS_DIR}/${member.name}/${env}/releases.jsonl` };
   }
   return { layout: "flat", path: `${env}/releases.jsonl` };
+}
+
+/** A box's ship as status prints it (ws-100). Never throws: what can't be read is null. */
+async function shipView(member: Member, cwd: string, read: LedgerReader): Promise<StatusBoxShip | null> {
+  const ship = member.box?.ship;
+  if (!ship) return null;
+  const view: StatusBoxShip = { op: ship.op, gate: ship.gate, env: ship.env, bookkeeping: [...ship.bookkeeping], serving: null, pending: null };
+  let records: ReleaseRecord[] = [];
+  try {
+    records = (await read((await ledgerFor(member, ship.env, cwd)).path, cwd)).records;
+  } catch {
+    return view;
+  }
+  const last = records[records.length - 1];
+  if (!last) return view;
+  view.serving = { commit: last.gitSha, digest: last.digest, component: last.component, at: last.timestamp, actor: last.actor ?? null };
+  const top = gitTop(cwd);
+  if (!top) return view;
+  const lines = (args: string[]): string[] | null => {
+    try {
+      return execFileSync("git", args, { cwd: top, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64 * 1024 * 1024 }).split("\0").filter(Boolean);
+    } catch {
+      return null;
+    }
+  };
+  // The commit must be here: a release from a commit this checkout never had says nothing about it.
+  if (lines(["cat-file", "-e", `${last.gitSha}^{commit}`]) === null) return view;
+  const changed = lines(["diff", "--name-only", "-z", "--no-renames", last.gitSha, "--"]);
+  const untracked = lines(["ls-files", "--others", "--exclude-standard", "-z"]);
+  if (changed === null || untracked === null) return view;
+  const bookkeeping = (path: string) => ship.bookkeeping.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
+  const paths = [...new Set([...changed, ...untracked])].filter((path) => !bookkeeping(path)).sort();
+  view.pending = { files: paths.length, paths: paths.slice(0, SHIP_PENDING_PATHS_MAX) };
+  return view;
 }
 
 const defaultReader: LedgerReader = (path, cwd) => readReleaseLedger(path.slice(0, -"/releases.jsonl".length), { cwd });
@@ -468,6 +529,7 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
                 factory: factoryView(m.box.factory, declaration.members),
                 listing: listingView(m.box.listing, coverBytes),
                 publisher: m.box.publisher,
+                ship: await shipView(m, found.dir, read),
                 replicate: m.box.replicate === null ? null : (({ box: _box, ...rest }) => rest)(policyView(m.name, m.box.replicate)),
               },
         stewards: stewards.stewards,
