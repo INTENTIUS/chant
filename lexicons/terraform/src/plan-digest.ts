@@ -47,8 +47,9 @@ export interface TerraformPlannedChange {
 export function terraformPlanChangeSet(planJson: unknown): {
   resourceChanges: TerraformPlannedChange[];
   outputChanges: unknown;
+  actionInvocations?: unknown[];
 } {
-  const doc = planJson as { resource_changes?: unknown; output_changes?: unknown } | null | undefined;
+  const doc = planJson as { resource_changes?: unknown; output_changes?: unknown; action_invocations?: unknown } | null | undefined;
   const raw = Array.isArray(doc?.resource_changes) ? doc.resource_changes : [];
   const resourceChanges = raw.map((entry): TerraformPlannedChange => {
     const e = (entry ?? {}) as Record<string, unknown>;
@@ -77,7 +78,10 @@ export function terraformPlanChangeSet(planJson: unknown): {
       `${String(b.address)}\u0000${String(b.deposed ?? "")}`,
     ),
   );
-  return { resourceChanges, outputChanges: doc?.output_changes ?? {} };
+  // Terraform 1.14 `action` blocks: side effects an apply runs. Present only
+  // when the plan has some, so the digest of a plan without them is unchanged.
+  const invocations = Array.isArray(doc?.action_invocations) ? [...doc.action_invocations].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))) : [];
+  return { resourceChanges, outputChanges: doc?.output_changes ?? {}, ...(invocations.length > 0 ? { actionInvocations: invocations } : {}) };
 }
 
 /**

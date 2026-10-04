@@ -884,6 +884,501 @@
           ]
         }
       }
+    },
+    {
+      "name": "a forget against a delete of the same resource",
+      "group": false,
+      "a": {
+        "root": "roots/acme",
+        "estate": "acme",
+        "status": "planned",
+        "plan": {
+          "format_version": "1.2",
+          "resource_changes": [
+            {
+              "address": "aws_s3_bucket.logs",
+              "change": {
+                "actions": [
+                  "forget"
+                ],
+                "before": {
+                  "bucket": "logs-acme",
+                  "region": "us-east-1"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "b": {
+        "root": "roots/globex",
+        "estate": "globex",
+        "status": "planned",
+        "plan": {
+          "format_version": "1.2",
+          "resource_changes": [
+            {
+              "address": "aws_s3_bucket.logs",
+              "change": {
+                "actions": [
+                  "delete"
+                ],
+                "before": {
+                  "bucket": "logs-globex",
+                  "region": "us-east-1"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a forget in both roots, bucket named for the estate",
+      "group": true,
+      "a": {
+        "root": "roots/acme",
+        "estate": "acme",
+        "status": "planned",
+        "plan": {
+          "format_version": "1.2",
+          "resource_changes": [
+            {
+              "address": "aws_s3_bucket.logs",
+              "change": {
+                "actions": [
+                  "forget"
+                ],
+                "before": {
+                  "bucket": "logs-acme",
+                  "region": "us-east-1"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "b": {
+        "root": "roots/globex",
+        "estate": "globex",
+        "status": "planned",
+        "plan": {
+          "format_version": "1.2",
+          "resource_changes": [
+            {
+              "address": "aws_s3_bucket.logs",
+              "change": {
+                "actions": [
+                  "forget"
+                ],
+                "before": {
+                  "bucket": "logs-globex",
+                  "region": "us-east-1"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "an import against the same attributes without one",
+      "group": false,
+      "a": {
+        "root": "roots/acme",
+        "estate": "acme",
+        "status": "planned",
+        "plan": {
+          "format_version": "1.2",
+          "resource_changes": [
+            {
+              "address": "aws_s3_bucket.logs",
+              "change": {
+                "actions": [
+                  "update"
+                ],
+                "before": {
+                  "bucket": "logs-acme",
+                  "tags": null
+                },
+                "after": {
+                  "bucket": "logs-acme",
+                  "tags": {
+                    "v": "1"
+                  }
+                },
+                "importing": {
+                  "id": "logs-acme"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "b": {
+        "root": "roots/globex",
+        "estate": "globex",
+        "status": "planned",
+        "plan": {
+          "format_version": "1.2",
+          "resource_changes": [
+            {
+              "address": "aws_s3_bucket.logs",
+              "change": {
+                "actions": [
+                  "update"
+                ],
+                "before": {
+                  "bucket": "logs-globex",
+                  "tags": null
+                },
+                "after": {
+                  "bucket": "logs-globex",
+                  "tags": {
+                    "v": "1"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "an import in both roots, the id naming the estate",
+      "group": true,
+      "a": {
+        "root": "roots/acme",
+        "estate": "acme",
+        "status": "planned",
+        "plan": {
+          "format_version": "1.2",
+          "resource_changes": [
+            {
+              "address": "aws_s3_bucket.logs",
+              "change": {
+                "actions": [
+                  "update"
+                ],
+                "before": {
+                  "bucket": "logs-acme",
+                  "tags": null
+                },
+                "after": {
+                  "bucket": "logs-acme",
+                  "tags": {
+                    "v": "1"
+                  }
+                },
+                "importing": {
+                  "id": "logs-acme"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "b": {
+        "root": "roots/globex",
+        "estate": "globex",
+        "status": "planned",
+        "plan": {
+          "format_version": "1.2",
+          "resource_changes": [
+            {
+              "address": "aws_s3_bucket.logs",
+              "change": {
+                "actions": [
+                  "update"
+                ],
+                "before": {
+                  "bucket": "logs-globex",
+                  "tags": null
+                },
+                "after": {
+                  "bucket": "logs-globex",
+                  "tags": {
+                    "v": "1"
+                  }
+                },
+                "importing": {
+                  "id": "logs-globex"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "an import that changes nothing against a plan with no entry for it",
+      "group": false,
+      "a": {
+        "root": "roots/acme",
+        "estate": "acme",
+        "status": "planned",
+        "plan": {
+          "format_version": "1.2",
+          "resource_changes": [
+            {
+              "address": "aws_s3_bucket.logs",
+              "change": {
+                "actions": [
+                  "no-op"
+                ],
+                "before": {
+                  "bucket": "logs-acme",
+                  "region": "us-east-1"
+                },
+                "after": {
+                  "bucket": "logs-acme",
+                  "region": "us-east-1"
+                },
+                "importing": {
+                  "id": "logs-acme"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "b": {
+        "root": "roots/globex",
+        "estate": "globex",
+        "status": "planned",
+        "plan": {
+          "format_version": "1.2",
+          "resource_changes": []
+        }
+      }
+    },
+    {
+      "name": "a triggered action against none",
+      "group": false,
+      "a": {
+        "root": "roots/acme",
+        "estate": "acme",
+        "status": "planned",
+        "plan": {
+          "format_version": "1.2",
+          "resource_changes": [
+            {
+              "address": "aws_lambda_function.worker",
+              "change": {
+                "actions": [
+                  "update"
+                ],
+                "before": {
+                  "runtime": "nodejs18.x",
+                  "description": "acme worker"
+                },
+                "after": {
+                  "runtime": "nodejs22.x",
+                  "description": "acme worker"
+                }
+              }
+            }
+          ],
+          "action_invocations": [
+            {
+              "address": "action.aws_lambda_invoke.notify",
+              "type": "aws_lambda_invoke",
+              "lifecycle_action_trigger": {
+                "triggering_resource_address": "aws_lambda_function.worker",
+                "action_trigger_event": "after_update",
+                "actions_block_index": 0,
+                "action_trigger_block_index": 0
+              }
+            }
+          ]
+        }
+      },
+      "b": {
+        "root": "roots/globex",
+        "estate": "globex",
+        "status": "planned",
+        "plan": {
+          "format_version": "1.2",
+          "resource_changes": [
+            {
+              "address": "aws_lambda_function.worker",
+              "change": {
+                "actions": [
+                  "update"
+                ],
+                "before": {
+                  "runtime": "nodejs18.x",
+                  "description": "globex worker"
+                },
+                "after": {
+                  "runtime": "nodejs22.x",
+                  "description": "globex worker"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "the same triggered action in both roots",
+      "group": true,
+      "a": {
+        "root": "roots/acme",
+        "estate": "acme",
+        "status": "planned",
+        "plan": {
+          "format_version": "1.2",
+          "resource_changes": [
+            {
+              "address": "aws_lambda_function.worker",
+              "change": {
+                "actions": [
+                  "update"
+                ],
+                "before": {
+                  "runtime": "nodejs18.x",
+                  "description": "acme worker"
+                },
+                "after": {
+                  "runtime": "nodejs22.x",
+                  "description": "acme worker"
+                }
+              }
+            }
+          ],
+          "action_invocations": [
+            {
+              "address": "action.aws_lambda_invoke.notify",
+              "type": "aws_lambda_invoke",
+              "lifecycle_action_trigger": {
+                "triggering_resource_address": "aws_lambda_function.worker",
+                "action_trigger_event": "after_update",
+                "actions_block_index": 0,
+                "action_trigger_block_index": 0
+              }
+            }
+          ]
+        }
+      },
+      "b": {
+        "root": "roots/globex",
+        "estate": "globex",
+        "status": "planned",
+        "plan": {
+          "format_version": "1.2",
+          "resource_changes": [
+            {
+              "address": "aws_lambda_function.worker",
+              "change": {
+                "actions": [
+                  "update"
+                ],
+                "before": {
+                  "runtime": "nodejs18.x",
+                  "description": "globex worker"
+                },
+                "after": {
+                  "runtime": "nodejs22.x",
+                  "description": "globex worker"
+                }
+              }
+            }
+          ],
+          "action_invocations": [
+            {
+              "address": "action.aws_lambda_invoke.notify",
+              "type": "aws_lambda_invoke",
+              "lifecycle_action_trigger": {
+                "triggering_resource_address": "aws_lambda_function.worker",
+                "action_trigger_event": "after_update",
+                "actions_block_index": 0,
+                "action_trigger_block_index": 0
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "triggered actions of different types",
+      "group": false,
+      "a": {
+        "root": "roots/acme",
+        "estate": "acme",
+        "status": "planned",
+        "plan": {
+          "format_version": "1.2",
+          "resource_changes": [
+            {
+              "address": "aws_lambda_function.worker",
+              "change": {
+                "actions": [
+                  "update"
+                ],
+                "before": {
+                  "runtime": "nodejs18.x",
+                  "description": "acme worker"
+                },
+                "after": {
+                  "runtime": "nodejs22.x",
+                  "description": "acme worker"
+                }
+              }
+            }
+          ],
+          "action_invocations": [
+            {
+              "address": "action.aws_lambda_invoke.notify",
+              "type": "aws_lambda_invoke",
+              "lifecycle_action_trigger": {
+                "triggering_resource_address": "aws_lambda_function.worker",
+                "action_trigger_event": "after_update",
+                "actions_block_index": 0,
+                "action_trigger_block_index": 0
+              }
+            }
+          ]
+        }
+      },
+      "b": {
+        "root": "roots/globex",
+        "estate": "globex",
+        "status": "planned",
+        "plan": {
+          "format_version": "1.2",
+          "resource_changes": [
+            {
+              "address": "aws_lambda_function.worker",
+              "change": {
+                "actions": [
+                  "update"
+                ],
+                "before": {
+                  "runtime": "nodejs18.x",
+                  "description": "globex worker"
+                },
+                "after": {
+                  "runtime": "nodejs22.x",
+                  "description": "globex worker"
+                }
+              }
+            }
+          ],
+          "action_invocations": [
+            {
+              "address": "action.aws_sns_publish.notify",
+              "type": "aws_sns_publish",
+              "lifecycle_action_trigger": {
+                "triggering_resource_address": "aws_lambda_function.worker",
+                "action_trigger_event": "after_update",
+                "actions_block_index": 0,
+                "action_trigger_block_index": 0
+              }
+            }
+          ]
+        }
+      }
     }
   ],
   "instancePairs": [
@@ -1020,6 +1515,67 @@
             "create"
           ],
           "after": {
+            "instance_type": "t3.small"
+          }
+        }
+      }
+    },
+    {
+      "name": "an imported instance against a plain one",
+      "group": false,
+      "a": {
+        "address": "aws_instance.web[\"a\"]",
+        "change": {
+          "actions": [
+            "update"
+          ],
+          "before": {
+            "instance_type": "t3.small"
+          },
+          "after": {
+            "instance_type": "t3.medium"
+          },
+          "importing": {
+            "id": "i-1"
+          }
+        }
+      },
+      "b": {
+        "address": "aws_instance.web[\"b\"]",
+        "change": {
+          "actions": [
+            "update"
+          ],
+          "before": {
+            "instance_type": "t3.small"
+          },
+          "after": {
+            "instance_type": "t3.medium"
+          }
+        }
+      }
+    },
+    {
+      "name": "a forgotten instance against a deleted one",
+      "group": false,
+      "a": {
+        "address": "aws_instance.web[\"a\"]",
+        "change": {
+          "actions": [
+            "forget"
+          ],
+          "before": {
+            "instance_type": "t3.small"
+          }
+        }
+      },
+      "b": {
+        "address": "aws_instance.web[\"b\"]",
+        "change": {
+          "actions": [
+            "delete"
+          ],
+          "before": {
             "instance_type": "t3.small"
           }
         }

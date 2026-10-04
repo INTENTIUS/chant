@@ -42,6 +42,21 @@
         "$ref": "#/$defs/entry"
       }
     },
+    "sideEffects": {
+      "type": "array",
+      "description": "Provider-defined actions an apply runs (Terraform actions blocks), sorted by member and address. Absent when none.",
+      "items": {
+        "type": "object",
+        "required": ["member", "address", "type"],
+        "properties": {
+          "member": { "type": "string" },
+          "address": { "type": "string" },
+          "type": { "type": "string" },
+          "trigger": { "type": "string" },
+          "event": { "type": "string" }
+        }
+      }
+    },
     "summary": {
       "$ref": "#/$defs/summary"
     }
@@ -186,6 +201,10 @@
         "id": {
           "type": "string",
           "description": "The provider's id, when the planner reports one."
+        },
+        "importing": {
+          "const": true,
+          "description": "The entry also imports the object into state; action is what else the plan does to it."
         },
         "action": {
           "enum": [

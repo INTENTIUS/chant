@@ -31,6 +31,13 @@
  * normalize away only when they hold the unit's own estate or address.
  * Nothing else is stripped.
  *
+ * An `import` block, a forget (a `removed` block or `destroy = false`, the
+ * plan action `forget`) and a triggered Terraform action (`action_invocations`)
+ * each get a named list of their own. A forget is not a destroy and is never
+ * in `destroys`; an import is part of its entry's change, so an entry that
+ * imports never groups with the same change without the import, and a triggered
+ * action is part of its unit's change the same way.
+ *
  * These are choudoufu's rules for `live-summary` (choudoufu#1753). The two
  * implementations are kept together by one table of test vectors both run
  * (`__fixtures__/plan-summary/normalization-vectors.json`), per the ruling
@@ -44,7 +51,7 @@
  */
 
 import { computePlanDigest, PLAN_DIGEST_PREFIX } from "./lifecycle/plan-digest";
-import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDocument, ChangeSetEntry, ChangeSetMember } from "./change-set";
+import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDocument, ChangeSetEntry, ChangeSetMember, ChangeSetSideEffect } from "./change-set";
 
 /** The schema a plan summary names in `$schema`. */
 export const PLAN_SUMMARY_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/plan-summary/v1/plan-summary.schema.json";
@@ -90,6 +97,26 @@ export interface PlanSummaryDestroy {
   deposed?: string;
 }
 
+/** One resource an `import` block brings into state. */
+export interface PlanSummaryImport {
+  member: string;
+  address: string;
+  type: string;
+  /** What else the plan does to it: `no-op` when the import changes nothing, else `update`, `create` and so on. */
+  action: ChangeSetAction;
+}
+
+/** One resource a plan stops tracking and leaves running (`removed` with `destroy = false`). It is not a destroy. */
+export interface PlanSummaryForget {
+  member: string;
+  address: string;
+  type: string;
+  deposed?: string;
+}
+
+/** A provider-defined side effect an apply runs: a triggered Terraform action. */
+export type PlanSummarySideEffect = ChangeSetSideEffect;
+
 export interface PlanSummaryGroup {
   /** Twelve hex characters over the group's normalized changes: the same change gets the same id in every run. */
   id: string;
@@ -107,6 +134,8 @@ export interface PlanSummaryGroup {
   plus?: PlanSummaryChange[];
   /** Every destroy and replacement any unit of the group makes. */
   destroys: PlanSummaryDestroy[];
+  /** Every triggered action any unit of the group runs. */
+  sideEffects: PlanSummarySideEffect[];
 }
 
 /** A member that failed to plan. It is never in a group. */
@@ -136,6 +165,12 @@ export interface PlanSummary {
   failed: PlanSummaryFailure[];
   /** Every destroy and replacement in the document, failed members' included, sorted by member and address. */
   destroys: PlanSummaryDestroy[];
+  /** Every import, in the document, sorted by member and address. Imports are never destroys. */
+  imports: PlanSummaryImport[];
+  /** Every forget in the document, sorted by member and address. A forget is never in `destroys`. */
+  forgets: PlanSummaryForget[];
+  /** Every triggered action in the document, sorted by member and address. */
+  sideEffects: PlanSummarySideEffect[];
   holes: PlanSummaryHole[];
 }
 
@@ -326,7 +361,7 @@ function normalizeValue(v: unknown, id: Identity, ownAddress: string): unknown {
   return out;
 }
 
-const SYMBOL: Record<ChangeSetAction, string> = { create: "+", update: "~", replace: "-/+", delete: "-", read: "<=", "no-op": "", forget: "." };
+const SYMBOL: Record<ChangeSetAction, string> = { create: "+", update: "~", replace: "-/+", delete: "-", read: "<=", "no-op": "", forget: "forget" };
 
 /** One entry with everything unit-specific stripped. `key` is what grouping compares. */
 interface Normalized {
@@ -348,7 +383,7 @@ function normalizeAttribute(a: ChangeSetAttribute, id: Identity, ownAddress: str
 }
 
 function normalizeEntry(e: ChangeSetEntry, id: Identity): Normalized | undefined {
-  if (e.action === "no-op") return undefined;
+  if (e.action === "no-op" && !e.importing) return undefined;
   const address = normalizeAddress(e.address, id) + (e.deposed !== undefined ? " (deposed)" : "");
   const attrs = new Map<string, string>();
   const body: Record<string, unknown> = {};
@@ -358,9 +393,10 @@ function normalizeEntry(e: ChangeSetEntry, id: Identity): Normalized | undefined
       attrs.set(a.path, JSON.stringify(body[a.path]));
     }
   }
-  const key = canonical({ type: e.type, action: e.action, address, attrs: body });
+  const key = canonical({ type: e.type, action: e.action, address, attrs: body, ...(e.importing ? { importing: true } : {}) });
   const names = [...attrs.keys()];
-  let line = `${SYMBOL[e.action]} ${address}`;
+  let line = `${SYMBOL[e.action] || "import"} ${address}`;
+  if (e.importing && e.action !== "no-op") line += " (import)";
   if (names.length > 0 && e.action !== "create" && e.action !== "read") line += `: ${names.join(", ")}`;
   return { key, line, action: e.action, address, attrs };
 }
@@ -382,6 +418,9 @@ interface Unit {
   family: string;
   changes: Normalized[];
   destroys: PlanSummaryDestroy[];
+  /** Normalized triggered actions, as canonical strings. */
+  effects: string[];
+  sideEffects: PlanSummarySideEffect[];
 }
 
 interface Line extends PlanSummaryChange {
@@ -394,6 +433,10 @@ const byString = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 function destroyOf(e: ChangeSetEntry): PlanSummaryDestroy | undefined {
   if (e.action !== "delete" && e.action !== "replace") return undefined;
   return { member: e.member, address: e.address, type: e.type, action: e.action, ...(e.deposed !== undefined ? { deposed: e.deposed } : {}) };
+}
+
+function effectKey(se: PlanSummarySideEffect, id: Identity): string {
+  return canonical({ type: se.type, trigger: se.trigger === undefined ? null : normalizeAddress(se.trigger, id), event: se.event ?? null });
 }
 
 function lastSegment(name: string): string {
@@ -413,7 +456,12 @@ function memberUnits(doc: ChangeSetDocument, failed: Set<string>): Unit[] {
     if (failed.has(m.member)) continue;
     const base = lastSegment(m.member);
     const id = identity(m.scope, [], base && base !== m.scope ? [base] : []);
-    const unit: Unit = { name: m.member, family: "", changes: [], destroys: [] };
+    const unit: Unit = { name: m.member, family: "", changes: [], destroys: [], effects: [], sideEffects: [] };
+    for (const se of doc.sideEffects ?? []) {
+      if (se.member !== m.member) continue;
+      unit.effects.push(effectKey(se, id));
+      unit.sideEffects.push(se);
+    }
     for (const e of byMember.get(m.member) ?? []) {
       const n = normalizeEntry(e, id);
       if (!n) continue;
@@ -431,11 +479,13 @@ function instanceUnits(doc: ChangeSetDocument, failed: Set<string>): Unit[] {
   for (const e of doc.entries) {
     if (failed.has(e.member)) continue;
     const { bare, keys } = splitInstanceKeys(e.address);
-    const n = normalizeEntry(e, identity(undefined, keys, []));
+    const id = identity(undefined, keys, []);
+    const n = normalizeEntry(e, id);
     if (!n) continue;
     const d = destroyOf(e);
     const name = e.deposed !== undefined ? `${e.address} (deposed ${e.deposed})` : e.address;
-    units.push({ name, family: bare, changes: [n], destroys: d ? [d] : [] });
+    const own = (doc.sideEffects ?? []).filter((se) => se.member === e.member && se.trigger === e.address);
+    units.push({ name, family: bare, changes: [n], destroys: d ? [d] : [], effects: own.map((se) => effectKey(se, id)), sideEffects: own });
   }
   return units;
 }
@@ -487,20 +537,23 @@ function groupUnits(units: Unit[], perFamily: boolean): PlanSummaryGroup[] {
     family: string;
     units: string[];
     destroys: PlanSummaryDestroy[];
+    sideEffects: PlanSummarySideEffect[];
     lines: Line[];
     noChanges: boolean;
   }
   const byId = new Map<string, Acc>();
   for (const u of units) {
     const keys = u.changes.map((c) => c.key).sort(byString);
-    const id = computePlanDigest("plan-summary-group", { resource: u.family, changes: keys }).slice(PLAN_DIGEST_PREFIX.length, PLAN_DIGEST_PREFIX.length + 12);
+    const effects = [...u.effects].sort(byString);
+    const id = computePlanDigest("plan-summary-group", { resource: u.family, changes: keys, ...(effects.length > 0 ? { effects } : {}) }).slice(PLAN_DIGEST_PREFIX.length, PLAN_DIGEST_PREFIX.length + 12);
     let acc = byId.get(id);
     if (!acc) {
-      acc = { id, family: u.family, units: [], destroys: [], lines: changeLines(u.changes), noChanges: u.changes.length === 0 };
+      acc = { id, family: u.family, units: [], destroys: [], sideEffects: [], lines: changeLines(u.changes), noChanges: u.changes.length === 0 && u.effects.length === 0 };
       byId.set(id, acc);
     }
     acc.units.push(u.name);
     acc.destroys.push(...u.destroys);
+    acc.sideEffects.push(...u.sideEffects);
   }
   const accs = [...byId.values()];
   for (const a of accs) a.units.sort(byString);
@@ -531,11 +584,18 @@ function groupUnits(units: Unit[], perFamily: boolean): PlanSummaryGroup[] {
       changes: a.lines.map(publicLine),
       ...(plus && base ? { extends: base.id, plus: plus.map(publicLine) } : {}),
       destroys: a.destroys.sort(byDestroy),
+      sideEffects: a.sideEffects.sort(bySideEffect),
     };
   });
 }
 
 const byDestroy = (a: PlanSummaryDestroy, b: PlanSummaryDestroy): number =>
+  byString(a.member, b.member) || byString(a.address, b.address) || byString(a.deposed ?? "", b.deposed ?? "");
+
+const bySideEffect = (a: PlanSummarySideEffect, b: PlanSummarySideEffect): number =>
+  byString(a.member, b.member) || byString(a.address, b.address) || byString(a.trigger ?? "", b.trigger ?? "");
+
+const byEntry = (a: { member: string; address: string; deposed?: string }, b: { member: string; address: string; deposed?: string }): number =>
   byString(a.member, b.member) || byString(a.address, b.address) || byString(a.deposed ?? "", b.deposed ?? "");
 
 function failureReason(m: ChangeSetMember): string {
@@ -564,6 +624,15 @@ export function groupChangeSet(doc: ChangeSetDocument, options: GroupChangeSetOp
     groups: groupUnits(units, unit === "instance"),
     failed: failedMembers.map((m) => ({ member: m.member, ...(m.scope ? { scope: m.scope } : {}), reason: failureReason(m) })),
     destroys,
+    imports: doc.entries
+      .filter((e) => e.importing)
+      .map((e) => ({ member: e.member, address: e.address, type: e.type, action: e.action }))
+      .sort(byEntry),
+    forgets: doc.entries
+      .filter((e) => e.action === "forget")
+      .map((e) => ({ member: e.member, address: e.address, type: e.type, ...(e.deposed !== undefined ? { deposed: e.deposed } : {}) }))
+      .sort(byEntry),
+    sideEffects: [...(doc.sideEffects ?? [])].sort(bySideEffect),
     holes,
   };
 }
@@ -581,6 +650,9 @@ export function planSummaryHeadline(s: PlanSummary): string {
   const parts = [plural(s.groups.length, "group", "groups")];
   if (s.failed.length > 0) parts.push(`${s.failed.length} failed`);
   parts.push(plural(s.destroys.length, "destroy or replacement", "destroys or replacements"));
+  if (s.forgets.length > 0) parts.push(plural(s.forgets.length, "forget", "forgets"));
+  if (s.imports.length > 0) parts.push(plural(s.imports.length, "import", "imports"));
+  if (s.sideEffects.length > 0) parts.push(plural(s.sideEffects.length, "triggered action", "triggered actions"));
   if (s.holes.length > 0) parts.push(plural(s.holes.length, "hole", "holes"));
   return `${unitWord(s, s.units)}: ${parts.join(", ")}.`;
 }
@@ -608,6 +680,11 @@ function destroyText(d: PlanSummaryDestroy): string {
   return `${d.member}: ${d.address}${d.deposed !== undefined ? ` (deposed ${d.deposed})` : ""} (${d.action})`;
 }
 
+const forgetText = (f: PlanSummaryForget): string => `${f.member}: ${f.address}${f.deposed !== undefined ? ` (deposed ${f.deposed})` : ""} (forget, the object keeps running)`;
+const importText = (i: PlanSummaryImport): string => `${i.member}: ${i.address} (${i.action === "no-op" ? "import, no other change" : `import, then ${i.action}`})`;
+const sideEffectText = (e: PlanSummarySideEffect): string =>
+  `${e.member}: ${e.address}${e.trigger !== undefined ? `, triggered by ${e.trigger}${e.event !== undefined ? ` ${e.event}` : ""}` : ""}`;
+
 const oneLine = (s: string): string => s.split(/\s+/).filter(Boolean).join(" ");
 
 const failureLabel = (f: PlanSummaryFailure): string => (f.scope && f.scope !== f.member ? `${f.member} (${f.scope})` : f.member);
@@ -618,6 +695,18 @@ export function renderPlanSummaryText(s: PlanSummary): string {
   if (s.destroys.length > 0) {
     out.push("", `Destroys and replacements (${s.destroys.length}):`);
     for (const d of s.destroys) out.push(`  ${destroyText(d)}`);
+  }
+  if (s.forgets.length > 0) {
+    out.push("", `Forgets (${s.forgets.length}), no longer tracked, not destroyed:`);
+    for (const f of s.forgets) out.push(`  ${forgetText(f)}`);
+  }
+  if (s.imports.length > 0) {
+    out.push("", `Imports (${s.imports.length}):`);
+    for (const i of s.imports) out.push(`  ${importText(i)}`);
+  }
+  if (s.sideEffects.length > 0) {
+    out.push("", `Triggered actions (${s.sideEffects.length}), side effects of apply:`);
+    for (const e of s.sideEffects) out.push(`  ${sideEffectText(e)}`);
   }
   if (s.failed.length > 0) {
     out.push("", `Failed (${s.failed.length}), not grouped:`);
@@ -632,6 +721,7 @@ export function renderPlanSummaryText(s: PlanSummary): string {
     for (const l of shownChanges(g)) out.push(`    ${changeText(l)}`);
     out.push(`  ${s.unit === "instance" ? "instances" : "members"}: ${g.units.join(", ")}`);
     if (g.destroys.length > 0) out.push(`  destroys and replacements: ${g.destroys.length}, listed above`);
+    if (g.sideEffects.length > 0) out.push(`  triggered actions: ${g.sideEffects.length}, listed above`);
   }
   return out.join("\n") + "\n";
 }
@@ -655,7 +745,7 @@ const code = (s: string): string => "`" + s.replaceAll("`", "'") + "`";
  * The summary as an MR or PR note of at most `limit` characters.
  *
  * Blocks come in a fixed order: the headline, every destroy and
- * replacement, every failed member, every hole, then the groups largest
+ * replacement, every forget, import and triggered action, every failed member, every hole, then the groups largest
  * first. When the whole does not fit, groups are dropped from the end, never
  * cut in the middle, and a closing line names how many groups, units and
  * destroys it left out. The destroy, failure and hole lines are cut only
@@ -669,12 +759,18 @@ export function renderPlanSummaryMarkdown(s: PlanSummary, options: RenderMarkdow
 
   interface Block {
     text: string;
-    kind: "destroy" | "failed" | "hole" | "group";
+    kind: "destroy" | "forget" | "import" | "effect" | "failed" | "hole" | "group";
     units: number;
   }
   const blocks: Block[] = [];
   if (s.destroys.length > 0) blocks.push({ kind: "destroy", units: 0, text: `\n**Destroys and replacements (${s.destroys.length}):**\n\n` });
   for (const d of s.destroys) blocks.push({ kind: "destroy", units: 1, text: `- ${code(destroyText(d))}\n` });
+  if (s.forgets.length > 0) blocks.push({ kind: "forget", units: 0, text: `\n**Forgets (${s.forgets.length}), no longer tracked, not destroyed:**\n\n` });
+  for (const f of s.forgets) blocks.push({ kind: "forget", units: 1, text: `- ${code(forgetText(f))}\n` });
+  if (s.imports.length > 0) blocks.push({ kind: "import", units: 0, text: `\n**Imports (${s.imports.length}):**\n\n` });
+  for (const i of s.imports) blocks.push({ kind: "import", units: 1, text: `- ${code(importText(i))}\n` });
+  if (s.sideEffects.length > 0) blocks.push({ kind: "effect", units: 0, text: `\n**Triggered actions (${s.sideEffects.length}), side effects of apply:**\n\n` });
+  for (const e of s.sideEffects) blocks.push({ kind: "effect", units: 1, text: `- ${code(sideEffectText(e))}\n` });
   if (s.failed.length > 0) blocks.push({ kind: "failed", units: 0, text: `\n**Failed (${s.failed.length}), not grouped:**\n\n` });
   for (const f of s.failed) blocks.push({ kind: "failed", units: 1, text: `- ${code(failureLabel(f))}: ${oneLine(f.reason)}\n` });
   if (s.holes.length > 0) blocks.push({ kind: "hole", units: 0, text: `\n**Holes (${s.holes.length}), addresses the plan says nothing about:**\n\n` });
@@ -685,6 +781,7 @@ export function renderPlanSummaryMarkdown(s: PlanSummary, options: RenderMarkdow
     if (lines.length > 0) t += "```\n" + lines.map(changeText).join("\n") + "\n```\n\n";
     t += `${s.unit === "instance" ? "Instances" : "Members"}: ${g.units.map(code).join(", ")}\n`;
     if (g.destroys.length > 0) t += `\nDestroys and replacements: ${g.destroys.length}, listed above.\n`;
+    if (g.sideEffects.length > 0) t += `\nTriggered actions: ${g.sideEffects.length}, listed above.\n`;
     blocks.push({ kind: "group", units: g.units.length, text: t });
   }
 
@@ -697,6 +794,9 @@ export function renderPlanSummaryMarkdown(s: PlanSummary, options: RenderMarkdow
     const count = (k: Block["kind"]) => cut.filter((b) => b.kind === k && (k === "group" || b.units > 0)).length;
     const parts: string[] = [];
     if (count("destroy") > 0) parts.push(plural(count("destroy"), "destroy or replacement", "destroys or replacements"));
+    if (count("forget") > 0) parts.push(plural(count("forget"), "forget", "forgets"));
+    if (count("import") > 0) parts.push(plural(count("import"), "import", "imports"));
+    if (count("effect") > 0) parts.push(plural(count("effect"), "triggered action", "triggered actions"));
     if (count("failed") > 0) parts.push(plural(count("failed"), "failed member", "failed members"));
     if (count("hole") > 0) parts.push(plural(count("hole"), "hole", "holes"));
     const groups = cut.filter((b) => b.kind === "group");

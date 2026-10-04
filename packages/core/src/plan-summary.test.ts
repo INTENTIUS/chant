@@ -14,6 +14,7 @@ import { composeChangeSet, type ChangeSetAction, type ChangeSetEntry, type Chang
 import {
   GITHUB_COMMENT_LIMIT,
   groupChangeSet,
+  planSummaryHeadline,
   PLAN_SUMMARY_SCHEMA_ID,
   renderPlanSummaryMarkdown,
   renderPlanSummaryText,
@@ -108,6 +109,60 @@ describe("what is never folded into a group", () => {
   test("a hole is named with its member and reason", () => {
     expect(s.holes).toEqual([{ member: "roots/r99", address: "aws_kms_key.k", reason: "access denied" }]);
     expect(renderPlanSummaryMarkdown(s)).toContain("`roots/r99: aws_kms_key.k`: access denied");
+  });
+
+  test("validates against the schema", () => {
+    expectValid(s);
+  });
+});
+
+describe("imports, forgets and triggered actions", () => {
+  const parts: ChangeSetPart[] = [];
+  for (let i = 1; i <= 6; i++) {
+    const r = `r${i}`;
+    const entries: Parameters<typeof part>[1] = [tagsUpdate("aws_iam_role.app", r)];
+    if (i <= 2) entries.push({ address: "aws_s3_bucket.old", action: "forget" });
+    if (i === 3) entries.push({ address: "aws_s3_bucket.old", action: "delete" });
+    if (i === 4) entries.push({ address: "aws_s3_bucket.adopted", action: "no-op", importing: true });
+    if (i === 5) entries.push({ address: "aws_s3_bucket.adopted", action: "update", importing: true, attributes: [{ path: "tags", before: null, after: { v: "1" } }] });
+    const p = part(`roots/${r}`, entries, { scope: r });
+    if (i === 6) p.sideEffects = [{ address: "action.aws_lambda_invoke.notify", type: "aws_lambda_invoke", trigger: "aws_iam_role.app", event: "after_update" }];
+    parts.push(p);
+  }
+  const doc = composeChangeSet(parts);
+  const s = groupChangeSet(doc);
+
+  test("a forget is never counted as a destroy, nor a destroy as a forget", () => {
+    expect(s.destroys.map((d) => `${d.member} ${d.address} ${d.action}`)).toEqual(["roots/r3 aws_s3_bucket.old delete"]);
+    expect(s.forgets.map((f) => `${f.member} ${f.address}`)).toEqual(["roots/r1 aws_s3_bucket.old", "roots/r2 aws_s3_bucket.old"]);
+    expect(s.groups.map((g) => g.units)).toContainEqual(["roots/r1", "roots/r2"]);
+    expect(s.groups.find((g) => g.units.includes("roots/r3"))?.units).toEqual(["roots/r3"]);
+    expect(s.groups.flatMap((g) => g.destroys).map((d) => d.member)).toEqual(["roots/r3"]);
+  });
+
+  test("an import is named, whether it changes anything or not, and splits from the same change without one", () => {
+    expect(s.imports.map((i) => `${i.member} ${i.address} ${i.action}`)).toEqual(["roots/r4 aws_s3_bucket.adopted no-op", "roots/r5 aws_s3_bucket.adopted update"]);
+    expect(s.groups.find((g) => g.units.includes("roots/r4"))?.units).toEqual(["roots/r4"]);
+  });
+
+  test("a triggered action is a side effect, named with what triggers it", () => {
+    expect(s.sideEffects).toEqual([{ member: "roots/r6", address: "action.aws_lambda_invoke.notify", type: "aws_lambda_invoke", trigger: "aws_iam_role.app", event: "after_update" }]);
+    expect(s.groups.find((g) => g.units.includes("roots/r6"))?.units).toEqual(["roots/r6"]);
+  });
+
+  test("the headline and both renderings name each kind apart from destroys", () => {
+    expect(planSummaryHeadline(s)).toContain("1 destroy or replacement");
+    expect(planSummaryHeadline(s)).toContain("2 forgets");
+    expect(planSummaryHeadline(s)).toContain("2 imports");
+    expect(planSummaryHeadline(s)).toContain("1 triggered action");
+    for (const out of [renderPlanSummaryText(s), renderPlanSummaryMarkdown(s)]) {
+      expect(out).toContain("Forgets (2)");
+      expect(out).toContain("Imports (2)");
+      expect(out).toContain("Triggered actions (1)");
+      expect(out).toContain("roots/r1: aws_s3_bucket.old");
+      expect(out).toContain("roots/r4: aws_s3_bucket.adopted");
+      expect(out).toContain("roots/r6: action.aws_lambda_invoke.notify");
+    }
   });
 
   test("validates against the schema", () => {

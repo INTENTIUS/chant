@@ -37,7 +37,8 @@
           "count": 1
         }
       ],
-      "destroys": []
+      "destroys": [],
+      "sideEffects": []
     },
     {
       "id": "36dca470b879",
@@ -81,10 +82,14 @@
           "count": 1
         }
       ],
-      "destroys": []
+      "destroys": [],
+      "sideEffects": []
     }
   ],
   "failed": [],
   "destroys": [],
+  "imports": [],
+  "forgets": [],
+  "sideEffects": [],
   "holes": []
 }
