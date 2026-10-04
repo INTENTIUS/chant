@@ -88,6 +88,8 @@ export interface ChangeSetEntry {
   /** The provider's own id, when the planner reports one. */
   id?: string;
   action: ChangeSetAction;
+  /** The entry also imports the object into state (an `import` block). Its action is whatever else the plan does to it, `no-op` included. */
+  importing?: true;
   /** Set on update, replace and delete. `unknown` means nobody could say. */
   disruption?: ChangeSetDisruption;
   region?: string;
@@ -117,10 +119,24 @@ export interface ChangeSetMember {
   holes: ChangeSetHole[];
 }
 
-/** What an adapter returns: one member and the entries it plans. */
+/** A provider-defined side effect an apply runs: a Terraform `action` block's invocation. */
+export interface ChangeSetSideEffect {
+  member: string;
+  /** The invocation's address, or its action type when the planner gives none. */
+  address: string;
+  /** The action's type, such as `aws_lambda_invoke`. */
+  type: string;
+  /** The address of the resource whose lifecycle triggers it, when one does. */
+  trigger?: string;
+  /** The lifecycle event, such as `after_update`. */
+  event?: string;
+}
+
+/** What an adapter returns: one member, the entries it plans and the side effects it will run. */
 export interface ChangeSetPart {
   member: ChangeSetMember;
   entries: ChangeSetEntry[];
+  sideEffects?: Array<Omit<ChangeSetSideEffect, "member">>;
 }
 
 export type ActionCounts = Partial<Record<ChangeSetAction, number>>;
@@ -157,6 +173,8 @@ export interface ChangeSetDocument {
   digest: string;
   members: ChangeSetMember[];
   entries: ChangeSetEntry[];
+  /** Triggered actions, sorted by member and address. Absent when no member runs one. */
+  sideEffects?: ChangeSetSideEffect[];
   summary: ChangeSetSummary;
 }
 
@@ -241,6 +259,9 @@ export function composeChangeSet(parts: ReadonlyArray<ChangeSetPart>, options: C
     }
   }
   entries.sort((a, b) => byString(entryKey(a), entryKey(b)));
+  const sideEffects: ChangeSetSideEffect[] = parts
+    .flatMap((p) => (p.sideEffects ?? []).map((s) => ({ member: p.member.member, ...s })))
+    .sort((a, b) => byString(a.member, b.member) || byString(a.address, b.address) || byString(a.trigger ?? "", b.trigger ?? ""));
   const digest = changeSetDigest(members);
   return {
     $schema: CHANGE_SET_SCHEMA_ID,
@@ -249,6 +270,7 @@ export function composeChangeSet(parts: ReadonlyArray<ChangeSetPart>, options: C
     digest,
     members,
     entries,
+    ...(sideEffects.length > 0 ? { sideEffects } : {}),
     summary: summarizeChangeSet(members, entries),
   };
 }

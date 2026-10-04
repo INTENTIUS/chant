@@ -18,6 +18,7 @@ The document is part of the [workspace read contract](/chant/reference/workspace
 | `digest` | what a gate over the whole run binds, described [below](#the-digest) |
 | `members` | one per member, sorted by name |
 | `entries` | one per resource change, sorted by member, address, deposed key and action |
+| `sideEffects` | the Terraform actions an apply runs, `{ member, address, type, trigger, event }`; absent when none |
 | `summary` | counts and the named deletes and replacements |
 
 ### Members
@@ -46,6 +47,7 @@ A member with holes has an incomplete plan. Its entries say nothing about the ad
 | `deposed` | a deposed object's key |
 | `id` | the provider's id, when the planner reports one |
 | `action` | `create`, `update`, `replace`, `delete`, `read`, `no-op` or `forget` |
+| `importing` | `true` when an `import` block also brings the object into state; `action` is what else the plan does to it |
 | `disruption` | on `update`, `replace` and `delete`: `in-place`, `rolling`, `replace`, `destroy` or `unknown` |
 | `region`, `scope` | where the change lands |
 | `attributes` | the top-level attributes the change writes |

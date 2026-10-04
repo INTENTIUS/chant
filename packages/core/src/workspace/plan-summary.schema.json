@@ -4,7 +4,7 @@
   "title": "plan summary",
   "description": "The grouped plan summary (#3188): a change-set document's members, or one member's instances, grouped by their normalized changes, with every destroy, replacement, failure and hole by name. Written by `chant change-set summary --format json` and by groupChangeSet in @intentius/chant/plan-summary. Reviewers read it; no gate binds it. Version 1 of the workspace read contract. Readers ignore fields they do not know; a field is only ever added within a version.",
   "type": "object",
-  "required": ["$schema", "contract", "changeSet", "unit", "units", "groups", "failed", "destroys", "holes"],
+  "required": ["$schema", "contract", "changeSet", "unit", "units", "groups", "failed", "destroys", "holes", "imports", "forgets", "sideEffects"],
   "properties": {
     "$schema": { "const": "https://intentius.io/chant/schemas/workspace/plan-summary/v1/plan-summary.schema.json" },
     "contract": { "const": 1 },
@@ -45,6 +45,21 @@
       "description": "Every delete and replace in the document, failed members' included, sorted by member and address.",
       "items": { "$ref": "#/$defs/destroy" }
     },
+    "imports": {
+      "type": "array",
+      "description": "Every entry that imports an object into state, sorted by member and address. An import is not a destroy.",
+      "items": { "$ref": "#/$defs/import" }
+    },
+    "forgets": {
+      "type": "array",
+      "description": "Every forget: the plan stops tracking the object and leaves it running. Never in destroys, and a destroy is never here.",
+      "items": { "$ref": "#/$defs/forget" }
+    },
+    "sideEffects": {
+      "type": "array",
+      "description": "Every provider-defined action an apply runs (Terraform actions blocks), sorted by member and address.",
+      "items": { "$ref": "#/$defs/sideEffect" }
+    },
     "holes": {
       "type": "array",
       "description": "Every address a member's planner could not read.",
@@ -62,6 +77,37 @@
   },
   "$defs": {
     "action": { "enum": ["create", "update", "replace", "delete", "read", "no-op", "forget"] },
+    "import": {
+      "type": "object",
+      "required": ["member", "address", "type", "action"],
+      "properties": {
+        "member": { "type": "string" },
+        "address": { "type": "string" },
+        "type": { "type": "string" },
+        "action": { "$ref": "#/$defs/action", "description": "What else the plan does to the object; no-op when the import changes nothing." }
+      }
+    },
+    "forget": {
+      "type": "object",
+      "required": ["member", "address", "type"],
+      "properties": {
+        "member": { "type": "string" },
+        "address": { "type": "string" },
+        "type": { "type": "string" },
+        "deposed": { "type": "string" }
+      }
+    },
+    "sideEffect": {
+      "type": "object",
+      "required": ["member", "address", "type"],
+      "properties": {
+        "member": { "type": "string" },
+        "address": { "type": "string", "description": "The invocation's address, or its action type when the planner gives none." },
+        "type": { "type": "string" },
+        "trigger": { "type": "string", "description": "The resource whose lifecycle triggers it." },
+        "event": { "type": "string" }
+      }
+    },
     "destroy": {
       "type": "object",
       "required": ["member", "address", "type", "action"],
@@ -100,7 +146,8 @@
         "changes": { "type": "array", "items": { "$ref": "#/$defs/change" } },
         "extends": { "type": "string", "description": "The group whose whole change this one contains." },
         "plus": { "type": "array", "items": { "$ref": "#/$defs/change" }, "description": "What it adds to that group's change." },
-        "destroys": { "type": "array", "items": { "$ref": "#/$defs/destroy" }, "description": "Every delete and replace a unit of this group makes. Each is also in the top-level destroys." }
+        "destroys": { "type": "array", "items": { "$ref": "#/$defs/destroy" }, "description": "Every delete and replace a unit of this group makes. Each is also in the top-level destroys." },
+        "sideEffects": { "type": "array", "items": { "$ref": "#/$defs/sideEffect" }, "description": "Every triggered action a unit of this group runs." }
       }
     }
   }

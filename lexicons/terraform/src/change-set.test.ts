@@ -72,6 +72,33 @@ describe("terraformChangeSetPart, on real plans", () => {
   });
 });
 
+describe("imports, forgets and triggered actions", () => {
+  // terraform 1.15.8 show -json: a `removed` block with destroy = false (action
+  // "forget"), an `import` block (change.importing, action "update") and a
+  // create. The plan has no field named for a forget beyond its action.
+  const plan = read("terraform.import-forget.plan.json") as { resource_changes: unknown[] };
+
+  test("a forget keeps the action forget and an import is flagged beside its own action", () => {
+    const { entries } = terraformChangeSetPart({ member: "root", plan });
+    const at = (address: string) => entries.find((e) => e.address === address)!;
+    expect(at("terraform_data.a")).toMatchObject({ action: "forget", attributes: [] });
+    expect(at("terraform_data.a").importing).toBeUndefined();
+    expect(at("terraform_data.b")).toMatchObject({ action: "update", importing: true });
+    expect(at("terraform_data.c").importing).toBeUndefined();
+  });
+
+  test("action_invocations become side effects, and bind the plan digest only when present", () => {
+    const invocation = { address: "action.aws_lambda_invoke.notify", type: "aws_lambda_invoke", lifecycle_action_trigger: { triggering_resource_address: "aws_lambda_function.worker", action_trigger_event: "after_update", actions_block_index: 0, action_trigger_block_index: 0 } };
+    const withAction = { ...plan, action_invocations: [invocation] };
+    const part = terraformChangeSetPart({ member: "root", plan: withAction });
+    expect(part.sideEffects).toEqual([{ address: "action.aws_lambda_invoke.notify", type: "aws_lambda_invoke", trigger: "aws_lambda_function.worker", event: "after_update" }]);
+    expect(terraformChangeSetPart({ member: "root", plan }).sideEffects).toBeUndefined();
+    expect(terraformPlanDigest(withAction)).not.toBe(terraformPlanDigest(plan));
+    expect(terraformPlanDigest({ ...plan, action_invocations: [] })).toBe(terraformPlanDigest(plan));
+    expect(composeChangeSet([part]).sideEffects).toEqual([{ member: "root", ...part.sideEffects![0] }]);
+  });
+});
+
 describe("choudoufuSetPlanParts, on choudoufu's golden set plan", () => {
   test("one part per root, the failed root a failed member, and the golden document", () => {
     const parts = choudoufuSetPlanParts({ document: read("choudoufu-set-plan.json") });

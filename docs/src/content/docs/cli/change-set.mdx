@@ -53,6 +53,9 @@ chant and choudoufu's `live-summary` follow the same rules. Each keeps its own c
 
 - A member that failed to plan is listed with its reason and is in no group.
 - Every `delete` and `replace` in the document is listed by member and real address, failed members' included. A destroy is also part of its member's change, so a member that destroys something never groups with one that does not.
+- A forget is the plan action `forget`: a `removed` block, or `lifecycle { destroy = false }`, stops tracking an object and leaves it running. Forgets are listed on their own and are never counted as destroys; a destroy is never listed as a forget. A member that forgets something never groups with one that destroys it.
+- An import (an `import` block) is listed on its own with what else the plan does to the object, which is nothing when the import changes nothing. An import is part of its entry's change, so it never groups with the same change made without one.
+- A triggered action (a Terraform `action` block, in the plan's `action_invocations`) is listed as a side effect of apply, with the resource and event that trigger it. Members that run different actions do not group.
 - Every hole is listed with its member and the planner's reason. A hole is an address the planner could not read.
 
 ## Output
@@ -67,16 +70,19 @@ chant and choudoufu's `live-summary` follow the same rules. Each keeps its own c
 | `changeSet` | the digest of the change-set document summarized |
 | `unit` | `member`, or `instance` for a one-member document |
 | `units` | the number of members, failed ones included, or of changing instances |
-| `groups` | largest first, each `{ id, resource, units, outlier, noChanges, changes, extends, plus, destroys }` |
+| `groups` | largest first, each `{ id, resource, units, outlier, noChanges, changes, extends, plus, destroys, sideEffects }` |
 | `failed` | `{ member, scope, reason }` for each member that failed |
 | `destroys` | `{ member, address, type, action, deposed }` for each delete and replace |
+| `forgets` | `{ member, address, type, deposed }` for each forget |
+| `imports` | `{ member, address, type, action }` for each import |
+| `sideEffects` | `{ member, address, type, trigger, event }` for each triggered action |
 | `holes` | `{ member, address, type, reason }` |
 
 A group's `id` is twelve hex characters of a hash over its normalized changes. The same change gets the same id in every run and on every commit, so a report can link one group across commits. `changes` lists each distinct change once, with `count` for a change one member makes several times. When a group holds the whole of the largest group's change and more, `extends` names that group and `plus` lists the rest. Sometimes a change has the same address and action as one in the largest group but other values. It then carries `differsFrom`, naming that group, and `differsIn`, naming the attributes. Values are never printed.
 
 `--format markdown` prints a note for a merge request or pull request, of at most `--limit` characters counted as Unicode code points. The default is 65,536, the most a GitHub issue or pull request comment may hold; the API refuses a longer one. A GitLab note may hold 1,000,000 characters ([GitLab Notes API](https://docs.gitlab.com/api/notes/)), so `--limit 1000000` suits a GitLab-only pipeline.
 
-Its blocks keep the text order. When they do not fit, whole groups are dropped from the end. A last line then says how many groups and members it left out. The destroy, failure and hole lines are dropped only when they alone exceed the limit, from the end, and the last line counts them too.
+Its blocks keep the text order. When they do not fit, whole groups are dropped from the end. A last line then says how many groups and members it left out. The destroy, forget, import, triggered action, failure and hole lines are dropped only when they alone exceed the limit, from the end, and the last line counts them too.
 
 ## Options
 

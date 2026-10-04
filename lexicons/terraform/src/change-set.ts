@@ -20,6 +20,7 @@ import type {
   ChangeSetEntry,
   ChangeSetPart,
   ChangeSetPlanner,
+  ChangeSetSideEffect,
 } from "@intentius/chant/change-set";
 import { terraformPlanDigest } from "./plan-digest";
 
@@ -179,12 +180,14 @@ export function terraformChangeSetPart(input: TerraformChangeSetPartInput): Chan
       ...(module ? { module } : {}),
       ...(typeof rc.deposed === "string" ? { deposed: rc.deposed } : {}),
       action,
+      ...(isObject(change.importing) ? { importing: true as const } : {}),
       ...(disruption ? { disruption } : {}),
       ...(region ? { region } : {}),
       ...(input.scope ? { scope: input.scope } : {}),
       attributes: attributesFor(change, action),
     };
   });
+  const sideEffects = (Array.isArray(plan.action_invocations) ? plan.action_invocations : []).map(sideEffectFor);
   const errored = plan.errored === true;
   return {
     member: {
@@ -199,6 +202,23 @@ export function terraformChangeSetPart(input: TerraformChangeSetPartInput): Chan
       holes: [],
     },
     entries,
+    ...(sideEffects.length > 0 ? { sideEffects } : {}),
+  };
+}
+
+/**
+ * One `action_invocations` entry of a plan (Terraform 1.14): the action's
+ * address and type, and, for a lifecycle trigger, the resource and event.
+ */
+function sideEffectFor(raw: unknown): Omit<ChangeSetSideEffect, "member"> {
+  const inv = isObject(raw) ? raw : {};
+  const type = typeof inv.type === "string" ? inv.type : "unknown";
+  const lifecycle = isObject(inv.lifecycle_action_trigger) ? inv.lifecycle_action_trigger : {};
+  return {
+    address: typeof inv.address === "string" ? inv.address : type,
+    type,
+    ...(typeof lifecycle.triggering_resource_address === "string" ? { trigger: lifecycle.triggering_resource_address } : {}),
+    ...(typeof lifecycle.action_trigger_event === "string" ? { event: lifecycle.action_trigger_event } : {}),
   };
 }
 
