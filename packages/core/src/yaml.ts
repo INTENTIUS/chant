@@ -2,13 +2,22 @@
  * YAML emitter and parser.
  *
  * The emitter writes the block-style YAML chant's serializers produce. The
- * parser is js-yaml with chant's schema (#3006): YAML 1.2 core types,
+ * parser is a vendored js-yaml loader with chant's schema (#3006): YAML 1.2 core types,
  * merge keys, `yes`/`no` booleans, and local tags such as `!reference` read
  * as strings. `splitYAMLDocuments` splits a multi-document stream. Input the
  * parser cannot read throws a `YAMLParseError` naming the line.
  */
 
-import yaml from "js-yaml";
+import {
+  FLOAT_TYPE,
+  INT_TYPE,
+  load,
+  MAP_TYPE,
+  NULL_TYPE,
+  SEQ_TYPE,
+  STR_TYPE,
+  YAMLException,
+} from "./vendor/js-yaml-load";
 
 // ---------------------------------------------------------------------------
 // Emitter
@@ -191,14 +200,12 @@ const DOCUMENT_MARKER = /^(?:---|\.\.\.)(?:[ \t]+#.*)?[ \t]*$/;
  * Booleans as YAML 1.2's core schema reads them, plus `yes` and `no`, which
  * this parser has always read as booleans and its callers expect.
  */
-const BOOL = new yaml.Type("tag:yaml.org,2002:bool", {
+const BOOL = {
+  tag: "tag:yaml.org,2002:bool",
   kind: "scalar",
   resolve: (data: string | null) => data !== null && /^(?:true|True|TRUE|false|False|FALSE|yes|no)$/.test(data),
   construct: (data: string) => /^(?:true|True|TRUE|yes)$/.test(data),
-  predicate: (value: unknown) => typeof value === "boolean",
-  represent: { lowercase: (value: object) => (value ? "true" : "false") },
-  defaultStyle: "lowercase",
-});
+};
 
 /** A tagged value written back as text, the way it appeared: `!reference [.base, script]`. */
 function flowText(value: unknown): string {
@@ -215,31 +222,34 @@ function flowText(value: unknown): string {
  * `!reference [.base, script]` is the string `"!reference [.base, script]"`.
  * A tag on a mapping has no such form and is an error.
  */
-const TAGGED_SCALAR = new yaml.Type("!", {
+const TAGGED_SCALAR = {
+  tag: "!",
   kind: "scalar",
   multi: true,
   construct: (data: string | null, tag?: string) => (data === null || data === "" ? tag : `${tag} ${data}`),
-});
-const TAGGED_SEQUENCE = new yaml.Type("!", {
+};
+const TAGGED_SEQUENCE = {
+  tag: "!",
   kind: "sequence",
   multi: true,
   construct: (data: unknown[] | null, tag?: string) => `${tag} ${flowText(data ?? [])}`,
-});
+};
 
-/** The merge key `<<`, as js-yaml's own merge type reads it (its typings omit `types`). */
-const MERGE = new yaml.Type("tag:yaml.org,2002:merge", {
+/** The merge key `<<`, as js-yaml's own merge type reads it. */
+const MERGE = {
+  tag: "tag:yaml.org,2002:merge",
   kind: "scalar",
   resolve: (data: string | null) => data === "<<" || data === null,
-});
+};
 
 /**
  * YAML 1.2's core schema (no timestamps, so a date stays a string) with merge
  * keys, `yes`/`no` booleans and local tags read as strings.
  */
-const SCHEMA = yaml.CORE_SCHEMA.extend({
-  implicit: [BOOL, MERGE],
-  explicit: [TAGGED_SCALAR, TAGGED_SEQUENCE],
-});
+const SCHEMA = {
+  implicit: [NULL_TYPE, BOOL, INT_TYPE, FLOAT_TYPE, MERGE],
+  explicit: [STR_TYPE, SEQ_TYPE, MAP_TYPE, TAGGED_SCALAR, TAGGED_SEQUENCE],
+};
 
 /**
  * Give every alias its own copy of the anchored value. js-yaml shares one
@@ -266,7 +276,7 @@ function unshareAliases(value: unknown, seen = new Set<object>()): unknown {
  * multiline key. Report the line where that key starts instead, the text
  * that is not a key.
  */
-function errorLine(lines: string[], err: yaml.YAMLException): number {
+function errorLine(lines: string[], err: YAMLException): number {
   let line = err.mark?.line ?? 0;
   if (/multiline key may not be an implicit key/.test(err.reason)) {
     const indent = lines[line]?.search(/\S/) ?? -1;
@@ -297,9 +307,9 @@ function loadDocument(content: string): unknown {
     .join("\n");
   let value: unknown;
   try {
-    value = yaml.load(text, { schema: SCHEMA, json: true });
+    value = load(text, SCHEMA);
   } catch (err) {
-    if (!(err instanceof yaml.YAMLException)) throw err;
+    if (!(err instanceof YAMLException)) throw err;
     const line = errorLine(text.split("\n"), err);
     const tag = err.reason.match(/^unknown tag !<(![^>]*)>/)?.[1];
     throw new YAMLParseError(line, tag ? `the tag ${JSON.stringify(tag)} on a mapping is not supported` : err.reason);
