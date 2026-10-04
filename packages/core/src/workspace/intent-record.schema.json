@@ -726,10 +726,16 @@
           "items": {
             "enum": [
               "trailer",
-              "record"
+              "record",
+              "patch-id"
             ]
           },
-          "description": "trailer: the commit carries Chant-Run with the run's id. record: the run's end lists the commit."
+          "description": "trailer: the commit carries Chant-Run with the run's id. record: the run's end lists the commit. patch-id: neither holds, and the commit's git patch-id --stable equals a commit's the run's end recorded, as after a rebase or a cherry-pick that dropped the trailer (#3036); never alongside the others. Added within version 1."
+        },
+        "recordedAs": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40,64}$",
+          "description": "For a patch-id join (#3036): the commit the run's end recorded with the same patch-id, which this one rewrites. Added within version 1."
         }
       }
     }

@@ -39,6 +39,13 @@
  * behind each (narrowed by the hunks a run recorded when several share a
  * commit), and the decisions governing the region, most relevant first, with
  * `explained: false` and closed gap codes when nothing accounts for it.
+ *
+ * A commit joins an agent run by its `Chant-Run` trailer or the run's own
+ * list of commits, and, failing both, by content (#3036): a commit whose
+ * `git patch-id --stable` equals one the run recorded, as after a rebase or a
+ * cherry-pick that dropped the trailer. Its `made-by` edge says `patch-id`,
+ * and a commit joined one way whose content matches another run's recorded
+ * commit is `intent-commit-join-conflict`.
  */
 
 import { execFileSync } from "node:child_process";
@@ -56,7 +63,7 @@ import type { DecidedIn } from "./record-decided";
 import { importKindModule, loadRecordKind, parseFrontMatter, RecordReadError, supersedesTargets, type LoadedRecordKind } from "./records";
 import { queryRecords, type RecordView } from "./records-cli";
 import { isPluginCode, type PluginCode, type ReasonCode } from "./reason-codes";
-import { runsForCommits, type RunCost, type RunPin, type RunUsage, type RunView } from "./runs";
+import { runsForCommits, type RunCost, type RunJoin, type RunPin, type RunUsage, type RunView } from "./runs";
 import { resolveSymbol } from "./symbols";
 import { readTrailerJoins, type CommitTrailerJoins } from "./trailer-joins";
 import { joinPath, skippedDir, type WorkspaceTree } from "./tree";
@@ -109,6 +116,8 @@ export const INTENT_FINDING_CODES = [
   "intent-work-blocked",
   /** Commits in the region are a decision's own work while the work item implementing it is still open: the code says done and the queue says not (#2683). */
   "intent-work-open-decided-code",
+  /** A commit joined to an agent run by its trailer or the run's record has the patch-id of a commit another run recorded; the content join is not made (#3036). */
+  "intent-commit-join-conflict",
 ] as const satisfies readonly ReasonCode[];
 export type IntentFindingCode = (typeof INTENT_FINDING_CODES)[number];
 
@@ -408,7 +417,7 @@ export type IntentEdge =
   | { kind: "pins"; from: string; to: string; pinnedSha256: string | null; pinState: PinState }
   | { kind: "touched-by"; from: string; to: string; lines: LineRange[] | null }
   | { kind: "within"; from: string; to: string; state: "decided" | "decided-by-window" | "worked" }
-  | { kind: "made-by"; from: string; to: string; joinedBy: ("trailer" | "record")[] }
+  | { kind: "made-by"; from: string; to: string; joinedBy: RunJoin[]; recordedAs?: string }
   | { kind: "produced-by" | "serves" | "cites-evidence" | "supersedes" | "links" | "implements" | "needs" | "addressed-by" | "carries" | "worked-on"; from: string; to: string };
 
 /** Lines of the region that one commit, and the same runs, last wrote (#3034). */
@@ -422,6 +431,8 @@ export interface WhySpan {
   runs: string[];
   /** `hunks` when a run's recorded hunks chose among the commit's runs; null when every run that made the commit is listed. */
   narrowedBy: "hunks" | null;
+  /** How the runs in `runs` join the commit, as their `made-by` edges say, without repeats (#3036). Empty with no runs. */
+  joinedBy: RunJoin[];
 }
 
 /** Why a decision is in `why`, most relevant first (#3034). */
@@ -454,6 +465,8 @@ export interface WhyRun {
   unit: { id: string; kind: string | null; node: string | null } | null;
   /** The decision nodes it carried out: through its work item's implements, and the decision records it names. */
   decisions: string[];
+  /** How it joins the commits in `commits`, as their `made-by` edges say, without repeats (#3036). */
+  joinedBy: RunJoin[];
 }
 
 export interface WhyGap {
@@ -1063,8 +1076,14 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
         instruction: r?.instruction ?? null,
         lease: r?.lease ?? null,
       });
-      edges.push({ kind: "made-by", from: `commit:${t.sha}`, to: node.id, joinedBy: ref.joinedBy });
+      edges.push({ kind: "made-by", from: `commit:${t.sha}`, to: node.id, joinedBy: ref.joinedBy, ...(ref.recordedAs ? { recordedAs: ref.recordedAs } : {}) });
     }
+  }
+  // A commit a trailer or a record joins to one run, with the content of a commit another run recorded (#3036).
+  for (const x of runJoins.conflicts) {
+    if (!nodes.has(`commit:${x.sha}`)) continue;
+    const others = x.content.map((m) => `${m.run} (${m.sha.slice(0, 8)})`).join(", ");
+    find("intent-commit-join-conflict", `${x.sha.slice(0, 8)} joins ${x.joined.join(", ")} by its trailer or the run's record, and has the patch-id of a commit ${others} recorded; it is not joined to ${x.content.length === 1 ? "that run" : "those runs"}`, [`commit:${x.sha}`, ...x.joined.map((id) => `run:${id}`)]);
   }
 
   // 3. The decisions whose constrains cover the region, and their chains.
@@ -1679,6 +1698,11 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
   /** "Why is it like this" over the region (#3034): who made its current lines, and the decisions governing it, most relevant first. */
   function explain(): WhyAnswer {
     const hunksOf = (run: string, sha: string) => runJoins.runs.get(run)?.commits.find((c) => c.sha === sha)?.hunks ?? null;
+    const joinOf = (run: string, sha: string): RunJoin[] => (runJoins.refs.get(sha) ?? []).find((r) => r.id === run)?.joinedBy ?? [];
+    const joinsOf = (runs: string[], shas: string[]): RunJoin[] => {
+      const all = new Set(runs.flatMap((id) => shas.flatMap((sha) => joinOf(id, sha))));
+      return (["trailer", "record", "patch-id"] as const).filter((j) => all.has(j));
+    };
     // Each current line: its commit, and the runs that wrote it.
     const who = blamed.map((b) => {
       if (b.sha === null) return { line: b.line, sha: null, runs: [] as string[], narrowedBy: null as "hunks" | null };
@@ -1697,7 +1721,7 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
         last.end = w.line;
         continue;
       }
-      spans.push({ start: w.line, end: w.line, commit: w.sha ? `commit:${w.sha}` : null, sha: w.sha, runs: w.runs.map((r) => `run:${r}`), narrowedBy: w.narrowedBy });
+      spans.push({ start: w.line, end: w.line, commit: w.sha ? `commit:${w.sha}` : null, sha: w.sha, runs: w.runs.map((r) => `run:${r}`), narrowedBy: w.narrowedBy, joinedBy: w.sha ? joinsOf(w.runs, [w.sha]) : [] });
     }
     const ranges = (lines: number[]): LineRange[] => {
       const out: LineRange[] = [];
@@ -1745,7 +1769,8 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
         if (t?.kind === "decision") carried.add(t.id);
         if (t?.kind === "work") for (const e of edges) if (e.kind === "implements" && e.from === t.id) carried.add(e.to);
       }
-      return { run: n.id, lines, commits, unit: r?.unit ? { id: r.unit.id, kind: r.unit.kind, node: work?.id ?? null } : null, decisions: [...carried] };
+      const shas = commits.map((c) => c.slice("commit:".length));
+      return { run: n.id, lines, commits, unit: r?.unit ? { id: r.unit.id, kind: r.unit.kind, node: work?.id ?? null } : null, decisions: [...carried], joinedBy: joinsOf([n.run], shas) };
     };
     let runs: WhyRun[];
     if (fileLines !== null) {
