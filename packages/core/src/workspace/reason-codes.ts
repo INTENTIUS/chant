@@ -159,6 +159,8 @@ export const REASONS = {
   "answer-not-candidate": "The people's answer is not one of the question's candidates.",
   "quorum-not-met": "Too few of the people who answered count toward the point's quorum: distinct, not holding the agent role, not the steward that asked, and holding one of its roles when it names any.",
   "answer-in-steward-turn": "The answer was given during a steward's turn, or by a process it started: a steward never answers a decision point, and a person answers it through hud or at a shell.",
+  "answer-not-answered": "points retract names a question that has no answer to retract: it is escalated or proposed, and people answer it instead (#3351).",
+  "answer-field-unsupported": "The answer kind's copy of point-answer.schema.json predates a field the write needs, a note or a retraction: copy the schema anew to turn it on (#3351).",
   // records --since that fails (#2673).
   "since-rev-unknown": "--since names no commit, or a session with no opening revision and no commit that added it.",
   "since-session-unknown": "--since has the shape of a session id and names no commit, and no session the kind or the declaration reads has that id.",
@@ -254,6 +256,13 @@ export const REASONS = {
   "listing-member-unknown": "box listing set names a member the declaration does not declare.",
   "listing-box-missing": "box listing set names a member whose entry declares no box block, so it has no listing.",
   "listing-cover-invalid": "The cover can't be read, is not a PNG, JPEG or WebP picture, is larger than 5 MiB, has a path outside the workspace, or has an extension other than its picture format's.",
+  // A box's work published through chant (box publish, #3165, ws-088): why the call printed no result.
+  "publish-member-unknown": "box publish names a member the declaration does not declare.",
+  "publish-none": "box publish names a member whose box block names no publisher, or which declares no box block.",
+  "publish-refused": "The box's publisher refused (it exited 2): nothing was published, and its message says why.",
+  "publish-failed": "The box's publisher could not be run, failed (a nonzero exit other than 2) or ran out of time; its message says what it had done.",
+  "publish-answer-invalid": "The box's publisher exited 0 and printed no JSON object, or one box-publish.schema.json does not allow.",
+  "publish-unrecorded": "The commit the publisher named is not in the repository, or lacks the apply record of ws-075: Chant-Applied-By naming --by, Chant-Applied-At, Chant-Applied-Commit and a Chant-Record for the item, or a Chant-Record for each record sent.",
   // Work in progress under refs/chant/wip/<branch> and its replication (wip save|restore|push|fetch, #3172): why the write was refused. Nothing is written.
   "wip-no-branch": "HEAD is detached, or names a branch with no commit yet, so there is no branch to keep work in progress for.",
   "wip-none": "wip restore was given no snapshot, and the branch has none under refs/chant/wip/<branch>.",

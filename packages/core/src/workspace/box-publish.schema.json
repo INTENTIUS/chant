@@ -1,0 +1,498 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/box-publish/v1/box-publish.schema.json",
+  "title": "chant workspace box publish output",
+  "description": "What `chant workspace box publish <member> <item> --by <principal>` and `chant workspace box publish <member> --records --by <principal>` print (#3165, ws-088): what the box's publisher published, read back from its answer and from the apply record on the commit it names, or why the call printed no result. chant runs the publisher the box block names (box.publisher) from the workspace root, with no shell, the request in $defs.request on stdin and CHANT_PUBLISH_CONTRACT=1 in its environment; the publisher prints the answer in $defs.answer as the last JSON object on stdout and exits 0, exits 2 to refuse, or exits with any other code when it failed. chant itself never commits, pushes or calls a forge. Readers ignore fields they do not know; a field is only ever added within a version. The error codes are a closed list, each in the one closed list of `reason-codes.ts`. Contract version 1 of this document is written by chant 0.103.0 and newer.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/result"
+    },
+    {
+      "$ref": "#/$defs/failure"
+    }
+  ],
+  "$defs": {
+    "result": {
+      "description": "The publisher published, or with --dry-run said what it would publish. Exit code 0.",
+      "type": "object",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "member",
+        "action",
+        "item",
+        "by",
+        "dryRun",
+        "publisher",
+        "commit",
+        "records",
+        "pullRequest",
+        "pushed",
+        "local",
+        "applied",
+        "answer"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/box-publish/v1/box-publish.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string",
+          "description": "The chant that ran it."
+        },
+        "member": {
+          "type": "string",
+          "description": "The member whose box block names the publisher."
+        },
+        "action": {
+          "enum": [
+            "item",
+            "records"
+          ],
+          "description": "item for a built work item, records for the records kept uncommitted (--records)."
+        },
+        "item": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The work item published, or null for records."
+        },
+        "by": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Who published (--by), or null on a --dry-run that named nobody."
+        },
+        "dryRun": {
+          "type": "boolean"
+        },
+        "publisher": {
+          "type": "string",
+          "description": "The publisher, as the box block declares it."
+        },
+        "commit": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{40,64}$",
+          "description": "The commit the publisher made in the box's checkout: the merge that applied the item, or the commit of the records. null with --dry-run."
+        },
+        "records": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/record"
+          },
+          "description": "The records sent, or with --dry-run the ones that would go. Empty for an item unless the publisher names the records it carried with it."
+        },
+        "pullRequest": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/pullRequest"
+            }
+          ],
+          "description": "The pull request opened, or found already open, on factory.publish's repo; null when none was."
+        },
+        "pushed": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/pushed"
+            }
+          ],
+          "description": "Where the branch was pushed when no pull request could be opened; null otherwise."
+        },
+        "local": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Why the work stayed in the box although factory.publish names a target, such as a box kept local by its orchestrator; null otherwise."
+        },
+        "applied": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "by",
+                "at",
+                "commit"
+              ],
+              "properties": {
+                "by": {
+                  "type": "string"
+                },
+                "at": {
+                  "type": "string",
+                  "description": "ISO 8601."
+                },
+                "commit": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40,64}$",
+                  "description": "The tip of the branch that was applied."
+                }
+              }
+            }
+          ],
+          "description": "The apply record read back from the commit's Chant-Applied-By, Chant-Applied-At and Chant-Applied-Commit trailers (ws-075), for an item; null for records and with --dry-run."
+        },
+        "answer": {
+          "type": "object",
+          "description": "The publisher's answer as it printed it, x- fields included."
+        }
+      }
+    },
+    "record": {
+      "type": "object",
+      "required": [
+        "kind",
+        "id",
+        "path",
+        "title"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "description": "The record kind's name, as a Chant-Record trailer names it."
+        },
+        "id": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string",
+          "description": "The record file, from the workspace root."
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "pullRequest": {
+      "type": "object",
+      "required": [
+        "url",
+        "number",
+        "branch",
+        "base",
+        "head"
+      ],
+      "properties": {
+        "url": {
+          "type": "string",
+          "pattern": "^https://"
+        },
+        "number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "branch": {
+          "type": "string",
+          "description": "The branch pushed, such as <factory.publish.branchPrefix><item>."
+        },
+        "base": {
+          "type": "string",
+          "description": "The branch the pull request targets."
+        },
+        "head": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "owner/name of the fork the branch was pushed to, or null when it went to the repo itself."
+        }
+      }
+    },
+    "pushed": {
+      "type": "object",
+      "required": [
+        "branch",
+        "repo"
+      ],
+      "properties": {
+        "branch": {
+          "type": "string"
+        },
+        "repo": {
+          "type": "string",
+          "description": "owner/name the branch was pushed to."
+        }
+      }
+    },
+    "request": {
+      "description": "What chant writes on the publisher's stdin, one JSON object and a newline. Not printed by chant; a publisher validates it against this definition.",
+      "type": "object",
+      "required": [
+        "contract",
+        "action",
+        "member",
+        "item",
+        "by",
+        "head",
+        "dryRun",
+        "workspace",
+        "factory"
+      ],
+      "properties": {
+        "contract": {
+          "const": 1
+        },
+        "action": {
+          "enum": [
+            "item",
+            "records"
+          ]
+        },
+        "member": {
+          "type": "string"
+        },
+        "item": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The work item to publish; null for records."
+        },
+        "by": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Who publishes, checked against identity.attribution (ws-080); the publisher names it in Chant-Applied-By and makes the commit as them. null only with dryRun."
+        },
+        "head": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "owner/name of a fork to push to instead of factory.publish.head (--head), or null."
+        },
+        "dryRun": {
+          "type": "boolean",
+          "description": "Say what would be published, as the answer's records (and nothing else) and change nothing."
+        },
+        "workspace": {
+          "type": "object",
+          "required": [
+            "root"
+          ],
+          "properties": {
+            "root": {
+              "type": "string",
+              "description": "The workspace root on disk, which is also the publisher's working directory."
+            }
+          }
+        },
+        "factory": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object"
+            }
+          ],
+          "description": "The workspace's factory as chant workspace status --json prints it (status.schema.json $defs.factory), with publish, the target an item goes to, or null when no box declares a factory."
+        }
+      }
+    },
+    "answer": {
+      "description": "What a publisher prints as the last JSON object on stdout, with exit code 0. Every field but ok may be left out; x- fields are kept in the result's answer.",
+      "type": "object",
+      "required": [
+        "ok"
+      ],
+      "properties": {
+        "ok": {
+          "const": true
+        },
+        "commit": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{40,64}$",
+          "description": "The commit made in the box's checkout. Required unless dryRun. For an item it carries Chant-Applied-By naming the request's by, Chant-Applied-At, Chant-Applied-Commit and Chant-Record: <kind>:<item>; for records, a Chant-Record for each record sent. chant refuses the result with publish-unrecorded otherwise."
+        },
+        "records": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "kind",
+              "id",
+              "path"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "title": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "pullRequest": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "url",
+                "number",
+                "branch",
+                "base"
+              ],
+              "properties": {
+                "url": {
+                  "type": "string",
+                  "pattern": "^https://"
+                },
+                "number": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "branch": {
+                  "type": "string"
+                },
+                "base": {
+                  "type": "string"
+                },
+                "head": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "pushed": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/pushed"
+            }
+          ]
+        },
+        "local": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "failure": {
+      "type": "object",
+      "description": "The call printed no result. Exit code 1. With publish-failed the publisher may have done part of the work, such as applying an item and failing to push it; its message says what.",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "member",
+        "action",
+        "item",
+        "error"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/box-publish/v1/box-publish.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "member": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "action": {
+          "enum": [
+            "item",
+            "records",
+            null
+          ]
+        },
+        "item": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "enum": [
+                "declaration-missing",
+                "declaration-ambiguous",
+                "declaration-unparseable",
+                "declaration-invalid",
+                "placement-invalid",
+                "reader-too-old",
+                "root-chant-required",
+                "not-a-git-repository",
+                "revision-unknown",
+                "write-usage-invalid",
+                "publish-member-unknown",
+                "publish-none",
+                "publish-refused",
+                "publish-failed",
+                "publish-answer-invalid",
+                "publish-unrecorded",
+                "principal-unidentified"
+              ]
+            },
+            "message": {
+              "type": "string"
+            }
+          }
+        },
+        "answer": {
+          "type": "object",
+          "description": "The publisher's answer, when it printed one and the result was refused for it (publish-answer-invalid, publish-unrecorded) or it printed one before failing."
+        }
+      }
+    }
+  }
+}

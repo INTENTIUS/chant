@@ -347,6 +347,18 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.fromAffected = args[++i];
     } else if (arg === "--gate") {
       result.gate = args[++i];
+    } else if (arg === "--wave-gate") {
+      result.waveGate = args[++i];
+      if (!result.waveGate || result.waveGate.startsWith("-")) throw new Error("--wave-gate needs a gate name: --wave-gate <name>");
+    } else if (arg === "--wave") {
+      const raw = args[++i];
+      const wave = Number(raw);
+      if (!Number.isInteger(wave) || wave < 1) throw new Error(`--wave needs a wave number from 1: got "${raw ?? ""}"`);
+      result.wave = wave;
+    } else if (arg === "--canary") {
+      const raw = args[++i];
+      if (!raw || raw.startsWith("-")) throw new Error("--canary needs a component name: --canary <name>[,<name>...]");
+      (result.canary ??= []).push(...raw.split(",").map((n) => n.trim()).filter(Boolean));
     } else if (arg === "--resume") {
       result.resume = args[++i];
     } else if (arg === "--local") {
@@ -431,6 +443,9 @@ export function parseArgs(args: string[]): ParsedArgs {
       // `chant workspace box listing set <member> --cover <image> --cover-path <path>` (#3308)
       result.coverPath = args[++i];
       if (!result.coverPath || result.coverPath.startsWith("-")) throw new Error("--cover-path needs a path from the workspace root: --cover-path <path>");
+    } else if (arg === "--records") {
+      // `chant workspace box publish <member> --records` (#3165): the records kept uncommitted, not a work item.
+      result.records = true;
     } else if (arg === "--expect") {
       // `chant workspace records amend|review|close <id> --expect <digest>` (#3173): the record's digest the caller last read.
       result.expect = args[++i];
@@ -803,6 +818,14 @@ Commands:
                         (--json)          its target, stage (planned/emitted/bridged/
                                           applied) and path. Read-only.
 
+Change sets:
+  change-set summary <file>  The grouped plan summary of a change-set
+                        [--format text|json|markdown]  document: members taking
+                        [--limit <chars>]  the same change grouped, every destroy,
+                                          replacement, failure and hole named.
+                                          markdown fits an MR/PR note of --limit
+                                          characters (default 65536). Read-only.
+
 Ops:
   run <name>            Run an Op on the resolved runtime (--on; local by default)
                         [--work <id>] [--holder <name>]: the work item an Op
@@ -1018,6 +1041,13 @@ Workspace (level 1, #2524):
                         and comments; --cover copies a PNG, JPEG or WebP into
                         the repository. Judged by the write scope at base.
                         Prints the box-listing-write document; never commits
+  workspace box publish <member> (<item> | --records) [--by <principal>] [--head <owner/name>] [--dry-run]
+                        Publish a built work item, or the records kept
+                        uncommitted, through the publisher the box block names:
+                        run with a JSON request on stdin, its answer checked
+                        and its commit held to the apply record (ws-088).
+                        Prints the box-publish document; chant itself never
+                        commits, pushes or calls a forge
   workspace wip [--branch <branch>] [--json]
                         List the work-in-progress snapshots under
                         refs/chant/wip/<branch>, newest first, and how far each
@@ -1044,9 +1074,13 @@ Workspace (level 1, #2524):
                         record the answer: proposed from a model, escalated to
                         people below its threshold. --response is a POST
                         /v1/systemone response the caller got; chant calls no model
-  workspace points answer <id> --answer <value> --by <name>... [--kind <kind file>] [--dry-run]
+  workspace points answer <id> --answer <value> --by <name>... [--note <text>] [--kind <kind file>] [--dry-run]
                         Record people's answer to an open question, or confirm
-                        a model's proposal, once the point's quorum is met
+                        a model's proposal, once the point's quorum is met,
+                        with their note
+  workspace points retract <id> --by <name>... [--note <text>] [--kind <kind file>] [--dry-run]
+                        Take an answer back: the question is open for people
+                        again, and the answer stays in its retractions
   workspace pin <path> [--json]
                         Print the integrity value that pins the plugin at
                         <path>, to put in a path pin of chant.workspace.json.
@@ -1226,8 +1260,12 @@ Component release ledger + status:
                             (--base <ref> [--head <ref>] [--include-dependents],
                              or --from-affected <file>; --dry-run prints the
                              derivation and dispatches nothing; --gate <name>
-                             puts one approval over the whole set; --resume
-                             <file> finishes an attempt that stopped)
+                             puts one approval over the whole set;
+                             --wave-gate <name> puts one on each wave, planned
+                             when the wave is reached, with --canary <name>
+                             for wave 1 and --wave <n> for one wave per CI
+                             job; --resume <file> finishes an attempt that
+                             stopped)
   components release <env> Append one immutable release record
                             (--component <name> --digest <sha256:...>
                              [--git-sha <sha>] [--run-id <id>] [--actor <name>]);
@@ -1634,6 +1672,8 @@ export const commandRegistry: CommandDef[] = [
   // Status read over a tree of carve manifests (#2038): the contract a
   // renderer replaces its own walk-and-guess discovery with. Read-only.
   { name: "carve status", handler: runCarveStatus },
+  // #3188 — the grouped plan summary of a change-set document. Reads one file; imported on first use.
+  { name: "change-set summary", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/change-set")).runChangeSetSummary(ctx) },
   { name: "init", handler: runInit, runsNoConfig: true },
   { name: "init lexicon", handler: runInitLexicon },
 { name: "update", handler: runUpdate },

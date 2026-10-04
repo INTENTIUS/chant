@@ -421,3 +421,32 @@ describe("generateGithubPipeline: a promote job (#2575)", () => {
     expect(artifactRoot(["/tmp/out/a.tar", "/tmp/out/b.tar"])).toBe("/tmp/out");
   });
 });
+
+describe("generateGithubPipeline: gated waves (#3049)", () => {
+  const roots: DriverComponent[] = [
+    { name: "net", deploy: [] },
+    { name: "a", dependsOn: ["net"], deploy: [] },
+    { name: "app", dependsOn: ["a"], deploy: [] },
+  ];
+
+  test("one job per wave, each handing the attempt record to the next", () => {
+    const result = generateGithubPipeline(roots, { env: "prod", gatedWaves: { gate: "release" } });
+    const parsed = parseYAML(result.yaml) as { jobs: Record<string, { needs?: string[]; steps: Array<Record<string, unknown>> }> };
+    expect(Object.keys(parsed.jobs)).toEqual(["wave-1", "wave-2", "wave-3"]);
+    expect(parsed.jobs["wave-2"].needs).toEqual(["wave-1"]);
+
+    const steps = parsed.jobs["wave-2"].steps;
+    expect(steps[0].with).toEqual({ "fetch-depth": 0 });
+    expect(steps[1]).toMatchObject({ uses: "actions/download-artifact@v4", with: { name: "fan-out-record-wave-1", path: ".chant" } });
+    expect(steps[2].run).toBe(
+      "chant components fan-out --base HEAD~1 --env prod --wave-gate release --wave 2 --resume .chant/fan-out.json",
+    );
+    expect(steps[3]).toMatchObject({ if: "always()", with: { name: "fan-out-record-wave-2", path: ".chant/fan-out.json" } });
+    // Wave 1 has nothing to download.
+    expect(parsed.jobs["wave-1"].steps.some((s) => s.uses === "actions/download-artifact@v4")).toBe(false);
+  });
+
+  test("a gated-wave pipeline has no promote job", () => {
+    expect(() => generateGithubPipeline(roots, { gatedWaves: { gate: "release" }, promoteTo: "prod" })).toThrow(/no promote job/);
+  });
+});

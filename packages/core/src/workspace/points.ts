@@ -51,6 +51,7 @@ export const POINT_INPUT_OUTPUTS = {
   finding: { schema: "intent", def: "finding", description: "a finding of graph --intent, or of check --changes (#2794)" },
   region: { schema: "intent", def: "region", description: "the region an intent graph covers" },
   commit: { schema: "intent", def: "commit", description: "a commit in an intent graph's window" },
+  node: { schema: "intent", def: "node", description: "any node of an intent graph, by its id and kind: a commit, decision, unit, artifact or the region itself, as an intent walk asks of it (#3351)" },
   member: { schema: "ls", def: "member", description: "a member, as ls lists it" },
   gate: { schema: "status", def: "gate", description: "a gate, as status lists it" },
   release: { schema: "status", def: "release", description: "a release, as status lists it; a release plan's fields until the lifecycle ledger lists plans (#2717)" },

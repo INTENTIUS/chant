@@ -130,6 +130,7 @@ export default defineConfig({
 								{ label: 'Reconciling Lifecycle', slug: 'guide/reconciling-lifecycle' },
 								{ label: 'Converging Lifecycle', slug: 'guide/converging-lifecycle' },
 								{ label: 'Operator', slug: 'guide/operator' },
+								{ label: 'Pinned Module Rollout', slug: 'guide/pinned-module-rollout' },
 							],
 						},
 						{
@@ -216,7 +217,7 @@ export default defineConfig({
 						{ label: 'Workspace Writer Conformance', slug: 'reference/workspace-writer-conformance' },
 						{ label: 'Decision Record Kind', slug: 'reference/decision-kind' },
 						{ label: 'Decision Review Views', slug: 'reference/decision-review-views' },
-						{ label: 'chant and hud Boundary', slug: 'reference/boundary' },
+						{ label: 'Owners of the Workspace Boundary', slug: 'reference/boundary' },
 						{
 							label: 'CLI',
 							items: [
@@ -231,6 +232,7 @@ export default defineConfig({
 								{ label: 'import', slug: 'cli/import' },
 								{ label: 'carve advise', slug: 'cli/carve' },
 								{ label: 'carve out (emit/bridge/apply)', slug: 'cli/carve-out' },
+								{ label: 'change-set summary', slug: 'cli/change-set' },
 								{ label: 'audit', slug: 'cli/audit' },
 								{ label: 'migrate', slug: 'cli/migrate' },
 								{ label: 'update', slug: 'cli/update' },

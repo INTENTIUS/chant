@@ -35,6 +35,7 @@
 import { emitYAMLEntry } from "@intentius/chant/yaml";
 import { resolveComponentGraph, type DriverComponent } from "@intentius/chant/components/driver";
 import { hasPublishStep, promoteArchivePaths } from "@intentius/chant/components/promote";
+import { GATED_WAVE_RECORD, gatedWaveJobs } from "@intentius/chant/components/gated-wave-pipeline";
 import { memberGitlabChanges, memberRepoPath, memberShellDir } from "@intentius/chant/lexicon";
 import type {
   ComponentPipelineJob as GeneratedJob,
@@ -72,6 +73,11 @@ export function generateGitlabPipeline(
 
   const { waves } = resolveComponentGraph(components);
   const byName = new Map(components.map((c) => [c.name, c]));
+
+  if (options.gatedWaves) {
+    if (options.promoteTo !== undefined) throw new Error("a gated-wave pipeline has no promote job; drop --promote-to or --wave-gate");
+    return gatedWaveGitlabPipeline(components, env, image, beforeScript, extraScript, options);
+  }
 
   // Components that something else depends on must hand their resolved outputs
   // (stack outputs, published artifact refs) to their dependents, which run as
@@ -199,6 +205,50 @@ export function generateGitlabPipeline(
   }
   if (promoteJob) sections.push(emitYAMLEntry(promoteJob, doc[promoteJob]));
 
+  return { yaml: sections.join("\n\n") + "\n", stages, jobs, env };
+}
+
+/**
+ * The gated-wave pipeline (#3049): one job per wave, each running one wave of
+ * `chant components fan-out --wave-gate`, in order through `needs:`. The
+ * attempt record is the artifact GitLab hands from job to job, kept even when
+ * a job stops at a gate (exit 3) so the re-run after `chant approve` reads it.
+ * `GIT_DEPTH: "0"` gives the job the history `--base` diffs against.
+ */
+function gatedWaveGitlabPipeline(
+  components: DriverComponent[],
+  env: string,
+  image: string,
+  beforeScript: string[],
+  extraScript: string[],
+  options: GenerateGitlabOptions,
+): GenerateGitlabResult {
+  const waveJobs = gatedWaveJobs(components, env, options.gatedWaves!);
+  const stages = waveJobs.map((j) => j.jobName);
+  const doc: Record<string, unknown> = {
+    workflow: { name: `chant-components-${env}` },
+    stages,
+    variables: { ...options.variables, CHANT_ENV: env },
+  };
+  const jobs: GeneratedJob[] = [];
+  for (const job of waveJobs) {
+    jobs.push({ jobName: job.jobName, component: `wave ${job.wave}`, stage: job.jobName, needs: job.needs });
+    doc[job.jobName] = {
+      stage: job.jobName,
+      image,
+      variables: { GIT_DEPTH: "0" },
+      script: [...beforeScript, job.command.join(" "), ...extraScript],
+      ...(job.needs.length > 0 ? { needs: job.needs } : {}),
+      artifacts: { when: "always", paths: [GATED_WAVE_RECORD] },
+    };
+  }
+  if (options.member) scopeToMember(doc, jobs, undefined, options.member, env);
+  const sections = [
+    emitYAMLEntry("workflow", doc.workflow),
+    emitYAMLEntry("stages", stages),
+    emitYAMLEntry("variables", doc.variables),
+    ...jobs.map((job) => emitYAMLEntry(job.jobName, doc[job.jobName])),
+  ];
   return { yaml: sections.join("\n\n") + "\n", stages, jobs, env };
 }
 

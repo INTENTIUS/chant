@@ -241,6 +241,18 @@ export interface ParsedArgs {
    */
   gate?: string;
   /**
+   * `chant components fan-out --wave-gate <name>` (#3049) — one gate per wave
+   * instead of one over the set. Wave `n` waits on `<name>-wave-<n>`, bound to
+   * that wave's set digest, and is planned only once the waves before it
+   * applied. Also `chant build --components --generate <lexicon> --wave-gate
+   * <name>`, which generates one CI job per wave.
+   */
+  waveGate?: string;
+  /** `chant components fan-out --wave <n>` (#3049) — run wave `n` of a `--wave-gate` fan-out and no other. */
+  wave?: number;
+  /** `chant components fan-out --canary <component>` (#3049), repeatable — components that form wave 1. */
+  canary?: string[];
+  /**
    * `chant components fan-out --resume <file>` (#2420) — the attempt record
    * this fan-out reads before it starts and writes when it finishes. Repeating
    * the identical command finishes what an interrupted attempt left, because
@@ -345,6 +357,8 @@ export interface ParsedArgs {
   cover?: string;
   /** `chant workspace box listing set <member> --cover <image> --cover-path <path>` (#3308): where the cover goes, from the workspace root. */
   coverPath?: string;
+  /** `chant workspace box publish <member> --records` (#3165): publish the records kept uncommitted instead of a work item. */
+  records?: boolean;
   /** `chant workspace wip save --label <text>` (#3172): what the caller calls the snapshot, such as a turn id. */
   label?: string;
   /** `chant workspace wip --branch <branch>` (#3172): list one branch's snapshots. */
