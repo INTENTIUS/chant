@@ -98,6 +98,18 @@ interface WorkRead {
   intentDecided: boolean | null;
 }
 
+/** Whether the declared kind file `file` is the one `kind` names, as a path from `cwd` (such as ../work/work.kind.mjs) or a trailing part of it. */
+function sameKind(file: string, kind: string, cwd: string): boolean {
+  const real = (p: string) => {
+    try {
+      return realpathSync(p);
+    } catch {
+      return p;
+    }
+  };
+  return real(resolve(cwd, kind)) === real(file) || file.endsWith(kind.replace(/^(\.\.?\/)+/, ""));
+}
+
 /** The work kind's items and the box's intent, read through the read contract. */
 async function readWork(cwd: string, kind?: string): Promise<WorkRead> {
   const { declaredKindFiles, queryDeclaredRecords } = await import("../../workspace/records-cli");
@@ -113,7 +125,7 @@ async function readWork(cwd: string, kind?: string): Promise<WorkRead> {
       for (const r of doc.records) if (r.id) decisionStates.set(r.id, { state: r.state, rank: r.state ? (loaded.kind.approval?.[r.state] ?? 0) : 0 });
       continue;
     }
-    if (found || (kind !== undefined && !files[i].file.endsWith(kind))) continue;
+    if (found || (kind !== undefined && !sameKind(files[i].file, kind, cwd))) continue;
     const work = loaded.kind.work;
     const states = loaded.kind.states ?? [];
     const items: WorkRead["items"] = new Map();
