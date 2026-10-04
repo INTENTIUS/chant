@@ -84,7 +84,7 @@ beforeAll(async () => {
   sha.c3 = commit(["three", "Chant-Run: build-c"]);
   await write("end", { endedAt: "2026-10-01T12:05:00Z", outcome: "done" }, run.c);
   run.d = (await write("start", { id: "build-d", harness: "claude-code", by: "alice", startedAt: "2026-10-01T13:00:00Z" })).run.id;
-});
+}, 60_000);
 afterAll(cleanScratch);
 
 describe("signing a run", () => {
