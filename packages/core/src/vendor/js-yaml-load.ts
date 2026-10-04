@@ -29,7 +29,10 @@
  * timestamp, omap, pairs, set), the snippet renderer, the schema classes and
  * the loader's option handling are gone. The reader always runs in json mode
  * (a repeated mapping key takes the last value) and takes its type list from
- * the caller. The parsing code itself is unchanged. It is kept in one file
+ * the caller. With the options fixed, the branches only another setting
+ * reached (the duplicate key error, the legacy line break check) and the
+ * warnings, which nothing listened to, are gone too. The parsing code itself
+ * is otherwise unchanged. It is kept in one file
  * because js-yaml's ES module wraps each of its files in an init function a
  * bundler cannot shake, so importing it costs the whole library.
  */
@@ -214,7 +217,6 @@ const CHOMPING_KEEP = 3
 
 // eslint-disable-next-line no-control-regex
 const PATTERN_NON_PRINTABLE = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x84\x86-\x9F\uFFFE\uFFFF]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?:[^\uD800-\uDBFF]|^)[\uDC00-\uDFFF]/
-const PATTERN_NON_ASCII_LINE_BREAKS = /[\x85\u2028\u2029]/
 // eslint-disable-next-line no-useless-escape
 const PATTERN_FLOW_INDICATORS = /[,\[\]{}]/
 // eslint-disable-next-line no-useless-escape
@@ -338,12 +340,8 @@ for (let i = 0; i < 256; i++) {
 function State (input, types) {
   this.input = input
 
-  this.filename = null
   this.implicitTypes = types.implicit
   this.typeMap = compileTypes(types.implicit, types.explicit)
-  // json mode: a duplicate mapping key takes the last value
-  this.json = true
-  this.legacy = false
   this.maxDepth = 100
   this.maxTotalMergeKeys = 10000
 
@@ -364,7 +362,6 @@ function State (input, types) {
 
   /*
   this.version;
-  this.checkLineBreaks;
   this.tagMap;
   this.anchorMap;
   this.tag;
@@ -375,7 +372,7 @@ function State (input, types) {
 
 function generateError (state, message) {
   const mark = {
-    name: state.filename,
+    name: null,
     buffer: state.input.slice(0, -1), // omit trailing \0
     position: state.position,
     line: state.line,
@@ -388,8 +385,6 @@ function generateError (state, message) {
 function throwError (state, message) {
   throw generateError(state, message)
 }
-
-function throwWarning () {}
 
 function storeAnchor (state, name, value) {
   const transactions = state.anchorMapTransactions
@@ -489,18 +484,12 @@ const directiveHandlers = {
     }
 
     const major = parseInt(match[1], 10)
-    const minor = parseInt(match[2], 10)
 
     if (major !== 1) {
       throwError(state, 'unacceptable YAML version of the document')
     }
 
     state.version = args[0]
-    state.checkLineBreaks = (minor < 2)
-
-    if (minor !== 1 && minor !== 2) {
-      throwWarning(state, 'unsupported YAML version of the document')
-    }
   },
 
   TAG: function handleTagDirective (state, name, args) {
@@ -585,8 +574,7 @@ function mergeMappings (state, destination, source, overridableKeys) {
   }
 }
 
-function storeMappingPair (state, _result, overridableKeys, keyTag, keyNode, valueNode,
-  startLine, startLineStart, startPos) {
+function storeMappingPair (state, _result, overridableKeys, keyTag, keyNode, valueNode) {
   // The output is a plain object here, so keys can only be strings.
   // We need to convert keyNode to a string, but doing so can hang the process
   // (deeply nested arrays that explode exponentially using aliases).
@@ -630,15 +618,7 @@ function storeMappingPair (state, _result, overridableKeys, keyTag, keyNode, val
       mergeMappings(state, _result, valueNode, overridableKeys)
     }
   } else {
-    if (!state.json &&
-        !_hasOwnProperty.call(overridableKeys, keyNode) &&
-        _hasOwnProperty.call(_result, keyNode)) {
-      state.line = startLine || state.line
-      state.lineStart = startLineStart || state.lineStart
-      state.position = startPos || state.position
-      throwError(state, 'duplicated mapping key')
-    }
-
+    // json mode: a repeated key takes the last value.
     setProperty(_result, keyNode, valueNode)
     delete overridableKeys[keyNode]
   }
@@ -697,10 +677,6 @@ function skipSeparationSpace (state, allowComments, checkIndent) {
     } else {
       break
     }
-  }
-
-  if (checkIndent !== -1 && lineBreaks !== 0 && state.lineIndent < checkIndent) {
-    throwWarning(state, 'deficient indentation')
   }
 
   return lineBreaks
@@ -956,8 +932,6 @@ function readDoubleQuotedScalar (state, nodeIndent) {
 function readFlowCollection (state, nodeIndent) {
   let readNext = true
   let _line
-  let _lineStart
-  let _pos
   const _tag = state.tag
   let _result
   const _anchor = state.anchor
@@ -1023,8 +997,6 @@ function readFlowCollection (state, nodeIndent) {
     }
 
     _line = state.line // Save the current line.
-    _lineStart = state.lineStart
-    _pos = state.position
     composeNode(state, nodeIndent, CONTEXT_FLOW_IN, false, true)
     keyTag = state.tag
     keyNode = state.result
@@ -1041,9 +1013,9 @@ function readFlowCollection (state, nodeIndent) {
     }
 
     if (isMapping) {
-      storeMappingPair(state, _result, overridableKeys, keyTag, keyNode, valueNode, _line, _lineStart, _pos)
+      storeMappingPair(state, _result, overridableKeys, keyTag, keyNode, valueNode)
     } else if (isPair) {
-      _result.push(storeMappingPair(state, null, overridableKeys, keyTag, keyNode, valueNode, _line, _lineStart, _pos))
+      _result.push(storeMappingPair(state, null, overridableKeys, keyTag, keyNode, valueNode))
     } else {
       _result.push(keyNode)
     }
@@ -1274,9 +1246,6 @@ function readBlockSequence (state, nodeIndent) {
 
 function readBlockMapping (state, nodeIndent, flowIndent) {
   let allowCompact
-  let _keyLine
-  let _keyLineStart
-  let _keyPos
   const _tag = state.tag
   const _anchor = state.anchor
   const _result = {}
@@ -1313,7 +1282,7 @@ function readBlockMapping (state, nodeIndent, flowIndent) {
     if ((ch === 0x3F/* ? */ || ch === 0x3A/* : */) && isWsOrEol(following)) {
       if (ch === 0x3F/* ? */) {
         if (atExplicitKey) {
-          storeMappingPair(state, _result, overridableKeys, keyTag, keyNode, null, _keyLine, _keyLineStart, _keyPos)
+          storeMappingPair(state, _result, overridableKeys, keyTag, keyNode, null)
           keyTag = keyNode = valueNode = null
         }
 
@@ -1335,10 +1304,6 @@ function readBlockMapping (state, nodeIndent, flowIndent) {
     // Implicit notation case. Flow-style node as the key first, then ":", and the value.
     //
     } else {
-      _keyLine = state.line
-      _keyLineStart = state.lineStart
-      _keyPos = state.position
-
       if (!composeNode(state, flowIndent, CONTEXT_FLOW_OUT, false, true)) {
         // Neither implicit nor explicit notation.
         // Reading is done. Go to the epilogue.
@@ -1360,7 +1325,7 @@ function readBlockMapping (state, nodeIndent, flowIndent) {
           }
 
           if (atExplicitKey) {
-            storeMappingPair(state, _result, overridableKeys, keyTag, keyNode, null, _keyLine, _keyLineStart, _keyPos)
+            storeMappingPair(state, _result, overridableKeys, keyTag, keyNode, null)
             keyTag = keyNode = valueNode = null
           }
 
@@ -1389,12 +1354,6 @@ function readBlockMapping (state, nodeIndent, flowIndent) {
     // Common reading code for both explicit and implicit notations.
     //
     if (state.line === _line || state.lineIndent > nodeIndent) {
-      if (atExplicitKey) {
-        _keyLine = state.line
-        _keyLineStart = state.lineStart
-        _keyPos = state.position
-      }
-
       if (composeNode(state, nodeIndent, CONTEXT_BLOCK_OUT, true, allowCompact)) {
         if (atExplicitKey) {
           keyNode = state.result
@@ -1404,7 +1363,7 @@ function readBlockMapping (state, nodeIndent, flowIndent) {
       }
 
       if (!atExplicitKey) {
-        storeMappingPair(state, _result, overridableKeys, keyTag, keyNode, valueNode, _keyLine, _keyLineStart, _keyPos)
+        storeMappingPair(state, _result, overridableKeys, keyTag, keyNode, valueNode)
         keyTag = keyNode = valueNode = null
       }
 
@@ -1425,7 +1384,7 @@ function readBlockMapping (state, nodeIndent, flowIndent) {
 
   // Special case: last mapping's node contains only the key in explicit notation.
   if (atExplicitKey) {
-    storeMappingPair(state, _result, overridableKeys, keyTag, keyNode, null, _keyLine, _keyLineStart, _keyPos)
+    storeMappingPair(state, _result, overridableKeys, keyTag, keyNode, null)
   }
 
   // Expose the resulting mapping.
@@ -1807,12 +1766,10 @@ function composeNode (state, parentIndent, nodeContext, allowToSeek, allowCompac
 }
 
 function readDocument (state) {
-  const documentStart = state.position
   let hasDirectives = false
   let ch
 
   state.version = null
-  state.checkLineBreaks = state.legacy
   state.tagMap = Object.create(null)
   state.anchorMap = Object.create(null)
 
@@ -1864,10 +1821,9 @@ function readDocument (state) {
 
     if (ch !== 0) readLineBreak(state)
 
+    // An unknown directive is ignored.
     if (_hasOwnProperty.call(directiveHandlers, directiveName)) {
       directiveHandlers[directiveName](state, directiveName, directiveArgs)
-    } else {
-      throwWarning(state, 'unknown document directive "' + directiveName + '"')
     }
   }
 
@@ -1885,11 +1841,6 @@ function readDocument (state) {
 
   composeNode(state, state.lineIndent - 1, CONTEXT_BLOCK_OUT, false, true)
   skipSeparationSpace(state, true, -1)
-
-  if (state.checkLineBreaks &&
-      PATTERN_NON_ASCII_LINE_BREAKS.test(state.input.slice(documentStart, state.position))) {
-    throwWarning(state, 'non-ASCII line breaks are interpreted as content')
-  }
 
   state.documents.push(state.result)
 

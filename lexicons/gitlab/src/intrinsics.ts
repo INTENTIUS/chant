@@ -12,10 +12,13 @@ import { INTRINSIC_MARKER, type Intrinsic } from "@intentius/chant/intrinsic";
  * References another job's properties: !reference [job_name, key]
  */
 export class ReferenceIntrinsic implements Intrinsic {
-  readonly [INTRINSIC_MARKER] = true as const;
+  // Set in the constructor, not as a field: a class field under a computed
+  // key counts as a side effect, so a bundler would keep the class unused.
+  declare readonly [INTRINSIC_MARKER]: true;
   private path: string[];
 
   constructor(...path: string[]) {
+    this[INTRINSIC_MARKER] = true;
     this.path = path;
   }
 

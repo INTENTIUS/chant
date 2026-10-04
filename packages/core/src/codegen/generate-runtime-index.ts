@@ -2,7 +2,9 @@
  * Generic runtime index generator for lexicon packages.
  *
  * Produces the `index.ts` file containing factory constructor exports
- * (`createResource`, `createProperty`) and collision-safe re-exports.
+ * (`createResource`, `createProperty`) and collision-safe re-exports. Each
+ * factory call is marked pure, so a bundler drops the classes a caller does
+ * not import instead of keeping every one.
  */
 
 export interface RuntimeIndexConfig {
@@ -55,7 +57,7 @@ export function generateRuntimeIndex(
   for (const { tsName, resourceType, attrs } of sortedResources) {
     const attrsStr = JSON.stringify(attrs);
     lines.push(
-      `export const ${tsName} = createResource(${JSON.stringify(resourceType)}, ${JSON.stringify(config.lexiconName)}, ${attrsStr});`,
+      `export const ${tsName} = /* @__PURE__ */ createResource(${JSON.stringify(resourceType)}, ${JSON.stringify(config.lexiconName)}, ${attrsStr});`,
     );
   }
 
@@ -65,7 +67,7 @@ export function generateRuntimeIndex(
   const sortedProperties = [...properties].sort((a, b) => a.tsName.localeCompare(b.tsName));
   for (const { tsName, resourceType } of sortedProperties) {
     lines.push(
-      `export const ${tsName} = createProperty(${JSON.stringify(resourceType)}, ${JSON.stringify(config.lexiconName)});`,
+      `export const ${tsName} = /* @__PURE__ */ createProperty(${JSON.stringify(resourceType)}, ${JSON.stringify(config.lexiconName)});`,
     );
   }
 

@@ -11,10 +11,13 @@ import { INTRINSIC_MARKER, type Intrinsic } from "@intentius/chant/intrinsic";
  * A GitHub Actions expression that serializes to `${{ raw }}`.
  */
 export class Expression implements Intrinsic {
-  readonly [INTRINSIC_MARKER] = true as const;
+  // Set in the constructor, not as a field: a class field under a computed
+  // key counts as a side effect, so a bundler would keep the class unused.
+  declare readonly [INTRINSIC_MARKER]: true;
   private readonly _raw: string;
 
   constructor(raw: string) {
+    this[INTRINSIC_MARKER] = true;
     this._raw = raw;
   }
 

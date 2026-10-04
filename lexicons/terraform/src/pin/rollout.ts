@@ -48,7 +48,7 @@ import { checkPinRequest, moduleOf } from "./source";
 import { planPinWaves, restrictWaves, terragruntDependencies, type PinRoot, type PinWave } from "./waves";
 import { ghPinForge, type PinForge } from "./forge";
 
-const execFileAsync = promisify(execFile);
+const execFileAsync = /* @__PURE__ */ promisify(execFile);
 
 /** Edits the module declaration in a generated root's TypeScript source (`./edit-ts.ts`). */
 export type TsPinEditor = (text: string, file: string, request: PinRequest) => PinEditResult;
