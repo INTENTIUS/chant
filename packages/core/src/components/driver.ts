@@ -47,6 +47,7 @@
  */
 
 import { topoSort } from "../codegen/topo-sort";
+import { kahnLayers } from "./layers";
 import { evaluateGate, gitGateLedgerPort, type GateDigestMismatch, type GateLedgerPort } from "../op/gate";
 import { gateName } from "../op/gate-name";
 import { componentPlanDigest } from "./gate-plan";
@@ -239,18 +240,9 @@ export function resolveComponentGraph(components: DriverComponent[]): ComponentG
   const deps = new Map<string, Set<string>>();
   for (const c of components) deps.set(c.name, new Set(c.dependsOn ?? []));
 
-  const remaining = new Set(deps.keys());
-  const waves: string[][] = [];
-  while (remaining.size > 0) {
-    const wave = [...remaining]
-      .filter((n) => [...deps.get(n)!].every((d) => !remaining.has(d)))
-      .sort();
-    if (wave.length === 0) {
-      throw new DependencyCycleError([...remaining].sort());
-    }
-    for (const n of wave) remaining.delete(n);
-    waves.push(wave);
-  }
+  const layered = kahnLayers(deps);
+  if (layered.cycle) throw new DependencyCycleError(layered.cycle);
+  const waves = layered.waves;
 
   const order = topoSort(
     components,

@@ -1,6 +1,6 @@
 ---
 title: Ops
-description: The terraform and choudoufu activities, the typed builders, and the apply, watch and adopt composites.
+description: The terraform and choudoufu activities, the typed builders, and the apply, watch, adopt and pin rollout composites.
 diataxis: how-to
 ---
 
@@ -8,7 +8,7 @@ diataxis: how-to
     Edit lexicons/terraform/docs/pages/ops.mdx instead; changes here are overwritten. */}
 
 
-Eight activities ship with the lexicon, resolvable by name via `loadActivities(["terraform"])`, plus three composite Ops built from them: a gated apply, a scheduled watch, and a gated adoption.
+Nine activities ship with the lexicon, resolvable by name via `loadActivities(["terraform"])`, plus four composite Ops built from them. Three act on one root: a gated apply, a scheduled watch, and a gated adoption. The fourth rolls a module version out across many roots as pin-bump pull requests.
 
 ## The activities
 
@@ -346,3 +346,23 @@ Two live resources at one declared identity are two `unowned` entries with the s
 For an estate that still has its `terraform.tfstate`, do not start with the ledger loop above. `choudoufu live-import -state=terraform.tfstate -estate=<name>` reads that state file once, verifies each entry against the live system, and stamps markers on everything that verifies, which lands the whole estate in the "already marked" group with nothing left to adopt by hand. It is also the only path that answers the `count`/`for_each` blind spot: content matching never offers an indexed or keyed address, while `live-import` reads every instance, index and key included, straight out of the state. Two runs, the same two flags: the first prints a ratification report and writes nothing, the second stamps what the report showed as `VERIFIED` or `DRIFTED`.
 
 chant does not wrap it in an Op, on purpose. It reads a state file, once, and chant does not host one: the file is the migration's input rather than part of the estate, and an Op that took a path to somebody's `terraform.tfstate` as an argument would be pretending otherwise. Run it by hand in the root directory, keep the state file until it has run, then let `TerraformWatchOp` and `TerraformAdoptOp` cover what is left. choudoufu's "Migrate an existing estate" guide has the full sequence.
+
+## TerraformPinRolloutOp
+
+`terraformPinRollout` runs one step of a pin-bump rollout ([#3189](https://github.com/INTENTIUS/chant/issues/3189)). It names no `terraform.roots` entry. It finds the roots that call a module, in `.tf` files and `terragrunt.hcl`, splits them into waves, and opens at most the next wave's pull request. `TerraformPinRolloutOp` wraps it in one `Rollout` phase, whose run outcome is the rollout's status. `chant terraform pin-rollout` runs the same step from the command line.
+
+```typescript
+import { TerraformPinRolloutOp } from "@intentius/chant-lexicon-terraform";
+
+export const { op } = TerraformPinRolloutOp({
+  name: "vpc-1-4",
+  module: "oci://registry.example.com/modules/vpc",
+  from: "1.3.0",
+  to: "1.4.0",
+  canaries: ["live/dev/vpc"],
+  mode: "pull-request",
+  schedule: "*/30 * * * *",
+});
+```
+
+A wave's PR opens only on a run after the previous wave's PR merged and each of its roots reported its apply check as passed on the merge commit. A failed root fails the run and names the root. The [Pinned Module Rollout](/chant/guide/pinned-module-rollout/) guide covers pinning, wave planning, and the exit codes.

@@ -714,6 +714,9 @@
   "anaphora/repeated-opening": 2,
   "repetition/near-duplicate": 2
  },
+ "docs/src/content/docs/guide/pinned-module-rollout.mdx": {
+  "claude/colon-reveal": 2
+ },
  "docs/src/content/docs/guide/presets.mdx": {
   "formatting/em-dash-density": 3,
   "discourse/punchy-fragments": 3,
