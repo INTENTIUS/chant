@@ -244,6 +244,7 @@ export default defineConfig({
 								{ label: 'workspace work', slug: 'cli/workspace-work' },
 								{ label: 'workspace runs', slug: 'cli/workspace-runs' },
 								{ label: 'workspace box', slug: 'cli/workspace-box' },
+								{ label: 'workspace wip', slug: 'cli/workspace-wip' },
 								{ label: 'workspace points', slug: 'cli/workspace-points' },
 								{ label: 'workspace verify', slug: 'cli/workspace-verify' },
 								{ label: 'workspace pin', slug: 'cli/workspace-pin' },

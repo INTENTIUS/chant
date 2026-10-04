@@ -38,6 +38,8 @@
  * deal with (see `logAccess` on `OtelCollector`).
  */
 
+import { canonicalTypeOf } from "@intentius/chant-lexicon-otel/model";
+
 /** A variable set from the downward API. A type alias, so it fits where container fields are a plain record. */
 export type NodeEnvVar = {
   name: string;
@@ -77,11 +79,6 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-function typeOf(id: string): string {
-  const slash = id.indexOf("/");
-  return slash === -1 ? id : id.slice(0, slash);
-}
-
 /** Component ids of one kind that some pipeline runs. */
 function runningIds(config: NodeReadingConfig, kind: "receivers" | "processors"): Set<string> {
   const ids = new Set<string>();
@@ -93,12 +90,13 @@ function runningIds(config: NodeReadingConfig, kind: "receivers" | "processors")
   return ids;
 }
 
-/** [id, settings] of each running component of `type`. */
+/** [id, settings] of each running component of `type`, under its old or new name (`kubelet_stats`). */
 function running(config: NodeReadingConfig, kind: "receivers" | "processors", type: string): Array<[string, Record<string, unknown>]> {
   const ids = runningIds(config, kind);
   const section = isRecord(config[kind]) ? (config[kind] as Record<string, unknown>) : {};
+  const componentKind = kind === "receivers" ? "receiver" : "processor";
   return Object.entries(section)
-    .filter(([id]) => ids.has(id) && typeOf(id) === type)
+    .filter(([id]) => ids.has(id) && canonicalTypeOf(componentKind, id) === type)
     .map(([id, cfg]) => [id, isRecord(cfg) ? cfg : {}]);
 }
 

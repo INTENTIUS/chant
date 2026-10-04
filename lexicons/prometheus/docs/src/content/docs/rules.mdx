@@ -6,7 +6,7 @@ description: "Every lint rule and post-synth check provided by the Prometheus le
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-prometheus` — DO NOT EDIT.
     Edit lexicons/prometheus/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-The Prometheus lexicon provides **20** rules: 3 lint rules and 17 post-synth checks.
+The Prometheus lexicon provides **34** rules: 3 lint rules and 31 post-synth checks.
 
 ## Lint Rules
 
@@ -39,3 +39,17 @@ Post-synth checks validate the serialized output after the build pipeline comple
 | `PROM208` | An Alertmanager duration is not a duration |
 | `PROM209` | A receiver integration is missing its destination or credential |
 | `PROM210` | A receiver integration or global setting is one Alertmanager rejects |
+| `PROM211` | An alerting rule has no for, or for: 0s |
+| `PROM212` | An alerting rule has no runbook_url annotation (opt-in) |
+| `PROM213` | An alert expression has no comparison |
+| `PROM214` | An alert template reads a label the expression aggregates away |
+| `PROM215` | rate, irate or increase over a name that is not a counter's |
+| `PROM216` | histogram_quantile over a series without _bucket, or without le |
+| `PROM217` | A recording rule name is not in level:metric:operations form |
+| `PROM218` | A regex matcher needs no regex, or is anchored |
+| `PROM219` | An alerting rule sets the alertname label |
+| `PROM220` | A receiver turns off TLS certificate verification |
+| `PROM221` | SMTP credentials sent with require_tls false |
+| `PROM222` | Credentials sent to an http:// receiver URL |
+| `PROM223` | repeat_interval is shorter than group_interval |
+| `PROM224` | An inhibit rule matches one alert as source and target, with no equal |

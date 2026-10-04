@@ -42,6 +42,7 @@ import { latestPerComponent, readReleaseLedger, type ReleaseRecord } from "../li
 import { readReleasePlan, type ReleasePlan } from "../lifecycle/plan-ledger";
 import { listWorkLeases, type WorkLeaseState } from "../lifecycle/work-lease";
 import { readCheckoutHead, type CheckoutHead } from "./records-checkout";
+import { policyView, replicationState, type ReplicationState } from "./wip";
 import { findWorkspaceRoot } from "../project-root";
 import { resolveBoxes, type ResolvedIsolation } from "./box-isolation";
 import { resolveBoxIntents, unresolvedIntent, type BoxIntent } from "./box-intent";
@@ -196,6 +197,8 @@ export interface StatusBox {
   factory: FactoryView | null;
   /** What the box shows of itself on a home site, with the cover's sha256 (#3146), or null when the block declares no listing. */
   listing: ListingView | null;
+  /** Where the box's work in progress is replicated, with defaults filled in (#3172, ws-085), or null when the block declares no policy. */
+  replicate: { remote: string; refs: string[]; on: string[]; every: string | null } | null;
 }
 
 /** A declared box service as `status --json` prints it (#2880): every field present, null or false when not declared. */
@@ -252,6 +255,8 @@ export type StatusDocument =
       leases: StatusLease[];
       /** Each work item's acceptance criteria, met of total, by declared kind then item (#2772). Empty when no declared work kind has criteria. */
       acceptance: StatusAcceptance[];
+      /** How far each ref the box's replicate policy names is from its remote (#3172), read locally; null when no box declares one. */
+      replication: ReplicationState | null;
       summary: { members: number; released: number; unreadable: number; differing: number | null };
     }
   | {
@@ -449,6 +454,7 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
                 })),
                 factory: factoryView(m.box.factory),
                 listing: listingView(m.box.listing, coverBytes),
+                replicate: m.box.replicate === null ? null : (({ box: _box, ...rest }) => rest)(policyView(m.name, m.box.replicate)),
               },
         stewards: stewards.stewards,
         stewardReasons: stewards.reasons,
@@ -475,6 +481,7 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
       members,
       leases,
       acceptance,
+      replication: replicationOf(declaration, top),
       summary: {
         members: members.length,
         released: members.filter((m) => m.environments[0].releases.length > 0).length,
@@ -630,4 +637,10 @@ export function formatStatus(doc: Extract<StatusDocument, { members: unknown }>)
       `, ${s.unreadable} unreadable`,
   );
   return lines.join("\n");
+}
+
+/** Where the box's work in progress stands against its remote (#3172), or null when no box block declares replicate. */
+function replicationOf(declaration: Declaration, top: string): ReplicationState | null {
+  const m = declaration.members.find((x) => x.box?.replicate);
+  return m ? replicationState(top, policyView(m.name, m.box!.replicate!)) : null;
 }

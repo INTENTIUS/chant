@@ -20,10 +20,10 @@
  */
 
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
+import { canonicalTypeOf } from "@intentius/chant-lexicon-otel/model";
 import { docsToManifests } from "./k8s-helpers";
 import {
   collectorPlacements,
-  componentType,
   describePlacement,
   hostOfEndpoint,
   pipelinesOf,
@@ -47,7 +47,7 @@ function unroutedExporters(sender: CollectorPlacement, services: Map<string, boo
     for (const id of pipeline.exporters) {
       if (seen.has(id)) continue;
       seen.add(id);
-      const type = componentType(id);
+      const type = canonicalTypeOf("exporter", id);
       const cfg = record(sender.config.exporters?.[id]);
 
       if (type === "loadbalancing") {

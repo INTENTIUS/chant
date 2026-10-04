@@ -5,7 +5,7 @@ import { createDiffTool } from "@intentius/chant/lexicon-plugin-helpers";
 import { prometheusSerializer } from "./serializer";
 import { rules } from "./lint/rules";
 import { postSynthChecks } from "./lint/post-synth";
-import { prometheusAuditCatalog } from "./lint/audit-catalog";
+import { OPT_IN_CHECKS, prometheusAuditCatalog } from "./lint/audit-catalog";
 import { completions } from "./lsp/completions";
 import { hover } from "./lsp/hover";
 import { detectTemplate } from "./detect";
@@ -87,6 +87,17 @@ export const prometheusPlugin: LexiconPlugin = {
 
   auditCatalog() {
     return prometheusAuditCatalog;
+  },
+
+  /**
+   * `recommended` (what `chant build` reports by default) is every check but
+   * the opt-in ones; `all` adds them. A project turns one on with
+   * `lint.presets: { prometheus: "all" }`, or by naming it in `lint.rules`
+   * (`{ PROM212: "warning" }`), which keeps a check whatever the preset.
+   */
+  lintPresets() {
+    const all = Object.keys(prometheusAuditCatalog);
+    return { recommended: all.filter((id) => !OPT_IN_CHECKS.has(id)), all };
   },
 
   skills: prometheusSkills,

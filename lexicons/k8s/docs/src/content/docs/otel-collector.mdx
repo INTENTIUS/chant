@@ -80,6 +80,10 @@ export const collector = OtelCollector({ config: Object.values(agent.members) })
 
 The DaemonSet sets `K8S_NODE_NAME`, mounts the host root at `/hostfs` and `/var/log/pods`, both read-only, and the ClusterRole gets `nodes/stats` for `kubeletstats`. [WK8605](../otel-placement-checks/#wk8605-a-node-reading-config-without-the-node) reports a workload that runs such a config without them. The example project is `lexicons/k8s/examples/otel-node-agent`.
 
+### Renamed component types
+
+Newer collector releases renamed some components and kept the old names as aliases: `k8s_attributes`, `kubelet_stats`, `host_metrics`, `file_log` and `load_balancing` among them. The RBAC and node access tables above, the gateway's `k8s` resolver Roles, and the WK8602 and WK8605 checks treat each new name as the old one. A hand-written config with `kubelet_stats` gets `nodes/stats` like one with `kubeletstats`. The otel lexicon's [import docs](/chant/lexicons/otel/importing/#renamed-component-types) list all twelve. Configs chant builds keep the old names.
+
 ## Props
 
 | Prop | Default | Meaning |

@@ -128,6 +128,42 @@ describe("fly-release", () => {
     expect((m.config.env as Record<string, string>).APP_REVISION).toBe("aaaaaaa");
   });
 
+  /** The plan with a Machine the build stamped with telemetry attribution (#3060). */
+  function stampedPlan(attributes: string) {
+    const web = PLAN.web;
+    writeFileSync(
+      planPath,
+      JSON.stringify({
+        ...PLAN,
+        web: { ...web, body: { ...web.body, config: { ...web.body.config, env: { PORT: "8080", OTEL_SERVICE_NAME: "shop", OTEL_RESOURCE_ATTRIBUTES: attributes } } } },
+      }),
+    );
+  }
+
+  test("a stamped Machine's resource attributes name the release's digest and commit (#3061, ws-081)", async () => {
+    stampedPlan("chant.workspace=acme,chant.decl=web,service.version=sha256%3Aold");
+    const s = setup();
+    await s.release.run(CTX, input("sha256:aaaaaaaaaaaa"));
+    const env = s.fake.machine("shop", "web")!.config.env as Record<string, string>;
+    expect(env.OTEL_RESOURCE_ATTRIBUTES).toBe("chant.workspace=acme,chant.decl=web,service.version=sha256%3Aaaaaaaaaaaaa,vcs.ref.head.revision=aaaaaaa");
+    expect(env.PORT).toBe("8080");
+    // A rollback puts back the attributes of the release it restores.
+    await s.release.run(CTX, input("sha256:bbbbbbbbbbbb"));
+    await s.rollback.run(CTX, { plan: planPath, endpoint: ENDPOINT, wait: NO_WAIT, verify: { intervalMs: 1, timeoutMs: 20 } });
+    expect((s.fake.machine("shop", "web")!.config.env as Record<string, string>).OTEL_RESOURCE_ATTRIBUTES).toContain("service.version=sha256%3Aaaaaaaaaaaaa");
+  });
+
+  test("a Machine the build did not stamp, or a caller's own value, gets no release attributes", async () => {
+    stampedPlan("team=core");
+    const s = setup();
+    await s.release.run(CTX, input("sha256:aaaaaaaaaaaa"));
+    expect((s.fake.machine("shop", "web")!.config.env as Record<string, string>).OTEL_RESOURCE_ATTRIBUTES).toBe("team=core");
+
+    stampedPlan("chant.decl=web");
+    await s.release.run(CTX, input("sha256:bbbbbbbbbbbb", { env: { OTEL_RESOURCE_ATTRIBUTES: "mine=1" } }));
+    expect((s.fake.machine("shop", "web")!.config.env as Record<string, string>).OTEL_RESOURCE_ATTRIBUTES).toBe("mine=1");
+  });
+
   test("each migration fires once per environment, then the Machine restarts", async () => {
     const s = setup();
     const migrations = [

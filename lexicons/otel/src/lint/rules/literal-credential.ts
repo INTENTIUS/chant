@@ -1,9 +1,8 @@
 import * as ts from "typescript";
 import type { LintRule, LintDiagnostic, LintContext } from "@intentius/chant/lint/rule";
 import { calleeName, COMPONENT_CLASS, literalText, position, propertyName } from "./otel-ast";
-
-/** Keys whose value is a credential. `*_file` keys name a path, which is fine. */
-const SECRET_KEY = /(authorization|api[-_]?key|password|passwd|secret|token|key_pem|x-honeycomb-team)/i;
+// Shared with OTEL120, which applies the same check to the emitted YAML.
+import { SECRET_KEY } from "../../config-hygiene";
 
 /**
  * OTEL002: a credential written as a literal in a component's config.

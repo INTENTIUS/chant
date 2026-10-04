@@ -1,0 +1,504 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/chant/schemas/workspace/wip-write/v1/wip-write.schema.json",
+  "title": "chant workspace wip save|restore|push|fetch output",
+  "description": "What `chant workspace wip save|restore|push|fetch` prints (#3172, ws-085), with or without --json. save takes a snapshot of the whole working tree, uncommitted records included, onto refs/chant/wip/<branch> through a temporary index, so the checkout's index, HEAD and branch never move; restore puts the working tree back as a snapshot holds it, after a snapshot of how it is now; push and fetch replicate the refs the box's replicate policy names. None of them commits to a branch or writes a record. Readers ignore fields they do not know; a field is only ever added within a version. The error codes are a closed list, each in the one closed list of `reason-codes.ts`. Contract version 1 of this document is written by chant 0.103.0 and newer.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/save"
+    },
+    {
+      "$ref": "#/$defs/restore"
+    },
+    {
+      "$ref": "#/$defs/push"
+    },
+    {
+      "$ref": "#/$defs/fetch"
+    },
+    {
+      "$ref": "#/$defs/failure"
+    }
+  ],
+  "$defs": {
+    "save": {
+      "type": "object",
+      "description": "The snapshot was taken, or the tip already was it. Exit code 0.",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "action",
+        "branch",
+        "ref",
+        "created",
+        "snapshot",
+        "replication"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/wip-write/v1/wip-write.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "error": false,
+        "action": {
+          "const": "save"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "ref": {
+          "type": "string",
+          "description": "refs/chant/wip/<branch>, the one ref the save moved."
+        },
+        "created": {
+          "type": "boolean",
+          "description": "False when the ref's tip already held this tree on this head with the same label and by, and nothing was written."
+        },
+        "snapshot": {
+          "$ref": "#/$defs/snapshot"
+        },
+        "replication": {
+          "description": "The push the policy makes after a save, or null when no policy is declared or its on leaves save out.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/replicationPush"
+            }
+          ]
+        }
+      }
+    },
+    "restore": {
+      "type": "object",
+      "description": "The working tree holds what the snapshot holds. Exit code 0.",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "action",
+        "branch",
+        "ref",
+        "head",
+        "snapshot",
+        "checkpoint",
+        "headMoved",
+        "paths"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/wip-write/v1/wip-write.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "error": false,
+        "action": {
+          "const": "restore"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "ref": {
+          "type": "string"
+        },
+        "head": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40,64}$",
+          "description": "The commit HEAD names; it did not move."
+        },
+        "snapshot": {
+          "$ref": "#/$defs/snapshot",
+          "description": "The snapshot restored."
+        },
+        "checkpoint": {
+          "type": "object",
+          "required": [
+            "created",
+            "snapshot"
+          ],
+          "description": "The snapshot of the working tree taken before the restore changed it, kind pre-restore; created is false when the ref's tip already held that tree.",
+          "properties": {
+            "created": {
+              "type": "boolean"
+            },
+            "snapshot": {
+              "$ref": "#/$defs/snapshot"
+            }
+          }
+        },
+        "headMoved": {
+          "type": "boolean",
+          "description": "True when the snapshot was taken on another commit than HEAD names now: the files are restored over the current HEAD, as uncommitted changes against it."
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Every file the restore wrote or removed, from the repository root, sorted. The index is reset to HEAD as well."
+        }
+      }
+    },
+    "push": {
+      "type": "object",
+      "description": "The push ran; replication.rejected lists what did not go. Exit code 0.",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "action",
+        "policy",
+        "replication"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/wip-write/v1/wip-write.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "error": false,
+        "action": {
+          "const": "push"
+        },
+        "policy": {
+          "$ref": "#/$defs/policy"
+        },
+        "replication": {
+          "$ref": "#/$defs/replicationPush"
+        }
+      }
+    },
+    "fetch": {
+      "type": "object",
+      "description": "The fetch ran. Exit code 0.",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "action",
+        "policy",
+        "refs",
+        "failed"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/wip-write/v1/wip-write.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "error": false,
+        "action": {
+          "const": "fetch"
+        },
+        "policy": {
+          "$ref": "#/$defs/policy"
+        },
+        "refs": {
+          "type": "array",
+          "description": "Each ref the remote holds of the policy's, sorted by ref, and what the fetch did with the local ref.",
+          "items": {
+            "type": "object",
+            "required": [
+              "ref",
+              "class",
+              "remote",
+              "local",
+              "result"
+            ],
+            "properties": {
+              "ref": {
+                "type": "string"
+              },
+              "class": {
+                "enum": [
+                  "work",
+                  "kept",
+                  "wip",
+                  "ledger"
+                ]
+              },
+              "remote": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40,64}$"
+              },
+              "local": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "pattern": "^[0-9a-f]{40,64}$",
+                "description": "The local ref before the fetch, or null when there was none."
+              },
+              "result": {
+                "enum": [
+                  "created",
+                  "fast-forward",
+                  "up-to-date",
+                  "ahead",
+                  "diverged",
+                  "checked-out"
+                ],
+                "description": "created and fast-forward moved the local ref; ahead, diverged and checked-out (a branch checked out in some worktree) left it as it was."
+              }
+            }
+          }
+        },
+        "failed": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Why the remote could not be fetched from, or null. refs then lists what earlier fetches brought."
+        }
+      }
+    },
+    "failure": {
+      "type": "object",
+      "description": "Nothing was read or written. Exit code 1.",
+      "required": [
+        "$schema",
+        "contract",
+        "chant",
+        "action",
+        "error"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "https://intentius.io/chant/schemas/workspace/wip-write/v1/wip-write.schema.json"
+        },
+        "contract": {
+          "const": 1
+        },
+        "chant": {
+          "type": "string"
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "enum": [
+                "declaration-missing",
+                "declaration-ambiguous",
+                "declaration-unparseable",
+                "declaration-invalid",
+                "placement-invalid",
+                "reader-too-old",
+                "root-chant-required",
+                "not-a-git-repository",
+                "revision-unknown",
+                "write-usage-invalid",
+                "wip-no-branch",
+                "wip-none",
+                "wip-snapshot-unknown",
+                "wip-branch-other",
+                "wip-race",
+                "wip-policy-none",
+                "wip-remote-unknown",
+                "principal-unidentified"
+              ]
+            },
+            "message": {
+              "type": "string"
+            }
+          }
+        },
+        "action": {
+          "enum": [
+            "save",
+            "restore",
+            "push",
+            "fetch",
+            null
+          ],
+          "description": "The verb refused, or null when there was none."
+        }
+      }
+    },
+    "snapshot": {
+      "type": "object",
+      "description": "One snapshot of a branch's working tree: a commit whose tree is the whole working tree, staged, unstaged and untracked files alike, ignored files left out. Its first parent is the snapshot before it on the same ref, when there is one, and its last parent is head.",
+      "required": [
+        "commit",
+        "tree",
+        "branch",
+        "head",
+        "kind",
+        "label",
+        "by",
+        "at"
+      ],
+      "properties": {
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40,64}$",
+          "description": "The snapshot commit. wip restore <commit> puts the working tree back as it holds it."
+        },
+        "tree": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40,64}$",
+          "description": "The tree of the working tree as it was. Two snapshots with the same tree hold the same files."
+        },
+        "branch": {
+          "type": "string",
+          "description": "The branch it was taken on (trailer Chant-Wip-Branch)."
+        },
+        "head": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40,64}$",
+          "description": "The commit HEAD named when it was taken (Chant-Wip-Head)."
+        },
+        "kind": {
+          "enum": [
+            "save",
+            "pre-restore"
+          ],
+          "description": "save for wip save; pre-restore for the snapshot wip restore takes of the working tree before it changes it, so a restore can be undone (Chant-Wip-Kind)."
+        },
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "What the caller called it with --label, such as a turn id, or null (Chant-Wip-Label). A pre-restore snapshot is labelled before <the restored snapshot's first 12 characters>."
+        },
+        "by": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Who took it, as --by named them, or null (Chant-Wip-By)."
+        },
+        "at": {
+          "type": "string",
+          "description": "When it was taken: the commit's committer time."
+        }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "description": "The replicate policy the declaration in the working tree states (box.replicate), with every default filled in.",
+      "required": [
+        "box",
+        "remote",
+        "refs",
+        "on",
+        "every"
+      ],
+      "properties": {
+        "box": {
+          "type": "string",
+          "description": "The member whose box block declares it."
+        },
+        "remote": {
+          "type": "string",
+          "description": "The git remote it pushes to, by name."
+        },
+        "refs": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "work",
+              "kept",
+              "wip",
+              "ledger"
+            ]
+          },
+          "description": "What it replicates, in this order: work (refs/heads/chant/work/...), kept (refs/chant/kept/...), wip (refs/chant/wip/...) and ledger (refs/heads/chant/lifecycle)."
+        },
+        "on": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "save",
+              "release"
+            ]
+          },
+          "description": "When chant pushes on its own: after a wip save, after a work lease release."
+        },
+        "every": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The interval at which the host runs wip push, or null."
+        }
+      }
+    },
+    "replicationPush": {
+      "type": "object",
+      "description": "What one push did. Each ref the remote doesn't hold as it is locally is pushed under its own name, never forced; a pre-push hook is not run.",
+      "required": [
+        "remote",
+        "pushed",
+        "rejected",
+        "upToDate"
+      ],
+      "properties": {
+        "remote": {
+          "type": "string"
+        },
+        "pushed": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/refPush"
+          },
+          "description": "The refs the remote took."
+        },
+        "rejected": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/refPush"
+          },
+          "description": "The refs the remote refused, or that could not be pushed because it was unreachable or not configured, each with the reason."
+        },
+        "upToDate": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many refs were already on the remote as they are locally."
+        }
+      }
+    },
+    "refPush": {
+      "type": "object",
+      "required": [
+        "ref",
+        "commit"
+      ],
+      "properties": {
+        "ref": {
+          "type": "string"
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40,64}$"
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}
