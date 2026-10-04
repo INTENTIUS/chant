@@ -1,0 +1,4 @@
+import { Queue, Topic } from "@intentius/chant-lexicon-aws";
+export const jobs = new Queue({ QueueName: "cs-jobs", VisibilityTimeout: 30 });
+export const events = new Queue({ QueueName: "cs-events", VisibilityTimeout: 30 });
+export const alerts = new Topic({ TopicName: "cs-alerts" });

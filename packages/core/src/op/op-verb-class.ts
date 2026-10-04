@@ -35,6 +35,9 @@ export type OpVerbClass = "read-only" | "mutating" | "destructive";
 const READ_ONLY_ACTIVITY_FNS: ReadonlySet<string> = new Set([
   "lifecycleSnapshot",
   "lifecycleDiff",
+  "composeChangeSet",
+  "lifecyclePlanChangeSet",
+  "readChangeSetPart",
   "httpCheck",
   "policyGate",
   "workflowSupplyChainAudit",

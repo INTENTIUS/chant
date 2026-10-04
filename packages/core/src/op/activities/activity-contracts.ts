@@ -252,6 +252,29 @@ export const sourceArchiveContract = activityContract(
   z.object({ digest: z.string(), archive: z.string(), commit: z.string(), dir: z.string(), files: z.number(), bytes: z.number() }),
 );
 
+const changeSetPart = z.object({
+  member: z.object({ member: z.string(), planDigest: z.string().nullable() }).passthrough(),
+  entries: z.array(z.unknown()),
+});
+
+export const composeChangeSetContract = activityContract(
+  "composeChangeSet",
+  z.strictObject({ parts: z.array(changeSetPart) }),
+  z.object({ document: z.record(z.string(), z.unknown()), digest: z.string(), summary: z.record(z.string(), z.unknown()) }),
+);
+
+export const lifecyclePlanChangeSetContract = activityContract(
+  "lifecyclePlanChangeSet",
+  z.strictObject({ member: z.string(), env: z.string(), cwd: z.string().optional(), owned: z.boolean().optional() }),
+  z.object({ part: changeSetPart }),
+);
+
+export const readChangeSetPartContract = activityContract(
+  "readChangeSetPart",
+  z.strictObject({ member: z.string(), planner: z.enum(["chant", "warden"]), file: z.string(), lexicon: z.string().optional() }),
+  z.object({ part: changeSetPart }),
+);
+
 export const releasePlanContract = activityContract(
   "releasePlan",
   z.strictObject({

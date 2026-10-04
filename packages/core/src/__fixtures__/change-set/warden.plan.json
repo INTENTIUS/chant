@@ -1,0 +1,44 @@
+{
+  "org": "acme",
+  "entries": [
+    {
+      "kind": "update",
+      "resourceType": "team",
+      "key": "platform",
+      "before": {
+        "privacy": "secret",
+        "description": "Platform team"
+      },
+      "after": {
+        "privacy": "closed",
+        "description": "Platform team"
+      },
+      "fields": [
+        {
+          "field": "privacy",
+          "before": "secret",
+          "after": "closed"
+        }
+      ]
+    },
+    {
+      "kind": "create",
+      "resourceType": "team",
+      "key": "release",
+      "after": {
+        "privacy": "secret",
+        "description": "Release managers"
+      }
+    },
+    {
+      "kind": "delete",
+      "resourceType": "team",
+      "key": "contractors",
+      "before": {
+        "privacy": "closed",
+        "description": "Old contractors"
+      }
+    }
+  ],
+  "managedCount": 2
+}
