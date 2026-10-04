@@ -33,7 +33,7 @@ is named `-op.ts` rather than `.op.ts` on disk) so the page cannot drift from
 what the tests actually run.
 */}
 
-The Terraform lexicon ships one source-level lint rule and thirty-six
+The Terraform lexicon ships one source-level lint rule and thirty-nine
 post-synth checks, plus TF023, which runs only in `chant audit` and is
 documented here beside the rest of the family. See [Lint
 Rules](/chant/lexicons/terraform/rules/) for the generated, always-current
@@ -2107,3 +2107,107 @@ From `fixtures/TF037/positive.tf` (the first three lines of the block),
 vendored from
 [bridgecrewio/terragoat](https://github.com/bridgecrewio/terragoat/blob/729f8da62c6a85ce4af5ad3d123de97776d954c4/terraform/aws/ecr.tf)
 (Apache-2.0).
+
+## TF038: an OCI module source names no tag or digest, or a mutable tag
+
+A `module` block whose `source` is an OpenTofu `oci://` address with no tag
+and no digest, or with a mutable tag such as `latest`. Severity `warning`.
+
+**Why it matters.** OpenTofu resolves an `oci://` source with no `tag` to the
+`latest` tag, so an unpinned source and `?tag=latest` are the same thing. A
+push to the registry changes what the root provisions with no diff to
+review. A digest cannot move. An exact version tag is read as pinned, but a
+registry can still repoint it, which is why this is a warning and why the
+message prefers a digest.
+
+**The fix.** Pin the source with `?digest=sha256:...` or an exact version tag
+(`?tag=1.4.0`). The rule also reads the container-image spellings
+`oci://host/repo:1.4.0` and `oci://host/repo@sha256:...`. A colon in the host
+is a registry port, never a tag. A source that names a digest passes whatever
+tag sits beside it. The tags read as mutable are `latest`, `main`, `master`,
+`develop`, `dev`, `stable`, `edge` and `nightly`.
+
+**Prior art.** No tool in the survey covers `oci://` module sources. The
+[OpenTofu module sources page](https://opentofu.org/docs/language/modules/sources/)
+documents the `tag` and `digest` query arguments and the `latest` default.
+The suffix spellings are not documented there and are not verified against
+OpenTofu's parser.
+
+```hcl
+module "network" {
+  source = "oci://registry.example.com/platform/network"
+}
+```
+
+From `fixtures/TF038/positive.tf`.
+
+## TF039: a registry module version is a range
+
+A registry `module` block whose `version` is a range (`~> 1.4`, `>= 1.4`,
+`>= 1.0, < 2.0`) rather than an exact version (`1.4.0` or `= 1.4.0`).
+Severity `warning`, and off by default.
+
+**Why it matters.** TF004 passes any `version`, so a range passes it. A
+release inside the range changes what the root provisions with no diff to
+review, and a reader of a change cannot say which module release it picked
+up. Ranges are common and often intended, so this is for projects that pin
+modules.
+
+**The fix.** Pin an exact version: `version = "1.4.0"`.
+
+**Off by default.** TF039 is a `report-only` rule, so the `recommended` preset
+leaves it out. Turn it on with `lint.presets: { terraform: "all" }`, or for
+this rule alone with a `lint.rules` entry (`{ TF039: "warning" }`), which
+keeps it under any preset. It is a separate rule rather than an option on
+TF004 because a post-synth check takes no options, while a preset already
+carries the on/off choice per rule id. A module with no `version` is TF004's
+finding and is skipped here.
+
+**Prior art.** tflint's `terraform_module_version` has an `exact` style that
+rejects a range. It is not credited in the lineage file because that mapping
+was not checked against the rule's source.
+
+```hcl
+module "vpc" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "~> 5.0"
+}
+```
+
+From `fixtures/TF039/positive.tf`.
+
+## TF040: a root has no committed `.terraform.lock.hcl`
+
+A root module that uses a provider (a `provider` block, or a `resource` or
+`data` block whose type implies one) with no `.terraform.lock.hcl` beside its
+`.tf` files. Severity `warning`, and off by default.
+
+**Why it matters.** The lock file records the provider versions and hashes
+`terraform init` selected. Without it every `init` resolves the
+`required_providers` constraints again, so a provider release changes a plan
+with no diff. None of TF001 to TF029 checks for it.
+
+**The fix.** Run `terraform init` in the root and commit the file it writes.
+
+**How "committed" is known.** The rule tests for the file's presence next to
+the root's `.tf` files in the source tree being parsed. It does not ask git
+whether the file is tracked, so a lock file that exists but is gitignored
+counts as present. The check runs where the root's directory is known: a
+build over `terraform.roots`, and `chant audit` over a local path. A fetched
+repository and inline source carry no directory, and the rule reports nothing
+for them. A root that implies no provider, and a live choudoufu root, are
+skipped.
+
+**Off by default.** TF040 is a `report-only` rule, since many estates run
+`init` in CI and never commit the file. Enable it as described under TF039.
+
+**Prior art.** No tool in the survey covers this; see the lineage file.
+
+```hcl
+resource "aws_s3_bucket" "b" {
+  bucket = "x"
+}
+```
+
+A root whose directory holds only this file triggers the rule. The test builds
+that directory in `tf040.test.ts`.

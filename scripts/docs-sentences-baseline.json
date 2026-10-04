@@ -902,7 +902,7 @@
   "formatting/bold-first-bullet": 1
  },
  "docs/src/content/docs/lint-rules/audit-rules.mdx": {
-  "formatting/em-dash-density": 395,
+  "formatting/em-dash-density": 398,
   "claude/sounds-like-claude": 1,
   "claude/colon-reveal": 6,
   "tricolon/comma-series": 1,
@@ -1071,7 +1071,6 @@
   "claude/colon-reveal": 3
  },
  "docs/src/content/docs/reference/workspace-writer-conformance.mdx": {
-  "formatting/em-dash-density": 2,
   "discourse/punchy-fragments": 1,
   "claude/colon-reveal": 3
  },
