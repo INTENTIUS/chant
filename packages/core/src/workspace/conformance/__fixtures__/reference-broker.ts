@@ -24,6 +24,9 @@ import {
   FOUNTAIN_CAPABILITY,
   INFERENCE_CAPABILITY,
   parseDeclarationReport,
+  formatPayerHeader,
+  PAYER_HEADER,
+  type BrokerPayer,
   type KeptDeclaration,
 } from "../../broker-protocol";
 import type { BrokerConformanceEnv, StartedBroker } from "../broker";
@@ -34,8 +37,8 @@ const DROP = new Set(["host", "connection", "keep-alive", "content-length", "tra
 /** Response headers fetch has already undone. */
 const HOP = new Set(["connection", "keep-alive", "content-length", "content-encoding", "transfer-encoding"]);
 
-function send(res: ServerResponse, status: number, value: unknown): void {
-  res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
+function send(res: ServerResponse, status: number, value: unknown, extra: Record<string, string> = {}): void {
+  res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store", ...extra });
   res.end(JSON.stringify(value));
 }
 
@@ -57,11 +60,12 @@ function forwarded(req: IncomingMessage, extra: Record<string, string>): Record<
   return { ...headers, ...extra };
 }
 
-async function relay(res: ServerResponse, answer: Response, swap?: [string, string]): Promise<void> {
+async function relay(res: ServerResponse, answer: Response, swap?: [string, string], extra: Record<string, string> = {}): Promise<void> {
   const headers: Record<string, string> = {};
   answer.headers.forEach((v, k) => {
     if (!HOP.has(k)) headers[k] = swap ? v.split(swap[0]).join(swap[1]) : v;
   });
+  Object.assign(headers, extra);
   res.writeHead(answer.status, headers);
   res.end(Buffer.from(await answer.arrayBuffer()));
 }
@@ -72,6 +76,9 @@ export async function startReferenceBroker(env: BrokerConformanceEnv): Promise<S
   const boxOf = new Map(Object.entries(tokens).map(([box, token]) => [token, box]));
   const reports = new Map<string, KeptDeclaration>();
   const anthropic = new URL(env.anthropic.url);
+  // It spends the operator's one credential for every box, so the payer is shared (#3474), said on the report's answer and on each inference and decide answer.
+  const payer: BrokerPayer = { kind: "shared", principal: null };
+  const paid = { [PAYER_HEADER]: formatPayerHeader(payer) };
   const fountain = new URL(env.fountain.url);
 
   const tokenOf = (req: IncomingMessage): string | undefined => {
@@ -103,7 +110,7 @@ export async function startReferenceBroker(env: BrokerConformanceEnv): Promise<S
         if ("error" in parsed) return refuse(res, 400, parsed.error);
         const kept: KeptDeclaration = { capabilities: parsed.capabilities, at: new Date().toISOString() };
         reports.set(box, kept);
-        return send(res, 200, kept);
+        return send(res, 200, { ...kept, payer });
       }
 
       let body: unknown;
@@ -129,7 +136,7 @@ export async function startReferenceBroker(env: BrokerConformanceEnv): Promise<S
         if (spec === INFERENCE_CAPABILITY) {
           const rest = path.slice(BROKER_ROUTES.inference.length);
           const answer = await fetch(new URL(`${rest}${url.search}`, anthropic), { method, headers: forwarded(req, { "x-api-key": env.anthropic.credential }), body: raw || undefined });
-          return relay(res, answer);
+          return relay(res, answer, undefined, paid);
         }
         if (spec === EGRESS_CAPABILITY) {
           const [name] = words;
@@ -188,7 +195,7 @@ export async function startReferenceBroker(env: BrokerConformanceEnv): Promise<S
       const reason = typeof out.reason === "string" ? { reason: out.reason } : {};
       answers[name] = q.type === "noul" ? { type: "noul", noul: p.true, ...reason } : { type: "choice", choice: out.choice, probabilities: p, confidence: p[out.choice ?? ""] ?? 0, ...reason };
     }
-    send(res, 200, { model: b.model, answers });
+    send(res, 200, { model: b.model, answers }, paid);
   }
 
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));

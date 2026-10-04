@@ -25,6 +25,10 @@
  * | `POST /api/feedback` | `feedback`, `agent` for `entries` and `passive` for `counts` | the box's agents' feedback (studio#257) |
  * | `/fountain/api/...` | `fountain`, `agent`, `conversations`, `sandboxes`, `vault` | Fountain's API, with the operator's Fountain key |
  *
+ * A broker may say whose credential pays (#3474, ws-098): `payer` on the
+ * declaration's answer and the `chant-payer` header on each inference and
+ * decide answer ({@link BrokerPayer}). It is optional within version 1.
+ *
  * The rule every broker keeps: a request that needs scope word `w` of
  * capability `c` is refused with a 403 unless the box's last report holds an
  * entry named `c`, brokered by this broker, whose scope lists `w`. A box that
@@ -194,10 +198,51 @@ export interface KeptCapability {
   scope: string[];
 }
 
-/** What a broker keeps of a box's last report. */
+/**
+ * Whose credential pays for a box's model calls (#3474, ws-098): `shared`, a
+ * credential neither the box's owner nor its visitor owns (a house or
+ * operator key); `owner`, the box owner's own; `visitor`, the credential a
+ * person brought for this box. `principal` is the payer in ws-080's form
+ * (`github:<login>`) when the broker knows them. A broker that does not say
+ * leaves it out, and a box reads that as unknown.
+ */
+export interface BrokerPayer {
+  kind: "shared" | "owner" | "visitor";
+  principal?: string | null;
+}
+
+/** The payer kinds, in the protocol's order. */
+export const PAYER_KINDS = ["shared", "owner", "visitor"] as const;
+
+/** The response header that carries the payer on each answer from `/llm/anthropic` and `/decide`: `<kind>` or `<kind> <principal>`. */
+export const PAYER_HEADER = "chant-payer";
+
+/** A payer as the header carries it. */
+export function formatPayerHeader(payer: BrokerPayer): string {
+  return payer.principal ? `${payer.kind} ${payer.principal}` : payer.kind;
+}
+
+/** The payer a `chant-payer` header value names, or undefined when it names none the protocol knows. */
+export function parsePayerHeader(value: string | null | undefined): BrokerPayer | undefined {
+  const m = /^\s*(shared|owner|visitor)(?:\s+(\S{1,200}))?\s*$/.exec(value ?? "");
+  if (!m) return undefined;
+  return { kind: m[1] as BrokerPayer["kind"], principal: m[2] ?? null };
+}
+
+/** The payer in a `declarationKept` answer (or any object with a `payer` field), or undefined when it has none or a malformed one. */
+export function payerOf(body: unknown): BrokerPayer | undefined {
+  const payer = (body as { payer?: unknown } | null)?.payer as { kind?: unknown; principal?: unknown } | undefined;
+  if (!payer || typeof payer !== "object" || !PAYER_KINDS.includes(payer.kind as BrokerPayer["kind"])) return undefined;
+  const principal = payer.principal;
+  if (principal !== undefined && principal !== null && (typeof principal !== "string" || !/^\S{1,200}$/.test(principal))) return undefined;
+  return { kind: payer.kind as BrokerPayer["kind"], principal: (principal as string | null | undefined) ?? null };
+}
+
+/** What a broker keeps of a box's last report, and, when it says, who pays (#3474). */
 export interface KeptDeclaration {
   capabilities: KeptCapability[];
   at: string;
+  payer?: BrokerPayer;
 }
 
 /**
