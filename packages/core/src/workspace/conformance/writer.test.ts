@@ -148,7 +148,7 @@ describe("state and reads (#3159)", () => {
     for (const argv of [["workspace", "wip", "--json"], ["workspace", "records", "--kind", "k", "--json"], ["workspace", "records", "--uncommitted", "--json"], ["workspace", "runs", "--json"], ["workspace", "points", "--open", "--json"], ["workspace", "work", "history", "W-001"], ["workspace", "ls", "--json"]]) {
       expect(isReadCall(argv), argv.join(" ")).toBe(true);
     }
-    for (const argv of [["workspace", "wip", "save"], ["workspace", "wip", "restore"], ["workspace", "wip", "push"], ["workspace", "wip", "fetch"], ["workspace", "records", "new"], ["workspace", "runs", "start"], ["workspace", "points", "answer"], ["workspace", "work", "claim"], ["workspace", "work", "evidence"], ["build"]]) {
+    for (const argv of [["workspace", "wip", "save"], ["workspace", "wip", "restore"], ["workspace", "wip", "push"], ["workspace", "wip", "fetch"], ["workspace", "records", "new"], ["workspace", "runs", "start"], ["workspace", "points", "answer"], ["workspace", "points", "retract"], ["workspace", "work", "claim"], ["workspace", "work", "evidence"], ["build"]]) {
       expect(isReadCall(argv), argv.join(" ")).toBe(false);
     }
   });

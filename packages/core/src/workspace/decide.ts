@@ -2,9 +2,10 @@
  * Answers to decision points as records (ws-058, #2739).
  *
  * {@link askPoint} asks a point's deciders for one set of inputs and records
- * the answer in the answer kind's records directory, and {@link answerPoint}
- * records people's answer to an open question. Both write one Markdown record
- * or none, never commit, and go through the checks every records write goes
+ * the answer in the answer kind's records directory, {@link answerPoint}
+ * records people's answer to an open question, with an optional note, and
+ * {@link retractAnswer} takes an answer back (#3351). Each writes one Markdown
+ * record or none, never commits, and goes through the checks every records write goes
  * through (`records-write.ts`): the record is read back with the kind's schema
  * before it is written, and no other record may become invalid.
  *
@@ -21,7 +22,13 @@
  * escalated one is asked again, since a backend may answer now, and rewritten
  * only when the chain no longer escalates.
  *
- * Both hold the working tree's write lock (#3173, ws-089) from the first read
+ * An answer never changes in place. People may retract it (ws-084): the
+ * question is escalated to them again, and the answer, who gave it, when, and
+ * its note move into the record's `retractions` with who retracted it, when
+ * and why. Asking a retracted question again returns it as it stands, since
+ * people took it back from the deciders; people answer it again.
+ *
+ * Each write holds the working tree's write lock (#3173, ws-089) from the first read
  * to the write, so two answers to one question are never both taken from the
  * same reading of it.
  *
@@ -78,11 +85,11 @@ import { scopeSource } from "./write-scope";
 import { RefCASConflictError } from "../lifecycle/git";
 import { readLedgerAnswers, refreshLedger, withLedgerAnswers, writeLedgerAnswer, type LedgerAnswers } from "./answers-ledger";
 
-/** The version of the write documents `points ask` and `points answer` print. */
+/** The version of the write documents `points ask`, `points answer` and `points retract` print. */
 export const POINTS_WRITE_CONTRACT_VERSION = 1;
 export const POINTS_WRITE_SCHEMA_ID = "https://intentius.io/chant/schemas/workspace/points-write/v1/points-write.schema.json";
 
-/** Why `points ask` or `points answer` wrote nothing. Closed: a reader may switch on it. */
+/** Why `points ask`, `points answer` or `points retract` wrote nothing. Closed: a reader may switch on it. */
 export const POINTS_WRITE_ERROR_CODES = [
   ...LOAD_ERROR_CODES,
   "write-usage-invalid",
@@ -108,6 +115,10 @@ export const POINTS_WRITE_ERROR_CODES = [
   "answer-in-steward-turn",
   /** An answerer is named by a bare name, and identity.attribution at base is identified (#3163). */
   "principal-unidentified",
+  /** `points retract` names a question that has no answer: escalated or proposed (#3351). */
+  "answer-not-answered",
+  /** The answer kind's schema copy has no `note` or `retractions` field for what the write was given (#3351). */
+  "answer-field-unsupported",
   ...WRITE_LOCK_CODES,
   ...RECORD_REASON_CODES,
 ] as const satisfies readonly ReasonCode[];
@@ -163,6 +174,10 @@ export interface QuestionView {
   answeredBy: string[];
   askedOn: string | null;
   answeredOn: string | null;
+  /** What the people who answered wrote with their answer (`points answer --note`, #3351), or null. */
+  note: string | null;
+  /** Answers people took back, oldest first (`points retract`, #3351). Empty when none was. */
+  retractions: RetractionView[];
   /**
    * The steward whose turn asked the question (#2749), and the run it was in,
    * or null when no steward asked it. The steward waits on the question and
@@ -179,6 +194,40 @@ export interface QuestionView {
   ledger: string | null;
   valid: boolean;
   warnings: RecordWarning[];
+}
+
+/** One retracted answer, as a {@link QuestionView} lists it: the answer as it was, and who took it back, when and why. */
+export interface RetractionView {
+  answer: string | boolean | null;
+  decider: Record<string, unknown>;
+  answeredBy: string[];
+  answeredOn: string | null;
+  /** The note the answer carried, or null. */
+  answerNote: string | null;
+  /** Who retracted it. */
+  by: string[];
+  on: string | null;
+  /** Why it was retracted (`points retract --note`), or null. */
+  note: string | null;
+}
+
+/** The record's `retractions`, as views. */
+function retractionsOf(d: Record<string, unknown>): RetractionView[] {
+  if (!Array.isArray(d.retractions)) return [];
+  const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
+  const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+  return d.retractions
+    .filter((r): r is Record<string, unknown> => r !== null && typeof r === "object" && !Array.isArray(r))
+    .map((r) => ({
+      answer: typeof r.answer === "string" || typeof r.answer === "boolean" ? r.answer : null,
+      decider: r.decider !== null && typeof r.decider === "object" && !Array.isArray(r.decider) ? (r.decider as Record<string, unknown>) : {},
+      answeredBy: strs(r.answered_by),
+      answeredOn: str(r.answered_on),
+      answerNote: str(r.answer_note),
+      by: strs(r.by),
+      on: str(r.on),
+      note: str(r.note),
+    }));
 }
 
 /** The harness a steward's question names in its source block (#2749). */
@@ -255,6 +304,8 @@ export function questionView(entry: RecordEntry, point: Point | undefined, ledge
     answeredBy: Array.isArray(d.answered_by) ? d.answered_by.filter((b): b is string => typeof b === "string") : [],
     askedOn: str(d.asked_on),
     answeredOn: str(d.answered_on),
+    note: str(d.note),
+    retractions: retractionsOf(d),
     askedBy: askedByOf(d),
     ledger,
     valid: entry.valid,
@@ -262,12 +313,15 @@ export function questionView(entry: RecordEntry, point: Point | undefined, ledge
   };
 }
 
-/** What `points ask` and `points answer` print. */
+/** The write verbs of `points`. */
+export type PointsWriteVerb = "ask" | "answer" | "retract";
+
+/** What `points ask`, `points answer` and `points retract` print. */
 export type PointsWriteDocument =
   | {
       $schema: string;
       contract: number;
-      verb: "ask" | "answer";
+      verb: PointsWriteVerb;
       kind: KindView;
       id: string;
       path: string;
@@ -280,9 +334,9 @@ export type PointsWriteDocument =
       /** With --dry-run, the text the command would write. */
       text?: string;
     }
-  | { $schema: string; contract: number; verb: "ask" | "answer"; error: { code: PointsWriteErrorCode; message: string } };
+  | { $schema: string; contract: number; verb: PointsWriteVerb; error: { code: PointsWriteErrorCode; message: string } };
 
-function failure(verb: "ask" | "answer", err: unknown): PointsWriteDocument {
+function failure(verb: PointsWriteVerb, err: unknown): PointsWriteDocument {
   if (err instanceof PointsWriteError || err instanceof RecordWriteError || err instanceof RecordReadError || err instanceof IdentityError || err instanceof WriteLockError) {
     return { $schema: POINTS_WRITE_SCHEMA_ID, contract: POINTS_WRITE_CONTRACT_VERSION, verb, error: { code: err.code as PointsWriteErrorCode, message: err.message } };
   }
@@ -529,6 +583,8 @@ async function askPointLocked(opts: AskPointOptions): Promise<PointsWriteDocumen
       ...(extra.text !== undefined ? { text: extra.text } : {}),
     });
     if (existing && existing.data !== null && (existing.state === "answered" || existing.state === "proposed")) return done(existing, { reused: true, written: false });
+    // People took a retracted question back from the deciders (ws-084): they answer it again, and asking returns it as it stands.
+    if (existing && existing.data !== null && Array.isArray(existing.data.retractions) && existing.data.retractions.length > 0) return done(existing, { reused: true, written: false });
 
     let result: ChainResult;
     try {
@@ -595,10 +651,30 @@ export interface AnswerPointOptions {
   answer: string | boolean;
   /** Who answered, as the caller names them. chant does not check who they are; the trust policy says who counts. */
   by: string[];
+  /** What the people who answered say with it, recorded as the record's `note` (#3351). */
+  note?: string;
   kind?: string;
   on?: string;
   dryRun?: boolean;
 }
+
+/**
+ * Whether an answer kind's schema copy takes the fields of #3351: `note` on an
+ * answer, and `retractions`. A copy of point-answer.schema.json from before
+ * them refuses a note or a retraction with `answer-field-unsupported`, rather
+ * than dropping what a person wrote.
+ */
+export function answerFields(schema: Record<string, unknown>): { note: boolean; retractions: boolean } {
+  const props = schema.properties as Record<string, unknown> | undefined;
+  const has = (key: string): boolean => props !== undefined && props !== null && typeof props === "object" && Object.prototype.hasOwnProperty.call(props, key);
+  return { note: has("note"), retractions: has("retractions") };
+}
+
+/** A note as given, trimmed, or undefined when it is empty. */
+const noteOf = (note: string | undefined): string | undefined => {
+  const t = note?.trim();
+  return t ? t : undefined;
+};
 
 /** The trust policy at base, for the quorum: who holds the agent role and each role a quorum names. */
 function policyFor(root: string): TrustPolicy {
@@ -650,10 +726,61 @@ export function tallyQuorum(
 }
 
 /**
+ * A steward waits on a question and never answers or retracts one (#2749), as
+ * it never clears a gate: the write has to come from a person, through hud or
+ * a shell, not from the steward's own turn or a process it started.
+ */
+function refuseStewardTurn(id: string, does: "answers" | "retracts"): void {
+  const turn = currentStewardTurn();
+  if (turn) {
+    throw new PointsWriteError(
+      "answer-in-steward-turn",
+      `this is the steward ${turn.steward}'s turn, and a steward never ${does} a decision point: a person ${does === "answers" ? "answers" : "retracts the answer to"} ${id} through hud or \`chant workspace points ${does === "answers" ? "answer" : "retract"}\` at a shell`,
+    );
+  }
+}
+
+interface FoundQuestion {
+  opened: OpenedPoints;
+  before: RecordEntry[];
+  read: Awaited<ReturnType<typeof readWithLedger>>;
+  target: RecordEntry & { data: Record<string, unknown> };
+}
+
+/** The answer record with this id, in the answer kind `kind` names or the first declared one that has it, read with the ledger's answers laid over the tree. */
+async function findQuestion(cwd: string, kind: string | undefined, id: string): Promise<FoundQuestion> {
+  const kinds = await answerKindFiles(cwd, kind);
+  if (kinds.length === 0) throw new PointsWriteError("points-undeclared", "no record kind with an answers block is declared: name one with --kind, or declare one in chant.workspace.json");
+  for (const k of kinds) {
+    const opened = await openAnswers(k, cwd);
+    // A question a steward asked is on the ledger (#2786), and people's answer goes back there.
+    const read = await readWithLedger(opened.o);
+    const target = read.before.find((e) => e.id === id);
+    if (target && target.data !== null) return { opened, before: read.before, read, target: target as FoundQuestion["target"] };
+  }
+  throw new PointsWriteError("record-not-found", `no answer record has id ${id}`);
+}
+
+/** Count `by` toward the point's quorum, or refuse with `quorum-not-met`. */
+function meetQuorum(name: string, by: string[], quorum: { count: number; roles?: string[] }, root: string, steward: string | undefined, verb: "answer" | "retract"): { counted: string[] } {
+  const tally = tallyQuorum(by, quorum, policyFor(root), steward);
+  if (!tally.met) {
+    const got = tally.counted.length;
+    const left = tally.left.length ? `; not counted: ${tally.left.map((l) => `${l.name}, who ${l.why}`).join("; ")}` : "";
+    throw new PointsWriteError(
+      "quorum-not-met",
+      `${name} needs ${quorum.count} ${quorum.count === 1 ? "person" : "people"}${quorum.roles ? ` holding ${quorum.roles.join(" or ")}` : ""} to ${verb === "answer" ? "answer" : "retract an answer"}, and ${got} ${got === 1 ? "counts" : "count"}${got ? ` (${tally.counted.join(", ")})` : ""}${left}`,
+    );
+  }
+  return tally;
+}
+
+/**
  * People answer an open question: `points answer`. A proposed question the
  * people answer as the model did is confirmed, and keeps the model as its
  * decider; any other answer is the quorum's, and a model's proposal moves into
- * the escalations. The question becomes `answered`.
+ * the escalations. The question becomes `answered`, with the people's note
+ * when they give one (#3351).
  */
 export async function answerPoint(opts: AnswerPointOptions): Promise<PointsWriteDocument> {
   try {
@@ -665,39 +792,21 @@ export async function answerPoint(opts: AnswerPointOptions): Promise<PointsWrite
 
 async function answerPointLocked(opts: AnswerPointOptions): Promise<PointsWriteDocument> {
   try {
-    // A steward waits on a question and never answers one (#2749), as it never
-    // clears a gate: the answer has to come from a person, through hud or a
-    // shell, not from the steward's own turn or a process it started.
-    const turn = currentStewardTurn();
-    if (turn) {
-      throw new PointsWriteError(
-        "answer-in-steward-turn",
-        `this is the steward ${turn.steward}'s turn, and a steward never answers a decision point: a person answers ${opts.id} through hud or \`chant workspace points answer\` at a shell`,
-      );
-    }
+    refuseStewardTurn(opts.id, "answers");
     // #3163: under identity.attribution "identified" at base, each answerer is a forge identity or a signer.
     refuseUnidentified(scopeSource(opts.cwd), opts.by, "--by");
-    const kinds = await answerKindFiles(opts.cwd, opts.kind);
-    if (kinds.length === 0) throw new PointsWriteError("points-undeclared", "no record kind with an answers block is declared: name one with --kind, or declare one in chant.workspace.json");
-    let found:
-      | { opened: OpenedPoints; before: RecordEntry[]; read: Awaited<ReturnType<typeof readWithLedger>>; target: RecordEntry & { data: Record<string, unknown> } }
-      | undefined;
-    for (const k of kinds) {
-      const opened = await openAnswers(k, opts.cwd);
-      // A question a steward asked is on the ledger (#2786), and people's answer goes back there.
-      const read = await readWithLedger(opened.o);
-      const target = read.before.find((e) => e.id === opts.id);
-      if (target && target.data !== null) {
-        found = { opened, before: read.before, read, target: target as RecordEntry & { data: Record<string, unknown> } };
-        break;
-      }
-    }
-    if (!found) throw new PointsWriteError("record-not-found", `no answer record has id ${opts.id}`);
+    const found = await findQuestion(opts.cwd, opts.kind, opts.id);
     const { opened, before, target } = found;
     const ledger = found.read.ledger;
     const { o } = opened;
     const d = target.data;
-    if (target.state === "answered") throw new PointsWriteError("record-closed", `${opts.id} is answered, and an answer never changes: ask again with other inputs, or change the point, which asks the question anew`);
+    if (target.state === "answered") {
+      throw new PointsWriteError("record-closed", `${opts.id} is answered, and an answer never changes in place: retract it with \`points retract ${opts.id}\` and answer again, ask again with other inputs, or change the point, which asks the question anew`);
+    }
+    const note = noteOf(opts.note);
+    if (note !== undefined && !answerFields(o.loaded.schema).note) {
+      throw new PointsWriteError("answer-field-unsupported", `the ${o.loaded.kind.name} kind's schema has no note field, so ${opts.id} can't keep the note: copy point-answer.schema.json from @intentius/chant anew`);
+    }
     const name = String(d.point);
     const point = pointOf(opened.points, name);
     if (!point) throw new PointsWriteError("point-unknown", `${opts.id} answers ${name}, which ${opened.pointsFile} no longer declares`);
@@ -708,22 +817,14 @@ async function answerPointLocked(opts: AnswerPointOptions): Promise<PointsWriteD
       throw new PointsWriteError("answer-not-candidate", `${opts.id} takes one of ${allowed.map((c) => JSON.stringify(c)).join(", ")}, not ${JSON.stringify(opts.answer)}`);
     }
     const quorum = quorumOf(point);
-    const tally = tallyQuorum(opts.by, quorum, policyFor(o.root), askedByOf(d)?.steward);
-    if (!tally.met) {
-      const got = tally.counted.length;
-      const left = tally.left.length ? `; not counted: ${tally.left.map((l) => `${l.name}, who ${l.why}`).join("; ")}` : "";
-      throw new PointsWriteError(
-        "quorum-not-met",
-        `${name} needs ${quorum.count} ${quorum.count === 1 ? "person" : "people"}${quorum.roles ? ` holding ${quorum.roles.join(" or ")}` : ""} to answer, and ${got} ${got === 1 ? "counts" : "count"}${got ? ` (${tally.counted.join(", ")})` : ""}${left}`,
-      );
-    }
+    const tally = meetQuorum(name, opts.by, quorum, o.root, askedByOf(d)?.steward, "answer");
     const on = opts.on ?? today();
     const decider = d.decider as Record<string, unknown>;
     const confirmed = target.state === "proposed" && decider.kind === "model" && d.answer === value;
     const escalations = Array.isArray(d.escalations) ? [...(d.escalations as Escalation[])] : [];
     let fields: Record<string, unknown>;
     if (confirmed) {
-      fields = { ...d, state: "answered", answered_by: tally.counted, answered_on: on };
+      fields = { ...d, state: "answered", answered_by: tally.counted, answered_on: on, note };
     } else {
       if (target.state === "proposed" && decider.kind === "model") {
         escalations.push({
@@ -748,6 +849,7 @@ async function answerPointLocked(opts: AnswerPointOptions): Promise<PointsWriteD
         escalations: escalations.length > 0 ? escalations : undefined,
         answered_by: tally.counted,
         answered_on: on,
+        note,
       };
     }
     const subject = Array.isArray(d.constrains) && typeof d.constrains[0] === "string" ? (d.constrains[0] as string) : undefined;
@@ -773,5 +875,124 @@ async function answerPointLocked(opts: AnswerPointOptions): Promise<PointsWriteD
     };
   } catch (err) {
     return failure("answer", err);
+  }
+}
+
+// ── points retract ───────────────────────────────────────────────────────────
+
+export interface RetractAnswerOptions {
+  cwd: string;
+  /** The answer record's id. */
+  id: string;
+  /** Who takes the answer back. They count toward the point's quorum as answerers do. */
+  by: string[];
+  /** Why, recorded on the retraction. */
+  note?: string;
+  kind?: string;
+  on?: string;
+  dryRun?: boolean;
+}
+
+/**
+ * People take an answer back: `points retract` (#3351, ws-084). The answer
+ * never changes in place. The question is escalated to the point's quorum
+ * again, open for people, and the answer as it was (its value, decider, who
+ * gave it, when, and its note) moves into the record's `retractions`, with who
+ * retracted it, when and why. A model's confirmed proposal also moves into the
+ * escalations, as when people answer otherwise. Retracting needs the point's
+ * quorum, counted as an answer is, and is refused in a steward's turn. People
+ * answer the question again with `points answer`.
+ */
+export async function retractAnswer(opts: RetractAnswerOptions): Promise<PointsWriteDocument> {
+  try {
+    return await withWriteLock(opts.cwd, { verb: "points retract", by: (opts.by ?? []).join(", ") || null }, opts.dryRun, () => retractAnswerLocked(opts));
+  } catch (err) {
+    return failure("retract", err);
+  }
+}
+
+async function retractAnswerLocked(opts: RetractAnswerOptions): Promise<PointsWriteDocument> {
+  try {
+    refuseStewardTurn(opts.id, "retracts");
+    refuseUnidentified(scopeSource(opts.cwd), opts.by, "--by");
+    const found = await findQuestion(opts.cwd, opts.kind, opts.id);
+    const { opened, before, target } = found;
+    const ledger = found.read.ledger;
+    const { o } = opened;
+    const d = target.data;
+    if (target.state !== "answered") {
+      throw new PointsWriteError("answer-not-answered", `${opts.id} is ${target.state ?? "not answered"}, so there is no answer to retract: answer it with \`points answer ${opts.id}\``);
+    }
+    if (!answerFields(o.loaded.schema).retractions) {
+      throw new PointsWriteError("answer-field-unsupported", `the ${o.loaded.kind.name} kind's schema has no retractions field, so ${opts.id} can't keep the answer it would retract: copy point-answer.schema.json from @intentius/chant anew`);
+    }
+    const name = String(d.point);
+    const point = pointOf(opened.points, name);
+    if (!point) throw new PointsWriteError("point-unknown", `${opts.id} answers ${name}, which ${opened.pointsFile} no longer declares, so no quorum can take the answer back: ask the point as it is declared now`);
+    const quorum = quorumOf(point);
+    const tally = meetQuorum(name, opts.by, quorum, o.root, askedByOf(d)?.steward, "retract");
+    const on = opts.on ?? today();
+    const type = String(d.question_type);
+    const decider = d.decider !== null && typeof d.decider === "object" && !Array.isArray(d.decider) ? (d.decider as Record<string, unknown>) : { kind: "quorum" };
+    const answer = d.answer as string | boolean;
+    const note = noteOf(opts.note);
+    const retraction = {
+      answer,
+      decider,
+      answered_by: Array.isArray(d.answered_by) && d.answered_by.length > 0 ? d.answered_by : undefined,
+      answered_on: typeof d.answered_on === "string" ? d.answered_on : undefined,
+      answer_note: typeof d.note === "string" ? d.note : undefined,
+      by: tally.counted,
+      on,
+      note,
+    };
+    const escalations = Array.isArray(d.escalations) ? [...(d.escalations as Escalation[])] : [];
+    if (decider.kind === "model") {
+      // The confirmed proposal goes back among the deciders that did not settle the question.
+      escalations.push({
+        kind: "model",
+        backend: String(decider.backend),
+        model: String(decider.model),
+        answer,
+        ...(d.probabilities ? { probabilities: d.probabilities as Record<string, number> } : {}),
+        ...(typeof d.confidence === "number" ? { confidence: d.confidence } : {}),
+        ...(typeof d.threshold === "number" ? { threshold: d.threshold } : {}),
+        reason: `proposed ${show(answer, type)}, which people confirmed and then retracted`,
+        ...(typeof d.reason === "string" && reasonFields(o.loaded.schema).escalation ? { model_reason: d.reason } : {}),
+      });
+    }
+    const gone = new Set(["answer", "answered_by", "answered_on", "note", "probabilities", "confidence", "threshold", "reason"]);
+    const rest = Object.fromEntries(Object.entries(d).filter(([k]) => !gone.has(k)));
+    const prior = Array.isArray(d.retractions) ? (d.retractions as unknown[]) : [];
+    const subject = Array.isArray(d.constrains) && typeof d.constrains[0] === "string" ? (d.constrains[0] as string) : undefined;
+    const title = titleFor(point, subject, "escalated", undefined);
+    const data = recordData(o, {
+      ...rest,
+      title,
+      state: "escalated",
+      decider: { kind: "quorum", count: quorum.count, ...(quorum.roles ? { roles: quorum.roles } : {}) },
+      escalations: escalations.length > 0 ? escalations : undefined,
+      retractions: [...prior, Object.fromEntries(Object.entries(retraction).filter(([, v]) => v !== undefined))],
+    });
+    const text = renderRecord(data, body(point, title));
+    const onLedger = ledger.byPath.has(target.path);
+    const message = `Decision point ${name}: ${show(answer, type)} retracted by ${tally.counted.join(", ")}`;
+    const wrote = await write(o, before, target.path, text, false, !!opts.dryRun, { source: found.read.source, ledger, onLedger, message, who: { verb: "points retract", by: tally.counted.join(", ") } });
+    const entry: RecordEntry = { ...target, state: "escalated", data, valid: true, reasons: [], warnings: wrote.warnings };
+    return {
+      $schema: POINTS_WRITE_SCHEMA_ID,
+      contract: POINTS_WRITE_CONTRACT_VERSION,
+      verb: "retract",
+      kind: o.view,
+      id: opts.id,
+      path: target.path,
+      reused: false,
+      written: !opts.dryRun,
+      dryRun: !!opts.dryRun,
+      question: questionView(entry, point, onLedger ? (wrote.ledger ?? ledger.byPath.get(target.path)?.ledger ?? null) : null)!,
+      ...(opts.dryRun ? { text } : {}),
+    };
+  } catch (err) {
+    return failure("retract", err);
   }
 }

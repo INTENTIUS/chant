@@ -25,7 +25,9 @@ The [reader suite](/chant/reference/workspace-read-contract/#testing-a-reader) h
 | `session` | `records new` | `workspace records new sessions/session.kind.mjs --from -` | `records-new.schema.json` | an open review session, `S-0001`, holding one anchored review comment and its round ([#3350](https://github.com/INTENTIUS/chant/issues/3350)) |
 | `close` | `records close` | `workspace records close S-0001 --kind <kind>` | `records-close.schema.json` | the session, closed and sealed |
 | `ask` | `points ask` | `workspace points ask slice-tier --inputs - --subject W-001 --kind <kind>` | `points-write.schema.json` | a question, escalated to people |
-| `answer` | `points answer` | `workspace points answer <id> --answer medium --by <name> --kind <kind>` | `points-write.schema.json` | the people's answer |
+| `answer` | `points answer` | `workspace points answer <id> --answer medium --by <name> --note <text> --kind <kind>` | `points-write.schema.json` | the people's answer, with their note |
+| `retract` | `points retract` | `workspace points retract <id> --by <name> --note <text> --kind <kind>` | `points-write.schema.json` | the question escalated again, the answer kept in its `retractions` ([#3351](https://github.com/INTENTIUS/chant/issues/3351)) |
+| `reanswer` | `points answer` | `workspace points answer <id> --answer large --by <name> --kind <kind>` | `points-write.schema.json` | the people's new answer |
 | `claim` | `work claim` | `workspace work claim W-001 --holder <name> --kind <kind> --json` | `work-lease.schema.json` | the lease ref and a `chant/lifecycle` line |
 | `renew` | `work renew` | `workspace work renew W-001 --holder <name> --token <token> --kind <kind> --json` | `work-lease.schema.json` | the same |
 | `evidence` | `work evidence` | `workspace work evidence W-001 --holder <name> --token <token> --from - --kind <kind>` | `work-evidence.schema.json` | evidence for `AC-1` on the work item |
@@ -106,7 +108,7 @@ After the script it fails when any of these is false:
 | the state directory holds only what `privateState` declares | listed after the script |
 | amnesia: the writer shows the same facts with its private state deleted | `facts()` before; then `close()`, the state directory deleted, the writer built again with the same `stateDir`, and `facts()` again; the two must be equal |
 | everything `holds()` names is in the repository, or one of the four exceptions | each record read with `records`, each run with `runs`, each lease with `work history` |
-| every fact the script produced reads back through the read contract | `records --uncommitted` for each kind, `work history W-001`, `runs`, the listing in `status dev --json`, and each snapshot in `wip --json` |
+| every fact the script produced reads back through the read contract | `records --uncommitted` for each kind, `points --json` for the retraction, `work history W-001`, `runs`, the listing in `status dev --json`, and each snapshot in `wip --json` |
 
 When the writer performs `records amend`, the suite also holds it to the concurrent case ([#3173](https://github.com/INTENTIUS/chant/issues/3173)). It reads the script's decision's digest and has the writer make the three amendments in `CONCURRENT_AMENDS` at once, each with `expect` set to that digest, as two people and an agent answering one record would. `writeArgv` passes `expect` as `--expect`. Exactly one must be written. The other two must each be chant's `record-conflict` refusal naming the winner's digest. Each comes from one chant call and is returned unchanged. Retrying a conflict without `--expect` overwrites the other writer, and the one-call check catches it. The suite then has the writer retry each refused amendment from the digest its refusal named, and each retry must be written. The problems are listed in `after.concurrent`, each starting `concurrent:`.
 

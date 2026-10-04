@@ -13,7 +13,7 @@
  *   record, decision, work-item   a record, by id, from the declared record kinds (`records --json`)
  *   member                        a member, by name (`ls --json`)
  *
- * The other outputs a point may name (finding, region, commit, gate, release,
+ * The other outputs a point may name (finding, region, commit, node, gate, release,
  * environment, component) are passed in `inputs`, as the output printed them.
  * These reads never call a model, and never write. The module loads code
  * under `workspace/`, so the `decide` activity imports it on first call.
