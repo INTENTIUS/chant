@@ -560,6 +560,13 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     why: "The workflow-audit activity resolves an action reference to a commit so a pipeline can assert what it actually ran.",
   },
   {
+    file: "packages/core/src/pr-forge.ts",
+    primitives: ["fetch"],
+    phase: "apply",
+    destination: "the forge that hosts the pull request: `api.github.com` or `$GITHUB_API_URL`, a Forgejo instance's API, or a GitLab instance's API",
+    why: "The pull-request loop (#3183): `chant components pr-plan --forge` keeps one note on the pull request and sets a commit status, and `pr-apply` lists approving reviews and finds the pull request that merged a commit. Only those two CI commands reach it, and each client takes an injected `fetch`, so no test opens a socket.",
+  },
+  {
     file: "packages/core/src/op/activities/pipeline-audit.ts",
     primitives: ["fetch"],
     phase: "apply",
