@@ -10,6 +10,7 @@ import type { Declarable } from "@intentius/chant/declarable";
 import { looksLikeCollectorConfig, type CollectorConfig } from "../../model";
 import { configMapCollectorConfigs, describeConfigMapConfig } from "../../configmap";
 import { validateCollectorConfig, validateCollectorEntities, type CollectorIssueCode, type CollectorIssue } from "../../validate-config";
+import { attributionIssues } from "../../attribution";
 
 /** Where a collector config was found in the build output. */
 export interface FoundCollectorConfig {
@@ -74,20 +75,30 @@ function toDiagnostic(issue: CollectorIssue, found?: Omit<FoundCollectorConfig, 
 }
 
 /**
- * Every config-level diagnostic (OTEL101-OTEL106, OTEL112-OTEL117 and any later
+ * The config-level issues for one config. OTEL118 joins them only when the
+ * build stamps the telemetry attribution (`ctx.telemetry`), so a level-0
+ * project never sees it.
+ */
+function configIssues(ctx: PostSynthContext, config: CollectorConfig): CollectorIssue[] {
+  const issues = validateCollectorConfig(config);
+  return ctx.telemetry ? [...issues, ...attributionIssues(config)] : issues;
+}
+
+/**
+ * Every config-level diagnostic (OTEL101-OTEL106, OTEL112-OTEL127 and any later
  * config check) over the collector configs in the output. `configMapsOnly`
  * keeps the configs held in ConfigMaps, which is what WK8604 reads.
  */
 export function collectorConfigDiagnostics(ctx: PostSynthContext, opts: { configMapsOnly?: boolean } = {}): PostSynthDiagnostic[] {
   return collectorConfigs(ctx)
     .filter((found) => !opts.configMapsOnly || found.configMap)
-    .flatMap(({ config, ...found }) => validateCollectorConfig(config).map((i) => toDiagnostic(i, found)));
+    .flatMap(({ config, ...found }) => configIssues(ctx, config).map((i) => toDiagnostic(i, found)));
 }
 
-/** Diagnostics for one config-level code (OTEL101-OTEL106, OTEL112-OTEL117) across every collector config in the output. */
+/** Diagnostics for one config-level code (OTEL101-OTEL106, OTEL112-OTEL127) across every collector config in the output. */
 export function configDiagnostics(ctx: PostSynthContext, code: CollectorIssueCode): PostSynthDiagnostic[] {
   return collectorConfigs(ctx).flatMap(({ config, ...found }) =>
-    validateCollectorConfig(config)
+    configIssues(ctx, config)
       .filter((i) => i.code === code)
       .map((i) => toDiagnostic(i, found)),
   );

@@ -18,7 +18,10 @@
  *    `APP_REVISION` env var (#2834, as chud's fly-site.mjs set it), so the
  *    app's own `/health` can report it. A caller's `env.APP_REVISION`
  *    overrides it. `fly-rollback` restores it for free: it puts back the
- *    whole recorded config, env included;
+ *    whole recorded config, env included. A Machine the build stamped with
+ *    telemetry attribution (#3060) also gets the release's `service.version`
+ *    and `vcs.ref.head.revision` in its `OTEL_RESOURCE_ATTRIBUTES` (#3061,
+ *    ws-081; see {@link releaseResourceAttributes});
  * 2. migrate: each migration runs inside the Machine once per environment,
  *    witnessed by a receipt in chant's lifecycle receipt store
  *    (`@intentius/chant/op/lifecycle-receipt-store`), then the Machine restarts
@@ -60,6 +63,7 @@ import {
 import { defaultFlyHttp, parsePlan, resolveEndpoint, type FlyHttp, type WaitOpts } from "../op/activities/fly-apply";
 import type { MachineConfigStore } from "../release-store";
 import { readFileSync } from "node:fs";
+import { releaseAttributesSuffix, type ReleaseIdentity } from "@intentius/chant/telemetry-attribution";
 
 /** One migration, run inside the Machine once per environment. */
 export interface FlyMigration {
@@ -244,6 +248,28 @@ export function migrationReceipt(app: string, migration: FlyMigration): { ref: E
   };
 }
 
+/**
+ * A stamped Machine's `OTEL_RESOURCE_ATTRIBUTES` with the release's attributes
+ * (#3061, ws-081), or undefined when the build did not stamp it (no
+ * `chant.decl` key) or the release knows neither attribute.
+ *
+ * A Machine's env values are literal, so the deploy writes the full value in
+ * place of a `CHANT_RELEASE_ATTRIBUTES` reference the platform would expand.
+ * The release's keys replace the same keys in the declared value, as the
+ * suffix appended last does on Compose and Kubernetes: a digest-pinned image
+ * gave the build a `service.version`, and the release may run another image.
+ */
+export function releaseResourceAttributes(declared: unknown, release: ReleaseIdentity): string | undefined {
+  if (typeof declared !== "string") return undefined;
+  const pairs = declared.split(",").filter((kv) => kv !== "");
+  const key = (kv: string) => kv.split("=")[0]!.trim();
+  if (!pairs.some((kv) => key(kv) === "chant.decl")) return undefined;
+  const added = releaseAttributesSuffix(release).split(",").filter((kv) => kv !== "");
+  if (added.length === 0) return undefined;
+  const replaced = new Set(added.map(key));
+  return [...pairs.filter((kv) => !replaced.has(key(kv))), ...added].join(",");
+}
+
 function loadTarget(planPath: string, machine?: string) {
   const plan = parsePlan(readFileSync(planPath, "utf8"));
   return { plan, target: releaseTarget(plan, machine) };
@@ -280,7 +306,7 @@ export function createFlyReleaseCapability(deps: FlyReleaseDeps = {}): Capabilit
     async run(ctx, input) {
       if (!input.digest) throw new Error("fly-release: a release needs its digest");
       const http = httpFor();
-      const { plan } = loadTarget(input.plan, input.machine);
+      const { plan, target } = loadTarget(input.plan, input.machine);
       const gitSha = input.gitSha ?? (await (deps.headCommit ?? defaultHeadCommit)());
       const configs = await (deps.configStore ?? defaultConfigStore)(ctx);
       // The tree is checked against its digest before the Machine changes.
@@ -289,7 +315,15 @@ export function createFlyReleaseCapability(deps: FlyReleaseDeps = {}): Capabilit
       // APP_REVISION carries the commit into the Machine's env, as chud's
       // fly-site.mjs did (chant#2834), so the app's own /health can report
       // it. A caller's own APP_REVISION (input.env) wins over the commit.
-      const env = { APP_REVISION: gitSha, ...(input.env ?? {}) };
+      // A stamped Machine's resource attributes name the same release as its
+      // metadata (#3061, ws-081), unless the caller sets its own.
+      const declaredEnv = (target.request.body.config as { env?: Record<string, unknown> } | undefined)?.env;
+      const attributes = releaseResourceAttributes(declaredEnv?.OTEL_RESOURCE_ATTRIBUTES, { version: input.digest, revision: gitSha });
+      const env = {
+        APP_REVISION: gitSha,
+        ...(attributes !== undefined ? { OTEL_RESOURCE_ATTRIBUTES: attributes } : {}),
+        ...(input.env ?? {}),
+      };
 
       const released = await flyMachineRelease(
         {

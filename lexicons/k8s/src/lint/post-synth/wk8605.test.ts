@@ -90,6 +90,18 @@ describe("WK8605: node-reading collector config without the node", () => {
     expect(d[0].message).toContain("filelog reads host /var/log/pods at /var/log/pods");
   });
 
+  test("the collector's newer names (host_metrics, file_log, k8s_attributes) are reported the same", () => {
+    const docs = daemonSet({}) as Array<Record<string, any>>;
+    docs[0].data["config.yaml"] = NODE_CONFIG.replace(/hostmetrics/g, "host_metrics")
+      .replace(/filelog/g, "file_log")
+      .replace(/k8sattributes/g, "k8s_attributes");
+    const d = wk8605.check(yaml(...docs));
+    expect(d).toHaveLength(1);
+    expect(d[0].message).toContain("no K8S_NODE_NAME variable (set it from spec.nodeName");
+    expect(d[0].message).toContain("host_metrics reads host / at /hostfs");
+    expect(d[0].message).toContain("file_log reads host /var/log/pods at /var/log/pods");
+  });
+
   test("the variable from any source and covering hostPath mounts pass, including partial host root mounts", () => {
     const d = wk8605.check(yaml(...daemonSet({
       env: [{ name: "K8S_NODE_NAME", value: "fixed" }],

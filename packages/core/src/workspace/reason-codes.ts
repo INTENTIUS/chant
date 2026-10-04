@@ -250,6 +250,14 @@ export const REASONS = {
   "listing-member-unknown": "box listing set names a member the declaration does not declare.",
   "listing-box-missing": "box listing set names a member whose entry declares no box block, so it has no listing.",
   "listing-cover-invalid": "The cover can't be read, is not a PNG, JPEG or WebP picture, is larger than 5 MiB, has a path outside the workspace, or has an extension other than its picture format's.",
+  // Work in progress under refs/chant/wip/<branch> and its replication (wip save|restore|push|fetch, #3172): why the write was refused. Nothing is written.
+  "wip-no-branch": "HEAD is detached, or names a branch with no commit yet, so there is no branch to keep work in progress for.",
+  "wip-none": "wip restore was given no snapshot, and the branch has none under refs/chant/wip/<branch>.",
+  "wip-snapshot-unknown": "wip restore names something that is not a work-in-progress snapshot chant took.",
+  "wip-branch-other": "wip restore names a snapshot taken on another branch than the one checked out.",
+  "wip-race": "Another writer moved refs/chant/wip/<branch> between this command's read and its write.",
+  "wip-policy-none": "wip push or wip fetch was run, and no box block declares replicate, so there is no remote.",
+  "wip-remote-unknown": "The replicate policy names a git remote the checkout does not have; the host adds it, with its credential, before chant pushes.",
   // A box whose isolation fails (check, #2727). Each is also a WSP finding.
   "box-isolation-collision": "Two boxes on one host resolve to the same port, state path or cookie name, or two ports in one box share an offset.",
   "box-isolation-literal": "A host's stateRoot or a box's state entry is a literal machine path instead of one derived from an environment reference and the box's name.",

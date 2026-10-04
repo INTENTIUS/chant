@@ -108,3 +108,51 @@ export function looksLikeCollectorConfig(value: unknown): value is CollectorConf
   if (typeof pipelines !== "object" || pipelines === null) return false;
   return "receivers" in v || "exporters" in v;
 }
+
+/**
+ * A built-in type the collector renamed, keeping the old name as a
+ * deprecated alias. `type` is the new name and `builtin` the name chant's
+ * class declares and emits. `since` is the first release of `repo` whose
+ * `metadata.yaml` for the component lists `builtin` as `deprecated_type`.
+ */
+export interface ComponentTypeAlias {
+  kind: ComponentKind;
+  type: string;
+  builtin: string;
+  since: string;
+  repo: "core" | "contrib";
+}
+
+/**
+ * The renamed built-ins. chant emits `builtin`, which the pinned collector
+ * (`COLLECTOR_PIN`, v0.130.0) knows and newer ones still accept. A config
+ * written for a newer collector may use `type`, so code that reads a config
+ * (the importer, the checks, the k8s composites) accepts both.
+ */
+export const COMPONENT_TYPE_ALIASES: readonly ComponentTypeAlias[] = [
+  { kind: "exporter", type: "otlp_grpc", builtin: "otlp", since: "v0.148.0", repo: "core" },
+  { kind: "exporter", type: "otlp_http", builtin: "otlphttp", since: "v0.148.0", repo: "core" },
+  { kind: "processor", type: "k8s_attributes", builtin: "k8sattributes", since: "v0.148.0", repo: "contrib" },
+  { kind: "connector", type: "signal_to_metrics", builtin: "signaltometrics", since: "v0.148.0", repo: "contrib" },
+  { kind: "receiver", type: "file_log", builtin: "filelog", since: "v0.149.0", repo: "contrib" },
+  { kind: "connector", type: "span_metrics", builtin: "spanmetrics", since: "v0.151.0", repo: "contrib" },
+  { kind: "connector", type: "service_graph", builtin: "servicegraph", since: "v0.151.0", repo: "contrib" },
+  { kind: "receiver", type: "host_metrics", builtin: "hostmetrics", since: "v0.151.0", repo: "contrib" },
+  { kind: "receiver", type: "kubelet_stats", builtin: "kubeletstats", since: "v0.152.0", repo: "contrib" },
+  { kind: "processor", type: "resource_detection", builtin: "resourcedetection", since: "v0.153.0", repo: "contrib" },
+  { kind: "exporter", type: "load_balancing", builtin: "loadbalancing", since: "v0.153.0", repo: "contrib" },
+  { kind: "processor", type: "delta_to_cumulative", builtin: "deltatocumulative", since: "v0.158.0", repo: "contrib" },
+];
+
+const ALIAS_TO_BUILTIN: ReadonlyMap<string, string> = new Map(COMPONENT_TYPE_ALIASES.map((a) => [`${a.kind}:${a.type}`, a.builtin]));
+
+/** The type chant declares for `kind` + `type`: the old name of a renamed built-in, otherwise `type` itself. */
+export function canonicalComponentType(kind: ComponentKind, type: string): string {
+  return ALIAS_TO_BUILTIN.get(`${kind}:${type}`) ?? type;
+}
+
+/** The type of component id `id`, with a renamed built-in's new name read as the old one: `span_metrics/genai` is `spanmetrics`. */
+export function canonicalTypeOf(kind: ComponentKind, id: string): string {
+  const slash = id.indexOf("/");
+  return canonicalComponentType(kind, slash === -1 ? id : id.slice(0, slash));
+}

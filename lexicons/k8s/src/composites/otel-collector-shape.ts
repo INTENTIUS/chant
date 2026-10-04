@@ -14,6 +14,7 @@
 import type { Declarable } from "@intentius/chant/declarable";
 import {
   buildCollectorConfig,
+  canonicalTypeOf,
   collectorEndpoints,
   collectorYaml,
   COLLECTOR_CONFIG_PATH,
@@ -130,7 +131,7 @@ export function collectorRuntime(entities: Declarable[]): CollectorRuntime {
 export function k8sResolverNamespaces(built: BuiltCollector, ownNamespace: string): string[] {
   const out: string[] = [];
   for (const [id, cfg] of Object.entries(built.config.exporters ?? {})) {
-    if (id !== "loadbalancing" && !id.startsWith("loadbalancing/")) continue;
+    if (canonicalTypeOf("exporter", id) !== "loadbalancing") continue;
     const service = (cfg as { resolver?: { k8s?: { service?: string } } })?.resolver?.k8s?.service;
     if (!service) continue;
     const dot = service.indexOf(".");

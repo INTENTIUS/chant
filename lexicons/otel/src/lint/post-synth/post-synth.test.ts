@@ -275,6 +275,13 @@ describe("OTEL116 high-cardinality GenAI attributes as metric attributes", () =>
   ];
   const run = (config: object, lexicon = "otel") => otel116.check(makePostSynthCtx(lexicon, dump(config, { lineWidth: -1 })));
 
+  test("reads span_metrics, service_graph and signal_to_metrics, the collector's newer names, as the built-ins", () => {
+    const rename = (s: string) => s.replace(/spanmetrics/g, "span_metrics").replace(/servicegraph/g, "service_graph").replace(/signaltometrics/g, "signal_to_metrics");
+    const key = GENAI_HIGH_CARDINALITY_ATTRIBUTES[0];
+    const config = JSON.parse(rename(JSON.stringify(connectorsSplitBy(key))));
+    expect(run(config).map((d) => [d.entity, d.message.match(/\((.+)\);/)?.[1]])).toEqual(FIELDS.map(([id, field]) => [rename(id), field]));
+  });
+
   test.each(GENAI_HIGH_CARDINALITY_ATTRIBUTES.map((k) => [k]))("reports %s in every connector field", (key) => {
     const diags = run(connectorsSplitBy(key));
     expect(diags.map((d) => [d.entity, d.message.match(/\((.+)\);/)?.[1]])).toEqual(FIELDS);

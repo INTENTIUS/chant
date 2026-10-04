@@ -1,6 +1,7 @@
 import type { Declarable } from "../declarable";
 import type { ActivityContract } from "../op/activity-contract";
 import type { SerializerResult } from "../serializer";
+import type { TelemetryAttribution } from "../telemetry-attribution";
 import type { Severity } from "./rule";
 import { parseOutputDocs, type OutputDoc } from "./output-docs";
 
@@ -55,6 +56,13 @@ export interface PostSynthContext {
    * when it is `undefined`.
    */
   readonly activityContracts?: ReadonlyMap<string, ActivityContract>;
+  /**
+   * The telemetry attribution the build stamped (#2558), from
+   * `resolveTelemetryAttribution`. Set when the project is inside a workspace
+   * or sets `telemetry.attribution: true`, and absent at level 0 and from a
+   * hand-built context. OTEL118 runs only when it is set.
+   */
+  readonly telemetry?: TelemetryAttribution;
   /** Raw build result object */
   buildResult: {
     outputs: Map<string, string | SerializerResult>;
@@ -201,12 +209,13 @@ export function isPostSynthCheck(value: unknown): value is PostSynthCheck {
  * into the context so a check can branch on the current environment/stack, and
  * `opts.activityContracts` (chant #2101) carries the build's cross-lexicon
  * activity-contract map to the checks that validate Op steps against it.
+ * `opts.telemetry` is the build's resolved telemetry attribution.
  */
 export function runPostSynthChecks(
   checks: PostSynthCheck[],
   buildResult: PostSynthContext["buildResult"],
   env?: string,
-  opts?: { activityContracts?: ReadonlyMap<string, ActivityContract> },
+  opts?: { activityContracts?: ReadonlyMap<string, ActivityContract>; telemetry?: TelemetryAttribution },
 ): PostSynthDiagnostic[] {
   const getDocs = createDocsAccessor(buildResult.outputs);
   const ctx: PostSynthContext = {
@@ -215,6 +224,7 @@ export function runPostSynthChecks(
     env,
     buildResult,
     ...(opts?.activityContracts ? { activityContracts: opts.activityContracts } : {}),
+    ...(opts?.telemetry ? { telemetry: opts.telemetry } : {}),
     get docs(): OutputDoc[] {
       return getDocs();
     },

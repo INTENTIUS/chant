@@ -113,6 +113,7 @@ describe("signing a run", () => {
     const s = await runStatement(run.b, "lobby", root);
     statementContract.expectValid(s);
     if ("error" in s) throw new Error(s.error.message);
+    if (s.verb !== "statement") throw new Error("not a statement document");
     // The signer signs the payload as given, with any DSSE library.
     const { key } = loadRunnerKey(lobby.pem);
     const envelope = signEnvelope(s.payloadType, Buffer.from(s.payload, "base64"), key, lobby.pub);
@@ -184,19 +185,19 @@ describe("reading statements", () => {
   test("runs verify reports and never fails on its own; --require signed fails on an ended run that is not signed", async () => {
     const report = await runsVerify({ cwd: root });
     statementContract.expectValid(report);
-    if ("error" in report) throw new Error(report.error.message);
+    if ("error" in report || report.verb !== "verify") throw new Error("not a verify document");
     expect(report.ok).toBe(true);
     expect(report.summary).toEqual({ runs: 4, signed: 2, unsigned: 2, failed: 0, running: 1 });
 
     const required = await runsVerify({ cwd: root, require: "signed" });
     statementContract.expectValid(required);
-    if ("error" in required) throw new Error(required.error.message);
+    if ("error" in required || required.verb !== "verify") throw new Error("not a verify document");
     expect(required.ok).toBe(false);
     expect(required.failures).toHaveLength(1);
     expect(required.failures[0]).toMatch(/^build-c is unsigned/);
 
     const one = await runsVerify({ cwd: root, id: run.a, require: "signed" });
-    if ("error" in one) throw new Error(one.error.message);
+    if ("error" in one || one.verb !== "verify") throw new Error("not a verify document");
     expect(one.ok).toBe(true);
     const unknown = await runsVerify({ cwd: root, id: "nope" });
     statementContract.expectValid(unknown);

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import type { CollectorConfig } from "../model";
+import { COMPONENT_TYPE_ALIASES, type CollectorConfig } from "../model";
 import { builtinClassName, generateCollectorFiles, OtelCollectorGenerator, tsLiteral } from "./generator";
 import { OtelCollectorParser } from "./parser";
 
@@ -16,6 +16,44 @@ describe("builtinClassName", () => {
     expect(builtinClassName("receiver", "k8s_cluster")).toBe("K8sClusterReceiver");
     expect(builtinClassName("extension", "health_check")).toBe("HealthCheckExtension");
     expect(builtinClassName("exporter", "datadog")).toBeUndefined();
+  });
+
+  test("maps a renamed built-in's newer name to the class of the old one", () => {
+    for (const a of COMPONENT_TYPE_ALIASES) {
+      expect(builtinClassName(a.kind, a.type), a.type).toBe(builtinClassName(a.kind, a.builtin));
+      expect(builtinClassName(a.kind, a.type), a.type).toBeDefined();
+    }
+    expect(builtinClassName("exporter", "otlp_grpc")).toBe("OtlpExporter");
+    // The rename is per kind: the otlp receiver kept its name.
+    expect(builtinClassName("receiver", "otlp_grpc")).toBeUndefined();
+  });
+});
+
+describe("a config using the collector's newer names", () => {
+  test("imports to the built-ins and warns that the old name is written", () => {
+    const yaml = [
+      "receivers: { otlp: { protocols: { grpc: null } } }",
+      "exporters: { otlp_grpc/tempo: { endpoint: 'tempo:4317' }, prometheus: { endpoint: '0.0.0.0:8889' } }",
+      "connectors: { span_metrics: {} }",
+      "service:",
+      "  pipelines:",
+      "    traces: { receivers: [otlp], exporters: [otlp_grpc/tempo, span_metrics] }",
+      "    metrics: { receivers: [span_metrics], exporters: [prometheus] }",
+    ].join("\n");
+    const ir = new OtelCollectorParser().parse(yaml);
+    expect(ir.warnings).toEqual([
+      'exporters.otlp_grpc/tempo uses "otlp_grpc", the collector\'s newer name for "otlp"; it imports as the built-in, which writes "otlp"',
+      'connectors.span_metrics uses "span_metrics", the collector\'s newer name for "spanmetrics"; it imports as the built-in, which writes "spanmetrics"',
+    ]);
+    const out = Object.fromEntries(new OtelCollectorGenerator().generate(ir).map((f) => [f.path, f.content]));
+    expect(out["exporters.ts"]).toContain('new OtlpExporter({ name: "tempo", endpoint: "tempo:4317" })');
+    expect(out["connectors.ts"]).toContain("new SpanMetricsConnector()");
+    expect(Object.keys(out)).not.toContain("custom-components.ts");
+  });
+
+  test("warns when an old and a new name collapse to one id", () => {
+    const ir = new OtelCollectorParser().parse("connectors: { spanmetrics: {}, span_metrics: {} }\n");
+    expect(ir.warnings).toContain('connectors.span_metrics and connectors.spanmetrics become the same id "spanmetrics"; rename one of them');
   });
 });
 
@@ -83,14 +121,14 @@ describe("generateCollectorFiles", () => {
 
   test("a component type chant does not ship is defined once with defineComponent and COLLECTOR_PIN", () => {
     const out = files({
-      exporters: { "datadog/a": { api: { key: "${env:DD}" } }, "datadog/b": {}, otlp_http: {} },
-      service: { pipelines: { logs: { receivers: [], exporters: ["datadog/a", "datadog/b", "otlp_http"] } } },
+      exporters: { "datadog/a": { api: { key: "${env:DD}" } }, "datadog/b": {}, otlp__http: {} },
+      service: { pipelines: { logs: { receivers: [], exporters: ["datadog/a", "datadog/b", "otlp__http"] } } },
     });
     const custom = out["custom-components.ts"];
     expect(custom).toContain('import { COLLECTOR_PIN, defineComponent } from "@intentius/chant-lexicon-otel";');
     expect(custom.match(/defineComponent<Record<string, unknown>>\(\)/g)).toHaveLength(2);
     expect(custom).toContain('const DatadogExporter = defineComponent<Record<string, unknown>>()({\n  kind: "exporter",\n  type: "datadog",\n  pin: COLLECTOR_PIN,\n});');
-    // `OtlpHttpExporter` is the built-in otlphttp exporter's class, so this one is numbered.
+    // `OtlpHttpExporter` is the built-in otlphttp exporter's class, so `otlp__http` gets a numbered one.
     expect(custom).toContain("const OtlpHttpExporter2 = defineComponent");
     expect(custom).toContain("export { DatadogExporter, OtlpHttpExporter2 };");
     expect(out["exporters.ts"]).toContain('import { DatadogExporter, OtlpHttpExporter2 } from "./custom-components";');

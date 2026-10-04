@@ -90,7 +90,7 @@ export const cluster = new K8sClusterReceiver({ auth_type: "serviceAccount", k8s
 
 ## WK8604: the otel config checks on ConfigMap configs
 
-The otel lexicon's config checks (OTEL101 to OTEL106 and OTEL112 to OTEL117) read collector YAML, but `chant build` gives them only the otel lexicon's output, and a config deployed through `OtelCollector`, `OtelCollectorGateway`, `GkeOtelCollector` or a hand-written manifest is a string inside a ConfigMap in the k8s output. WK8604 runs those checks there. Every ConfigMap data value that parses as a collector config (a `service.pipelines` map) is checked, whether or not a workload in the build mounts it. It doesn't use the workload join above.
+The otel lexicon's config checks (OTEL101 to OTEL106 and OTEL112 to OTEL127) read collector YAML, but `chant build` gives them only the otel lexicon's output, and a config deployed through `OtelCollector`, `OtelCollectorGateway`, `GkeOtelCollector` or a hand-written manifest is a string inside a ConfigMap in the k8s output. WK8604 runs those checks there, OTEL118 only when the build stamps telemetry attribution. Every ConfigMap data value that parses as a collector config (a `service.pipelines` map) is checked, whether or not a workload in the build mounts it. It doesn't use the workload join above.
 
 Findings keep their otel ids and severities, so `lint.rules` entries and suppressions for OTEL103 apply wherever the config lives. The message starts with the ConfigMap's namespace, name and key:
 

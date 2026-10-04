@@ -21,7 +21,7 @@ import { spawnSync } from "child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { load } from "js-yaml";
+import { dump, load } from "js-yaml";
 import { build } from "@intentius/chant/build";
 import { lintCommand } from "@intentius/chant/cli/commands/lint";
 import { importCommand, importFromContent } from "@intentius/chant/cli/commands/import";
@@ -29,7 +29,7 @@ import { otelSerializer } from "../serializer";
 import { collectorYaml } from "../collector";
 import { registeredDefinitions } from "../define";
 import { genAiPipeline } from "../genai";
-import { SECTION_OF, type CollectorConfig, type ComponentKind } from "../model";
+import { COMPONENT_TYPE_ALIASES, SECTION_OF, type CollectorConfig, type ComponentKind } from "../model";
 import * as c from "../components";
 import { OtelCollectorParser } from "./parser";
 import { OtelCollectorGenerator } from "./generator";
@@ -230,23 +230,99 @@ describe("YAML -> TypeScript -> YAML", () => {
   }
 
   test.skipIf(!OTELCOL)("otelcol validate accepts every re-emitted config", async () => {
-    // Not the agent-observability agent: its k8s resolver needs a cluster to build (that example's own tests swap it for dns).
-    const yamls: Array<[string, string]> = [
-      ["gateway.yaml", read("gateway.yaml")],
-      ["signaltometrics.yaml", read("signaltometrics.yaml")],
-      ["agent-observability-gateway.yaml", read("agent-observability-gateway.yaml")],
-      ["genAiPipeline()", collectorYaml(genAiPipeline())],
-      ...UPSTREAM_BUILTIN_ONLY.map((f): [string, string] => [f, read("upstream", f)]),
-      // hostmetrics' root_path is accepted on linux only, which is where the node agent runs.
-      ...(await exampleOutputs()).filter(([n]) => n !== "k8s-node-agent" || process.platform === "linux"),
-    ];
-    for (const [name, yaml] of yamls) {
-      const { yaml: rebuilt } = await importAndBuild(yaml);
-      const { ok, output } = otelcolValidate(rebuilt);
-      expect(ok, `${name}: ${output}`).toBe(true);
+    // file_storage and hostmetrics need their directories to exist, so fault-tolerant-logs gets temp ones in place of /var/lib/otelcol.
+    const storage = mkdtempSync(join(tmpdir(), "chant-otelcol-storage-"));
+    try {
+      for (const d of ["receiver", "output"]) mkdirSync(join(storage, d));
+      // Not the agent-observability agent: its k8s resolver needs a cluster to build (that example's own tests swap it for dns).
+      const yamls: Array<[string, string]> = [
+        ["gateway.yaml", read("gateway.yaml")],
+        ["signaltometrics.yaml", read("signaltometrics.yaml")],
+        ["agent-observability-gateway.yaml", read("agent-observability-gateway.yaml")],
+        ["genAiPipeline()", collectorYaml(genAiPipeline())],
+        ...[...UPSTREAM_BUILTIN_ONLY, "loadbalancing-agent.yaml", "servicegraph-nop.yaml"].map((f): [string, string] => [f, read("upstream", f)]),
+        ["fault-tolerant-logs.yaml", read("upstream", "fault-tolerant-logs.yaml").replaceAll("/var/lib/otelcol/file_storage", storage)],
+        // hostmetrics' root_path is accepted on linux only, which is where the node agent runs.
+        // It must exist, so the node agent's /hostfs becomes the temp dir.
+        ...(await exampleOutputs())
+          .filter(([n]) => n !== "k8s-node-agent" || process.platform === "linux")
+          .map(([n, y]): [string, string] => [n, y.replaceAll("/hostfs", storage)]),
+      ];
+      for (const [name, yaml] of yamls) {
+        const { yaml: rebuilt } = await importAndBuild(yaml);
+        const { ok, output } = otelcolValidate(rebuilt);
+        expect(ok, `${name}: ${output}`).toBe(true);
+      }
+    } finally {
+      rmSync(storage, { recursive: true, force: true });
     }
   });
 
+  // couchbase fails validate upstream at the pinned release; a pin bump that fixes it shows here.
+  test.skipIf(!OTELCOL)("otelcol validate rejects couchbase.yaml as it does upstream", async () => {
+    const { yaml: rebuilt } = await importAndBuild(read("upstream", "couchbase.yaml"));
+    const { ok, output } = otelcolValidate(rebuilt);
+    expect(ok).toBe(false);
+    expect(output).toContain('undefined function "convert_gauge_to_sum"');
+  });
+
+});
+
+/** `yaml` with every renamed built-in written under the collector's newer name (`spanmetrics` as `span_metrics`). */
+function withNewNames(yaml: string): string {
+  const doc = (load(yaml) ?? {}) as CollectorConfig;
+  const renamed = new Map<string, string>();
+  for (const kind of Object.keys(SECTION_OF) as ComponentKind[]) {
+    const section = doc[SECTION_OF[kind]];
+    if (!section) continue;
+    const out: Record<string, unknown> = {};
+    for (const [id, cfg] of Object.entries(section)) {
+      const slash = id.indexOf("/");
+      const type = slash === -1 ? id : id.slice(0, slash);
+      const alias = COMPONENT_TYPE_ALIASES.find((a) => a.kind === kind && a.builtin === type);
+      const next = alias ? `${alias.type}${slash === -1 ? "" : id.slice(slash)}` : id;
+      if (alias) renamed.set(`${kind}:${id}`, next);
+      out[next] = cfg;
+    }
+    (doc as Record<string, unknown>)[SECTION_OF[kind]] = out;
+  }
+  // A receiver and an exporter may share an id (`otlp`), so each list renames only its own kinds.
+  const kindsOf = { receivers: ["receiver", "connector"], processors: ["processor"], exporters: ["exporter", "connector"] } as const;
+  for (const p of Object.values(doc.service?.pipelines ?? {})) {
+    for (const list of ["receivers", "processors", "exporters"] as const) {
+      p[list] = p[list]?.map((id) => kindsOf[list].map((k) => renamed.get(`${k}:${id}`)).find(Boolean) ?? id);
+    }
+  }
+  return dump(doc, { lineWidth: -1 });
+}
+
+describe("the collector's newer names for renamed built-ins", () => {
+  test("import to the same classes as the old names, and build back to the old names", async () => {
+    const fixtures: Array<[string, string]> = [
+      ["every built-in", collectorYaml(everyBuiltin())],
+      ["gateway.yaml", read("gateway.yaml")],
+      ["signaltometrics.yaml", read("signaltometrics.yaml")],
+    ];
+    const used = new Set<string>();
+    for (const [name, yaml] of fixtures) {
+      const renamedYaml = withNewNames(yaml);
+      if (renamedYaml === dump(load(yaml), { lineWidth: -1 })) continue;
+      const before = await importAndBuild(yaml);
+      const after = await importAndBuild(renamedYaml);
+      expect(after.buildErrors, name).toEqual([]);
+      const classes = (src: string) => [...src.matchAll(/new ([A-Z]\w+)\(/g)].map((m) => m[1]).sort();
+      expect(classes(after.source), name).toEqual(classes(before.source));
+      expect(after.source, name).not.toContain("defineComponent<");
+      // Emitted names stay the ones the pinned collector knows.
+      expect(normalize(after.yaml), name).toEqual(normalize(yaml));
+      for (const w of after.warnings) {
+        const m = /uses "(\w+)", the collector's newer name for "(\w+)"/.exec(w);
+        if (m) used.add(m[1]);
+      }
+    }
+    // The every-built-in fixture uses all twelve renamed types.
+    expect([...used].sort()).toEqual(COMPONENT_TYPE_ALIASES.map((a) => a.type).sort());
+  });
 });
 
 describe("components chant does not ship", () => {

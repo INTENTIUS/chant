@@ -306,6 +306,20 @@ describe("WK8602: multi-replica tail sampling gateway without trace-aware routin
     expect(wk8602.check(withAgent("otlphttp", "{ endpoint: 'http://gw:4318' }"))).toHaveLength(1);
   });
 
+  test.each([
+    ["otlp_grpc", "{ endpoint: gw.obs.svc.cluster.local:4317 }"],
+    ["otlp_http", "{ endpoint: 'http://gw:4318' }"],
+  ])("flags a hand-written exporter under the collector's newer name %s", (type, body) => {
+    expect(wk8602.check(withAgent(type, body))).toHaveLength(1);
+  });
+
+  test("reads load_balancing as loadbalancing", () => {
+    const diags = wk8602.check(withAgent("load_balancing", "{ protocol: { otlp: {} }, resolver: { dns: { hostname: gw.obs.svc } } }"));
+    expect(diags).toHaveLength(1);
+    expect(diags[0].message).toContain("one virtual IP");
+    expect(wk8602.check(withAgent("load_balancing", "{ routing_key: traceID, protocol: { otlp: {} }, resolver: { k8s: { service: gw-headless.obs } } }"))).toEqual([]);
+  });
+
   test("flags the dns resolver on the ClusterIP Service", () => {
     const diags = wk8602.check(withAgent("loadbalancing", "{ protocol: { otlp: {} }, resolver: { dns: { hostname: gw.obs.svc } } }"));
     expect(diags).toHaveLength(1);

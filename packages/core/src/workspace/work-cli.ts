@@ -55,6 +55,7 @@ import { declaredKindFiles, readRecordsFor } from "./records-cli";
 import { loadRecordKind, RecordReadError, type LoadedRecordKind, type RecordEntry } from "./records";
 import { gitRoot } from "./record-source";
 import type { ReasonCode } from "./reason-codes";
+import { replicateAfter } from "./wip";
 
 /** The version of the `work` output this chant writes. */
 export const WORK_LEASE_CONTRACT_VERSION = 1;
@@ -223,6 +224,8 @@ export async function workLease(req: WorkLeaseRequest): Promise<WorkLeaseDocumen
       const heldBy = result.heldBy ? strip(result.heldBy) : null;
       return { ...head, refused: { code: result.reason, message: result.message, heldBy } };
     }
+    // #3172: a box's replicate policy may push its work in progress once a lease is released. Best effort; status shows what is behind.
+    if (req.verb === "release") replicateAfter("release", req.cwd);
     return { ...head, lease: strip(result.lease), history: result.history };
   } catch (err) {
     if (err instanceof WorkError) return { ...doc, error: { code: err.code, message: err.message } };
