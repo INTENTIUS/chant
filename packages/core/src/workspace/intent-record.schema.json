@@ -412,6 +412,9 @@
             "$ref": "#/$defs/runRef"
           },
           "description": "The agent runs that made the commit (#3033). Added within version 1, so an older document may lack it."
+        },
+        "squash": {
+          "$ref": "#/$defs/squash"
         }
       }
     },
@@ -473,7 +476,8 @@
         "code": {
           "enum": [
             "intent-history-shallow",
-            "intent-plugin-failed"
+            "intent-plugin-failed",
+            "squash-unfollowed"
           ]
         },
         "message": {
@@ -727,15 +731,132 @@
             "enum": [
               "trailer",
               "record",
-              "patch-id"
+              "patch-id",
+              "squash"
             ]
           },
-          "description": "trailer: the commit carries Chant-Run with the run's id. record: the run's end lists the commit. patch-id: neither holds, and the commit's git patch-id --stable equals a commit's the run's end recorded, as after a rebase or a cherry-pick that dropped the trailer (#3036); never alongside the others. Added within version 1."
+          "description": "trailer: the commit carries Chant-Run with the run's id. record: the run's end lists the commit. patch-id: neither holds, and the commit's git patch-id --stable equals a commit's the run's end recorded, as after a rebase or a cherry-pick that dropped the trailer (#3036); never alongside the others. Added within version 1. squash: the commit squashes a pull request whose original commits join the run one of those ways, and the read was asked to follow squashes (#3035); via names them. Added within version 1."
         },
         "recordedAs": {
           "type": "string",
           "pattern": "^[0-9a-f]{40,64}$",
           "description": "For a patch-id join (#3036): the commit the run's end recorded with the same patch-id, which this one rewrites. Added within version 1."
+        },
+        "via": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40,64}$"
+          },
+          "description": "For a squash join (#3035): the pull request's original commits through which the commit joins the run, oldest first. Added within version 1."
+        }
+      }
+    },
+    "squash": {
+      "type": "object",
+      "description": "Present only when the read follows squashes (--follow-squash, #3035) and the commit squashes a pull request: its subject ends with (#<n>), it has one parent, and the pull request's head is not in its history. The commit carries what the original commits' trailers carry and joins their runs. Added within version 1.",
+      "required": [
+        "pullRequest",
+        "forge",
+        "ref",
+        "head",
+        "fetched",
+        "followed",
+        "commits"
+      ],
+      "properties": {
+        "pullRequest": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "forge": {
+          "enum": [
+            "github",
+            "forgejo",
+            null
+          ],
+          "description": "The forge origin points at, from its URL, or null for one chant doesn't know or no origin. Both keep the pull request's head at refs/pull/<n>/head."
+        },
+        "ref": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The local ref the head was read from: refs/chant/pull/<n>/head where a read fetched it, refs/pull/<n>/head, or refs/remotes/origin/pr/<n>. Null when none could be read."
+        },
+        "head": {
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40,64}$"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The pull request's head commit, or null."
+        },
+        "fetched": {
+          "type": "boolean",
+          "description": "Whether this read fetched the ref from origin."
+        },
+        "followed": {
+          "type": "boolean",
+          "description": "Whether the original commits were read. When false, squash-unfollowed in reasons says why, and commits is empty."
+        },
+        "commits": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "sha",
+              "subject",
+              "author",
+              "date",
+              "trailers",
+              "joins"
+            ],
+            "properties": {
+              "sha": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40,64}$"
+              },
+              "subject": {
+                "type": "string"
+              },
+              "author": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "email"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "email": {
+                    "type": "string"
+                  }
+                }
+              },
+              "date": {
+                "type": "string"
+              },
+              "trailers": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "joins": {
+                "$ref": "#/$defs/trailerJoins"
+              }
+            }
+          },
+          "description": "The original commits, oldest first: the head's commits the squash's parent doesn't have, merges left out."
         }
       }
     }

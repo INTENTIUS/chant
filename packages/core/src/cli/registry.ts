@@ -319,6 +319,8 @@ export interface ParsedArgs {
   composites?: boolean;
   /** `chant workspace graph --intent <path[:start-end]|path#symbol>` (#2651): the region the intent graph is over. Empty with `--record`. */
   intent?: string;
+  /** `chant workspace graph --intent` and `chant workspace runs` (#3035): follow squash merges to their pull requests' original commits, fetching missing pull request refs. */
+  followSquash?: boolean;
   /** `chant workspace graph --intent --record <id>`: walk one decision record over every entry its constrains lists. */
   record?: string;
   /** `chant workspace patch <range> --path <p>`: only these paths, from the workspace root. Repeatable. */
