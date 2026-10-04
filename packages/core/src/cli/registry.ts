@@ -363,6 +363,12 @@ export interface ParsedArgs {
    * On `chant approve` and `chant run approve`, the key that seals the gate approval (#3163).
    */
   sign?: string | true;
+  /**
+   * `chant approve <op> <gate> --relayed-by <principal>` and `chant workspace
+   * points answer <id> --relayed-by <principal>` (#3402): the principal that
+   * carried the approval or answer to chant on behalf of the person it names.
+   */
+  relayedBy?: string;
   /** `chant workspace records review <id> --session <id>` (#2670): the review session the verdict was given in. */
   session?: string;
   /** `chant workspace records new <kind> --prefix <prefix>` (#2670): the id prefix to allocate under. */

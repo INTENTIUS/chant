@@ -528,6 +528,11 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.actor = args[++i];
     } else if (arg === "--approver") {
       result.approver = args[++i];
+    } else if (arg === "--relayed-by") {
+      // `chant approve <op> <gate> --relayed-by <principal>` and `workspace points answer <id> --relayed-by <principal>` (#3402):
+      // who carried the approval or answer to chant for the person it names.
+      result.relayedBy = args[++i];
+      if (!result.relayedBy || result.relayedBy.startsWith("-")) throw new Error("--relayed-by needs the principal that relayed it: --relayed-by <principal>");
     } else if (arg === "--on") {
       // `chant run ... --on <lexicon>` (#2121) — which runtime hosts the run.
       result.on = args[++i];
@@ -859,7 +864,9 @@ Ops:
                         --sign [<key file>] seals the approval with an ssh
                         key; a gate the workspace's identity.gates names
                         counts only an approval sealed by a key the signers
-                        file at base lists for --actor
+                        file at base lists for --actor. --relayed-by
+                        <principal> records who carried the approval to chant
+                        for --actor (a follower, a bot); --sign covers it
 
   graph                 Show Op dependency graph (--stacks for cross-stack order,
                         --format ir|mermaid|dot|layout for the lint-gated graph IR,
