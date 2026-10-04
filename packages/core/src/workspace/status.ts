@@ -197,6 +197,8 @@ export interface StatusBox {
   factory: FactoryView | null;
   /** What the box shows of itself on a home site, with the cover's sha256 (#3146), or null when the block declares no listing. */
   listing: ListingView | null;
+  /** The command that publishes the box's work, as declared (#3165, ws-088), or null when the block names none. */
+  publisher: string | null;
   /** Where the box's work in progress is replicated, with defaults filled in (#3172, ws-085), or null when the block declares no policy. */
   replicate: { remote: string; refs: string[]; on: string[]; every: string | null } | null;
 }
@@ -454,6 +456,7 @@ export async function workspaceStatus(query: StatusQuery): Promise<StatusDocumen
                 })),
                 factory: factoryView(m.box.factory),
                 listing: listingView(m.box.listing, coverBytes),
+                publisher: m.box.publisher,
                 replicate: m.box.replicate === null ? null : (({ box: _box, ...rest }) => rest)(policyView(m.name, m.box.replicate)),
               },
         stewards: stewards.stewards,
