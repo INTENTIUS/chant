@@ -523,7 +523,8 @@ export interface FactoryCheckArgs {
 /** Run the check and attach its result as evidence to each criterion the factory ticks (#3406 rule 5). */
 export async function factoryCheck(args: FactoryCheckArgs): Promise<FactoryCheckResult> {
   const lease = leaseOf(args.lease, "factoryCheck");
-  if (!args.build.ran || !args.build.finished) return { ran: false, ok: false, command: null, evidence: [], log: null, report: null };
+  // A build whose guard put changes back is not done whatever its check says, so it is not checked.
+  if (!args.build.ran || !args.build.finished || args.build.reverted.length > 0) return { ran: false, ok: false, command: null, evidence: [], log: null, report: null };
   let command = args.check ?? null;
   if (command === null) {
     const { readDeclaration } = await import("../../workspace/declaration");
@@ -575,7 +576,10 @@ export interface FactoryRecordArgs {
 /** The decisions a done build proposes it implements, from the intent graph of each path it changed (studio#243). */
 async function proposals(worktree: string, base: string, already: string[]): Promise<{ decision: string; paths: string[] }[]> {
   const { proposeImplements } = await import("../../workspace/factory-rules");
-  const changed = (await gitOut(["diff", "--name-only", base], worktree)).out.split("\n").filter((p) => p && !p.startsWith(".chant/"));
+  // What the build changed since the base, the files it added among them: they are untracked until Record commits.
+  const tracked = (await gitOut(["diff", "--name-only", base], worktree)).out.split("\n");
+  const added = (await gitOut(["ls-files", "--others", "--exclude-standard"], worktree)).out.split("\n");
+  const changed = [...new Set([...tracked, ...added])].filter((p) => p && !p.startsWith(".chant/")).sort();
   const { intentGraph } = await import("../../workspace/intent");
   const rows: { path: string; decisions: { id: string; state: string | null; granularity: string }[] }[] = [];
   for (const path of changed.slice(0, 20)) {
