@@ -687,6 +687,13 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     why: "Reports how far behind an emulator's pinned image is. Advisory, never gating, and reached only from `scripts/check-emulator-freshness.ts` — no CLI command calls it.",
   },
   {
+    file: "packages/core/src/workspace/conformance/broker.ts",
+    primitives: ["fetch"],
+    phase: "maintenance",
+    destination: "the broker under test, at the base URL its `start(env)` returns",
+    why: "The broker conformance suite (#3164) makes each check's request to the broker a maintainer points it at, as a box would. No CLI command or build, lint or apply path imports it; only a broker's own test run does, and chant's own test dials a loopback stand-in.",
+  },
+  {
     file: "scripts/dogwood-freshness.ts",
     primitives: ["fetch"],
     phase: "maintenance",

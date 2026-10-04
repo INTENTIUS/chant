@@ -381,6 +381,7 @@ The member that holds the box's declarations carries a `box` block:
 | `factory` | no | What the box builds, how a build is checked, which member declares the builder agents and where a finished build is published. See [Factory](#factory). |
 | `listing` | no | What the box shows of itself on a home site that lists boxes. See [Listing](#listing). |
 | `publisher` | no | The command that publishes the box's work, which an orchestrator such as studio supplies. See [Publisher](#publisher). |
+| `ship` | no | How the box ships its staged work to its own site: the Op, its gate, the environment it records releases in, and the bookkeeping paths. See [Ship](#ship). |
 | `capabilities[].name` | yes | The capability, in the kind-name grammar, such as `inference` or `fountain`. A box names each capability once. |
 | `capabilities[].broker` | no | What brokers it, such as `lobby` or `door`. It may be a member of this workspace or a runtime outside it, as a planted box's lobby is. Without it the capability is unbrokered, and `chant workspace check` fails with `WSP122`. |
 | `capabilities[].scope` | no | The parts of the box's own that the broker lets it reach. The broker enforces the words, and chant records them. For Fountain these are `agent` (start conversations with its own agent), `vault` (attach its own vault), and `conversations` and `sandboxes` (its own). |
@@ -392,7 +393,7 @@ The block goes in the workspace declaration and not in the box's TypeScript. `ch
 | Command | Uses the box block |
 |---|---|
 | [`chant workspace check`](/chant/cli/workspace-check/#boxes) | reads every file in the member's directory and fails with `WSP121` (`box-credential-declared`) on a literal secret. It fails with `WSP122` (`box-capability-unbrokered`) on a capability that names no broker, and with `WSP125` (`box-fountain-callback-undeclared`) when a member that builds a fountain `Box` doesn't declare `fountain-callback`. It fails with `WSP126` (`box-intent-unknown`) when the intent names no decision record, and warns with `WSP127` (`box-intent-unconstrained`) when that record's constrains names no member or path of this workspace at all |
-| [`chant workspace status --json`](/chant/cli/workspace-status/#boxes) | lists each member's `box`, with every capability's `name`, `broker` and `scope`, the box's `intent`, its `services`, its `factory`, its `listing` and its `publisher`, and whether the workspace is `plantable` |
+| [`chant workspace status --json`](/chant/cli/workspace-status/#boxes) | lists each member's `box`, with every capability's `name`, `broker` and `scope`, the box's `intent`, its `services`, its `factory`, its `listing`, its `publisher` and its `ship`, and whether the workspace is `plantable` |
 | [`chant workspace graph --json`](/chant/cli/workspace-graph/) | prints each member's `factory` and `listing` as `box`, and `plantable`, read at the revision `--at` names |
 
 Set `minReader` to `"0.91.0"` or newer when the file has a `box` block, so an older chant reports `reader-too-old` instead of an unknown field.
@@ -553,6 +554,25 @@ A box's work leaves the box through its publisher. The publisher applies a built
 ```
 
 chant splits the command into words as a shell splits plain words, where quotes group and a backslash escapes. No shell runs it, so `$HOME` and `~` reach the program as written. A surface calls [`chant workspace box publish`](/chant/cli/workspace-box/#publishing-a-boxs-work) rather than running the command. chant then runs it from the workspace root with a JSON request on stdin and checks the commit it made for the apply record of [ws-075](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-075-commit-trailers.md). `status --json` prints it under the member's `box`, or `null`. A chant older than 0.103.0 refuses the field, so set `minReader` to `"0.103.0"` when you add it.
+
+### Ship
+
+The people working on a box see its working tree at once, and everyone else sees the app as it was last shipped, until a person ships the staged work. `ship` names the Op in the box member that does it ([ws-100](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-100-a-box-declares-how-it-ships.md)):
+
+```json
+"box": {
+  "ship": { "op": "release", "gate": "ship", "env": "box", "bookkeeping": ["decisions", "work", "answers"] }
+}
+```
+
+| Field | Required | Value |
+|---|---|---|
+| `op` | yes | The Op in the box member that ships, as `chant run` takes it. Its own steps commit the staged tree as one commit by the person shipping, with a `Chant-Record` trailer for each work item it lands, then release that commit to the box's site, stopping at `gate`, and record the release in `env`'s release ledger. |
+| `gate` | no | The gate the Op stops at for a person's approval, which is `ship` when the field is left out. |
+| `env` | no | The environment whose release ledger, under the box member, the Op records each release in, which is `box` when the field is left out. |
+| `bookkeeping` | no | Path prefixes from the workspace root whose changes never count as waiting to ship, such as the record directories; with none, every change counts. |
+
+chant runs none of those steps itself. A surface offers Ship when the field is set, and it runs `chant run <op>` in the member's directory with the person's principal in `CHANT_SHIP_BY`, and approves the gate as for any Op. [`chant workspace status --json`](/chant/cli/workspace-status/#boxes) prints it under the member's `box`, with `serving`, the latest release in `env`'s ledger, and `pending`, the files that differ between that commit and the working tree, bookkeeping left out. A declaration that uses `ship` needs a `minReader` of `"0.104.0"` or later, because older readers refuse the field.
 
 ### Replicate
 
