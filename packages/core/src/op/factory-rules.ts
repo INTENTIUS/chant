@@ -1,7 +1,7 @@
 /**
  * The factory's rules (#3406, ws-087): what every orchestrator of a factory
  * must agree on, as pure functions over what the read contract prints. The
- * reference Op (`../op/factory.ts`) runs them; an orchestrator supplies only
+ * reference Op (`./factory.ts`) runs them; an orchestrator supplies only
  * execution (the builder, the context, the check).
  *
  * - Readiness ({@link pickable}): on top of the work kind's `ready`, the box's

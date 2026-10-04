@@ -153,6 +153,6 @@ export { takeProfileAndId } from "./builders";
 // The factory reference Op (#3406, ws-087).
 export { factoryOp, factoryOpConfig, factoryReady } from "./factory";
 // The factory's rules themselves (#3406), for an orchestrator's own tools, such as a retry command a UI runs.
-export { pickable, retryState, retryRequest, isAsk, understandOutcome, doneVerdict, proposeImplements, readyKey, FACTORY_HOLDS, UNDERSTAND_POINT, TIER_POINT } from "../workspace/factory-rules";
-export type { FactoryItem, FactoryContext, FactoryClaim, FactoryHold, RetryState } from "../workspace/factory-rules";
+export { pickable, retryState, retryRequest, isAsk, understandOutcome, doneVerdict, proposeImplements, readyKey, FACTORY_HOLDS, UNDERSTAND_POINT, TIER_POINT } from "./factory-rules";
+export type { FactoryItem, FactoryContext, FactoryClaim, FactoryHold, RetryState } from "./factory-rules";
 export type { FactoryOpOptions } from "./factory";

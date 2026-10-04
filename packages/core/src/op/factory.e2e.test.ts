@@ -4,7 +4,7 @@
  * workspace's decision, work and answer kinds and its points: one item from
  * pick to done, one retry after a failed build, and one ask the understand
  * point refuses. The rules themselves are tested in
- * ../workspace/factory-rules.test.ts.
+ * ./factory-rules.test.ts.
  */
 
 import { spawnSync } from "node:child_process";

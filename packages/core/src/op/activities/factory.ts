@@ -1,6 +1,6 @@
 /**
  * The factory reference Op's activities (#3406, ws-087): the rules of
- * `../../workspace/factory-rules.ts` run against a workspace, and the two
+ * `../factory-rules.ts` run against a workspace, and the two
  * places an orchestrator's execution plugs in, the builder and the check, run
  * as commands in the run's worktree.
  *
@@ -21,7 +21,7 @@
 import { spawn } from "node:child_process";
 import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
-import type { FactoryClaim, FactoryContext, FactoryItem } from "../../workspace/factory-rules";
+import type { FactoryClaim, FactoryContext, FactoryItem } from "../factory-rules";
 
 /** The run's work lease, as `workLeaseOutput()` hands it to a step. */
 export interface FactoryLease {
@@ -231,7 +231,7 @@ async function contextFor(cwd: string, item: FactoryItem & { path: string }, int
   const h = await workHistory({ id: item.id, cwd });
   const claims: FactoryClaim[] = "error" in h ? [] : h.claims.map((c) => ({ token: c.token, ended: c.ended, outcome: c.release?.outcome ?? null, attempt: c.attempt }));
   const attempts = "error" in h ? { exhausted: false } : { exhausted: h.attempts.exhausted };
-  const { isAsk, TIER_POINT, UNDERSTAND_POINT } = await import("../../workspace/factory-rules");
+  const { isAsk, TIER_POINT, UNDERSTAND_POINT } = await import("../factory-rules");
   return {
     intentDecided,
     claims,
@@ -369,7 +369,7 @@ async function commitAll(worktree: string, subject: string, item: string, kindNa
 /** Which work items are buildable now (#3406 rule 1). */
 export async function factoryPick(args: FactoryPickArgs = {}): Promise<FactoryPickResult> {
   const cwd = args.cwd ?? process.cwd();
-  const { pickable, readyKey } = await import("../../workspace/factory-rules");
+  const { pickable, readyKey } = await import("../factory-rules");
   const w = await readWork(cwd, args.kind);
   const points = await declaredPoints(cwd);
   const out: FactoryPickResult = { candidates: [], held: [], keys: [] };
@@ -432,7 +432,7 @@ export async function factoryAsk(args: FactoryAskArgs): Promise<FactoryAskResult
   const cwd = args.cwd ?? process.cwd();
   if (!args.lease?.item) throw new Error("factoryAsk runs under the factory Op's work lease: pass workLeaseOutput() as lease");
   const id = args.lease.item;
-  const { isAsk, understandOutcome, TIER_POINT, UNDERSTAND_POINT } = await import("../../workspace/factory-rules");
+  const { isAsk, understandOutcome, TIER_POINT, UNDERSTAND_POINT } = await import("../factory-rules");
   const w = await readWork(cwd, args.kind);
   const item = w.items.get(id);
   if (!item) throw new Error(`no record of the work kind has id ${id}`);
@@ -551,7 +551,7 @@ export interface FactoryRecordArgs {
 
 /** The decisions a done build proposes it implements, from the intent graph of each path it changed (studio#243). */
 async function proposals(worktree: string, base: string, already: string[]): Promise<{ decision: string; paths: string[] }[]> {
-  const { proposeImplements } = await import("../../workspace/factory-rules");
+  const { proposeImplements } = await import("../factory-rules");
   const changed = (await gitOut(["diff", "--name-only", base], worktree)).out.split("\n").filter((p) => p && !p.startsWith(".chant/"));
   const { intentGraph } = await import("../../workspace/intent");
   const rows: { path: string; decisions: { id: string; state: string | null; granularity: string }[] }[] = [];
@@ -626,7 +626,7 @@ async function recordOutcome(args: FactoryRecordArgs): Promise<FactoryRecordResu
     const commit = await commitAll(lease.worktree, `${lease.item}: dropped, the understand point refused it`, lease.item, w.kindName, lease.token);
     return { outcome: "dropped", reason: "understand answered refuse", commit, implementsProposed: [] };
   }
-  const { doneVerdict } = await import("../../workspace/factory-rules");
+  const { doneVerdict } = await import("../factory-rules");
   const verdict = doneVerdict(args.build, args.check, item.acceptance);
   if (!verdict.done) return { outcome: "not_done", reason: verdict.reason, ...none };
   const base = (await gitOut(["merge-base", "HEAD", (await gitOut(["rev-parse", "HEAD"], root)).out], lease.worktree)).out;

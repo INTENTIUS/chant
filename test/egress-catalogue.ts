@@ -567,6 +567,13 @@ export const EGRESS_CATALOGUE: readonly EgressSite[] = [
     why: "The pull-request loop (#3183): `chant components pr-plan --forge` keeps one note on the pull request and sets a commit status, and `pr-apply` lists approving reviews and finds the pull request that merged a commit. Only those two CI commands reach it, and each client takes an injected `fetch`, so no test opens a socket.",
   },
   {
+    file: "packages/core/src/workspace/conformance/broker.ts",
+    primitives: ["fetch"],
+    phase: "maintenance",
+    destination: "the broker under test and the stand-in upstreams the caller's `listen` serves, on loopback addresses the test starts",
+    why: "The broker conformance suite (#3164, ws-097) calls the broker it checks, as each box would. A broker author runs it in their own tests, and chant runs it in `broker.test.ts`. No CLI command reaches it, and it dials nothing the test did not start.",
+  },
+  {
     file: "packages/core/src/op/activities/pipeline-audit.ts",
     primitives: ["fetch"],
     phase: "apply",

@@ -121,7 +121,7 @@ rows:
   - category: "area"
     concept: "the factory's rules: readiness, attempts, outcomes, done"
     owner: "chant"
-    carrier: "factoryOp in @intentius/chant/op, workspace/factory-rules.ts (#3406)"
+    carrier: "factoryOp in @intentius/chant/op, op/factory-rules.ts (#3406)"
     what: "Which work items are ready, which lease outcomes count as attempts, what done means and what happens to an unfinished attempt, as declared and tested behaviour; an orchestrator supplies only execution (#3162, ws-087)."
   - category: "area"
     concept: "record kinds a workspace pins from a third party, and their `commitJoins`"
