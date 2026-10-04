@@ -1,0 +1,29 @@
+{
+  "name": "infra",
+  "schema": 1,
+  "members": [
+    {
+      "name": "network",
+      "dir": "network",
+      "kind": "chant",
+      "box": {
+        "factory": {
+          "builds": ["network"],
+          "check": { "run": "cd network && npx chant lint && npx chant build", "kind": "lint" }
+        }
+      }
+    }
+  ],
+  "records": [
+    { "kind": "decisions/decision.kind.mjs" },
+    { "kind": "work/work.kind.mjs" },
+    { "kind": "answers/answer.kind.mjs" }
+  ],
+  "pins": [],
+  "writeScope": {
+    "agent": {
+      "records": { "decision": ["new"], "work": ["new", "amend"] },
+      "protected": [{ "path": "chant.workspace.json" }, "decisions/points.json"]
+    }
+  }
+}

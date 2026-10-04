@@ -208,7 +208,8 @@ describe("reference workspace layout", () => {
 
   test("its declaration is the only one in it, and no draft is left", () => {
     const declarations = walk(fixture).filter((p) => /(^|\/)chant\.workspace(\.draft)?\.jsonc?$/.test(p));
-    expect(declarations).toEqual(["chant.workspace.json"]);
+    // Besides its own, the three profiles' declarations (#3174): template directories, not members.
+    expect(declarations.sort()).toEqual(["chant.workspace.json", "profiles/app/chant.workspace.json", "profiles/ideation/chant.workspace.json", "profiles/infra/chant.workspace.json"]);
   });
 
   test("the chant repo's own declaration holds it as a nested workspace", () => {
@@ -218,7 +219,8 @@ describe("reference workspace layout", () => {
 
   test("only delivery is a chant project", () => {
     const configs = walk(fixture).filter((p) => /(^|\/)chant\.config\.[a-z]+$/.test(p));
-    expect(configs).toEqual(["delivery/chant.config.ts"]);
+    // The infra profile's estate member is one too, inside its template directory (#3174).
+    expect(configs.sort()).toEqual(["delivery/chant.config.ts", "profiles/infra/network/chant.config.json"]);
   });
 });
 

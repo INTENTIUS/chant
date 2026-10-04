@@ -83,6 +83,10 @@ for duplicates and contests, show the list, and write only what's kept with
 `chant workspace records new`. See [Recording Decisions by Hand](https://intentius.io/chant/guide/recording-decisions-by-hand/)
 for the loop end to end.
 
+## Profiles
+
+[`profiles/`](profiles) holds three smaller workspaces to start from, one per kind of user ([#3174](https://github.com/INTENTIUS/chant/issues/3174), [ws-096](../docs/design/decisions/ws-096-opt-in-factory-fields-and-three-profiles.md)). [`ideation`](profiles/ideation) is records only, with a stub app of the app kind and no factory. [`app`](profiles/app) adds a box block that runs the app as a service and a factory that builds it. [`infra`](profiles/infra) has an estate member and a factory that builds it, with no app member and no box services. Each carries copies of this workspace's decision, work and answer kinds and, for the two with an app, of `kinds/app`, so a copy reads on its own. `chant workspace init --profile <name>` copies one with `chant init --from`, and `test/reference-workspace.test.ts` and `packages/core/src/workspace/profiles.test.ts` check that each copy passes `chant workspace check` and that its kinds match the ones here.
+
 ## What switches on here, and when
 
 | Issue | What it adds to this workspace |
