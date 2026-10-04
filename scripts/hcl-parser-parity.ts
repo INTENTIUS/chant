@@ -11,7 +11,7 @@
  *
  * Inputs come from two places. A corpus walk collects every `.tf` and `.hcl`
  * file under the given roots. A record file, written by the test suite under
- * `CHANT_HCL2JSON_RECORD` (see `packages/core/src/terraform/parse.ts`),
+ * `CHANT_HCL2JSON_RECORD` (see `packages/core/src/terraform/hcl2json.ts`),
  * replays the inline HCL the tests parse, which no walk would find. Each
  * parsed tree also yields its interpolated strings, which are sent through
  * `getReferencesInExpression` the way core's `collectExpressions` would, so

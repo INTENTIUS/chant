@@ -43,7 +43,7 @@ const DELIBERATELY_UNDECLARED = new Map<string, string>([
   [
     "@cdktn/hcl2json",
     "carries a ~1.8 MB wasm blob and is only needed by `chant carve`; " +
-      "`terraform/parse.ts` catches the failed import and prints the install line",
+      "`terraform/hcl2json.ts` catches the failed import and prints the install line",
   ],
   [
     "@intentius/chant-lexicon-gitlab",

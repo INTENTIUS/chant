@@ -29,7 +29,7 @@ const require = createRequire(import.meta.url);
  * every time, not just for the rare file that uses the compiler itself.
  *
  * `@cdktn/hcl2json` is here for the same reason and by a longer road. It is
- * an OPTIONAL dependency — `../../terraform/parse.ts` reaches it through
+ * an OPTIONAL dependency — `../../terraform/hcl2json.ts` reaches it through
  * `await import(...)` and turns a missing module into an actionable "npm
  * install -D @cdktn/hcl2json" — but esbuild follows a dynamic import as
  * eagerly as a static one, and the package ships a Go `wasm_exec` shim whose

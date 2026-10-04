@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { loadHcl2json } from "@intentius/chant/terraform/parse";
+import { loadHcl2json } from "@intentius/chant/terraform/hcl2json";
 import { editPins, type PinRequest } from "./edit";
 import { readModulePin } from "./source";
 

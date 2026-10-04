@@ -21,7 +21,7 @@
  */
 
 import { posix } from "node:path";
-import type { Hcl2Json } from "@intentius/chant/terraform/parse";
+import type { Hcl2Json } from "@intentius/chant/terraform/hcl2json";
 import { kahnLayers } from "@intentius/chant/components/layers";
 
 /** One root in a rollout. `root` is its directory, relative to the repository, with `/` separators. */

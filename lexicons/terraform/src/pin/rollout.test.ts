@@ -17,7 +17,7 @@ import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { loadHcl2json } from "@intentius/chant/terraform/parse";
+import { loadHcl2json } from "@intentius/chant/terraform/hcl2json";
 import { runPinRollout, type PinRolloutOptions } from "./rollout";
 import type { PinCommitCheck, PinForge, PinPullRequest } from "./forge";
 import { editPinsInTs } from "./edit-ts";

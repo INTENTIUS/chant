@@ -41,7 +41,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join, posix } from "node:path";
 import { promisify } from "node:util";
-import type { Hcl2Json } from "@intentius/chant/terraform/parse";
+import type { Hcl2Json } from "@intentius/chant/terraform/hcl2json";
 import type { CommandRunner } from "@intentius/chant/op/activities/propose-upgrade";
 import { editPins, type PinCallResult, type PinEditResult, type PinRequest } from "./edit";
 import { checkPinRequest, moduleOf } from "./source";
@@ -72,7 +72,7 @@ export interface PinRolloutOptions extends PinRequest {
   remote?: string;
   /** The check each moved root's apply reports on the merge commit. `{root}` is the root's directory. Default `apply/{root}`. */
   appliedCheck?: string;
-  /** The HCL reader, `loadHcl2json()` from `@intentius/chant/terraform/parse`. */
+  /** The HCL reader, `loadHcl2json()` from `@intentius/chant/terraform/hcl2json`. */
   parser: Hcl2Json;
   /** The forge. Default: `gh`, through `run`. */
   forge?: PinForge;

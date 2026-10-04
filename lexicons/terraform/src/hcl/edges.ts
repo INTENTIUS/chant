@@ -14,7 +14,7 @@
  *
  * The `${...}` body is tokenized by hcl2json's own expression AST
  * (`getReferencesInExpression`), never by a regex over the string. That is the
- * same instrument `packages/core/src/terraform/parse.ts` uses for the carve-out
+ * same instrument `packages/core/src/terraform/hcl2json.ts` uses for the carve-out
  * advisor, and for the same reason: a quoted address used as a map key
  * (`var.m["aws_s3_bucket.assets.arn"]`) and an escaped `$${...}` literal are
  * not references, and no regex over the raw string can tell. `./references.ts`
@@ -86,7 +86,7 @@
 
 import { isResourceDeclarable, type Declarable } from "@intentius/chant/declarable";
 import type { EntityReference } from "@intentius/chant/graph-ir";
-import { loadHcl2json, type Hcl2Json } from "@intentius/chant/terraform/parse";
+import { loadHcl2json, type Hcl2Json } from "@intentius/chant/terraform/hcl2json";
 import { refFromAccessor } from "@intentius/chant/terraform/graph";
 import { LOCALS_TYPE, scopeOfKey, type BlockBody, type TerraformEntity } from "./parse";
 

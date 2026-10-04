@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
-import { loadHcl2json } from "@intentius/chant/terraform/parse";
+import { loadHcl2json } from "@intentius/chant/terraform/hcl2json";
 import { planPinWaves, restrictWaves, terragruntDependencies, wavesFromChoudoufu, PinWavePlanError } from "./waves";
 
 /** choudoufu#1750's N=5 shape: e02 reads e01, e03 reads e02; e04 and e05 read nothing. */

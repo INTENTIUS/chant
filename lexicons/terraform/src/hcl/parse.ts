@@ -20,7 +20,7 @@
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { loadHcl2json, type Hcl2Json } from "@intentius/chant/terraform/parse";
+import { loadHcl2json, type Hcl2Json } from "@intentius/chant/terraform/hcl2json";
 import { DECLARABLE_MARKER, type Declarable } from "@intentius/chant/declarable";
 import type { EntityReference } from "@intentius/chant/graph-ir";
 import type { SuppressionDirective } from "@intentius/chant/lint/suppressions";
