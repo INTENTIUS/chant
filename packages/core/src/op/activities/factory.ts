@@ -335,7 +335,17 @@ async function amend(cwd: string, kindFile: string, id: string, fields: Record<s
 
 /** The kind file as seen from the worktree: the same path under the worktree when it sits in the checkout. */
 function inWorktree(kindFile: string, checkout: string, worktree: string): string {
-  return kindFile.startsWith(`${checkout}/`) ? join(worktree, kindFile.slice(checkout.length + 1)) : kindFile;
+  const real = (p: string) => {
+    try {
+      return realpathSync(p);
+    } catch {
+      return p;
+    }
+  };
+  const [file, top, tree] = [real(kindFile), real(checkout), real(worktree)];
+  // Read from the worktree already (it sits under the checkout's .git), or outside the checkout: as it is.
+  if (file.startsWith(`${tree}/`) || !file.startsWith(`${top}/`)) return file;
+  return join(tree, file.slice(top.length + 1));
 }
 
 async function checkoutRoot(cwd: string): Promise<string> {
@@ -370,7 +380,11 @@ export async function factoryPick(args: FactoryPickArgs = {}): Promise<FactoryPi
     if (verdict.ok) {
       out.candidates.push(item.id);
       out.keys.push(readyKey(item, ctx, item.data));
-    } else out.held.push({ item: item.id, hold: verdict.hold, message: verdict.message });
+    } else {
+      out.held.push({ item: item.id, hold: verdict.hold, message: verdict.message });
+      // Said in the run's log too, so whoever reads why nothing was built sees it.
+      console.error(`factoryPick: skipped ${item.id}: ${verdict.message}`);
+    }
   }
   return out;
 }
