@@ -1,5 +1,5 @@
 // The entry of `@intentius/chant/workspace/conformance` for plain Node
-// (#2679): the reader suite, and the writer suite (#3159). The suites are
+// (#2679): the reader suite, the writer suite (#3159), and the broker suite (#3164). The suites are
 // written in TypeScript like the rest of the package, and Node does not
 // strip types under node_modules, so this file loads them through tsx, a
 // dependency of this package. `node --test` runs a reader's or a writer's
@@ -67,4 +67,17 @@ export const {
   CONCURRENT_AMENDS,
   concurrentAmendStep,
   concurrentAmends,
+  BROKER_CONFORMANCE_CAPABILITIES,
+  LOBBY_CAPABILITIES,
+  CONFORMANCE_BOXES,
+  CONFORMANCE_SECRET,
+  CONFORMANCE_UNHELD_SECRET,
+  BROKER_CHECKS,
+  brokerChecks,
+  brokerSchemaValidator,
+  schemaInstance,
+  startBrokerConformance,
+  runBrokerCheck,
+  runBrokerConformance,
+  upstreamHandlers,
 } = suite;

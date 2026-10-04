@@ -747,3 +747,4 @@ export async function runWorkspaceReaderConformance(reader: WorkspaceReaderFacto
 
 // The writer suite (#3159), published from this same entry.
 export * from "./writer";
+export * from "./broker";

@@ -6,7 +6,8 @@
  * (#3159) does the same for the writer suite: one test per step of the
  * script, and one per check after it. This is the only module of the suite
  * that imports vitest; `@intentius/chant/workspace/conformance` imports no
- * runner.
+ * runner. {@link describeBrokerConformance} (#3164) makes one test per check
+ * of the broker suite.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -26,6 +27,10 @@ import {
   type WorkspaceReaderConformanceConfig,
   type WorkspaceWriterConformanceConfig,
   type WorkspaceWriterConformanceReport,
+  brokerChecks,
+  runBrokerCheck,
+  startBrokerConformance,
+  type BrokerConformanceConfig,
 } from "./index";
 
 export function describeWorkspaceReaderConformance(config: WorkspaceReaderConformanceConfig): void {
@@ -107,6 +112,33 @@ export function describeWorkspaceWriterConformance(config: WorkspaceWriterConfor
     it("amnesia: with its private state deleted, the writer shows the same facts", () => expect(ran().after.amnesia).toEqual([]));
     it("everything the writer holds is in the repository, or one of ws-074's four exceptions", () => expect(ran().after.holds).toEqual([]));
     it("every fact the script produced reads back through the read contract, uncommitted ones included", () => expect(ran().after.readBack).toEqual([]));
+  });
+}
+
+/**
+ * The broker suite in vitest (#3164): the upstreams and the broker start
+ * before the tests, and each check is one test, run in order. A check of a
+ * capability the broker does not serve is skipped.
+ */
+export function describeBrokerConformance(config: BrokerConformanceConfig): void {
+  describe(`broker conformance (#3164): ${config.name}`, () => {
+    let run: Awaited<ReturnType<typeof startBrokerConformance>> | undefined;
+    beforeAll(async () => {
+      run = await startBrokerConformance(config);
+    }, 120_000);
+    afterAll(async () => {
+      await run?.close();
+    });
+    for (const { check, skipped } of brokerChecks(config)) {
+      if (skipped) {
+        it.skip(`${check.id}: not applicable, ${skipped}`, () => {});
+        continue;
+      }
+      it(`${check.id}: ${check.title}`, async () => {
+        expect(run, "the broker did not start").toBeDefined();
+        expect(await runBrokerCheck(run!.ctx, check)).toEqual([]);
+      }, 60_000);
+    }
   });
 }
 

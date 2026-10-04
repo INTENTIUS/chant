@@ -1,0 +1,75 @@
+---
+schema: 1
+id: "ws-097"
+title: "A broker protocol for box capabilities"
+state: "decided"
+area: "D15"
+source:
+  issue: "INTENTIUS/chant#3164"
+  row: "a broker protocol for box capabilities (inference, decide, egress, fountain), so studio's lobby and fountain's broker are interchangeable"
+  revision: null
+question: "What must a broker of box capabilities answer, and how is an implementation shown to answer it, so that a box reaches the same capabilities through studio's lobby, fountain's broker or a broker its operators run themselves, without changing its declaration?"
+options:
+  - id: "a"
+    label: "chant specifies the lobby's wire surface as version 1 of a protocol, with a schema, the routes and scope words as data, and a conformance suite a broker runs"
+    how: "chant ships broker-protocol.schema.json (the declaration report and what is kept, the refusal, the decide request and answer with reason, the feedback batch) and broker-protocol.ts (the routes, the scope words of inference, egress, feedback and fountain, the rule that a request needing word w of capability c is refused with a 403 naming both unless the box's last report declares it through this broker, and BrokerCapabilitySpec for a capability a lexicon or runtime adds). The routes are the ones studio's lobby already serves: POST /api/box/declaration, /llm/anthropic, POST /decide/v1/systemone, /egress/<NAME>, POST /api/feedback, plus /fountain/api for Fountain's API. The broker word in a box block names the broker the box reaches, and an implementation is configured with the word it answers for. runBrokerConformance and describeBrokerConformance in @intentius/chant/workspace/conformance start stand-in upstreams, start the broker under test against them, and check each route's forwarding and refusals, and that no box token reaches an upstream and no credential or secret comes back. The caller serves the stand-ins through a listen function it passes, so chant's own code still opens no listener. A reference broker, a test fixture, passes it in chant's CI."
+    tradeoff: "The protocol is the lobby's existing behaviour, so studio passes without a change, and another broker has a fixed target and a test. The path routes are not the shape of fountain's egress broker, which is an HTTPS_PROXY that attaches credentials by host and reads no declaration, so fountain needs a front that speaks the protocol before it passes. chant keeps running no broker."
+  - id: "b"
+    label: "specify a new, broker-neutral surface with discovery, and have studio's lobby move to it"
+    how: "A well-known document lists what a broker serves, every capability lives under one /capabilities/<name>/ prefix, and refusals share one body shape. Studio's lobby, its steward, hud and the template's chant.config.ts change to the new paths."
+    tradeoff: "A cleaner surface, at the cost of changing every box and the lobby together, for no capability a box lacks today."
+  - id: "c"
+    label: "adopt fountain's egress broker as the protocol"
+    how: "Every capability is an outbound request through HTTPS_PROXY, with placeholder credentials the broker swaps by host, and scope is the broker's per-account policy rather than the box block."
+    tradeoff: "No route of its own for decide or feedback, and the box block's scope would no longer be what the broker enforces, which undoes #2726."
+  - id: "d"
+    label: "leave the protocol to each broker and specify only the declaration"
+    how: "chant keeps recording { name, broker, scope } and states nothing about what a broker answers."
+    tradeoff: "Nothing changes, and a self-hosted team still has to run studio's lobby, or copy it, to serve a studio box."
+choice:
+  option: "a"
+  reason: "The question is interchangeability, and the lobby's routes are already what every studio box, its steward and its chant.config.ts speak. Writing them down as version 1, with schemas and a suite, lets studio pass today (its kit lobby passes every check it serves), lets a platform team running chant ops on fountain or on its own broker serve a box without studio in the path, and holds every implementation to the same refusals and the same token isolation. A capability stays a free string, so feedback and anything a lexicon adds join the protocol by giving a spec, not by a chant release."
+rejected:
+  - option: "b"
+    why: "It moves every box and the lobby for no new capability; a version 2 can add discovery once a second implementation needs it."
+  - option: "c"
+    why: "It drops the declaration's scope as the thing a broker enforces (#2726), and has no route for decide or feedback."
+  - option: "d"
+    why: "It is the gap #3164 was filed for: a self-hosted customer has to run studio's lobby to get a broker."
+supersedes: []
+evidence:
+  - title: "INTENTIUS/chant#3164, a broker protocol for box capabilities"
+    url: "https://github.com/INTENTIUS/chant/issues/3164"
+    as_of: "2026-10-03T00:00:00Z"
+  - title: "INTENTIUS/chant#3166, epic: boundaries between chant, hud, studio, behold and fountain"
+    url: "https://github.com/INTENTIUS/chant/issues/3166"
+    as_of: "2026-10-03T00:00:00Z"
+  - title: "INTENTIUS/chant#3345, decision-point answers carry the model's reason"
+    url: "https://github.com/INTENTIUS/chant/issues/3345"
+    as_of: "2026-10-03T00:00:00Z"
+  - title: "arugula-salad/studio#257, declare and broker a feedback capability"
+    url: "https://github.com/arugula-salad/studio/issues/257"
+    as_of: "2026-10-03T00:00:00Z"
+  - title: "arugula-salad/hud#504, keep the real Claude token out of the box"
+    url: "https://github.com/arugula-salad/hud/issues/504"
+    as_of: "2026-10-03T00:00:00Z"
+  - title: "ws-086, the workspace boundary without chud"
+    url: "https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-086-the-workspace-boundary-without-chud-chant-hud-st.md"
+    as_of: "2026-10-03T00:00:00Z"
+decided_by: "lex00"
+decided_on: "2026-10-03"
+reviews: []
+constrains:
+  - "INTENTIUS/chant#3164"
+  - "INTENTIUS/chant#3166"
+  - "arugula-salad/studio#257"
+  - "arugula-salad/hud#504"
+  - "arugula-salad/hud#416"
+  - "ws-086"
+  - "member:core"
+  - "path:packages/core/src/workspace/broker-protocol.ts"
+  - "path:packages/core/src/workspace/broker-protocol.schema.json"
+  - "path:packages/core/src/workspace/conformance/broker.ts"
+---
+
+# A broker protocol for box capabilities

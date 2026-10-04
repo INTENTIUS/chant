@@ -26,6 +26,7 @@ chant provides the repository specification, which now takes in the domain recor
 | domain record kinds (contract, evidence, review session, driver, proposal, notes) |  |  |  |  |
 | decision-point standards: the `understand` point and the `slice-tier` inputs |  |  |  |  |
 | the factory's rules: readiness, attempts, outcomes, done |  |  |  |  |
+| the broker protocol: what a broker of box capabilities answers for inference, decide, egress, feedback and fountain, its refusals, and the broker conformance suite |  |  |  |  |
 
 ## Rules
 
@@ -41,7 +42,7 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 
 | Category | Where the code keeps it | chant | hud | studio | behold | plugin |
 |---|---|---|---|---|---|---|
-| boundary cell | the table of #2657, one row per cell | 14 | 5 | 3 | 1 | 1 |
+| boundary cell | the table of #2657, one row per cell | 15 | 5 | 3 | 1 | 1 |
 | workspace command | `commandRegistry` in `cli/main.ts`, and each sub-verb its help names | 53 | 0 | 0 | 0 | 0 |
 | member kind | `BUILTIN_KIND_NAMES` in `kinds.ts` | 5 | 0 | 0 | 0 | 0 |
 | record kind | none in core; the reference workspace's and this repository's kind files, or a kind a workspace pins from a third party | 7 | 0 | 0 | 0 | 1 |
@@ -80,6 +81,7 @@ Each row follows, in the order of the table above.
 | boundary cell | record kinds a workspace pins from a third party, and their `commitJoins` | plugin | a pinned package's record kind file, its schema and its commitJoins export (intent-joins.ts reads it) | A kind chant does not ship, and how a commit is tied to its records; core calls the join and never parses the package's own trailers, while chant's trailers join a commit to chant's kinds (ws-075). |
 | boundary cell | agent prompts, context bundles, how a builder is run | studio | arugula-salad/studio | What an agent is told and given, and the builder's harness (Claude Code in the box, fountainRun); chant hands out data and no prompts (ws-086). |
 | boundary cell | hosting and provisioning: boxes, the lobby, the door, the planter and beds | studio | arugula-salad/studio | Where a box runs and how it is reached and credentialed; the box's configuration it reads from the declaration through the read contract (ws-074, ws-086). |
+| boundary cell | the broker protocol: what a broker of box capabilities answers for inference, decide, egress, feedback and fountain, its refusals, and the broker conformance suite | chant | broker-protocol.schema.json | The routes, scope words and bodies a broker serves a box on, and the suite a broker such as studio's lobby or fountain's runs to show it; chant specifies and checks a broker and runs none (#3164, ws-097). |
 | boundary cell | publishing a box's work: the merge, the push and the pull request | studio | arugula-salad/studio | The work behind a publish, run as the publisher a box block names; chant runs no push and calls no forge (#3165, ws-086). |
 | boundary cell | reading a workspace for the infra plane | behold | INTENTIUS/behold | behold reads a workspace only through the read contract and writes only through chant, under hud's rules (ws-086). |
 | workspace command | `workspace init` | chant | declaration.schema.json | Proposes a chant.workspace.json from the projects under a directory. |

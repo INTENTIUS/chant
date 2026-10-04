@@ -347,7 +347,7 @@ The example above sets `minReader` for that reason: without it, a chant older th
 
 ## Boxes
 
-A box holds no credential ([#2726](https://github.com/INTENTIUS/chant/issues/2726)). Each capability it needs from outside, such as inference, Fountain or a third-party API, goes through a broker. The broker is a runtime, such as a lobby or a door. It holds the real credential, swaps the box's own token for it, and allows only what the declared scope allows. chant never runs a broker ([ws-052](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-052-chant-hud-boundary.md)). The declaration states the capabilities and their scopes, `chant workspace check` checks that the box holds no credential, and the broker reads the scopes from `chant workspace status --json`.
+A box holds no credential ([#2726](https://github.com/INTENTIUS/chant/issues/2726)). Each capability it needs from outside, such as inference, Fountain or a third-party API, goes through a broker. The broker is a runtime, such as a lobby or a door. It holds the real credential, swaps the box's own token for it, and allows only what the declared scope allows. chant never runs a broker ([ws-052](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-052-chant-hud-boundary.md)). The declaration states the capabilities and their scopes, `chant workspace check` checks that the box holds no credential, and the broker reads the scopes from `chant workspace status --json`. What a broker answers for each capability, and the suite that checks one, is the [broker protocol](/chant/reference/broker-protocol/) ([#3164](https://github.com/INTENTIUS/chant/issues/3164)).
 
 The member that holds the box's declarations carries a `box` block:
 
