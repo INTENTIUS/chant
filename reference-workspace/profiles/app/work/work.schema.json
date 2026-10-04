@@ -138,6 +138,30 @@
       ],
       "minimum": 1
     },
+    "retry": {
+      "description": "A person's request to build the item again after a failed build (#3406, ws-087, arugula-salad/studio#232): after names the lease token of the failed build it follows, so one request starts one run. Written through chant workspace records amend; a factory never retries a failed build without it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["after", "by"],
+      "properties": {
+        "after": { "type": "string", "minLength": 1, "description": "The fencing token of the failed build this request follows." },
+        "by": { "type": "string", "minLength": 1, "description": "Who asked." },
+        "at": { "type": "string", "description": "When, as an ISO 8601 timestamp." }
+      }
+    },
+    "implements_proposed": {
+      "description": "The decisions the factory proposed this item implements when it recorded the build done (#3406, arugula-salad/studio#243): each a decision in force that constrains, by path, a path the build changed, with those paths. They are also added to implements, and listed here so a reader tells them from links a person wrote.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["decision", "paths"],
+        "properties": {
+          "decision": { "type": "string", "minLength": 1 },
+          "paths": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
     "result": {
       "description": "What the last build of the item ran under (#3147): only the lease token, which joins the item to the run record and to the commits carrying it. Build provenance (agent, model, harness, session, cost) is the run record's, never the item's.",
       "type": "object",

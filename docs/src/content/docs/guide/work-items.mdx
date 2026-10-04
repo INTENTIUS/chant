@@ -235,6 +235,32 @@ Two agents that take the same record change the same lines of the same file, so 
 
 A runner that dispatches agents doesn't have to wait for that conflict. It claims the item first with [`chant workspace work claim`](/chant/cli/workspace-work/), which takes a lease with an expiry that only one worker can hold. It renews the lease while the agent works and releases it at the end. `records --json` then shows the holder in each record's `lease`.
 
+## Run the factory reference Op
+
+A factory is a runner that picks the next buildable item, builds it with an agent and records the outcome. The rules every factory must agree on are chant's, so two orchestrators build the same item the same way ([#3406](https://github.com/INTENTIUS/chant/issues/3406), [ws-087](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-087-the-factory-s-rules-ship-as-a-chant-reference-op.md)). An orchestrator such as studio supplies only execution, as hooks:
+
+```ts
+// ops/factory.op.ts in a chant member
+import { factoryOp } from "@intentius/chant/op";
+
+export const factory = factoryOp({
+  builder: "node box/ops/factory/builder.mjs", // runs a builder agent in the worktree
+  check: "npm test --silent",                   // the verdict; the box's factory.check when left out
+});
+```
+
+`chant run factory` is one build of one item, under the item's [work lease](/chant/cli/workspace-work/), in a worktree on `chant/work/<item>`:
+
+| Phase | What chant does |
+|---|---|
+| Pick | Lists the buildable items. On top of `ready`, the box's intent must be decided and a contract the item builds approved. The item must be under its attempt limit, not built and waiting to be applied on its branch, and not dropped there. A slice-tier or understand question already asked about it must be answered, and an understand answer of `redraft` or `ask` holds it. The lease claims the first one nobody holds. |
+| Ask | Takes the item's own `tier`, or asks [`slice-tier`](/chant/guide/decision-points/#sizing-a-work-item). For a person's ask it asks `understand`. A question left open stops the run `waiting` until a person answers it. |
+| Build | Runs the `builder` hook in the worktree with `FACTORY_ITEM`, `FACTORY_TIER`, `FACTORY_TOKEN`, `FACTORY_HOLDER`, `FACTORY_WORKTREE` and `FACTORY_CONTEXT`. A kept ask opens first. Nothing is built when `understand` answered anything but `proceed`. |
+| Check | Runs the `check` hook and attaches its result as evidence to each criterion the factory may tick. |
+| Record | Amends the item `done` and commits the worktree with `Chant-Record` and `Chant-Lease` trailers when the build finished, the check passed and every criterion has passing evidence. It adds the decisions in force that constrain a changed path by path to `implements`, and lists them in `implements_proposed`. A refused ask is dropped on its branch. Anything else is `not_done`, and the run keeps the attempt under `refs/chant/kept/`. |
+
+A criterion verified `manual` or `runtime` is never the factory's to tick, so an item with one is not done by the factory. A failed build is never retried on its own: a person asks for one more by amending the item's `retry` to `{ after: <the failed build's lease token>, by, at }`, so one request starts one run. Publishing a done item is a separate call, [`chant workspace box publish`](/chant/cli/workspace-box/#publishing-a-boxs-work). The reference workspace declares the Op in `delivery/src/factory.op.ts` with stub hooks.
+
 ## The window and the three findings
 
 The window of W-001 runs from the commit that added its record to the commit that moved it to `done` or `dropped`. While it is open, the window runs to the revision the walk reads. A commit that changes the region inside the window has a `within` edge to W-001 with the state `worked`. The commit's own state still comes from the decisions, because a work record says who is doing something, and a decision says what was chosen.
