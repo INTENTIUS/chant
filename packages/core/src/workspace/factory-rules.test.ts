@@ -8,7 +8,7 @@ import { describe, expect, test } from "vitest";
 import { isAsk, pickable, retryState, doneVerdict, proposeImplements, understandOutcome, type FactoryContext, type FactoryItem } from "./factory-rules";
 
 describe("the factory's rules", () => {
-  const base: FactoryItem = { id: "W-1", state: "open", openState: "open", proposedState: "proposed", ready: true, data: {}, tier: null, contract: null, warnings: [], answers: [], leased: false };
+  const base: FactoryItem = { id: "W-1", state: "open", openState: "open", proposedState: "proposed", ready: true, data: {}, tier: null, contract: { id: "C-1", state: "approved" }, warnings: [], answers: [], leased: false };
   const ctx: FactoryContext = { intentDecided: null, claims: [], attempts: { exhausted: false }, branch: null, questions: { tier: null, understand: null } };
   const hold = (i: Partial<FactoryItem>, c: Partial<FactoryContext> = {}) => {
     const v = pickable({ ...base, ...i }, { ...ctx, ...c });
@@ -19,6 +19,11 @@ describe("the factory's rules", () => {
     expect(hold({})).toBe("ok");
     expect(hold({}, { intentDecided: false })).toBe("intent-undecided");
     expect(hold({ ready: false })).toBe("not-ready");
+    // Only an item that names a contract, an ask or an intent build is the factory's (#3503).
+    expect(hold({ contract: null })).toBe("no-contract");
+    expect(hold({ contract: null, data: { source: { kind: "finding", finding: "F-1" } } })).toBe("no-contract");
+    expect(hold({ contract: null, data: { source: { ask: { said: "x", by: "a" } } } })).toBe("ok");
+    expect(hold({ contract: null, data: { source: { intent: { answer: "x" } } } })).toBe("ok");
     expect(hold({ ready: false, state: "proposed", data: { source: { ask: { said: "x", by: "a" } } } })).toBe("ok");
     expect(hold({ contract: { id: "C-1", state: "draft" }, warnings: ["work-contract-undecided"] })).toBe("contract-not-approved");
     expect(hold({}, { branch: { state: "done", applied: false } })).toBe("built-not-applied");

@@ -4,8 +4,11 @@
  * reference Op (`../op/factory.ts`) runs them; an orchestrator supplies only
  * execution (the builder, the context, the check).
  *
- * - Readiness ({@link pickable}): on top of the work kind's `ready`, the box's
- *   intent is decided, a contract the item builds is approved and in force,
+ * - Readiness ({@link pickable}): the item names a contract, or is an ask or
+ *   the box's first build from its intent ({@link isAsk}); a work item a
+ *   person wrote by hand or a finding's triage item stays with its author
+ *   (#3503). On top of the work kind's `ready`, the box's intent is decided,
+ *   a contract the item builds is approved and in force,
  *   the item is under its attempt limit, it is not done and waiting to be
  *   applied on its branch, its slice-tier and understand questions are not
  *   open, an understand answer of redraft or ask holds it, and a failed last
@@ -37,6 +40,7 @@ export type UnderstandAnswer = (typeof UNDERSTAND_ANSWERS)[number];
 /** Why an item is not picked. Closed. */
 export const FACTORY_HOLDS = [
   "not-ready",
+  "no-contract",
   "intent-undecided",
   "contract-not-approved",
   "attempts-exhausted",
@@ -133,7 +137,9 @@ export function understandOutcome(answer: unknown): "dropped" | "redraft" | "ask
 const OPEN = new Set(["escalated", "proposed"]);
 
 /**
- * Whether the factory picks `item` now, or why not. Asks are candidates while
+ * Whether the factory picks `item` now, or why not. The factory builds an
+ * item that names a contract, an ask, or an intent build, as studio's queue
+ * did (#3503); any other item is its author's. Asks are candidates while
  * proposed as well as open; any other item only when the work kind reads it
  * ready.
  */
@@ -142,6 +148,7 @@ export function pickable(item: FactoryItem, ctx: FactoryContext): { ok: true } |
   if (ctx.intentDecided === false) return no("intent-undecided", "the box's intent is not decided yet, so nothing is picked");
   if (item.leased) return no("leased", `${item.id} is leased`);
   const ask = isAsk(item.data);
+  if (!item.contract && !ask) return no("no-contract", `${item.id} names no contract and is not an ask or an intent build, so it is left to its author`);
   const candidate = item.ready || (ask && item.proposedState !== null && item.state === item.proposedState);
   if (!candidate) return no("not-ready", `${item.id} is ${item.state ?? "in no state"} and not ready`);
   if (item.contract && (item.warnings.includes("work-contract-undecided") || item.warnings.includes("work-contract-unknown"))) {

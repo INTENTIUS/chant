@@ -1,7 +1,9 @@
 /**
  * The factory reference Op (#3406, ws-087), run through the local executor
  * with stub hooks on a small workspace that carries the reference
- * workspace's decision, work and answer kinds and its points: one item from
+ * workspace's decision, work, answer and contract kinds and its points, its
+ * work kind linked to the contracts, as the factory builds only an item that
+ * names a contract, an ask or an intent build (#3503): one item from
  * pick to done, one retry after a failed build, and one ask the understand
  * point refuses. The rules themselves are tested in
  * ../workspace/factory-rules.test.ts.
@@ -53,10 +55,19 @@ function workspace(dir: string): void {
   git(["config", "user.email", "t@chant.dev"], dir);
   git(["config", "user.name", "T"], dir);
   git(["config", "commit.gpgsign", "false"], dir);
-  for (const d of ["decisions", "work", "answers"]) mkdirSync(join(dir, d), { recursive: true });
+  for (const d of ["decisions", "work", "answers", "contracts"]) mkdirSync(join(dir, d), { recursive: true });
   for (const f of ["decisions/decision.kind.mjs", "decisions/decision.schema.json", "decisions/points.json", "work/work.kind.mjs", "work/work.schema.json", "answers/answer.kind.mjs", "answers/answer.schema.json"]) {
     cpSync(join(REF, f), join(dir, f));
   }
+  for (const f of ["contract.kind.mjs", "contract.schema.json"]) cpSync(join(REF, "design", "contracts", f), join(dir, "contracts", f));
+  const kindFile = join(dir, "work", "work.kind.mjs");
+  const answers = 'answers: "../answers/answer.kind.mjs",';
+  if (!readFileSync(kindFile, "utf-8").includes(answers)) throw new Error("the reference work kind no longer names its answer kind as the fixture expects");
+  writeFileSync(kindFile, readFileSync(kindFile, "utf-8").replace(answers, `${answers}\n    contract: { field: "contract", kind: "../contracts/contract.kind.mjs" },`));
+  writeFileSync(
+    join(dir, "contracts", "C-001-the-feature.md"),
+    `---\n${JSON.stringify({ schema: 1, id: "C-001", title: "The feature", state: "approved", criteria: [{ id: "AC-1", text: "the feature exists" }], checks: [], reviews: [], approved_by: "alice" }, null, 2)}\n---\n\n# The feature\n`,
+  );
   writeFileSync(
     join(dir, "chant.workspace.json"),
     JSON.stringify({
@@ -71,8 +82,8 @@ function workspace(dir: string): void {
   mkdirSync(join(dir, "hooks"), { recursive: true });
   writeFileSync(join(dir, "hooks", "builder.cjs"), BUILDER);
   writeFileSync(join(dir, "hooks", "check.cjs"), CHECK);
-  writeFileSync(join(dir, "work", "W-101-the-feature.md"), item("W-101", { acceptance: [{ id: "AC-1", text: "app/W-101.txt exists", verification: "unit" }] }));
-  writeFileSync(join(dir, "work", "W-102-the-retried-one.md"), item("W-102", { acceptance: [{ id: "AC-1", text: "app/W-102.txt exists", verification: "unit" }] }));
+  writeFileSync(join(dir, "work", "W-101-the-feature.md"), item("W-101", { contract: "C-001", acceptance: [{ id: "AC-1", text: "app/W-101.txt exists", verification: "unit" }] }));
+  writeFileSync(join(dir, "work", "W-102-the-retried-one.md"), item("W-102", { contract: "C-001", acceptance: [{ id: "AC-1", text: "app/W-102.txt exists", verification: "unit" }] }));
   writeFileSync(join(dir, "work", "W-103-an-ask.md"), item("W-103", { state: "proposed", source: { ask: { said: "Make the page purple.", by: "alice", via: "hud" } } }));
   git(["add", "-A"], dir);
   git(["commit", "-q", "-m", "the workspace"], dir);
@@ -177,7 +188,7 @@ describe("the factory Op's seams for an orchestrator (studio#382)", () => {
       // The prepare hook writes W-110 in the checkout and leaves it uncommitted; the others are taken out of the way.
       writeFileSync(
         join(dir, "hooks", "prepare.cjs"),
-        `require("node:fs").writeFileSync("work/W-110-prepared.md", ${JSON.stringify(item("W-110", { acceptance: [{ id: "AC-1", text: "one", verification: "unit" }, { id: "AC-2", text: "two", verification: "unit" }] }))});`,
+        `require("node:fs").writeFileSync("work/W-110-prepared.md", ${JSON.stringify(item("W-110", { contract: "C-001", acceptance: [{ id: "AC-1", text: "one", verification: "unit" }, { id: "AC-2", text: "two", verification: "unit" }] }))});`,
       );
       for (const id of ["W-101", "W-102"]) writeFileSync(join(dir, ".fail-" + id), "");
       git(["add", "-A"], dir);
