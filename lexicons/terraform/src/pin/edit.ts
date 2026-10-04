@@ -22,7 +22,7 @@
  * module (terragucci's `tf-rollout` stage, #3421) decides how it is loaded.
  */
 
-import type { Hcl2Json } from "@intentius/chant/terraform/parse";
+import type { Hcl2Json } from "@intentius/chant/terraform/hcl2json";
 import { movePin, type PinMove } from "./source";
 import { escapeHcl, scanBlocks, unescapeHcl, type ScannedAttribute, type ScannedBlock } from "./scan";
 

@@ -49,7 +49,7 @@
 import { existsSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import type { Declarable } from "@intentius/chant/declarable";
-import type { Hcl2Json } from "@intentius/chant/terraform/parse";
+import type { Hcl2Json } from "@intentius/chant/terraform/hcl2json";
 import { isResourceDeclarable } from "@intentius/chant/declarable";
 import { classifyModuleSource } from "../lint/post-synth/module-source";
 import {

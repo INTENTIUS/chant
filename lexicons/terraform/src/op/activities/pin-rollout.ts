@@ -54,7 +54,7 @@ export async function terraformPinRollout(args: TerraformPinRolloutArgs): Promis
 
 /** The same run, returning a stopped rollout instead of throwing. `chant terraform pin-rollout` calls this. */
 export async function readPinRollout(args: TerraformPinRolloutArgs): Promise<TerraformPinRolloutResult> {
-  const { loadHcl2json } = await import("@intentius/chant/terraform/parse");
+  const { loadHcl2json } = await import("@intentius/chant/terraform/hcl2json");
   const { runPinRollout, wavesFromChoudoufu } = await import("../../pin");
   const { editPinsInTs } = await import("../../pin/edit-ts");
   const cwd = args.cwd ?? process.cwd();

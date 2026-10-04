@@ -29,7 +29,7 @@
 import { existsSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { isResourceDeclarable, type Declarable } from "@intentius/chant/declarable";
-import type { Hcl2Json } from "@intentius/chant/terraform/parse";
+import type { Hcl2Json } from "@intentius/chant/terraform/hcl2json";
 import type { TerraformRootConfig } from "../config";
 import { LIVE_TYPE, parseTerraformRootDir } from "./parse";
 import { descendModules, resolveCallModuleType, type CallModuleType } from "./descend";
