@@ -804,7 +804,7 @@ describe("the composite graph on the fixture (#2662)", () => {
         // #2674: delivery configures no lexicon that hosts component runs, so the app deploys locally only.
         runtimes: [{ name: "local", lexicon: null, default: true, command: "chant run --components app" }],
         // #2695: delivery's config declares no environments and chant's own ledger holds no release of it, so local only.
-        environments: [{ name: "local", default: true, source: "builtin", command: "chant run --components app" }],
+        environments: [{ name: "local", default: true, source: "builtin", site: null, command: "chant run --components app" }],
       },
     ]);
     expect(doc.members.find((m) => m.name === "delivery")!.runtimeReasons).toEqual([]);

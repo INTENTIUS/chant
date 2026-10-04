@@ -215,7 +215,7 @@ describe("every schema against the reference workspace (#2543)", () => {
         expect(doc.components[0].runtimes).toEqual([{ name: "local", lexicon: null, default: true, command: "chant run --components app" }]);
         expect(doc.members.find((m) => m.name === "delivery")!.runtimeReasons).toEqual([]);
         // #2695: the reference config declares no environments, so the app deploys to local only.
-        expect(doc.components[0].environments).toEqual([{ name: "local", default: true, source: "builtin", command: "chant run --components app" }]);
+        expect(doc.components[0].environments).toEqual([{ name: "local", default: true, source: "builtin", site: null, command: "chant run --components app" }]);
         expect(doc.members.find((m) => m.name === "delivery")!.environmentReasons.map((r) => r.code)).toEqual(["environments-none-declared"]);
         expect(doc.reasons).toEqual([]);
       }

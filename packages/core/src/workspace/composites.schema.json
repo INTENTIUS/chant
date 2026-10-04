@@ -227,7 +227,8 @@
                   "runtimes-config-unreadable",
                   "environments-none-declared",
                   "environments-ledger-undeclared",
-                  "environments-ledger-unreadable"
+                  "environments-ledger-unreadable",
+                  "environments-component-undeclared"
                 ]
               },
               "message": {
@@ -428,7 +429,7 @@
           }
         },
         "environments": {
-          "description": "The environments the component may deploy to with chant run --components --env in its member: local first, the default, then each name the member's chant.config.ts declares in environments (patterns left out), in config order, then each environment with a release ledger for the member on chant/lifecycle that the config covers, sorted. The component contract declares no environments.",
+          "description": "The environments the component may deploy to with chant run --components --env in its member: local first, the default, then each name the member's chant.config.ts declares in environments (patterns left out), in config order, then each environment with a release ledger for the member on chant/lifecycle that the config covers, sorted, then each environment only the component's own environments declare (#3153) that the config covers, in contract order. An environment the component declares carries its site.",
           "type": "array",
           "minItems": 1,
           "items": {
@@ -569,6 +570,7 @@
         "name",
         "default",
         "source",
+        "site",
         "command"
       ],
       "properties": {
@@ -584,9 +586,26 @@
           "enum": [
             "config",
             "ledger",
-            "builtin"
+            "builtin",
+            "component"
           ],
-          "description": "Where the name came from, the first of these that names it: config for the member's chant.config.ts environments, ledger for a release ledger on chant/lifecycle, builtin for local when neither names it."
+          "description": "Where the name came from, the first of these that names it: config for the member's chant.config.ts environments, ledger for a release ledger on chant/lifecycle, builtin for local when neither names it, and component for an environment only the component's own environments declare (#3153, added by chant 0.103.0)."
+        },
+        "site": {
+          "description": "Where a release of the component goes in this environment, as the component's environments declare it (#3153): the runtime that hosts it, the URL it answers on, a custom domain and the git remote its lifecycle records are pushed to, each null when not declared. Null when the component declares nothing for this environment. Added by chant 0.103.0.",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["runtime", "url", "domain", "lifecycle"],
+              "properties": {
+                "runtime": { "type": ["string", "null"] },
+                "url": { "type": ["string", "null"] },
+                "domain": { "type": ["string", "null"] },
+                "lifecycle": { "type": ["string", "null"] }
+              }
+            }
+          ]
         },
         "command": {
           "type": "string",

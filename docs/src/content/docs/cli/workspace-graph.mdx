@@ -224,10 +224,10 @@ A component can match an instance in another member. Each match says how it cros
         { "name": "fleet", "lexicon": "fleet", "default": false, "command": "chant run --components loom-backend --on fleet" }
       ],
       "environments": [
-        { "name": "local", "default": true, "source": "builtin", "command": "chant run --components loom-backend" },
-        { "name": "staging", "default": false, "source": "config", "command": "chant run --components loom-backend --env staging" },
-        { "name": "prod", "default": false, "source": "config", "command": "chant run --components loom-backend --env prod" },
-        { "name": "pr-42", "default": false, "source": "ledger", "command": "chant run --components loom-backend --env pr-42" }
+        { "name": "local", "default": true, "source": "builtin", "site": null, "command": "chant run --components loom-backend" },
+        { "name": "staging", "default": false, "source": "config", "site": null, "command": "chant run --components loom-backend --env staging" },
+        { "name": "prod", "default": false, "source": "config", "site": { "runtime": "fleet", "url": "https://loom.example.com", "domain": null, "lifecycle": "origin" }, "command": "chant run --components loom-backend --on fleet --env prod" },
+        { "name": "pr-42", "default": false, "source": "ledger", "site": null, "command": "chant run --components loom-backend --env pr-42" }
       ]
     }
   ],
@@ -257,7 +257,7 @@ The reading chant loads each member's `chant.config.ts` and the lexicons it list
 
 Each component also lists in `environments` where it may be deployed ([#2695](https://github.com/INTENTIUS/chant/issues/2695)). The first entry is `local`, the environment [`chant run --components`](/chant/cli/run/) deploys to without `--env`, and the only one with `default: true`. `chant.config.ts` has no default environment of its own. After `local` come the names the member's config declares in `environments`, in config order, and then each environment that has a release ledger for the member on `chant/lifecycle`, sorted. `source` says where each name came from: `config`, `ledger`, or `builtin` for `local` when neither names it. A name both places know is `config`. A pattern such as `pr-*` isn't an environment by itself, so it isn't listed, but it lets the ledger's `pr-42` through. Each `command` deploys the component to that environment on the member's default runtime, so it carries `--env` unless the environment is the default. To deploy on another runtime, add that runtime's `--on` from `runtimes`.
 
-The component contract doesn't declare environments, so every component of a member lists the same ones. The config is read in the same load as the runtimes. The ledger comes from the local `chant/lifecycle` branch, as for [`workspace status`](/chant/cli/workspace-status/). It is read there even with `--at` and is never fetched. `chant run --env` refuses a name the config's `environments` doesn't cover when it declares any. So a ledger environment the config no longer covers isn't listed, and the member's `environmentReasons` names it.
+A component may also declare [`environments`](/chant/components/component-contract/#environments) of its own, each with where a release goes there ([#3153](https://github.com/INTENTIUS/chant/issues/3153)). An environment it declares carries `site`: `{ runtime, url, domain, lifecycle }`, each `null` when not declared, and `site` is `null` for the rest. When the site's runtime is one the member hosts, the `command` runs there with `--on`, as for `prod` above. A name only the component declares is added after the others with `source: "component"` when `chant run --env` takes it. When the config's `environments` don't cover it, it is left out and `environmentReasons` holds `environments-component-undeclared`. The config is read in the same load as the runtimes. The ledger comes from the local `chant/lifecycle` branch, as for [`workspace status`](/chant/cli/workspace-status/). It is read there even with `--at` and is never fetched. `chant run --env` refuses a name the config's `environments` doesn't cover when it declares any. So a ledger environment the config no longer covers isn't listed, and the member's `environmentReasons` names it.
 
 | Code | Meaning |
 |---|---|
@@ -265,6 +265,7 @@ The component contract doesn't declare environments, so every component of a mem
 | `environments-none-declared` | The config declares no `environments`, so `--env` takes any name and only `local` and the ledger's are listed |
 | `environments-ledger-undeclared` | The ledger has releases in an environment the config doesn't cover, so it isn't listed |
 | `environments-ledger-unreadable` | The `chant/lifecycle` branch exists and the member's ledger directories couldn't be listed |
+| `environments-component-undeclared` | A component declares an environment the config doesn't cover, so it isn't listed |
 
 The reference workspace's `delivery` member declares the app with the docker lexicon's `DockerWebService` composite and deploys it with the `app` component, whose contract lists that kind in `composites`. Its document has one row, `delivery/app`, with that component matched `by: "composites"` and `via: "member"` and no reason. The component's only runtime is `local`. The delivery config declares no environments, so the only environment is `local` and `environmentReasons` holds `environments-none-declared`.
 
