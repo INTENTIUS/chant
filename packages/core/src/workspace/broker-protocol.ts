@@ -28,8 +28,6 @@
  * A broker may say whose credential pays (#3474, ws-098): `payer` on the
  * declaration's answer and the `chant-payer` header on each inference and
  * decide answer ({@link BrokerPayer}). It is optional within version 1.
- * A box names whose turn a request is with a `chant-grant` header the broker
- * issued (#3477, ws-099); the broker then may spend that person's credential.
  *
  * The rule every broker keeps: a request that needs scope word `w` of
  * capability `c` is refused with a 403 unless the box's last report holds an
@@ -218,27 +216,6 @@ export const PAYER_KINDS = ["shared", "owner", "visitor"] as const;
 
 /** The response header that carries the payer on each answer from `/llm/anthropic` and `/decide`: `<kind>` or `<kind> <principal>`. */
 export const PAYER_HEADER = "chant-payer";
-
-/**
- * The request header a box sends on an inference or decide request made on a
- * person's turn (#3477, ws-099): a grant the broker itself issued to that
- * person for this box, which the person's browser carried to the box's
- * surface. Opaque to chant and to the box. The broker checks its own grant
- * (issued by it, for the box whose token the request carries, not expired or
- * revoked, the person still holding a credential), spends the person's
- * credential, and answers `chant-payer: visitor <principal>`. A grant it does
- * not accept is ignored, not refused: the request is paid as it would have
- * been without one, and the payer header says so.
- */
-export const GRANT_HEADER = "chant-grant";
-
-/** The longest grant a box sends, in characters; a broker may refuse a longer header as malformed. */
-export const GRANT_MAX_LENGTH = 2048;
-
-/** Whether `value` is a grant a box may send: printable ASCII without spaces, at most {@link GRANT_MAX_LENGTH} long. */
-export function isGrantValue(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0 && value.length <= GRANT_MAX_LENGTH && /^[\x21-\x7e]+$/.test(value);
-}
 
 /** A payer as the header carries it. */
 export function formatPayerHeader(payer: BrokerPayer): string {

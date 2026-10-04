@@ -4,8 +4,6 @@ import {
   EGRESS_CAPABILITY,
   FEEDBACK_CAPABILITY,
   formatPayerHeader,
-  GRANT_MAX_LENGTH,
-  isGrantValue,
   FOUNTAIN_CAPABILITY,
   INFERENCE_CAPABILITY,
   parseDeclarationReport,
@@ -111,12 +109,5 @@ describe("the payer (#3474)", () => {
     expect(payerOf({ capabilities: [], at: "t" })).toBeUndefined();
     expect(payerOf({ payer: { kind: "house" } })).toBeUndefined();
     expect(payerOf({ payer: { kind: "visitor", principal: "has space" } })).toBeUndefined();
-  });
-});
-
-describe("a grant (#3477)", () => {
-  test("is printable ASCII without spaces, bounded in length", () => {
-    expect(isGrantValue("lobbyg1.eyJ0.abc_-")).toBe(true);
-    for (const bad of ["", "has space", "line\nbreak", "x".repeat(GRANT_MAX_LENGTH + 1), 42, null]) expect(isGrantValue(bad), String(bad).slice(0, 20)).toBe(false);
   });
 });

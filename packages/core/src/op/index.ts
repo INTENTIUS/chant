@@ -149,3 +149,7 @@ export type { ChangeSignalGate, ChangeSignalGateOptions, WakeReason } from "./ch
 export { classifyOpVerbClass, isGated } from "./op-verb-class";
 export type { OpVerbClass } from "./op-verb-class";
 export { takeProfileAndId } from "./builders";
+
+// The factory reference Op (#3406, ws-087).
+export { factoryOp, factoryOpConfig } from "./factory";
+export type { FactoryOpOptions } from "./factory";
