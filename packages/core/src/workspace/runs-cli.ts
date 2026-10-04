@@ -289,7 +289,6 @@ export async function workspaceRuns(query: RunsQuery): Promise<RunsDocument> {
     joinTrailerCommits(runs, byTrailer, top);
     // A commit that lost its trailer joins by content (#3036).
     joinPatchIdCommits(runs, byTrailer, top);
-    joinTrailerCommits(runs, commitsByRunTrailer(top), top);
     const { policy, trust } = runsTrust(top, query.base);
     attestRuns(runs.values(), policy);
     const all = [...runs.values()];
