@@ -188,7 +188,9 @@
                 "write-scope-protected",
                 "write-scope-class-unknown",
                 "agent-unknown",
-                "principal-unidentified"
+                "principal-unidentified",
+                "write-lock-timeout",
+                "write-lock-not-held"
               ]
             },
             "message": {

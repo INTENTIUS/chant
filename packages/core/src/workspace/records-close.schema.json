@@ -108,6 +108,11 @@
             "$ref": "#/$defs/warning"
           }
         },
+        "digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "Added in contract 1 by #3173. The record's digest after the write, as chant workspace records --json reports it (with --dry-run, the digest it would have). Pass it as --expect to the next amend, review or close of the record, so that write is refused with record-conflict if someone else wrote the record in between."
+        },
         "text": {
           "type": "string",
           "description": "With --dry-run only: the whole text of the file the command would write."
@@ -171,6 +176,9 @@
                 "write-usage-invalid",
                 "record-not-found",
                 "record-closed",
+                "record-conflict",
+                "write-lock-timeout",
+                "write-lock-not-held",
                 "write-scope-member",
                 "write-scope-kind",
                 "write-scope-class-unknown",
@@ -190,6 +198,76 @@
             "message": {
               "type": "string",
               "description": "What was wrong, and what to do instead when there is something. A session already closed is record-closed; a verdict naming a record the session kind's subjects lack is session-verdict-unknown-record."
+            }
+          }
+        },
+        "conflict": {
+          "type": "object",
+          "description": "Added in contract 1 by #3173. With record-conflict only: the record as it is now. Re-read it, and write again with --expect set to digest if the change still stands.",
+          "required": [
+            "id",
+            "path",
+            "expected",
+            "digest",
+            "lastWrite"
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string",
+              "description": "The record file, from the repository root."
+            },
+            "expected": {
+              "type": "string",
+              "description": "The digest given with --expect."
+            },
+            "digest": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "description": "The record's digest now."
+            },
+            "lastWrite": {
+              "description": "The last chant write of the record file, from the write journal in the git directory, while the file still holds the text it left; null when the journal does not know it.",
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "verb",
+                    "by",
+                    "agent",
+                    "at"
+                  ],
+                  "properties": {
+                    "verb": {
+                      "type": "string",
+                      "description": "The write command, such as records amend or points answer."
+                    },
+                    "by": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "The principal the write named, or null when it named none."
+                    },
+                    "agent": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "The agent session it was made in (CHANT_AGENT), or null."
+                    },
+                    "at": {
+                      "type": "string",
+                      "description": "When, as an ISO 8601 time."
+                    }
+                  }
+                }
+              ]
             }
           }
         },

@@ -162,6 +162,25 @@ describe("cross-lexicon activity contracts (#2101)", () => {
   });
 });
 
+describe("telemetry attribution (#3375)", () => {
+  const readsTelemetry: PostSynthCheck = {
+    id: "TELEMETRY",
+    description: "reports the attribution the context carries",
+    check(ctx) {
+      return [{ checkId: "TELEMETRY", severity: "warning", message: JSON.stringify(ctx.telemetry ?? null) }];
+    },
+  };
+
+  test("the build's attribution is threaded into the context", () => {
+    const diags = runPostSynthChecks([readsTelemetry], createBuildResult(), undefined, { telemetry: { workspace: "acme" } });
+    expect(diags[0].message).toBe('{"workspace":"acme"}');
+  });
+
+  test("a level-0 run leaves the field undefined", () => {
+    expect(runPostSynthChecks([readsTelemetry], createBuildResult())[0].message).toBe("null");
+  });
+});
+
 describe("isPostSynthCheck", () => {
   test("accepts a well-formed check and rejects others", async () => {
     const { isPostSynthCheck } = await import("./post-synth");

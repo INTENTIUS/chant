@@ -94,4 +94,4 @@ The endpoint is a member link of a new kind, `telemetry`. The service's member i
 
 ## What stays out
 
-Checks that a collector pipeline does not drop or overwrite these attributes, and a composite that keeps them intact, are post-synth checks on the otel side. They are in #2989 section 10 and follow this table.
+A composite that keeps these attributes intact is otel-side work in #2989 section 10 and follows this table. The check that a collector pipeline does not drop or overwrite them is the otel lexicon's OTEL118 (#3375), a post-synth warning that runs only when the build stamps the attribution.
