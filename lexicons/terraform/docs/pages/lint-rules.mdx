@@ -2196,6 +2196,10 @@ skipped.
 
 **Off by default.** TF040 is a `report-only` rule, since many estates run
 `init` in CI and never commit the file. Enable it as described under TF039.
+`chant audit` runs every rule, so TF040 is also marked to stay out of the
+audit unless the project's `lint.rules` names it. The audit reads `lint.rules`
+from `chant.config.ts` or `chant.config.json` without running the config, and
+a `lint.rules` entry for TF040 turns it on in both a build and an audit.
 
 **Prior art.** No tool in the survey covers this; see the lineage file.
 

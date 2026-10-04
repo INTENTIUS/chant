@@ -19,8 +19,9 @@
  * choudoufu root, which runs no `init`. One diagnostic per root, anchored on
  * the first block that implies a provider.
  *
- * Off by default (`report-only` tier), since many estates run `init` in CI and
- * never commit the file.
+ * Off by default in both places: the `report-only` tier keeps it out of a
+ * build's `recommended` preset, and `auditOptIn` keeps it out of `chant audit`.
+ * Many estates run `init` in CI and never commit the file.
  *
  * Scope: root modules only (#2112); a child module has no lock file of its own.
  */
@@ -38,6 +39,10 @@ import { impliedProviders } from "./tf002";
 export const tf040: PostSynthCheck = {
   id: "TF040",
   description: "Root has no committed .terraform.lock.hcl",
+  // `chant audit` runs every rule, report-only ones included, so without this a
+  // new rule would change every project's audit output. A `lint.rules` entry
+  // for TF040 turns it on in the audit as well as in a build (#3190).
+  auditOptIn: true,
 
   check(ctx: PostSynthContext): PostSynthDiagnostic[] {
     const diagnostics: PostSynthDiagnostic[] = [];

@@ -191,6 +191,14 @@ export interface PostSynthCheck {
   description: string;
   /** Execute the check and return diagnostics */
   check(ctx: PostSynthContext): PostSynthDiagnostic[];
+  /**
+   * `chant audit` skips this check unless the project enables it with a
+   * `lint.rules` entry for its id (chant #3190). Builds are not affected: they
+   * already filter by the lexicon's `lintPresets()`. It exists because the
+   * audit runs every check a lexicon ships, report-only ones included, so a
+   * new check would otherwise change the audit output of every project.
+   */
+  auditOptIn?: boolean;
 }
 
 /** Structural type guard — used to collect project-authored policy checks. */
