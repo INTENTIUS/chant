@@ -393,6 +393,18 @@ export interface WorkGapSource {
   artifact?: string;
 }
 
+/** A review session that led to a work item (#3154, E21). */
+export interface WorkReview {
+  /** The session record's node-style id, `record:<kind>/<id>`. */
+  id: string;
+  recordKind: string;
+  record: string;
+  path: string;
+  state: string | null;
+  /** The comments whose follow_ups name the item, numbered from 1; empty when only the session's own follow_ups do. */
+  comments: number[];
+}
+
 export interface WorkNode {
   id: string;
   kind: "work";
@@ -423,6 +435,15 @@ export interface WorkNode {
   constrains: { entry: string; granularity: Granularity }[];
   /** The item's work warnings, as records reports them, and work-done-gap-open. */
   warnings: { code: WorkWarningCode; message: string }[];
+  /**
+   * The review sessions whose comments led to this item (#3154, E21 in
+   * arugula-salad/hud#823): each session record of a session kind read whose
+   * `comments[].follow_ups` (or its own `follow_ups`) names the item as
+   * `<kind>:<id>`, with the 1-based numbers of those comments. A commit that
+   * carries the item, by its `Chant-Record: work:<id>` trailer, joins back
+   * to the review through it. Empty when none does. Added within contract 1.
+   */
+  reviews?: WorkReview[];
 }
 
 /**
@@ -1774,6 +1795,35 @@ async function walk(query: IntentQuery, head: Head): Promise<IntentResult> {
       f.addressed = by.length > 0;
       f.addressedBy = by.map((h) => ({ id: h.view.id!, state: h.view.state }));
       for (const h of by) edges.push({ kind: "addressed-by", from: f.id, to: workNode(h).id });
+    }
+  }
+  // Reviews that led to a work item in the graph (#3154, E21): a session's comments[].follow_ups name it.
+  const workNodes = [...nodes.values()].filter((n): n is WorkNode => n.kind === "work");
+  if (workNodes.length > 0) {
+    const byRef = new Map(workNodes.map((n) => [`${n.recordKind}:${n.record}`, n]));
+    for (const k of kinds) {
+      const loaded = k.records?.loaded.kind;
+      if (!loaded?.session) continue;
+      for (const v of k.records!.views) {
+        if (v.id === null || !v.data) continue;
+        const hits = new Map<WorkNode, number[]>();
+        const note = (refs: unknown, comment: number | null) => {
+          if (!Array.isArray(refs)) return;
+          for (const ref of refs) {
+            const n = typeof ref === "string" ? byRef.get(ref) : undefined;
+            if (!n) continue;
+            const list = hits.get(n) ?? [];
+            if (comment !== null && !list.includes(comment)) list.push(comment);
+            hits.set(n, list);
+          }
+        };
+        note(v.data.follow_ups, null);
+        const comments = Array.isArray(v.data.comments) ? v.data.comments : [];
+        comments.forEach((c: unknown, i: number) => note((c as { follow_ups?: unknown } | null)?.follow_ups, i + 1));
+        for (const [n, list] of hits) {
+          (n.reviews ??= []).push({ id: `record:${loaded.name}/${v.id}`, recordKind: loaded.name, record: v.id, path: v.path, state: v.state, comments: list.sort((a, b) => a - b) });
+        }
+      }
     }
   }
   for (const f of findings) nodes.set(f.id, f);
