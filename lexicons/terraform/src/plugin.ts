@@ -12,7 +12,9 @@ import { completions } from "./lsp/completions";
 import { hover } from "./lsp/hover";
 import { terraformConfigSchema, type TerraformConfig } from "./config";
 import { renderTerraformRoots } from "./hcl/roots";
-import { auditRootName, parseTerraformRootContent, RESOURCE_TYPE } from "./hcl/parse";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { auditRootName, LOCK_FILENAME, parseTerraformRootContent, RESOURCE_TYPE } from "./hcl/parse";
 import { descendModules } from "./hcl/descend";
 import { TERRAFORM_STATE_OWNERSHIP_KEYS } from "./state-ownership";
 
@@ -256,7 +258,10 @@ export const terraformPlugin: LexiconPlugin = {
   async auditEntities(content: string, input?: AuditEntitiesInput): Promise<Map<string, Declarable>> {
     try {
       const root = auditRootName(input?.path);
-      const entities = await parseTerraformRootContent(content, root);
+      // A local audit knows the root's directory, so it can say whether the
+      // lock file is beside the `.tf` files (TF040); a fetched one cannot.
+      const lockFile = input?.dir !== undefined ? existsSync(join(input.dir, LOCK_FILENAME)) : undefined;
+      const entities = await parseTerraformRootContent(content, root, undefined, lockFile === undefined ? undefined : { lockFile });
       if (input?.dir === undefined) return entities;
       const { entities: children } = await descendModules(entities, {
         dir: input.dir,
