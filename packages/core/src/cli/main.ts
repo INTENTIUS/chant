@@ -347,6 +347,18 @@ export function parseArgs(args: string[]): ParsedArgs {
       result.fromAffected = args[++i];
     } else if (arg === "--gate") {
       result.gate = args[++i];
+    } else if (arg === "--wave-gate") {
+      result.waveGate = args[++i];
+      if (!result.waveGate || result.waveGate.startsWith("-")) throw new Error("--wave-gate needs a gate name: --wave-gate <name>");
+    } else if (arg === "--wave") {
+      const raw = args[++i];
+      const wave = Number(raw);
+      if (!Number.isInteger(wave) || wave < 1) throw new Error(`--wave needs a wave number from 1: got "${raw ?? ""}"`);
+      result.wave = wave;
+    } else if (arg === "--canary") {
+      const raw = args[++i];
+      if (!raw || raw.startsWith("-")) throw new Error("--canary needs a component name: --canary <name>[,<name>...]");
+      (result.canary ??= []).push(...raw.split(",").map((n) => n.trim()).filter(Boolean));
     } else if (arg === "--resume") {
       result.resume = args[++i];
     } else if (arg === "--local") {
@@ -1213,8 +1225,12 @@ Component release ledger + status:
                             (--base <ref> [--head <ref>] [--include-dependents],
                              or --from-affected <file>; --dry-run prints the
                              derivation and dispatches nothing; --gate <name>
-                             puts one approval over the whole set; --resume
-                             <file> finishes an attempt that stopped)
+                             puts one approval over the whole set;
+                             --wave-gate <name> puts one on each wave, planned
+                             when the wave is reached, with --canary <name>
+                             for wave 1 and --wave <n> for one wave per CI
+                             job; --resume <file> finishes an attempt that
+                             stopped)
   components release <env> Append one immutable release record
                             (--component <name> --digest <sha256:...>
                              [--git-sha <sha>] [--run-id <id>] [--actor <name>]);

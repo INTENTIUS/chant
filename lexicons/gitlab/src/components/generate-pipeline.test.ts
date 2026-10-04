@@ -327,3 +327,36 @@ describe("generateGitlabPipeline: a promote job (#2575)", () => {
     expect(() => generateGitlabPipeline(infraOnly)).not.toThrow();
   });
 });
+
+describe("generateGitlabPipeline: gated waves (#3049)", () => {
+  /** net -> a, b -> app: three waves, four with a canary in front. */
+  const roots: DriverComponent[] = [
+    { name: "net", deploy: [] },
+    { name: "a", dependsOn: ["net"], deploy: [] },
+    { name: "b", dependsOn: ["net"], deploy: [] },
+    { name: "app", dependsOn: ["a"], deploy: [] },
+  ];
+
+  test("one job per wave, in order, each running that wave of the gated fan-out", () => {
+    const result = generateGitlabPipeline(roots, { env: "prod", gatedWaves: { gate: "release" } });
+    const parsed = parseYAML(result.yaml) as Record<string, Record<string, unknown>>;
+    expect(result.stages).toEqual(["wave-1", "wave-2", "wave-3"]);
+    expect(parsed["wave-2"].needs).toEqual(["wave-1"]);
+    expect(parsed["wave-1"].needs).toBeUndefined();
+    expect(parsed["wave-3"].script).toEqual([
+      "chant components fan-out --base HEAD~1 --env prod --wave-gate release --wave 3 --resume .chant/fan-out.json",
+    ]);
+    // The record goes to the next job even when this one stops at a gate.
+    expect(parsed["wave-1"].artifacts).toEqual({ when: "always", paths: [".chant/fan-out.json"] });
+    expect(parsed["wave-1"].variables).toEqual({ GIT_DEPTH: "0" });
+    // No per-component jobs.
+    expect(parsed.net).toBeUndefined();
+  });
+
+  test("a canary list adds a wave in front and is passed to every job", () => {
+    const result = generateGitlabPipeline(roots, { env: "prod", gatedWaves: { gate: "release", canary: ["b"], base: "$CI_COMMIT_BEFORE_SHA" } });
+    expect(result.stages).toEqual(["wave-1", "wave-2", "wave-3", "wave-4"]);
+    const parsed = parseYAML(result.yaml) as Record<string, Record<string, unknown>>;
+    expect((parsed["wave-1"].script as string[])[0]).toContain("--base $CI_COMMIT_BEFORE_SHA --env prod --wave-gate release --canary b --wave 1");
+  });
+});

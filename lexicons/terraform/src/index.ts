@@ -1,6 +1,18 @@
 // Plugin
 export { terraformPlugin } from "./plugin";
 
+// The `terraform-apply` component verb (#3049), contributed to core's
+// capability-plugin seam. Core loads `terraformCapabilityPlugin` when a
+// project's chant.config lists this lexicon, so a component can deploy a root
+// and a fan-out can run many of them in gated waves.
+export {
+  terraformCapabilityPlugin,
+  terraformApplyCapability,
+  TERRAFORM_VERB_FAMILIES,
+  type TerraformApplyStepInput,
+  type TerraformApplyStepOutput,
+} from "./components/capability-plugin";
+
 // Serializer
 export { terraformSerializer } from "./serializer";
 

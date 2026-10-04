@@ -37,6 +37,36 @@ Default profiles: `terraformInit`/`terraformPlan`/`terraformApply` run on `longI
 
 Two adapters live in the `@intentius/chant-lexicon-terraform/change-set` subpath. `terraformChangeSetPart` reads a `show -json` plan from terraform, tofu or choudoufu. `choudoufuSetPlanParts` reads `choudoufu live-plan-set -json` and returns one part per root, with choudoufu's root digest as `nativeDigest`. The subpath imports no lint rules and no TypeScript, so it bundles on its own.
 
+## Roots as components, in gated waves
+
+The lexicon contributes one component verb, `terraform-apply`. A component that deploys a root names it:
+
+```typescript
+import type { Component } from "@intentius/chant/components";
+
+export const app: Component = {
+  name: "app",
+  dependsOn: ["network"],
+  deploy: [
+    {
+      phase: "Apply",
+      steps: [
+        {
+          kind: "terraform-apply",
+          root: "app",
+          vars: { vpc_id: { stackOutput: { stack: "network", name: "vpc_id" } } },
+          noRollback: "an apply is undone by applying the previous configuration",
+        },
+      ],
+    },
+  ],
+};
+```
+
+`root` is a key into `terraform.roots`, so it works for `terraform`, `tofu` and `choudoufu` alike. `vars` are passed as `-var` after the root's var files, so a value another root's apply produced reaches this root's plan. The step returns the root's `terraform output -json` as `outputs`, which is what a dependent's `stackOutput()` reads.
+
+Roots written this way run as a [`chant components fan-out`](/chant/cli/components/#components-fan-out). With `--wave-gate <name>`, each wave of roots is planned once the wave before it has applied, and its gate binds the wave's set digest. The member is the root's name and its plan digest is the step's `planDigest`, so a wave's digest is the change-set digest of its roots. `run` applies the saved plan the wave approved. terraform and tofu refuse a saved plan whose state moved, and choudoufu refuses one whose live plan changed, so either way the approved plan is the one applied or nothing is.
+
 ## TerraformApplyOp
 
 The composite that phases the four activities into Init, Plan, an optional approval Gate, then Apply:
