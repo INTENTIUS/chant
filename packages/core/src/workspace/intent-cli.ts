@@ -1,5 +1,5 @@
 /**
- * `chant workspace graph --intent <path[:start-end]|path#symbol> [--at <rev>] [--kind <kind file>...] [--json]`
+ * `chant workspace graph --intent <path[:start-end]|path#symbol> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--json]`
  * (#2651, #3034): the intent graph over one region (`intent.ts`), printed as JSON
  * with `--json` or as a walk, one line per node, in the order of #2650
  * section B: the region, its decisions, their artifacts, the commits, and the
@@ -16,8 +16,8 @@ import type { CommandContext } from "../cli/registry";
 import { intentRecord, type IntentRecordDocument } from "./intent-record";
 import { intentGraph, type ArtifactNode, type CommitNode, type DecisionNode, type IntentDocument, type IntentEdge, type IntentNode, type RunNode, type WhyAnswer, type WorkNode } from "./intent";
 
-const USAGE = "chant workspace graph --intent <path[:start-end]|path#symbol> [--at <rev>] [--kind <kind file>...] [--json]";
-const RECORD_USAGE = "chant workspace graph --intent --record <id> [--at <rev>] [--kind <kind file>...] [--json]";
+const USAGE = "chant workspace graph --intent <path[:start-end]|path#symbol> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--json]";
+const RECORD_USAGE = "chant workspace graph --intent --record <id> [--at <rev>] [--kind <kind file>...] [--follow-squash] [--json]";
 
 type Result = Exclude<IntentDocument, { error: unknown }>;
 type RecordResult = Exclude<IntentRecordDocument, { error: unknown }>;
@@ -110,11 +110,27 @@ function commitLine(doc: Result, c: CommitNode): string[] {
     for (const s of edgesFrom(doc, e.to, "cites-evidence")) out.push(`  evidence  ${s.to.slice("evidence:".length)}`);
   }
   out.push(...joinLines(c.joins));
+  if (c.squash) {
+    const s = c.squash;
+    out.push(`  squash    #${s.pullRequest}${s.followed ? `: ${s.commits.length} original ${s.commits.length === 1 ? "commit" : "commits"} from ${s.ref}${s.fetched ? ", fetched" : ""}` : ", not followed"}`);
+    for (const o of s.commits) {
+      const carried = [...o.joins.records.map((r) => `${r.kind}:${r.id}`), ...(o.joins.lease ? [`lease ${o.joins.lease.token}`] : []), ...(o.joins.run ? [`run ${o.joins.run}`] : [])];
+      out.push(`  original  ${short(o.sha)} ${o.subject}; ${o.signature.level}${carried.length > 0 ? `; ${carried.join(", ")}` : ""}`);
+    }
+  }
   for (const e of edgesFrom(doc, c.id, "made-by")) {
     const r = doc.nodes.find((n): n is RunNode => n.kind === "run" && n.id === e.to);
     if (!r) continue;
     const what = r.recorded ? `${[r.harness?.name, r.model].filter(Boolean).join("/") || "no model recorded"}${r.by ? ` for ${r.by}` : ""}${r.cost ? `, ${r.cost.amount} ${r.cost.currency}` : ", unpriced"}` : "not in the run ledger";
-    out.push(`  run       ${r.run}: ${what}`);
+    const content =
+      e.kind !== "made-by"
+        ? ""
+        : e.joinedBy.includes("patch-id")
+          ? `; joined by content${e.recordedAs ? `, as ${short(e.recordedAs)}` : ""}`
+          : e.joinedBy.length === 1 && e.joinedBy[0] === "squash"
+            ? `; through the squash, by ${(e.via ?? []).map(short).join(", ")}`
+            : "";
+    out.push(`  run       ${r.run}: ${what}${content}`);
   }
   return out;
 }
@@ -139,7 +155,7 @@ export function whyLines(doc: Result, why: WhyAnswer): string[] {
     out.push(`  decision  ${record(d.decision)} ${d.relevance}${d.lines > 0 ? `, ${d.lines} ${d.lines === 1 ? "line" : "lines"}` : ""}${d.current ? "" : ", superseded"}${d.closed ? ", closed" : ""}`);
   }
   for (const b of why.blame) {
-    const by = b.runs.length > 0 ? `; ${b.runs.map(runLabel).join(", ")}${b.narrowedBy ? " (by its hunks)" : ""}` : b.sha ? "; no run" : "";
+    const by = b.runs.length > 0 ? `; ${b.runs.map(runLabel).join(", ")}${b.narrowedBy ? " (by its hunks)" : ""}${b.joinedBy?.includes("patch-id") ? " (joined by content)" : ""}${b.via && b.via.length > 0 ? ` (squashed from ${b.via.map(short).join(", ")})` : ""}` : b.sha ? "; no run" : "";
     out.push(`  lines     ${span(b)} ${b.sha ? short(b.sha) : "uncommitted"}${by}`);
   }
   for (const g of why.gaps) out.push(`  gap       ${g.code}: ${g.message}${g.lines ? ` (lines ${g.lines.map(span).join(", ")})` : ""}`);
@@ -195,8 +211,9 @@ export function formatIntentRecord(doc: RecordResult): string {
           : c.bucket === "within-other"
             ? `within ${c.alsoWithin.map((w) => w.record).join(", ")}`
             : "nothing else accounts for it";
-    const runs = (c.runs ?? []).map((r) => `run ${r.id}${r.model ? ` (${r.model})` : ""}`).join(", ");
-    out.push(`${c.bucket.padEnd(12)} ${short(c.sha)} ${c.date.slice(0, 10)} ${c.subject}; ${why}${runs ? `; ${runs}` : ""}; ${c.files.join(", ") || c.entries.join(", ")}`);
+    const runs = (c.runs ?? []).map((r) => `run ${r.id}${r.model ? ` (${r.model})` : ""}${r.joinedBy?.includes("squash") && !r.joinedBy.some((j) => j !== "squash") ? " through the squash" : ""}`).join(", ");
+    const squash = c.squash ? `; squash of #${c.squash.pullRequest}${c.squash.followed ? `, ${c.squash.commits.length} original ${c.squash.commits.length === 1 ? "commit" : "commits"}` : ", not followed"}` : "";
+    out.push(`${c.bucket.padEnd(12)} ${short(c.sha)} ${c.date.slice(0, 10)} ${c.subject}; ${why}${runs ? `; ${runs}` : ""}${squash}; ${c.files.join(", ") || c.entries.join(", ")}`);
   }
   for (const x of doc.reasons) out.push(`reason    ${x.code}: ${x.message}`);
   const n = doc.counts;
@@ -206,7 +223,7 @@ export function formatIntentRecord(doc: RecordResult): string {
 
 async function runRecord(ctx: CommandContext, cwd: string, kinds: string[] | undefined): Promise<number> {
   const { args } = ctx;
-  const { doc, failed } = await intentRecord({ cwd, record: args.record!, at: args.at, kinds: kinds?.map((k) => resolve(k)) });
+  const { doc, failed } = await intentRecord({ cwd, record: args.record!, at: args.at, kinds: kinds?.map((k) => resolve(k)), followSquash: args.followSquash });
   if (args.json) console.log(JSON.stringify(doc, null, 2));
   if ("error" in doc) {
     console.error(formatError({ message: `${doc.error.code}: ${doc.error.message}`, hint: RECORD_USAGE }));
@@ -231,7 +248,7 @@ export async function runWorkspaceIntent(ctx: CommandContext, cwd: string): Prom
   }
   // No --kind: undefined, so the walk reads the kinds the declaration names (#2680).
   const kinds = args.kinds ?? (args.kind !== undefined ? [args.kind] : undefined);
-  const { doc, failed } = await intentGraph({ cwd, region: args.intent, at: args.at, kinds: kinds?.map((k) => resolve(k)) });
+  const { doc, failed } = await intentGraph({ cwd, region: args.intent, at: args.at, kinds: kinds?.map((k) => resolve(k)), followSquash: args.followSquash });
   if (args.json) console.log(JSON.stringify(doc, null, 2));
   if ("error" in doc) {
     console.error(formatError({ message: `${doc.error.code}: ${doc.error.message}`, hint: USAGE }));

@@ -106,6 +106,10 @@
                 "string",
                 "null"
               ]
+            },
+            "followSquash": {
+              "type": "boolean",
+              "description": "Whether --follow-squash was given (#3035). Added within version 1."
             }
           }
         },
@@ -216,7 +220,8 @@
                 "enum": [
                   "runs-no-ledger",
                   "runs-ledger-malformed",
-                  "kind-unreadable"
+                  "kind-unreadable",
+                  "squash-unfollowed"
                 ]
               },
               "message": {
@@ -500,10 +505,12 @@
                 "items": {
                   "enum": [
                     "record",
-                    "trailer"
+                    "trailer",
+                    "patch-id",
+                    "squash"
                   ]
                 },
-                "description": "record: the run's end lists it. trailer: it carries Chant-Run with the run's id, on HEAD's history."
+                "description": "record: the run's end lists it. trailer: it carries Chant-Run with the run's id, on HEAD's history. patch-id: neither holds, and the commit on HEAD's history has the git patch-id --stable of a commit the run's end lists, as after a rebase or a cherry-pick that dropped the trailer (#3036); never alongside the others, and its hunks are null. Added within version 1. squash: with --follow-squash, a squash merge on HEAD whose pull request's original commits join the run one of the other ways (#3035); via names them, and hunks is null. Added within version 1."
               },
               "hunks": {
                 "oneOf": [
@@ -519,6 +526,19 @@
                   }
                 ],
                 "description": "The hunks of the commit the run's end says it wrote, or null when it gives none, and the run is then taken to have made the whole commit (#3034). graph --intent uses them to name which of several runs sharing a commit wrote a line. Added within version 1, so an older document may lack it."
+              },
+              "recordedAs": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40,64}$",
+                "description": "For a patch-id join (#3036): the commit the run's end recorded with the same patch-id, which this one rewrites. Added within version 1."
+              },
+              "via": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40,64}$"
+                },
+                "description": "For a squash join (#3035): the pull request's original commits through which the commit joins the run, oldest first. Added within version 1."
               }
             }
           }

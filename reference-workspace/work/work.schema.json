@@ -370,6 +370,7 @@
                 "intent-decision-unimplemented",
                 "intent-work-blocked",
                 "intent-work-open-decided-code",
+                "intent-commit-join-conflict",
                 "change-uncovered",
                 "change-out-of-scope"
               ]

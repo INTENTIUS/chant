@@ -45,8 +45,8 @@ This page is generated from `docs/data/boundary.yaml`, which has one row for eac
 | record link kind | `RECORD_LINK_KINDS` in `record-assets.ts` | 2 | 0 | 0 |
 | intent node kind | the node kinds of `intent.schema.json` | 10 | 0 | 3 |
 | intent edge kind | the edge kinds of `intent.schema.json` | 12 | 0 | 3 |
-| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 194 | 0 | 0 |
-| finding code | the finding codes of `intent.schema.json` | 17 | 0 | 0 |
+| reason code | `REASONS` in `reason-codes.ts`, less the finding codes | 195 | 0 | 0 |
+| finding code | the finding codes of `intent.schema.json` | 18 | 0 | 0 |
 | WSP check | `WORKSPACE_CHECKS` in `checks.ts` and `checks/*.ts` | 50 | 0 | 0 |
 | hud view | the hud reader requirements H1 to H11 of #2650 | 0 | 11 | 0 |
 
@@ -294,6 +294,7 @@ Each row follows, in the order of the table above.
 | reason code | `intent-region-invalid` | chant | intent.schema.json | The region's path, or its line range, does not exist in the tree read. |
 | reason code | `intent-history-shallow` | chant | intent-record.schema.json, intent.schema.json | The repository is a shallow clone, so the region's history stops at the clone's boundary. |
 | reason code | `intent-plugin-failed` | chant | intent-record.schema.json, intent.schema.json | A kind file's commitJoins, which joins commits to units, contracts and evidence, failed for a commit. |
+| reason code | `squash-unfollowed` | chant | intent-record.schema.json, intent.schema.json, runs.schema.json | With --follow-squash, a squash commit's pull request ref is not in the clone and could not be fetched from origin, so its original commits are not followed; the read keeps its answer (#3035). |
 | reason code | `box-credential-declared` | chant | check.schema.json | A file in a box member's directory carries a literal secret: a credential's shape, or a literal where a credential goes. A variable or secret-manager reference is not one. |
 | reason code | `box-capability-unbrokered` | chant | check.schema.json | A capability in a member's box block names no broker, so the box would hold its credential. |
 | reason code | `box-isolation-collision` | chant | check.schema.json | Two boxes on one host resolve to the same port, state path or cookie name, or two ports in one box share an offset. |
@@ -381,6 +382,7 @@ Each row follows, in the order of the table above.
 | finding code | `intent-decision-unimplemented` | chant | intent.schema.json | A decided decision constrains the region, no work item that is not dropped implements it, and no commit falls in its window. |
 | finding code | `intent-work-blocked` | chant | intent.schema.json | A work item constraining the region has commits in its window while a work item it needs is not done. |
 | finding code | `intent-work-open-decided-code` | chant | intent.schema.json | Commits in the region are a decision's own work while the work item implementing that decision is still open. |
+| finding code | `intent-commit-join-conflict` | chant | intent.schema.json | A commit joined to an agent run by its Chant-Run trailer or the run's record has the patch-id of a commit another run recorded, so it is not joined to that run by content (#3036). |
 | WSP check | `WSP001` `declaration-unreadable` | chant | check.schema.json | The declaration can be read: it parses, matches the schema and keeps the placement rules. |
 | WSP check | `WSP002` `kinds-unreadable` | chant | check.schema.json | Every pinned package's kinds and principal classes can be read: it is installed at the pinned version, its ./workspace-kinds file is valid kind data, and its ./workspace-principals file is valid class data. |
 | WSP check | `WSP003` `kind-unknown` | chant | check.schema.json | Every member's kind is built in or supplied by a pinned package, and so is every principal class writeScope names (#3080). Unknown kinds and classes fail closed. |

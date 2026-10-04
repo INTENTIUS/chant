@@ -172,6 +172,7 @@ export const REASONS = {
   // The intent graph: part of the walk that can't be read. The document is still printed.
   "intent-history-shallow": "The repository is a shallow clone, so the region's history stops at the clone's boundary.",
   "intent-plugin-failed": "A kind file's commitJoins, which joins commits to units, contracts and evidence, failed for a commit.",
+  "squash-unfollowed": "A squash commit's pull request ref (refs/pull/<n>/head) is not in the clone and could not be fetched from origin, so its original commits are not followed; the read keeps its answer without them.",
   // The intent graph: findings, each a node in the graph.
   "intent-commit-undecided": "A commit changed the region when no decision constrained it at path granularity.",
   "intent-commit-bare": "A commit names no unit, carries no record through its Chant-Record or Chant-Lease trailer, and has no pull request and no decision covering the region at its time.",
@@ -190,6 +191,7 @@ export const REASONS = {
   "intent-decision-unimplemented": "A decided decision constrains the region, no work item that is not dropped implements it, and no commit falls in its window.",
   "intent-work-blocked": "A work item constraining the region has commits in its window while a work item it needs is not done.",
   "intent-work-open-decided-code": "Commits in the region are a decision's own work while the work item implementing that decision is still open.",
+  "intent-commit-join-conflict": "A commit joined to an agent run by its Chant-Run trailer or the run's record has the patch-id of a commit another run recorded, so it is not joined to that run by content.",
   // The intent graph's answer to why the region is like this (#3034): what it can't account for.
   "intent-why-no-decision": "No current decision governs the region at any granularity, and none is carried out by the commits or runs that made its current lines.",
   "intent-why-no-run": "None of the region's current lines was made by a commit an agent run is joined to.",
