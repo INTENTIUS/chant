@@ -37,6 +37,26 @@ export interface DeployContext {
    * `chant run --components`.
    */
   release?: ReleaseIdentity;
+  /**
+   * What this component's steps planned before its wave's gate was decided
+   * (#3049), keyed by {@link CapabilityPlan.member}. Set only by a gated-wave
+   * fan-out. A capability whose `run` finds its own member here applies that
+   * plan, the one the approver approved, instead of planning again.
+   */
+  plans?: Record<string, unknown>;
+}
+
+/**
+ * What a capability's `plan` produced (#3049): the member it planned, that
+ * plan's digest, and whatever `run` needs to apply exactly that plan.
+ */
+export interface CapabilityPlan {
+  /** The member's name in a wave's set digest. For a terraform-family step, the root. */
+  member: string;
+  /** The digest a gate on this member alone would bind (#2300). */
+  planDigest: string;
+  /** Handed back to `run` as `DeployContext.plans[member]`. Opaque to the runner. */
+  artifact?: unknown;
 }
 
 /**
@@ -71,6 +91,15 @@ export interface Capability<In = unknown, Out = unknown> {
    * never needs it (most of them) simply ignores the third parameter.
    */
   rollback?(ctx: DeployContext, input: In, output?: Out): Promise<void>;
+  /**
+   * Optional: say what `run` would change, without changing it (#3049). A
+   * gated-wave fan-out calls this for every step of every component in a
+   * wave, once the waves before it have applied, and binds the wave's gate
+   * to the set digest of the results. `run` then receives the result's
+   * `artifact` through `DeployContext.plans`. A capability without `plan`
+   * is covered by its component's composition digest instead.
+   */
+  plan?(ctx: DeployContext, input: In): Promise<CapabilityPlan>;
   /**
    * How this verb relates to rollback, for the COMP003 composition check.
    * Usually derivable and left unset: a capability with a `rollback` method is

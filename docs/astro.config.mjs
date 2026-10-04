@@ -130,6 +130,7 @@ export default defineConfig({
 								{ label: 'Reconciling Lifecycle', slug: 'guide/reconciling-lifecycle' },
 								{ label: 'Converging Lifecycle', slug: 'guide/converging-lifecycle' },
 								{ label: 'Operator', slug: 'guide/operator' },
+								{ label: 'Pinned Module Rollout', slug: 'guide/pinned-module-rollout' },
 							],
 						},
 						{

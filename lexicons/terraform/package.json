@@ -29,6 +29,11 @@
       "types": "./dist/op/activity-contracts.d.ts",
       "default": "./src/op/activity-contracts.ts"
     },
+    "./pin": {
+      "development": "./src/pin/index.ts",
+      "types": "./dist/pin/index.d.ts",
+      "default": "./src/pin/index.ts"
+    },
     "./lint/post-synth": {
       "development": "./src/lint/post-synth/index.ts",
       "types": "./dist/lint/post-synth/index.d.ts",
