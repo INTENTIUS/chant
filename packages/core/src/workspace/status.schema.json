@@ -5,6 +5,50 @@
   "description": "What `chant workspace status <env> --json` prints, version 1 of the read contract for releases across members (#2524 D15, D19, #2544). Readers ignore fields they do not know; a field is only ever added within a version. The reason and error codes are closed lists: a new code is a new contract version. Contract version 1 is written by chant 0.81.0 and newer; a reader that needs it refuses output whose `contract` it doesn't know. Every code is in the one closed list of `reason-codes.ts`. Each member's gates, read from its gate ledger on the same branch, are in the JSON only (#2674), and so is each member's box block, from the declaration (#2726), with its isolation resolved (#2727). So are its stewards, their Ops and each Op's last run (#2731), the work lease each Op's turn holds (#2748), and the open decision points a steward waits on (#2749).",
   "oneOf": [{ "$ref": "#/$defs/result" }, { "$ref": "#/$defs/failure" }],
   "$defs": {
+    "boxShip": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "gate", "env", "bookkeeping", "serving", "pending"],
+      "properties": {
+        "op": { "type": "string", "description": "The Op in the box member that commits the staged tree and releases it." },
+        "gate": { "type": "string", "description": "The gate the Op stops at for a person's approval." },
+        "env": { "type": "string", "description": "The environment whose release ledger, under the box member, the Op records each release in." },
+        "bookkeeping": { "type": "array", "items": { "type": "string" }, "description": "Path prefixes from the workspace root whose changes never count as waiting to ship." },
+        "serving": {
+          "description": "The latest release in env's ledger, the commit the box's site serves, or null when nothing has shipped or the ledger can't be read.",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["commit", "digest", "component", "at", "actor"],
+              "properties": {
+                "commit": { "type": "string" },
+                "digest": { "type": "string" },
+                "component": { "type": "string" },
+                "at": { "type": "string" },
+                "actor": { "type": ["string", "null"] }
+              }
+            }
+          ]
+        },
+        "pending": {
+          "description": "What is waiting to ship: the files that differ between serving.commit and the working tree, tracked or untracked and not ignored, bookkeeping left out. paths is sorted and lists at most 200. Null when nothing has shipped or the serving commit isn't in this checkout.",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["files", "paths"],
+              "properties": {
+                "files": { "type": "integer", "minimum": 0 },
+                "paths": { "type": "array", "items": { "type": "string" }, "maxItems": 200 }
+              }
+            }
+          ]
+        }
+      }
+    },
     "result": {
       "description": "The declaration was read. Exit code 0, even when some ledgers can't be read or members differ.",
       "type": "object",
@@ -552,6 +596,10 @@
         "publisher": {
           "description": "Added in contract 1 by #3165. The command that publishes the box's work, as the box block declares it (ws-088), or null when it names none. A surface offers a publish only when it is set, and asks for one with chant workspace box publish rather than running it.",
           "type": ["string", "null"]
+        },
+        "ship": {
+          "description": "Added in contract 1 by ws-100. How the box ships its staged work to its own site, with defaults filled in, the release its site serves and what is waiting to ship, or null when the box block declares no ship. A surface offers Ship only when it is set: it runs chant run <op> in the member's directory with the person in CHANT_SHIP_BY and approves <gate> as for any Op.",
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/boxShip" }]
         },
         "replicate": {
           "description": "Added in contract 1 by #3172. Where the box's work in progress is replicated (ws-085), with every default filled in, or null when the block declares no policy. At most one member's box has one; the top-level replication says how far each ref is from the remote.",
