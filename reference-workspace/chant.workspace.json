@@ -51,12 +51,14 @@
         "decision": ["new", "review"],
         "work": ["new", "amend", "review"],
         "lesson": ["new"],
-        "session": ["review"]
+        "session": ["review"],
+        "evidence": ["new"]
       }
     }
   },
   "agents": [
     { "name": "app", "member": "app" },
-    { "name": "design", "member": "design" }
+    { "name": "design", "member": "design" },
+    { "name": "factory", "members": ["app", "design"] }
   ]
 }

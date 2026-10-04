@@ -141,7 +141,7 @@ export const REASONS = {
   "write-lock-timeout": "Another write held the working tree's write lock for longer than the write waits (CHANT_WRITE_LOCK_WAIT_MS); the refusal names the holder. Run the write again.",
   "write-lock-not-held": "CHANT_WRITE_LOCK names a batch's lock token that no longer holds the working tree's write lock: the batch released it, or it expired and another writer took it.",
   // Write scope (#2548): a records write that is refused, and a commit check --changes reports, outside the writer's scope.
-  "write-scope-member": "The write is to a file, or to a record kind, of a member outside the writer's scope: an agent session writes only its own member, and writeScope.<class>.members leaves the member out.",
+  "write-scope-member": "The write is to a file, or to a record kind, of a member outside the writer's scope: an agent session writes only the members it is bound to, and writeScope.<class>.members leaves the member out.",
   "write-scope-kind": "The write is to a record kind writeScope.<class>.records does not list, with a verb it does not list for the kind, or deletes a record.",
   "write-scope-protected": "The write is to a file writeScope.<class>.protected lists, or one under a directory it lists, outside the top-level keys or JSON Pointers the entry's except allows (#3146, #3308).",
   "write-scope-class-unknown": "The declaration's writeScope at base names a principal class no pinned package supplies, and the writer is judged human, so it may be in that class; the write is refused until the package is installed at the pinned version or the entry removed (#3080).",

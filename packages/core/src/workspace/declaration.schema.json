@@ -133,7 +133,7 @@
     },
     "agents": {
       "type": "array",
-      "description": "The agent sessions the workspace declares (#2524 D20, #2548, ws-067). Each is bound to one member: it writes that member's files and the records of kinds that member or the workspace declares, as writeScope.agent allows. A session resumes from chant workspace agent <name> --json, which prints its member, its scope and the spec, read from the repository alone. A write names its session with the CHANT_AGENT environment variable, or a commit with a Chant-Agent trailer. Added in schema 1 by chant 0.101.0, so a declaration that uses it sets minReader to 0.101.0 or newer.",
+      "description": "The agent sessions the workspace declares (#2524 D20, #2548, ws-067, ws-101). Each is bound to the members it names, one with member or several with members: it writes the files of any of them and the records of kinds any of them or the workspace declares, as writeScope.agent allows. A session resumes from chant workspace agent <name> --json, which prints its member, its scope and the spec, read from the repository alone. A write names its session with the CHANT_AGENT environment variable, or a commit with a Chant-Agent trailer. Added in schema 1 by chant 0.101.0, so a declaration that uses it sets minReader to 0.101.0 or newer.",
       "items": {
         "$ref": "#/$defs/agent"
       }
@@ -1322,7 +1322,7 @@
     },
     "agentScope": {
       "type": "object",
-      "description": "The agent class's write scope. Its members are always its session's one member, so only the record kinds and the protected paths can be set.",
+      "description": "The agent class's write scope. Its members are always the members its session is bound to, so only the record kinds and the protected paths can be set.",
       "properties": {
         "protected": {
           "type": "array",
@@ -1343,10 +1343,27 @@
     },
     "agent": {
       "type": "object",
-      "description": "An agent session (#2548).",
+      "description": "An agent session (#2548). It names its members with exactly one of member and members (ws-101).",
       "required": [
-        "name",
-        "member"
+        "name"
+      ],
+      "oneOf": [
+        {
+          "properties": {
+            "member": true
+          },
+          "required": [
+            "member"
+          ]
+        },
+        {
+          "properties": {
+            "members": true
+          },
+          "required": [
+            "members"
+          ]
+        }
       ],
       "properties": {
         "name": {
@@ -1355,7 +1372,16 @@
         },
         "member": {
           "$ref": "#/$defs/name",
-          "description": "The one member the session is bound to. It must be a declared member, not an example group."
+          "description": "The one member the session is bound to. It must be a declared member, not an example group. A session bound to several names them with members instead."
+        },
+        "members": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/name"
+          },
+          "description": "The members the session is bound to, when it writes in more than one, such as a factory that builds an app and writes its evidence records in a design member (ws-101, arugula-salad/studio#402). Each must be a declared member, not an example group. The session may write the files of any of them and the records of kinds any of them or the workspace declares, and the write scope is judged against all of them together. Added in schema 1 by chant 0.105.0, so a declaration that uses it sets minReader to 0.105.0 or newer."
         },
         "principals": {
           "type": "array",

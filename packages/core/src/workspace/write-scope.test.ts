@@ -127,6 +127,9 @@ describe("the declaration's writeScope and agents (#2548)", () => {
     ["a principal two sessions list", declaration(SCOPE, [{ name: "a", member: "app", principals: ["p"] }, { name: "b", member: "design", principals: ["p"] }]), /already listed by agent a/],
     ["two sessions with one name", declaration(SCOPE, [{ name: "a", member: "app" }, { name: "a", member: "design" }]), /already used/],
     ["a members list on the agent class", declaration({ agent: { members: ["app"] } }), /members/],
+    ["an agent naming an undeclared member among several", declaration(SCOPE, [{ name: "a", members: ["app", "nowhere"] }]), /"nowhere", which is not a declared member/],
+    ["an agent with both member and members", declaration(SCOPE, [{ name: "a", member: "app", members: ["design"] }]), /oneOf|exactly one|must match/],
+    ["an agent with an empty members list", declaration(SCOPE, [{ name: "a", members: [] }]), /fewer than 1|minItems|members/],
     ["an unknown verb", declaration({ agent: { records: { decision: ["delete"] } } }), /must be equal to one of the allowed values|delete/],
   ])("refuse %s", (_, text, message) => {
     let err: unknown;
@@ -208,6 +211,19 @@ describe("judging a write", () => {
     const human = resolveWriter(decl, policy, { principal: "lex00" });
     expect(judgePath(decl, human, "design/spec.md")).toEqual({ ok: true });
     expect(judgeRecord(decl, human, screen, "delete")).toEqual({ ok: true });
+  });
+
+  test("an agent bound to several members writes in any of them, and its scope is their union (ws-101)", () => {
+    const d = parseDeclaration(declaration(SCOPE, [...AGENTS, { name: "factory", members: ["app", "design"] }]), "chant.workspace.json");
+    expect(d.agents.find((a) => a.name === "factory")).toMatchObject({ members: ["app", "design"], member: "app" });
+    expect(d.agents.find((a) => a.name === "app-agent")).toMatchObject({ members: ["app"], member: "app" });
+    const factory = resolveWriter(d, policy, { agent: "factory" });
+    expect(judgePath(d, factory, "app/server.mjs")).toEqual({ ok: true });
+    expect(judgePath(d, factory, "design/spec.md")).toEqual({ ok: true });
+    expect(judgePath(d, factory, "chant.workspace.json")).toMatchObject({ ok: false, code: "write-scope-member", message: expect.stringContaining("agent session factory, bound to members app, design,") });
+    expect(judgeRecord(d, factory, screen, "new")).toEqual({ ok: true });
+    expect(judgeRecord(d, factory, ws, "new")).toEqual({ ok: true });
+    expect(judgeRecord(d, factory, screen, "amend")).toMatchObject({ ok: false, code: "write-scope-kind" });
   });
 
   test("the declared name of a kind is a key for its records rule too", () => {
@@ -335,7 +351,8 @@ describe("chant workspace agent: what a session reloads from (#2548)", () => {
     agent.expectValid(doc);
     if ("error" in doc) throw new Error(doc.error.message);
     expect(doc.workspace).toEqual({ name: "studio", root: ".", scopeFrom: "base" });
-    expect(doc.agent).toEqual({ name: "design-agent", member: { name: "design", dir: "design", kind: "other" }, principals: [] });
+    const design = { name: "design", dir: "design", kind: "other" };
+    expect(doc.agent).toEqual({ name: "design-agent", member: design, members: [design], principals: [] });
     expect(doc.scope).toEqual({
       members: ["design"],
       records: [

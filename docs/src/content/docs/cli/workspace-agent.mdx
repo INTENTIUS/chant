@@ -12,12 +12,12 @@ chant workspace agent [<name>] [--json]
 
 ## Description
 
-An agent session is declared in the declaration's [`agents` list](/chant/reference/workspace-declaration/#write-scope-and-agent-sessions) and bound to one member ([#2548](https://github.com/INTENTIUS/chant/issues/2548), [#2524](https://github.com/INTENTIUS/chant/issues/2524) D20). `chant workspace agent <name>` prints what the session reloads from.
+An agent session is declared in the declaration's [`agents` list](/chant/reference/workspace-declaration/#write-scope-and-agent-sessions) and bound to one member or several ([#2548](https://github.com/INTENTIUS/chant/issues/2548), [#2524](https://github.com/INTENTIUS/chant/issues/2524) D20, [ws-101](https://github.com/INTENTIUS/chant/blob/main/docs/design/decisions/ws-101-an-agent-session-may-write-in-several-members.md)). `chant workspace agent <name>` prints what the session reloads from.
 
 | Part | What it holds |
 |---|---|
-| `agent` | The session, the member it is bound to and the principals it lists |
-| `scope` | The one member whose files the session writes. Each declared record kind in its reach is listed with the verbs (`new`, `amend`, `review`, `close`) the session may write the kind with. `protected` lists the paths `writeScope.agent.protected` keeps it from writing, each `{ path, except }` ([#3146](https://github.com/INTENTIUS/chant/issues/3146)) |
+| `agent` | The session, the members it is bound to and the principals it lists. `members` lists each in the order the declaration names them; `member` is the first, for readers written before a session could name several |
+| `scope` | The members whose files the session writes. Each declared record kind in its reach, the workspace's own and then each member's, is listed with the verbs (`new`, `amend`, `review`, `close`) the session may write the kind with. `protected` lists the paths `writeScope.agent.protected` keeps it from writing, each `{ path, except }` ([#3146](https://github.com/INTENTIUS/chant/issues/3146)) |
 | `spec` | The `spec` block [`chant workspace records --current --json`](/chant/cli/workspace-records/#the-spec) prints: the current records of the kinds with `spec: true`, each with the files it pins |
 | `reload` | The two reads that rebuild the session's context |
 

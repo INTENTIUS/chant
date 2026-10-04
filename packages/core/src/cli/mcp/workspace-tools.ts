@@ -174,7 +174,7 @@ export const workspaceReadTools: ToolDefinition[] = [
   {
     name: "workspace-agent",
     description:
-      "An agent session and what it reloads from (#2548): chant workspace agent <name> --json (agent.schema.json). The one member it is bound to, the record kinds and verbs its write scope allows, and the spec records --current prints, read from the repository alone. Without name, this server's session (CHANT_AGENT). Returns the document unchanged.",
+      "An agent session and what it reloads from (#2548): chant workspace agent <name> --json (agent.schema.json). The members it is bound to, the record kinds and verbs its write scope allows, and the spec records --current prints, read from the repository alone. Without name, this server's session (CHANT_AGENT). Returns the document unchanged.",
     inputSchema: {
       type: "object",
       properties: {

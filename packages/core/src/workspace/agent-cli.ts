@@ -3,7 +3,8 @@
  * an agent session reloads from, read from the repository alone.
  *
  * A session is declared in the declaration's `agents` list and bound to one
- * member. This prints the session, its member, its write scope (the files
+ * member or several (ws-101). This prints the session, its members, its
+ * write scope (the files
  * and the record kinds, with their verbs, it may write) and the spec: the
  * `spec` block `chant workspace records --current --json` prints (#2546). An
  * agent that resumes needs nothing else: no memory of an earlier run, no
@@ -45,6 +46,13 @@ export interface AgentKindScope {
   verbs: WriteVerb[];
 }
 
+/** A member an agent session is bound to. */
+export interface AgentMember {
+  name: string;
+  dir: string;
+  kind: string;
+}
+
 interface Head {
   $schema: string;
   contract: number;
@@ -54,11 +62,18 @@ interface Head {
 export type AgentDocument =
   | (Head & {
       workspace: { name: string; root: string; scopeFrom: "base" | "working-tree" };
-      agent: { name: string; member: { name: string; dir: string; kind: string }; principals: string[] };
+      agent: {
+        name: string;
+        /** The first member the session is bound to, kept for readers of a one-member session. */
+        member: AgentMember;
+        /** Every member the session is bound to, in the order it names them (ws-101). */
+        members: AgentMember[];
+        principals: string[];
+      };
       scope: {
-        /** The one member whose files the session writes. */
+        /** The members whose files the session writes. */
         members: string[];
-        /** Every declared kind in reach: the workspace's own and the member's. */
+        /** Every declared kind in reach: the workspace's own, then each member's. */
         records: AgentKindScope[];
         /** The paths writeScope.agent.protected keeps the session from writing, with the JSON keys each still allows (#3146). */
         protected: { path: string; except: string[] }[];
@@ -81,13 +96,14 @@ export async function agentSession(q: { cwd: string; name: string }): Promise<Ag
     const decl = source.declaration;
     const writer = resolveWriter(decl, source.policy, { agent: q.name }, source.classes);
     const agent = writer.agent!;
-    const member = decl.members.find((m) => m.name === agent.member)!;
+    const bound = agent.members.map((name) => decl.members.find((m) => m.name === name)!);
+    const members: AgentMember[] = bound.map((m) => ({ name: m.name, dir: m.dir, kind: m.kind }));
     const scope = scopeOf(decl, writer)!;
     const rules = scope.records;
     // The spec query, over every declared kind in the working tree.
     const set = await queryDeclaredRecords(declaredKindFiles(q.cwd), { cwd: q.cwd, current: true });
     const loadedName = new Map(set.kinds.map((k) => [k.declared.path, "error" in k ? null : k.kind.name]));
-    const records: AgentKindScope[] = [...decl.records, ...member.records].map((d) => {
+    const records: AgentKindScope[] = [...decl.records, ...bound.flatMap((m) => m.records)].map((d) => {
       const kind = loadedName.get(d.path) ?? null;
       const names = [kind, d.name].filter((n): n is string => n !== null);
       const verbs = rules === null ? [...WRITE_VERBS] : WRITE_VERBS.filter((v) => names.some((n) => (rules[n] ?? []).includes(v)));
@@ -96,8 +112,8 @@ export async function agentSession(q: { cwd: string; name: string }): Promise<Ag
     return {
       ...head,
       workspace: { name: decl.name, root: source.root ?? ".", scopeFrom: source.from },
-      agent: { name: agent.name, member: { name: member.name, dir: member.dir, kind: member.kind }, principals: agent.principals },
-      scope: { members: [member.name], records, protected: scope.protected.map((p) => ({ path: p.path, except: [...p.except] })) },
+      agent: { name: agent.name, member: members[0], members, principals: agent.principals },
+      scope: { members: members.map((m) => m.name), records, protected: scope.protected.map((p) => ({ path: p.path, except: [...p.except] })) },
       spec: set.spec ?? { kinds: [], records: [] },
       reload: [`chant workspace agent ${agent.name} --json`, "chant workspace records --current --json"],
     };
@@ -127,7 +143,8 @@ export async function runWorkspaceAgent(ctx: CommandContext): Promise<number> {
   }
   if (args.json || args.format === "json") return 0;
   const out: string[] = [];
-  out.push(`agent     ${doc.agent.name}, bound to member ${doc.agent.member.name} (${doc.agent.member.dir}), scope read from ${doc.workspace.scopeFrom}`);
+  const bound = doc.agent.members.map((m) => `${m.name} (${m.dir})`).join(", ");
+  out.push(`agent     ${doc.agent.name}, bound to ${doc.agent.members.length === 1 ? "member" : "members"} ${bound}, scope read from ${doc.workspace.scopeFrom}`);
   for (const r of doc.scope.records) out.push(`records   ${r.name ?? r.kind ?? r.path} (${r.path}): ${r.verbs.length > 0 ? r.verbs.join(", ") : "not writable"}`);
   for (const p of doc.scope.protected) out.push(`protected ${p.path}${p.except.length > 0 ? ` (except ${p.except.join(", ")})` : ""}`);
   out.push(`spec      ${doc.spec.records.length} current records of ${doc.spec.kinds.length} spec kinds`);
