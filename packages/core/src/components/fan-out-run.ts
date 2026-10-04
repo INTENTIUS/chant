@@ -66,6 +66,13 @@ export interface FanOutRunOptions {
   progress?: FanOutProgress;
   /** The release each component deploys (#3061), as `InterpretRunOptions.releaseIdentity`. */
   releaseIdentity?: (component: string) => ReleaseIdentity | undefined;
+  /**
+   * Called as each component settles, with the outputs it exposed, before the
+   * rest of its wave finishes. A caller that records progress here keeps what
+   * already applied when the process is killed mid-fan-out, which waiting for
+   * the returned result cannot do.
+   */
+  onComponentSettled?: (result: DriverComponentResult, outputs: Record<string, unknown> | undefined) => void;
 }
 
 export interface FanOutRunResult {
@@ -173,6 +180,7 @@ export async function runFanOut(
           component: name,
           status: result.status === "fail" ? "failed" : result.status,
         });
+        options.onComponentSettled?.(result, componentOutputs[name]);
         return result;
       }),
     );
