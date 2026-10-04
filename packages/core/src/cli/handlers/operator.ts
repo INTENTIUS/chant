@@ -1104,6 +1104,16 @@ export async function recordGateApproval(
   const origin = opts.origin ?? currentGateOrigin();
   const ledger = await readGateLedger(opName);
   const standingForOrigin = latestPendingGate(pendingFor(ledger.pending), gate);
+
+  // chant#3485: a gate that is never resolved over MCP or ACP says so on its
+  // own record, or on its Op's config. No flag overrides this one.
+  if (isModelAuthored(origin) && (standingForOrigin?.neverOverMcp || ops.get(opName)?.config.neverOverMcp)) {
+    console.error(formatError({
+      message: `Gate "${gate}" on "${opName}" is never resolved over ${origin === "acp" ? "ACP" : "MCP"}`,
+      hint: `Approvals belong to people: \`chant approve ${opName} ${gate}\` at a shell.`,
+    }));
+    return { ok: false };
+  }
   const refusal = sameOriginRefusal(standingForOrigin?.origin, origin);
   if (refusal && !opts.allowSameOrigin) {
     console.error(formatError({
