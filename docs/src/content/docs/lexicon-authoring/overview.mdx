@@ -98,6 +98,7 @@ best-known readers.
 | `completionProvider()` | `CompletionItem[]` | LSP completions for resource/property names |
 | `hoverProvider()` | `HoverInfo \| undefined` | LSP hover information for resource types |
 | `codeActionProvider()` | `CodeAction[]` | LSP code actions. No shipped lexicon uses this |
+| `symbolResolvers()` | `SymbolResolver[]` | Resolve `path#symbol` in this lexicon's languages for `chant workspace graph --intent`, such as a table in a `.sql` file, for a file in a member that configures the lexicon ([#3313](https://github.com/INTENTIUS/chant/issues/3313)). See [Symbol resolvers](/chant/lexicon-authoring/lsp-mcp/#symbol-resolvers) |
 
 **Import and migration**
 
