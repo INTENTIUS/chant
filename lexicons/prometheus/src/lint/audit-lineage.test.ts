@@ -36,7 +36,7 @@ describe("prometheus audit lineage (#2916, #3136)", () => {
   });
 
   test("rules no upstream tool checks carry no credit", () => {
-    for (const id of ["PROM001", "PROM003", "PROM202", "PROM207", "PROM216", "PROM219", "PROM220", "PROM221", "PROM222", "PROM223", "PROM224"]) {
+    for (const id of ["PROM001", "PROM003", "PROM202", "PROM207", "PROM216", "PROM219", "PROM220", "PROM221", "PROM222", "PROM223", "PROM224", "PROM301"]) {
       expect(prometheusAuditCatalog[id].lineage, id).toBeUndefined();
     }
   });

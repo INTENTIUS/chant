@@ -13,7 +13,8 @@
  * --changes` applies to the commit later), refuses a bare `--by` name under
  * `identity.attribution: "identified"` (ws-080), prints one JSON document
  * (`box-listing-write.schema.json`) and never commits: the caller commits, as
- * after the records writes.
+ * after the records writes. Like them it holds the working tree's write lock
+ * (#3173, ws-089) from reading the declaration to writing it.
  */
 
 import { createHash } from "node:crypto";
@@ -28,6 +29,7 @@ import type { ReasonCode } from "./reason-codes";
 import { workingTree } from "./tree";
 import { locateWorkspace } from "./which-chant";
 import { judgePath, resolveWriter, scopeSource, unknownClassVerdict, WriteScopeError } from "./write-scope";
+import { withWriteLockSync, WriteLockError, WRITE_LOCK_CODES } from "./write-lock";
 
 /** The version of the document this write prints. */
 export const BOX_LISTING_CONTRACT_VERSION = 1;
@@ -48,6 +50,7 @@ export const BOX_LISTING_ERROR_CODES = [
   "write-scope-class-unknown",
   "agent-unknown",
   ...IDENTITY_CODES,
+  ...WRITE_LOCK_CODES,
 ] as const satisfies readonly ReasonCode[];
 export type BoxListingErrorCode = (typeof BOX_LISTING_ERROR_CODES)[number];
 
@@ -170,13 +173,14 @@ function writeAtomically(file: string, bytes: Uint8Array | string): void {
 export function boxListingSet(req: BoxListingWriteRequest): BoxListingWriteDocument {
   const head = { $schema: BOX_LISTING_WRITE_SCHEMA_ID, contract: BOX_LISTING_CONTRACT_VERSION, chant: readerVersion() };
   try {
-    return write(req, head);
+    return withWriteLockSync(req.cwd, { verb: "box listing set", by: req.by ?? null, agent: req.agent || null }, req.dryRun, () => write(req, head));
   } catch (err) {
     const fail = (code: BoxListingErrorCode, message: string): BoxListingWriteDocument => ({ ...head, member: req.member || null, error: { code, message } });
     if (err instanceof ListingWriteError) return fail(err.code, err.message);
     // A path write is never judged write-scope-kind, which is for record kinds.
     if (err instanceof WriteScopeError) return fail(err.code as BoxListingErrorCode, err.message);
     if (err instanceof IdentityError) return fail(err.code, err.message);
+    if (err instanceof WriteLockError) return fail(err.code, err.message);
     if (err instanceof WorkspaceReadError) return fail(err.code as BoxListingErrorCode, err.describe());
     throw err;
   }

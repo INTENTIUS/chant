@@ -13,6 +13,7 @@
 import type { PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
 import type { SerializerResult } from "@intentius/chant/serializer";
 import { loadAll } from "js-yaml";
+import { buildCollectorConfigs, collectorMetricIssues, collectorMetrics } from "../../collector-metrics";
 import { looksLikeAlertmanagerConfig, looksLikeRuleFile, type AlertmanagerConfig, type RuleFileConfig } from "../../model";
 import {
   validateAlertmanagerConfig,
@@ -84,6 +85,38 @@ export function alertmanagerDiagnostics(ctx: PostSynthContext, code: PrometheusI
 /** PROM212 across every rule file in the output. Opt-in: the lexicon's `recommended` lint preset leaves it out (see ../../plugin.ts). */
 export function runbookDiagnostics(ctx: PostSynthContext): PostSynthDiagnostic[] {
   return prometheusDocs(ctx).ruleFiles.flatMap(({ source, config }) => validateRunbookUrls(config).map((i) => toDiagnostic(i, source)));
+}
+
+/**
+ * PROM301: every rule expression in the output against the metrics the
+ * build's collector configs emit. Silent when the build has none.
+ */
+export function collectorMetricDiagnostics(ctx: PostSynthContext): PostSynthDiagnostic[] {
+  const { ruleFiles } = prometheusDocs(ctx);
+  if (ruleFiles.length === 0) return [];
+  const emitted = collectorMetrics(buildCollectorConfigs(ctx));
+  if (!emitted) return [];
+  const out: PostSynthDiagnostic[] = [];
+  for (const { source, config } of ruleFiles) {
+    for (const group of Array.isArray(config?.groups) ? config.groups : []) {
+      for (const rule of Array.isArray(group?.rules) ? group.rules : []) {
+        const r = rule as unknown as Record<string, unknown>;
+        if (typeof r.expr !== "string") continue;
+        const subject = `${group.name}/${typeof r.record === "string" ? r.record : String(r.alert ?? "")}`;
+        for (const issue of collectorMetricIssues(r.expr, emitted)) {
+          const message = `rule ${subject} ${issue.message}`;
+          out.push({
+            checkId: "PROM301",
+            severity: "warning",
+            message: source && source !== "prometheus" ? `${source}: ${message}` : message,
+            entity: subject,
+            lexicon: "prometheus",
+          });
+        }
+      }
+    }
+  }
+  return out;
 }
 
 /** PROM202: joins every rule file in the output against every Alertmanager config in it. Silent when either is absent. */

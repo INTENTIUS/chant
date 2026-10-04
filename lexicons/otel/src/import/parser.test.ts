@@ -110,6 +110,17 @@ exporters:
     expect(pins).toEqual([]);
   });
 
+  test("a k8s semconv line at another version is read and warned about", () => {
+    const { semconv, warnings } = parseCollectorYaml(
+      ["# chant: semconv k8s github.com/open-telemetry/semantic-conventions@v1.21.0 (k8sattributes)", "receivers: {}"].join("\n"),
+    );
+    expect(semconv).toEqual([{ namespace: "k8s", pin: { source: "github.com/open-telemetry/semantic-conventions", version: "v1.21.0" } }]);
+    expect(warnings).toEqual([
+      "the config was built against k8s semantic conventions github.com/open-telemetry/semantic-conventions@v1.21.0; " +
+        "this lexicon follows github.com/open-telemetry/semantic-conventions@v1.27.0, which the rebuilt config will name",
+    ]);
+  });
+
   test("names what it cannot carry", () => {
     const { config, warnings } = parseCollectorYaml(
       [
