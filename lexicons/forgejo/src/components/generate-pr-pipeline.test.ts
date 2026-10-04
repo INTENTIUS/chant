@@ -38,11 +38,11 @@ describe("the Forgejo pull-request workflow", () => {
     expect(result.yaml).toBe(readFileSync(GOLDEN, "utf-8"));
   });
 
-  test("its commands talk to Forgejo, on Forgejo's runner, with no permissions block", () => {
+  test("its commands talk to Forgejo, on Forgejo's runner, with the job permissions kept", () => {
     expect(result.yaml).toContain("--forge forgejo");
     expect(result.yaml).not.toContain("--forge github");
     expect(result.yaml).toContain("runs-on: docker");
-    expect(result.yaml).not.toMatch(/^\s+permissions:/m);
+    expect(result.yaml).toMatch(/^\s+permissions:/m);
   });
 
   test.skipIf(!hasActionlint())("passes actionlint, less the runner label and actions by URL", () => {
