@@ -798,6 +798,14 @@ Commands:
                         (--json)          its target, stage (planned/emitted/bridged/
                                           applied) and path. Read-only.
 
+Change sets:
+  change-set summary <file>  The grouped plan summary of a change-set
+                        [--format text|json|markdown]  document: members taking
+                        [--limit <chars>]  the same change grouped, every destroy,
+                                          replacement, failure and hole named.
+                                          markdown fits an MR/PR note of --limit
+                                          characters (default 65536). Read-only.
+
 Ops:
   run <name>            Run an Op on the resolved runtime (--on; local by default)
                         [--work <id>] [--holder <name>]: the work item an Op
@@ -1621,6 +1629,8 @@ export const commandRegistry: CommandDef[] = [
   // Status read over a tree of carve manifests (#2038): the contract a
   // renderer replaces its own walk-and-guess discovery with. Read-only.
   { name: "carve status", handler: runCarveStatus },
+  // #3188 — the grouped plan summary of a change-set document. Reads one file; imported on first use.
+  { name: "change-set summary", runsNoConfig: true, handler: async (ctx) => (await import("./handlers/change-set")).runChangeSetSummary(ctx) },
   { name: "init", handler: runInit, runsNoConfig: true },
   { name: "init lexicon", handler: runInitLexicon },
 { name: "update", handler: runUpdate },
