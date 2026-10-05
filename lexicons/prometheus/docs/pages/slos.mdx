@@ -58,12 +58,25 @@ For `orderAck` above:
 
 | Series | Expression |
 |---|---|
-| `slo:sli_error:ratio_rate5m` ... `slo:sli_error:ratio_rate3d` | `1 - (good / total)` with the window filled in, one per window the alerts read: `5m`, `30m`, `1h`, `2h`, `6h`, `1d`, `3d` |
+| `slo:sli_error:ratio_rate5m` ... `slo:sli_error:ratio_rate3d` | `1 - (good / total)` (or `errors / total`) with the window filled in, and `total` kept only where it is above 0, one per window the alerts read: `5m`, `30m`, `1h`, `2h`, `6h`, `1d`, `3d` |
 | `slo:sli_error:ratio_rate28d` | `avg_over_time` of the shortest window's ratio over the SLO window |
 | `slo:objective:ratio` | `vector(0.995)` |
 | `slo:error_budget:remaining` | `1 - (ratio_rate28d / 0.005)`: 1 is untouched, 0 is spent, below 0 is overspent |
 
 Every series carries `slo="order-acknowledged"`. The SLO window's ratio averages the shortest recorded ratio rather than taking a rate over 28 days of raw counters on every evaluation, as Sloth does; it weighs each evaluation equally, so it drifts from the exact ratio when traffic swings widely across the window. With alerting off there is no shorter ratio, and the window's ratio is read from the SLI directly.
+
+### Sparse SLIs
+
+An SLI that sees no events in a window, such as a job that runs a few times a day, would divide 0 by 0. Every ratio keeps `total` only where it is above 0, so an idle window records no ratio at all. This matters for the SLO window: `avg_over_time` over 28 days stays NaN for all 28 days once one NaN falls inside it, and the error budget would show nothing. With idle windows left out, the average covers only the windows that had events and the budget stays finite. Each numerator falls back to `0 * total`, so a window whose events were all good records 0, and one where all were bad records 1, where the numerator series is absent.
+
+The SLI expressions are yours, and `rate()` and `increase()` need two samples in the range. A counter that first appears inside the window has one, so its first event counts as nothing and reads as 0/0. For a sparse SLI, count events so that a series' first sample counts: the increase over the window where the series existed before it, and the series' own value where it did not.
+
+```ts
+const events = (sel: string) =>
+  `sum(clamp_min(${sel} - ${sel} offset {{window}}, 0) or (${sel} unless ${sel} offset {{window}}))`;
+```
+
+`clamp_min(..., 0)` counts none of a counter that went down after a restart. Use `events(...)` for `errors` (or `good`) and `total`; the lexicon adds the `> 0` filter itself.
 
 Then one alert per window pair, all named `ErrorBudgetBurn` and told apart by labels:
 

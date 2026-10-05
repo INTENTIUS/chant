@@ -9,6 +9,7 @@ import { ruleGroupConfig } from "../rules";
 import { ruleFileYaml } from "../build";
 import { validateRuleFile, validateSeverityRouting } from "../validate-config";
 import { hasTool, promtoolCheckRules } from "../tools";
+import { RuleEvaluator } from "../rule-eval";
 import type { AlertingRuleConfig, RecordingRuleConfig, RuleFileConfig } from "../model";
 
 const PROMTOOL = process.env.PROMTOOL ?? "promtool";
@@ -179,9 +180,48 @@ describe("the rules an Slo builds", () => {
     expect(alertsOf(direct)).toEqual([]);
     const rec = recordings(direct);
     expect(rec.map((r) => r.record)).toEqual(["slo:sli_error:ratio_rate28d", "slo:objective:ratio", "slo:error_budget:remaining"]);
-    expect(rec[0].expr).toBe("(sum(rate(e_total[28d])))\n/\n(sum(rate(t_total[28d])))");
+    expect(rec[0].expr).toBe(
+      "((sum(rate(e_total[28d]))) or 0 * ((sum(rate(t_total[28d]))) > 0))\n/\n((sum(rate(t_total[28d]))) > 0)",
+    );
     expect(sloMetrics(direct).group).toBe("slo-direct");
     expect(sloMetrics(direct).burnRates).toEqual([]);
+  });
+
+  test("a window with no events records nothing, so a sparse SLI keeps a finite budget", () => {
+    const sparseProps: SloProps = {
+      name: "sparse",
+      objective: 0.9,
+      window: "1h",
+      sli: { errors: "sum(increase(e_total[{{window}}]))", total: "sum(increase(t_total[{{window}}]))" },
+      alerting: { page: { burnRates: [{ long: "30m", short: "5m", factor: 2 }] }, ticket: false },
+    };
+    const sparse = Slo(sparseProps);
+    const ratio = recordings(sparse)[0].expr;
+    expect(ratio).toBe("((sum(increase(e_total[5m]))) or 0 * ((sum(increase(t_total[5m]))) > 0))\n/\n((sum(increase(t_total[5m]))) > 0)");
+    const good = Slo({ ...sparseProps, name: "sparse-good", sli: { good: "sum(increase(g_total[{{window}}]))", total: "sum(increase(t_total[{{window}}]))" } });
+    expect(recordings(good)[0].expr).toBe(
+      "1 - (\n  ((sum(increase(g_total[5m]))) or 0 * ((sum(increase(t_total[5m]))) > 0))\n  /\n  ((sum(increase(t_total[5m]))) > 0)\n)",
+    );
+
+    // Counters that sit still except for two events at minute 20, one of them bad.
+    const ev = new RuleEvaluator([ruleGroupConfig(sparse.rules)]);
+    const MIN = 60_000;
+    let t = 0;
+    let e = 0;
+    for (let minute = 0; minute <= 50; minute += 5) {
+      if (minute === 20) {
+        t = 2;
+        e = 1;
+      }
+      ev.add({ __name__: "e_total" }, minute * MIN, e);
+      ev.add({ __name__: "t_total" }, minute * MIN, t);
+      ev.step(minute * MIN);
+    }
+    const at = (name: string) => ev.query(`${name}{slo="sparse"}`, 50 * MIN);
+    expect(at("slo:sli_error:ratio_rate5m")).toEqual([]); // minutes 30 to 50 saw no events
+    const budget = at("slo:error_budget:remaining");
+    expect(budget).toHaveLength(1);
+    expect(Number.isFinite(budget[0].value)).toBe(true);
   });
 
   test.skipIf(!hasPromtool)("the same Slo renders inside the rule file promtool accepts", () => {

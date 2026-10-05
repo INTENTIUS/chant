@@ -14,6 +14,16 @@
  *   pair's factor: the long window keeps a short spike from paging, the
  *   short window stops the alert soon after the burn does.
  *
+ * An SLI that sees no events in a window (a sparse one: a job that runs a few
+ * times a day) records no ratio for that window, where good/total would be
+ * 0/0 and record NaN. The SLO window's ratio is an average of the shortest
+ * recorded ratio, and one NaN in a range keeps `avg_over_time` NaN for the
+ * whole window, so the idle windows are left out and the average covers only
+ * the windows that had events. The SLI expressions are the caller's: `rate()`
+ * over a counter that first appears inside the range sees one sample and
+ * counts nothing, so a sparse SLI should count events as an increase that
+ * includes a series' first sample (see the SLOs page).
+ *
  * Both kinds share a group because Prometheus evaluates a group's rules in
  * order: the alerts read the ratios recorded in the same evaluation. In
  * separate groups they would read the previous evaluation's, and with an
@@ -379,10 +389,18 @@ function metricsOf(r: Resolved): SloMetrics {
 function recordingRules(r: Resolved, m: SloMetrics): RecordingRule[] {
   const { props } = r;
   const sli = props.sli as { good?: string; errors?: string; total: string };
-  const ratio = (w: string) =>
-    sli.errors !== undefined
-      ? `(${withWindow(sli.errors, w)})\n/\n(${withWindow(sli.total, w)})`
-      : `1 - (\n  (${withWindow(sli.good!, w)})\n  /\n  (${withWindow(sli.total, w)})\n)`;
+  // A window with no events records nothing: `total > 0` drops the idle
+  // window's 0/0 NaN, and the SLO window's average then covers only the
+  // windows that had events. The numerator falls back to `0 * total`, so a
+  // window whose events were all good (or all bad) still records 0 (or 1)
+  // where its own series is absent.
+  const ratio = (w: string) => {
+    const total = `(${withWindow(sli.total, w)}) > 0`;
+    const some = (expr: string) => `((${expr}) or 0 * (${total}))`;
+    return sli.errors !== undefined
+      ? `${some(withWindow(sli.errors, w))}\n/\n(${total})`
+      : `1 - (\n  ${some(withWindow(sli.good!, w))}\n  /\n  (${total})\n)`;
+  };
   const labels = { slo: props.name };
   const rules: RecordingRule[] = [];
   const alertWindows = m.windows.slice(0, -1);
