@@ -78,6 +78,11 @@ export const grafanaResources = GrafanaOperatorResources({
 | `grafana-library-panel-<uid>`, a `GrafanaLibraryPanel` per library panel the dashboards place | `uid`, `json` (the panel model with its `name` and `uid`), and `folderRef` naming its folder's resource |
 | `grafana-dashboard-<uid>`, a `GrafanaDashboard` per dashboard | `json`, the text of `dashboardJson(dashboard)`, and `folderRef` naming its folder's resource |
 | `grafana-datasource-<uid>`, a `GrafanaDatasource` per datasource | `uid`, and the provisioning entry as `datasource` |
+| `grafana-rule-group-<folder>-<group>`, a `GrafanaAlertRuleGroup` per rule group | `name`, `interval`, `rules`, and `folderRef` naming the `GrafanaFolder` whose title is the group's `folder` |
+| `grafana-contact-point-<name>`, a `GrafanaContactPoint` per contact point | `name`, and `receivers` with their settings and `valuesFrom` |
+| `grafana-notification-policy`, a `GrafanaNotificationPolicy` | `route`, the policy tree with its nested routes inline |
+| `grafana-mute-timing-<name>`, a `GrafanaMuteTiming` per mute timing | `name` and `time_intervals` |
+| `grafana-notification-template-<name>`, a `GrafanaNotificationTemplate` per template | `name` and `template` |
 
 `instanceSelector` picks the `Grafana` resources that take these, usually by the labels on your `Grafana`. The operator requires one and a selector that matches nothing delivers nothing, so it has no default. `name`, `labels`, `allowCrossNamespaceImport` and `resyncPeriod` go on every resource.
 
@@ -86,6 +91,10 @@ Pick the delivery by what runs your Grafana: export `GrafanaConfigMaps` for the 
 Each library panel is its own `GrafanaLibraryPanel`, written once however many dashboards place it, because a `GrafanaDashboard`'s `__elements` does not create it. It goes in the folder its `LibraryPanel` names, else in the first dashboard's folder, as with the API applier.
 
 Folders are always `GrafanaFolder` resources with the uids the build gives them, so a nested `folder` or a `Folder` with `parent` keeps its place and its uid. Dashboard providers are not written; the operator does not use them.
+
+Alerting goes the same way. A rule group goes in the folder whose title is its `folder`; when no folder has that title a `GrafanaFolder` is written for it. A rule's `dashboardUid` and `panelId` become the `__dashboardUid__` and `__panelId__` annotations the operator reads, `missing_series_evals_to_resolve` and `notification_settings` take the CRD's camel-case names, and `for`, `noDataState` and `execErrState` get Grafana's defaults when unset because the CRD requires them. The policy's nested routes stay inline in `spec.route`, with Alertmanager `matchers` strings turned into `object_matchers`. A `GrafanaNotificationPolicyRoute` is not written.
+
+A contact point setting that is wholly `${NAME}` (or `$__env{NAME}`) is taken out of the receiver's `settings` and read from key `NAME` of `secretName` through that receiver's `valuesFrom`, whose `targetPath` is the dotted path inside the settings (`tlsConfig.clientKey`). A variable inside longer text, or `$__file{...}`, is an error, and so is a reference without `secretName`.
 
 The operator has no environment to expand, so a datasource field written as `${NAME}` or `$__env{NAME}` (in `url`, `user`, `basicAuthUser`, `database` or `secureJsonData`) reads key `NAME` of the Secret named by `secretName`, through `spec.valuesFrom`. Without `secretName` such a field is an error, and so is `$__file{...}`. `withCredentials`, `version` and `orgId` are not in the operator's datasource and are left out.
 

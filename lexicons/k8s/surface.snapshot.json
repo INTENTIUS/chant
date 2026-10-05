@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-03T20:09:24.260Z",
+  "generatedAt": "2026-10-05T18:22:56.759Z",
   "entries": {
     "APIGroup": {
       "kind": "resource",
@@ -1772,6 +1772,50 @@
       "kind": "property",
       "resourceType": "K8s::Flux::GitRepository.verify"
     },
+    "GrafanaAlertRuleGroup": {
+      "kind": "resource",
+      "resourceType": "K8s::Grafana::GrafanaAlertRuleGroup",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "GrafanaAlertRuleGroup_InstanceSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaAlertRuleGroup.instanceSelector"
+    },
+    "GrafanaAlertRuleGroup_Rule": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaAlertRuleGroup.rules"
+    },
+    "GrafanaAlertRuleGroup_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaAlertRuleGroup.status"
+    },
+    "GrafanaContactPoint": {
+      "kind": "resource",
+      "resourceType": "K8s::Grafana::GrafanaContactPoint",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "GrafanaContactPoint_InstanceSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaContactPoint.instanceSelector"
+    },
+    "GrafanaContactPoint_Receiver": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaContactPoint.receivers"
+    },
+    "GrafanaContactPoint_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaContactPoint.status"
+    },
+    "GrafanaContactPoint_ValuesFrom": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaContactPoint.valuesFrom"
+    },
     "GrafanaDashboard": {
       "kind": "resource",
       "resourceType": "K8s::Grafana::GrafanaDashboard",
@@ -1927,6 +1971,82 @@
     "GrafanaLibraryPanel_UrlAuthorization": {
       "kind": "property",
       "resourceType": "K8s::Grafana::GrafanaLibraryPanel.urlAuthorization"
+    },
+    "GrafanaMuteTiming": {
+      "kind": "resource",
+      "resourceType": "K8s::Grafana::GrafanaMuteTiming",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "GrafanaMuteTiming_InstanceSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaMuteTiming.instanceSelector"
+    },
+    "GrafanaMuteTiming_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaMuteTiming.status"
+    },
+    "GrafanaMuteTiming_TimeInterval": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaMuteTiming.time_intervals"
+    },
+    "GrafanaNotificationPolicy": {
+      "kind": "resource",
+      "resourceType": "K8s::Grafana::GrafanaNotificationPolicy",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "GrafanaNotificationPolicyRoute": {
+      "kind": "resource",
+      "resourceType": "K8s::Grafana::GrafanaNotificationPolicyRoute",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "GrafanaNotificationPolicyRoute_Matcher": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaNotificationPolicyRoute.matchers"
+    },
+    "GrafanaNotificationPolicyRoute_RouteSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaNotificationPolicyRoute.routeSelector"
+    },
+    "GrafanaNotificationPolicyRoute_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaNotificationPolicyRoute.status"
+    },
+    "GrafanaNotificationPolicy_InstanceSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaNotificationPolicy.instanceSelector"
+    },
+    "GrafanaNotificationPolicy_Route": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaNotificationPolicy.route"
+    },
+    "GrafanaNotificationPolicy_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaNotificationPolicy.status"
+    },
+    "GrafanaNotificationTemplate": {
+      "kind": "resource",
+      "resourceType": "K8s::Grafana::GrafanaNotificationTemplate",
+      "props": [
+        "metadata:false",
+        "spec:true"
+      ]
+    },
+    "GrafanaNotificationTemplate_InstanceSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaNotificationTemplate.instanceSelector"
+    },
+    "GrafanaNotificationTemplate_Status": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaNotificationTemplate.status"
     },
     "Group": {
       "kind": "property",
@@ -2847,6 +2967,10 @@
     "MasterUserSecretKMSKeyRef": {
       "kind": "property",
       "resourceType": "K8s::Rds::DBInstance.masterUserSecretKMSKeyRef"
+    },
+    "Matcher": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaNotificationPolicyRoute.matchers"
     },
     "Metric": {
       "kind": "property",
@@ -4100,6 +4224,10 @@
       "kind": "property",
       "resourceType": "K8s::Traefik::ServersTransport.rootCAs"
     },
+    "RouteSelector": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaNotificationPolicyRoute.routeSelector"
+    },
     "RuntimeClass": {
       "kind": "resource",
       "resourceType": "K8s::Node::RuntimeClass",
@@ -4716,6 +4844,10 @@
     "Test": {
       "kind": "property",
       "resourceType": "K8s::Flux::HelmRelease.test"
+    },
+    "TimeInterval": {
+      "kind": "property",
+      "resourceType": "K8s::Grafana::GrafanaMuteTiming.time_intervals"
     },
     "TlsConfig": {
       "kind": "property",
