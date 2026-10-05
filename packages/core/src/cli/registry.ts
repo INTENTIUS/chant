@@ -282,6 +282,9 @@ export interface ParsedArgs {
    * the identical command finishes what an interrupted attempt left, because
    * the plan is narrowed by this file before the gate is decided and the
    * digest is carried rather than recomputed, so the approval still stands.
+   * `chant components pr-apply --resume <file>` (#3464) keeps the same record
+   * with the approved change set in it, and finishes an apply that failed
+   * partway under that approval.
    */
   resume?: string;
   /** `chant audit --tier merge-worthy|all` */

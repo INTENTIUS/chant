@@ -30,6 +30,29 @@
 import { dirname } from "node:path";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { readWaveRecords, type WaveRecord } from "../gated-waves";
+import type { ChangeSetDocument } from "../change-set";
+import type { PrMember } from "../pr-loop";
+
+/** What a pull request's apply approved, kept so a re-run can finish it (#3464). */
+export interface PrApplyRecord {
+  /** The gate's op and name: `pr-<n>` and `pr-apply` unless the pipeline names another. */
+  op: string;
+  gate: string;
+  /** The commit the apply ran on. A record from another commit does not carry. */
+  head: string;
+  /** The change-set digest the approval stands for. */
+  digest: string;
+  approvedBy: string[];
+  /** Every member of the approved set, as planned. */
+  members: PrMember[];
+  /** The approved change-set document. Its entries are what a re-planned member is checked against. */
+  changeSet: ChangeSetDocument;
+  /**
+   * The outputs the approved plans read. The members left are planned
+   * against them again, so an unchanged member plans to the same digest.
+   */
+  planOutputs: Record<string, Record<string, unknown>>;
+}
 
 export interface FanOutAttempt {
   digest: string;
@@ -44,10 +67,38 @@ export interface FanOutAttempt {
    * root, choudoufu's wave resume file.
    */
   carried?: Record<string, unknown>;
+  /** A pull request's apply only (#3464). */
+  prApply?: PrApplyRecord;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+const isStringArray = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.every((v) => typeof v === "string");
+
+/** The `prApply` entry, when it has every field a resume needs. Anything else reads as no entry. */
+function readPrApplyRecord(value: unknown): PrApplyRecord | undefined {
+  if (!isRecord(value)) return undefined;
+  const { op, gate, head, digest, approvedBy, members, changeSet, planOutputs } = value;
+  if (typeof op !== "string" || typeof gate !== "string" || typeof head !== "string" || typeof digest !== "string") return undefined;
+  if (!isStringArray(approvedBy) || !Array.isArray(members) || !members.every(isRecord)) return undefined;
+  if (!isRecord(changeSet) || changeSet.digest !== digest || !Array.isArray(changeSet.members) || !Array.isArray(changeSet.entries)) return undefined;
+  const outputs: Record<string, Record<string, unknown>> = {};
+  if (isRecord(planOutputs)) {
+    for (const [name, v] of Object.entries(planOutputs)) if (isRecord(v)) outputs[name] = v;
+  }
+  return {
+    op,
+    gate,
+    head,
+    digest,
+    approvedBy,
+    members: members as unknown as PrMember[],
+    changeSet: changeSet as unknown as ChangeSetDocument,
+    planOutputs: outputs,
+  };
+}
 
 /** Read an attempt record, or `undefined` when there is none yet. Throws on a file that is not JSON. */
 export function readFanOutAttempt(path: string): FanOutAttempt | undefined {
@@ -58,6 +109,7 @@ export function readFanOutAttempt(path: string): FanOutAttempt | undefined {
     for (const [name, value] of Object.entries(parsed.outputs)) if (isRecord(value)) outputs[name] = value;
   }
   const waves = readWaveRecords(parsed.waves);
+  const prApply = readPrApplyRecord(parsed.prApply);
   return {
     digest: typeof parsed.digest === "string" ? parsed.digest : "",
     completed: Array.isArray(parsed.completed) ? parsed.completed.filter((n): n is string => typeof n === "string") : [],
@@ -65,6 +117,7 @@ export function readFanOutAttempt(path: string): FanOutAttempt | undefined {
     outputs,
     ...(waves.length > 0 ? { waves } : {}),
     ...(isRecord(parsed.carried) && Object.keys(parsed.carried).length > 0 ? { carried: parsed.carried } : {}),
+    ...(prApply ? { prApply } : {}),
   };
 }
 

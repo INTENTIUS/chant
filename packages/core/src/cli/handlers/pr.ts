@@ -5,7 +5,7 @@
  * ```
  * chant components pr-plan  --base <ref> --pr <n> --env <env> [--forge github|gitlab|forgejo]
  * chant approve pr-<n> pr-apply --plan <digest> --approver github:<login> --sign
- * chant components pr-apply --base <ref> --env <env> [--pr <n>] [--forge <kind>] [--require-review]
+ * chant components pr-apply --base <ref> --env <env> [--pr <n>] [--forge <kind>] [--require-review] [--resume <file>]
  * ```
  *
  * Both measure the change from the merge base of `--base` and `HEAD`, select
@@ -17,6 +17,15 @@
  * the merged commit, decides the gate against the digest it gets, and
  * applies only when an approval stands for that digest. A moved plan stops
  * it with both digests named and nothing applied (exit 3).
+ *
+ * `--resume <file>` (#3464) finishes an apply that failed partway, the way
+ * `components fan-out --resume` does (#2417, #3049). The apply writes the
+ * attempt record as each component settles: the change set the gate
+ * approved and the components that applied. Repeated on the same commit
+ * with the same record, it plans only what is left, checks each member
+ * against the approved set (`resumePrSet`) and, when all are covered and the
+ * approval still stands, applies the rest without a fresh approval. When
+ * they are not covered it says why and runs as it would without a record.
  *
  * Every run writes `pr-plan.json` or `pr-apply.json` (`pr-report.schema.json`),
  * `change-set.json` and `pr-note.md` under `--output` (default `.chant/pr`). *
@@ -40,8 +49,11 @@ import {
   planPrSet,
   prReport,
   readOnlyLedger,
+  resumePrSet,
   type PrPlanSet,
 } from "../../components/pr-run";
+import { readFanOutAttempt, writeFanOutAttempt, type FanOutAttempt, type PrApplyRecord } from "../../components/fan-out-record";
+import { samePlanDigest } from "../../lifecycle/plan-digest";
 import { gitGateLedgerPort } from "../../op/gate";
 import {
   describePlanChanged,
@@ -85,7 +97,7 @@ interface Prepared {
   plan: FanOutPlan;
   signal: ComponentChangeSignal;
   registry: CapabilityRegistry;
-  set: PrPlanSet;
+  seededOutputs: Record<string, Record<string, unknown>>;
 }
 
 const fail = (message: string, hint?: string): number => {
@@ -93,7 +105,7 @@ const fail = (message: string, hint?: string): number => {
   return 1;
 };
 
-/** Everything both stages share: the change, the derivation and the plan of every member. */
+/** Everything both stages share: the change and the derivation. Each stage plans the members itself. */
 async function prepare(ctx: CommandContext, stage: "plan" | "apply"): Promise<Prepared | number> {
   const { args } = ctx;
   const projectPath = resolve(".");
@@ -170,7 +182,6 @@ async function prepare(ctx: CommandContext, stage: "plan" | "apply"): Promise<Pr
 
   const env = args.env ?? "local";
   const registry = await fanOutRegistry(projectPath, config);
-  const set = await planPrSet({ components: derived.components, plan: derived.plan, registry, env, seededOutputs });
   return {
     config,
     env,
@@ -183,7 +194,7 @@ async function prepare(ctx: CommandContext, stage: "plan" | "apply"): Promise<Pr
     plan: derived.plan,
     signal: derived.signal,
     registry,
-    set,
+    seededOutputs,
   };
 }
 
@@ -211,6 +222,11 @@ async function checkMember(projectPath: string, names: string[]): Promise<string
     };
   }
   return name;
+}
+
+/** Plan every member the derivation selects. */
+function planAll(p: Prepared): Promise<PrPlanSet> {
+  return planPrSet({ components: p.components, plan: p.plan, registry: p.registry, env: p.env, seededOutputs: p.seededOutputs });
 }
 
 /** Write the report, the change set and the note; print the note's path. */
@@ -272,17 +288,18 @@ export async function runComponentsPrPlan(ctx: CommandContext): Promise<number> 
   }
   const p = await prepare(ctx, "plan");
   if (typeof p === "number") return p;
+  const set = await planAll(p);
   const op = prOp(ctx.args.pr, p.member);
 
   let approval: PrApproval = { status: "pending" };
   if (p.plan.order.length > 0) {
     try {
-      approval = approvalOf(await decidePrGate(readOnlyLedger(gitGateLedgerPort()), { op, gate: p.gate, digest: p.set.doc.digest }));
+      approval = approvalOf(await decidePrGate(readOnlyLedger(gitGateLedgerPort()), { op, gate: p.gate, digest: set.doc.digest }));
     } catch (err) {
       console.error(formatWarning({ message: `could not read the gate ledger, so the approval reads as pending: ${err instanceof Error ? err.message : String(err)}` }));
     }
   }
-  const status = p.plan.order.length === 0 ? "nothing" : p.set.failed ? "plan-failed" : "planned";
+  const status = p.plan.order.length === 0 ? "nothing" : set.failed ? "plan-failed" : "planned";
   const report = prReport({
     stage: "plan",
     pr: ctx.args.pr,
@@ -294,7 +311,7 @@ export async function runComponentsPrPlan(ctx: CommandContext): Promise<number> 
     gate: p.gate,
     plan: p.plan,
     signal: p.signal,
-    set: p.set,
+    set,
     approval,
     status,
   });
@@ -325,7 +342,23 @@ export async function runComponentsPrApply(ctx: CommandContext): Promise<number>
     }
   }
   const op = pr === null ? "pr-unknown" : prOp(pr, p.member);
-  const base = { stage: "apply" as const, pr, env: p.env, ...(p.member ? { member: p.member } : {}), base: p.base, head: p.head, op, gate: p.gate, plan: p.plan, signal: p.signal, set: p.set };
+
+  // `--resume` (#3464): an earlier attempt at this change on this commit
+  // applied part of an approved set. When the members left are covered by
+  // it and its approval still stands, finish it under that approval.
+  const resumePath = args.resume ? resolve(args.resume) : undefined;
+  let attempt: FanOutAttempt | undefined;
+  if (resumePath) {
+    try {
+      attempt = readFanOutAttempt(resumePath);
+    } catch (err) {
+      return fail(`--resume: could not read "${args.resume}": ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  const resumed = pr !== null && p.plan.order.length > 0 && attempt ? await tryResume(p, attempt, args.resume!, op) : undefined;
+
+  const set = resumed?.set ?? (await planAll(p));
+  const base = { stage: "apply" as const, pr, env: p.env, ...(p.member ? { member: p.member } : {}), base: p.base, head: p.head, op, gate: p.gate, plan: p.plan, signal: p.signal, set };
 
   const stop = async (report: PrReport, code: number): Promise<number> => {
     await finish(ctx, p, report);
@@ -350,7 +383,7 @@ export async function runComponentsPrApply(ctx: CommandContext): Promise<number>
       GATED_EXIT_CODE,
     );
   }
-  if (p.set.failed) {
+  if (set.failed) {
     return stop(
       prReport({
         ...base,
@@ -362,23 +395,28 @@ export async function runComponentsPrApply(ctx: CommandContext): Promise<number>
     );
   }
 
-  const check = await decidePrGate(gitGateLedgerPort(), {
-    op,
-    gate: p.gate,
-    digest: p.set.doc.digest,
-    description: `pull request #${pr}: ${p.plan.order.join(", ")}`,
-  });
-  const approval = approvalOf(check);
-  if (!check.satisfied) {
-    const partial = { ...base, approval, status: "refused" as const };
-    const report = approval.status === "changed"
-      ? prReport({ ...partial, refusal: "plan-changed", message: describePlanChanged({ op, gate: p.gate, digest: p.set.doc.digest, approval }) })
-      : prReport({
-          ...partial,
-          refusal: "not-approved",
-          message: `No approval stands for this plan, so nothing was applied. Approve it: ${prApproveCommand({ op, gate: p.gate, digest: p.set.doc.digest })}; then run the apply again.`,
-        });
-    return stop(report, GATED_EXIT_CODE);
+  let approval: PrApproval;
+  if (resumed) {
+    approval = resumed.approval;
+  } else {
+    const check = await decidePrGate(gitGateLedgerPort(), {
+      op,
+      gate: p.gate,
+      digest: set.doc.digest,
+      description: `pull request #${pr}: ${p.plan.order.join(", ")}`,
+    });
+    approval = approvalOf(check);
+    if (!check.satisfied) {
+      const partial = { ...base, approval, status: "refused" as const };
+      const report = approval.status === "changed"
+        ? prReport({ ...partial, refusal: "plan-changed", message: describePlanChanged({ op, gate: p.gate, digest: set.doc.digest, approval }) })
+        : prReport({
+            ...partial,
+            refusal: "not-approved",
+            message: `No approval stands for this plan, so nothing was applied. Approve it: ${prApproveCommand({ op, gate: p.gate, digest: set.doc.digest })}; then run the apply again.`,
+          });
+      return stop(report, GATED_EXIT_CODE);
+    }
   }
 
   if (args.requireReview && p.forge) {
@@ -406,10 +444,115 @@ export async function runComponentsPrApply(ctx: CommandContext): Promise<number>
     }
   }
 
-  const applied = await applyPrSet({ components: p.components, plan: p.plan, registry: p.registry, env: p.env, set: p.set });
+  // The record is written before the first component runs and again as each
+  // one settles, so a run killed partway still knows what applied.
+  const prior = resumed ? { completed: resumed.completed, outputs: resumed.outputs } : { completed: [], outputs: {} };
+  const completedSoFar = new Set<string>(prior.completed);
+  const failedSoFar: string[] = [];
+  const outputsSoFar: Record<string, Record<string, unknown>> = { ...prior.outputs };
+  const record: PrApplyRecord = {
+    op,
+    gate: p.gate,
+    head: p.head,
+    digest: set.doc.digest,
+    approvedBy: approval.approvedBy ?? [],
+    members: set.members,
+    changeSet: set.doc,
+    planOutputs: set.outputs,
+  };
+  const recordAttempt = (): void => {
+    if (!resumePath) return;
+    writeFanOutAttempt(resumePath, {
+      digest: p.plan.digest,
+      completed: [...completedSoFar].sort(),
+      failed: [...failedSoFar].sort(),
+      outputs: outputsSoFar,
+      prApply: record,
+    });
+  };
+  recordAttempt();
+
+  const applied = await applyPrSet({
+    components: p.components,
+    plan: resumed?.plan ?? p.plan,
+    registry: p.registry,
+    env: p.env,
+    set,
+    ...(resumed ? { resumed: prior } : {}),
+    ...(resumePath
+      ? {
+          onComponentSettled: (settled, outputs) => {
+            if (settled.status === "ok") {
+              completedSoFar.add(settled.component);
+              if (outputs) outputsSoFar[settled.component] = outputs;
+            } else if (settled.status === "fail") {
+              failedSoFar.push(settled.component);
+            }
+            recordAttempt();
+          },
+        }
+      : {}),
+  });
+  recordAttempt();
   await recordAutoReleasesForRun(applied.run.results, p.env, `${op}-${Date.now()}`, resolveAutoReleaseDisabled(p.config, args.noReleaseRecord));
-  const report = prReport({ ...base, approval, status: applied.status, members: applied.members });
+  const report = prReport({
+    ...base,
+    approval,
+    status: applied.status,
+    members: applied.members,
+    ...(resumed ? { resumed: resumed.completed } : {}),
+  });
   const code = await stop(report, applied.status === "applied" ? 0 : 1);
   if (applied.status === "applied") console.error(formatSuccess(`applied the plan ${report.digest} approved by ${(approval.approvedBy ?? []).join(", ")}`));
   return code;
+}
+
+interface Resumed {
+  plan: FanOutPlan;
+  set: PrPlanSet;
+  approval: PrApproval;
+  completed: string[];
+  outputs: Record<string, Record<string, unknown>>;
+}
+
+/**
+ * Whether `attempt` finishes here (#3464). It carries only when it was made
+ * by an apply of this pull request's gate, on this commit, for this
+ * derivation; when its approval still stands; and when every member left is
+ * covered by the approved set. Otherwise it says why on stderr and the apply
+ * runs as it would with no record.
+ */
+async function tryResume(p: Prepared, attempt: FanOutAttempt, file: string, op: string): Promise<Resumed | undefined> {
+  const skip = (why: string): undefined => {
+    console.error(formatWarning({ message: `--resume: "${file}" does not carry: ${why}`, hint: "Every member is planned again, and the plan needs an approval of its own." }));
+    return undefined;
+  };
+  const record = attempt.prApply;
+  if (!record) return skip("it was not written by pr-apply");
+  if (record.op !== op || record.gate !== p.gate) return skip(`it records ${record.op} ${record.gate}, not ${op} ${p.gate}`);
+  if (record.head !== p.head) return skip(`it records an apply of ${record.head.slice(0, 12)}, not ${p.head.slice(0, 12)}`);
+  if (!samePlanDigest(attempt.digest, p.plan.digest)) return skip("the change selects other components than it did");
+  if (attempt.completed.length === 0) return undefined;
+
+  let check;
+  try {
+    check = await decidePrGate(readOnlyLedger(gitGateLedgerPort()), { op, gate: p.gate, digest: record.digest });
+  } catch (err) {
+    return skip(`could not read the gate ledger: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (!check.satisfied) return skip(`no approval stands for the plan it applied (${record.digest}) any more`);
+
+  const outputs = Object.fromEntries(Object.entries(attempt.outputs).filter(([name]) => attempt.completed.includes(name)));
+  const resumed = await resumePrSet({
+    components: p.components,
+    plan: p.plan,
+    registry: p.registry,
+    env: p.env,
+    seededOutputs: p.seededOutputs,
+    record,
+    completed: attempt.completed,
+  });
+  if (!resumed.ok) return skip(`what is left is not what was approved. ${resumed.reasons.join("; ")}`);
+  console.error(formatInfo(`resume  : ${attempt.completed.join(", ")} applied in an earlier attempt; applying ${resumed.plan.order.join(", ") || "nothing more"} under the approval of ${record.digest}`));
+  return { plan: resumed.plan, set: resumed.set, approval: approvalOf(check), completed: attempt.completed, outputs };
 }

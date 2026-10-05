@@ -141,7 +141,7 @@ Both jobs keep `.chant/pr` as an artifact:
 
 A dependent is planned against the outputs its upstream has now. When the change moves an output a dependent reads, the dependent applies the plan it was approved with, which carries the old value. The apply marks it `inputsMoved`, and the next run plans it against the new value. To carry a moved output through every dependent in one rollout, use [gated waves](/chant/cli/components/#one-gate-per-wave), which plan each wave after the one before it applied.
 
-An apply that fails partway leaves the members it applied in place. Re-running it plans those members again, which changes the digest, so it needs a fresh approval.
+An apply that fails partway leaves the members it applied in place. Run with [`--resume <file>`](/chant/cli/components/#finishing-an-apply-that-failed-partway), `pr-apply` finishes it on the same commit under the same approval, applying only what is left. The generated pipeline does not pass `--resume` yet, and a re-run job starts without the earlier job's files, so a re-run of the generated apply job plans every member again, which changes the digest and needs a fresh approval.
 
 ## Inside a workspace member
 

@@ -41,6 +41,14 @@
       "description": "Why an apply refused. plan-changed: an approval stands for another digest, so the plan changed after review."
     },
     "message": { "type": "string", "description": "The refusal or failure as printed." },
+    "resumed": {
+      "type": "object",
+      "required": ["applied"],
+      "description": "Apply stage with --resume (#3464): an earlier attempt at the approved set failed partway. This run applied the rest under the same approval.",
+      "properties": {
+        "applied": { "type": "array", "items": { "type": "string" }, "description": "Components the earlier attempt applied, which this run did not run again." }
+      }
+    },
     "approval": {
       "type": "object",
       "required": ["status"],

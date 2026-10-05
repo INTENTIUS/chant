@@ -23,7 +23,7 @@ chant components pr-plan --base <ref> --pr <n> [--env <env>] [--gate <name>]
                                 [--output <dir>] [--json]
 chant components pr-apply --base <ref> [--pr <n>] [--env <env>] [--gate <name>]
                                 [--forge github|gitlab|forgejo] [--require-review]
-                                [--member <name>] [--output <dir>] [--json]
+                                [--member <name>] [--resume <file>] [--output <dir>] [--json]
 chant components promote --from <env> --to <env>
                                 [--component <name> [--digest <sha256:...>]
                                  | --digest <component>=<sha256:...> ...]
@@ -323,6 +323,18 @@ Each run writes three files under `--output` (default `.chant/pr`). `pr-plan.jso
 
 Pass `--forge` to post the note on the pull request and set the `chant/plan` or `chant/apply` commit status. The note carries a marker per environment, so every push and the apply update one note. When `pr-apply` has no `--pr`, it asks the forge which pull request merged `HEAD`. A forge that refuses a call is a warning, and the outcome stands.
 
+#### Finishing an apply that failed partway
+
+`pr-apply --resume <file>` keeps the same attempt record `fan-out --resume` keeps, with the change set the gate approved in it. The apply writes it before the first member runs and again as each component settles. When a member fails, repeat the same command on the same commit with the same file:
+
+```bash
+chant components pr-apply --base "$BEFORE_SHA" --pr 12 --env prod --resume .chant/pr/attempt.json
+```
+
+The re-run skips the components that applied and plans the rest against the outputs the approved plans read. It then checks each member it plans against the approved change set. A member is covered when it plans to the approved digest, or when every change it plans is one the approved plan made: the same address and action (or the create or delete left of an approved replace), and each attribute written to the approved value or to a value the approved plan knew only after apply. A sensitive value is covered only where the approved plan wrote it as sensitive too. When every member is covered and the approval still stands for the approved digest, the rest applies with no fresh approval, and the report's `resumed.applied` and the note name what the earlier attempt applied.
+
+The record carries nothing when it was written for another pull request, gate or commit, or for a change that selects other components, or when the approval no longer stands, or when a member left over plans a change the approved plan did not make. Then `pr-apply` prints why and runs as it would with no record: it plans every member, and the new digest needs an approval of its own.
+
 | Flag | Meaning |
 |---|---|
 | `--base <ref>` | The commit the change is measured from. On a pull request, the target branch's commit. After a merge, the commit the push replaced. Required. |
@@ -332,6 +344,7 @@ Pass `--forge` to post the note on the pull request and set the `chant/plan` or 
 | `--forge <kind>` | `github`, `gitlab` or `forgejo`. Post the note and the status, with the client read from the CI job's environment. |
 | `--require-review` | `pr-apply` only. Count an approval only from someone with a standing approving review on the pull request, named the way the forge names them (`github:<login>`, `gitlab:<login>`, `forgejo@<host>:<login>`). Needs `--forge`. |
 | `--member <name>` | A workspace member's loop, run in the member's directory. The gate is recorded under `pr-<n>-<member>`, the note and the statuses carry the member's name, and the report gains `member`. The name must be the member that owns the current directory. The member's generated pipeline passes it. |
+| `--resume <file>` | `pr-apply` only. Write the attempt record here, and finish an earlier attempt it records under the same approval. See above. |
 | `--output <dir>` | Where the report, the change set and the note go. Defaults to `.chant/pr`. |
 | `--seed-outputs <file>` | Outputs to use instead of reading them, as on `fan-out`. |
 | `--json` | Print the report on stdout. |
