@@ -13,6 +13,7 @@ import { detectTemplate } from "./detect";
 import { GrafanaParser } from "./import/parser";
 import { GrafanaGenerator } from "./import/generator";
 import { dashboardImporter } from "./import/embedded";
+import { operatorImporter } from "./import/operator";
 import { grafanaSkills } from "./skill-defs";
 import { DEFAULT_TEMPLATE, K8S_PODS_TEMPLATE, RED_TEMPLATE, SLO_TEMPLATE } from "./init-templates";
 import { BUILTIN_CATALOG } from "./catalog";
@@ -162,7 +163,7 @@ export const grafanaPlugin: LexiconPlugin = {
   },
 
   embeddedImporters() {
-    return [dashboardImporter];
+    return [dashboardImporter, operatorImporter];
   },
 
   completionProvider(ctx: CompletionContext) {

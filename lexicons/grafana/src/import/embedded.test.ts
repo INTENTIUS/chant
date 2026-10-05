@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import { embeddedDocument, type EmbeddedContent } from "@intentius/chant/import/embedded";
 import { grafanaPlugin } from "../plugin";
 import { dashboardImporter } from "./embedded";
+import { operatorImporter } from "./operator";
 
 const DASHBOARD = JSON.stringify({
   title: "API",
@@ -22,7 +23,7 @@ const site = (text: string): EmbeddedContent => ({
 
 describe("dashboard JSON embedded in another lexicon's resource (#2962)", () => {
   test("the plugin registers the importer", () => {
-    expect(grafanaPlugin.embeddedImporters?.()).toEqual([dashboardImporter]);
+    expect(grafanaPlugin.embeddedImporters?.()).toEqual([dashboardImporter, operatorImporter]);
   });
 
   test("matches classic and v2 dashboard JSON; not other text", () => {
