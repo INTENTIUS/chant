@@ -8,7 +8,8 @@
  *
  * The plans are the real fixtures the adapter tests pin: chant's `lifecycle
  * plan --json` against floci (`packages/core/src/__fixtures__/change-set`),
- * choudoufu 0.16.0's `show -json` and the warden's reconcile change set. The
+ * choudoufu 0.16.0's `show -json` and the change sets github-warden's
+ * `reconcile --plan-json` wrote (`warden.plan.json`, github-warden#66). The
  * two planner activities that need a cloud are stand-ins returning what the
  * real ones return for those plans. `composeChangeSet` and
  * `readChangeSetPart` are the real activities. The scenario is #2300's on a

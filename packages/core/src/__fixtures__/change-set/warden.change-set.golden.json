@@ -1,7 +1,7 @@
 {
   "$schema": "https://intentius.io/chant/schemas/workspace/change-set/v1/change-set.schema.json",
   "contract": 1,
-  "digest": "jcs1-sha256:c3f30feb61c9337a7ddbeaa752cf1ff67ec8efefd7d705516e4bcca6840a8a50",
+  "digest": "jcs1-sha256:f0a27adaabb4196d730ef797304be0637d9812210796800bc176d2c960f1ca81",
   "members": [
     {
       "member": "warden",
@@ -9,7 +9,7 @@
       "planner": "warden",
       "scope": "acme",
       "status": "planned",
-      "planDigest": "jcs1-sha256:f86dc7f2ad51397bba9a6259ea7c1d98070ee1d1d2e61f11e1e753fa8c006d86",
+      "planDigest": "jcs1-sha256:0ae7141f1c5543916126f5162bd2ce3c9d3f240155b6b9965886280a9fc56e62",
       "holes": []
     }
   ],

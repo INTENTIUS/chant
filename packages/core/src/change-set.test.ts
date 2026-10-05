@@ -10,10 +10,11 @@
  * update. The update, delete, effect and hole mappings are pinned on typed
  * entries below.
  *
- * `warden.plan.json` is the reconcile change set chant's own
- * `diffCollection` produces for a warden's teams cycle: one create, one
- * update and one owned delete. github-warden prints its plan as text today,
- * so this is the shape it would write.
+ * `warden.plan.json` is what github-warden's `reconcile --plan-json` wrote
+ * (github-warden#66) for a teams cycle in an org that declares `owned: true`:
+ * one create, one update and one owned delete, as a JSON array of reconcile
+ * change sets. It was produced by warden's own `runReconcile` and
+ * `teamsCycle` against a stubbed live state, not built here.
  *
  * Goldens regenerate with `UPDATE_GOLDEN=1`.
  */
@@ -140,10 +141,8 @@ describe("lifecyclePlanPart", () => {
 });
 
 describe("reconcilePlanPart", () => {
-  test("a warden's teams cycle, as chant's reconcile primitives plan it", () => {
-    const plan = wardenPlan();
-    golden("warden.plan.json", plan);
-    const part = reconcilePlanPart({ member: "warden", plan: read(DIR, "warden.plan.json") as ReconcileChangeSet });
+  test("a warden's teams cycle, as `reconcile --plan-json` wrote it", () => {
+    const part = reconcilePlanPart({ member: "warden", plan: read(DIR, "warden.plan.json") as ReconcileChangeSet[] });
     expect(part.entries.map((e) => [e.address, e.action, e.disruption ?? null])).toEqual([
       ["team.contractors", "delete", "destroy"],
       ["team.platform", "update", "unknown"],

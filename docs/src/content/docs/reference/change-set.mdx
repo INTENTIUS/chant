@@ -94,7 +94,7 @@ Entries and the summary are derived from the same plans and are not hashed again
 | terraform, tofu, choudoufu | `terraformChangeSetPart` in `@intentius/chant-lexicon-terraform/change-set` | `show -json` of a saved plan |
 | choudoufu set plan | `choudoufuSetPlanParts` in the same module | `choudoufu live-plan-set -json`, one part per root |
 | chant | `lifecyclePlanPart` in `@intentius/chant/change-set` | `chant lifecycle plan <env> --json` |
-| warden | `reconcilePlanPart` in the same module | the reconcile `ChangeSet` from `@intentius/chant/reconcile`, or an array of them |
+| warden | `reconcilePlanPart` in the same module | the reconcile `ChangeSet` from `@intentius/chant/reconcile`, or an array of them; `github-warden reconcile --plan-json <file>` writes that array |
 
 Each adapter returns a part: `{ member, entries }`. `composeChangeSet(parts)` joins them. It refuses two parts for one member.
 
