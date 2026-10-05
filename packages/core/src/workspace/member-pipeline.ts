@@ -134,11 +134,14 @@ export function memberPipelineDir(provider: string): string | undefined {
  * The default path of a member's component pipeline for one environment,
  * relative to the repository root: `chant-<member>-<env>.yml` in the forge's
  * workflow directory, or `.gitlab/ci/chant-<member>-<env>.gitlab-ci.yml`.
+ * A pull-request pipeline (`kind` `"pr"`, #3465) is `chant-pr-<member>-<env>`,
+ * so it sits beside the member's deploy pipeline for the same environment.
  */
-export function memberPipelineFile(provider: string, member: string, env: string): string | undefined {
+export function memberPipelineFile(provider: string, member: string, env: string, kind: "components" | "pr" = "components"): string | undefined {
   const dir = PIPELINE_DIRS[provider];
   if (dir === undefined) return undefined;
-  return `${dir}/chant-${member}-${env}${provider === "gitlab" ? ".gitlab-ci.yml" : ".yml"}`;
+  const stem = kind === "pr" ? `chant-pr-${member}-${env}` : `chant-${member}-${env}`;
+  return `${dir}/${stem}${provider === "gitlab" ? ".gitlab-ci.yml" : ".yml"}`;
 }
 
 /** A repository-relative path for an absolute one. */
@@ -205,6 +208,8 @@ export interface ComponentPlanInput {
   output?: string;
   params?: string[];
   paramsFile?: string;
+  /** `--pr-loop`, with its `--gate` and `--branch` (#3465). */
+  prLoop?: { gate?: string; branch?: string };
 }
 
 /** The generators' own default environment when `--env` is not given. */
@@ -224,7 +229,7 @@ export function planMemberComponentPipeline(input: ComponentPlanInput): MemberCo
   if (input.output) {
     target = resolve(input.output);
   } else {
-    const file = memberPipelineFile(input.lexicon, ctx.member.name, env);
+    const file = memberPipelineFile(input.lexicon, ctx.member.name, env, input.prLoop ? "pr" : "components");
     if (file === undefined) {
       throw new Error(`there is no default pipeline path for ${input.lexicon} in a workspace member; pass --output <file>`);
     }
@@ -234,6 +239,11 @@ export function planMemberComponentPipeline(input: ComponentPlanInput): MemberCo
 
   const parts = ["chant", "build", "--components", "--generate", input.lexicon, "--env", env];
   if (input.promoteTo) parts.push("--promote-to", input.promoteTo);
+  if (input.prLoop) {
+    parts.push("--pr-loop");
+    if (input.prLoop.gate) parts.push("--gate", input.prLoop.gate);
+    if (input.prLoop.branch) parts.push("--branch", input.prLoop.branch);
+  }
   for (const p of input.params ?? []) parts.push("--param", p);
   if (input.paramsFile) parts.push("--params-file", relPath(ctx.memberRoot, resolve(input.paramsFile)));
   if (input.output) parts.push("--output", relPath(ctx.memberRoot, target));

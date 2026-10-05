@@ -92,6 +92,39 @@ describe("the GitHub pull-request workflow", () => {
     expect(() => generateGithubPipeline(ESTATE, { prLoop: {}, promoteTo: "prod" })).toThrow(/pull-request pipeline has no wave or promote jobs/);
   });
 
+  test("inside a workspace member: runs in the member's directory and keeps its own gate, note and apply group (#3465)", () => {
+    const member = { name: "network", dir: "infra/network", file: ".github/workflows/chant-pr-network-prod.yml" };
+    const scoped = generateGithubPipeline(ESTATE, { env: "prod", prLoop: {}, member });
+    const mdoc = parseYAML(scoped.yaml) as {
+      name: string;
+      on: Record<string, unknown>;
+      defaults?: { run: Record<string, string> };
+      jobs: Record<string, Job>;
+    };
+    expect(mdoc.name).toBe("chant-pr-network-prod");
+    // No path filter: a change outside the member can reach it.
+    expect(mdoc.on).toEqual({ pull_request: { branches: ["main"] }, push: { branches: ["main"] } });
+    expect(mdoc.defaults).toEqual({ run: { "working-directory": "infra/network" } });
+    const plan = mdoc.jobs.plan.steps.find((s) => s.run?.includes("pr-plan"))!;
+    expect(plan.run).toBe('chant components pr-plan --base "$BASE_SHA" --pr "$PR_NUMBER" --env prod --gate pr-apply --output .chant/pr --forge github --member network');
+    const apply = mdoc.jobs.apply.steps.find((s) => s.run?.includes("pr-apply"))!;
+    expect(apply.run).toContain("--member network");
+    expect(mdoc.jobs.apply.concurrency).toEqual({ group: "chant-apply-network-prod", "cancel-in-progress": false });
+    for (const job of Object.values(mdoc.jobs)) {
+      const keep = job.steps.find((s) => s.uses?.startsWith("actions/upload-artifact"))!;
+      expect(keep.with?.path).toBe("infra/network/.chant/pr");
+    }
+  });
+
+  test("a member at the workspace root keeps the root's paths but its own names", () => {
+    const yaml = generateGithubPipeline(ESTATE, { env: "prod", prLoop: {}, member: { name: "root", dir: "." } }).yaml;
+    const mdoc = parseYAML(yaml) as { name: string; defaults?: unknown; jobs: Record<string, Job> };
+    expect(mdoc.name).toBe("chant-pr-root-prod");
+    expect(mdoc.defaults).toBeUndefined();
+    expect(yaml).toContain("--member root");
+    expect(yaml).toContain("path: .chant/pr");
+  });
+
   test.skipIf(!hasActionlint())("passes actionlint", () => {
     const dir = mkdtempSync(join(tmpdir(), "chant-actionlint-"));
     try {

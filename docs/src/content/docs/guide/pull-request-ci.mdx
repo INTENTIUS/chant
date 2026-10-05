@@ -143,4 +143,24 @@ A dependent is planned against the outputs its upstream has now. When the change
 
 An apply that fails partway leaves the members it applied in place. Re-running it plans those members again, which changes the digest, so it needs a fresh approval.
 
-The pipeline is not generated inside a workspace member yet.
+## Inside a workspace member
+
+Run the same command in a member of a [workspace](/chant/cli/workspace-init/) and the pipeline belongs to that member. Each member that wants the loop generates its own, and each runs on the same pull request without touching the others:
+
+```bash
+cd infra/network
+chant build --components --generate github --pr-loop --env prod
+# wrote .github/workflows/chant-pr-network-prod.yml for member network
+```
+
+The jobs run in the member's directory, so `.chant/pr` and every path in `chant.config.ts` read from there. The report artifact is kept from `<member dir>/.chant/pr`. On GitLab the file is `.gitlab/ci/chant-pr-<member>-<env>.gitlab-ci.yml`, its jobs are `<member>-plan` and `<member>-apply`, and each script starts with `cd <member dir>`.
+
+The jobs pass `--member <name>` to `pr-plan` and `pr-apply`. The member's gate is recorded under `pr-<number>-<member>`, its note carries the member's name, and its statuses are `chant/plan/<member>` and `chant/apply/<member>`. A reviewer approves each member's plan on its own:
+
+```bash
+chant approve pr-42-network pr-apply --plan <digest> --approver github:<login> --sign
+```
+
+The gate name stays `pr-apply`, so one `identity.gates` entry covers every member.
+
+The pipeline has no path filter. The plan measures the whole change, not only the files under the member, so a change outside the member that reaches one of its units selects it. A Terraform root that calls `../../modules/vpc`, a module another member keeps, is planned when that module changes. A member the change does not reach reports `nothing` and applies nothing.

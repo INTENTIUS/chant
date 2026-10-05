@@ -26,6 +26,14 @@
  * On merge the apply plans the same members again, before anything applies,
  * and decides the gate against the new digest. The same plan applies; a moved
  * plan stops with both digests named and nothing applied.
+ *
+ * ## Inside a workspace member
+ *
+ * Each workspace member that generates the pipeline (#3465) runs its own
+ * plan and apply on the same pull request, so each keeps its own gate, note
+ * and statuses: op `pr-<number>-<member>`, the note marker and the status
+ * contexts carry the member's name. The gate name stays the same, so one
+ * `identity.gates` entry covers every member.
  */
 
 import type { ChangeSetAction, ChangeSetDocument } from "./change-set";
@@ -40,18 +48,29 @@ export const PR_REPORT_CONTRACT = 1;
 /** The gate a pull request's apply waits on, unless the pipeline names another. */
 export const PR_APPLY_GATE = "pr-apply";
 
-/** The op a pull request's gate is recorded under: `pr-<number>`. */
-export function prOp(pr: number): string {
-  return `pr-${pr}`;
+/**
+ * The op a pull request's gate is recorded under: `pr-<number>`, or
+ * `pr-<number>-<member>` for a workspace member's pipeline (#3465).
+ */
+export function prOp(pr: number, member?: string): string {
+  return member ? `pr-${pr}-${member}` : `pr-${pr}`;
 }
 
-/** The hidden line that marks the pull request's note, one per environment. */
-export function prNoteMarker(env: string): string {
-  return `<!-- chant-pr:${env} -->`;
+/** Whether `op` is a pull request's gate op, with or without a member. Member names follow the declaration's name pattern. */
+export const PR_GATE_OP = /^pr-\d+(?:-[a-z0-9][a-z0-9-]*)?$/;
+
+/** The hidden line that marks the pull request's note, one per environment and, in a workspace, per member. */
+export function prNoteMarker(env: string, member?: string): string {
+  return member ? `<!-- chant-pr:${env}:${member} -->` : `<!-- chant-pr:${env} -->`;
 }
 
 /** The status contexts the two stages set on the commit. */
 export const PR_STATUS_CONTEXTS = { plan: "chant/plan", apply: "chant/apply" } as const;
+
+/** A stage's status context: `chant/plan`, or `chant/plan/<member>` for a workspace member's pipeline. */
+export function prStatusContext(stage: "plan" | "apply", member?: string): string {
+  return member ? `${PR_STATUS_CONTEXTS[stage]}/${member}` : PR_STATUS_CONTEXTS[stage];
+}
 
 /** Changes a member's plan proposes, by the actions a reviewer reads. */
 export interface PrMemberCounts {
@@ -143,6 +162,8 @@ export interface PrReport {
   /** The pull or merge request number, when known. */
   pr: number | null;
   env: string;
+  /** The workspace member whose pipeline ran the stage (#3465). Absent outside a workspace member. */
+  member?: string;
   /** The commit the change is measured from: the merge base of the given base and `head`. */
   base: string;
   head: string;
@@ -255,8 +276,8 @@ function approvalLines(report: PrReport, approver: string): string[] {
 export function renderPrNote(report: PrReport, options: { limit?: number; approver?: string } = {}): string {
   const limit = options.limit ?? GITHUB_COMMENT_LIMIT;
   const out: string[] = [
-    prNoteMarker(report.env),
-    `### chant ${report.stage === "plan" ? "plan" : "apply"} for ${code(report.env)}`,
+    prNoteMarker(report.env, report.member),
+    `### chant ${report.stage === "plan" ? "plan" : "apply"} for ${code(report.env)}${report.member ? ` in member ${code(report.member)}` : ""}`,
     "",
     `${headline(report)} Head ${code(short(report.head))}, measured from ${code(short(report.base))}.`,
   ];

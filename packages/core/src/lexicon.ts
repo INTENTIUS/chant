@@ -562,6 +562,12 @@ export interface ComponentPipelineOptions {
    * GitLab's job rules) are limited to the member's files and the pipeline
    * file. Its jobs run in the member's directory, and its names carry the
    * member's name so two members' pipelines never collide.
+   *
+   * A pull-request pipeline (`prLoop`, #3465) takes no path filter: a change
+   * outside the member can reach it (a module it calls in another member),
+   * so its plan runs on every pull request and selects from the whole
+   * change. Its commands pass `--member`, which gives the member its own
+   * gate op, note and statuses on the pull request.
    */
   member?: PipelineMember;
 }
@@ -913,7 +919,12 @@ export interface ChangedUnitsContext {
   projectRoot: string;
   /** The resolved project configuration, for the lexicon's own namespace. */
   config: Record<string, unknown>;
-  /** Files the change added, modified or deleted, relative to `projectRoot`, with `/` separators. */
+  /**
+   * Files the change added, modified or deleted, relative to `projectRoot`,
+   * with `/` separators. Files outside `projectRoot` are listed too, as
+   * `../...`, so a unit that calls code outside the project (another
+   * workspace member's module, #3465) can claim them.
+   */
   changedFiles: string[];
 }
 

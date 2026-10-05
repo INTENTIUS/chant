@@ -1308,7 +1308,9 @@ Component release ledger + status:
                             (chant approve pr-<n> pr-apply --plan <digest>);
                             a moved plan refuses with exit 3
                             (--require-review: the approver must have
-                            approved the pull request on the forge)
+                            approved the pull request on the forge;
+                            --member <name>, both commands: a workspace
+                            member's loop, gate op pr-<n>-<member>)
   components release <env> Append one immutable release record
                             (--component <name> --digest <sha256:...>
                              [--git-sha <sha>] [--run-id <id>] [--actor <name>]);

@@ -65,6 +65,7 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
         output: args.output,
         params: args.param,
         paramsFile: args.paramsFile,
+        ...(args.prLoop ? { prLoop: { ...(args.gate ? { gate: args.gate } : {}), ...(args.branch ? { branch: args.branch } : {}) } } : {}),
       });
     } catch (err) {
       console.error(formatError({ message: memberPipeline.describeError(err) }));

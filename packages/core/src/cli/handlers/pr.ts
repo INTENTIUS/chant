@@ -19,7 +19,12 @@
  * it with both digests named and nothing applied (exit 3).
  *
  * Every run writes `pr-plan.json` or `pr-apply.json` (`pr-report.schema.json`),
- * `change-set.json` and `pr-note.md` under `--output` (default `.chant/pr`).
+ * `change-set.json` and `pr-note.md` under `--output` (default `.chant/pr`). *
+ * `--member <name>` (#3465) runs a workspace member's loop: the member's
+ * generated pipeline passes it from the member's directory. The gate is
+ * recorded under `pr-<n>-<member>`, and the note and the statuses carry the
+ * member's name, so each member's loop on one pull request stands apart.
+ * The name must be the member that owns the current directory.
  */
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -41,11 +46,11 @@ import { gitGateLedgerPort } from "../../op/gate";
 import {
   describePlanChanged,
   PR_APPLY_GATE,
-  PR_STATUS_CONTEXTS,
   prApproveCommand,
   prNoteMarker,
   prOp,
   prStatusDescription,
+  prStatusContext,
   prStatusState,
   renderPrNote,
   type PrApproval,
@@ -55,6 +60,7 @@ import { FORGE_KINDS, forgeFromEnv, forgePrincipalOf, type ForgeKind, type PrFor
 import { GITHUB_COMMENT_LIMIT, GITLAB_NOTE_LIMIT } from "../../plan-summary";
 import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
 import { formatError, formatInfo, formatSuccess, formatWarning } from "../format";
+import { findWorkspaceRoot } from "../../project-root";
 import { resolveChangedUnits } from "./fan-out";
 import { GATED_EXIT_CODE, recordAutoReleasesForRun } from "./run";
 import type { CommandContext } from "../registry";
@@ -69,6 +75,8 @@ export const PR_REPORT_DIR = ".chant/pr";
 interface Prepared {
   config: ChantConfig;
   env: string;
+  /** The workspace member, with `--member` (#3465). */
+  member?: string;
   base: string;
   head: string;
   gate: string;
@@ -106,6 +114,12 @@ async function prepare(ctx: CommandContext, stage: "plan" | "apply"): Promise<Pr
     );
   }
   if (args.fromAffected) return fail(`pr-${stage} derives the change itself; drop --from-affected`);
+  let member: string | undefined;
+  if (args.members?.length) {
+    const checked = await checkMember(projectPath, args.members);
+    if (typeof checked !== "string") return fail(checked.error, checked.hint);
+    member = checked;
+  }
   if (args.forge !== undefined && !(FORGE_KINDS as readonly string[]).includes(args.forge)) {
     return fail(`--forge ${args.forge} is not one of ${FORGE_KINDS.join(", ")}`);
   }
@@ -160,6 +174,7 @@ async function prepare(ctx: CommandContext, stage: "plan" | "apply"): Promise<Pr
   return {
     config,
     env,
+    ...(member ? { member } : {}),
     base,
     head,
     gate: args.gate ?? PR_APPLY_GATE,
@@ -170,6 +185,32 @@ async function prepare(ctx: CommandContext, stage: "plan" | "apply"): Promise<Pr
     registry,
     set,
   };
+}
+
+/**
+ * The one `--member` name, checked against the workspace member that owns
+ * `projectPath`: a pipeline copied into another member would otherwise
+ * record its gate under the wrong name.
+ */
+async function checkMember(projectPath: string, names: string[]): Promise<string | { error: string; hint?: string }> {
+  if (names.length !== 1) return { error: `pr-plan and pr-apply take one --member, not ${names.join(", ")}` };
+  const name = names[0];
+  const found = findWorkspaceRoot(projectPath);
+  if (!found) return { error: `--member ${name}: no chant.workspace.json above ${projectPath}`, hint: "Drop --member outside a workspace." };
+  const { resolveMemberContext } = await import("../../workspace/member-pipeline");
+  let owner: string | undefined;
+  try {
+    owner = resolveMemberContext(projectPath, found)?.member.name;
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+  if (owner !== name) {
+    return {
+      error: `--member ${name}: ${owner ? `this directory belongs to member ${owner}` : "no workspace member owns this directory"}`,
+      hint: "Run the command in the member's directory, the way its generated pipeline does.",
+    };
+  }
+  return name;
 }
 
 /** Write the report, the change set and the note; print the note's path. */
@@ -185,7 +226,7 @@ function writeOutputs(ctx: CommandContext, report: PrReport, note: string): void
 async function publish(forge: PrForge | undefined, report: PrReport, note: string): Promise<void> {
   if (!forge) return;
   const status = {
-    context: PR_STATUS_CONTEXTS[report.stage],
+    context: prStatusContext(report.stage, report.member),
     state: prStatusState(report),
     description: prStatusDescription(report),
     ...(forge.runUrl ? { url: forge.runUrl } : {}),
@@ -197,7 +238,7 @@ async function publish(forge: PrForge | undefined, report: PrReport, note: strin
   }
   if (report.pr === null) return;
   try {
-    await forge.upsertNote(report.pr, prNoteMarker(report.env), note);
+    await forge.upsertNote(report.pr, prNoteMarker(report.env, report.member), note);
   } catch (err) {
     console.error(formatWarning({ message: `could not post the note on #${report.pr}: ${err instanceof Error ? err.message : String(err)}` }));
   }
@@ -231,7 +272,7 @@ export async function runComponentsPrPlan(ctx: CommandContext): Promise<number> 
   }
   const p = await prepare(ctx, "plan");
   if (typeof p === "number") return p;
-  const op = prOp(ctx.args.pr);
+  const op = prOp(ctx.args.pr, p.member);
 
   let approval: PrApproval = { status: "pending" };
   if (p.plan.order.length > 0) {
@@ -246,6 +287,7 @@ export async function runComponentsPrPlan(ctx: CommandContext): Promise<number> 
     stage: "plan",
     pr: ctx.args.pr,
     env: p.env,
+    ...(p.member ? { member: p.member } : {}),
     base: p.base,
     head: p.head,
     op,
@@ -282,8 +324,8 @@ export async function runComponentsPrApply(ctx: CommandContext): Promise<number>
       return fail(`could not ask ${p.forge.kind} which pull request merged ${p.head}: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
-  const op = pr === null ? "pr-unknown" : prOp(pr);
-  const base = { stage: "apply" as const, pr, env: p.env, base: p.base, head: p.head, op, gate: p.gate, plan: p.plan, signal: p.signal, set: p.set };
+  const op = pr === null ? "pr-unknown" : prOp(pr, p.member);
+  const base = { stage: "apply" as const, pr, env: p.env, ...(p.member ? { member: p.member } : {}), base: p.base, head: p.head, op, gate: p.gate, plan: p.plan, signal: p.signal, set: p.set };
 
   const stop = async (report: PrReport, code: number): Promise<number> => {
     await finish(ctx, p, report);

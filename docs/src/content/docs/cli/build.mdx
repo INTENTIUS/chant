@@ -157,7 +157,7 @@ chant build --components --generate github --env staging --promote-to prod --out
 chant build --components --generate github --pr-loop --env prod --output .github/workflows/chant-pr.yml
 ```
 
-`--pr-loop` is refused beside `--wave-gate` or `--promote-to`, and inside a workspace member.
+`--pr-loop` is refused beside `--wave-gate` or `--promote-to`. Inside a workspace member it generates that member's loop, written to `chant-pr-<member>-<env>` in the forge's directory; see [inside a workspace member](/chant/guide/pull-request-ci/#inside-a-workspace-member).
 
 ### Inside a workspace member
 

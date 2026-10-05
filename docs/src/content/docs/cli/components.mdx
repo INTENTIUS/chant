@@ -19,10 +19,11 @@ chant components fan-out (--base <ref> [--head <ref>] [--include-dependents]
                                 [--resume <file>] [--seed-outputs <file>]
                                 [--dump-outputs <file>] [--progress-json]
 chant components pr-plan --base <ref> --pr <n> [--env <env>] [--gate <name>]
-                                [--forge github|gitlab|forgejo] [--output <dir>] [--json]
+                                [--forge github|gitlab|forgejo] [--member <name>]
+                                [--output <dir>] [--json]
 chant components pr-apply --base <ref> [--pr <n>] [--env <env>] [--gate <name>]
                                 [--forge github|gitlab|forgejo] [--require-review]
-                                [--output <dir>] [--json]
+                                [--member <name>] [--output <dir>] [--json]
 chant components promote --from <env> --to <env>
                                 [--component <name> [--digest <sha256:...>]
                                  | --digest <component>=<sha256:...> ...]
@@ -330,6 +331,7 @@ Pass `--forge` to post the note on the pull request and set the `chant/plan` or 
 | `--gate <name>` | The gate's name. Defaults to `pr-apply`. |
 | `--forge <kind>` | `github`, `gitlab` or `forgejo`. Post the note and the status, with the client read from the CI job's environment. |
 | `--require-review` | `pr-apply` only. Count an approval only from someone with a standing approving review on the pull request, named the way the forge names them (`github:<login>`, `gitlab:<login>`, `forgejo@<host>:<login>`). Needs `--forge`. |
+| `--member <name>` | A workspace member's loop, run in the member's directory. The gate is recorded under `pr-<n>-<member>`, the note and the statuses carry the member's name, and the report gains `member`. The name must be the member that owns the current directory. The member's generated pipeline passes it. |
 | `--output <dir>` | Where the report, the change set and the note go. Defaults to `.chant/pr`. |
 | `--seed-outputs <file>` | Outputs to use instead of reading them, as on `fan-out`. |
 | `--json` | Print the report on stdout. |

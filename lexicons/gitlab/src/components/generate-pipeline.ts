@@ -79,7 +79,6 @@ export function generateGitlabPipeline(
     if (options.gatedWaves || options.promoteTo !== undefined) {
       throw new Error("a pull-request pipeline has no wave or promote jobs; drop --wave-gate and --promote-to, or --pr-loop");
     }
-    if (options.member) throw new Error("a pull-request pipeline is not generated for a workspace member yet; generate it from the project outside the workspace");
     return prLoopGitlabPipeline(env, image, beforeScript, extraScript, options);
   }
 
@@ -268,6 +267,15 @@ function gatedWaveGitlabPipeline(
  * they measure the change with. The jobs talk to GitLab with
  * `CHANT_FORGE_TOKEN`, a project or group access token with the `api` scope
  * set as a masked CI/CD variable, since a job token cannot write notes.
+ *
+ * For a workspace member (#3465) the file is one the root `.gitlab-ci.yml`
+ * includes, so the jobs are `<member>-plan` and `<member>-apply`, each
+ * script starts with a `cd` into the member's directory and the report
+ * artifact is kept from there. The jobs take no `changes:` rule, since a
+ * change outside the member can reach it; the plan selects from the whole
+ * change and passes `--member`, which keeps the member's gate, note and
+ * statuses apart from the other members'. The apply's resource group is the
+ * member's own.
  */
 function prLoopGitlabPipeline(
   env: string,
@@ -277,39 +285,46 @@ function prLoopGitlabPipeline(
   options: GenerateGitlabOptions,
 ): GenerateGitlabResult {
   const loop = options.prLoop!;
-  const [plan, apply] = prLoopJobs("gitlab", env, loop);
+  const member = options.member;
+  const rooted = !member || member.dir === "." || member.dir === "";
+  const [plan, apply] = prLoopJobs("gitlab", env, loop, member?.name);
+  const reportPath = member ? memberRepoPath(member, PR_LOOP_REPORT_DIR) : PR_LOOP_REPORT_DIR;
+  const planJob = member ? `${member.name}-plan` : "plan";
+  const applyJob = member ? `${member.name}-apply` : "apply";
   const onMergeRequest = '$CI_PIPELINE_SOURCE == "merge_request_event"';
   const target = loop.branch ? JSON.stringify(loop.branch) : "$CI_DEFAULT_BRANCH";
   const onMerge = `$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == ${target}`;
-  const script = (job: typeof plan): string[] => [...prLoopSetup(image), ...beforeScript, ...(job.setup ?? []), job.command, ...extraScript];
+  // A member's jobs start in its directory, after the image's install lines.
+  const enter = rooted ? [] : [`cd ${memberShellDir(member!)}`];
+  const script = (job: typeof plan): string[] => [...prLoopSetup(image), ...enter, ...beforeScript, ...(job.setup ?? []), job.command, ...extraScript];
   const stages = ["plan", "apply"];
   const doc: Record<string, unknown> = {
-    workflow: { name: `chant-pr-${env}`, rules: [{ if: onMergeRequest }, { if: onMerge }] },
+    workflow: { name: member ? `chant-pr-${member.name}-${env}` : `chant-pr-${env}`, rules: [{ if: onMergeRequest }, { if: onMerge }] },
     stages,
     variables: { ...options.variables, CHANT_ENV: env, GIT_DEPTH: "0" },
-    plan: {
+    [planJob]: {
       stage: "plan",
       image,
       rules: [{ if: onMergeRequest }],
       variables: plan.env,
       script: script(plan),
-      artifacts: { when: "always", paths: [PR_LOOP_REPORT_DIR] },
+      artifacts: { when: "always", paths: [reportPath] },
     },
-    apply: {
+    [applyJob]: {
       stage: "apply",
       image,
-      resource_group: prApplyGroup(env),
+      resource_group: prApplyGroup(env, member?.name),
       rules: [{ if: onMerge }],
       variables: apply.env,
       script: script(apply),
-      artifacts: { when: "always", paths: [PR_LOOP_REPORT_DIR] },
+      artifacts: { when: "always", paths: [reportPath] },
     },
   };
   const jobs: GeneratedJob[] = [
-    { jobName: "plan", component: "merge request plan", stage: "plan", needs: [] },
-    { jobName: "apply", component: "merge request apply", stage: "apply", needs: [] },
+    { jobName: planJob, component: "merge request plan", stage: "plan", needs: [] },
+    { jobName: applyJob, component: "merge request apply", stage: "apply", needs: [] },
   ];
-  const sections = ["workflow", "stages", "variables", "plan", "apply"].map((key) => emitYAMLEntry(key, doc[key]));
+  const sections = ["workflow", "stages", "variables", planJob, applyJob].map((key) => emitYAMLEntry(key, doc[key]));
   return { yaml: sections.join("\n\n") + "\n", stages, jobs, env };
 }
 

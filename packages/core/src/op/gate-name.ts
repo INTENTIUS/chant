@@ -38,10 +38,11 @@ export const FAN_OUT_GATE_OP = "fan-out";
 export const WORKSPACE_UPGRADE_GATE_OP = "workspace-upgrade";
 
 /**
- * The pull-request loop records its gate under `pr-<number>` (`prOp` in
- * `pr-loop.ts`), and no `*.op.ts` stands behind that name either.
+ * The pull-request loop records its gate under `pr-<number>`, or
+ * `pr-<number>-<member>` in a workspace member (`prOp` in `pr-loop.ts`), and
+ * no `*.op.ts` stands behind that name either.
  */
-const PR_GATE_OP = /^pr-\d+$/;
+const PR_GATE_OP = /^pr-\d+(?:-[a-z0-9][a-z0-9-]*)?$/;
 
 /**
  * Whether gates recorded under this op name are never resolved over MCP or ACP
