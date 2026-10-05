@@ -14,7 +14,7 @@ import { validateAlertmanagerConfig, validateRuleFile } from "./validate-config"
 export type { ValidateCheck, ValidateResult } from "@intentius/chant/codegen/validate";
 
 /** Every entity class the package must keep exporting. */
-export const REQUIRED_NAMES = ["RuleGroup", "Route", "Receiver", "InhibitRule", "TimeInterval", "AlertmanagerSettings"];
+export const REQUIRED_NAMES = ["RuleGroup", "ScrapeConfig", "PrometheusConfig", "Route", "Receiver", "InhibitRule", "TimeInterval", "AlertmanagerSettings"];
 
 export async function validate(): Promise<ValidateResult> {
   const checks: ValidateCheck[] = [];

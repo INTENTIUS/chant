@@ -6,13 +6,14 @@
 
 import type { LexiconEntry } from "@intentius/chant/lsp/lexicon-providers";
 import { RULE_GROUP_TYPE } from "./rules";
+import { PROMETHEUS_CONFIG_TYPE, SCRAPE_CONFIG_TYPE } from "./prometheus-config";
 import { INHIBIT_RULE_TYPE, RECEIVER_TYPE, ROUTE_TYPE, SETTINGS_TYPE, TIME_INTERVAL_TYPE } from "./alertmanager";
 
 export interface CatalogEntry {
   className: string;
   entityType: string;
   /** The file the entity serializes into. */
-  file: "rule file" | "alertmanager.yml";
+  file: "rule file" | "prometheus.yml" | "alertmanager.yml";
   description: string;
 }
 
@@ -22,6 +23,18 @@ export const CATALOG: CatalogEntry[] = [
     entityType: RULE_GROUP_TYPE,
     file: "rule file",
     description: "A group of recording and alerting rules, evaluated together on one interval",
+  },
+  {
+    className: "ScrapeConfig",
+    entityType: SCRAPE_CONFIG_TYPE,
+    file: "prometheus.yml",
+    description: "One scrape job: static or discovered targets, scrape settings, and relabelling",
+  },
+  {
+    className: "PrometheusConfig",
+    entityType: PROMETHEUS_CONFIG_TYPE,
+    file: "prometheus.yml",
+    description: "The global, alerting, rule_files, remote_write, remote_read and otlp sections of prometheus.yml",
   },
   {
     className: "Route",

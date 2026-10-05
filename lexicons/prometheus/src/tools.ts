@@ -1,5 +1,5 @@
 /**
- * `promtool check rules` and `amtool check-config`, when they are installed.
+ * `promtool check rules`, `promtool check config` and `amtool check-config`, when they are installed.
  *
  * The lexicon's own checks cover structure, references and PromQL syntax.
  * The upstream tools add what only Prometheus and Alertmanager know (PromQL
@@ -10,9 +10,9 @@
  */
 
 import { spawnSync } from "child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
-import { join } from "path";
+import { dirname, join } from "path";
 
 export interface ToolResult {
   /** False when the binary isn't installed; `ok` and `output` are then meaningless. */
@@ -44,6 +44,34 @@ function runOnText(bin: string, args: (file: string) => string[], filename: stri
 /** Run `promtool check rules` over rule file YAML. `bin` defaults to `promtool` on PATH. */
 export function promtoolCheckRules(yaml: string, bin = process.env.PROMTOOL ?? "promtool"): ToolResult {
   return runOnText(bin, (f) => ["check", "rules", f], "rules.yml", yaml);
+}
+
+/**
+ * Run `promtool check config` over `prometheus.yml` text. The config is written
+ * as `prometheus.yml` in a directory of its own, and `files` (path relative to
+ * that directory to contents) are written beside it: `check config` also reads
+ * the rule files, certificates and credentials files the config names, so a
+ * config that names any needs them here. `bin` defaults to `promtool` on PATH.
+ */
+export function promtoolCheckConfig(
+  yaml: string,
+  files: Record<string, string> = {},
+  bin = process.env.PROMTOOL ?? "promtool",
+): ToolResult {
+  if (!hasTool(bin)) return { ran: false, ok: false, output: "" };
+  const dir = mkdtempSync(join(tmpdir(), "chant-prometheus-"));
+  try {
+    writeFileSync(join(dir, "prometheus.yml"), yaml);
+    for (const [path, content] of Object.entries(files)) {
+      const target = join(dir, path);
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(target, content);
+    }
+    const r = spawnSync(bin, ["check", "config", "prometheus.yml"], { cwd: dir, encoding: "utf-8" });
+    return { ran: true, ok: r.status === 0, output: `${r.stdout ?? ""}${r.stderr ?? ""}` };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 /**

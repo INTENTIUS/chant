@@ -1,5 +1,5 @@
 /**
- * Rule file or `alertmanager.yml` -> `TemplateIR`, for `chant import`.
+ * Rule file, `prometheus.yml` or `alertmanager.yml` -> `TemplateIR`, for `chant import`.
  *
  * Either file is one document whose parts name each other (a route names a
  * receiver and time intervals), so the IR carries the whole file as one
@@ -24,7 +24,9 @@ import {
   ALERTMANAGER_GLOBAL_FIELDS,
   RECEIVER_INTEGRATIONS,
   looksLikeAlertmanagerConfig,
+  looksLikePrometheusConfig,
   looksLikeRuleFile,
+  PROMETHEUS_CONFIG_SECTIONS,
   type AlertmanagerConfig,
   type InhibitRuleConfig,
   type ReceiverConfig,
@@ -32,14 +34,25 @@ import {
   type RuleConfig,
   type RuleFileConfig,
   type RuleGroupConfig,
+  type PrometheusConfigFile,
+  type ScrapeJobConfig,
   type TimeIntervalConfig,
 } from "../model";
+import { TYPED_SD_KINDS } from "../model";
 import { PROMETHEUS_PIN } from "../pin";
 
 /** The IR resource type for a whole rule file. */
 export const RULE_FILE_RESOURCE_TYPE = "Prometheus::RuleFile";
 /** The IR resource type for a whole `alertmanager.yml`. */
 export const ALERTMANAGER_RESOURCE_TYPE = "Prometheus::Alertmanager::Config";
+
+/** The IR resource type for a whole `prometheus.yml`. */
+export const PROMETHEUS_RESOURCE_TYPE = "Prometheus::Config";
+
+/** `properties` of the `Prometheus::Config` resource. */
+export interface PrometheusResourceProperties {
+  config: PrometheusConfigFile;
+}
 
 /** `properties` of the `Prometheus::RuleFile` resource. */
 export interface RuleFileResourceProperties {
@@ -54,7 +67,8 @@ export interface AlertmanagerResourceProperties {
 /** What the parser read. */
 export type ParsedPrometheusFile =
   | { kind: "rules"; file: RuleFileConfig; warnings: string[] }
-  | { kind: "alertmanager"; config: AlertmanagerConfig; warnings: string[] };
+  | { kind: "alertmanager"; config: AlertmanagerConfig; warnings: string[] }
+  | { kind: "prometheus"; config: PrometheusConfigFile; warnings: string[] };
 
 // YAML 1.2 core types plus `<<` merge keys, which Alertmanager configs use to
 // share notifier settings. The default schema would also turn an unquoted
@@ -324,6 +338,52 @@ function parseAlertmanager(doc: Record<string, unknown>, warnings: string[]): Al
   return config;
 }
 
+// ── prometheus.yml ──────────────────────────────────────────────────
+
+function parsePrometheusConfig(doc: Record<string, unknown>, warnings: string[]): PrometheusConfigFile {
+  const config: Record<string, unknown> = {};
+  for (const k of Object.keys(doc)) {
+    if (!PROMETHEUS_CONFIG_SECTIONS.includes(k)) warnings.push(`top-level section "${k}" is not one Prometheus ${PROM_VERSION} defines; it is not carried`);
+  }
+  const jobNames = new Set<string>();
+  for (const key of PROMETHEUS_CONFIG_SECTIONS) {
+    const v = doc[key];
+    if (v === undefined || v === null) continue;
+    if (key === "rule_files" || key === "scrape_config_files") {
+      const list = stringList(v, key, warnings);
+      if (list) config[key] = list;
+    } else if (key === "scrape_configs") {
+      if (!Array.isArray(v)) {
+        warnings.push("scrape_configs is not a list; it is not carried");
+        continue;
+      }
+      const jobs: ScrapeJobConfig[] = [];
+      v.forEach((raw, i) => {
+        if (!isPlainObject(raw) || typeof raw.job_name !== "string") {
+          warnings.push(`scrape_configs[${i}] has no job_name; it is not carried`);
+          return;
+        }
+        if (jobNames.has(raw.job_name)) warnings.push(`scrape_configs: job_name "${raw.job_name}" is used more than once; Prometheus rejects that`);
+        jobNames.add(raw.job_name);
+        const sd = Object.keys(raw).filter((k) => k.endsWith("_sd_configs") && !TYPED_SD_KINDS.includes(k));
+        if (sd.length > 0) warnings.push(`job "${raw.job_name}": ${sd.join(", ")} ${sd.length === 1 ? "is" : "are"} carried as data, untyped`);
+        jobs.push(raw as unknown as ScrapeJobConfig);
+      });
+      config.scrape_configs = jobs;
+    } else if (key === "remote_write" || key === "remote_read") {
+      if (Array.isArray(v)) config[key] = v;
+      else warnings.push(`${key} is not a list; it is not carried`);
+    } else if (isPlainObject(v)) {
+      config[key] = v;
+    } else {
+      warnings.push(`${key} is not a mapping; it is not carried`);
+    }
+  }
+  return config as PrometheusConfigFile;
+}
+
+const PROM_VERSION = PROMETHEUS_PIN.prometheus.version;
+
 // ── entry points ────────────────────────────────────────────────────
 
 /** Parse a rule file or `alertmanager.yml`, telling them apart by shape. */
@@ -331,16 +391,17 @@ export function parsePrometheusYaml(content: string): ParsedPrometheusFile {
   const warnings: string[] = [];
   const doc = content.trim() === "" ? {} : jsYaml.load(content, { schema: YAML_SCHEMA });
   if (!isPlainObject(doc)) {
-    throw new Error("a Prometheus rule file or alertmanager.yml is a YAML mapping; this document is not one");
+    throw new Error("a Prometheus rule file, alertmanager.yml or prometheus.yml is a YAML mapping; this document is not one");
   }
   if (looksLikeRuleFile(doc)) return { kind: "rules", file: parseRuleFile(doc, warnings), warnings };
   if (looksLikeAlertmanagerConfig(doc)) return { kind: "alertmanager", config: parseAlertmanager(doc, warnings), warnings };
+  if (looksLikePrometheusConfig(doc)) return { kind: "prometheus", config: parsePrometheusConfig(doc, warnings), warnings };
   if ("groups" in doc) {
     // A rule file with a malformed group still imports; the bad parts are named.
     return { kind: "rules", file: parseRuleFile(doc, warnings), warnings };
   }
   throw new Error(
-    "this YAML is neither a Prometheus rule file (groups: of named rule lists) nor an alertmanager.yml (route: or receivers:)",
+    "this YAML is not a Prometheus rule file (groups: of named rule lists), an alertmanager.yml (route: or receivers:) or a prometheus.yml (scrape_configs: and the like)",
   );
 }
 
@@ -349,7 +410,13 @@ export class PrometheusParser implements TemplateParser {
   parse(content: string): TemplateIR {
     const parsed = parsePrometheusYaml(content);
     const resource =
-      parsed.kind === "rules"
+      parsed.kind === "prometheus"
+        ? {
+            logicalId: "prometheus",
+            type: PROMETHEUS_RESOURCE_TYPE,
+            properties: { config: parsed.config } satisfies PrometheusResourceProperties as unknown as Record<string, unknown>,
+          }
+        : parsed.kind === "rules"
         ? {
             logicalId: "ruleFile",
             type: RULE_FILE_RESOURCE_TYPE,

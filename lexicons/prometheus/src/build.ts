@@ -30,6 +30,14 @@ import type {
   TimeIntervalConfig,
 } from "./model";
 import { isRuleGroup, ruleGroupConfig, type RuleGroupEntity } from "./rules";
+import {
+  isPrometheusConfig,
+  isScrapeConfig,
+  type PrometheusConfigEntity,
+  type ScrapeConfigEntity,
+  type ScrapeConfigProps,
+} from "./prometheus-config";
+import { PROMETHEUS_CONFIG_SECTIONS, type PrometheusConfigFile, type ScrapeJobConfig } from "./model";
 
 function byName(a: unknown, b: unknown): number {
   return String(a ?? "").localeCompare(String(b ?? ""));
@@ -183,6 +191,66 @@ export function buildAlertmanagerConfig(entities: Iterable<Declarable> | Map<str
   return { config, warnings, count };
 }
 
+// ── prometheus.yml ──────────────────────────────────────────────────
+
+export interface BuiltPrometheusConfig {
+  config: PrometheusConfigFile;
+  /** Non-fatal problems, e.g. two scrape jobs with one name. */
+  warnings: string[];
+  /** Every `PrometheusConfig` and `ScrapeConfig` that took part. */
+  count: number;
+}
+
+/**
+ * The `prometheus.yml` for a set of declared entities. Entities that aren't
+ * `PrometheusConfig`s or `ScrapeConfig`s are ignored. Sections come out in the
+ * order Prometheus documents them, and scrape jobs are sorted by name: the
+ * jobs are independent, so their order carries no meaning.
+ */
+export function buildPrometheusConfig(entities: Iterable<Declarable> | Map<string, Declarable>): BuiltPrometheusConfig {
+  const warnings: string[] = [];
+  const jobs: ScrapeJobConfig[] = [];
+  const seen = new Set<unknown>();
+  let main: PrometheusConfigEntity | undefined;
+  let count = 0;
+
+  const addJob = (job: ScrapeConfigEntity | ScrapeConfigProps) => {
+    if (seen.has(job)) return;
+    seen.add(job);
+    jobs.push(plain(isScrapeConfig(job) ? job.props : job) as ScrapeJobConfig);
+  };
+
+  for (const e of entityList(entities)) {
+    if (isScrapeConfig(e)) {
+      addJob(e);
+      count++;
+    } else if (isPrometheusConfig(e)) {
+      if (main) warnings.push("prometheus: more than one PrometheusConfig is declared; the first one is used");
+      else main = e;
+      count++;
+    }
+  }
+  for (const job of main?.props.scrape_configs ?? []) addJob(job);
+
+  const names = new Map<string, number>();
+  for (const j of jobs) names.set(j.job_name, (names.get(j.job_name) ?? 0) + 1);
+  for (const [name, n] of names) {
+    if (n > 1) warnings.push(`prometheus: ${n} scrape configs are named "${name}"; Prometheus rejects a file with a repeated job_name`);
+  }
+  jobs.sort((a, b) => byName(a.job_name, b.job_name));
+
+  const sections = (plain(main?.props ?? {}) ?? {}) as Record<string, unknown>;
+  const config: Record<string, unknown> = {};
+  for (const key of PROMETHEUS_CONFIG_SECTIONS) {
+    if (key === "scrape_configs") {
+      if (jobs.length > 0) config.scrape_configs = jobs;
+    } else if (sections[key] !== undefined) {
+      config[key] = sections[key];
+    }
+  }
+  return { config: config as PrometheusConfigFile, warnings, count };
+}
+
 // ── YAML ────────────────────────────────────────────────────────────
 
 /** Print a rule file or Alertmanager config as YAML, keys in the order given. */
@@ -198,4 +266,9 @@ export function ruleFileYaml(entities: Iterable<Declarable> | Map<string, Declar
 /** The `alertmanager.yml` text for a set of declared entities, exactly as the serializer emits it. */
 export function alertmanagerYaml(entities: Iterable<Declarable> | Map<string, Declarable>): string {
   return emitYaml(buildAlertmanagerConfig(entities).config);
+}
+
+/** The `prometheus.yml` text for a set of declared entities, exactly as the serializer emits it. */
+export function prometheusConfigYaml(entities: Iterable<Declarable> | Map<string, Declarable>): string {
+  return emitYaml(buildPrometheusConfig(entities).config);
 }
