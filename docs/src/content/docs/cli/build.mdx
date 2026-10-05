@@ -24,6 +24,7 @@ It reaches no network. Every schema it needs is generated into the lexicon packa
 | `-o, --output` | `string` | stdout | Write output to file |
 | `-f, --format` | `string` | `json` | Output format: `json` or `yaml` |
 | `-d, --lexicon` | `string` | all | Build only the specified lexicon (e.g. `aws`, `gitlab`) |
+| `--lexicon-output <lexicon>=<path>` | `string` | — | Repeatable. Write that lexicon's output to its own file. See [One file per lexicon](#one-file-per-lexicon) |
 | `-w, --watch` | `bool` | `false` | Watch for file changes and rebuild |
 | `--fold` / `--no-fold` | `bool` | `true` | Fold source files statically instead of importing and running them. On by default since #1134; `--no-fold` runs every file instead. Folding falls back to running a file, per file, for anything outside the fold subset — summarized as `fold: N files folded, M ran`, with the per-file `[fold:fold]` / `[fold:run] <reason>` lines under `--verbose` |
 | `-v, --verbose` | `bool` | `false` | List every resolved build parameter and every per-file fold decision, and print a success line with the resource count. Without it each group is one summary line |
@@ -193,6 +194,18 @@ chant run --generate github
 ```
 
 ## Build-time parameters
+
+## One file per lexicon
+
+A build over several lexicons writes them to one output, with non-JSON documents such as YAML appended one after another. That is wrong for a project that declares both a collector and a Prometheus config, which are separate files read by separate programs. List every lexicon the source uses in `chant.config.ts` (a lexicon missing from the config prints `No serializer found for lexicon ...`), then give each its own path:
+
+```bash
+chant build observability/ \
+  --lexicon-output otel=observability/otel-collector.yml \
+  --lexicon-output prometheus=observability/prometheus.yml
+```
+
+Each named lexicon is built into its path, and the format follows that file's extension. Lexicons you do not name are written together to `-o <file>` when you pass it, and skipped otherwise. `--lexicon-output` cannot be combined with `--lexicon` or `--watch`, and a lexicon that has no entities in the project makes its build fail with the usual empty-output error.
 
 `--param name=value` (repeatable) and `--params-file <path>` bind declared build-time parameters — `chant.config.ts`'s `buildParams` — so source can read `params.<name>` (`import { params } from "@intentius/chant/params"`) instead of `process.env`. Unlike the AWS lexicon's deploy-time `Parameter()`, a build-time parameter resolves before synthesis, so its value can change which resources are produced at all. An unknown name, a missing required value, or a value outside a declared `enum` is reported as a build error naming the parameter — never a thrown error from inside project source. The resolution is summarized on one line (`23 build parameters resolved (4 from env, 19 default)`), listed one per line as `[param] name = value (source)` under `--verbose`, and recorded on the build result for provenance. See [Build-Time Parameters](/chant/concepts/build-time-parameters/) for the full picture, including precedence and why it folds to a literal.
 

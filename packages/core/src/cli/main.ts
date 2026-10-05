@@ -606,6 +606,10 @@ export function parseArgs(args: string[]): ParsedArgs {
       // didn't support joined forms at all — now that it does, the joined
       // form is just as valid as the space-separated one).
       (result.param ??= []).push(args[++i]);
+    } else if (arg === "--lexicon-output") {
+      // `--lexicon-output <lexicon>=<path>` (repeatable); the joined form
+      // `--lexicon-output=otel=a.yml` arrives here already split at the first `=`.
+      (result.lexiconOutput ??= []).push(args[++i]);
     } else if (arg === "--params-file") {
       result.paramsFile = args[++i];
     } else if (arg === "--projection") {
@@ -1380,6 +1384,10 @@ Options:
                         - build: json (default) or yaml
                         - list: text (default) or json
                         - lint: stylish (default), json, or sarif
+      --lexicon-output <lexicon>=<path>
+                        build: write that lexicon's output to its own file
+                        (repeatable). Lexicons not named go to --output when
+                        given, and are skipped otherwise
   -d, --lexicon <name>  Build only the specified lexicon (e.g. aws, gitlab);
                         import: use this lexicon instead of detecting one
       --env <name>      Active environment: sets CHANT_ENV so env-aware source
