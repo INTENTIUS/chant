@@ -11,9 +11,9 @@ describe("parsePrometheusYaml", () => {
   });
 
   test("rejects a document that is neither, and one that is not a mapping", () => {
-    expect(() => parsePrometheusYaml("receivers:\n  otlp: {}\n")).toThrow(/neither a Prometheus rule file/);
+    expect(() => parsePrometheusYaml("receivers:\n  otlp: {}\n")).toThrow(/is not a Prometheus rule file .*an alertmanager\.yml .*or a prometheus\.yml/);
     expect(() => parsePrometheusYaml("- a\n- b\n")).toThrow(/YAML mapping/);
-    expect(() => parsePrometheusYaml("")).toThrow(/neither/);
+    expect(() => parsePrometheusYaml("")).toThrow(/is not a Prometheus rule file/);
   });
 
   test("a rule's values are strings, label values included, and a group's limit a number", () => {
