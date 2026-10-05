@@ -243,9 +243,10 @@ describe("TF022: credential-named resource attribute holding a literal", () => {
   test("flags the plaintext password", async () => {
     const diags = tf022.check(await loadFixture("TF022", "positive"));
     expect(diags).toHaveLength(1);
-    expect(diags[0].entity).toBe("TF022/aws_db_instance.app.password");
+    expect(diags[0].entity).toBe("TF022/aws_db_instance.app");
     expect(diags[0].message).not.toContain("Pr0dDbP4ssw0rd");
     expect(diags[0].message).toContain("reference");
+    expect(diags[0].message).toContain("`password`");
   });
 
   test("passes a password read from a data source", async () => {
@@ -254,7 +255,8 @@ describe("TF022: credential-named resource attribute holding a literal", () => {
 
   test("descends into a nested block", async () => {
     const diags = tf022.check(await loadFixture("TF022", "positive-nested"));
-    expect(diags.map((d) => d.entity)).toEqual(["TF022/aws_instance.web.connection.password"]);
+    expect(diags.map((d) => d.entity)).toEqual(["TF022/aws_instance.web"]);
+    expect(diags[0].message).toContain("`connection.password`");
   });
 
   test("a locator attribute is the remediation, not the finding", async () => {
