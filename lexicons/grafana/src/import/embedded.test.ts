@@ -54,4 +54,11 @@ describe("dashboard JSON embedded in another lexicon's resource (#2962)", () => 
     const file = out.files.find((f) => f.path === binding.from);
     expect(file?.content).toContain(`const ${binding.name} = new Dashboard(`);
   });
+
+  test("panels and queries are written inline, as `chant import dashboard.json` writes them (#3184)", () => {
+    const out = dashboardImporter.import(site(DASHBOARD));
+    const text = out.files.map((f) => f.content).join("\n");
+    expect(text).toContain("new StatPanel(");
+    expect(text).not.toMatch(/const panel\d* = new StatPanel/);
+  });
 });

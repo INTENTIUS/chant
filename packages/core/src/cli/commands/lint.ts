@@ -4,7 +4,8 @@ import { readFileSync, writeFileSync, readdirSync } from "fs";
 import { runLint, parseDisableComments } from "../../lint/engine";
 import type { LintRule, LintDiagnostic, LintFix } from "../../lint/rule";
 import type { IntrinsicDef, LexiconPlugin } from "../../lexicon";
-import { loadPlugins, resolveProjectLexicons } from "../plugins";
+import { loadPlugin, loadPlugins, resolveProjectLexicons } from "../plugins";
+import { findInfraFiles, detectLexicons } from "../../index";
 import { formatStylish, formatJson, formatSarif } from "../reporters/stylish";
 import { loadLocalRules } from "../../lint/rule-loader";
 import { loadCoreRules } from "../../lint/rules/index";
@@ -130,6 +131,29 @@ function lexiconResolutionDiagnostic(projectRoot: string, error: Error): LintDia
 }
 
 /**
+ * The plugins of lexicons that the project's source imports from and that are not in `configured`, for their
+ * property-kind class names (#3184). A package that is not installed, or that fails to load, is skipped.
+ */
+async function loadImportedPropertyPlugins(projectPath: string, configured: readonly string[]): Promise<LexiconPlugin[]> {
+  let imported: string[];
+  try {
+    imported = await detectLexicons(await findInfraFiles(projectPath));
+  } catch {
+    return [];
+  }
+  const plugins: LexiconPlugin[] = [];
+  for (const name of imported) {
+    if (configured.includes(name)) continue;
+    try {
+      plugins.push(await loadPlugin(name));
+    } catch {
+      // Not installed here; the import is the build's problem to report, not lint's.
+    }
+  }
+  return plugins;
+}
+
+/**
  * Load all lint rules: core COR/EVL rules, then lexicon plugin rules.
  *
  * Also returns the active lexicons' registered intrinsics (chant #1106) —
@@ -209,6 +233,15 @@ async function loadAllPluginRules(
   // resource (a Grafana panel inside its dashboard) instead of treating
   // them as resources.
   const propertyClasses = new Set(plugins.flatMap((plugin) => plugin.propertyClassNames?.() ?? []));
+
+  // chant #3184: a lexicon the source imports from but the config does not list (grafana in a k8s project that
+  // holds a dashboard ConfigMap, after `chant import`) still declares which of its classes are property-kind. Only
+  // those names are taken from it; its rules and intrinsics stay out, since the project did not ask for them.
+  if (!lexiconError) {
+    for (const plugin of await loadImportedPropertyPlugins(projectPath, lexiconNames)) {
+      for (const name of plugin.propertyClassNames?.() ?? []) propertyClasses.add(name);
+    }
+  }
 
   for (const plugin of plugins) {
     if (plugin.lintRules) {
