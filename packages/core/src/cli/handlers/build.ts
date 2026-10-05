@@ -178,6 +178,69 @@ export async function runBuild(ctx: CommandContext): Promise<number> {
   // #1064 — `--param name=value`, repeated, into a flat { name: value } record.
   const params = parseParamFlags(args.param);
 
+  // `--lexicon-output <lexicon>=<path>`: each named lexicon builds into its own
+  // file. One build per file, over the same project, so every write, check and
+  // diagnostic path is the one a single-lexicon `--lexicon` build already takes.
+  if (args.lexiconOutput?.length) {
+    if (args.watch || args.lexicon) {
+      console.error(formatError({ message: "--lexicon-output cannot be combined with --watch or --lexicon" }));
+      return 1;
+    }
+    const targets = new Map<string, string>();
+    for (const spec of args.lexiconOutput) {
+      const eq = (spec ?? "").indexOf("=");
+      if (eq <= 0 || eq === spec.length - 1) {
+        console.error(formatError({ message: `Invalid --lexicon-output "${spec}". Expected <lexicon>=<path>.` }));
+        return 1;
+      }
+      const name = spec.slice(0, eq);
+      if (targets.has(name)) {
+        console.error(formatError({ message: `--lexicon-output names lexicon "${name}" twice.` }));
+        return 1;
+      }
+      if (!serializers.some((s) => s.name === name)) {
+        console.error(formatError({ message: `No serializer found for lexicon "${name}". Available: ${serializers.map((s) => s.name).join(", ")}. List the lexicon in chant.config.ts.` }));
+        return 1;
+      }
+      targets.set(name, spec.slice(eq + 1));
+    }
+    const groups: { serializers: typeof serializers; output: string }[] = [...targets].map(([name, output]) => ({
+      serializers: serializers.filter((s) => s.name === name),
+      output,
+    }));
+    const rest = serializers.filter((s) => !targets.has(s.name));
+    if (args.output && rest.length > 0) groups.push({ serializers: rest, output: args.output });
+
+    const seenWarnings = new Set<string>();
+    let failed = false;
+    for (const group of groups) {
+      const { format, warning } = resolveBuildFormat(args.format, group.output);
+      if (warning) console.error(formatInfo(warning));
+      const result = await buildCommand({
+        path: args.path,
+        output: group.output,
+        format,
+        serializers: group.serializers,
+        plugins,
+        verbose: args.verbose,
+        env: args.env,
+        fold: args.fold,
+        sandbox: args.sandbox,
+        foldRank: args.foldRank,
+        foldRankCollapsedFile: args.foldRankCollapsedFile,
+        params: parseParamFlags(args.param),
+        paramsFile: args.paramsFile,
+      });
+      // The lexicons built by another group are not missing serializers.
+      const own = result.warnings.filter((w) => !w.includes("No serializer found for lexicon") && !seenWarnings.has(w));
+      for (const w of own) seenWarnings.add(w);
+      printWarnings(own);
+      printErrors(result.errors);
+      if (!result.success) failed = true;
+    }
+    return failed ? 1 : 0;
+  }
+
   if (args.watch) {
     const cleanup = buildCommandWatch({
       path: args.path,

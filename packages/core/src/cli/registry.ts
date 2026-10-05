@@ -529,6 +529,8 @@ export interface ParsedArgs {
   foldRankCollapsedFile?: string;
   /** `chant build --param name=value` (#1064) — repeatable. Bound to `params.<name>` (`@intentius/chant/params`) for source to reference, after validation against `chant.config.ts`'s declared `buildParams`. Highest precedence over `--params-file`/a declared `env` mapping/the declared `default`. */
   param?: string[];
+  /** `chant build --lexicon-output <lexicon>=<path>` — repeatable. Writes that lexicon's output to its own file, so one project can declare several lexicons (otel and prometheus) without their outputs sharing a file. Lexicons not named are built into `--output` when given, and skipped otherwise. */
+  lexiconOutput?: string[];
   /** `chant build --params-file <path>` (#1064) — a JSON file of `{ "name": value }` build-time parameter values. Second precedence, after `--param`. */
   paramsFile?: string;
   /** `chant graph --components --format ir --projection <lexicon>` (#989) — add
