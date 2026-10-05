@@ -48,7 +48,16 @@ import {
   GrafanaNotificationPolicy,
   GrafanaNotificationTemplate,
 } from "@intentius/chant-lexicon-k8s/generated/index";
-import type { ProvisionedAlertRule, ProvisionedContactPoint } from "./alerting-build";
+import {
+  contactPointJson,
+  muteTimingJson,
+  notificationPolicyJson,
+  notificationTemplateJson,
+  ruleGroupJson,
+  type ProvisionedAlertRule,
+  type ProvisionedContactPoint,
+} from "./alerting-build";
+import type { AlertRuleGroupEntity, ContactPointEntity, MuteTimingEntity, NotificationPolicyEntity, NotificationTemplateEntity } from "./alerting";
 import { compact, slugUid } from "./util";
 import { buildGrafana, DASHBOARD_PROVIDERS_FILE, DASHBOARDS_DIR, DATASOURCES_FILE, type ProvisionedDatasource } from "./build";
 import { libraryPanelsOf, type LibraryPanelPlan } from "./api/library-panels";
@@ -469,6 +478,38 @@ function operatorRoute(route: Record<string, unknown>): Record<string, unknown> 
 export function operatorPolicyRoute(policy: Record<string, unknown>): Record<string, unknown> {
   const { orgId: _orgId, ...route } = policy;
   return operatorRoute(route);
+}
+
+/**
+ * The fields `chant import` writes into an imported Grafana Operator
+ * resource (#3538): each takes the alerting declaration the field was read
+ * into and gives the field `GrafanaOperatorResources` writes for it, so the
+ * resource builds back to what was imported.
+ */
+
+/** `GrafanaAlertRuleGroup.spec.rules` for a rule group. */
+export function operatorRules(group: AlertRuleGroupEntity): Array<Record<string, unknown>> {
+  return ruleGroupJson(group).rules.map(operatorRule);
+}
+
+/** `GrafanaContactPoint.spec.receivers` for a contact point, its `${NAME}` secrets read from `secretName`. */
+export function operatorReceivers(cp: ContactPointEntity, secretName?: string): Array<Record<string, unknown>> {
+  return operatorContactPoint(contactPointJson(cp), secretName).receivers as Array<Record<string, unknown>>;
+}
+
+/** `GrafanaNotificationPolicy.spec.route` for a policy tree. */
+export function operatorPolicy(policy: NotificationPolicyEntity): Record<string, unknown> {
+  return operatorPolicyRoute(notificationPolicyJson(policy));
+}
+
+/** `GrafanaMuteTiming.spec.time_intervals` for a mute timing. */
+export function operatorTimeIntervals(timing: MuteTimingEntity): Array<Record<string, unknown>> {
+  return muteTimingJson(timing).time_intervals;
+}
+
+/** `GrafanaNotificationTemplate.spec.template` for a template. */
+export function operatorTemplate(template: NotificationTemplateEntity): string {
+  return notificationTemplateJson(template).template;
 }
 
 /**

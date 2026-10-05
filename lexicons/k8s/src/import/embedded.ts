@@ -9,7 +9,13 @@
  *   JSON);
  * - a `monitoring.coreos.com` PrometheusRule's `spec.groups`, as the rule file
  *   `{ groups }` those groups would make;
- * - a Grafana Operator `GrafanaDashboard`'s `spec.json`, as text (#3015).
+ * - a Grafana Operator `GrafanaDashboard`'s `spec.json`, as text (#3015);
+ * - the alerting content of the Grafana Operator's `GrafanaAlertRuleGroup`
+ *   (`spec.rules`), `GrafanaContactPoint` (`spec.receivers`),
+ *   `GrafanaNotificationPolicy` (`spec.route`), `GrafanaMuteTiming`
+ *   (`spec.time_intervals`) and `GrafanaNotificationTemplate`
+ *   (`spec.template`), each with the whole `spec` as the document so the
+ *   owner can read the fields beside it (#3538).
  *
  * Which lexicon imports the content is decided by core at run time, from the
  * lexicons that register an `embeddedImporters()`; this module names none of
@@ -26,6 +32,15 @@ function isObject(v: unknown): v is Record<string, unknown> {
 
 /** The `grafana_dashboard` label the Grafana dashboard sidecar looks for (kube-prometheus-stack, the Grafana Helm chart). */
 export const GRAFANA_DASHBOARD_LABEL = "grafana_dashboard";
+
+/** The Grafana Operator alerting kinds, and the `spec` field holding what the grafana lexicon imports. */
+const GRAFANA_ALERTING_FIELDS: Record<string, { field: string; what: string }> = {
+  "K8s::Grafana::GrafanaAlertRuleGroup": { field: "rules", what: "Grafana alert rules" },
+  "K8s::Grafana::GrafanaContactPoint": { field: "receivers", what: "Grafana contact point receivers" },
+  "K8s::Grafana::GrafanaNotificationPolicy": { field: "route", what: "a Grafana notification policy" },
+  "K8s::Grafana::GrafanaMuteTiming": { field: "time_intervals", what: "Grafana mute timing intervals" },
+  "K8s::Grafana::GrafanaNotificationTemplate": { field: "template", what: "a Grafana notification template" },
+};
 
 function looksLikeRuleGroups(groups: unknown): boolean {
   return Array.isArray(groups) && groups.length > 0 && groups.every((g) => isObject(g) && typeof g.name === "string" && Array.isArray(g.rules));
@@ -113,6 +128,23 @@ export function delegateEmbedded(
       expectedOwner: { lexicon: "grafana", what: "a Grafana dashboard" },
     });
     if (ref) properties.spec = { ...properties.spec, json: ref };
+    return;
+  }
+
+  const alerting = GRAFANA_ALERTING_FIELDS[type];
+  if (alerting && isObject(properties.spec) && properties.spec[alerting.field] !== undefined) {
+    const spec = properties.spec;
+    const ref = embedded.resolve({
+      host: "k8s",
+      hostType: type,
+      location: `${kind} ${name} spec.${alerting.field}`,
+      directory: name,
+      document: spec,
+      select: alerting.field,
+      labels,
+      expectedOwner: { lexicon: "grafana", what: alerting.what },
+    });
+    if (ref) properties.spec = { ...spec, [alerting.field]: ref };
     return;
   }
 
