@@ -687,6 +687,25 @@ export function createFountainOpRuntime(opts: FountainOpRuntimeOptions = {}): Op
     return conversations.find((c) => c.channel_id === "fountain:team") ?? conversations[0];
   };
 
+  /**
+   * The steward thread's turn ids as they stand before a post. Best effort: a
+   * lookup that fails leaves the set empty, which is the old behaviour.
+   */
+  const turnsBeforePost = async (
+    http: FountainHttp,
+    steward: Steward,
+  ): Promise<{ conversationId: string; turnIds: Set<string> } | undefined> => {
+    try {
+      const conversation = await stewardConversation(http, steward);
+      if (!conversation?.id) return undefined;
+      const turnIds = new Set<string>();
+      for (const turn of await turnsOf(http, conversation.id)) if (turn.id) turnIds.add(turn.id);
+      return { conversationId: conversation.id, turnIds };
+    } catch {
+      return undefined;
+    }
+  };
+
   const turnsOf = async (http: FountainHttp, conversationId: string): Promise<Turn[]> => {
     const { status, json } = await http("GET", `/api/conversations/${conversationId}/turns`);
     if (status !== 200) {
@@ -735,6 +754,11 @@ export function createFountainOpRuntime(opts: FountainOpRuntimeOptions = {}): Op
       const agentId = await resolveAgentId(http, steward.agent);
       const prompt = runPrompt(op.name);
 
+      // A teammate's thread already holds earlier turns, and the stream's first
+      // connection replays the whole log from the start. Note which turns are
+      // there before the post, so the tail can skip them (#3524).
+      const before = steward.team ? await turnsBeforePost(http, steward) : undefined;
+
       const conversationId = steward.team
         ? await postTeamMessage(http, agentId, steward, prompt, conversationUrl)
         : await openConversation(http, agentId, prompt);
@@ -749,6 +773,7 @@ export function createFountainOpRuntime(opts: FountainOpRuntimeOptions = {}): Op
         startedAt,
         idleTimeoutMs,
         now,
+        ...(before && before.conversationId === conversationId ? { ignoreTurns: before.turnIds } : {}),
         // The same REST client, so a stream that goes quiet can ask what
         // became of the conversation instead of waiting out the idle
         // timeout on one fountain has already failed (#2167).
@@ -979,6 +1004,12 @@ interface TailOptions {
   http?: FountainHttp;
   /** How much silence asks fountain about the conversation. Default 2s. */
   pollIntervalMs?: number;
+  /**
+   * Turn ids that existed before this run's prompt was posted. The stream
+   * replays the whole log on a first connection, so events of these turns are
+   * skipped: an earlier turn's `done` must not settle this run (#3524).
+   */
+  ignoreTurns?: ReadonlySet<string>;
 }
 
 const IDLE = Symbol("idle");
@@ -1165,6 +1196,7 @@ export async function tailConversation(opts: TailOptions): Promise<OpRunStatus> 
         // A heartbeat or a frame this client has no schema for. The stream is
         // still alive, which is the only thing the loop above needed to know.
       }
+      if (payload?.turn_id && opts.ignoreTurns?.has(payload.turn_id)) continue;
       if (payload && consume(payload)) {
         settled = true;
         break;
