@@ -139,7 +139,9 @@ export function createLocalOpRuntime(opts: { projectPath?: string } = {}): OpRun
 
       const [activities, profiles] = await Promise.all([loadActivities(lexicons), loadProfiles()]);
 
-      const runId = `local-${Date.now()}`;
+      // A caller that names the run (#3539: `chant acp` on fountain passes the
+      // conversation id) gets its id on the record; otherwise one is minted.
+      const runId = startOpts.runId ?? `local-${Date.now()}`;
       const startedAt = new Date().toISOString();
       noteEnv(op);
 

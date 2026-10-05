@@ -187,6 +187,23 @@ export interface OpRunStartOptions {
    * runtime takes it; a hosted run's lease is taken where the run executes.
    */
   work?: { item?: string; holder?: string };
+  /**
+   * The id to name this run by, in place of one the runtime mints (#3539).
+   * The local runtime uses it as the run record's id, the gate ledger's
+   * `runId` and `currentOpRun().runId`. `chant acp` passes fountain's
+   * conversation id here, so the record a hosted run writes in the sandbox
+   * and the run `chant run status --on fountain` reports carry the same id.
+   */
+  runId?: string;
+}
+
+/** What a caller hands {@link OpRuntimeProvider.resolveGate} besides the resolution. */
+export interface OpGateResolveOptions {
+  /**
+   * `--env` on `chant run approve` (#3539): the environment the woken run
+   * runs in. Omitted, a runtime keeps the environment the gated run had.
+   */
+  env?: string;
 }
 
 /**
@@ -220,9 +237,10 @@ export interface OpRuntimeProvider {
   /**
    * Wake a run whose gate has just been resolved. The ledger write is the
    * fact and `chant approve` owns it; this is the runtime's chance to act on
-   * it. Omit when a run re-reads the ledger on its own.
+   * it. Omit when a run re-reads the ledger on its own. `opts.env` is the
+   * `--env` the approver named, when they named one.
    */
-  resolveGate?(op: string, gate: string, resolution: GateResolutionRecord): Promise<void>;
+  resolveGate?(op: string, gate: string, resolution: GateResolutionRecord, opts?: OpGateResolveOptions): Promise<void>;
 
   /**
    * Host `chant run --components`. Optional: a runtime without it refuses the

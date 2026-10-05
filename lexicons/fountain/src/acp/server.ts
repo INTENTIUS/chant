@@ -70,6 +70,14 @@ export interface AcpServerOptions {
   createHost?: (cwd: string) => ChantHost;
   /** Mints permission request ids. Injected so a test can pin them. */
   newRequestId?: () => string;
+  /**
+   * The id every Op run in this process is named by (#3539). On fountain it
+   * is the conversation id the sandbox's environment carries
+   * (`FOUNTAIN_CONVERSATION_ID`), so the run record the sandbox writes and
+   * the run `chant run status --on fountain` reports have the same id.
+   * Omitted, the local runtime mints one per run.
+   */
+  runId?: string;
 }
 
 /** One open session: a working directory, the turn in flight, and any gate awaiting an answer. */
@@ -93,6 +101,7 @@ export class AcpServer implements JsonRpcHandler {
   private readonly version: string;
   private readonly createHost: (cwd: string) => ChantHost;
   private readonly newRequestId: () => string;
+  private readonly runId: string | undefined;
   /** Serializes turns — see the module doc. */
   private queue: Promise<unknown> = Promise.resolve();
 
@@ -101,6 +110,7 @@ export class AcpServer implements JsonRpcHandler {
     this.version = opts.version ?? "dev";
     this.createHost = opts.createHost ?? createChantHost;
     this.newRequestId = opts.newRequestId ?? (() => randomUUID());
+    this.runId = opts.runId !== undefined && opts.runId !== "" ? opts.runId : undefined;
   }
 
   /** Serve one connection until it closes. */
@@ -256,6 +266,7 @@ export class AcpServer implements JsonRpcHandler {
         signal: controller.signal,
         durableRequests: this.durableRequests,
         newRequestId: this.newRequestId,
+        ...(this.runId ? { runId: this.runId } : {}),
       });
       if (outcome.permission) {
         session.permissions.set(outcome.permission.requestId, { ...outcome.permission });

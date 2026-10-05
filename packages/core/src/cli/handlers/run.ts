@@ -466,7 +466,10 @@ export async function runOpApprove(ctx: CommandContext): Promise<number> {
   }
 
   try {
-    await runtime.resolveGate(opName, gate, outcome.record);
+    // `--env` on the approve line names the environment the woken run runs
+    // in (#3539); without it the runtime keeps the gated run's.
+    if (ctx.args.env !== undefined) await runtime.resolveGate(opName, gate, outcome.record, { env: ctx.args.env });
+    else await runtime.resolveGate(opName, gate, outcome.record);
   } catch (err) {
     console.error(formatWarning({
       message:
@@ -1108,8 +1111,13 @@ export async function runOpOnRuntime(ctx: CommandContext): Promise<number> {
   process.on("SIGTERM", onSigint);
 
   try {
+    // `--param name=value` reaches the runtime (#3539). The local runtime
+    // has no use for it; fountain reads `agent` to pick the steward and posts
+    // the rest on the command line it hands the sandbox.
+    const params = parseParamFlags(ctx.args.param);
     const handle = await runtime.start(config, {
       env: ctx.args.env,
+      ...(params ? { params } : {}),
       ...(ctx.args.profile !== undefined ? { profile: ctx.args.profile } : {}),
       progress,
       signal: controller.signal,

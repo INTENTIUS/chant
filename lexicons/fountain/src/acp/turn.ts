@@ -106,6 +106,8 @@ export interface TurnOptions {
   durableRequests: boolean;
   /** Mints the id a resume prompt names. Injected so a test can pin it. */
   newRequestId: () => string;
+  /** The id an Op run is named by, when the host names runs (#3539: fountain's conversation id). */
+  runId?: string;
 }
 
 /**
@@ -210,8 +212,19 @@ async function runOpTurn(
 
   let status: OpRunStatus;
   try {
+    // What `chant run` itself hands a runtime (#3539): the run's id, when
+    // the session names it, and the prompt's `--param` and `--work`, which a
+    // turn used to drop.
+    const params = paramsOf(command.args.param);
+    const work = {
+      ...(command.args.work !== undefined ? { item: command.args.work } : {}),
+      ...(command.args.holder !== undefined ? { holder: command.args.holder } : {}),
+    };
     const handle = await host.startOp(config, {
       ...(command.args.env ? { env: command.args.env } : {}),
+      ...(opts.runId ? { runId: opts.runId } : {}),
+      ...(params ? { params } : {}),
+      ...(Object.keys(work).length > 0 ? { work } : {}),
       progress: settle,
       signal,
     });
@@ -250,6 +263,18 @@ async function runOpTurn(
 
   sink.message(JSON.stringify(status.result?.record ?? status, null, 2) + "\n");
   return { stopReason: "end_turn" };
+}
+
+/** `--param name=value` flags as a record, the way `chant run` reads them. */
+function paramsOf(entries: string[] | undefined): Record<string, string> | undefined {
+  if (!entries?.length) return undefined;
+  const out: Record<string, string> = {};
+  for (const entry of entries) {
+    const eq = entry.indexOf("=");
+    if (eq === -1) out[entry] = "";
+    else out[entry.slice(0, eq)] = entry.slice(eq + 1);
+  }
+  return out;
 }
 
 /**

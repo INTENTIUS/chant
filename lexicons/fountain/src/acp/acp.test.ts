@@ -133,6 +133,8 @@ interface StubHostOptions {
 
 interface StubHost extends ChantHost {
   started: string[];
+  /** The options each `startOp` was handed, in order. */
+  startOpts: OpRunStartOptions[];
   verbsRun: string[];
   resolvedGates: Array<{ op: string; gate: string; by: string }>;
   firstStep: Promise<void>;
@@ -147,6 +149,7 @@ function stubHost(opts: StubHostOptions = {}): StubHost {
   const host: StubHost = {
     cwd: process.cwd(),
     started: [],
+    startOpts: [],
     verbsRun: [],
     resolvedGates: [],
     firstStep,
@@ -160,6 +163,7 @@ function stubHost(opts: StubHostOptions = {}): StubHost {
     },
     async startOp(op: OpConfig, start: OpRunStartOptions): Promise<OpRunHandle> {
       host.started.push(op.name);
+      host.startOpts.push(start);
       const runId = "run-1";
       const settled = (async (): Promise<OpRunStatus> => {
         const records = opts.records ?? [];
@@ -410,6 +414,39 @@ describe("chant acp", () => {
         order.indexOf(`tool_call_update ${call.toolCallId}`),
       );
     }
+  });
+
+  // #3539: on fountain the session names every run by the conversation id,
+  // and a prompt's --param and --work reach the run as `chant run` passes them.
+  it("names the run by the server's runId and passes --env, --param and --work through", async () => {
+    const host = stubHost({ records: okRecords });
+    const server = new AcpServer({ createHost: () => host, runId: "conv-42" });
+    const { client, sessionId } = await open(server);
+
+    await client.peer.request("session/prompt", {
+      sessionId,
+      prompt: promptOf('chant run demo-op --env prod --param tier=gold --param "note=two words" --work ISSUE-7 --on local'),
+    });
+
+    expect(host.startOpts).toHaveLength(1);
+    expect(host.startOpts[0]).toMatchObject({
+      env: "prod",
+      runId: "conv-42",
+      params: { tier: "gold", note: "two words" },
+      work: { item: "ISSUE-7" },
+    });
+  });
+
+  it("leaves the run id to the runtime when the server names none", async () => {
+    const host = stubHost({ records: okRecords });
+    const server = new AcpServer({ createHost: () => host });
+    const { client, sessionId } = await open(server);
+
+    await client.peer.request("session/prompt", { sessionId, prompt: promptOf("chant run demo-op") });
+
+    expect(host.startOpts[0]).not.toHaveProperty("runId");
+    expect(host.startOpts[0]).not.toHaveProperty("params");
+    expect(host.startOpts[0]).not.toHaveProperty("work");
   });
 
   it("replies with the run record as the final chunk", async () => {

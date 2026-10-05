@@ -33,9 +33,17 @@ export async function serveAcpOverStdio(opts: { durableRequests?: boolean; stewa
   // this session is refused, as the gate's resolution is above.
   if (opts.steward) setStewardTurn({ steward: opts.steward });
 
+  // chant#3539 — fountain gives the command it spawns the conversation's id
+  // in `FOUNTAIN_CONVERSATION_ID` (process env only, never on disk), and
+  // `chant run <op> --on fountain` names the run by that same id. Naming the
+  // sandbox's runs by it joins the two: the run record written here carries
+  // the id the caller's `chant run status` reports.
+  const conversationId = process.env.FOUNTAIN_CONVERSATION_ID?.trim();
+
   const server = new AcpServer({
     durableRequests: opts.durableRequests ?? false,
     version: lexiconVersion(),
+    ...(conversationId ? { runId: conversationId } : {}),
   });
 
   const transport = streamTransport(process.stdin, process.stdout);

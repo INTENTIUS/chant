@@ -41,6 +41,7 @@ export type {
   OpRunHandle,
   OpRunRecord,
   OpRunStartOptions,
+  OpGateResolveOptions,
   OpRunState,
   OpRunStatus,
 } from "./op/runtime";
