@@ -21,6 +21,14 @@ import { LOCK_FILE, fileHash, readLock, writeLock } from "./lineage-lock";
 import { stageUpgrade, isGovernancePath, UPGRADE_DIR, type ChantRunner } from "./lineage-upgrade";
 import { upgradeCommand } from "./lineage-upgrade-cli";
 
+// #3521: whether the workspace seals a gate is read from identity.gates in the
+// working directory; a test says which gates are sealed instead.
+const sealedGates = new Set<string>();
+vi.mock("../op/gate", async () => {
+  const actual = await vi.importActual<typeof import("../op/gate")>("../op/gate");
+  return { ...actual, gateIsSealed: async (gate: string) => sealedGates.has(gate) };
+});
+
 const ENV = { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" };
 
 let root: string;
@@ -288,6 +296,38 @@ describe("chant workspace upgrade", () => {
     commitProject("upgrade");
     const again = await upgradeCommand({ root: proj, to: "v2.0.0", runChant: passing, ledger: port });
     expect(again.outcome).toBe("up-to-date");
+  });
+
+  describe("the gated hint's approve command (#3521)", () => {
+    /** Runs the upgrade into its gate, and again against an approval of another patch; returns what both printed. */
+    async function gatedOutput(): Promise<string> {
+      release("v2.0.0", { "README.md": "starter v2\n" });
+      const port = ledger();
+      const lines: string[] = [];
+      vi.spyOn(console, "error").mockImplementation((s: unknown) => { lines.push(String(s)); });
+      await upgradeCommand({ root: proj, to: "v2.0.0", runChant: passing, ledger: port, now: "2026-09-23T10:00:00.000Z" });
+      port.approve(`sha256:${"0".repeat(64)}`, "2026-09-23T10:01:00.000Z");
+      await upgradeCommand({ root: proj, to: "v2.0.0", runChant: passing, ledger: port, now: "2026-09-23T10:02:00.000Z" });
+      return lines.join("\n");
+    }
+
+    test("unsealed gate: the gated line and the mismatch line carry no --sign", async () => {
+      const out = await gatedOutput();
+      expect(out).toContain("then run `chant approve workspace-upgrade .`");
+      expect(out).toContain("needs a fresh one: chant approve workspace-upgrade .");
+      expect(out).not.toContain("--sign");
+    });
+
+    test("sealed gate: the gated line and the mismatch line end in --sign", async () => {
+      sealedGates.add(".");
+      try {
+        const out = await gatedOutput();
+        expect(out).toContain("then run `chant approve workspace-upgrade . --sign`");
+        expect(out).toContain("needs a fresh one: chant approve workspace-upgrade . --sign");
+      } finally {
+        sealedGates.clear();
+      }
+    });
   });
 
   test("a lock that a .gitignore covers is applied beside the patch, and the digest covers it", async () => {

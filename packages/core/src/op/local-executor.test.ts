@@ -9,6 +9,14 @@ import {
 import { memoryGateLedgerPort, type GateLedgerPort } from "./gate";
 import { computePlanDigest } from "../lifecycle/plan-digest";
 import { renderHuman } from "./local-output";
+
+// #3521: whether the workspace seals a gate is read from identity.gates in the
+// working directory; a test says which gates are sealed instead.
+const sealedGates = new Set<string>();
+vi.mock("./gate", async () => {
+  const actual = await vi.importActual<typeof import("./gate")>("./gate");
+  return { ...actual, gateIsSealed: async (gate: string) => sealedGates.has(gate) };
+});
 import type { GateResolutionRecord, PendingGateRecord, PendingGateInput } from "../lifecycle/gate-ledger";
 import { stepOutput } from "./step-output-ref";
 
@@ -776,6 +784,33 @@ describe("runOpLocally — a gate approves a plan, not the next run (#2300)", ()
     const lines: string[] = [];
     renderHuman(second, (line) => lines.push(line));
     expect(lines.some((l) => l.includes("[refused]") && l.includes("not for this plan"))).toBe(true);
+  });
+
+  describe("the refusal's approve command (#3521)", () => {
+    async function refusalOnRename(): Promise<string | undefined> {
+      const { root, activities, config, digestOf } = harness();
+      const gates = approvableLedger();
+      await runOpLocally(config, activities, PROFILES, undefined, { gates, now: NOW });
+      gates.approve("approve-live-apply", digestOf("aws_s3_bucket.original"), "2026-09-09T12:05:00.000Z");
+      root.address = "aws_s3_bucket.renamed";
+      const second = await runOpLocally(config, activities, PROFILES, undefined, { gates, now: "2026-09-09T12:10:00.000Z" });
+      return second.records.find((r) => r.fn === "gate:approve-live-apply")?.refusal;
+    }
+
+    test("unsealed gate: the refusal's approve command has no --sign", async () => {
+      const refusal = await refusalOnRename();
+      expect(refusal).toContain("chant approve live-apply approve-live-apply");
+      expect(refusal).not.toContain("--sign");
+    });
+
+    test("sealed gate: the refusal's approve command ends in --sign", async () => {
+      sealedGates.add("approve-live-apply");
+      try {
+        expect(await refusalOnRename()).toContain("chant approve live-apply approve-live-apply --sign");
+      } finally {
+        sealedGates.clear();
+      }
+    });
   });
 
   test("approve, re-run with the root unchanged — it applies", async () => {
