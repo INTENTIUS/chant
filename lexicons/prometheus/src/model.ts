@@ -104,6 +104,7 @@ export function ruleName(rule: RuleConfig): string {
 // ── Alertmanager ────────────────────────────────────────────────────
 
 export * from "./integrations";
+export * from "./config-model";
 
 /** One entry under `receivers:`. */
 export interface ReceiverConfig {

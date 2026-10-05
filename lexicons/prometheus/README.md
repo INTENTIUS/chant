@@ -28,13 +28,16 @@ export { api, oncall, fallback, root };
 | `RuleGroup` | rule file |
 | `Slo` (composite) | rule file: SLI recording rules, error budget and multiwindow burn-rate alerts |
 | `GenAiRules` (composite) | rule file: request, error, latency, token and cost rules and opt-in alerts for the otel GenAI preset |
+| `ScrapeConfig`, `PrometheusConfig` | `prometheus.yml`: scrape jobs with relabelling and typed kubernetes, file, http, dns, ec2 and consul discovery (other `*_sd_configs` kinds pass through untyped), plus `global`, `alerting`, `rule_files`, `remote_write`, `remote_read` and `otlp` |
 | `Route`, `Receiver` (every Alertmanager integration), `InhibitRule`, `TimeInterval`, `AlertmanagerSettings` | `alertmanager.yml` |
+
+`prometheus.yml` is opt-in: a project that declares no `ScrapeConfig` or `PrometheusConfig` writes no such file. With a rule file in the build it is written beside it, otherwise it is the primary output; `prometheusConfigYaml([...])` gives the text for a set of entities, and `promtoolCheckConfig(yaml)` runs `promtool check config` over it.
 
 Types follow Prometheus `v3.15.0` and Alertmanager `v0.34.1` (`PROMETHEUS_PIN`).
 
 ## Importing existing files
 
-`chant import rules.yml --output src` and `chant import alertmanager.yml --output src` turn an existing rule file or Alertmanager config into this lexicon's TypeScript (`--lexicon prometheus` skips detection). Rules stay plain objects in a `Rule[]` const beside each `RuleGroup`; a group an `Slo()` built comes back as the `Slo` call. Routes reference receivers and time intervals by variable. `*_file` credential paths and Go templates are kept as written, and a literal credential is imported as found for PROM001 to report. `chant build` on the result gives back the same files: the round-trip tests in `src/import/roundtrip.test.ts` hold every example's output, `Slo()` output, and samples from the Prometheus docs and Alertmanager's example configs to that, and run `promtool` and `amtool` over the rebuilt files when installed.
+`chant import rules.yml --output src` and `chant import alertmanager.yml --output src` (and `chant import prometheus.yml`) turn an existing rule file, Alertmanager config or Prometheus config into this lexicon's TypeScript (`--lexicon prometheus` skips detection). Rules stay plain objects in a `Rule[]` const beside each `RuleGroup`; a group an `Slo()` built comes back as the `Slo` call. Routes reference receivers and time intervals by variable. `*_file` credential paths and Go templates are kept as written, and a literal credential is imported as found for PROM001 to report. `chant build` on the result gives back the same files: the round-trip tests in `src/import/roundtrip.test.ts` hold every example's output, `Slo()` output, and samples from the Prometheus docs and Alertmanager's example configs to that, and run `promtool` and `amtool` over the rebuilt files when installed.
 
 ## Checks
 

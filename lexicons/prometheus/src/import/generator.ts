@@ -24,6 +24,8 @@ import type { GeneratedFile, TypeScriptGenerator } from "@intentius/chant/import
 import type { TemplateIR } from "@intentius/chant/import/parser";
 import type {
   AlertmanagerConfig,
+  PrometheusConfigFile,
+  ScrapeJobConfig,
   InhibitRuleConfig,
   ReceiverConfig,
   RouteConfig,
@@ -35,8 +37,10 @@ import { ALERTMANAGER_GLOBAL_FIELDS, RECEIVER_INTEGRATION_TYPES } from "../model
 import { PROMETHEUS_PIN } from "../pin";
 import {
   ALERTMANAGER_RESOURCE_TYPE,
+  PROMETHEUS_RESOURCE_TYPE,
   RULE_FILE_RESOURCE_TYPE,
   type AlertmanagerResourceProperties,
+  type PrometheusResourceProperties,
   type RuleFileResourceProperties,
 } from "./parser";
 import { recognizeSlo } from "./slo";
@@ -259,6 +263,22 @@ const LEXICON_NAMES = [
   "TimeInterval",
   "TimePeriodConfig",
   "InhibitRule",
+  "ScrapeConfig",
+  "ScrapeConfigProps",
+  "PrometheusConfig",
+  "StaticConfig",
+  "RelabelConfig",
+  "PrometheusGlobalConfig",
+  "PrometheusAlertingConfig",
+  "RemoteWriteConfig",
+  "RemoteReadConfig",
+  "OtlpConfig",
+  "KubernetesSDConfig",
+  "FileSDConfig",
+  "HttpSDConfig",
+  "DnsSDConfig",
+  "Ec2SDConfig",
+  "ConsulSDConfig",
   "AlertmanagerSettings",
   "AlertmanagerGlobalConfig",
   "AlertmanagerTracingConfig",
@@ -579,6 +599,104 @@ export function generateAlertmanager(config: AlertmanagerConfig): { files: Gener
   };
 }
 
+// ── prometheus.yml ───────────────────────────────────────────────────
+
+/** The type each hoisted scrape config field is declared as; others use `ScrapeConfigProps["field"]`. */
+const SCRAPE_FIELD_TYPES: Record<string, string> = {
+  static_configs: "StaticConfig[]",
+  relabel_configs: "RelabelConfig[]",
+  metric_relabel_configs: "RelabelConfig[]",
+  params: "Record<string, string[]>",
+  kubernetes_sd_configs: "KubernetesSDConfig[]",
+  file_sd_configs: "FileSDConfig[]",
+  http_sd_configs: "HttpSDConfig[]",
+  dns_sd_configs: "DnsSDConfig[]",
+  ec2_sd_configs: "Ec2SDConfig[]",
+  consul_sd_configs: "ConsulSDConfig[]",
+};
+
+/** The type each top-level section is declared as. */
+const SECTION_TYPES: Record<string, string> = {
+  global: "PrometheusGlobalConfig",
+  alerting: "PrometheusAlertingConfig",
+  remote_write: "RemoteWriteConfig[]",
+  remote_read: "RemoteReadConfig[]",
+  otlp: "OtlpConfig",
+  storage: "Record<string, unknown>",
+  tracing: "Record<string, unknown>",
+  runtime: "Record<string, unknown>",
+};
+
+/** Generate the TypeScript declaring one `prometheus.yml`. */
+export function generatePrometheusConfigFiles(config: PrometheusConfigFile): GeneratedFile[] {
+  const names = new Names([...LEXICON_NAMES, ...Object.keys(SECTION_TYPES)]);
+  const modules: Module[] = [];
+
+  for (const [mod, items] of chunk(config.scrape_configs ?? [], "scrape-configs", "Scrape jobs: where Prometheus pulls metrics from")) {
+    modules.push(mod);
+    mod.use("ScrapeConfig");
+    for (const job of items as ScrapeJobConfig[]) {
+      const v = names.claim(job.job_name, "Scrape", "scrape");
+      const lines: string[] = [];
+      const entries: Array<[string, string]> = [["job_name", stringLiteral(job.job_name)]];
+      for (const [key, value] of Object.entries(job)) {
+        if (key === "job_name" || value === undefined) continue;
+        if (!needsHoist(value)) {
+          entries.push([key, tsLiteral(value, 2, 4 + key.length)]);
+          continue;
+        }
+        const known = SCRAPE_FIELD_TYPES[key];
+        const type = known ?? (key.endsWith("_sd_configs") ? undefined : `ScrapeConfigProps["${key}"]`);
+        const c = names.claim(`${v} ${key.replace(/_configs$/, "")}`, "Config", "scrape");
+        if (type) {
+          if (type.startsWith("ScrapeConfigProps")) mod.types.add("ScrapeConfigProps");
+          else if (!type.startsWith("Record<")) mod.types.add(type.replace(/\[\]$/, ""));
+          const head = `const ${c}: ${type} = `;
+          lines.push(`${head}${tsLiteral(value, 0, head.length)};`);
+        } else {
+          lines.push(`// ${key} is not a discovery kind the lexicon types, so it is carried as data, untyped.`);
+          const head = `const ${c} = `;
+          lines.push(`${head}${tsLiteral(value, 0, head.length)};`);
+        }
+        entries.push([key, c]);
+      }
+      const ctor = `const ${v} = new ScrapeConfig(`;
+      lines.push(`${ctor}${objectOf(entries, 0, ctor.length)});`);
+      mod.block(lines);
+      mod.exports.push(v);
+    }
+  }
+
+  const sectionKeys = Object.keys(config).filter((k) => k !== "scrape_configs");
+  if (sectionKeys.length > 0) {
+    const mod = new Module("prometheus.ts", "The prometheus.yml sections besides the scrape jobs");
+    modules.push(mod);
+    mod.use("PrometheusConfig");
+    const lines: string[] = [];
+    const entries: Array<[string, string]> = [];
+    for (const key of sectionKeys) {
+      const value = (config as Record<string, unknown>)[key];
+      const type = SECTION_TYPES[key];
+      if (!type || !needsHoist(value)) {
+        entries.push([key, tsLiteral(value, 2, 4 + key.length)]);
+        continue;
+      }
+      if (!type.startsWith("Record<")) mod.types.add(type.replace(/\[\]$/, ""));
+      const c = names.claim(key.replace(/_/g, " "), "Config", "prometheus");
+      const head = `const ${c}: ${type} = `;
+      lines.push(`${head}${tsLiteral(value, 0, head.length)};`);
+      entries.push([key, c]);
+    }
+    const v = names.claim("prometheus", "Settings", "prometheus");
+    const ctor = `const ${v} = new PrometheusConfig(`;
+    lines.push(`${ctor}${objectOf(entries, 0, ctor.length)});`);
+    mod.block(lines);
+    mod.exports.push(v);
+  }
+
+  return modules.map((m) => ({ path: m.path, content: m.render() }));
+}
+
 /** The rule file and `alertmanager.yml` TypeScript generator `chant import` runs. */
 export class PrometheusGenerator implements TypeScriptGenerator {
   generate(ir: TemplateIR): GeneratedFile[] {
@@ -586,6 +704,8 @@ export class PrometheusGenerator implements TypeScriptGenerator {
     for (const r of ir.resources) {
       if (r.type === RULE_FILE_RESOURCE_TYPE) {
         files.push(...generateRuleFileFiles((r.properties as unknown as RuleFileResourceProperties).file));
+      } else if (r.type === PROMETHEUS_RESOURCE_TYPE) {
+        files.push(...generatePrometheusConfigFiles((r.properties as unknown as PrometheusResourceProperties).config));
       } else if (r.type === ALERTMANAGER_RESOURCE_TYPE) {
         files.push(...generateAlertmanagerFiles((r.properties as unknown as AlertmanagerResourceProperties).config));
       }

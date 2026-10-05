@@ -57,6 +57,7 @@ export const prometheusPlugin: LexiconPlugin = {
     const { prometheus, alertmanager } = PROMETHEUS_PIN;
     console.error(`prometheus: ${CATALOG.length} entities`);
     console.error(`  rule file (${prometheus.source} ${prometheus.version}): RuleGroup, recording and alerting rules`);
+    console.error(`  prometheus.yml (${prometheus.source} ${prometheus.version}): ScrapeConfig, PrometheusConfig`);
     console.error(
       `  alertmanager.yml (${alertmanager.source} ${alertmanager.version}): ` +
         CATALOG.filter((c) => c.file === "alertmanager.yml").map((c) => c.className).join(", "),

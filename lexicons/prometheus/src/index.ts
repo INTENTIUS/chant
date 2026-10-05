@@ -2,7 +2,7 @@
 
 // Plugin and serializer
 export { prometheusPlugin } from "./plugin";
-export { prometheusSerializer, ALERTMANAGER_FILE } from "./serializer";
+export { prometheusSerializer, ALERTMANAGER_FILE, PROMETHEUS_FILE } from "./serializer";
 
 // Rule groups
 export {
@@ -50,16 +50,34 @@ export {
   type AlertmanagerSettingsEntity,
 } from "./alertmanager";
 
+// prometheus.yml
+export {
+  PrometheusConfig,
+  ScrapeConfig,
+  PROMETHEUS_CONFIG_TYPE,
+  SCRAPE_CONFIG_TYPE,
+  isPrometheusConfig,
+  isScrapeConfig,
+  isPrometheusConfigEntity,
+  type PrometheusConfigProps,
+  type PrometheusConfigEntity,
+  type ScrapeConfigProps,
+  type ScrapeConfigEntity,
+} from "./prometheus-config";
+
 // The plain-data model, building, YAML and checks
 export * from "./model";
 export {
   buildRuleFile,
   buildAlertmanagerConfig,
+  buildPrometheusConfig,
   ruleFileYaml,
   alertmanagerYaml,
+  prometheusConfigYaml,
   emitYaml,
   type BuiltRuleFile,
   type BuiltAlertmanager,
+  type BuiltPrometheusConfig,
 } from "./build";
 export { isValidDuration, durationMs, formatDuration } from "./duration";
 export { parseMatchers, matcherMatches, matcher, type Matcher, type MatchOp, type ParsedMatchers } from "./matchers";
@@ -76,7 +94,7 @@ export {
 export { PROMETHEUS_PIN } from "./pin";
 
 // promtool and amtool, when installed
-export { promtoolCheckRules, promtoolTestRules, amtoolCheckConfig, hasTool, type ToolResult } from "./tools";
+export { promtoolCheckRules, promtoolCheckConfig, promtoolTestRules, amtoolCheckConfig, hasTool, type ToolResult } from "./tools";
 
 // Composites
 export {
