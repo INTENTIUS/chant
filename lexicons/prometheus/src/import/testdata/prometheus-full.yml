@@ -13,8 +13,7 @@ global:
   target_limit: 500
 alerting:
   alert_relabel_configs:
-    - source_labels: [replica]
-      regex: a
+    - regex: replica
       action: labeldrop
   alertmanagers:
     - scheme: http
