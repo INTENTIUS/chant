@@ -204,11 +204,13 @@ describe("the rules an Slo builds", () => {
     );
 
     // Counters that sit still except for two events at minute 20, one of them bad.
+    // Sampled every minute: the evaluator's range is (t - range, t], so a 5m range
+    // over 5m samples holds one point and increase() has nothing to subtract.
     const ev = new RuleEvaluator([ruleGroupConfig(sparse.rules)]);
     const MIN = 60_000;
     let t = 0;
     let e = 0;
-    for (let minute = 0; minute <= 50; minute += 5) {
+    for (let minute = 0; minute <= 50; minute += 1) {
       if (minute === 20) {
         t = 2;
         e = 1;
