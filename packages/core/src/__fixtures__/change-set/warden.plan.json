@@ -1,44 +1,51 @@
-{
-  "org": "acme",
-  "entries": [
-    {
-      "kind": "update",
-      "resourceType": "team",
-      "key": "platform",
-      "before": {
-        "privacy": "secret",
-        "description": "Platform team"
+[
+  {
+    "org": "acme",
+    "entries": [
+      {
+        "kind": "delete",
+        "resourceType": "team",
+        "key": "contractors",
+        "before": {
+          "privacy": "closed",
+          "description": "Old contractors"
+        },
+        "verb": "membership"
       },
-      "after": {
-        "privacy": "closed",
-        "description": "Platform team"
+      {
+        "kind": "update",
+        "resourceType": "team",
+        "key": "platform",
+        "before": {
+          "privacy": "secret",
+          "description": "Platform team"
+        },
+        "after": {
+          "privacy": "closed",
+          "description": "Platform team"
+        },
+        "fields": [
+          {
+            "field": "privacy",
+            "before": "secret",
+            "after": "closed"
+          }
+        ],
+        "verb": "membership"
       },
-      "fields": [
-        {
-          "field": "privacy",
-          "before": "secret",
-          "after": "closed"
-        }
-      ]
-    },
-    {
-      "kind": "create",
-      "resourceType": "team",
-      "key": "release",
-      "after": {
-        "privacy": "secret",
-        "description": "Release managers"
+      {
+        "kind": "create",
+        "resourceType": "team",
+        "key": "release",
+        "after": {
+          "privacy": "secret",
+          "description": "Release managers"
+        },
+        "verb": "membership"
       }
-    },
-    {
-      "kind": "delete",
-      "resourceType": "team",
-      "key": "contractors",
-      "before": {
-        "privacy": "closed",
-        "description": "Old contractors"
-      }
+    ],
+    "managedCounts": {
+      "team": 2
     }
-  ],
-  "managedCount": 2
-}
+  }
+]
