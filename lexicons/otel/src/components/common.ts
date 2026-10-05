@@ -144,6 +144,22 @@ export interface RetrySettings {
   max_elapsed_time?: Duration;
 }
 
+/**
+ * `sending_queue.batch` (v0.130.0, `exporterhelper/internal/queuebatch`):
+ * the exporter merges queued requests into larger ones before sending. An
+ * alternative to the `batch` processor that works per exporter. Unset, the
+ * exporter does not batch.
+ */
+export interface BatchSettings {
+  /** How long a partial batch waits before it is sent. Default 200ms. */
+  flush_timeout?: Duration;
+  /** A batch is sent once it reaches this size, in `sizer` units. Default 8192. */
+  min_size?: number;
+  /** A larger batch is split to this size. 0 means no limit. */
+  max_size?: number;
+  sizer?: "requests" | "items" | "bytes";
+}
+
 export interface QueueSettings {
   enabled?: boolean;
   num_consumers?: number;
@@ -152,6 +168,23 @@ export interface QueueSettings {
   storage?: string;
   blocking?: boolean;
   sizer?: "requests" | "items" | "bytes";
+  /** Batching in the queue, in place of a `batch` processor. */
+  batch?: BatchSettings;
+}
+
+/** Problems in the `sending_queue` of an exporter's `exporterhelper` settings. */
+export function queueIssues(c: ExporterHelperSettings): string[] {
+  const q = c.sending_queue;
+  const b = q?.batch;
+  if (!q || !b) return [];
+  const issues: string[] = [];
+  if (q.enabled === false) issues.push("sending_queue.batch is set but sending_queue.enabled is false; batching runs in the queue");
+  if (b.min_size !== undefined && b.min_size < 0) issues.push("sending_queue.batch.min_size is negative");
+  if (b.max_size !== undefined && b.max_size < 0) issues.push("sending_queue.batch.max_size is negative");
+  if (b.max_size !== undefined && b.max_size !== 0 && b.min_size !== undefined && b.max_size < b.min_size) {
+    issues.push(`sending_queue.batch.max_size (${b.max_size}) is below min_size (${b.min_size}); the collector rejects this`);
+  }
+  return issues;
 }
 
 /** `exporterhelper` settings every queued exporter accepts. */
