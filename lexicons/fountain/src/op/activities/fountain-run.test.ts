@@ -92,7 +92,7 @@ function scriptedConversation(opts: {
   return { http, calls };
 }
 
-describe("fountainRun — ephemeral (behaves as today, #2718)", () => {
+describe("fountainRun — ephemeral (#2718, #3386)", () => {
   it("resolves the agent by name, starts, and polls to a terminal status", async () => {
     const { http } = scriptedConversation({
       sandboxMode: "ephemeral",
@@ -132,6 +132,87 @@ describe("fountainRun — ephemeral (behaves as today, #2718)", () => {
       terminatedByDeadline: true,
     });
     expect(calls).toContain("POST /api/conversations/conv-2/terminate");
+  });
+
+  it("ends on idle with the latest turn's outcome, and terminates the machine by default (#3386)", async () => {
+    const { http, calls } = scriptedConversation({
+      sandboxMode: "ephemeral",
+      conversationId: "conv-e1",
+      statuses: ["pending", "running", "idle"],
+      turns: [{ turn_number: 1, status: "completed" }],
+    });
+
+    const result = await fountainRun(
+      { agent: "researcher", prompt: "hi", timeoutMs: 60_000, pollMs: 1, sleep: async () => {} },
+      undefined,
+      http,
+    );
+    expect(result).toEqual({
+      conversationId: "conv-e1",
+      status: "completed",
+      persistent: false,
+      terminatedByDeadline: false,
+    });
+    expect(calls.filter((c) => c === "GET /api/conversations/conv-e1")).toHaveLength(3);
+    expect(calls).toContain("POST /api/conversations/conv-e1/terminate");
+  });
+
+  it("reports a failed or interrupted turn as the run's outcome (#3386)", async () => {
+    for (const turnStatus of ["failed", "interrupted"]) {
+      const { http } = scriptedConversation({
+        sandboxMode: "ephemeral",
+        conversationId: "conv-e2",
+        statuses: ["running", "idle"],
+        turns: [{ turn_number: 1, status: turnStatus }],
+      });
+      const result = await fountainRun({ agent: "researcher", prompt: "hi", pollMs: 1, sleep: async () => {} }, undefined, http);
+      expect(result.status).toBe(turnStatus);
+      expect(result.terminatedByDeadline).toBe(false);
+    }
+  });
+
+  it("keeps polling an idle conversation whose latest turn has not ended (#3386)", async () => {
+    const { http, calls } = scriptedConversation({
+      sandboxMode: "ephemeral",
+      conversationId: "conv-e3",
+      statuses: ["idle"],
+      turns: [{ turn_number: 1, status: "running" }],
+    });
+    let sleeps = 0;
+    const result = await fountainRun(
+      {
+        agent: "researcher",
+        prompt: "hi",
+        timeoutMs: 50,
+        pollMs: 1,
+        sleep: async () => {
+          sleeps += 1;
+          await new Promise((r) => setTimeout(r, 5));
+        },
+      },
+      undefined,
+      http,
+    );
+    expect(sleeps).toBeGreaterThan(1);
+    expect(result.status).toBe("terminated");
+    expect(result.terminatedByDeadline).toBe(true);
+    expect(calls).toContain("POST /api/conversations/conv-e3/terminate");
+  });
+
+  it("terminate: never leaves a finished ephemeral conversation up for a later fountainPrompt turn", async () => {
+    const { http, calls } = scriptedConversation({
+      sandboxMode: "ephemeral",
+      conversationId: "conv-e4",
+      statuses: ["running", "idle"],
+      turns: [{ turn_number: 1, status: "completed" }],
+    });
+    const result = await fountainRun(
+      { agent: "researcher", prompt: "hi", terminate: "never", pollMs: 1, sleep: async () => {} },
+      undefined,
+      http,
+    );
+    expect(result.status).toBe("completed");
+    expect(calls).not.toContain("POST /api/conversations/conv-e4/terminate");
   });
 });
 

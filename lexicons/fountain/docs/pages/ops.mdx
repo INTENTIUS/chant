@@ -30,7 +30,7 @@ Conversations are runs, not resources, so they are started rather than declared.
 
 | Launch | Done when | `status` in the result |
 |---|---|---|
-| Ephemeral agent | The conversation reaches `completed`, `failed`, `timed_out` or `terminated`. | The conversation's status. |
+| Ephemeral agent | The conversation settles on `idle` with its latest turn ended, or reaches `completed`, `failed`, `timed_out` or `terminated`. | The turn's own outcome (`completed`, `failed` or `interrupted`), or the conversation's status. |
 | Persistent agent, with a prompt | The conversation settles on `idle` (or one of the above). | The turn's own outcome: `completed`, `failed` or `interrupted`. |
 | Persistent agent, no prompt | The conversation's sandbox is `ready` or `failed` and no turn is running. fountain v0.21.0 leaves such a conversation `pending`, since no turn starts. | `provisioned`, or `failed` with `failedStage` naming the provisioning stage that failed. |
 
@@ -41,7 +41,7 @@ An empty `prompt` counts as no prompt. The result also carries `sandboxId` and `
 | `timeoutMs` | Deadline for the wait. Default 10 minutes. |
 | `pollMs` | Poll interval. Default 5 seconds. |
 | `sandboxApiAccess` | fountain's `sandbox_api_access`. `owner`, fountain's default, gives the sandbox a callback token (`FOUNTAIN_TOKEN`) scoped to the owner. `none` gives it none. fountain v0.21.0 accepts `none` only for a fresh ephemeral sandbox, so `fountainRun` refuses it for a persistent agent before starting anything ([managoat/fountain#2497](https://github.com/managoat/fountain/issues/2497)). |
-| `terminate` | What happens to the conversation's machine when the wait ends: `on-deadline` (the ephemeral default) terminates only a run whose turn never ended, `never` (the persistent default) leaves it, `always` terminates it either way. |
+| `terminate` | What happens to the conversation's machine when the wait ends: `always` (the ephemeral default) terminates it whether the turn ended or the deadline fired, `never` (the persistent default) leaves it, `on-deadline` terminates only a run whose turn never ended. Pass `never` on an ephemeral run to send it a later turn with `fountainPrompt`. |
 
 Under `chant run` the executor calls these activities as `fn(args, signal)`. When the signal fires (the step's timeout, or Ctrl-C) `fountainRun` stops polling, applies the `terminate` policy as it does at its deadline, and the step fails.
 

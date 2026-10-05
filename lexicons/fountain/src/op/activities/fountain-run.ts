@@ -7,12 +7,18 @@
  * imperative half: resolve the agent by name, POST the conversation, and
  * poll until the turn is done.
  *
- * What "done" means depends on the agent's `sandbox_mode` (#2718). An
- * `ephemeral` conversation's machine is its own and this polls the
- * conversation's own status to `completed | failed | timed_out |
- * terminated` — none of which a running server's conversation status
- * actually reaches on its own, so in practice this waits out `timeoutMs`
- * and terminates, as it always has. A `persistent` agent's conversation
+ * What "done" means depends on the agent's `sandbox_mode` (#2718). Any
+ * conversation is done at `completed | failed | timed_out | terminated`,
+ * but a running server's conversation reaches none of those on its own: when
+ * a turn ends, the conversation settles on `idle`. An `ephemeral`
+ * conversation is done once it is `idle` and its latest turn (`GET .../turns`)
+ * has ended (`completed | failed | interrupted`), and the result is that
+ * turn's outcome (#3386). Before #3386 this path waited for the four statuses
+ * only, so every ephemeral run waited out `timeoutMs` and was terminated. An
+ * ephemeral machine is its own, so by default it is terminated once the wait
+ * ends, cleanly or not (`terminate: "always"`); pass `terminate: "never"` to
+ * keep the conversation up for a later turn through `fountainPrompt`
+ * (#3356). A `persistent` agent's conversation
  * (`Steward`, and `Box` from #2705) shares one machine across every
  * conversation on it, and a turn ending there does not tear the sandbox
  * down: the conversation settles on `idle`, not on any of the four
@@ -51,11 +57,12 @@ import {
 } from "./fountain-apply";
 
 /**
- * Conversation statuses that end an *ephemeral* agent's run. `completed`
- * and `timed_out` are not values fountain's `Conversation.status` takes
- * today (its enum is `pending | running | idle | failed | terminated`) —
- * they are kept so a server that starts reporting them is handled without
- * a further change here.
+ * Conversation statuses that end any agent's run without reading its turns.
+ * `completed` and `timed_out` are not values fountain's `Conversation.status`
+ * takes today (its enum is `pending | running | idle | failed | terminated`);
+ * they are kept so a server that starts reporting them is handled without a
+ * further change here. An ephemeral conversation also ends on `idle` once its
+ * latest turn has ended (#3386).
  */
 export const TERMINAL_STATUSES = new Set(["completed", "failed", "timed_out", "terminated"]);
 
@@ -119,10 +126,12 @@ export interface FountainRunArgs {
   pollMs?: number;
   /**
    * When to terminate the conversation's machine (#2718). Default follows
-   * the agent's `sandbox_mode`: `on-deadline` for `ephemeral` (unchanged),
-   * `never` for `persistent` — its machine is a home meant to outlive the
+   * the agent's `sandbox_mode`: `always` for `ephemeral` (the machine is the
+   * run's own, so it goes once the turn ends or the deadline fires, #3386),
+   * `never` for `persistent` (its machine is a home meant to outlive the
    * conversation, so a run that hits its deadline leaves it be unless this
-   * says otherwise.
+   * says otherwise). Pass `never` on an ephemeral run to send it a later turn
+   * with `fountainPrompt`.
    */
   terminate?: TerminatePolicy;
   /** Injectable clock/sleep for tests. */
@@ -132,9 +141,10 @@ export interface FountainRunArgs {
 export interface FountainRunResult {
   conversationId: string;
   /**
-   * The run's outcome. For a persistent agent whose turn ended, this is the
-   * turn's own status (`completed | failed | interrupted`); otherwise it is
-   * the conversation's status when the wait ended (`terminated` on a
+   * The run's outcome. For a conversation that settled on `idle` after its
+   * turn (persistent, or ephemeral since #3386), this is the turn's own
+   * status (`completed | failed | interrupted`); otherwise it is the
+   * conversation's status when the wait ended (`terminated` on a
    * deadline). For a persistent agent launched with no prompt (#2781), it is
    * the sandbox's outcome: `provisioned` or `failed`.
    */
@@ -259,7 +269,7 @@ export async function fountainRun(
         `only for a fresh ephemeral sandbox, so its sandbox gets the owner-scoped callback token (managoat/fountain#2497)`,
     );
   }
-  const terminatePolicy: TerminatePolicy = args.terminate ?? (persistent ? "never" : "on-deadline");
+  const terminatePolicy: TerminatePolicy = args.terminate ?? (persistent ? "never" : "always");
   const doneStatuses = persistent ? PERSISTENT_DONE_STATUSES : TERMINAL_STATUSES;
 
   const createBody: Record<string, unknown> = { agent_id: agentId };
@@ -322,13 +332,17 @@ export async function fountainRun(
             ...(stage ? { failedStage: stage } : {}),
           };
         }
-        if (doneStatuses.has(conversationStatus)) {
-          let status = conversationStatus;
-          if (persistent && conversationStatus === "idle") {
-            const turnStatus = await latestTurnStatus(client, conversationId);
-            if (turnStatus && TERMINAL_TURN_STATUSES.has(turnStatus)) status = turnStatus;
-          }
-          if (terminatePolicy === "always") {
+        // `idle` reports the latest turn's outcome. A persistent conversation
+        // is done at `idle` either way; an ephemeral one only once that turn
+        // has ended (#3386), so `idle` with no ended turn keeps polling.
+        let idleTurnStatus: string | undefined;
+        if (conversationStatus === "idle") {
+          const turnStatus = await latestTurnStatus(client, conversationId);
+          if (turnStatus && TERMINAL_TURN_STATUSES.has(turnStatus)) idleTurnStatus = turnStatus;
+        }
+        if (doneStatuses.has(conversationStatus) || idleTurnStatus !== undefined) {
+          const status = idleTurnStatus ?? conversationStatus;
+          if (terminatePolicy === "always" && conversationStatus !== "terminated") {
             await client("POST", `/api/conversations/${conversationId}/terminate`);
           }
           return { conversationId, status, persistent, terminatedByDeadline: false, ...machine() };
@@ -345,8 +359,7 @@ export async function fountainRun(
     throw err;
   }
 
-  // Deadline: the turn never ended (or, for an ephemeral conversation, its
-  // done-status is never observed on the wire — see TERMINAL_STATUSES).
+  // Deadline: the turn never ended.
   // `never` leaves a hung run's machine alone; every other policy ends the
   // conversation so it does not outlive the op.
   if (terminatePolicy !== "never") {

@@ -215,9 +215,11 @@ describe("start", () => {
     expect(status.endedAt).toBe("2026-03-01T10:04:00.000Z");
 
     // The prompt is the command line, posted on the single-writer team path.
+    // `--on local` keeps a project's `run.on: "fountain"` from posting again
+    // from the sandbox (#3225).
     const post = calls.find((c) => c.method === "POST");
     expect(post?.path).toBe("/api/team/agent-1/messages");
-    expect(post?.body).toEqual({ prompt: "chant run alb-deploy" });
+    expect(post?.body).toEqual({ prompt: "chant run alb-deploy --on local" });
 
     // Phases reached the progress sink the way the local runtime feeds it.
     expect(progress).toHaveLength(1);
@@ -227,6 +229,47 @@ describe("start", () => {
 
     expect(opens[0].path).toContain("streams=stdout,stderr,stage");
     expect(opens[0].path).toContain("blocks=true");
+  });
+
+  // #3232: `--env` rides on the posted command line, so the sandbox's run
+  // sees the environment the caller asked for.
+  it("posts --env on the command line when the run names one (#3232)", async () => {
+    const { http, calls } = fakeHttp(
+      stewardRoutes({
+        "POST /api/team/agent-1/messages": { status: 202, json: { data: { conversation_id: "conv-1" } } },
+      }),
+    );
+    const { sse } = fakeSse([
+      [
+        sseEvent("1", { stream: "stdout", blocks: [{ kind: "text", body: JSON.stringify(RECORD) }] }),
+        sseEvent("2", { stream: "stage", stage: "turn", state: "done" }),
+      ],
+    ]);
+    const runtime = createFountainOpRuntime({
+      config: CONFIG, endpoint: "https://fountain.example.com", token: "t", http, sse, now: fakeClock(),
+    });
+
+    const handle = await runtime.start(OP, { env: "staging" });
+    await handle.result();
+
+    const post = calls.find((c) => c.method === "POST");
+    expect(post?.body).toEqual({ prompt: "chant run alb-deploy --env staging --on local" });
+
+    const { parseChantCommandLine } = await import("../acp/command-line");
+    const parsed = await parseChantCommandLine((post?.body as { prompt: string }).prompt);
+    expect(parsed.ok && parsed.command.kind === "op-run" && parsed.command.op).toBe("alb-deploy");
+    expect(parsed.ok && parsed.command.args.env).toBe("staging");
+    expect(parsed.ok && parsed.command.args.on).toBe("local");
+  });
+
+  it("refuses an --env the command line cannot carry, by name, before posting anything (#3232)", async () => {
+    const { http, calls } = fakeHttp(stewardRoutes({}));
+    const runtime = createFountainOpRuntime({
+      config: CONFIG, endpoint: "https://fountain.example.com", token: "t", http, now: fakeClock(),
+    });
+
+    await expect(runtime.start(OP, { env: "prod east" })).rejects.toThrow(/--env "prod east" cannot be posted/);
+    expect(calls).toEqual([]);
   });
 
   // #3524: a teammate's thread already holds finished turns, and the stream's
@@ -951,7 +994,35 @@ describe("resolveGate", () => {
 
     const post = calls.find((c) => c.path === "/api/conversations/conv-1/prompts");
     expect(post?.body).toEqual({
-      prompt: "chant run alb-deploy --approver alex --url https://github.com/o/r/pull/1",
+      prompt: "chant run alb-deploy --on local --approver alex --url https://github.com/o/r/pull/1",
+    });
+  });
+
+  // #3232: the re-run runs in the environment the gated run did.
+  it("carries the gated turn's --env onto the re-run prompt", async () => {
+    const { http, calls } = fakeHttp(
+      stewardRoutes({
+        ...routes,
+        "GET /api/conversations/conv-1/turns": {
+          status: 200,
+          json: {
+            data: [
+              { id: "turn-1", prompt: "chant run alb-deploy --on local", state: "done" },
+              { id: "turn-2", prompt: "chant run alb-deploy --env prod --on local", state: "done" },
+            ],
+          },
+        },
+      }),
+    );
+    const runtime = createFountainOpRuntime({
+      config: CONFIG, endpoint: "https://fountain.example.com", token: "t", http, now: fakeClock(),
+    });
+
+    await runtime.resolveGate!("alb-deploy", "release", resolution);
+
+    const post = calls.find((c) => c.path === "/api/conversations/conv-1/prompts");
+    expect(post?.body).toEqual({
+      prompt: "chant run alb-deploy --env prod --on local --approver alex --url https://github.com/o/r/pull/1",
     });
   });
 
@@ -975,6 +1046,7 @@ describe("resolveGate", () => {
     expect(parsed.ok && parsed.command.kind === "op-run" && parsed.command.op).toBe("alb-deploy");
     expect(parsed.ok && parsed.command.args.approver).toBe("alex");
     expect(parsed.ok && parsed.command.args.url).toBe("https://github.com/o/r/pull/1");
+    expect(parsed.ok && parsed.command.args.on).toBe("local");
   });
 
   it("reports conversation_busy rather than retrying the prompt", async () => {

@@ -37,7 +37,7 @@ A name that is not a configured lexicon is refused with the list of lexicons tha
 
 A project whose Ops always run on one lexicon's runtime can set it once in `chant.config.ts`. `run.on` is the default for `chant run` and every subcommand. `--on` overrides it, and `--on local` selects the built-in runtime. When `run.on` names a lexicon that is not configured or has no `opRuntime`, the refusal is the one `--on` gives. Its label names `run.on` and the config file in place of the flag.
 
-A `run` block that does not validate is refused too. That covers a non-string or empty `on` and a misspelt key, so a broken default never falls back to the local runtime unnoticed. Leave `run.on` unset for fountain and pass `--on fountain` instead: the steward runs the posted `chant run <op>` in a copy of the project, where `run.on` would hand it to fountain again ([#3225](https://github.com/INTENTIUS/chant/issues/3225)).
+A `run` block that does not validate is refused too. That covers a non-string or empty `on` and a misspelt key, so a broken default never falls back to the local runtime unnoticed. `run: { on: "fountain" }` works like `--on fountain` on every run: the line fountain posts carries `--on local`, so the sandbox runs the Op itself rather than posting it again ([#3225](https://github.com/INTENTIUS/chant/issues/3225)).
 
 ```ts
 // chant.config.ts
@@ -49,7 +49,7 @@ export default {
 
 ### `--on fountain`
 
-The [fountain](/chant/lexicons/fountain/profiles/) lexicon hosts a run on a teammate's thread. `chant run <op> --on fountain` posts the command line `chant run <op>` to the steward as a prompt, tails the conversation's event stream, and exits with the status the run reached. The Op executes in fountain's sandbox, so the run record lands on the ledger from there rather than from this process.
+The [fountain](/chant/lexicons/fountain/profiles/) lexicon hosts a run on a teammate's thread. `chant run <op> --on fountain` posts the command line `chant run <op> --on local` to the steward as a prompt, tails the conversation's event stream, and exits with the status the run reached. The Op executes in fountain's sandbox, so the run record lands on the ledger from there rather than from this process. `--env <env>` rides on the posted line as `chant run <op> --env <env> --on local`, so the run in the sandbox sees the environment you named ([#3232](https://github.com/INTENTIUS/chant/issues/3232)). An environment name that is not one plain word (letters, digits and `. _ : @ + = / -`) is refused by name before anything is posted.
 
 ```bash
 chant run alb-deploy --on fountain
@@ -65,7 +65,7 @@ A teammate runs one turn at a time. A prompt sent while another op is running co
 
 Tool calls on the stream become phases, so `--progress-json` and the human renderer show the run's shape as it happens. Fountain closes an idle stream connection after 60 seconds, which is not the end of a turn: the reader reconnects with `Last-Event-ID` and the server replays what arrived meanwhile. Only real silence ends the wait, after 30 minutes, and `FOUNTAIN_STREAM_IDLE_TIMEOUT` (in seconds) widens that for a run that thinks for longer.
 
-`chant run approve <op> <gate> --on fountain` writes the resolution to the gate ledger as always. It then posts `chant run <op>` to the steward, with `--approver` and `--url` on it. The sandbox re-runs the op and walks through the gate, reading the resolution back off the ledger. `--durable-requests` is reserved for answering fountain's own pending request instead; the endpoint it needs has not shipped, and the flag currently refuses by naming the upstream issue rather than reporting a resolution it did not make.
+`chant run approve <op> <gate> --on fountain` writes the resolution to the gate ledger as always. It then posts `chant run <op> --on local` to the steward, with `--approver` and `--url` on it, and with the `--env` the gated run carried. The sandbox re-runs the op and walks through the gate, reading the resolution back off the ledger. `--durable-requests` is reserved for answering fountain's own pending request instead; the endpoint it needs has not shipped, and the flag currently refuses by naming the upstream issue rather than reporting a resolution it did not make.
 
 ### An Op a declared steward lists
 

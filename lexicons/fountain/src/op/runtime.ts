@@ -3,7 +3,8 @@
  *
  * `chant run <op> --on fountain` hands the run to a fountain teammate instead
  * of executing it here. This module is the client for that: it posts the
- * command line `chant run <op>` as a prompt on the steward's thread, tails the
+ * command line `chant run <op> [--env <env>] --on local` ({@link hostedRunPrompt})
+ * as a prompt on the steward's thread, tails the
  * conversation's SSE stream, and reports what comes back through the
  * {@link OpRuntimeProvider} contract core defines in
  * `packages/core/src/op/runtime.ts`.
@@ -72,9 +73,9 @@ import {
 } from "./activities/fountain-apply";
 import { resolveAgentId } from "./activities/fountain-run";
 import { stewardForOp } from "../composites/steward";
-import { runPrompt } from "./run-prompt";
+import { runPrompt, hostedRunPrompt, envOfPrompt } from "./run-prompt";
 
-export { runPrompt };
+export { runPrompt, hostedRunPrompt, envOfPrompt };
 
 // ── The SSE seam ──────────────────────────────────────────────────────────
 
@@ -302,7 +303,7 @@ const MAX_RECONNECTS = 1000;
 
 // ── Pure helpers ──────────────────────────────────────────────────────────
 
-/** Does this turn's prompt name `op`? The prompt is `chant run <op>`, exactly. */
+/** Does this turn's prompt name `op`? The prompt is `chant run <op>`, alone or followed by flags. */
 export function turnRunsOp(turn: Turn, op: string): boolean {
   const prompt = (turn.prompt ?? "").trim();
   return prompt === runPrompt(op) || prompt.startsWith(`${runPrompt(op)} `);
@@ -749,10 +750,12 @@ export function createFountainOpRuntime(opts: FountainOpRuntimeOptions = {}): Op
       // Before the first `rest()`, so the endpoint and token this run uses are
       // the named profile's (#2192). Omitted, `defaultProfile` still answers.
       selectProfile(startOpts.profile);
+      // Before any request: an `--env` the command line cannot carry is
+      // refused here, by name, rather than dropped (#3232).
+      const prompt = hostedRunPrompt(op.name, { env: startOpts.env });
       const http = await rest();
       const steward = await resolveSteward(op, startOpts.params);
       const agentId = await resolveAgentId(http, steward.agent);
-      const prompt = runPrompt(op.name);
 
       // A teammate's thread already holds earlier turns, and the stream's first
       // connection replays the whole log from the start. Note which turns are
@@ -909,12 +912,15 @@ export function createFountainOpRuntime(opts: FountainOpRuntimeOptions = {}): Op
       // never re-apply anything (#2192). `--approver` and `--url` ride along
       // so the thread's own transcript names who resolved the gate and where;
       // the run itself decides the gate from the ledger (`evaluateGate` in
-      // core's `op/gate.ts`), not from these.
-      const parts = [`chant run ${op}`];
-      if (resolution.resolvedBy) parts.push(`--approver ${resolution.resolvedBy}`);
-      if (resolution.url) parts.push(`--url ${resolution.url}`);
+      // core's `op/gate.ts`), not from these. The re-run runs in the
+      // environment the gated run did: the `--env` on the op's latest turn
+      // (#3232), and `--on local` as on every posted run (#3225).
+      const extra: string[] = [];
+      if (resolution.resolvedBy) extra.push(`--approver ${resolution.resolvedBy}`);
+      if (resolution.url) extra.push(`--url ${resolution.url}`);
+      const env = envOfPrompt(found?.turns[0]?.prompt);
       const { status, json } = await http("POST", `/api/conversations/${conversationId}/prompts`, {
-        prompt: parts.join(" "),
+        prompt: hostedRunPrompt(op, { env, extra }),
       });
 
       if (status === 400 && errorCode(json) === "conversation_busy") {
