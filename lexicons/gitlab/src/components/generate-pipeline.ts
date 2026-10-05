@@ -36,7 +36,7 @@ import { emitYAMLEntry } from "@intentius/chant/yaml";
 import { resolveComponentGraph, type DriverComponent } from "@intentius/chant/components/driver";
 import { hasPublishStep, promoteArchivePaths } from "@intentius/chant/components/promote";
 import { GATED_WAVE_RECORD, gatedWaveJobs } from "@intentius/chant/components/gated-wave-pipeline";
-import { PR_LOOP_REPORT_DIR, prApplyGroup, prLoopJobs } from "@intentius/chant/components/pr-pipeline";
+import { PR_LOOP_IMAGE, PR_LOOP_REPORT_DIR, prApplyGroup, prLoopJobs, prLoopSetup } from "@intentius/chant/components/pr-pipeline";
 import { memberGitlabChanges, memberRepoPath, memberShellDir } from "@intentius/chant/lexicon";
 import type {
   ComponentPipelineJob as GeneratedJob,
@@ -67,7 +67,7 @@ export function generateGitlabPipeline(
   options: GenerateGitlabOptions = {},
 ): GenerateGitlabResult {
   const env = options.env ?? "production";
-  const image = options.image ?? DEFAULT_IMAGE;
+  const image = options.image ?? (options.prLoop ? PR_LOOP_IMAGE : DEFAULT_IMAGE);
   const runCommand = options.runCommand ?? ["chant", "run", "--components", "{name}", "--env", env];
   const beforeScript = options.beforeScript ?? [];
   const extraScript = options.extraScript ?? [];
@@ -281,7 +281,7 @@ function prLoopGitlabPipeline(
   const onMergeRequest = '$CI_PIPELINE_SOURCE == "merge_request_event"';
   const target = loop.branch ? JSON.stringify(loop.branch) : "$CI_DEFAULT_BRANCH";
   const onMerge = `$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == ${target}`;
-  const script = (job: typeof plan): string[] => [...beforeScript, job.command, ...extraScript];
+  const script = (job: typeof plan): string[] => [...prLoopSetup(image), ...beforeScript, ...(job.setup ?? []), job.command, ...extraScript];
   const stages = ["plan", "apply"];
   const doc: Record<string, unknown> = {
     workflow: { name: `chant-pr-${env}`, rules: [{ if: onMergeRequest }, { if: onMerge }] },

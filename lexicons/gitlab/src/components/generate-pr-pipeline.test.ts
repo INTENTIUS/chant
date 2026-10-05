@@ -12,6 +12,7 @@ import { describe, expect, test } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import type { DriverComponent } from "@intentius/chant/components/driver";
 import { generateGitlabPipeline } from "./generate-pipeline";
+import { PR_LOOP_SETUP } from "@intentius/chant/components/pr-pipeline";
 
 const ESTATE: DriverComponent[] = [
   { name: "net", dependsOn: [], deploy: [{ phase: "Apply", steps: [{ kind: "terraform-apply", root: "net" }] }] },
@@ -50,13 +51,30 @@ describe("the GitLab merge-request pipeline", () => {
   test("plans in a merge request pipeline from its diff base, applies on a push to the default branch, one at a time", () => {
     expect(doc.plan.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "merge_request_event"' }]);
     expect(doc.plan.variables).toEqual({ BASE_SHA: "$CI_MERGE_REQUEST_DIFF_BASE_SHA", PR_NUMBER: "$CI_MERGE_REQUEST_IID" });
-    expect(doc.plan.script).toEqual(['chant components pr-plan --base "$BASE_SHA" --pr "$PR_NUMBER" --env prod --gate pr-apply --output .chant/pr --forge gitlab']);
+    expect(doc.plan.script).toEqual([
+      ...PR_LOOP_SETUP,'chant components pr-plan --base "$BASE_SHA" --pr "$PR_NUMBER" --env prod --gate pr-apply --output .chant/pr --forge gitlab']);
     expect(doc.apply.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH' }]);
     expect(doc.apply.variables).toEqual({ BASE_SHA: "$CI_COMMIT_BEFORE_SHA" });
-    expect(doc.apply.script[0]).toContain("--require-review");
+    expect(doc.apply.script.at(-1)).toContain("--require-review");
     expect(doc.apply.resource_group).toBe("chant-apply-prod");
     expect(doc.variables.GIT_DEPTH).toBe("0");
     expect(doc.apply.artifacts).toEqual({ when: "always", paths: [".chant/pr"] });
+  });
+
+  test("runs in an image with git and installs OpenTofu, unless the caller names an image", () => {
+    expect(doc.plan.image).toBe("node:22");
+    expect(doc.apply.script[0]).toBe(PR_LOOP_SETUP[0]);
+    const own = generateGitlabPipeline(ESTATE, { env: "prod", image: "example/ci:1", prLoop: {} }).yaml;
+    expect(own).toContain("image: example/ci:1");
+    expect(own).not.toContain("install-opentofu");
+  });
+
+  test("an all-zero CI_COMMIT_BEFORE_SHA falls back to the merge request diff base, then the target branch", () => {
+    const line = doc.apply.script.find((l) => l.includes("CI_MERGE_REQUEST_DIFF_BASE_SHA"))!;
+    expect(line).toContain("0000000000000000000000000000000000000000");
+    expect(line).toContain("git fetch origin $CI_DEFAULT_BRANCH");
+    expect(doc.apply.script.indexOf(line)).toBeLessThan(doc.apply.script.length - 1);
+    expect(doc.plan.script.some((l) => l.includes("CI_MERGE_REQUEST_DIFF_BASE_SHA"))).toBe(false);
   });
 
   test("a named branch replaces the default branch in the apply rule", () => {

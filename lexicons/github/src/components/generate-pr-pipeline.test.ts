@@ -73,6 +73,13 @@ describe("the GitHub pull-request workflow", () => {
     for (const job of Object.values(doc.jobs)) expect(job.steps[0].with).toEqual({ "fetch-depth": 0 });
   });
 
+  test("runs in an image with git and installs OpenTofu, unless the caller names an image", () => {
+    expect(doc.jobs.plan.steps[1].run).toContain("install-opentofu");
+    const own = generateGithubPipeline(ESTATE, { env: "prod", image: "example/ci:1", prLoop: {} }).yaml;
+    expect(own).toContain("container: example/ci:1");
+    expect(own).not.toContain("install-opentofu");
+  });
+
   test("the gate, branch and review requirement are options", () => {
     const yaml = generateGithubPipeline(ESTATE, { env: "prod", prLoop: { gate: "infra-apply", branch: "trunk", requireReview: false } }).yaml;
     expect(yaml).toContain("--gate infra-apply");
