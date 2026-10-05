@@ -28,6 +28,24 @@ import { PR_APPLY_GATE } from "../pr-loop";
 /** Where both jobs write their reports, kept as a CI artifact. */
 export const PR_LOOP_REPORT_DIR = ".chant/pr";
 
+/**
+ * The image the pull-request pipeline runs in when the caller sets none. The
+ * full `node` image has git, which both jobs measure the change with;
+ * `PR_LOOP_SETUP` adds OpenTofu on top of it. A caller who sets `image`
+ * brings both and gets no setup lines.
+ */
+export const PR_LOOP_IMAGE = "node:22";
+
+/** Installs OpenTofu into `PR_LOOP_IMAGE`. */
+export const PR_LOOP_SETUP = [
+  "command -v tofu >/dev/null 2>&1 || (curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh && sh /tmp/install-opentofu.sh --install-method standalone)",
+];
+
+/** The setup lines for a pipeline running in `image`: the install when it is the default image, none otherwise. */
+export function prLoopSetup(image: string): string[] {
+  return image === PR_LOOP_IMAGE ? PR_LOOP_SETUP : [];
+}
+
 /** The `prLoop` generator option (`ComponentPipelineOptions.prLoop`). */
 export interface PrLoopPipelineOptions {
   /** The gate the apply waits on. Default `pr-apply`. */
@@ -58,6 +76,8 @@ export interface PrLoopJob {
    * variables on GitLab.
    */
   env: Record<string, string>;
+  /** Shell lines to run before the command, to settle values the forge may leave unusable. */
+  setup?: string[];
 }
 
 /** The two jobs for `forge`. */
@@ -81,6 +101,7 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
         ...(options.requireReview === false ? [] : ["--require-review"]),
       ].join(" "),
       env: github ? { BASE_SHA: "${{ github.event.before }}", ...token } : { BASE_SHA: "$CI_COMMIT_BEFORE_SHA" },
+      ...(github ? {} : { setup: [gitlabBaseFallback(options.branch)] }),
     },
   ];
 }
@@ -88,4 +109,22 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
 /** The concurrency group (GitHub, Forgejo) or resource group (GitLab) that keeps one apply at a time per environment. */
 export function prApplyGroup(env: string): string {
   return `chant-apply-${env}`;
+}
+
+/**
+ * GitLab sets `CI_COMMIT_BEFORE_SHA` to forty zeros on a branch's first push.
+ * The line replaces it with the merge request's diff base when the pipeline
+ * has one, and otherwise with the merge base of the target branch and the
+ * pushed commit, or the pushed commit's parent when that is the commit itself.
+ */
+export function gitlabBaseFallback(branch?: string): string {
+  const target = branch ? JSON.stringify(branch) : "$CI_DEFAULT_BRANCH";
+  return (
+    'if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then ' +
+    'BASE_SHA="${CI_MERGE_REQUEST_DIFF_BASE_SHA:-}"; ' +
+    'if [ -z "$BASE_SHA" ]; then ' +
+    `git fetch origin ${target} && BASE_SHA="$(git merge-base FETCH_HEAD "$CI_COMMIT_SHA")"; ` +
+    'if [ "$BASE_SHA" = "$CI_COMMIT_SHA" ]; then BASE_SHA="$(git rev-parse "$CI_COMMIT_SHA^")"; fi; ' +
+    "fi; fi; export BASE_SHA"
+  );
 }

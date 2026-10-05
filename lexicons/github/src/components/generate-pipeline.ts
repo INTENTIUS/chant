@@ -60,7 +60,7 @@ import { emitYAML, emitYAMLEntry } from "@intentius/chant/yaml";
 import { resolveComponentGraph, type DriverComponent } from "@intentius/chant/components/driver";
 import { hasPublishStep, promoteArchivePaths } from "@intentius/chant/components/promote";
 import { GATED_WAVE_RECORD, gatedWaveJobs } from "@intentius/chant/components/gated-wave-pipeline";
-import { PR_LOOP_REPORT_DIR, prApplyGroup, prLoopJobs } from "@intentius/chant/components/pr-pipeline";
+import { PR_LOOP_IMAGE, PR_LOOP_REPORT_DIR, prApplyGroup, prLoopJobs, prLoopSetup } from "@intentius/chant/components/pr-pipeline";
 import { memberRepoPath } from "@intentius/chant/lexicon";
 import type {
   ComponentPipelineJob as GeneratedJob,
@@ -196,6 +196,7 @@ function prLoopGithubDoc(
   const [plan, apply] = prLoopJobs(loop.forge ?? "github", env, loop);
   const steps = (job: typeof plan, name: string): Array<Record<string, unknown>> => [
     { uses: actionRef("actions/checkout"), with: { "fetch-depth": 0 } },
+    ...prLoopSetup(image).map((line) => ({ run: line })),
     ...beforeScript.map((line) => ({ run: line })),
     { name, env: job.env, run: job.command },
     ...extraScript.map((line) => ({ run: line })),
@@ -302,7 +303,7 @@ export function buildGithubPipelineDoc(
   options: GenerateGithubOptions = {},
 ): GithubPipelineDoc {
   const env = options.env ?? "production";
-  const image = options.image ?? DEFAULT_IMAGE;
+  const image = options.image ?? (options.prLoop ? PR_LOOP_IMAGE : DEFAULT_IMAGE);
   const runCommand = options.runCommand ?? ["chant", "run", "--components", "{name}", "--env", env];
   const beforeScript = options.beforeScript ?? [];
   const extraScript = options.extraScript ?? [];
