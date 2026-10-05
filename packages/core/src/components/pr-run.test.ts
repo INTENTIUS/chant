@@ -389,6 +389,25 @@ describe("resuming an apply that failed partway (#3464)", () => {
     expect(resumed.reasons[0]).toMatch(/^a failed to plan/);
   });
 
+  test("a record whose change set is not the one its digest names does not resume (#3543)", async () => {
+    const w = world();
+    const plan = planFanOut({ components: ESTATE, changed: ["net"] });
+    const { set, first, record } = await firstAttempt(w, plan, ["a"]);
+    const other = { ...set.doc, digest: "jcs1-sha256:" + "0".repeat(64) };
+    for (const forged of [
+      { ...record, changeSet: other },
+      { ...record, digest: other.digest, changeSet: other },
+      { ...record, changeSet: { ...set.doc, members: set.doc.members.map((m) => (m.member === "a" ? { ...m, planDigest: "jcs1-sha256:" + "1".repeat(64) } : m)) } },
+    ]) {
+      w.planned.length = 0;
+      const resumed = await resumePrSet({ components: ESTATE, plan, registry: w.registry, env: "prod", record: forged, completed: first.run.completed });
+      expect(resumed.ok).toBe(false);
+      if (resumed.ok) return;
+      expect(resumed.reasons[0]).toMatch(/^the record's change set is not the one its digest/);
+      expect(w.planned).toEqual([]);
+    }
+  });
+
   test("with every component applied, nothing is left to plan or apply", async () => {
     const w = world();
     const plan = planFanOut({ components: ESTATE, changed: ["dns"] });

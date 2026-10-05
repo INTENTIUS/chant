@@ -333,7 +333,9 @@ chant components pr-apply --base "$BEFORE_SHA" --pr 12 --env prod --resume .chan
 
 The re-run skips the components that applied and plans the rest against the outputs the approved plans read. It then checks each member it plans against the approved change set. A member is covered when it plans to the approved digest, or when every change it plans is one the approved plan made: the same address and action (or the create or delete left of an approved replace), and each attribute written to the approved value or to a value the approved plan knew only after apply. A sensitive value is covered only where the approved plan wrote it as sensitive too. When every member is covered and the approval still stands for the approved digest, the rest applies with no fresh approval, and the report's `resumed.applied` and the note name what the earlier attempt applied.
 
-The record carries nothing when it was written for another pull request, gate or commit, or for a change that selects other components, or when the approval no longer stands, or when a member left over plans a change the approved plan did not make. Then `pr-apply` prints why and runs as it would with no record: it plans every member, and the new digest needs an approval of its own.
+The record carries nothing when it was written for another pull request, gate or commit, or for a change that selects other components, or when the approval no longer stands, or when a member left over plans a change the approved plan did not make. Then `pr-apply` prints why and runs as it would with no record: it plans every member, and the new digest needs an approval of its own. A record whose change set does not hash to the digest it names carries nothing either.
+
+The [generated pull-request pipeline](/chant/guide/pull-request-ci/#limits) passes `--resume .chant/pr-resume/pr-apply.json` and keeps the file in the CI cache under the pushed commit, so re-running a failed apply job finishes it.
 
 | Flag | Meaning |
 |---|---|

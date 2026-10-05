@@ -39,7 +39,12 @@ apply:
   script:
     - command -v tofu >/dev/null 2>&1 || (curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh && sh /tmp/install-opentofu.sh --install-method standalone)
     - if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then BASE_SHA="${CI_MERGE_REQUEST_DIFF_BASE_SHA:-}"; if [ -z "$BASE_SHA" ]; then git fetch origin $CI_DEFAULT_BRANCH && BASE_SHA="$(git merge-base FETCH_HEAD "$CI_COMMIT_SHA")"; if [ "$BASE_SHA" = "$CI_COMMIT_SHA" ]; then BASE_SHA="$(git rev-parse "$CI_COMMIT_SHA^")"; fi; fi; fi; export BASE_SHA
-    - chant components pr-apply --base "$BASE_SHA" --env prod --gate pr-apply --output .chant/pr --forge gitlab --require-review
+    - chant components pr-apply --base "$BASE_SHA" --env prod --gate pr-apply --output .chant/pr --forge gitlab --require-review --resume .chant/pr-resume/pr-apply.json
+  cache:
+    key: chant-apply-prod-$CI_COMMIT_SHA
+    paths:
+      - .chant/pr-resume/pr-apply.json
+    when: always
   artifacts:
     when: always
     paths:

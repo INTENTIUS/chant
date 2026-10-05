@@ -55,11 +55,23 @@ jobs:
         with:
           fetch-depth: 0
       - run: command -v tofu >/dev/null 2>&1 || (curl -fsSL https://get.opentofu.org/install-opentofu.sh -o /tmp/install-opentofu.sh && sh /tmp/install-opentofu.sh --install-method standalone)
+      - name: Restore the record of an earlier attempt at this commit
+        uses: https://code.forgejo.org/actions/cache/restore@v4
+        with:
+          path: .chant/pr-resume/pr-apply.json
+          key: chant-apply-prod-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: chant-apply-prod-${{ github.sha }}-
       - name: Apply the plan a reviewer approved
         env:
           BASE_SHA: '${{ github.event.before }}'
           GITHUB_TOKEN: '${{ github.token }}'
-        run: chant components pr-apply --base "$BASE_SHA" --env prod --gate pr-apply --output .chant/pr --forge forgejo --require-review
+        run: chant components pr-apply --base "$BASE_SHA" --env prod --gate pr-apply --output .chant/pr --forge forgejo --require-review --resume .chant/pr-resume/pr-apply.json
+      - name: Keep the record for a re-run
+        if: always()
+        uses: https://code.forgejo.org/actions/cache/save@v4
+        with:
+          path: .chant/pr-resume/pr-apply.json
+          key: chant-apply-prod-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Keep the apply report
         if: always()
         uses: https://code.forgejo.org/actions/upload-artifact@v4

@@ -33,7 +33,7 @@
  * work already approved.
  */
 
-import { composeChangeSet, type ChangeSetDocument, type ChangeSetEntry, type ChangeSetPart } from "../change-set";
+import { composeChangeSet, verifyChangeSetDigest, type ChangeSetDocument, type ChangeSetEntry, type ChangeSetPart } from "../change-set";
 import { evaluateGate, type GateCheck, type GateLedgerPort } from "../op/gate";
 import {
   memberCounts,
@@ -379,8 +379,16 @@ export type PrResume =
  * the new plans in it, to decide the gate against `record.digest` and hand
  * to {@link applyPrSet}. Not covered, it says why, and the caller plans
  * everything and asks for a fresh approval.
+ *
+ * The record now travels between CI jobs through a cache (#3543), so its
+ * change set has to be the one its digest names: the document's own digest
+ * is `record.digest`, and its members' plan digests give that digest.
  */
 export async function resumePrSet(options: PrResumeOptions): Promise<PrResume> {
+  const { record } = options;
+  if (record.changeSet.digest !== record.digest || !verifyChangeSetDigest(record.changeSet)) {
+    return { ok: false, reasons: [`the record's change set is not the one its digest ${record.digest} names`] };
+  }
   const plan = remainingFanOut(options.plan, options.components, { completed: options.completed });
   const fresh = await planPrSet({
     components: options.components,

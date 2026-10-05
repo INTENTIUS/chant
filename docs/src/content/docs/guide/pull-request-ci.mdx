@@ -141,7 +141,17 @@ Both jobs keep `.chant/pr` as an artifact:
 
 A dependent is planned against the outputs its upstream has now. When the change moves an output a dependent reads, the dependent applies the plan it was approved with, which carries the old value. The apply marks it `inputsMoved`, and the next run plans it against the new value. To carry a moved output through every dependent in one rollout, use [gated waves](/chant/cli/components/#one-gate-per-wave), which plan each wave after the one before it applied.
 
-An apply that fails partway leaves the members it applied in place. Run with [`--resume <file>`](/chant/cli/components/#finishing-an-apply-that-failed-partway), `pr-apply` finishes it on the same commit under the same approval, applying only what is left. The generated pipeline does not pass `--resume` yet, and a re-run job starts without the earlier job's files, so a re-run of the generated apply job plans every member again, which changes the digest and needs a fresh approval.
+An apply that fails partway leaves the members it applied in place. The generated apply job runs `pr-apply` with [`--resume .chant/pr-resume/pr-apply.json`](/chant/cli/components/#finishing-an-apply-that-failed-partway) and keeps that record in the CI cache, saved even when the job fails. Re-run the failed apply job and it restores the record, skips the members that applied and applies the rest under the approval it already has. The record is not part of the report artifact, since it holds the outputs the members read.
+
+The cache key names the environment, the member and the pushed commit: on GitHub and Forgejo `chant-apply-<env>-<commit>-<run>-<attempt>`, restored by the prefix up to the commit, and on GitLab `chant-apply-<env>-<commit>`. A push of another commit never restores it. The pull request and the gate digest are not in the key, because the job learns them only once it runs; `pr-apply` checks them against the record and refuses a record made for another pull request, gate, commit or digest, or one whose approval no longer stands. A refused record changes nothing: the apply plans every member, and the new digest needs a fresh approval.
+
+The record survives a re-run when the cache does:
+
+- On GitHub, the Actions cache is per repository, and a run on the target branch reads only caches written from that branch or the default branch, so a pull request cannot write the record the apply reads.
+- On GitLab, the cache is kept on the runner unless the runners share a distributed cache, as GitLab.com's hosted runners do. A retry that lands on another runner without one plans every member again. GitLab keeps protected branches' caches apart from the others by default; keep it that way.
+- On Forgejo, the cache server runs with each runner unless the runners share one, with the same consequence. Run the apply on a runner the pull requests' jobs do not use, so no other job writes into the cache it reads.
+
+A record that comes back from an older attempt of the same run still resumes correctly: what it lists as applied did apply, and a member that applied since plans no change, which the approved plan covers.
 
 ## Inside a workspace member
 

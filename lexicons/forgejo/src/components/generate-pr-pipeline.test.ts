@@ -45,6 +45,12 @@ describe("the Forgejo pull-request workflow", () => {
     expect(result.yaml).toMatch(/^\s+permissions:/m);
   });
 
+  test("the apply keeps its resume record in the runner's cache, through the Forgejo mirror of actions/cache (#3543)", () => {
+    expect(result.yaml).toContain("uses: https://code.forgejo.org/actions/cache/restore@v4");
+    expect(result.yaml).toContain("uses: https://code.forgejo.org/actions/cache/save@v4");
+    expect(result.yaml).toContain("--forge forgejo --require-review --resume .chant/pr-resume/pr-apply.json");
+  });
+
   test.skipIf(!hasActionlint())("passes actionlint, less the runner label and actions by URL", () => {
     const dir = mkdtempSync(join(tmpdir(), "chant-actionlint-"));
     try {
