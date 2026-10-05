@@ -65,6 +65,7 @@ async function runGenerateComponents(ctx: CommandContext): Promise<number> {
         output: args.output,
         params: args.param,
         paramsFile: args.paramsFile,
+        ...(args.waveGate ? { waveGate: { gate: args.waveGate, ...(args.canary?.length ? { canary: args.canary } : {}), ...(args.base ? { base: args.base } : {}) } } : {}),
         ...(args.prLoop ? { prLoop: { ...(args.gate ? { gate: args.gate } : {}), ...(args.branch ? { branch: args.branch } : {}) } } : {}),
       });
     } catch (err) {

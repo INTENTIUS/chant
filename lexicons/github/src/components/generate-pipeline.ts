@@ -142,6 +142,7 @@ function gatedWaveGithubDoc(
         with: { name: waveRecordArtifact(job.wave - 1), path: dirnameOf(GATED_WAVE_RECORD) },
       });
     }
+    for (const line of prLoopSetup(image)) steps.push({ run: line });
     for (const line of beforeScript) steps.push({ run: line });
     steps.push({ run: job.command.join(" ") });
     for (const line of extraScript) steps.push({ run: line });
@@ -313,7 +314,7 @@ export function buildGithubPipelineDoc(
   options: GenerateGithubOptions = {},
 ): GithubPipelineDoc {
   const env = options.env ?? "production";
-  const image = options.image ?? (options.prLoop ? PR_LOOP_IMAGE : DEFAULT_IMAGE);
+  const image = options.image ?? (options.prLoop || options.gatedWaves ? PR_LOOP_IMAGE : DEFAULT_IMAGE);
   const runCommand = options.runCommand ?? ["chant", "run", "--components", "{name}", "--env", env];
   const beforeScript = options.beforeScript ?? [];
   const extraScript = options.extraScript ?? [];

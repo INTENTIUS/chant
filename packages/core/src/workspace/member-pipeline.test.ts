@@ -95,6 +95,18 @@ describe("the component pipeline's file and command", () => {
     expect(plan.command).toBe("chant build --components --generate github --env staging --pr-loop --gate infra-apply --branch trunk");
   });
 
+  test("the recorded command keeps --wave-gate, --canary and --base (#3049)", () => {
+    const dir = join(repo, "services/api");
+    const plan = planMemberComponentPipeline({
+      projectDir: dir,
+      found: findWorkspaceRoot(dir)!,
+      lexicon: "github",
+      env: "staging",
+      waveGate: { gate: "release", canary: ["a", "b"], base: "origin/main" },
+    })!;
+    expect(plan.command).toBe("chant build --components --generate github --env staging --wave-gate release --canary a,b --base origin/main");
+  });
+
   test("--output keeps the path, relative to the member in the command", () => {
     const dir = join(repo, "services/api");
     const plan = planMemberComponentPipeline({

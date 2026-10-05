@@ -14,6 +14,8 @@ import type { PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lin
 import type { SerializerResult } from "@intentius/chant/serializer";
 import { loadAll } from "js-yaml";
 import { buildCollectorConfigs, collectorMetricIssues, collectorMetrics } from "../../collector-metrics";
+import { looksLikePrometheusConfig, type PrometheusConfigFile } from "../../config-model";
+import { validateRelabelFields } from "../../validate-relabel";
 import { looksLikeAlertmanagerConfig, looksLikeRuleFile, type AlertmanagerConfig, type RuleFileConfig } from "../../model";
 import {
   validateAlertmanagerConfig,
@@ -27,11 +29,12 @@ import {
 export interface FoundDocs {
   ruleFiles: Array<{ source: string; config: RuleFileConfig }>;
   alertmanager: Array<{ source: string; config: AlertmanagerConfig }>;
+  prometheus: Array<{ source: string; config: PrometheusConfigFile }>;
 }
 
 /** Every rule file and Alertmanager config in the output. Parsed with js-yaml rather than `ctx.docs`, which keeps block scalars and flow lists as strings. */
 export function prometheusDocs(ctx: PostSynthContext): FoundDocs {
-  const found: FoundDocs = { ruleFiles: [], alertmanager: [] };
+  const found: FoundDocs = { ruleFiles: [], alertmanager: [], prometheus: [] };
   for (const [lexicon, output] of ctx.outputs) {
     const texts: Array<[string, string]> =
       typeof output === "string"
@@ -48,6 +51,7 @@ export function prometheusDocs(ctx: PostSynthContext): FoundDocs {
       for (const doc of docs) {
         if (looksLikeRuleFile(doc)) found.ruleFiles.push({ source, config: doc });
         else if (looksLikeAlertmanagerConfig(doc)) found.alertmanager.push({ source, config: doc });
+        else if (looksLikePrometheusConfig(doc)) found.prometheus.push({ source, config: doc });
       }
     }
   }
@@ -80,6 +84,11 @@ export function alertmanagerDiagnostics(ctx: PostSynthContext, code: PrometheusI
       .filter((i) => i.code === code)
       .map((i) => toDiagnostic(i, source)),
   );
+}
+
+/** PROM225 across every `prometheus.yml` in the output. */
+export function relabelDiagnostics(ctx: PostSynthContext): PostSynthDiagnostic[] {
+  return prometheusDocs(ctx).prometheus.flatMap(({ source, config }) => validateRelabelFields(config).map((i) => toDiagnostic(i, source)));
 }
 
 /** PROM212 across every rule file in the output. Opt-in: the lexicon's `recommended` lint preset leaves it out (see ../../plugin.ts). */

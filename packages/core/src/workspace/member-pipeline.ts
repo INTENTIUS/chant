@@ -210,6 +210,8 @@ export interface ComponentPlanInput {
   paramsFile?: string;
   /** `--pr-loop`, with its `--gate` and `--branch` (#3465). */
   prLoop?: { gate?: string; branch?: string };
+  /** `--wave-gate` with its `--canary` and `--base` (#3049). */
+  waveGate?: { gate: string; canary?: string[]; base?: string };
 }
 
 /** The generators' own default environment when `--env` is not given. */
@@ -239,6 +241,11 @@ export function planMemberComponentPipeline(input: ComponentPlanInput): MemberCo
 
   const parts = ["chant", "build", "--components", "--generate", input.lexicon, "--env", env];
   if (input.promoteTo) parts.push("--promote-to", input.promoteTo);
+  if (input.waveGate) {
+    parts.push("--wave-gate", input.waveGate.gate);
+    if (input.waveGate.canary?.length) parts.push("--canary", input.waveGate.canary.join(","));
+    if (input.waveGate.base) parts.push("--base", input.waveGate.base);
+  }
   if (input.prLoop) {
     parts.push("--pr-loop");
     if (input.prLoop.gate) parts.push("--gate", input.prLoop.gate);

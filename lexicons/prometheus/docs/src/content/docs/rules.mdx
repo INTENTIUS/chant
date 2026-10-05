@@ -6,7 +6,7 @@ description: "Every lint rule and post-synth check provided by the Prometheus le
 {/* GENERATED-BY-CHANT-DOCS by `npm run docs -w @intentius/chant-lexicon-prometheus` — DO NOT EDIT.
     Edit lexicons/prometheus/src/codegen/docs.ts instead; changes here are overwritten. */}
 
-The Prometheus lexicon provides **35** rules: 3 lint rules and 32 post-synth checks.
+The Prometheus lexicon provides **36** rules: 3 lint rules and 33 post-synth checks.
 
 ## Lint Rules
 
@@ -53,4 +53,5 @@ Post-synth checks validate the serialized output after the build pipeline comple
 | `PROM222` | Credentials sent to an http:// receiver URL |
 | `PROM223` | repeat_interval is shorter than group_interval |
 | `PROM224` | An inhibit rule matches one alert as source and target, with no equal |
+| `PROM225` | A labeldrop or labelkeep relabel step carries a field it does not take |
 | `PROM301` | A rule reads a connector metric no collector in the build emits |

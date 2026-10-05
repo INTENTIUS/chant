@@ -438,10 +438,13 @@ describe("generateGithubPipeline: gated waves (#3049)", () => {
     const steps = parsed.jobs["wave-2"].steps;
     expect(steps[0].with).toEqual({ "fetch-depth": 0 });
     expect(steps[1]).toMatchObject({ uses: "actions/download-artifact@v4", with: { name: "fan-out-record-wave-1", path: ".chant" } });
-    expect(steps[2].run).toBe(
+    // The default image is the pr-loop one: node:22, with OpenTofu installed when missing.
+    expect(parsed.jobs["wave-2"]).toMatchObject({ container: "node:22" });
+    expect(steps[2].run).toMatch(/^command -v tofu /);
+    expect(steps[3].run).toBe(
       "chant components fan-out --base HEAD~1 --env prod --wave-gate release --wave 2 --resume .chant/fan-out.json",
     );
-    expect(steps[3]).toMatchObject({ if: "always()", with: { name: "fan-out-record-wave-2", path: ".chant/fan-out.json" } });
+    expect(steps[4]).toMatchObject({ if: "always()", with: { name: "fan-out-record-wave-2", path: ".chant/fan-out.json" } });
     // Wave 1 has nothing to download.
     expect(parsed.jobs["wave-1"].steps.some((s) => s.uses === "actions/download-artifact@v4")).toBe(false);
   });

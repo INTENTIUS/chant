@@ -220,6 +220,13 @@ export const prometheusAuditCatalog: Record<string, RuleMeta> = {
     "Inhibit rule matches one alert as source and target, with no equal",
     "List the labels source and target must share under equal (e.g. alertname, cluster), or make the matchers exclusive.",
   ),
+  PROM225: outputRule(
+    "PROM225",
+    "merge-worthy",
+    "correctness",
+    "labeldrop or labelkeep relabel step carries a field it does not take",
+    "Remove source_labels, separator, target_label, modulus and replacement from the step; keep only regex (and action).",
+  ),
   PROM301: outputRule(
     "PROM301",
     "merge-worthy",

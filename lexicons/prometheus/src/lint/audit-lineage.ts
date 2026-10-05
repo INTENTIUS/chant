@@ -46,6 +46,8 @@
  * - PROM220-PROM224: check-config accepts insecure_skip_verify, SMTP auth
  *   without TLS, credentials over http://, a repeat_interval under
  *   group_interval, and an inhibit rule without equal.
+ * - PROM225: promtool check config rejects it, but the check reads a built
+ *   prometheus.yml, which no tool above does.
  * - PROM301: no tool here reads a rule file together with the collector
  *   config that produces its metrics.
  */
