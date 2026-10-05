@@ -41,6 +41,21 @@ function same(a: unknown, b: unknown): boolean {
 /** The SLI expressions a recorded error ratio was built from, with the window put back as `{{window}}`. */
 function sliFrom(expr: string, window: string): SloProps["sli"] | undefined {
   const unwindow = (s: string) => s.split(`[${window}]`).join(`[${SLO_WINDOW_PLACEHOLDER}]`);
+  // Since #3548 a window with no events records nothing: `((E) or 0 * ((T) > 0)) / ((T) > 0)`, and the good/total form
+  // as `1 - (((G) or 0 * ((T) > 0)) / ((T) > 0))`.
+  const idle = (head: string, divide: string, tail: string, key: "errors" | "good"): SloProps["sli"] | undefined => {
+    if (!expr.startsWith(head) || !expr.endsWith(tail)) return undefined;
+    const body = expr.slice(head.length, expr.length - tail.length);
+    const orAt = body.indexOf(") or 0 * ((");
+    const divAt = body.indexOf(`) > 0))${divide}((`);
+    if (orAt === -1 || divAt < orAt) return undefined;
+    const total = body.slice(divAt + `) > 0))${divide}((`.length);
+    return { [key]: unwindow(body.slice(0, orAt)), total: unwindow(total) } as SloProps["sli"];
+  };
+  const idleErrors = idle("((", "\n/\n", ") > 0)", "errors");
+  if (idleErrors) return idleErrors;
+  const idleGood = idle("1 - (\n  ((", "\n  /\n  ", ") > 0)\n)", "good");
+  if (idleGood) return idleGood;
   const goodHead = "1 - (\n  (";
   const goodTail = ")\n)";
   if (expr.startsWith(goodHead) && expr.endsWith(goodTail)) {

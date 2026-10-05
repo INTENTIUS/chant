@@ -2645,51 +2645,51 @@ data:
         rules:
           - record: slo:sli_error:ratio_rate5m
             expr: |-
-              (sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support",status_code="STATUS_CODE_ERROR"}[5m])))
+              ((sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support",status_code="STATUS_CODE_ERROR"}[5m]))) or 0 * ((sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support"}[5m]))) > 0))
               /
-              (sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support"}[5m])))
+              ((sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support"}[5m]))) > 0)
             labels:
               slo: support-agent-runs
           - record: slo:sli_error:ratio_rate30m
             expr: |-
-              (sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support",status_code="STATUS_CODE_ERROR"}[30m])))
+              ((sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support",status_code="STATUS_CODE_ERROR"}[30m]))) or 0 * ((sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support"}[30m]))) > 0))
               /
-              (sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support"}[30m])))
+              ((sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support"}[30m]))) > 0)
             labels:
               slo: support-agent-runs
           - record: slo:sli_error:ratio_rate1h
             expr: |-
-              (sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support",status_code="STATUS_CODE_ERROR"}[1h])))
+              ((sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support",status_code="STATUS_CODE_ERROR"}[1h]))) or 0 * ((sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support"}[1h]))) > 0))
               /
-              (sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support"}[1h])))
+              ((sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support"}[1h]))) > 0)
             labels:
               slo: support-agent-runs
           - record: slo:sli_error:ratio_rate2h
             expr: |-
-              (sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support",status_code="STATUS_CODE_ERROR"}[2h])))
+              ((sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support",status_code="STATUS_CODE_ERROR"}[2h]))) or 0 * ((sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support"}[2h]))) > 0))
               /
-              (sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support"}[2h])))
+              ((sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support"}[2h]))) > 0)
             labels:
               slo: support-agent-runs
           - record: slo:sli_error:ratio_rate6h
             expr: |-
-              (sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support",status_code="STATUS_CODE_ERROR"}[6h])))
+              ((sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support",status_code="STATUS_CODE_ERROR"}[6h]))) or 0 * ((sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support"}[6h]))) > 0))
               /
-              (sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support"}[6h])))
+              ((sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support"}[6h]))) > 0)
             labels:
               slo: support-agent-runs
           - record: slo:sli_error:ratio_rate1d
             expr: |-
-              (sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support",status_code="STATUS_CODE_ERROR"}[1d])))
+              ((sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support",status_code="STATUS_CODE_ERROR"}[1d]))) or 0 * ((sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support"}[1d]))) > 0))
               /
-              (sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support"}[1d])))
+              ((sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support"}[1d]))) > 0)
             labels:
               slo: support-agent-runs
           - record: slo:sli_error:ratio_rate3d
             expr: |-
-              (sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support",status_code="STATUS_CODE_ERROR"}[3d])))
+              ((sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support",status_code="STATUS_CODE_ERROR"}[3d]))) or 0 * ((sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support"}[3d]))) > 0))
               /
-              (sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support"}[3d])))
+              ((sum(rate(traces_span_metrics_calls_total{service_name="support-agent",span_name="invoke_agent support"}[3d]))) > 0)
             labels:
               slo: support-agent-runs
           - record: slo:sli_error:ratio_rate28d
