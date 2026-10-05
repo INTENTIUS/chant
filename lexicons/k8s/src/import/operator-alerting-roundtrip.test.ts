@@ -104,7 +104,7 @@ describe("GrafanaOperatorResources -> chant import -> chant build", () => {
       expect(imported.result.success).toBe(true);
 
       // Each field the grafana lexicon reads is a call over its declarations.
-      const main = imported.files["main.ts"];
+      const main = imported.files["other.ts"];
       expect(main).toContain('from "@intentius/chant-lexicon-grafana/k8s"');
       for (const fn of ["operatorRules", "operatorPolicy", "operatorTimeIntervals", "operatorTemplate"]) expect(main).toContain(`${fn}(`);
       // The contact point reads a Secret, so its receivers come from a module naming it.

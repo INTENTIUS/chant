@@ -194,7 +194,7 @@ describe("Grafana Operator alerting embedded in a k8s manifest (#3538)", () => {
       expect(policy.value.through?.name).toBe("operatorPolicy");
       const text = policy.files.map((f) => f.content).join("\n");
       expect(text).toContain("new NotificationPolicy(");
-      expect(text).toContain('severity=\\"page\\"');
+      expect(text).toContain('severity="page"');
 
       const mute = operatorImporter.import(site("K8s::Grafana::GrafanaMuteTiming", "time_intervals", { name: "weekends", time_intervals: [{ weekdays: ["saturday", "sunday"] }] }));
       expect(mute.value.through?.name).toBe("operatorTimeIntervals");

@@ -89,12 +89,33 @@ export function looksLikeAlertingProvisioning(data: unknown): data is Record<str
 }
 
 /**
+ * The `spec` of a Grafana Operator alerting resource (`GrafanaAlertRuleGroup`,
+ * `GrafanaContactPoint`, `GrafanaNotificationPolicy`, `GrafanaMuteTiming`,
+ * `GrafanaNotificationTemplate`) as the k8s importer offers it (#3538): every
+ * operator resource's spec has an `instanceSelector`, beside the field that
+ * holds the alerting content.
+ */
+export function looksLikeOperatorAlertingSpec(data: unknown): boolean {
+  if (typeof data !== "object" || data === null || Array.isArray(data)) return false;
+  const d = data as Record<string, unknown>;
+  if (typeof d.instanceSelector !== "object" || d.instanceSelector === null) return false;
+  return (
+    (typeof d.name === "string" && Array.isArray(d.rules)) ||
+    (typeof d.name === "string" && Array.isArray(d.receivers)) ||
+    (typeof d.route === "object" && d.route !== null) ||
+    (typeof d.name === "string" && Array.isArray(d.time_intervals)) ||
+    (typeof d.name === "string" && typeof d.template === "string")
+  );
+}
+
+/**
  * Template detection for `chant import` and friends: dashboard JSON in any
  * of the shapes above (v2 included, #2947), or a datasource, dashboard or
  * alerting provisioning file.
  */
 export function detectTemplate(data: unknown): boolean {
   return (
+    looksLikeOperatorAlertingSpec(data) ||
     looksLikeDashboard(data) ||
     looksLikeLegacyRowsDashboard(data) ||
     looksLikeDashboardResource(data) ||
