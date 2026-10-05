@@ -95,6 +95,21 @@ describe("the local op runtime", () => {
     expect(status.result?.record?.id).toBe(handle.runId);
   });
 
+  test("a run named by its caller carries that id on the handle, the run context and the record (#3539)", async () => {
+    const { currentOpRun } = await import("../run-context");
+    let seen: ReturnType<typeof currentOpRun>;
+    loadActivitiesMock.mockResolvedValue(new Map([["ok", vi.fn(async () => { seen = currentOpRun(); })]]));
+    const runtime = createLocalOpRuntime();
+
+    const handle = await runtime.start(op("hello", [{ kind: "activity", fn: "ok", args: {} }]), { runId: "conv-42" });
+    const status = await handle.result();
+
+    expect(handle.runId).toBe("conv-42");
+    expect(status.runId).toBe("conv-42");
+    expect(seen?.runId).toBe("conv-42");
+    expect(status.result?.record?.id).toBe("conv-42");
+  });
+
   test("the project's configured lexicons decide which appliers load", async () => {
     loadActivitiesMock.mockResolvedValue(new Map([["ok", vi.fn(async () => ({}))]]));
     const runtime = createLocalOpRuntime();

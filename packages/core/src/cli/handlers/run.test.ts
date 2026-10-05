@@ -956,6 +956,29 @@ describe("run subcommands on the resolved runtime", () => {
     expect((runtime.start.mock.calls[0][0] as { name: string }).name).toBe("hello");
   });
 
+  test("--param reaches the runtime's start as params (#3539)", async () => {
+    const runtime = makeStubRuntime();
+    discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("hello")]), errors: [] });
+    makeStdoutSpy();
+    const exit = await runOp({
+      args: makeArgs({ path: "hello", on: "stub", env: "staging", param: ["agent=ops-bot", "tier=gold plus"] }),
+      plugins: [stubPlugin(runtime)], serializers: [],
+    });
+    expect(exit).toBe(0);
+    expect((runtime.start.mock.calls[0] as unknown[])[1]).toMatchObject({
+      env: "staging",
+      params: { agent: "ops-bot", tier: "gold plus" },
+    });
+  });
+
+  test("no --param hands start no params", async () => {
+    const runtime = makeStubRuntime();
+    discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("hello")]), errors: [] });
+    makeStdoutSpy();
+    await runOp({ args: makeArgs({ path: "hello", on: "stub" }), plugins: [stubPlugin(runtime)], serializers: [] });
+    expect((runtime.start.mock.calls[0] as unknown[])[1]).not.toHaveProperty("params");
+  });
+
   test("run status/log/list/cancel --on stub reach their methods", async () => {
     const runtime = makeStubRuntime();
     discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("hello")]), errors: [] });
@@ -1136,6 +1159,21 @@ describe("runOpApprove", () => {
     });
     expect(resolveGate).toHaveBeenCalledWith("alb-deploy", "release", record);
     expect(stderr.join("\n")).toContain('Runtime "stub" was notified');
+  });
+
+  test("--env on the approve line reaches resolveGate (#3539)", async () => {
+    const record = { version: 1, op: "alb-deploy", gate: "release", resolvedBy: "alex", timestamp: "2026-01-01T00:00:00.000Z" };
+    recordGateApprovalMock.mockResolvedValue({ ok: true, record });
+    const resolveGate = vi.fn(async () => undefined);
+    makeStderrSpy();
+
+    const exit = await runOpApprove({
+      args: makeArgs({ on: "stub", extraPositional: "alb-deploy", extraPositional2: "release", approver: "alex", env: "prod" }),
+      plugins: [{ name: "stub", opRuntime: { name: "stub", resolveGate } } as never], serializers: [],
+    });
+
+    expect(exit).toBe(0);
+    expect(resolveGate).toHaveBeenCalledWith("alb-deploy", "release", record, { env: "prod" });
   });
 
   test("a provider with no resolveGate still records the fact and exits 0", async () => {

@@ -14,7 +14,9 @@ import type { ChantConfig } from "@intentius/chant/config";
 import type { OpConfig, StepRecord } from "@intentius/chant/op";
 import {
   createFountainOpRuntime,
+  flagsOfPrompt,
   parseRunRecord,
+  quoteArg,
   parseSseFrame,
   runPrompt,
   runStateOfTurn,
@@ -178,6 +180,28 @@ describe("pure helpers", () => {
 
 // ── start ─────────────────────────────────────────────────────────────────
 
+describe("quoteArg and flagsOfPrompt (#3539)", () => {
+  it("leaves a plain word bare and quotes anything the tokenizer would split or unquote", async () => {
+    const { tokenize } = await import("../acp/command-line");
+    expect(quoteArg("alex")).toBe("alex");
+    expect(quoteArg("https://github.com/o/r/pull/1")).toBe("https://github.com/o/r/pull/1");
+    for (const value of ["Alex Smith", 'say "hi"', "back\\slash", "it's", "", "a\tb"]) {
+      expect(tokenize(`--approver ${quoteArg(value)}`)).toEqual(["--approver", value]);
+    }
+  });
+
+  it("reads --env and every --param off a posted prompt, quotes included", () => {
+    expect(flagsOfPrompt('chant run x --env prod --param a=1 --param "b=two words" --on local')).toEqual({
+      env: "prod",
+      params: { a: "1", b: "two words" },
+    });
+    expect(flagsOfPrompt("chant run x --env=prod --param=a=1")).toEqual({ env: "prod", params: { a: "1" } });
+    expect(flagsOfPrompt("chant run x --on local")).toEqual({});
+    expect(flagsOfPrompt('chant run x --env "unterminated')).toEqual({});
+    expect(flagsOfPrompt(undefined)).toEqual({});
+  });
+});
+
 describe("start", () => {
   it("posts to the steward's thread, tails the stream, and reports the record", async () => {
     const { http, calls } = fakeHttp(
@@ -269,6 +293,48 @@ describe("start", () => {
     });
 
     await expect(runtime.start(OP, { env: "prod east" })).rejects.toThrow(/--env "prod east" cannot be posted/);
+    expect(calls).toEqual([]);
+  });
+
+  // #3539: `--param` rides on the posted line, quoted when a value needs it,
+  // and the sandbox's parser reads each one back.
+  it("posts each --param on the command line (#3539)", async () => {
+    const { http, calls } = fakeHttp(
+      stewardRoutes({
+        "POST /api/team/agent-1/messages": { status: 202, json: { data: { conversation_id: "conv-1" } } },
+      }),
+    );
+    const { sse } = fakeSse([
+      [
+        sseEvent("1", { stream: "stdout", blocks: [{ kind: "text", body: JSON.stringify(RECORD) }] }),
+        sseEvent("2", { stream: "stage", stage: "turn", state: "done" }),
+      ],
+    ]);
+    const runtime = createFountainOpRuntime({
+      config: CONFIG, endpoint: "https://fountain.example.com", token: "t", http, sse, now: fakeClock(),
+    });
+
+    const handle = await runtime.start(OP, { env: "staging", params: { tier: "gold", note: "two words" } });
+    await handle.result();
+
+    const post = calls.find((c) => c.method === "POST");
+    const prompt = (post?.body as { prompt: string }).prompt;
+    expect(prompt).toBe('chant run alb-deploy --env staging --param tier=gold --param "note=two words" --on local');
+
+    const { parseChantCommandLine } = await import("../acp/command-line");
+    const parsed = await parseChantCommandLine(prompt);
+    expect(parsed.ok && parsed.command.kind === "op-run" && parsed.command.op).toBe("alb-deploy");
+    expect(parsed.ok && parsed.command.args.param).toEqual(["tier=gold", "note=two words"]);
+    expect(parsed.ok && parsed.command.args.on).toBe("local");
+  });
+
+  it("refuses --work by name before posting anything (#3539)", async () => {
+    const { http, calls } = fakeHttp(stewardRoutes({}));
+    const runtime = createFountainOpRuntime({
+      config: CONFIG, endpoint: "https://fountain.example.com", token: "t", http, now: fakeClock(),
+    });
+
+    await expect(runtime.start(OP, { work: { item: "ISSUE-7" } })).rejects.toThrow(/--work and --holder are not posted/);
     expect(calls).toEqual([]);
   });
 
@@ -1047,6 +1113,85 @@ describe("resolveGate", () => {
     expect(parsed.ok && parsed.command.args.approver).toBe("alex");
     expect(parsed.ok && parsed.command.args.url).toBe("https://github.com/o/r/pull/1");
     expect(parsed.ok && parsed.command.args.on).toBe("local");
+  });
+
+  // #3539: an approver name with a space is one value on the re-run prompt.
+  it("quotes an approver name with a space, and the sandbox reads it back whole (#3539)", async () => {
+    const { http, calls } = fakeHttp(stewardRoutes(routes));
+    const runtime = createFountainOpRuntime({
+      config: CONFIG, endpoint: "https://fountain.example.com", token: "t", http, now: fakeClock(),
+    });
+
+    await runtime.resolveGate!("alb-deploy", "release", { ...resolution, resolvedBy: 'Alex "AJ" Smith' });
+
+    const post = calls.find((c) => c.path === "/api/conversations/conv-1/prompts");
+    const prompt = (post?.body as { prompt: string }).prompt;
+    expect(prompt).toBe(
+      'chant run alb-deploy --on local --approver "Alex \\"AJ\\" Smith" --url https://github.com/o/r/pull/1',
+    );
+
+    const { parseChantCommandLine } = await import("../acp/command-line");
+    const parsed = await parseChantCommandLine(prompt);
+    expect(parsed.ok && parsed.command.kind === "op-run" && parsed.command.op).toBe("alb-deploy");
+    expect(parsed.ok && parsed.command.args.approver).toBe('Alex "AJ" Smith');
+    expect(parsed.ok && parsed.command.args.url).toBe("https://github.com/o/r/pull/1");
+  });
+
+  // #3539: `chant run approve ... --env <env> --on fountain` names the env the
+  // re-run runs in, over the gated turn's.
+  it("runs the re-run in the env core hands it, over the gated turn's", async () => {
+    const { http, calls } = fakeHttp(
+      stewardRoutes({
+        ...routes,
+        "GET /api/conversations/conv-1/turns": {
+          status: 200,
+          json: { data: [{ id: "turn-1", prompt: "chant run alb-deploy --env prod --on local", state: "done" }] },
+        },
+      }),
+    );
+    const runtime = createFountainOpRuntime({
+      config: CONFIG, endpoint: "https://fountain.example.com", token: "t", http, now: fakeClock(),
+    });
+
+    await runtime.resolveGate!("alb-deploy", "release", resolution, { env: "staging" });
+
+    const post = calls.find((c) => c.path === "/api/conversations/conv-1/prompts");
+    expect(post?.body).toEqual({
+      prompt: "chant run alb-deploy --env staging --on local --approver alex --url https://github.com/o/r/pull/1",
+    });
+  });
+
+  // #3539: the gated turn's `--param`s ride on the re-run, quoted as posted.
+  it("carries the gated turn's --param flags onto the re-run prompt", async () => {
+    const { http, calls } = fakeHttp(
+      stewardRoutes({
+        ...routes,
+        "GET /api/conversations/conv-1/turns": {
+          status: 200,
+          json: {
+            data: [
+              {
+                id: "turn-1",
+                prompt: 'chant run alb-deploy --env prod --param tier=gold --param "note=two words" --on local',
+                state: "done",
+              },
+            ],
+          },
+        },
+      }),
+    );
+    const runtime = createFountainOpRuntime({
+      config: CONFIG, endpoint: "https://fountain.example.com", token: "t", http, now: fakeClock(),
+    });
+
+    await runtime.resolveGate!("alb-deploy", "release", resolution);
+
+    const post = calls.find((c) => c.path === "/api/conversations/conv-1/prompts");
+    expect(post?.body).toEqual({
+      prompt:
+        'chant run alb-deploy --env prod --param tier=gold --param "note=two words" --on local ' +
+        "--approver alex --url https://github.com/o/r/pull/1",
+    });
   });
 
   it("reports conversation_busy rather than retrying the prompt", async () => {

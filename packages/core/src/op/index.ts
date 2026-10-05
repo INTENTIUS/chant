@@ -80,7 +80,7 @@ export type { GateNamed } from "./gate-name";
 export { createLocalOpRuntime } from "./runtimes/local";
 export { runStateOf } from "./runtime";
 export type {
-  OpRuntimeProvider, OpRunHandle, OpRunStartOptions, OpRunState, OpRunStatus,
+  OpRuntimeProvider, OpRunHandle, OpRunStartOptions, OpGateResolveOptions, OpRunState, OpRunStatus,
   OpRunRecord, OpRunRecordInput, OpRunPhaseRecord, OpRunStepRecord,
 } from "./runtime";
 export { buildOpIR, serializeOpIR, opConfigFromIR, OP_IR_FORMAT_VERSION } from "./op-ir";
