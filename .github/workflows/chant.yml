@@ -346,7 +346,8 @@ jobs:
           fi
 
   # The unit tests that check output with the real otelcol-contrib, promtool
-  # and amtool (#3359). They skip where a binary is missing and no other job
+  # and amtool (#3359), and the pull-request loop over five real roots with
+  # tofu (#3463). They skip where a binary is missing and no other job
   # installs one, so this job installs the pinned builds and fails on a skip.
   # The versions are the lexicons' pins (COLLECTOR_PIN, PROMETHEUS_PIN); the
   # digests sit beside the script. A job of its own rather than a step in each
@@ -386,7 +387,7 @@ jobs:
           path: ~/.cache/chant-observability-binaries
           key: observability-binaries-${{ steps.pins.outputs.key }}
 
-      - name: Install otelcol-contrib, promtool and amtool (pinned)
+      - name: Install otelcol-contrib, promtool, amtool and tofu (pinned)
         run: scripts/ci-observability-binaries.sh install ~/.cache/chant-observability-binaries
 
       - name: Run the tests that need the binaries
@@ -419,7 +420,7 @@ jobs:
             echo "::error::The end-to-end tests did not succeed (result: ${E2E})."
           fi
           if [ "${BINARIES}" != "success" ]; then
-            echo "::error::The tests against otelcol-contrib, promtool and amtool did not succeed (result: ${BINARIES})."
+            echo "::error::The tests against otelcol-contrib, promtool, amtool and tofu did not succeed (result: ${BINARIES})."
           fi
           [ "${SHARDS}" = "success" ] && [ "${E2E}" = "success" ] && [ "${BINARIES}" = "success" ]
 

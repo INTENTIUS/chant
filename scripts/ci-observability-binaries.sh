@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# Install the pinned otelcol-contrib, promtool and amtool, and run the unit
-# tests that skip without them (chant #3359).
+# Install the pinned otelcol-contrib, promtool, amtool and tofu, and run the
+# unit tests that skip without them (chant #3359, #3463).
 #
 # The versions come from the lexicons' own pins, so a pin bump moves CI:
 #   otelcol-contrib  COLLECTOR_PIN   lexicons/otel/src/define.ts
 #   promtool         PROMETHEUS_PIN  lexicons/prometheus/src/pin.ts (prometheus)
 #   amtool           PROMETHEUS_PIN  lexicons/prometheus/src/pin.ts (alertmanager)
+#   tofu             TOFU_VERSION    below; pr-loop.tofu.test.ts runs the pull-request
+#                                   loop over five real roots with it
 # Each archive is checked against ci-observability-binaries.sha256 beside this
 # script. A pin bump without a digest for the new archive fails here.
 #
@@ -15,15 +17,18 @@
 #   scripts/ci-observability-binaries.sh install <dir>
 #       Download the archives into <dir> (skipping ones already there), check
 #       every digest, extract the binaries into <dir>/bin and print the
-#       OTELCOL_BIN, PROMTOOL and AMTOOL exports. Under GitHub Actions it also
+#       OTELCOL_BIN, PROMTOOL, AMTOOL and TOFU_BIN exports. Under GitHub Actions it also
 #       appends them to $GITHUB_ENV.
 #   scripts/ci-observability-binaries.sh test
 #       Run every unit test file that names OTELCOL_BIN, PROMTOOL, AMTOOL or
-#       hasTool, and fail if any test in them was skipped. Needs the three
-#       variables set, as `install` sets them.
+#       hasTool, plus pr-loop.tofu.test.ts, and fail if any test in them was
+#       skipped. Needs the four variables set, as `install` sets them.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+# The tofu release the pull-request loop test runs against. A bump needs the
+# new archive's digest in the sha256 file (from the release's SHA256SUMS).
+tofu_version="1.12.7"
 sums="scripts/ci-observability-binaries.sha256"
 
 # The version string after `version:` on the first line matching $2 in file $1, without the "v".
@@ -54,6 +59,7 @@ esac
 
 otel_asset="otelcol-contrib_${otel_version}_${os}_${arch}.tar.gz"
 prom_asset="prometheus-${prom_version}.${os}-${arch}.tar.gz"
+tofu_asset="tofu_${tofu_version}_${os}_${arch}.zip"
 am_asset="alertmanager-${am_version}.${os}-${arch}.tar.gz"
 
 sha256() {
@@ -101,32 +107,42 @@ install_binaries() {
   fetch "$dir" "https://github.com/prometheus/prometheus/releases/download/v${prom_version}/${prom_asset}" "$prom_asset"
   fetch "$dir" "https://github.com/prometheus/alertmanager/releases/download/v${am_version}/${am_asset}" "$am_asset"
 
+  fetch "$dir" "https://github.com/opentofu/opentofu/releases/download/v${tofu_version}/${tofu_asset}" "$tofu_asset"
+
   tar -xzf "${dir}/${otel_asset}" -C "${dir}/bin" otelcol-contrib
   tar -xzf "${dir}/${prom_asset}" -C "${dir}/bin" --strip-components=1 "prometheus-${prom_version}.${os}-${arch}/promtool"
   tar -xzf "${dir}/${am_asset}" -C "${dir}/bin" --strip-components=1 "alertmanager-${am_version}.${os}-${arch}/amtool"
 
+  unzip -o -q "${dir}/${tofu_asset}" tofu -d "${dir}/bin"
+
   check_version "${dir}/bin/otelcol-contrib" "$otel_version"
   check_version "${dir}/bin/promtool" "$prom_version"
   check_version "${dir}/bin/amtool" "$am_version"
+  check_version "${dir}/bin/tofu" "$tofu_version"
 
   local env="OTELCOL_BIN=${dir}/bin/otelcol-contrib
 PROMTOOL=${dir}/bin/promtool
-AMTOOL=${dir}/bin/amtool"
+AMTOOL=${dir}/bin/amtool
+TOFU_BIN=${dir}/bin/tofu"
   if [ -n "${GITHUB_ENV:-}" ]; then echo "$env" >> "$GITHUB_ENV"; fi
   echo "$env" | sed 's/^/export /'
 }
 
 run_tests() {
-  for v in OTELCOL_BIN PROMTOOL AMTOOL; do
+  for v in OTELCOL_BIN PROMTOOL AMTOOL TOFU_BIN; do
     if [ -z "${!v:-}" ] || [ ! -x "${!v}" ]; then
       echo "${v} does not name an executable; run \`$0 install <dir>\` first" >&2
       exit 1
     fi
   done
 
+  # The test finds tofu on the PATH.
+  export PATH="$(dirname "$TOFU_BIN"):$PATH"
+
   local files
   files="$(grep -rlE 'OTELCOL_BIN|PROMTOOL|AMTOOL|hasTool' --include='*.test.ts' \
     lexicons packages examples test scripts | grep -v node_modules | grep -v '\.e2e\.test\.ts$' | sort)"
+  files="$(printf '%s\n%s\n' "$files" lexicons/terraform/src/components/pr-loop.tofu.test.ts | sort -u)"
   echo "test files that need the binaries:"
   echo "$files" | sed 's/^/  /'
 
@@ -149,7 +165,7 @@ run_tests() {
 }
 
 case "${1:-}" in
-  key) echo "otelcol-contrib-${otel_version}-prometheus-${prom_version}-alertmanager-${am_version}-${os}-${arch}" ;;
+  key) echo "otelcol-contrib-${otel_version}-prometheus-${prom_version}-alertmanager-${am_version}-tofu-${tofu_version}-${os}-${arch}" ;;
   install) install_binaries "${2:?usage: $0 install <dir>}" ;;
   test) run_tests ;;
   *) echo "usage: $0 key | install <dir> | test" >&2; exit 2 ;;
