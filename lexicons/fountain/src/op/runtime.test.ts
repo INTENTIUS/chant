@@ -229,6 +229,49 @@ describe("start", () => {
     expect(opens[0].path).toContain("blocks=true");
   });
 
+  // #3524: a teammate's thread already holds finished turns, and the stream's
+  // first connection replays the whole log. The old turn's `done` and record
+  // must not settle (or describe) the run the post just queued.
+  it("does not settle on an earlier turn's done replayed from the teammate's stream (#3524)", async () => {
+    const OLD_RECORD = { ...RECORD, id: "run-old" };
+    const { http } = fakeHttp(
+      stewardRoutes({
+        "GET /api/conversations/conv-1/turns": {
+          status: 200,
+          json: { data: [{ id: "turn-old", prompt: runPrompt("alb-deploy"), state: "done" }] },
+        },
+        "POST /api/team/agent-1/messages": { status: 202, json: { data: { conversation_id: "conv-1" } } },
+      }),
+    );
+    const { sse } = fakeSse([
+      [
+        // Replayed: the earlier turn, start to finish.
+        sseEvent("1", { turn_id: "turn-old", stream: "stage", stage: "turn", state: "started" }),
+        sseEvent("2", { turn_id: "turn-old", stream: "stdout", blocks: [{ kind: "text", body: JSON.stringify(OLD_RECORD) }] }),
+        sseEvent("3", { turn_id: "turn-old", stream: "stage", stage: "turn", state: "done" }),
+        // The new turn.
+        sseEvent("4", { turn_id: "turn-new", stream: "stage", stage: "turn", state: "started" }),
+        sseEvent("5", { turn_id: "turn-new", stream: "stdout", blocks: [{ kind: "text", body: JSON.stringify(RECORD) }] }),
+        sseEvent("6", { turn_id: "turn-new", stream: "stage", stage: "turn", state: "failed" }),
+      ],
+    ]);
+
+    const runtime = createFountainOpRuntime({
+      config: CONFIG,
+      endpoint: "https://fountain.example.com",
+      token: "t",
+      http,
+      sse,
+      now: fakeClock(),
+    });
+
+    const status = await (await runtime.start(OP, {})).result();
+
+    // Settled on turn-new's own record, not turn-old's.
+    expect(status.runId).toBe("run-7");
+    expect(status.runId).not.toBe("run-old");
+  });
+
   it("opens a fresh conversation on the Op's labels.Agent when no profile names a team", async () => {
     const configWithoutTeam = {
       lexicons: ["fountain"],
@@ -455,6 +498,34 @@ describe("tailConversation", () => {
     // The replayed event 2 is folded in once, not twice.
     expect(progress.map((r) => r.fn)).toEqual(["plan", "apply"]);
     expect(status.state).toBe("completed");
+  });
+
+  it("ignores a replayed earlier turn and settles only on the new turn's terminal event (#3524)", async () => {
+    const { sse } = fakeSse([
+      [
+        sseEvent("1", { turn_id: "turn-old", stream: "stage", stage: "turn", state: "done" }),
+        sseEvent("2", { turn_id: "turn-new", stream: "stage", stage: "turn", state: "started" }),
+        sseEvent("3", { turn_id: "turn-new", stream: "stdout", blocks: [{ kind: "text", body: JSON.stringify(RECORD) }] }),
+      ],
+      // The new turn is still running when the first connection closes; the
+      // reconnect resumes after event 3 and carries the terminal event.
+      [sseEvent("4", { turn_id: "turn-new", stream: "stage", stage: "turn", state: "done" })],
+    ]);
+
+    const status = await tailConversation({
+      sse,
+      conversationId: "conv-1",
+      op: "alb-deploy",
+      startedAt: "2026-03-01T10:00:00.000Z",
+      idleTimeoutMs: 60_000,
+      now: fakeClock(),
+      ignoreTurns: new Set(["turn-old"]),
+    });
+
+    // Settling on event 1 would have used one connection; the new turn's own
+    // `done` is on the second.
+    expect(status.state).toBe("completed");
+    expect(status.runId).toBe("run-7");
   });
 
   it("ends the wait with an error naming the conversation when nothing arrives", async () => {
