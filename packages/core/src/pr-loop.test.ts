@@ -103,6 +103,12 @@ const appliedReport: PrReport = {
   ],
 };
 
+const resumedReport: PrReport = {
+  ...appliedReport,
+  members: [{ ...planReport.members[0], status: "applied" }, { ...planReport.members[1], status: "applied" }],
+  resumed: { applied: ["a"] },
+};
+
 describe("the pr-report schema", () => {
   test("is a valid schema and names this module's id", () => {
     expect(validSchema(schema)).toBe(true);
@@ -110,7 +116,7 @@ describe("the pr-report schema", () => {
   });
 
   test("every stage's report validates, and its change set validates against the change-set schema", () => {
-    for (const report of [planReport, refusedReport, appliedReport]) {
+    for (const report of [planReport, refusedReport, appliedReport, resumedReport]) {
       expectValid(report);
       expectValidChangeSet(report.changeSet);
       expect(report.changeSet.digest).toBe(report.digest);
@@ -144,6 +150,12 @@ describe("the note", () => {
     expect(note).toContain("applied, inputs from a moved");
     expect(note).toContain("Approved by `github:alice` for this digest.");
     golden("pr-apply-applied.note.golden.md", note);
+  });
+
+  test("a resumed apply names what the earlier attempt applied (#3464)", () => {
+    const note = renderPrNote(resumedReport);
+    expect(note).toContain("Resumed under the same approval: `a` applied in an earlier attempt and did not run again.");
+    expect(renderPrNote(appliedReport)).not.toContain("Resumed");
   });
 
   test("a small limit leaves the summary out rather than cutting the table", () => {

@@ -18,9 +18,22 @@
  * it against the new value. A change that must carry a moved output through
  * its dependents in one rollout is what gated waves are for (#3049): each
  * wave is planned after the one before it applied.
+ *
+ * ## Finishing an apply that failed partway
+ *
+ * {@link resumePrSet} (#3464) is fan-out's resume (#2417, #3049) for a pull
+ * request. The attempt record (`./fan-out-record.ts`) keeps the change set
+ * the gate approved and the components that applied. A re-run on the same
+ * commit narrows the derivation to what is left (`remainingFanOut`), plans
+ * only that against the outputs the approved plans read, and checks each
+ * member it plans against the approved set. When every one is covered, the
+ * gate is decided against the approved digest, which still stands, and only
+ * the rest applies. Planning everything again would give the applied members
+ * empty plans and the set a new digest, and so ask for a second approval of
+ * work already approved.
  */
 
-import { composeChangeSet, type ChangeSetDocument, type ChangeSetPart } from "../change-set";
+import { composeChangeSet, type ChangeSetDocument, type ChangeSetEntry, type ChangeSetPart } from "../change-set";
 import { evaluateGate, type GateCheck, type GateLedgerPort } from "../op/gate";
 import {
   memberCounts,
@@ -32,10 +45,11 @@ import {
   type PrReport,
   type PrStatus,
 } from "../pr-loop";
-import { deployContext, type DriverComponent } from "./driver";
+import { deployContext, type DriverComponent, type DriverComponentResult } from "./driver";
 import { deployUnits } from "./deploy-units";
 import { runFanOut, type FanOutRunResult } from "./fan-out-run";
-import type { ComponentChangeSignal, FanOutPlan } from "./fan-out";
+import { remainingFanOut, type ComponentChangeSignal, type FanOutPlan } from "./fan-out";
+import type { PrApplyRecord } from "./fan-out-record";
 import type { CapabilityRegistry } from "./capability";
 import type { RunProgressEvent } from "./run-progress";
 import { planWaveComponent, readComponentOutputs } from "./wave-plan";
@@ -189,9 +203,17 @@ export interface PrApplyOptions {
   registry: CapabilityRegistry;
   env: string;
   vars?: Record<string, unknown>;
-  /** The set {@link planPrSet} planned and the gate approved. */
+  /** The set {@link planPrSet} planned and the gate approved, or {@link resumePrSet}'s set. */
   set: PrPlanSet;
   onProgress?: (event: RunProgressEvent) => void;
+  /**
+   * What an earlier attempt at this approved set applied (#3464): its
+   * components, which are reported applied and not run again, and the
+   * outputs they left.
+   */
+  resumed?: { completed: string[]; outputs: Record<string, Record<string, unknown>> };
+  /** Called as each component settles, so an attempt record survives a kill (`runFanOut`). */
+  onComponentSettled?: (result: DriverComponentResult, outputs: Record<string, unknown> | undefined) => void;
 }
 
 const sameJson = (a: unknown, b: unknown): boolean => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
@@ -208,8 +230,19 @@ export async function applyPrSet(options: PrApplyOptions): Promise<{ members: Pr
     plans: options.set.plans,
     componentOutputs: { ...before },
     ...(options.onProgress ? { onProgress: options.onProgress } : {}),
+    ...(options.onComponentSettled ? { onComponentSettled: options.onComponentSettled } : {}),
   });
   const completed = new Set(run.completed);
+  const priorCompleted = new Set(options.resumed?.completed ?? []);
+  /**
+   * Whether a dependency's outputs moved from what the plans read: by this
+   * run's apply, or by the earlier attempt's when the record kept them.
+   */
+  const movedBy = (dep: string): boolean => {
+    if (completed.has(dep)) return !sameJson(before[dep], run.componentOutputs[dep]);
+    const earlier = options.resumed?.outputs;
+    return priorCompleted.has(dep) && earlier !== undefined && dep in earlier && !sameJson(before[dep], earlier[dep]);
+  };
   const blocked = new Set(run.blocked.map((b) => b.component));
   const errorOf = (component: string): string | undefined => {
     const result = run.results.find((r) => r.component === component);
@@ -218,9 +251,10 @@ export async function applyPrSet(options: PrApplyOptions): Promise<{ members: Pr
   };
   const byName = new Map(options.components.map((c) => [c.name, c]));
   const members = options.set.members.map((m): PrMember => {
+    if (priorCompleted.has(m.component)) return { ...m, status: "applied" };
     if (completed.has(m.component)) {
       const moved = (byName.get(m.component)?.dependsOn ?? [])
-        .filter((dep) => completed.has(dep) && !sameJson(before[dep], run.componentOutputs[dep]))
+        .filter(movedBy)
         .sort();
       return { ...m, status: "applied", ...(moved.length > 0 ? { inputsMoved: moved } : {}) };
     }
@@ -229,6 +263,149 @@ export async function applyPrSet(options: PrApplyOptions): Promise<{ members: Pr
     return { ...m, status: "failed", ...(error ? { error } : {}) };
   });
   return { members, status: run.status === "ok" ? "applied" : "failed", run };
+}
+
+const entryKey = (e: Pick<ChangeSetEntry, "member" | "address" | "deposed">): string => `${e.member}\u0000${e.address}\u0000${e.deposed ?? ""}`;
+
+/**
+ * Why `member`'s fresh plan is not covered by the approved change set, or
+ * `undefined` when it is. A member left over from a partial apply is covered
+ * when it plans to the digest that was approved, or when every change it
+ * plans now is one the approved plan made:
+ *
+ * - an entry at the same address with the same action, or a `create` or a
+ *   `delete` where a `replace` was approved (the other half applied);
+ * - each attribute it writes was written by the approved entry, to the same
+ *   value or to one the approved plan knew only after apply. A sensitive
+ *   attribute carries no value to compare, so it is covered only where the
+ *   approved entry wrote that attribute as sensitive too. On a `create` left
+ *   from a `replace`, an attribute the replace did not change is not compared;
+ * - each side effect is one the approved plan ran.
+ *
+ * A member with holes the approved plan did not have is never covered by its
+ * entries, since its entries may not say everything it will do.
+ */
+export function planCoveredBy(approved: ChangeSetDocument, fresh: ChangeSetDocument, member: string): string | undefined {
+  const was = approved.members.find((m) => m.member === member);
+  const now = fresh.members.find((m) => m.member === member);
+  if (!now) return undefined;
+  if (!was) return `${member} was not in the approved plan`;
+  if (now.status === "failed" || now.planDigest === null) return `${member} failed to plan${now.error ? `: ${now.error}` : ""}`;
+  if (was.planDigest !== null && now.planDigest === was.planDigest) return undefined;
+  if (was.status === "failed") return `${member} had no approved plan`;
+  const knownHoles = new Set(was.holes.map((h) => h.address));
+  const newHole = now.holes.find((h) => !knownHoles.has(h.address));
+  if (newHole) return `${member} cannot read ${newHole.address} (${newHole.reason}), so its plan cannot be checked against the approved one`;
+
+  const approvedEntries = new Map(approved.entries.filter((e) => e.member === member).map((e) => [entryKey(e), e]));
+  for (const e of fresh.entries) {
+    if (e.member !== member || e.action === "no-op" || e.action === "read") continue;
+    // A create-before-destroy replace whose create applied leaves the old
+    // object deposed, and the plan now deletes it under a deposed key.
+    const a =
+      approvedEntries.get(entryKey(e)) ??
+      (e.action === "delete" && e.deposed ? approvedEntries.get(entryKey({ ...e, deposed: undefined })) : undefined);
+    if (!a) return `${member} now plans to ${e.action} ${e.address}, which the approved plan did not`;
+    const halfReplace = a.action === "replace" && (e.action === "create" || e.action === "delete");
+    if (a.action !== e.action && !halfReplace) {
+      return `${member} now plans to ${e.action} ${e.address}, where the approved plan would ${a.action} it`;
+    }
+    const approvedAttrs = new Map(a.attributes.map((attr) => [attr.path, attr]));
+    for (const attr of e.attributes) {
+      const at = `${e.address}.${attr.path}`;
+      const prior = approvedAttrs.get(attr.path);
+      if (!prior) {
+        if (halfReplace && e.action === "create") continue;
+        return `${member} now writes ${at}, which the approved plan did not`;
+      }
+      if (attr.sensitive) {
+        if (!prior.sensitive) return `${member} now writes ${at} as sensitive, so it cannot be compared with the approved value`;
+        continue;
+      }
+      if (prior.sensitive) return `${member} writes ${at}, which the approved plan wrote as sensitive, so it cannot be compared`;
+      if (prior.unknown) continue;
+      if (attr.unknown) return `${member} now writes ${at} with a value known only after apply, where the approved plan knew it`;
+      if (!sameJson(attr.after, prior.after)) return `${member} now writes ${at} to a different value than the approved plan`;
+    }
+  }
+  const approvedEffects = new Set(
+    (approved.sideEffects ?? []).filter((s) => s.member === member).map((s) => JSON.stringify([s.address, s.type, s.trigger ?? null, s.event ?? null])),
+  );
+  for (const s of fresh.sideEffects ?? []) {
+    if (s.member !== member) continue;
+    if (!approvedEffects.has(JSON.stringify([s.address, s.type, s.trigger ?? null, s.event ?? null]))) {
+      return `${member} now runs ${s.address}, which the approved plan did not`;
+    }
+  }
+  return undefined;
+}
+
+export interface PrResumeOptions {
+  components: DriverComponent[];
+  /** The fan-out the change derives now. The caller has checked it is the one the record was made from. */
+  plan: FanOutPlan;
+  registry: CapabilityRegistry;
+  env: string;
+  vars?: Record<string, unknown>;
+  seededOutputs?: Record<string, Record<string, unknown>>;
+  /** The approved set, from the attempt record. */
+  record: PrApplyRecord;
+  /** Components an earlier attempt applied. */
+  completed: string[];
+}
+
+export type PrResume =
+  | {
+      ok: true;
+      /** The derivation narrowed to what is left. */
+      plan: FanOutPlan;
+      /** The approved set, carrying fresh plans for the members left. Its digest is the approved one. */
+      set: PrPlanSet;
+      /** What the fresh plans of the members left came to. */
+      fresh: PrPlanSet;
+    }
+  | {
+      ok: false;
+      /** Why the approved set does not cover what is left, one line per member. */
+      reasons: string[];
+      fresh?: PrPlanSet;
+    };
+
+/**
+ * Plan what an apply that failed partway left (#3464): narrow the plan by
+ * the components that applied, plan the rest against the outputs the
+ * approved plans read, and check each member against the approved change
+ * set ({@link planCoveredBy}). Covered, the result is the approved set with
+ * the new plans in it, to decide the gate against `record.digest` and hand
+ * to {@link applyPrSet}. Not covered, it says why, and the caller plans
+ * everything and asks for a fresh approval.
+ */
+export async function resumePrSet(options: PrResumeOptions): Promise<PrResume> {
+  const plan = remainingFanOut(options.plan, options.components, { completed: options.completed });
+  const fresh = await planPrSet({
+    components: options.components,
+    plan,
+    registry: options.registry,
+    env: options.env,
+    ...(options.vars ? { vars: options.vars } : {}),
+    seededOutputs: { ...(options.seededOutputs ?? {}), ...options.record.planOutputs },
+  });
+  const reasons = fresh.doc.members
+    .map((m) => planCoveredBy(options.record.changeSet, fresh.doc, m.member))
+    .filter((r): r is string => r !== undefined);
+  if (reasons.length > 0) return { ok: false, reasons, fresh };
+  return {
+    ok: true,
+    plan,
+    fresh,
+    set: {
+      doc: options.record.changeSet,
+      members: options.record.members.map((m) => ({ ...m, status: "planned" as const })),
+      plans: fresh.plans,
+      outputs: options.record.planOutputs,
+      failed: false,
+    },
+  };
 }
 
 export interface PrReportInput {
@@ -249,6 +426,8 @@ export interface PrReportInput {
   members?: PrMember[];
   refusal?: PrRefusal;
   message?: string;
+  /** Components an earlier attempt at the approved set applied (#3464). */
+  resumed?: string[];
 }
 
 /** The report a stage writes. */
@@ -269,6 +448,7 @@ export function prReport(input: PrReportInput): PrReport {
     status: input.status,
     ...(input.refusal ? { refusal: input.refusal } : {}),
     ...(input.message ? { message: input.message } : {}),
+    ...(input.resumed ? { resumed: { applied: [...input.resumed].sort() } } : {}),
     approval: input.approval,
     selection: {
       changed: input.plan.order.filter((c) => changed.has(c)),

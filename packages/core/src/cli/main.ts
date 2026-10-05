@@ -1310,7 +1310,9 @@ Component release ledger + status:
                             (--require-review: the approver must have
                             approved the pull request on the forge;
                             --member <name>, both commands: a workspace
-                            member's loop, gate op pr-<n>-<member>)
+                            member's loop, gate op pr-<n>-<member>;
+                            --resume <file> finishes an apply that failed
+                            partway under the same approval)
   components release <env> Append one immutable release record
                             (--component <name> --digest <sha256:...>
                              [--git-sha <sha>] [--run-id <id>] [--actor <name>]);

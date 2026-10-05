@@ -176,6 +176,12 @@ export interface PrReport {
   refusal?: PrRefusal;
   /** The refusal or failure, as printed. */
   message?: string;
+  /**
+   * Apply stage, `--resume` (#3464): an earlier attempt at the approved set
+   * failed partway, and these components applied in it. This run applied
+   * the rest under the same approval and did not run them again.
+   */
+  resumed?: { applied: string[] };
   approval: PrApproval;
   /** Component names: which changed, which run because they depend on one, and what the change touched that no component deploys. */
   selection: {
@@ -282,6 +288,9 @@ export function renderPrNote(report: PrReport, options: { limit?: number; approv
     `${headline(report)} Head ${code(short(report.head))}, measured from ${code(short(report.base))}.`,
   ];
   if (report.message) out.push("", `> ${report.message.split("\n").join("\n> ")}`);
+  if (report.resumed && report.resumed.applied.length > 0) {
+    out.push("", `Resumed under the same approval: ${report.resumed.applied.map(code).join(", ")} applied in an earlier attempt and did not run again.`);
+  }
   if (report.members.length > 0) {
     out.push("", "| Member | Component | Status | Create | Update | Replace | Delete |", "|---|---|---|---:|---:|---:|---:|");
     for (const m of report.members) {
