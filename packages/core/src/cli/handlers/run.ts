@@ -7,7 +7,7 @@ import { stewardWorkHolder } from "../../op/work-lease-run";
 import type { OpConfig } from "../../op/types";
 import { loadActivities, loadProfiles } from "../../op/activity-registry";
 import { runOpLocally, findPolicyGateStep, OpRunFailure, type StepRecord } from "../../op/local-executor";
-import { approveCommand, describeGateMismatch } from "../../op/gate";
+import { approveCommand, describeGateMismatch, gateIsSealed } from "../../op/gate";
 import { summaryLedgerPrefix, writeGatedRunSummary, type GatedRunSummary } from "../../op/gate-summary";
 import { createLocalOpRuntime } from "../../op/runtimes/local";
 import type { OpRuntimeProvider, OpRunStatus } from "../../op/runtime";
@@ -77,8 +77,8 @@ function resolveGatedExitCode(ctx: CommandContext): number | undefined {
  * passes `--gated-exit 0` reports success, and the one line that explains why
  * a zero-exit run applied nothing belongs next to the gate itself.
  */
-function reportGatedRun(summary: GatedRunSummary, exitCode: number): void {
-  writeGatedRunSummary(summary);
+async function reportGatedRun(summary: GatedRunSummary, exitCode: number): Promise<void> {
+  writeGatedRunSummary({ ...summary, sealed: await gateIsSealed(summary.gate) });
   if (exitCode !== GATED_EXIT_CODE) {
     console.error(formatInfo(
       `gated: exiting ${exitCode} because --gated-exit asked for it. Nothing after the gate ran.`,
@@ -962,10 +962,11 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
     }));
     // #2574: an approval stands, but for another plan or for none. Say so,
     // with the command that replaces it.
+    const sealed = await gateIsSealed(gate.gate);
     if (result.gated.mismatch) {
-      console.error(formatWarning({ message: describeGateMismatch(gate.op, gate.gate, result.gated.mismatch) }));
+      console.error(formatWarning({ message: describeGateMismatch(gate.op, gate.gate, result.gated.mismatch, sealed) }));
     }
-    console.error(formatInfo(`approve : ${approveCommand(gate.op, gate.gate, gate.environment)}`));
+    console.error(formatInfo(`approve : ${approveCommand(gate.op, gate.gate, gate.environment, undefined, sealed)}`));
     if (gate.url) console.error(formatInfo(`approve at: ${gate.url}`));
     console.error(formatInfo(`expires : ${gate.expiresAt}`));
     // #2310: this run's own append reached only the local chant/lifecycle
@@ -978,7 +979,7 @@ export async function runOpComponents(ctx: CommandContext): Promise<number> {
         hint: "an operator working from a clone of the remote cannot approve it until it does",
       }));
     }
-    reportGatedRun(
+    await reportGatedRun(
       {
         op: gate.op,
         gate: gate.gate,
@@ -1119,13 +1120,14 @@ export async function runOpOnRuntime(ctx: CommandContext): Promise<number> {
     if (status.result) {
       // The executor's own render already prints a gate, its approve line
       // and its expiry (#2119).
-      if (ctx.args.json) renderJson(status.result); else renderHuman(status.result);
+      const sealed = status.result.gate ? await gateIsSealed(status.result.gate.gate) : false;
+      if (ctx.args.json) renderJson(status.result, undefined, sealed); else renderHuman(status.result, undefined, sealed);
     } else {
       renderRuntimeStatus("Op", opName, runtime.name, status);
       if (status.state === "gated" && status.gate) {
         console.error(formatWarning({
           message: `Op "${opName}" is waiting on gate "${status.gate.name}"`,
-          hint: `Record the resolution with: ${approveCommand(opName, status.gate.name)}`,
+          hint: `Record the resolution with: ${approveCommand(opName, status.gate.name, undefined, undefined, await gateIsSealed(status.gate.name))}`,
         }));
       }
     }
@@ -1140,7 +1142,7 @@ export async function runOpOnRuntime(ctx: CommandContext): Promise<number> {
       const pending = status.result?.gate;
       const gate = pending?.gate ?? status.gate?.name;
       if (gate) {
-        reportGatedRun(
+        await reportGatedRun(
           {
             op: opName,
             gate,
@@ -1175,7 +1177,8 @@ export async function runOpOnRuntime(ctx: CommandContext): Promise<number> {
     return status.state === "completed" ? 0 : 1;
   } catch (err) {
     if (err instanceof OpRunFailure) {
-      if (ctx.args.json) renderJson(err.result); else renderHuman(err.result);
+      const sealed = err.result.gate ? await gateIsSealed(err.result.gate.gate) : false;
+      if (ctx.args.json) renderJson(err.result, undefined, sealed); else renderHuman(err.result, undefined, sealed);
       return 1;
     }
     console.error(formatError({ message: err instanceof Error ? err.message : String(err) }));

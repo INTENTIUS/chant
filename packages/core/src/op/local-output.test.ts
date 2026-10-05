@@ -207,3 +207,23 @@ describe("renderJson", () => {
     expect(parsed.pushed).toBeUndefined();
   });
 });
+
+describe("a sealed gate's approve line carries --sign (#3521)", () => {
+  test("renderHuman prints --sign when sealed, and not when unsealed", () => {
+    const sealed: string[] = [];
+    renderHuman(GATED_WITH_PLAN, (l) => sealed.push(l), true);
+    expect(sealed.join("\n")).toContain(`approve : chant approve prod-apply rollout-gate --plan ${GATED_WITH_PLAN.gate!.planDigest} --sign`);
+    const unsealed: string[] = [];
+    renderHuman(GATED_WITH_PLAN, (l) => unsealed.push(l), false);
+    expect(unsealed.join("\n")).not.toContain("--sign");
+  });
+
+  test("renderJson's approve field carries --sign when sealed, and not when unsealed", () => {
+    const sealed: string[] = [];
+    renderJson(GATED, (l) => sealed.push(l), true);
+    expect(JSON.parse(sealed[0]).approve).toBe("chant approve prod-apply rollout-gate --sign");
+    const unsealed: string[] = [];
+    renderJson(GATED, (l) => unsealed.push(l), false);
+    expect(JSON.parse(unsealed[0]).approve).toBe("chant approve prod-apply rollout-gate");
+  });
+});

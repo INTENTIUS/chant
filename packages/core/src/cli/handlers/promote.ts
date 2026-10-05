@@ -47,7 +47,7 @@ import {
 } from "../../components/promote";
 import type { DriverComponent } from "../../components/driver";
 import { summaryLedgerPrefix, writeGatedRunSummary } from "../../op/gate-summary";
-import { approveCommand, describeGateMismatch } from "../../op/gate";
+import { approveCommand, describeGateMismatch, gateIsSealed } from "../../op/gate";
 import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
 import { GATED_EXIT_CODE } from "./run";
@@ -248,12 +248,14 @@ async function deployPlan(
     const pending = run.gate;
     console.error(formatWarning({ message: `component "${run.gatedComponent}" is gated on "${pending.gate}" — pending approval` }));
     // #2574: an approval stands, but for another environment, plan or none.
+    const sealed = await gateIsSealed(pending.gate);
     if (run.gateMismatch) {
-      console.error(formatWarning({ message: describeGateMismatch(pending.op, pending.gate, run.gateMismatch) }));
+      console.error(formatWarning({ message: describeGateMismatch(pending.op, pending.gate, run.gateMismatch, sealed) }));
     }
-    console.error(formatInfo(`approve : ${approveCommand(pending.op, pending.gate, pending.environment)}`));
+    console.error(formatInfo(`approve : ${approveCommand(pending.op, pending.gate, pending.environment, undefined, sealed)}`));
     console.error(formatInfo(`then run the same ${verb} again`));
     writeGatedRunSummary({
+      sealed,
       op: pending.op,
       gate: pending.gate,
       ...(pending.description ? { description: pending.description } : {}),

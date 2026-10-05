@@ -235,7 +235,7 @@ export interface GateDigestMismatch {
  * have changed — the record simply never said what it approved, which is
  * every record written before #2300.
  */
-export function describeGateMismatch(op: string, gate: string, mismatch: GateDigestMismatch): string {
+export function describeGateMismatch(op: string, gate: string, mismatch: GateDigestMismatch, sealed = false): string {
   const why =
     mismatch.approved === undefined
       ? mismatch.environment !== undefined
@@ -249,7 +249,7 @@ export function describeGateMismatch(op: string, gate: string, mismatch: GateDig
     `Gate "${gate}" is approved, but not for this plan. ` +
     `approved: ${describePlanDigest(mismatch.approved)} (by ${mismatch.resolvedBy} at ${mismatch.timestamp}); ` +
     `planned: ${mismatch.planned}. ` +
-    `${why} ${approveCommand(op, gate, mismatch.environment)}`
+    `${why} ${approveCommand(op, gate, mismatch.environment, undefined, sealed)}`
   );
 }
 
@@ -512,8 +512,25 @@ export async function evaluateGate(port: GateLedgerPort, input: GateCheckInput):
  * plan the reader was shown and not whatever is pending by the time they run
  * it.
  */
-export function approveCommand(op: string, gate: string, environment?: string, planDigest?: string): string {
+export function approveCommand(op: string, gate: string, environment?: string, planDigest?: string, sealed = false): string {
   return `chant approve ${op} ${gate}` +
     (environment === undefined ? "" : ` --env ${environment}`) +
-    (planDigest === undefined ? "" : ` --plan ${planDigest}`);
+    (planDigest === undefined ? "" : ` --plan ${planDigest}`) +
+    (sealed ? " --sign" : "");
+}
+
+/**
+ * Whether the workspace seals `gate` (`identity.gates`), so an approval
+ * without `--sign` doesn't count. Callers pass the answer to
+ * {@link approveCommand} so the hint names the flag. Loaded on demand, as the
+ * git ledger port does: the workspace modules import the Op modules. A read
+ * that throws counts as unsealed, since the hint is advice and not the check.
+ */
+export async function gateIsSealed(gate: string, cwd: string = process.cwd()): Promise<boolean> {
+  try {
+    const { gateAdmission } = await import("../workspace/identity");
+    return gateAdmission(cwd, gate) !== null;
+  } catch {
+    return false;
+  }
 }

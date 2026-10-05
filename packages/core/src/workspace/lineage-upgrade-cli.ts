@@ -15,7 +15,7 @@ import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { formatError, formatInfo, formatSuccess, formatWarning } from "../cli/format";
 import type { CommandContext } from "../cli/registry";
-import { approveCommand, describeGateMismatch, evaluateGate, gitGateLedgerPort, type GateLedgerPort } from "../op/gate";
+import { approveCommand, describeGateMismatch, evaluateGate, gateIsSealed, gitGateLedgerPort, type GateLedgerPort } from "../op/gate";
 import { WORKSPACE_UPGRADE_GATE_OP } from "../op/gate-name";
 import { LockError } from "./lineage-lock";
 import { applyStagedUpgrade, describeStaged, stageUpgrade, type ChantRunner, type StagedUpgrade } from "./lineage-upgrade";
@@ -104,12 +104,13 @@ export async function upgradeCommand(opts: UpgradeCommandOptions): Promise<Upgra
     });
     if (!check.satisfied) {
       if (!opts.json) {
-        if (check.mismatch) console.error(formatWarning({ message: describeGateMismatch(WORKSPACE_UPGRADE_GATE_OP, gate, check.mismatch) }));
+        const sealed = await gateIsSealed(gate);
+        if (check.mismatch) console.error(formatWarning({ message: describeGateMismatch(WORKSPACE_UPGRADE_GATE_OP, gate, check.mismatch, sealed) }));
         if (check.pushWarning) console.error(formatWarning({ message: check.pushWarning }));
         if (check.quorum) console.error(formatInfo(`approvals so far: ${check.quorum.approvers.length} of ${check.quorum.need}`));
         console.error(
           formatInfo(
-            `Gated: the patch ${staged.digest} waits for approval. Review it (--output <file> writes it), then run \`${approveCommand(WORKSPACE_UPGRADE_GATE_OP, gate)}\` and repeat this command to apply it.`,
+            `Gated: the patch ${staged.digest} waits for approval. Review it (--output <file> writes it), then run \`${approveCommand(WORKSPACE_UPGRADE_GATE_OP, gate, undefined, undefined, sealed)}\` and repeat this command to apply it.`,
           ),
         );
       }
