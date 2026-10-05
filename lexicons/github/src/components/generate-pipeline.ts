@@ -60,7 +60,7 @@ import { emitYAML, emitYAMLEntry } from "@intentius/chant/yaml";
 import { resolveComponentGraph, type DriverComponent } from "@intentius/chant/components/driver";
 import { hasPublishStep, promoteArchivePaths } from "@intentius/chant/components/promote";
 import { GATED_WAVE_RECORD, gatedWaveJobs } from "@intentius/chant/components/gated-wave-pipeline";
-import { PR_LOOP_IMAGE, PR_LOOP_REPORT_DIR, prApplyGroup, prLoopJobs, prLoopSetup } from "@intentius/chant/components/pr-pipeline";
+import { PR_APPLY_RECORD, PR_LOOP_IMAGE, PR_LOOP_REPORT_DIR, prApplyGroup, prApplyRecordKey, prLoopJobs, prLoopSetup } from "@intentius/chant/components/pr-pipeline";
 import { memberRepoPath } from "@intentius/chant/lexicon";
 import type {
   ComponentPipelineJob as GeneratedJob,
@@ -183,6 +183,9 @@ function gatedWaveGithubDoc(
  * job can push, to record a pending fact on `chant/lifecycle`, and runs one
  * at a time per environment. Both keep their report as an artifact, and both
  * check out the full history, since each measures the change with git.
+ * The apply job restores its attempt record from the cache before it runs
+ * and saves it afterwards, failed or not, so a re-run of a failed apply
+ * finishes it under the same approval (#3543).
  *
  * For a workspace member (#3465) the run steps start in the member's
  * directory and the report artifact is kept from there. The triggers take no
@@ -203,12 +206,31 @@ function prLoopGithubDoc(
   const rooted = !member || member.dir === "." || member.dir === "";
   const [plan, apply] = prLoopJobs(loop.forge ?? "github", env, loop, member?.name);
   const reportPath = member ? memberRepoPath(member, PR_LOOP_REPORT_DIR) : PR_LOOP_REPORT_DIR;
+  // The apply's attempt record (#3543) lives in the cache under the pushed
+  // commit. Cache keys cannot be overwritten, so each attempt saves under
+  // its run and attempt, and a re-run restores the newest for the commit.
+  const recordPath = member ? memberRepoPath(member, PR_APPLY_RECORD) : PR_APPLY_RECORD;
+  const recordPrefix = `${prApplyRecordKey(env, "${{ github.sha }}", member?.name)}-`;
+  const recordKey = `${recordPrefix}\${{ github.run_id }}-\${{ github.run_attempt }}`;
+  const restoreRecord = {
+    name: "Restore the record of an earlier attempt at this commit",
+    uses: "actions/cache/restore@v4",
+    with: { path: recordPath, key: recordKey, "restore-keys": recordPrefix },
+  };
+  const saveRecord = {
+    name: "Keep the record for a re-run",
+    if: "always()",
+    uses: "actions/cache/save@v4",
+    with: { path: recordPath, key: recordKey },
+  };
   const steps = (job: typeof plan, name: string): Array<Record<string, unknown>> => [
     { uses: actionRef("actions/checkout"), with: { "fetch-depth": 0 } },
     ...prLoopSetup(image).map((line) => ({ run: line })),
     ...beforeScript.map((line) => ({ run: line })),
+    ...(job.jobName === "apply" ? [restoreRecord] : []),
     { name, env: job.env, run: job.command },
     ...extraScript.map((line) => ({ run: line })),
+    ...(job.jobName === "apply" ? [saveRecord] : []),
     {
       name: `Keep the ${job.jobName} report`,
       if: "always()",

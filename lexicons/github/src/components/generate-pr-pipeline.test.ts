@@ -30,6 +30,8 @@ function hasActionlint(): boolean {
 }
 
 interface Step {
+  name?: string;
+  if?: string;
   uses?: string;
   run?: string;
   env?: Record<string, string>;
@@ -73,6 +75,28 @@ describe("the GitHub pull-request workflow", () => {
     for (const job of Object.values(doc.jobs)) expect(job.steps[0].with).toEqual({ "fetch-depth": 0 });
   });
 
+  test("the apply resumes from a record the cache keeps for the pushed commit across a re-run (#3543)", () => {
+    const steps = doc.jobs.apply.steps;
+    const restore = steps.findIndex((s) => s.uses === "actions/cache/restore@v4");
+    const run = steps.findIndex((s) => s.run?.includes("pr-apply"));
+    const save = steps.findIndex((s) => s.uses === "actions/cache/save@v4");
+    expect(restore).toBeGreaterThan(-1);
+    expect(restore).toBeLessThan(run);
+    expect(save).toBeGreaterThan(run);
+    expect(steps[run].run).toContain("--resume .chant/pr-resume/pr-apply.json");
+    const key = "chant-apply-prod-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}";
+    expect(steps[restore].with).toEqual({ path: ".chant/pr-resume/pr-apply.json", key, "restore-keys": "chant-apply-prod-${{ github.sha }}-" });
+    // Saved even when the apply failed, which is when a re-run needs it.
+    expect(steps[save].if).toBe("always()");
+    expect(steps[save].with).toEqual({ path: ".chant/pr-resume/pr-apply.json", key });
+    // The plan job runs the pull request's code: it neither reads nor writes the record.
+    expect(doc.jobs.plan.steps.some((s) => s.uses?.startsWith("actions/cache"))).toBe(false);
+    expect(doc.jobs.plan.steps.find((s) => s.run?.includes("pr-plan"))!.run).not.toContain("--resume");
+    // The report artifact does not carry the record, which holds the members' outputs.
+    const keep = steps.find((s) => s.uses?.startsWith("actions/upload-artifact"))!;
+    expect(keep.with?.path).toBe(".chant/pr");
+  });
+
   test("runs in an image with git and installs OpenTofu, unless the caller names an image", () => {
     expect(doc.jobs.plan.steps[1].run).toContain("install-opentofu");
     const own = generateGithubPipeline(ESTATE, { env: "prod", image: "example/ci:1", prLoop: {} }).yaml;
@@ -110,6 +134,10 @@ describe("the GitHub pull-request workflow", () => {
     const apply = mdoc.jobs.apply.steps.find((s) => s.run?.includes("pr-apply"))!;
     expect(apply.run).toContain("--member network");
     expect(mdoc.jobs.apply.concurrency).toEqual({ group: "chant-apply-network-prod", "cancel-in-progress": false });
+    // The record path is relative to the member for --resume and to the repository for the cache.
+    expect(apply.run).toContain("--resume .chant/pr-resume/pr-apply.json");
+    const restore = mdoc.jobs.apply.steps.find((s) => s.uses === "actions/cache/restore@v4")!;
+    expect(restore.with).toMatchObject({ path: "infra/network/.chant/pr-resume/pr-apply.json", "restore-keys": "chant-apply-network-prod-${{ github.sha }}-" });
     for (const job of Object.values(mdoc.jobs)) {
       const keep = job.steps.find((s) => s.uses?.startsWith("actions/upload-artifact"))!;
       expect(keep.with?.path).toBe("infra/network/.chant/pr");

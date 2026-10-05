@@ -36,7 +36,7 @@ import { emitYAMLEntry } from "@intentius/chant/yaml";
 import { resolveComponentGraph, type DriverComponent } from "@intentius/chant/components/driver";
 import { hasPublishStep, promoteArchivePaths } from "@intentius/chant/components/promote";
 import { GATED_WAVE_RECORD, gatedWaveJobs } from "@intentius/chant/components/gated-wave-pipeline";
-import { PR_LOOP_IMAGE, PR_LOOP_REPORT_DIR, prApplyGroup, prLoopJobs, prLoopSetup } from "@intentius/chant/components/pr-pipeline";
+import { PR_APPLY_RECORD, PR_LOOP_IMAGE, PR_LOOP_REPORT_DIR, prApplyGroup, prApplyRecordKey, prLoopJobs, prLoopSetup } from "@intentius/chant/components/pr-pipeline";
 import { memberGitlabChanges, memberRepoPath, memberShellDir } from "@intentius/chant/lexicon";
 import type {
   ComponentPipelineJob as GeneratedJob,
@@ -276,6 +276,12 @@ function gatedWaveGitlabPipeline(
  * change and passes `--member`, which keeps the member's gate, note and
  * statuses apart from the other members'. The apply's resource group is the
  * member's own.
+ *
+ * The apply job keeps its attempt record in the job cache under the pushed
+ * commit, uploaded whether the job passed or failed, so a retry of a failed
+ * apply passes it to `pr-apply --resume` (#3543). GitLab keeps protected
+ * branches' caches apart from other branches' by default, so a merge request
+ * pipeline cannot write the record the target branch's apply reads.
  */
 function prLoopGitlabPipeline(
   env: string,
@@ -317,6 +323,13 @@ function prLoopGitlabPipeline(
       rules: [{ if: onMerge }],
       variables: apply.env,
       script: script(apply),
+      // The attempt record (#3543), kept under the pushed commit even when
+      // the job fails, so a retry finishes the apply under the same approval.
+      cache: {
+        key: prApplyRecordKey(env, "$CI_COMMIT_SHA", member?.name),
+        paths: [member ? memberRepoPath(member, PR_APPLY_RECORD) : PR_APPLY_RECORD],
+        when: "always",
+      },
       artifacts: { when: "always", paths: [reportPath] },
     },
   };

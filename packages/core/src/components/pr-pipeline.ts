@@ -17,6 +17,14 @@
  *   to `chant/lifecycle`, to record the pending fact when the gate stops it.
  *   One apply runs at a time per environment.
  *
+ * The apply job passes `--resume` (#3543) with a record path outside the
+ * report directory, and each forge keeps that file in its CI cache under a
+ * key that names the environment, the member and the pushed commit
+ * (`prApplyRecordKey`). A re-run of a failed apply job restores it and
+ * finishes the approved set under the same approval; the record itself is
+ * checked against the pull request's gate, the commit, the selection and
+ * the ledger before it counts (`pr-apply --resume`, #3464).
+ *
  * Measuring the push from the commit it replaced works for merge commits,
  * squash merges and rebase merges alike, and every job measures from the
  * merge base of that commit and its own head (`resolveMergeBase`).
@@ -33,6 +41,13 @@ import { PR_APPLY_GATE } from "../pr-loop";
 
 /** Where both jobs write their reports, kept as a CI artifact. */
 export const PR_LOOP_REPORT_DIR = ".chant/pr";
+
+/**
+ * The attempt record the apply job resumes from (#3543), relative to the
+ * directory the job runs in. It sits outside `PR_LOOP_REPORT_DIR`, so the
+ * report artifact never carries it: it holds the outputs the members read.
+ */
+export const PR_APPLY_RECORD = ".chant/pr-resume/pr-apply.json";
 
 /**
  * The image the pull-request pipeline runs in when the caller sets none. The
@@ -112,6 +127,7 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
       command: [
         "chant", "components", "pr-apply", "--base", '"$BASE_SHA"', ...common,
         ...(options.requireReview === false ? [] : ["--require-review"]),
+        "--resume", PR_APPLY_RECORD,
       ].join(" "),
       env: github ? { BASE_SHA: "${{ github.event.before }}", ...token } : { BASE_SHA: "$CI_COMMIT_BEFORE_SHA" },
       ...(github ? {} : { setup: [gitlabBaseFallback(options.branch)] }),
@@ -125,6 +141,18 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
  */
 export function prApplyGroup(env: string, member?: string): string {
   return member ? `chant-apply-${member}-${env}` : `chant-apply-${env}`;
+}
+
+/**
+ * The cache key the apply job keeps its attempt record under (#3543), with
+ * `commit` the forge's expression for the pushed commit. A push of another
+ * commit never restores a record, and the environment and member keep each
+ * pipeline's record apart. The pull request and the gate digest are not in
+ * the key, since neither is known before the job runs; `pr-apply --resume`
+ * refuses a record made for another pull request, gate or digest.
+ */
+export function prApplyRecordKey(env: string, commit: string, member?: string): string {
+  return `${prApplyGroup(env, member)}-${commit}`;
 }
 
 /**

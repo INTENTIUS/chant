@@ -29,6 +29,7 @@ interface Job {
   resource_group?: string;
   image?: string;
   artifacts: Record<string, unknown>;
+  cache?: Record<string, unknown>;
 }
 
 describe("the GitLab merge-request pipeline", () => {
@@ -83,6 +84,14 @@ describe("the GitLab merge-request pipeline", () => {
     expect(yaml).toContain('$CI_COMMIT_BRANCH == "trunk"');
   });
 
+  test("the apply resumes from a record the job cache keeps for the pushed commit, failed or not (#3543)", () => {
+    expect(doc.apply.script.at(-1)).toContain("--resume .chant/pr-resume/pr-apply.json");
+    expect(doc.apply.cache).toEqual({ key: "chant-apply-prod-$CI_COMMIT_SHA", paths: [".chant/pr-resume/pr-apply.json"], when: "always" });
+    // The plan runs the merge request's code: no cache, no record.
+    expect(doc.plan.cache).toBeUndefined();
+    expect(doc.plan.script.at(-1)).not.toContain("--resume");
+  });
+
   test("refuses a wave or promote job beside it", () => {
     expect(() => generateGitlabPipeline(ESTATE, { prLoop: {}, gatedWaves: { gate: "g" } })).toThrow(/pull-request pipeline has no wave or promote jobs/);
   });
@@ -105,5 +114,6 @@ describe("the GitLab merge-request pipeline", () => {
     expect(apply.resource_group).toBe("chant-apply-network-prod");
     expect(plan.artifacts).toEqual({ when: "always", paths: ["infra/network/.chant/pr"] });
     expect(apply.artifacts).toEqual({ when: "always", paths: ["infra/network/.chant/pr"] });
+    expect(apply.cache).toEqual({ key: "chant-apply-network-prod-$CI_COMMIT_SHA", paths: ["infra/network/.chant/pr-resume/pr-apply.json"], when: "always" });
   });
 });
