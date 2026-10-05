@@ -64,6 +64,21 @@ import { GATED_EXIT_CODE, recordAutoReleasesForRun } from "./run";
 import type { CommandContext } from "../registry";
 
 /**
+ * Whether the workspace seals `gate` (`identity.gates`), so an approval
+ * without `--sign` doesn't count. Loaded on demand, as the git ledger port
+ * does: the workspace modules import the Op modules. A read that throws
+ * counts as unsealed, since the hint is advice and not the check.
+ */
+async function gateIsSealed(gate: string): Promise<boolean> {
+  try {
+    const { gateAdmission } = await import("../../workspace/identity");
+    return gateAdmission(process.cwd(), gate) !== null;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * The stack-level change signal, from whichever end the invocation supplied.
  *
  * `--base` re-derives it here, which is the one-command shape a developer
@@ -405,7 +420,9 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
   // (#3049), the #2300 refusal on a set. Printed on stderr even under --json,
   // since it is the line a CI log reader is looking for.
   for (const wave of result.waves ?? []) {
-    if (wave.status === "gated" && wave.approved) console.error(formatWarning({ message: describeChangedWave(wave) }));
+    if (wave.status === "gated" && wave.approved) {
+      console.error(formatWarning({ message: describeChangedWave(wave, await gateIsSealed(wave.gate)) }));
+    }
   }
 
   // The same durable trace `chant run --components` leaves (#597), for the
@@ -430,7 +447,8 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
     // The pending fact's own plan: the fan-out's digest for the gate over the
     // set, or a component's plan and environment for a gate inside one (#2574).
     console.error(formatInfo(
-      `approve : ${approveCommand(pending.op, pending.gate, pending.environment)} --plan ${pending.planDigest ?? result.plan.digest}`,
+      `approve : ${approveCommand(pending.op, pending.gate, pending.environment)} --plan ${pending.planDigest ?? result.plan.digest}` +
+        ((await gateIsSealed(pending.gate)) ? " --sign" : ""),
     ));
     writeGatedRunSummary({
       op: pending.op,

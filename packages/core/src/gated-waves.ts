@@ -230,11 +230,16 @@ export function withWaveRecord(records: readonly WaveRecord[], record: WaveRecor
 /**
  * The refusal for a wave whose set changed after it was approved: the digest
  * that was approved, the one planned now, and that nothing in the wave ran.
+ * On a sealed gate the approve hint ends in `--sign`.
  */
-export function describeChangedWave(record: Pick<WaveRecord, "wave" | "op" | "gate" | "digest" | "approved">): string {
+export function describeChangedWave(
+  record: Pick<WaveRecord, "wave" | "op" | "gate" | "digest" | "approved">,
+  /** True when the gate is sealed (`identity.gates`): an approval without `--sign` doesn't count, so the hint says to sign. */
+  sealed = false,
+): string {
   return (
     `wave ${record.wave} changed after it was approved, so nothing in it was applied. ` +
     `approved: ${record.approved ?? "(none)"}; planned now: ${record.digest}. ` +
-    `Read the new plan, then approve it: chant approve ${record.op} ${record.gate} --plan ${record.digest}`
+    `Read the new plan, then approve it: chant approve ${record.op} ${record.gate} --plan ${record.digest}${sealed ? " --sign" : ""}`
   );
 }

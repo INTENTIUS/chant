@@ -115,4 +115,15 @@ describe("wave records", () => {
     expect(line).toContain("nothing in it was applied");
     expect(line).toContain("chant approve fan-out release-wave-2 --plan");
   });
+
+  test("the approve hint on an unsealed gate has no --sign", () => {
+    const line = describeChangedWave(record);
+    expect(line).not.toContain("--sign");
+    expect(line.endsWith(`--plan ${record.digest}`)).toBe(true);
+  });
+
+  test("the approve hint on a sealed gate ends in --sign", () => {
+    const line = describeChangedWave(record, true);
+    expect(line.endsWith(`--plan ${record.digest} --sign`)).toBe(true);
+  });
 });
