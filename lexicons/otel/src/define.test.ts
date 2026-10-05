@@ -77,6 +77,21 @@ describe("defineComponent", () => {
     expect(yaml.startsWith("receivers:")).toBe(true);
   });
 
+  test("sending_queue.batch serializes and is checked as OTEL107", () => {
+    const otlp = new OtlpReceiver({ protocols: { grpc: {} } });
+    const ok = new OtlpExporter({ endpoint: "backend:4317", sending_queue: { batch: { flush_timeout: "1s", min_size: 100, max_size: 500 } } });
+    const good = build([otlp, ok, new Pipeline({ signal: "traces", receivers: [otlp], exporters: [ok] })]);
+    expect(good.yaml).toContain("flush_timeout: 1s");
+    expect(good.diags.filter((d) => d.checkId === "OTEL107" || d.checkId === "OTEL125")).toEqual([]);
+
+    const bad = new OtlpExporter({ endpoint: "backend:4317", sending_queue: { enabled: false, batch: { min_size: 500, max_size: 100 } } });
+    const r = build([otlp, bad, new Pipeline({ signal: "traces", receivers: [otlp], exporters: [bad] })]);
+    expect(r.diags.filter((d) => d.checkId === "OTEL107").map((d) => d.message)).toEqual([
+      'exporter "otlp": sending_queue.batch is set but sending_queue.enabled is false; batching runs in the queue',
+      'exporter "otlp": sending_queue.batch.max_size (100) is below min_size (500); the collector rejects this',
+    ]);
+  });
+
   test("its own validate runs as OTEL107, function or safeParse", () => {
     const otlp = new OtlpReceiver({ protocols: { grpc: {} } });
     const v = new VendorExporter({ api: { key: "plaintext" } });

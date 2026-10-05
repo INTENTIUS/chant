@@ -3,6 +3,7 @@
  */
 
 import { defineBuiltin } from "../define";
+import { queueIssues } from "./common";
 import type { Duration, ExporterHelperSettings, GRPCClientSettings, HTTPClientSettings, TLSServerSettings } from "./common";
 
 // ── otlp ─────────────────────────────────────────────────────────────
@@ -14,7 +15,7 @@ export const OtlpExporter = defineBuiltin<OtlpExporterConfig, "exporter", "otlp"
   kind: "exporter",
   type: "otlp",
   description: "Sends traces, metrics and logs over OTLP gRPC",
-  validate: (c) => (c.endpoint ? [] : ["endpoint is empty"]),
+  validate: (c) => [...(c.endpoint ? [] : ["endpoint is empty"]), ...queueIssues(c)],
   endpoints: (c) => (c.endpoint ? [c.endpoint] : []),
   protocols: () => ["grpc"],
 });
@@ -34,10 +35,12 @@ export const OtlpHttpExporter = defineBuiltin<OtlpHttpExporterConfig, "exporter"
   kind: "exporter",
   type: "otlphttp",
   description: "Sends traces, metrics and logs over OTLP HTTP",
-  validate: (c) =>
-    c.endpoint || c.traces_endpoint || c.metrics_endpoint || c.logs_endpoint
+  validate: (c) => [
+    ...(c.endpoint || c.traces_endpoint || c.metrics_endpoint || c.logs_endpoint
       ? []
-      : ["set endpoint, or at least one of traces_endpoint, metrics_endpoint and logs_endpoint"],
+      : ["set endpoint, or at least one of traces_endpoint, metrics_endpoint and logs_endpoint"]),
+    ...queueIssues(c),
+  ],
   endpoints: (c) =>
     [c.endpoint, c.traces_endpoint, c.metrics_endpoint, c.logs_endpoint].filter((e): e is string => typeof e === "string" && e !== ""),
   protocols: (c) => [c.encoding === "json" ? "http/json" : "http/protobuf"],

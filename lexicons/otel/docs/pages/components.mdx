@@ -186,4 +186,6 @@ export const service = new Service({ extensions: [elector] });
 
 ## Shared config types
 
-The settings many components share are exported as types: `TLSClientSettings`, `TLSServerSettings`, `GRPCServerSettings`, `HTTPServerSettings`, `GRPCClientSettings`, `HTTPClientSettings`, `RetrySettings`, `QueueSettings`, `ExporterHelperSettings`, `AttributeAction`, and for the processors and receivers above `OttlErrorMode`, `TransformStatementGroup`, `K8sAuthType` and `MetricToggle`. Use them to type a nested block you declare as its own const.
+The settings many components share are exported as types: `TLSClientSettings`, `TLSServerSettings`, `GRPCServerSettings`, `HTTPServerSettings`, `GRPCClientSettings`, `HTTPClientSettings`, `RetrySettings`, `QueueSettings`, `BatchSettings`, `ExporterHelperSettings`, `AttributeAction`, and for the processors and receivers above `OttlErrorMode`, `TransformStatementGroup`, `K8sAuthType` and `MetricToggle`. Use them to type a nested block you declare as its own const.
+
+`QueueSettings.batch` (`flush_timeout`, `min_size`, `max_size`, `sizer`) turns on batching inside an exporter's `sending_queue` at collector v0.130.0, as an alternative to a `batch` processor in the pipeline. Setting it on an `otlp` or `otlphttp` exporter also satisfies OTEL125. The build rejects it on a disabled queue and when `max_size` is below `min_size`.
