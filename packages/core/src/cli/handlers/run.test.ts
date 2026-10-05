@@ -815,6 +815,45 @@ describe("runOp: --sandbox with a policyGate step (chant #2003)", () => {
     expect(seen).not.toHaveProperty("profile");
   });
 
+  // #3521: a hosted runtime that reports only a gate name gets a hint whose
+  // approve command names `--sign` when the workspace seals that gate.
+  describe("a runtime that reports a gated state with only the gate name (#3521)", () => {
+    async function runGatedOnStub(): Promise<string> {
+      discoverOpsMock.mockResolvedValue({ ops: new Map([makeOp("prod-apply")]), errors: [] });
+      const start = vi.fn(async () => ({
+        op: "prod-apply",
+        runId: "stub-1",
+        result: async () => ({
+          op: "prod-apply", runId: "stub-1", state: "gated", startedAt: "2026-01-01T00:00:00.000Z",
+          gate: { name: "approve-prod", since: "2026-01-01T00:00:00.000Z" },
+        }),
+      }));
+      makeStdoutSpy();
+      const stderr = makeStderrSpy();
+      const exit = await runOp({
+        args: makeArgs({ path: "prod-apply", on: "stub" }),
+        plugins: [{ name: "stub", opRuntime: { name: "stub", start } } as never], serializers: [],
+      });
+      expect(exit).toBe(3);
+      return stderr.join("\n");
+    }
+
+    test("unsealed gate: the hint's approve command has no --sign", async () => {
+      const out = await runGatedOnStub();
+      expect(out).toContain("Record the resolution with: chant approve prod-apply approve-prod");
+      expect(out).not.toContain("--sign");
+    });
+
+    test("sealed gate: the hint's approve command ends in --sign", async () => {
+      sealedGates.add("approve-prod");
+      try {
+        expect(await runGatedOnStub()).toContain("Record the resolution with: chant approve prod-apply approve-prod --sign");
+      } finally {
+        sealedGates.clear();
+      }
+    });
+  });
+
   test("--sandbox on an Op with no policyGate step is untouched", async () => {
     discoverOpsMock.mockResolvedValue({
       ops: new Map([localOp("hello", [{ kind: "activity", fn: "shellCmd", args: { cmd: "true" } }])]),
@@ -1177,6 +1216,53 @@ describe("runOp dispatcher: --components routes to runOpComponents", () => {
     expect(exit).toBe(0);
     expect(runComponentsMock).toHaveBeenCalled();
     vi.restoreAllMocks();
+  });
+});
+
+// #3521: a gated component's approve line and mismatch line name `--sign` on
+// a sealed gate and leave it off otherwise.
+describe("runOp --components gate hints (#3521)", () => {
+  beforeEach(() => {
+    runComponentsMock.mockReset();
+    loadChantConfigMock.mockReset().mockResolvedValue({ config: {} });
+    maybeRecordAutoReleaseMock.mockReset().mockResolvedValue({ recorded: false, reason: "no-digest" });
+    maybePersistBuildManifestMock.mockReset().mockResolvedValue({ persisted: false, reason: "no-manifest" });
+  });
+
+  async function runGatedComponent(): Promise<string> {
+    runComponentsMock.mockResolvedValue({
+      success: false,
+      selected: ["svc"],
+      gated: {
+        component: "svc",
+        gate: {
+          version: 1, kind: "pending", op: "svc", gate: "approve-prod", environment: "prod",
+          timestamp: "2026-09-05T10:00:00.000Z", expiresAt: "2099-01-01T00:00:00.000Z",
+        },
+        mismatch: { approved: "sha256:aaa", planned: "sha256:bbb", resolvedBy: "alex", timestamp: "2026-09-05T11:00:00.000Z", environment: "prod" },
+      },
+    });
+    const stderr = makeStderrSpy();
+    expect(await runOp({ args: makeArgs({ path: "svc", components: true }), plugins: [], serializers: [] })).toBe(3);
+    return stderr.join("\n");
+  }
+
+  test("unsealed gate: the approve line and the mismatch line carry no --sign", async () => {
+    const out = await runGatedComponent();
+    expect(out).toContain("approve : chant approve svc approve-prod --env prod");
+    expect(out).toContain("needs a fresh one: chant approve svc approve-prod --env prod");
+    expect(out).not.toContain("--sign");
+  });
+
+  test("sealed gate: the approve line and the mismatch line end in --sign", async () => {
+    sealedGates.add("approve-prod");
+    try {
+      const out = await runGatedComponent();
+      expect(out).toContain("approve : chant approve svc approve-prod --env prod --sign");
+      expect(out).toContain("needs a fresh one: chant approve svc approve-prod --env prod --sign");
+    } finally {
+      sealedGates.clear();
+    }
   });
 });
 
