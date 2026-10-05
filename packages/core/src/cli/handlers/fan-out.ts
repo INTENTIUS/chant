@@ -53,7 +53,7 @@ import { describeChangedWave, withWaveRecord, type WaveRecord } from "../../gate
 import { renderFanOutHuman, renderFanOutJson, renderFanOutPlan } from "../../components/fan-out-output";
 import { ndjsonProgressSink } from "../../components/run-progress";
 import { summaryLedgerPrefix, writeGatedRunSummary } from "../../op/gate-summary";
-import { approveCommand } from "../../op/gate";
+import { approveCommand, gateIsSealed } from "../../op/gate";
 import { getHeadCommit } from "../../lifecycle/git";
 import { remainingFanOut, type ChangedUnits, type FanOutProgress } from "../../components/fan-out";
 import { resolveCliBuildParams, parseParamFlags } from "../build-params-cli";
@@ -62,21 +62,6 @@ import { FAN_OUT_GATE_OP } from "../../op/gate-name";
 import { resolveBuildRoot } from "./lifecycle";
 import { GATED_EXIT_CODE, recordAutoReleasesForRun } from "./run";
 import type { CommandContext } from "../registry";
-
-/**
- * Whether the workspace seals `gate` (`identity.gates`), so an approval
- * without `--sign` doesn't count. Loaded on demand, as the git ledger port
- * does: the workspace modules import the Op modules. A read that throws
- * counts as unsealed, since the hint is advice and not the check.
- */
-async function gateIsSealed(gate: string): Promise<boolean> {
-  try {
-    const { gateAdmission } = await import("../../workspace/identity");
-    return gateAdmission(process.cwd(), gate) !== null;
-  } catch {
-    return false;
-  }
-}
 
 /**
  * The stack-level change signal, from whichever end the invocation supplied.
@@ -446,11 +431,12 @@ export async function runComponentsFanOut(ctx: CommandContext): Promise<number> 
     const pending = result.gate;
     // The pending fact's own plan: the fan-out's digest for the gate over the
     // set, or a component's plan and environment for a gate inside one (#2574).
+    const sealed = await gateIsSealed(pending.gate);
     console.error(formatInfo(
-      `approve : ${approveCommand(pending.op, pending.gate, pending.environment)} --plan ${pending.planDigest ?? result.plan.digest}` +
-        ((await gateIsSealed(pending.gate)) ? " --sign" : ""),
+      `approve : ${approveCommand(pending.op, pending.gate, pending.environment, pending.planDigest ?? result.plan.digest, sealed)}`,
     ));
     writeGatedRunSummary({
+      sealed,
       op: pending.op,
       gate: pending.gate,
       ...(pending.description ? { description: pending.description } : {}),

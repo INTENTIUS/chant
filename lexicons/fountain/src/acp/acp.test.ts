@@ -8,8 +8,15 @@
  * would pass without the protocol ever being spoken.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { PassThrough } from "node:stream";
+
+// The workspace's sealed gates (`identity.gates`), standing in for a project's declaration.
+const sealedGates = new Set<string>();
+vi.mock("@intentius/chant/op/gate", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@intentius/chant/op/gate")>();
+  return { ...actual, gateIsSealed: async (gate: string) => sealedGates.has(gate) };
+});
 import {
   JsonRpcPeer,
   memoryTransportPair,
@@ -527,10 +534,32 @@ describe("chant acp", () => {
 
     expect(result.stopReason).toBe("end_turn");
     expect(text(client.updates)).toContain("chant approve demo-op deploy");
+    expect(text(client.updates)).not.toContain("--sign");
     expect(client.permissionRequests).toEqual([]);
 
     // A step the run never reached is settled rather than left spinning.
     expect(toolUpdates(client.updates).length).toBe(toolCalls(client.updates).length);
+  });
+
+  it("names --sign in the approve hint when the gate is sealed (#3521)", async () => {
+    sealedGates.add("deploy");
+    try {
+      const host = stubHost({
+        records: [okRecords[0]],
+        status: {
+          state: "gated",
+          gate: { name: "deploy", since: "2026-09-06T00:00:01.000Z" },
+        } as Partial<OpRunStatus>,
+      });
+      const server = new AcpServer({ createHost: () => host });
+      const { client, sessionId } = await open(server);
+
+      await client.peer.request("session/prompt", { sessionId, prompt: promptOf("chant run demo-op") });
+
+      expect(text(client.updates)).toContain("chant approve demo-op deploy --sign");
+    } finally {
+      sealedGates.delete("deploy");
+    }
   });
 
   it("asks for permission and waits under --durable-requests, then completes on resume", async () => {

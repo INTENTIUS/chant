@@ -107,3 +107,15 @@ describe("writeGatedRunSummary surfaces (#2243, #2256)", () => {
     expect(writeGatedRunSummary(summary, { CHANT_GATE_SUMMARY: "/no/such/dir/gate.md" })).toBeUndefined();
   });
 });
+
+describe("gatedRunSummaryMarkdown on a sealed gate (#3521)", () => {
+  test("the approve line carries --sign when sealed", () => {
+    const md = gatedRunSummaryMarkdown({ ...summary, sealed: true });
+    expect(md).toContain("chant approve app-apply approve-app-apply --sign --approver <you>");
+  });
+
+  test("the approve line has no --sign when unsealed", () => {
+    expect(gatedRunSummaryMarkdown({ ...summary, sealed: false })).not.toContain("--sign");
+    expect(gatedRunSummaryMarkdown(summary)).not.toContain("--sign");
+  });
+});

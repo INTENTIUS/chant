@@ -61,8 +61,9 @@ vi.mock("../../components/fan-out-support", () => ({
 vi.mock("../../op/gate", async () => {
   const actual = await vi.importActual<typeof import("../../op/gate")>("../../op/gate");
   const port = actual.memoryGateLedgerPort();
-  return { ...actual, gitGateLedgerPort: () => port };
+  return { ...actual, gitGateLedgerPort: () => port, gateIsSealed: async (gate: string) => sealedGates.has(gate) };
 });
+const sealedGates = new Set<string>();
 
 // The run handler pulls in every runtime; the promote needs only its exit code.
 vi.mock("./run", () => ({ GATED_EXIT_CODE: 3 }));
@@ -113,6 +114,7 @@ let errors: string[];
 let logs: string[];
 
 beforeEach(() => {
+  sealedGates.clear();
   ran.length = 0;
   publishedDigest = "sha256:api";
   failApplyFor = undefined;
@@ -186,6 +188,18 @@ describe("chant components promote", () => {
     expect(ran).not.toContain("prod:apply");
     expect(appendReleaseRecordMock).not.toHaveBeenCalled();
     expect(errors.join("\n")).toMatch(/chant approve api prod-release/);
+    expect(errors.join("\n")).not.toContain("--sign");
+  });
+
+  test("a sealed gate's approve line carries --sign (#3521)", async () => {
+    sealedGates.add("prod-release");
+    const gated: DriverComponent = {
+      ...api,
+      deploy: [...api.deploy.slice(0, 2), { phase: "Apply", steps: [{ kind: "gate", gate: "prod-release" }, { kind: "apply" }] }],
+    };
+    resolveTargetsMock.mockResolvedValue({ success: true, targets: [gated] });
+    expect(await runComponentsPromote(ctx({}))).toBe(3);
+    expect(errors.join("\n")).toMatch(/approve : chant approve api prod-release.* --sign/);
   });
 
   test("a component that deployed is recorded even when another one failed", async () => {

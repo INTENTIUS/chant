@@ -22,7 +22,7 @@ import type { OpConfig, StepDefinition } from "@intentius/chant/op/types";
 import type { StepRecord } from "@intentius/chant/op/local-executor";
 import type { OpRunStatus } from "@intentius/chant/op/runtime";
 import type { PendingGateRecord } from "@intentius/chant/lifecycle/gate-ledger";
-import { approveCommand } from "@intentius/chant/op/gate";
+import { approveCommand, gateIsSealed } from "@intentius/chant/op/gate";
 import { gateName } from "@intentius/chant/op/gate-name";
 import type { ChantCommand } from "./command-line";
 import type { ChantHost } from "./host";
@@ -277,7 +277,7 @@ async function gatedReply(
   sink.message(
     `Op "${command.op}" is waiting on gate "${gate.name}", pending since ${gate.since}` +
       (pending?.expiresAt ? ` and expiring ${pending.expiresAt}` : "") +
-      `.\nApprove with: ${approveCommand(command.op, gate.name)}\n`,
+      `.\nApprove with: ${approveCommand(command.op, gate.name, undefined, undefined, await gateIsSealed(gate.name))}\n`,
   );
   sink.message(JSON.stringify(status.result?.record ?? status, null, 2) + "\n");
 

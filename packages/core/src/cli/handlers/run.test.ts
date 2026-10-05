@@ -75,8 +75,9 @@ vi.mock("./operator", () => ({
 // gate handling, and a unit test must never write a fact to the real repo.
 vi.mock("../../op/gate", async () => {
   const actual = await vi.importActual<typeof import("../../op/gate")>("../../op/gate");
-  return { ...actual, gitGateLedgerPort: () => gateLedger };
+  return { ...actual, gitGateLedgerPort: () => gateLedger, gateIsSealed: async (gate: string) => sealedGates.has(gate) };
 });
+const sealedGates = new Set<string>();
 // The local runtime appends each run's record to that same branch (#2118).
 // Real behavior in a project, and exactly what this suite must not do in
 // chant's own checkout, since the append is against `process.cwd()`. Only the
@@ -264,7 +265,26 @@ describe("runOp dispatcher", () => {
     stderrWrite.mockRestore();
     expect(out).toContain('is gated on "approve-prod"');
     expect(out).toContain("chant approve gated approve-prod");
+    expect(out).not.toContain("--sign");
     expect(gateLedger.appended).toHaveLength(1);
+  });
+
+  test("gate in local mode on a sealed gate: the approve line carries --sign (#3521)", async () => {
+    gateLedger = memoryGateLedgerPort();
+    sealedGates.add("approve-prod");
+    discoverOpsMock.mockResolvedValue({
+      ops: new Map([localOp("gated", [{ kind: "gate", gate: "approve-prod" }])]),
+      errors: [],
+    });
+    const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      expect(await runOp({ args: makeArgs({ path: "gated" }), plugins: [], serializers: [] })).toBe(3);
+      const out = stderrWrite.mock.calls.map((c) => String(c[0])).join("");
+      expect(out).toContain("approve : chant approve gated approve-prod --sign");
+    } finally {
+      stderrWrite.mockRestore();
+      sealedGates.clear();
+    }
   });
 
   test("an approved gate lets the run through and exits 0", async () => {
@@ -614,6 +634,25 @@ describe("runOp: --gated-exit (#2243)", () => {
     expect(parsed.approve).toBe("chant approve gated approve-prod");
     // The summary is written whether or not stdout is machine-readable.
     expect(readFileSync(file, "utf8")).toContain("chant approve gated approve-prod");
+  });
+
+  test("a sealed gate: the --json approve field and the summary carry --sign (#3521)", async () => {
+    const file = summaryFile();
+    process.env.GITHUB_STEP_SUMMARY = file;
+    sealedGates.add("approve-prod");
+    discoverOpsMock.mockResolvedValue({ ops: new Map([localOp("gated", [gateStep])]), errors: [] });
+    const stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    makeStderrSpy();
+
+    try {
+      await runOp({ args: makeArgs({ path: "gated", gatedExit: 0, json: true }), plugins: [], serializers: [] });
+      const parsed = JSON.parse(stdoutWrite.mock.calls.map((c) => String(c[0])).join("").trim());
+      expect(parsed.approve).toBe("chant approve gated approve-prod --sign");
+      expect(readFileSync(file, "utf8")).toContain("chant approve gated approve-prod --sign --approver <you>");
+    } finally {
+      sealedGates.clear();
+    }
   });
 
   test("a run that fails for any other reason is still red under the flag", async () => {

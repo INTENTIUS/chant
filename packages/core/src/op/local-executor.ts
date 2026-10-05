@@ -26,7 +26,7 @@ import type { ReceiptReadResult } from "./receipt-store";
 import { isStepOutputRef } from "./step-output-ref";
 import { parseDuration } from "./duration";
 import { stepTimeoutProblem } from "./activity-profiles";
-import { describeGateMismatch, evaluateGate, gitGateLedgerPort, type GateCheck, type GateLedgerPort } from "./gate";
+import { describeGateMismatch, evaluateGate, gateIsSealed, gitGateLedgerPort, type GateCheck, type GateLedgerPort } from "./gate";
 import { gateName } from "./gate-name";
 import type { ResolvedGateApproval } from "./gate-approval";
 import { withOpRunContext, type OpRunContext, type PassedGate } from "./run-context";
@@ -672,7 +672,7 @@ async function runGateStep(
   }
 
   const refusal = check.mismatch
-    ? { refusal: describeGateMismatch(gates.op, gateName(step), check.mismatch) }
+    ? { refusal: describeGateMismatch(gates.op, gateName(step), check.mismatch, await gateIsSealed(gateName(step))) }
     : {};
   return {
     record: {

@@ -45,8 +45,9 @@ vi.mock("../../components/capability-plugin-loader", () => ({
  */
 vi.mock("../../op/gate", async () => {
   const actual = await vi.importActual<typeof import("../../op/gate")>("../../op/gate");
-  return { ...actual, gitGateLedgerPort: () => gateLedger };
+  return { ...actual, gitGateLedgerPort: () => gateLedger, gateIsSealed: async (gate: string) => sealedGates.has(gate) };
 });
+const sealedGates = new Set<string>();
 
 const { CapabilityRegistry } = await import("../../components/capability");
 const { memoryGateLedgerPort } = await import("../../op/gate");
@@ -105,6 +106,7 @@ let errSpy: ReturnType<typeof vi.spyOn>;
 let outSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
+  sealedGates.clear();
   vi.clearAllMocks();
   ran = [];
   failing = [];
@@ -409,6 +411,14 @@ describe("proof: killed mid-fan-out, a re-run finishes without hand repair", () 
 });
 
 describe("proof: one approval covers the set, and the printed digest is what approves it", () => {
+  test("a sealed gate's approve line carries --sign after --plan (#3521)", async () => {
+    sealedGates.add("release");
+    const exit = await runComponentsFanOut(ctx({ base: "main", env: "test", gate: "release" }));
+
+    expect(exit).toBe(3);
+    expect(stderr()).toMatch(/approve : chant approve fan-out release --plan jcs1-sha256:[0-9a-f]{64} --sign/);
+  });
+
   test("an unapproved gate stops the whole fan-out before anything runs", async () => {
     const exit = await runComponentsFanOut(ctx({ base: "main", env: "test", gate: "release" }));
 
@@ -417,6 +427,7 @@ describe("proof: one approval covers the set, and the printed digest is what app
     const out = stderr();
     expect(out).toContain("gated: nothing ran.");
     expect(out).toMatch(/approve : chant approve fan-out release --plan jcs1-sha256:[0-9a-f]{64}/);
+    expect(out).not.toContain("--sign");
     // One pending fact for the whole set, not one per component.
     expect(gateLedger.appended).toHaveLength(1);
     expect(gateLedger.appended[0].planDigest).toBe(/plan: (jcs1-sha256:[0-9a-f]{64})/.exec(out)?.[1]);
