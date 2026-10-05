@@ -102,6 +102,24 @@ describe("the shared normalization vectors", () => {
     expect(grouped).toEqual([]);
   });
 
+  test("red first: keeping a sensitive value or a read's result splits the sensitive and read must-group rows", () => {
+    const keepValues = (root: Json): Json => {
+      const r = clone(root);
+      for (const rc of r.plan.resource_changes) {
+        delete rc.change.before_sensitive;
+        delete rc.change.after_sensitive;
+        if (rc.change.actions.length === 1 && rc.change.actions[0] === "read") rc.change.actions = ["create"];
+      }
+      return r;
+    };
+    const rows = vectors.rootPairs.filter((r) => r.group && ["sensitive attribute with different values", "read entries whose results differ"].includes(r.name));
+    expect(rows.map((r) => r.name).sort()).toEqual(["read entries whose results differ", "sensitive attribute with different values"]);
+    for (const row of rows) {
+      expect(rootsGroup(row.a, row.b)).toBe(true);
+      expect(rootsGroup(keepValues(row.a), keepValues(row.b))).toBe(false);
+    }
+  });
+
   test("red first: blanking every string falsely groups exactly the named must-not pairs", () => {
     const falselyGrouped = vectors.rootPairs.filter((r) => !r.group && rootsGroup(blankStrings(r.a), blankStrings(r.b))).map((r) => r.name);
     expect(falselyGrouped.sort()).toEqual([...vectors.overEagerFalselyGroups].sort());
