@@ -23,9 +23,12 @@
  * A Grafana run by the Grafana Operator reads custom resources instead
  * (#3015): `GrafanaOperatorResources` writes a `GrafanaDashboard` per
  * dashboard, a `GrafanaDatasource` per datasource, a `GrafanaFolder` per
- * folder and a `GrafanaLibraryPanel` per library panel (#3186), all
- * `grafana.integreatly.org/v1beta1` as the k8s lexicon types them from the
- * operator's CRDs (pinned in its `crd-sources.ts`).
+ * folder and a `GrafanaLibraryPanel` per library panel (#3186), and for
+ * alerting (#3156) a `GrafanaAlertRuleGroup` per rule group, a
+ * `GrafanaContactPoint` per contact point, a `GrafanaNotificationPolicy`, a
+ * `GrafanaMuteTiming` per mute timing and a `GrafanaNotificationTemplate` per
+ * template, all `grafana.integreatly.org/v1beta1` as the k8s lexicon types
+ * them from the operator's CRDs (pinned in its `crd-sources.ts`).
  *
  * This module is the only part of the grafana lexicon that loads the k8s
  * lexicon; nothing else imports it.
@@ -33,7 +36,20 @@
 
 import { Composite, type CompositeInstance } from "@intentius/chant/composite";
 import type { Declarable } from "@intentius/chant/declarable";
-import { ConfigMap, GrafanaDashboard, GrafanaDatasource, GrafanaFolder, GrafanaLibraryPanel } from "@intentius/chant-lexicon-k8s/generated/index";
+import {
+  ConfigMap,
+  GrafanaAlertRuleGroup,
+  GrafanaContactPoint,
+  GrafanaDashboard,
+  GrafanaDatasource,
+  GrafanaFolder,
+  GrafanaLibraryPanel,
+  GrafanaMuteTiming,
+  GrafanaNotificationPolicy,
+  GrafanaNotificationTemplate,
+} from "@intentius/chant-lexicon-k8s/generated/index";
+import type { ProvisionedAlertRule, ProvisionedContactPoint } from "./alerting-build";
+import { compact, slugUid } from "./util";
 import { buildGrafana, DASHBOARD_PROVIDERS_FILE, DASHBOARDS_DIR, DATASOURCES_FILE, type ProvisionedDatasource } from "./build";
 import { libraryPanelsOf, type LibraryPanelPlan } from "./api/library-panels";
 import { DEFAULT_DASHBOARDS_PATH } from "./dashboard";
@@ -240,11 +256,14 @@ export interface GrafanaOperatorResourcesProps {
    */
   dashboardSource?: "json" | "configMap";
   /**
-   * The Secret that datasource secrets come from. A datasource field written
-   * as `${NAME}` or `$__env{NAME}` (the way file provisioning reads the
-   * environment) becomes a `spec.valuesFrom` entry reading key `NAME` of
-   * this Secret, which the operator substitutes for `${NAME}`. Required when
-   * any datasource has such a reference.
+   * The Secret that datasource and contact point secrets come from. A
+   * datasource field written as `${NAME}` or `$__env{NAME}` (the way file
+   * provisioning reads the environment) becomes a `spec.valuesFrom` entry
+   * reading key `NAME` of this Secret, which the operator substitutes for
+   * `${NAME}`. A contact point setting that is entirely such a reference
+   * becomes a `valuesFrom` entry of its receiver, which the operator writes
+   * into the setting at `targetPath`. Required when any datasource or
+   * contact point has such a reference.
    */
   secretName?: string;
 }
@@ -254,6 +273,11 @@ type OperatorEntity = (
   | InstanceType<typeof GrafanaDatasource>
   | InstanceType<typeof GrafanaFolder>
   | InstanceType<typeof GrafanaLibraryPanel>
+  | InstanceType<typeof GrafanaAlertRuleGroup>
+  | InstanceType<typeof GrafanaContactPoint>
+  | InstanceType<typeof GrafanaNotificationPolicy>
+  | InstanceType<typeof GrafanaMuteTiming>
+  | InstanceType<typeof GrafanaNotificationTemplate>
 ) &
   Declarable;
 
@@ -315,6 +339,138 @@ export function operatorDatasource(
   return { datasource, valuesFrom };
 }
 
+// ── Alerting (#3156) ──────────────────────────────────────────────────
+
+/** A setting that is wholly a reference to a variable: `${NAME}`, `$__env{NAME}` or `$NAME`. */
+const WHOLE_VARIABLE = /^(?:\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$__env\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*))$/;
+/** A braced reference inside longer text, which `valuesFrom` cannot substitute into. */
+const EMBEDDED_VARIABLE = /\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$__env\{[^}]*\}|\$__(?:file|vault)\{[^}]*\}/;
+
+/**
+ * One contact point receiver's settings for `spec.receivers[].settings`, and
+ * the `valuesFrom` entries for the secrets in it. A setting that is wholly
+ * `${NAME}` (or `$__env{NAME}`, `$NAME`) is taken out of `settings` and read
+ * from key `NAME` of `secretName` into the same path by the operator, whose
+ * `targetPath` is a dotted path inside the settings. A reference inside
+ * longer text, or a `$__file` or `$__vault` one, is an error: the operator
+ * can only replace a whole value.
+ */
+export function operatorReceiverSettings(
+  where: string,
+  settings: Record<string, unknown>,
+  secretName: string | undefined,
+): { settings: Record<string, unknown>; valuesFrom: Array<Record<string, unknown>> } {
+  const valuesFrom: Array<Record<string, unknown>> = [];
+  const walk = (node: Record<string, unknown>, path: string[]): Record<string, unknown> => {
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(node)) {
+      const here = [...path, key];
+      if (typeof value === "string") {
+        const whole = WHOLE_VARIABLE.exec(value);
+        if (whole) {
+          if (here.some((seg) => seg.includes("."))) {
+            throw new Error(`grafana: ${where} reads ${here.join(".")} from ${value}, and the operator's valuesFrom targetPath cannot address a key containing "."`);
+          }
+          if (!secretName) {
+            throw new Error(`grafana: ${where} reads ${value} in ${here.join(".")}; pass secretName to GrafanaOperatorResources, the Secret holding that key`);
+          }
+          valuesFrom.push({ targetPath: here.join("."), valueFrom: { secretKeyRef: { name: secretName, key: whole[1] ?? whole[2] ?? whole[3] } } });
+          continue;
+        }
+        if (EMBEDDED_VARIABLE.test(value)) {
+          throw new Error(`grafana: ${where} has a variable inside the text of ${here.join(".")}; the operator can only fill a whole setting from a Secret, so make it exactly \${NAME}`);
+        }
+        out[key] = value;
+      } else if (Array.isArray(value)) {
+        // Inside a list a value has no path the operator can write to.
+        if (EMBEDDED_VARIABLE.test(JSON.stringify(value))) throw new Error(`grafana: ${where} has a variable inside the list ${here.join(".")}, which the operator cannot fill from a Secret`);
+        out[key] = value;
+      } else if (value !== null && typeof value === "object") {
+        out[key] = walk(value as Record<string, unknown>, here);
+      } else {
+        out[key] = value;
+      }
+    }
+    return out;
+  };
+  return { settings: walk(settings, []), valuesFrom };
+}
+
+/** One contact point as `GrafanaContactPoint.spec`: its name, and its receivers with their secrets in `valuesFrom`. */
+export function operatorContactPoint(cp: ProvisionedContactPoint, secretName: string | undefined): Record<string, unknown> {
+  return {
+    name: cp.name,
+    receivers: cp.receivers.map((r) => {
+      const { settings, valuesFrom } = operatorReceiverSettings(`contact point "${cp.name}" receiver "${r.uid}"`, r.settings, secretName);
+      return {
+        uid: r.uid,
+        type: r.type,
+        settings,
+        ...(r.disableResolveMessage !== undefined ? { disableResolveMessage: r.disableResolveMessage } : {}),
+        ...(valuesFrom.length > 0 ? { valuesFrom } : {}),
+      };
+    }),
+  };
+}
+
+/**
+ * One rule as an entry of `GrafanaAlertRuleGroup.spec.rules`. The CRD spells
+ * two fields in camel case (`missingSeriesEvalsToResolve`,
+ * `notificationSettings`), requires `for`, `noDataState` and `execErrState`
+ * (Grafana's defaults fill them), and has no use for `dashboardUid` and
+ * `panelId`, which it reads from the `__dashboardUid__` and `__panelId__`
+ * annotations.
+ */
+export function operatorRule(rule: ProvisionedAlertRule): Record<string, unknown> {
+  const { dashboardUid, panelId, missing_series_evals_to_resolve, notification_settings, noDataState, execErrState, for: forDuration, condition, annotations, ...rest } = rule;
+  const notes = {
+    ...(annotations ?? {}),
+    ...(dashboardUid !== undefined ? { __dashboardUid__: dashboardUid } : {}),
+    ...(panelId !== undefined ? { __panelId__: String(panelId) } : {}),
+  };
+  const record = rule.record as { from?: string } | undefined;
+  return compact({
+    ...rest,
+    condition: condition ?? record?.from ?? "",
+    for: forDuration ?? "0s",
+    noDataState: noDataState ?? "NoData",
+    execErrState: execErrState ?? "Alerting",
+    annotations: Object.keys(notes).length > 0 ? notes : undefined,
+    missingSeriesEvalsToResolve: missing_series_evals_to_resolve,
+    notificationSettings: notification_settings,
+  });
+}
+
+/** An Alertmanager matcher string (`severity="page"`, `team=~"a|b"`) as Grafana's `[label, operator, value]`. */
+function objectMatcher(text: string): [string, string, string] {
+  const m = /^\s*([^\s=!~]+)\s*(=~|!~|!=|=)\s*(.*?)\s*$/.exec(text);
+  if (!m) throw new Error(`grafana: cannot read the route matcher ${JSON.stringify(text)} as label, operator and value`);
+  const value = m[3].length >= 2 && m[3].startsWith('"') && m[3].endsWith('"') ? m[3].slice(1, -1) : m[3];
+  return [m[1], m[2], value];
+}
+
+/**
+ * A route of the policy tree for the operator. The operator's `routes` are
+ * Grafana's API routes, whose `matchers` are objects, so the Alertmanager
+ * strings in `matchers` are moved into `object_matchers`.
+ */
+function operatorRoute(route: Record<string, unknown>): Record<string, unknown> {
+  const { matchers, routes, object_matchers, ...rest } = route as {
+    matchers?: string[];
+    routes?: Array<Record<string, unknown>>;
+    object_matchers?: unknown[];
+    [key: string]: unknown;
+  };
+  const objects = [...(object_matchers ?? []), ...(matchers ?? []).map(objectMatcher)];
+  return compact({ ...rest, object_matchers: objects.length > 0 ? objects : undefined, routes: routes?.map(operatorRoute) });
+}
+
+/** One policy tree as `GrafanaNotificationPolicy.spec.route`. `orgId` is the operator's to set, so it is left out. */
+export function operatorPolicyRoute(policy: Record<string, unknown>): Record<string, unknown> {
+  const { orgId: _orgId, ...route } = policy;
+  return operatorRoute(route);
+}
+
 /**
  * The Grafana Operator's custom resources for a set of grafana declarations
  * (`grafana.integreatly.org/v1beta1`, Grafana Operator v5.25.0):
@@ -329,7 +485,15 @@ export function operatorDatasource(
  * - a `GrafanaDashboard` per dashboard, `<name>-dashboard-<uid>`, holding
  *   `dashboardJson(dashboard)` in `spec.json` and naming its folder with
  *   `folderRef`;
- * - a `GrafanaDatasource` per datasource, `<name>-datasource-<uid>`.
+ * - a `GrafanaDatasource` per datasource, `<name>-datasource-<uid>`;
+ * - for the alerting the build declares: a `GrafanaAlertRuleGroup` per rule
+ *   group, `<name>-rule-group-<folder>-<group>`, in the `GrafanaFolder` whose
+ *   title is the group's `folder` (one is written when no folder has it);
+ *   a `GrafanaContactPoint` per contact point, `<name>-contact-point-<name>`,
+ *   whose `${NAME}` secrets go to each receiver's `valuesFrom`; a
+ *   `GrafanaNotificationPolicy`, `<name>-notification-policy`, with its
+ *   nested routes inline; a `GrafanaMuteTiming` per mute timing and a
+ *   `GrafanaNotificationTemplate` per template.
  *
  * Every resource carries `instanceSelector`. Export the result from a k8s
  * build root, beside or instead of `GrafanaConfigMaps`.
@@ -408,6 +572,62 @@ export const GrafanaOperatorResources = Composite<GrafanaOperatorResourcesProps,
       metadata: metadata(name),
       spec: { ...common, uid: ds.uid, datasource, ...(valuesFrom.length > 0 ? { valuesFrom } : {}) },
     }) as OperatorEntity;
+  }
+
+  const alerting = built.alerting;
+  if (alerting) {
+    // A rule group names its folder by title. Use the folder with that title (a root one first), else write one.
+    const folderByTitle = new Map<string, string>();
+    for (const f of built.folders) {
+      const ref = folderRef.get(f.uid);
+      if (ref && (!folderByTitle.has(f.title) || f.parentUid === undefined)) folderByTitle.set(f.title, ref);
+    }
+    const folderFor = (title: string): string => {
+      const known = folderByTitle.get(title);
+      if (known) return known;
+      const uid = slugUid(title);
+      const name = unique(`${prefix}-folder-${uid}`);
+      members[memberName(name, prefix)] = new GrafanaFolder({ metadata: metadata(name), spec: { ...common, uid, title } }) as OperatorEntity;
+      folderByTitle.set(title, name);
+      return name;
+    };
+
+    for (const g of alerting.groups ?? []) {
+      const folder = folderFor(g.folder);
+      const name = unique(`${prefix}-rule-group-${slugUid(g.folder)}-${slugUid(g.name)}`);
+      members[memberName(name, prefix)] = new GrafanaAlertRuleGroup({
+        metadata: metadata(name),
+        spec: { ...common, name: g.name, folderRef: folder, interval: g.interval, rules: g.rules.map(operatorRule) },
+      }) as OperatorEntity;
+    }
+    for (const cp of alerting.contactPoints ?? []) {
+      const name = unique(`${prefix}-contact-point-${slugUid(cp.name)}`);
+      members[memberName(name, prefix)] = new GrafanaContactPoint({
+        metadata: metadata(name),
+        spec: { ...common, ...operatorContactPoint(cp, props.secretName) },
+      }) as OperatorEntity;
+    }
+    for (const policy of alerting.policies ?? []) {
+      const name = unique(`${prefix}-notification-policy`);
+      members[memberName(name, prefix)] = new GrafanaNotificationPolicy({
+        metadata: metadata(name),
+        spec: { ...common, route: operatorPolicyRoute(policy) },
+      }) as OperatorEntity;
+    }
+    for (const t of alerting.muteTimes ?? []) {
+      const name = unique(`${prefix}-mute-timing-${slugUid(t.name)}`);
+      members[memberName(name, prefix)] = new GrafanaMuteTiming({
+        metadata: metadata(name),
+        spec: { ...common, name: t.name, time_intervals: t.time_intervals },
+      }) as OperatorEntity;
+    }
+    for (const t of alerting.templates ?? []) {
+      const name = unique(`${prefix}-notification-template-${slugUid(t.name)}`);
+      members[memberName(name, prefix)] = new GrafanaNotificationTemplate({
+        metadata: metadata(name),
+        spec: { ...common, name: t.name, template: t.template },
+      }) as OperatorEntity;
+    }
   }
   return members;
 }, "GrafanaOperatorResources");

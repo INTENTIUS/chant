@@ -490,9 +490,12 @@ const ACK_EKS_CRD_BASE = `https://raw.githubusercontent.com/aws-controllers-k8s/
  *   K8s::Grafana::GrafanaDatasource  → grafana.integreatly.org/v1beta1, kind: GrafanaDatasource
  *   K8s::Grafana::GrafanaFolder      → grafana.integreatly.org/v1beta1, kind: GrafanaFolder
  *   K8s::Grafana::GrafanaLibraryPanel → grafana.integreatly.org/v1beta1, kind: GrafanaLibraryPanel
+ *   K8s::Grafana::GrafanaAlertRuleGroup, GrafanaContactPoint, GrafanaNotificationPolicy,
+ *   GrafanaNotificationPolicyRoute, GrafanaMuteTiming, GrafanaNotificationTemplate
+ *     → grafana.integreatly.org/v1beta1, the alerting kinds (#3156)
  *
- * The operator's other kinds (Grafana itself, alerting, service accounts,
- * manifests) are left out until something uses them.
+ * The operator's other kinds (Grafana itself, service accounts, manifests)
+ * are left out until something uses them.
  *
  * Operator install: kubectl apply --server-side -f
  *   https://github.com/grafana/grafana-operator/releases/download/v5.25.0/kustomize-cluster_scoped.yaml
@@ -589,4 +592,10 @@ export const CRD_SOURCES: CRDSource[] = [
   { type: "url", url: `${GRAFANA_OPERATOR_CRD_BASE}/grafana.integreatly.org_grafanadatasources.yaml` },
   { type: "url", url: `${GRAFANA_OPERATOR_CRD_BASE}/grafana.integreatly.org_grafanafolders.yaml` },
   { type: "url", url: `${GRAFANA_OPERATOR_CRD_BASE}/grafana.integreatly.org_grafanalibrarypanels.yaml` },
+  { type: "url", url: `${GRAFANA_OPERATOR_CRD_BASE}/grafana.integreatly.org_grafanaalertrulegroups.yaml` },
+  { type: "url", url: `${GRAFANA_OPERATOR_CRD_BASE}/grafana.integreatly.org_grafanacontactpoints.yaml` },
+  { type: "url", url: `${GRAFANA_OPERATOR_CRD_BASE}/grafana.integreatly.org_grafananotificationpolicies.yaml` },
+  { type: "url", url: `${GRAFANA_OPERATOR_CRD_BASE}/grafana.integreatly.org_grafananotificationpolicyroutes.yaml` },
+  { type: "url", url: `${GRAFANA_OPERATOR_CRD_BASE}/grafana.integreatly.org_grafanamutetimings.yaml` },
+  { type: "url", url: `${GRAFANA_OPERATOR_CRD_BASE}/grafana.integreatly.org_grafananotificationtemplates.yaml` },
 ];

@@ -9,7 +9,17 @@ import { LibraryPanel, LibraryPanelRef } from "./library-panel";
 import { PromQuery } from "./query";
 import { dashboardJson } from "./build";
 import { Folder } from "./folder";
-import { GrafanaConfigMaps, grafanaConfigMapLayout, grafanaVolumes, GrafanaOperatorResources, operatorDatasource } from "./k8s";
+import { AlertRule, AlertRuleGroup, ContactPoint, MuteTiming, NotificationPolicy, NotificationTemplate } from "./alerting";
+import {
+  GrafanaConfigMaps,
+  grafanaConfigMapLayout,
+  grafanaVolumes,
+  GrafanaOperatorResources,
+  operatorDatasource,
+  operatorPolicyRoute,
+  operatorReceiverSettings,
+  operatorRule,
+} from "./k8s";
 
 const prometheus = new Datasource({ name: "Prometheus", type: "prometheus", url: "http://prometheus:9090" });
 const stat = () => new StatPanel({ title: "Up", datasource: prometheus, targets: [new PromQuery({ expr: "sum(up)" })] });
@@ -199,5 +209,150 @@ describe("GrafanaOperatorResources (#3015)", () => {
     const base = { name: "X", type: "loki", uid: "x" };
     expect(() => operatorDatasource({ ...base, secureJsonData: { password: "$__file{/run/secret}" } }, "s")).toThrow(/cannot/);
     expect(operatorDatasource({ ...base, orgId: 1, version: 2, withCredentials: true }, undefined)).toEqual({ datasource: { name: "X", type: "loki" }, valuesFrom: [] });
+  });
+});
+
+describe("GrafanaOperatorResources alerting (#3156)", () => {
+  const selector = { matchLabels: { dashboards: "grafana" } };
+  const GROUP = "grafana.integreatly.org/v1beta1";
+  const oncall = new ContactPoint({
+    name: "oncall",
+    receivers: [
+      { uid: "oncall-slack", type: "slack", settings: { url: "$__env{SLACK_URL}", title: "chant" } },
+      { uid: "oncall-mail", type: "email", settings: { addresses: "a@example.com" }, disableResolveMessage: true },
+    ],
+  });
+  const weekends = new MuteTiming({ name: "weekends", time_intervals: [{ weekdays: ["saturday", "sunday"] }] });
+  const template = new NotificationTemplate({ name: "t", template: '{{ define "t" }}x{{ end }}' });
+  const policy = new NotificationPolicy({
+    receiver: oncall,
+    group_by: ["alertname"],
+    routes: [{ receiver: "tickets", matchers: ['severity="ticket"'], mute_time_intervals: [weekends], routes: [{ object_matchers: [["team", "=", "a"]] }] }],
+  });
+  const rule = new AlertRule({
+    title: "High errors",
+    data: [new PromQuery({ datasource: prometheus, expr: "up" })],
+    dashboardUid: "dash1",
+    panelId: 2,
+    for: "5m",
+    labels: { severity: "page" },
+  });
+  const group = new AlertRuleGroup({ name: "errors", folder: "Alerts", interval: "30s", rules: [rule] });
+  const alerting = [oncall, weekends, template, policy, group];
+
+  const ops = (entities: Iterable<unknown>, props: Partial<Parameters<typeof GrafanaOperatorResources>[0]> = {}) =>
+    manifests(GrafanaOperatorResources({ entities: entities as never, instanceSelector: selector, secretName: "grafana-secrets", ...props })) as unknown as OperatorManifest[];
+
+  test("one resource per alerting entity, a folder written for a group's folder title", () => {
+    const docs = ops([prometheus, ...alerting]);
+    expect(docs.map((d) => [d.apiVersion, d.kind, d.metadata.name])).toEqual([
+      [GROUP, "GrafanaDatasource", `grafana-datasource-${prometheus.uid}`],
+      [GROUP, "GrafanaFolder", "grafana-folder-alerts"],
+      [GROUP, "GrafanaAlertRuleGroup", "grafana-rule-group-alerts-errors"],
+      [GROUP, "GrafanaContactPoint", "grafana-contact-point-oncall"],
+      [GROUP, "GrafanaNotificationPolicy", "grafana-notification-policy"],
+      [GROUP, "GrafanaMuteTiming", "grafana-mute-timing-weekends"],
+      [GROUP, "GrafanaNotificationTemplate", "grafana-notification-template-t"],
+    ]);
+    for (const d of docs.slice(1)) expect(d.spec.instanceSelector).toEqual(selector);
+    expect(docs[1].spec).toMatchObject({ uid: "alerts", title: "Alerts" });
+    expect(docs[5].spec).toMatchObject({ name: "weekends", time_intervals: [{ weekdays: ["saturday", "sunday"] }] });
+    expect(docs[6].spec).toMatchObject({ name: "t", template: '{{ define "t" }}x{{ end }}' });
+  });
+
+  test("a rule group goes in the GrafanaFolder with its title, and its rules take the CRD's spelling", () => {
+    const alerts = new Dashboard({ title: "Errors", uid: "errors", folder: "Alerts", panels: [stat()] });
+    const docs = ops([prometheus, alerts, group]);
+    expect(docs.map((d) => d.kind)).toEqual(["GrafanaFolder", "GrafanaDashboard", "GrafanaDatasource", "GrafanaAlertRuleGroup"]);
+    const spec = docs[3].spec as { name: string; folderRef: string; interval: string; rules: Array<Record<string, unknown>> };
+    expect(spec).toMatchObject({ name: "errors", folderRef: "grafana-folder-alerts", interval: "30s" });
+    expect(spec.rules).toHaveLength(1);
+    expect(spec.rules[0]).toMatchObject({
+      uid: "high-errors",
+      title: "High errors",
+      condition: "A",
+      for: "5m",
+      noDataState: "NoData",
+      execErrState: "Alerting",
+      labels: { severity: "page" },
+      annotations: { __dashboardUid__: "dash1", __panelId__: "2" },
+    });
+    expect(spec.rules[0]).not.toHaveProperty("dashboardUid");
+    expect(spec.rules[0]).not.toHaveProperty("panelId");
+  });
+
+  test("operatorRule fills what the CRD requires and renames notification settings", () => {
+    const out = operatorRule({
+      uid: "r",
+      title: "R",
+      condition: "A",
+      data: [],
+      missing_series_evals_to_resolve: 3,
+      notification_settings: { receiver: "oncall", group_by: ["a"] },
+    });
+    expect(out).toEqual({
+      uid: "r",
+      title: "R",
+      condition: "A",
+      data: [],
+      for: "0s",
+      noDataState: "NoData",
+      execErrState: "Alerting",
+      missingSeriesEvalsToResolve: 3,
+      notificationSettings: { receiver: "oncall", group_by: ["a"] },
+    });
+  });
+
+  test("contact point secrets leave the settings and become valuesFrom of their receiver", () => {
+    const cp = ops(alerting).find((d) => d.kind === "GrafanaContactPoint")!;
+    expect(cp.spec.name).toBe("oncall");
+    expect(cp.spec.receivers).toEqual([
+      {
+        uid: "oncall-slack",
+        type: "slack",
+        settings: { title: "chant" },
+        valuesFrom: [{ targetPath: "url", valueFrom: { secretKeyRef: { name: "grafana-secrets", key: "SLACK_URL" } } }],
+      },
+      { uid: "oncall-mail", type: "email", settings: { addresses: "a@example.com" }, disableResolveMessage: true },
+    ]);
+    expect(() => GrafanaOperatorResources({ entities: [oncall], instanceSelector: selector })).toThrow(/pass secretName/);
+  });
+
+  test("operatorReceiverSettings reaches nested settings and refuses what valuesFrom cannot fill", () => {
+    const nested = operatorReceiverSettings("cp", { tlsConfig: { clientKey: "${KEY}", insecureSkipVerify: false }, url: "$TOKEN" }, "s");
+    expect(nested.settings).toEqual({ tlsConfig: { insecureSkipVerify: false } });
+    expect(nested.valuesFrom).toEqual([
+      { targetPath: "tlsConfig.clientKey", valueFrom: { secretKeyRef: { name: "s", key: "KEY" } } },
+      { targetPath: "url", valueFrom: { secretKeyRef: { name: "s", key: "TOKEN" } } },
+    ]);
+    expect(() => operatorReceiverSettings("cp", { url: "https://x/${TOKEN}" }, "s")).toThrow(/inside the text/);
+    expect(() => operatorReceiverSettings("cp", { password: "$__file{/run/pw}" }, "s")).toThrow(/inside the text/);
+    // Go template text with a plain `$` is not a reference.
+    expect(operatorReceiverSettings("cp", { message: "{{ $labels.job }} is down" }, undefined)).toEqual({ settings: { message: "{{ $labels.job }} is down" }, valuesFrom: [] });
+  });
+
+  test("the notification policy keeps its tree inline, with Alertmanager matchers as object matchers", () => {
+    const doc = ops(alerting).find((d) => d.kind === "GrafanaNotificationPolicy")!;
+    expect(doc.spec.route).toEqual({
+      receiver: "oncall",
+      group_by: ["alertname"],
+      routes: [
+        {
+          receiver: "tickets",
+          object_matchers: [["severity", "=", "ticket"]],
+          mute_time_intervals: ["weekends"],
+          routes: [{ object_matchers: [["team", "=", "a"]] }],
+        },
+      ],
+    });
+    expect(operatorPolicyRoute({ orgId: 2, receiver: "x", routes: [{ matchers: ["a!~b.*"] }] })).toEqual({ receiver: "x", routes: [{ object_matchers: [["a", "!~", "b.*"]] }] });
+    expect(() => operatorPolicyRoute({ receiver: "x", routes: [{ matchers: ["nonsense"] }] })).toThrow(/cannot read the route matcher/);
+  });
+
+  test("a build with no alerting writes none, and options reach the alerting resources", () => {
+    expect(ops([prometheus]).map((d) => d.kind)).toEqual(["GrafanaDatasource"]);
+    const docs = ops([weekends], { allowCrossNamespaceImport: true, resyncPeriod: "5m", namespace: "obs", name: "obs" });
+    expect(docs[0].metadata).toEqual({ name: "obs-mute-timing-weekends", namespace: "obs" });
+    expect(docs[0].spec).toMatchObject({ allowCrossNamespaceImport: true, resyncPeriod: "5m" });
   });
 });

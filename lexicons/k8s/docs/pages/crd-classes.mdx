@@ -360,7 +360,7 @@ The operator-managed `CrdbCluster` is the common single-region production path. 
 
 ## Grafana Operator
 
-`grafana.integreatly.org`, pinned to **v5.25.0**. A Grafana that the Grafana Operator runs reads its dashboards, datasources and folders from these resources, not from files or sidecar ConfigMaps.
+`grafana.integreatly.org`, pinned to **v5.25.0**. A Grafana that the Grafana Operator runs reads its dashboards, datasources, folders and alerting from these resources, not from files or sidecar ConfigMaps.
 
 | Type | apiVersion / kind |
 |---|---|
@@ -368,6 +368,12 @@ The operator-managed `CrdbCluster` is the common single-region production path. 
 | `GrafanaDatasource` | `grafana.integreatly.org/v1beta1` / `GrafanaDatasource` |
 | `GrafanaFolder` | `grafana.integreatly.org/v1beta1` / `GrafanaFolder` |
 | `GrafanaLibraryPanel` | `grafana.integreatly.org/v1beta1` / `GrafanaLibraryPanel` |
+| `GrafanaAlertRuleGroup` | `grafana.integreatly.org/v1beta1` / `GrafanaAlertRuleGroup` |
+| `GrafanaContactPoint` | `grafana.integreatly.org/v1beta1` / `GrafanaContactPoint` |
+| `GrafanaNotificationPolicy` | `grafana.integreatly.org/v1beta1` / `GrafanaNotificationPolicy` |
+| `GrafanaNotificationPolicyRoute` | `grafana.integreatly.org/v1beta1` / `GrafanaNotificationPolicyRoute` |
+| `GrafanaMuteTiming` | `grafana.integreatly.org/v1beta1` / `GrafanaMuteTiming` |
+| `GrafanaNotificationTemplate` | `grafana.integreatly.org/v1beta1` / `GrafanaNotificationTemplate` |
 
 ```bash
 kubectl apply --server-side -f https://github.com/grafana/grafana-operator/releases/download/v5.25.0/kustomize-cluster_scoped.yaml
