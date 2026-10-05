@@ -235,6 +235,8 @@ export interface PrReportInput {
   stage: "plan" | "apply";
   pr: number | null;
   env: string;
+  /** The workspace member whose pipeline runs the stage (#3465). */
+  member?: string;
   base: string;
   head: string;
   op: string;
@@ -258,6 +260,7 @@ export function prReport(input: PrReportInput): PrReport {
     stage: input.stage,
     pr: input.pr,
     env: input.env,
+    ...(input.member ? { member: input.member } : {}),
     base: input.base,
     head: input.head,
     op: input.op,

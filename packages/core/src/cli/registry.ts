@@ -446,6 +446,8 @@ export interface ParsedArgs {
   /**
    * `chant workspace build|lint|audit|graph --member <name>` (#2537): run only
    * the named members or example groups. Repeatable, and a comma list works too.
+   * `chant components pr-plan|pr-apply --member <name>` (#3465) takes exactly
+   * one: the workspace member whose pull-request loop runs.
    */
   members?: string[];
   /**

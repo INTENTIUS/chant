@@ -79,6 +79,22 @@ describe("the component pipeline's file and command", () => {
     expect(plan.command).toBe("chant build --components --generate github --env staging --promote-to prod");
   });
 
+  test("a pull-request pipeline gets its own file and a command that regenerates it (#3465)", () => {
+    expect(memberPipelineFile("github", "api", "staging", "pr")).toBe(".github/workflows/chant-pr-api-staging.yml");
+    expect(memberPipelineFile("gitlab", "api", "staging", "pr")).toBe(".gitlab/ci/chant-pr-api-staging.gitlab-ci.yml");
+    const dir = join(repo, "services/api");
+    const plan = planMemberComponentPipeline({
+      projectDir: dir,
+      found: findWorkspaceRoot(dir)!,
+      lexicon: "github",
+      env: "staging",
+      prLoop: { gate: "infra-apply", branch: "trunk" },
+    })!;
+    expect(plan.file).toBe(".github/workflows/chant-pr-api-staging.yml");
+    expect(plan.member).toEqual({ name: "api", dir: "services/api", file: ".github/workflows/chant-pr-api-staging.yml" });
+    expect(plan.command).toBe("chant build --components --generate github --env staging --pr-loop --gate infra-apply --branch trunk");
+  });
+
   test("--output keeps the path, relative to the member in the command", () => {
     const dir = join(repo, "services/api");
     const plan = planMemberComponentPipeline({

@@ -15,11 +15,16 @@
       "description": "The pull or merge request number. null when an apply found no pull request that merged its commit."
     },
     "env": { "type": "string" },
+    "member": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,39}$",
+      "description": "The workspace member whose pipeline ran the stage. Absent outside a workspace member."
+    },
     "base": { "type": "string", "pattern": "^[0-9a-f]{40,64}$", "description": "The commit the change is measured from: the merge base of the given base and head." },
     "head": { "type": "string", "pattern": "^[0-9a-f]{40,64}$" },
     "op": {
       "type": "string",
-      "description": "The gate's op, pr-<number>. Its ledger is _gates/<op>.jsonl on chant/lifecycle. pr-unknown when no pull request was found."
+      "description": "The gate's op, pr-<number>, or pr-<number>-<member> for a workspace member's pipeline. Its ledger is _gates/<op>.jsonl on chant/lifecycle. pr-unknown when no pull request was found."
     },
     "gate": { "type": "string", "description": "The gate the apply waits on, pr-apply unless the pipeline names another." },
     "digest": {

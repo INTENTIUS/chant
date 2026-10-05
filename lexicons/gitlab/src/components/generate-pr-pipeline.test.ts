@@ -27,6 +27,7 @@ interface Job {
   variables: Record<string, string>;
   script: string[];
   resource_group?: string;
+  image?: string;
   artifacts: Record<string, unknown>;
 }
 
@@ -84,5 +85,25 @@ describe("the GitLab merge-request pipeline", () => {
 
   test("refuses a wave or promote job beside it", () => {
     expect(() => generateGitlabPipeline(ESTATE, { prLoop: {}, gatedWaves: { gate: "g" } })).toThrow(/pull-request pipeline has no wave or promote jobs/);
+  });
+
+  test("inside a workspace member: member-named jobs that cd into the member, with no changes rule (#3465)", () => {
+    const member = { name: "network", dir: "infra/network", file: ".gitlab/ci/chant-pr-network-prod.gitlab-ci.yml" };
+    const scoped = generateGitlabPipeline(ESTATE, { env: "prod", prLoop: {}, member });
+    const mdoc = parseYAML(scoped.yaml) as Record<string, unknown> & { workflow: { name: string } };
+    expect(scoped.jobs.map((j) => j.jobName)).toEqual(["network-plan", "network-apply"]);
+    expect(mdoc.plan).toBeUndefined();
+    expect(mdoc.workflow.name).toBe("chant-pr-network-prod");
+    const plan = mdoc["network-plan"] as Job;
+    const apply = mdoc["network-apply"] as Job;
+    expect(plan.script).toContain("cd infra/network");
+    expect(plan.script.indexOf("cd infra/network")).toBeLessThan(plan.script.findIndex((l) => l.includes("pr-plan")));
+    expect(plan.script.find((l) => l.includes("pr-plan"))).toContain("--member network");
+    expect(apply.script.find((l) => l.includes("pr-apply"))).toContain("--member network");
+    // A change outside the member can reach it, so the jobs keep only their pipeline-source rules.
+    expect(plan.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "merge_request_event"' }]);
+    expect(apply.resource_group).toBe("chant-apply-network-prod");
+    expect(plan.artifacts).toEqual({ when: "always", paths: ["infra/network/.chant/pr"] });
+    expect(apply.artifacts).toEqual({ when: "always", paths: ["infra/network/.chant/pr"] });
   });
 });

@@ -183,6 +183,12 @@ function gatedWaveGithubDoc(
  * job can push, to record a pending fact on `chant/lifecycle`, and runs one
  * at a time per environment. Both keep their report as an artifact, and both
  * check out the full history, since each measures the change with git.
+ *
+ * For a workspace member (#3465) the run steps start in the member's
+ * directory and the report artifact is kept from there. The triggers take no
+ * path filter, since a change outside the member can reach it; the plan
+ * selects from the whole change and passes `--member`, which keeps the
+ * member's gate, note and statuses apart from the other members'.
  */
 function prLoopGithubDoc(
   env: string,
@@ -193,7 +199,10 @@ function prLoopGithubDoc(
 ): GithubPipelineDoc {
   const loop = options.prLoop!;
   const branch = loop.branch ?? "main";
-  const [plan, apply] = prLoopJobs(loop.forge ?? "github", env, loop);
+  const member = options.member;
+  const rooted = !member || member.dir === "." || member.dir === "";
+  const [plan, apply] = prLoopJobs(loop.forge ?? "github", env, loop, member?.name);
+  const reportPath = member ? memberRepoPath(member, PR_LOOP_REPORT_DIR) : PR_LOOP_REPORT_DIR;
   const steps = (job: typeof plan, name: string): Array<Record<string, unknown>> => [
     { uses: actionRef("actions/checkout"), with: { "fetch-depth": 0 } },
     ...prLoopSetup(image).map((line) => ({ run: line })),
@@ -204,7 +213,7 @@ function prLoopGithubDoc(
       name: `Keep the ${job.jobName} report`,
       if: "always()",
       uses: "actions/upload-artifact@v4",
-      with: { name: `chant-pr-${job.jobName}`, path: PR_LOOP_REPORT_DIR, "if-no-files-found": "ignore", "include-hidden-files": true },
+      with: { name: `chant-pr-${job.jobName}`, path: reportPath, "if-no-files-found": "ignore", "include-hidden-files": true },
     },
   ];
   const jobsDoc: Record<string, unknown> = {
@@ -219,15 +228,16 @@ function prLoopGithubDoc(
       if: "github.event_name == 'push'",
       "runs-on": "ubuntu-latest",
       container: image,
-      concurrency: { group: prApplyGroup(env), "cancel-in-progress": false },
+      concurrency: { group: prApplyGroup(env, member?.name), "cancel-in-progress": false },
       permissions: { contents: "write", "pull-requests": "write", statuses: "write" },
       steps: steps(apply, "Apply the plan a reviewer approved"),
     },
   };
   return {
-    name: `chant-pr-${env}`,
+    name: member ? `chant-pr-${member.name}-${env}` : `chant-pr-${env}`,
     environment: env,
     on: { pull_request: { branches: [branch] }, push: { branches: [branch] } },
+    ...(rooted ? {} : { defaults: { run: { "working-directory": member!.dir } } }),
     env: { ...options.variables, CHANT_ENV: env },
     jobsDoc,
     stages: ["plan", "apply"],
@@ -315,7 +325,6 @@ export function buildGithubPipelineDoc(
     if (options.gatedWaves || options.promoteTo !== undefined) {
       throw new Error("a pull-request pipeline has no wave or promote jobs; drop --wave-gate and --promote-to, or --pr-loop");
     }
-    if (options.member) throw new Error("a pull-request pipeline is not generated for a workspace member yet; generate it from the project outside the workspace");
     return prLoopGithubDoc(env, image, beforeScript, extraScript, options);
   }
 

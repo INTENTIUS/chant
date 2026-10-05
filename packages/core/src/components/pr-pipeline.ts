@@ -20,6 +20,12 @@
  * Measuring the push from the commit it replaced works for merge commits,
  * squash merges and rebase merges alike, and every job measures from the
  * merge base of that commit and its own head (`resolveMergeBase`).
+ *
+ * In a workspace member (#3465) both commands run in the member's directory
+ * and pass `--member <name>`, so the member's gate (`pr-<number>-<member>`),
+ * note and statuses stay apart from every other member's on the same pull
+ * request. They still measure the whole change: a file outside the member
+ * that one of its units reaches selects that unit.
  */
 
 import type { ForgeKind } from "../pr-forge";
@@ -80,10 +86,17 @@ export interface PrLoopJob {
   setup?: string[];
 }
 
-/** The two jobs for `forge`. */
-export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelineOptions = {}): PrLoopJob[] {
+/**
+ * The two jobs for `forge`. `member` is the workspace member the pipeline is
+ * generated for; the commands then run in its directory, so `--output` is
+ * relative to it.
+ */
+export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelineOptions = {}, member?: string): PrLoopJob[] {
   const gate = options.gate ?? PR_APPLY_GATE;
-  const common = ["--env", env, "--gate", gate, "--output", PR_LOOP_REPORT_DIR, "--forge", forge];
+  const common = [
+    "--env", env, "--gate", gate, "--output", PR_LOOP_REPORT_DIR, "--forge", forge,
+    ...(member ? ["--member", member] : []),
+  ];
   const github = forge !== "gitlab";
   const token: Record<string, string> = github ? { GITHUB_TOKEN: "${{ github.token }}" } : {};
   return [
@@ -106,9 +119,12 @@ export function prLoopJobs(forge: ForgeKind, env: string, options: PrLoopPipelin
   ];
 }
 
-/** The concurrency group (GitHub, Forgejo) or resource group (GitLab) that keeps one apply at a time per environment. */
-export function prApplyGroup(env: string): string {
-  return `chant-apply-${env}`;
+/**
+ * The concurrency group (GitHub, Forgejo) or resource group (GitLab) that
+ * keeps one apply at a time per environment, and per member in a workspace.
+ */
+export function prApplyGroup(env: string, member?: string): string {
+  return member ? `chant-apply-${member}-${env}` : `chant-apply-${env}`;
 }
 
 /**

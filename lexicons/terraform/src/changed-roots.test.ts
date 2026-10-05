@@ -56,3 +56,29 @@ describe("changedRoots", () => {
     expect(changedRoots(project, ROOTS, ["README.md", "roots/netsplit/main.tf"])).toEqual([]);
   });
 });
+
+describe("changedRoots in a workspace member (#3465)", () => {
+  // The project is a member at infra/network. Its root calls a module that
+  // lives outside the member, and the changed files come relative to the
+  // member, so a file outside it reads `../...`.
+  const repo = mkdtempSync(join(tmpdir(), "chant-changed-roots-member-"));
+  afterAll(() => rmSync(repo, { recursive: true, force: true }));
+  const put = (path: string, text: string): void => {
+    mkdirSync(dirname(join(repo, path)), { recursive: true });
+    writeFileSync(join(repo, path), text);
+  };
+  put("infra/network/roots/vpc/main.tf", 'module "base" {\n  source = "../../../../shared/modules/base"\n}\n');
+  put("shared/modules/base/main.tf", "");
+  put("apps/web/main.tf", "");
+  const member = join(repo, "infra/network");
+  const roots = { vpc: { dir: "roots/vpc" } };
+
+  test("a module outside the member is watched by a path that leaves it", () => {
+    expect(rootWatchPaths(member, roots.vpc)).toEqual(["../../shared/modules/base", "roots/vpc"]);
+  });
+
+  test("a change to that module touches the root; a change in another member touches nothing", () => {
+    expect(changedRoots(member, roots, ["../../shared/modules/base/main.tf"])).toEqual(["vpc"]);
+    expect(changedRoots(member, roots, ["../../apps/web/main.tf"])).toEqual([]);
+  });
+});

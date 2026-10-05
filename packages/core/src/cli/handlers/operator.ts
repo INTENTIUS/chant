@@ -49,6 +49,7 @@ import {
 } from "../../op/gate-approval";
 import { approverOf, tallyGateApprovals } from "../../op/gate";
 import { FAN_OUT_GATE_OP, WORKSPACE_UPGRADE_GATE_OP } from "../../op/gate-name";
+import { PR_GATE_OP } from "../../pr-loop";
 import { pushLifecycle, requireLifecycleLedger } from "../../lifecycle/git";
 import { formatError, formatWarning, formatSuccess, formatBold, formatInfo } from "../format";
 import type { CommandContext } from "../registry";
@@ -134,8 +135,6 @@ async function collectOperatorSubscribers(
   }
 }
 
-/** A pull request's gate op, `pr-<number>` (#3183, `prOp` in ../../pr-loop.ts). */
-const PR_GATE_OP = /^pr-\d+$/;
 
 // ── chant operator ──────────────────────────────────────────────────────────
 

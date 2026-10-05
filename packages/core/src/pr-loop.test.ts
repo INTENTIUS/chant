@@ -16,7 +16,9 @@ import {
   PR_REPORT_SCHEMA_ID,
   prApproveCommand,
   prNoteMarker,
+  PR_GATE_OP,
   prOp,
+  prStatusContext,
   prStatusDescription,
   prStatusState,
   renderPrNote,
@@ -167,5 +169,31 @@ describe("the status", () => {
 
   test("the approve command binds the digest and asks for a signature", () => {
     expect(prApproveCommand(planReport, "gitlab:ana")).toBe(`chant approve pr-12 pr-apply --plan ${doc.digest} --approver gitlab:ana --sign`);
+  });
+});
+
+describe("a workspace member's loop (#3465)", () => {
+  const memberReport: PrReport = { ...planReport, member: "network", op: prOp(12, "network") };
+
+  test("the op, the note marker and the status contexts carry the member's name", () => {
+    expect(prOp(12)).toBe("pr-12");
+    expect(prOp(12, "network")).toBe("pr-12-network");
+    expect(prNoteMarker("prod", "network")).toBe("<!-- chant-pr:prod:network -->");
+    expect(prNoteMarker("prod", "network")).not.toBe(prNoteMarker("prod"));
+    expect(prStatusContext("plan")).toBe("chant/plan");
+    expect(prStatusContext("apply", "network")).toBe("chant/apply/network");
+  });
+
+  test("the gate op pattern takes both forms and nothing else", () => {
+    for (const op of ["pr-12", "pr-12-network", "pr-3-a1-b2"]) expect(PR_GATE_OP.test(op)).toBe(true);
+    for (const op of ["pr-", "pr-x", "pr-12-", "pr-12-Net", "fan-out"]) expect(PR_GATE_OP.test(op)).toBe(false);
+  });
+
+  test("the report with a member validates, and its note names the member and approves its own op", () => {
+    expectValid(memberReport);
+    const note = renderPrNote(memberReport);
+    expect(note.startsWith("<!-- chant-pr:" + memberReport.env + ":network -->")).toBe(true);
+    expect(note).toContain("in member `network`");
+    expect(note).toContain("chant approve pr-12-network pr-apply");
   });
 });

@@ -9,6 +9,7 @@
  */
 
 import { execFile } from "node:child_process";
+import { posix } from "node:path";
 import { promisify } from "node:util";
 import type { LexiconPlugin } from "../lexicon";
 
@@ -43,12 +44,26 @@ export async function resolveCommit(cwd: string, ref: string): Promise<string> {
 }
 
 /**
- * Files changed between `base` and `head`, relative to `cwd` and limited to
- * it, with `/` separators. A rename counts as its old and its new path.
+ * Files changed between `base` and `head`, relative to `cwd`, with `/`
+ * separators. A rename counts as its old and its new path.
+ *
+ * Every changed file in the repository is listed, not only those under
+ * `cwd`: one outside it reads `../...`. A project in a workspace member
+ * (#3465) can call a module that lives in another member or beside the
+ * members, and a change there reaches it; `changedUnits` decides which of
+ * these paths matter.
  */
 export async function changedFilesBetween(cwd: string, base: string, head = "HEAD"): Promise<string[]> {
-  const out = await git(cwd, ["diff", "--name-only", "-z", "--no-renames", "--relative", base, head]);
-  return out.split("\0").filter(Boolean).sort();
+  const prefix = (await git(cwd, ["rev-parse", "--show-prefix"])).trim().replace(/\/+$/, "");
+  const out = await git(cwd, ["diff", "--name-only", "-z", "--no-renames", "--no-relative", base, head]);
+  return out
+    .split("\0")
+    .filter(Boolean)
+    .map((file) => {
+      const rel = posix.relative(prefix, file);
+      return rel === "" ? "." : rel;
+    })
+    .sort();
 }
 
 /** The union of every plugin's `changedUnits` answer, sorted. */
