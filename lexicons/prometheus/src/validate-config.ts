@@ -66,7 +66,8 @@ export type PrometheusIssueCode =
   | "PROM221"
   | "PROM222"
   | "PROM223"
-  | "PROM224";
+  | "PROM224"
+  | "PROM225";
 
 export interface PrometheusIssue {
   code: PrometheusIssueCode;

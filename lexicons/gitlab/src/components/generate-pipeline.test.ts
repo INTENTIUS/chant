@@ -343,7 +343,9 @@ describe("generateGitlabPipeline: gated waves (#3049)", () => {
     expect(result.stages).toEqual(["wave-1", "wave-2", "wave-3"]);
     expect(parsed["wave-2"].needs).toEqual(["wave-1"]);
     expect(parsed["wave-1"].needs).toBeUndefined();
+    expect(parsed["wave-3"].image).toBe("node:22");
     expect(parsed["wave-3"].script).toEqual([
+      expect.stringMatching(/^command -v tofu /),
       "chant components fan-out --base HEAD~1 --env prod --wave-gate release --wave 3 --resume .chant/fan-out.json",
     ]);
     // The record goes to the next job even when this one stops at a gate.
@@ -357,6 +359,6 @@ describe("generateGitlabPipeline: gated waves (#3049)", () => {
     const result = generateGitlabPipeline(roots, { env: "prod", gatedWaves: { gate: "release", canary: ["b"], base: "$CI_COMMIT_BEFORE_SHA" } });
     expect(result.stages).toEqual(["wave-1", "wave-2", "wave-3", "wave-4"]);
     const parsed = parseYAML(result.yaml) as Record<string, Record<string, unknown>>;
-    expect((parsed["wave-1"].script as string[])[0]).toContain("--base $CI_COMMIT_BEFORE_SHA --env prod --wave-gate release --canary b --wave 1");
+    expect((parsed["wave-1"].script as string[])[1]).toContain("--base $CI_COMMIT_BEFORE_SHA --env prod --wave-gate release --canary b --wave 1");
   });
 });

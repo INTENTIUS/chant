@@ -67,7 +67,7 @@ export function generateGitlabPipeline(
   options: GenerateGitlabOptions = {},
 ): GenerateGitlabResult {
   const env = options.env ?? "production";
-  const image = options.image ?? (options.prLoop ? PR_LOOP_IMAGE : DEFAULT_IMAGE);
+  const image = options.image ?? (options.prLoop || options.gatedWaves ? PR_LOOP_IMAGE : DEFAULT_IMAGE);
   const runCommand = options.runCommand ?? ["chant", "run", "--components", "{name}", "--env", env];
   const beforeScript = options.beforeScript ?? [];
   const extraScript = options.extraScript ?? [];
@@ -245,7 +245,7 @@ function gatedWaveGitlabPipeline(
       stage: job.jobName,
       image,
       variables: { GIT_DEPTH: "0" },
-      script: [...beforeScript, job.command.join(" "), ...extraScript],
+      script: [...prLoopSetup(image), ...beforeScript, job.command.join(" "), ...extraScript],
       ...(job.needs.length > 0 ? { needs: job.needs } : {}),
       artifacts: { when: "always", paths: [GATED_WAVE_RECORD] },
     };

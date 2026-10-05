@@ -10,6 +10,7 @@ import { build } from "@intentius/chant/build";
 import { runPostSynthChecks } from "@intentius/chant/lint/post-synth";
 import { genAiMetrics } from "@intentius/chant-lexicon-otel/genai";
 import { postSynthChecks } from "./index";
+import { prom225 } from "./prom225";
 import { OPT_IN_CHECKS } from "../audit-catalog";
 import { prometheusSerializer } from "../../serializer";
 import { emitYaml } from "../../build";
@@ -253,5 +254,38 @@ describe("the lexicon's own rules report none of the checks", () => {
     expect(result.errors).toEqual([]);
     const diags = runPostSynthChecks(postSynthChecks, result).filter((d) => !OPT_IN_CHECKS.has(d.checkId));
     expect(diags).toEqual([]);
+  });
+});
+
+describe("PROM225 labeldrop and labelkeep fields", () => {
+  const prom = (step: Record<string, unknown>) =>
+    JSON.stringify({ scrape_configs: [{ job_name: "j", static_configs: [{ targets: ["a:1"] }], metric_relabel_configs: [step] }] });
+  const run = (text: string) => prom225.check(makePostSynthCtx("prometheus", text));
+
+  test("a labeldrop with only regex reports nothing", () => {
+    expect(run(prom({ action: "labeldrop", regex: "tmp_.*" }))).toEqual([]);
+    expect(run(prom({ action: "replace", source_labels: ["a"], target_label: "b" }))).toEqual([]);
+  });
+
+  test("each foreign field on labeldrop or labelkeep is reported once per step", () => {
+    for (const action of ["labeldrop", "labelkeep"]) {
+      for (const field of ["source_labels", "separator", "target_label", "modulus", "replacement"]) {
+        const diags = run(prom({ action, regex: "x", [field]: field === "modulus" ? 2 : field === "source_labels" ? ["a"] : "v" }));
+        expect(diags.map((d) => d.checkId), `${action} ${field}`).toEqual(["PROM225"]);
+        expect(diags[0].entity).toBe("scrape_configs[0].metric_relabel_configs[0]");
+        expect(diags[0].message).toContain(field);
+      }
+    }
+  });
+
+  test("steps under remote_write and alerting are read too", () => {
+    const text = JSON.stringify({
+      alerting: { alert_relabel_configs: [{ action: "labelkeep", regex: "a", replacement: "$1" }] },
+      remote_write: [{ url: "http://r", write_relabel_configs: [{ action: "labeldrop", regex: "a", separator: ";" }] }],
+    });
+    expect(run(text).map((d) => d.entity)).toEqual([
+      "alerting.alert_relabel_configs[0]",
+      "remote_write[0].write_relabel_configs[0]",
+    ]);
   });
 });

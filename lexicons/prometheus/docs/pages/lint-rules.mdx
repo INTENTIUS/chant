@@ -43,6 +43,7 @@ The prometheus lexicon's rules use the `PROM` prefix. `PROM0xx` rules read your 
 | PROM222 | warning | an integration sending a credential to an `http://` URL |
 | PROM223 | warning | a route whose `repeat_interval` is shorter than its `group_interval` |
 | PROM224 | warning | an inhibit rule with no `equal` whose source and target matchers can match the same alert |
+| PROM225 | error | a `labeldrop` or `labelkeep` relabel step with `source_labels`, `separator`, `target_label`, `modulus` or `replacement` |
 | PROM301 | warning | a rule reading a spanmetrics, servicegraph or GenAI metric no collector config in the build emits, or grouping one by a label that is not a declared dimension |
 
 ## PROM001: literal credential
@@ -160,6 +161,10 @@ Prometheus sets `alertname` to the rule's name after it applies the rule's label
 Alertmanager resends a group's notification only when it flushes the group, every `group_interval`, so a shorter `repeat_interval` never takes effect. PROM223 follows both timers down the routing tree from Alertmanager's defaults (5m and 4h) and reports the route that sets one of them.
 
 An inhibit rule with no `equal` mutes every target alert while any source alert fires. PROM224 reports one whose source and target matchers can both match the same alert, so alerts of that kind mute each other. Matchers that name values (`=`, or a regex of plain alternatives such as `page|ticket`) are compared; any other regex is taken to overlap.
+
+## PROM225: labeldrop and labelkeep fields
+
+`labeldrop` and `labelkeep` match `regex` against label names, so a step that also sets `source_labels`, `separator`, `target_label`, `modulus` or `replacement` has fields with nothing to act on, and Prometheus refuses to load the file. PROM225 reads every `prometheus.yml` in the build, in `relabel_configs`, `metric_relabel_configs`, `alert_relabel_configs` and `write_relabel_configs`, and names the step.
 
 ## PROM301: metrics the build's collectors emit
 
