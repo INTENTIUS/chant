@@ -203,7 +203,7 @@ An Op can declare `neverOverMcp: true`. Approvals for such an Op belong to peopl
 
 The rule above only covers a gate reached over MCP. A gate reached on forge CI or at a shell is otherwise resolvable here, and the resolution is recorded as `unattested`. For an Op that must never be approved by an agent, that is too much, so the declaration closes it. Each refusal names the rule and the shell command, `chant run <op>` or `chant approve <op> <gate>`, that does the same thing for a person. Those commands are unchanged.
 
-An Op that is not discovered from a `*.op.ts` file, such as `fan-out`, has no declaration to read. Its pending gate record carries `neverOverMcp: true` instead, and `op-approve` refuses it the same way. The ACP surface refuses the same gates, because it resolves a gate through the same code.
+An Op that is not discovered from a `*.op.ts` file, such as `fan-out`, `workspace-upgrade` or the pull-request gate `pr-<number>`, has no declaration to read. Its pending gate record carries `neverOverMcp: true` instead, and `op-approve` refuses it the same way. The ACP surface refuses the same gates, because it resolves a gate through the same code.
 
 ### `op-report`
 

@@ -41,7 +41,7 @@
  * (absent on the resolution lines written before #2119, which is why
  * `"resolution"` is the default reading).
  */
-import { FAN_OUT_GATE_OP } from "../op/gate-name";
+import { isNeverOverMcpGateOp } from "../op/gate-name";
 import { samePlanDigest } from "./plan-digest";
 import { sortedJsonReplacer } from "../utils";
 import { currentGateOrigin, type GateOrigin } from "./gate-origin";
@@ -342,8 +342,9 @@ export async function appendPendingGate(
     kind: "pending",
     origin: currentGateOrigin(),
     // chant#3485: an Op MCP cannot discover declares nothing, so the gate
-    // records the rule for it. Every fan-out gate is one.
-    ...(input.op === FAN_OUT_GATE_OP ? { neverOverMcp: true as const } : {}),
+    // records the rule for it: fan-out, workspace-upgrade (chant#3513) and
+    // the pull-request gate's `pr-<number>` op.
+    ...(isNeverOverMcpGateOp(input.op) ? { neverOverMcp: true as const } : {}),
     ...input,
   };
   const commit = await appendGateLine(record, "Pending gate record", opts);

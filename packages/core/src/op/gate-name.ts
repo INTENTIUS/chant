@@ -37,6 +37,22 @@ export const FAN_OUT_GATE_OP = "fan-out";
  */
 export const WORKSPACE_UPGRADE_GATE_OP = "workspace-upgrade";
 
+/**
+ * The pull-request loop records its gate under `pr-<number>` (`prOp` in
+ * `pr-loop.ts`), and no `*.op.ts` stands behind that name either.
+ */
+const PR_GATE_OP = /^pr-\d+$/;
+
+/**
+ * Whether gates recorded under this op name are never resolved over MCP or ACP
+ * (chant#3485, chant#3513). These are the gate-only names MCP cannot discover:
+ * `fan-out`, `workspace-upgrade` and the pull-request gate `pr-<number>`. With
+ * no Op config to read `neverOverMcp` from, the pending record carries it.
+ */
+export function isNeverOverMcpGateOp(op: string): boolean {
+  return op === FAN_OUT_GATE_OP || op === WORKSPACE_UPGRADE_GATE_OP || PR_GATE_OP.test(op);
+}
+
 /** Either spelling of a gate step's name. `gate` since #2202; `signalName` through 0.59.0. */
 export interface GateNamed {
   gate?: string;

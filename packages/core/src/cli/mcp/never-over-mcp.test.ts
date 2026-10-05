@@ -166,4 +166,78 @@ describe("neverOverMcp (chant#3447)", () => {
       expect(outcome.ok).toBe(true);
     });
   });
+
+  // chant#3513: workspace-upgrade and the pull-request gate are undiscovered too.
+  const gateOnlyOps: Array<{ op: string; gate: string }> = [
+    { op: "workspace-upgrade", gate: "." },
+    { op: "pr-12", gate: "pr-apply" },
+  ];
+
+  for (const { op, gate } of gateOnlyOps) {
+    async function repoWithGate(dir: string): Promise<void> {
+      git(["init", "-q", "-b", "main"], dir);
+      git(["config", "user.email", "t@chant.dev"], dir);
+      git(["config", "user.name", "T"], dir);
+      writeFileSync(join(dir, "README.md"), "x\n");
+      git(["add", "."], dir);
+      git(["commit", "-q", "-m", "init"], dir);
+      await appendPendingGate(
+        {
+          op,
+          gate,
+          timestamp: "2026-01-01T00:00:00.000Z",
+          origin: "cli",
+          expiresAt: "2999-01-01T00:00:00.000Z",
+          planDigest: `sha256:${"c".repeat(64)}`,
+        },
+        { cwd: dir },
+      );
+    }
+
+    test(`${op}: the gate record carries neverOverMcp (chant#3513)`, async () => {
+      await withTestDir(async (dir) => {
+        await repoWithGate(dir);
+        const { pending } = await readGateLedger(op, { cwd: dir });
+        expect(pending[0].neverOverMcp).toBe(true);
+      });
+    });
+
+    test(`${op}: op-approve over MCP is refused and the ledger is unchanged (chant#3513)`, async () => {
+      await withTestDir(async (dir) => {
+        await repoWithGate(dir);
+        const before = await readGateLedger(op, { cwd: dir });
+        process.chdir(dir);
+        await expect(createOpApproveTool().handler({ name: op, gate })).rejects.toThrow(
+          /neverOverMcp.*whichever channel/s,
+        );
+        expect(await readGateLedger(op, { cwd: dir })).toEqual(before);
+        expect(resolveGate).not.toHaveBeenCalled();
+      });
+    });
+
+    test(`${op}: ACP is refused even with the same-origin override (chant#3513)`, async () => {
+      await withTestDir(async (dir) => {
+        await repoWithGate(dir);
+        const before = await readGateLedger(op, { cwd: dir });
+        process.chdir(dir);
+        const outcome = await recordGateApproval(op, gate, {
+          origin: "acp",
+          actor: "agent",
+          allowSameOrigin: true,
+          cwd: dir,
+        });
+        expect(outcome.ok).toBe(false);
+        expect(await readGateLedger(op, { cwd: dir })).toEqual(before);
+      });
+    });
+
+    test(`${op}: a person at a shell can still approve (chant#3513)`, async () => {
+      await withTestDir(async (dir) => {
+        await repoWithGate(dir);
+        process.chdir(dir);
+        const outcome = await recordGateApproval(op, gate, { origin: "cli", actor: "alex", cwd: dir });
+        expect(outcome.ok).toBe(true);
+      });
+    });
+  }
 });
