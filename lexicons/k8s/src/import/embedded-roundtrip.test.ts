@@ -229,6 +229,7 @@ describe("manifest -> TypeScript -> manifest, with embedded content imported by 
       "grafana-dashboard-slo-support-agent-runs",
       "otel-agent-config",
       "otel-gateway-config",
+      "prometheus-config-prometheus",
       "prometheus-config-rules",
     ]);
     // The rule group an Slo() built comes back as that Slo, referenced by its rules.
