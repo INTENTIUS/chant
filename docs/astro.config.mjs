@@ -231,6 +231,7 @@ export default defineConfig({
 								{ label: 'describe', slug: 'cli/describe' },
 								{ label: 'search', slug: 'cli/search' },
 								{ label: 'vendor', slug: 'cli/vendor' },
+								{ label: 'generate', slug: 'cli/codegen' },
 								{ label: 'import', slug: 'cli/import' },
 								{ label: 'carve advise', slug: 'cli/carve' },
 								{ label: 'carve out (emit/bridge/apply)', slug: 'cli/carve-out' },

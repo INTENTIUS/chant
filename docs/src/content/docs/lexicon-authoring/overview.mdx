@@ -153,6 +153,7 @@ best-known readers.
 | `generateOpPipeline()` | `OpPipelineResult` | Turn a set of scheduled Ops into cron-triggered CI YAML, one file per Op. CI-provider lexicons only (gitlab, github, forgejo) |
 | `opRuntime` | `OpRuntimeProvider` | Host Op runs: `chant run <op> --on <this lexicon>` starts, watches, cancels and wakes runs through it. Core ships the built-in `local` runtime and selects it when no `--on` is passed |
 | `buildRoots()` | `Promise<BuildRootContribution>` | Render config-declared build roots that are not typed chant source into entities, merged into the build before partitioning — k8s implements it for `k8s.kustomize.roots` |
+| `projectCodegen()` | `ProjectCodegen` | Generate typed code into the project from sources its config declares, written by `chant generate` and checked for drift by every build. k8s implements it for `k8s.crds`, helm for `helm.charts` |
 | `graphMeta(entities)` | `Record<string, unknown> \| undefined` | Whole-read facts for `chant graph --format ir` to put under `meta`. The otel lexicon answers `{ collector }`, the topology of the project's collector config, which `chant workspace graph` lists as `collectors` |
 | `configSchema` | `LexiconConfigSchema` (a `ZodObject`) | The shape of this lexicon's own `chant.config.ts` namespace — see [Owning a config namespace](#owning-a-config-namespace) |
 | `upstreamPin` | `UpstreamPin` | How this lexicon pins its upstream schema and where to look for a newer one, for self-upgrade tooling |

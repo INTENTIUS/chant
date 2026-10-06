@@ -95,6 +95,48 @@ The profile is also asserted at deploy time. When `helmInstall` is given a `capa
 
 `overrideProfileAssertion: true` is the deliberate escape hatch. The deploy proceeds through the divergence, the bypassed differences are warned about, and they are recorded verbatim in the release record's `profileOverride` field — so the ledger shows the release knowingly skewed from its declared profile.
 
+## Typed chart values
+
+`HelmRender` takes `values` as a plain record, so a misspelled key or a value of the wrong shape reaches `helm template`, and a chart that ignores unknown keys renders without it. Declaring the chart in `chant.config.ts` gets you a typed values type and a render factory instead:
+
+```typescript
+export default {
+  lexicons: ["helm", "k8s"],
+  helm: {
+    charts: {
+      traefik: { repo: "https://traefik.github.io/charts", chart: "traefik", version: "34.4.1" },
+      operator: { chart: "oci://ghcr.io/acme/charts/operator", version: "1.2.0" },
+      app: { path: "charts/app" },
+    },
+  },
+};
+```
+
+```bash
+chant generate
+```
+
+For each entry, [`chant generate`](/chant/cli/codegen/) reads the chart and writes `TraefikValues` and `TraefikRender` (named after the key) to `src/generated/helm/`:
+
+```typescript
+import { TraefikRender } from "./generated/helm";
+
+export const traefik = TraefikRender({
+  name: "traefik",
+  namespace: "traefik",
+  capabilityProfile: "prod",
+  values: { ports: { web: { port: 8000 } }, logs: { general: { level: "INFO" } } },
+});
+```
+
+The factory takes every `HelmRender` prop except `repo`, `chart` and `version`, which come from the config, so the types and the version they describe cannot drift apart.
+
+When the chart ships a `values.schema.json`, the values type comes from it: `$ref` targets become named types, keys such as `app.kubernetes.io/name` or `use-forwarded-headers` are quoted as written, maps keep their value type, enums become string unions, and `oneOf`/`anyOf` become unions. Every key is optional, because the schema validates the values Helm merges with the chart's defaults. An object the schema leaves open (no `additionalProperties: false`) accepts keys it does not list, as Helm does.
+
+When it does not, the type is inferred from `values.yaml`. Every key is optional and typed from its default, and only the keys `values.yaml` lists are accepted, so a misspelling fails to typecheck. A key whose default is null or empty says nothing about its type: `key:` becomes `unknown`, `{}` a map of anything, `[]` an array of `unknown`. A key the chart reads but does not list in `values.yaml` is rejected; pass it through a cast, or ask the chart to publish a schema.
+
+Remote charts are downloaded without the helm binary, from the repository's `index.yaml` or the OCI registry, and `version` is required. A local chart is read from its directory. Commit the generated code. `chant build` stays offline and fails when a chart's pin, or a local chart's `Chart.yaml`, `values.yaml` or `values.schema.json`, changed since the code was generated.
+
 ## Render digests
 
 A pinned render records two digests. Each answers a different question.

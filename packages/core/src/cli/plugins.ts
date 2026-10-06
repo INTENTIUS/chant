@@ -9,6 +9,7 @@ import { isLexiconPlugin, type LexiconPlugin } from "../lexicon";
 import { loadChantConfigUpward } from "../config";
 import { findInfraFiles, detectLexicons } from "../index";
 import { checkConflicts, describeConflict } from "./conflict-check";
+import { prepareProjectCodegen } from "../project-codegen";
 
 /**
  * chant#2591 — record the lexicons the chant.config nearest `dir` declares by
@@ -194,11 +195,24 @@ export function collectBuildRootContributors(
   config: Record<string, unknown>,
   projectRoot: string,
 ): Array<import("../lexicon").BuildRootContributor> {
-  return (plugins ?? [])
+  // Project-local codegen (../project-codegen.ts) rides the same seam: every
+  // build path that renders build roots also has to refuse generated code
+  // that drifted from its declared sources, and to let the lexicon load that
+  // code (the k8s kinds its serializer must know) before serialization. Its
+  // contributor adds no entities; a drift is thrown, which the merge reports
+  // as a build error. Runs first, so a build-root hook sees loaded kinds.
+  const codegen = (plugins ?? [])
+    .filter((plugin) => typeof plugin.projectCodegen === "function")
+    .map((plugin): import("../lexicon").BuildRootContributor => async () => {
+      await prepareProjectCodegen(plugin, projectRoot, config);
+      return { entities: new Map() };
+    });
+  const roots = (plugins ?? [])
     .filter((plugin) => typeof plugin.buildRoots === "function")
     // `entities` is not bindable here — discovery has not run — so the merge
     // hands it in when it calls the closure (#1828 / SOPS provenance).
-    .map((plugin) => (ctx) => plugin.buildRoots!({ projectRoot, config, entities: ctx?.entities }));
+    .map((plugin): import("../lexicon").BuildRootContributor => (ctx) => plugin.buildRoots!({ projectRoot, config, entities: ctx?.entities }));
+  return [...codegen, ...roots];
 }
 
 /**

@@ -796,6 +796,10 @@ Commands:
                         okf emits an OKF v0.2 knowledge bundle — one markdown
                         concept per entity + index.md; -o <dir> writes the
                         bundle tree, otherwise JSON path→content on stdout)
+  generate              Generate typed code from sources chant.config declares
+                        (k8s.crds, helm.charts) into src/generated/<lexicon>/
+                        (codegen.outDir); --check exits 1 when the committed
+                        output no longer matches its sources, as build does
   vendor                Pull pinned, checksummed patterns into your repo
                         (pull [name] | check | migrate; migrate moves
                         vendor.json into .chant/workspace.lock.json)
@@ -1759,6 +1763,9 @@ export const commandRegistry: CommandDef[] = [
 
   { name: "graph", handler: runGraph },
   { name: "vendor", handler: runVendor },
+  // Project-local codegen: typed code from sources chant.config declares
+  // (k8s.crds, helm.charts). Imported on first use.
+  { name: "generate", requiresPlugins: true, handler: async (ctx) => (await import("./handlers/generate")).runGenerate(ctx) },
 
   // Workspace reads (#2524). Imported on first use, so a level-0 command never
   // loads anything under workspace/ (#2525 rule 5, pinned by #2526's goldens).

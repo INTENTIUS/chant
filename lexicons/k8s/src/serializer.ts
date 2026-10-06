@@ -32,6 +32,7 @@ import { walkValue, type SerializerVisitor } from "@intentius/chant/serializer-w
 import { emitYAML } from "@intentius/chant/yaml";
 import { isDefaultLabels, isDefaultAnnotations, type DefaultLabels, type DefaultAnnotations } from "./default-labels";
 import { isRenderedManifestEntity } from "./manifest-entity";
+import { projectKindForType } from "./project-kinds";
 import { isEncryptedSecretFileEntity } from "./sops/entity";
 import { isRuleGroup, ruleGroupConfig } from "@intentius/chant-lexicon-prometheus";
 
@@ -82,6 +83,11 @@ function getGVKMap(): Record<string, GVKEntry> {
  * Resolve entityType to apiVersion and kind.
  */
 function resolveGVK(entityType: string): { apiVersion: string; kind: string } | null {
+  // A kind the project generated from its own CRDs (`chant generate`) wins
+  // over the packaged map, which knows nothing of it or an older version.
+  const projectKind = projectKindForType(entityType);
+  if (projectKind) return { apiVersion: projectKind.apiVersion, kind: projectKind.kind };
+
   const gvkMap = getGVKMap();
 
   // Search for matching entry by resourceType
