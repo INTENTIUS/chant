@@ -80,7 +80,7 @@
  * ```
  */
 
-import { Op, phase, gate, activity, OpResource } from "@intentius/chant/op";
+import { Op, phase, gate, activity, OpResource, type GateApproval } from "@intentius/chant/op";
 import { DEFAULT_PLAN_FILE } from "../op/activities/terraform";
 import { detectLivePolicyVerbs } from "../op/activities/live-detect";
 import { resolveRootModeSync } from "../op/resolve-root-mode";
@@ -130,6 +130,13 @@ export interface TerraformApplyOpConfig {
   gateTimeout?: string;
   /** Override the gate description shown to the approver. */
   gateDescription?: string;
+  /**
+   * The gate's approval block (#2508): a quorum, and a policy such as the
+   * cedar lexicon's starter pack (`gatePolicy("prod", starterGatePolicies())`).
+   * The gate binds the Plan step, so the policy reads the plan's change-set
+   * summary as `context.plan` with nothing more here (#3182).
+   */
+  gateApproval?: GateApproval;
   /** `-upgrade` on the Init step: re-resolve provider and module versions. */
   upgrade?: boolean;
   /**
@@ -241,6 +248,7 @@ export function TerraformApplyOp(config: TerraformApplyOpConfig): TerraformApply
           // copies it onto the resolution, and a later run whose fresh plan
           // digests differently is refused with both digests named.
           plan: plan.out.planDigest,
+          ...(config.gateApproval ? { approval: config.gateApproval } : {}),
           description:
             config.gateDescription ??
             `Approve terraform apply of ${live ? "live " : ""}root "${config.root}" (gate: ${gateMode}). ` +

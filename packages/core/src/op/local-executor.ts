@@ -31,6 +31,7 @@ import { gateName } from "./gate-name";
 import { gatePointOf } from "./gate-point";
 import { evaluatePointGate, workspaceGatePointAsker, type GatePointAsker } from "./gate-point-run";
 import type { ResolvedGateApproval } from "./gate-approval";
+import { GATE_PLAN_CONTEXT_KEY, gatePlanSummaryOfResult } from "./gate-plan-context";
 import { withOpRunContext, type OpRunContext, type PassedGate } from "./run-context";
 import type { GateAnswerRef, PendingGateRecord } from "../lifecycle/gate-ledger";
 import { isPointWait, type WaitingPoint } from "./steward-points";
@@ -591,6 +592,13 @@ function resolveGateApproval(
       const resolved = resolveStepOutputRefs(value, resultsById);
       if (resolved !== undefined && resolved !== null) context[key] = resolved;
     }
+  }
+  // #3182: a policy also sees what the plan does. When the gate's `plan`
+  // names the step that planned it and that step returned a change set, its
+  // summary lands under `context.plan` with no context code in the Op.
+  if (authored.policy && isStepOutputRef(step.plan)) {
+    const summary = gatePlanSummaryOfResult(resultsById.get(step.plan.step));
+    if (summary) context = { ...(context ?? {}), [GATE_PLAN_CONTEXT_KEY]: summary };
   }
   return {
     ...(authored.quorum ? { quorum: authored.quorum } : {}),
