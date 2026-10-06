@@ -99,10 +99,12 @@ describe("the GitLab merge-request pipeline", () => {
   test("inside a workspace member: member-named jobs that cd into the member, with no changes rule (#3465)", () => {
     const member = { name: "network", dir: "infra/network", file: ".gitlab/ci/chant-pr-network-prod.gitlab-ci.yml" };
     const scoped = generateGitlabPipeline(ESTATE, { env: "prod", prLoop: {}, member });
-    const mdoc = parseYAML(scoped.yaml) as Record<string, unknown> & { workflow: { name: string } };
+    const mdoc = parseYAML(scoped.yaml) as Record<string, unknown> & { workflow: { name?: string; rules: unknown[] } };
     expect(scoped.jobs.map((j) => j.jobName)).toEqual(["network-plan", "network-apply"]);
     expect(mdoc.plan).toBeUndefined();
-    expect(mdoc.workflow.name).toBe("chant-pr-network-prod");
+    // Included files merge top-level keys: no name, so members do not collide on it.
+    expect(mdoc.workflow.name).toBeUndefined();
+    expect(mdoc.workflow.rules).toHaveLength(2);
     const plan = mdoc["network-plan"] as Job;
     const apply = mdoc["network-apply"] as Job;
     expect(plan.script).toContain("cd infra/network");

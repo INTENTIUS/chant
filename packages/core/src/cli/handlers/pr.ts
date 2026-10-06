@@ -253,6 +253,9 @@ async function publish(forge: PrForge | undefined, report: PrReport, note: strin
     console.error(formatWarning({ message: `could not set the ${status.context} status: ${err instanceof Error ? err.message : String(err)}` }));
   }
   if (report.pr === null) return;
+  // A member the change does not reach has nothing to say: one note per
+  // member would put a line on every pull request for each member it skips.
+  if (report.member && report.status === "nothing") return;
   try {
     await forge.upsertNote(report.pr, prNoteMarker(report.env, report.member), note);
   } catch (err) {
