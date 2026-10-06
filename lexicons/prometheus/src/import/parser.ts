@@ -386,10 +386,27 @@ const PROM_VERSION = PROMETHEUS_PIN.prometheus.version;
 
 // ── entry points ────────────────────────────────────────────────────
 
+/** Load YAML the way the parser does: YAML 1.2 core types plus `<<` merge keys. */
+export function loadPrometheusYaml(content: string): unknown {
+  return content.trim() === "" ? {} : jsYaml.load(content, { schema: YAML_SCHEMA });
+}
+
+/** A rule file already loaded (live import builds one from a ruler's groups, ../export-resources.ts). */
+export function parseRuleFileDocument(doc: Record<string, unknown>): { file: RuleFileConfig; warnings: string[] } {
+  const warnings: string[] = [];
+  return { file: parseRuleFile(doc, warnings), warnings };
+}
+
+/** An `alertmanager.yml` already loaded (live import reads one from Alertmanager's API, ../export-resources.ts). */
+export function parseAlertmanagerDocument(doc: Record<string, unknown>): { config: AlertmanagerConfig; warnings: string[] } {
+  const warnings: string[] = [];
+  return { config: parseAlertmanager(doc, warnings), warnings };
+}
+
 /** Parse a rule file or `alertmanager.yml`, telling them apart by shape. */
 export function parsePrometheusYaml(content: string): ParsedPrometheusFile {
   const warnings: string[] = [];
-  const doc = content.trim() === "" ? {} : jsYaml.load(content, { schema: YAML_SCHEMA });
+  const doc = loadPrometheusYaml(content);
   if (!isPlainObject(doc)) {
     throw new Error("a Prometheus rule file, alertmanager.yml or prometheus.yml is a YAML mapping; this document is not one");
   }

@@ -135,6 +135,57 @@ A few things have no place in the lexicon, and `chant import` prints a warning f
 
 A Prometheus Operator `PrometheusRule` is a Kubernetes manifest, not a rule file, and imports through the k8s lexicon.
 
+## Import from a running ruler or Alertmanager
+
+`chant import --from <env>` reads the rule groups and the Alertmanager config an environment runs, and writes them through the same importer, so a group read from a ruler and the same group in a rule file give the same source, `Slo` declarations included. Name the endpoints per environment in `chant.config.ts`:
+
+```ts title="chant.config.ts"
+import type { ChantConfig } from "@intentius/chant/config";
+import "@intentius/chant-lexicon-prometheus";
+
+export default {
+  lexicons: ["prometheus"],
+  prometheus: {
+    profiles: {
+      prod: {
+        ruler: {
+          kind: "mimir",                    // or "cortex", "loki", "prometheus"
+          url: "https://mimir.example.com",
+          tenant: "shop",                   // sent as X-Scope-OrgID
+          namespace: "shop",                // where this project's groups live
+          groupNamespaces: { infra: "platform" },
+          token: { env: "MIMIR_TOKEN" },
+        },
+        alertmanager: { kind: "mimir", url: "https://mimir.example.com", tenant: "shop", token: { env: "MIMIR_TOKEN" } },
+      },
+    },
+  },
+} satisfies ChantConfig;
+```
+
+```bash
+chant import --from prod --lexicon prometheus --output src
+```
+
+| Endpoint | What is read |
+|---|---|
+| Mimir ruler | `/prometheus/config/v1/rules/<namespace>` (another prefix with `prometheusPrefix`) |
+| Cortex ruler | `/api/v1/rules/<namespace>` |
+| Loki ruler | `/loki/api/v1/rules/<namespace>` |
+| Plain Prometheus | `/api/v1/rules` |
+| Alertmanager | `/api/v2/status`, the `config.original` it reports |
+| Mimir or Cortex Alertmanager | `/api/v1/alerts`, the config the tenant uploaded |
+
+A rule group carries no ownership marker, so the namespaces a profile names are the boundary: `namespace` and the values of `groupNamespaces` are read, and no other namespace is. A rule file cannot say which namespace a group belongs in, so a group that lives outside `namespace` needs a `groupNamespaces` entry, and the import warns about any that has none. With no profile, `PROMETHEUS_RULER_URL` (with `PROMETHEUS_RULER_KIND`, `PROMETHEUS_RULER_TENANT`, `PROMETHEUS_RULER_NAMESPACE` and `PROMETHEUS_RULER_TOKEN`), `PROMETHEUS_URL` and `ALERTMANAGER_URL` bind instead; a ruler read with no namespace named reads every namespace of the tenant and lists them in a warning, and `--owned` then reads none.
+
+Some of what comes back differs from what was written:
+
+- A plain Prometheus serves rules as it evaluates them. Expressions come back as PromQL prints them, a group's interval is the one it runs on (the global `evaluation_interval` when the group set none), and group `labels` and `query_offset` are not reported.
+- Alertmanager's `config.original` is its loaded config written out again, with every default filled in and each receiver's inherited `global:` settings copied into it. The import takes those back out; `--verbatim` keeps them. Secrets come back as `<secret>`, and a warning lists each place one needs its real value.
+- Mimir's uploaded notification templates are not imported. `templates:` names files, and the import warns with their names.
+
+`chant lifecycle diff --live` and the other live reads use the same profile. Each declared `RuleGroup` is read in its namespace and reports `health` (`ok`, `err` or `unknown`), the first rule error, and how many of its alerts are firing or pending, from `/api/v1/rules`. Receivers and time intervals are found by name in the loaded Alertmanager config, routes by receiver and matchers, and inhibit rules by matchers.
+
 ## Checking the result
 
 The lexicon's round-trip tests (`src/import/roundtrip.test.ts`) hold every example's built files, `Slo()` output, and samples from the Prometheus documentation and Alertmanager's example configs to the same standard: imported, built, compared with the original, linted, and passed through `promtool check rules` and `amtool check-config` when those are installed. To check your own import the same way, see [Checking with promtool and amtool](../upstream-tools/).

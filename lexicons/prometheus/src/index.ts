@@ -152,3 +152,9 @@ export {
   type AlertRoutingTiming,
   type AlertRoutingReceiver,
 } from "./composites";
+
+// Config namespace (#3371): `prometheus.profiles.<env>` in chant.config.ts, the
+// ruler and Alertmanager each environment observes and imports from. The API
+// clients are `@intentius/chant-lexicon-prometheus/api`.
+export { prometheusConfigSchema, resolveRulerTarget, resolveAlertmanagerTarget, declaredNamespaces, namespaceOfGroup } from "./config";
+export type { PrometheusLexiconConfig, PrometheusProfile, RulerProfile, AlertmanagerProfile, RulerKind, AlertmanagerKind } from "./config";
