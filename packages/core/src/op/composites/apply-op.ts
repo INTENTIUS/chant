@@ -12,7 +12,8 @@
  * (chant #1449), the metadata marker (machines) and managed app
  * (volumes/ips/certs/secrets) on `fly` (chant #1449), the ownership labels on
  * `grafana` (chant #3011), the comment marker on `clickhouse` (chant #3208)
- * and `postgres` (chant #3280),
+ * and `postgres` (chant #3280), the declared ruler namespaces on `ruler`
+ * (chant #3372),
  * and the stack itself on `cloudformation`, which a
  * resource CFN did not create is not in. All of
  * them are owned-only. See {@link DeleteMode}.
@@ -67,7 +68,7 @@ export interface ApplyOpConfig {
   name: string;
   /** Environment — CFN stack name / ARM resource group / kube context env /
    * the `grafana.profiles.<env>` entry on `grafana` / the `sql.profiles.<env>`
-   * entry on `clickhouse` and `postgres`; a log label on `gcp` and
+   * entry on `clickhouse` and `postgres`, the `prometheus.profiles.<env>` entry on `ruler`; a log label on `gcp` and
    * `fly`. */
   env: string;
   /** Native apply mechanism. Default: "kubectl". */
@@ -75,7 +76,7 @@ export interface ApplyOpConfig {
   /** Built manifest/template path. Default per target: `dist` (dir) for kubectl,
    * `template.json` (file) for CloudFormation/ARM, `dist/gcp.yaml` for gcp,
    * `dist/fly.json` for fly, `dist/grafana.json` (the build index) for
-   * grafana, `dist/schema.json` for clickhouse and postgres. Must match your
+   * grafana, `dist/schema.json` for clickhouse and postgres, `dist/rules.yml` for ruler. Must match your
    * build output. */
   output?: string;
   /** Project directory to build. Default: ".". */
@@ -220,7 +221,7 @@ export function ApplyOp(config: ApplyOpConfig): ApplyOpResources {
   if (config.compensate !== undefined && config.compensate !== false && !rollbackAvailable) {
     throw new Error(
       `ApplyOp "${config.name}": compensate is enabled, but target "${target}" has no automatic ` +
-        `rollback — the only mapped one today is cloudformation's rollbackStack. Either supply ` +
+        `rollback — the mapped ones are cloudformation's rollbackStack and the ruler's previous-group re-apply. Either supply ` +
         `compensate: { command: "..." } with a rollback of your own, or set compensate: false.`,
     );
   }
@@ -247,6 +248,7 @@ export function ApplyOp(config: ApplyOpConfig): ApplyOpResources {
               activity("compensateApply", {
                 target,
                 env: config.env,
+                ...(target === "ruler" ? { output } : {}),
                 ...(compensateCommand ? { command: compensateCommand } : {}),
               }),
             ]),

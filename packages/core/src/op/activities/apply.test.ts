@@ -749,3 +749,46 @@ describe('defaultOutput (target-aware apply output)', () => {
     expect(defaultOutput('grafana')).toBe('dist/grafana.json');
   });
 });
+
+describe("nativeApply: ruler dispatches to the prometheus lexicon (chant #3372)", () => {
+  const spy = () => {
+    const calls: Array<Parameters<ClickHouseApplier>[0]> = [];
+    const applier: ClickHouseApplier = async (args) => {
+      calls.push(args);
+      return applyResult([{ kind: "RuleGroup", name: "shop/api", action: "created" }]);
+    };
+    return { calls, applier };
+  };
+  const applyRuler = (args: Parameters<typeof nativeApply>[0], applier: ClickHouseApplier) =>
+    nativeApply(args, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, applier);
+
+  test("output maps to the build path, env to the environment, and owned-only prunes", async () => {
+    const { calls, applier } = spy();
+    const result = await applyRuler({ target: "ruler", env: "prod", deleteMode: "owned-only" }, applier);
+    expect(calls).toEqual([{ buildPath: "dist/rules.yml", environment: "prod", prune: true }]);
+    expect(result).toEqual({ applied: 1, pruned: 0, notAttempted: 0 });
+    expect(defaultOutput("ruler")).toBe("dist/rules.yml");
+  });
+
+  test("the default does not prune", async () => {
+    const { calls, applier } = spy();
+    await applyRuler({ target: "ruler", env: "prod" }, applier);
+    expect(calls[0].prune).toBe(false);
+  });
+
+  test("ruler has a native rollback, which re-applies the previous groups", async () => {
+    expect(hasNativeRollback("ruler")).toBe(true);
+    const calls: unknown[] = [];
+    const result = await compensateApply(
+      { target: "ruler", env: "prod", output: "dist/rules.yml" },
+      undefined,
+      undefined,
+      async (args) => {
+        calls.push(args);
+        return { restored: 2, removed: 1, alertmanagerRestored: false, hadSnapshot: true };
+      },
+    );
+    expect(calls).toEqual([{ buildPath: "dist/rules.yml", environment: "prod" }]);
+    expect(result).toEqual({ restored: 2, removed: 1 });
+  });
+});
