@@ -49,7 +49,7 @@ describe("generateGithubPipeline for a workspace member", () => {
   test("run steps start in the member's directory, and the name carries the member", () => {
     const doc = parseYAML(generateGithubPipeline(components, { env: "staging", member: api }).yaml) as unknown as Doc;
     expect(doc.defaults).toEqual({ run: { "working-directory": "services/api" } });
-    expect(doc.name).toBe("chant-components-api-staging");
+    expect(doc.name).toBe("chant-components.api.staging");
   });
 
   test("artifact paths move under the member's directory, where the run steps write them", () => {

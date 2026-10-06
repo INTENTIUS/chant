@@ -83,7 +83,7 @@ It deletes prompt, completion, system-instruction and tool-call content from spa
 - Don't split metrics by a per-request id (`gen_ai.conversation.id`, `gen_ai.response.id`, `gen_ai.tool.call.id`, `session.id`, `user.id`, `enduser.id`) or a content key: each value starts new time series (OTEL116).
 - Give every listener its own port. The collector's own metrics already use localhost:8888, so a `prometheus` exporter there makes it exit with "address already in use" (OTEL117).
 - Keep `zpages` and `pprof` on localhost (OTEL122). `health_check` may listen on 0.0.0.0 for probes.
-- Put `batch` in every pipeline that sends to a remote `otlp` or `otlphttp` exporter (OTEL125), and leave the exporter's `sending_queue` and `retry_on_failure` on (OTEL124).
+- Put `batch` in every pipeline that sends to a remote `otlp` or `otlphttp` exporter (OTEL125), and leave the exporter's `sending_queue` and `retry_on_failure` on (OTEL124). To block the sender instead of dropping data when the queue is full, set `sending_queue.block_on_overflow: true`; `sending_queue.blocking` is not a collector setting (OTEL107).
 - Use a `drop` policy rather than `invert_match`, and `readers` rather than `service.telemetry.metrics.address` (OTEL119).
 - In a workspace, or with `telemetry.attribution: true`, leave `service.name`, `service.version`, `deployment.environment.name`, `vcs.ref.head.revision` and `chant.*` resource attributes alone: `insert` rather than `upsert`, and `override: false` on `resourcedetection` (OTEL118).
 - Declared extensions are enabled in declaration order unless a `Service` lists `extensions` itself.

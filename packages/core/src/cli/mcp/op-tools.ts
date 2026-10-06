@@ -136,6 +136,9 @@ export function createOpRunTool(): ToolRegistration {
         type: "object",
         properties: {
           name: { type: "string", description: "Op name (e.g. alb-deploy)" },
+          // chant#3560 — what `chant run --env` passes: the environment the
+          // run targets. Omitted, the runtime uses its own default.
+          env: { type: "string", description: "Environment the run targets (defaults to the runtime's own)" },
           runtime: RUNTIME_PARAM,
         },
         required: ["name"],
@@ -153,7 +156,8 @@ export function createOpRunTool(): ToolRegistration {
       }
 
       const runtime = await runtimeFor(params.runtime);
-      const handle = await runtime.start(ops.get(name)!.config, {});
+      const env = typeof params.env === "string" && params.env !== "" ? params.env : undefined;
+      const handle = await runtime.start(ops.get(name)!.config, env !== undefined ? { env } : {});
       const status = await handle.result();
 
       return {

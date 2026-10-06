@@ -118,7 +118,7 @@ describe("the GitHub pull-request workflow", () => {
   });
 
   test("inside a workspace member: runs in the member's directory and keeps its own gate, note and apply group (#3465)", () => {
-    const member = { name: "network", dir: "infra/network", file: ".github/workflows/chant-pr-network-prod.yml" };
+    const member = { name: "network", dir: "infra/network", file: ".github/workflows/chant-pr.network.prod.yml" };
     const scoped = generateGithubPipeline(ESTATE, { env: "prod", prLoop: {}, member });
     const mdoc = parseYAML(scoped.yaml) as {
       name: string;
@@ -126,7 +126,7 @@ describe("the GitHub pull-request workflow", () => {
       defaults?: { run: Record<string, string> };
       jobs: Record<string, Job>;
     };
-    expect(mdoc.name).toBe("chant-pr-network-prod");
+    expect(mdoc.name).toBe("chant-pr.network.prod");
     // No path filter: a change outside the member can reach it.
     expect(mdoc.on).toEqual({ pull_request: { branches: ["main"] }, push: { branches: ["main"] } });
     expect(mdoc.defaults).toEqual({ run: { "working-directory": "infra/network" } });
@@ -158,7 +158,7 @@ describe("the GitHub pull-request workflow", () => {
   test("a member at the workspace root keeps the root's paths but its own names", () => {
     const yaml = generateGithubPipeline(ESTATE, { env: "prod", prLoop: {}, member: { name: "root", dir: "." } }).yaml;
     const mdoc = parseYAML(yaml) as { name: string; defaults?: unknown; jobs: Record<string, Job> };
-    expect(mdoc.name).toBe("chant-pr-root-prod");
+    expect(mdoc.name).toBe("chant-pr.root.prod");
     expect(mdoc.defaults).toBeUndefined();
     expect(yaml).toContain("--member root");
     expect(yaml).toContain("path: .chant/pr");

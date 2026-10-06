@@ -97,7 +97,7 @@ describe("the GitLab merge-request pipeline", () => {
   });
 
   test("inside a workspace member: member-named jobs that cd into the member, with no changes rule (#3465)", () => {
-    const member = { name: "network", dir: "infra/network", file: ".gitlab/ci/chant-pr-network-prod.gitlab-ci.yml" };
+    const member = { name: "network", dir: "infra/network", file: ".gitlab/ci/chant-pr.network.prod.gitlab-ci.yml" };
     const scoped = generateGitlabPipeline(ESTATE, { env: "prod", prLoop: {}, member });
     const mdoc = parseYAML(scoped.yaml) as Record<string, unknown> & { workflow: { name?: string; rules: unknown[] } };
     expect(scoped.jobs.map((j) => j.jobName)).toEqual(["network-plan", "network-apply"]);

@@ -499,12 +499,13 @@ describe("McpServer", () => {
         expect(props.runtime).toBeDefined();
       });
 
-      test("op-run has name (required) and runtime", async () => {
+      test("op-run has name (required), env and runtime", async () => {
         const response = await server.handleRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
         const result = response.result as { tools: Array<{ name: string; inputSchema: Record<string, unknown> }> };
         const tool = result.tools.find((t) => t.name === "op-run")!;
         const props = tool.inputSchema.properties as Record<string, unknown>;
         expect(props.name).toBeDefined();
+        expect(props.env).toBeDefined();
         expect(props.runtime).toBeDefined();
         expect(tool.inputSchema.required).toContain("name");
       });

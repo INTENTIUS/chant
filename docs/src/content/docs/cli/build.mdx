@@ -158,7 +158,7 @@ chant build --components --generate github --env staging --promote-to prod --out
 chant build --components --generate github --pr-loop --env prod --output .github/workflows/chant-pr.yml
 ```
 
-`--pr-loop` is refused beside `--wave-gate` or `--promote-to`. Inside a workspace member it generates that member's loop, written to `chant-pr-<member>-<env>` in the forge's directory; see [inside a workspace member](/chant/guide/pull-request-ci/#inside-a-workspace-member).
+`--pr-loop` is refused beside `--wave-gate` or `--promote-to`. Inside a workspace member it generates that member's loop, written to `chant-pr.<member>.<env>` in the forge's directory; see [inside a workspace member](/chant/guide/pull-request-ci/#inside-a-workspace-member).
 
 ### Inside a workspace member
 
@@ -166,7 +166,7 @@ When the project sits in a member of a [workspace](/chant/cli/workspace-init/), 
 
 - On GitHub and Forgejo, `run:` steps start in the member's directory through `defaults.run.working-directory`. Artifact upload and download paths move under that directory to match. The only trigger is `workflow_dispatch`, which takes no `paths:` filter.
 - On GitLab each job name starts with the member's name, and each script starts with `cd <member dir>`. Each job also gets a `rules: changes:` entry for the member's directory and the pipeline file, so a pipeline that the forge starts for a change in another member skips it. GitLab's `changes` has no exclusions, so a member at the workspace root (`.`) gets no `changes` rule.
-- The workflow's name is `chant-components-<member>-<env>`.
+- The workflow's name is `chant-components.<member>.<env>`.
 
 Without `--output` the pipeline is written to the forge's directory at the repository root, in a file named after the member and the environment, so two members never write the same file:
 

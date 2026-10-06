@@ -257,7 +257,7 @@ function prLoopGithubDoc(
     },
   };
   return {
-    name: member ? `chant-pr-${member.name}-${env}` : `chant-pr-${env}`,
+    name: member ? `chant-pr.${member.name}.${env}` : `chant-pr-${env}`,
     environment: env,
     on: { pull_request: { branches: [branch] }, push: { branches: [branch] } },
     ...(rooted ? {} : { defaults: { run: { "working-directory": member!.dir } } }),
@@ -534,7 +534,7 @@ function scopeToMember(doc: GithubPipelineDoc, member: PipelineMember): GithubPi
   }
   return {
     ...doc,
-    name: `chant-components-${member.name}-${doc.environment}`,
+    name: `chant-components.${member.name}.${doc.environment}`,
     ...(rooted ? {} : { defaults: { run: { "working-directory": member.dir } } }),
     jobsDoc,
   };
