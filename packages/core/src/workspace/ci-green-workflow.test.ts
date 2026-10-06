@@ -74,7 +74,7 @@ describe("the workflows that hold required check runs (#3573)", () => {
   });
 
   test("runs the tick on completion of each, on a 15-minute cron, one at a time, with the rights it needs", () => {
-    const text = renderCiGreenWorkflow({ green, workflows: ["ci", "macos"], chantVersion: "0.107.0", workspaceRoot: "." });
+    const text = renderCiGreenWorkflow({ green, workflows: ["ci", "macos"], chantVersion: "0.108.0", workspaceRoot: "." });
     const doc = parseYAMLDocument(text) as Yaml;
     expect(doc.name).toBe("chant-ci-green");
     expect(doc.on.workflow_run).toEqual({ workflows: ["ci", "macos"], types: ["completed"], branches: ["main"] });
@@ -83,10 +83,10 @@ describe("the workflows that hold required check runs (#3573)", () => {
     expect(doc.permissions).toEqual({ contents: "write", checks: "read" });
     const steps = doc.jobs.tick.steps;
     expect(steps[0]).toEqual({ uses: "actions/checkout@v6", with: { ref: "main", "fetch-depth": 0 } });
-    expect(steps[2].run).toBe("npx --yes @intentius/chant@0.107.0 ci tick");
+    expect(steps[2].run).toBe("npx --yes @intentius/chant@0.108.0 ci tick");
     expect(steps[2]["working-directory"]).toBeUndefined();
     expect(steps[2].env.GITHUB_TOKEN).toBe("${{ github.token }}");
-    const nested = parseYAMLDocument(renderCiGreenWorkflow({ green, workflows: ["ci"], chantVersion: "0.107.0", workspaceRoot: "infra" })) as Yaml;
+    const nested = parseYAMLDocument(renderCiGreenWorkflow({ green, workflows: ["ci"], chantVersion: "0.108.0", workspaceRoot: "infra" })) as Yaml;
     expect(nested.jobs.tick.steps[2]["working-directory"]).toBe("infra");
   });
 });

@@ -61,7 +61,7 @@ chant finds the file by walking up from the current directory to the git root, t
 | `writeScope` | no | Who may write what: for each principal class, the members whose files it may write and the record kinds it may write, with which verbs. See [Write scope and agent sessions](#write-scope-and-agent-sessions). It was added in chant 0.101.0. |
 | `agents` | no | The agent sessions, each bound to one member or several. See [Write scope and agent sessions](#write-scope-and-agent-sessions). It was added in chant 0.101.0, and a session's `members` in chant 0.105.0. |
 | `identity` | no | Who a person-attributed record or gate approval may name, and which gates pass only on a signed approval. See [Identity](#identity). It was added in chant 0.102.0. |
-| `ci` | no | Which of the branch's commits passed CI, as `green`. See [CI](#ci). It was added in chant 0.107.0. |
+| `ci` | no | Which of the branch's commits passed CI, as `green`. See [CI](#ci). It was added in chant 0.108.0. |
 | `quorum` | no | How many agree verdicts besides the decider's a record needs, as an integer from 0. [`chant workspace records`](/chant/cli/workspace-records/#reviews-and-quorum) reports each record's quorum against it, and it applies to every record kind with a reviews list. The default is 2. It was added in chant 0.86.0, so a declaration that sets it should set `minReader` to `"0.86.0"`. |
 | `$schema`, `$comment` | no | Editor hints and notes. chant ignores them. |
 | `x-...` | no | Any field whose name starts with `x-`, for people and other tools. Allowed on every object in the file. |

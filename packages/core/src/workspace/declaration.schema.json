@@ -173,7 +173,7 @@
       "patternProperties": {
         "^x-": true
       },
-      "description": "What the workspace's CI decides about its commits (#3573, ws-103). Added in schema 1 by chant 0.107.0, so a declaration that uses it sets minReader to 0.107.0 or newer.",
+      "description": "What the workspace's CI decides about its commits (#3573, ws-103). Added in schema 1 by chant 0.108.0, so a declaration that uses it sets minReader to 0.108.0 or newer.",
       "properties": {
         "green": {
           "$ref": "#/$defs/ciGreen"
