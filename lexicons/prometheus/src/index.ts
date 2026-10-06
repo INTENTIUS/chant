@@ -158,3 +158,11 @@ export {
 // clients are `@intentius/chant-lexicon-prometheus/api`.
 export { prometheusConfigSchema, resolveRulerTarget, resolveAlertmanagerTarget, declaredNamespaces, namespaceOfGroup } from "./config";
 export type { PrometheusLexiconConfig, PrometheusProfile, RulerProfile, AlertmanagerProfile, RulerKind, AlertmanagerKind } from "./config";
+
+// Op steps (#3369). The activities resolve from
+// `@intentius/chant-lexicon-prometheus/op/activities`; the promtool and amtool
+// check builders share their names with the functions above, so they are at
+// `@intentius/chant-lexicon-prometheus/op/builders`.
+export { amtoolRoutesTest, alertmanagerSilence, alertmanagerUnsilence, rulesLoadedObserve, ruleAudit } from "./op/builders";
+export { RuleAuditOp, type RuleAuditOpConfig, type RuleAuditOpResources } from "./op/audit-op";
+export { sloRuleTests, type SloTestInput } from "./op/slo-rule-tests";

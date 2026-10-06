@@ -182,3 +182,9 @@ export {
   type RedQueryOptions,
   type RedQueries,
 } from "./metric-names";
+
+// Op steps (#3369): the collector binary's checks, collectors as resources a
+// ConvergeOp observes, and the pin audit. The activities resolve from
+// `@intentius/chant-lexicon-otel/op/activities`.
+export { otelcolValidate, otelcolComponents, collectorHealthObserve, collectorAudit } from "./op/builders";
+export { CollectorAuditOp, type CollectorAuditOpConfig, type CollectorAuditOpResources } from "./op/audit-op";

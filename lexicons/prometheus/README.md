@@ -73,4 +73,4 @@ PromQL is parsed with `@prometheus-io/lezer-promql`, the Prometheus project's ow
 - `src/tools.ts`: promtool and amtool
 - `src/import/`: `chant import` for rule files and `alertmanager.yml` (parser, generator, `Slo` recognition, round-trip tests and fixtures)
 - `src/rule-eval.ts`: a small rule evaluator the SLO and GenAI tests run over synthetic series
-- `examples/`: getting-started, alerting, rules-from-data, slo, k3d-stack
+- `examples/`: getting-started, alerting, rules-from-data, slo, k3d-stack, observe-converge

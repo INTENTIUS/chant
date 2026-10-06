@@ -41,6 +41,10 @@ export default defineConfig({
                               "slug": "upstream-tools"
                         },
                         {
+                              "label": "Op Steps",
+                              "slug": "op-steps"
+                        },
+                        {
                               "label": "Examples",
                               "slug": "examples"
                         },
