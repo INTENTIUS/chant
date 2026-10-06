@@ -109,6 +109,14 @@ export interface BuildOptions {
    * any flame/icicle viewer with no chant-specific tooling.
    */
   foldRankCollapsedFile?: string;
+
+  /**
+   * `--lexicon-output` runs `buildCommand` once per output file. The first call
+   * runs the build with `serializers` (every serializer the project lists) and
+   * keeps the promise here; the later calls reuse it and each takes only the
+   * outputs of its own `serializers`, so the sources are evaluated once.
+   */
+  sharedBuild?: { serializers: Serializer[]; result?: ReturnType<typeof build> };
 }
 
 /**
@@ -311,20 +319,31 @@ export async function buildCommand(options: BuildOptions): Promise<BuildResult> 
   // (../build-options.ts), which `evaluateProjectPolicies` calls too, so the
   // `policyGate` step decides on the same project this command builds.
   const telemetry = await resolveTelemetryAttribution(configDir, config as unknown as Record<string, unknown>, env);
-  const result = await build(
-    infraPath,
-    options.serializers,
-    undefined,
-    resolveProjectBuildOptions({
-      config,
-      configDir,
-      plugins: options.plugins,
-      modes,
-      ownership,
-      buildParams: paramsResolution.provenance,
-      telemetry,
-    }),
-  );
+  const runBuild = (serializers: Serializer[]) =>
+    build(
+      infraPath,
+      serializers,
+      undefined,
+      resolveProjectBuildOptions({
+        config,
+        configDir,
+        plugins: options.plugins,
+        modes,
+        ownership,
+        buildParams: paramsResolution.provenance,
+        telemetry,
+      }),
+    );
+  let result;
+  if (options.sharedBuild) {
+    const shared = options.sharedBuild;
+    shared.result ??= runBuild(shared.serializers);
+    const full = await shared.result;
+    const own = new Set(options.serializers.map((x) => x.name));
+    result = { ...full, outputs: new Map([...full.outputs].filter(([name]) => own.has(name))) };
+  } else {
+    result = await runBuild(options.serializers);
+  }
 
   // #1022 — report per-file fold vs run so it's visible what still runs.
   // #1424 — one line by default; the per-file lines and their reasons are

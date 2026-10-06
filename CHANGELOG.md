@@ -4,6 +4,8 @@ This file records changes to what chant prints or writes for a plain project, th
 
 ## Unreleased
 
+- [#3555](https://github.com/INTENTIUS/chant/issues/3555) `chant build --lexicon-output` builds the project once and writes each file from that build, instead of building once per file. The "No serializer found for lexicon" warning now ends with "List the lexicon in chant.config.ts." The otel lexicon types `sending_queue.block_on_overflow` and reports the old `sending_queue.blocking` as OTEL107, since the collector reads only `block_on_overflow`.
+
 Two level-0 changes that shipped in 0.81.0 without a warning release are now on the [level-0 exceptions](docs/src/content/docs/reference/level-0-exceptions.mdx) list, and so is a third, below. The maintainer accepted all three on 2026-09-30.
 
 - [#2550](https://github.com/INTENTIUS/chant/issues/2550) ledger reads and writes run `git ls-tree --full-tree`, so a project in a subdirectory of its repository appends to `chant/lifecycle` instead of having its second append refused. Ledger paths do not move. `level0-ledger.test.ts` now holds the subdirectory case ([#2610](https://github.com/INTENTIUS/chant/pull/2610)).

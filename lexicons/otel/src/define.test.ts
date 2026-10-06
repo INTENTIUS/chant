@@ -92,6 +92,24 @@ describe("defineComponent", () => {
     ]);
   });
 
+  test("sending_queue.blocking is reported; the collector reads block_on_overflow", () => {
+    const otlp = new OtlpReceiver({ protocols: { grpc: {} } });
+    const old = new OtlpExporter({ endpoint: "backend:4317", sending_queue: { blocking: true } });
+    const r = build([otlp, old, new Pipeline({ signal: "traces", receivers: [otlp], exporters: [old] })]);
+    expect(r.diags.filter((d) => d.checkId === "OTEL107").map((d) => d.message)).toEqual([
+      'exporter "otlp": sending_queue.blocking is not a collector setting; use sending_queue.block_on_overflow',
+    ]);
+
+    const both = new OtlpExporter({ endpoint: "backend:4317", sending_queue: { blocking: true, block_on_overflow: true } });
+    const r2 = build([otlp, both, new Pipeline({ signal: "traces", receivers: [otlp], exporters: [both] })]);
+    expect(r2.diags.filter((d) => d.checkId === "OTEL107")).toHaveLength(1);
+
+    const ok = new OtlpExporter({ endpoint: "backend:4317", sending_queue: { block_on_overflow: true } });
+    const r3 = build([otlp, ok, new Pipeline({ signal: "traces", receivers: [otlp], exporters: [ok] })]);
+    expect(r3.diags.filter((d) => d.checkId === "OTEL107")).toEqual([]);
+    expect(r3.yaml).toContain("block_on_overflow: true");
+  });
+
   test("its own validate runs as OTEL107, function or safeParse", () => {
     const otlp = new OtlpReceiver({ protocols: { grpc: {} } });
     const v = new VendorExporter({ api: { key: "plaintext" } });

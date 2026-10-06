@@ -166,6 +166,9 @@ export interface QueueSettings {
   queue_size?: number;
   /** The id of a storage extension, for a persistent queue. */
   storage?: string;
+  /** Block the sender when the queue is full instead of dropping data. The collector's field is `block_on_overflow`. */
+  block_on_overflow?: boolean;
+  /** @deprecated The collector reads `block_on_overflow`; `queueIssues` reports this field. */
   blocking?: boolean;
   sizer?: "requests" | "items" | "bytes";
   /** Batching in the queue, in place of a `batch` processor. */
@@ -175,9 +178,17 @@ export interface QueueSettings {
 /** Problems in the `sending_queue` of an exporter's `exporterhelper` settings. */
 export function queueIssues(c: ExporterHelperSettings): string[] {
   const q = c.sending_queue;
-  const b = q?.batch;
-  if (!q || !b) return [];
+  if (!q) return [];
   const issues: string[] = [];
+  if (q.blocking !== undefined) {
+    issues.push(
+      q.block_on_overflow !== undefined
+        ? "sending_queue.blocking is set next to block_on_overflow; remove blocking, the collector reads block_on_overflow"
+        : "sending_queue.blocking is not a collector setting; use sending_queue.block_on_overflow",
+    );
+  }
+  const b = q.batch;
+  if (!b) return issues;
   if (q.enabled === false) issues.push("sending_queue.batch is set but sending_queue.enabled is false; batching runs in the queue");
   if (b.min_size !== undefined && b.min_size < 0) issues.push("sending_queue.batch.min_size is negative");
   if (b.max_size !== undefined && b.max_size < 0) issues.push("sending_queue.batch.max_size is negative");
