@@ -22,7 +22,11 @@
  * resource off) belongs behind the same condition in TypeScript that sets
  * the value.
  */
-import type * as Generated from "../generated/index";
+// The generated declaration file carries the real constructor props;
+// `../generated/index` resolves to the runtime classes, which take
+// `Record<string, unknown>`. The lexicon build copies the declaration file
+// next to the emitted types (see composites/member-defaults.ts).
+import type * as Generated from "../generated/index.d";
 import { applyJsonPatch, applyMergePatch, type JsonPatchOperation } from "./json-patch";
 
 export type { JsonPatchOperation } from "./json-patch";
@@ -41,16 +45,21 @@ export interface RenderedSelector<K extends string = string> {
 }
 
 /**
- * The props the lexicon's class for `K` takes, when there is one; otherwise
- * an open record. Merge patches for known kinds are checked against it.
+ * The constructor props of the lexicon's generated class named `K`, when
+ * there is one; otherwise an open record. Merge patches for known kinds are
+ * checked against it.
  */
 export type KindProps<K extends string> = K extends keyof typeof Generated
-  ? (typeof Generated)[K] extends new (props: infer P, ...rest: never[]) => unknown
+  ? (typeof Generated)[K] extends abstract new (props: infer P) => unknown
     ? P
     : Record<string, unknown>
   : Record<string, unknown>;
 
-/** An RFC 7386 merge patch over `T`: every field optional, `null` deletes. */
+/**
+ * An RFC 7386 merge patch over `T`: object fields are optional at every
+ * depth and may be `null` (which deletes them); arrays replace the target
+ * whole, so their elements stay complete.
+ */
 export type MergePatchOf<T> = T extends readonly unknown[]
   ? T
   : T extends object

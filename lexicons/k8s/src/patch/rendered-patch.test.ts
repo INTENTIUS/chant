@@ -1,5 +1,5 @@
-import { describe, test, expect } from "vitest";
-import { applyRenderedPatches, renderedPatch, type RenderedPatch } from "./rendered-patch";
+import { describe, test, expect, expectTypeOf } from "vitest";
+import { applyRenderedPatches, renderedPatch, type MergePatchOf, type KindProps, type RenderedPatch } from "./rendered-patch";
 
 const docs = (): Array<Record<string, unknown>> => [
   { apiVersion: "v1", kind: "ConfigMap", metadata: { name: "cfg", namespace: "a" }, data: { level: "info" } },
@@ -92,5 +92,52 @@ describe("applyRenderedPatches", () => {
     const input = docs();
     applyRenderedPatches(input, [{ kind: "Deployment", name: "web", merge: { spec: { replicas: 9 } } }], "src");
     expect(input).toEqual(docs());
+  });
+});
+
+describe("renderedPatch types merge against the generated props", () => {
+  test("a well-typed Deployment merge compiles, with null deleting a field", () => {
+    const patch = renderedPatch({
+      kind: "Deployment",
+      name: "web",
+      merge: { spec: { replicas: 3, paused: null, template: { spec: { enableServiceLinks: false } } } },
+    });
+    expect(patch.kind).toBe("Deployment");
+  });
+
+  test("wrong-typed or unknown fields are rejected by the compiler", () => {
+    renderedPatch({
+      kind: "Deployment",
+      name: "web",
+      // @ts-expect-error replicas is a number
+      merge: { spec: { replicas: "three" } },
+    });
+    renderedPatch({
+      kind: "Deployment",
+      name: "web",
+      // @ts-expect-error not a Deployment field
+      merge: { spek: { replicas: 3 } },
+    });
+    renderedPatch({
+      kind: "Deployment",
+      name: "web",
+      merge: {
+        spec: {
+          template: {
+            spec: {
+              // @ts-expect-error a container in a replacing array must be complete and well-typed
+              containers: [{ name: "c", livenessProbe: { grpc: { port: "x" } } }],
+            },
+          },
+        },
+      },
+    });
+  });
+
+  test("a kind with no generated class takes an open record", () => {
+    renderedPatch({ kind: "SomeVendorThing", name: "x", merge: { anything: { goes: 1 } } });
+    expectTypeOf<KindProps<"SomeVendorThing">>().toEqualTypeOf<Record<string, unknown>>();
+    expectTypeOf<{ spec: { replicas: number } }>().toMatchTypeOf<MergePatchOf<KindProps<"Deployment">>>();
+    expectTypeOf<{ spec: { replicas: string } }>().not.toMatchTypeOf<MergePatchOf<KindProps<"Deployment">>>();
   });
 });
