@@ -629,6 +629,21 @@ const SECTION_TYPES: Record<string, string> = {
 
 /** Generate the TypeScript declaring one `prometheus.yml`. */
 export function generatePrometheusConfigFiles(config: PrometheusConfigFile): GeneratedFile[] {
+  return generatePrometheusConfig(config).files;
+}
+
+/** A declaration a `prometheus.yml` import exports: its module and variable. */
+export interface PrometheusConfigDeclaration {
+  readonly path: string;
+  readonly name: string;
+}
+
+/**
+ * Generate the TypeScript declaring one `prometheus.yml`, and list every
+ * declaration it exports, module by module (a ConfigMap holding the file
+ * becomes `prometheusConfigYaml([...])` over them).
+ */
+export function generatePrometheusConfig(config: PrometheusConfigFile): { files: GeneratedFile[]; declarations: PrometheusConfigDeclaration[] } {
   const names = new Names([...LEXICON_NAMES, ...Object.keys(SECTION_TYPES)]);
   const modules: Module[] = [];
 
@@ -694,7 +709,10 @@ export function generatePrometheusConfigFiles(config: PrometheusConfigFile): Gen
     mod.exports.push(v);
   }
 
-  return modules.map((m) => ({ path: m.path, content: m.render() }));
+  return {
+    files: modules.map((m) => ({ path: m.path, content: m.render() })),
+    declarations: modules.flatMap((m) => m.exports.map((name) => ({ path: m.path, name }))),
+  };
 }
 
 /** The rule file and `alertmanager.yml` TypeScript generator `chant import` runs. */

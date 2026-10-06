@@ -22,7 +22,7 @@
  * the windows that had events. The SLI expressions are the caller's: `rate()`
  * over a counter that first appears inside the range sees one sample and
  * counts nothing, so a sparse SLI should count events as an increase that
- * includes a series' first sample (see the SLOs page).
+ * includes a series' first sample (`eventCount`, see the SLOs page).
  *
  * Both kinds share a group because Prometheus evaluates a group's rules in
  * order: the alerts read the ratios recorded in the same evaluation. In
@@ -345,6 +345,27 @@ export function sliExprProblem(expr: unknown): string | undefined {
   const checked = checkPromql(withWindow(expr, "5m"));
   if (!checked.ok) return `is not valid PromQL once ${SLO_WINDOW_PLACEHOLDER} is filled in: ${checked.message}`;
   return undefined;
+}
+
+/**
+ * The number of events a counter saw over a window, counting a series' first
+ * sample. `rate()` and `increase()` need two samples in the range, so a counter
+ * that first appears inside the window reads as no events for the first one.
+ * This is the increase over the window where the series existed before it
+ * (never below 0, so a counter reset counts nothing), and the series' own
+ * value where it did not. Use it for `good`, `errors` and `total` of a sparse
+ * SLI; `window` defaults to the `{{window}}` placeholder an `Slo` fills in.
+ *
+ * `selector` is an instant vector selector, e.g. `jobs_total{result="ok"}`. It
+ * appears three times, so it must have no range and no `offset` of its own.
+ */
+export function eventCount(selector: string, window: string = SLO_WINDOW_PLACEHOLDER): string {
+  const sel = typeof selector === "string" ? selector.trim() : "";
+  if (sel === "") throw new Error("eventCount: selector must be an instant vector selector, e.g. jobs_total{result=\"ok\"}");
+  if (/\boffset\b/.test(sel) || /\[[^\]]*\]\s*$/.test(sel) || /^(sum|rate|increase)\b/.test(sel)) {
+    throw new Error(`eventCount: "${sel}" must be a plain instant vector selector, with no range, offset or function`);
+  }
+  return `sum(clamp_min(${sel} - ${sel} offset ${window}, 0) or (${sel} unless ${sel} offset ${window}))`;
 }
 
 function withWindow(expr: string, window: string): string {

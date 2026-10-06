@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { embeddedDocument, type EmbeddedContent } from "@intentius/chant/import/embedded";
 import { prometheusPlugin } from "../plugin";
-import { alertmanagerImporter, ruleGroupsImporter } from "./embedded";
+import { alertmanagerImporter, prometheusConfigImporter, ruleGroupsImporter } from "./embedded";
 
 const GROUPS = [
   { name: "api", rules: [{ alert: "ApiDown", expr: "up{job=\"api\"} == 0", for: "5m" }] },
@@ -26,7 +26,7 @@ const site = (over: Partial<EmbeddedContent>): EmbeddedContent => ({
 
 describe("rule groups embedded in another lexicon's resource (#2962)", () => {
   test("the plugin registers the importers", () => {
-    expect(prometheusPlugin.embeddedImporters?.()).toEqual([ruleGroupsImporter, alertmanagerImporter]);
+    expect(prometheusPlugin.embeddedImporters?.()).toEqual([ruleGroupsImporter, alertmanagerImporter, prometheusConfigImporter]);
   });
 
   test("matches a PrometheusRule's groups and a rule file held as text; not an alertmanager.yml", () => {
@@ -99,6 +99,50 @@ describe("an alertmanager.yml embedded in another lexicon's resource (#3031)", (
       ],
       shape: "list",
       through: { from: "@intentius/chant-lexicon-prometheus", name: "alertmanagerYaml" },
+    });
+    expect(out.warnings).toEqual([]);
+  });
+});
+
+const PROMETHEUS = `global:
+  scrape_interval: 15s
+rule_files:
+  - /etc/prometheus/rules.yml
+scrape_configs:
+  - job_name: node
+    static_configs:
+      - targets: ["node:9100"]
+  - job_name: api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["api:8080"]
+`;
+
+describe("a prometheus.yml embedded in another lexicon's resource (#3365)", () => {
+  const configMap = (text: string) =>
+    site({ hostType: "K8s::Core::ConfigMap", location: 'ConfigMap prometheus data["prometheus.yml"]', text, document: embeddedDocument(text) });
+
+  test("matches a prometheus.yml held as text; not a rule file, an alertmanager.yml, nor a selected member", () => {
+    expect(prometheusConfigImporter.matches(configMap(PROMETHEUS))).toBe(true);
+    expect(prometheusConfigImporter.matches(configMap(RULE_FILE))).toBe(false);
+    expect(prometheusConfigImporter.matches(configMap(ALERTMANAGER))).toBe(false);
+    expect(prometheusConfigImporter.matches(configMap("storage:\n  path: /data\n"))).toBe(false);
+    expect(prometheusConfigImporter.matches(site({ document: { scrape_configs: [] }, select: "groups" }))).toBe(false);
+    expect(ruleGroupsImporter.matches(configMap(PROMETHEUS))).toBe(false);
+    expect(alertmanagerImporter.matches(configMap(PROMETHEUS))).toBe(false);
+  });
+
+  test("becomes prometheusConfigYaml over every declaration the standalone import writes", () => {
+    const out = prometheusConfigImporter.import(configMap(PROMETHEUS));
+    expect(out.files.map((f) => f.path)).toEqual(["scrape-configs.ts", "prometheus.ts"]);
+    expect(out.value).toEqual({
+      bindings: [
+        { from: "scrape-configs.ts", name: "node" },
+        { from: "scrape-configs.ts", name: "api" },
+        { from: "prometheus.ts", name: "prometheus" },
+      ],
+      shape: "list",
+      through: { from: "@intentius/chant-lexicon-prometheus", name: "prometheusConfigYaml" },
     });
     expect(out.warnings).toEqual([]);
   });

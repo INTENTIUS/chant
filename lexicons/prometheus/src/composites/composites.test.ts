@@ -4,7 +4,7 @@
  */
 import { describe, expect, test } from "vitest";
 import { load } from "js-yaml";
-import { Slo, sloMetrics, sloPropsProblem, type SloProps } from "./slo";
+import { Slo, eventCount, sliExprProblem, sloMetrics, sloPropsProblem, type SloProps } from "./slo";
 import { ruleGroupConfig } from "../rules";
 import { ruleFileYaml } from "../build";
 import { validateRuleFile, validateSeverityRouting } from "../validate-config";
@@ -291,5 +291,33 @@ describe("sloMetrics", () => {
     const m = sloMetrics(slo);
     m.errorRatio["1h"] = "changed";
     expect(sloMetrics(slo).errorRatio["1h"]).toBe("slo:sli_error:ratio_rate1h");
+  });
+});
+
+describe("eventCount (#3548)", () => {
+  const sel = 'jobs_total{result="ok"}';
+
+  test("counts a series' first sample: the increase where the series existed, its own value where it did not", () => {
+    expect(eventCount(sel)).toBe(
+      'sum(clamp_min(jobs_total{result="ok"} - jobs_total{result="ok"} offset {{window}}, 0) or (jobs_total{result="ok"} unless jobs_total{result="ok"} offset {{window}}))',
+    );
+  });
+
+  test("takes a literal window for use outside an Slo", () => {
+    expect(eventCount("jobs_total", "1h")).toBe(
+      "sum(clamp_min(jobs_total - jobs_total offset 1h, 0) or (jobs_total unless jobs_total offset 1h))",
+    );
+  });
+
+  test("is an SLI expression an Slo accepts", () => {
+    expect(sliExprProblem(eventCount(sel))).toBeUndefined();
+    expect(sloPropsProblem({ ...orderAck, sli: { errors: eventCount('jobs_total{result="bad"}'), total: eventCount("jobs_total") } })).toBeUndefined();
+  });
+
+  test("rejects a selector with a range, an offset or a function, and an empty one", () => {
+    expect(() => eventCount("")).toThrow(/selector/);
+    expect(() => eventCount("jobs_total[5m]")).toThrow(/plain instant vector/);
+    expect(() => eventCount("jobs_total offset 5m")).toThrow(/plain instant vector/);
+    expect(() => eventCount("sum(jobs_total)")).toThrow(/plain instant vector/);
   });
 });

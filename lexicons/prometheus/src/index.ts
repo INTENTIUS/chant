@@ -102,6 +102,7 @@ export {
   sloMetrics,
   sloPropsProblem,
   sliExprProblem,
+  eventCount,
   DEFAULT_BURN_RATES,
   SLO_WINDOW_PLACEHOLDER,
   type SloProps,

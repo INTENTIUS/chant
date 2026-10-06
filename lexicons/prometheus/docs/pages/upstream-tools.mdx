@@ -10,16 +10,19 @@ The lexicon's own checks cover structure, references and PromQL syntax. `promtoo
 ## From TypeScript
 
 ```ts
-import { alertmanagerYaml, amtoolCheckConfig, promtoolCheckRules, ruleFileYaml } from "@intentius/chant-lexicon-prometheus";
+import { alertmanagerYaml, amtoolCheckConfig, prometheusConfigYaml, promtoolCheckConfig, promtoolCheckRules, ruleFileYaml } from "@intentius/chant-lexicon-prometheus";
 
 const rules = promtoolCheckRules(ruleFileYaml([api]));
 if (rules.ran && !rules.ok) throw new Error(rules.output);
+
+const config = promtoolCheckConfig(prometheusConfigYaml([settings, api]), { "rules.yml": ruleFileYaml([api]) });
+if (config.ran && !config.ok) throw new Error(config.output);
 
 const am = amtoolCheckConfig(alertmanagerYaml([root, oncall, fallback]));
 if (am.ran && !am.ok) throw new Error(am.output);
 ```
 
-Each helper writes the text to a temporary file and runs the tool on it. `ran` is `false` when the binary isn't found, so a test can skip rather than fail:
+Each helper writes the text to a temporary file and runs the tool on it. `promtool check config` also reads the rule files, certificates and credentials files a `prometheus.yml` names, so `promtoolCheckConfig` takes them as a second argument (path relative to the config, to contents) and writes them beside it. The lexicon's own `validate()` runs it over a sample `prometheus.yml` when `promtool` is installed. `ran` is `false` when the binary isn't found, so a test can skip rather than fail:
 
 ```ts
 import { hasTool } from "@intentius/chant-lexicon-prometheus";
@@ -36,6 +39,7 @@ The binaries are found on `PATH`, or at `$PROMTOOL` and `$AMTOOL`, or at the pat
 ```bash
 chant build src --lexicon prometheus -o dist/rules.yml
 promtool check rules dist/rules.yml
+promtool check config dist/prometheus.yml
 amtool check-config dist/alertmanager.yml
 ```
 
