@@ -202,7 +202,7 @@ describe("the digest", () => {
     const [first, ...rest] = doc.entries;
     const edited = [
       { ...doc, entries: rest },
-      { ...doc, entries: [{ ...first, action: "no-op" as const }, ...rest] },
+      { ...doc, entries: [{ ...first, action: first.action === "delete" ? ("create" as const) : ("delete" as const) }, ...rest] },
       { ...doc, entries: [{ ...first, attributes: [...first.attributes, { path: "planted", after: "x" }] }, ...rest] },
       { ...doc, entries: [...doc.entries, { ...first, address: `${first.address}-planted` }] },
       { ...doc, members: doc.members.map((m) => ({ ...m, holes: [...m.holes, { address: "planted", reason: "unobserved" }] })) },
