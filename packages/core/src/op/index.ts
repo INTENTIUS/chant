@@ -73,6 +73,10 @@ export type {
   GatePolicyEvaluator, GatePolicyRef, GatePolicyRequest, GateQuorum, ResolvedGateApproval,
 } from "./gate-approval";
 export {
+  gatePlanSummary, gatePlanSummaryOfResult, changeSetOfResult, GATE_PLAN_CONTEXT_KEY, GATE_PLAN_ADDRESS_LIMIT,
+} from "./gate-plan-context";
+export type { GatePlanSummary } from "./gate-plan-context";
+export {
   computePlanDigest, isPlanDigest, describePlanDigest, samePlanDigest, PLAN_DIGEST_ALGORITHM, PLAN_DIGEST_PREFIX,
 } from "../lifecycle/plan-digest";
 export { gateName, usesDeprecatedGateKey, DEPRECATED_GATE_KEY_WARNING } from "./gate-name";

@@ -131,9 +131,9 @@ function cedarValue(value: unknown): CedarValue | undefined {
  * The set as a record keyed by each policy's `@id`. Handed the text whole,
  * cedar-wasm names policies by position (`policy0`), and a recorded decision
  * would then name a rule nobody wrote. A policy with no `@id` keeps its
- * positional name.
+ * positional name. Exported for `./gate-schema.ts`, so validation names rules the same way.
  */
-function keyedById(wasm: NonNullable<ReturnType<typeof loadWasm>>, policy: GatePolicyRef): Record<string, string> {
+export function keyedById(wasm: NonNullable<ReturnType<typeof loadWasm>>, policy: GatePolicyRef): Record<string, string> {
   const parts = wasm.policySetTextToParts(policy.text);
   if (parts.type === "failure") {
     throw new Error(`policy "${policy.name}" does not parse: ${parts.errors.map(describeError).join("; ")}`);

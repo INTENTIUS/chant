@@ -12,7 +12,9 @@
  *   and lets only the quorum bind. `"enforce"` lets a permit pass the gate on
  *   its own, which is how an agent principal passes a low-risk plan.
  * - `context`: plan attributes handed to the policy (risk labels, changed
- *   paths), resolved at run time like a gate's `plan`.
+ *   paths), resolved at run time like a gate's `plan`. A gate whose `plan`
+ *   names a step that returned a change set also gets `context.plan`, that
+ *   change set's summary (#3182, `./gate-plan-context.ts`).
  *
  * Core does not know Cedar. A {@link GatePolicyRef} names the lexicon that
  * made it, and {@link loadGatePolicyEvaluator} imports that lexicon's
@@ -34,6 +36,7 @@
 import { createHash } from "node:crypto";
 import { lexiconModulePath, importLexiconPackage } from "../lexicon-module";
 import { isStepOutputRef, type StepOutputRef } from "./step-output-ref";
+import { GATE_PLAN_CONTEXT_KEY } from "./gate-plan-context";
 
 /** What a policy's decision does to the gate. */
 export type GateApprovalMode = "log-only" | "enforce";
@@ -74,7 +77,13 @@ export interface GateApproval {
   policy?: GatePolicyRef;
   /** Default `"log-only"`, so a new policy is observed against real gate traffic before it binds. */
   mode?: GateApprovalMode;
-  /** Plan attributes handed to the policy as Cedar `context`. A {@link StepOutputRef} is resolved at run time. */
+  /**
+   * Plan attributes handed to the policy as Cedar `context`. A {@link StepOutputRef} is resolved at run time.
+   *
+   * `plan` is reserved (#3182): when the gate's `plan` names a step that
+   * returned a change set (`terraformPlan`, `composeChangeSet`, ...), the run
+   * puts that change set's `GatePlanSummary` there on its own.
+   */
   context?: Record<string, GateContextValue>;
 }
 
@@ -205,6 +214,13 @@ export function gateApprovalProblems(approval: unknown): string[] {
       problems.push("`approval.context` is only read by a policy, and this gate declares none");
     } else {
       for (const [key, value] of Object.entries(a.context)) {
+        if (key === GATE_PLAN_CONTEXT_KEY) {
+          problems.push(
+            `\`approval.context.${key}\` is reserved: the run fills it with the plan's change-set summary (#3182) ` +
+              "when the gate's `plan` names the step that planned it",
+          );
+          continue;
+        }
         if (!isContextValue(value)) {
           problems.push(
             `\`approval.context.${key}\` must be a string, number, boolean, list of strings, or a step output reference`,

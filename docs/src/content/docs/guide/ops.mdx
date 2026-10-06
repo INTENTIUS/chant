@@ -276,15 +276,57 @@ The policy is a Cedar policy set that `gatePolicy()` renders when the Op is buil
 | principal | `Chant::Human::"<approver>"` or `Chant::Agent::"<approver>"`, with one `Chant::Role` parent per `--role` |
 | action | `Chant::Action::"PassGate"` |
 | resource | `Chant::Gate::"<op>/<gate>"` |
-| context | `planDigest`, plus the gate's `approval.context` as this run resolved it |
+| context | `planDigest`, `plan` (the plan summary below), plus the gate's `approval.context` as this run resolved it |
 
-The typed `Policy` scopes accept only entity types and actions from the project's Cedar schema. Declare `Chant::Human`, `Chant::Agent`, `Chant::Role`, `Chant::Gate` and the `PassGate` action there before writing gate policies.
+The typed `Policy` scopes accept only entity types and actions from the project's Cedar schema. Declare `Chant::Human`, `Chant::Agent`, `Chant::Role`, `Chant::Gate` and the `PassGate` action there before writing gate policies. `GATE_CEDAR_SCHEMA` from the cedar lexicon is that declaration, with the plan summary as `Chant::PlanSummary`. Copy it into your `.cedarschema`, or pass `gateCedarSchema({ context: { risk: "String" } })` to `new Schema({ text })` when the gate has its own context. `validateGatePolicy(policy)` checks a gate policy set against it.
 
 `--agent` records an approval as an agent's. An approval sent over MCP or ACP is always recorded as an agent's. An agent never counts toward the quorum.
 
 `mode` decides what a decision does. The default mode is `log-only`, where the decision is recorded and only the quorum can pass the gate. That lets you check a new rule against real gate traffic before it binds. In `enforce`, a permit passes the gate by itself, which is how an agent passes a low-risk plan. A permit counts only while the gate still declares the policy version it was evaluated under, so editing the policy needs fresh approvals. A permit recorded while the gate was in `log-only` never passes it, even after the gate switches to `enforce`, so the agent has to approve again ([#2512](https://github.com/INTENTIUS/chant/issues/2512)). A human's approval recorded under `log-only` still counts toward the quorum after the switch. A deny never cancels a human's approval, so a deny-by-default policy such as `DenyByDefaultSet` leaves the gate working as it did before: humans only.
 
 OPS015 rejects an `approval` block at build when it is malformed, for example a policy that is not a gate policy set or `enforce` with no policy.
+
+#### The plan in the policy's context
+
+A gate whose `plan` names the step that planned the change gets the plan's summary as `context.plan`, with no context code in the Op ([#3182](https://github.com/INTENTIUS/chant/issues/3182)). The summary comes from that step's [change set](/chant/reference/change-set/): `terraformPlan` returns one, and so do `lifecyclePlanChangeSet`, `readChangeSetPart` and `composeChangeSet`. `TerraformApplyOp` takes the gate's approval block as `gateApproval`.
+
+| Field | Type | What it holds |
+|---|---|---|
+| `changes`, `creates`, `updates`, `replaces`, `deletes` | Long | Counts per action. `changes` is the four together. |
+| `reads`, `noOps`, `forgets`, `entries` | Long | The other actions, and every entry. |
+| `types`, `createdTypes`, `updatedTypes`, `replacedTypes`, `deletedTypes` | Set of String | Resource types with a change, overall and per action. |
+| `deleted`, `replaced` | Set of String | Addresses deleted and replaced, at most 500 each. `truncated` says one was cut. |
+| `regions`, `scopes`, `lexicons` | Set of String | Where the changes land. |
+| `members`, `membersChanged`, `failedMembers`, `failed`, `holes` | | Members in the change set, those with a change, those that failed to plan and how many, and resources a planner could not read. |
+| `taggedCreates`, `untaggedCreates`, `createTagKeys` | | Creates with and without `tags`, `tags_all` or `labels`, and the tag keys every tagged create carries. |
+| `tagOnly` | Bool | Every change is an update of tags or labels. |
+
+The summary is recorded on the pending fact with the rest of the context. It comes from the same step result as the digest the gate binds, so an approval never stands on another plan's summary. `approval.context` may not set `plan` itself.
+
+The cedar lexicon ships a starter pack written against it, one `Policy` per builder.
+
+| Builder | Effect |
+|---|---|
+| `protectStateful({ types?, deletes?, replacements? })` | Forbids deleting or replacing a stateful type: an RDS instance, a DynamoDB table, a bucket. `STATEFUL_TYPES` is the default list, in terraform and CloudFormation names. |
+| `capDeletes({ max })`, `capReplacements({ max })` | Forbid a plan with more than `max` deletes or replacements. The default max is 0. |
+| `allowRegions({ regions })` | Forbids a change in any other region. |
+| `requireCreateTags({ keys, strict? })` | Forbids a tagged create missing one of `keys`. `strict` also forbids creates with no tags at all. |
+| `permitLowRiskAgents({ maxChanges })` | Permits an agent when the plan deletes and replaces nothing, changes at most `maxChanges` resources (default 10), and has no failed member or hole. |
+| `permitTagOnlyAgents()` | Permits an agent when the plan only changes tags or labels. |
+
+`starterGatePolicies()` returns the whole pack as one record. Regions and required tags are added when you pass them.
+
+```typescript
+import { gatePolicy, starterGatePolicies } from "@intentius/chant-lexicon-cedar";
+
+const prodGate = gatePolicy("prod", starterGatePolicies({ regions: ["us-east-1"], requiredTags: ["owner"] }));
+
+gate("approve-prod", { plan: plan.out.planDigest, approval: { policy: prodGate, mode: "log-only" } });
+```
+
+A forbid beats every permit, so an agent's approval of a plan that deletes an RDS instance is denied by `protect-stateful` even though `permit-low-risk-agents` is in the same set. Every forbid in the pack also applies when the context has no `plan`, so a gate that lost its change set does not let an agent through. A forbid can name `appliesTo: "agents"` to leave humans' recorded decisions alone. A human's approval counts toward the quorum whatever the policy says. Start in `log-only` to see each rule's decisions on real plans, then switch the gate to `enforce`.
+
+Cedar has no loop over a set. The summary therefore carries the facts a rule needs as sets and counts. Per-type counts are out of its reach. A rule like two maintainers once more than 20 resources change is a quorum, and the gate sets its quorum itself.
 
 ### A gate that asks a decision point
 
