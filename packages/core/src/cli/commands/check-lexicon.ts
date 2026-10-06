@@ -46,6 +46,17 @@ function findFiles(dir: string, predicate: (name: string) => boolean): string[] 
 }
 
 /** Read a file's content, returning empty string if missing. */
+/**
+ * Count the names in a validate.ts. Reads the entries of the exported
+ * REQUIRED_NAMES array; a lexicon with no such export falls back to counting
+ * quoted capitalised identifiers (digits allowed, e.g. K8sClusterReceiver).
+ */
+export function countRequiredNames(validateContent: string): number {
+  const arr = validateContent.match(/export\s+const\s+REQUIRED_NAMES\b[^=]*=\s*\[([\s\S]*?)\]/);
+  const body = arr ? arr[1] : validateContent;
+  return (body.match(/["'][A-Z][A-Za-z0-9]*["']/g) || []).length;
+}
+
 function readOr(path: string): string {
   try {
     return readFileSync(path, "utf-8");
@@ -722,12 +733,12 @@ export async function checkLexicon(dir: string): Promise<CheckResult> {
 
   // Validate required names count
   const validateContent = readOr(join(dir, "src/validate.ts"));
-  const requiredNamesMatches = validateContent.match(/["'][A-Z][a-zA-Z]+["']/g) || [];
+  const requiredNamesMatches = countRequiredNames(validateContent);
   items.push({
     name: "validate.ts checks at least 30 required names",
     tier: 3,
-    pass: requiredNamesMatches.length >= 30,
-    detail: `${requiredNamesMatches.length} required name(s)`,
+    pass: requiredNamesMatches >= 30,
+    detail: `${requiredNamesMatches} required name(s)`,
   });
 
   // Composite test file exists

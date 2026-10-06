@@ -1,9 +1,9 @@
 import { describe, test, expect } from "vitest";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { checkLexicon, countComposites, coverageReportCheck } from "./check-lexicon";
+import { checkLexicon, countComposites, countRequiredNames, coverageReportCheck } from "./check-lexicon";
 import { loadLexiconFromDir } from "./check-lexicon-plugin";
 import type { LexiconPlugin } from "../../lexicon";
 
@@ -82,6 +82,22 @@ describe("coverageReportCheck", () => {
 // chant #3104 — the composite rows counted every .ts file in src/composites/
 // but index.ts, so otel's one composite (NodeAgent) reported as four: the
 // catalog, its test and composites.test.ts counted too.
+describe("countRequiredNames (#3377)", () => {
+  const read = (lex: string) => readFileSync(join(repoRoot, "lexicons", lex, "src/validate.ts"), "utf8");
+
+  test("counts names with digits: otel reports 37", () => {
+    expect(countRequiredNames(read("otel"))).toBe(37);
+  });
+
+  test("counts only the REQUIRED_NAMES entries: prometheus reports the array length", () => {
+    expect(countRequiredNames(read("prometheus"))).toBe(8);
+  });
+
+  test("falls back to the widened pattern when there is no REQUIRED_NAMES export", () => {
+    expect(countRequiredNames(`const a = ["K8sThing", 'Plain'];`)).toBe(2);
+  });
+});
+
 describe("countComposites", () => {
   const entry = (name: string) => ({ name, lexicon: "x", description: "", bundles: [], params: [] });
 
