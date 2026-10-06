@@ -227,6 +227,10 @@ export function createOpApproveTool(): ToolRegistration {
           // the ledger recorded it indistinguishably from a name a person gave.
           note: { type: "string", description: "Free-text context recorded on the resolution" },
           url: { type: "string", description: "Absolute http/https URL this resolution happened at" },
+          // chant#3555 — what `chant run approve --env` passes: the
+          // environment the woken run runs in. Omitted, the runtime keeps the
+          // gated run's.
+          env: { type: "string", description: "Environment the woken run runs in (defaults to the gated run's)" },
           runtime: RUNTIME_PARAM,
         },
         required: ["name", "gate"],
@@ -256,7 +260,11 @@ export function createOpApproveTool(): ToolRegistration {
         );
       }
 
-      if (runtime.resolveGate) await runtime.resolveGate(name, gate, outcome.record);
+      if (runtime.resolveGate) {
+        const env = typeof params.env === "string" && params.env !== "" ? params.env : undefined;
+        if (env !== undefined) await runtime.resolveGate(name, gate, outcome.record, { env });
+        else await runtime.resolveGate(name, gate, outcome.record);
+      }
 
       return {
         op: name,

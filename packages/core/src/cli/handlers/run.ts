@@ -1078,8 +1078,8 @@ export async function runOpOnRuntime(ctx: CommandContext): Promise<number> {
 
   // The work lease (#2748). `--work` names the item an Op with a work lease
   // runs under; it is taken where the run executes, which for a hosted
-  // runtime is not this process.
-  const work = await resolveRunWork(ctx, config, runtime.name);
+  // runtime that carries it (fountain, #3555) is not this process.
+  const work = await resolveRunWork(ctx, config, runtime);
   if (work === null) {
     await stewardGate?.release?.();
     return 1;
@@ -1208,12 +1208,17 @@ export async function runOpOnRuntime(ctx: CommandContext): Promise<number> {
  * `null` after printing why the run is refused. The holder is `--holder`, or,
  * for an Op a steward lists, `<steward>/<op>@<process>` so `workspace status`
  * shows the lease beside the steward's Ops, or this process's id.
+ *
+ * A non-local runtime takes `--work` only when it declares `carriesWork`
+ * (#3555), and then gets just what the caller named: the holder is chosen
+ * where the run executes, not after this process.
  */
 async function resolveRunWork(
   ctx: CommandContext,
   config: OpConfig,
-  runtime: string,
+  provider: Pick<OpRuntimeProvider, "name" | "carriesWork">,
 ): Promise<{ item?: string; holder?: string } | undefined | null> {
+  const runtime = provider.name;
   const item = ctx.args.work;
   if (!config.workLease) {
     if (item === undefined) return undefined;
@@ -1223,12 +1228,17 @@ async function resolveRunWork(
     }));
     return null;
   }
-  if (runtime !== "local" && (item !== undefined || ctx.args.holder !== undefined)) {
+  if (runtime !== "local" && provider.carriesWork !== true && (item !== undefined || ctx.args.holder !== undefined)) {
     console.error(formatError({
       message: `--work and --holder run on the local runtime; "${runtime}" takes the work lease where it executes the run`,
       hint: "Omit --on, or name the item in the Op's workLease.",
     }));
     return null;
+  }
+  if (runtime !== "local" && provider.carriesWork === true) {
+    const holderArg = ctx.args.holder;
+    if (item === undefined && holderArg === undefined) return undefined;
+    return { ...(item !== undefined ? { item } : {}), ...(holderArg !== undefined ? { holder: holderArg } : {}) };
   }
   let holder = ctx.args.holder;
   if (holder === undefined) {

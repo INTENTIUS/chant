@@ -3,7 +3,7 @@
  *
  * `chant run <op> --on fountain` hands the run to a fountain teammate instead
  * of executing it here. This module is the client for that: it posts the
- * command line `chant run <op> [--env <env>] [--param k=v ...] --on local` ({@link hostedRunPrompt})
+ * command line `chant run <op> [--env <env>] [--param k=v ...] [--work <id>] [--holder <name>] --on local` ({@link hostedRunPrompt})
  * as a prompt on the steward's thread, tails the
  * conversation's SSE stream, and reports what comes back through the
  * {@link OpRuntimeProvider} contract core defines in
@@ -73,10 +73,10 @@ import {
 } from "./activities/fountain-apply";
 import { resolveAgentId } from "./activities/fountain-run";
 import { stewardForOp } from "../composites/steward";
-import { runPrompt, hostedRunPrompt, envOfPrompt, quoteArg } from "./run-prompt";
+import { runPrompt, hostedRunPrompt, quoteArg } from "./run-prompt";
 import { tokenize } from "../acp/command-line";
 
-export { runPrompt, hostedRunPrompt, envOfPrompt, quoteArg };
+export { runPrompt, hostedRunPrompt, quoteArg };
 
 // ── The SSE seam ──────────────────────────────────────────────────────────
 
@@ -745,6 +745,10 @@ export function createFountainOpRuntime(opts: FountainOpRuntimeOptions = {}): Op
 
   return {
     name: "fountain",
+    // `--work` and `--holder` ride on the posted line (#3555), so an Op whose
+    // work lease leaves the item to the run can run here; the sandbox's run
+    // takes the lease.
+    carriesWork: true,
 
     async start(op: OpConfig, startOpts: OpRunStartOptions): Promise<OpRunHandle> {
       known.set(op.name, op);
@@ -753,12 +757,12 @@ export function createFountainOpRuntime(opts: FountainOpRuntimeOptions = {}): Op
       selectProfile(startOpts.profile);
       // Before any request: an `--env` the command line cannot carry is
       // refused here, by name, rather than dropped (#3232). `--param` rides
-      // on the line (#3539); `--work` is refused, since the posted line does
-      // not carry the lease the caller named.
-      refuseWork(op.name, startOpts.work);
+      // on the line (#3539), and so do `--work` and `--holder` (#3555): the
+      // run in the sandbox takes the work lease the caller named.
       const prompt = hostedRunPrompt(op.name, {
         env: startOpts.env,
         ...(startOpts.params ? { params: startOpts.params } : {}),
+        ...(startOpts.work ? { work: startOpts.work } : {}),
       });
       const http = await rest();
       const steward = await resolveSteward(op, startOpts.params);
@@ -928,15 +932,20 @@ export function createFountainOpRuntime(opts: FountainOpRuntimeOptions = {}): Op
       // a space stays one value (#3539). The re-run runs in the environment
       // the approver named (`chant run approve ... --env`, #3539), or else the
       // one the gated run did: the `--env` on the op's latest turn (#3232).
-      // The gated turn's `--param`s ride along too, and `--on local` as on
-      // every posted run (#3225).
+      // The gated turn's `--param`s, `--work` and `--holder` ride along too
+      // (#3555), and `--on local` as on every posted run (#3225).
       const flags: Array<[string, string]> = [];
       if (resolution.resolvedBy) flags.push(["--approver", resolution.resolvedBy]);
       if (resolution.url) flags.push(["--url", resolution.url]);
       const gated = flagsOfPrompt(found?.turns[0]?.prompt);
       const env = resolveOpts?.env !== undefined && resolveOpts.env !== "" ? resolveOpts.env : gated.env;
       const { status, json } = await http("POST", `/api/conversations/${conversationId}/prompts`, {
-        prompt: hostedRunPrompt(op, { env, ...(gated.params ? { params: gated.params } : {}), flags }),
+        prompt: hostedRunPrompt(op, {
+          env,
+          ...(gated.params ? { params: gated.params } : {}),
+          ...(gated.work ? { work: gated.work } : {}),
+          flags,
+        }),
       });
 
       if (status === 400 && errorCode(json) === "conversation_busy") {
@@ -953,25 +962,15 @@ export function createFountainOpRuntime(opts: FountainOpRuntimeOptions = {}): Op
 }
 
 /**
- * Refuse `--work`/`--holder` on a hosted run, by name (#3539). The posted
- * line does not carry them, so the run in the sandbox would hold no lease, or
- * one the caller did not name. Core's `chant run` refuses them before any
- * runtime is reached; this covers a caller that holds the provider directly.
+ * The `--env`, `--param`s, `--work` and `--holder` a posted prompt carries,
+ * read with the same quote-aware split `chant acp` uses. A prompt that does
+ * not split (an unterminated quote) carries none of them.
  */
-function refuseWork(op: string, work: OpRunStartOptions["work"]): void {
-  if (!work || (work.item === undefined && work.holder === undefined)) return;
-  throw new Error(
-    `fountain runtime: --work and --holder are not posted to the steward, so the hosted run of "${op}" ` +
-      `would not hold the lease named here. Run it with --on local to hold the lease in this process.`,
-  );
-}
-
-/**
- * The `--env` and `--param`s a posted prompt carries, read with the same
- * quote-aware split `chant acp` uses. A prompt that does not split (an
- * unterminated quote) carries neither.
- */
-export function flagsOfPrompt(prompt: string | undefined): { env?: string; params?: Record<string, string> } {
+export function flagsOfPrompt(prompt: string | undefined): {
+  env?: string;
+  params?: Record<string, string>;
+  work?: { item?: string; holder?: string };
+} {
   let words: string[];
   try {
     words = tokenize(prompt ?? "");
@@ -979,6 +978,7 @@ export function flagsOfPrompt(prompt: string | undefined): { env?: string; param
     return {};
   }
   let env: string | undefined;
+  const work: { item?: string; holder?: string } = {};
   const params: Record<string, string> = {};
   let any = false;
   for (let i = 0; i < words.length; i++) {
@@ -989,20 +989,26 @@ export function flagsOfPrompt(prompt: string | undefined): { env?: string; param
     if (eq > 0) {
       flag = word.slice(0, eq);
       value = word.slice(eq + 1);
-    } else if (word === "--env" || word === "--param") {
+    } else if (word === "--env" || word === "--param" || word === "--work" || word === "--holder") {
       value = words[i + 1];
       if (value === undefined || value.startsWith("-")) continue;
       i++;
     }
     if (value === undefined) continue;
     if (flag === "--env") env = value;
+    else if (flag === "--work") work.item = value;
+    else if (flag === "--holder") work.holder = value;
     else if (flag === "--param") {
       const at = value.indexOf("=");
       params[at === -1 ? value : value.slice(0, at)] = at === -1 ? "" : value.slice(at + 1);
       any = true;
     }
   }
-  return { ...(env ? { env } : {}), ...(any ? { params } : {}) };
+  return {
+    ...(env ? { env } : {}),
+    ...(any ? { params } : {}),
+    ...(work.item !== undefined || work.holder !== undefined ? { work } : {}),
+  };
 }
 
 /** Was `--durable-requests` asked for on this invocation? */

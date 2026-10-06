@@ -37,7 +37,7 @@ describe("op-approve on the MCP channel (chant#2384)", () => {
     // The rest of the tool is unchanged — this narrows one field, it does not
     // remove the tool. The narrower alternative in the issue was to drop
     // op-approve entirely; this keeps it useful for the cross-channel case.
-    expect(Object.keys(schema.properties).sort()).toEqual(["gate", "name", "note", "runtime", "url"]);
+    expect(Object.keys(schema.properties).sort()).toEqual(["env", "gate", "name", "note", "runtime", "url"]);
     expect(schema.required.sort()).toEqual(["gate", "name"]);
   });
 
