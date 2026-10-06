@@ -35,6 +35,22 @@ chant build src --lexicon grafana -o dist/grafana/index.json
 
 A dashboard held in a Kubernetes ConfigMap, such as one labelled `grafana_dashboard` for the Grafana sidecar, is imported the same way when you import the manifest with the k8s lexicon. The ConfigMap's value becomes `dashboardJson(dashboard)`. That dashboard keeps the older flat shape, a const per panel and query with nested settings lifted and at most eight to a module, because the k8s project need not list grafana, and without it `chant lint` doesn't know panels are property-kind. A v2 dashboard in a ConfigMap is the exception: it stays a string, with a warning, because the lexicon builds v1 JSON and the ConfigMap would change from v2 to v1 on the next build. See the k8s lexicon's [Importing Existing YAML](/chant/lexicons/k8s/importing-yaml/).
 
+## Inside Kubernetes manifests
+
+When you import a Kubernetes manifest with the k8s lexicon, the grafana lexicon reads the Grafana content in it. It registers two embedded importers:
+
+| Where the content is | What it becomes | The manifest value is written by |
+|---|---|---|
+| a ConfigMap value holding dashboard JSON (the `grafana_dashboard` label is not required), and a Grafana Operator `GrafanaDashboard`'s `spec.json` | a `Dashboard` | `dashboardJson(dashboard)` |
+| a `GrafanaAlertRuleGroup`'s `spec.rules` | an `AlertRuleGroup` | `operatorRules` |
+| a `GrafanaContactPoint`'s `spec.receivers` | a `ContactPoint`, its `valuesFrom` entries back as `${NAME}` settings | `operatorReceivers`, with the Secret's name when the receivers read one |
+| a `GrafanaNotificationPolicy`'s `spec.route` | a `NotificationPolicy` | `operatorPolicy` |
+| a `GrafanaNotificationPolicyRoute`'s `spec` | a `NotificationPolicy` holding the route as its one child | `operatorRouteSpec` |
+| a `GrafanaMuteTiming`'s `spec.time_intervals` | a `MuteTiming` | `operatorTimeIntervals` |
+| a `GrafanaNotificationTemplate`'s `spec.template` | a `NotificationTemplate` | `operatorTemplate` |
+
+The functions are exported from `@intentius/chant-lexicon-grafana/k8s`, the same entry that holds `GrafanaOperatorResources`, so a build writes the imported field again. A policy that selects its routes with `spec.route.routeSelector` stays as written, since a `NotificationPolicy` cannot hold the selector; the `GrafanaNotificationPolicyRoute` resources it selects are imported one by one, and a route's own `routeSelector` is left out with a warning. A rule group's `folderRef` is a resource name, not a folder title, so it is kept as the group's `folder` with a warning to change it. The `GrafanaOperatorResources` option `policyRoutes` writes this form. See [Provisioning](../provisioning/).
+
 ## What the generated source looks like
 
 The dashboard reads the way you would write it by hand. Panels, rows and queries sit inline in the `Dashboard`, with their `gridPos`, `options` and `fieldConfig` inline too, since COR001 leaves property-kind declarables alone. A variable used once, in the dashboard's variable list, is inline as well; one that panels also refer to (a datasource variable, or one a panel repeats over) is a constant named after it. The dashboard's own nested settings, such as `links` and `annotations`, are lifted into named consts typed by its props, which is how COR001 wants a resource written:

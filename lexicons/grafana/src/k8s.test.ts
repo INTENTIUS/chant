@@ -18,6 +18,7 @@ import {
   operatorDatasource,
   operatorPolicyRoute,
   operatorReceiverSettings,
+  operatorRouteSpec,
   operatorRule,
 } from "./k8s";
 
@@ -327,6 +328,12 @@ describe("GrafanaOperatorResources alerting (#3156)", () => {
     ]);
     expect(() => operatorReceiverSettings("cp", { url: "https://x/${TOKEN}" }, "s")).toThrow(/inside the text/);
     expect(() => operatorReceiverSettings("cp", { password: "$__file{/run/pw}" }, "s")).toThrow(/inside the text/);
+    // The alert template variables are not references, even when they are the whole setting.
+    expect(operatorReceiverSettings("cp", { message: "$labels", detail: "$value", more: "$values" }, undefined)).toEqual({
+      settings: { message: "$labels", detail: "$value", more: "$values" },
+      valuesFrom: [],
+    });
+    expect(operatorReceiverSettings("cp", { url: "$labelsToken" }, "s").valuesFrom).toEqual([{ targetPath: "url", valueFrom: { secretKeyRef: { name: "s", key: "labelsToken" } } }]);
     // Go template text with a plain `$` is not a reference.
     expect(operatorReceiverSettings("cp", { message: "{{ $labels.job }} is down" }, undefined)).toEqual({ settings: { message: "{{ $labels.job }} is down" }, valuesFrom: [] });
   });
@@ -347,6 +354,33 @@ describe("GrafanaOperatorResources alerting (#3156)", () => {
     });
     expect(operatorPolicyRoute({ orgId: 2, receiver: "x", routes: [{ matchers: ["a!~b.*"] }] })).toEqual({ receiver: "x", routes: [{ object_matchers: [["a", "!~", "b.*"]] }] });
     expect(() => operatorPolicyRoute({ receiver: "x", routes: [{ matchers: ["nonsense"] }] })).toThrow(/cannot read the route matcher/);
+  });
+
+  test("policyRoutes writes each child route as a GrafanaNotificationPolicyRoute the policy selects by label", () => {
+    const docs = ops(alerting, { policyRoutes: true, labels: { team: "sre" } });
+    const root = docs.find((d) => d.kind === "GrafanaNotificationPolicy")!;
+    const label = { "grafana.chant.dev/policy": "grafana-notification-policy" };
+    expect(root.spec.route).toEqual({ receiver: "oncall", group_by: ["alertname"], routeSelector: { matchLabels: label } });
+    const routes = docs.filter((d) => d.kind === "GrafanaNotificationPolicyRoute");
+    expect(routes.map((d) => d.metadata.name)).toEqual(["grafana-notification-policy-route-1"]);
+    expect(routes[0].metadata.labels).toEqual({ team: "sre", ...label });
+    expect(routes[0].spec).toEqual({
+      receiver: "tickets",
+      object_matchers: [["severity", "=", "ticket"]],
+      mute_time_intervals: ["weekends"],
+      routes: [{ object_matchers: [["team", "=", "a"]] }],
+    });
+    expect(routes[0].spec.instanceSelector).toBeUndefined();
+  });
+
+  test("a policy with no child routes stays one resource under policyRoutes", () => {
+    const docs = ops([oncall, new NotificationPolicy({ receiver: oncall })], { policyRoutes: true });
+    expect(docs.some((d) => d.kind === "GrafanaNotificationPolicyRoute")).toBe(false);
+  });
+
+  test("operatorRouteSpec gives a child the policy's receiver when it has none", () => {
+    expect(operatorRouteSpec(new NotificationPolicy({ receiver: "oncall", routes: [{ matchers: ["a=\"b\""] }] }))).toEqual({ receiver: "oncall", object_matchers: [["a", "=", "b"]] });
+    expect(() => operatorRouteSpec(new NotificationPolicy({ receiver: "oncall" }))).toThrow(/no child route/);
   });
 
   test("a build with no alerting writes none, and options reach the alerting resources", () => {
