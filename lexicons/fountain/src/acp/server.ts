@@ -46,6 +46,8 @@ import {
   type PromptParams,
   type PromptResult,
   type RequestPermissionParams,
+  type ResumeSessionParams,
+  type ResumeSessionResult,
   type RequestPermissionResult,
   type SessionNotification,
   type SessionUpdate,
@@ -125,6 +127,8 @@ export class AcpServer implements JsonRpcHandler {
         return this.initialize((params ?? {}) as InitializeParams);
       case "session/new":
         return this.newSession((params ?? {}) as NewSessionParams);
+      case "session/resume":
+        return this.resumeSession((params ?? {}) as ResumeSessionParams);
       case "session/prompt":
         return this.enqueue(() => this.prompt((params ?? {}) as PromptParams));
       default:
@@ -161,6 +165,11 @@ export class AcpServer implements JsonRpcHandler {
         // directory and nothing else, so there is no transcript to replay
         // that the run ledger does not already hold.
         loadSession: false,
+        // `session/resume` is: fountain spawns `chant acp` afresh for every
+        // turn and resumes the conversation's session from the second turn
+        // on, and an agent that offers no way back in fails that turn
+        // before its prompt is sent.
+        sessionCapabilities: { resume: {} },
         // A chant command line is text. Claiming otherwise would invite a
         // client to send bytes this agent would have to drop.
         promptCapabilities: { image: false, audio: false, embeddedContext: false },
@@ -172,15 +181,34 @@ export class AcpServer implements JsonRpcHandler {
   }
 
   private newSession(params: NewSessionParams): NewSessionResult {
-    const cwd = params.cwd && params.cwd.length > 0 ? params.cwd : process.cwd();
     const id = randomUUID();
+    this.openSession(id, params.cwd);
+    return { sessionId: id };
+  }
+
+  /**
+   * Take up a session by the id a client already holds. A chant session is a
+   * working directory and nothing else, so one this process never opened —
+   * the usual case, since a client spawns a new process per turn — is opened
+   * again under the same id with the cwd the client sends. A gate a previous
+   * process asked about under `--durable-requests` is not carried over: its
+   * answer finds no request waiting and says to prompt the line again.
+   */
+  private resumeSession(params: ResumeSessionParams): ResumeSessionResult {
+    if (typeof params.sessionId !== "string" || params.sessionId.length === 0) {
+      throw new JsonRpcError(JSONRPC_INVALID_PARAMS, "session/resume needs a sessionId");
+    }
+    if (!this.sessions.has(params.sessionId)) this.openSession(params.sessionId, params.cwd);
+    return {};
+  }
+
+  private openSession(id: string, cwd: string | undefined): void {
     this.sessions.set(id, {
       id,
-      host: this.createHost(cwd),
+      host: this.createHost(cwd && cwd.length > 0 ? cwd : process.cwd()),
       permissions: new Map(),
       earlyAnswers: new Map(),
     });
-    return { sessionId: id };
   }
 
   private async prompt(params: PromptParams): Promise<PromptResult> {

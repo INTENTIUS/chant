@@ -61,6 +61,8 @@ export interface InitializeResult {
   agentCapabilities: {
     loadSession: boolean;
     promptCapabilities: { image: boolean; audio: boolean; embeddedContext: boolean };
+    /** `resume` present: the agent answers `session/resume`. */
+    sessionCapabilities: { resume: Record<string, never> };
   };
   authMethods: unknown[];
 }
@@ -76,6 +78,17 @@ export interface NewSessionParams {
 export interface NewSessionResult {
   sessionId: string;
 }
+
+/** `session/resume` params: a session an earlier process opened, and the cwd to open it in. */
+export interface ResumeSessionParams {
+  sessionId: string;
+  cwd?: string;
+  mcpServers?: unknown[];
+  _meta?: Record<string, unknown>;
+}
+
+/** `session/resume` result. Nothing to report: there is no mode or model to restore. */
+export type ResumeSessionResult = Record<string, never>;
 
 /**
  * The out-of-band bag a client attaches to `session/prompt` to resume a
