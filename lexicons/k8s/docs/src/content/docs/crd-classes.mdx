@@ -383,7 +383,7 @@ The operator-managed `CrdbCluster` is the common single-region production path. 
 kubectl apply --server-side -f https://github.com/grafana/grafana-operator/releases/download/v5.25.0/kustomize-cluster_scoped.yaml
 ```
 
-You rarely write these by hand. `GrafanaOperatorResources` in `@intentius/chant-lexicon-grafana/k8s` writes one per grafana `Dashboard`, `Datasource`, folder and library panel (see the grafana lexicon's [Provisioning](/chant/lexicons/grafana/provisioning/) page). `chant import` of a `GrafanaDashboard` reads its `spec.json` back into a grafana `Dashboard`, the same way it reads a sidecar dashboard ConfigMap. The operator's other kinds (`Grafana` itself, alerting) are not generated yet.
+You rarely write these by hand. `GrafanaOperatorResources` in `@intentius/chant-lexicon-grafana/k8s` writes one per grafana `Dashboard`, `Datasource`, folder and library panel (see the grafana lexicon's [Provisioning](/chant/lexicons/grafana/provisioning/) page). `chant import` of a `GrafanaDashboard` reads its `spec.json` back into a grafana `Dashboard`, the same way it reads a sidecar dashboard ConfigMap. Alerting goes the same way: rule groups, contact points, notification policies and their child routes, mute timings and templates are written and read back. `Grafana` itself is not generated.
 
 ## KubeRay & Argo CD
 

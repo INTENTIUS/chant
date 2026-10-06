@@ -15,7 +15,7 @@ describe("generateForgejoPipeline for a workspace member", () => {
   test("working directory and name survive the dialect, and the triggers stay the plain pipeline's", () => {
     const member = { name: "api", dir: "services/api", file: ".forgejo/workflows/chant-api-staging.yml" };
     const doc = parseYAML(generateForgejoPipeline(components, { env: "staging", member }).yaml) as Record<string, unknown>;
-    expect(doc.name).toBe("chant-components-api-staging");
+    expect(doc.name).toBe("chant-components.api.staging");
     expect(Object.keys(doc.on as Record<string, unknown>)).toEqual(["workflow_dispatch"]);
     expect(doc.defaults).toEqual({ run: { "working-directory": "services/api" } });
   });

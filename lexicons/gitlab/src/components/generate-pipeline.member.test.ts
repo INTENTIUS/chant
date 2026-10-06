@@ -31,7 +31,7 @@ describe("generateGitlabPipeline for a workspace member", () => {
   test("jobs take the member's name, run in its directory and only on its changes", () => {
     const result = generateGitlabPipeline(components, { env: "staging", member: api });
     const doc = parseYAML(result.yaml) as Record<string, unknown>;
-    expect(doc.workflow).toEqual({ name: "chant-components-api-staging" });
+    expect(doc.workflow).toEqual({ name: "chant-components.api.staging" });
     expect(doc["shared-alb"]).toBeUndefined();
 
     const job = doc["api-api"] as Job;

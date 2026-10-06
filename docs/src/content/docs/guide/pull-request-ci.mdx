@@ -162,10 +162,10 @@ Run the same command in a member of a [workspace](/chant/cli/workspace-init/) an
 ```bash
 cd infra/network
 chant build --components --generate github --pr-loop --env prod
-# wrote .github/workflows/chant-pr-network-prod.yml for member network
+# wrote .github/workflows/chant-pr.network.prod.yml for member network
 ```
 
-The jobs run in the member's directory, so `.chant/pr` and every path in `chant.config.ts` read from there. The report artifact is kept from `<member dir>/.chant/pr`. On GitLab the file is `.gitlab/ci/chant-pr-<member>-<env>.gitlab-ci.yml`, its jobs are `<member>-plan` and `<member>-apply`, and each script starts with `cd <member dir>`.
+The jobs run in the member's directory, so `.chant/pr` and every path in `chant.config.ts` read from there. The report artifact is kept from `<member dir>/.chant/pr`. On GitLab the file is `.gitlab/ci/chant-pr.<member>.<env>.gitlab-ci.yml`, its jobs are `<member>-plan` and `<member>-apply`, and each script starts with `cd <member dir>`.
 
 One apply runs at a time per member and environment, through the concurrency group (GitLab: resource group) `chant-apply.<member>.<env>`. A member name has no `.`, so no two members' groups meet: member `a` in environment `b-c` and member `a-b` in environment `c` apply side by side.
 

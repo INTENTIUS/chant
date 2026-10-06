@@ -150,6 +150,7 @@ Run an Op on a runtime and return its result.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `name` | `string` | Yes | Op name (must match an `*.op.ts` file) |
+| `env` | `string` | No | Environment the run targets, as `chant run --env` names it; omitted, the runtime uses its own default |
 | `runtime` | `string` | No | Runtime to address: a lexicon name with an `opRuntime`, or `local` (the default) |
 
 A finished run comes back as `{ op, runId, state, startedAt, endedAt }`, plus `records` and `gate` when the run produced them.

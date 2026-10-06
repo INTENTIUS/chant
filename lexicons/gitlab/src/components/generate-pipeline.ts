@@ -384,6 +384,6 @@ function scopeToMember(
     job.jobName = renamed.get(job.jobName)!;
     job.needs = job.needs.map((n) => renamed.get(n) ?? n);
   }
-  doc.workflow = { name: `chant-components-${member.name}-${env}` };
+  doc.workflow = { name: `chant-components.${member.name}.${env}` };
   return promoteJob ? renamed.get(promoteJob) : undefined;
 }

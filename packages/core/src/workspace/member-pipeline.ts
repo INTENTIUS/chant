@@ -134,13 +134,14 @@ export function memberPipelineDir(provider: string): string | undefined {
  * The default path of a member's component pipeline for one environment,
  * relative to the repository root: `chant-<member>-<env>.yml` in the forge's
  * workflow directory, or `.gitlab/ci/chant-<member>-<env>.gitlab-ci.yml`.
- * A pull-request pipeline (`kind` `"pr"`, #3465) is `chant-pr-<member>-<env>`,
- * so it sits beside the member's deploy pipeline for the same environment.
+ * A pull-request pipeline (`kind` `"pr"`, #3465) is `chant-pr.<member>.<env>`, with the dots the apply group uses so no
+ * two member and environment pairs share one name, and it sits beside the
+ * member's deploy pipeline for the same environment.
  */
 export function memberPipelineFile(provider: string, member: string, env: string, kind: "components" | "pr" = "components"): string | undefined {
   const dir = PIPELINE_DIRS[provider];
   if (dir === undefined) return undefined;
-  const stem = kind === "pr" ? `chant-pr-${member}-${env}` : `chant-${member}-${env}`;
+  const stem = kind === "pr" ? `chant-pr.${member}.${env}` : `chant-${member}-${env}`;
   return `${dir}/${stem}${provider === "gitlab" ? ".gitlab-ci.yml" : ".yml"}`;
 }
 
