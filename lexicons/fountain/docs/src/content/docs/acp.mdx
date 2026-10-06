@@ -50,12 +50,13 @@ A record that matches no declared step, which is what an `onFailure` phase produ
 
 | Method | Behavior |
 |---|---|
-| `initialize` | negotiates down to the highest version both ends speak. Reports `loadSession: false`, text-only prompt capabilities, and no auth methods: the agent runs as whoever spawned it. |
+| `initialize` | negotiates down to the highest version both ends speak. Reports `loadSession: false`, `sessionCapabilities.resume`, text-only prompt capabilities, and no auth methods: the agent runs as whoever spawned it. |
 | `session/new` | a session is a working directory and nothing else. `mcpServers` is ignored, because chant's tools are its own verbs. |
+| `session/resume` | takes up a session by the id the client holds, in the `cwd` it sends. A process that never opened that id opens it again: the session is only its working directory. Fountain spawns a new `chant acp` for every turn and resumes from a conversation's second turn on. |
 | `session/prompt` | one command line, one turn. Turns are serialized: a turn borrows the process writers to stream output and changes into the session's `cwd`, both process-wide, so one connection runs one command at a time. |
 | `session/cancel` | a notification. It aborts the in-flight step through the executor's signal, which then runs the Op's `onFailure` phases before the run settles. The pending `session/prompt` answers with `stopReason: "cancelled"`. |
 
-`session/load` is not implemented. There is no transcript to replay that the run ledger does not already hold.
+`session/load` is not implemented. There is no transcript to replay that the run ledger does not already hold, so a client resumes with `session/resume`. A gate a previous process asked about under `--durable-requests` does not survive a resume in a new process; answering it says to prompt the command line again.
 
 Stop reasons are `end_turn`, `cancelled`, `refusal` (the command line did not parse to a chant verb) and `waiting` (a gate, under `--durable-requests`).
 
