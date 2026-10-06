@@ -83,7 +83,7 @@ describe("rule groups from a Mimir ruler", () => {
     am = { kind: "alertmanager", original };
     rulerCalls.length = 0;
     const ir = await exportProd();
-    expect(ruleFile(ir)?.groups.map((g) => g.name)).toEqual(["api", "checkout", "infra"]);
+    expect(ruleFile(ir)?.groups.map((g) => g.name)).toEqual(["api", "slo-checkout", "infra"]);
     expect(ruleFile(ir)?.groups[0]).toEqual({ name: "api", interval: "30s", rules: [{ alert: "ApiDown", expr: 'up{job="api"} == 0', for: "5m", labels: { severity: "page" } }] });
     expect(rulerCalls).toEqual(["GET /prometheus/config/v1/rules/shop", "GET /prometheus/config/v1/rules/platform"]);
     expect(ir.warnings?.some((w) => w.startsWith('ruler namespace "shop": group "api": "source_tenants" is not a rule group field'))).toBe(true);
@@ -130,7 +130,7 @@ describe("rule groups from a Mimir ruler", () => {
     ruler = rulerState();
     const adHoc = { PROMETHEUS_RULER_URL: rulerUrl, PROMETHEUS_RULER_TENANT: "shop" };
     let ir = await exportResources({ environment: "dev", config: {}, env: adHoc, selector: { type: "Prometheus::Rules::RuleGroup" } });
-    expect(ruleFile(ir)?.groups.map((g) => g.name).sort()).toEqual(["api", "checkout", "foreign", "infra"]);
+    expect(ruleFile(ir)?.groups.map((g) => g.name).sort()).toEqual(["api", "foreign", "infra", "slo-checkout"]);
     expect(ir.warnings?.some((w) => w.includes("declares no ruler namespace, so every namespace of the tenant was read (shop, platform, other)"))).toBe(true);
     rulerCalls.length = 0;
     ir = await exportResources({ environment: "dev", config: {}, env: adHoc, owned: true, selector: { type: "Prometheus::Rules::RuleGroup" } });
