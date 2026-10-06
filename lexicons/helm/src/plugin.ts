@@ -20,6 +20,7 @@ import { helmSerializer } from "./serializer";
 import { helmCompletions } from "./lsp/completions";
 import { helmHover } from "./lsp/hover";
 import { helmConfigSchema } from "./config";
+import { helmProjectCodegen } from "./project-codegen";
 import { helmDeepNormalizationHooks } from "./deep-observe-hooks";
 import { LABEL_OWNERSHIP_KEYS } from "@intentius/chant/ownership";
 
@@ -29,6 +30,10 @@ export const helmPlugin: LexiconPlugin = {
   // Declaring the schema makes core validate the namespace at load, so a
   // typo'd profile field fails the build instead of silently unpinning.
   configSchema: helmConfigSchema,
+  // Typed values and a render factory per chart in `helm.charts`, written by
+  // `chant generate` and checked for drift by every build. See
+  // ./project-codegen.ts.
+  projectCodegen: () => helmProjectCodegen(),
   // #1246 — helm resolves real ownership verdicts on the thin read (every row
   // is release-scoped, so helm-managed = owned via release identity), and the
   // deep read (#1247) delegates to the k8s reader, which resolves the shared
