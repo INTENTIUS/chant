@@ -357,7 +357,7 @@ The gate passes the point its own facts as inputs, under the names `chant worksp
 Reaching the gate asks the point, the way the `decide` activity does:
 
 - When the question is open (escalated to people, or a model's proposal waiting for a person to confirm it), the run records a pending fact on the gate ledger that names the question, and ends `waiting` on it. `chant run` prints the question's id. Answer it with `chant workspace points answer <id> --answer true --by <name>`, or through hud, then run the Op again. A local steward reruns it on its next round.
-- When the answer is one the gate passes on, the run appends a resolution to the gate ledger and walks through. The resolution's `answer` names the point, the answer record's id and path, the answer and who gave it. A retry of the same plan finds that resolution and does not write a second one.
+- When the answer is one the gate passes on, the run appends a resolution to the gate ledger and walks through. The resolution's `answer` names the point and the answer record's id and path, and holds the answer and who gave it. A retry of the same plan finds that resolution and does not write a second one.
 - Any other answer fails the gate step, naming the record. `chant workspace points retract <id>` takes the answer back and puts the question to people again.
 
 The answer record names the gate back: its `constrains` is `gate:<op>/<gate>`, with `@<env>` when the run names an environment, and its inputs hold the `gate.*` values it was asked with. So the run's history (the step record's `approval.answer` and the ledger's resolution) and the workspace's decision history each point at the other.
